@@ -1,0 +1,27 @@
+{
+  "name": "@bondfires/config",
+  "version": "0.0.1",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "sideEffects": false,
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "build": "echo 'config package - no build needed'",
+    "clean": "rm -rf node_modules",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tamagui/config": "^1.144.0",
+    "@tamagui/animations-react-native": "^1.144.0",
+    "@tamagui/font-inter": "^1.144.0",
+    "@tamagui/shorthands": "^1.144.0",
+    "@tamagui/themes": "^1.144.0",
+    "tamagui": "^1.144.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}
+
