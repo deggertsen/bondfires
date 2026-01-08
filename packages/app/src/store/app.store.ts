@@ -1,6 +1,6 @@
 import { observable } from '@legendapp/state'
-import { ObservablePersistMMKV } from '@legendapp/state/persist-plugins/mmkv'
 import { synced } from '@legendapp/state/sync'
+import { ObservablePersistMMKV } from '@legendapp/state/persist-plugins/mmkv'
 
 // App-wide state that persists
 export interface AppState {
@@ -30,7 +30,7 @@ const defaultState: AppState = {
   userId: null,
 }
 
-// Create the observable store with persistence
+// Create the observable store with MMKV persistence
 export const appStore$ = observable<AppState>(
   synced({
     initial: defaultState,
@@ -73,4 +73,3 @@ export const appActions = {
     appStore$.set(defaultState)
   },
 }
-

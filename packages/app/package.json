@@ -21,7 +21,10 @@
     "react-native": "*",
     "expo-notifications": "*",
     "expo-device": "*",
-    "expo-constants": "*"
+    "expo-constants": "*",
+    "expo-file-system": "*",
+    "ffmpeg-kit-react-native": "*",
+    "react-native-mmkv": "*"
   },
   "devDependencies": {
     "@types/react": "^19.1.0",
