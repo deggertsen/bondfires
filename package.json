@@ -8,12 +8,13 @@
   "scripts": {
     "dev": "turbo dev",
     "build": "turbo build",
-    "lint": "turbo lint",
-    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "check": "biome check --write .",
     "clean": "turbo clean && rm -rf node_modules"
   },
   "devDependencies": {
-    "prettier": "^3.2.5",
+    "@biomejs/biome": "^1.9.4",
     "turbo": "^2.3.0",
     "typescript": "^5.7.2"
   },

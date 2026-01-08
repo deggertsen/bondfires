@@ -1,0 +1,78 @@
+{
+  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+  "files": {
+    "ignoreUnknown": false,
+    "include": [
+      "**"
+    ],
+    "ignore": [
+      "**/*.json",
+      "**/*.cjs",
+      "**/*.css",
+      "**/*.js",
+      "**/*.d.ts",
+      "**/*.config.ts",
+      "**/generated/**/*",
+      "**/dist",
+      "**/out",
+      "**/.expo",
+      "**/node_modules",
+      "**/apps/mobile/ios",
+      "**/apps/mobile/android"
+    ]
+  },
+  "organizeImports": {
+    "enabled": true
+  },
+  "formatter": {
+    "formatWithErrors": false,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "complexity": {
+        "useSimplifiedLogicExpression": "off"
+      },
+      "correctness": {
+        "noUnusedImports": "error",
+        "noUnusedVariables": {
+          "level": "error",
+          "fix": "none"
+        },
+        "noSwitchDeclarations": "off"
+      },
+      "style": {
+        "noImplicitBoolean": "off",
+        "useBlockStatements": "off",
+        "useNamingConvention": "off"
+      },
+      "suspicious": {
+        "noShadowRestrictedNames": "off",
+        "noConsole": {
+          "level": "error",
+          "fix": "none",
+          "options": {
+            "allow": ["assert", "error", "info", "warn"]
+          }
+        }
+      },
+      "a11y": {
+        "useSemanticElements": "off"
+      },
+      "performance": {},
+      "security": {},
+      "nursery": {}
+    }
+  },
+  "javascript": {
+    "formatter": {
+      "semicolons": "asNeeded",
+      "quoteStyle": "single"
+    },
+    "globals": ["JSX", "expect", "describe", "beforeAll", "afterAll", "jest"]
+  }
+}
