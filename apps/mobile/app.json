@@ -1,28 +1,41 @@
 {
   "expo": {
-    "name": "mobile",
-    "slug": "mobile",
+    "name": "Bondfires",
+    "slug": "bondfires",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "mobile",
+    "scheme": "bondfires",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/images/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#1a1a1a"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.bondfires.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Bondfires needs camera access to record video responses.",
+        "NSMicrophoneUsageDescription": "Bondfires needs microphone access to record audio with your videos.",
+        "NSPhotoLibraryUsageDescription": "Bondfires needs photo library access to save and select videos."
+      }
     },
     "android": {
+      "package": "com.bondfires.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#1a1a1a"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -30,10 +43,53 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-dev-client",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Bondfires to access your camera to record video responses.",
+          "microphonePermission": "Allow Bondfires to access your microphone to record audio.",
+          "recordAudioAndroid": true
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Allow Bondfires to access your microphone for video recording."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/notification-icon.png",
+          "color": "#FF6B35"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "15.1",
+            "flipper": false
+          },
+          "android": {
+            "minSdkVersion": 24,
+            "compileSdkVersion": 35,
+            "targetSdkVersion": 35,
+            "buildToolsVersion": "35.0.0"
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "YOUR_EAS_PROJECT_ID"
+      }
+    },
+    "owner": "deggertsen"
   }
 }
