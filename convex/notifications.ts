@@ -1,13 +1,15 @@
 import { v } from 'convex/values'
-import { mutation, query } from './_generated/server'
+import { mutation, query, action } from './_generated/server'
 import { auth } from './auth'
+import { internal } from './_generated/api'
 
 // Register a device token for push notifications
 export const registerDevice = mutation({
   args: {
     token: v.string(),
     platform: v.union(v.literal('ios'), v.literal('android')),
-    experienceId: v.optional(v.string()),
+    tokenType: v.optional(v.union(v.literal('fcm'), v.literal('expo'))),
+    deviceId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await auth.getUserId(ctx)
@@ -28,7 +30,8 @@ export const registerDevice = mutation({
       await ctx.db.patch(existing._id, {
         userId,
         platform: args.platform,
-        experienceId: args.experienceId,
+        tokenType: args.tokenType ?? 'fcm',
+        deviceId: args.deviceId,
         updatedAt: now,
       })
       return existing._id
@@ -39,7 +42,8 @@ export const registerDevice = mutation({
       userId,
       token: args.token,
       platform: args.platform,
-      experienceId: args.experienceId,
+      tokenType: args.tokenType ?? 'fcm',
+      deviceId: args.deviceId,
       createdAt: now,
       updatedAt: now,
     })

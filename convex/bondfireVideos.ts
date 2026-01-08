@@ -1,6 +1,7 @@
 import { v } from 'convex/values'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
+import { internal } from './_generated/api'
 
 // Get all videos for a bondfire
 export const listByBondfire = query({
@@ -87,6 +88,13 @@ export const addResponse = mutation({
     await ctx.db.patch(userId, {
       responseCount: (user?.responseCount ?? 0) + 1,
       updatedAt: now,
+    })
+
+    // Send push notification to bondfire creator
+    await ctx.scheduler.runAfter(0, internal.sendNotification.notifyBondfireResponse, {
+      bondfireId: args.bondfireId,
+      responderId: userId,
+      responderName: user?.displayName ?? user?.name ?? 'Someone',
     })
 
     return videoId

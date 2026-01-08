@@ -18,6 +18,8 @@
     "@convex-dev/auth": "^0.0.90",
     "@expo/vector-icons": "^15.0.3",
     "@legendapp/state": "^2.1.15",
+    "@react-native-firebase/app": "^23.7.0",
+    "@react-native-firebase/messaging": "^23.7.0",
     "@react-navigation/native": "^7.1.8",
     "@tamagui/animations-react-native": "^1.144.0",
     "@tamagui/babel-plugin": "^1.144.0",

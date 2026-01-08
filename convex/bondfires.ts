@@ -24,9 +24,9 @@ export const listFeed = query({
 
 // Get a single bondfire by ID
 export const get = query({
-  args: { bondfireId: v.id('bondfires') },
+  args: { id: v.id('bondfires') },
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.bondfireId)
+    return await ctx.db.get(args.id)
   },
 })
 

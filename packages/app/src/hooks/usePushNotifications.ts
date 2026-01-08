@@ -1,11 +1,12 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
+import { Platform, AppState, type AppStateStatus } from 'react-native'
 import * as Notifications from 'expo-notifications'
 import * as Device from 'expo-device'
-import { Platform } from 'react-native'
 import Constants from 'expo-constants'
-import { appStore$ } from '../store/app.store'
+import messaging from '@react-native-firebase/messaging'
+import { useMutation } from 'convex/react'
 
-// Configure notification handler
+// Configure how notifications are handled when app is in foreground
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
@@ -16,169 +17,245 @@ Notifications.setNotificationHandler({
   }),
 })
 
-export interface PushNotificationState {
+export interface UsePushNotificationsOptions {
+  // Convex mutation to register device token
+  registerTokenMutation?: any
+  // Convex mutation to unregister device token
+  unregisterTokenMutation?: any
+  // Called when a notification is received while app is in foreground
+  onNotificationReceived?: (notification: Notifications.Notification) => void
+  // Called when user taps on a notification
+  onNotificationResponse?: (response: Notifications.NotificationResponse) => void
+}
+
+export interface UsePushNotificationsResult {
   expoPushToken: string | null
-  notification: Notifications.Notification | null
+  fcmToken: string | null
+  isRegistered: boolean
   error: string | null
+  requestPermissions: () => Promise<boolean>
+  unregister: () => Promise<void>
 }
 
 export function usePushNotifications(
-  onRegisterToken?: (token: string, platform: 'ios' | 'android') => Promise<void>
-) {
+  options: UsePushNotificationsOptions = {}
+): UsePushNotificationsResult {
+  const {
+    registerTokenMutation,
+    unregisterTokenMutation,
+    onNotificationReceived,
+    onNotificationResponse,
+  } = options
+
   const [expoPushToken, setExpoPushToken] = useState<string | null>(null)
-  const [notification, setNotification] = useState<Notifications.Notification | null>(null)
+  const [fcmToken, setFcmToken] = useState<string | null>(null)
+  const [isRegistered, setIsRegistered] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  
-  const notificationListener = useRef<Notifications.Subscription>()
-  const responseListener = useRef<Notifications.Subscription>()
-  
-  const registerForPushNotifications = useCallback(async () => {
-    if (!Device.isDevice) {
-      setError('Push notifications require a physical device')
-      return null
-    }
-    
-    // Check existing permissions
-    const { status: existingStatus } = await Notifications.getPermissionsAsync()
-    let finalStatus = existingStatus
-    
-    // Request permissions if not granted
-    if (existingStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync()
-      finalStatus = status
-    }
-    
-    if (finalStatus !== 'granted') {
-      setError('Permission for push notifications was denied')
-      return null
-    }
-    
-    // Get Expo push token
-    try {
-      const projectId = Constants.expoConfig?.extra?.eas?.projectId
-      const token = await Notifications.getExpoPushTokenAsync({
-        projectId,
-      })
-      
-      setExpoPushToken(token.data)
-      
-      // Register token with backend
-      if (onRegisterToken) {
-        const platform = Platform.OS as 'ios' | 'android'
-        await onRegisterToken(token.data, platform)
+
+  const notificationListener = useRef<Notifications.EventSubscription>()
+  const responseListener = useRef<Notifications.EventSubscription>()
+  const appStateRef = useRef(AppState.currentState)
+
+  // Register token with backend
+  const registerWithBackend = useCallback(
+    async (token: string, tokenType: 'expo' | 'fcm') => {
+      if (registerTokenMutation) {
+        try {
+          await registerTokenMutation({
+            token,
+            tokenType,
+            platform: Platform.OS,
+            deviceId: Constants.deviceId ?? 'unknown',
+          })
+          setIsRegistered(true)
+        } catch (e) {
+          console.error('Failed to register token with backend:', e)
+          setError('Failed to register with server')
+        }
       }
-      
-      return token.data
-    } catch (err) {
-      setError(`Failed to get push token: ${err}`)
-      return null
+    },
+    [registerTokenMutation]
+  )
+
+  // Request notification permissions
+  const requestPermissions = useCallback(async (): Promise<boolean> => {
+    if (!Device.isDevice) {
+      setError('Push notifications only work on physical devices')
+      return false
     }
-  }, [onRegisterToken])
-  
+
+    try {
+      // Request Firebase messaging permission (iOS)
+      if (Platform.OS === 'ios') {
+        const authStatus = await messaging().requestPermission()
+        const enabled =
+          authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
+          authStatus === messaging.AuthorizationStatus.PROVISIONAL
+
+        if (!enabled) {
+          setError('Push notification permissions denied')
+          return false
+        }
+      }
+
+      // Also request expo-notifications permission
+      const { status: existingStatus } = await Notifications.getPermissionsAsync()
+      let finalStatus = existingStatus
+
+      if (existingStatus !== 'granted') {
+        const { status } = await Notifications.requestPermissionsAsync()
+        finalStatus = status
+      }
+
+      if (finalStatus !== 'granted') {
+        setError('Push notification permissions denied')
+        return false
+      }
+
+      // Get FCM token
+      const token = await messaging().getToken()
+      setFcmToken(token)
+      await registerWithBackend(token, 'fcm')
+
+      // Also get Expo push token for compatibility
+      try {
+        const projectId = Constants.expoConfig?.extra?.eas?.projectId
+        if (projectId) {
+          const expoPushTokenData = await Notifications.getExpoPushTokenAsync({
+            projectId,
+          })
+          setExpoPushToken(expoPushTokenData.data)
+        }
+      } catch (e) {
+        // Expo push token is optional, FCM is the primary
+        console.log('Could not get Expo push token:', e)
+      }
+
+      setError(null)
+      return true
+    } catch (e) {
+      console.error('Error requesting push notification permissions:', e)
+      setError('Failed to set up push notifications')
+      return false
+    }
+  }, [registerWithBackend])
+
+  // Unregister from push notifications
+  const unregister = useCallback(async () => {
+    try {
+      if (fcmToken && unregisterTokenMutation) {
+        await unregisterTokenMutation({ token: fcmToken })
+      }
+      await messaging().deleteToken()
+      setFcmToken(null)
+      setExpoPushToken(null)
+      setIsRegistered(false)
+    } catch (e) {
+      console.error('Error unregistering push notifications:', e)
+    }
+  }, [fcmToken, unregisterTokenMutation])
+
+  // Set up notification listeners
   useEffect(() => {
-    // Only register if notifications are enabled in preferences
-    const notificationsEnabled = appStore$.preferences.notificationsEnabled.get()
-    
-    if (notificationsEnabled) {
-      registerForPushNotifications()
-    }
-    
-    // Listen for incoming notifications
+    // Foreground notification handler (expo-notifications)
     notificationListener.current = Notifications.addNotificationReceivedListener(
       (notification) => {
-        setNotification(notification)
+        onNotificationReceived?.(notification)
       }
     )
-    
-    // Listen for notification interactions
+
+    // Notification response handler (when user taps notification)
     responseListener.current = Notifications.addNotificationResponseReceivedListener(
       (response) => {
-        // Handle notification tap
-        const data = response.notification.request.content.data
-        console.log('Notification tapped:', data)
-        // Navigate to appropriate screen based on notification data
+        onNotificationResponse?.(response)
       }
     )
-    
-    // Cleanup
+
+    // Firebase foreground message handler
+    const unsubscribeOnMessage = messaging().onMessage(async (remoteMessage) => {
+      // Display local notification for foreground messages
+      if (remoteMessage.notification) {
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: remoteMessage.notification.title ?? 'New notification',
+            body: remoteMessage.notification.body ?? '',
+            data: remoteMessage.data,
+          },
+          trigger: null, // Show immediately
+        })
+      }
+    })
+
+    // Firebase token refresh handler
+    const unsubscribeOnTokenRefresh = messaging().onTokenRefresh(async (token) => {
+      setFcmToken(token)
+      await registerWithBackend(token, 'fcm')
+    })
+
+    // Handle app state changes (re-register on foreground)
+    const handleAppStateChange = (nextAppState: AppStateStatus) => {
+      if (
+        appStateRef.current.match(/inactive|background/) &&
+        nextAppState === 'active'
+      ) {
+        // App came to foreground - check token is still valid
+        messaging()
+          .getToken()
+          .then((token) => {
+            if (token !== fcmToken) {
+              setFcmToken(token)
+              registerWithBackend(token, 'fcm')
+            }
+          })
+          .catch(console.error)
+      }
+      appStateRef.current = nextAppState
+    }
+
+    const appStateSubscription = AppState.addEventListener(
+      'change',
+      handleAppStateChange
+    )
+
     return () => {
-      if (notificationListener.current) {
-        Notifications.removeNotificationSubscription(notificationListener.current)
-      }
-      if (responseListener.current) {
-        Notifications.removeNotificationSubscription(responseListener.current)
-      }
+      notificationListener.current?.remove()
+      responseListener.current?.remove()
+      unsubscribeOnMessage()
+      unsubscribeOnTokenRefresh()
+      appStateSubscription.remove()
     }
-  }, [registerForPushNotifications])
-  
-  // Set up Android notification channel
+  }, [fcmToken, onNotificationReceived, onNotificationResponse, registerWithBackend])
+
+  // Check initial permission status on mount
   useEffect(() => {
-    if (Platform.OS === 'android') {
-      Notifications.setNotificationChannelAsync('default', {
-        name: 'Default',
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#FF6B35', // Orange color for Bondfires
-      })
+    const checkInitialStatus = async () => {
+      if (!Device.isDevice) return
+
+      const authStatus = await messaging().hasPermission()
+      if (
+        authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
+        authStatus === messaging.AuthorizationStatus.PROVISIONAL
+      ) {
+        // Already have permission, get token
+        try {
+          const token = await messaging().getToken()
+          setFcmToken(token)
+          await registerWithBackend(token, 'fcm')
+        } catch (e) {
+          console.error('Error getting initial FCM token:', e)
+        }
+      }
     }
-  }, [])
-  
+
+    checkInitialStatus()
+  }, [registerWithBackend])
+
   return {
     expoPushToken,
-    notification,
+    fcmToken,
+    isRegistered,
     error,
-    registerForPushNotifications,
+    requestPermissions,
+    unregister,
   }
 }
-
-// Helper to schedule a local notification (for testing)
-export async function scheduleLocalNotification(
-  title: string,
-  body: string,
-  data?: Record<string, unknown>,
-  seconds: number = 1
-) {
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title,
-      body,
-      data,
-    },
-    trigger: {
-      seconds,
-      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-    },
-  })
-}
-
-// Helper to send push notification via Expo's push service (for server-side use)
-export interface PushMessage {
-  to: string // Expo push token
-  title: string
-  body: string
-  data?: Record<string, unknown>
-  sound?: 'default' | null
-  badge?: number
-}
-
-export async function sendPushNotification(message: PushMessage) {
-  const response = await fetch('https://exp.host/--/api/v2/push/send', {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Accept-Encoding': 'gzip, deflate',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      to: message.to,
-      sound: message.sound ?? 'default',
-      title: message.title,
-      body: message.body,
-      data: message.data,
-      badge: message.badge,
-    }),
-  })
-  
-  return response.json()
-}
-

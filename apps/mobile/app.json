@@ -22,7 +22,10 @@
         "NSMicrophoneUsageDescription": "Bondfires needs access to your microphone to record audio with your videos.",
         "NSPhotoLibraryUsageDescription": "Bondfires needs access to your photo library to save and share videos from your bondfire sessions.",
         "ITSAppUsesNonExemptEncryption": false,
-        "UIBackgroundModes": ["fetch", "remote-notification"]
+        "UIBackgroundModes": [
+          "fetch",
+          "remote-notification"
+        ]
       }
     },
     "android": {
@@ -37,7 +40,10 @@
         "CAMERA",
         "RECORD_AUDIO",
         "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE"
+        "WRITE_EXTERNAL_STORAGE",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
       ]
     },
     "web": {
@@ -48,6 +54,8 @@
     "plugins": [
       "expo-router",
       "expo-dev-client",
+      "@react-native-firebase/app",
+      "@react-native-firebase/messaging",
       [
         "expo-camera",
         {
@@ -74,7 +82,8 @@
         {
           "ios": {
             "deploymentTarget": "15.1",
-            "flipper": false
+            "flipper": false,
+            "useFrameworks": "static"
           },
           "android": {
             "minSdkVersion": 24,
@@ -89,8 +98,9 @@
       "typedRoutes": true
     },
     "extra": {
+      "router": {},
       "eas": {
-        "projectId": "YOUR_EAS_PROJECT_ID"
+        "projectId": "fbb59011-a987-492b-90fa-421481f1597b"
       }
     },
     "owner": "deggertsen"

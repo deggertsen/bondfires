@@ -1,10 +1,83 @@
 import { v } from 'convex/values'
 import { action, internalAction } from './_generated/server'
-import { internal } from './_generated/api'
-import { Id } from './_generated/dataModel'
+import { internal, api } from './_generated/api'
 
-// Send push notification to a user
-export const sendToUser = action({
+// Firebase Admin SDK types for FCM
+interface FCMMessage {
+  token: string
+  notification?: {
+    title: string
+    body: string
+  }
+  data?: Record<string, string>
+  android?: {
+    priority: 'high' | 'normal'
+    notification?: {
+      icon?: string
+      color?: string
+      channelId?: string
+    }
+  }
+  apns?: {
+    payload: {
+      aps: {
+        alert?: {
+          title: string
+          body: string
+        }
+        badge?: number
+        sound?: string
+      }
+    }
+  }
+}
+
+interface FCMResponse {
+  successCount: number
+  failureCount: number
+  results: Array<{
+    success: boolean
+    messageId?: string
+    error?: string
+  }>
+}
+
+// Send notification via Firebase Cloud Messaging
+async function sendFCMNotification(
+  serverKey: string,
+  message: FCMMessage
+): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  const response = await fetch('https://fcm.googleapis.com/fcm/send', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `key=${serverKey}`,
+    },
+    body: JSON.stringify({
+      to: message.token,
+      notification: message.notification,
+      data: message.data,
+      android: message.android,
+      apns: message.apns,
+    }),
+  })
+
+  if (!response.ok) {
+    const text = await response.text()
+    return { success: false, error: `FCM error: ${response.status} - ${text}` }
+  }
+
+  const result = await response.json()
+  
+  if (result.failure > 0) {
+    return { success: false, error: result.results?.[0]?.error ?? 'Unknown FCM error' }
+  }
+
+  return { success: true, messageId: result.message_id }
+}
+
+// Internal action to send a notification to a specific user
+export const sendToUser = internalAction({
   args: {
     userId: v.id('users'),
     title: v.string(),
@@ -12,80 +85,94 @@ export const sendToUser = action({
     data: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
-    // Get user's device tokens
-    const tokens = await ctx.runQuery(internal.notifications.getTokensForUser, {
+    const serverKey = process.env.FIREBASE_SERVER_KEY
+    if (!serverKey) {
+      console.error('FIREBASE_SERVER_KEY not configured')
+      return { success: false, error: 'Firebase not configured' }
+    }
+
+    // Get all device tokens for the user
+    const tokens = await ctx.runQuery(api.notifications.getTokensForUser, {
       userId: args.userId,
     })
-    
+
     if (tokens.length === 0) {
-      console.log(`No device tokens found for user ${args.userId}`)
-      return { success: false, reason: 'No device tokens' }
+      return { success: false, error: 'No device tokens found for user' }
     }
-    
-    // Send to all user's devices via Expo Push Service
-    const messages = tokens.map((t) => ({
-      to: t.token,
-      sound: 'default' as const,
-      title: args.title,
-      body: args.body,
-      data: args.data ?? {},
-    }))
-    
-    try {
-      const response = await fetch('https://exp.host/--/api/v2/push/send', {
-        method: 'POST',
-        headers: {
-          Accept: 'application/json',
-          'Accept-Encoding': 'gzip, deflate',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(messages),
+
+    const results = await Promise.all(
+      tokens.map(async (tokenDoc) => {
+        const message: FCMMessage = {
+          token: tokenDoc.token,
+          notification: {
+            title: args.title,
+            body: args.body,
+          },
+          data: args.data ? Object.fromEntries(
+            Object.entries(args.data).map(([k, v]) => [k, String(v)])
+          ) : undefined,
+          android: {
+            priority: 'high',
+            notification: {
+              icon: 'ic_notification',
+              color: '#FF6B35',
+              channelId: 'bondfires-default',
+            },
+          },
+          apns: {
+            payload: {
+              aps: {
+                alert: {
+                  title: args.title,
+                  body: args.body,
+                },
+                badge: 1,
+                sound: 'default',
+              },
+            },
+          },
+        }
+
+        return sendFCMNotification(serverKey, message)
       })
-      
-      const result = await response.json()
-      console.log('Push notification result:', result)
-      
-      return { success: true, result }
-    } catch (error) {
-      console.error('Failed to send push notification:', error)
-      return { success: false, reason: String(error) }
+    )
+
+    const successCount = results.filter((r) => r.success).length
+    const failureCount = results.filter((r) => !r.success).length
+
+    return {
+      success: successCount > 0,
+      successCount,
+      failureCount,
+      errors: results.filter((r) => !r.success).map((r) => r.error),
     }
   },
 })
 
-// Notify bondfire owner when someone responds
-export const notifyBondfireResponse = action({
+// Send notification when someone responds to a bondfire
+export const notifyBondfireResponse = internalAction({
   args: {
     bondfireId: v.id('bondfires'),
     responderId: v.id('users'),
+    responderName: v.string(),
   },
   handler: async (ctx, args) => {
-    // Get the bondfire to find the owner
-    const bondfire = await ctx.runQuery(internal.bondfires.get, {
-      bondfireId: args.bondfireId,
-    })
+    // Get the bondfire to find the creator
+    const bondfire = await ctx.runQuery(api.bondfires.get, { id: args.bondfireId })
     
     if (!bondfire) {
-      return { success: false, reason: 'Bondfire not found' }
+      return { success: false, error: 'Bondfire not found' }
     }
-    
-    // Don't notify if the responder is the owner
+
+    // Don't notify if user is responding to their own bondfire
     if (bondfire.userId === args.responderId) {
-      return { success: false, reason: 'Responder is owner' }
+      return { success: true, skipped: true }
     }
-    
-    // Get responder's name
-    const responder = await ctx.runQuery(internal.users.get, {
-      userId: args.responderId,
-    })
-    
-    const responderName = responder?.displayName ?? responder?.name ?? 'Someone'
-    
-    // Send notification to bondfire owner
+
     return await ctx.runAction(internal.sendNotification.sendToUser, {
       userId: bondfire.userId,
-      title: 'New Response! 🔥',
-      body: `${responderName} added a video to your bondfire`,
+      title: '🔥 New Response!',
+      body: `${args.responderName} added a video to your Bondfire`,
       data: {
         type: 'bondfire_response',
         bondfireId: args.bondfireId,
@@ -94,3 +181,25 @@ export const notifyBondfireResponse = action({
   },
 })
 
+// Test action to send a notification (for debugging)
+export const sendTest = action({
+  args: {
+    title: v.string(),
+    body: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { auth } = await import('./auth')
+    const userId = await auth.getUserId(ctx)
+    
+    if (!userId) {
+      throw new Error('Not authenticated')
+    }
+
+    return await ctx.runAction(internal.sendNotification.sendToUser, {
+      userId,
+      title: args.title,
+      body: args.body,
+      data: { type: 'test' },
+    })
+  },
+})

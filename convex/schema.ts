@@ -129,8 +129,11 @@ export default defineSchema({
     token: v.string(),
     platform: v.union(v.literal('ios'), v.literal('android')),
     
-    // Expo push token specific fields
-    experienceId: v.optional(v.string()),
+    // Token type - FCM (Firebase) or Expo
+    tokenType: v.optional(v.union(v.literal('fcm'), v.literal('expo'))),
+    
+    // Device identifier (for managing multiple devices per user)
+    deviceId: v.optional(v.string()),
     
     // Timestamps
     createdAt: v.number(),
