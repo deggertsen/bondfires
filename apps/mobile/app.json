@@ -2,34 +2,37 @@
   "expo": {
     "name": "Bondfires",
     "slug": "bondfires",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "bondfires",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/images/splash-icon.png",
+      "image": "./assets/images/icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#1a1a1a"
+      "backgroundColor": "#141416"
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.bondfires.app",
+      "bundleIdentifier": "org.bondfires",
+      "buildNumber": "1",
       "infoPlist": {
-        "NSCameraUsageDescription": "Bondfires needs camera access to record video responses.",
-        "NSMicrophoneUsageDescription": "Bondfires needs microphone access to record audio with your videos.",
-        "NSPhotoLibraryUsageDescription": "Bondfires needs photo library access to save and select videos."
+        "NSCameraUsageDescription": "Bondfires needs access to your camera to record videos for your bondfire sessions.",
+        "NSMicrophoneUsageDescription": "Bondfires needs access to your microphone to record audio with your videos.",
+        "NSPhotoLibraryUsageDescription": "Bondfires needs access to your photo library to save and share videos from your bondfire sessions.",
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": ["fetch", "remote-notification"]
       }
     },
     "android": {
-      "package": "com.bondfires.app",
+      "package": "org.bondfires",
+      "versionCode": 1,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#1a1a1a"
+        "foregroundImage": "./assets/images/icon.png",
+        "backgroundColor": "#141416"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false,
       "permissions": [
         "CAMERA",
         "RECORD_AUDIO",
@@ -40,7 +43,7 @@
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/icon.png"
     },
     "plugins": [
       "expo-router",
@@ -48,15 +51,15 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Allow Bondfires to access your camera to record video responses.",
-          "microphonePermission": "Allow Bondfires to access your microphone to record audio.",
+          "cameraPermission": "Bondfires needs access to your camera to record videos for your bondfire sessions.",
+          "microphonePermission": "Bondfires needs access to your microphone to record audio with your videos.",
           "recordAudioAndroid": true
         }
       ],
       [
         "expo-av",
         {
-          "microphonePermission": "Allow Bondfires to access your microphone for video recording."
+          "microphonePermission": "Bondfires needs access to your microphone to record audio with your videos."
         }
       ],
       [
