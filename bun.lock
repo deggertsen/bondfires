@@ -26,7 +26,7 @@
         "@bondfires/ui": "workspace:*",
         "@convex-dev/auth": "^0.0.90",
         "@expo/vector-icons": "^15.0.3",
-        "@legendapp/state": "^2.1.15",
+        "@legendapp/state": "^3.0.0-beta.27",
         "@react-native-firebase/app": "^23.7.0",
         "@react-native-firebase/messaging": "^23.7.0",
         "@react-navigation/native": "^7.1.8",
@@ -75,7 +75,7 @@
       "name": "@bondfires/app",
       "version": "0.0.1",
       "dependencies": {
-        "@legendapp/state": "^2.1.15",
+        "@legendapp/state": "^3.0.0-beta.27",
         "convex": "^1.31.3",
       },
       "devDependencies": {
@@ -680,7 +680,7 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@legendapp/state": ["@legendapp/state@2.1.15", "", { "dependencies": { "use-sync-external-store": "^1.2.0" }, "peerDependencies": { "react": ">=16.8.0" }, "optionalPeers": ["react"] }, "sha512-7/8Rgg7m38eznupr36QJeSkrtbhVxaRtQvRMjdBigSm+HW3ZIFgMtUX1DqZ2hJxbPqqAJamw5s+TLs8dRstUNw=="],
+    "@legendapp/state": ["@legendapp/state@3.0.0-beta.43", "", { "dependencies": { "use-sync-external-store": "^1.2.2" }, "peerDependencies": { "expo-sqlite": "^15.0.0" }, "optionalPeers": ["expo-sqlite"] }, "sha512-5Jtz1Vlubw5x98I+H12talCFT02orIWq+ewBMPFlSNIxRj+ZLjwV2yDM2UMR8ebI8XqW8YyoqOfGFh9zr3VU0g=="],
 
     "@motionone/animation": ["@motionone/animation@10.18.0", "", { "dependencies": { "@motionone/easing": "^10.18.0", "@motionone/types": "^10.17.1", "@motionone/utils": "^10.18.0", "tslib": "^2.3.1" } }, "sha512-9z2p5GFGCm0gBsZbi8rVMOAJCtw1WqBTIPw3ozk06gDvZInBPIsQcHgYogEJ4yuHJ+akuW8g1SEIOpTOvYs8hw=="],
 

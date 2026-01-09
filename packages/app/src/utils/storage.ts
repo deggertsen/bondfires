@@ -1,4 +1,4 @@
-import { configureObservablePersistence } from '@legendapp/state/persist'
+import { configureObservableSync } from '@legendapp/state/sync'
 import { ObservablePersistMMKV } from '@legendapp/state/persist-plugins/mmkv'
 
 // Interface matching react-native-mmkv's MMKV class
@@ -28,10 +28,12 @@ function getStorage(): MMKVStorage {
   return storage
 }
 
-// Configure Legend State to use MMKV
+// Configure Legend State to use MMKV (v3 API)
 export function configureStorage() {
-  configureObservablePersistence({
-    pluginLocal: ObservablePersistMMKV,
+  configureObservableSync({
+    persist: {
+      plugin: ObservablePersistMMKV,
+    },
   })
 }
 

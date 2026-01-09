@@ -1,10 +1,12 @@
 import { observable } from '@legendapp/state'
-import { configureObservablePersistence, persistObservable } from '@legendapp/state/persist'
+import { configureObservableSync, syncObservable } from '@legendapp/state/sync'
 import { ObservablePersistMMKV } from '@legendapp/state/persist-plugins/mmkv'
 
-// Configure MMKV as default persistence
-configureObservablePersistence({
-  pluginLocal: ObservablePersistMMKV,
+// Configure MMKV as default persistence plugin
+configureObservableSync({
+  persist: {
+    plugin: ObservablePersistMMKV,
+  },
 })
 
 // App-wide state that persists
@@ -38,9 +40,11 @@ const defaultState: AppState = {
 // Create the observable store
 export const appStore$ = observable<AppState>(defaultState)
 
-// Persist the store with MMKV
-persistObservable(appStore$, {
-  local: 'bondfires-app',
+// Sync/persist the store with MMKV
+syncObservable(appStore$, {
+  persist: {
+    name: 'bondfires-app',
+  },
 })
 
 // Actions

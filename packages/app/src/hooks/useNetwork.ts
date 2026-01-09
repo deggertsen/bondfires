@@ -1,47 +1,47 @@
-import { useObservable } from '@legendapp/state/react'
+import { useValue } from '@legendapp/state/react'
 import { uiActions, uiStore$ } from '../store/ui.store'
 
 export function useNetwork() {
-  const isOnline = useObservable(uiStore$.isOnline)
+  const isOnline = useValue(uiStore$.isOnline)
 
   return {
-    isOnline: isOnline.get(),
+    isOnline,
     setOnline: uiActions.setOnline,
   }
 }
 
 export function useToast() {
-  const toast = useObservable(uiStore$.toast)
+  const toast = useValue(uiStore$.toast)
 
   return {
-    toast: toast.get(),
+    toast,
     showToast: uiActions.showToast,
     hideToast: uiActions.hideToast,
   }
 }
 
 export function useLoading() {
-  const isLoading = useObservable(uiStore$.isLoading)
-  const loadingMessage = useObservable(uiStore$.loadingMessage)
+  const isLoading = useValue(uiStore$.isLoading)
+  const loadingMessage = useValue(uiStore$.loadingMessage)
 
   return {
-    isLoading: isLoading.get(),
-    loadingMessage: loadingMessage.get(),
+    isLoading,
+    loadingMessage,
     setLoading: uiActions.setLoading,
   }
 }
 
 export function useModal() {
-  const activeModal = useObservable(uiStore$.activeModal)
-  const modalData = useObservable(uiStore$.modalData)
+  const activeModal = useValue(uiStore$.activeModal)
+  const modalData = useValue(uiStore$.modalData)
 
   return {
-    activeModal: activeModal.get(),
-    modalData: modalData.get(),
+    activeModal,
+    modalData,
     openModal: uiActions.openModal,
     closeModal: uiActions.closeModal,
     isOpen: (modalId: string) => {
-      const current = activeModal.get() as unknown as string | null
+      const current = activeModal
       return current === modalId
     },
   }
