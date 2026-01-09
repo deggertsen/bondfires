@@ -32,14 +32,16 @@ interface FCMMessage {
   }
 }
 
-interface FCMResponse {
-  successCount: number
-  failureCount: number
-  results: Array<{
-    success: boolean
-    messageId?: string
-    error?: string
-  }>
+interface SendResult {
+  success: boolean
+  messageId?: string
+  error?: string
+}
+
+interface DeviceToken {
+  token: string
+  platform: 'ios' | 'android'
+  tokenType?: 'fcm' | 'expo'
 }
 
 // Send notification via Firebase Cloud Messaging
@@ -84,15 +86,22 @@ export const sendToUser = internalAction({
     body: v.string(),
     data: v.optional(v.any()),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{
+    success: boolean
+    successCount?: number
+    failureCount?: number
+    error?: string
+    errors?: (string | undefined)[]
+  }> => {
     const serverKey = process.env.FIREBASE_SERVER_KEY
     if (!serverKey) {
+      // eslint-disable-next-line no-console
       console.error('FIREBASE_SERVER_KEY not configured')
       return { success: false, error: 'Firebase not configured' }
     }
 
     // Get all device tokens for the user
-    const tokens = await ctx.runQuery(api.notifications.getTokensForUser, {
+    const tokens: DeviceToken[] = await ctx.runQuery(api.notifications.getTokensForUser, {
       userId: args.userId,
     })
 
@@ -100,8 +109,8 @@ export const sendToUser = internalAction({
       return { success: false, error: 'No device tokens found for user' }
     }
 
-    const results = await Promise.all(
-      tokens.map(async (tokenDoc) => {
+    const results: SendResult[] = await Promise.all(
+      tokens.map(async (tokenDoc: DeviceToken): Promise<SendResult> => {
         const message: FCMMessage = {
           token: tokenDoc.token,
           notification: {
@@ -109,7 +118,7 @@ export const sendToUser = internalAction({
             body: args.body,
           },
           data: args.data ? Object.fromEntries(
-            Object.entries(args.data).map(([k, v]) => [k, String(v)])
+            Object.entries(args.data as Record<string, unknown>).map(([k, val]) => [k, String(val)])
           ) : undefined,
           android: {
             priority: 'high',
@@ -137,14 +146,14 @@ export const sendToUser = internalAction({
       })
     )
 
-    const successCount = results.filter((r) => r.success).length
-    const failureCount = results.filter((r) => !r.success).length
+    const successCount = results.filter((r: SendResult) => r.success).length
+    const failureCount = results.filter((r: SendResult) => !r.success).length
 
     return {
       success: successCount > 0,
       successCount,
       failureCount,
-      errors: results.filter((r) => !r.success).map((r) => r.error),
+      errors: results.filter((r: SendResult) => !r.success).map((r: SendResult) => r.error),
     }
   },
 })
@@ -156,7 +165,11 @@ export const notifyBondfireResponse = internalAction({
     responderId: v.id('users'),
     responderName: v.string(),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{
+    success: boolean
+    skipped?: boolean
+    error?: string
+  }> => {
     // Get the bondfire to find the creator
     const bondfire = await ctx.runQuery(api.bondfires.get, { id: args.bondfireId })
     
@@ -169,7 +182,7 @@ export const notifyBondfireResponse = internalAction({
       return { success: true, skipped: true }
     }
 
-    return await ctx.runAction(internal.sendNotification.sendToUser, {
+    await ctx.runAction(internal.sendNotification.sendToUser, {
       userId: bondfire.userId,
       title: '🔥 New Response!',
       body: `${args.responderName} added a video to your Bondfire`,
@@ -178,6 +191,8 @@ export const notifyBondfireResponse = internalAction({
         bondfireId: args.bondfireId,
       },
     })
+    
+    return { success: true }
   },
 })
 
@@ -187,7 +202,13 @@ export const sendTest = action({
     title: v.string(),
     body: v.string(),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{
+    success: boolean
+    successCount?: number
+    failureCount?: number
+    error?: string
+    errors?: (string | undefined)[]
+  }> => {
     const { auth } = await import('./auth')
     const userId = await auth.getUserId(ctx)
     
@@ -195,11 +216,13 @@ export const sendTest = action({
       throw new Error('Not authenticated')
     }
 
-    return await ctx.runAction(internal.sendNotification.sendToUser, {
+    const result = await ctx.runAction(internal.sendNotification.sendToUser, {
       userId,
       title: args.title,
       body: args.body,
       data: { type: 'test' },
     })
+    
+    return result
   },
 })

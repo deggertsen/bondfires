@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@legendapp/state": "^2.1.15",
-    "convex": "^1.31.2"
+    "convex": "^1.31.3"
   },
   "peerDependencies": {
     "react": "*",
