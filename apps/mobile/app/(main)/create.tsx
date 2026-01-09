@@ -1,17 +1,26 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
-import { Dimensions, Pressable, Alert } from 'react-native'
-import { useRouter, useLocalSearchParams } from 'expo-router'
-import { YStack, XStack, Spinner } from 'tamagui'
-import { Container, Button, Text } from '@bondfires/ui'
-import { CameraView, CameraType, useCameraPermissions, useMicrophonePermissions } from 'expo-camera'
-import { useMutation, useAction } from 'convex/react'
-import { api } from '../../../convex/_generated/api'
-import { Id } from '../../../convex/_generated/dataModel'
-import { Video, ResizeMode } from 'expo-av'
-import { FlipHorizontal, X, Check } from '@tamagui/lucide-icons'
-import { processVideo, cleanupTempVideos, cancelProcessing, CompressionProgress } from '@bondfires/app'
+import {
+  type CompressionProgress,
+  cancelProcessing,
+  cleanupTempVideos,
+  processVideo,
+} from '@bondfires/app'
+import { Button, Container, Text } from '@bondfires/ui'
+import { Check, FlipHorizontal, X } from '@tamagui/lucide-icons'
+import { useAction, useMutation } from 'convex/react'
+import { ResizeMode, Video } from 'expo-av'
+import {
+  type CameraType,
+  CameraView,
+  useCameraPermissions,
+  useMicrophonePermissions,
+} from 'expo-camera'
+import { useLocalSearchParams, useRouter } from 'expo-router'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Alert, Pressable } from 'react-native'
+import { Spinner, XStack, YStack } from 'tamagui'
+import { api } from '../../../../convex/_generated/api'
+import type { Id } from '../../../../convex/_generated/dataModel'
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window')
 const MAX_DURATION = 60 // 60 seconds max
 
 type RecordingState = 'idle' | 'recording' | 'preview' | 'processing' | 'uploading'
@@ -19,10 +28,10 @@ type RecordingState = 'idle' | 'recording' | 'preview' | 'processing' | 'uploadi
 export default function CreateScreen() {
   const router = useRouter()
   const { respondTo } = useLocalSearchParams<{ respondTo?: string }>()
-  
+
   const [cameraPermission, requestCameraPermission] = useCameraPermissions()
   const [micPermission, requestMicPermission] = useMicrophonePermissions()
-  
+
   const cameraRef = useRef<CameraView>(null)
   const [facing, setFacing] = useState<CameraType>('back')
   const [recordingState, setRecordingState] = useState<RecordingState>('idle')
@@ -35,15 +44,15 @@ export default function CreateScreen() {
   } | null>(null)
   const [progress, setProgress] = useState(0)
   const [progressStage, setProgressStage] = useState<string>('')
-  
+
   const createBondfire = useMutation(api.bondfires.create)
   const addResponse = useMutation(api.bondfireVideos.addResponse)
   const getUploadUrls = useAction(api.videos.getUploadUrls)
-  
+
   // Recording timer
   useEffect(() => {
     let interval: NodeJS.Timeout
-    
+
     if (recordingState === 'recording') {
       interval = setInterval(() => {
         setRecordingDuration((prev) => {
@@ -55,24 +64,20 @@ export default function CreateScreen() {
         })
       }, 1000)
     }
-    
+
     return () => clearInterval(interval)
   }, [recordingState])
-  
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       cancelProcessing()
       if (processedVideo) {
-        cleanupTempVideos([
-          processedVideo.hdUri,
-          processedVideo.sdUri,
-          processedVideo.thumbnailUri,
-        ])
+        cleanupTempVideos([processedVideo.hdUri, processedVideo.sdUri, processedVideo.thumbnailUri])
       }
     }
   }, [processedVideo])
-  
+
   const requestPermissions = useCallback(async () => {
     if (!cameraPermission?.granted) {
       await requestCameraPermission()
@@ -81,22 +86,22 @@ export default function CreateScreen() {
       await requestMicPermission()
     }
   }, [cameraPermission, micPermission, requestCameraPermission, requestMicPermission])
-  
+
   useEffect(() => {
     requestPermissions()
   }, [requestPermissions])
-  
+
   const startRecording = useCallback(async () => {
     if (!cameraRef.current) return
-    
+
     setRecordingState('recording')
     setRecordingDuration(0)
-    
+
     try {
       const video = await cameraRef.current.recordAsync({
         maxDuration: MAX_DURATION,
       })
-      
+
       if (video?.uri) {
         setVideoUri(video.uri)
         setRecordingState('preview')
@@ -107,13 +112,13 @@ export default function CreateScreen() {
       Alert.alert('Error', 'Failed to record video. Please try again.')
     }
   }, [])
-  
+
   const stopRecording = useCallback(() => {
     if (cameraRef.current) {
       cameraRef.current.stopRecording()
     }
   }, [])
-  
+
   const discardRecording = useCallback(() => {
     setVideoUri(null)
     setProcessedVideo(null)
@@ -121,7 +126,7 @@ export default function CreateScreen() {
     setRecordingDuration(0)
     setProgress(0)
   }, [])
-  
+
   const handleProgressUpdate = useCallback((update: CompressionProgress) => {
     setProgress(update.percentage)
     switch (update.stage) {
@@ -136,69 +141,69 @@ export default function CreateScreen() {
         break
     }
   }, [])
-  
+
   const processAndUpload = useCallback(async () => {
     if (!videoUri) return
-    
+
     setRecordingState('processing')
     setProgress(0)
     setProgressStage('Starting compression...')
-    
+
     try {
       // Process video (compress to HD/SD, extract thumbnail)
       const processed = await processVideo(videoUri, handleProgressUpdate)
       setProcessedVideo(processed)
-      
+
       // Now upload
       setRecordingState('uploading')
       setProgress(0)
       setProgressStage('Uploading...')
-      
+
       // Get presigned upload URLs
       const filename = `bondfire-${Date.now()}.mp4`
       const urls = await getUploadUrls({
         filename,
         contentType: 'video/mp4',
       })
-      
+
       setProgress(10)
-      
+
       // Upload HD video
       const hdFile = await fetch(processed.hdUri)
       const hdBlob = await hdFile.blob()
-      
+
       await fetch(urls.hdUrl, {
         method: 'PUT',
         body: hdBlob,
         headers: { 'Content-Type': 'video/mp4' },
       })
-      
+
       setProgress(40)
-      
+
       // Upload SD video
       const sdFile = await fetch(processed.sdUri)
       const sdBlob = await sdFile.blob()
-      
+
       await fetch(urls.sdUrl, {
         method: 'PUT',
         body: sdBlob,
         headers: { 'Content-Type': 'video/mp4' },
       })
-      
+
       setProgress(70)
-      
+
       // Upload thumbnail
       const thumbFile = await fetch(processed.thumbnailUri)
       const thumbBlob = await thumbFile.blob()
-      
+
       await fetch(urls.thumbnailUrl, {
         method: 'PUT',
         body: thumbBlob,
         headers: { 'Content-Type': 'image/jpeg' },
       })
-      
+
       setProgress(85)
-      
+
       // Create bondfire or response in database
       if (respondTo) {
         await addResponse({
@@ -220,16 +225,12 @@ export default function CreateScreen() {
           height: processed.metadata.height,
         })
       }
-      
+
       setProgress(100)
-      
+
       // Cleanup temp files
-      await cleanupTempVideos([
-        processed.hdUri,
-        processed.sdUri,
-        processed.thumbnailUri,
-      ])
-      
+      await cleanupTempVideos([processed.hdUri, processed.sdUri, processed.thumbnailUri])
+
       // Navigate back to feed
       router.replace('/(main)/feed')
     } catch (error) {
@@ -237,12 +238,20 @@ export default function CreateScreen() {
       Alert.alert('Error', 'Failed to process or upload video. Please try again.')
       setRecordingState('preview')
     }
-  }, [videoUri, getUploadUrls, createBondfire, addResponse, respondTo, router, handleProgressUpdate])
-  
+  }, [
+    videoUri,
+    getUploadUrls,
+    createBondfire,
+    addResponse,
+    respondTo,
+    router,
+    handleProgressUpdate,
+  ])
+
   const toggleFacing = useCallback(() => {
     setFacing((current) => (current === 'back' ? 'front' : 'back'))
   }, [])
-  
+
   // Permission denied state
   if (!cameraPermission?.granted || !micPermission?.granted) {
     return (
@@ -262,7 +271,7 @@ export default function CreateScreen() {
       </Container>
     )
   }
-  
+
   // Preview recorded video
   if (recordingState === 'preview' && videoUri) {
     return (
@@ -274,7 +283,7 @@ export default function CreateScreen() {
           shouldPlay
           isLooping
         />
-        
+
         <XStack
           position="absolute"
           bottom={50}
@@ -294,7 +303,7 @@ export default function CreateScreen() {
           >
             <X size={32} color="white" />
           </Button>
-          
+
           <Button
             variant="primary"
             size="lg"
@@ -306,14 +315,8 @@ export default function CreateScreen() {
             <Check size={32} color="white" />
           </Button>
         </XStack>
-        
-        <YStack
-          position="absolute"
-          bottom={140}
-          left={0}
-          right={0}
-          alignItems="center"
-        >
+
+        <YStack position="absolute" bottom={140} left={0} right={0} alignItems="center">
           <Text color="rgba(255,255,255,0.7)" fontSize="$2">
             Tap ✓ to compress & upload
           </Text>
@@ -321,7 +324,7 @@ export default function CreateScreen() {
       </YStack>
     )
   }
-  
+
   // Processing state
   if (recordingState === 'processing') {
     return (
@@ -343,7 +346,7 @@ export default function CreateScreen() {
             />
           </YStack>
           <Text color="$gray11">{Math.round(progress)}%</Text>
-          
+
           <Button
             variant="ghost"
             size="sm"
@@ -359,7 +362,7 @@ export default function CreateScreen() {
       </Container>
     )
   }
-  
+
   // Uploading state
   if (recordingState === 'uploading') {
     return (
@@ -373,28 +376,18 @@ export default function CreateScreen() {
             {progressStage}
           </Text>
           <YStack width={200} height={8} backgroundColor="$gray4" borderRadius={4}>
-            <YStack
-              height={8}
-              backgroundColor="$green10"
-              borderRadius={4}
-              width={`${progress}%`}
-            />
+            <YStack height={8} backgroundColor="$green10" borderRadius={4} width={`${progress}%`} />
           </YStack>
           <Text color="$gray11">{Math.round(progress)}%</Text>
         </YStack>
       </Container>
     )
   }
-  
+
   // Camera view
   return (
     <YStack flex={1} backgroundColor="black">
-      <CameraView
-        ref={cameraRef}
-        style={{ flex: 1 }}
-        facing={facing}
-        mode="video"
-      >
+      <CameraView ref={cameraRef} style={{ flex: 1 }} facing={facing} mode="video">
         {/* Header */}
         <XStack
           paddingTop="$8"
@@ -405,7 +398,7 @@ export default function CreateScreen() {
           <Button variant="ghost" size="sm" onPress={() => router.back()}>
             <X size={24} color="white" />
           </Button>
-          
+
           {recordingState === 'recording' && (
             <YStack
               backgroundColor="$red10"
@@ -414,16 +407,17 @@ export default function CreateScreen() {
               borderRadius="$2"
             >
               <Text color="white" fontWeight="600">
-                {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, '0')}
+                {Math.floor(recordingDuration / 60)}:
+                {(recordingDuration % 60).toString().padStart(2, '0')}
               </Text>
             </YStack>
           )}
-          
+
           <Button variant="ghost" size="sm" onPress={toggleFacing}>
             <FlipHorizontal size={24} color="white" />
           </Button>
         </XStack>
-        
+
         {/* Title */}
         <YStack flex={1} justifyContent="center" alignItems="center">
           {recordingState === 'idle' && (
@@ -437,16 +431,10 @@ export default function CreateScreen() {
             </YStack>
           )}
         </YStack>
-        
+
         {/* Record button */}
-        <YStack
-          paddingBottom="$10"
-          alignItems="center"
-        >
-          <Pressable
-            onPressIn={startRecording}
-            onPressOut={stopRecording}
-          >
+        <YStack paddingBottom="$10" alignItems="center">
+          <Pressable onPressIn={startRecording} onPressOut={stopRecording}>
             <YStack
               width={80}
               height={80}
@@ -465,7 +453,7 @@ export default function CreateScreen() {
               />
             </YStack>
           </Pressable>
-          
+
           <Text color="rgba(255,255,255,0.7)" fontSize="$2" marginTop="$2">
             Max {MAX_DURATION} seconds
           </Text>

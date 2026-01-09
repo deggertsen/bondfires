@@ -43,4 +43,3 @@ export {
   H6,
   SizableText,
 } from 'tamagui'
-

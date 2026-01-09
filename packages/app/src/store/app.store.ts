@@ -1,19 +1,24 @@
 import { observable } from '@legendapp/state'
-import { synced } from '@legendapp/state/sync'
+import { configureObservablePersistence, persistObservable } from '@legendapp/state/persist'
 import { ObservablePersistMMKV } from '@legendapp/state/persist-plugins/mmkv'
+
+// Configure MMKV as default persistence
+configureObservablePersistence({
+  pluginLocal: ObservablePersistMMKV,
+})
 
 // App-wide state that persists
 export interface AppState {
   // Onboarding
   hasSeenOnboarding: boolean
-  
+
   // User preferences
   preferences: {
     videoQuality: 'auto' | 'hd' | 'sd'
     autoplayVideos: boolean
     notificationsEnabled: boolean
   }
-  
+
   // Auth state (managed by Convex, but cached locally)
   isAuthenticated: boolean
   userId: string | null
@@ -30,45 +35,42 @@ const defaultState: AppState = {
   userId: null,
 }
 
-// Create the observable store with MMKV persistence
-export const appStore$ = observable<AppState>(
-  synced({
-    initial: defaultState,
-    persist: {
-      name: 'bondfires-app',
-      plugin: ObservablePersistMMKV,
-    },
-  })
-)
+// Create the observable store
+export const appStore$ = observable<AppState>(defaultState)
+
+// Persist the store with MMKV
+persistObservable(appStore$, {
+  local: 'bondfires-app',
+})
 
 // Actions
 export const appActions = {
   completeOnboarding: () => {
     appStore$.hasSeenOnboarding.set(true)
   },
-  
+
   setVideoQuality: (quality: AppState['preferences']['videoQuality']) => {
     appStore$.preferences.videoQuality.set(quality)
   },
-  
+
   setAutoplayVideos: (enabled: boolean) => {
     appStore$.preferences.autoplayVideos.set(enabled)
   },
-  
+
   setNotificationsEnabled: (enabled: boolean) => {
     appStore$.preferences.notificationsEnabled.set(enabled)
   },
-  
+
   setAuth: (userId: string | null) => {
     appStore$.isAuthenticated.set(!!userId)
     appStore$.userId.set(userId)
   },
-  
+
   logout: () => {
     appStore$.isAuthenticated.set(false)
     appStore$.userId.set(null)
   },
-  
+
   reset: () => {
     appStore$.set(defaultState)
   },

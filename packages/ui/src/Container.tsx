@@ -1,10 +1,10 @@
-import { styled, YStack, GetProps } from 'tamagui'
+import { type GetProps, YStack, styled } from 'tamagui'
 
 export const Container = styled(YStack, {
   name: 'Container',
   flex: 1,
   backgroundColor: '$background',
-  
+
   variants: {
     centered: {
       true: {
@@ -39,7 +39,7 @@ export const Row = styled(YStack, {
   name: 'Row',
   flexDirection: 'row',
   alignItems: 'center',
-  
+
   variants: {
     gap: {
       sm: { gap: '$2' },
@@ -58,7 +58,7 @@ export const Row = styled(YStack, {
 
 export const Column = styled(YStack, {
   name: 'Column',
-  
+
   variants: {
     gap: {
       sm: { gap: '$2' },
@@ -77,4 +77,3 @@ export const Column = styled(YStack, {
 export type ContainerProps = GetProps<typeof Container>
 export type RowProps = GetProps<typeof Row>
 export type ColumnProps = GetProps<typeof Column>
-

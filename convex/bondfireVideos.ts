@@ -1,7 +1,7 @@
 import { v } from 'convex/values'
+import { internal } from './_generated/api'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
-import { internal } from './_generated/api'
 
 // Get all videos for a bondfire
 export const listByBondfire = query({
@@ -47,7 +47,7 @@ export const addResponse = mutation({
 
     const user = await ctx.db.get(userId)
     const bondfire = await ctx.db.get(args.bondfireId)
-    
+
     if (!bondfire) {
       throw new Error('Bondfire not found')
     }
@@ -100,4 +100,3 @@ export const addResponse = mutation({
     return videoId
   },
 })
-

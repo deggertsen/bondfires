@@ -1,47 +1,45 @@
-import { useState } from 'react'
-import { useRouter } from 'expo-router'
-import { YStack, H1, Paragraph, Spinner } from 'tamagui'
-import { Button, Input, Container, Text } from '@bondfires/ui'
+import { Button, Container, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
+import { useRouter } from 'expo-router'
+import { useState } from 'react'
+import { H1, Paragraph, Spinner, YStack } from 'tamagui'
 
 export default function LoginScreen() {
   const router = useRouter()
   const { signIn } = useAuthActions()
-  
+
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  
+
   const handleLogin = async () => {
     if (!email || !password) {
       setError('Please enter your email and password')
       return
     }
-    
+
     setIsLoading(true)
     setError(null)
-    
+
     try {
       await signIn('password', { email, password, flow: 'signIn' })
       router.replace('/(main)/feed')
-    } catch (err) {
+    } catch {
       setError('Invalid email or password')
     } finally {
       setIsLoading(false)
     }
   }
-  
+
   return (
     <Container padded safe>
       <YStack flex={1} justifyContent="center" gap="$6">
         <YStack gap="$2">
           <H1>Welcome back</H1>
-          <Paragraph color="$gray11">
-            Sign in to continue to Bondfires
-          </Paragraph>
+          <Paragraph color="$gray11">Sign in to continue to Bondfires</Paragraph>
         </YStack>
-        
+
         <YStack gap="$4">
           <YStack gap="$2">
             <Text variant="label">Email</Text>
@@ -55,7 +53,7 @@ export default function LoginScreen() {
               error={!!error}
             />
           </YStack>
-          
+
           <YStack gap="$2">
             <Text variant="label">Password</Text>
             <Input
@@ -67,13 +65,13 @@ export default function LoginScreen() {
               error={!!error}
             />
           </YStack>
-          
+
           {error && (
             <Text color="$red10" fontSize="$2">
               {error}
             </Text>
           )}
-          
+
           <Button
             variant="ghost"
             size="sm"
@@ -83,22 +81,13 @@ export default function LoginScreen() {
             Forgot password?
           </Button>
         </YStack>
-        
+
         <YStack gap="$3">
-          <Button
-            variant="primary"
-            size="lg"
-            onPress={handleLogin}
-            disabled={isLoading}
-          >
+          <Button variant="primary" size="lg" onPress={handleLogin} disabled={isLoading}>
             {isLoading ? <Spinner color="$white" /> : 'Sign In'}
           </Button>
-          
-          <Button
-            variant="outline"
-            size="md"
-            onPress={() => router.push('/(auth)/signup')}
-          >
+
+          <Button variant="outline" size="md" onPress={() => router.push('/(auth)/signup')}>
             Create an account
           </Button>
         </YStack>
@@ -106,4 +95,3 @@ export default function LoginScreen() {
     </Container>
   )
 }
-

@@ -1,4 +1,4 @@
-import { styled, Card as TamaguiCard, GetProps } from 'tamagui'
+import { type GetProps, Card as TamaguiCard, styled } from 'tamagui'
 
 export const Card = styled(TamaguiCard, {
   name: 'Card',
@@ -7,7 +7,7 @@ export const Card = styled(TamaguiCard, {
   padding: '$4',
   borderWidth: 1,
   borderColor: '$borderColor',
-  
+
   variants: {
     elevated: {
       true: {
@@ -43,4 +43,3 @@ export const CardFooter = styled(TamaguiCard.Footer, {
 })
 
 export type CardProps = GetProps<typeof Card>
-

@@ -1,10 +1,10 @@
+import { Home, PlusCircle, User } from '@tamagui/lucide-icons'
 import { Tabs } from 'expo-router'
-import { Home, User, PlusCircle } from '@tamagui/lucide-icons'
 import { useTheme } from 'tamagui'
 
 export default function MainLayout() {
   const theme = useTheme()
-  
+
   return (
     <Tabs
       screenOptions={{
@@ -41,4 +41,3 @@ export default function MainLayout() {
     </Tabs>
   )
 }
-

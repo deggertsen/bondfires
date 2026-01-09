@@ -1,4 +1,4 @@
-import { styled, Input as TamaguiInput, TextArea as TamaguiTextArea, GetProps } from 'tamagui'
+import { type GetProps, Input as TamaguiInput, TextArea as TamaguiTextArea, styled } from 'tamagui'
 
 export const Input = styled(TamaguiInput, {
   name: 'Input',
@@ -9,14 +9,14 @@ export const Input = styled(TamaguiInput, {
   borderRadius: '$3',
   paddingHorizontal: '$3',
   height: 44,
-  
+
   focusStyle: {
     borderColor: '$orange8',
     outlineColor: '$orange8',
     outlineWidth: 2,
     outlineStyle: 'solid',
   },
-  
+
   variants: {
     error: {
       true: {
@@ -57,14 +57,14 @@ export const TextArea = styled(TamaguiTextArea, {
   borderRadius: '$3',
   padding: '$3',
   minHeight: 100,
-  
+
   focusStyle: {
     borderColor: '$orange8',
     outlineColor: '$orange8',
     outlineWidth: 2,
     outlineStyle: 'solid',
   },
-  
+
   variants: {
     error: {
       true: {
@@ -76,4 +76,3 @@ export const TextArea = styled(TamaguiTextArea, {
 
 export type InputProps = GetProps<typeof Input>
 export type TextAreaProps = GetProps<typeof TextArea>
-

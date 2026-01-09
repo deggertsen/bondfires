@@ -1,8 +1,13 @@
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { v } from 'convex/values'
 import { action } from './_generated/server'
 import { auth } from './auth'
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
 // Initialize S3 client
 function getS3Client() {
@@ -11,7 +16,9 @@ function getS3Client() {
   const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY
 
   if (!region || !accessKeyId || !secretAccessKey) {
-    throw new Error('AWS credentials not configured. Please set AWS_REGION, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY in Convex environment variables.')
+    throw new Error(
+      'AWS credentials not configured. Please set AWS_REGION, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY in Convex environment variables.',
+    )
   }
 
   return new S3Client({
@@ -74,7 +81,7 @@ export const getDownloadUrl = action({
   args: {
     key: v.string(),
   },
-  handler: async (ctx, args) => {
+  handler: async (_ctx, args) => {
     const client = getS3Client()
     const bucket = getBucket()
 
@@ -98,7 +105,7 @@ export const getVideoUrls = action({
     hdKey: v.string(),
     sdKey: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
+  handler: async (_ctx, args) => {
     const client = getS3Client()
     const bucket = getBucket()
 
@@ -173,7 +180,7 @@ export const getUploadUrls = action({
 
     const timestamp = Date.now()
     const sanitizedFilename = args.filename.replace(/[^a-zA-Z0-9.-]/g, '_')
-    
+
     const hdKey = `videos/${userId}/${timestamp}-hd-${sanitizedFilename}`
     const sdKey = `videos/${userId}/${timestamp}-sd-${sanitizedFilename}`
     const thumbnailKey = `thumbnails/${userId}/${timestamp}-thumb.jpg`
@@ -182,17 +189,17 @@ export const getUploadUrls = action({
       getSignedUrl(
         client,
         new PutObjectCommand({ Bucket: bucket, Key: hdKey, ContentType: args.contentType }),
-        { expiresIn: 3600 }
+        { expiresIn: 3600 },
       ),
       getSignedUrl(
         client,
         new PutObjectCommand({ Bucket: bucket, Key: sdKey, ContentType: args.contentType }),
-        { expiresIn: 3600 }
+        { expiresIn: 3600 },
       ),
       getSignedUrl(
         client,
         new PutObjectCommand({ Bucket: bucket, Key: thumbnailKey, ContentType: 'image/jpeg' }),
-        { expiresIn: 3600 }
+        { expiresIn: 3600 },
       ),
     ])
 

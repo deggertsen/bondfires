@@ -9,4 +9,3 @@ export const features = {
   profile: 'profile',
   onboarding: 'onboarding',
 } as const
-

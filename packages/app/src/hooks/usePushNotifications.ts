@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
-import { Platform, AppState, type AppStateStatus } from 'react-native'
-import * as Notifications from 'expo-notifications'
-import * as Device from 'expo-device'
-import Constants from 'expo-constants'
 import messaging from '@react-native-firebase/messaging'
-import { useMutation } from 'convex/react'
+import Constants from 'expo-constants'
+import * as Device from 'expo-device'
+import * as Notifications from 'expo-notifications'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { AppState, type AppStateStatus, Platform } from 'react-native'
 
 // Configure how notifications are handled when app is in foreground
 Notifications.setNotificationHandler({
@@ -17,11 +16,22 @@ Notifications.setNotificationHandler({
   }),
 })
 
+interface TokenRegistrationParams {
+  token: string
+  tokenType: string
+  platform: string
+  deviceId: string
+}
+
+interface TokenUnregistrationParams {
+  token: string
+}
+
 export interface UsePushNotificationsOptions {
   // Convex mutation to register device token
-  registerTokenMutation?: any
+  registerTokenMutation?: (params: TokenRegistrationParams) => Promise<void>
   // Convex mutation to unregister device token
-  unregisterTokenMutation?: any
+  unregisterTokenMutation?: (params: TokenUnregistrationParams) => Promise<void>
   // Called when a notification is received while app is in foreground
   onNotificationReceived?: (notification: Notifications.Notification) => void
   // Called when user taps on a notification
@@ -38,7 +48,7 @@ export interface UsePushNotificationsResult {
 }
 
 export function usePushNotifications(
-  options: UsePushNotificationsOptions = {}
+  options: UsePushNotificationsOptions = {},
 ): UsePushNotificationsResult {
   const {
     registerTokenMutation,
@@ -52,8 +62,8 @@ export function usePushNotifications(
   const [isRegistered, setIsRegistered] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const notificationListener = useRef<Notifications.EventSubscription>()
-  const responseListener = useRef<Notifications.EventSubscription>()
+  const notificationListener = useRef<Notifications.EventSubscription | null>(null)
+  const responseListener = useRef<Notifications.EventSubscription | null>(null)
   const appStateRef = useRef(AppState.currentState)
 
   // Register token with backend
@@ -74,7 +84,7 @@ export function usePushNotifications(
         }
       }
     },
-    [registerTokenMutation]
+    [registerTokenMutation],
   )
 
   // Request notification permissions
@@ -126,9 +136,8 @@ export function usePushNotifications(
           })
           setExpoPushToken(expoPushTokenData.data)
         }
-      } catch (e) {
+      } catch {
         // Expo push token is optional, FCM is the primary
-        console.log('Could not get Expo push token:', e)
       }
 
       setError(null)
@@ -158,18 +167,14 @@ export function usePushNotifications(
   // Set up notification listeners
   useEffect(() => {
     // Foreground notification handler (expo-notifications)
-    notificationListener.current = Notifications.addNotificationReceivedListener(
-      (notification) => {
-        onNotificationReceived?.(notification)
-      }
-    )
+    notificationListener.current = Notifications.addNotificationReceivedListener((notification) => {
+      onNotificationReceived?.(notification)
+    })
 
     // Notification response handler (when user taps notification)
-    responseListener.current = Notifications.addNotificationResponseReceivedListener(
-      (response) => {
-        onNotificationResponse?.(response)
-      }
-    )
+    responseListener.current = Notifications.addNotificationResponseReceivedListener((response) => {
+      onNotificationResponse?.(response)
+    })
 
     // Firebase foreground message handler
     const unsubscribeOnMessage = messaging().onMessage(async (remoteMessage) => {
@@ -194,10 +199,7 @@ export function usePushNotifications(
 
     // Handle app state changes (re-register on foreground)
     const handleAppStateChange = (nextAppState: AppStateStatus) => {
-      if (
-        appStateRef.current.match(/inactive|background/) &&
-        nextAppState === 'active'
-      ) {
+      if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
         // App came to foreground - check token is still valid
         messaging()
           .getToken()
@@ -212,10 +214,7 @@ export function usePushNotifications(
       appStateRef.current = nextAppState
     }
 
-    const appStateSubscription = AppState.addEventListener(
-      'change',
-      handleAppStateChange
-    )
+    const appStateSubscription = AppState.addEventListener('change', handleAppStateChange)
 
     return () => {
       notificationListener.current?.remove()

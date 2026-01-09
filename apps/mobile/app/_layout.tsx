@@ -1,17 +1,17 @@
-import { useEffect, useCallback } from 'react'
-import { useColorScheme } from 'react-native'
+import { ConvexAuthProvider } from '@convex-dev/auth/react'
+import { ConvexProvider, ConvexReactClient, useMutation } from 'convex/react'
 import { useFonts } from 'expo-font'
+import type * as Notifications from 'expo-notifications'
 import { Stack, useRouter } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
+import { useCallback, useEffect } from 'react'
+import { useColorScheme } from 'react-native'
 import { TamaguiProvider, Theme } from 'tamagui'
-import { ConvexProvider, ConvexReactClient, useMutation } from 'convex/react'
-import { ConvexAuthProvider } from '@convex-dev/auth/react'
-import * as Notifications from 'expo-notifications'
 import 'react-native-reanimated'
 
-import config from '../tamagui.config'
 import { usePushNotifications } from '@bondfires/app'
-import { api } from '../../convex/_generated/api'
+import { api } from '../../../convex/_generated/api'
+import config from '../tamagui.config'
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -34,25 +34,29 @@ function AppContent() {
   const router = useRouter()
   const registerDevice = useMutation(api.notifications.registerDevice)
   const unregisterDevice = useMutation(api.notifications.unregisterDevice)
-  
+
   // Handle notification taps
   const handleNotificationResponse = useCallback(
     (response: Notifications.NotificationResponse) => {
       const data = response.notification.request.content.data
-      
+
       // Navigate based on notification type
       if (data?.bondfireId) {
         router.push(`/(main)/bondfire/${data.bondfireId}`)
       } else if (data?.screen) {
-        router.push(data.screen as any)
+        router.push(data.screen as `/${string}`)
       }
     },
-    [router]
+    [router],
   )
-  
+
   // Initialize push notifications with Firebase
-  const { fcmToken, isRegistered, error: pushError, requestPermissions } = usePushNotifications({
-    registerTokenMutation: async (params: { token: string; tokenType: string; platform: string }) => {
+  const { error: pushError, requestPermissions } = usePushNotifications({
+    registerTokenMutation: async (params: {
+      token: string
+      tokenType: string
+      platform: string
+    }) => {
       await registerDevice({
         token: params.token,
         platform: params.platform as 'ios' | 'android',
@@ -62,25 +66,22 @@ function AppContent() {
       await unregisterDevice({ token: params.token })
     },
     onNotificationResponse: handleNotificationResponse,
-    onNotificationReceived: (notification) => {
-      console.log('Notification received in foreground:', notification.request.content.title)
+    onNotificationReceived: (_notification) => {
+      // Notification received in foreground - could show in-app alert here
     },
   })
-  
+
   // Request permissions on mount
   useEffect(() => {
     requestPermissions()
   }, [requestPermissions])
-  
+
   useEffect(() => {
     if (pushError) {
-      console.warn('Push notification error:', pushError)
+      console.error('Push notification error:', pushError)
     }
-    if (fcmToken && isRegistered) {
-      console.log('FCM token registered:', fcmToken.substring(0, 20) + '...')
-    }
-  }, [fcmToken, isRegistered, pushError])
-  
+  }, [pushError])
+
   return (
     <TamaguiProvider config={config} defaultTheme={colorScheme ?? 'dark'}>
       <Theme name={colorScheme ?? 'dark'}>

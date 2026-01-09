@@ -1,6 +1,6 @@
 import { v } from 'convex/values'
+import { api, internal } from './_generated/api'
 import { action, internalAction } from './_generated/server'
-import { internal, api } from './_generated/api'
 
 // Firebase Admin SDK types for FCM
 interface FCMMessage {
@@ -47,7 +47,7 @@ interface DeviceToken {
 // Send notification via Firebase Cloud Messaging
 async function sendFCMNotification(
   serverKey: string,
-  message: FCMMessage
+  message: FCMMessage,
 ): Promise<{ success: boolean; messageId?: string; error?: string }> {
   const response = await fetch('https://fcm.googleapis.com/fcm/send', {
     method: 'POST',
@@ -70,7 +70,7 @@ async function sendFCMNotification(
   }
 
   const result = await response.json()
-  
+
   if (result.failure > 0) {
     return { success: false, error: result.results?.[0]?.error ?? 'Unknown FCM error' }
   }
@@ -86,7 +86,10 @@ export const sendToUser = internalAction({
     body: v.string(),
     data: v.optional(v.any()),
   },
-  handler: async (ctx, args): Promise<{
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
     success: boolean
     successCount?: number
     failureCount?: number
@@ -117,9 +120,14 @@ export const sendToUser = internalAction({
             title: args.title,
             body: args.body,
           },
-          data: args.data ? Object.fromEntries(
-            Object.entries(args.data as Record<string, unknown>).map(([k, val]) => [k, String(val)])
-          ) : undefined,
+          data: args.data
+            ? Object.fromEntries(
+                Object.entries(args.data as Record<string, unknown>).map(([k, val]) => [
+                  k,
+                  String(val),
+                ]),
+              )
+            : undefined,
           android: {
             priority: 'high',
             notification: {
@@ -143,7 +151,7 @@ export const sendToUser = internalAction({
         }
 
         return sendFCMNotification(serverKey, message)
-      })
+      }),
     )
 
     const successCount = results.filter((r: SendResult) => r.success).length
@@ -165,14 +173,17 @@ export const notifyBondfireResponse = internalAction({
     responderId: v.id('users'),
     responderName: v.string(),
   },
-  handler: async (ctx, args): Promise<{
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
     success: boolean
     skipped?: boolean
     error?: string
   }> => {
     // Get the bondfire to find the creator
     const bondfire = await ctx.runQuery(api.bondfires.get, { id: args.bondfireId })
-    
+
     if (!bondfire) {
       return { success: false, error: 'Bondfire not found' }
     }
@@ -191,7 +202,7 @@ export const notifyBondfireResponse = internalAction({
         bondfireId: args.bondfireId,
       },
     })
-    
+
     return { success: true }
   },
 })
@@ -202,7 +213,10 @@ export const sendTest = action({
     title: v.string(),
     body: v.string(),
   },
-  handler: async (ctx, args): Promise<{
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
     success: boolean
     successCount?: number
     failureCount?: number
@@ -211,7 +225,7 @@ export const sendTest = action({
   }> => {
     const { auth } = await import('./auth')
     const userId = await auth.getUserId(ctx)
-    
+
     if (!userId) {
       throw new Error('Not authenticated')
     }
@@ -222,7 +236,7 @@ export const sendTest = action({
       body: args.body,
       data: { type: 'test' },
     })
-    
+
     return result
   },
 })

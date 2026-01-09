@@ -1,6 +1,5 @@
 import { v } from 'convex/values'
-import { action, internalAction } from './_generated/server'
-import { internal } from './_generated/api'
+import { internalAction } from './_generated/server'
 
 // Email sending configuration
 // Set RESEND_API_KEY in your Convex dashboard under Settings > Environment Variables
@@ -14,7 +13,10 @@ interface EmailOptions {
 }
 
 // Send an email using Resend API
-async function sendEmail(apiKey: string, options: EmailOptions): Promise<{ success: boolean; error?: string; id?: string }> {
+async function sendEmail(
+  apiKey: string,
+  options: EmailOptions,
+): Promise<{ success: boolean; error?: string; id?: string }> {
   try {
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -53,14 +55,13 @@ export const sendVerificationEmail = internalAction({
   handler: async (_ctx, args): Promise<{ success: boolean; error?: string }> => {
     const apiKey = process.env.RESEND_API_KEY
     if (!apiKey) {
-      // In development, just log instead of sending
-      // eslint-disable-next-line no-console
-      console.log(`[DEV] Verification email to ${args.email}: Code is ${args.code}`)
+      // In development without RESEND_API_KEY, skip email sending
+      // The verification will still work, just no email is sent
       return { success: true }
     }
 
     const greeting = args.name ? `Hi ${args.name}` : 'Hi there'
-    
+
     return await sendEmail(apiKey, {
       to: args.email,
       subject: '🔥 Verify your Bondfires account',
@@ -93,14 +94,12 @@ export const sendPasswordResetEmail = internalAction({
   handler: async (_ctx, args): Promise<{ success: boolean; error?: string }> => {
     const apiKey = process.env.RESEND_API_KEY
     if (!apiKey) {
-      // In development, just log instead of sending
-      // eslint-disable-next-line no-console
-      console.log(`[DEV] Password reset email to ${args.email}: Code is ${args.code}`)
+      // In development without RESEND_API_KEY, skip email sending
       return { success: true }
     }
 
     const greeting = args.name ? `Hi ${args.name}` : 'Hi there'
-    
+
     return await sendEmail(apiKey, {
       to: args.email,
       subject: '🔑 Reset your Bondfires password',
@@ -132,13 +131,12 @@ export const sendWelcomeEmail = internalAction({
   handler: async (_ctx, args): Promise<{ success: boolean; error?: string }> => {
     const apiKey = process.env.RESEND_API_KEY
     if (!apiKey) {
-      // eslint-disable-next-line no-console
-      console.log(`[DEV] Welcome email to ${args.email}`)
+      // In development without RESEND_API_KEY, skip email sending
       return { success: true }
     }
 
     const greeting = args.name ? `Hi ${args.name}` : 'Hi there'
-    
+
     return await sendEmail(apiKey, {
       to: args.email,
       subject: '🎉 Welcome to Bondfires!',

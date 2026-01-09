@@ -1,10 +1,10 @@
-import { styled, Text as TamaguiText, GetProps } from 'tamagui'
+import { type GetProps, Text as TamaguiText, styled } from 'tamagui'
 
 export const Text = styled(TamaguiText, {
   name: 'Text',
   fontFamily: '$body',
   color: '$color',
-  
+
   variants: {
     variant: {
       heading: {
@@ -43,4 +43,3 @@ export const Text = styled(TamaguiText, {
 })
 
 export type TextProps = GetProps<typeof Text>
-

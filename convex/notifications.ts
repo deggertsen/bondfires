@@ -1,7 +1,6 @@
 import { v } from 'convex/values'
-import { mutation, query, action } from './_generated/server'
+import { mutation, query } from './_generated/server'
 import { auth } from './auth'
-import { internal } from './_generated/api'
 
 // Register a device token for push notifications
 export const registerDevice = mutation({
@@ -98,4 +97,3 @@ export const getTokensForUser = query({
       .collect()
   },
 })
-

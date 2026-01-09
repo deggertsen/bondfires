@@ -1,9 +1,9 @@
-import { styled, Button as TamaguiButton, GetProps } from 'tamagui'
+import { type GetProps, Button as TamaguiButton, styled } from 'tamagui'
 
 export const Button = styled(TamaguiButton, {
   name: 'Button',
   fontFamily: '$body',
-  
+
   variants: {
     variant: {
       primary: {
@@ -75,4 +75,3 @@ export const Button = styled(TamaguiButton, {
 })
 
 export type ButtonProps = GetProps<typeof Button>
-

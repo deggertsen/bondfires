@@ -5,26 +5,26 @@ export interface UIState {
   // Loading states
   isLoading: boolean
   loadingMessage: string | null
-  
+
   // Modal states
   activeModal: string | null
   modalData: Record<string, unknown> | null
-  
+
   // Video player state
   currentVideoId: string | null
   isVideoPlaying: boolean
   videoProgress: number
-  
+
   // Toast/notifications
   toast: {
     visible: boolean
     message: string
     type: 'success' | 'error' | 'info'
   } | null
-  
+
   // Network state
   isOnline: boolean
-  
+
   // Keyboard state
   keyboardVisible: boolean
 }
@@ -50,30 +50,30 @@ export const uiActions = {
     uiStore$.isLoading.set(loading)
     uiStore$.loadingMessage.set(message ?? null)
   },
-  
+
   openModal: (modalId: string, data?: Record<string, unknown>) => {
     uiStore$.activeModal.set(modalId)
     uiStore$.modalData.set(data ?? null)
   },
-  
+
   closeModal: () => {
     uiStore$.activeModal.set(null)
     uiStore$.modalData.set(null)
   },
-  
+
   setCurrentVideo: (videoId: string | null) => {
     uiStore$.currentVideoId.set(videoId)
     uiStore$.videoProgress.set(0)
   },
-  
+
   setVideoPlaying: (playing: boolean) => {
     uiStore$.isVideoPlaying.set(playing)
   },
-  
+
   setVideoProgress: (progress: number) => {
     uiStore$.videoProgress.set(progress)
   },
-  
+
   showToast: (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     uiStore$.toast.set({ visible: true, message, type })
     // Auto-hide after 3 seconds
@@ -81,17 +81,16 @@ export const uiActions = {
       uiStore$.toast.set(null)
     }, 3000)
   },
-  
+
   hideToast: () => {
     uiStore$.toast.set(null)
   },
-  
+
   setOnline: (online: boolean) => {
     uiStore$.isOnline.set(online)
   },
-  
+
   setKeyboardVisible: (visible: boolean) => {
     uiStore$.keyboardVisible.set(visible)
   },
 }
-

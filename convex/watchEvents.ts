@@ -12,7 +12,7 @@ export const record = mutation({
       v.literal('milestone_25'),
       v.literal('milestone_50'),
       v.literal('milestone_75'),
-      v.literal('complete')
+      v.literal('complete'),
     ),
     positionMs: v.number(),
     durationMs: v.optional(v.number()),
@@ -45,8 +45,8 @@ export const hasWatched = query({
         v.literal('milestone_25'),
         v.literal('milestone_50'),
         v.literal('milestone_75'),
-        v.literal('complete')
-      )
+        v.literal('complete'),
+      ),
     ),
   },
   handler: async (ctx, args) => {
@@ -57,9 +57,7 @@ export const hasWatched = query({
 
     const events = await ctx.db
       .query('watchEvents')
-      .withIndex('by_user_video', (q) =>
-        q.eq('userId', userId).eq('videoId', args.videoId)
-      )
+      .withIndex('by_user_video', (q) => q.eq('userId', userId).eq('videoId', args.videoId))
       .collect()
 
     if (args.eventType) {
@@ -90,4 +88,3 @@ export const getHistory = query({
       .take(limit)
   },
 })
-

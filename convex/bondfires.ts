@@ -10,7 +10,7 @@ export const listFeed = query({
   },
   handler: async (ctx, args) => {
     const limit = args.limit ?? 20
-    
+
     // Query bondfires ordered by video_count ascending (prioritize newer/smaller)
     const bondfires = await ctx.db
       .query('bondfires')
@@ -125,4 +125,3 @@ export const incrementViews = mutation({
     })
   },
 })
-
