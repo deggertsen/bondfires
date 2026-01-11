@@ -14,8 +14,8 @@
   },
   "dependencies": {
     "@tamagui/animations-react-native": "^1.144.0",
-    "tamagui": "^1.144.0",
-    "react-native-svg": "^15.15.1"
+    "react-native-svg": "^15.15.1",
+    "tamagui": "^1.144.0"
   },
   "peerDependencies": {
     "react": "*",
@@ -26,4 +26,3 @@
     "typescript": "^5.7.2"
   }
 }
-

@@ -15,7 +15,7 @@ A video sharing social app where users create "bondfires" (video posts) and othe
 | Video Storage | AWS S3 |
 | Video Processing | react-native-compressor |
 | Monorepo | Turborepo |
-| Package Manager | Bun |
+| Package Manager | Yarn |
 | Infrastructure | Terraform |
 
 ## Repository Structure
@@ -37,8 +37,8 @@ bondfires/
 
 ### Prerequisites
 
-- [Bun](https://bun.sh/) >= 1.0
 - [Node.js](https://nodejs.org/) >= 18
+- [Yarn](https://yarnpkg.com/) (via Corepack: `corepack enable`)
 - iOS Simulator (Mac) or Android Emulator/Device
 - [Convex](https://convex.dev/) account
 - [EAS CLI](https://docs.expo.dev/build/setup/) for building development clients
@@ -53,11 +53,14 @@ bondfires/
 git clone https://github.com/deggertsen/bondfires.git
 cd bondfires
 
+# Enable Corepack (for Yarn)
+corepack enable
+
 # Install dependencies
-bun install
+yarn install
 
 # Set up Convex backend
-bunx convex dev
+yarn dlx convex dev
 ```
 
 ### Environment Variables
@@ -83,13 +86,13 @@ cd apps/mobile
 eas login
 
 # Build for Android
-bun run build:android:dev
+yarn build:android:dev
 
 # OR build for iOS (simulator)
-bun run build:ios:dev:sim
+yarn build:ios:dev:sim
 
 # OR build for iOS (physical device)
-bun run build:ios:dev
+yarn build:ios:dev
 ```
 
 After the build completes, download and install the APK (Android) or app bundle (iOS) on your device/emulator.
@@ -100,10 +103,10 @@ Once the development client is installed, start the Metro bundler:
 
 ```bash
 # From apps/mobile directory
-bun run start
+yarn start
 
 # Or from root using Turborepo
-bun run dev
+yarn dev
 ```
 
 The app should automatically connect to your development server.
@@ -115,7 +118,7 @@ Once you have a development client installed:
 ```bash
 # Start the dev server
 cd apps/mobile
-bun run start
+yarn start
 ```
 
 ## Features
@@ -129,4 +132,3 @@ bun run start
 ## License
 
 MIT
-
