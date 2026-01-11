@@ -12,14 +12,12 @@
     "clean": "rm -rf node_modules",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "@tamagui/animations-react-native": "^1.144.0",
-    "react-native-svg": "^15.15.1",
-    "tamagui": "^1.144.0"
-  },
   "peerDependencies": {
+    "@tamagui/animations-react-native": "^1.144.0",
     "react": "*",
-    "react-native": "*"
+    "react-native": "*",
+    "react-native-svg": "^15.0.0",
+    "tamagui": "^1.144.0"
   },
   "devDependencies": {
     "@types/react": "^19.1.0",
