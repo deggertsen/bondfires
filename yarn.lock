@@ -10201,6 +10201,7 @@ __metadata:
     react-native: "npm:0.81.5"
     react-native-compressor: "npm:^1.16.0"
     react-native-mmkv: "npm:^4.1.1"
+    react-native-nitro-modules: "npm:^0.32.1"
     react-native-reanimated: "npm:~4.1.1"
     react-native-safe-area-context: "npm:~5.6.0"
     react-native-screens: "npm:~4.16.0"
@@ -10991,6 +10992,16 @@ __metadata:
     react-native: "*"
     react-native-nitro-modules: "*"
   checksum: 10c0/53f87ab5daa31b5a1d236e29cacca4a7ea0cccb8604ee88fb7725db786b6415476a737ae1f0266225c4d283ef0326524250b3cef6add6eb6b7efa1c480d46678
+  languageName: node
+  linkType: hard
+
+"react-native-nitro-modules@npm:^0.32.1":
+  version: 0.32.1
+  resolution: "react-native-nitro-modules@npm:0.32.1"
+  peerDependencies:
+    react: "*"
+    react-native: "*"
+  checksum: 10c0/5f11eda5965225f7ef3d758441ee4ca1355c950ff38de5ac950a848ccb6d1a2ebe765c34db17cd2aa5e1362661e86931620d20d856f04a4fa593df2b62e189e3
   languageName: node
   linkType: hard
 
