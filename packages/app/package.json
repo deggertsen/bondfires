@@ -23,9 +23,8 @@
     "expo-device": "*",
     "expo-constants": "*",
     "expo-file-system": "*",
-    "ffmpeg-kit-react-native": "*",
-    "react-native-mmkv": "*",
-    "@react-native-firebase/messaging": "*"
+    "react-native-compressor": "*",
+    "react-native-mmkv": "*"
   },
   "devDependencies": {
     "@types/react": "^19.1.0",

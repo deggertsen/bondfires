@@ -12,6 +12,7 @@ import 'react-native-reanimated'
 import { usePushNotifications } from '@bondfires/app'
 import { api } from '../../../convex/_generated/api'
 import config from '../tamagui.config'
+import type { RelativePathString } from 'expo-router/build/types';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -44,13 +45,13 @@ function AppContent() {
       if (data?.bondfireId) {
         router.push(`/(main)/bondfire/${data.bondfireId}`)
       } else if (data?.screen) {
-        router.push(data.screen as `/${string}`)
+        router.push(data.screen as RelativePathString)
       }
     },
     [router],
   )
 
-  // Initialize push notifications with Firebase
+  // Initialize push notifications with Expo
   const { error: pushError, requestPermissions } = usePushNotifications({
     registerTokenMutation: async (params: {
       token: string

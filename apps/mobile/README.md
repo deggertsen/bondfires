@@ -4,97 +4,166 @@ React Native (Expo) mobile application for Bondfires - a video response social p
 
 ## Prerequisites
 
-- Node.js 18+
-- Bun package manager
-- Xcode 15+ (for iOS)
-- Android Studio (for Android)
-- EAS CLI: `npm install -g eas-cli`
+Before running the app, ensure you have:
 
-## Setup
+- **Node.js** 18+ and **Bun** package manager
+- **EAS CLI** installed globally:
+  ```bash
+  npm install -g eas-cli
+  ```
+- **iOS development**: Xcode 15+ (macOS only)
+- **Android development**: Android Studio with SDK and emulator/device
+- **Convex account** and deployment URL
 
-1. **Install dependencies**
-   ```bash
-   cd apps/mobile
-   bun install
-   ```
+## Important: Development Builds Required
 
-2. **Configure EAS** (first time only)
-   ```bash
-   eas login
-   eas build:configure
-   ```
-   
-   This will prompt you to create an EAS project and update `app.json` with your project ID.
+⚠️ **This app cannot run in Expo Go.** It uses native modules that require a custom development client:
+- `expo-camera` - Video recording
+- `expo-av` - Video playback
+- `expo-notifications` - Push notifications
+- `react-native-compressor` - Video/image compression (WhatsApp-like)
+- `react-native-mmkv` - Fast local storage
 
-3. **Set up environment variables**
-   
-   Create `.env` file with your Convex deployment URL:
-   ```
-   EXPO_PUBLIC_CONVEX_URL=https://your-deployment.convex.cloud
-   ```
+You **must** build and install a development client before running the app.
+
+## Initial Setup
+
+### 1. Install Dependencies
+
+```bash
+cd apps/mobile
+bun install
+```
+
+### 2. Configure EAS (First Time Only)
+
+```bash
+# Login to your Expo account
+eas login
+
+# Configure the project (creates/updates app.json with project ID)
+eas build:configure
+```
+
+### 3. Set Up Environment Variables
+
+Create a `.env` or `.env.local` file in the project root with your Convex deployment URL:
+
+```env
+EXPO_PUBLIC_CONVEX_URL=https://your-deployment.convex.cloud
+```
+
+### 4. Build Development Client
+
+You need to build and install a development client on your target device/emulator **before** you can run the app:
+
+#### For Android
+
+```bash
+# Build development client APK
+bun run build:android:dev
+
+# After build completes:
+# 1. Download the APK from EAS dashboard
+# 2. Install on your Android device/emulator:
+#    - Device: Enable USB debugging and install via ADB
+#    - Emulator: Drag APK into emulator window
+```
+
+#### For iOS Simulator
+
+```bash
+# Build development client for iOS simulator
+bun run build:ios:dev:sim
+
+# After build completes:
+# 1. Download the .app file from EAS dashboard
+# 2. Install: xcrun simctl install booted /path/to/app.app
+#    OR drag the .app into Simulator
+```
+
+#### For iOS Physical Device
+
+```bash
+# Build development client for physical device
+bun run build:ios:dev
+
+# After build completes:
+# 1. Scan QR code from EAS dashboard with your device camera
+# 2. Install via TestFlight (if configured) or direct install
+```
 
 ## Development Builds
 
-### iOS Simulator
-```bash
-# Build dev client for iOS simulator
-eas build --profile development-simulator --platform ios
+After your development client is installed, you can develop normally:
 
-# After build completes, download and install the .app
-# Then start the dev server:
-bun start
+Use the npm scripts for convenience:
+
+```bash
+# Android
+bun run build:android:dev
+
+# iOS Simulator
+bun run build:ios:dev:sim
+
+# iOS Device
+bun run build:ios:dev
 ```
 
-### iOS Device
-```bash
-# Build dev client for physical iOS device
-eas build --profile development --platform ios
+Or use EAS CLI directly:
 
-# Install via QR code from EAS dashboard
-# Then start the dev server:
-bun start
+```bash
+# Android
+eas build --platform android --profile development
+
+# iOS Simulator
+eas build --platform ios --profile development-simulator
+
+# iOS Device
+eas build --platform ios --profile development
 ```
 
-### Android
-```bash
-# Build dev client APK
-eas build --profile development --platform android
+## Running the App
 
-# Install the APK on your device/emulator
-# Then start the dev server:
-bun start
-```
-
-## Local Development (after dev client is installed)
+**After the development client is installed**, start the development server:
 
 ```bash
 # Start Metro bundler
 bun start
 
-# Or with cache clear
+# Or with cache clear if you have issues
 bun start --clear
+# or
+npx expo start -c
 ```
 
-## Native Code Changes
+The app should automatically connect to the development server. If it doesn't, shake your device/emulator to open the dev menu and select "Configure Bundler" to enter the server URL manually.
 
-If you add or update native modules, you need to rebuild the dev client:
+## When to Rebuild Development Client
+
+Rebuild your development client when:
+
+- Adding or updating native modules (e.g., `expo-camera`, `react-native-compressor`)
+- Changing native configuration (e.g., `app.json` plugins, permissions)
+- Updating Expo SDK version
+- Changing build properties (e.g., `expo-build-properties`)
+
+To rebuild:
 
 ```bash
-# iOS
-eas build --profile development-simulator --platform ios
-
-# Android
-eas build --profile development --platform android
+# Use the build scripts
+bun run build:android:dev
+bun run build:ios:dev:sim
 ```
 
 ## Production Builds
 
 ```bash
 # iOS App Store build
-eas build --profile production --platform ios
+eas build --platform ios --profile production
 
 # Android Play Store build
-eas build --profile production --platform android
+eas build --platform android --profile production
 ```
 
 ## Submitting to App Stores
@@ -136,28 +205,64 @@ This app uses native modules that require a custom dev client:
 - `expo-camera` - Video recording
 - `expo-av` - Video playback
 - `expo-notifications` - Push notifications
-- `ffmpeg-kit-react-native` - Video compression
+- `react-native-compressor` - Video/image compression
 - `react-native-mmkv` - Fast local storage
 
 These modules **cannot** run in Expo Go. You must use a development build.
 
 ## Troubleshooting
 
-### Build fails with CocoaPods error
-```bash
-cd ios && pod install --repo-update && cd ..
-```
+### Development client not connecting to Metro
+
+1. Make sure your device/emulator and computer are on the same network
+2. Check that Metro bundler is running
+3. Shake device/emulator → Dev Menu → "Configure Bundler" → Enter correct URL
+4. For Android emulator, use `adb reverse tcp:8081 tcp:8081` if needed
 
 ### Metro bundler cache issues
+
 ```bash
 bun start --clear
 # or
 npx expo start -c
 ```
 
-### ffmpeg-kit issues on iOS
-Make sure you're on iOS 15.1+ (set in `expo-build-properties` plugin).
+### Build fails with CocoaPods error (iOS)
+
+```bash
+cd ios && pod install --repo-update && cd ..
+```
+
+### Android build issues
+
+If you encounter dependency resolution errors, use EAS Build instead of local builds:
+- EAS Build handles native dependencies more reliably
+- Use `bun run build:android:dev` for cloud builds
+
+### Video compression issues
+
+This app uses `react-native-compressor` for video compression. If you encounter issues:
+
+- Ensure you have a development build (not Expo Go)
+- Check that native modules are properly linked
+- Try cleaning and rebuilding: `bun run android:clean`
 
 ### MMKV issues
-Ensure `metro.config.js` includes `'cjs'` in `sourceExts`.
+
+Ensure `metro.config.js` includes `'cjs'` in `sourceExts` (already configured).
+
+### Watchman issues (Mac)
+
+If Metro has Watchman connection issues:
+
+```bash
+watchman shutdown-server
+# Then restart Metro
+bun start
+```
+
+Or bypass Watchman:
+```bash
+CI=true bun start
+```
 

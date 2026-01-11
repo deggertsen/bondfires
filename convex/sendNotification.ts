@@ -2,39 +2,28 @@ import { v } from 'convex/values'
 import { api, internal } from './_generated/api'
 import { action, internalAction } from './_generated/server'
 
-// Firebase Admin SDK types for FCM
-interface FCMMessage {
-  token: string
-  notification?: {
-    title: string
-    body: string
-  }
-  data?: Record<string, string>
-  android?: {
-    priority: 'high' | 'normal'
-    notification?: {
-      icon?: string
-      color?: string
-      channelId?: string
-    }
-  }
-  apns?: {
-    payload: {
-      aps: {
-        alert?: {
-          title: string
-          body: string
-        }
-        badge?: number
-        sound?: string
-      }
-    }
-  }
+// Expo Push API types
+interface ExpoPushMessage {
+  to: string | string[]
+  title?: string
+  body?: string
+  data?: Record<string, unknown>
+  sound?: 'default' | null
+  badge?: number
+  channelId?: string
+  priority?: 'default' | 'normal' | 'high'
+}
+
+interface ExpoPushTicket {
+  status: 'ok' | 'error'
+  id?: string
+  message?: string
+  details?: { error?: string }
 }
 
 interface SendResult {
   success: boolean
-  messageId?: string
+  ticketId?: string
   error?: string
 }
 
@@ -44,38 +33,29 @@ interface DeviceToken {
   tokenType?: 'fcm' | 'expo'
 }
 
-// Send notification via Firebase Cloud Messaging
-async function sendFCMNotification(
-  serverKey: string,
-  message: FCMMessage,
-): Promise<{ success: boolean; messageId?: string; error?: string }> {
-  const response = await fetch('https://fcm.googleapis.com/fcm/send', {
+const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send'
+
+// Send notification via Expo Push API
+async function sendExpoPushNotification(
+  messages: ExpoPushMessage[],
+): Promise<ExpoPushTicket[]> {
+  const response = await fetch(EXPO_PUSH_URL, {
     method: 'POST',
     headers: {
+      Accept: 'application/json',
+      'Accept-Encoding': 'gzip, deflate',
       'Content-Type': 'application/json',
-      Authorization: `key=${serverKey}`,
     },
-    body: JSON.stringify({
-      to: message.token,
-      notification: message.notification,
-      data: message.data,
-      android: message.android,
-      apns: message.apns,
-    }),
+    body: JSON.stringify(messages),
   })
 
   if (!response.ok) {
     const text = await response.text()
-    return { success: false, error: `FCM error: ${response.status} - ${text}` }
+    throw new Error(`Expo Push error: ${response.status} - ${text}`)
   }
 
   const result = await response.json()
-
-  if (result.failure > 0) {
-    return { success: false, error: result.results?.[0]?.error ?? 'Unknown FCM error' }
-  }
-
-  return { success: true, messageId: result.message_id }
+  return result.data as ExpoPushTicket[]
 }
 
 // Internal action to send a notification to a specific user
@@ -96,13 +76,6 @@ export const sendToUser = internalAction({
     error?: string
     errors?: (string | undefined)[]
   }> => {
-    const serverKey = process.env.FIREBASE_SERVER_KEY
-    if (!serverKey) {
-      // eslint-disable-next-line no-console
-      console.error('FIREBASE_SERVER_KEY not configured')
-      return { success: false, error: 'Firebase not configured' }
-    }
-
     // Get all device tokens for the user
     const tokens: DeviceToken[] = await ctx.runQuery(api.notifications.getTokensForUser, {
       userId: args.userId,
@@ -112,56 +85,51 @@ export const sendToUser = internalAction({
       return { success: false, error: 'No device tokens found for user' }
     }
 
-    const results: SendResult[] = await Promise.all(
-      tokens.map(async (tokenDoc: DeviceToken): Promise<SendResult> => {
-        const message: FCMMessage = {
-          token: tokenDoc.token,
-          notification: {
-            title: args.title,
-            body: args.body,
-          },
-          data: args.data
-            ? Object.fromEntries(
-                Object.entries(args.data as Record<string, unknown>).map(([k, val]) => [
-                  k,
-                  String(val),
-                ]),
-              )
-            : undefined,
-          android: {
-            priority: 'high',
-            notification: {
-              icon: 'ic_notification',
-              color: '#FF6B35',
-              channelId: 'bondfires-default',
-            },
-          },
-          apns: {
-            payload: {
-              aps: {
-                alert: {
-                  title: args.title,
-                  body: args.body,
-                },
-                badge: 1,
-                sound: 'default',
-              },
-            },
-          },
-        }
-
-        return sendFCMNotification(serverKey, message)
-      }),
+    // Filter for Expo tokens (tokens starting with "ExponentPushToken")
+    const expoTokens = tokens.filter(
+      (t) => t.tokenType === 'expo' || t.token.startsWith('ExponentPushToken'),
     )
 
-    const successCount = results.filter((r: SendResult) => r.success).length
-    const failureCount = results.filter((r: SendResult) => !r.success).length
+    if (expoTokens.length === 0) {
+      return { success: false, error: 'No Expo push tokens found for user' }
+    }
 
-    return {
-      success: successCount > 0,
-      successCount,
-      failureCount,
-      errors: results.filter((r: SendResult) => !r.success).map((r: SendResult) => r.error),
+    // Build messages for each token
+    const messages: ExpoPushMessage[] = expoTokens.map((tokenDoc) => ({
+      to: tokenDoc.token,
+      title: args.title,
+      body: args.body,
+      data: args.data as Record<string, unknown> | undefined,
+      sound: 'default',
+      priority: 'high',
+      channelId: 'bondfires-default',
+    }))
+
+    try {
+      const tickets = await sendExpoPushNotification(messages)
+
+      const results: SendResult[] = tickets.map((ticket) => ({
+        success: ticket.status === 'ok',
+        ticketId: ticket.id,
+        error:
+          ticket.status === 'error'
+            ? ticket.message ?? ticket.details?.error ?? 'Unknown error'
+            : undefined,
+      }))
+
+      const successCount = results.filter((r) => r.success).length
+      const failureCount = results.filter((r) => !r.success).length
+
+      return {
+        success: successCount > 0,
+        successCount,
+        failureCount,
+        errors: results.filter((r) => !r.success).map((r) => r.error),
+      }
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : 'Unknown error sending notification'
+      console.error('Error sending Expo push notification:', errorMessage)
+      return { success: false, error: errorMessage }
     }
   },
 })

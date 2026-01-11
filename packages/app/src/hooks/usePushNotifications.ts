@@ -1,4 +1,3 @@
-import messaging from '@react-native-firebase/messaging'
 import Constants from 'expo-constants'
 import * as Device from 'expo-device'
 import * as Notifications from 'expo-notifications'
@@ -40,7 +39,6 @@ export interface UsePushNotificationsOptions {
 
 export interface UsePushNotificationsResult {
   expoPushToken: string | null
-  fcmToken: string | null
   isRegistered: boolean
   error: string | null
   requestPermissions: () => Promise<boolean>
@@ -58,7 +56,6 @@ export function usePushNotifications(
   } = options
 
   const [expoPushToken, setExpoPushToken] = useState<string | null>(null)
-  const [fcmToken, setFcmToken] = useState<string | null>(null)
   const [isRegistered, setIsRegistered] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -68,12 +65,12 @@ export function usePushNotifications(
 
   // Register token with backend
   const registerWithBackend = useCallback(
-    async (token: string, tokenType: 'expo' | 'fcm') => {
+    async (token: string) => {
       if (registerTokenMutation) {
         try {
           await registerTokenMutation({
             token,
-            tokenType,
+            tokenType: 'expo',
             platform: Platform.OS,
             deviceId: Constants.deviceId ?? 'unknown',
           })
@@ -87,6 +84,18 @@ export function usePushNotifications(
     [registerTokenMutation],
   )
 
+  // Get the Expo push token
+  const getExpoPushToken = useCallback(async (): Promise<string | null> => {
+    const projectId = Constants.expoConfig?.extra?.eas?.projectId
+    if (!projectId) {
+      console.error('EAS project ID not found in app config')
+      return null
+    }
+
+    const tokenData = await Notifications.getExpoPushTokenAsync({ projectId })
+    return tokenData.data
+  }, [])
+
   // Request notification permissions
   const requestPermissions = useCallback(async (): Promise<boolean> => {
     if (!Device.isDevice) {
@@ -95,20 +104,6 @@ export function usePushNotifications(
     }
 
     try {
-      // Request Firebase messaging permission (iOS)
-      if (Platform.OS === 'ios') {
-        const authStatus = await messaging().requestPermission()
-        const enabled =
-          authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
-          authStatus === messaging.AuthorizationStatus.PROVISIONAL
-
-        if (!enabled) {
-          setError('Push notification permissions denied')
-          return false
-        }
-      }
-
-      // Also request expo-notifications permission
       const { status: existingStatus } = await Notifications.getPermissionsAsync()
       let finalStatus = existingStatus
 
@@ -122,22 +117,24 @@ export function usePushNotifications(
         return false
       }
 
-      // Get FCM token
-      const token = await messaging().getToken()
-      setFcmToken(token)
-      await registerWithBackend(token, 'fcm')
+      // Set up Android notification channel
+      if (Platform.OS === 'android') {
+        await Notifications.setNotificationChannelAsync('bondfires-default', {
+          name: 'Bondfires',
+          importance: Notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 250, 250, 250],
+          lightColor: '#FF6B35',
+        })
+      }
 
-      // Also get Expo push token for compatibility
-      try {
-        const projectId = Constants.expoConfig?.extra?.eas?.projectId
-        if (projectId) {
-          const expoPushTokenData = await Notifications.getExpoPushTokenAsync({
-            projectId,
-          })
-          setExpoPushToken(expoPushTokenData.data)
-        }
-      } catch {
-        // Expo push token is optional, FCM is the primary
+      // Get Expo push token
+      const token = await getExpoPushToken()
+      if (token) {
+        setExpoPushToken(token)
+        await registerWithBackend(token)
+      } else {
+        setError('Failed to get push notification token')
+        return false
       }
 
       setError(null)
@@ -147,26 +144,24 @@ export function usePushNotifications(
       setError('Failed to set up push notifications')
       return false
     }
-  }, [registerWithBackend])
+  }, [getExpoPushToken, registerWithBackend])
 
   // Unregister from push notifications
   const unregister = useCallback(async () => {
     try {
-      if (fcmToken && unregisterTokenMutation) {
-        await unregisterTokenMutation({ token: fcmToken })
+      if (expoPushToken && unregisterTokenMutation) {
+        await unregisterTokenMutation({ token: expoPushToken })
       }
-      await messaging().deleteToken()
-      setFcmToken(null)
       setExpoPushToken(null)
       setIsRegistered(false)
     } catch (e) {
       console.error('Error unregistering push notifications:', e)
     }
-  }, [fcmToken, unregisterTokenMutation])
+  }, [expoPushToken, unregisterTokenMutation])
 
   // Set up notification listeners
   useEffect(() => {
-    // Foreground notification handler (expo-notifications)
+    // Foreground notification handler
     notificationListener.current = Notifications.addNotificationReceivedListener((notification) => {
       onNotificationReceived?.(notification)
     })
@@ -176,40 +171,19 @@ export function usePushNotifications(
       onNotificationResponse?.(response)
     })
 
-    // Firebase foreground message handler
-    const unsubscribeOnMessage = messaging().onMessage(async (remoteMessage) => {
-      // Display local notification for foreground messages
-      if (remoteMessage.notification) {
-        await Notifications.scheduleNotificationAsync({
-          content: {
-            title: remoteMessage.notification.title ?? 'New notification',
-            body: remoteMessage.notification.body ?? '',
-            data: remoteMessage.data,
-          },
-          trigger: null, // Show immediately
-        })
-      }
-    })
-
-    // Firebase token refresh handler
-    const unsubscribeOnTokenRefresh = messaging().onTokenRefresh(async (token) => {
-      setFcmToken(token)
-      await registerWithBackend(token, 'fcm')
-    })
-
-    // Handle app state changes (re-register on foreground)
-    const handleAppStateChange = (nextAppState: AppStateStatus) => {
+    // Handle app state changes (refresh token on foreground)
+    const handleAppStateChange = async (nextAppState: AppStateStatus) => {
       if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
-        // App came to foreground - check token is still valid
-        messaging()
-          .getToken()
-          .then((token) => {
-            if (token !== fcmToken) {
-              setFcmToken(token)
-              registerWithBackend(token, 'fcm')
-            }
-          })
-          .catch(console.error)
+        // App came to foreground - verify token is still valid
+        try {
+          const token = await getExpoPushToken()
+          if (token && token !== expoPushToken) {
+            setExpoPushToken(token)
+            await registerWithBackend(token)
+          }
+        } catch (e) {
+          console.error('Error refreshing push token:', e)
+        }
       }
       appStateRef.current = nextAppState
     }
@@ -219,39 +193,35 @@ export function usePushNotifications(
     return () => {
       notificationListener.current?.remove()
       responseListener.current?.remove()
-      unsubscribeOnMessage()
-      unsubscribeOnTokenRefresh()
       appStateSubscription.remove()
     }
-  }, [fcmToken, onNotificationReceived, onNotificationResponse, registerWithBackend])
+  }, [expoPushToken, getExpoPushToken, onNotificationReceived, onNotificationResponse, registerWithBackend])
 
   // Check initial permission status on mount
   useEffect(() => {
     const checkInitialStatus = async () => {
       if (!Device.isDevice) return
 
-      const authStatus = await messaging().hasPermission()
-      if (
-        authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
-        authStatus === messaging.AuthorizationStatus.PROVISIONAL
-      ) {
+      const { status } = await Notifications.getPermissionsAsync()
+      if (status === 'granted') {
         // Already have permission, get token
         try {
-          const token = await messaging().getToken()
-          setFcmToken(token)
-          await registerWithBackend(token, 'fcm')
+          const token = await getExpoPushToken()
+          if (token) {
+            setExpoPushToken(token)
+            await registerWithBackend(token)
+          }
         } catch (e) {
-          console.error('Error getting initial FCM token:', e)
+          console.error('Error getting initial push token:', e)
         }
       }
     }
 
     checkInitialStatus()
-  }, [registerWithBackend])
+  }, [getExpoPushToken, registerWithBackend])
 
   return {
     expoPushToken,
-    fcmToken,
     isRegistered,
     error,
     requestPermissions,

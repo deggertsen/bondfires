@@ -5,10 +5,18 @@
   "scripts": {
     "start": "expo start",
     "dev": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "npx expo run:android",
+    "ios": "npx expo run:ios",
+    "android:start": "expo start --android",
+    "ios:start": "expo start --ios",
+    "android:clean": "cd android && ./gradlew clean && cd ..",
     "web": "expo start --web",
     "build": "echo 'Use EAS Build for production builds'",
+    "build:android:dev": "eas build --platform android --profile development",
+    "build:ios:dev": "eas build --platform ios --profile development",
+    "build:ios:dev:sim": "eas build --platform ios --profile development-simulator",
+    "build:android:preview": "eas build --platform android --profile preview",
+    "build:ios:preview": "eas build --platform ios --profile preview",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -18,8 +26,6 @@
     "@convex-dev/auth": "^0.0.90",
     "@expo/vector-icons": "^15.0.3",
     "@legendapp/state": "^3.0.0-beta.27",
-    "@react-native-firebase/app": "^23.7.0",
-    "@react-native-firebase/messaging": "^23.7.0",
     "@react-navigation/native": "^7.1.8",
     "@tamagui/animations-react-native": "^1.144.0",
     "@tamagui/babel-plugin": "^1.144.0",
@@ -42,7 +48,7 @@
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
     "expo-web-browser": "~15.0.10",
-    "ffmpeg-kit-react-native": "^6.0.2",
+    "react-native-compressor": "^1.16.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
@@ -57,6 +63,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
+    "babel-preset-expo": "~14.0.0",
     "expo-build-properties": "^1.0.10",
     "react-test-renderer": "19.1.0",
     "typescript": "~5.9.2"

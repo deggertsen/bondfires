@@ -29,7 +29,7 @@ export const registerDevice = mutation({
       await ctx.db.patch(existing._id, {
         userId,
         platform: args.platform,
-        tokenType: args.tokenType ?? 'fcm',
+        tokenType: args.tokenType ?? 'expo',
         deviceId: args.deviceId,
         updatedAt: now,
       })
