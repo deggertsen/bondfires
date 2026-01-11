@@ -17,12 +17,12 @@
     "convex": "^1.31.3"
   },
   "peerDependencies": {
+    "expo-constants": "*",
+    "expo-device": "*",
+    "expo-file-system": "*",
+    "expo-notifications": "*",
     "react": "*",
     "react-native": "*",
-    "expo-notifications": "*",
-    "expo-device": "*",
-    "expo-constants": "*",
-    "expo-file-system": "*",
     "react-native-compressor": "*",
     "react-native-mmkv": "*"
   },
@@ -31,4 +31,3 @@
     "typescript": "^5.7.2"
   }
 }
-

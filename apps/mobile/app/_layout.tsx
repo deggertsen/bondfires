@@ -1,3 +1,6 @@
+// Import config for TamaguiProvider
+import config from '../tamagui.config'
+
 import { ConvexAuthProvider } from '@convex-dev/auth/react'
 import { ConvexProvider, ConvexReactClient, useMutation } from 'convex/react'
 import { useFonts } from 'expo-font'
@@ -9,9 +12,8 @@ import { useColorScheme } from 'react-native'
 import { TamaguiProvider, Theme } from 'tamagui'
 import 'react-native-reanimated'
 
-import { usePushNotifications } from '@bondfires/app'
+import { usePushNotifications, mmkvStorage } from '@bondfires/app'
 import { api } from '../../../convex/_generated/api'
-import config from '../tamagui.config'
 import type { RelativePathString } from 'expo-router/build/types';
 
 export {
@@ -28,7 +30,13 @@ export const unstable_settings = {
 SplashScreen.preventAutoHideAsync()
 
 // Initialize Convex client
-const convex = new ConvexReactClient(process.env.EXPO_PUBLIC_CONVEX_URL as string)
+const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL
+if (!convexUrl) {
+  throw new Error(
+    'EXPO_PUBLIC_CONVEX_URL is not set. Please create a .env.local file in the project root with EXPO_PUBLIC_CONVEX_URL=your-convex-url'
+  )
+}
+const convex = new ConvexReactClient(convexUrl)
 
 function AppContent() {
   const colorScheme = useColorScheme()
@@ -118,7 +126,7 @@ export default function RootLayout() {
 
   return (
     <ConvexProvider client={convex}>
-      <ConvexAuthProvider client={convex}>
+      <ConvexAuthProvider client={convex} storage={mmkvStorage}>
         <AppContent />
       </ConvexAuthProvider>
     </ConvexProvider>

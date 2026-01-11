@@ -6,7 +6,7 @@ React Native (Expo) mobile application for Bondfires - a video response social p
 
 Before running the app, ensure you have:
 
-- **Node.js** 18+ and **Bun** package manager
+- **Node.js** 18+ and **Yarn** package manager (via Corepack: `corepack enable`)
 - **EAS CLI** installed globally:
   ```bash
   npm install -g eas-cli
@@ -32,7 +32,7 @@ You **must** build and install a development client before running the app.
 
 ```bash
 cd apps/mobile
-bun install
+yarn install
 ```
 
 ### 2. Configure EAS (First Time Only)
@@ -61,7 +61,7 @@ You need to build and install a development client on your target device/emulato
 
 ```bash
 # Build development client APK
-bun run build:android:dev
+yarn build:android:dev
 
 # After build completes:
 # 1. Download the APK from EAS dashboard
@@ -74,7 +74,7 @@ bun run build:android:dev
 
 ```bash
 # Build development client for iOS simulator
-bun run build:ios:dev:sim
+yarn build:ios:dev:sim
 
 # After build completes:
 # 1. Download the .app file from EAS dashboard
@@ -86,7 +86,7 @@ bun run build:ios:dev:sim
 
 ```bash
 # Build development client for physical device
-bun run build:ios:dev
+yarn build:ios:dev
 
 # After build completes:
 # 1. Scan QR code from EAS dashboard with your device camera
@@ -101,13 +101,13 @@ Use the npm scripts for convenience:
 
 ```bash
 # Android
-bun run build:android:dev
+yarn build:android:dev
 
 # iOS Simulator
-bun run build:ios:dev:sim
+yarn build:ios:dev:sim
 
 # iOS Device
-bun run build:ios:dev
+yarn build:ios:dev
 ```
 
 Or use EAS CLI directly:
@@ -129,10 +129,10 @@ eas build --platform ios --profile development
 
 ```bash
 # Start Metro bundler
-bun start
+yarn start
 
 # Or with cache clear if you have issues
-bun start --clear
+yarn start --clear
 # or
 npx expo start -c
 ```
@@ -152,8 +152,8 @@ To rebuild:
 
 ```bash
 # Use the build scripts
-bun run build:android:dev
-bun run build:ios:dev:sim
+yarn build:android:dev
+yarn build:ios:dev:sim
 ```
 
 ## Production Builds
@@ -222,7 +222,7 @@ These modules **cannot** run in Expo Go. You must use a development build.
 ### Metro bundler cache issues
 
 ```bash
-bun start --clear
+yarn start --clear
 # or
 npx expo start -c
 ```
@@ -237,7 +237,7 @@ cd ios && pod install --repo-update && cd ..
 
 If you encounter dependency resolution errors, use EAS Build instead of local builds:
 - EAS Build handles native dependencies more reliably
-- Use `bun run build:android:dev` for cloud builds
+- Use `yarn build:android:dev` for cloud builds
 
 ### Video compression issues
 
@@ -245,7 +245,7 @@ This app uses `react-native-compressor` for video compression. If you encounter 
 
 - Ensure you have a development build (not Expo Go)
 - Check that native modules are properly linked
-- Try cleaning and rebuilding: `bun run android:clean`
+- Try cleaning and rebuilding: `yarn android:clean`
 
 ### MMKV issues
 
@@ -258,11 +258,10 @@ If Metro has Watchman connection issues:
 ```bash
 watchman shutdown-server
 # Then restart Metro
-bun start
+yarn start
 ```
 
 Or bypass Watchman:
 ```bash
-CI=true bun start
+CI=true yarn start
 ```
-

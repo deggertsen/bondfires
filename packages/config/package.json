@@ -13,8 +13,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@tamagui/config": "^1.144.0",
     "@tamagui/animations-react-native": "^1.144.0",
+    "@tamagui/config": "^1.144.0",
     "@tamagui/font-inter": "^1.144.0",
     "@tamagui/shorthands": "^1.144.0",
     "@tamagui/themes": "^1.144.0",
@@ -24,4 +24,3 @@
     "typescript": "^5.7.2"
   }
 }
-
