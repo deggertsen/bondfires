@@ -1,14 +1,8 @@
-import {
-  type CompressionProgress,
-  cancelProcessing,
-  cleanupTempVideos,
-  processVideo,
-} from '@bondfires/app'
-import { Button, Text } from '@bondfires/ui'
+import { cancelProcessing, startBackgroundUpload } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
-import { Check, FlipHorizontal, X, Flame } from '@tamagui/lucide-icons'
+import { Button, Text } from '@bondfires/ui'
+import { Flame, FlipHorizontal, X } from '@tamagui/lucide-icons'
 import { useAction, useMutation } from 'convex/react'
-import { ResizeMode, Video } from 'expo-av'
 import {
   type CameraType,
   CameraView,
@@ -21,10 +15,11 @@ import { Alert, Pressable, StatusBar } from 'react-native'
 import { Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
+import { CompletionScreen } from '../../components/CompletionScreen'
 
 const MAX_DURATION = 60 // 60 seconds max
 
-type RecordingState = 'idle' | 'recording' | 'preview' | 'processing' | 'uploading'
+type RecordingState = 'idle' | 'recording' | 'completion' | 'processing' | 'uploading'
 
 export default function CreateScreen() {
   const router = useRouter()
@@ -38,11 +33,6 @@ export default function CreateScreen() {
   const [recordingState, setRecordingState] = useState<RecordingState>('idle')
   const [recordingDuration, setRecordingDuration] = useState(0)
   const [videoUri, setVideoUri] = useState<string | null>(null)
-  const [processedVideo, setProcessedVideo] = useState<{
-    hdUri: string
-    sdUri: string
-    thumbnailUri: string
-  } | null>(null)
   const [progress, setProgress] = useState(0)
   const [progressStage, setProgressStage] = useState<string>('')
 
@@ -75,11 +65,8 @@ export default function CreateScreen() {
   useEffect(() => {
     return () => {
       cancelProcessing()
-      if (processedVideo) {
-        cleanupTempVideos([processedVideo.hdUri, processedVideo.sdUri, processedVideo.thumbnailUri])
-      }
     }
-  }, [processedVideo])
+  }, [])
 
   const requestPermissions = useCallback(async () => {
     if (!cameraPermission?.granted) {
@@ -107,7 +94,9 @@ export default function CreateScreen() {
 
       if (video?.uri) {
         setVideoUri(video.uri)
-        setRecordingState('preview')
+        setRecordingState('completion')
+        // Start background upload immediately
+        queueBackgroundUpload(video.uri)
       }
     } catch (error) {
       console.error('Recording error:', error)
@@ -122,134 +111,46 @@ export default function CreateScreen() {
     }
   }, [])
 
-  const discardRecording = useCallback(() => {
-    setVideoUri(null)
-    setProcessedVideo(null)
-    setRecordingState('idle')
-    setRecordingDuration(0)
-    setProgress(0)
-  }, [])
-
-  const handleProgressUpdate = useCallback((update: CompressionProgress) => {
-    setProgress(update.percentage)
-    switch (update.stage) {
-      case 'hd':
-        setProgressStage('Compressing HD...')
-        break
-      case 'sd':
-        setProgressStage('Creating SD version...')
-        break
-      case 'thumbnail':
-        setProgressStage('Generating thumbnail...')
-        break
-    }
-  }, [])
-
-  const processAndUpload = useCallback(async () => {
-    if (!videoUri) return
-
-    setRecordingState('processing')
-    setProgress(0)
-    setProgressStage('Starting compression...')
-
-    try {
-      // Process video (compress to HD/SD, extract thumbnail)
-      const processed = await processVideo(videoUri, handleProgressUpdate)
-      setProcessedVideo(processed)
-
-      // Now upload
-      setRecordingState('uploading')
-      setProgress(0)
-      setProgressStage('Uploading...')
-
-      // Get presigned upload URLs
-      const filename = `bondfire-${Date.now()}.mp4`
-      const urls = await getUploadUrls({
-        filename,
-        contentType: 'video/mp4',
-      })
-
-      setProgress(10)
-
-      // Upload HD video
-      const hdFile = await fetch(processed.hdUri)
-      const hdBlob = await hdFile.blob()
-
-      await fetch(urls.hdUrl, {
-        method: 'PUT',
-        body: hdBlob,
-        headers: { 'Content-Type': 'video/mp4' },
-      })
-
-      setProgress(40)
-
-      // Upload SD video
-      const sdFile = await fetch(processed.sdUri)
-      const sdBlob = await sdFile.blob()
-
-      await fetch(urls.sdUrl, {
-        method: 'PUT',
-        body: sdBlob,
-        headers: { 'Content-Type': 'video/mp4' },
-      })
-
-      setProgress(70)
-
-      // Upload thumbnail
-      const thumbFile = await fetch(processed.thumbnailUri)
-      const thumbBlob = await thumbFile.blob()
-
-      await fetch(urls.thumbnailUrl, {
-        method: 'PUT',
-        body: thumbBlob,
-        headers: { 'Content-Type': 'image/jpeg' },
-      })
-
-      setProgress(85)
-
-      // Create bondfire or response in database
-      if (respondTo) {
-        await addResponse({
-          bondfireId: respondTo as Id<'bondfires'>,
-          videoKey: urls.hdKey,
-          sdVideoKey: urls.sdKey,
-          thumbnailKey: urls.thumbnailKey,
-          durationMs: processed.metadata.durationMs,
-          width: processed.metadata.width,
-          height: processed.metadata.height,
+  const queueBackgroundUpload = useCallback(
+    async (uri: string) => {
+      try {
+        await startBackgroundUpload({
+          videoUri: uri,
+          bondfireId: respondTo,
+          isResponse: !!respondTo,
+          getUploadUrls: async (args) => {
+            return await getUploadUrls(args)
+          },
+          createBondfire: async (args) => {
+            await createBondfire(args)
+          },
+          addResponse: async (args) => {
+            await addResponse({
+              ...args,
+              bondfireId: respondTo as Id<'bondfires'>,
+            })
+          },
+          callbacks: {
+            onProgress: (progress, stage) => {
+              setProgress(progress)
+              setProgressStage(stage)
+            },
+            onComplete: () => {
+              console.info('Upload completed')
+            },
+            onError: (error) => {
+              console.error('Upload error:', error)
+              Alert.alert('Upload Error', 'Failed to upload video. It will retry automatically.')
+            },
+          },
         })
-      } else {
-        await createBondfire({
-          videoKey: urls.hdKey,
-          sdVideoKey: urls.sdKey,
-          thumbnailKey: urls.thumbnailKey,
-          durationMs: processed.metadata.durationMs,
-          width: processed.metadata.width,
-          height: processed.metadata.height,
-        })
+      } catch (error) {
+        console.error('Failed to queue upload:', error)
+        Alert.alert('Error', 'Failed to start upload. Please try again.')
       }
-
-      setProgress(100)
-
-      // Cleanup temp files
-      await cleanupTempVideos([processed.hdUri, processed.sdUri, processed.thumbnailUri])
-
-      // Navigate back to feed
-      router.replace('/(main)/feed')
-    } catch (error) {
-      console.error('Processing/upload error:', error)
-      Alert.alert('Error', 'Failed to process or upload video. Please try again.')
-      setRecordingState('preview')
-    }
-  }, [
-    videoUri,
-    getUploadUrls,
-    createBondfire,
-    addResponse,
-    respondTo,
-    router,
-    handleProgressUpdate,
-  ])
+    },
+    [respondTo, getUploadUrls, createBondfire, addResponse],
+  )
 
   const toggleFacing = useCallback(() => {
     setFacing((current) => (current === 'back' ? 'front' : 'back'))
@@ -258,7 +159,13 @@ export default function CreateScreen() {
   // Permission denied state
   if (!cameraPermission?.granted || !micPermission?.granted) {
     return (
-      <YStack flex={1} backgroundColor={bondfireColors.obsidian} alignItems="center" justifyContent="center" paddingHorizontal={24}>
+      <YStack
+        flex={1}
+        backgroundColor={bondfireColors.obsidian}
+        alignItems="center"
+        justifyContent="center"
+        paddingHorizontal={24}
+      >
         <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
         <YStack alignItems="center" gap={24}>
           <YStack
@@ -287,70 +194,20 @@ export default function CreateScreen() {
     )
   }
 
-  // Preview recorded video
-  if (recordingState === 'preview' && videoUri) {
-    return (
-      <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
-        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
-        <Video
-          source={{ uri: videoUri }}
-          style={{ flex: 1 }}
-          resizeMode={ResizeMode.COVER}
-          shouldPlay
-          isLooping
-        />
-
-        <XStack
-          position="absolute"
-          bottom={50}
-          left={0}
-          right={0}
-          justifyContent="center"
-          gap={40}
-          paddingHorizontal={24}
-        >
-          <Pressable onPress={discardRecording}>
-            <YStack
-              width={70}
-              height={70}
-              borderRadius={35}
-              backgroundColor="rgba(31, 32, 35, 0.8)"
-              borderWidth={2}
-              borderColor={bondfireColors.iron}
-              alignItems="center"
-              justifyContent="center"
-            >
-              <X size={32} color={bondfireColors.whiteSmoke} />
-            </YStack>
-          </Pressable>
-
-          <Pressable onPress={processAndUpload}>
-            <YStack
-              width={70}
-              height={70}
-              borderRadius={35}
-              backgroundColor={bondfireColors.bondfireCopper}
-              alignItems="center"
-              justifyContent="center"
-            >
-              <Check size={32} color={bondfireColors.whiteSmoke} />
-            </YStack>
-          </Pressable>
-        </XStack>
-
-        <YStack position="absolute" bottom={140} left={0} right={0} alignItems="center">
-          <Text color={bondfireColors.ash} fontSize={14}>
-            Tap ✓ to compress & upload
-          </Text>
-        </YStack>
-      </YStack>
-    )
+  // Completion screen - shown immediately after recording
+  if (recordingState === 'completion' && videoUri) {
+    return <CompletionScreen onContinue={() => router.replace('/(main)/feed')} />
   }
 
   // Processing state
   if (recordingState === 'processing') {
     return (
-      <YStack flex={1} backgroundColor={bondfireColors.obsidian} alignItems="center" justifyContent="center">
+      <YStack
+        flex={1}
+        backgroundColor={bondfireColors.obsidian}
+        alignItems="center"
+        justifyContent="center"
+      >
         <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
         <YStack alignItems="center" gap={20}>
           <Spinner size="large" color={bondfireColors.bondfireCopper} />
@@ -376,7 +233,7 @@ export default function CreateScreen() {
             marginTop={16}
             onPress={() => {
               cancelProcessing()
-              setRecordingState('preview')
+              setRecordingState('idle')
             }}
           >
             Cancel
@@ -389,7 +246,12 @@ export default function CreateScreen() {
   // Uploading state
   if (recordingState === 'uploading') {
     return (
-      <YStack flex={1} backgroundColor={bondfireColors.obsidian} alignItems="center" justifyContent="center">
+      <YStack
+        flex={1}
+        backgroundColor={bondfireColors.obsidian}
+        alignItems="center"
+        justifyContent="center"
+      >
         <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
         <YStack alignItems="center" gap={20}>
           <Spinner size="large" color={bondfireColors.success} />
@@ -494,13 +356,19 @@ export default function CreateScreen() {
               borderColor={bondfireColors.whiteSmoke}
               alignItems="center"
               justifyContent="center"
-              backgroundColor={recordingState === 'recording' ? bondfireColors.error : 'transparent'}
+              backgroundColor={
+                recordingState === 'recording' ? bondfireColors.error : 'transparent'
+              }
             >
               <YStack
                 width={recordingState === 'recording' ? 30 : 60}
                 height={recordingState === 'recording' ? 30 : 60}
                 borderRadius={recordingState === 'recording' ? 6 : 30}
-                backgroundColor={recordingState === 'recording' ? bondfireColors.whiteSmoke : bondfireColors.bondfireCopper}
+                backgroundColor={
+                  recordingState === 'recording'
+                    ? bondfireColors.whiteSmoke
+                    : bondfireColors.bondfireCopper
+                }
               />
             </YStack>
           </Pressable>

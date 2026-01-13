@@ -195,7 +195,13 @@ export function usePushNotifications(
       responseListener.current?.remove()
       appStateSubscription.remove()
     }
-  }, [expoPushToken, getExpoPushToken, onNotificationReceived, onNotificationResponse, registerWithBackend])
+  }, [
+    expoPushToken,
+    getExpoPushToken,
+    onNotificationReceived,
+    onNotificationResponse,
+    registerWithBackend,
+  ])
 
   // Check initial permission status on mount
   useEffect(() => {

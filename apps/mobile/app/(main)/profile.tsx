@@ -1,8 +1,19 @@
 import { appActions, usePreferences } from '@bondfires/app'
-import { Button, Card, Input, Text } from '@bondfires/ui'
 import { bondfireColors } from '@bondfires/config'
+import { Button, Card, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
-import { Edit3, LogOut, Settings, Flame, Eye, MessageCircle, User, Bell, Play, Video } from '@tamagui/lucide-icons'
+import {
+  Bell,
+  Edit3,
+  Eye,
+  Flame,
+  LogOut,
+  MessageCircle,
+  Play,
+  Settings,
+  User,
+  Video,
+} from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useState } from 'react'
@@ -63,7 +74,12 @@ export default function ProfileScreen() {
 
   if (!currentUser) {
     return (
-      <YStack flex={1} backgroundColor={bondfireColors.obsidian} alignItems="center" justifyContent="center">
+      <YStack
+        flex={1}
+        backgroundColor={bondfireColors.obsidian}
+        alignItems="center"
+        justifyContent="center"
+      >
         <Spinner size="large" color={bondfireColors.bondfireCopper} />
       </YStack>
     )
@@ -240,7 +256,11 @@ export default function ProfileScreen() {
                 >
                   <Switch.Thumb
                     animation="quick"
-                    backgroundColor={preferences.autoplayVideos ? bondfireColors.bondfireCopper : bondfireColors.ash}
+                    backgroundColor={
+                      preferences.autoplayVideos
+                        ? bondfireColors.bondfireCopper
+                        : bondfireColors.ash
+                    }
                   />
                 </Switch>
               </XStack>
@@ -266,7 +286,11 @@ export default function ProfileScreen() {
                 >
                   <Switch.Thumb
                     animation="quick"
-                    backgroundColor={preferences.notificationsEnabled ? bondfireColors.bondfireCopper : bondfireColors.ash}
+                    backgroundColor={
+                      preferences.notificationsEnabled
+                        ? bondfireColors.bondfireCopper
+                        : bondfireColors.ash
+                    }
                   />
                 </Switch>
               </XStack>
@@ -337,7 +361,12 @@ export default function ProfileScreen() {
         dismissOnSnapToBottom
       >
         <Sheet.Overlay backgroundColor="rgba(0,0,0,0.6)" />
-        <Sheet.Frame padding={20} backgroundColor={bondfireColors.gunmetal} borderTopLeftRadius={24} borderTopRightRadius={24}>
+        <Sheet.Frame
+          padding={20}
+          backgroundColor={bondfireColors.gunmetal}
+          borderTopLeftRadius={24}
+          borderTopRightRadius={24}
+        >
           <Sheet.Handle backgroundColor={bondfireColors.iron} />
           <YStack gap={20} marginTop={16}>
             <Text fontSize={20} fontWeight="700">
@@ -352,10 +381,21 @@ export default function ProfileScreen() {
             </YStack>
 
             <XStack gap={12}>
-              <Button variant="outline" flex={1} size="$md" onPress={() => setIsEditSheetOpen(false)}>
+              <Button
+                variant="outline"
+                flex={1}
+                size="$md"
+                onPress={() => setIsEditSheetOpen(false)}
+              >
                 <Text color={bondfireColors.whiteSmoke}>Cancel</Text>
               </Button>
-              <Button variant="primary" flex={1} size="$md" onPress={handleSaveProfile} disabled={isSaving}>
+              <Button
+                variant="primary"
+                flex={1}
+                size="$md"
+                onPress={handleSaveProfile}
+                disabled={isSaving}
+              >
                 {isSaving ? (
                   <Spinner size="small" color={bondfireColors.whiteSmoke} />
                 ) : (

@@ -1,13 +1,13 @@
-import { Button, Text } from '@bondfires/ui'
 import { bondfireColors } from '@bondfires/config'
+import { Button, Text } from '@bondfires/ui'
+import { Eye, Flame, MessageCircle, Play } from '@tamagui/lucide-icons'
 import { useQuery } from 'convex/react'
 import { Image } from 'expo-image'
-import { useRouter } from 'expo-router'
-import { Flame, MessageCircle, Eye, Play } from '@tamagui/lucide-icons'
-import { useCallback, useRef, useState } from 'react'
-import { Dimensions, FlatList, Pressable, StatusBar, ViewToken } from 'react-native'
-import { Spinner, XStack, YStack } from 'tamagui'
 import { LinearGradient } from 'expo-linear-gradient'
+import { useRouter } from 'expo-router'
+import { useCallback, useRef, useState } from 'react'
+import { Dimensions, FlatList, Pressable, StatusBar, type ViewToken } from 'react-native'
+import { Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window')
@@ -57,7 +57,11 @@ function BondfireItem({ bondfire, isActive, onPress, onRespond }: BondfireItemPr
                   alignItems="center"
                   justifyContent="center"
                 >
-                  <Play size={40} color={bondfireColors.whiteSmoke} fill={bondfireColors.whiteSmoke} />
+                  <Play
+                    size={40}
+                    color={bondfireColors.whiteSmoke}
+                    fill={bondfireColors.whiteSmoke}
+                  />
                 </YStack>
               )}
             </YStack>
@@ -77,14 +81,7 @@ function BondfireItem({ bondfire, isActive, onPress, onRespond }: BondfireItemPr
         />
 
         {/* Bottom info section */}
-        <YStack
-          position="absolute"
-          bottom={100}
-          left={0}
-          right={0}
-          paddingHorizontal={20}
-          gap={12}
-        >
+        <YStack position="absolute" bottom={100} left={0} right={0} paddingHorizontal={20} gap={12}>
           {/* Creator info */}
           <XStack alignItems="center" gap={12}>
             <YStack
@@ -127,13 +124,7 @@ function BondfireItem({ bondfire, isActive, onPress, onRespond }: BondfireItemPr
         </YStack>
 
         {/* Right side action buttons */}
-        <YStack
-          position="absolute"
-          right={16}
-          bottom={160}
-          gap={20}
-          alignItems="center"
-        >
+        <YStack position="absolute" right={16} bottom={160} gap={20} alignItems="center">
           <Pressable onPress={onRespond}>
             <YStack alignItems="center" gap={4}>
               <YStack
@@ -263,7 +254,7 @@ export default function FeedScreen() {
   return (
     <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
       <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
-      
+
       <FlatList
         ref={flatListRef}
         data={bondfires}

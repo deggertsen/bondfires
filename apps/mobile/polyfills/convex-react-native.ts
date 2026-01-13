@@ -1,12 +1,12 @@
 /**
  * Convex React Native Polyfill
- * 
+ *
  * Convex checks `typeof window === "undefined"` to detect non-browser environments,
  * but React Native has a `window` object without browser methods like `addEventListener`.
  * This polyfill provides no-op implementations for the methods Convex expects.
- * 
+ *
  * This should be imported BEFORE any Convex imports.
- * 
+ *
  * See: https://github.com/get-convex/convex-backend/issues/74
  */
 

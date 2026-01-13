@@ -1,5 +1,5 @@
 import { bondfireColors } from '@bondfires/config'
-import { Home, Flame, User } from '@tamagui/lucide-icons'
+import { Flame, Home, User } from '@tamagui/lucide-icons'
 import { Tabs } from 'expo-router'
 
 export default function MainLayout() {
