@@ -16,7 +16,7 @@ function generateOTP(): string {
 const ResendOTP = Resend({
   id: 'resend-otp',
   apiKey: process.env.RESEND_API_KEY,
-  from: process.env.EMAIL_FROM ?? 'Bondfires <noreply@bondfires.app>',
+  from: process.env.EMAIL_FROM ?? 'Bondfires <noreply@bondfires.org>',
   maxAge: 15 * 60, // 15 minutes
   // Generate 6-digit numeric OTP instead of long secure token
   generateVerificationToken: generateOTP,
@@ -29,7 +29,7 @@ const ResendOTP = Resend({
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: process.env.EMAIL_FROM ?? 'Bondfires <noreply@bondfires.app>',
+        from: process.env.EMAIL_FROM ?? 'Bondfires <noreply@bondfires.org>',
         to: email,
         subject: '🔥 Verify your Bondfires account',
         html: `
