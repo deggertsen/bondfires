@@ -1,3 +1,6 @@
+// Convex React Native polyfill - MUST be imported before any Convex imports
+import '../polyfills/convex-react-native'
+
 // Import config for TamaguiProvider
 import config from '../tamagui.config'
 
@@ -36,7 +39,19 @@ if (!convexUrl) {
     'EXPO_PUBLIC_CONVEX_URL is not set. Please create a .env.local file in the project root with EXPO_PUBLIC_CONVEX_URL=your-convex-url'
   )
 }
-const convex = new ConvexReactClient(convexUrl)
+
+// Validate URL format - Convex deployment URLs should end with .convex.cloud
+if (convexUrl.endsWith('.convex.site')) {
+  throw new Error(
+    `Invalid Convex URL: ${convexUrl}\nConvex deployment URLs should end with .convex.cloud, not .convex.site\n.convex.site is used for HTTP Actions only. Please update your EXPO_PUBLIC_CONVEX_URL environment variable.`
+  )
+}
+
+// React Native requires unsavedChangesWarning: false to disable browser-specific APIs
+// See: https://docs.convex.dev/quickstart/react-native
+const convex = new ConvexReactClient(convexUrl, {
+  unsavedChangesWarning: false,
+})
 
 function AppContent() {
   const colorScheme = useColorScheme()
@@ -87,7 +102,12 @@ function AppContent() {
 
   useEffect(() => {
     if (pushError) {
-      console.error('Push notification error:', pushError)
+      // Only log push notification errors in production - emulator errors are expected
+      const isEmulatorError = typeof pushError === 'string' && 
+        pushError.includes('physical devices')
+      if (!__DEV__ || !isEmulatorError) {
+        console.error('Push notification error:', pushError)
+      }
     }
   }, [pushError])
 

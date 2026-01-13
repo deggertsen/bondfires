@@ -4,8 +4,9 @@ import {
   cleanupTempVideos,
   processVideo,
 } from '@bondfires/app'
-import { Button, Container, Text } from '@bondfires/ui'
-import { Check, FlipHorizontal, X } from '@tamagui/lucide-icons'
+import { Button, Text } from '@bondfires/ui'
+import { bondfireColors } from '@bondfires/config'
+import { Check, FlipHorizontal, X, Flame } from '@tamagui/lucide-icons'
 import { useAction, useMutation } from 'convex/react'
 import { ResizeMode, Video } from 'expo-av'
 import {
@@ -16,7 +17,7 @@ import {
 } from 'expo-camera'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Alert, Pressable } from 'react-native'
+import { Alert, Pressable, StatusBar } from 'react-native'
 import { Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
@@ -51,7 +52,7 @@ export default function CreateScreen() {
 
   // Recording timer
   useEffect(() => {
-    let interval: NodeJS.Timeout
+    let interval: ReturnType<typeof setInterval> | undefined
 
     if (recordingState === 'recording') {
       interval = setInterval(() => {
@@ -65,7 +66,9 @@ export default function CreateScreen() {
       }, 1000)
     }
 
-    return () => clearInterval(interval)
+    return () => {
+      if (interval) clearInterval(interval)
+    }
   }, [recordingState])
 
   // Cleanup on unmount
@@ -255,27 +258,40 @@ export default function CreateScreen() {
   // Permission denied state
   if (!cameraPermission?.granted || !micPermission?.granted) {
     return (
-      <Container centered padded>
-        <YStack alignItems="center" gap="$4">
-          <Text fontSize={60}>📹</Text>
-          <Text textAlign="center" fontSize="$4">
+      <YStack flex={1} backgroundColor={bondfireColors.obsidian} alignItems="center" justifyContent="center" paddingHorizontal={24}>
+        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+        <YStack alignItems="center" gap={24}>
+          <YStack
+            width={100}
+            height={100}
+            borderRadius={50}
+            backgroundColor={bondfireColors.gunmetal}
+            alignItems="center"
+            justifyContent="center"
+            borderWidth={2}
+            borderColor={bondfireColors.bondfireCopper}
+          >
+            <Flame size={50} color={bondfireColors.bondfireCopper} />
+          </YStack>
+          <Text fontSize={20} fontWeight="600" textAlign="center">
             Camera and microphone access required
           </Text>
-          <Text textAlign="center" color="$gray11">
+          <Text textAlign="center" color={bondfireColors.ash}>
             We need access to your camera and microphone to record videos.
           </Text>
-          <Button variant="primary" size="lg" onPress={requestPermissions}>
+          <Button variant="primary" size="$lg" onPress={requestPermissions}>
             Grant Permissions
           </Button>
         </YStack>
-      </Container>
+      </YStack>
     )
   }
 
   // Preview recorded video
   if (recordingState === 'preview' && videoUri) {
     return (
-      <YStack flex={1} backgroundColor="black">
+      <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
+        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
         <Video
           source={{ uri: videoUri }}
           style={{ flex: 1 }}
@@ -290,34 +306,40 @@ export default function CreateScreen() {
           left={0}
           right={0}
           justifyContent="center"
-          gap="$6"
-          paddingHorizontal="$4"
+          gap={40}
+          paddingHorizontal={24}
         >
-          <Button
-            variant="outline"
-            size="lg"
-            circular
-            width={70}
-            height={70}
-            onPress={discardRecording}
-          >
-            <X size={32} color="white" />
-          </Button>
+          <Pressable onPress={discardRecording}>
+            <YStack
+              width={70}
+              height={70}
+              borderRadius={35}
+              backgroundColor="rgba(31, 32, 35, 0.8)"
+              borderWidth={2}
+              borderColor={bondfireColors.iron}
+              alignItems="center"
+              justifyContent="center"
+            >
+              <X size={32} color={bondfireColors.whiteSmoke} />
+            </YStack>
+          </Pressable>
 
-          <Button
-            variant="primary"
-            size="lg"
-            circular
-            width={70}
-            height={70}
-            onPress={processAndUpload}
-          >
-            <Check size={32} color="white" />
-          </Button>
+          <Pressable onPress={processAndUpload}>
+            <YStack
+              width={70}
+              height={70}
+              borderRadius={35}
+              backgroundColor={bondfireColors.bondfireCopper}
+              alignItems="center"
+              justifyContent="center"
+            >
+              <Check size={32} color={bondfireColors.whiteSmoke} />
+            </YStack>
+          </Pressable>
         </XStack>
 
         <YStack position="absolute" bottom={140} left={0} right={0} alignItems="center">
-          <Text color="rgba(255,255,255,0.7)" fontSize="$2">
+          <Text color={bondfireColors.ash} fontSize={14}>
             Tap ✓ to compress & upload
           </Text>
         </YStack>
@@ -328,29 +350,30 @@ export default function CreateScreen() {
   // Processing state
   if (recordingState === 'processing') {
     return (
-      <Container centered>
-        <YStack alignItems="center" gap="$4">
-          <Spinner size="large" color="$orange10" />
-          <Text fontSize="$4" fontWeight="600">
+      <YStack flex={1} backgroundColor={bondfireColors.obsidian} alignItems="center" justifyContent="center">
+        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+        <YStack alignItems="center" gap={20}>
+          <Spinner size="large" color={bondfireColors.bondfireCopper} />
+          <Text fontSize={20} fontWeight="600">
             Processing Video
           </Text>
-          <Text color="$gray11" fontSize="$2">
+          <Text color={bondfireColors.ash} fontSize={14}>
             {progressStage}
           </Text>
-          <YStack width={200} height={8} backgroundColor="$gray4" borderRadius={4}>
+          <YStack width={200} height={6} backgroundColor={bondfireColors.iron} borderRadius={3}>
             <YStack
-              height={8}
-              backgroundColor="$orange10"
-              borderRadius={4}
+              height={6}
+              backgroundColor={bondfireColors.bondfireCopper}
+              borderRadius={3}
               width={`${progress}%`}
             />
           </YStack>
-          <Text color="$gray11">{Math.round(progress)}%</Text>
+          <Text color={bondfireColors.ash}>{Math.round(progress)}%</Text>
 
           <Button
             variant="ghost"
-            size="sm"
-            marginTop="$4"
+            size="$sm"
+            marginTop={16}
             onPress={() => {
               cancelProcessing()
               setRecordingState('preview')
@@ -359,73 +382,101 @@ export default function CreateScreen() {
             Cancel
           </Button>
         </YStack>
-      </Container>
+      </YStack>
     )
   }
 
   // Uploading state
   if (recordingState === 'uploading') {
     return (
-      <Container centered>
-        <YStack alignItems="center" gap="$4">
-          <Spinner size="large" color="$orange10" />
-          <Text fontSize="$4" fontWeight="600">
+      <YStack flex={1} backgroundColor={bondfireColors.obsidian} alignItems="center" justifyContent="center">
+        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+        <YStack alignItems="center" gap={20}>
+          <Spinner size="large" color={bondfireColors.success} />
+          <Text fontSize={20} fontWeight="600">
             Uploading
           </Text>
-          <Text color="$gray11" fontSize="$2">
+          <Text color={bondfireColors.ash} fontSize={14}>
             {progressStage}
           </Text>
-          <YStack width={200} height={8} backgroundColor="$gray4" borderRadius={4}>
-            <YStack height={8} backgroundColor="$green10" borderRadius={4} width={`${progress}%`} />
+          <YStack width={200} height={6} backgroundColor={bondfireColors.iron} borderRadius={3}>
+            <YStack
+              height={6}
+              backgroundColor={bondfireColors.success}
+              borderRadius={3}
+              width={`${progress}%`}
+            />
           </YStack>
-          <Text color="$gray11">{Math.round(progress)}%</Text>
+          <Text color={bondfireColors.ash}>{Math.round(progress)}%</Text>
         </YStack>
-      </Container>
+      </YStack>
     )
   }
 
   // Camera view
   return (
-    <YStack flex={1} backgroundColor="black">
+    <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       <CameraView ref={cameraRef} style={{ flex: 1 }} facing={facing} mode="video">
         {/* Header */}
         <XStack
-          paddingTop="$8"
-          paddingHorizontal="$4"
+          paddingTop={60}
+          paddingHorizontal={20}
           justifyContent="space-between"
           alignItems="center"
         >
-          <Button variant="ghost" size="sm" onPress={() => router.back()}>
-            <X size={24} color="white" />
-          </Button>
+          <Pressable onPress={() => router.back()}>
+            <YStack
+              width={40}
+              height={40}
+              borderRadius={20}
+              backgroundColor="rgba(31, 32, 35, 0.7)"
+              alignItems="center"
+              justifyContent="center"
+            >
+              <X size={24} color={bondfireColors.whiteSmoke} />
+            </YStack>
+          </Pressable>
 
           {recordingState === 'recording' && (
             <YStack
-              backgroundColor="$red10"
-              paddingHorizontal="$3"
-              paddingVertical="$1"
-              borderRadius="$2"
+              backgroundColor={bondfireColors.error}
+              paddingHorizontal={16}
+              paddingVertical={6}
+              borderRadius={16}
             >
-              <Text color="white" fontWeight="600">
+              <Text color={bondfireColors.whiteSmoke} fontWeight="700" fontSize={14}>
                 {Math.floor(recordingDuration / 60)}:
                 {(recordingDuration % 60).toString().padStart(2, '0')}
               </Text>
             </YStack>
           )}
 
-          <Button variant="ghost" size="sm" onPress={toggleFacing}>
-            <FlipHorizontal size={24} color="white" />
-          </Button>
+          <Pressable onPress={toggleFacing}>
+            <YStack
+              width={40}
+              height={40}
+              borderRadius={20}
+              backgroundColor="rgba(31, 32, 35, 0.7)"
+              alignItems="center"
+              justifyContent="center"
+            >
+              <FlipHorizontal size={22} color={bondfireColors.whiteSmoke} />
+            </YStack>
+          </Pressable>
         </XStack>
 
         {/* Title */}
         <YStack flex={1} justifyContent="center" alignItems="center">
           {recordingState === 'idle' && (
-            <YStack alignItems="center" gap="$2">
-              <Text color="white" fontSize="$5" fontWeight="600">
-                {respondTo ? 'Add Your Response' : 'Spark a Bondfire'}
-              </Text>
-              <Text color="rgba(255,255,255,0.7)" fontSize="$2">
+            <YStack alignItems="center" gap={12}>
+              <XStack alignItems="center" gap={8}>
+                <Flame size={28} color={bondfireColors.bondfireCopper} />
+                <Text color={bondfireColors.whiteSmoke} fontSize={22} fontWeight="700">
+                  {respondTo ? 'Add Your Response' : 'Spark a Bondfire'}
+                </Text>
+              </XStack>
+              <Text color={bondfireColors.ash} fontSize={14}>
                 Hold the button to record
               </Text>
             </YStack>
@@ -433,28 +484,28 @@ export default function CreateScreen() {
         </YStack>
 
         {/* Record button */}
-        <YStack paddingBottom="$10" alignItems="center">
+        <YStack paddingBottom={40} alignItems="center">
           <Pressable onPressIn={startRecording} onPressOut={stopRecording}>
             <YStack
               width={80}
               height={80}
               borderRadius={40}
               borderWidth={4}
-              borderColor="white"
+              borderColor={bondfireColors.whiteSmoke}
               alignItems="center"
               justifyContent="center"
-              backgroundColor={recordingState === 'recording' ? '$red10' : 'transparent'}
+              backgroundColor={recordingState === 'recording' ? bondfireColors.error : 'transparent'}
             >
               <YStack
                 width={recordingState === 'recording' ? 30 : 60}
                 height={recordingState === 'recording' ? 30 : 60}
-                borderRadius={recordingState === 'recording' ? 4 : 30}
-                backgroundColor={recordingState === 'recording' ? 'white' : '$red10'}
+                borderRadius={recordingState === 'recording' ? 6 : 30}
+                backgroundColor={recordingState === 'recording' ? bondfireColors.whiteSmoke : bondfireColors.bondfireCopper}
               />
             </YStack>
           </Pressable>
 
-          <Text color="rgba(255,255,255,0.7)" fontSize="$2" marginTop="$2">
+          <Text color={bondfireColors.ash} fontSize={13} marginTop={12}>
             Max {MAX_DURATION} seconds
           </Text>
         </YStack>
