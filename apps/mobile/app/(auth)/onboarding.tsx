@@ -1,6 +1,6 @@
 import { appActions } from '@bondfires/app'
-import { Button, Text } from '@bondfires/ui'
 import { bondfireColors } from '@bondfires/config'
+import { Button, Text } from '@bondfires/ui'
 import { Flame } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
 import { StatusBar } from 'react-native'

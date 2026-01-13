@@ -1,9 +1,5 @@
 import { File } from 'expo-file-system'
-import {
-  Video,
-  getVideoMetaData,
-  createVideoThumbnail,
-} from 'react-native-compressor'
+import { Video, createVideoThumbnail, getVideoMetaData } from 'react-native-compressor'
 
 export interface VideoMetadata {
   width: number
@@ -55,14 +51,18 @@ async function compressVideo(
   quality: 'high' | 'medium' | 'low',
   onProgress?: (percentage: number) => void,
 ): Promise<string> {
-  const result = await Video.compress(inputUri, {
-    compressionMethod: 'auto',
-    maxSize: quality === 'high' ? 1280 : 640,
-    minimumFileSizeForCompress: 0,
-    progressDivider: 10,
-  }, (progress: number) => {
-    onProgress?.(progress * 100)
-  })
+  const result = await Video.compress(
+    inputUri,
+    {
+      compressionMethod: 'auto',
+      maxSize: quality === 'high' ? 1280 : 640,
+      minimumFileSizeForCompress: 0,
+      progressDivider: 10,
+    },
+    (progress: number) => {
+      onProgress?.(progress * 100)
+    },
+  )
 
   return result
 }
@@ -104,7 +104,7 @@ export async function processVideo(
 
   // Get compressed file metadata using new File API
   const hdFile = new File(hdUri)
-  const hdSize = hdFile.exists ? hdFile.size ?? 0 : 0
+  const hdSize = hdFile.exists ? (hdFile.size ?? 0) : 0
 
   return {
     hdUri,

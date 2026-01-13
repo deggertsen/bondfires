@@ -1,5 +1,5 @@
-import { Button, Input, Text } from '@bondfires/ui'
 import { bondfireColors } from '@bondfires/config'
+import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { Flame, UserPlus } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
@@ -59,7 +59,13 @@ export default function SignupScreen() {
           contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
           keyboardShouldPersistTaps="handled"
         >
-          <YStack flex={1} justifyContent="center" paddingHorizontal={24} paddingVertical={40} gap={28}>
+          <YStack
+            flex={1}
+            justifyContent="center"
+            paddingHorizontal={24}
+            paddingVertical={40}
+            gap={28}
+          >
             {/* Header */}
             <YStack alignItems="center" gap={16}>
               <YStack

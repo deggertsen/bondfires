@@ -1,6 +1,6 @@
-import { configureObservableSync } from '@legendapp/state/sync'
 import { ObservablePersistMMKV } from '@legendapp/state/persist-plugins/mmkv'
-import { createMMKV, type MMKV } from 'react-native-mmkv'
+import { configureObservableSync } from '@legendapp/state/sync'
+import { type MMKV, createMMKV } from 'react-native-mmkv'
 
 // MMKV instance - created once when first accessed
 let storage: MMKV | null = null

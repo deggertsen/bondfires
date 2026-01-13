@@ -1,10 +1,10 @@
-import { Button, Input, Text } from '@bondfires/ui'
 import { bondfireColors } from '@bondfires/config'
+import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
-import { useQuery } from 'convex/react'
 import { Flame } from '@tamagui/lucide-icons'
+import { useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { KeyboardAvoidingView, Platform, ScrollView, StatusBar } from 'react-native'
 import { Spinner, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
@@ -46,15 +46,20 @@ export default function LoginScreen() {
 
     try {
       const result = await signIn('password', { email, password, flow: 'signIn' })
-      
+
       // Check if verification is required (signingIn: false means email not verified)
-      if (result && typeof result === 'object' && 'signingIn' in result && result.signingIn === false) {
+      if (
+        result &&
+        typeof result === 'object' &&
+        'signingIn' in result &&
+        result.signingIn === false
+      ) {
         // User needs to verify email - a new verification code was sent
         router.replace({ pathname: '/(auth)/verify-email', params: { email } })
         setIsLoading(false)
         return
       }
-      
+
       // Set pending navigation to wait for user data to load
       setPendingNavigation(true)
     } catch (err) {

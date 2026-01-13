@@ -1,7 +1,7 @@
-import { Button, Input, Text } from '@bondfires/ui'
 import { bondfireColors } from '@bondfires/config'
+import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
-import { Mail, CheckCircle } from '@tamagui/lucide-icons'
+import { CheckCircle, Mail } from '@tamagui/lucide-icons'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useState } from 'react'
 import { KeyboardAvoidingView, Platform, StatusBar } from 'react-native'
@@ -11,7 +11,7 @@ export default function VerifyEmailScreen() {
   const router = useRouter()
   const { signIn } = useAuthActions()
   const params = useLocalSearchParams<{ email?: string }>()
-  
+
   const [code, setCode] = useState('')
   const [isVerifying, setIsVerifying] = useState(false)
   const [isResending, setIsResending] = useState(false)
@@ -30,14 +30,14 @@ export default function VerifyEmailScreen() {
     try {
       // Verify the OTP code with email-verification flow
       await signIn('password', {
-        email: params.email,
+        email: params.email ?? '',
         code,
         flow: 'email-verification',
       })
       setSuccess(true)
       // Navigate to feed after successful verification
       router.replace('/(main)/feed')
-    } catch (err) {
+    } catch {
       setError('Invalid or expired code. Please try again.')
     } finally {
       setIsVerifying(false)
@@ -60,7 +60,7 @@ export default function VerifyEmailScreen() {
         flow: 'email-verification',
       })
       setError(null)
-    } catch (err) {
+    } catch {
       setError('Failed to resend code. Please try again.')
     } finally {
       setIsResending(false)
@@ -74,12 +74,7 @@ export default function VerifyEmailScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
       >
-        <YStack
-          flex={1}
-          paddingHorizontal={24}
-          alignItems="center"
-          justifyContent="center"
-        >
+        <YStack flex={1} paddingHorizontal={24} alignItems="center" justifyContent="center">
           <YStack alignItems="center" gap={32} maxWidth={320} width="100%">
             {/* Icon */}
             <YStack
@@ -152,12 +147,7 @@ export default function VerifyEmailScreen() {
                     )}
                   </Button>
 
-                  <Button
-                    variant="ghost"
-                    size="$md"
-                    onPress={handleResend}
-                    disabled={isResending}
-                  >
+                  <Button variant="ghost" size="$md" onPress={handleResend} disabled={isResending}>
                     {isResending ? (
                       <Spinner size="small" color={bondfireColors.ash} />
                     ) : (

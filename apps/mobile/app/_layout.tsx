@@ -15,9 +15,9 @@ import { useColorScheme } from 'react-native'
 import { TamaguiProvider, Theme } from 'tamagui'
 import 'react-native-reanimated'
 
-import { usePushNotifications, mmkvStorage } from '@bondfires/app'
+import { mmkvStorage, usePushNotifications } from '@bondfires/app'
+import type { RelativePathString } from 'expo-router/build/types'
 import { api } from '../../../convex/_generated/api'
-import type { RelativePathString } from 'expo-router/build/types';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -36,14 +36,14 @@ SplashScreen.preventAutoHideAsync()
 const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL
 if (!convexUrl) {
   throw new Error(
-    'EXPO_PUBLIC_CONVEX_URL is not set. Please create a .env.local file in the project root with EXPO_PUBLIC_CONVEX_URL=your-convex-url'
+    'EXPO_PUBLIC_CONVEX_URL is not set. Please create a .env.local file in the project root with EXPO_PUBLIC_CONVEX_URL=your-convex-url',
   )
 }
 
 // Validate URL format - Convex deployment URLs should end with .convex.cloud
 if (convexUrl.endsWith('.convex.site')) {
   throw new Error(
-    `Invalid Convex URL: ${convexUrl}\nConvex deployment URLs should end with .convex.cloud, not .convex.site\n.convex.site is used for HTTP Actions only. Please update your EXPO_PUBLIC_CONVEX_URL environment variable.`
+    `Invalid Convex URL: ${convexUrl}\nConvex deployment URLs should end with .convex.cloud, not .convex.site\n.convex.site is used for HTTP Actions only. Please update your EXPO_PUBLIC_CONVEX_URL environment variable.`,
   )
 }
 
@@ -103,8 +103,8 @@ function AppContent() {
   useEffect(() => {
     if (pushError) {
       // Only log push notification errors in production - emulator errors are expected
-      const isEmulatorError = typeof pushError === 'string' && 
-        pushError.includes('physical devices')
+      const isEmulatorError =
+        typeof pushError === 'string' && pushError.includes('physical devices')
       if (!__DEV__ || !isEmulatorError) {
         console.error('Push notification error:', pushError)
       }

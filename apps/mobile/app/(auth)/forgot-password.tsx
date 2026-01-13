@@ -1,6 +1,6 @@
-import { Button, Input, Text } from '@bondfires/ui'
 import { bondfireColors } from '@bondfires/config'
-import { Mail, ChevronLeft, CheckCircle } from '@tamagui/lucide-icons'
+import { Button, Input, Text } from '@bondfires/ui'
+import { CheckCircle, ChevronLeft, Mail } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
 import { useState } from 'react'
 import { KeyboardAvoidingView, Platform, Pressable, StatusBar } from 'react-native'
@@ -44,7 +44,7 @@ export default function ForgotPasswordScreen() {
         justifyContent="center"
       >
         <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
-        
+
         <YStack alignItems="center" gap={24} maxWidth={320}>
           <YStack
             width={100}
@@ -84,7 +84,7 @@ export default function ForgotPasswordScreen() {
   return (
     <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
       <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
-      
+
       {/* Back button */}
       <YStack paddingTop={60} paddingHorizontal={16}>
         <Pressable onPress={() => router.back()}>

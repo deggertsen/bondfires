@@ -1,6 +1,6 @@
 import { observable } from '@legendapp/state'
-import { configureObservableSync, syncObservable } from '@legendapp/state/sync'
 import { ObservablePersistMMKV } from '@legendapp/state/persist-plugins/mmkv'
+import { configureObservableSync, syncObservable } from '@legendapp/state/sync'
 
 // Configure MMKV as default persistence plugin
 configureObservableSync({
@@ -19,6 +19,7 @@ export interface AppState {
     videoQuality: 'auto' | 'hd' | 'sd'
     autoplayVideos: boolean
     notificationsEnabled: boolean
+    playbackSpeed: number // 1.0 to 2.0
   }
 
   // Auth state (managed by Convex, but cached locally)
@@ -32,6 +33,7 @@ const defaultState: AppState = {
     videoQuality: 'auto',
     autoplayVideos: true,
     notificationsEnabled: true,
+    playbackSpeed: 1.0,
   },
   isAuthenticated: false,
   userId: null,
@@ -63,6 +65,10 @@ export const appActions = {
 
   setNotificationsEnabled: (enabled: boolean) => {
     appStore$.preferences.notificationsEnabled.set(enabled)
+  },
+
+  setPlaybackSpeed: (speed: number) => {
+    appStore$.preferences.playbackSpeed.set(speed)
   },
 
   setAuth: (userId: string | null) => {
