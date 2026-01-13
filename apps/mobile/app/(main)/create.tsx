@@ -477,7 +477,7 @@ export default function CreateScreen() {
                 </Text>
               </XStack>
               <Text color={bondfireColors.ash} fontSize={14}>
-                Hold the button to record
+                Tap to start recording
               </Text>
             </YStack>
           )}
@@ -485,7 +485,7 @@ export default function CreateScreen() {
 
         {/* Record button */}
         <YStack paddingBottom={40} alignItems="center">
-          <Pressable onPressIn={startRecording} onPressOut={stopRecording}>
+          <Pressable onPress={recordingState === 'recording' ? stopRecording : startRecording}>
             <YStack
               width={80}
               height={80}
@@ -506,7 +506,7 @@ export default function CreateScreen() {
           </Pressable>
 
           <Text color={bondfireColors.ash} fontSize={13} marginTop={12}>
-            Max {MAX_DURATION} seconds
+            {recordingState === 'recording' ? 'Tap to stop' : `Max ${MAX_DURATION} seconds`}
           </Text>
         </YStack>
       </CameraView>

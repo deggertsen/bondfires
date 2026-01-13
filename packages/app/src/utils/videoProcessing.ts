@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system'
+import { File } from 'expo-file-system'
 import {
   Video,
   getVideoMetaData,
@@ -102,8 +102,9 @@ export async function processVideo(
   const thumbnailUri = await extractThumbnail(inputUri)
   onProgress?.({ percentage: 100, stage: 'thumbnail' })
 
-  // Get compressed file metadata
-  const hdInfo = await FileSystem.getInfoAsync(hdUri)
+  // Get compressed file metadata using new File API
+  const hdFile = new File(hdUri)
+  const hdSize = hdFile.exists ? hdFile.size ?? 0 : 0
 
   return {
     hdUri,
@@ -111,7 +112,7 @@ export async function processVideo(
     thumbnailUri,
     metadata: {
       ...metadata,
-      size: hdInfo.exists && 'size' in hdInfo ? (hdInfo.size as number) : 0,
+      size: hdSize,
     },
   }
 }
@@ -123,9 +124,9 @@ export async function cleanupTempVideos(uris: string[]): Promise<void> {
   await Promise.all(
     uris.map(async (uri) => {
       try {
-        const info = await FileSystem.getInfoAsync(uri)
-        if (info.exists) {
-          await FileSystem.deleteAsync(uri, { idempotent: true })
+        const file = new File(uri)
+        if (file.exists) {
+          file.delete()
         }
       } catch (e) {
         console.error('Failed to delete temp file:', uri, e)
