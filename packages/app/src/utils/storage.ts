@@ -1,29 +1,14 @@
 import { configureObservableSync } from '@legendapp/state/sync'
 import { ObservablePersistMMKV } from '@legendapp/state/persist-plugins/mmkv'
+import { createMMKV, type MMKV } from 'react-native-mmkv'
 
-// Interface matching react-native-mmkv's MMKV class
-interface MMKVStorage {
-  set(key: string, value: string | number | boolean): void
-  getString(key: string): string | undefined
-  getNumber(key: string): number | undefined
-  getBoolean(key: string): boolean | undefined
-  delete(key: string): void
-  clearAll(): void
-  contains(key: string): boolean
-  getAllKeys(): string[]
-}
+// MMKV instance - created once when first accessed
+let storage: MMKV | null = null
 
-// MMKV instance will be created lazily when running in React Native
-let storage: MMKVStorage | null = null
-
-function getStorage(): MMKVStorage {
+function getStorage(): MMKV {
   if (!storage) {
-    // Dynamic require to avoid issues during type checking
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { MMKV } = require('react-native-mmkv') as {
-      MMKV: new (config: { id: string }) => MMKVStorage
-    }
-    storage = new MMKV({ id: 'bondfires-storage' })
+    // MMKV v4 uses createMMKV() factory function instead of new MMKV()
+    storage = createMMKV({ id: 'bondfires-storage' })
   }
   return storage
 }
@@ -46,7 +31,8 @@ export const mmkvStorage = {
     return getStorage().getString(key) ?? null
   },
   removeItem: (key: string) => {
-    getStorage().delete(key)
+    // MMKV v4 uses remove() instead of delete()
+    getStorage().remove(key)
   },
   clear: () => {
     getStorage().clearAll()

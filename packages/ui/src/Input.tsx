@@ -1,74 +1,80 @@
 import { type GetProps, Input as TamaguiInput, TextArea as TamaguiTextArea, styled } from 'tamagui'
+import { bondfireColors } from '@bondfires/config'
 
 export const Input = styled(TamaguiInput, {
   name: 'Input',
   fontFamily: '$body',
-  backgroundColor: '$background',
+  // Bondfire styling - gunmetal background with iron border
+  backgroundColor: bondfireColors.gunmetal,
+  color: bondfireColors.whiteSmoke,
+  placeholderTextColor: bondfireColors.ash,
   borderWidth: 1,
-  borderColor: '$borderColor',
-  borderRadius: '$3',
-  paddingHorizontal: '$3',
+  borderColor: bondfireColors.iron,
+  borderRadius: 12,
+  paddingHorizontal: 16,
   height: 44,
 
   focusStyle: {
-    borderColor: '$orange8',
-    outlineColor: '$orange8',
-    outlineWidth: 2,
-    outlineStyle: 'solid',
+    borderColor: bondfireColors.bondfireCopper,
+    borderWidth: 2,
   },
 
   variants: {
     error: {
       true: {
-        borderColor: '$red10',
+        borderColor: bondfireColors.error,
         focusStyle: {
-          borderColor: '$red10',
-          outlineColor: '$red8',
+          borderColor: bondfireColors.error,
         },
       },
     },
+    // Use $-prefixed size tokens to match Tamagui's token format
     size: {
-      sm: {
+      '$sm': {
         height: 36,
-        fontSize: '$2',
+        fontSize: 14,
+        paddingHorizontal: 12,
       },
-      md: {
+      '$md': {
         height: 44,
-        fontSize: '$3',
+        fontSize: 15,
+        paddingHorizontal: 16,
       },
-      lg: {
+      '$lg': {
         height: 52,
-        fontSize: '$4',
+        fontSize: 16,
+        paddingHorizontal: 20,
       },
     },
   } as const,
 
   defaultVariants: {
-    size: 'md',
+    size: '$md',
   },
 })
 
 export const TextArea = styled(TamaguiTextArea, {
   name: 'TextArea',
   fontFamily: '$body',
-  backgroundColor: '$background',
+  // Bondfire styling
+  backgroundColor: bondfireColors.gunmetal,
+  color: bondfireColors.whiteSmoke,
+  placeholderTextColor: bondfireColors.ash,
   borderWidth: 1,
-  borderColor: '$borderColor',
-  borderRadius: '$3',
-  padding: '$3',
+  borderColor: bondfireColors.iron,
+  borderRadius: 12,
+  padding: 16,
   minHeight: 100,
 
   focusStyle: {
-    borderColor: '$orange8',
-    outlineColor: '$orange8',
-    outlineWidth: 2,
-    outlineStyle: 'solid',
+    borderColor: bondfireColors.bondfireCopper,
+    borderWidth: 2,
   },
 
   variants: {
     error: {
       true: {
-        borderColor: '$red10',
+        borderColor: bondfireColors.error,
       },
     },
   } as const,

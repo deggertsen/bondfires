@@ -11,6 +11,7 @@ export default defineSchema({
     // Auth fields (managed by @convex-dev/auth)
     email: v.optional(v.string()),
     emailVerified: v.optional(v.boolean()),
+    emailVerificationTime: v.optional(v.number()), // Timestamp when email was verified
 
     // Profile fields
     name: v.optional(v.string()),
@@ -25,7 +26,7 @@ export default defineSchema({
     // Metadata
     createdAt: v.optional(v.number()),
     updatedAt: v.optional(v.number()),
-  }).index('by_email', ['email']),
+  }).index('email', ['email']), // Required by @convex-dev/auth (must be named exactly 'email')
 
   // Bondfires - main video posts
   bondfires: defineTable({

@@ -1,76 +1,113 @@
 import { type GetProps, Button as TamaguiButton, styled } from 'tamagui'
+import { bondfireColors } from '@bondfires/config'
 
 export const Button = styled(TamaguiButton, {
   name: 'Button',
-  fontFamily: '$body',
+  // Disable TamaguiButton's default size-to-font mapping to prevent warnings
+  unstyled: true,
+  // Base button styles matching Flutter FilledButton
+  alignItems: 'center',
+  justifyContent: 'center',
+  flexDirection: 'row',
+  borderRadius: 24,
+  cursor: 'pointer',
+  fontWeight: '600',
 
   variants: {
     variant: {
       primary: {
-        backgroundColor: '$orange10',
-        color: '$white',
+        backgroundColor: bondfireColors.bondfireCopper,
+        color: bondfireColors.whiteSmoke,
         hoverStyle: {
-          backgroundColor: '$orange11',
+          backgroundColor: bondfireColors.moltenGold,
         },
         pressStyle: {
-          backgroundColor: '$orange9',
+          backgroundColor: bondfireColors.deepEmber,
+          opacity: 0.9,
         },
       },
       secondary: {
-        backgroundColor: '$gray4',
-        color: '$gray12',
+        backgroundColor: bondfireColors.gunmetal,
+        color: bondfireColors.whiteSmoke,
         hoverStyle: {
-          backgroundColor: '$gray5',
+          backgroundColor: bondfireColors.iron,
         },
         pressStyle: {
-          backgroundColor: '$gray3',
+          backgroundColor: bondfireColors.charcoal,
+          opacity: 0.9,
         },
       },
       outline: {
         backgroundColor: 'transparent',
         borderWidth: 1,
-        borderColor: '$gray8',
-        color: '$gray12',
+        borderColor: bondfireColors.iron,
+        color: '$color',
         hoverStyle: {
-          backgroundColor: '$gray2',
+          backgroundColor: bondfireColors.gunmetal,
+          borderColor: bondfireColors.ash,
         },
         pressStyle: {
-          backgroundColor: '$gray3',
+          backgroundColor: bondfireColors.charcoal,
+          borderColor: bondfireColors.bondfireCopper,
         },
       },
       ghost: {
         backgroundColor: 'transparent',
-        color: '$gray12',
+        color: '$color',
         hoverStyle: {
-          backgroundColor: '$gray3',
+          backgroundColor: bondfireColors.gunmetal,
         },
         pressStyle: {
-          backgroundColor: '$gray4',
+          backgroundColor: bondfireColors.iron,
+        },
+      },
+      destructive: {
+        backgroundColor: bondfireColors.error,
+        color: bondfireColors.whiteSmoke,
+        hoverStyle: {
+          backgroundColor: bondfireColors.errorDark,
+        },
+        pressStyle: {
+          backgroundColor: bondfireColors.errorDark,
+          opacity: 0.9,
         },
       },
     },
+    // Use $-prefixed size tokens to match Tamagui's token format
     size: {
-      sm: {
+      '$sm': {
         height: 36,
-        paddingHorizontal: '$3',
-        fontSize: '$2',
+        paddingHorizontal: 16,
+        fontSize: 14,
+        fontFamily: '$body',
+        gap: 6,
       },
-      md: {
+      '$md': {
         height: 44,
-        paddingHorizontal: '$4',
-        fontSize: '$3',
+        paddingHorizontal: 20,
+        fontSize: 15,
+        fontFamily: '$body',
+        gap: 8,
       },
-      lg: {
+      '$lg': {
         height: 52,
-        paddingHorizontal: '$5',
-        fontSize: '$4',
+        paddingHorizontal: 24,
+        fontSize: 16,
+        fontFamily: '$body',
+        gap: 10,
+      },
+    },
+    disabled: {
+      true: {
+        opacity: 0.5,
+        pointerEvents: 'none',
       },
     },
   } as const,
 
   defaultVariants: {
     variant: 'primary',
-    size: 'md',
+    size: '$md',
   },
 })
 

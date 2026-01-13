@@ -1,12 +1,13 @@
 import { appActions, usePreferences } from '@bondfires/app'
-import { Button, Card, Container, Input, Text } from '@bondfires/ui'
+import { Button, Card, Input, Text } from '@bondfires/ui'
+import { bondfireColors } from '@bondfires/config'
 import { useAuthActions } from '@convex-dev/auth/react'
-import { Edit3, LogOut, Settings } from '@tamagui/lucide-icons'
+import { Edit3, LogOut, Settings, Flame, Eye, MessageCircle, User, Bell, Play, Video } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useState } from 'react'
-import { Alert, FlatList } from 'react-native'
-import { Avatar, H1, Separator, Sheet, Spinner, Switch, XStack, YStack } from 'tamagui'
+import { Alert, FlatList, Pressable, StatusBar } from 'react-native'
+import { Avatar, Separator, Sheet, Spinner, Switch, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 
 export default function ProfileScreen() {
@@ -62,9 +63,9 @@ export default function ProfileScreen() {
 
   if (!currentUser) {
     return (
-      <Container centered>
-        <Spinner size="large" color="$orange10" />
-      </Container>
+      <YStack flex={1} backgroundColor={bondfireColors.obsidian} alignItems="center" justifyContent="center">
+        <Spinner size="large" color={bondfireColors.bondfireCopper} />
+      </YStack>
     )
   }
 
@@ -75,71 +76,115 @@ export default function ProfileScreen() {
   }
 
   return (
-    <Container safe>
-      <YStack flex={1} paddingHorizontal="$4">
-        <XStack justifyContent="space-between" alignItems="center" paddingTop="$4">
-          <H1>Profile</H1>
-          <Button variant="ghost" size="sm" onPress={handleLogout}>
-            <LogOut size={20} color="$gray11" />
-          </Button>
-        </XStack>
+    <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
+      <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
 
-        {/* Profile header */}
-        <Card elevated marginTop="$4" padding="$4">
-          <XStack gap="$4" alignItems="center">
+      {/* Header */}
+      <XStack
+        justifyContent="space-between"
+        alignItems="center"
+        paddingTop={60}
+        paddingHorizontal={20}
+        paddingBottom={16}
+      >
+        <Text fontSize={28} fontWeight="700">
+          Profile
+        </Text>
+        <Pressable onPress={handleLogout}>
+          <YStack
+            width={40}
+            height={40}
+            borderRadius={20}
+            backgroundColor={bondfireColors.gunmetal}
+            alignItems="center"
+            justifyContent="center"
+          >
+            <LogOut size={20} color={bondfireColors.ash} />
+          </YStack>
+        </Pressable>
+      </XStack>
+
+      <YStack flex={1} paddingHorizontal={20}>
+        {/* Profile header card */}
+        <Card elevated marginBottom={20}>
+          <XStack gap={16} alignItems="center">
             <Avatar circular size="$8">
               {currentUser.photoUrl ? (
                 <Avatar.Image source={{ uri: currentUser.photoUrl }} />
               ) : (
-                <Avatar.Fallback backgroundColor="$orange10">
-                  <Text color="$white" fontSize="$6" fontWeight="bold">
-                    {(currentUser.displayName ?? currentUser.name ?? 'U')[0].toUpperCase()}
-                  </Text>
+                <Avatar.Fallback
+                  backgroundColor={bondfireColors.gunmetal}
+                  borderWidth={2}
+                  borderColor={bondfireColors.bondfireCopper}
+                >
+                  <User size={32} color={bondfireColors.bondfireCopper} />
                 </Avatar.Fallback>
               )}
             </Avatar>
 
             <YStack flex={1}>
-              <Text fontWeight="bold" fontSize="$5">
+              <Text fontWeight="700" fontSize={18}>
                 {currentUser.displayName ?? currentUser.name ?? 'User'}
               </Text>
-              <Text color="$gray11" fontSize="$2">
+              <Text color={bondfireColors.ash} fontSize={14}>
                 {currentUser.email}
               </Text>
             </YStack>
 
-            <Button variant="outline" size="sm" onPress={handleEditProfile}>
-              <Edit3 size={16} />
-            </Button>
+            <Pressable onPress={handleEditProfile}>
+              <YStack
+                width={40}
+                height={40}
+                borderRadius={20}
+                backgroundColor={bondfireColors.iron}
+                alignItems="center"
+                justifyContent="center"
+              >
+                <Edit3 size={18} color={bondfireColors.whiteSmoke} />
+              </YStack>
+            </Pressable>
           </XStack>
         </Card>
 
         {/* Stats */}
-        <Card marginTop="$4">
-          <XStack justifyContent="space-around" paddingVertical="$3">
-            <YStack alignItems="center">
-              <Text fontSize="$7" fontWeight="bold" color="$orange10">
-                {stats.bondfireCount}
-              </Text>
-              <Text color="$gray11" fontSize="$2">
+        <Card marginBottom={24}>
+          <XStack justifyContent="space-around" paddingVertical={8}>
+            <YStack alignItems="center" gap={4}>
+              <XStack alignItems="center" gap={6}>
+                <Flame size={20} color={bondfireColors.bondfireCopper} />
+                <Text fontSize={24} fontWeight="700" color={bondfireColors.bondfireCopper}>
+                  {stats.bondfireCount}
+                </Text>
+              </XStack>
+              <Text color={bondfireColors.ash} fontSize={12}>
                 Bondfires
               </Text>
             </YStack>
-            <Separator vertical />
-            <YStack alignItems="center">
-              <Text fontSize="$7" fontWeight="bold" color="$orange10">
-                {stats.responseCount}
-              </Text>
-              <Text color="$gray11" fontSize="$2">
+
+            <Separator vertical borderColor={bondfireColors.iron} />
+
+            <YStack alignItems="center" gap={4}>
+              <XStack alignItems="center" gap={6}>
+                <MessageCircle size={20} color={bondfireColors.moltenGold} />
+                <Text fontSize={24} fontWeight="700" color={bondfireColors.moltenGold}>
+                  {stats.responseCount}
+                </Text>
+              </XStack>
+              <Text color={bondfireColors.ash} fontSize={12}>
                 Responses
               </Text>
             </YStack>
-            <Separator vertical />
-            <YStack alignItems="center">
-              <Text fontSize="$7" fontWeight="bold" color="$orange10">
-                {stats.totalViews}
-              </Text>
-              <Text color="$gray11" fontSize="$2">
+
+            <Separator vertical borderColor={bondfireColors.iron} />
+
+            <YStack alignItems="center" gap={4}>
+              <XStack alignItems="center" gap={6}>
+                <Eye size={20} color={bondfireColors.whiteSmoke} />
+                <Text fontSize={24} fontWeight="700" color={bondfireColors.whiteSmoke}>
+                  {stats.totalViews}
+                </Text>
+              </XStack>
+              <Text color={bondfireColors.ash} fontSize={12}>
                 Views
               </Text>
             </YStack>
@@ -147,56 +192,82 @@ export default function ProfileScreen() {
         </Card>
 
         {/* Settings */}
-        <YStack gap="$3" marginTop="$6">
-          <XStack alignItems="center" gap="$2">
-            <Settings size={18} color="$gray11" />
-            <Text variant="label" color="$gray11">
-              Settings
+        <YStack gap={12} marginBottom={24}>
+          <XStack alignItems="center" gap={8}>
+            <Settings size={18} color={bondfireColors.ash} />
+            <Text variant="label" color={bondfireColors.ash} fontSize={13} fontWeight="600">
+              SETTINGS
             </Text>
           </XStack>
 
           <Card>
-            <YStack gap="$3">
+            <YStack gap={16}>
               <XStack justifyContent="space-between" alignItems="center">
-                <YStack>
-                  <Text fontWeight="500">Video Quality</Text>
-                  <Text fontSize="$2" color="$gray11">
-                    Auto adjusts based on network
-                  </Text>
-                </YStack>
-                <Text color="$orange10" fontWeight="500">
+                <XStack alignItems="center" gap={12}>
+                  <Video size={20} color={bondfireColors.bondfireCopper} />
+                  <YStack>
+                    <Text fontWeight="500" fontSize={15}>
+                      Video Quality
+                    </Text>
+                    <Text fontSize={13} color={bondfireColors.ash}>
+                      Auto adjusts based on network
+                    </Text>
+                  </YStack>
+                </XStack>
+                <Text color={bondfireColors.bondfireCopper} fontWeight="600" fontSize={14}>
                   {preferences.videoQuality.toUpperCase()}
                 </Text>
               </XStack>
 
-              <Separator />
+              <Separator borderColor={bondfireColors.iron} />
 
               <XStack justifyContent="space-between" alignItems="center">
-                <YStack>
-                  <Text fontWeight="500">Autoplay Videos</Text>
-                  <Text fontSize="$2" color="$gray11">
-                    Play videos automatically in feed
-                  </Text>
-                </YStack>
-                <Switch checked={preferences.autoplayVideos} onCheckedChange={setAutoplayVideos}>
-                  <Switch.Thumb animation="quick" />
+                <XStack alignItems="center" gap={12}>
+                  <Play size={20} color={bondfireColors.moltenGold} />
+                  <YStack>
+                    <Text fontWeight="500" fontSize={15}>
+                      Autoplay Videos
+                    </Text>
+                    <Text fontSize={13} color={bondfireColors.ash}>
+                      Play videos automatically in feed
+                    </Text>
+                  </YStack>
+                </XStack>
+                <Switch
+                  checked={preferences.autoplayVideos}
+                  onCheckedChange={setAutoplayVideos}
+                  backgroundColor={bondfireColors.iron}
+                >
+                  <Switch.Thumb
+                    animation="quick"
+                    backgroundColor={preferences.autoplayVideos ? bondfireColors.bondfireCopper : bondfireColors.ash}
+                  />
                 </Switch>
               </XStack>
 
-              <Separator />
+              <Separator borderColor={bondfireColors.iron} />
 
               <XStack justifyContent="space-between" alignItems="center">
-                <YStack>
-                  <Text fontWeight="500">Notifications</Text>
-                  <Text fontSize="$2" color="$gray11">
-                    Get notified of new responses
-                  </Text>
-                </YStack>
+                <XStack alignItems="center" gap={12}>
+                  <Bell size={20} color={bondfireColors.deepEmber} />
+                  <YStack>
+                    <Text fontWeight="500" fontSize={15}>
+                      Notifications
+                    </Text>
+                    <Text fontSize={13} color={bondfireColors.ash}>
+                      Get notified of new responses
+                    </Text>
+                  </YStack>
+                </XStack>
                 <Switch
                   checked={preferences.notificationsEnabled}
                   onCheckedChange={setNotificationsEnabled}
+                  backgroundColor={bondfireColors.iron}
                 >
-                  <Switch.Thumb animation="quick" />
+                  <Switch.Thumb
+                    animation="quick"
+                    backgroundColor={preferences.notificationsEnabled ? bondfireColors.bondfireCopper : bondfireColors.ash}
+                  />
                 </Switch>
               </XStack>
             </YStack>
@@ -205,10 +276,13 @@ export default function ProfileScreen() {
 
         {/* User's Bondfires */}
         {userBondfires && userBondfires.length > 0 && (
-          <YStack gap="$3" marginTop="$6" flex={1}>
-            <Text variant="label" color="$gray11">
-              Your Bondfires
-            </Text>
+          <YStack gap={12} flex={1}>
+            <XStack alignItems="center" gap={8}>
+              <Flame size={18} color={bondfireColors.ash} />
+              <Text variant="label" color={bondfireColors.ash} fontSize={13} fontWeight="600">
+                YOUR BONDFIRES
+              </Text>
+            </XStack>
 
             <FlatList
               data={userBondfires}
@@ -216,32 +290,39 @@ export default function ProfileScreen() {
               horizontal
               showsHorizontalScrollIndicator={false}
               renderItem={({ item }) => (
-                <Card
-                  width={150}
-                  height={200}
-                  marginRight="$3"
-                  padding={0}
-                  overflow="hidden"
-                  interactive
-                  onPress={() => router.push(`/(main)/bondfire/${item._id}`)}
-                >
-                  <YStack
-                    flex={1}
-                    backgroundColor="$gray3"
-                    alignItems="center"
-                    justifyContent="center"
+                <Pressable onPress={() => router.push(`/(main)/bondfire/${item._id}`)}>
+                  <Card
+                    width={140}
+                    height={180}
+                    marginRight={12}
+                    padding={0}
+                    overflow="hidden"
+                    interactive
                   >
-                    <Text fontSize={40}>🔥</Text>
-                  </YStack>
-                  <YStack padding="$2">
-                    <Text fontSize="$2" numberOfLines={1}>
-                      {item.videoCount} videos
-                    </Text>
-                    <Text fontSize="$1" color="$gray11">
-                      {item.viewCount ?? 0} views
-                    </Text>
-                  </YStack>
-                </Card>
+                    <YStack
+                      flex={1}
+                      backgroundColor={bondfireColors.charcoal}
+                      alignItems="center"
+                      justifyContent="center"
+                    >
+                      <Flame size={40} color={bondfireColors.bondfireCopper} />
+                    </YStack>
+                    <YStack padding={12} gap={4} backgroundColor={bondfireColors.gunmetal}>
+                      <XStack alignItems="center" gap={6}>
+                        <MessageCircle size={14} color={bondfireColors.ash} />
+                        <Text fontSize={13} color={bondfireColors.whiteSmoke}>
+                          {item.videoCount} videos
+                        </Text>
+                      </XStack>
+                      <XStack alignItems="center" gap={6}>
+                        <Eye size={14} color={bondfireColors.ash} />
+                        <Text fontSize={12} color={bondfireColors.ash}>
+                          {item.viewCount ?? 0} views
+                        </Text>
+                      </XStack>
+                    </YStack>
+                  </Card>
+                </Pressable>
               )}
             />
           </YStack>
@@ -255,30 +336,36 @@ export default function ProfileScreen() {
         snapPoints={[40]}
         dismissOnSnapToBottom
       >
-        <Sheet.Overlay />
-        <Sheet.Frame padding="$4">
-          <Sheet.Handle />
-          <YStack gap="$4" marginTop="$4">
-            <Text fontSize="$5" fontWeight="bold">
+        <Sheet.Overlay backgroundColor="rgba(0,0,0,0.6)" />
+        <Sheet.Frame padding={20} backgroundColor={bondfireColors.gunmetal} borderTopLeftRadius={24} borderTopRightRadius={24}>
+          <Sheet.Handle backgroundColor={bondfireColors.iron} />
+          <YStack gap={20} marginTop={16}>
+            <Text fontSize={20} fontWeight="700">
               Edit Profile
             </Text>
 
-            <YStack gap="$2">
-              <Text variant="label">Display Name</Text>
+            <YStack gap={8}>
+              <Text variant="label" color={bondfireColors.whiteSmoke}>
+                Display Name
+              </Text>
               <Input value={editName} onChangeText={setEditName} placeholder="Your name" />
             </YStack>
 
-            <XStack gap="$3">
-              <Button variant="outline" flex={1} onPress={() => setIsEditSheetOpen(false)}>
-                Cancel
+            <XStack gap={12}>
+              <Button variant="outline" flex={1} size="$md" onPress={() => setIsEditSheetOpen(false)}>
+                <Text color={bondfireColors.whiteSmoke}>Cancel</Text>
               </Button>
-              <Button variant="primary" flex={1} onPress={handleSaveProfile} disabled={isSaving}>
-                {isSaving ? <Spinner size="small" /> : 'Save'}
+              <Button variant="primary" flex={1} size="$md" onPress={handleSaveProfile} disabled={isSaving}>
+                {isSaving ? (
+                  <Spinner size="small" color={bondfireColors.whiteSmoke} />
+                ) : (
+                  <Text color={bondfireColors.whiteSmoke}>Save</Text>
+                )}
               </Button>
             </XStack>
           </YStack>
         </Sheet.Frame>
       </Sheet>
-    </Container>
+    </YStack>
   )
 }

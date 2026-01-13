@@ -1932,6 +1932,7 @@ __metadata:
     "@legendapp/state": "npm:^3.0.0-beta.27"
     "@types/react": "npm:^19.1.0"
     convex: "npm:^1.31.3"
+    react-native-mmkv: "npm:^4.1.1"
     typescript: "npm:^5.7.2"
   peerDependencies:
     expo-constants: "*"
@@ -8113,6 +8114,17 @@ __metadata:
   languageName: node
   linkType: hard
 
+"expo-linear-gradient@npm:~15.0.8":
+  version: 15.0.8
+  resolution: "expo-linear-gradient@npm:15.0.8"
+  peerDependencies:
+    expo: "*"
+    react: "*"
+    react-native: "*"
+  checksum: 10c0/2ac3bff62143083e3d5b894fccc4c76de058277f65ed123232636cf26c88da6d566fa3cd46be4101f86e66b89ede7c058e12c93493b752df562da2fa971dcd66
+  languageName: node
+  linkType: hard
+
 "expo-linking@npm:~8.0.11":
   version: 8.0.11
   resolution: "expo-linking@npm:8.0.11"
@@ -10191,6 +10203,7 @@ __metadata:
     expo-file-system: "npm:^19.0.21"
     expo-font: "npm:~14.0.10"
     expo-image: "npm:^3.0.11"
+    expo-linear-gradient: "npm:~15.0.8"
     expo-linking: "npm:~8.0.11"
     expo-notifications: "npm:^0.32.16"
     expo-router: "npm:~6.0.21"

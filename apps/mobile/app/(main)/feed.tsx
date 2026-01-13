@@ -1,85 +1,159 @@
-import { Button, Card, Container, Text } from '@bondfires/ui'
+import { Button, Text } from '@bondfires/ui'
+import { bondfireColors } from '@bondfires/config'
 import { useQuery } from 'convex/react'
 import { Image } from 'expo-image'
 import { useRouter } from 'expo-router'
-import { useCallback } from 'react'
-import { Dimensions, FlatList, RefreshControl } from 'react-native'
-import { H1, Paragraph, Spinner, XStack, YStack } from 'tamagui'
+import { Flame, MessageCircle, Eye, Play } from '@tamagui/lucide-icons'
+import { useCallback, useRef, useState } from 'react'
+import { Dimensions, FlatList, Pressable, StatusBar, ViewToken } from 'react-native'
+import { Spinner, XStack, YStack } from 'tamagui'
+import { LinearGradient } from 'expo-linear-gradient'
 import { api } from '../../../../convex/_generated/api'
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window')
-const CARD_WIDTH = SCREEN_WIDTH - 32 // 16px padding on each side
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window')
+// Account for status bar and tab bar
+const ITEM_HEIGHT = SCREEN_HEIGHT
 
-interface BondfireCardProps {
-  bondfire: {
-    _id: string
-    creatorName?: string
-    videoCount: number
-    viewCount?: number
-    thumbnailKey?: string
-    createdAt: number
-  }
-  onPress: () => void
+interface BondfireData {
+  _id: string
+  creatorName?: string
+  videoCount: number
+  viewCount?: number
+  thumbnailUrl?: string
+  createdAt: number
 }
 
-function BondfireCard({ bondfire, onPress }: BondfireCardProps) {
+interface BondfireItemProps {
+  bondfire: BondfireData
+  isActive: boolean
+  onPress: () => void
+  onRespond: () => void
+}
+
+function BondfireItem({ bondfire, isActive, onPress, onRespond }: BondfireItemProps) {
   const timeAgo = getTimeAgo(bondfire.createdAt)
 
   return (
-    <Card elevated interactive marginBottom="$3" padding={0} overflow="hidden" onPress={onPress}>
-      {/* Thumbnail */}
-      <YStack
-        width={CARD_WIDTH}
-        height={CARD_WIDTH * 0.6}
-        backgroundColor="$gray3"
-        alignItems="center"
-        justifyContent="center"
-      >
-        {bondfire.thumbnailKey ? (
-          <Image
-            source={{ uri: 'placeholder-for-thumbnail' }}
-            style={{ width: '100%', height: '100%' }}
-            contentFit="cover"
-          />
-        ) : (
-          <Text fontSize={60}>🔥</Text>
-        )}
+    <Pressable onPress={onPress} style={{ width: SCREEN_WIDTH, height: ITEM_HEIGHT }}>
+      <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
+        {/* Video/Thumbnail area */}
+        <YStack flex={1} alignItems="center" justifyContent="center">
+          {bondfire.thumbnailUrl ? (
+            <Image
+              source={{ uri: bondfire.thumbnailUrl }}
+              style={{ width: '100%', height: '100%' }}
+              contentFit="cover"
+            />
+          ) : (
+            <YStack flex={1} alignItems="center" justifyContent="center">
+              <Flame size={120} color={bondfireColors.bondfireCopper} />
+              {isActive && (
+                <YStack
+                  position="absolute"
+                  width={80}
+                  height={80}
+                  borderRadius={40}
+                  backgroundColor="rgba(217, 119, 54, 0.3)"
+                  alignItems="center"
+                  justifyContent="center"
+                >
+                  <Play size={40} color={bondfireColors.whiteSmoke} fill={bondfireColors.whiteSmoke} />
+                </YStack>
+              )}
+            </YStack>
+          )}
+        </YStack>
 
-        {/* Video count badge */}
+        {/* Bottom gradient overlay */}
+        <LinearGradient
+          colors={['transparent', 'rgba(20, 20, 22, 0.8)', bondfireColors.obsidian]}
+          style={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: 250,
+          }}
+        />
+
+        {/* Bottom info section */}
         <YStack
           position="absolute"
-          top="$2"
-          right="$2"
-          backgroundColor="$background"
-          paddingHorizontal="$2"
-          paddingVertical="$1"
-          borderRadius="$2"
-          opacity={0.9}
+          bottom={100}
+          left={0}
+          right={0}
+          paddingHorizontal={20}
+          gap={12}
         >
-          <Text fontSize="$2" fontWeight="600">
-            {bondfire.videoCount} {bondfire.videoCount === 1 ? 'video' : 'videos'}
-          </Text>
+          {/* Creator info */}
+          <XStack alignItems="center" gap={12}>
+            <YStack
+              width={48}
+              height={48}
+              borderRadius={24}
+              backgroundColor={bondfireColors.gunmetal}
+              alignItems="center"
+              justifyContent="center"
+              borderWidth={2}
+              borderColor={bondfireColors.bondfireCopper}
+            >
+              <Text fontSize={20}>🔥</Text>
+            </YStack>
+            <YStack>
+              <Text fontWeight="700" fontSize={16}>
+                {bondfire.creatorName ?? 'Anonymous'}
+              </Text>
+              <Text fontSize={13} color={bondfireColors.ash}>
+                {timeAgo}
+              </Text>
+            </YStack>
+          </XStack>
+
+          {/* Stats row */}
+          <XStack gap={20}>
+            <XStack alignItems="center" gap={6}>
+              <Eye size={18} color={bondfireColors.ash} />
+              <Text fontSize={14} color={bondfireColors.ash}>
+                {bondfire.viewCount ?? 0}
+              </Text>
+            </XStack>
+            <XStack alignItems="center" gap={6}>
+              <MessageCircle size={18} color={bondfireColors.ash} />
+              <Text fontSize={14} color={bondfireColors.ash}>
+                {bondfire.videoCount} {bondfire.videoCount === 1 ? 'response' : 'responses'}
+              </Text>
+            </XStack>
+          </XStack>
+        </YStack>
+
+        {/* Right side action buttons */}
+        <YStack
+          position="absolute"
+          right={16}
+          bottom={160}
+          gap={20}
+          alignItems="center"
+        >
+          <Pressable onPress={onRespond}>
+            <YStack alignItems="center" gap={4}>
+              <YStack
+                width={48}
+                height={48}
+                borderRadius={24}
+                backgroundColor={bondfireColors.bondfireCopper}
+                alignItems="center"
+                justifyContent="center"
+              >
+                <Flame size={24} color={bondfireColors.whiteSmoke} />
+              </YStack>
+              <Text fontSize={12} color={bondfireColors.whiteSmoke}>
+                Respond
+              </Text>
+            </YStack>
+          </Pressable>
         </YStack>
       </YStack>
-
-      {/* Info */}
-      <YStack padding="$3" gap="$1">
-        <XStack justifyContent="space-between" alignItems="center">
-          <Text fontWeight="600" fontSize="$4">
-            {bondfire.creatorName ?? 'Anonymous'}
-          </Text>
-          <Text fontSize="$2" color="$gray11">
-            {timeAgo}
-          </Text>
-        </XStack>
-
-        <XStack gap="$3">
-          <Text fontSize="$2" color="$gray11">
-            👁 {bondfire.viewCount ?? 0} views
-          </Text>
-        </XStack>
-      </YStack>
-    </Card>
+    </Pressable>
   )
 }
 
@@ -97,28 +171,50 @@ function EmptyFeed() {
   const router = useRouter()
 
   return (
-    <YStack flex={1} alignItems="center" justifyContent="center" paddingVertical="$10" gap="$4">
+    <YStack
+      flex={1}
+      alignItems="center"
+      justifyContent="center"
+      backgroundColor={bondfireColors.obsidian}
+      paddingHorizontal={40}
+    >
       <YStack
-        width={100}
-        height={100}
-        borderRadius={50}
-        backgroundColor="$orange5"
+        width={120}
+        height={120}
+        borderRadius={60}
+        backgroundColor={bondfireColors.gunmetal}
         alignItems="center"
         justifyContent="center"
+        marginBottom={32}
       >
-        <Text fontSize={50}>🔥</Text>
+        <Flame size={60} color={bondfireColors.bondfireCopper} />
       </YStack>
-      <YStack alignItems="center" gap="$2">
-        <Text fontSize="$5" fontWeight="600">
-          No bondfires yet
-        </Text>
-        <Text color="$gray11" textAlign="center">
-          Be the first to spark one!
-        </Text>
-      </YStack>
-      <Button variant="primary" size="md" onPress={() => router.push('/(main)/create')}>
+      <Text fontSize={24} fontWeight="700" marginBottom={12} textAlign="center">
         Spark a Bondfire
+      </Text>
+      <Text fontSize={16} color={bondfireColors.ash} textAlign="center" marginBottom={32}>
+        Be the first to share a video!
+      </Text>
+      <Button variant="primary" size="$lg" onPress={() => router.push('/(main)/create')}>
+        <Flame size={20} color={bondfireColors.whiteSmoke} />
+        <Text color={bondfireColors.whiteSmoke}>Spark Bondfire</Text>
       </Button>
+    </YStack>
+  )
+}
+
+function LoadingFeed() {
+  return (
+    <YStack
+      flex={1}
+      alignItems="center"
+      justifyContent="center"
+      backgroundColor={bondfireColors.obsidian}
+    >
+      <Spinner size="large" color={bondfireColors.bondfireCopper} />
+      <Text marginTop={20} color={bondfireColors.ash}>
+        Loading bondfires...
+      </Text>
     </YStack>
   )
 }
@@ -126,6 +222,8 @@ function EmptyFeed() {
 export default function FeedScreen() {
   const router = useRouter()
   const bondfires = useQuery(api.bondfires.listFeed, { limit: 20 })
+  const [activeIndex, setActiveIndex] = useState(0)
+  const flatListRef = useRef<FlatList>(null)
 
   const handleBondfirePress = useCallback(
     (bondfireId: string) => {
@@ -134,44 +232,63 @@ export default function FeedScreen() {
     [router],
   )
 
-  const handleRefresh = useCallback(() => {
-    // Convex queries auto-refresh, but we could trigger a manual refresh here
-  }, [])
+  const handleRespond = useCallback(
+    (bondfireId: string) => {
+      router.push(`/(main)/create?respondTo=${bondfireId}`)
+    },
+    [router],
+  )
+
+  const onViewableItemsChanged = useCallback(
+    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      if (viewableItems.length > 0 && viewableItems[0].index !== null) {
+        setActiveIndex(viewableItems[0].index)
+      }
+    },
+    [],
+  )
+
+  const viewabilityConfig = useRef({
+    itemVisiblePercentThreshold: 50,
+  }).current
 
   if (bondfires === undefined) {
-    return (
-      <Container centered>
-        <Spinner size="large" color="$orange10" />
-        <Text marginTop="$4" color="$gray11">
-          Loading feed...
-        </Text>
-      </Container>
-    )
+    return <LoadingFeed />
+  }
+
+  if (bondfires.length === 0) {
+    return <EmptyFeed />
   }
 
   return (
-    <Container safe>
-      <YStack paddingHorizontal="$4" paddingTop="$4">
-        <H1 marginBottom="$2">Feed</H1>
-        <Paragraph color="$gray11" marginBottom="$4">
-          Discover bondfires and join the conversation
-        </Paragraph>
-      </YStack>
-
-      {bondfires.length === 0 ? (
-        <EmptyFeed />
-      ) : (
-        <FlatList
-          data={bondfires}
-          keyExtractor={(item) => item._id}
-          renderItem={({ item }) => (
-            <BondfireCard bondfire={item} onPress={() => handleBondfirePress(item._id)} />
-          )}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 100 }}
-          showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={false} onRefresh={handleRefresh} />}
-        />
-      )}
-    </Container>
+    <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
+      <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+      
+      <FlatList
+        ref={flatListRef}
+        data={bondfires}
+        keyExtractor={(item) => item._id}
+        renderItem={({ item, index }) => (
+          <BondfireItem
+            bondfire={item}
+            isActive={index === activeIndex}
+            onPress={() => handleBondfirePress(item._id)}
+            onRespond={() => handleRespond(item._id)}
+          />
+        )}
+        pagingEnabled
+        showsVerticalScrollIndicator={false}
+        snapToInterval={ITEM_HEIGHT}
+        snapToAlignment="start"
+        decelerationRate="fast"
+        onViewableItemsChanged={onViewableItemsChanged}
+        viewabilityConfig={viewabilityConfig}
+        getItemLayout={(_, index) => ({
+          length: ITEM_HEIGHT,
+          offset: ITEM_HEIGHT * index,
+          index,
+        })}
+      />
+    </YStack>
   )
 }

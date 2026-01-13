@@ -1,19 +1,25 @@
-import { Home, PlusCircle, User } from '@tamagui/lucide-icons'
+import { bondfireColors } from '@bondfires/config'
+import { Home, Flame, User } from '@tamagui/lucide-icons'
 import { Tabs } from 'expo-router'
-import { useTheme } from 'tamagui'
 
 export default function MainLayout() {
-  const theme = useTheme()
-
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: theme.orange10.val,
-        tabBarInactiveTintColor: theme.gray10.val,
+        tabBarActiveTintColor: bondfireColors.bondfireCopper,
+        tabBarInactiveTintColor: bondfireColors.ash,
         tabBarStyle: {
-          backgroundColor: theme.background.val,
-          borderTopColor: theme.borderColor.val,
+          backgroundColor: bondfireColors.gunmetal,
+          borderTopColor: bondfireColors.iron,
+          borderTopWidth: 1,
+          paddingTop: 8,
+          paddingBottom: 8,
+          height: 60,
+        },
+        tabBarLabelStyle: {
+          fontSize: 11,
+          fontWeight: '600',
         },
       }}
     >
@@ -27,8 +33,8 @@ export default function MainLayout() {
       <Tabs.Screen
         name="create"
         options={{
-          title: 'Create',
-          tabBarIcon: ({ color, size }) => <PlusCircle color={color} size={size} />,
+          title: 'Spark',
+          tabBarIcon: ({ color, size }) => <Flame color={color} size={size} />,
         }}
       />
       <Tabs.Screen
@@ -36,6 +42,12 @@ export default function MainLayout() {
         options={{
           title: 'Profile',
           tabBarIcon: ({ color, size }) => <User color={color} size={size} />,
+        }}
+      />
+      <Tabs.Screen
+        name="bondfire/[id]"
+        options={{
+          href: null, // Hide from tab bar
         }}
       />
     </Tabs>
