@@ -1,8 +1,11 @@
 import { bondfireColors } from '@bondfires/config'
 import { Flame, Home, User } from '@tamagui/lucide-icons'
 import { Tabs } from 'expo-router'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 export default function MainLayout() {
+  const insets = useSafeAreaInsets()
+
   return (
     <Tabs
       screenOptions={{
@@ -14,8 +17,8 @@ export default function MainLayout() {
           borderTopColor: bondfireColors.iron,
           borderTopWidth: 1,
           paddingTop: 8,
-          paddingBottom: 8,
-          height: 60,
+          paddingBottom: 8 + insets.bottom,
+          height: 60 + insets.bottom,
         },
         tabBarLabelStyle: {
           fontSize: 11,
@@ -26,21 +29,21 @@ export default function MainLayout() {
       <Tabs.Screen
         name="feed"
         options={{
-          title: 'Feed',
+          title: '',
           tabBarIcon: ({ color, size }) => <Home color={color} size={size} />,
         }}
       />
       <Tabs.Screen
         name="create"
         options={{
-          title: 'Spark',
+          title: '',
           tabBarIcon: ({ color, size }) => <Flame color={color} size={size} />,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
-          title: 'Profile',
+          title: '',
           tabBarIcon: ({ color, size }) => <User color={color} size={size} />,
         }}
       />
