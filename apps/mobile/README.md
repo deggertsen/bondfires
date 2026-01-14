@@ -196,10 +196,34 @@ Follow the interactive prompts to:
 #### Android Credentials
 
 1. **Get Google Play Service Account Key**:
-   - Go to Google Play Console → Setup → API access
-   - Create or select a service account
-   - Download the JSON key file
-   - Place it at `apps/mobile/google-services-key.json` (already in `.gitignore`)
+
+   **Step 1: Create Service Account in Google Cloud Console**
+   - Go to [Google Cloud Console](https://console.cloud.google.com/)
+   - Make sure you're in the same Google account as your Play Console
+   - In the left sidebar, go to **"IAM & Admin"** → **"Service Accounts"**
+   - Click **"Create Service Account"** at the top
+   - Enter a name (e.g., "play-console-submit") and description
+   - Click **"Create and Continue"**
+   - Skip role assignment (click **"Continue"**)
+   - Click **"Done"** (no need to grant users access)
+
+   **Step 2: Generate and Download the JSON Key**
+   - Still in Google Cloud Console → IAM & Admin → Service Accounts
+   - Find your newly created service account and click on it
+   - Go to the **"Keys"** tab
+   - Click **"Add Key"** → **"Create new key"**
+   - Choose **JSON** format
+   - Click **"Create"** - the JSON key file will download automatically
+   - **Save this file as `google-services-key.json`** in `apps/mobile/` directory (already in `.gitignore`)
+
+   **Step 3: Link Service Account to Google Play Console**
+   - Go to [Google Play Console](https://play.google.com/console)
+   - Select **"Users and permissions"**
+   - Click **"Invite new users"** (or **"Add users"**)
+   - Enter the service account email (format: `your-service-account-name@project-id.iam.gserviceaccount.com` - you can find this in Google Cloud Console)
+   - Select **"Admin"** role (or grant permissions: "View app information", "Create, edit, and delete draft apps", "Release apps in testing tracks", "Release apps in production")
+   - Click **"Send invitation"**
+   - The service account will be linked to your Play Console
 
 2. **Configure EAS credentials**:
 
@@ -208,7 +232,7 @@ Follow the interactive prompts to:
    eas credentials --platform android
    ```
 
-   Follow prompts to configure the upload key for signing.
+   Follow prompts to configure the upload key for signing (separate from the service account key).
 
 ### Building for Production
 
