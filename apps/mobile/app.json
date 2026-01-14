@@ -32,7 +32,7 @@
       "package": "org.bondfires",
       "versionCode": 1,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/icon.png",
+        "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#141416"
       },
       "edgeToEdgeEnabled": true,

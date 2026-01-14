@@ -12,7 +12,8 @@
     "lint": "biome lint .",
     "format": "biome format --write .",
     "check": "biome check --write .",
-    "clean": "turbo clean && rm -rf node_modules"
+    "clean": "turbo clean && rm -rf node_modules",
+    "eas-build-pre-install": "corepack enable && corepack prepare yarn@4.12.0 --activate"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
