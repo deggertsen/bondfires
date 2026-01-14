@@ -7958,14 +7958,14 @@ __metadata:
   languageName: node
   linkType: hard
 
-"expo-background-fetch@npm:~13.0.4":
-  version: 13.0.6
-  resolution: "expo-background-fetch@npm:13.0.6"
+"expo-background-fetch@npm:~14.0.9":
+  version: 14.0.9
+  resolution: "expo-background-fetch@npm:14.0.9"
   dependencies:
-    expo-task-manager: "npm:~12.0.6"
+    expo-task-manager: "npm:~14.0.9"
   peerDependencies:
     expo: "*"
-  checksum: 10c0/48cbc3fdf1a5b065be98ea58ee68aed2fc4aa86e44c3307d1d19f91dcbd7501d41ef9df5feba9432b158dddc1b5cb756893769d79b001a7a6e83a246766cbf67
+  checksum: 10c0/df0d8c7ae3f15c63c181a16c25ebbb4712afce65b4a1a88708dfca21a0dd47ce9352d9ba117d2e76e220d3ca35145f114f39fb3a43434fe4cd27e1a9e8ee24fc
   languageName: node
   linkType: hard
 
@@ -8299,15 +8299,15 @@ __metadata:
   languageName: node
   linkType: hard
 
-"expo-task-manager@npm:~12.0.3, expo-task-manager@npm:~12.0.6":
-  version: 12.0.6
-  resolution: "expo-task-manager@npm:12.0.6"
+"expo-task-manager@npm:~14.0.9":
+  version: 14.0.9
+  resolution: "expo-task-manager@npm:14.0.9"
   dependencies:
-    unimodules-app-loader: "npm:~5.0.1"
+    unimodules-app-loader: "npm:~6.0.8"
   peerDependencies:
     expo: "*"
     react-native: "*"
-  checksum: 10c0/a6f9b7ba24b1928b0fd07b07637cd7475edaf2242240135ae4688a28510d35015dd764dfaaaf3078d920fed9403d79602347811487170ded8b10611e359e9b8a
+  checksum: 10c0/e56cd92702a05400af8505c5de1bb538fe4fd564ca3f5bb3b5930e20c2e62397ad592ed337d51a43b3e6e81cb47660672f399d23410bcf11e29680621a1f414e
   languageName: node
   linkType: hard
 
@@ -8320,14 +8320,14 @@ __metadata:
   languageName: node
   linkType: hard
 
-"expo-video@npm:^2.0.0":
-  version: 2.2.2
-  resolution: "expo-video@npm:2.2.2"
+"expo-video@npm:~3.0.15":
+  version: 3.0.15
+  resolution: "expo-video@npm:3.0.15"
   peerDependencies:
     expo: "*"
     react: "*"
     react-native: "*"
-  checksum: 10c0/d7b4060748b69750c0afa4300ac8830ff90fe34057dbe9efcdb3a31d7c73d3b3f88087a3ae546e4da497577446a00d0602f7521e6a3150ba8998d94a0e9585ff
+  checksum: 10c0/34b0b7f53cf5cb2ada0de39b8cf9e7e8b2528fbe78fddc5ae8d261b3c0a06170894bc218262a913d11197ef7497e350252b6f0f321c77e51ec26100be9f08dae
   languageName: node
   linkType: hard
 
@@ -10229,7 +10229,7 @@ __metadata:
     convex: "npm:^1.31.3"
     expo: "npm:~54.0.31"
     expo-av: "npm:^16.0.8"
-    expo-background-fetch: "npm:~13.0.4"
+    expo-background-fetch: "npm:~14.0.9"
     expo-build-properties: "npm:^1.0.10"
     expo-camera: "npm:^17.0.10"
     expo-constants: "npm:~18.0.13"
@@ -10244,8 +10244,8 @@ __metadata:
     expo-router: "npm:~6.0.21"
     expo-splash-screen: "npm:~31.0.13"
     expo-status-bar: "npm:~3.0.9"
-    expo-task-manager: "npm:~12.0.3"
-    expo-video: "npm:^2.0.0"
+    expo-task-manager: "npm:~14.0.9"
+    expo-video: "npm:~3.0.15"
     expo-web-browser: "npm:~15.0.10"
     react: "npm:19.1.0"
     react-dom: "npm:19.1.0"
@@ -12413,10 +12413,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"unimodules-app-loader@npm:~5.0.1":
-  version: 5.0.1
-  resolution: "unimodules-app-loader@npm:5.0.1"
-  checksum: 10c0/eb3a9adcd3a166a546eb51e68ee378f1382fe374036ddd0c8d6a34345891cc4cfca4a0a0129ceab5f04b81e88975c49db281414e5411dcb62ed5439a5da4a46c
+"unimodules-app-loader@npm:~6.0.8":
+  version: 6.0.8
+  resolution: "unimodules-app-loader@npm:6.0.8"
+  checksum: 10c0/7354c2d741917ed60daf2d6b2a4309d56f6f0f97b9de9f753b09e962e0654649dc7367a2063166caabdc5786aeb70b98b70507e929113062cea3c896776d45f7
   languageName: node
   linkType: hard
 
