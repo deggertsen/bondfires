@@ -21,7 +21,7 @@ export default function MainLayout() {
           height: 60 + insets.bottom,
         },
         tabBarLabelStyle: {
-          fontSize: 11,
+          fontSize: 9,
           fontWeight: '600',
         },
       }}
@@ -29,21 +29,21 @@ export default function MainLayout() {
       <Tabs.Screen
         name="feed"
         options={{
-          title: '',
+          title: 'Feed',
           tabBarIcon: ({ color, size }) => <Home color={color} size={size} />,
         }}
       />
       <Tabs.Screen
         name="create"
         options={{
-          title: '',
+          title: 'Spark',
           tabBarIcon: ({ color, size }) => <Flame color={color} size={size} />,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
-          title: '',
+          title: 'Profile',
           tabBarIcon: ({ color, size }) => <User color={color} size={size} />,
         }}
       />
