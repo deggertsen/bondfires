@@ -1932,7 +1932,6 @@ __metadata:
     "@legendapp/state": "npm:^3.0.0-beta.27"
     "@types/react": "npm:^19.1.0"
     convex: "npm:^1.31.3"
-    react-native-mmkv: "npm:^4.1.1"
     typescript: "npm:^5.7.2"
   peerDependencies:
     expo-constants: "*"

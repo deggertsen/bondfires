@@ -56,7 +56,7 @@
   "submit": {
     "production": {
       "ios": {
-        "appleTeamId": "J8UCZDVZ8K"
+        "appleTeamId": "A9BJ2VA78M"
       },
       "android": {
         "serviceAccountKeyPath": "./google-services-key.json",

@@ -3,6 +3,7 @@
   "main": "expo-router/entry",
   "version": "1.0.0",
   "scripts": {
+    "eas-build-pre-install": "corepack enable && corepack prepare yarn@4.12.0 --activate",
     "start": "expo start",
     "dev": "expo start",
     "android": "npx expo run:android",

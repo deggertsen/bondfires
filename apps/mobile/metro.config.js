@@ -17,7 +17,8 @@ config.resolver.assetExts = config.resolver.assetExts.filter((ext) => ext !== 's
 config.resolver.sourceExts.push('svg')
 
 // Configure Metro to watch the workspace root and resolve modules from it
-config.watchFolders = [workspaceRoot]
+// Merge with default watchFolders instead of replacing them
+config.watchFolders = [...(config.watchFolders || []), workspaceRoot]
 
 // Configure resolver to look in workspace root node_modules
 config.resolver.nodeModulesPaths = [

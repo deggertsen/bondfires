@@ -191,7 +191,7 @@ Follow the interactive prompts to:
 
 - Set up distribution certificates and provisioning profiles
 - Configure App Store Connect API key or Apple ID authentication
-- The `eas.json` already has the Apple Team ID configured: `J8UCZDVZ8K`
+- The `eas.json` already has the Apple Team ID configured: `A9BJ2VA78M`
 
 #### Android Credentials
 
