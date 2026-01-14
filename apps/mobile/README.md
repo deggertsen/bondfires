@@ -18,6 +18,7 @@ Before running the app, ensure you have:
 ## Important: Development Builds Required
 
 ⚠️ **This app cannot run in Expo Go.** It uses native modules that require a custom development client:
+
 - `expo-camera` - Video recording
 - `expo-av` - Video playback
 - `expo-notifications` - Push notifications
@@ -156,30 +157,165 @@ yarn build:android:dev
 yarn build:ios:dev:sim
 ```
 
-## Production Builds
+## Releasing to Production
+
+### Production Environment
+
+The production build profile is configured in `eas.json` with:
+
+- **Production Convex URL**: `https://fleet-caiman-92.convex.cloud` (configured in build profile)
+- **Auto-increment build numbers**: Enabled for both iOS and Android
+- **Build distribution**: App Store (iOS) / Google Play (Android)
+
+### Prerequisites
+
+Before releasing, ensure you have:
+
+1. **EAS account** logged in (`eas login`)
+2. **App Store Connect access** (iOS)
+3. **Google Play Console access** (Android)
+4. **Credentials configured** (one-time setup, see below)
+
+### Setting Up Credentials (First Time Only)
+
+#### iOS Credentials
+
+Configure code signing and App Store Connect credentials:
 
 ```bash
-# iOS App Store build
+cd apps/mobile
+eas credentials --platform ios
+```
+
+Follow the interactive prompts to:
+
+- Set up distribution certificates and provisioning profiles
+- Configure App Store Connect API key or Apple ID authentication
+- The `eas.json` already has the Apple Team ID configured: `J8UCZDVZ8K`
+
+#### Android Credentials
+
+1. **Get Google Play Service Account Key**:
+   - Go to Google Play Console → Setup → API access
+   - Create or select a service account
+   - Download the JSON key file
+   - Place it at `apps/mobile/google-services-key.json` (already in `.gitignore`)
+
+2. **Configure EAS credentials**:
+
+   ```bash
+   cd apps/mobile
+   eas credentials --platform android
+   ```
+
+   Follow prompts to configure the upload key for signing.
+
+### Building for Production
+
+Use the convenient npm scripts:
+
+```bash
+# iOS production build
+yarn build:ios:prod
+
+# Android production build
+yarn build:android:prod
+```
+
+Or use EAS CLI directly:
+
+```bash
+# iOS
 eas build --platform ios --profile production
 
-# Android Play Store build
+# Android
 eas build --platform android --profile production
 ```
 
-## Submitting to App Stores
+**Build Process:**
 
-First, update `eas.json` with your credentials:
-- iOS: Apple ID, ASC App ID, Team ID
-- Android: Service account key path
+- Builds run on EAS Build servers (cloud)
+- Build numbers are auto-incremented (iOS: `buildNumber`, Android: `versionCode`)
+- Production environment variables are injected automatically
+- Build artifacts are stored on EAS servers
 
-Then:
+### Submitting to App Stores
+
+#### iOS - TestFlight
+
+After the build completes, submit to TestFlight:
+
 ```bash
-# Submit to App Store
-eas submit --platform ios
+# Submit latest iOS build
+yarn submit:ios
 
-# Submit to Play Store
-eas submit --platform android
+# Or manually
+eas submit --platform ios --profile production
 ```
+
+**Submission Process:**
+
+- Uploads the build to App Store Connect
+- Processing typically takes 10-30 minutes
+- Once processed, build appears in TestFlight
+- TestFlight builds can be distributed to internal/external testers
+
+#### Android - Google Play Internal Testing
+
+After the build completes, submit to Google Play Internal testing track:
+
+```bash
+# Submit latest Android build
+yarn submit:android
+
+# Or manually
+eas submit --platform android --profile production
+```
+
+**Submission Process:**
+
+- Uploads AAB to Google Play Console
+- Processing typically takes 10-30 minutes
+- Build appears in Internal Testing track (configured in `eas.json`)
+- Can be distributed to internal testers immediately
+
+### One-Command Release
+
+For convenience, you can build and submit in one command:
+
+```bash
+# iOS: Build + Submit to TestFlight
+yarn release:ios
+
+# Android: Build + Submit to Google Play Internal
+yarn release:android
+```
+
+**Note:** These commands will:
+
+1. Build the app (10-20 minutes)
+2. Wait for build completion
+3. Automatically submit to the respective store
+4. Submit may fail if build is still processing; wait a few minutes and run submit separately
+
+### Release Checklist
+
+Before each release:
+
+- [ ] Update version number in `app.json` (if needed)
+- [ ] Verify production Convex URL in `eas.json`
+- [ ] Test the app locally with production environment
+- [ ] Ensure credentials are configured (`eas credentials`)
+- [ ] Build production version
+- [ ] Submit to TestFlight/Play Store
+- [ ] Monitor build processing in respective consoles
+- [ ] Distribute to testers (TestFlight/Play Console)
+
+### Version Management
+
+- **Version numbers** (`version` in `app.json`): Update manually when releasing new features
+- **Build numbers** (`buildNumber`/`versionCode`): Auto-incremented by EAS (configured in `eas.json`)
+- **Remote version source**: Enabled in `eas.json`, so EAS manages build numbers remotely
 
 ## Project Structure
 
@@ -236,6 +372,7 @@ cd ios && pod install --repo-update && cd ..
 ### Android build issues
 
 If you encounter dependency resolution errors, use EAS Build instead of local builds:
+
 - EAS Build handles native dependencies more reliably
 - Use `yarn build:android:dev` for cloud builds
 
@@ -262,6 +399,7 @@ yarn start
 ```
 
 Or bypass Watchman:
+
 ```bash
 CI=true yarn start
 ```
