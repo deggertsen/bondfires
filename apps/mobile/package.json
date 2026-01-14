@@ -17,6 +17,12 @@
     "build:ios:dev:sim": "eas build --platform ios --profile development-simulator",
     "build:android:preview": "eas build --platform android --profile preview",
     "build:ios:preview": "eas build --platform ios --profile preview",
+    "build:ios:prod": "eas build --platform ios --profile production",
+    "build:android:prod": "eas build --platform android --profile production",
+    "submit:ios": "eas submit --platform ios --profile production",
+    "submit:android": "eas submit --platform android --profile production",
+    "release:ios": "yarn build:ios:prod && yarn submit:ios",
+    "release:android": "yarn build:android:prod && yarn submit:android",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

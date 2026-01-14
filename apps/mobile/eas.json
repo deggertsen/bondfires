@@ -48,7 +48,8 @@
         "resourceClass": "m-medium"
       },
       "env": {
-        "APP_VARIANT": "production"
+        "APP_VARIANT": "production",
+        "EXPO_PUBLIC_CONVEX_URL": "https://fleet-caiman-92.convex.cloud"
       }
     }
   },
