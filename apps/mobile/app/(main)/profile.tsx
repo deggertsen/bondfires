@@ -136,7 +136,10 @@ export default function ProfileScreen() {
                   <Avatar.Fallback
                     backgroundColor={bondfireColors.gunmetal}
                     borderWidth={2}
+                    borderRadius={100}
                     borderColor={bondfireColors.bondfireCopper}
+                    alignItems="center"
+                    justifyContent="center"
                   >
                     <User size={32} color={bondfireColors.bondfireCopper} />
                   </Avatar.Fallback>
