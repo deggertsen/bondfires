@@ -1,17 +1,19 @@
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
-import { CheckCircle, ChevronLeft, Mail } from '@tamagui/lucide-icons'
+import { useAuthActions } from '@convex-dev/auth/react'
+import { ChevronLeft, Mail } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
+import type { RelativePathString } from 'expo-router'
 import { useState } from 'react'
 import { KeyboardAvoidingView, Platform, Pressable, StatusBar } from 'react-native'
 import { Spinner, YStack } from 'tamagui'
 
 export default function ForgotPasswordScreen() {
   const router = useRouter()
+  const { signIn } = useAuthActions()
 
   const [email, setEmail] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [isSent, setIsSent] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const handleSubmit = async () => {
@@ -24,61 +26,21 @@ export default function ForgotPasswordScreen() {
     setError(null)
 
     try {
-      // TODO: Implement password reset via Convex
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      setIsSent(true)
+      // Request password reset - this sends an email with a reset code
+      await signIn('password', {
+        email,
+        flow: 'reset',
+      })
+      // Navigate to reset password screen to enter code and new password
+      router.replace({
+        pathname: '/(auth)/reset-password' as RelativePathString,
+        params: { email },
+      })
     } catch {
       setError('Could not send reset email. Please try again.')
     } finally {
       setIsLoading(false)
     }
-  }
-
-  if (isSent) {
-    return (
-      <YStack
-        flex={1}
-        backgroundColor={bondfireColors.obsidian}
-        paddingHorizontal={24}
-        alignItems="center"
-        justifyContent="center"
-      >
-        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
-
-        <YStack alignItems="center" gap={24} maxWidth={320}>
-          <YStack
-            width={100}
-            height={100}
-            borderRadius={50}
-            backgroundColor={bondfireColors.gunmetal}
-            alignItems="center"
-            justifyContent="center"
-            borderWidth={2}
-            borderColor={bondfireColors.success}
-          >
-            <CheckCircle size={50} color={bondfireColors.success} />
-          </YStack>
-
-          <YStack alignItems="center" gap={12}>
-            <Text fontSize={24} fontWeight="700" textAlign="center">
-              Check your email
-            </Text>
-            <Text fontSize={15} color={bondfireColors.ash} textAlign="center">
-              If an account exists with that email, we've sent password reset instructions.
-            </Text>
-          </YStack>
-
-          <Button
-            variant="primary"
-            size="$lg"
-            width="100%"
-            onPress={() => router.replace('/(auth)/login')}
-          >
-            <Text color={bondfireColors.whiteSmoke}>Back to Sign In</Text>
-          </Button>
-        </YStack>
-      </YStack>
-    )
   }
 
   return (
