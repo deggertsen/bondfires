@@ -1,5 +1,5 @@
-import { Password } from '@convex-dev/auth/providers/Password'
 import Resend from '@auth/core/providers/resend'
+import { Password } from '@convex-dev/auth/providers/Password'
 import { convexAuth } from '@convex-dev/auth/server'
 
 // Generate a 6-digit numeric OTP using crypto for security
@@ -55,7 +55,50 @@ const ResendOTP = Resend({
   },
 })
 
-// Password provider with email verification and profile support
+// Custom Resend email provider for password reset
+const ResendPasswordReset = Resend({
+  id: 'resend-password-reset',
+  apiKey: process.env.RESEND_API_KEY,
+  from: process.env.EMAIL_FROM ?? 'Bondfires <noreply@bondfires.org>',
+  maxAge: 15 * 60, // 15 minutes
+  // Generate 6-digit numeric OTP for password reset
+  generateVerificationToken: generateOTP,
+  // Custom email template for password reset
+  async sendVerificationRequest({ identifier: email, token }) {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: process.env.EMAIL_FROM ?? 'Bondfires <noreply@bondfires.org>',
+        to: email,
+        subject: '🔑 Reset your Bondfires password',
+        html: `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h1 style="color: #FF6B35; margin-bottom: 24px;">🔥 Bondfires</h1>
+            <p style="font-size: 16px; color: #333;">We received a request to reset your password.</p>
+            <p style="font-size: 16px; color: #333;">Use this code to set a new password:</p>
+            <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; text-align: center; margin: 24px 0;">
+              <span style="font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #FF6B35;">${token}</span>
+            </div>
+            <p style="font-size: 14px; color: #666;">This code expires in 15 minutes.</p>
+            <p style="font-size: 14px; color: #666;">If you didn't request a password reset, you can safely ignore this email.</p>
+          </div>
+        `,
+        text: `Your Bondfires password reset code is: ${token}. This code expires in 15 minutes.`,
+      }),
+    })
+
+    if (!res.ok) {
+      const error = await res.text()
+      throw new Error(`Failed to send password reset email: ${error}`)
+    }
+  },
+})
+
+// Password provider with email verification, password reset, and profile support
 const PasswordWithVerification = Password({
   // Profile fields to include when creating a user
   profile(params) {
@@ -66,6 +109,8 @@ const PasswordWithVerification = Password({
   },
   // Require email verification before allowing sign in
   verify: ResendOTP,
+  // Enable password reset via email
+  reset: ResendPasswordReset,
 })
 
 export const { auth, signIn, signOut, store } = convexAuth({
