@@ -72,3 +72,65 @@ output "convex_setup_instructions" {
   EOT
 }
 
+# ============================================================
+# Website Outputs
+# ============================================================
+
+output "website_bucket_name" {
+  description = "Name of the S3 bucket for website hosting"
+  value       = aws_s3_bucket.website.id
+}
+
+output "website_bucket_arn" {
+  description = "ARN of the S3 bucket for website hosting"
+  value       = aws_s3_bucket.website.arn
+}
+
+output "website_cloudfront_distribution_id" {
+  description = "CloudFront distribution ID for the website"
+  value       = aws_cloudfront_distribution.website.id
+}
+
+output "website_cloudfront_domain_name" {
+  description = "CloudFront distribution domain name for the website"
+  value       = aws_cloudfront_distribution.website.domain_name
+}
+
+output "website_url" {
+  description = "URL of the website (CloudFront distribution)"
+  value       = "https://${aws_cloudfront_distribution.website.domain_name}"
+}
+
+output "website_deployment_instructions" {
+  description = "Instructions for deploying the website"
+  value       = <<-EOT
+    
+    ==========================================
+    WEBSITE DEPLOYMENT INSTRUCTIONS
+    ==========================================
+    
+    To deploy the website:
+    
+    1. Build/prepare your website files in apps/website/
+    
+    2. Sync files to S3 bucket:
+    
+       aws s3 sync apps/website/ s3://${aws_s3_bucket.website.id}/ --delete
+    
+    3. Invalidate CloudFront cache (to update immediately):
+    
+       aws cloudfront create-invalidation \
+         --distribution-id ${aws_cloudfront_distribution.website.id} \
+         --paths "/*"
+    
+    4. Website will be available at:
+    
+       ${aws_cloudfront_distribution.website.domain_name}
+    
+    Or use the CloudFront URL: https://${aws_cloudfront_distribution.website.domain_name}
+    
+    For custom domain, configure Route53 and update CloudFront with ACM certificate.
+    
+  EOT
+}
+
