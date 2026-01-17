@@ -264,4 +264,4 @@ The `og:image` and `twitter:image` meta tags in `index.html` require **absolute 
 
 ## License
 
-Copyright © 2024 Bondfires. All rights reserved.
+Copyright © 2026 Bondfires. All rights reserved.
