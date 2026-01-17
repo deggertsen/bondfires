@@ -109,27 +109,31 @@ output "website_deployment_instructions" {
     WEBSITE DEPLOYMENT INSTRUCTIONS
     ==========================================
     
-    To deploy the website:
+    To deploy the website (run from repository root):
     
-    1. Build/prepare your website files in apps/website/
+    1. Sync files to S3 bucket:
     
-    2. Sync files to S3 bucket:
+       aws s3 sync apps/website/ s3://${aws_s3_bucket.website.id}/ \
+         --delete \
+         --exclude "README.md"
     
-       aws s3 sync apps/website/ s3://${aws_s3_bucket.website.id}/ --delete
-    
-    3. Invalidate CloudFront cache (to update immediately):
+    2. Invalidate CloudFront cache:
     
        aws cloudfront create-invalidation \
          --distribution-id ${aws_cloudfront_distribution.website.id} \
          --paths "/*"
     
-    4. Website will be available at:
+    3. Website will be available at:
     
-       ${aws_cloudfront_distribution.website.domain_name}
+       https://${aws_cloudfront_distribution.website.domain_name}
     
-    Or use the CloudFront URL: https://${aws_cloudfront_distribution.website.domain_name}
+    Quick one-liner:
+    
+       aws s3 sync apps/website/ s3://${aws_s3_bucket.website.id}/ --delete --exclude "README.md" && \
+       aws cloudfront create-invalidation --distribution-id ${aws_cloudfront_distribution.website.id} --paths "/*"
     
     For custom domain, configure Route53 and update CloudFront with ACM certificate.
+    See apps/website/README.md for detailed deployment documentation.
     
   EOT
 }

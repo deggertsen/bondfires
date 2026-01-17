@@ -14,13 +14,14 @@ apps/website/
 ├── privacy.html                # Privacy Policy
 ├── terms.html                  # Terms of Service
 ├── community-guidelines.html   # Community Guidelines
+├── 404.html                    # Custom 404 error page
 ├── css/
 │   ├── variables.css           # CSS custom properties (design tokens)
 │   └── styles.css              # Main styles
 ├── js/
 │   └── main.js                 # Mobile nav, interactions
 ├── images/                     # Placeholder directory for assets
-└── README.md                   # This file
+└── README.md                   # This file (excluded from deployment)
 ```
 
 ## Design System
@@ -81,18 +82,41 @@ terraform output website_cloudfront_distribution_id
 terraform output website_url
 ```
 
+### Before First Deployment
+
+1. **Update OG Image URLs:** Edit `index.html` and replace `https://bondfires.org/` with your actual domain (CloudFront URL or custom domain).
+
+2. **Add Required Assets:**
+   - `images/og-image.png` - Social sharing preview image (1200x630px recommended)
+   - Replace placeholder logo SVG with actual logo if available
+
 ### Deploy to S3
 
-Deploy all files to S3:
+Deploy from the **repository root** directory (not from `apps/website/`):
 
 ```bash
-cd apps/website
-aws s3 sync . s3://YOUR_BUCKET_NAME --delete
+# From repository root
+aws s3 sync apps/website/ s3://YOUR_BUCKET_NAME/ \
+  --delete \
+  --cache-control "max-age=31536000" \
+  --exclude "*.html" \
+  --exclude "README.md"
+
+# Upload HTML files with shorter cache and correct content type
+aws s3 sync apps/website/ s3://YOUR_BUCKET_NAME/ \
+  --exclude "*" \
+  --include "*.html" \
+  --content-type "text/html" \
+  --cache-control "max-age=300"
 ```
 
 Replace `YOUR_BUCKET_NAME` with the bucket name from Terraform output.
 
-**Note:** Use `--delete` to remove files from S3 that no longer exist locally.
+**Note:**
+
+- `--delete` removes files from S3 that no longer exist locally
+- HTML files get a 5-minute cache; assets get 1-year cache (CloudFront will invalidate)
+- `README.md` is excluded from deployment
 
 ### Invalidate CloudFront Cache
 
@@ -108,33 +132,58 @@ Replace `YOUR_DISTRIBUTION_ID` with the distribution ID from Terraform output.
 
 ### Complete Deployment Script
 
-Create a deployment script (e.g., `deploy.sh`):
+Create a deployment script at the **repository root** (e.g., `scripts/deploy-website.sh`):
 
 ```bash
 #!/bin/bash
+set -e
 
-# Get Terraform outputs
-BUCKET_NAME=$(cd ../../infrastructure/terraform && terraform output -raw website_bucket_name)
-DISTRIBUTION_ID=$(cd ../../infrastructure/terraform && terraform output -raw website_cloudfront_distribution_id)
+# Configuration - update these or use terraform output
+BUCKET_NAME="${WEBSITE_BUCKET_NAME:-$(cd infrastructure/terraform && terraform output -raw website_bucket_name)}"
+DISTRIBUTION_ID="${WEBSITE_DISTRIBUTION_ID:-$(cd infrastructure/terraform && terraform output -raw website_cloudfront_distribution_id)}"
 
-# Deploy to S3
-echo "Deploying to S3 bucket: $BUCKET_NAME"
-aws s3 sync . s3://$BUCKET_NAME --delete
+echo "Deploying website to S3 bucket: $BUCKET_NAME"
 
-# Invalidate CloudFront
+# Sync static assets (long cache)
+aws s3 sync apps/website/ s3://$BUCKET_NAME/ \
+  --delete \
+  --cache-control "max-age=31536000" \
+  --exclude "*.html" \
+  --exclude "README.md"
+
+# Sync HTML files (short cache, explicit content type)
+aws s3 sync apps/website/ s3://$BUCKET_NAME/ \
+  --exclude "*" \
+  --include "*.html" \
+  --content-type "text/html" \
+  --cache-control "max-age=300"
+
 echo "Invalidating CloudFront distribution: $DISTRIBUTION_ID"
 aws cloudfront create-invalidation \
   --distribution-id $DISTRIBUTION_ID \
   --paths "/*"
 
+echo ""
 echo "Deployment complete!"
+echo "Website URL: https://$(cd infrastructure/terraform && terraform output -raw website_cloudfront_domain_name)"
 ```
 
 Make it executable and run:
 
 ```bash
-chmod +x deploy.sh
-./deploy.sh
+chmod +x scripts/deploy-website.sh
+./scripts/deploy-website.sh
+```
+
+### Quick Deploy (One-liner)
+
+From repository root:
+
+```bash
+BUCKET=$(cd infrastructure/terraform && terraform output -raw website_bucket_name) && \
+DIST=$(cd infrastructure/terraform && terraform output -raw website_cloudfront_distribution_id) && \
+aws s3 sync apps/website/ s3://$BUCKET/ --delete --exclude "README.md" && \
+aws cloudfront create-invalidation --distribution-id $DIST --paths "/*"
 ```
 
 ## Infrastructure
@@ -181,11 +230,19 @@ The website infrastructure is managed by Terraform in `infrastructure/terraform/
 The following assets are currently placeholders and should be replaced:
 
 - **Logo:** Inline SVG flame icon in navigation (replace with actual logo)
-- **OG Image:** Social sharing preview image (`images/og-image.png`)
+- **OG Image:** Social sharing preview image (`images/og-image.png`) - Required for social media sharing
+  - Recommended size: 1200x630px
+  - Update the absolute URL in `index.html` meta tags with your domain
 - **App Store Badges:** iOS and Android download badges in `download.html`
+  - Get official badges from [Apple](https://developer.apple.com/app-store/marketing/guidelines/) and [Google](https://play.google.com/intl/en_us/badges/)
 - **QR Codes:** App store QR codes in `download.html`
+- **Favicon:** Add `favicon.ico` to the root directory
 
 All placeholders are clearly marked with comments in the HTML.
+
+### Important: OG Image URLs
+
+The `og:image` and `twitter:image` meta tags in `index.html` require **absolute URLs** (e.g., `https://bondfires.org/images/og-image.png`). Update these with your actual domain before deployment.
 
 ## Features
 
