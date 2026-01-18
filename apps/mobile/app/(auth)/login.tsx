@@ -79,14 +79,14 @@ export default function LoginScreen() {
     <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
       <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={{ flex: 1 }}
       >
         <ScrollView
           contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
           keyboardShouldPersistTaps="handled"
         >
-          <YStack flex={1} justifyContent="center" paddingHorizontal={24} gap={32}>
+          <YStack justifyContent="center" paddingHorizontal={24} gap={32}>
             {/* Header */}
             <YStack alignItems="center" gap={16}>
               <YStack
