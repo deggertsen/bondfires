@@ -26,6 +26,9 @@ export default defineSchema({
     // Metadata
     createdAt: v.optional(v.number()),
     updatedAt: v.optional(v.number()),
+
+    // Admin flags
+    isReviewerAccount: v.optional(v.boolean()), // For Google Play / App Store reviewer accounts
   }).index('email', ['email']), // Required by @convex-dev/auth (must be named exactly 'email')
 
   // Bondfires - main video posts
