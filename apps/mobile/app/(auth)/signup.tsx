@@ -59,12 +59,7 @@ export default function SignupScreen() {
           contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
           keyboardShouldPersistTaps="handled"
         >
-          <YStack
-            justifyContent="center"
-            paddingHorizontal={24}
-            paddingVertical={40}
-            gap={28}
-          >
+          <YStack justifyContent="center" paddingHorizontal={24} paddingVertical={40} gap={28}>
             {/* Header */}
             <YStack alignItems="center" gap={16}>
               <YStack
