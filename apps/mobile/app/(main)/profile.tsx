@@ -11,6 +11,7 @@ import {
   MessageCircle,
   Play,
   Settings,
+  Trash2,
   User,
   Video,
 } from '@tamagui/lucide-icons'
@@ -31,12 +32,14 @@ export default function ProfileScreen() {
     currentUser?._id ? { userId: currentUser._id } : 'skip',
   )
   const updateProfile = useMutation(api.users.updateProfile)
+  const deleteAccountMutation = useMutation(api.users.deleteAccount)
 
   const { preferences, setAutoplayVideos, setNotificationsEnabled } = usePreferences()
 
   const [isEditSheetOpen, setIsEditSheetOpen] = useState(false)
   const [editName, setEditName] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   const handleLogout = useCallback(async () => {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
@@ -71,6 +74,46 @@ export default function ProfileScreen() {
       setIsSaving(false)
     }
   }, [editName, updateProfile])
+
+  const handleDeleteAccount = useCallback(() => {
+    Alert.alert(
+      'Delete Account',
+      'Are you sure you want to permanently delete your account? This will delete all your bondfires, videos, and data. This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Account',
+          style: 'destructive',
+          onPress: () => {
+            // Second confirmation for such a destructive action
+            Alert.alert(
+              'Final Confirmation',
+              'This is permanent. All your data will be deleted forever.',
+              [
+                { text: 'Keep My Account', style: 'cancel' },
+                {
+                  text: 'Yes, Delete Everything',
+                  style: 'destructive',
+                  onPress: async () => {
+                    setIsDeleting(true)
+                    try {
+                      await deleteAccountMutation()
+                      await signOut()
+                      appActions.logout()
+                      router.replace('/(auth)/login')
+                    } catch {
+                      Alert.alert('Error', 'Failed to delete account. Please try again.')
+                      setIsDeleting(false)
+                    }
+                  },
+                },
+              ],
+            )
+          },
+        },
+      ],
+    )
+  }, [deleteAccountMutation, signOut, router])
 
   if (!currentUser) {
     return (
@@ -308,7 +351,7 @@ export default function ProfileScreen() {
 
           {/* User's Bondfires */}
           {userBondfires && userBondfires.length > 0 && (
-            <YStack gap={12}>
+            <YStack gap={12} marginBottom={24}>
               <XStack alignItems="center" gap={8}>
                 <Flame size={18} color={bondfireColors.ash} />
                 <Text variant="label" color={bondfireColors.ash} fontSize={13} fontWeight="600">
@@ -359,6 +402,46 @@ export default function ProfileScreen() {
               />
             </YStack>
           )}
+
+          {/* Danger Zone */}
+          <YStack gap={12} marginBottom={24}>
+            <XStack alignItems="center" gap={8}>
+              <Trash2 size={18} color={bondfireColors.error} />
+              <Text variant="label" color={bondfireColors.error} fontSize={13} fontWeight="600">
+                DANGER ZONE
+              </Text>
+            </XStack>
+
+            <Card borderColor={bondfireColors.error} borderWidth={1}>
+              <YStack gap={12}>
+                <YStack gap={4}>
+                  <Text fontWeight="500" fontSize={15}>
+                    Delete Account
+                  </Text>
+                  <Text fontSize={13} color={bondfireColors.ash}>
+                    Permanently delete your account and all associated data. This action cannot be
+                    undone.
+                  </Text>
+                </YStack>
+                <Button
+                  variant="outline"
+                  size="$sm"
+                  onPress={handleDeleteAccount}
+                  disabled={isDeleting}
+                  borderColor={bondfireColors.error}
+                >
+                  {isDeleting ? (
+                    <Spinner size="small" color={bondfireColors.error} />
+                  ) : (
+                    <>
+                      <Trash2 size={16} color={bondfireColors.error} />
+                      <Text color={bondfireColors.error}>Delete My Account</Text>
+                    </>
+                  )}
+                </Button>
+              </YStack>
+            </Card>
+          </YStack>
         </YStack>
       </ScrollView>
 
