@@ -71,7 +71,7 @@ export default function VerifyEmailScreen() {
     <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
       <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={{ flex: 1 }}
       >
         <YStack flex={1} paddingHorizontal={24} alignItems="center" justifyContent="center">

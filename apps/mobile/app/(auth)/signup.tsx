@@ -52,7 +52,7 @@ export default function SignupScreen() {
     <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
       <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={{ flex: 1 }}
       >
         <ScrollView
@@ -60,7 +60,6 @@ export default function SignupScreen() {
           keyboardShouldPersistTaps="handled"
         >
           <YStack
-            flex={1}
             justifyContent="center"
             paddingHorizontal={24}
             paddingVertical={40}

@@ -145,7 +145,7 @@ export default function ResetPasswordScreen() {
       </YStack>
 
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={{ flex: 1 }}
       >
         <YStack flex={1} justifyContent="center" paddingHorizontal={24} gap={32}>

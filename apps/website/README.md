@@ -145,14 +145,14 @@ DISTRIBUTION_ID="${WEBSITE_DISTRIBUTION_ID:-$(cd infrastructure/terraform && ter
 echo "Deploying website to S3 bucket: $BUCKET_NAME"
 
 # Sync static assets (long cache)
-aws s3 sync apps/website/ s3://$BUCKET_NAME/ \
+aws s3 sync apps/website/ s3://bondfires-prod-website/ \
   --delete \
   --cache-control "max-age=31536000" \
   --exclude "*.html" \
   --exclude "README.md"
 
 # Sync HTML files (short cache, explicit content type)
-aws s3 sync apps/website/ s3://$BUCKET_NAME/ \
+aws s3 sync apps/website/ s3://bondfires-prod-website/ \
   --exclude "*" \
   --include "*.html" \
   --content-type "text/html" \
