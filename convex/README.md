@@ -88,3 +88,48 @@ function handleButtonPress() {
 Use the Convex CLI to push your functions to a deployment. See everything
 the Convex CLI can do by running `npx convex -h` in your project root
 directory. To learn more, launch the docs with `npx convex docs`.
+
+---
+
+## Admin: Reviewer Account Management
+
+For Google Play and App Store reviews, you'll need to provide test credentials
+that bypass email verification. Use the `reviewerAccounts` mutations to manage
+these accounts.
+
+### Setup a Reviewer Account
+
+1. **Create the account** via the app's normal signup flow with an email like
+   `googlereview@bondfires.org`
+
+2. **Mark it as a reviewer account** (bypasses email verification):
+
+```bash
+npx convex run reviewerAccounts:setupReviewerAccount '{"email": "googlereview@bondfires.org"}'
+```
+
+3. **Provide the credentials** to the app store:
+   - Email: `googlereview@bondfires.org`
+   - Password: (whatever was used during signup)
+
+### List All Reviewer Accounts
+
+```bash
+npx convex run reviewerAccounts:listReviewerAccounts
+```
+
+### Revoke Reviewer Access
+
+Removes the reviewer flag but keeps the account:
+
+```bash
+npx convex run reviewerAccounts:revokeReviewerAccess '{"email": "googlereview@bondfires.org"}'
+```
+
+### Delete a Reviewer Account
+
+Permanently deletes the account and all associated data:
+
+```bash
+npx convex run reviewerAccounts:deleteReviewerAccount '{"email": "googlereview@bondfires.org", "confirmDelete": true}'
+```

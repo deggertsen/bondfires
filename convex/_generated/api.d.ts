@@ -14,6 +14,7 @@ import type * as bondfires from "../bondfires.js";
 import type * as email from "../email.js";
 import type * as http from "../http.js";
 import type * as notifications from "../notifications.js";
+import type * as reviewerAccounts from "../reviewerAccounts.js";
 import type * as sendNotification from "../sendNotification.js";
 import type * as users from "../users.js";
 import type * as videos from "../videos.js";
@@ -32,6 +33,7 @@ declare const fullApi: ApiFromModules<{
   email: typeof email;
   http: typeof http;
   notifications: typeof notifications;
+  reviewerAccounts: typeof reviewerAccounts;
   sendNotification: typeof sendNotification;
   users: typeof users;
   videos: typeof videos;
