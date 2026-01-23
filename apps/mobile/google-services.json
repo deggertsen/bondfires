@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "723772695705",
+    "project_id": "bondfires-c455d",
+    "storage_bucket": "bondfires-c455d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:723772695705:android:dd290044882f21bc894408",
+        "android_client_info": {
+          "package_name": "org.bondfires"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAj_-HBkKUm6uMmXMRvg4sB3405V71iFZE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

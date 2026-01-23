@@ -17,6 +17,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "org.bondfires",
       "buildNumber": "1",
+      "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "NSCameraUsageDescription": "Bondfires needs access to your camera to record videos for your bondfire sessions.",
         "NSMicrophoneUsageDescription": "Bondfires needs access to your microphone to record audio with your videos.",
@@ -31,6 +32,7 @@
     "android": {
       "package": "org.bondfires",
       "versionCode": 1,
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#141416"
