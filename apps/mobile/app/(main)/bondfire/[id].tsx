@@ -56,12 +56,21 @@ function VideoPlayer({
   responseIndex,
 }: VideoPlayerProps) {
   const playbackSpeed = useValue(appStore$.preferences.playbackSpeed)
-  const [currentUrl, setCurrentUrl] = useState(videoUrl)
+  const autoplayVideos = useValue(appStore$.preferences.autoplayVideos)
+  const videoQuality = useValue(appStore$.preferences.videoQuality)
+
+  // Determine initial URL based on quality preference
+  const getInitialUrl = () => {
+    if (videoQuality === 'sd' && videoUrlSd) return videoUrlSd
+    return videoUrl // HD or auto starts with HD
+  }
+  const [currentUrl, setCurrentUrl] = useState(getInitialUrl)
   const [hasSwitchedToSD, setHasSwitchedToSD] = useState(false)
   const [isMuted, setIsMuted] = useState(true)
   const [progress, setProgress] = useState(0)
   const [duration, setDuration] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
+  const [userInitiatedPlay, setUserInitiatedPlay] = useState(false)
   const bufferingCheckInterval = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const player = useVideoPlayer(currentUrl || '', (player) => {
@@ -84,16 +93,21 @@ function VideoPlayer({
     }
   }, [player, isMuted])
 
-  // Play/pause based on isActive
+  // Play/pause based on isActive and autoplay preference
   useEffect(() => {
     if (!player) return
 
     if (isActive) {
-      player.play()
+      // Only auto-play if autoplay is enabled OR user has manually initiated play
+      if (autoplayVideos || userInitiatedPlay) {
+        player.play()
+      }
     } else {
       player.pause()
+      // Reset user-initiated play when video becomes inactive
+      setUserInitiatedPlay(false)
     }
-  }, [player, isActive])
+  }, [player, isActive, autoplayVideos, userInitiatedPlay])
 
   // Monitor playback status
   useEffect(() => {
@@ -139,8 +153,10 @@ function VideoPlayer({
     }
   }, [player, onComplete, onProgress])
 
-  // Buffering detection - switch to SD if buffer is low
+  // Buffering detection - switch to SD if buffer is low (only in auto mode)
   useEffect(() => {
+    // Only apply adaptive quality switching in 'auto' mode
+    if (videoQuality !== 'auto') return
     if (!videoUrlSd || hasSwitchedToSD || !currentUrl || currentUrl !== videoUrl) {
       return
     }
@@ -164,15 +180,26 @@ function VideoPlayer({
         clearInterval(bufferingCheckInterval.current)
       }
     }
-  }, [player, videoUrlSd, hasSwitchedToSD, currentUrl, videoUrl])
+  }, [player, videoUrlSd, hasSwitchedToSD, currentUrl, videoUrl, videoQuality])
 
-  // Reset when HD URL changes
+  // Update URL when video quality preference or source URLs change
   useEffect(() => {
-    if (videoUrl && currentUrl !== videoUrl) {
-      setCurrentUrl(videoUrl)
-      setHasSwitchedToSD(false)
+    let targetUrl: string | null = null
+
+    if (videoQuality === 'sd' && videoUrlSd) {
+      targetUrl = videoUrlSd
+    } else if (videoQuality === 'hd' || videoQuality === 'auto') {
+      targetUrl = videoUrl
     }
-  }, [videoUrl, currentUrl])
+
+    if (targetUrl && currentUrl !== targetUrl) {
+      setCurrentUrl(targetUrl)
+      // Only reset hasSwitchedToSD when preference changes or new video
+      if (videoQuality !== 'auto') {
+        setHasSwitchedToSD(false)
+      }
+    }
+  }, [videoUrl, videoUrlSd, videoQuality, currentUrl])
 
   // Keep screen awake while video is playing
   const isPlaying = player?.playing ?? false
@@ -195,6 +222,8 @@ function VideoPlayer({
     if (player.playing) {
       player.pause()
     } else {
+      // User manually initiated play
+      setUserInitiatedPlay(true)
       player.play()
     }
   }, [player])
