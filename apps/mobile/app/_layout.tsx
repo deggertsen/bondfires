@@ -15,7 +15,8 @@ import { useColorScheme } from 'react-native'
 import { TamaguiProvider, Theme } from 'tamagui'
 import 'react-native-reanimated'
 
-import { mmkvStorage, usePushNotifications } from '@bondfires/app'
+import { appStore$, mmkvStorage, usePushNotifications } from '@bondfires/app'
+import { useObserve } from '@legendapp/state/react'
 import type { RelativePathString } from 'expo-router/build/types'
 import { api } from '../../../convex/_generated/api'
 
@@ -75,7 +76,7 @@ function AppContent() {
   )
 
   // Initialize push notifications with Expo
-  const { error: pushError, requestPermissions } = usePushNotifications({
+  const { error: pushError, requestPermissions, unregister } = usePushNotifications({
     registerTokenMutation: async (params: {
       token: string
       tokenType: string
@@ -95,10 +96,14 @@ function AppContent() {
     },
   })
 
-  // Request permissions on mount
-  useEffect(() => {
-    requestPermissions()
-  }, [requestPermissions])
+  // Observe notifications preference and register/unregister accordingly
+  useObserve(appStore$.preferences.notificationsEnabled, ({ value: notificationsEnabled }) => {
+    if (notificationsEnabled) {
+      requestPermissions()
+    } else {
+      unregister()
+    }
+  })
 
   useEffect(() => {
     if (pushError) {
