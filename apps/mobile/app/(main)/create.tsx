@@ -19,8 +19,6 @@ import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
 import { CompletionScreen } from '../../components/CompletionScreen'
 
-const MAX_DURATION = 60 // 60 seconds max
-
 type RecordingState = 'idle' | 'recording' | 'completion' | 'processing' | 'uploading'
 
 export default function CreateScreen() {
@@ -51,13 +49,7 @@ export default function CreateScreen() {
 
     if (recordingState === 'recording') {
       interval = setInterval(() => {
-        setRecordingDuration((prev) => {
-          if (prev >= MAX_DURATION) {
-            stopRecording()
-            return MAX_DURATION
-          }
-          return prev + 1
-        })
+        setRecordingDuration((prev) => prev + 1)
       }, 1000)
     }
 
@@ -101,7 +93,7 @@ export default function CreateScreen() {
     return () => {
       deactivateKeepAwake(keepAwakeTag)
     }
-  }, [recordingState, isFocused, isAppActive, keepAwakeTag])
+  }, [recordingState, isFocused, isAppActive])
 
   const requestPermissions = useCallback(async () => {
     if (!cameraPermission?.granted) {
@@ -123,9 +115,7 @@ export default function CreateScreen() {
     setRecordingDuration(0)
 
     try {
-      const video = await cameraRef.current.recordAsync({
-        maxDuration: MAX_DURATION,
-      })
+      const video = await cameraRef.current.recordAsync()
 
       if (video?.uri) {
         setVideoUri(video.uri)
@@ -409,7 +399,7 @@ export default function CreateScreen() {
           </Pressable>
 
           <Text color={bondfireColors.ash} fontSize={13} marginTop={12}>
-            {recordingState === 'recording' ? 'Tap to stop' : `Max ${MAX_DURATION} seconds`}
+            {recordingState === 'recording' ? 'Tap to stop' : 'Tap to record'}
           </Text>
         </YStack>
       </CameraView>
