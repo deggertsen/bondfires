@@ -9,9 +9,11 @@ import {
   useCameraPermissions,
   useMicrophonePermissions,
 } from 'expo-camera'
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { useLocalSearchParams, useRouter } from 'expo-router'
+import { useIsFocused } from '@react-navigation/native'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Alert, Pressable, StatusBar } from 'react-native'
+import { Alert, AppState, Pressable, StatusBar } from 'react-native'
 import { Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
@@ -24,6 +26,7 @@ type RecordingState = 'idle' | 'recording' | 'completion' | 'processing' | 'uplo
 export default function CreateScreen() {
   const router = useRouter()
   const { respondTo } = useLocalSearchParams<{ respondTo?: string }>()
+  const isFocused = useIsFocused()
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions()
   const [micPermission, requestMicPermission] = useMicrophonePermissions()
@@ -35,10 +38,12 @@ export default function CreateScreen() {
   const [videoUri, setVideoUri] = useState<string | null>(null)
   const [progress, setProgress] = useState(0)
   const [progressStage, setProgressStage] = useState<string>('')
+  const [isAppActive, setIsAppActive] = useState(AppState.currentState === 'active')
 
   const createBondfire = useMutation(api.bondfires.create)
   const addResponse = useMutation(api.bondfireVideos.addResponse)
   const getUploadUrls = useAction(api.videos.getUploadUrls)
+  const keepAwakeTag = 'create-recording'
 
   // Recording timer
   useEffect(() => {
@@ -67,6 +72,36 @@ export default function CreateScreen() {
       cancelProcessing()
     }
   }, [])
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      setIsAppActive(state === 'active')
+    })
+
+    return () => {
+      subscription.remove()
+    }
+  }, [])
+
+  // Keep screen awake while recording or processing
+  useEffect(() => {
+    const shouldKeepAwake =
+      isFocused &&
+      isAppActive &&
+      (recordingState === 'recording' ||
+        recordingState === 'processing' ||
+        recordingState === 'uploading')
+
+    if (shouldKeepAwake) {
+      activateKeepAwakeAsync(keepAwakeTag)
+    } else {
+      deactivateKeepAwake(keepAwakeTag)
+    }
+
+    return () => {
+      deactivateKeepAwake(keepAwakeTag)
+    }
+  }, [recordingState, isFocused, isAppActive, keepAwakeTag])
 
   const requestPermissions = useCallback(async () => {
     if (!cameraPermission?.granted) {
