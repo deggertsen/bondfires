@@ -25,7 +25,7 @@ export function SettingsPopover({ onClose }: SettingsPopoverProps) {
       {/* Popover container */}
       <YStack
         position="absolute"
-        top={56}
+        top={94}
         right={16}
         width={200}
         padding={16}
