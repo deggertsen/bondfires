@@ -9,6 +9,7 @@ import {
   FileText,
   Flame,
   Play,
+  RotateCcw,
   Settings,
   Volume2,
   VolumeX,
@@ -19,7 +20,16 @@ import { LinearGradient } from 'expo-linear-gradient'
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { VideoView, useVideoPlayer } from 'expo-video'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AppState, Dimensions, FlatList, Pressable, StatusBar, type ViewToken } from 'react-native'
+import {
+  AppState,
+  Dimensions,
+  FlatList,
+  type GestureResponderEvent,
+  type LayoutChangeEvent,
+  Pressable,
+  StatusBar,
+  type ViewToken,
+} from 'react-native'
 import { Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Id } from '../../../../../convex/_generated/dataModel'
@@ -71,7 +81,9 @@ function VideoPlayer({
   const [duration, setDuration] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const [userInitiatedPlay, setUserInitiatedPlay] = useState(false)
+  const [hasEnded, setHasEnded] = useState(false)
   const bufferingCheckInterval = useRef<ReturnType<typeof setInterval> | null>(null)
+  const progressBarRef = useRef<{ width: number; x: number }>({ width: 0, x: 0 })
 
   const player = useVideoPlayer(currentUrl || '', (player) => {
     player.loop = false
@@ -119,7 +131,7 @@ function VideoPlayer({
   useEffect(() => {
     if (!player) return
 
-    const subscription = player.addListener('statusChange', (status) => {
+    const statusSubscription = player.addListener('statusChange', (status) => {
       if (status.status === 'readyToPlay') {
         setIsLoading(false)
         // Get duration from player, not status event
@@ -144,6 +156,13 @@ function VideoPlayer({
       }
     })
 
+    // Listen for video end
+    const endSubscription = player.addListener('playToEnd', () => {
+      setHasEnded(true)
+      setProgress(1)
+      onComplete()
+    })
+
     // Update progress periodically
     const progressInterval = setInterval(() => {
       if (player.status === 'readyToPlay' && player.currentTime !== undefined && player.duration) {
@@ -154,7 +173,8 @@ function VideoPlayer({
     }, 100)
 
     return () => {
-      subscription.remove()
+      statusSubscription.remove()
+      endSubscription.remove()
       clearInterval(progressInterval)
     }
   }, [player, onComplete, onProgress])
@@ -225,19 +245,48 @@ function VideoPlayer({
   const togglePlayPause = useCallback(() => {
     if (!player) return
 
-    if (player.playing) {
+    if (hasEnded) {
+      // Replay from beginning
+      player.replay()
+      setHasEnded(false)
+      setUserInitiatedPlay(true)
+    } else if (player.playing) {
       player.pause()
     } else {
       // User manually initiated play
       setUserInitiatedPlay(true)
       player.play()
     }
-  }, [player])
+  }, [player, hasEnded])
 
   const toggleMute = useCallback(() => {
     if (!player) return
     appActions.setVideoMuted(!isMuted)
   }, [player, isMuted])
+
+  const handleProgressBarLayout = useCallback((event: LayoutChangeEvent) => {
+    const { width, x } = event.nativeEvent.layout
+    progressBarRef.current = { width, x }
+  }, [])
+
+  const handleProgressBarPress = useCallback(
+    (event: GestureResponderEvent) => {
+      if (!player || !player.duration) return
+
+      const { locationX } = event.nativeEvent
+      const { width } = progressBarRef.current
+
+      if (width > 0) {
+        const seekProgress = Math.max(0, Math.min(1, locationX / width))
+        const seekTime = seekProgress * player.duration
+        player.currentTime = seekTime
+        setProgress(seekProgress)
+        setHasEnded(false)
+        setUserInitiatedPlay(true)
+      }
+    },
+    [player],
+  )
 
   return (
     <Pressable style={{ flex: 1, width: SCREEN_WIDTH }} onPress={togglePlayPause}>
@@ -271,7 +320,7 @@ function VideoPlayer({
           </YStack>
         )}
 
-        {/* Play/Pause indicator */}
+        {/* Play/Pause/Replay indicator */}
         {!isPlaying && !isLoading && (
           <YStack
             position="absolute"
@@ -291,7 +340,11 @@ function VideoPlayer({
               alignItems="center"
               justifyContent="center"
             >
-              <Play size={40} color={bondfireColors.whiteSmoke} fill={bondfireColors.whiteSmoke} />
+              {hasEnded ? (
+                <RotateCcw size={40} color={bondfireColors.whiteSmoke} />
+              ) : (
+                <Play size={40} color={bondfireColors.whiteSmoke} fill={bondfireColors.whiteSmoke} />
+              )}
             </YStack>
           </YStack>
         )}
@@ -309,17 +362,32 @@ function VideoPlayer({
           pointerEvents="none"
         />
 
-        {/* Progress bar */}
+        {/* Progress bar - interactive for scrubbing */}
         <YStack position="absolute" bottom={100} left={20} right={20}>
-          <YStack height={3} backgroundColor="rgba(255,255,255,0.3)" borderRadius={2}>
-            <YStack
-              height={3}
-              backgroundColor={bondfireColors.bondfireCopper}
-              borderRadius={2}
-              width={`${progress * 100}%`}
-            />
-          </YStack>
-          <XStack justifyContent="space-between" marginTop={8}>
+          <Pressable onPress={handleProgressBarPress} onLayout={handleProgressBarLayout}>
+            <YStack paddingVertical={10}>
+              <YStack height={4} backgroundColor="rgba(255,255,255,0.3)" borderRadius={2}>
+                <YStack
+                  height={4}
+                  backgroundColor={bondfireColors.bondfireCopper}
+                  borderRadius={2}
+                  width={`${progress * 100}%`}
+                />
+                {/* Scrubber thumb */}
+                <YStack
+                  position="absolute"
+                  top={-4}
+                  left={`${progress * 100}%`}
+                  marginLeft={-6}
+                  width={12}
+                  height={12}
+                  borderRadius={6}
+                  backgroundColor={bondfireColors.bondfireCopper}
+                />
+              </YStack>
+            </YStack>
+          </Pressable>
+          <XStack justifyContent="space-between" marginTop={4}>
             <Text fontSize={12} color={bondfireColors.ash}>
               {formatTime(progress * duration)}
             </Text>
