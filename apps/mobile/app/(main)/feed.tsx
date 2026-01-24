@@ -1,12 +1,16 @@
+import { appStore$ } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
-import { Eye, Flame, MessageCircle, Play } from '@tamagui/lucide-icons'
-import { useQuery } from 'convex/react'
+import { useValue } from '@legendapp/state/react'
+import { useIsFocused } from '@react-navigation/native'
+import { Eye, Flame, MessageCircle, Play, Volume2, VolumeX } from '@tamagui/lucide-icons'
+import { useAction, useQuery } from 'convex/react'
 import { Image } from 'expo-image'
 import { LinearGradient } from 'expo-linear-gradient'
 import { useRouter } from 'expo-router'
-import { useCallback, useRef, useState } from 'react'
-import { Dimensions, FlatList, Pressable, StatusBar, type ViewToken } from 'react-native'
+import { VideoView, useVideoPlayer } from 'expo-video'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { AppState, Dimensions, FlatList, Pressable, StatusBar, type ViewToken } from 'react-native'
 import { Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 
@@ -17,6 +21,9 @@ const ITEM_HEIGHT = SCREEN_HEIGHT
 interface BondfireData {
   _id: string
   creatorName?: string
+  videoKey: string
+  sdVideoKey?: string
+  thumbnailKey?: string
   videoCount: number
   viewCount?: number
   thumbnailUrl?: string
@@ -26,47 +33,171 @@ interface BondfireData {
 interface BondfireItemProps {
   bondfire: BondfireData
   isActive: boolean
+  isScreenFocused: boolean
+  isAppActive: boolean
+  videoUrl: string | null
+  videoUrlSd: string | null
   onPress: () => void
   onRespond: () => void
 }
 
-function BondfireItem({ bondfire, isActive, onPress, onRespond }: BondfireItemProps) {
+function BondfireItem({
+  bondfire,
+  isActive,
+  isScreenFocused,
+  isAppActive,
+  videoUrl,
+  videoUrlSd,
+  onPress,
+  onRespond,
+}: BondfireItemProps) {
   const timeAgo = getTimeAgo(bondfire.createdAt)
+  const autoplayVideos = useValue(appStore$.preferences.autoplayVideos)
+  const videoQuality = useValue(appStore$.preferences.videoQuality)
+
+  const [isMuted, setIsMuted] = useState(true)
+  const [isLoading, setIsLoading] = useState(true)
+  const [userInitiatedPlay, setUserInitiatedPlay] = useState(false)
+
+  // Determine which URL to use based on quality preference
+  const currentUrl = videoQuality === 'sd' && videoUrlSd ? videoUrlSd : videoUrl
+
+  const player = useVideoPlayer(currentUrl || '', (player) => {
+    player.loop = true
+    player.muted = isMuted
+  })
+
+  // Update mute state
+  useEffect(() => {
+    if (player) {
+      player.muted = isMuted
+    }
+  }, [player, isMuted])
+
+  // Play/pause based on isActive, screen focus, app state, and autoplay preference
+  useEffect(() => {
+    if (!player) return
+
+    const shouldPlay = isActive && isScreenFocused && isAppActive
+
+    if (shouldPlay) {
+      // Only auto-play if autoplay is enabled OR user has manually initiated play
+      if (autoplayVideos || userInitiatedPlay) {
+        player.play()
+      }
+    } else {
+      player.pause()
+      // Reset user-initiated play when video becomes inactive
+      if (!isActive) {
+        setUserInitiatedPlay(false)
+      }
+    }
+  }, [player, isActive, isScreenFocused, isAppActive, autoplayVideos, userInitiatedPlay])
+
+  // Monitor playback status
+  useEffect(() => {
+    if (!player) return
+
+    const subscription = player.addListener('statusChange', (status) => {
+      if (status.status === 'readyToPlay') {
+        setIsLoading(false)
+      } else if (status.status === 'loading') {
+        setIsLoading(true)
+      }
+    })
+
+    return () => {
+      subscription.remove()
+    }
+  }, [player])
+
+  const togglePlayPause = useCallback(() => {
+    if (!player) return
+
+    if (player.playing) {
+      player.pause()
+    } else {
+      // User manually initiated play
+      setUserInitiatedPlay(true)
+      player.play()
+    }
+  }, [player])
+
+  const toggleMute = useCallback(() => {
+    setIsMuted((prev) => !prev)
+  }, [])
+
+  const isPlaying = player?.playing ?? false
+  const hasVideo = !!currentUrl
 
   return (
-    <Pressable onPress={onPress} style={{ width: SCREEN_WIDTH, height: ITEM_HEIGHT }}>
+    <Pressable
+      onPress={hasVideo ? togglePlayPause : onPress}
+      style={{ width: SCREEN_WIDTH, height: ITEM_HEIGHT }}
+    >
       <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
         {/* Video/Thumbnail area */}
         <YStack flex={1} alignItems="center" justifyContent="center">
-          {bondfire.thumbnailUrl ? (
+          {hasVideo && player ? (
+            <VideoView
+              player={player}
+              style={{ width: '100%', height: '100%' }}
+              contentFit="cover"
+              nativeControls={false}
+            />
+          ) : bondfire.thumbnailUrl ? (
             <Image
               source={{ uri: bondfire.thumbnailUrl }}
               style={{ width: '100%', height: '100%' }}
               contentFit="cover"
             />
           ) : (
-            <YStack flex={1} alignItems="center" justifyContent="center">
+            <YStack flex={1} alignItems="center" justifyContent="center" width="100%">
               <Flame size={120} color={bondfireColors.bondfireCopper} />
-              {isActive && (
-                <YStack
-                  position="absolute"
-                  width={80}
-                  height={80}
-                  borderRadius={40}
-                  backgroundColor="rgba(217, 119, 54, 0.3)"
-                  alignItems="center"
-                  justifyContent="center"
-                >
-                  <Play
-                    size={40}
-                    color={bondfireColors.whiteSmoke}
-                    fill={bondfireColors.whiteSmoke}
-                  />
-                </YStack>
-              )}
             </YStack>
           )}
         </YStack>
+
+        {/* Loading overlay */}
+        {hasVideo && isLoading && (
+          <YStack
+            position="absolute"
+            top={0}
+            left={0}
+            right={0}
+            bottom={0}
+            alignItems="center"
+            justifyContent="center"
+            backgroundColor="rgba(20, 20, 22, 0.5)"
+          >
+            <Spinner size="large" color={bondfireColors.bondfireCopper} />
+          </YStack>
+        )}
+
+        {/* Play/Pause indicator (when paused and video is available) */}
+        {hasVideo && !isPlaying && !isLoading && (
+          <YStack
+            position="absolute"
+            top={0}
+            left={0}
+            right={0}
+            bottom={0}
+            alignItems="center"
+            justifyContent="center"
+            pointerEvents="none"
+          >
+            <YStack
+              width={80}
+              height={80}
+              borderRadius={40}
+              backgroundColor="rgba(20, 20, 22, 0.6)"
+              alignItems="center"
+              justifyContent="center"
+            >
+              <Play size={40} color={bondfireColors.whiteSmoke} fill={bondfireColors.whiteSmoke} />
+            </YStack>
+          </YStack>
+        )}
 
         {/* Bottom gradient overlay */}
         <LinearGradient
@@ -124,8 +255,9 @@ function BondfireItem({ bondfire, isActive, onPress, onRespond }: BondfireItemPr
         </YStack>
 
         {/* Right side action buttons */}
-        <YStack position="absolute" right={16} bottom={160} gap={20} alignItems="center">
-          <Pressable onPress={onRespond}>
+        <YStack position="absolute" right={16} bottom={100} gap={20} alignItems="center">
+          {/* View details / respond button */}
+          <Pressable onPress={onPress}>
             <YStack alignItems="center" gap={4}>
               <YStack
                 width={48}
@@ -138,10 +270,50 @@ function BondfireItem({ bondfire, isActive, onPress, onRespond }: BondfireItemPr
                 <Flame size={24} color={bondfireColors.whiteSmoke} />
               </YStack>
               <Text fontSize={12} color={bondfireColors.whiteSmoke}>
+                View
+              </Text>
+            </YStack>
+          </Pressable>
+
+          <Pressable onPress={onRespond}>
+            <YStack alignItems="center" gap={4}>
+              <YStack
+                width={48}
+                height={48}
+                borderRadius={24}
+                backgroundColor={bondfireColors.gunmetal}
+                alignItems="center"
+                justifyContent="center"
+                borderWidth={2}
+                borderColor={bondfireColors.bondfireCopper}
+              >
+                <MessageCircle size={24} color={bondfireColors.bondfireCopper} />
+              </YStack>
+              <Text fontSize={12} color={bondfireColors.whiteSmoke}>
                 Respond
               </Text>
             </YStack>
           </Pressable>
+
+          {/* Mute/Unmute button */}
+          {hasVideo && (
+            <Pressable onPress={toggleMute}>
+              <YStack
+                width={44}
+                height={44}
+                borderRadius={22}
+                backgroundColor="rgba(31, 32, 35, 0.8)"
+                alignItems="center"
+                justifyContent="center"
+              >
+                {isMuted ? (
+                  <VolumeX size={22} color={bondfireColors.whiteSmoke} />
+                ) : (
+                  <Volume2 size={22} color={bondfireColors.whiteSmoke} />
+                )}
+              </YStack>
+            </Pressable>
+          )}
         </YStack>
       </YStack>
     </Pressable>
@@ -212,9 +384,65 @@ function LoadingFeed() {
 
 export default function FeedScreen() {
   const router = useRouter()
+  const isFocused = useIsFocused()
   const bondfires = useQuery(api.bondfires.listFeed, { limit: 20 })
+  const getVideoUrls = useAction(api.videos.getVideoUrls)
+
   const [activeIndex, setActiveIndex] = useState(0)
+  const [videoUrls, setVideoUrls] = useState<
+    Record<string, { hdUrl: string | null; sdUrl: string | null }>
+  >({})
+  const [isAppActive, setIsAppActive] = useState(AppState.currentState === 'active')
   const flatListRef = useRef<FlatList>(null)
+  const loadingUrlsRef = useRef<Set<string>>(new Set())
+
+  // Track app active state
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      setIsAppActive(state === 'active')
+    })
+
+    return () => {
+      subscription.remove()
+    }
+  }, [])
+
+  // Load video URLs for bondfires near the active index (preload adjacent videos)
+  useEffect(() => {
+    if (!bondfires) return
+
+    const loadVideoUrls = async () => {
+      // Load URLs for current, previous, and next items
+      const indicesToLoad = [activeIndex - 1, activeIndex, activeIndex + 1].filter(
+        (i) => i >= 0 && i < bondfires.length,
+      )
+
+      for (const index of indicesToLoad) {
+        const bondfire = bondfires[index]
+        // Skip if we're already loading or have loaded this URL
+        if (loadingUrlsRef.current.has(bondfire._id)) continue
+        loadingUrlsRef.current.add(bondfire._id)
+
+        try {
+          const urls = await getVideoUrls({
+            hdKey: bondfire.videoKey,
+            sdKey: bondfire.sdVideoKey,
+          })
+
+          setVideoUrls((prev) => ({
+            ...prev,
+            [bondfire._id]: { hdUrl: urls.hdUrl, sdUrl: urls.sdUrl },
+          }))
+        } catch (error) {
+          console.error('Failed to load video URL for bondfire:', bondfire._id, error)
+          // Remove from loading set on error so we can retry
+          loadingUrlsRef.current.delete(bondfire._id)
+        }
+      }
+    }
+
+    loadVideoUrls()
+  }, [bondfires, activeIndex, getVideoUrls])
 
   const handleBondfirePress = useCallback(
     (bondfireId: string) => {
@@ -263,6 +491,10 @@ export default function FeedScreen() {
           <BondfireItem
             bondfire={item}
             isActive={index === activeIndex}
+            isScreenFocused={isFocused}
+            isAppActive={isAppActive}
+            videoUrl={videoUrls[item._id]?.hdUrl ?? null}
+            videoUrlSd={videoUrls[item._id]?.sdUrl ?? null}
             onPress={() => handleBondfirePress(item._id)}
             onRespond={() => handleRespond(item._id)}
           />
