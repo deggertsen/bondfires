@@ -12,12 +12,14 @@ import {
   Volume2,
   VolumeX,
 } from '@tamagui/lucide-icons'
+import { useIsFocused } from '@react-navigation/native'
 import { useAction, useMutation, useQuery } from 'convex/react'
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { LinearGradient } from 'expo-linear-gradient'
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { VideoView, useVideoPlayer } from 'expo-video'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Dimensions, FlatList, Pressable, StatusBar, type ViewToken } from 'react-native'
+import { AppState, Dimensions, FlatList, Pressable, StatusBar, type ViewToken } from 'react-native'
 import { Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Id } from '../../../../../convex/_generated/dataModel'
@@ -27,9 +29,12 @@ import { SettingsPopover } from '../../../components/SettingsPopover'
 const { width: SCREEN_WIDTH } = Dimensions.get('window')
 
 interface VideoPlayerProps {
+  videoId: string
   videoUrl: string | null
   videoUrlSd: string | null
   isActive: boolean
+  isScreenFocused: boolean
+  isAppActive: boolean
   onComplete: () => void
   onProgress: (progress: number) => void
   creatorName: string
@@ -38,9 +43,12 @@ interface VideoPlayerProps {
 }
 
 function VideoPlayer({
+  videoId,
   videoUrl,
   videoUrlSd,
   isActive,
+  isScreenFocused,
+  isAppActive,
   onComplete,
   onProgress,
   creatorName,
@@ -166,6 +174,21 @@ function VideoPlayer({
     }
   }, [videoUrl, currentUrl])
 
+  // Keep screen awake while video is playing
+  const isPlaying = player?.playing ?? false
+  const keepAwakeTag = `video-playback-${videoId}`
+  useEffect(() => {
+    if (isScreenFocused && isAppActive && isActive && isPlaying) {
+      activateKeepAwakeAsync(keepAwakeTag)
+    } else {
+      deactivateKeepAwake(keepAwakeTag)
+    }
+
+    return () => {
+      deactivateKeepAwake(keepAwakeTag)
+    }
+  }, [isScreenFocused, isAppActive, isActive, isPlaying, keepAwakeTag])
+
   const togglePlayPause = useCallback(() => {
     if (!player) return
 
@@ -180,8 +203,6 @@ function VideoPlayer({
     if (!player) return
     setIsMuted(!isMuted)
   }, [player, isMuted])
-
-  const isPlaying = player?.playing ?? false
 
   return (
     <Pressable style={{ flex: 1, width: SCREEN_WIDTH }} onPress={togglePlayPause}>
@@ -337,18 +358,30 @@ export default function BondfireDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const router = useRouter()
   const flatListRef = useRef<FlatList>(null)
+  const isFocused = useIsFocused()
 
   const [currentVideoIndex, setCurrentVideoIndex] = useState(0)
   const [videoUrls, setVideoUrls] = useState<(string | null)[]>([])
   const [videoUrlsSd, setVideoUrlsSd] = useState<(string | null)[]>([])
   const [showSettings, setShowSettings] = useState(false)
   const [showNotepad, setShowNotepad] = useState(false)
+  const [isAppActive, setIsAppActive] = useState(AppState.currentState === 'active')
 
   const bondfireId = id as Id<'bondfires'>
   const bondfireData = useQuery(api.bondfires.getWithVideos, { bondfireId })
   const getVideoUrls = useAction(api.videos.getVideoUrls)
   const recordWatchEvent = useMutation(api.watchEvents.record)
   const incrementViews = useMutation(api.bondfires.incrementViews)
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      setIsAppActive(state === 'active')
+    })
+
+    return () => {
+      subscription.remove()
+    }
+  }, [])
 
   // Load video URLs when data is available
   useEffect(() => {
@@ -567,9 +600,12 @@ export default function BondfireDetailScreen() {
           keyExtractor={(item) => item.id}
           renderItem={({ item, index }) => (
             <VideoPlayer
+              videoId={item.id}
               videoUrl={item.url}
               videoUrlSd={item.urlSd}
               isActive={index === currentVideoIndex}
+              isScreenFocused={isFocused}
+              isAppActive={isAppActive}
               onComplete={handleVideoComplete}
               onProgress={handleProgress}
               creatorName={item.creatorName}
