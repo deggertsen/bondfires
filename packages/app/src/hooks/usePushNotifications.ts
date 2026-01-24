@@ -92,8 +92,21 @@ export function usePushNotifications(
       return null
     }
 
-    const tokenData = await Notifications.getExpoPushTokenAsync({ projectId })
-    return tokenData.data
+    try {
+      const tokenData = await Notifications.getExpoPushTokenAsync({ projectId })
+      return tokenData.data
+    } catch (e) {
+      // Handle Firebase auth errors gracefully (common in dev builds)
+      const errorMessage = e instanceof Error ? e.message : String(e)
+      if (errorMessage.includes('FIS_AUTH_ERROR')) {
+        console.warn(
+          'Push notifications unavailable: Firebase auth error. ' +
+            'This is normal in development. For production, ensure SHA-1 fingerprint is registered in Firebase Console.',
+        )
+        return null
+      }
+      throw e
+    }
   }, [])
 
   // Request notification permissions
@@ -181,8 +194,8 @@ export function usePushNotifications(
             setExpoPushToken(token)
             await registerWithBackend(token)
           }
-        } catch (e) {
-          console.error('Error refreshing push token:', e)
+        } catch {
+          // Silently handle - getExpoPushToken already logs helpful messages
         }
       }
       appStateRef.current = nextAppState
@@ -217,8 +230,8 @@ export function usePushNotifications(
             setExpoPushToken(token)
             await registerWithBackend(token)
           }
-        } catch (e) {
-          console.error('Error getting initial push token:', e)
+        } catch {
+          // Silently handle - getExpoPushToken already logs helpful messages
         }
       }
     }
