@@ -34,9 +34,11 @@ export default function ProfileScreen() {
   const updateProfile = useMutation(api.users.updateProfile)
   const deleteAccountMutation = useMutation(api.users.deleteAccount)
 
-  const { preferences, setAutoplayVideos, setNotificationsEnabled } = usePreferences()
+  const { preferences, setVideoQuality, setAutoplayVideos, setNotificationsEnabled } =
+    usePreferences()
 
   const [isEditSheetOpen, setIsEditSheetOpen] = useState(false)
+  const [isVideoQualitySheetOpen, setIsVideoQualitySheetOpen] = useState(false)
   const [editName, setEditName] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -269,22 +271,24 @@ export default function ProfileScreen() {
 
             <Card>
               <YStack gap={16}>
-                <XStack justifyContent="space-between" alignItems="center">
-                  <XStack alignItems="center" gap={12}>
-                    <Video size={20} color={bondfireColors.bondfireCopper} />
-                    <YStack>
-                      <Text fontWeight="500" fontSize={15}>
-                        Video Quality
-                      </Text>
-                      <Text fontSize={13} color={bondfireColors.ash}>
-                        Auto adjusts based on network
-                      </Text>
-                    </YStack>
+                <Pressable onPress={() => setIsVideoQualitySheetOpen(true)}>
+                  <XStack justifyContent="space-between" alignItems="center">
+                    <XStack alignItems="center" gap={12}>
+                      <Video size={20} color={bondfireColors.bondfireCopper} />
+                      <YStack>
+                        <Text fontWeight="500" fontSize={15}>
+                          Video Quality
+                        </Text>
+                        <Text fontSize={13} color={bondfireColors.ash}>
+                          Tap to change quality preference
+                        </Text>
+                      </YStack>
+                    </XStack>
+                    <Text color={bondfireColors.bondfireCopper} fontWeight="600" fontSize={14}>
+                      {preferences.videoQuality.toUpperCase()}
+                    </Text>
                   </XStack>
-                  <Text color={bondfireColors.bondfireCopper} fontWeight="600" fontSize={14}>
-                    {preferences.videoQuality.toUpperCase()}
-                  </Text>
-                </XStack>
+                </Pressable>
 
                 <Separator borderColor={bondfireColors.iron} />
 
@@ -495,6 +499,71 @@ export default function ProfileScreen() {
                 )}
               </Button>
             </XStack>
+          </YStack>
+        </Sheet.Frame>
+      </Sheet>
+
+      {/* Video Quality Sheet */}
+      <Sheet
+        open={isVideoQualitySheetOpen}
+        onOpenChange={setIsVideoQualitySheetOpen}
+        snapPoints={[35]}
+        dismissOnSnapToBottom
+      >
+        <Sheet.Overlay backgroundColor="rgba(0,0,0,0.6)" />
+        <Sheet.Frame
+          padding={20}
+          backgroundColor={bondfireColors.gunmetal}
+          borderTopLeftRadius={24}
+          borderTopRightRadius={24}
+        >
+          <Sheet.Handle backgroundColor={bondfireColors.iron} />
+          <YStack gap={20} marginTop={16}>
+            <Text fontSize={20} fontWeight="700">
+              Video Quality
+            </Text>
+
+            <YStack gap={12}>
+              {(['auto', 'hd', 'sd'] as const).map((quality) => (
+                <Pressable
+                  key={quality}
+                  onPress={() => {
+                    setVideoQuality(quality)
+                    setIsVideoQualitySheetOpen(false)
+                  }}
+                >
+                  <XStack
+                    padding={16}
+                    borderRadius={12}
+                    backgroundColor={
+                      preferences.videoQuality === quality
+                        ? bondfireColors.charcoal
+                        : bondfireColors.iron
+                    }
+                    borderWidth={preferences.videoQuality === quality ? 2 : 0}
+                    borderColor={bondfireColors.bondfireCopper}
+                    justifyContent="space-between"
+                    alignItems="center"
+                  >
+                    <YStack>
+                      <Text fontWeight="600" fontSize={16}>
+                        {quality === 'auto' ? 'Auto' : quality === 'hd' ? 'High (HD)' : 'Standard (SD)'}
+                      </Text>
+                      <Text fontSize={13} color={bondfireColors.ash}>
+                        {quality === 'auto'
+                          ? 'Adjusts based on network speed'
+                          : quality === 'hd'
+                            ? 'Best quality, uses more data'
+                            : 'Lower quality, saves data'}
+                      </Text>
+                    </YStack>
+                    {preferences.videoQuality === quality && (
+                      <Video size={20} color={bondfireColors.bondfireCopper} />
+                    )}
+                  </XStack>
+                </Pressable>
+              ))}
+            </YStack>
           </YStack>
         </Sheet.Frame>
       </Sheet>
