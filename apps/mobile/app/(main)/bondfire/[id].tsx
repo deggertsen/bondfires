@@ -77,6 +77,7 @@ function VideoPlayer({
     player.loop = false
     player.muted = isMuted
     player.playbackRate = playbackSpeed
+    player.preservesPitch = true
   })
 
   // Update playback speed when it changes

@@ -65,6 +65,7 @@ function BondfireItem({
   const player = useVideoPlayer(currentUrl || '', (player) => {
     player.loop = true
     player.muted = isMuted
+    player.preservesPitch = true
   })
 
   // Update mute state
