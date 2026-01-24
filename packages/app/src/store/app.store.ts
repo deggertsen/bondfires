@@ -18,6 +18,7 @@ export interface AppState {
   preferences: {
     videoQuality: 'auto' | 'hd' | 'sd'
     autoplayVideos: boolean
+    videoMuted: boolean
     notificationsEnabled: boolean
     playbackSpeed: number // 1.0 to 2.0
   }
@@ -32,6 +33,7 @@ const defaultState: AppState = {
   preferences: {
     videoQuality: 'auto',
     autoplayVideos: true,
+    videoMuted: true,
     notificationsEnabled: true,
     playbackSpeed: 1.0,
   },
@@ -61,6 +63,10 @@ export const appActions = {
 
   setAutoplayVideos: (enabled: boolean) => {
     appStore$.preferences.autoplayVideos.set(enabled)
+  },
+
+  setVideoMuted: (muted: boolean) => {
+    appStore$.preferences.videoMuted.set(muted)
   },
 
   setNotificationsEnabled: (enabled: boolean) => {

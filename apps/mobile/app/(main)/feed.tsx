@@ -1,4 +1,4 @@
-import { appStore$ } from '@bondfires/app'
+import { appActions, appStore$ } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
@@ -54,8 +54,8 @@ function BondfireItem({
   const timeAgo = getTimeAgo(bondfire.createdAt)
   const autoplayVideos = useValue(appStore$.preferences.autoplayVideos)
   const videoQuality = useValue(appStore$.preferences.videoQuality)
+  const isMuted = useValue(appStore$.preferences.videoMuted)
 
-  const [isMuted, setIsMuted] = useState(true)
   const [isLoading, setIsLoading] = useState(true)
   const [userInitiatedPlay, setUserInitiatedPlay] = useState(false)
 
@@ -124,8 +124,8 @@ function BondfireItem({
   }, [player])
 
   const toggleMute = useCallback(() => {
-    setIsMuted((prev) => !prev)
-  }, [])
+    appActions.setVideoMuted(!isMuted)
+  }, [isMuted])
 
   const isPlaying = player?.playing ?? false
   const hasVideo = !!currentUrl
@@ -446,6 +446,8 @@ export default function FeedScreen() {
 
   const handleBondfirePress = useCallback(
     (bondfireId: string) => {
+      // Unmute when navigating to detail view
+      appActions.setVideoMuted(false)
       router.push(`/(main)/bondfire/${bondfireId}`)
     },
     [router],

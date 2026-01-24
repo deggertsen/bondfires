@@ -1,4 +1,4 @@
-import { appStore$, hasViewedToday, markViewed } from '@bondfires/app'
+import { appActions, appStore$, hasViewedToday, markViewed } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
@@ -58,6 +58,7 @@ function VideoPlayer({
   const playbackSpeed = useValue(appStore$.preferences.playbackSpeed)
   const autoplayVideos = useValue(appStore$.preferences.autoplayVideos)
   const videoQuality = useValue(appStore$.preferences.videoQuality)
+  const isMuted = useValue(appStore$.preferences.videoMuted)
 
   // Determine initial URL based on quality preference
   const getInitialUrl = () => {
@@ -66,7 +67,6 @@ function VideoPlayer({
   }
   const [currentUrl, setCurrentUrl] = useState(getInitialUrl)
   const [hasSwitchedToSD, setHasSwitchedToSD] = useState(false)
-  const [isMuted, setIsMuted] = useState(true)
   const [progress, setProgress] = useState(0)
   const [duration, setDuration] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
@@ -230,7 +230,7 @@ function VideoPlayer({
 
   const toggleMute = useCallback(() => {
     if (!player) return
-    setIsMuted(!isMuted)
+    appActions.setVideoMuted(!isMuted)
   }, [player, isMuted])
 
   return (
