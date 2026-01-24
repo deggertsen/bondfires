@@ -4,7 +4,7 @@ import { Button, Text, XStack, YStack } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
 import { Trash2 } from '@tamagui/lucide-icons'
 import { useEffect, useRef } from 'react'
-import { Pressable, StyleSheet, TextInput } from 'react-native'
+import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, TextInput } from 'react-native'
 
 interface NotepadOverlayProps {
   onClose: () => void
@@ -35,35 +35,50 @@ export function NotepadOverlay({ onClose }: NotepadOverlayProps) {
 
   return (
     <Pressable style={StyleSheet.absoluteFill} onPress={onClose}>
-      <YStack
-        flex={1}
-        backgroundColor="rgba(20, 20, 22, 0.6)"
-        padding={24}
-        onPress={(e) => e.stopPropagation()}
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
       >
-        <TextInput
-          ref={textInputRef}
-          style={{
-            flex: 1,
-            color: bondfireColors.whiteSmoke,
-            fontSize: 16,
-            textAlignVertical: 'top',
-          }}
-          placeholder="Type your notes here..."
-          placeholderTextColor={bondfireColors.ash}
-          multiline
-          value={content}
-          onChangeText={handleTextChange}
-          autoFocus
-        />
+        <YStack
+          flex={1}
+          backgroundColor="rgba(20, 20, 22, 0.6)"
+          paddingHorizontal={12}
+          marginTop={100}
+          paddingBottom={12}
+          onPress={(e) => e.stopPropagation()}
+        >
+          <TextInput
+            ref={textInputRef}
+            style={styles.textInput}
+            placeholder="Type your notes here..."
+            placeholderTextColor={bondfireColors.ash}
+            multiline
+            value={content}
+            onChangeText={handleTextChange}
+            autoFocus
+          />
 
-        {/* Clear button */}
-        <XStack position="absolute" bottom={24} left={24}>
-          <Button variant="ghost" size="$sm" onPress={handleClear} icon={Trash2}>
-            <Text color={bondfireColors.whiteSmoke}>Clear Notepad</Text>
-          </Button>
-        </XStack>
-      </YStack>
+          {/* Clear button */}
+          <XStack paddingTop={16}>
+            <Button variant="secondary" size="$sm" onPress={handleClear} icon={Trash2}>
+              <Text color={bondfireColors.whiteSmoke}>Clear Notepad</Text>
+            </Button>
+          </XStack>
+        </YStack>
+      </KeyboardAvoidingView>
     </Pressable>
   )
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  textInput: {
+    flex: 1,
+    color: bondfireColors.whiteSmoke,
+    fontSize: 16,
+    textAlignVertical: 'top',
+  },
+})
