@@ -2,6 +2,7 @@ import { appStore$, hasViewedToday, markViewed } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
+import { useIsFocused } from '@react-navigation/native'
 import {
   ChevronLeft,
   ChevronRight,
@@ -12,7 +13,6 @@ import {
   Volume2,
   VolumeX,
 } from '@tamagui/lucide-icons'
-import { useIsFocused } from '@react-navigation/native'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { LinearGradient } from 'expo-linear-gradient'
@@ -568,7 +568,9 @@ export default function BondfireDetailScreen() {
                   width={40}
                   height={40}
                   borderRadius={20}
-                  backgroundColor="rgba(31, 32, 35, 0.8)"
+                  backgroundColor={
+                    showSettings ? bondfireColors.bondfireCopper : 'rgba(31, 32, 35, 0.8)'
+                  }
                   alignItems="center"
                   justifyContent="center"
                 >
@@ -649,7 +651,7 @@ export default function BondfireDetailScreen() {
           left={0}
           right={0}
           paddingHorizontal={20}
-          paddingBottom={40}
+          paddingBottom={20}
           paddingTop={16}
         >
           <LinearGradient
