@@ -93,11 +93,14 @@ function VideoPlayer({
     }
   }, [player, isMuted])
 
-  // Play/pause based on isActive and autoplay preference
+  // Play/pause based on isActive, screen focus, and app state
   useEffect(() => {
     if (!player) return
 
-    if (isActive) {
+    // Only play if video is active, screen is focused, AND app is in foreground
+    const shouldPlay = isActive && isScreenFocused && isAppActive
+
+    if (shouldPlay) {
       // Only auto-play if autoplay is enabled OR user has manually initiated play
       if (autoplayVideos || userInitiatedPlay) {
         player.play()
@@ -105,9 +108,11 @@ function VideoPlayer({
     } else {
       player.pause()
       // Reset user-initiated play when video becomes inactive
-      setUserInitiatedPlay(false)
+      if (!isActive) {
+        setUserInitiatedPlay(false)
+      }
     }
-  }, [player, isActive, autoplayVideos, userInitiatedPlay])
+  }, [player, isActive, isScreenFocused, isAppActive, autoplayVideos, userInitiatedPlay])
 
   // Monitor playback status
   useEffect(() => {
