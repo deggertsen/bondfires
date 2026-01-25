@@ -53,7 +53,7 @@ export default function OnboardingScreen() {
         </YStack>
 
         {/* How it works */}
-        <YStack gap={24} maxWidth={320} marginTop={20}>
+        <YStack gap={24} width="100%" maxWidth={320} marginTop={20}>
           <XStack gap={16} alignItems="flex-start">
             <YStack
               width={36}
@@ -70,7 +70,7 @@ export default function OnboardingScreen() {
               </Text>
             </YStack>
             <YStack flex={1}>
-              <Text fontWeight="600" fontSize={16}>
+              <Text fontWeight="600" fontSize={16} color={bondfireColors.warmWhite}>
                 Spark a Bondfire
               </Text>
               <Text fontSize={14} color={bondfireColors.ash}>
@@ -95,10 +95,10 @@ export default function OnboardingScreen() {
               </Text>
             </YStack>
             <YStack flex={1}>
-              <Text fontWeight="600" fontSize={16}>
+              <Text fontWeight="600" fontSize={16} color={bondfireColors.warmWhite}>
                 Respond to Others
               </Text>
-              <Text fontSize={14} color={bondfireColors.ash}>
+              <Text fontSize={14} color={bondfireColors.warmWhite}>
                 Add your video response to keep the bondfire growing.
               </Text>
             </YStack>
@@ -120,7 +120,7 @@ export default function OnboardingScreen() {
               </Text>
             </YStack>
             <YStack flex={1}>
-              <Text fontWeight="600" fontSize={16}>
+              <Text fontWeight="600" fontSize={16} color={bondfireColors.warmWhite}>
                 Build Connections
               </Text>
               <Text fontSize={14} color={bondfireColors.ash}>
