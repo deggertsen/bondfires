@@ -34,14 +34,19 @@ import { Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Id } from '../../../../../convex/_generated/dataModel'
 import { NotepadOverlay } from '../../../components/NotepadOverlay'
+import { ReportButton } from '../../../components/ReportButton'
+import { ReportOverlay } from '../../../components/ReportOverlay'
 import { SettingsPopover } from '../../../components/SettingsPopover'
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window')
 
 interface VideoPlayerProps {
-  videoId: string
+  // Exactly one of these must be provided
+  bondfireId?: Id<'bondfires'>
+  bondfireVideoId?: Id<'bondfireVideos'>
   videoUrl: string | null
   videoUrlSd: string | null
+  videoOwnerId: Id<'users'>
   isActive: boolean
   isScreenFocused: boolean
   isAppActive: boolean
@@ -53,9 +58,11 @@ interface VideoPlayerProps {
 }
 
 function VideoPlayer({
-  videoId,
+  bondfireId,
+  bondfireVideoId,
   videoUrl,
   videoUrlSd,
+  videoOwnerId,
   isActive,
   isScreenFocused,
   isAppActive,
@@ -65,6 +72,9 @@ function VideoPlayer({
   isMainVideo,
   responseIndex,
 }: VideoPlayerProps) {
+  // Get the video ID for internal use (keep-awake tag, etc.)
+  const videoId = bondfireId || bondfireVideoId || ''
+  const [showReport, setShowReport] = useState(false)
   const playbackSpeed = useValue(appStore$.preferences.playbackSpeed)
   const autoplayVideos = useValue(appStore$.preferences.autoplayVideos)
   const videoQuality = useValue(appStore$.preferences.videoQuality)
@@ -428,6 +438,10 @@ function VideoPlayer({
 
         {/* Right side controls */}
         <YStack position="absolute" right={16} bottom={160} gap={16} alignItems="center">
+          {/* Report button - only show when paused */}
+          {!isPlaying && !isLoading && (
+            <ReportButton onPress={() => setShowReport(true)} />
+          )}
           <Pressable onPress={toggleMute}>
             <YStack
               width={44}
@@ -445,6 +459,16 @@ function VideoPlayer({
             </YStack>
           </Pressable>
         </YStack>
+
+        {/* Report Overlay */}
+        {showReport && (
+          <ReportOverlay
+            bondfireId={bondfireId}
+            bondfireVideoId={bondfireVideoId}
+            videoOwnerId={videoOwnerId}
+            onClose={() => setShowReport(false)}
+          />
+        )}
       </YStack>
     </Pressable>
   )
@@ -595,20 +619,26 @@ export default function BondfireDetailScreen() {
 
   const totalVideos = 1 + bondfireData.videos.length
 
-  // Build video items with metadata
+  // Build video items with metadata - using typed IDs for type safety
   const videoItems = [
     {
-      id: bondfireData._id,
+      key: bondfireData._id,
+      bondfireId: bondfireData._id as Id<'bondfires'>,
+      bondfireVideoId: undefined as Id<'bondfireVideos'> | undefined,
       url: videoUrls[0] ?? null,
       urlSd: videoUrlsSd[0] ?? null,
+      videoOwnerId: bondfireData.userId,
       creatorName: bondfireData.creatorName ?? 'Anonymous',
       isMainVideo: true,
-      responseIndex: undefined,
+      responseIndex: undefined as number | undefined,
     },
     ...bondfireData.videos.map((v, i) => ({
-      id: v._id,
+      key: v._id,
+      bondfireId: undefined as Id<'bondfires'> | undefined,
+      bondfireVideoId: v._id as Id<'bondfireVideos'>,
       url: videoUrls[i + 1] ?? null,
       urlSd: videoUrlsSd[i + 1] ?? null,
+      videoOwnerId: v.userId,
       creatorName: v.creatorName ?? 'Anonymous',
       isMainVideo: false,
       responseIndex: i + 1,
@@ -702,12 +732,14 @@ export default function BondfireDetailScreen() {
         <FlatList
           ref={flatListRef}
           data={videoItems}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item) => item.key}
           renderItem={({ item, index }) => (
             <VideoPlayer
-              videoId={item.id}
+              bondfireId={item.bondfireId}
+              bondfireVideoId={item.bondfireVideoId}
               videoUrl={item.url}
               videoUrlSd={item.urlSd}
+              videoOwnerId={item.videoOwnerId}
               isActive={index === currentVideoIndex}
               isScreenFocused={isFocused}
               isAppActive={isAppActive}
@@ -777,7 +809,7 @@ export default function BondfireDetailScreen() {
         <XStack position="absolute" bottom={100} left={0} right={0} justifyContent="center" gap={8}>
           {videoItems.map((item, i) => (
             <Pressable
-              key={item.id}
+              key={item.key}
               onPress={() => {
                 flatListRef.current?.scrollToIndex({ index: i, animated: true })
               }}
