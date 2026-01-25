@@ -144,4 +144,60 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_token', ['token']),
+
+  // Video Reports - for content moderation / child safety compliance
+  reports: defineTable({
+    // Reporter reference
+    reporterUserId: v.id('users'),
+
+    // Video reference - exactly one must be set (enforced in mutation)
+    bondfireId: v.optional(v.id('bondfires')),
+    bondfireVideoId: v.optional(v.id('bondfireVideos')),
+
+    // Video owner (for quick reference)
+    videoOwnerId: v.id('users'),
+
+    // Report category
+    category: v.union(
+      v.literal('camp_guidelines'),
+      v.literal('community_guidelines'),
+      v.literal('terms_of_service'),
+      v.literal('privacy_policy'),
+    ),
+
+    // Sub-category (for community guidelines)
+    subCategory: v.optional(
+      v.union(
+        v.literal('harassment_or_abuse'),
+        v.literal('discrimination'),
+        v.literal('harmful_content'),
+        v.literal('spam_or_solicitation'),
+        v.literal('misinformation'),
+        v.literal('impersonation'),
+        v.literal('pornographic_content'),
+        v.literal('child_safety_concern'),
+        v.literal('other'),
+      ),
+    ),
+
+    // Additional comments from reporter (required, min 30 chars enforced in mutation)
+    comments: v.string(),
+
+    // Status for moderation workflow
+    status: v.union(
+      v.literal('pending'),
+      v.literal('reviewed'),
+      v.literal('resolved'),
+      v.literal('dismissed'),
+    ),
+
+    // Timestamps
+    createdAt: v.number(),
+    reviewedAt: v.optional(v.number()),
+  })
+    .index('by_bondfire', ['bondfireId', 'createdAt'])
+    .index('by_bondfire_video', ['bondfireVideoId', 'createdAt'])
+    .index('by_reporter', ['reporterUserId', 'createdAt'])
+    .index('by_status', ['status', 'createdAt'])
+    .index('by_video_owner', ['videoOwnerId', 'createdAt']),
 })
