@@ -1,7 +1,7 @@
 import { bondfireColors } from '@bondfires/config'
+import { useObservable, useValue } from '@legendapp/state/react'
 import { X } from '@tamagui/lucide-icons'
 import { useMutation } from 'convex/react'
-import { useState } from 'react'
 import {
   KeyboardAvoidingView,
   Platform,
@@ -29,39 +29,50 @@ export function ReportOverlay({
   videoOwnerId,
   onClose,
 }: ReportOverlayProps) {
-  const [step, setStep] = useState<ReportStep>('category')
-  const [category, setCategory] = useState<Category | null>(null)
-  const [subCategory, setSubCategory] = useState<SubCategory | null>(null)
-  const [comments, setComments] = useState('')
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const state$ = useObservable({
+    step: 'category' as ReportStep,
+    category: null as Category | null,
+    subCategory: null as SubCategory | null,
+    comments: '',
+    isSubmitting: false,
+    error: null as string | null,
+  })
+
+  const step = useValue(state$.step)
+  const comments = useValue(state$.comments)
+  const isSubmitting = useValue(state$.isSubmitting)
+  const error = useValue(state$.error)
 
   const submitReport = useMutation(api.reports.submit)
 
   const handleCategorySelect = (cat: Category) => {
-    setCategory(cat)
+    state$.category.set(cat)
     const categoryConfig = CATEGORIES.find((c) => c.value === cat)
     if (categoryConfig?.hasSubcategories) {
-      setStep('subcategory')
+      state$.step.set('subcategory')
     } else {
-      setStep('comments')
+      state$.step.set('comments')
     }
   }
 
   const handleSubCategorySelect = (subCat: SubCategory) => {
-    setSubCategory(subCat)
-    setStep('comments')
+    state$.subCategory.set(subCat)
+    state$.step.set('comments')
   }
 
   const handleCommentsNext = () => {
-    setStep('warning')
+    state$.step.set('warning')
   }
 
   const handleSubmit = async () => {
+    const category = state$.category.get()
+    const subCategory = state$.subCategory.get()
+    const currentComments = state$.comments.get()
+
     if (!category) return
 
-    setIsSubmitting(true)
-    setError(null)
+    state$.isSubmitting.set(true)
+    state$.error.set(null)
 
     try {
       await submitReport({
@@ -70,30 +81,33 @@ export function ReportOverlay({
         videoOwnerId,
         category,
         subCategory: subCategory || undefined,
-        comments: comments.trim(),
+        comments: currentComments.trim(),
       })
-      setStep('success')
+      state$.step.set('success')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to submit report')
+      state$.error.set(err instanceof Error ? err.message : 'Failed to submit report')
     } finally {
-      setIsSubmitting(false)
+      state$.isSubmitting.set(false)
     }
   }
 
   const handleBack = () => {
-    if (step === 'subcategory') {
-      setStep('category')
-      setCategory(null)
-    } else if (step === 'comments') {
+    const currentStep = state$.step.get()
+    const category = state$.category.get()
+
+    if (currentStep === 'subcategory') {
+      state$.step.set('category')
+      state$.category.set(null)
+    } else if (currentStep === 'comments') {
       if (category === 'community_guidelines') {
-        setStep('subcategory')
-        setSubCategory(null)
+        state$.step.set('subcategory')
+        state$.subCategory.set(null)
       } else {
-        setStep('category')
-        setCategory(null)
+        state$.step.set('category')
+        state$.category.set(null)
       }
-    } else if (step === 'warning') {
-      setStep('comments')
+    } else if (currentStep === 'warning') {
+      state$.step.set('comments')
     }
   }
 
@@ -114,7 +128,7 @@ export function ReportOverlay({
         return (
           <CommentsStep
             value={comments}
-            onChange={setComments}
+            onChange={(text) => state$.comments.set(text)}
             onNext={handleCommentsNext}
             onBack={handleBack}
           />

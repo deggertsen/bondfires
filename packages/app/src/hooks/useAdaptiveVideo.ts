@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect } from 'react'
+import { useObservable, useValue } from '@legendapp/state/react'
 
 interface UseAdaptiveVideoOptions {
   hdUrl: string
@@ -22,26 +23,28 @@ export function useAdaptiveVideo({
   sdUrl,
   onSwitchToSD,
 }: UseAdaptiveVideoOptions): UseAdaptiveVideoReturn {
-  const [currentUrl, setCurrentUrl] = useState(hdUrl)
-  const [hasSwitchedToSD, setHasSwitchedToSD] = useState(false)
+  const state$ = useObservable({
+    currentUrl: hdUrl,
+    hasSwitchedToSD: false,
+  })
 
   const switchToSD = useCallback(() => {
-    if (!sdUrl || hasSwitchedToSD) return
+    if (!sdUrl || state$.hasSwitchedToSD.get()) return
 
-    setCurrentUrl(sdUrl)
-    setHasSwitchedToSD(true)
+    state$.currentUrl.set(sdUrl)
+    state$.hasSwitchedToSD.set(true)
     onSwitchToSD?.()
-  }, [sdUrl, hasSwitchedToSD, onSwitchToSD])
+  }, [sdUrl, state$, onSwitchToSD])
 
-  // Reset when HD URL changes
+  // Reset when HD URL changes (prop-based, keep useEffect)
   useEffect(() => {
-    setCurrentUrl(hdUrl)
-    setHasSwitchedToSD(false)
-  }, [hdUrl])
+    state$.currentUrl.set(hdUrl)
+    state$.hasSwitchedToSD.set(false)
+  }, [hdUrl, state$])
 
   return {
-    currentUrl,
-    hasSwitchedToSD,
+    currentUrl: useValue(state$.currentUrl),
+    hasSwitchedToSD: useValue(state$.hasSwitchedToSD),
     switchToSD,
   }
 }

@@ -1,6 +1,7 @@
 import { appActions, usePreferences } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Card, Input, Text } from '@bondfires/ui'
+import { useObservable, useValue } from '@legendapp/state/react'
 import { useAuthActions } from '@convex-dev/auth/react'
 import {
   Bell,
@@ -17,7 +18,7 @@ import {
 } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
-import { useCallback, useState } from 'react'
+import { useCallback } from 'react'
 import { Alert, FlatList, Pressable, ScrollView, StatusBar } from 'react-native'
 import { Avatar, Separator, Sheet, Spinner, Switch, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
@@ -37,11 +38,19 @@ export default function ProfileScreen() {
   const { preferences, setVideoQuality, setAutoplayVideos, setNotificationsEnabled } =
     usePreferences()
 
-  const [isEditSheetOpen, setIsEditSheetOpen] = useState(false)
-  const [isVideoQualitySheetOpen, setIsVideoQualitySheetOpen] = useState(false)
-  const [editName, setEditName] = useState('')
-  const [isSaving, setIsSaving] = useState(false)
-  const [isDeleting, setIsDeleting] = useState(false)
+  const state$ = useObservable({
+    isEditSheetOpen: false,
+    isVideoQualitySheetOpen: false,
+    editName: '',
+    isSaving: false,
+    isDeleting: false,
+  })
+
+  const isEditSheetOpen = useValue(state$.isEditSheetOpen)
+  const isVideoQualitySheetOpen = useValue(state$.isVideoQualitySheetOpen)
+  const editName = useValue(state$.editName)
+  const isSaving = useValue(state$.isSaving)
+  const isDeleting = useValue(state$.isDeleting)
 
   const handleLogout = useCallback(async () => {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
@@ -59,23 +68,23 @@ export default function ProfileScreen() {
   }, [signOut, router])
 
   const handleEditProfile = useCallback(() => {
-    setEditName(currentUser?.displayName ?? currentUser?.name ?? '')
-    setIsEditSheetOpen(true)
-  }, [currentUser])
+    state$.editName.set(currentUser?.displayName ?? currentUser?.name ?? '')
+    state$.isEditSheetOpen.set(true)
+  }, [currentUser, state$])
 
   const handleSaveProfile = useCallback(async () => {
-    setIsSaving(true)
+    state$.isSaving.set(true)
     try {
       await updateProfile({
-        displayName: editName,
+        displayName: state$.editName.get(),
       })
-      setIsEditSheetOpen(false)
+      state$.isEditSheetOpen.set(false)
     } catch {
       Alert.alert('Error', 'Failed to update profile')
     } finally {
-      setIsSaving(false)
+      state$.isSaving.set(false)
     }
-  }, [editName, updateProfile])
+  }, [updateProfile, state$])
 
   const handleDeleteAccount = useCallback(() => {
     Alert.alert(
@@ -97,7 +106,7 @@ export default function ProfileScreen() {
                   text: 'Yes, Delete Everything',
                   style: 'destructive',
                   onPress: async () => {
-                    setIsDeleting(true)
+                    state$.isDeleting.set(true)
                     try {
                       await deleteAccountMutation()
                       await signOut()
@@ -105,7 +114,7 @@ export default function ProfileScreen() {
                       router.replace('/(auth)/login')
                     } catch {
                       Alert.alert('Error', 'Failed to delete account. Please try again.')
-                      setIsDeleting(false)
+                      state$.isDeleting.set(false)
                     }
                   },
                 },
@@ -115,7 +124,7 @@ export default function ProfileScreen() {
         },
       ],
     )
-  }, [deleteAccountMutation, signOut, router])
+  }, [deleteAccountMutation, signOut, router, state$])
 
   if (!currentUser) {
     return (
@@ -271,7 +280,7 @@ export default function ProfileScreen() {
 
             <Card>
               <YStack gap={16}>
-                <Pressable onPress={() => setIsVideoQualitySheetOpen(true)}>
+                <Pressable onPress={() => state$.isVideoQualitySheetOpen.set(true)}>
                   <XStack justifyContent="space-between" alignItems="center">
                     <XStack alignItems="center" gap={12}>
                       <Video size={20} color={bondfireColors.bondfireCopper} />
@@ -452,7 +461,7 @@ export default function ProfileScreen() {
       {/* Edit Profile Sheet */}
       <Sheet
         open={isEditSheetOpen}
-        onOpenChange={setIsEditSheetOpen}
+        onOpenChange={(open: boolean) => state$.isEditSheetOpen.set(open)}
         snapPoints={[40]}
         dismissOnSnapToBottom
       >
@@ -473,7 +482,7 @@ export default function ProfileScreen() {
               <Text variant="label" color={bondfireColors.whiteSmoke}>
                 Display Name
               </Text>
-              <Input value={editName} onChangeText={setEditName} placeholder="Your name" />
+              <Input value={editName} onChangeText={(text) => state$.editName.set(text)} placeholder="Your name" />
             </YStack>
 
             <XStack gap={12}>
@@ -481,7 +490,7 @@ export default function ProfileScreen() {
                 variant="outline"
                 flex={1}
                 size="$md"
-                onPress={() => setIsEditSheetOpen(false)}
+                onPress={() => state$.isEditSheetOpen.set(false)}
               >
                 <Text color={bondfireColors.whiteSmoke}>Cancel</Text>
               </Button>
@@ -506,7 +515,7 @@ export default function ProfileScreen() {
       {/* Video Quality Sheet */}
       <Sheet
         open={isVideoQualitySheetOpen}
-        onOpenChange={setIsVideoQualitySheetOpen}
+        onOpenChange={(open: boolean) => state$.isVideoQualitySheetOpen.set(open)}
         snapPoints={[35]}
         dismissOnSnapToBottom
       >
@@ -529,7 +538,7 @@ export default function ProfileScreen() {
                   key={quality}
                   onPress={() => {
                     setVideoQuality(quality)
-                    setIsVideoQualitySheetOpen(false)
+                    state$.isVideoQualitySheetOpen.set(false)
                   }}
                 >
                   <XStack

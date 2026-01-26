@@ -1,9 +1,9 @@
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
+import { useObservable, useValue } from '@legendapp/state/react'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { Flame, UserPlus } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
-import { useState } from 'react'
 import { KeyboardAvoidingView, Platform, ScrollView, StatusBar } from 'react-native'
 import { Spinner, YStack } from 'tamagui'
 
@@ -11,40 +11,54 @@ export default function SignupScreen() {
   const router = useRouter()
   const { signIn } = useAuthActions()
 
-  const [name, setName] = useState('')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const form$ = useObservable({
+    name: '',
+    email: '',
+    password: '',
+    confirmPassword: '',
+    isLoading: false,
+    error: null as string | null,
+  })
+
+  const name = useValue(form$.name)
+  const email = useValue(form$.email)
+  const password = useValue(form$.password)
+  const confirmPassword = useValue(form$.confirmPassword)
+  const isLoading = useValue(form$.isLoading)
+  const error = useValue(form$.error)
 
   const handleSignup = async () => {
-    if (!name || !email || !password) {
-      setError('Please fill in all fields')
+    const currentName = form$.name.get()
+    const currentEmail = form$.email.get()
+    const currentPassword = form$.password.get()
+    const currentConfirmPassword = form$.confirmPassword.get()
+
+    if (!currentName || !currentEmail || !currentPassword) {
+      form$.error.set('Please fill in all fields')
       return
     }
 
-    if (password !== confirmPassword) {
-      setError('Passwords do not match')
+    if (currentPassword !== currentConfirmPassword) {
+      form$.error.set('Passwords do not match')
       return
     }
 
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters')
+    if (currentPassword.length < 8) {
+      form$.error.set('Password must be at least 8 characters')
       return
     }
 
-    setIsLoading(true)
-    setError(null)
+    form$.isLoading.set(true)
+    form$.error.set(null)
 
     try {
-      await signIn('password', { email, password, name, flow: 'signUp' })
+      await signIn('password', { email: currentEmail, password: currentPassword, name: currentName, flow: 'signUp' })
       // Pass email to verify-email screen for OTP verification
-      router.replace({ pathname: '/(auth)/verify-email', params: { email } })
+      router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail } })
     } catch {
-      setError('Could not create account. Please try again.')
+      form$.error.set('Could not create account. Please try again.')
     } finally {
-      setIsLoading(false)
+      form$.isLoading.set(false)
     }
   }
 
@@ -93,7 +107,7 @@ export default function SignupScreen() {
                 <Input
                   placeholder="Your name"
                   value={name}
-                  onChangeText={setName}
+                  onChangeText={(text) => form$.name.set(text)}
                   autoCapitalize="words"
                   autoComplete="name"
                 />
@@ -106,7 +120,7 @@ export default function SignupScreen() {
                 <Input
                   placeholder="you@example.com"
                   value={email}
-                  onChangeText={setEmail}
+                  onChangeText={(text) => form$.email.set(text)}
                   keyboardType="email-address"
                   autoCapitalize="none"
                   autoComplete="email"
@@ -120,7 +134,7 @@ export default function SignupScreen() {
                 <Input
                   placeholder="At least 8 characters"
                   value={password}
-                  onChangeText={setPassword}
+                  onChangeText={(text) => form$.password.set(text)}
                   secureTextEntry
                   autoComplete="new-password"
                 />
@@ -133,7 +147,7 @@ export default function SignupScreen() {
                 <Input
                   placeholder="Confirm your password"
                   value={confirmPassword}
-                  onChangeText={setConfirmPassword}
+                  onChangeText={(text) => form$.confirmPassword.set(text)}
                   secureTextEntry
                   autoComplete="new-password"
                   error={confirmPassword.length > 0 && password !== confirmPassword}
