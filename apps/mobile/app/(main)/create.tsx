@@ -1,7 +1,7 @@
 import { cancelProcessing, startBackgroundUpload } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
-import { useObservable, useValue } from '@legendapp/state/react'
+import { useObservable, useObserveEffect, useValue } from '@legendapp/state/react'
 import { Flame, FlipHorizontal, X } from '@tamagui/lucide-icons'
 import { useAction, useMutation } from 'convex/react'
 import {
@@ -40,6 +40,7 @@ export default function CreateScreen() {
     progress: 0,
     progressStage: '',
     isAppActive: AppState.currentState === 'active',
+    isFocused: isFocused,
   })
 
   const facing = useValue(state$.facing)
@@ -87,6 +88,22 @@ export default function CreateScreen() {
       subscription.remove()
     }
   }, [state$])
+
+  // Sync isFocused from hook to observable
+  useEffect(() => {
+    state$.isFocused.set(isFocused)
+  }, [isFocused, state$])
+
+  // Reset state when screen becomes focused (e.g., pressing Spark tab again)
+  useObserveEffect(() => {
+    if (state$.isFocused.get() && state$.recordingState.get() === 'completion') {
+      state$.recordingState.set('idle')
+      state$.videoUri.set(null)
+      state$.recordingDuration.set(0)
+      state$.progress.set(0)
+      state$.progressStage.set('')
+    }
+  })
 
   // Keep screen awake while recording or processing
   useEffect(() => {
