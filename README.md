@@ -33,6 +33,20 @@ bondfires/
 └── package.json
 ```
 
+## State Management
+
+This project uses [Legend State v3](https://legendapp.com/open-source/state/v3/) for reactive state management.
+
+### Key Patterns
+
+- **Global stores** (`packages/app/src/store/`) for persistent and shared state
+- **`useObservable`** for local component state (3+ related values)
+- **`useValue`** to subscribe to observable changes
+- **`useObserve`/`useObserveEffect`** instead of `useEffect` for reactive side effects
+- **`useState`** is acceptable for simple 1-2 field forms
+
+See `.claude/CLAUDE.md` or `.cursor/rules/legend-state.mdc` for detailed patterns.
+
 ## Getting Started
 
 ### Prerequisites

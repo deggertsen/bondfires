@@ -1,9 +1,9 @@
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
+import { useObservable, useValue } from '@legendapp/state/react'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { CheckCircle, ChevronLeft, KeyRound } from '@tamagui/lucide-icons'
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { useState } from 'react'
 import { KeyboardAvoidingView, Platform, Pressable, StatusBar } from 'react-native'
 import { Spinner, YStack } from 'tamagui'
 
@@ -12,66 +12,80 @@ export default function ResetPasswordScreen() {
   const { signIn } = useAuthActions()
   const params = useLocalSearchParams<{ email?: string }>()
 
-  const [code, setCode] = useState('')
-  const [newPassword, setNewPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
-  const [isResending, setIsResending] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState(false)
+  const form$ = useObservable({
+    code: '',
+    newPassword: '',
+    confirmPassword: '',
+    isLoading: false,
+    isResending: false,
+    error: null as string | null,
+    success: false,
+  })
+
+  const code = useValue(form$.code)
+  const newPassword = useValue(form$.newPassword)
+  const confirmPassword = useValue(form$.confirmPassword)
+  const isLoading = useValue(form$.isLoading)
+  const isResending = useValue(form$.isResending)
+  const error = useValue(form$.error)
+  const success = useValue(form$.success)
 
   const handleReset = async () => {
-    if (!code || code.length < 6) {
-      setError('Please enter the 6-digit code from your email')
+    const currentCode = form$.code.get()
+    const currentNewPassword = form$.newPassword.get()
+    const currentConfirmPassword = form$.confirmPassword.get()
+
+    if (!currentCode || currentCode.length < 6) {
+      form$.error.set('Please enter the 6-digit code from your email')
       return
     }
 
-    if (!newPassword) {
-      setError('Please enter a new password')
+    if (!currentNewPassword) {
+      form$.error.set('Please enter a new password')
       return
     }
 
-    if (newPassword.length < 8) {
-      setError('Password must be at least 8 characters')
+    if (currentNewPassword.length < 8) {
+      form$.error.set('Password must be at least 8 characters')
       return
     }
 
-    if (newPassword !== confirmPassword) {
-      setError('Passwords do not match')
+    if (currentNewPassword !== currentConfirmPassword) {
+      form$.error.set('Passwords do not match')
       return
     }
 
-    setIsLoading(true)
-    setError(null)
+    form$.isLoading.set(true)
+    form$.error.set(null)
 
     try {
       // Verify the reset code and set new password
       await signIn('password', {
         email: params.email ?? '',
-        code,
-        newPassword,
+        code: currentCode,
+        newPassword: currentNewPassword,
         flow: 'reset-verification',
       })
-      setSuccess(true)
+      form$.success.set(true)
       // Navigate to login after a short delay
       setTimeout(() => {
         router.replace('/(auth)/login')
       }, 2000)
     } catch {
-      setError('Invalid or expired code. Please try again.')
+      form$.error.set('Invalid or expired code. Please try again.')
     } finally {
-      setIsLoading(false)
+      form$.isLoading.set(false)
     }
   }
 
   const handleResend = async () => {
     if (!params.email) {
-      setError('Email not found. Please go back and try again.')
+      form$.error.set('Email not found. Please go back and try again.')
       return
     }
 
-    setIsResending(true)
-    setError(null)
+    form$.isResending.set(true)
+    form$.error.set(null)
 
     try {
       // Request a new reset code
@@ -80,9 +94,9 @@ export default function ResetPasswordScreen() {
         flow: 'reset',
       })
     } catch {
-      setError('Failed to resend code. Please try again.')
+      form$.error.set('Failed to resend code. Please try again.')
     } finally {
-      setIsResending(false)
+      form$.isResending.set(false)
     }
   }
 
@@ -182,7 +196,7 @@ export default function ResetPasswordScreen() {
               <Input
                 placeholder="Enter 6-digit code"
                 value={code}
-                onChangeText={setCode}
+                onChangeText={(text) => form$.code.set(text)}
                 keyboardType="number-pad"
                 maxLength={6}
                 textAlign="center"
@@ -199,7 +213,7 @@ export default function ResetPasswordScreen() {
               <Input
                 placeholder="At least 8 characters"
                 value={newPassword}
-                onChangeText={setNewPassword}
+                onChangeText={(text) => form$.newPassword.set(text)}
                 secureTextEntry
                 autoComplete="new-password"
                 error={!!error && error.includes('password')}
@@ -213,7 +227,7 @@ export default function ResetPasswordScreen() {
               <Input
                 placeholder="Confirm your new password"
                 value={confirmPassword}
-                onChangeText={setConfirmPassword}
+                onChangeText={(text) => form$.confirmPassword.set(text)}
                 secureTextEntry
                 autoComplete="new-password"
                 error={!!error && error.includes('match')}

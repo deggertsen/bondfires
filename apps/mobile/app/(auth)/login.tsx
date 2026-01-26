@@ -1,10 +1,11 @@
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
+import { useObservable, useValue } from '@legendapp/state/react'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { Flame } from '@tamagui/lucide-icons'
 import { useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { KeyboardAvoidingView, Platform, ScrollView, StatusBar } from 'react-native'
 import { Spinner, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
@@ -14,38 +15,50 @@ export default function LoginScreen() {
   const { signIn } = useAuthActions()
   const currentUser = useQuery(api.users.current)
 
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [pendingNavigation, setPendingNavigation] = useState(false)
+  const form$ = useObservable({
+    email: '',
+    password: '',
+    isLoading: false,
+    error: null as string | null,
+    pendingNavigation: false,
+  })
+
+  const email = useValue(form$.email)
+  const password = useValue(form$.password)
+  const isLoading = useValue(form$.isLoading)
+  const error = useValue(form$.error)
+  const pendingNavigation = useValue(form$.pendingNavigation)
 
   // Check email verification after successful login
   useEffect(() => {
     if (pendingNavigation && currentUser !== undefined) {
+      const currentEmail = form$.email.get()
       if (currentUser && currentUser.emailVerified === false) {
         // User not verified, redirect to verification screen
-        router.replace({ pathname: '/(auth)/verify-email', params: { email } })
+        router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail } })
       } else if (currentUser) {
         // User is verified, go to feed
         router.replace('/(main)/feed')
       }
-      setPendingNavigation(false)
-      setIsLoading(false)
+      form$.pendingNavigation.set(false)
+      form$.isLoading.set(false)
     }
-  }, [currentUser, pendingNavigation, email, router])
+  }, [currentUser, pendingNavigation, router, form$])
 
   const handleLogin = async () => {
-    if (!email || !password) {
-      setError('Please enter your email and password')
+    const currentEmail = form$.email.get()
+    const currentPassword = form$.password.get()
+
+    if (!currentEmail || !currentPassword) {
+      form$.error.set('Please enter your email and password')
       return
     }
 
-    setIsLoading(true)
-    setError(null)
+    form$.isLoading.set(true)
+    form$.error.set(null)
 
     try {
-      const result = await signIn('password', { email, password, flow: 'signIn' })
+      const result = await signIn('password', { email: currentEmail, password: currentPassword, flow: 'signIn' })
 
       // Check if verification is required (signingIn: false means email not verified)
       if (
@@ -55,23 +68,23 @@ export default function LoginScreen() {
         result.signingIn === false
       ) {
         // User needs to verify email - a new verification code was sent
-        router.replace({ pathname: '/(auth)/verify-email', params: { email } })
-        setIsLoading(false)
+        router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail } })
+        form$.isLoading.set(false)
         return
       }
 
       // Set pending navigation to wait for user data to load
-      setPendingNavigation(true)
+      form$.pendingNavigation.set(true)
     } catch (err) {
       // Check if error is about email verification
       const errorMessage = err instanceof Error ? err.message : String(err)
       if (errorMessage.includes('verify') || errorMessage.includes('verification')) {
         // Redirect to verification screen
-        router.replace({ pathname: '/(auth)/verify-email', params: { email } })
+        router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail } })
       } else {
-        setError('Invalid email or password')
+        form$.error.set('Invalid email or password')
       }
-      setIsLoading(false)
+      form$.isLoading.set(false)
     }
   }
 
@@ -120,7 +133,7 @@ export default function LoginScreen() {
                 <Input
                   placeholder="you@example.com"
                   value={email}
-                  onChangeText={setEmail}
+                  onChangeText={(text) => form$.email.set(text)}
                   keyboardType="email-address"
                   autoCapitalize="none"
                   autoComplete="email"
@@ -135,7 +148,7 @@ export default function LoginScreen() {
                 <Input
                   placeholder="Your password"
                   value={password}
-                  onChangeText={setPassword}
+                  onChangeText={(text) => form$.password.set(text)}
                   secureTextEntry
                   autoComplete="password"
                   error={!!error}

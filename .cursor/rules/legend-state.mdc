@@ -1,0 +1,203 @@
+---
+description: Legend State v3 patterns for state management
+globs: ["**/*.tsx", "**/*.ts"]
+---
+
+# Legend State v3 Guidelines
+
+This project uses Legend State v3 for state management. Follow these patterns consistently.
+
+## When to Use Global Store vs Local Observable
+
+### Use Global Store (`packages/app/src/store/*.store.ts`)
+- State that persists across app restarts (preferences, auth state)
+- State shared between multiple screens/components
+- State that needs to survive component unmount
+
+### Use `useObservable` (local component state)
+- UI-only state scoped to a single component
+- Form input values (when 3+ related state values)
+- Temporary state (loading, error messages)
+- Modal/sheet visibility toggled within one component
+
+### Use React `useState` (exceptions)
+- Simple form inputs with only 1-2 fields
+- External library integration state
+- Animation state with react-native-reanimated
+
+## Hook Migration Patterns
+
+| React Hook | Legend State Equivalent | When to Use |
+|------------|------------------------|-------------|
+| `useState` for 3+ related values | `useObservable` | Group related component state |
+| `useState` for shared state | Global store + `useValue` | Cross-component state |
+| `useEffect` for pure reads | `useObserve` | Reactive reads during render (NO side effects) |
+| `useEffect` for side effects | `useObserveEffect` | Mutations/side effects in effect phase |
+| `useEffect` for waiting | `useWhenReady` | Conditional execution |
+| `useEffect([])` mount-only | `useMount` | One-time mount logic |
+| Cleanup on unmount | `useUnmount` | Cleanup logic |
+
+## Code Patterns
+
+### Global Store Pattern
+```typescript
+// packages/app/src/store/example.store.ts
+import { observable } from '@legendapp/state'
+import { syncObservable } from '@legendapp/state/sync'
+
+export interface ExampleState {
+  value: string
+  count: number
+}
+
+const defaultState: ExampleState = { value: '', count: 0 }
+
+export const exampleStore$ = observable<ExampleState>(defaultState)
+
+// For persistent state only
+syncObservable(exampleStore$, {
+  persist: { name: 'example-store' },
+})
+
+export const exampleActions = {
+  setValue: (value: string) => exampleStore$.value.set(value),
+  increment: () => exampleStore$.count.set((c) => c + 1),
+}
+```
+
+### Using Global Store in Components
+```typescript
+import { useValue } from '@legendapp/state/react'
+import { exampleStore$, exampleActions } from '@app/store/example.store'
+
+function MyComponent() {
+  const value = useValue(exampleStore$.value)
+  const count = useValue(exampleStore$.count)
+
+  return (
+    <Button onPress={exampleActions.increment}>
+      Count: {count}
+    </Button>
+  )
+}
+```
+
+### Local Component State with useObservable
+```typescript
+import { useObservable } from '@legendapp/state/react'
+import { useValue } from '@legendapp/state/react'
+
+function FormComponent() {
+  // Group related state in one observable
+  const form$ = useObservable({
+    email: '',
+    password: '',
+    isLoading: false,
+    error: null as string | null,
+  })
+
+  const handleSubmit = async () => {
+    form$.isLoading.set(true)
+    form$.error.set(null)
+    try {
+      await submitForm(form$.email.get(), form$.password.get())
+    } catch (e) {
+      form$.error.set(e.message)
+    } finally {
+      form$.isLoading.set(false)
+    }
+  }
+
+  return (
+    <Input
+      value={useValue(form$.email)}
+      onChangeText={(text) => form$.email.set(text)}
+    />
+  )
+}
+```
+
+### Reacting to Observable Changes (replaces useEffect)
+
+**IMPORTANT: `useObserve` vs `useObserveEffect`**
+- `useObserve` runs during render phase - use ONLY for pure reads/derivations, NOT for side effects
+- `useObserveEffect` runs in effect phase - use for mutations and side effects
+
+```typescript
+import { useObserve, useObserveEffect } from '@legendapp/state/react'
+
+function VideoPlayer({ player }) {
+  // useObserve: runs during RENDER when observables change
+  // Use for pure reads, NOT for mutations/side effects
+  useObserve(() => {
+    // GOOD: Pure derivation, no side effects
+    const speed = appStore$.preferences.playbackSpeed.get()
+    console.log('Current speed:', speed) // logging is OK
+  })
+
+  // useObserveEffect: runs in EFFECT phase when observables change
+  // Use for mutations and side effects on external objects
+  useObserveEffect(() => {
+    if (player) {
+      // GOOD: Side effect in effect phase
+      player.muted = appStore$.preferences.videoMuted.get()
+      player.playbackRate = appStore$.preferences.playbackSpeed.get()
+    }
+  })
+}
+```
+
+### Waiting for Conditions (replaces conditional useEffect)
+```typescript
+import { useWhenReady } from '@legendapp/state/react'
+
+function AuthenticatedComponent() {
+  // Runs once when condition becomes true
+  useWhenReady(
+    () => appStore$.isAuthenticated.get(),
+    () => {
+      // User just authenticated, do something
+      fetchUserData()
+    }
+  )
+}
+```
+
+## Important Rules
+
+1. **Naming Convention**: Use `$` suffix for observables (`form$`, `state$`, `appStore$`)
+
+2. **Access Values in Callbacks**: Always use `.get()` inside callbacks to avoid stale closures
+   ```typescript
+   // CORRECT
+   const handlePress = () => {
+     const email = form$.email.get()
+     submit(email)
+   }
+
+   // WRONG - stale closure
+   const email = useValue(form$.email)
+   const handlePress = () => submit(email)
+   ```
+
+3. **Group Related State**: Prefer one `useObservable` with multiple properties over multiple `useState`
+   ```typescript
+   // GOOD
+   const state$ = useObservable({ loading: false, error: null, data: null })
+
+   // AVOID (when values are related)
+   const [loading, setLoading] = useState(false)
+   const [error, setError] = useState(null)
+   const [data, setData] = useState(null)
+   ```
+
+4. **Don't Mix Patterns**: Use Legend State OR React hooks for a given piece of state, not both
+
+5. **External Subscriptions**: Keep `useEffect` for external library event listeners that need cleanup
+   ```typescript
+   // Keep useEffect for expo-video player events
+   useEffect(() => {
+     const subscription = player.addListener('statusChange', handler)
+     return () => subscription.remove()
+   }, [player])
+   ```

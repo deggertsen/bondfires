@@ -1,7 +1,7 @@
 import { appActions, appStore$ } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
-import { useValue } from '@legendapp/state/react'
+import { useObservable, useObserveEffect, useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
 import { Eye, Flame, MessageCircle, Play, Volume2, VolumeX } from '@tamagui/lucide-icons'
 import { useAction, useQuery } from 'convex/react'
@@ -9,7 +9,7 @@ import { Image } from 'expo-image'
 import { LinearGradient } from 'expo-linear-gradient'
 import { useRouter } from 'expo-router'
 import { VideoView, useVideoPlayer } from 'expo-video'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { AppState, Dimensions, FlatList, Pressable, StatusBar, type ViewToken } from 'react-native'
 import { Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
@@ -56,8 +56,10 @@ function BondfireItem({
   const videoQuality = useValue(appStore$.preferences.videoQuality)
   const isMuted = useValue(appStore$.preferences.videoMuted)
 
-  const [isLoading, setIsLoading] = useState(true)
-  const [userInitiatedPlay, setUserInitiatedPlay] = useState(false)
+  const state$ = useObservable({
+    isLoading: true,
+    userInitiatedPlay: false,
+  })
 
   // Determine which URL to use based on quality preference
   const currentUrl = videoQuality === 'sd' && videoUrlSd ? videoUrlSd : videoUrl
@@ -68,12 +70,12 @@ function BondfireItem({
     player.preservesPitch = true
   })
 
-  // Update mute state
-  useEffect(() => {
+  // Update mute state when preference changes (effect phase for player mutations)
+  useObserveEffect(() => {
     if (player) {
-      player.muted = isMuted
+      player.muted = appStore$.preferences.videoMuted.get()
     }
-  }, [player, isMuted])
+  })
 
   // Play/pause based on isActive, screen focus, app state, and autoplay preference
   useEffect(() => {
@@ -83,34 +85,34 @@ function BondfireItem({
 
     if (shouldPlay) {
       // Only auto-play if autoplay is enabled OR user has manually initiated play
-      if (autoplayVideos || userInitiatedPlay) {
+      if (autoplayVideos || state$.userInitiatedPlay.get()) {
         player.play()
       }
     } else {
       player.pause()
       // Reset user-initiated play when video becomes inactive
       if (!isActive) {
-        setUserInitiatedPlay(false)
+        state$.userInitiatedPlay.set(false)
       }
     }
-  }, [player, isActive, isScreenFocused, isAppActive, autoplayVideos, userInitiatedPlay])
+  }, [player, isActive, isScreenFocused, isAppActive, autoplayVideos, state$])
 
-  // Monitor playback status
+  // Monitor playback status (external subscription - keep useEffect)
   useEffect(() => {
     if (!player) return
 
     const subscription = player.addListener('statusChange', (status) => {
       if (status.status === 'readyToPlay') {
-        setIsLoading(false)
+        state$.isLoading.set(false)
       } else if (status.status === 'loading') {
-        setIsLoading(true)
+        state$.isLoading.set(true)
       }
     })
 
     return () => {
       subscription.remove()
     }
-  }, [player])
+  }, [player, state$])
 
   const togglePlayPause = useCallback(() => {
     if (!player) return
@@ -119,17 +121,18 @@ function BondfireItem({
       player.pause()
     } else {
       // User manually initiated play
-      setUserInitiatedPlay(true)
+      state$.userInitiatedPlay.set(true)
       player.play()
     }
-  }, [player])
+  }, [player, state$])
 
   const toggleMute = useCallback(() => {
-    appActions.setVideoMuted(!isMuted)
-  }, [isMuted])
+    appActions.setVideoMuted(!appStore$.preferences.videoMuted.get())
+  }, [])
 
   const isPlaying = player?.playing ?? false
   const hasVideo = !!currentUrl
+  const isLoading = useValue(state$.isLoading)
 
   return (
     <Pressable
@@ -389,32 +392,37 @@ export default function FeedScreen() {
   const bondfires = useQuery(api.bondfires.listFeed, { limit: 20 })
   const getVideoUrls = useAction(api.videos.getVideoUrls)
 
-  const [activeIndex, setActiveIndex] = useState(0)
-  const [videoUrls, setVideoUrls] = useState<
-    Record<string, { hdUrl: string | null; sdUrl: string | null }>
-  >({})
-  const [isAppActive, setIsAppActive] = useState(AppState.currentState === 'active')
+  const feedState$ = useObservable({
+    activeIndex: 0,
+    videoUrls: {} as Record<string, { hdUrl: string | null; sdUrl: string | null }>,
+    isAppActive: AppState.currentState === 'active',
+  })
   const flatListRef = useRef<FlatList>(null)
   const loadingUrlsRef = useRef<Set<string>>(new Set())
 
-  // Track app active state
+  const activeIndex = useValue(feedState$.activeIndex)
+  const videoUrls = useValue(feedState$.videoUrls)
+  const isAppActive = useValue(feedState$.isAppActive)
+
+  // Track app active state (external subscription - keep useEffect)
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
-      setIsAppActive(state === 'active')
+      feedState$.isAppActive.set(state === 'active')
     })
 
     return () => {
       subscription.remove()
     }
-  }, [])
+  }, [feedState$])
 
   // Load video URLs for bondfires near the active index (preload adjacent videos)
   useEffect(() => {
     if (!bondfires) return
 
     const loadVideoUrls = async () => {
+      const currentActiveIndex = feedState$.activeIndex.get()
       // Load URLs for current, previous, and next items
-      const indicesToLoad = [activeIndex - 1, activeIndex, activeIndex + 1].filter(
+      const indicesToLoad = [currentActiveIndex - 1, currentActiveIndex, currentActiveIndex + 1].filter(
         (i) => i >= 0 && i < bondfires.length,
       )
 
@@ -430,10 +438,7 @@ export default function FeedScreen() {
             sdKey: bondfire.sdVideoKey,
           })
 
-          setVideoUrls((prev) => ({
-            ...prev,
-            [bondfire._id]: { hdUrl: urls.hdUrl, sdUrl: urls.sdUrl },
-          }))
+          feedState$.videoUrls[bondfire._id].set({ hdUrl: urls.hdUrl, sdUrl: urls.sdUrl })
         } catch (error) {
           console.error('Failed to load video URL for bondfire:', bondfire._id, error)
           // Remove from loading set on error so we can retry
@@ -443,7 +448,7 @@ export default function FeedScreen() {
     }
 
     loadVideoUrls()
-  }, [bondfires, activeIndex, getVideoUrls])
+  }, [bondfires, activeIndex, getVideoUrls, feedState$])
 
   const handleBondfirePress = useCallback(
     (bondfireId: string) => {
@@ -464,10 +469,10 @@ export default function FeedScreen() {
   const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
       if (viewableItems.length > 0 && viewableItems[0].index !== null) {
-        setActiveIndex(viewableItems[0].index)
+        feedState$.activeIndex.set(viewableItems[0].index)
       }
     },
-    [],
+    [feedState$],
   )
 
   const viewabilityConfig = useRef({

@@ -1,7 +1,7 @@
 import { appActions, appStore$, hasViewedToday, markViewed } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
-import { useValue } from '@legendapp/state/react'
+import { useObservable, useObserveEffect, useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
 import {
   ChevronLeft,
@@ -19,7 +19,7 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { LinearGradient } from 'expo-linear-gradient'
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { VideoView, useVideoPlayer } from 'expo-video'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import {
   AppState,
   Dimensions,
@@ -74,7 +74,6 @@ function VideoPlayer({
 }: VideoPlayerProps) {
   // Get the video ID for internal use (keep-awake tag, etc.)
   const videoId = bondfireId || bondfireVideoId || ''
-  const [showReport, setShowReport] = useState(false)
   const playbackSpeed = useValue(appStore$.preferences.playbackSpeed)
   const autoplayVideos = useValue(appStore$.preferences.autoplayVideos)
   const videoQuality = useValue(appStore$.preferences.videoQuality)
@@ -85,13 +84,25 @@ function VideoPlayer({
     if (videoQuality === 'sd' && videoUrlSd) return videoUrlSd
     return videoUrl // HD or auto starts with HD
   }
-  const [currentUrl, setCurrentUrl] = useState(getInitialUrl)
-  const [hasSwitchedToSD, setHasSwitchedToSD] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [duration, setDuration] = useState(0)
-  const [isLoading, setIsLoading] = useState(true)
-  const [userInitiatedPlay, setUserInitiatedPlay] = useState(false)
-  const [hasEnded, setHasEnded] = useState(false)
+
+  const state$ = useObservable({
+    showReport: false,
+    currentUrl: getInitialUrl(),
+    hasSwitchedToSD: false,
+    progress: 0,
+    duration: 0,
+    isLoading: true,
+    userInitiatedPlay: false,
+    hasEnded: false,
+  })
+
+  const showReport = useValue(state$.showReport)
+  const currentUrl = useValue(state$.currentUrl)
+  const progress = useValue(state$.progress)
+  const duration = useValue(state$.duration)
+  const isLoading = useValue(state$.isLoading)
+  const hasEnded = useValue(state$.hasEnded)
+
   const bufferingCheckInterval = useRef<ReturnType<typeof setInterval> | null>(null)
   const progressBarRef = useRef<{ width: number; x: number }>({ width: 0, x: 0 })
 
@@ -102,19 +113,19 @@ function VideoPlayer({
     player.preservesPitch = true
   })
 
-  // Update playback speed when it changes
-  useEffect(() => {
+  // Update playback speed when preference changes (effect phase for player mutations)
+  useObserveEffect(() => {
     if (player) {
-      player.playbackRate = playbackSpeed
+      player.playbackRate = appStore$.preferences.playbackSpeed.get()
     }
-  }, [player, playbackSpeed])
+  })
 
-  // Update mute state
-  useEffect(() => {
+  // Update mute state when preference changes (effect phase for player mutations)
+  useObserveEffect(() => {
     if (player) {
-      player.muted = isMuted
+      player.muted = appStore$.preferences.videoMuted.get()
     }
-  }, [player, isMuted])
+  })
 
   // Play/pause based on isActive, screen focus, and app state
   useEffect(() => {
@@ -125,38 +136,38 @@ function VideoPlayer({
 
     if (shouldPlay) {
       // Only auto-play if autoplay is enabled OR user has manually initiated play
-      if (autoplayVideos || userInitiatedPlay) {
+      if (autoplayVideos || state$.userInitiatedPlay.get()) {
         player.play()
       }
     } else {
       player.pause()
       // Reset user-initiated play when video becomes inactive
       if (!isActive) {
-        setUserInitiatedPlay(false)
+        state$.userInitiatedPlay.set(false)
       }
     }
-  }, [player, isActive, isScreenFocused, isAppActive, autoplayVideos, userInitiatedPlay])
+  }, [player, isActive, isScreenFocused, isAppActive, autoplayVideos, state$])
 
-  // Monitor playback status
+  // Monitor playback status (external subscriptions - keep useEffect)
   useEffect(() => {
     if (!player) return
 
     const statusSubscription = player.addListener('statusChange', (status) => {
       if (status.status === 'readyToPlay') {
-        setIsLoading(false)
+        state$.isLoading.set(false)
         // Get duration from player, not status event
         if (player.duration) {
-          setDuration(player.duration * 1000) // Convert to milliseconds
+          state$.duration.set(player.duration * 1000) // Convert to milliseconds
         }
       } else if (status.status === 'loading') {
-        setIsLoading(true)
+        state$.isLoading.set(true)
       }
 
       // Update progress when status changes to readyToPlay
       if (status.status === 'readyToPlay') {
         if (player.currentTime !== undefined && player.duration) {
           const currentProgress = player.currentTime / player.duration
-          setProgress(currentProgress)
+          state$.progress.set(currentProgress)
           onProgress(currentProgress)
 
           if (player.currentTime >= player.duration - 0.1) {
@@ -168,16 +179,16 @@ function VideoPlayer({
 
     // Listen for video end
     const endSubscription = player.addListener('playToEnd', () => {
-      setHasEnded(true)
-      setProgress(1)
+      state$.hasEnded.set(true)
+      state$.progress.set(1)
       onComplete()
     })
 
-    // Update progress periodically
+    // Update progress periodically (interval-based)
     const progressInterval = setInterval(() => {
       if (player.status === 'readyToPlay' && player.currentTime !== undefined && player.duration) {
         const currentProgress = player.currentTime / player.duration
-        setProgress(currentProgress)
+        state$.progress.set(currentProgress)
         onProgress(currentProgress)
       }
     }, 100)
@@ -187,26 +198,28 @@ function VideoPlayer({
       endSubscription.remove()
       clearInterval(progressInterval)
     }
-  }, [player, onComplete, onProgress])
+  }, [player, onComplete, onProgress, state$])
 
   // Buffering detection - switch to SD if buffer is low (only in auto mode)
   useEffect(() => {
     // Only apply adaptive quality switching in 'auto' mode
     if (videoQuality !== 'auto') return
-    if (!videoUrlSd || hasSwitchedToSD || !currentUrl || currentUrl !== videoUrl) {
+    const hasSwitchedToSD = state$.hasSwitchedToSD.get()
+    const currentUrlValue = state$.currentUrl.get()
+    if (!videoUrlSd || hasSwitchedToSD || !currentUrlValue || currentUrlValue !== videoUrl) {
       return
     }
 
     bufferingCheckInterval.current = setInterval(() => {
-      if (!player || hasSwitchedToSD) return
+      if (!player || state$.hasSwitchedToSD.get()) return
 
       // Check if player is buffering and we have SD available
       if (player.status === 'loading' && player.currentTime !== undefined && player.duration) {
         const remaining = player.duration - player.currentTime
         // Switch to SD if buffering and more than 5 seconds remaining
         if (remaining > 5) {
-          setCurrentUrl(videoUrlSd)
-          setHasSwitchedToSD(true)
+          state$.currentUrl.set(videoUrlSd)
+          state$.hasSwitchedToSD.set(true)
         }
       }
     }, 1000)
@@ -216,7 +229,7 @@ function VideoPlayer({
         clearInterval(bufferingCheckInterval.current)
       }
     }
-  }, [player, videoUrlSd, hasSwitchedToSD, currentUrl, videoUrl, videoQuality])
+  }, [player, videoUrlSd, videoUrl, videoQuality, state$])
 
   // Update URL when video quality preference or source URLs change
   useEffect(() => {
@@ -228,14 +241,15 @@ function VideoPlayer({
       targetUrl = videoUrl
     }
 
-    if (targetUrl && currentUrl !== targetUrl) {
-      setCurrentUrl(targetUrl)
+    const currentUrlValue = state$.currentUrl.get()
+    if (targetUrl && currentUrlValue !== targetUrl) {
+      state$.currentUrl.set(targetUrl)
       // Only reset hasSwitchedToSD when preference changes or new video
       if (videoQuality !== 'auto') {
-        setHasSwitchedToSD(false)
+        state$.hasSwitchedToSD.set(false)
       }
     }
-  }, [videoUrl, videoUrlSd, videoQuality, currentUrl])
+  }, [videoUrl, videoUrlSd, videoQuality, state$])
 
   // Keep screen awake while video is playing
   const isPlaying = player?.playing ?? false
@@ -255,24 +269,24 @@ function VideoPlayer({
   const togglePlayPause = useCallback(() => {
     if (!player) return
 
-    if (hasEnded) {
+    if (state$.hasEnded.get()) {
       // Replay from beginning
       player.replay()
-      setHasEnded(false)
-      setUserInitiatedPlay(true)
+      state$.hasEnded.set(false)
+      state$.userInitiatedPlay.set(true)
     } else if (player.playing) {
       player.pause()
     } else {
       // User manually initiated play
-      setUserInitiatedPlay(true)
+      state$.userInitiatedPlay.set(true)
       player.play()
     }
-  }, [player, hasEnded])
+  }, [player, state$])
 
   const toggleMute = useCallback(() => {
     if (!player) return
-    appActions.setVideoMuted(!isMuted)
-  }, [player, isMuted])
+    appActions.setVideoMuted(!appStore$.preferences.videoMuted.get())
+  }, [player])
 
   const handleProgressBarLayout = useCallback((event: LayoutChangeEvent) => {
     const { width, x } = event.nativeEvent.layout
@@ -290,12 +304,12 @@ function VideoPlayer({
         const seekProgress = Math.max(0, Math.min(1, locationX / width))
         const seekTime = seekProgress * player.duration
         player.currentTime = seekTime
-        setProgress(seekProgress)
-        setHasEnded(false)
-        setUserInitiatedPlay(true)
+        state$.progress.set(seekProgress)
+        state$.hasEnded.set(false)
+        state$.userInitiatedPlay.set(true)
       }
     },
-    [player],
+    [player, state$],
   )
 
   return (
@@ -440,7 +454,7 @@ function VideoPlayer({
         <YStack position="absolute" right={16} bottom={160} gap={16} alignItems="center">
           {/* Report button - only show when paused */}
           {!isPlaying && !isLoading && (
-            <ReportButton onPress={() => setShowReport(true)} />
+            <ReportButton onPress={() => state$.showReport.set(true)} />
           )}
           <Pressable onPress={toggleMute}>
             <YStack
@@ -466,7 +480,7 @@ function VideoPlayer({
             bondfireId={bondfireId}
             bondfireVideoId={bondfireVideoId}
             videoOwnerId={videoOwnerId}
-            onClose={() => setShowReport(false)}
+            onClose={() => state$.showReport.set(false)}
           />
         )}
       </YStack>
@@ -487,12 +501,21 @@ export default function BondfireDetailScreen() {
   const flatListRef = useRef<FlatList>(null)
   const isFocused = useIsFocused()
 
-  const [currentVideoIndex, setCurrentVideoIndex] = useState(0)
-  const [videoUrls, setVideoUrls] = useState<(string | null)[]>([])
-  const [videoUrlsSd, setVideoUrlsSd] = useState<(string | null)[]>([])
-  const [showSettings, setShowSettings] = useState(false)
-  const [showNotepad, setShowNotepad] = useState(false)
-  const [isAppActive, setIsAppActive] = useState(AppState.currentState === 'active')
+  const screenState$ = useObservable({
+    currentVideoIndex: 0,
+    videoUrls: [] as (string | null)[],
+    videoUrlsSd: [] as (string | null)[],
+    showSettings: false,
+    showNotepad: false,
+    isAppActive: AppState.currentState === 'active',
+  })
+
+  const currentVideoIndex = useValue(screenState$.currentVideoIndex)
+  const videoUrls = useValue(screenState$.videoUrls)
+  const videoUrlsSd = useValue(screenState$.videoUrlsSd)
+  const showSettings = useValue(screenState$.showSettings)
+  const showNotepad = useValue(screenState$.showNotepad)
+  const isAppActive = useValue(screenState$.isAppActive)
 
   const bondfireId = id as Id<'bondfires'>
   const bondfireData = useQuery(api.bondfires.getWithVideos, { bondfireId })
@@ -500,15 +523,16 @@ export default function BondfireDetailScreen() {
   const recordWatchEvent = useMutation(api.watchEvents.record)
   const incrementViews = useMutation(api.bondfires.incrementViews)
 
+  // Track app active state (external subscription - keep useEffect)
   useEffect(() => {
-    const subscription = AppState.addEventListener('change', (state) => {
-      setIsAppActive(state === 'active')
+    const subscription = AppState.addEventListener('change', (appState) => {
+      screenState$.isAppActive.set(appState === 'active')
     })
 
     return () => {
       subscription.remove()
     }
-  }, [])
+  }, [screenState$])
 
   // Load video URLs when data is available
   useEffect(() => {
@@ -524,12 +548,12 @@ export default function BondfireDetailScreen() {
         bondfireData.videos.map((v) => getVideoUrls({ hdKey: v.videoKey, sdKey: v.sdVideoKey })),
       )
 
-      setVideoUrls([mainUrl.hdUrl, ...responseUrls.map((r) => r.hdUrl)])
-      setVideoUrlsSd([mainUrl.sdUrl, ...responseUrls.map((r) => r.sdUrl)])
+      screenState$.videoUrls.set([mainUrl.hdUrl, ...responseUrls.map((r) => r.hdUrl)])
+      screenState$.videoUrlsSd.set([mainUrl.sdUrl, ...responseUrls.map((r) => r.sdUrl)])
     }
 
     loadUrls()
-  }, [bondfireData, getVideoUrls])
+  }, [bondfireData, getVideoUrls, screenState$])
 
   // Track view count - only once per day per bondfire
   useEffect(() => {
@@ -594,10 +618,10 @@ export default function BondfireDetailScreen() {
   const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
       if (viewableItems.length > 0 && viewableItems[0].index !== null) {
-        setCurrentVideoIndex(viewableItems[0].index)
+        screenState$.currentVideoIndex.set(viewableItems[0].index)
       }
     },
-    [],
+    [screenState$],
   )
 
   const viewabilityConfig = useRef({
@@ -696,7 +720,7 @@ export default function BondfireDetailScreen() {
             </YStack>
 
             <XStack gap={8}>
-              <Pressable onPress={() => setShowSettings(!showSettings)}>
+              <Pressable onPress={() => screenState$.showSettings.set(!screenState$.showSettings.get())}>
                 <YStack
                   width={40}
                   height={40}
@@ -710,7 +734,7 @@ export default function BondfireDetailScreen() {
                   <Settings size={22} color={bondfireColors.whiteSmoke} />
                 </YStack>
               </Pressable>
-              <Pressable onPress={() => setShowNotepad(!showNotepad)}>
+              <Pressable onPress={() => screenState$.showNotepad.set(!screenState$.showNotepad.get())}>
                 <YStack
                   width={40}
                   height={40}
@@ -827,10 +851,10 @@ export default function BondfireDetailScreen() {
         </XStack>
 
         {/* Settings Popover */}
-        {showSettings && <SettingsPopover onClose={() => setShowSettings(false)} />}
+        {showSettings && <SettingsPopover onClose={() => screenState$.showSettings.set(false)} />}
 
         {/* Notepad Overlay */}
-        {showNotepad && <NotepadOverlay onClose={() => setShowNotepad(false)} />}
+        {showNotepad && <NotepadOverlay onClose={() => screenState$.showNotepad.set(false)} />}
       </YStack>
     </>
   )

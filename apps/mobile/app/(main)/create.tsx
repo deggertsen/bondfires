@@ -1,6 +1,7 @@
 import { cancelProcessing, startBackgroundUpload } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
+import { useObservable, useValue } from '@legendapp/state/react'
 import { Flame, FlipHorizontal, X } from '@tamagui/lucide-icons'
 import { useAction, useMutation } from 'convex/react'
 import {
@@ -12,7 +13,7 @@ import {
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useIsFocused } from '@react-navigation/native'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { Alert, AppState, Pressable, StatusBar } from 'react-native'
 import { Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
@@ -30,33 +31,44 @@ export default function CreateScreen() {
   const [micPermission, requestMicPermission] = useMicrophonePermissions()
 
   const cameraRef = useRef<CameraView>(null)
-  const [facing, setFacing] = useState<CameraType>('back')
-  const [recordingState, setRecordingState] = useState<RecordingState>('idle')
-  const [recordingDuration, setRecordingDuration] = useState(0)
-  const [videoUri, setVideoUri] = useState<string | null>(null)
-  const [progress, setProgress] = useState(0)
-  const [progressStage, setProgressStage] = useState<string>('')
-  const [isAppActive, setIsAppActive] = useState(AppState.currentState === 'active')
+
+  const state$ = useObservable({
+    facing: 'back' as CameraType,
+    recordingState: 'idle' as RecordingState,
+    recordingDuration: 0,
+    videoUri: null as string | null,
+    progress: 0,
+    progressStage: '',
+    isAppActive: AppState.currentState === 'active',
+  })
+
+  const facing = useValue(state$.facing)
+  const recordingState = useValue(state$.recordingState)
+  const recordingDuration = useValue(state$.recordingDuration)
+  const videoUri = useValue(state$.videoUri)
+  const progress = useValue(state$.progress)
+  const progressStage = useValue(state$.progressStage)
+  const isAppActive = useValue(state$.isAppActive)
 
   const createBondfire = useMutation(api.bondfires.create)
   const addResponse = useMutation(api.bondfireVideos.addResponse)
   const getUploadUrls = useAction(api.videos.getUploadUrls)
   const keepAwakeTag = 'create-recording'
 
-  // Recording timer
+  // Recording timer (interval-based - keep useEffect)
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | undefined
 
     if (recordingState === 'recording') {
       interval = setInterval(() => {
-        setRecordingDuration((prev) => prev + 1)
+        state$.recordingDuration.set((prev) => prev + 1)
       }, 1000)
     }
 
     return () => {
       if (interval) clearInterval(interval)
     }
-  }, [recordingState])
+  }, [recordingState, state$])
 
   // Cleanup on unmount
   useEffect(() => {
@@ -65,15 +77,16 @@ export default function CreateScreen() {
     }
   }, [])
 
+  // Track app active state (external subscription - keep useEffect)
   useEffect(() => {
-    const subscription = AppState.addEventListener('change', (state) => {
-      setIsAppActive(state === 'active')
+    const subscription = AppState.addEventListener('change', (appState) => {
+      state$.isAppActive.set(appState === 'active')
     })
 
     return () => {
       subscription.remove()
     }
-  }, [])
+  }, [state$])
 
   // Keep screen awake while recording or processing
   useEffect(() => {
@@ -111,24 +124,24 @@ export default function CreateScreen() {
   const startRecording = useCallback(async () => {
     if (!cameraRef.current) return
 
-    setRecordingState('recording')
-    setRecordingDuration(0)
+    state$.recordingState.set('recording')
+    state$.recordingDuration.set(0)
 
     try {
       const video = await cameraRef.current.recordAsync()
 
       if (video?.uri) {
-        setVideoUri(video.uri)
-        setRecordingState('completion')
+        state$.videoUri.set(video.uri)
+        state$.recordingState.set('completion')
         // Start background upload immediately
         queueBackgroundUpload(video.uri)
       }
     } catch (error) {
       console.error('Recording error:', error)
-      setRecordingState('idle')
+      state$.recordingState.set('idle')
       Alert.alert('Error', 'Failed to record video. Please try again.')
     }
-  }, [])
+  }, [state$])
 
   const stopRecording = useCallback(() => {
     if (cameraRef.current) {
@@ -156,9 +169,9 @@ export default function CreateScreen() {
             })
           },
           callbacks: {
-            onProgress: (progress, stage) => {
-              setProgress(progress)
-              setProgressStage(stage)
+            onProgress: (progressValue, stage) => {
+              state$.progress.set(progressValue)
+              state$.progressStage.set(stage)
             },
             onComplete: () => {
               console.info('Upload completed')
@@ -174,12 +187,12 @@ export default function CreateScreen() {
         Alert.alert('Error', 'Failed to start upload. Please try again.')
       }
     },
-    [respondTo, getUploadUrls, createBondfire, addResponse],
+    [respondTo, getUploadUrls, createBondfire, addResponse, state$],
   )
 
   const toggleFacing = useCallback(() => {
-    setFacing((current) => (current === 'back' ? 'front' : 'back'))
-  }, [])
+    state$.facing.set((current) => (current === 'back' ? 'front' : 'back'))
+  }, [state$])
 
   // Permission denied state
   if (!cameraPermission?.granted || !micPermission?.granted) {
@@ -258,7 +271,7 @@ export default function CreateScreen() {
             marginTop={16}
             onPress={() => {
               cancelProcessing()
-              setRecordingState('idle')
+              state$.recordingState.set('idle')
             }}
           >
             Cancel
