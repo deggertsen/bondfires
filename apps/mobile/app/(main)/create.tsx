@@ -102,6 +102,11 @@ export default function CreateScreen() {
       state$.recordingDuration.set(0)
       state$.progress.set(0)
       state$.progressStage.set('')
+      // Clear respondTo param so user can create a new spark instead of responding
+      // Use replace to navigate to clean URL since setParams doesn't properly clear undefined values
+      if (respondTo) {
+        router.replace('/(main)/create')
+      }
     }
   })
 
