@@ -11,6 +11,7 @@ import { useRouter } from 'expo-router'
 import { VideoView, useVideoPlayer } from 'expo-video'
 import { useCallback, useEffect, useRef } from 'react'
 import { AppState, Dimensions, FlatList, Pressable, StatusBar, type ViewToken } from 'react-native'
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated'
 import { Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 
@@ -60,6 +61,10 @@ function BondfireItem({
     isLoading: true,
     userInitiatedPlay: false,
   })
+
+  // Play icon fade animation
+  const playIconOpacity = useSharedValue(1)
+  const fadeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Determine which URL to use based on quality preference
   const currentUrl = videoQuality === 'sd' && videoUrlSd ? videoUrlSd : videoUrl
@@ -134,6 +139,34 @@ function BondfireItem({
   const hasVideo = !!currentUrl
   const isLoading = useValue(state$.isLoading)
 
+  // Animate play icon fade based on playing state
+  useEffect(() => {
+    if (fadeTimeoutRef.current) {
+      clearTimeout(fadeTimeoutRef.current)
+      fadeTimeoutRef.current = null
+    }
+
+    if (isPlaying) {
+      // Video started playing - fade out after 2.5 seconds
+      fadeTimeoutRef.current = setTimeout(() => {
+        playIconOpacity.value = withTiming(0, { duration: 300 })
+      }, 2500)
+    } else {
+      // Video paused - show play icon immediately
+      playIconOpacity.value = withTiming(1, { duration: 200 })
+    }
+
+    return () => {
+      if (fadeTimeoutRef.current) {
+        clearTimeout(fadeTimeoutRef.current)
+      }
+    }
+  }, [isPlaying, playIconOpacity])
+
+  const playIconAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: playIconOpacity.value,
+  }))
+
   return (
     <Pressable
       onPress={hasVideo ? togglePlayPause : onPress}
@@ -178,17 +211,22 @@ function BondfireItem({
           </YStack>
         )}
 
-        {/* Play/Pause indicator (when paused and video is available) */}
-        {hasVideo && !isPlaying && !isLoading && (
-          <YStack
-            position="absolute"
-            top={0}
-            left={0}
-            right={0}
-            bottom={0}
-            alignItems="center"
-            justifyContent="center"
-            pointerEvents="none"
+        {/* Play/Pause indicator with fade animation */}
+        {hasVideo && !isLoading && (
+          <Animated.View
+            style={[
+              {
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                alignItems: 'center',
+                justifyContent: 'center',
+                pointerEvents: 'none',
+              },
+              playIconAnimatedStyle,
+            ]}
           >
             <YStack
               width={80}
@@ -200,7 +238,7 @@ function BondfireItem({
             >
               <Play size={40} color={bondfireColors.whiteSmoke} fill={bondfireColors.whiteSmoke} />
             </YStack>
-          </YStack>
+          </Animated.View>
         )}
 
         {/* Bottom gradient overlay */}
