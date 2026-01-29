@@ -164,33 +164,42 @@ async function processUploadTask(taskId: string, options: BackgroundUploadOption
     // Upload HD video
     const hdFile = await fetch(processed.hdUri)
     const hdBlob = await hdFile.blob()
-    await fetch(presignedUrls.hdUrl, {
+    const hdResponse = await fetch(presignedUrls.hdUrl, {
       method: 'PUT',
       body: hdBlob,
       headers: { 'Content-Type': 'video/mp4' },
     })
+    if (!hdResponse.ok) {
+      throw new Error(`Failed to upload HD video: ${hdResponse.status} ${hdResponse.statusText}`)
+    }
 
     options.callbacks?.onProgress?.(70, 'Uploading SD video...')
 
     // Upload SD video
     const sdFile = await fetch(processed.sdUri)
     const sdBlob = await sdFile.blob()
-    await fetch(presignedUrls.sdUrl, {
+    const sdResponse = await fetch(presignedUrls.sdUrl, {
       method: 'PUT',
       body: sdBlob,
       headers: { 'Content-Type': 'video/mp4' },
     })
+    if (!sdResponse.ok) {
+      throw new Error(`Failed to upload SD video: ${sdResponse.status} ${sdResponse.statusText}`)
+    }
 
     options.callbacks?.onProgress?.(85, 'Uploading thumbnail...')
 
     // Upload thumbnail
     const thumbFile = await fetch(processed.thumbnailUri)
     const thumbBlob = await thumbFile.blob()
-    await fetch(presignedUrls.thumbnailUrl, {
+    const thumbResponse = await fetch(presignedUrls.thumbnailUrl, {
       method: 'PUT',
       body: thumbBlob,
       headers: { 'Content-Type': 'image/jpeg' },
     })
+    if (!thumbResponse.ok) {
+      throw new Error(`Failed to upload thumbnail: ${thumbResponse.status} ${thumbResponse.statusText}`)
+    }
 
     // Step 4: Create bondfire or response
     options.callbacks?.onProgress?.(90, 'Creating bondfire...')
