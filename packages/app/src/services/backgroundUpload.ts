@@ -3,6 +3,8 @@ import {
   copyAsync,
   getInfoAsync,
   makeDirectoryAsync,
+  uploadAsync,
+  FileSystemUploadType,
 } from 'expo-file-system/legacy'
 import { type UploadTask, uploadQueueActions } from '../store/uploadQueue.store'
 import { type ProcessedVideo, processVideo } from '../utils/videoProcessing'
@@ -157,48 +159,43 @@ async function processUploadTask(taskId: string, options: BackgroundUploadOption
       })
     }
 
-    // Step 3: Upload files
+    // Step 3: Upload files using streaming (avoids loading entire file into JS memory)
+    // This is critical for iOS which has stricter memory limits than Android
     uploadQueueActions.updateTask(taskId, { status: 'uploading' })
     options.callbacks?.onProgress?.(50, 'Uploading HD video...')
 
-    // Upload HD video
-    const hdFile = await fetch(processed.hdUri)
-    const hdBlob = await hdFile.blob()
-    const hdResponse = await fetch(presignedUrls.hdUrl, {
-      method: 'PUT',
-      body: hdBlob,
+    // Upload HD video - stream directly from disk to S3
+    const hdResponse = await uploadAsync(presignedUrls.hdUrl, processed.hdUri, {
+      httpMethod: 'PUT',
+      uploadType: FileSystemUploadType.BINARY_CONTENT,
       headers: { 'Content-Type': 'video/mp4' },
     })
-    if (!hdResponse.ok) {
-      throw new Error(`Failed to upload HD video: ${hdResponse.status} ${hdResponse.statusText}`)
+    if (hdResponse.status < 200 || hdResponse.status >= 300) {
+      throw new Error(`Failed to upload HD video: ${hdResponse.status}`)
     }
 
     options.callbacks?.onProgress?.(70, 'Uploading SD video...')
 
-    // Upload SD video
-    const sdFile = await fetch(processed.sdUri)
-    const sdBlob = await sdFile.blob()
-    const sdResponse = await fetch(presignedUrls.sdUrl, {
-      method: 'PUT',
-      body: sdBlob,
+    // Upload SD video - stream directly from disk to S3
+    const sdResponse = await uploadAsync(presignedUrls.sdUrl, processed.sdUri, {
+      httpMethod: 'PUT',
+      uploadType: FileSystemUploadType.BINARY_CONTENT,
       headers: { 'Content-Type': 'video/mp4' },
     })
-    if (!sdResponse.ok) {
-      throw new Error(`Failed to upload SD video: ${sdResponse.status} ${sdResponse.statusText}`)
+    if (sdResponse.status < 200 || sdResponse.status >= 300) {
+      throw new Error(`Failed to upload SD video: ${sdResponse.status}`)
     }
 
     options.callbacks?.onProgress?.(85, 'Uploading thumbnail...')
 
-    // Upload thumbnail
-    const thumbFile = await fetch(processed.thumbnailUri)
-    const thumbBlob = await thumbFile.blob()
-    const thumbResponse = await fetch(presignedUrls.thumbnailUrl, {
-      method: 'PUT',
-      body: thumbBlob,
+    // Upload thumbnail - stream directly from disk to S3
+    const thumbResponse = await uploadAsync(presignedUrls.thumbnailUrl, processed.thumbnailUri, {
+      httpMethod: 'PUT',
+      uploadType: FileSystemUploadType.BINARY_CONTENT,
       headers: { 'Content-Type': 'image/jpeg' },
     })
-    if (!thumbResponse.ok) {
-      throw new Error(`Failed to upload thumbnail: ${thumbResponse.status} ${thumbResponse.statusText}`)
+    if (thumbResponse.status < 200 || thumbResponse.status >= 300) {
+      throw new Error(`Failed to upload thumbnail: ${thumbResponse.status}`)
     }
 
     // Step 4: Create bondfire or response
