@@ -144,7 +144,10 @@ export default function CreateScreen() {
   }, [requestPermissions])
 
   const startRecording = useCallback(async () => {
-    if (!cameraRef.current) return
+    if (!cameraRef.current) {
+      Alert.alert('Camera Not Ready', 'Please wait a moment and try again.')
+      return
+    }
 
     state$.recordingState.set('recording')
     state$.recordingDuration.set(0)
@@ -157,6 +160,11 @@ export default function CreateScreen() {
         state$.recordingState.set('completion')
         // Start background upload immediately
         queueBackgroundUpload(video.uri)
+      } else {
+        // recordAsync() resolved without a URI (known iOS edge case)
+        console.warn('Recording returned no URI')
+        state$.recordingState.set('idle')
+        Alert.alert('Recording Failed', 'No video was captured. Please try again.')
       }
     } catch (error) {
       console.error('Recording error:', error)

@@ -3,7 +3,7 @@ import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
 import { useObservable, useObserveEffect, useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
-import { Eye, Flame, MessageCircle, Play, Volume2, VolumeX } from '@tamagui/lucide-icons'
+import { Eye, Flame, MessageCircle, Pause, Play, Volume2, VolumeX } from '@tamagui/lucide-icons'
 import { useAction, useQuery } from 'convex/react'
 import { Image } from 'expo-image'
 import { LinearGradient } from 'expo-linear-gradient'
@@ -59,6 +59,7 @@ function BondfireItem({
 
   const state$ = useObservable({
     isLoading: true,
+    isPlaying: false,
     userInitiatedPlay: false,
   })
 
@@ -106,7 +107,7 @@ function BondfireItem({
   useEffect(() => {
     if (!player) return
 
-    const subscription = player.addListener('statusChange', (status) => {
+    const statusSub = player.addListener('statusChange', (status) => {
       if (status.status === 'readyToPlay') {
         state$.isLoading.set(false)
       } else if (status.status === 'loading') {
@@ -114,8 +115,14 @@ function BondfireItem({
       }
     })
 
+    // Track playing state reactively so UI updates when play/pause changes
+    const playingSub = player.addListener('playingChange', (event) => {
+      state$.isPlaying.set(event.isPlaying)
+    })
+
     return () => {
-      subscription.remove()
+      statusSub.remove()
+      playingSub.remove()
     }
   }, [player, state$])
 
@@ -135,7 +142,7 @@ function BondfireItem({
     appActions.setVideoMuted(!appStore$.preferences.videoMuted.get())
   }, [])
 
-  const isPlaying = player?.playing ?? false
+  const isPlaying = useValue(state$.isPlaying)
   const hasVideo = !!currentUrl
   const isLoading = useValue(state$.isLoading)
 
@@ -236,7 +243,11 @@ function BondfireItem({
               alignItems="center"
               justifyContent="center"
             >
-              <Play size={40} color={bondfireColors.whiteSmoke} fill={bondfireColors.whiteSmoke} />
+              {isPlaying ? (
+                <Pause size={40} color={bondfireColors.whiteSmoke} fill={bondfireColors.whiteSmoke} />
+              ) : (
+                <Play size={40} color={bondfireColors.whiteSmoke} fill={bondfireColors.whiteSmoke} />
+              )}
             </YStack>
           </Animated.View>
         )}
