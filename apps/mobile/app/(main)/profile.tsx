@@ -5,6 +5,7 @@ import { useObservable, useValue } from '@legendapp/state/react'
 import { useAuthActions } from '@convex-dev/auth/react'
 import {
   Bell,
+  Camera,
   Edit3,
   Eye,
   Flame,
@@ -16,7 +17,9 @@ import {
   User,
   Video,
 } from '@tamagui/lucide-icons'
-import { useMutation, useQuery } from 'convex/react'
+import { useAction, useMutation, useQuery } from 'convex/react'
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator'
+import * as ImagePicker from 'expo-image-picker'
 import { useRouter } from 'expo-router'
 import { useCallback } from 'react'
 import { Alert, FlatList, Pressable, ScrollView, StatusBar } from 'react-native'
@@ -34,6 +37,7 @@ export default function ProfileScreen() {
   )
   const updateProfile = useMutation(api.users.updateProfile)
   const deleteAccountMutation = useMutation(api.users.deleteAccount)
+  const getProfilePhotoUploadUrl = useAction(api.videos.getProfilePhotoUploadUrl)
 
   const { preferences, setVideoQuality, setAutoplayVideos, setNotificationsEnabled } =
     usePreferences()
@@ -44,6 +48,7 @@ export default function ProfileScreen() {
     editName: '',
     isSaving: false,
     isDeleting: false,
+    isUploadingPhoto: false,
   })
 
   const isEditSheetOpen = useValue(state$.isEditSheetOpen)
@@ -51,6 +56,7 @@ export default function ProfileScreen() {
   const editName = useValue(state$.editName)
   const isSaving = useValue(state$.isSaving)
   const isDeleting = useValue(state$.isDeleting)
+  const isUploadingPhoto = useValue(state$.isUploadingPhoto)
 
   const handleLogout = useCallback(async () => {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
@@ -126,6 +132,51 @@ export default function ProfileScreen() {
     )
   }, [deleteAccountMutation, signOut, router, state$])
 
+  const handleChangePhoto = useCallback(async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    })
+
+    if (result.canceled || !result.assets[0]) return
+
+    state$.isUploadingPhoto.set(true)
+    try {
+      // Resize to reasonable profile photo dimensions
+      const manipulated = await manipulateAsync(
+        result.assets[0].uri,
+        [{ resize: { width: 400, height: 400 } }],
+        { compress: 0.8, format: SaveFormat.JPEG },
+      )
+
+      // Get presigned upload URL
+      const { uploadUrl, downloadUrl } = await getProfilePhotoUploadUrl()
+
+      // Upload to S3
+      const response = await fetch(manipulated.uri)
+      const blob = await response.blob()
+      const uploadResponse = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'image/jpeg' },
+        body: blob,
+      })
+
+      if (!uploadResponse.ok) {
+        throw new Error(`Upload failed: ${uploadResponse.status}`)
+      }
+
+      // Update user profile with the download URL
+      await updateProfile({ photoUrl: downloadUrl })
+    } catch (error) {
+      console.error('Photo upload error:', error)
+      Alert.alert('Error', 'Failed to upload photo. Please try again.')
+    } finally {
+      state$.isUploadingPhoto.set(false)
+    }
+  }, [getProfilePhotoUploadUrl, updateProfile, state$])
+
   if (!currentUser) {
     return (
       <YStack
@@ -183,22 +234,44 @@ export default function ProfileScreen() {
           {/* Profile header card */}
           <Card elevated marginBottom={20}>
             <XStack gap={16} alignItems="center">
-              <Avatar circular size="$8">
-                {currentUser.photoUrl ? (
-                  <Avatar.Image source={{ uri: currentUser.photoUrl }} />
-                ) : (
-                  <Avatar.Fallback
-                    backgroundColor={bondfireColors.gunmetal}
-                    borderWidth={2}
-                    borderRadius={100}
-                    borderColor={bondfireColors.bondfireCopper}
-                    alignItems="center"
-                    justifyContent="center"
-                  >
-                    <User size={32} color={bondfireColors.bondfireCopper} />
-                  </Avatar.Fallback>
-                )}
-              </Avatar>
+              <Pressable onPress={handleChangePhoto} disabled={isUploadingPhoto}>
+                <Avatar circular size="$8">
+                  {currentUser.photoUrl ? (
+                    <Avatar.Image source={{ uri: currentUser.photoUrl }} />
+                  ) : (
+                    <Avatar.Fallback
+                      backgroundColor={bondfireColors.gunmetal}
+                      borderWidth={2}
+                      borderRadius={100}
+                      borderColor={bondfireColors.bondfireCopper}
+                      alignItems="center"
+                      justifyContent="center"
+                    >
+                      <User size={32} color={bondfireColors.bondfireCopper} />
+                    </Avatar.Fallback>
+                  )}
+                </Avatar>
+                {/* Camera badge */}
+                <YStack
+                  position="absolute"
+                  bottom={0}
+                  right={0}
+                  width={28}
+                  height={28}
+                  borderRadius={14}
+                  backgroundColor={bondfireColors.bondfireCopper}
+                  alignItems="center"
+                  justifyContent="center"
+                  borderWidth={2}
+                  borderColor={bondfireColors.obsidian}
+                >
+                  {isUploadingPhoto ? (
+                    <Spinner size="small" color={bondfireColors.whiteSmoke} />
+                  ) : (
+                    <Camera size={14} color={bondfireColors.whiteSmoke} />
+                  )}
+                </YStack>
+              </Pressable>
 
               <YStack flex={1}>
                 <Text fontWeight="700" fontSize={18}>

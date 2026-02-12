@@ -2,7 +2,7 @@ import { cancelProcessing, startBackgroundUpload } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
 import { useObservable, useObserveEffect, useValue } from '@legendapp/state/react'
-import { Flame, FlipHorizontal, X } from '@tamagui/lucide-icons'
+import { Flame, SwitchCamera, X } from '@tamagui/lucide-icons'
 import { useAction, useMutation } from 'convex/react'
 import {
   type CameraType,
@@ -33,7 +33,7 @@ export default function CreateScreen() {
   const cameraRef = useRef<CameraView>(null)
 
   const state$ = useObservable({
-    facing: 'back' as CameraType,
+    facing: 'front' as CameraType,
     recordingState: 'idle' as RecordingState,
     recordingDuration: 0,
     videoUri: null as string | null,
@@ -391,7 +391,7 @@ export default function CreateScreen() {
               alignItems="center"
               justifyContent="center"
             >
-              <FlipHorizontal size={22} color={bondfireColors.whiteSmoke} />
+              <SwitchCamera size={22} color={bondfireColors.whiteSmoke} />
             </YStack>
           </Pressable>
         </XStack>

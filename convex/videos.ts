@@ -163,6 +163,43 @@ export const deleteVideo = action({
   },
 })
 
+// Generate a presigned upload URL for a profile photo
+export const getProfilePhotoUploadUrl = action({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      throw new Error('Not authenticated')
+    }
+
+    const client = getS3Client()
+    const bucket = getBucket()
+
+    const timestamp = Date.now()
+    const key = `profile-photos/${userId}/${timestamp}.jpg`
+
+    const uploadUrl = await getSignedUrl(
+      client,
+      new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: 'image/jpeg' }),
+      { expiresIn: 3600 },
+    )
+
+    // Generate a download URL for the uploaded photo
+    const downloadUrl = await getSignedUrl(
+      client,
+      new GetObjectCommand({ Bucket: bucket, Key: key }),
+      { expiresIn: 86400 * 7 }, // 7 day URL
+    )
+
+    return {
+      uploadUrl,
+      downloadUrl,
+      key,
+      expiresIn: 3600,
+    }
+  },
+})
+
 // Generate upload URLs for both HD and SD versions at once
 export const getUploadUrls = action({
   args: {
