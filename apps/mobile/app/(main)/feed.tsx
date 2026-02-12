@@ -176,7 +176,7 @@ function BondfireItem({
 
   return (
     <Pressable
-      onPress={hasVideo ? togglePlayPause : onPress}
+      onPress={hasVideo ? undefined : onPress}
       style={{ width: SCREEN_WIDTH, height: ITEM_HEIGHT }}
     >
       <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
@@ -201,6 +201,21 @@ function BondfireItem({
             </YStack>
           )}
         </YStack>
+
+        {/* Transparent tap target for play/pause (sits above VideoView which eats touch events) */}
+        {hasVideo && (
+          <Pressable
+            onPress={togglePlayPause}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 1,
+            }}
+          />
+        )}
 
         {/* Loading overlay */}
         {hasVideo && isLoading && (
@@ -265,7 +280,7 @@ function BondfireItem({
         />
 
         {/* Bottom info section */}
-        <YStack position="absolute" bottom={100} left={0} right={0} paddingHorizontal={20} gap={12}>
+        <YStack position="absolute" bottom={100} left={0} right={0} paddingHorizontal={20} gap={12} zIndex={2}>
           {/* Creator info */}
           <XStack alignItems="center" gap={12}>
             <YStack
@@ -308,7 +323,7 @@ function BondfireItem({
         </YStack>
 
         {/* Right side action buttons */}
-        <YStack position="absolute" right={16} bottom={100} gap={20} alignItems="center">
+        <YStack position="absolute" right={16} bottom={100} gap={20} alignItems="center" zIndex={2}>
           {/* View details / respond button */}
           <Pressable onPress={onPress}>
             <YStack alignItems="center" gap={4}>
