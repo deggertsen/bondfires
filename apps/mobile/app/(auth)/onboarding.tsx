@@ -98,7 +98,7 @@ export default function OnboardingScreen() {
               <Text fontWeight="600" fontSize={16} color={bondfireColors.warmWhite}>
                 Respond to Others
               </Text>
-              <Text fontSize={14} color={bondfireColors.warmWhite}>
+              <Text fontSize={14} color={bondfireColors.ash}>
                 Add your video response to keep the bondfire growing.
               </Text>
             </YStack>
@@ -137,7 +137,14 @@ export default function OnboardingScreen() {
           <Text color={bondfireColors.whiteSmoke}>Get Started</Text>
         </Button>
         <Button variant="ghost" size="$md" onPress={handleLogin}>
-          <Text>Already have an account? Log in</Text>
+          <YStack alignItems="center" gap={2}>
+            <Text fontSize={14} color={bondfireColors.ash}>
+              Already have an account?
+            </Text>
+            <Text fontSize={16} fontWeight="700" color={bondfireColors.bondfireCopper}>
+              Log in
+            </Text>
+          </YStack>
         </Button>
       </YStack>
     </YStack>

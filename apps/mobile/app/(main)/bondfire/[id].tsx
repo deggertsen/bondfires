@@ -1,8 +1,16 @@
-import { appActions, appStore$, hasViewedToday, markViewed } from '@bondfires/app'
+import {
+  appActions,
+  appStore$,
+  getBondfireVideoIndex,
+  setBondfireVideoIndex,
+  setFeedActiveBondfireId,
+  hasViewedToday,
+  markViewed,
+} from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
 import { useObservable, useObserveEffect, useValue } from '@legendapp/state/react'
-import { useIsFocused } from '@react-navigation/native'
+import { useIsFocused, useNavigation } from '@react-navigation/native'
 import {
   ChevronLeft,
   ChevronRight,
@@ -498,6 +506,7 @@ function formatTime(ms: number): string {
 export default function BondfireDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const router = useRouter()
+  const navigation = useNavigation()
   const flatListRef = useRef<FlatList>(null)
   const isFocused = useIsFocused()
 
@@ -522,6 +531,9 @@ export default function BondfireDetailScreen() {
   const getVideoUrls = useAction(api.videos.getVideoUrls)
   const recordWatchEvent = useMutation(api.watchEvents.record)
   const incrementViews = useMutation(api.bondfires.incrementViews)
+
+  const didRestorePositionRef = useRef(false)
+  const persistPositionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Track app active state (external subscription - keep useEffect)
   useEffect(() => {
@@ -563,6 +575,54 @@ export default function BondfireDetailScreen() {
     markViewed(bondfireId)
     incrementViews({ bondfireId })
   }, [bondfireId, incrementViews])
+
+  // Restore last position within this conversation (camp) once data is available.
+  useEffect(() => {
+    if (!bondfireData) return
+    if (didRestorePositionRef.current) return
+    didRestorePositionRef.current = true
+
+    setFeedActiveBondfireId(bondfireId)
+
+    const total = 1 + bondfireData.videos.length
+    const saved = getBondfireVideoIndex(bondfireId) ?? 0
+    const clamped = Math.max(0, Math.min(saved, total - 1))
+
+    if (clamped === 0) return
+    screenState$.currentVideoIndex.set(clamped)
+    setTimeout(() => {
+      flatListRef.current?.scrollToIndex({ index: clamped, animated: false })
+    }, 0)
+  }, [bondfireData, bondfireId, screenState$, flatListRef])
+
+  // Persist position as the user swipes through the conversation.
+  useEffect(() => {
+    if (!bondfireId) return
+
+    if (persistPositionTimerRef.current) {
+      clearTimeout(persistPositionTimerRef.current)
+    }
+    persistPositionTimerRef.current = setTimeout(() => {
+      setFeedActiveBondfireId(bondfireId)
+      setBondfireVideoIndex(bondfireId, screenState$.currentVideoIndex.get())
+    }, 200)
+
+    return () => {
+      if (persistPositionTimerRef.current) {
+        clearTimeout(persistPositionTimerRef.current)
+        persistPositionTimerRef.current = null
+      }
+    }
+  }, [bondfireId, currentVideoIndex, screenState$])
+
+  const handleBackPress = useCallback(() => {
+    // If opened from a deep link / notification, there may not be a back stack.
+    if (navigation.canGoBack()) {
+      router.back()
+    } else {
+      router.replace('/(main)/feed')
+    }
+  }, [navigation, router])
 
   const handleVideoComplete = useCallback(() => {
     if (!bondfireData) return
@@ -697,17 +757,20 @@ export default function BondfireDetailScreen() {
             }}
           />
           <XStack flex={1} justifyContent="space-between" alignItems="center">
-            <Pressable onPress={() => router.back()}>
-              <YStack
-                width={40}
+            <Pressable onPress={handleBackPress}>
+              <XStack
+                paddingHorizontal={12}
                 height={40}
                 borderRadius={20}
                 backgroundColor="rgba(31, 32, 35, 0.8)"
                 alignItems="center"
-                justifyContent="center"
+                gap={6}
               >
-                <ChevronLeft size={24} color={bondfireColors.whiteSmoke} />
-              </YStack>
+                <ChevronLeft size={22} color={bondfireColors.whiteSmoke} />
+                <Text fontSize={13} fontWeight="700" color={bondfireColors.whiteSmoke}>
+                  Campground
+                </Text>
+              </XStack>
             </Pressable>
 
             <YStack alignItems="center">
@@ -715,7 +778,7 @@ export default function BondfireDetailScreen() {
                 {currentVideoIndex + 1} / {totalVideos}
               </Text>
               <Text fontSize={12} color={bondfireColors.ash}>
-                Swipe to navigate
+                Swipe for responses
               </Text>
             </YStack>
 

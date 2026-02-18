@@ -14,11 +14,11 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useIsFocused } from '@react-navigation/native'
 import { useCallback, useEffect, useRef } from 'react'
-import { Alert, AppState, Pressable, StatusBar } from 'react-native'
+import { Alert, AppState, Platform, Pressable, StatusBar } from 'react-native'
 import { Spinner, XStack, YStack } from 'tamagui'
-import { api } from '../../../../convex/_generated/api'
-import type { Id } from '../../../../convex/_generated/dataModel'
-import { CompletionScreen } from '../../components/CompletionScreen'
+import { api } from '../../../../../convex/_generated/api'
+import type { Id } from '../../../../../convex/_generated/dataModel'
+import { CompletionScreen } from '../../../components/CompletionScreen'
 
 type RecordingState = 'idle' | 'recording' | 'completion' | 'processing' | 'uploading'
 
@@ -31,6 +31,7 @@ export default function CreateScreen() {
   const [micPermission, requestMicPermission] = useMicrophonePermissions()
 
   const cameraRef = useRef<CameraView>(null)
+  const isStartingRecordingRef = useRef(false)
 
   const state$ = useObservable({
     facing: 'front' as CameraType,
@@ -41,6 +42,8 @@ export default function CreateScreen() {
     progressStage: '',
     isAppActive: AppState.currentState === 'active',
     isFocused: isFocused,
+    isCameraReady: false,
+    cameraMountError: null as string | null,
   })
 
   const facing = useValue(state$.facing)
@@ -50,6 +53,7 @@ export default function CreateScreen() {
   const progress = useValue(state$.progress)
   const progressStage = useValue(state$.progressStage)
   const isAppActive = useValue(state$.isAppActive)
+  const isCameraReady = useValue(state$.isCameraReady)
 
   const createBondfire = useMutation(api.bondfires.create)
   const addResponse = useMutation(api.bondfireVideos.addResponse)
@@ -92,6 +96,15 @@ export default function CreateScreen() {
   // Sync isFocused from hook to observable
   useEffect(() => {
     state$.isFocused.set(isFocused)
+  }, [isFocused, state$])
+
+  // Camera readiness should be re-established on focus changes.
+  useEffect(() => {
+    if (!isFocused) {
+      state$.isCameraReady.set(false)
+      state$.cameraMountError.set(null)
+      isStartingRecordingRef.current = false
+    }
   }, [isFocused, state$])
 
   // Reset state when screen becomes focused (e.g., pressing Spark tab again)
@@ -143,12 +156,64 @@ export default function CreateScreen() {
     requestPermissions()
   }, [requestPermissions])
 
+  const logRecordingError = useCallback(
+    (error: unknown) => {
+      type ErrorLike = { message?: unknown; name?: unknown; stack?: unknown }
+      const errObj: ErrorLike | undefined =
+        typeof error === 'object' && error !== null ? (error as ErrorLike) : undefined
+
+      const name = typeof errObj?.name === 'string' ? errObj.name : undefined
+      const stack = typeof errObj?.stack === 'string' ? errObj.stack : undefined
+      const messageFromObj = typeof errObj?.message === 'string' ? errObj.message : undefined
+
+      let message = messageFromObj ?? (typeof error === 'string' ? error : undefined)
+      if (!message) {
+        try {
+          message = JSON.stringify(error)
+        } catch {
+          message = 'Unknown error'
+        }
+      }
+
+      console.error('Recording error:', {
+        platform: Platform.OS,
+        message,
+        name,
+        stack,
+        cameraPermission: cameraPermission?.status,
+        micPermission: micPermission?.status,
+        isFocused: state$.isFocused.get(),
+        isAppActive: state$.isAppActive.get(),
+        isCameraReady: state$.isCameraReady.get(),
+        recordingState: state$.recordingState.get(),
+      })
+    },
+    [cameraPermission?.status, micPermission?.status, state$],
+  )
+
   const startRecording = useCallback(async () => {
     if (!cameraRef.current) {
       Alert.alert('Camera Not Ready', 'Please wait a moment and try again.')
       return
     }
 
+    // Prevent double-taps / re-entrancy before React has re-rendered with the new state.
+    if (isStartingRecordingRef.current || state$.recordingState.get() === 'recording') {
+      return
+    }
+
+    if (!state$.isFocused.get() || !state$.isAppActive.get()) {
+      Alert.alert('Camera Not Ready', 'Please return to the app and try again.')
+      return
+    }
+
+    // expo-camera explicitly requires waiting for onCameraReady before calling recordAsync.
+    if (!state$.isCameraReady.get()) {
+      Alert.alert('Camera Initializing', 'Please wait a moment and try again.')
+      return
+    }
+
+    isStartingRecordingRef.current = true
     state$.recordingState.set('recording')
     state$.recordingDuration.set(0)
 
@@ -167,11 +232,13 @@ export default function CreateScreen() {
         Alert.alert('Recording Failed', 'No video was captured. Please try again.')
       }
     } catch (error) {
-      console.error('Recording error:', error)
+      logRecordingError(error)
       state$.recordingState.set('idle')
       Alert.alert('Error', 'Failed to record video. Please try again.')
+    } finally {
+      isStartingRecordingRef.current = false
     }
-  }, [state$])
+  }, [logRecordingError, state$])
 
   const stopRecording = useCallback(() => {
     if (cameraRef.current) {
@@ -347,7 +414,23 @@ export default function CreateScreen() {
   return (
     <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-      <CameraView ref={cameraRef} style={{ flex: 1 }} facing={facing} mode="video">
+      <CameraView
+        ref={cameraRef}
+        style={{ flex: 1 }}
+        facing={facing}
+        mode="video"
+        onCameraReady={() => {
+          state$.isCameraReady.set(true)
+          state$.cameraMountError.set(null)
+        }}
+        onMountError={(event) => {
+          const message = event?.message ?? 'Unknown camera mount error'
+          state$.cameraMountError.set(message)
+          state$.isCameraReady.set(false)
+          console.error('Camera mount error:', { platform: Platform.OS, message })
+          Alert.alert('Camera Error', message)
+        }}
+      >
         {/* Header */}
         <XStack
           paddingTop={60}
@@ -415,7 +498,10 @@ export default function CreateScreen() {
 
         {/* Record button */}
         <YStack paddingBottom={40} alignItems="center">
-          <Pressable onPress={recordingState === 'recording' ? stopRecording : startRecording}>
+          <Pressable
+            disabled={!isCameraReady && recordingState !== 'recording'}
+            onPress={recordingState === 'recording' ? stopRecording : startRecording}
+          >
             <YStack
               width={80}
               height={80}
@@ -427,6 +513,7 @@ export default function CreateScreen() {
               backgroundColor={
                 recordingState === 'recording' ? bondfireColors.error : 'transparent'
               }
+              opacity={!isCameraReady && recordingState !== 'recording' ? 0.5 : 1}
             >
               <YStack
                 width={recordingState === 'recording' ? 30 : 60}
@@ -442,7 +529,11 @@ export default function CreateScreen() {
           </Pressable>
 
           <Text color={bondfireColors.ash} fontSize={13} marginTop={12}>
-            {recordingState === 'recording' ? 'Tap to stop' : 'Tap to record'}
+            {recordingState === 'recording'
+              ? 'Tap to stop'
+              : isCameraReady
+                ? 'Tap to record'
+                : 'Initializing camera...'}
           </Text>
         </YStack>
       </CameraView>

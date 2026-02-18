@@ -24,7 +24,7 @@ import { useRouter } from 'expo-router'
 import { useCallback } from 'react'
 import { Alert, FlatList, Pressable, ScrollView, StatusBar } from 'react-native'
 import { Avatar, Separator, Sheet, Spinner, Switch, XStack, YStack } from 'tamagui'
-import { api } from '../../../../convex/_generated/api'
+import { api } from '../../../../../convex/_generated/api'
 
 export default function ProfileScreen() {
   const router = useRouter()
