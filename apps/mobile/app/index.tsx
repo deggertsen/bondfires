@@ -54,5 +54,5 @@ export default function SplashScreen() {
   if (lastLocation?.type === 'bondfire' && lastLocation.bondfireId) {
     return <Redirect href={`/(main)/bondfire/${lastLocation.bondfireId}`} />
   }
-  return <Redirect href="/(main)/feed" />
+  return <Redirect href="/(main)/(tabs)/feed" />
 }

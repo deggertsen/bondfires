@@ -19,7 +19,7 @@ export function CompletionScreen({ onContinue }: CompletionScreenProps) {
     if (onContinue) {
       onContinue()
     } else {
-      router.replace('/(main)/feed')
+      router.replace('/(main)/(tabs)/feed')
     }
   }
 

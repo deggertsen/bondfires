@@ -620,7 +620,7 @@ export default function BondfireDetailScreen() {
     if (navigation.canGoBack()) {
       router.back()
     } else {
-      router.replace('/(main)/feed')
+      router.replace('/(main)/(tabs)/feed')
     }
   }, [navigation, router])
 
@@ -672,7 +672,7 @@ export default function BondfireDetailScreen() {
   )
 
   const handleRespond = useCallback(() => {
-    router.push(`/(main)/create?respondTo=${id}`)
+    router.push(`/(main)/(tabs)/create?respondTo=${id}`)
   }, [router, id])
 
   const onViewableItemsChanged = useCallback(

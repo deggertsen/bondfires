@@ -177,7 +177,7 @@ function EmptyFeed() {
       <Text fontSize={16} color={bondfireColors.ash} textAlign="center" marginBottom={32}>
         Be the first to share a video!
       </Text>
-      <Button variant="primary" size="$lg" onPress={() => router.push('/(main)/create')}>
+      <Button variant="primary" size="$lg" onPress={() => router.push('/(main)/(tabs)/create')}>
         <Flame size={20} color={bondfireColors.whiteSmoke} />
         <Text color={bondfireColors.whiteSmoke} fontWeight="900">
           Spark Bondfire
@@ -329,7 +329,7 @@ export default function FeedScreen() {
 
   const handleRespond = useCallback(
     (bondfireId: string) => {
-      router.push(`/(main)/create?respondTo=${bondfireId}`)
+      router.push(`/(main)/(tabs)/create?respondTo=${bondfireId}`)
     },
     [router],
   )
@@ -424,7 +424,7 @@ export default function FeedScreen() {
                 </Text>
               </YStack>
 
-              <Button variant="secondary" size="$sm" onPress={() => router.push('/(main)/create')}>
+              <Button variant="secondary" size="$sm" onPress={() => router.push('/(main)/(tabs)/create')}>
                 <Text color={bondfireColors.whiteSmoke} fontWeight="900">
                   Spark
                 </Text>

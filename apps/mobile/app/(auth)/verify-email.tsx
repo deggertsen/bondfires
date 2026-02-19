@@ -36,7 +36,7 @@ export default function VerifyEmailScreen() {
       })
       setSuccess(true)
       // Navigate to feed after successful verification
-      router.replace('/(main)/feed')
+      router.replace('/(main)/(tabs)/feed')
     } catch {
       setError('Invalid or expired code. Please try again.')
     } finally {
