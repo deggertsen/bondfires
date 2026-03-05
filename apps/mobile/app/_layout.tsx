@@ -12,6 +12,7 @@ import { Stack, useRouter } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
 import { useCallback, useEffect } from 'react'
 import { useColorScheme } from 'react-native'
+import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { TamaguiProvider, Theme } from 'tamagui'
 import 'react-native-reanimated'
 
@@ -152,7 +153,9 @@ export default function RootLayout() {
   return (
     <ConvexProvider client={convex}>
       <ConvexAuthProvider client={convex} storage={mmkvStorage}>
-        <AppContent />
+        <SafeAreaProvider>
+          <AppContent />
+        </SafeAreaProvider>
       </ConvexAuthProvider>
     </ConvexProvider>
   )

@@ -16,6 +16,7 @@ import { Image } from 'expo-image'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FlatList, Pressable, StatusBar, type ViewToken } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Separator, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc } from '../../../../../convex/_generated/dataModel'
@@ -205,6 +206,7 @@ function LoadingFeed() {
 
 export default function FeedScreen() {
   const router = useRouter()
+  const insets = useSafeAreaInsets()
   const bondfires = useQuery(api.bondfires.listFeed, { limit: 50 })
   const getDownloadUrl = useAction(api.videos.getDownloadUrl)
 
@@ -386,7 +388,7 @@ export default function FeedScreen() {
 
   return (
     <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
-      <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
       <FlatList
         ref={(r) => {
@@ -413,7 +415,7 @@ export default function FeedScreen() {
           <Separator borderColor={bondfireColors.iron} opacity={0.6} marginHorizontal={16} />
         )}
         ListHeaderComponent={
-          <YStack paddingTop={16} paddingBottom={12} paddingHorizontal={16} gap={12}>
+          <YStack paddingTop={insets.top + 16} paddingBottom={12} paddingHorizontal={16} gap={12}>
             <XStack alignItems="baseline" justifyContent="space-between" gap={16}>
               <YStack gap={2} flex={1}>
                 <Text fontSize={26} fontWeight="900" numberOfLines={1}>

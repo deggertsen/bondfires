@@ -1,7 +1,7 @@
 import { cancelProcessing, startBackgroundUpload } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
-import { useObservable, useObserveEffect, useValue } from '@legendapp/state/react'
+import { useObservable, useValue } from '@legendapp/state/react'
 import { Flame, SwitchCamera, X } from '@tamagui/lucide-icons'
 import { useAction, useMutation } from 'convex/react'
 import {
@@ -32,6 +32,7 @@ export default function CreateScreen() {
 
   const cameraRef = useRef<CameraView>(null)
   const isStartingRecordingRef = useRef(false)
+  const wasFocusedRef = useRef(isFocused)
 
   const state$ = useObservable({
     facing: 'front' as CameraType,
@@ -107,21 +108,28 @@ export default function CreateScreen() {
     }
   }, [isFocused, state$])
 
-  // Reset state when screen becomes focused (e.g., pressing Spark tab again)
-  useObserveEffect(() => {
-    if (state$.isFocused.get() && state$.recordingState.get() === 'completion') {
+  // Reset completion state only after returning to this tab from another screen.
+  // This avoids immediately clearing completion right after recordAsync resolves.
+  useEffect(() => {
+    const wasFocused = wasFocusedRef.current
+    wasFocusedRef.current = isFocused
+
+    if (!isFocused || wasFocused) {
+      return
+    }
+
+    if (state$.recordingState.get() === 'completion') {
       state$.recordingState.set('idle')
       state$.videoUri.set(null)
       state$.recordingDuration.set(0)
       state$.progress.set(0)
       state$.progressStage.set('')
-      // Clear respondTo param so user can create a new spark instead of responding
-      // Use replace to navigate to clean URL since setParams doesn't properly clear undefined values
+      // Clear respondTo param so user can create a new spark instead of responding.
       if (respondTo) {
         router.replace('/(main)/(tabs)/create')
       }
     }
-  })
+  }, [isFocused, respondTo, router, state$])
 
   // Keep screen awake while recording or processing
   useEffect(() => {

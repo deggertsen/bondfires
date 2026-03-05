@@ -7,8 +7,13 @@ export interface UploadTask {
   bondfireId?: string // If responding to existing bondfire
   isResponse: boolean
   status: 'pending' | 'processing' | 'uploading' | 'completed' | 'failed'
+  progress?: number // 0-100 progress for current upload lifecycle
+  stage?: string // Human-readable stage text for UI (processing/uploading/retry/etc)
+  errorMessage?: string
   attemptCount: number
   lastAttemptAt?: number
+  updatedAt?: number
+  completedAt?: number
   presignedUrls?: {
     // Cached after first fetch
     hdUrl: string
@@ -51,14 +56,19 @@ syncObservable(uploadQueueStore$, {
 // Actions
 export const uploadQueueActions = {
   addTask: (task: UploadTask) => {
-    uploadQueueStore$.tasks.push(task)
+    uploadQueueStore$.tasks.push({
+      ...task,
+      updatedAt: task.updatedAt ?? Date.now(),
+      progress: task.progress ?? 0,
+      stage: task.stage ?? 'Queued',
+    })
   },
 
   updateTask: (taskId: string, updates: Partial<UploadTask>) => {
     const tasks = uploadQueueStore$.tasks.get()
     const index = tasks.findIndex((t) => t.id === taskId)
     if (index !== -1) {
-      uploadQueueStore$.tasks[index].set({ ...tasks[index], ...updates })
+      uploadQueueStore$.tasks[index].set({ ...tasks[index], ...updates, updatedAt: Date.now() })
     }
   },
 
@@ -73,6 +83,11 @@ export const uploadQueueActions = {
     return tasks.filter(
       (t) => t.status === 'pending' || t.status === 'processing' || t.status === 'uploading',
     )
+  },
+
+  getVisibleTasks: (): UploadTask[] => {
+    const tasks = uploadQueueStore$.tasks.get()
+    return tasks.filter((t) => t.status !== 'completed' || (t.completedAt ?? 0) > Date.now() - 120000)
   },
 
   getTask: (taskId: string): UploadTask | undefined => {

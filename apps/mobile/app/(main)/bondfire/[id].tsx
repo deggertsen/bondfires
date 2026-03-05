@@ -82,7 +82,6 @@ function VideoPlayer({
 }: VideoPlayerProps) {
   // Get the video ID for internal use (keep-awake tag, etc.)
   const videoId = bondfireId || bondfireVideoId || ''
-  const playbackSpeed = useValue(appStore$.preferences.playbackSpeed)
   const autoplayVideos = useValue(appStore$.preferences.autoplayVideos)
   const videoQuality = useValue(appStore$.preferences.videoQuality)
   const isMuted = useValue(appStore$.preferences.videoMuted)
@@ -117,13 +116,14 @@ function VideoPlayer({
   const player = useVideoPlayer(currentUrl || '', (player) => {
     player.loop = false
     player.muted = isMuted
-    player.playbackRate = playbackSpeed
+    player.playbackRate = appStore$.preferences.playbackSpeed.get()
     player.preservesPitch = true
   })
 
-  // Update playback speed when preference changes (effect phase for player mutations)
+  // Update playback speed only for the active, foreground player.
+  // This prevents rate changes from mutating all mounted players in the response chain.
   useObserveEffect(() => {
-    if (player) {
+    if (player && isActive && isScreenFocused && isAppActive) {
       player.playbackRate = appStore$.preferences.playbackSpeed.get()
     }
   })
@@ -143,6 +143,7 @@ function VideoPlayer({
     const shouldPlay = isActive && isScreenFocused && isAppActive
 
     if (shouldPlay) {
+      player.playbackRate = appStore$.preferences.playbackSpeed.get()
       // Only auto-play if autoplay is enabled OR user has manually initiated play
       if (autoplayVideos || state$.userInitiatedPlay.get()) {
         player.play()
