@@ -20,7 +20,13 @@ import { api } from '../../../../../convex/_generated/api'
 import type { Id } from '../../../../../convex/_generated/dataModel'
 import { CompletionScreen } from '../../../components/CompletionScreen'
 
-type RecordingState = 'idle' | 'recording' | 'completion' | 'processing' | 'uploading'
+type RecordingState =
+  | 'idle'
+  | 'recording'
+  | 'stopping'
+  | 'completion'
+  | 'processing'
+  | 'uploading'
 
 export default function CreateScreen() {
   const router = useRouter()
@@ -32,10 +38,13 @@ export default function CreateScreen() {
 
   const cameraRef = useRef<CameraView>(null)
   const isStartingRecordingRef = useRef(false)
+  const recordingSessionRef = useRef(0)
+  const stopTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const wasFocusedRef = useRef(isFocused)
 
   const state$ = useObservable({
     facing: 'front' as CameraType,
+    pendingFacing: null as CameraType | null,
     recordingState: 'idle' as RecordingState,
     recordingDuration: 0,
     videoUri: null as string | null,
@@ -48,6 +57,7 @@ export default function CreateScreen() {
   })
 
   const facing = useValue(state$.facing)
+  const pendingFacing = useValue(state$.pendingFacing)
   const recordingState = useValue(state$.recordingState)
   const recordingDuration = useValue(state$.recordingDuration)
   const videoUri = useValue(state$.videoUri)
@@ -79,6 +89,10 @@ export default function CreateScreen() {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      if (stopTimeoutRef.current) {
+        clearTimeout(stopTimeoutRef.current)
+        stopTimeoutRef.current = null
+      }
       cancelProcessing()
     }
   }, [])
@@ -102,11 +116,48 @@ export default function CreateScreen() {
   // Camera readiness should be re-established on focus changes.
   useEffect(() => {
     if (!isFocused) {
+      if (
+        state$.recordingState.get() === 'recording' ||
+        state$.recordingState.get() === 'stopping'
+      ) {
+        try {
+          cameraRef.current?.stopRecording()
+        } catch (error) {
+          console.error('Failed to stop recording while screen lost focus:', error)
+        }
+        recordingSessionRef.current += 1
+        state$.recordingState.set('idle')
+        state$.recordingDuration.set(0)
+        state$.videoUri.set(null)
+        state$.progress.set(0)
+        state$.progressStage.set('')
+      }
+
       state$.isCameraReady.set(false)
       state$.cameraMountError.set(null)
       isStartingRecordingRef.current = false
+      if (stopTimeoutRef.current) {
+        clearTimeout(stopTimeoutRef.current)
+        stopTimeoutRef.current = null
+      }
     }
   }, [isFocused, state$])
+
+  // expo-camera stops an active recording if the facing camera changes.
+  // Queue flip requests made during recording and apply them only after the session settles.
+  useEffect(() => {
+    if (recordingState === 'recording' || recordingState === 'stopping' || !pendingFacing) {
+      return
+    }
+
+    if (pendingFacing !== state$.facing.get()) {
+      state$.isCameraReady.set(false)
+      state$.cameraMountError.set(null)
+      state$.facing.set(pendingFacing)
+    }
+
+    state$.pendingFacing.set(null)
+  }, [pendingFacing, recordingState, state$])
 
   // Reset completion state only after returning to this tab from another screen.
   // This avoids immediately clearing completion right after recordAsync resolves.
@@ -137,6 +188,7 @@ export default function CreateScreen() {
       isFocused &&
       isAppActive &&
       (recordingState === 'recording' ||
+        recordingState === 'stopping' ||
         recordingState === 'processing' ||
         recordingState === 'uploading')
 
@@ -199,14 +251,38 @@ export default function CreateScreen() {
     [cameraPermission?.status, micPermission?.status, state$],
   )
 
+  const clearStopTimeout = useCallback(() => {
+    if (stopTimeoutRef.current) {
+      clearTimeout(stopTimeoutRef.current)
+      stopTimeoutRef.current = null
+    }
+  }, [])
+
+  const resetRecordingState = useCallback(() => {
+    clearStopTimeout()
+    state$.recordingState.set('idle')
+    state$.recordingDuration.set(0)
+    state$.videoUri.set(null)
+    state$.progress.set(0)
+    state$.progressStage.set('')
+  }, [clearStopTimeout, state$])
+
   const startRecording = useCallback(async () => {
-    if (!cameraRef.current) {
+    const activeCamera = cameraRef.current
+
+    if (!activeCamera) {
       Alert.alert('Camera Not Ready', 'Please wait a moment and try again.')
       return
     }
 
     // Prevent double-taps / re-entrancy before React has re-rendered with the new state.
-    if (isStartingRecordingRef.current || state$.recordingState.get() === 'recording') {
+    const currentRecordingState = state$.recordingState.get()
+
+    if (
+      isStartingRecordingRef.current ||
+      currentRecordingState === 'recording' ||
+      currentRecordingState === 'stopping'
+    ) {
       return
     }
 
@@ -222,11 +298,23 @@ export default function CreateScreen() {
     }
 
     isStartingRecordingRef.current = true
+    clearStopTimeout()
+    const sessionId = recordingSessionRef.current + 1
+    recordingSessionRef.current = sessionId
     state$.recordingState.set('recording')
     state$.recordingDuration.set(0)
+    state$.videoUri.set(null)
+    state$.progress.set(0)
+    state$.progressStage.set('')
 
     try {
-      const video = await cameraRef.current.recordAsync()
+      const video = await activeCamera.recordAsync()
+
+      if (recordingSessionRef.current !== sessionId) {
+        return
+      }
+
+      clearStopTimeout()
 
       if (video?.uri) {
         state$.videoUri.set(video.uri)
@@ -240,19 +328,65 @@ export default function CreateScreen() {
         Alert.alert('Recording Failed', 'No video was captured. Please try again.')
       }
     } catch (error) {
+      if (recordingSessionRef.current !== sessionId) {
+        return
+      }
+
+      clearStopTimeout()
       logRecordingError(error)
-      state$.recordingState.set('idle')
+      resetRecordingState()
       Alert.alert('Error', 'Failed to record video. Please try again.')
     } finally {
-      isStartingRecordingRef.current = false
+      if (recordingSessionRef.current === sessionId) {
+        isStartingRecordingRef.current = false
+      }
     }
-  }, [logRecordingError, state$])
+  }, [clearStopTimeout, logRecordingError, resetRecordingState, state$])
 
   const stopRecording = useCallback(() => {
-    if (cameraRef.current) {
-      cameraRef.current.stopRecording()
+    if (state$.recordingState.get() !== 'recording') {
+      return
     }
-  }, [])
+
+    if (!cameraRef.current) {
+      recordingSessionRef.current += 1
+      isStartingRecordingRef.current = false
+      resetRecordingState()
+      Alert.alert('Camera Not Ready', 'The camera was unavailable, so the recording was reset.')
+      return
+    }
+
+    const sessionId = recordingSessionRef.current
+    state$.recordingState.set('stopping')
+    state$.progressStage.set('Finishing recording...')
+    clearStopTimeout()
+    stopTimeoutRef.current = setTimeout(() => {
+      if (
+        recordingSessionRef.current === sessionId &&
+        state$.recordingState.get() === 'stopping'
+      ) {
+        console.warn('Recording stop timed out; resetting create screen state')
+        recordingSessionRef.current += 1
+        isStartingRecordingRef.current = false
+        resetRecordingState()
+        Alert.alert(
+          'Recording Stopped',
+          'The recording session was reset because it did not finish properly. Please try again.',
+        )
+      }
+    }, 8000)
+
+    try {
+      cameraRef.current?.stopRecording()
+    } catch (error) {
+      clearStopTimeout()
+      logRecordingError(error)
+      recordingSessionRef.current += 1
+      isStartingRecordingRef.current = false
+      resetRecordingState()
+      Alert.alert('Error', 'Failed to stop recording cleanly. Please try again.')
+    }
+  }, [clearStopTimeout, logRecordingError, resetRecordingState, state$])
 
   const queueBackgroundUpload = useCallback(
     async (uri: string) => {
@@ -296,7 +430,22 @@ export default function CreateScreen() {
   )
 
   const toggleFacing = useCallback(() => {
-    state$.facing.set((current) => (current === 'back' ? 'front' : 'back'))
+    const currentTargetFacing = state$.pendingFacing.get() ?? state$.facing.get()
+    const nextFacing = currentTargetFacing === 'back' ? 'front' : 'back'
+
+    if (
+      state$.recordingState.get() === 'recording' ||
+      state$.recordingState.get() === 'stopping' ||
+      isStartingRecordingRef.current
+    ) {
+      state$.pendingFacing.set(nextFacing)
+      return
+    }
+
+    state$.pendingFacing.set(null)
+    state$.isCameraReady.set(false)
+    state$.cameraMountError.set(null)
+    state$.facing.set(nextFacing)
   }, [state$])
 
   // Permission denied state
@@ -502,13 +651,36 @@ export default function CreateScreen() {
               </Text>
             </YStack>
           )}
+
+          {recordingState === 'stopping' && (
+            <YStack alignItems="center" gap={12}>
+              <Spinner size="large" color={bondfireColors.whiteSmoke} />
+              <Text color={bondfireColors.whiteSmoke} fontSize={18} fontWeight="700">
+                Finishing recording
+              </Text>
+              <Text color={bondfireColors.ash} fontSize={14}>
+                Please wait a moment...
+              </Text>
+            </YStack>
+          )}
         </YStack>
 
         {/* Record button */}
         <YStack paddingBottom={40} alignItems="center">
           <Pressable
-            disabled={!isCameraReady && recordingState !== 'recording'}
-            onPress={recordingState === 'recording' ? stopRecording : startRecording}
+            disabled={
+              (!isCameraReady && recordingState !== 'recording') || recordingState === 'stopping'
+            }
+            onPress={() => {
+              if (recordingState === 'recording') {
+                stopRecording()
+                return
+              }
+
+              if (recordingState === 'idle') {
+                startRecording()
+              }
+            }}
           >
             <YStack
               width={80}
@@ -519,25 +691,39 @@ export default function CreateScreen() {
               alignItems="center"
               justifyContent="center"
               backgroundColor={
-                recordingState === 'recording' ? bondfireColors.error : 'transparent'
+                recordingState === 'recording' || recordingState === 'stopping'
+                  ? bondfireColors.error
+                  : 'transparent'
               }
-              opacity={!isCameraReady && recordingState !== 'recording' ? 0.5 : 1}
+              opacity={
+                !isCameraReady && recordingState !== 'recording'
+                  ? 0.5
+                  : recordingState === 'stopping'
+                    ? 0.7
+                    : 1
+              }
             >
-              <YStack
-                width={recordingState === 'recording' ? 30 : 60}
-                height={recordingState === 'recording' ? 30 : 60}
-                borderRadius={recordingState === 'recording' ? 6 : 30}
-                backgroundColor={
-                  recordingState === 'recording'
-                    ? bondfireColors.whiteSmoke
-                    : bondfireColors.bondfireCopper
-                }
-              />
+              {recordingState === 'stopping' ? (
+                <Spinner size="small" color={bondfireColors.whiteSmoke} />
+              ) : (
+                <YStack
+                  width={recordingState === 'recording' ? 30 : 60}
+                  height={recordingState === 'recording' ? 30 : 60}
+                  borderRadius={recordingState === 'recording' ? 6 : 30}
+                  backgroundColor={
+                    recordingState === 'recording'
+                      ? bondfireColors.whiteSmoke
+                      : bondfireColors.bondfireCopper
+                  }
+                />
+              )}
             </YStack>
           </Pressable>
 
           <Text color={bondfireColors.ash} fontSize={13} marginTop={12}>
-            {recordingState === 'recording'
+            {recordingState === 'stopping'
+              ? 'Stopping recording...'
+              : recordingState === 'recording'
               ? 'Tap to stop'
               : isCameraReady
                 ? 'Tap to record'
