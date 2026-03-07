@@ -1,8 +1,8 @@
-import { appActions, usePreferences } from '@bondfires/app'
+import { appActions, uploadQueueActions, usePreferences } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Card, Input, Text } from '@bondfires/ui'
-import { useObservable, useValue } from '@legendapp/state/react'
 import { useAuthActions } from '@convex-dev/auth/react'
+import { useObservable, useValue } from '@legendapp/state/react'
 import {
   Bell,
   Camera,
@@ -18,30 +18,62 @@ import {
   Video,
 } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
-import { manipulateAsync, SaveFormat } from 'expo-image-manipulator'
+import { SaveFormat, manipulateAsync } from 'expo-image-manipulator'
 import * as ImagePicker from 'expo-image-picker'
 import { useRouter } from 'expo-router'
-import { useCallback } from 'react'
-import { Alert, FlatList, Pressable, ScrollView, StatusBar } from 'react-native'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Alert, FlatList, Pressable, RefreshControl, ScrollView, StatusBar } from 'react-native'
 import { Avatar, Separator, Sheet, Spinner, Switch, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
+import type { Doc } from '../../../../../convex/_generated/dataModel'
 import { UploadProgressCard } from '../../../components/UploadProgressCard'
 
-export default function ProfileScreen() {
-  const router = useRouter()
-  const { signOut } = useAuthActions()
+type CurrentUserData = Doc<'users'> | null
+type UserBondfireData = Doc<'bondfires'>
 
+function ProfileSubscription({
+  onResolved,
+}: {
+  onResolved: (params: {
+    currentUser: CurrentUserData
+    userBondfires: UserBondfireData[] | undefined
+  }) => void
+}) {
   const currentUser = useQuery(api.users.current)
   const userBondfires = useQuery(
     api.bondfires.listByUser,
     currentUser?._id ? { userId: currentUser._id } : 'skip',
   )
+
+  useEffect(() => {
+    if (currentUser === undefined) return
+    if (currentUser?._id && userBondfires === undefined) return
+
+    onResolved({
+      currentUser,
+      userBondfires: currentUser?._id ? (userBondfires ?? []) : undefined,
+    })
+  }, [currentUser, onResolved, userBondfires])
+
+  return null
+}
+
+export default function ProfileScreen() {
+  const router = useRouter()
+  const { signOut } = useAuthActions()
+
   const updateProfile = useMutation(api.users.updateProfile)
   const deleteAccountMutation = useMutation(api.users.deleteAccount)
   const getProfilePhotoUploadUrl = useAction(api.videos.getProfilePhotoUploadUrl)
 
   const { preferences, setVideoQuality, setAutoplayVideos, setNotificationsEnabled } =
     usePreferences()
+
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [currentUser, setCurrentUser] = useState<CurrentUserData | undefined>(undefined)
+  const [userBondfires, setUserBondfires] = useState<UserBondfireData[] | undefined>(undefined)
+  const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const state$ = useObservable({
     isEditSheetOpen: false,
@@ -58,6 +90,43 @@ export default function ProfileScreen() {
   const isSaving = useValue(state$.isSaving)
   const isDeleting = useValue(state$.isDeleting)
   const isUploadingPhoto = useValue(state$.isUploadingPhoto)
+
+  const stopRefreshing = useCallback(() => {
+    if (refreshTimeoutRef.current) {
+      clearTimeout(refreshTimeoutRef.current)
+      refreshTimeoutRef.current = null
+    }
+    setIsRefreshing(false)
+  }, [])
+
+  const handleRefresh = useCallback(() => {
+    uploadQueueActions.cleanupForRefresh()
+    setIsRefreshing(true)
+    setRefreshKey((current) => current + 1)
+
+    if (refreshTimeoutRef.current) {
+      clearTimeout(refreshTimeoutRef.current)
+    }
+    refreshTimeoutRef.current = setTimeout(() => {
+      refreshTimeoutRef.current = null
+      setIsRefreshing(false)
+    }, 5000)
+  }, [])
+
+  const handleProfileResolved = useCallback(
+    ({
+      currentUser: nextCurrentUser,
+      userBondfires: nextUserBondfires,
+    }: {
+      currentUser: CurrentUserData
+      userBondfires: UserBondfireData[] | undefined
+    }) => {
+      setCurrentUser(nextCurrentUser)
+      setUserBondfires(nextUserBondfires)
+      stopRefreshing()
+    },
+    [stopRefreshing],
+  )
 
   const handleLogout = useCallback(async () => {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
@@ -86,12 +155,13 @@ export default function ProfileScreen() {
         displayName: state$.editName.get(),
       })
       state$.isEditSheetOpen.set(false)
+      handleRefresh()
     } catch {
       Alert.alert('Error', 'Failed to update profile')
     } finally {
       state$.isSaving.set(false)
     }
-  }, [updateProfile, state$])
+  }, [handleRefresh, state$, updateProfile])
 
   const handleDeleteAccount = useCallback(() => {
     Alert.alert(
@@ -103,7 +173,6 @@ export default function ProfileScreen() {
           text: 'Delete Account',
           style: 'destructive',
           onPress: () => {
-            // Second confirmation for such a destructive action
             Alert.alert(
               'Final Confirmation',
               'This is permanent. All your data will be deleted forever.',
@@ -131,7 +200,7 @@ export default function ProfileScreen() {
         },
       ],
     )
-  }, [deleteAccountMutation, signOut, router, state$])
+  }, [deleteAccountMutation, router, signOut, state$])
 
   const handleChangePhoto = useCallback(async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -145,17 +214,14 @@ export default function ProfileScreen() {
 
     state$.isUploadingPhoto.set(true)
     try {
-      // Resize to reasonable profile photo dimensions
       const manipulated = await manipulateAsync(
         result.assets[0].uri,
         [{ resize: { width: 400, height: 400 } }],
         { compress: 0.8, format: SaveFormat.JPEG },
       )
 
-      // Get presigned upload URL
       const { uploadUrl, downloadUrl } = await getProfilePhotoUploadUrl()
 
-      // Upload to S3
       const response = await fetch(manipulated.uri)
       const blob = await response.blob()
       const uploadResponse = await fetch(uploadUrl, {
@@ -168,25 +234,37 @@ export default function ProfileScreen() {
         throw new Error(`Upload failed: ${uploadResponse.status}`)
       }
 
-      // Update user profile with the download URL
       await updateProfile({ photoUrl: downloadUrl })
+      handleRefresh()
     } catch (error) {
       console.error('Photo upload error:', error)
       Alert.alert('Error', 'Failed to upload photo. Please try again.')
     } finally {
       state$.isUploadingPhoto.set(false)
     }
-  }, [getProfilePhotoUploadUrl, updateProfile, state$])
+  }, [getProfilePhotoUploadUrl, handleRefresh, state$, updateProfile])
+
+  useEffect(() => {
+    return () => {
+      if (refreshTimeoutRef.current) {
+        clearTimeout(refreshTimeoutRef.current)
+        refreshTimeoutRef.current = null
+      }
+    }
+  }, [])
 
   if (!currentUser) {
     return (
-      <YStack
-        flex={1}
-        backgroundColor={bondfireColors.obsidian}
-        alignItems="center"
-        justifyContent="center"
-      >
-        <Spinner size="large" color={bondfireColors.bondfireCopper} />
+      <YStack flex={1}>
+        <ProfileSubscription key={refreshKey} onResolved={handleProfileResolved} />
+        <YStack
+          flex={1}
+          backgroundColor={bondfireColors.obsidian}
+          alignItems="center"
+          justifyContent="center"
+        >
+          <Spinner size="large" color={bondfireColors.bondfireCopper} />
+        </YStack>
       </YStack>
     )
   }
@@ -199,9 +277,9 @@ export default function ProfileScreen() {
 
   return (
     <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
+      <ProfileSubscription key={refreshKey} onResolved={handleProfileResolved} />
       <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
 
-      {/* Header */}
       <XStack
         justifyContent="space-between"
         alignItems="center"
@@ -229,10 +307,17 @@ export default function ProfileScreen() {
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingHorizontal: 20 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor={bondfireColors.bondfireCopper}
+            colors={[bondfireColors.bondfireCopper]}
+          />
+        }
         showsVerticalScrollIndicator={false}
       >
         <YStack gap={0} paddingBottom={20}>
-          {/* Profile header card */}
           <Card elevated marginBottom={20}>
             <XStack gap={16} alignItems="center">
               <Pressable onPress={handleChangePhoto} disabled={isUploadingPhoto}>
@@ -252,7 +337,6 @@ export default function ProfileScreen() {
                     </Avatar.Fallback>
                   )}
                 </Avatar>
-                {/* Camera badge */}
                 <YStack
                   position="absolute"
                   bottom={0}
@@ -298,7 +382,6 @@ export default function ProfileScreen() {
             </XStack>
           </Card>
 
-          {/* Stats */}
           <Card marginBottom={24}>
             <XStack justifyContent="space-around" paddingVertical={8}>
               <YStack alignItems="center" gap={4}>
@@ -345,7 +428,6 @@ export default function ProfileScreen() {
 
           <UploadProgressCard />
 
-          {/* Settings */}
           <YStack gap={12} marginBottom={24}>
             <XStack alignItems="center" gap={8}>
               <Settings size={18} color={bondfireColors.ash} />
@@ -438,7 +520,6 @@ export default function ProfileScreen() {
             </Card>
           </YStack>
 
-          {/* User's Bondfires */}
           {userBondfires && userBondfires.length > 0 && (
             <YStack gap={12} marginBottom={24}>
               <XStack alignItems="center" gap={8}>
@@ -492,7 +573,6 @@ export default function ProfileScreen() {
             </YStack>
           )}
 
-          {/* Danger Zone */}
           <YStack gap={12} marginBottom={24}>
             <XStack alignItems="center" gap={8}>
               <Trash2 size={18} color={bondfireColors.error} />
@@ -534,7 +614,6 @@ export default function ProfileScreen() {
         </YStack>
       </ScrollView>
 
-      {/* Edit Profile Sheet */}
       <Sheet
         open={isEditSheetOpen}
         onOpenChange={(open: boolean) => state$.isEditSheetOpen.set(open)}
@@ -558,7 +637,11 @@ export default function ProfileScreen() {
               <Text variant="label" color={bondfireColors.whiteSmoke}>
                 Display Name
               </Text>
-              <Input value={editName} onChangeText={(text) => state$.editName.set(text)} placeholder="Your name" />
+              <Input
+                value={editName}
+                onChangeText={(text) => state$.editName.set(text)}
+                placeholder="Your name"
+              />
             </YStack>
 
             <XStack gap={12}>
@@ -588,7 +671,6 @@ export default function ProfileScreen() {
         </Sheet.Frame>
       </Sheet>
 
-      {/* Video Quality Sheet */}
       <Sheet
         open={isVideoQualitySheetOpen}
         onOpenChange={(open: boolean) => state$.isVideoQualitySheetOpen.set(open)}
@@ -632,7 +714,11 @@ export default function ProfileScreen() {
                   >
                     <YStack>
                       <Text fontWeight="600" fontSize={16}>
-                        {quality === 'auto' ? 'Auto' : quality === 'hd' ? 'High (HD)' : 'Standard (SD)'}
+                        {quality === 'auto'
+                          ? 'Auto'
+                          : quality === 'hd'
+                            ? 'High (HD)'
+                            : 'Standard (SD)'}
                       </Text>
                       <Text fontSize={13} color={bondfireColors.ash}>
                         {quality === 'auto'

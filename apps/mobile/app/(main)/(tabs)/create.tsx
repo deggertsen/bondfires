@@ -1,7 +1,13 @@
-import { cancelProcessing, startBackgroundUpload } from '@bondfires/app'
+import {
+  cancelProcessing,
+  cleanupTempVideos,
+  resumePendingUploads,
+  startBackgroundUpload,
+} from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
+import { useIsFocused } from '@react-navigation/native'
 import { Flame, SwitchCamera, X } from '@tamagui/lucide-icons'
 import { useAction, useMutation } from 'convex/react'
 import {
@@ -12,21 +18,15 @@ import {
 } from 'expo-camera'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { useIsFocused } from '@react-navigation/native'
 import { useCallback, useEffect, useRef } from 'react'
 import { Alert, AppState, Platform, Pressable, StatusBar } from 'react-native'
 import { Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Id } from '../../../../../convex/_generated/dataModel'
 import { CompletionScreen } from '../../../components/CompletionScreen'
+import { mergeVideoSegments } from '../../../lib/videoSegmentMerger'
 
-type RecordingState =
-  | 'idle'
-  | 'recording'
-  | 'stopping'
-  | 'completion'
-  | 'processing'
-  | 'uploading'
+type RecordingState = 'idle' | 'recording' | 'stopping' | 'completion' | 'processing' | 'uploading'
 
 export default function CreateScreen() {
   const router = useRouter()
@@ -39,12 +39,17 @@ export default function CreateScreen() {
   const cameraRef = useRef<CameraView>(null)
   const isStartingRecordingRef = useRef(false)
   const recordingSessionRef = useRef(0)
+  const recordingActionRef = useRef<'none' | 'swap' | 'stop'>('none')
+  const hasActiveSegmentRef = useRef(false)
+  const recordedSegmentUrisRef = useRef<string[]>([])
   const stopTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const uploadStartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const wasFocusedRef = useRef(isFocused)
 
   const state$ = useObservable({
     facing: 'front' as CameraType,
     pendingFacing: null as CameraType | null,
+    cameraResetCounter: 0,
     recordingState: 'idle' as RecordingState,
     recordingDuration: 0,
     videoUri: null as string | null,
@@ -57,7 +62,7 @@ export default function CreateScreen() {
   })
 
   const facing = useValue(state$.facing)
-  const pendingFacing = useValue(state$.pendingFacing)
+  const cameraResetCounter = useValue(state$.cameraResetCounter)
   const recordingState = useValue(state$.recordingState)
   const recordingDuration = useValue(state$.recordingDuration)
   const videoUri = useValue(state$.videoUri)
@@ -65,6 +70,7 @@ export default function CreateScreen() {
   const progressStage = useValue(state$.progressStage)
   const isAppActive = useValue(state$.isAppActive)
   const isCameraReady = useValue(state$.isCameraReady)
+  const cameraMountError = useValue(state$.cameraMountError)
 
   const createBondfire = useMutation(api.bondfires.create)
   const addResponse = useMutation(api.bondfireVideos.addResponse)
@@ -93,6 +99,10 @@ export default function CreateScreen() {
         clearTimeout(stopTimeoutRef.current)
         stopTimeoutRef.current = null
       }
+      if (uploadStartTimeoutRef.current) {
+        clearTimeout(uploadStartTimeoutRef.current)
+        uploadStartTimeoutRef.current = null
+      }
       cancelProcessing()
     }
   }, [])
@@ -113,52 +123,6 @@ export default function CreateScreen() {
     state$.isFocused.set(isFocused)
   }, [isFocused, state$])
 
-  // Camera readiness should be re-established on focus changes.
-  useEffect(() => {
-    if (!isFocused) {
-      if (
-        state$.recordingState.get() === 'recording' ||
-        state$.recordingState.get() === 'stopping'
-      ) {
-        try {
-          cameraRef.current?.stopRecording()
-        } catch (error) {
-          console.error('Failed to stop recording while screen lost focus:', error)
-        }
-        recordingSessionRef.current += 1
-        state$.recordingState.set('idle')
-        state$.recordingDuration.set(0)
-        state$.videoUri.set(null)
-        state$.progress.set(0)
-        state$.progressStage.set('')
-      }
-
-      state$.isCameraReady.set(false)
-      state$.cameraMountError.set(null)
-      isStartingRecordingRef.current = false
-      if (stopTimeoutRef.current) {
-        clearTimeout(stopTimeoutRef.current)
-        stopTimeoutRef.current = null
-      }
-    }
-  }, [isFocused, state$])
-
-  // expo-camera stops an active recording if the facing camera changes.
-  // Queue flip requests made during recording and apply them only after the session settles.
-  useEffect(() => {
-    if (recordingState === 'recording' || recordingState === 'stopping' || !pendingFacing) {
-      return
-    }
-
-    if (pendingFacing !== state$.facing.get()) {
-      state$.isCameraReady.set(false)
-      state$.cameraMountError.set(null)
-      state$.facing.set(pendingFacing)
-    }
-
-    state$.pendingFacing.set(null)
-  }, [pendingFacing, recordingState, state$])
-
   // Reset completion state only after returning to this tab from another screen.
   // This avoids immediately clearing completion right after recordAsync resolves.
   useEffect(() => {
@@ -171,6 +135,7 @@ export default function CreateScreen() {
 
     if (state$.recordingState.get() === 'completion') {
       state$.recordingState.set('idle')
+      state$.pendingFacing.set(null)
       state$.videoUri.set(null)
       state$.recordingDuration.set(0)
       state$.progress.set(0)
@@ -258,14 +223,274 @@ export default function CreateScreen() {
     }
   }, [])
 
+  const clearUploadStartTimeout = useCallback(() => {
+    if (uploadStartTimeoutRef.current) {
+      clearTimeout(uploadStartTimeoutRef.current)
+      uploadStartTimeoutRef.current = null
+    }
+  }, [])
+
+  const startPendingUploads = useCallback(async () => {
+    await resumePendingUploads({
+      isResponse: false,
+      getUploadUrls: async (args) => {
+        return await getUploadUrls(args)
+      },
+      createBondfire: async (args) => {
+        await createBondfire(args)
+      },
+      addResponse: async (args) => {
+        await addResponse({
+          ...args,
+          bondfireId: args.bondfireId as Id<'bondfires'>,
+        })
+      },
+    })
+  }, [getUploadUrls, createBondfire, addResponse])
+
+  const schedulePendingUploads = useCallback(() => {
+    clearUploadStartTimeout()
+    uploadStartTimeoutRef.current = setTimeout(() => {
+      if (state$.isFocused.get()) {
+        return
+      }
+
+      startPendingUploads().catch((error) => {
+        console.error('Failed to start pending uploads:', error)
+      })
+    }, 1500)
+  }, [clearUploadStartTimeout, startPendingUploads, state$])
+
+  // Tear down the camera session whenever the screen or app becomes inactive.
+  useEffect(() => {
+    if (!isFocused || !isAppActive) {
+      if (
+        state$.recordingState.get() === 'recording' ||
+        state$.recordingState.get() === 'stopping'
+      ) {
+        try {
+          cameraRef.current?.stopRecording()
+        } catch (error) {
+          console.error('Failed to stop recording while screen lost focus:', error)
+        }
+        recordingSessionRef.current += 1
+        recordingActionRef.current = 'none'
+        hasActiveSegmentRef.current = false
+        recordedSegmentUrisRef.current = []
+        state$.recordingState.set('idle')
+        state$.recordingDuration.set(0)
+        state$.videoUri.set(null)
+        state$.progress.set(0)
+        state$.progressStage.set('')
+      }
+
+      state$.isCameraReady.set(false)
+      state$.cameraMountError.set(null)
+      cameraRef.current = null
+      isStartingRecordingRef.current = false
+      if (stopTimeoutRef.current) {
+        clearTimeout(stopTimeoutRef.current)
+        stopTimeoutRef.current = null
+      }
+
+      if (!isFocused) {
+        schedulePendingUploads()
+      }
+    } else {
+      clearUploadStartTimeout()
+    }
+  }, [clearUploadStartTimeout, isAppActive, isFocused, schedulePendingUploads, state$])
+
+  const resetCameraPreview = useCallback(() => {
+    clearStopTimeout()
+    isStartingRecordingRef.current = false
+    state$.isCameraReady.set(false)
+    state$.cameraMountError.set(null)
+    state$.cameraResetCounter.set((prev) => prev + 1)
+  }, [clearStopTimeout, state$])
+
   const resetRecordingState = useCallback(() => {
     clearStopTimeout()
+    clearUploadStartTimeout()
+    recordingActionRef.current = 'none'
+    hasActiveSegmentRef.current = false
+    recordedSegmentUrisRef.current = []
     state$.recordingState.set('idle')
     state$.recordingDuration.set(0)
     state$.videoUri.set(null)
     state$.progress.set(0)
     state$.progressStage.set('')
-  }, [clearStopTimeout, state$])
+    state$.pendingFacing.set(null)
+  }, [clearStopTimeout, clearUploadStartTimeout, state$])
+
+  const queueBackgroundUpload = useCallback(
+    async (uri: string) => {
+      try {
+        return await startBackgroundUpload(
+          {
+            videoUri: uri,
+            bondfireId: respondTo,
+            isResponse: !!respondTo,
+            getUploadUrls: async (args) => {
+              return await getUploadUrls(args)
+            },
+            createBondfire: async (args) => {
+              await createBondfire(args)
+            },
+            addResponse: async (args) => {
+              await addResponse({
+                ...args,
+                bondfireId: args.bondfireId as Id<'bondfires'>,
+              })
+            },
+          },
+          false,
+        )
+      } catch (error) {
+        console.error('Failed to queue upload:', error)
+        Alert.alert('Error', 'Failed to start upload. Please try again.')
+        return null
+      }
+    },
+    [respondTo, getUploadUrls, createBondfire, addResponse],
+  )
+
+  const finalizeRecording = useCallback(
+    async (sessionId: number) => {
+      const segmentUris = [...recordedSegmentUrisRef.current]
+
+      if (segmentUris.length === 0) {
+        resetRecordingState()
+        Alert.alert('Recording Failed', 'No video was captured. Please try again.')
+        return
+      }
+
+      state$.pendingFacing.set(null)
+      state$.recordingState.set('processing')
+      state$.progress.set(0)
+      state$.progressStage.set(
+        segmentUris.length > 1 ? 'Combining camera segments...' : 'Preparing video...',
+      )
+
+      let finalVideoUri = segmentUris[0]
+
+      try {
+        if (segmentUris.length > 1) {
+          finalVideoUri = await mergeVideoSegments(segmentUris)
+        }
+
+        if (recordingSessionRef.current !== sessionId) {
+          await cleanupTempVideos(
+            finalVideoUri === segmentUris[0] ? segmentUris : [...segmentUris, finalVideoUri],
+          )
+          return
+        }
+
+        state$.videoUri.set(finalVideoUri)
+        state$.recordingState.set('completion')
+        const uploadTaskId = await queueBackgroundUpload(finalVideoUri)
+
+        if (uploadTaskId) {
+          await cleanupTempVideos(
+            finalVideoUri === segmentUris[0] ? segmentUris : [...segmentUris, finalVideoUri],
+          )
+        }
+      } catch (error) {
+        logRecordingError(error)
+        resetRecordingState()
+        Alert.alert('Error', 'Failed to prepare the recording. Please try again.')
+      }
+    },
+    [logRecordingError, queueBackgroundUpload, resetRecordingState, state$],
+  )
+
+  const startSegmentRecording = useCallback(
+    async (sessionId: number) => {
+      const activeCamera = cameraRef.current
+
+      if (!activeCamera || !state$.isCameraReady.get()) {
+        resetRecordingState()
+        Alert.alert('Camera Not Ready', 'Please wait a moment and try again.')
+        return
+      }
+
+      if (
+        recordingSessionRef.current !== sessionId ||
+        (state$.recordingState.get() !== 'recording' && state$.recordingState.get() !== 'stopping')
+      ) {
+        return
+      }
+
+      isStartingRecordingRef.current = true
+      hasActiveSegmentRef.current = true
+
+      try {
+        const video = await activeCamera.recordAsync()
+        hasActiveSegmentRef.current = false
+
+        if (recordingSessionRef.current !== sessionId) {
+          if (video?.uri) {
+            await cleanupTempVideos([video.uri])
+          }
+          return
+        }
+
+        clearStopTimeout()
+
+        if (!video?.uri) {
+          resetRecordingState()
+          Alert.alert('Recording Failed', 'No video was captured. Please try again.')
+          return
+        }
+
+        recordedSegmentUrisRef.current.push(video.uri)
+
+        if (recordingActionRef.current === 'swap') {
+          const targetFacing = state$.pendingFacing.get()
+          recordingActionRef.current = 'none'
+
+          if (targetFacing && targetFacing !== state$.facing.get()) {
+            state$.isCameraReady.set(false)
+            state$.cameraMountError.set(null)
+            state$.facing.set(targetFacing)
+            return
+          }
+
+          state$.pendingFacing.set(null)
+          void startSegmentRecording(sessionId)
+          return
+        }
+
+        if (
+          recordingActionRef.current === 'stop' ||
+          state$.recordingState.get() === 'stopping'
+        ) {
+          recordingActionRef.current = 'none'
+          await finalizeRecording(sessionId)
+          return
+        }
+
+        resetRecordingState()
+        Alert.alert('Recording Failed', 'The recording stopped unexpectedly. Please try again.')
+      } catch (error) {
+        hasActiveSegmentRef.current = false
+
+        if (recordingSessionRef.current !== sessionId) {
+          return
+        }
+
+        clearStopTimeout()
+        logRecordingError(error)
+        resetRecordingState()
+        Alert.alert('Error', 'Failed to record video. Please try again.')
+      } finally {
+        if (recordingSessionRef.current === sessionId) {
+          isStartingRecordingRef.current = false
+        }
+      }
+    },
+    [clearStopTimeout, finalizeRecording, logRecordingError, resetRecordingState, state$],
+  )
 
   const startRecording = useCallback(async () => {
     const activeCamera = cameraRef.current
@@ -299,34 +524,21 @@ export default function CreateScreen() {
 
     isStartingRecordingRef.current = true
     clearStopTimeout()
+    clearUploadStartTimeout()
     const sessionId = recordingSessionRef.current + 1
     recordingSessionRef.current = sessionId
+    recordingActionRef.current = 'none'
+    hasActiveSegmentRef.current = false
+    recordedSegmentUrisRef.current = []
     state$.recordingState.set('recording')
     state$.recordingDuration.set(0)
     state$.videoUri.set(null)
     state$.progress.set(0)
     state$.progressStage.set('')
+    state$.pendingFacing.set(null)
 
     try {
-      const video = await activeCamera.recordAsync()
-
-      if (recordingSessionRef.current !== sessionId) {
-        return
-      }
-
-      clearStopTimeout()
-
-      if (video?.uri) {
-        state$.videoUri.set(video.uri)
-        state$.recordingState.set('completion')
-        // Start background upload immediately
-        queueBackgroundUpload(video.uri)
-      } else {
-        // recordAsync() resolved without a URI (known iOS edge case)
-        console.warn('Recording returned no URI')
-        state$.recordingState.set('idle')
-        Alert.alert('Recording Failed', 'No video was captured. Please try again.')
-      }
+      await startSegmentRecording(sessionId)
     } catch (error) {
       if (recordingSessionRef.current !== sessionId) {
         return
@@ -341,30 +553,49 @@ export default function CreateScreen() {
         isStartingRecordingRef.current = false
       }
     }
-  }, [clearStopTimeout, logRecordingError, resetRecordingState, state$])
+  }, [
+    clearStopTimeout,
+    clearUploadStartTimeout,
+    logRecordingError,
+    resetRecordingState,
+    startSegmentRecording,
+    state$,
+  ])
 
   const stopRecording = useCallback(() => {
-    if (state$.recordingState.get() !== 'recording') {
+    const currentState = state$.recordingState.get()
+
+    if (currentState !== 'recording' && currentState !== 'stopping') {
+      return
+    }
+
+    const sessionId = recordingSessionRef.current
+
+    if (!hasActiveSegmentRef.current) {
+      recordingActionRef.current = 'stop'
+      state$.recordingState.set('stopping')
+      state$.progressStage.set('Finishing recording...')
+      clearStopTimeout()
+      void finalizeRecording(sessionId)
       return
     }
 
     if (!cameraRef.current) {
       recordingSessionRef.current += 1
+      recordingActionRef.current = 'none'
+      hasActiveSegmentRef.current = false
       isStartingRecordingRef.current = false
       resetRecordingState()
       Alert.alert('Camera Not Ready', 'The camera was unavailable, so the recording was reset.')
       return
     }
 
-    const sessionId = recordingSessionRef.current
+    recordingActionRef.current = 'stop'
     state$.recordingState.set('stopping')
     state$.progressStage.set('Finishing recording...')
     clearStopTimeout()
     stopTimeoutRef.current = setTimeout(() => {
-      if (
-        recordingSessionRef.current === sessionId &&
-        state$.recordingState.get() === 'stopping'
-      ) {
+      if (recordingSessionRef.current === sessionId && state$.recordingState.get() === 'stopping') {
         console.warn('Recording stop timed out; resetting create screen state')
         recordingSessionRef.current += 1
         isStartingRecordingRef.current = false
@@ -382,63 +613,42 @@ export default function CreateScreen() {
       clearStopTimeout()
       logRecordingError(error)
       recordingSessionRef.current += 1
+      recordingActionRef.current = 'none'
+      hasActiveSegmentRef.current = false
       isStartingRecordingRef.current = false
       resetRecordingState()
       Alert.alert('Error', 'Failed to stop recording cleanly. Please try again.')
     }
-  }, [clearStopTimeout, logRecordingError, resetRecordingState, state$])
-
-  const queueBackgroundUpload = useCallback(
-    async (uri: string) => {
-      try {
-        await startBackgroundUpload({
-          videoUri: uri,
-          bondfireId: respondTo,
-          isResponse: !!respondTo,
-          getUploadUrls: async (args) => {
-            return await getUploadUrls(args)
-          },
-          createBondfire: async (args) => {
-            await createBondfire(args)
-          },
-          addResponse: async (args) => {
-            await addResponse({
-              ...args,
-              bondfireId: respondTo as Id<'bondfires'>,
-            })
-          },
-          callbacks: {
-            onProgress: (progressValue, stage) => {
-              state$.progress.set(progressValue)
-              state$.progressStage.set(stage)
-            },
-            onComplete: () => {
-              console.info('Upload completed')
-            },
-            onError: (error) => {
-              console.error('Upload error:', error)
-              Alert.alert('Upload Error', 'Failed to upload video. It will retry automatically.')
-            },
-          },
-        })
-      } catch (error) {
-        console.error('Failed to queue upload:', error)
-        Alert.alert('Error', 'Failed to start upload. Please try again.')
-      }
-    },
-    [respondTo, getUploadUrls, createBondfire, addResponse, state$],
-  )
+  }, [clearStopTimeout, finalizeRecording, logRecordingError, resetRecordingState, state$])
 
   const toggleFacing = useCallback(() => {
     const currentTargetFacing = state$.pendingFacing.get() ?? state$.facing.get()
     const nextFacing = currentTargetFacing === 'back' ? 'front' : 'back'
 
-    if (
-      state$.recordingState.get() === 'recording' ||
-      state$.recordingState.get() === 'stopping' ||
-      isStartingRecordingRef.current
-    ) {
+    if (state$.recordingState.get() === 'recording') {
       state$.pendingFacing.set(nextFacing)
+
+      if (recordingActionRef.current === 'swap' || !hasActiveSegmentRef.current) {
+        return
+      }
+
+      if (isStartingRecordingRef.current || !cameraRef.current) {
+        return
+      }
+
+      recordingActionRef.current = 'swap'
+      try {
+        cameraRef.current.stopRecording()
+      } catch (error) {
+        clearStopTimeout()
+        logRecordingError(error)
+        resetRecordingState()
+        Alert.alert('Error', 'Failed to switch cameras. Please try again.')
+      }
+      return
+    }
+
+    if (state$.recordingState.get() === 'stopping') {
       return
     }
 
@@ -446,7 +656,10 @@ export default function CreateScreen() {
     state$.isCameraReady.set(false)
     state$.cameraMountError.set(null)
     state$.facing.set(nextFacing)
-  }, [state$])
+  }, [clearStopTimeout, logRecordingError, resetRecordingState, state$])
+
+  const shouldRenderCamera =
+    cameraPermission?.granted && micPermission?.granted && isFocused && isAppActive
 
   // Permission denied state
   if (!cameraPermission?.granted || !micPermission?.granted) {
@@ -493,6 +706,9 @@ export default function CreateScreen() {
 
   // Processing state
   if (recordingState === 'processing') {
+    const canCancelProcessing =
+      progressStage !== 'Combining camera segments...' && progressStage !== 'Preparing video...'
+
     return (
       <YStack
         flex={1}
@@ -519,17 +735,19 @@ export default function CreateScreen() {
           </YStack>
           <Text color={bondfireColors.ash}>{Math.round(progress)}%</Text>
 
-          <Button
-            variant="ghost"
-            size="$sm"
-            marginTop={16}
-            onPress={() => {
-              cancelProcessing()
-              state$.recordingState.set('idle')
-            }}
-          >
-            Cancel
-          </Button>
+          {canCancelProcessing && (
+            <Button
+              variant="ghost"
+              size="$sm"
+              marginTop={16}
+              onPress={() => {
+                cancelProcessing()
+                state$.recordingState.set('idle')
+              }}
+            >
+              Cancel
+            </Button>
+          )}
         </YStack>
       </YStack>
     )
@@ -571,166 +789,201 @@ export default function CreateScreen() {
   return (
     <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-      <CameraView
-        ref={cameraRef}
-        style={{ flex: 1 }}
-        facing={facing}
-        mode="video"
-        onCameraReady={() => {
-          state$.isCameraReady.set(true)
-          state$.cameraMountError.set(null)
-        }}
-        onMountError={(event) => {
-          const message = event?.message ?? 'Unknown camera mount error'
-          state$.cameraMountError.set(message)
-          state$.isCameraReady.set(false)
-          console.error('Camera mount error:', { platform: Platform.OS, message })
-          Alert.alert('Camera Error', message)
-        }}
-      >
-        {/* Header */}
-        <XStack
-          paddingTop={60}
-          paddingHorizontal={20}
-          justifyContent="space-between"
-          alignItems="center"
-        >
-          <Pressable onPress={() => router.back()}>
-            <YStack
-              width={40}
-              height={40}
-              borderRadius={20}
-              backgroundColor="rgba(31, 32, 35, 0.7)"
-              alignItems="center"
-              justifyContent="center"
-            >
-              <X size={24} color={bondfireColors.whiteSmoke} />
-            </YStack>
-          </Pressable>
+      {shouldRenderCamera ? (
+        <CameraView
+          key={cameraResetCounter}
+          ref={cameraRef}
+          style={{ flex: 1 }}
+          facing={facing}
+          mode="video"
+          onCameraReady={() => {
+            state$.isCameraReady.set(true)
+            state$.cameraMountError.set(null)
 
-          {recordingState === 'recording' && (
-            <YStack
-              backgroundColor={bondfireColors.error}
-              paddingHorizontal={16}
-              paddingVertical={6}
-              borderRadius={16}
-            >
-              <Text color={bondfireColors.whiteSmoke} fontWeight="700" fontSize={14}>
-                {Math.floor(recordingDuration / 60)}:
-                {(recordingDuration % 60).toString().padStart(2, '0')}
-              </Text>
-            </YStack>
-          )}
-
-          <Pressable onPress={toggleFacing}>
-            <YStack
-              width={40}
-              height={40}
-              borderRadius={20}
-              backgroundColor="rgba(31, 32, 35, 0.7)"
-              alignItems="center"
-              justifyContent="center"
-            >
-              <SwitchCamera size={22} color={bondfireColors.whiteSmoke} />
-            </YStack>
-          </Pressable>
-        </XStack>
-
-        {/* Title */}
-        <YStack flex={1} justifyContent="center" alignItems="center">
-          {recordingState === 'idle' && (
-            <YStack alignItems="center" gap={12}>
-              <XStack alignItems="center" gap={8}>
-                <Flame size={28} color={bondfireColors.bondfireCopper} />
-                <Text color={bondfireColors.whiteSmoke} fontSize={22} fontWeight="700">
-                  {respondTo ? 'Add Your Response' : 'Spark a Bondfire'}
-                </Text>
-              </XStack>
-              <Text color={bondfireColors.ash} fontSize={14}>
-                Tap to start recording
-              </Text>
-            </YStack>
-          )}
-
-          {recordingState === 'stopping' && (
-            <YStack alignItems="center" gap={12}>
-              <Spinner size="large" color={bondfireColors.whiteSmoke} />
-              <Text color={bondfireColors.whiteSmoke} fontSize={18} fontWeight="700">
-                Finishing recording
-              </Text>
-              <Text color={bondfireColors.ash} fontSize={14}>
-                Please wait a moment...
-              </Text>
-            </YStack>
-          )}
-        </YStack>
-
-        {/* Record button */}
-        <YStack paddingBottom={40} alignItems="center">
-          <Pressable
-            disabled={
-              (!isCameraReady && recordingState !== 'recording') || recordingState === 'stopping'
+            if (state$.recordingState.get() !== 'recording' || hasActiveSegmentRef.current) {
+              return
             }
-            onPress={() => {
-              if (recordingState === 'recording') {
-                stopRecording()
-                return
-              }
 
-              if (recordingState === 'idle') {
-                startRecording()
-              }
-            }}
+            const targetFacing = state$.pendingFacing.get()
+            const sessionId = recordingSessionRef.current
+
+            if (targetFacing && targetFacing !== state$.facing.get()) {
+              state$.isCameraReady.set(false)
+              state$.cameraMountError.set(null)
+              state$.facing.set(targetFacing)
+              return
+            }
+
+            if (targetFacing === state$.facing.get()) {
+              state$.pendingFacing.set(null)
+            }
+
+            if (!isStartingRecordingRef.current) {
+              void startSegmentRecording(sessionId)
+            }
+          }}
+          onMountError={(event) => {
+            const message = event?.message ?? 'Unknown camera mount error'
+            state$.cameraMountError.set(message)
+            state$.isCameraReady.set(false)
+            console.error('Camera mount error:', { platform: Platform.OS, message })
+            Alert.alert('Camera Error', message)
+          }}
+        >
+          {/* Header */}
+          <XStack
+            paddingTop={60}
+            paddingHorizontal={20}
+            justifyContent="space-between"
+            alignItems="center"
           >
-            <YStack
-              width={80}
-              height={80}
-              borderRadius={40}
-              borderWidth={4}
-              borderColor={bondfireColors.whiteSmoke}
-              alignItems="center"
-              justifyContent="center"
-              backgroundColor={
-                recordingState === 'recording' || recordingState === 'stopping'
-                  ? bondfireColors.error
-                  : 'transparent'
-              }
-              opacity={
-                !isCameraReady && recordingState !== 'recording'
-                  ? 0.5
-                  : recordingState === 'stopping'
-                    ? 0.7
-                    : 1
-              }
-            >
-              {recordingState === 'stopping' ? (
-                <Spinner size="small" color={bondfireColors.whiteSmoke} />
-              ) : (
-                <YStack
-                  width={recordingState === 'recording' ? 30 : 60}
-                  height={recordingState === 'recording' ? 30 : 60}
-                  borderRadius={recordingState === 'recording' ? 6 : 30}
-                  backgroundColor={
-                    recordingState === 'recording'
-                      ? bondfireColors.whiteSmoke
-                      : bondfireColors.bondfireCopper
-                  }
-                />
-              )}
-            </YStack>
-          </Pressable>
+            <Pressable onPress={() => router.back()}>
+              <YStack
+                width={40}
+                height={40}
+                borderRadius={20}
+                backgroundColor="rgba(31, 32, 35, 0.7)"
+                alignItems="center"
+                justifyContent="center"
+              >
+                <X size={24} color={bondfireColors.whiteSmoke} />
+              </YStack>
+            </Pressable>
 
-          <Text color={bondfireColors.ash} fontSize={13} marginTop={12}>
-            {recordingState === 'stopping'
-              ? 'Stopping recording...'
-              : recordingState === 'recording'
-              ? 'Tap to stop'
-              : isCameraReady
-                ? 'Tap to record'
-                : 'Initializing camera...'}
-          </Text>
-        </YStack>
-      </CameraView>
+            {recordingState === 'recording' && (
+              <YStack
+                backgroundColor={bondfireColors.error}
+                paddingHorizontal={16}
+                paddingVertical={6}
+                borderRadius={16}
+              >
+                <Text color={bondfireColors.whiteSmoke} fontWeight="700" fontSize={14}>
+                  {Math.floor(recordingDuration / 60)}:
+                  {(recordingDuration % 60).toString().padStart(2, '0')}
+                </Text>
+              </YStack>
+            )}
+
+            <Pressable onPress={toggleFacing}>
+              <YStack
+                width={40}
+                height={40}
+                borderRadius={20}
+                backgroundColor="rgba(31, 32, 35, 0.7)"
+                alignItems="center"
+                justifyContent="center"
+              >
+                <SwitchCamera size={22} color={bondfireColors.whiteSmoke} />
+              </YStack>
+            </Pressable>
+          </XStack>
+
+          {/* Title */}
+          <YStack flex={1} justifyContent="center" alignItems="center">
+            {recordingState === 'idle' && (
+              <YStack alignItems="center" gap={12}>
+                <XStack alignItems="center" gap={8}>
+                  <Flame size={28} color={bondfireColors.bondfireCopper} />
+                  <Text color={bondfireColors.whiteSmoke} fontSize={22} fontWeight="700">
+                    {respondTo ? 'Add Your Response' : 'Spark a Bondfire'}
+                  </Text>
+                </XStack>
+                <Text color={bondfireColors.ash} fontSize={14}>
+                  Tap to start recording
+                </Text>
+              </YStack>
+            )}
+
+            {recordingState === 'stopping' && (
+              <YStack alignItems="center" gap={12}>
+                <Spinner size="large" color={bondfireColors.whiteSmoke} />
+                <Text color={bondfireColors.whiteSmoke} fontSize={18} fontWeight="700">
+                  Finishing recording
+                </Text>
+                <Text color={bondfireColors.ash} fontSize={14}>
+                  Please wait a moment...
+                </Text>
+              </YStack>
+            )}
+          </YStack>
+
+          {/* Record button */}
+          <YStack paddingBottom={40} alignItems="center">
+            <Pressable
+              disabled={
+                (!isCameraReady && recordingState !== 'recording') || recordingState === 'stopping'
+              }
+              onPress={() => {
+                if (recordingState === 'recording') {
+                  stopRecording()
+                  return
+                }
+
+                if (recordingState === 'idle') {
+                  startRecording()
+                }
+              }}
+            >
+              <YStack
+                width={80}
+                height={80}
+                borderRadius={40}
+                borderWidth={4}
+                borderColor={bondfireColors.whiteSmoke}
+                alignItems="center"
+                justifyContent="center"
+                backgroundColor={
+                  recordingState === 'recording' || recordingState === 'stopping'
+                    ? bondfireColors.error
+                    : 'transparent'
+                }
+                opacity={
+                  !isCameraReady && recordingState !== 'recording'
+                    ? 0.5
+                    : recordingState === 'stopping'
+                      ? 0.7
+                      : 1
+                }
+              >
+                {recordingState === 'stopping' ? (
+                  <Spinner size="small" color={bondfireColors.whiteSmoke} />
+                ) : (
+                  <YStack
+                    width={recordingState === 'recording' ? 30 : 60}
+                    height={recordingState === 'recording' ? 30 : 60}
+                    borderRadius={recordingState === 'recording' ? 6 : 30}
+                    backgroundColor={
+                      recordingState === 'recording'
+                        ? bondfireColors.whiteSmoke
+                        : bondfireColors.bondfireCopper
+                    }
+                  />
+                )}
+              </YStack>
+            </Pressable>
+
+            <Text color={bondfireColors.ash} fontSize={13} marginTop={12}>
+              {recordingState === 'stopping'
+                ? 'Stopping recording...'
+                : recordingState === 'recording'
+                  ? 'Tap to stop'
+                  : cameraMountError
+                    ? 'Camera failed to initialize'
+                    : isCameraReady
+                      ? 'Tap to record'
+                      : 'Initializing camera...'}
+            </Text>
+
+            {cameraMountError && recordingState === 'idle' && (
+              <Button variant="ghost" size="$sm" marginTop={12} onPress={resetCameraPreview}>
+                Retry Camera
+              </Button>
+            )}
+          </YStack>
+        </CameraView>
+      ) : (
+        <YStack flex={1} />
+      )}
     </YStack>
   )
 }

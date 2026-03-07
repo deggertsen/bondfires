@@ -46,6 +46,10 @@ export const uploadQueueStore$ = observable<UploadQueueState>({
   tasks: [],
 })
 
+const ACTIVE_TASK_STALE_MS = 10 * 60 * 1000
+const FAILED_TASK_RETENTION_MS = 10 * 60 * 1000
+const COMPLETED_TASK_RETENTION_MS = 2 * 60 * 1000
+
 // Sync with MMKV persistence
 syncObservable(uploadQueueStore$, {
   persist: {
@@ -87,11 +91,37 @@ export const uploadQueueActions = {
 
   getVisibleTasks: (): UploadTask[] => {
     const tasks = uploadQueueStore$.tasks.get()
-    return tasks.filter((t) => t.status !== 'completed' || (t.completedAt ?? 0) > Date.now() - 120000)
+    return tasks.filter(
+      (t) => t.status !== 'completed' || (t.completedAt ?? 0) > Date.now() - 120000,
+    )
   },
 
   getTask: (taskId: string): UploadTask | undefined => {
     const tasks = uploadQueueStore$.tasks.get()
     return tasks.find((t) => t.id === taskId)
+  },
+
+  cleanupForRefresh: (now = Date.now()): UploadTask[] => {
+    const tasks = uploadQueueStore$.tasks.get()
+    const filtered = tasks.filter((task) => {
+      const lastUpdatedAt =
+        task.completedAt ?? task.updatedAt ?? task.lastAttemptAt ?? task.createdAt
+
+      if (task.status === 'completed') {
+        return lastUpdatedAt > now - COMPLETED_TASK_RETENTION_MS
+      }
+
+      if (task.status === 'failed') {
+        return lastUpdatedAt > now - FAILED_TASK_RETENTION_MS
+      }
+
+      return lastUpdatedAt > now - ACTIVE_TASK_STALE_MS
+    })
+
+    if (filtered.length !== tasks.length) {
+      uploadQueueStore$.tasks.set(filtered)
+    }
+
+    return filtered
   },
 }

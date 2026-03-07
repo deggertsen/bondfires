@@ -15,7 +15,7 @@ import { useAction, useQuery } from 'convex/react'
 import { Image } from 'expo-image'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { FlatList, Pressable, StatusBar, type ViewToken } from 'react-native'
+import { FlatList, Pressable, RefreshControl, StatusBar, type ViewToken } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Separator, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
@@ -204,14 +204,32 @@ function LoadingFeed() {
   )
 }
 
+function FeedSubscription({
+  onResolved,
+}: {
+  onResolved: (bondfires: BondfireData[]) => void
+}) {
+  const bondfires = useQuery(api.bondfires.listFeed, { limit: 50 })
+
+  useEffect(() => {
+    if (bondfires !== undefined) {
+      onResolved(bondfires)
+    }
+  }, [bondfires, onResolved])
+
+  return null
+}
+
 export default function FeedScreen() {
   const router = useRouter()
   const insets = useSafeAreaInsets()
-  const bondfires = useQuery(api.bondfires.listFeed, { limit: 50 })
   const getDownloadUrl = useAction(api.videos.getDownloadUrl)
 
   const [viewMode, setViewMode] = useState<ViewMode>('discover')
   const [query, setQuery] = useState('')
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [bondfires, setBondfires] = useState<BondfireData[] | undefined>(undefined)
 
   const state$ = useObservable({
     thumbnailUrls: {} as Record<string, string | null>,
@@ -223,6 +241,38 @@ export default function FeedScreen() {
   const loadingThumbsRef = useRef<Set<string>>(new Set())
   const didRestoreScrollRef = useRef(false)
   const persistActiveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const stopRefreshing = useCallback(() => {
+    if (refreshTimeoutRef.current) {
+      clearTimeout(refreshTimeoutRef.current)
+      refreshTimeoutRef.current = null
+    }
+    setIsRefreshing(false)
+  }, [])
+
+  const handleRefresh = useCallback(() => {
+    state$.thumbnailUrls.set({})
+    loadingThumbsRef.current = new Set()
+    setIsRefreshing(true)
+    setRefreshKey((current) => current + 1)
+
+    if (refreshTimeoutRef.current) {
+      clearTimeout(refreshTimeoutRef.current)
+    }
+    refreshTimeoutRef.current = setTimeout(() => {
+      refreshTimeoutRef.current = null
+      setIsRefreshing(false)
+    }, 5000)
+  }, [state$])
+
+  const handleBondfiresResolved = useCallback(
+    (nextBondfires: BondfireData[]) => {
+      setBondfires(nextBondfires)
+      stopRefreshing()
+    },
+    [stopRefreshing],
+  )
 
   const filtered = useMemo(() => {
     if (!bondfires) return bondfires
@@ -286,7 +336,6 @@ export default function FeedScreen() {
     const index = items.findIndex((b) => b._id === savedBondfireId)
     if (index < 0) return
 
-    // Let FlatList mount before scrolling.
     setTimeout(() => {
       listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0.2 })
     }, 0)
@@ -304,6 +353,7 @@ export default function FeedScreen() {
         state$.thumbnailUrls[bondfire._id].set(downloadUrl)
       } catch (error) {
         console.error('Failed to load thumbnail URL for bondfire:', bondfire._id, error)
+      } finally {
         loadingThumbsRef.current.delete(bondfire._id)
       }
     },
@@ -320,9 +370,7 @@ export default function FeedScreen() {
   const handleBondfirePress = useCallback(
     (bondfireId: string) => {
       setFeedActiveBondfireId(bondfireId)
-      // Update last location so app relaunch returns to this conversation.
       setBondfireVideoIndex(bondfireId, getBondfireVideoIndex(bondfireId) ?? 0)
-      // Unmute when navigating to detail view.
       appActions.setVideoMuted(false)
       router.push(`/(main)/bondfire/${bondfireId}`)
     },
@@ -373,21 +421,27 @@ export default function FeedScreen() {
         clearTimeout(persistActiveTimerRef.current)
         persistActiveTimerRef.current = null
       }
+      if (refreshTimeoutRef.current) {
+        clearTimeout(refreshTimeoutRef.current)
+        refreshTimeoutRef.current = null
+      }
     }
   }, [])
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 10 }).current
 
   if (bondfires === undefined) {
-    return <LoadingFeed />
-  }
-
-  if (bondfires.length === 0) {
-    return <EmptyFeed />
+    return (
+      <YStack flex={1}>
+        <FeedSubscription key={refreshKey} onResolved={handleBondfiresResolved} />
+        <LoadingFeed />
+      </YStack>
+    )
   }
 
   return (
     <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
+      <FeedSubscription key={refreshKey} onResolved={handleBondfiresResolved} />
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
       <FlatList
@@ -396,8 +450,16 @@ export default function FeedScreen() {
         }}
         data={filtered ?? []}
         keyExtractor={(item) => item._id}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor={bondfireColors.bondfireCopper}
+            colors={[bondfireColors.bondfireCopper]}
+            progressViewOffset={insets.top + 100}
+          />
+        }
         onScrollToIndexFailed={({ index, averageItemLength }) => {
-          // If list hasn't measured yet, fall back to a best-effort offset.
           listRef.current?.scrollToOffset({
             offset: Math.max(0, index * (averageItemLength || 80)),
             animated: false,
@@ -426,7 +488,11 @@ export default function FeedScreen() {
                 </Text>
               </YStack>
 
-              <Button variant="secondary" size="$sm" onPress={() => router.push('/(main)/(tabs)/create')}>
+              <Button
+                variant="secondary"
+                size="$sm"
+                onPress={() => router.push('/(main)/(tabs)/create')}
+              >
                 <Text color={bondfireColors.whiteSmoke} fontWeight="900">
                   Spark
                 </Text>
@@ -498,29 +564,41 @@ export default function FeedScreen() {
           </YStack>
         }
         ListEmptyComponent={
-          <YStack paddingVertical={80} alignItems="center" justifyContent="center" gap={12}>
-            <Flame size={56} color={bondfireColors.bondfireCopper} />
-            <Text fontSize={18} fontWeight="900">
-              No matches
-            </Text>
-            <Text fontSize={14} color={bondfireColors.ash} textAlign="center" paddingHorizontal={48}>
-              Try a different search or switch filters.
-            </Text>
-            <Button
-              variant="outline"
-              size="$md"
-              onPress={() => {
-                setQuery('')
-                setViewMode('discover')
-              }}
-            >
-              <Text color={bondfireColors.whiteSmoke} fontWeight="900">
-                Reset
+          bondfires.length === 0 ? (
+            <EmptyFeed />
+          ) : (
+            <YStack paddingVertical={80} alignItems="center" justifyContent="center" gap={12}>
+              <Flame size={56} color={bondfireColors.bondfireCopper} />
+              <Text fontSize={18} fontWeight="900">
+                No matches
               </Text>
-            </Button>
-          </YStack>
+              <Text
+                fontSize={14}
+                color={bondfireColors.ash}
+                textAlign="center"
+                paddingHorizontal={48}
+              >
+                Try a different search or switch filters.
+              </Text>
+              <Button
+                variant="outline"
+                size="$md"
+                onPress={() => {
+                  setQuery('')
+                  setViewMode('discover')
+                }}
+              >
+                <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+                  Reset
+                </Text>
+              </Button>
+            </YStack>
+          )
         }
-        contentContainerStyle={{ paddingBottom: 140 }}
+        contentContainerStyle={{
+          paddingBottom: 140,
+          flexGrow: bondfires.length === 0 ? 1 : undefined,
+        }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         onViewableItemsChanged={onViewableItemsChanged}

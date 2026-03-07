@@ -1,17 +1,18 @@
 import {
+  FileSystemUploadType,
   cacheDirectory,
   copyAsync,
   createUploadTask,
   getInfoAsync,
   makeDirectoryAsync,
-  FileSystemUploadType,
 } from 'expo-file-system/legacy'
 import { type UploadTask, uploadQueueActions } from '../store/uploadQueue.store'
-import { cleanupTempVideos, type ProcessedVideo, processVideo } from '../utils/videoProcessing'
+import { type ProcessedVideo, cleanupTempVideos, processVideo } from '../utils/videoProcessing'
 
 const MAX_RETRIES = 5
 const BASE_RETRY_DELAY = 2000 // 2 seconds
 const COMPLETED_TASK_RETENTION_MS = 30000
+const activeTaskIds = new Set<string>()
 
 const PROCESSING_MAX_PROGRESS = 40
 const URLS_READY_PROGRESS = 45
@@ -115,7 +116,11 @@ async function uploadFileWithProgress(params: {
     (progress) => {
       const expectedBytes = progress.totalBytesExpectedToSend
       const fraction =
-        expectedBytes > 0 ? progress.totalBytesSent / expectedBytes : progress.totalBytesSent > 0 ? 1 : 0
+        expectedBytes > 0
+          ? progress.totalBytesSent / expectedBytes
+          : progress.totalBytesSent > 0
+            ? 1
+            : 0
       const normalizedFraction = Math.max(0, Math.min(1, fraction))
 
       // Only update when progress has materially moved (or completes) to avoid noisy re-renders.
@@ -172,7 +177,10 @@ async function copyToPersistentStorage(uri: string): Promise<string> {
 /**
  * Process and upload video in the background
  */
-export async function startBackgroundUpload(options: BackgroundUploadOptions): Promise<string> {
+export async function startBackgroundUpload(
+  options: BackgroundUploadOptions,
+  autoStart = true,
+): Promise<string> {
   const taskId = `upload-${Date.now()}-${Math.random().toString(36).substring(7)}`
 
   // Copy video to persistent storage
@@ -194,11 +202,13 @@ export async function startBackgroundUpload(options: BackgroundUploadOptions): P
 
   uploadQueueActions.addTask(task)
 
-  // Start processing (don't await - let it run in background)
-  processUploadTask(taskId, options).catch((error) => {
-    console.error('[backgroundUpload] Task failed:', error)
-    options.callbacks?.onError?.(error)
-  })
+  if (autoStart) {
+    // Start processing (don't await - let it run in background)
+    processUploadTask(taskId, options).catch((error) => {
+      console.error('[backgroundUpload] Task failed:', error)
+      options.callbacks?.onError?.(error)
+    })
+  }
 
   return taskId
 }
@@ -211,8 +221,12 @@ async function processUploadTask(taskId: string, options: BackgroundUploadOption
   if (!task) {
     throw new Error(`Task not found: ${taskId}`)
   }
+  if (task.status === 'completed' || task.status === 'failed' || activeTaskIds.has(taskId)) {
+    return
+  }
 
   let attemptCount = task.attemptCount
+  activeTaskIds.add(taskId)
 
   try {
     // Step 1: Process video if not already processed
@@ -290,7 +304,12 @@ async function processUploadTask(taskId: string, options: BackgroundUploadOption
       fileUri: processed.thumbnailUri,
       contentType: 'image/jpeg',
       onProgress: (fraction) => {
-        setTaskProgress(taskId, options, thumbStart + thumbRange * fraction, 'Uploading thumbnail...')
+        setTaskProgress(
+          taskId,
+          options,
+          thumbStart + thumbRange * fraction,
+          'Uploading thumbnail...',
+        )
       },
     })
 
@@ -377,6 +396,8 @@ async function processUploadTask(taskId: string, options: BackgroundUploadOption
       })
       options.callbacks?.onError?.(normalizedError)
     }
+  } finally {
+    activeTaskIds.delete(taskId)
   }
 }
 
