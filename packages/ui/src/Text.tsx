@@ -1,5 +1,5 @@
-import { type GetProps, Text as TamaguiText, styled } from 'tamagui'
 import { bondfireColors } from '@bondfires/config'
+import { type GetProps, styled, Text as TamaguiText } from 'tamagui'
 
 export const Text = styled(TamaguiText, {
   name: 'Text',

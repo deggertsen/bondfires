@@ -4,12 +4,7 @@ import { AlertTriangle } from '@tamagui/lucide-icons'
 import { Spinner, XStack, YStack } from 'tamagui'
 import type { WarningStepProps } from './types'
 
-export function WarningStep({
-  isSubmitting,
-  error,
-  onSubmit,
-  onBack,
-}: WarningStepProps) {
+export function WarningStep({ isSubmitting, error, onSubmit, onBack }: WarningStepProps) {
   return (
     <YStack gap={16} alignItems="center">
       <YStack
@@ -22,17 +17,12 @@ export function WarningStep({
       >
         <AlertTriangle size={32} color={bondfireColors.obsidian} />
       </YStack>
-      <Text
-        fontSize={18}
-        fontWeight="600"
-        color={bondfireColors.whiteSmoke}
-        textAlign="center"
-      >
+      <Text fontSize={18} fontWeight="600" color={bondfireColors.whiteSmoke} textAlign="center">
         Before You Submit
       </Text>
       <Text fontSize={14} color={bondfireColors.ash} textAlign="center">
-        Please only submit reports for genuine concerns. False or malicious
-        reports may result in action against your account.
+        Please only submit reports for genuine concerns. False or malicious reports may result in
+        action against your account.
       </Text>
       {error && (
         <Text fontSize={14} color={bondfireColors.error} textAlign="center">
@@ -40,13 +30,7 @@ export function WarningStep({
         </Text>
       )}
       <XStack gap={12} width="100%">
-        <Button
-          variant="secondary"
-          size="$md"
-          flex={1}
-          onPress={onBack}
-          disabled={isSubmitting}
-        >
+        <Button variant="secondary" size="$md" flex={1} onPress={onBack} disabled={isSubmitting}>
           <Text color={bondfireColors.whiteSmoke}>Go Back</Text>
         </Button>
         <Button

@@ -1,4 +1,4 @@
-import { uploadQueueStore$, type UploadTask } from '@bondfires/app'
+import { type UploadTask, uploadQueueStore$ } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Card, Text } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
@@ -45,7 +45,8 @@ export function UploadProgressCard() {
   const latestCompletedTask = sortedTasks.find(
     (task) =>
       task.status === 'completed' &&
-      (task.completedAt ?? task.updatedAt ?? task.createdAt) > Date.now() - RECENT_COMPLETION_WINDOW_MS,
+      (task.completedAt ?? task.updatedAt ?? task.createdAt) >
+        Date.now() - RECENT_COMPLETION_WINDOW_MS,
   )
 
   if (activeTasks.length === 0 && !latestFailedTask && !latestCompletedTask) {

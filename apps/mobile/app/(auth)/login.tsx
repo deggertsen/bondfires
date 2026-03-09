@@ -1,7 +1,7 @@
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
-import { useObservable, useValue } from '@legendapp/state/react'
 import { useAuthActions } from '@convex-dev/auth/react'
+import { useObservable, useValue } from '@legendapp/state/react'
 import { Flame } from '@tamagui/lucide-icons'
 import { useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
@@ -58,7 +58,11 @@ export default function LoginScreen() {
     form$.error.set(null)
 
     try {
-      const result = await signIn('password', { email: currentEmail, password: currentPassword, flow: 'signIn' })
+      const result = await signIn('password', {
+        email: currentEmail,
+        password: currentPassword,
+        flow: 'signIn',
+      })
 
       // Check if verification is required (signingIn: false means email not verified)
       if (

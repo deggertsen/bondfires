@@ -1,4 +1,4 @@
-import { type GetProps, YStack, styled } from 'tamagui'
+import { type GetProps, styled, YStack } from 'tamagui'
 
 export const Container = styled(YStack, {
   name: 'Container',

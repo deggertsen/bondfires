@@ -1,13 +1,13 @@
 import {
-  FileSystemUploadType,
   cacheDirectory,
   copyAsync,
   createUploadTask,
+  FileSystemUploadType,
   getInfoAsync,
   makeDirectoryAsync,
 } from 'expo-file-system/legacy'
 import { type UploadTask, uploadQueueActions } from '../store/uploadQueue.store'
-import { type ProcessedVideo, cleanupTempVideos, processVideo } from '../utils/videoProcessing'
+import { cleanupTempVideos, type ProcessedVideo, processVideo } from '../utils/videoProcessing'
 
 const MAX_RETRIES = 5
 const BASE_RETRY_DELAY = 2000 // 2 seconds

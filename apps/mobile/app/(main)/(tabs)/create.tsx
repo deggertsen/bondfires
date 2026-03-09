@@ -461,10 +461,7 @@ export default function CreateScreen() {
           return
         }
 
-        if (
-          recordingActionRef.current === 'stop' ||
-          state$.recordingState.get() === 'stopping'
-        ) {
+        if (recordingActionRef.current === 'stop' || state$.recordingState.get() === 'stopping') {
           recordingActionRef.current = 'none'
           await finalizeRecording(sessionId)
           return

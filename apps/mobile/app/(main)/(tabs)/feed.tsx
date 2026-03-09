@@ -204,11 +204,7 @@ function LoadingFeed() {
   )
 }
 
-function FeedSubscription({
-  onResolved,
-}: {
-  onResolved: (bondfires: BondfireData[]) => void
-}) {
+function FeedSubscription({ onResolved }: { onResolved: (bondfires: BondfireData[]) => void }) {
   const bondfires = useQuery(api.bondfires.listFeed, { limit: 50 })
 
   useEffect(() => {

@@ -2,10 +2,10 @@ import {
   appActions,
   appStore$,
   getBondfireVideoIndex,
-  setBondfireVideoIndex,
-  setFeedActiveBondfireId,
   hasViewedToday,
   markViewed,
+  setBondfireVideoIndex,
+  setFeedActiveBondfireId,
 } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
@@ -26,7 +26,7 @@ import { useAction, useMutation, useQuery } from 'convex/react'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { LinearGradient } from 'expo-linear-gradient'
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
-import { VideoView, useVideoPlayer } from 'expo-video'
+import { useVideoPlayer, VideoView } from 'expo-video'
 import { useCallback, useEffect, useRef } from 'react'
 import {
   AppState,
@@ -376,7 +376,11 @@ function VideoPlayer({
               {hasEnded ? (
                 <RotateCcw size={40} color={bondfireColors.whiteSmoke} />
               ) : (
-                <Play size={40} color={bondfireColors.whiteSmoke} fill={bondfireColors.whiteSmoke} />
+                <Play
+                  size={40}
+                  color={bondfireColors.whiteSmoke}
+                  fill={bondfireColors.whiteSmoke}
+                />
               )}
             </YStack>
           </YStack>
@@ -462,9 +466,7 @@ function VideoPlayer({
         {/* Right side controls */}
         <YStack position="absolute" right={16} bottom={160} gap={16} alignItems="center">
           {/* Report button - only show when paused */}
-          {!isPlaying && !isLoading && (
-            <ReportButton onPress={() => state$.showReport.set(true)} />
-          )}
+          {!isPlaying && !isLoading && <ReportButton onPress={() => state$.showReport.set(true)} />}
           <Pressable onPress={toggleMute}>
             <YStack
               width={44}
@@ -784,7 +786,9 @@ export default function BondfireDetailScreen() {
             </YStack>
 
             <XStack gap={8}>
-              <Pressable onPress={() => screenState$.showSettings.set(!screenState$.showSettings.get())}>
+              <Pressable
+                onPress={() => screenState$.showSettings.set(!screenState$.showSettings.get())}
+              >
                 <YStack
                   width={40}
                   height={40}
@@ -798,7 +802,9 @@ export default function BondfireDetailScreen() {
                   <Settings size={22} color={bondfireColors.whiteSmoke} />
                 </YStack>
               </Pressable>
-              <Pressable onPress={() => screenState$.showNotepad.set(!screenState$.showNotepad.get())}>
+              <Pressable
+                onPress={() => screenState$.showNotepad.set(!screenState$.showNotepad.get())}
+              >
                 <YStack
                   width={40}
                   height={40}

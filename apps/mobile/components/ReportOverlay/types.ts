@@ -1,12 +1,7 @@
 import type { Id } from '../../../../convex/_generated/dataModel'
 
 // Report flow step types
-export type ReportStep =
-  | 'category'
-  | 'subcategory'
-  | 'comments'
-  | 'warning'
-  | 'success'
+export type ReportStep = 'category' | 'subcategory' | 'comments' | 'warning' | 'success'
 
 // Main report categories
 export type Category =

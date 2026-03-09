@@ -1,7 +1,7 @@
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
-import { useObservable, useValue } from '@legendapp/state/react'
 import { useAuthActions } from '@convex-dev/auth/react'
+import { useObservable, useValue } from '@legendapp/state/react'
 import { Flame, UserPlus } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
 import { KeyboardAvoidingView, Platform, ScrollView, StatusBar } from 'react-native'
@@ -52,7 +52,12 @@ export default function SignupScreen() {
     form$.error.set(null)
 
     try {
-      await signIn('password', { email: currentEmail, password: currentPassword, name: currentName, flow: 'signUp' })
+      await signIn('password', {
+        email: currentEmail,
+        password: currentPassword,
+        name: currentName,
+        flow: 'signUp',
+      })
       // Pass email to verify-email screen for OTP verification
       router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail } })
     } catch {

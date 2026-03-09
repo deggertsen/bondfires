@@ -1,17 +1,13 @@
 // Stores
-export * from './store'
-
-// Hooks
-export * from './hooks'
-
-// Features
-export * from './features'
-
-// Utils
-export * from './utils'
-
-// Services
-export * from './services/backgroundUpload'
 
 // Data
 export * from './data/completionMessages'
+// Features
+export * from './features'
+// Hooks
+export * from './hooks'
+// Services
+export * from './services/backgroundUpload'
+export * from './store'
+// Utils
+export * from './utils'

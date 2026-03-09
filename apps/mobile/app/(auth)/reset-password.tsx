@@ -1,7 +1,7 @@
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
-import { useObservable, useValue } from '@legendapp/state/react'
 import { useAuthActions } from '@convex-dev/auth/react'
+import { useObservable, useValue } from '@legendapp/state/react'
 import { CheckCircle, ChevronLeft, KeyRound } from '@tamagui/lucide-icons'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { KeyboardAvoidingView, Platform, Pressable, StatusBar } from 'react-native'

@@ -1,5 +1,5 @@
-import { type GetProps, Input as TamaguiInput, TextArea as TamaguiTextArea, styled } from 'tamagui'
 import { bondfireColors } from '@bondfires/config'
+import { type GetProps, styled, Input as TamaguiInput, TextArea as TamaguiTextArea } from 'tamagui'
 
 export const Input = styled(TamaguiInput, {
   name: 'Input',
@@ -30,17 +30,17 @@ export const Input = styled(TamaguiInput, {
     },
     // Use $-prefixed size tokens to match Tamagui's token format
     size: {
-      '$sm': {
+      $sm: {
         height: 36,
         fontSize: 14,
         paddingHorizontal: 12,
       },
-      '$md': {
+      $md: {
         height: 44,
         fontSize: 15,
         paddingHorizontal: 16,
       },
-      '$lg': {
+      $lg: {
         height: 52,
         fontSize: 16,
         paddingHorizontal: 20,

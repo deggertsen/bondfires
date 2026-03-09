@@ -53,4 +53,3 @@ export function getBondfireVideoIndex(bondfireId: string): number | null {
   const n = Number.parseInt(raw, 10)
   return Number.isFinite(n) && n >= 0 ? n : null
 }
-
