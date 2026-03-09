@@ -7,8 +7,13 @@ export interface UploadTask {
   bondfireId?: string // If responding to existing bondfire
   isResponse: boolean
   status: 'pending' | 'processing' | 'uploading' | 'completed' | 'failed'
+  progress?: number // 0-100 progress for current upload lifecycle
+  stage?: string // Human-readable stage text for UI (processing/uploading/retry/etc)
+  errorMessage?: string
   attemptCount: number
   lastAttemptAt?: number
+  updatedAt?: number
+  completedAt?: number
   presignedUrls?: {
     // Cached after first fetch
     hdUrl: string
@@ -41,6 +46,10 @@ export const uploadQueueStore$ = observable<UploadQueueState>({
   tasks: [],
 })
 
+const ACTIVE_TASK_STALE_MS = 10 * 60 * 1000
+const FAILED_TASK_RETENTION_MS = 10 * 60 * 1000
+const COMPLETED_TASK_RETENTION_MS = 2 * 60 * 1000
+
 // Sync with MMKV persistence
 syncObservable(uploadQueueStore$, {
   persist: {
@@ -51,14 +60,19 @@ syncObservable(uploadQueueStore$, {
 // Actions
 export const uploadQueueActions = {
   addTask: (task: UploadTask) => {
-    uploadQueueStore$.tasks.push(task)
+    uploadQueueStore$.tasks.push({
+      ...task,
+      updatedAt: task.updatedAt ?? Date.now(),
+      progress: task.progress ?? 0,
+      stage: task.stage ?? 'Queued',
+    })
   },
 
   updateTask: (taskId: string, updates: Partial<UploadTask>) => {
     const tasks = uploadQueueStore$.tasks.get()
     const index = tasks.findIndex((t) => t.id === taskId)
     if (index !== -1) {
-      uploadQueueStore$.tasks[index].set({ ...tasks[index], ...updates })
+      uploadQueueStore$.tasks[index].set({ ...tasks[index], ...updates, updatedAt: Date.now() })
     }
   },
 
@@ -75,8 +89,39 @@ export const uploadQueueActions = {
     )
   },
 
+  getVisibleTasks: (): UploadTask[] => {
+    const tasks = uploadQueueStore$.tasks.get()
+    return tasks.filter(
+      (t) => t.status !== 'completed' || (t.completedAt ?? 0) > Date.now() - 120000,
+    )
+  },
+
   getTask: (taskId: string): UploadTask | undefined => {
     const tasks = uploadQueueStore$.tasks.get()
     return tasks.find((t) => t.id === taskId)
+  },
+
+  cleanupForRefresh: (now = Date.now()): UploadTask[] => {
+    const tasks = uploadQueueStore$.tasks.get()
+    const filtered = tasks.filter((task) => {
+      const lastUpdatedAt =
+        task.completedAt ?? task.updatedAt ?? task.lastAttemptAt ?? task.createdAt
+
+      if (task.status === 'completed') {
+        return lastUpdatedAt > now - COMPLETED_TASK_RETENTION_MS
+      }
+
+      if (task.status === 'failed') {
+        return lastUpdatedAt > now - FAILED_TASK_RETENTION_MS
+      }
+
+      return lastUpdatedAt > now - ACTIVE_TASK_STALE_MS
+    })
+
+    if (filtered.length !== tasks.length) {
+      uploadQueueStore$.tasks.set(filtered)
+    }
+
+    return filtered
   },
 }

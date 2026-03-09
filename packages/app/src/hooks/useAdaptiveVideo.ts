@@ -1,5 +1,5 @@
-import { useCallback, useEffect } from 'react'
 import { useObservable, useValue } from '@legendapp/state/react'
+import { useCallback, useEffect } from 'react'
 
 interface UseAdaptiveVideoOptions {
   hdUrl: string

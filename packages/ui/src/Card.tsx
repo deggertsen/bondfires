@@ -1,5 +1,5 @@
-import { type GetProps, Card as TamaguiCard, styled } from 'tamagui'
 import { bondfireColors } from '@bondfires/config'
+import { type GetProps, styled, Card as TamaguiCard } from 'tamagui'
 
 export const Card = styled(TamaguiCard, {
   name: 'Card',

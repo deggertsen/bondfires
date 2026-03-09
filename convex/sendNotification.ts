@@ -36,9 +36,7 @@ interface DeviceToken {
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send'
 
 // Send notification via Expo Push API
-async function sendExpoPushNotification(
-  messages: ExpoPushMessage[],
-): Promise<ExpoPushTicket[]> {
+async function sendExpoPushNotification(messages: ExpoPushMessage[]): Promise<ExpoPushTicket[]> {
   const response = await fetch(EXPO_PUSH_URL, {
     method: 'POST',
     headers: {
@@ -113,7 +111,7 @@ export const sendToUser = internalAction({
         ticketId: ticket.id,
         error:
           ticket.status === 'error'
-            ? ticket.message ?? ticket.details?.error ?? 'Unknown error'
+            ? (ticket.message ?? ticket.details?.error ?? 'Unknown error')
             : undefined,
       }))
 

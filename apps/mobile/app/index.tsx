@@ -1,4 +1,4 @@
-import { appActions, appStore$ } from '@bondfires/app'
+import { appActions, appStore$, getLastLocation } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { useValue } from '@legendapp/state/react'
 import { useQuery } from 'convex/react'
@@ -50,5 +50,9 @@ export default function SplashScreen() {
   }
 
   // User is authenticated, go to main app
-  return <Redirect href="/(main)/feed" />
+  const lastLocation = getLastLocation()
+  if (lastLocation?.type === 'bondfire' && lastLocation.bondfireId) {
+    return <Redirect href={`/(main)/bondfire/${lastLocation.bondfireId}`} />
+  }
+  return <Redirect href="/(main)/(tabs)/feed" />
 }

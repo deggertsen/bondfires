@@ -128,29 +128,36 @@ yarn ios
 - **User Profiles** - View and edit your profile
 - **Push Notifications** - Stay updated on responses
 
-## Production Builds
+## Releasing to App Stores
 
-For distribution builds (TestFlight, Play Store, etc.), use [EAS Build](https://docs.expo.dev/build/introduction/):
+One command to bump version, build both platforms, and auto-submit:
 
 ```bash
-# Install EAS CLI
-npm install -g eas-cli
+# Patch release (1.0.3 → 1.0.4) — most common
+yarn release
 
-# Login to EAS
-eas login
+# Minor release (1.0.3 → 1.1.0)
+yarn release:minor
 
-cd apps/mobile
-
-# Build for app stores
-yarn build:android:prod
-yarn build:ios:prod
-
-# Submit to stores
-yarn submit:android
-yarn submit:ios
+# Major release (1.0.3 → 2.0.0)
+yarn release:major
 ```
 
-See `apps/mobile/README.md` for more details on build profiles and deployment.
+This runs `scripts/release.sh` which:
+1. Bumps the version in `app.json`
+2. Commits the version bump
+3. Kicks off EAS production builds for iOS + Android
+4. Auto-submits to App Store Connect and Google Play when builds finish
+
+**Requirements:** Clean git tree, `eas-cli` installed and logged in.
+
+**Notes:**
+- Build numbers (iOS `buildNumber`, Android `versionCode`) auto-increment via EAS remote versioning
+- The `version` string in `app.json` must be bumped for each store submission (stores reject duplicate versions)
+- Android submits to the `internal` track as a draft
+- iOS submits to App Store Connect (you still need to submit for review from there)
+
+Monitor builds at: https://expo.dev/accounts/deggertsen/projects/bondfires/builds
 
 ## License
 

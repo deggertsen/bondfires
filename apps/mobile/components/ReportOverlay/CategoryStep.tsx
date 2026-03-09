@@ -16,10 +16,7 @@ export function CategoryStep({ onSelect }: CategoryStepProps) {
       </Text>
       <YStack gap={8}>
         {CATEGORIES.map((cat) => (
-          <Pressable
-            key={cat.value}
-            onPress={() => onSelect(cat.value as Category)}
-          >
+          <Pressable key={cat.value} onPress={() => onSelect(cat.value as Category)}>
             <XStack
               padding={16}
               backgroundColor={bondfireColors.gunmetal}

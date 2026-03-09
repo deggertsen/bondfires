@@ -11,14 +11,18 @@
     "dev:ios": "./scripts/dev-ios.sh",
     "build": "turbo build",
     "typecheck": "turbo typecheck",
-    "lint": "biome lint .",
-    "format": "biome format --write .",
+    "lint": "npx biome check .",
+    "lint:fix": "npx biome check --write .",
+    "format": "npx biome format --write .",
     "check": "biome check --write .",
     "clean": "turbo clean && rm -rf node_modules",
+    "release": "./scripts/release.sh",
+    "release:minor": "./scripts/release.sh minor",
+    "release:major": "./scripts/release.sh major",
     "eas-build-pre-install": "corepack enable && corepack prepare yarn@4.12.0 --activate"
   },
   "devDependencies": {
-    "@biomejs/biome": "^1.9.4",
+    "@biomejs/biome": "^2.4.6",
     "@types/node": "^25.0.3",
     "turbo": "^2.3.0",
     "typescript": "^5.7.2"

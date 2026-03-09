@@ -1,9 +1,6 @@
 // Convex React Native polyfill - MUST be imported before any Convex imports
 import '../polyfills/convex-react-native'
 
-// Import config for TamaguiProvider
-import config from '../tamagui.config'
-
 import { ConvexAuthProvider } from '@convex-dev/auth/react'
 import { ConvexProvider, ConvexReactClient, useMutation } from 'convex/react'
 import { useFonts } from 'expo-font'
@@ -12,7 +9,10 @@ import { Stack, useRouter } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
 import { useCallback, useEffect } from 'react'
 import { useColorScheme } from 'react-native'
+import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { TamaguiProvider, Theme } from 'tamagui'
+// Import config for TamaguiProvider
+import config from '../tamagui.config'
 import 'react-native-reanimated'
 
 import { appStore$, mmkvStorage, usePushNotifications } from '@bondfires/app'
@@ -76,7 +76,11 @@ function AppContent() {
   )
 
   // Initialize push notifications with Expo
-  const { error: pushError, requestPermissions, unregister } = usePushNotifications({
+  const {
+    error: pushError,
+    requestPermissions,
+    unregister,
+  } = usePushNotifications({
     registerTokenMutation: async (params: {
       token: string
       tokenType: string
@@ -152,7 +156,9 @@ export default function RootLayout() {
   return (
     <ConvexProvider client={convex}>
       <ConvexAuthProvider client={convex} storage={mmkvStorage}>
-        <AppContent />
+        <SafeAreaProvider>
+          <AppContent />
+        </SafeAreaProvider>
       </ConvexAuthProvider>
     </ConvexProvider>
   )

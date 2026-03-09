@@ -1,17 +1,12 @@
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
 import { ArrowLeft } from '@tamagui/lucide-icons'
-import { useRef, useEffect } from 'react'
-import { Pressable, TextInput, StyleSheet } from 'react-native'
+import { useEffect, useRef } from 'react'
+import { Pressable, StyleSheet, TextInput } from 'react-native'
 import { XStack, YStack } from 'tamagui'
-import { MIN_COMMENT_LENGTH, type CommentsStepProps } from './types'
+import { type CommentsStepProps, MIN_COMMENT_LENGTH } from './types'
 
-export function CommentsStep({
-  value,
-  onChange,
-  onNext,
-  onBack,
-}: CommentsStepProps) {
+export function CommentsStep({ value, onChange, onNext, onBack }: CommentsStepProps) {
   const textInputRef = useRef<TextInput>(null)
   const charCount = value.trim().length
   const isValid = charCount >= MIN_COMMENT_LENGTH
@@ -33,8 +28,8 @@ export function CommentsStep({
         </Text>
       </XStack>
       <Text fontSize={14} color={bondfireColors.ash}>
-        Please provide details about what you observed. This helps us review
-        your report more effectively.
+        Please provide details about what you observed. This helps us review your report more
+        effectively.
       </Text>
       <YStack>
         <TextInput
@@ -48,18 +43,12 @@ export function CommentsStep({
           textAlignVertical="top"
         />
         <XStack justifyContent="space-between" marginTop={8}>
-          <Text
-            fontSize={12}
-            color={isValid ? bondfireColors.ash : bondfireColors.error}
-          >
+          <Text fontSize={12} color={isValid ? bondfireColors.ash : bondfireColors.error}>
             {isValid
               ? 'Thank you for the details'
               : `Minimum ${MIN_COMMENT_LENGTH} characters required`}
           </Text>
-          <Text
-            fontSize={12}
-            color={isValid ? bondfireColors.ash : bondfireColors.error}
-          >
+          <Text fontSize={12} color={isValid ? bondfireColors.ash : bondfireColors.error}>
             {charCount}/{MIN_COMMENT_LENGTH}
           </Text>
         </XStack>

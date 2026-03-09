@@ -49,19 +49,20 @@
       },
       "env": {
         "APP_VARIANT": "production",
-        "EXPO_PUBLIC_CONVEX_URL": "https://fleet-caiman-92.convex.cloud"
+        "EXPO_PUBLIC_CONVEX_URL": "https://watchful-cow-525.convex.cloud"
       }
     }
   },
   "submit": {
     "production": {
       "ios": {
-        "appleTeamId": "A9BJ2VA78M"
+        "appleTeamId": "A9BJ2VA78M",
+        "ascAppId": "6755933598"
       },
       "android": {
         "serviceAccountKeyPath": "./google-services-key.json",
         "track": "internal",
-        "releaseStatus": "draft"
+        "releaseStatus": "completed"
       }
     }
   }

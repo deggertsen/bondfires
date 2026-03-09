@@ -2,19 +2,13 @@ import { bondfireColors } from '@bondfires/config'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { X } from '@tamagui/lucide-icons'
 import { useMutation } from 'convex/react'
-import {
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  StyleSheet,
-} from 'react-native'
-import { YStack, XStack } from 'tamagui'
+import { KeyboardAvoidingView, Platform, Pressable, StyleSheet } from 'react-native'
+import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import { CategoryStep } from './CategoryStep'
 import { CommentsStep } from './CommentsStep'
 import { SubCategoryStep } from './SubCategoryStep'
 import { SuccessStep } from './SuccessStep'
-import { WarningStep } from './WarningStep'
 import {
   CATEGORIES,
   type Category,
@@ -22,6 +16,7 @@ import {
   type ReportStep,
   type SubCategory,
 } from './types'
+import { WarningStep } from './WarningStep'
 
 export function ReportOverlay({
   bondfireId,
@@ -117,12 +112,7 @@ export function ReportOverlay({
         return <CategoryStep onSelect={handleCategorySelect} />
 
       case 'subcategory':
-        return (
-          <SubCategoryStep
-            onSelect={handleSubCategorySelect}
-            onBack={handleBack}
-          />
-        )
+        return <SubCategoryStep onSelect={handleSubCategorySelect} onBack={handleBack} />
 
       case 'comments':
         return (

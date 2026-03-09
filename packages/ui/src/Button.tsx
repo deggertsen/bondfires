@@ -1,5 +1,5 @@
-import { type GetProps, Button as TamaguiButton, styled } from 'tamagui'
 import { bondfireColors } from '@bondfires/config'
+import { type GetProps, styled, Button as TamaguiButton } from 'tamagui'
 
 export const Button = styled(TamaguiButton, {
   name: 'Button',
@@ -75,21 +75,21 @@ export const Button = styled(TamaguiButton, {
     },
     // Use $-prefixed size tokens to match Tamagui's token format
     size: {
-      '$sm': {
+      $sm: {
         height: 36,
         paddingHorizontal: 16,
         fontSize: 14,
         fontFamily: '$body',
         gap: 6,
       },
-      '$md': {
+      $md: {
         height: 44,
         paddingHorizontal: 20,
         fontSize: 15,
         fontFamily: '$body',
         gap: 8,
       },
-      '$lg': {
+      $lg: {
         height: 52,
         paddingHorizontal: 24,
         fontSize: 16,

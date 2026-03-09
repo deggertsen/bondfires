@@ -18,10 +18,7 @@
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
     "isolatedModules": true,
-    "noEmit": true,
-
-    /* Node types for process.env in actions */
-    "types": ["node"]
+    "noEmit": true
   },
   "include": ["./**/*"],
   "exclude": ["./_generated"]

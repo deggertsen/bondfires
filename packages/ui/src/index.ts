@@ -1,45 +1,45 @@
 // Re-export Tamagui components with customizations
-export * from './Button'
-export * from './Card'
-export * from './Input'
-export * from './Text'
-export * from './Container'
 
 // Re-export commonly used Tamagui primitives
 export {
-  XStack,
-  YStack,
-  ZStack,
-  Stack,
-  Separator,
-  Spinner,
-  ScrollView,
-  Image,
-  Avatar,
-  Sheet,
-  Dialog,
-  Popover,
-  Tooltip,
-  Switch,
-  Checkbox,
-  RadioGroup,
-  Select,
-  Slider,
-  Progress,
-  Label,
-  Form,
-  Fieldset,
-  Theme,
-  ThemeableStack,
-  Circle,
-  Square,
   Anchor,
-  Paragraph,
+  Avatar,
+  Checkbox,
+  Circle,
+  Dialog,
+  Fieldset,
+  Form,
   H1,
   H2,
   H3,
   H4,
   H5,
   H6,
+  Image,
+  Label,
+  Paragraph,
+  Popover,
+  Progress,
+  RadioGroup,
+  ScrollView,
+  Select,
+  Separator,
+  Sheet,
   SizableText,
+  Slider,
+  Spinner,
+  Square,
+  Stack,
+  Switch,
+  Theme,
+  ThemeableStack,
+  Tooltip,
+  XStack,
+  YStack,
+  ZStack,
 } from 'tamagui'
+export * from './Button'
+export * from './Card'
+export * from './Container'
+export * from './Input'
+export * from './Text'

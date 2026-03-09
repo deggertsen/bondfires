@@ -1,8 +1,16 @@
-import { appActions, appStore$, hasViewedToday, markViewed } from '@bondfires/app'
+import {
+  appActions,
+  appStore$,
+  getBondfireVideoIndex,
+  hasViewedToday,
+  markViewed,
+  setBondfireVideoIndex,
+  setFeedActiveBondfireId,
+} from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
 import { useObservable, useObserveEffect, useValue } from '@legendapp/state/react'
-import { useIsFocused } from '@react-navigation/native'
+import { useIsFocused, useNavigation } from '@react-navigation/native'
 import {
   ChevronLeft,
   ChevronRight,
@@ -18,7 +26,7 @@ import { useAction, useMutation, useQuery } from 'convex/react'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { LinearGradient } from 'expo-linear-gradient'
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
-import { VideoView, useVideoPlayer } from 'expo-video'
+import { useVideoPlayer, VideoView } from 'expo-video'
 import { useCallback, useEffect, useRef } from 'react'
 import {
   AppState,
@@ -74,7 +82,6 @@ function VideoPlayer({
 }: VideoPlayerProps) {
   // Get the video ID for internal use (keep-awake tag, etc.)
   const videoId = bondfireId || bondfireVideoId || ''
-  const playbackSpeed = useValue(appStore$.preferences.playbackSpeed)
   const autoplayVideos = useValue(appStore$.preferences.autoplayVideos)
   const videoQuality = useValue(appStore$.preferences.videoQuality)
   const isMuted = useValue(appStore$.preferences.videoMuted)
@@ -109,13 +116,14 @@ function VideoPlayer({
   const player = useVideoPlayer(currentUrl || '', (player) => {
     player.loop = false
     player.muted = isMuted
-    player.playbackRate = playbackSpeed
+    player.playbackRate = appStore$.preferences.playbackSpeed.get()
     player.preservesPitch = true
   })
 
-  // Update playback speed when preference changes (effect phase for player mutations)
+  // Update playback speed only for the active, foreground player.
+  // This prevents rate changes from mutating all mounted players in the response chain.
   useObserveEffect(() => {
-    if (player) {
+    if (player && isActive && isScreenFocused && isAppActive) {
       player.playbackRate = appStore$.preferences.playbackSpeed.get()
     }
   })
@@ -135,6 +143,7 @@ function VideoPlayer({
     const shouldPlay = isActive && isScreenFocused && isAppActive
 
     if (shouldPlay) {
+      player.playbackRate = appStore$.preferences.playbackSpeed.get()
       // Only auto-play if autoplay is enabled OR user has manually initiated play
       if (autoplayVideos || state$.userInitiatedPlay.get()) {
         player.play()
@@ -367,7 +376,11 @@ function VideoPlayer({
               {hasEnded ? (
                 <RotateCcw size={40} color={bondfireColors.whiteSmoke} />
               ) : (
-                <Play size={40} color={bondfireColors.whiteSmoke} fill={bondfireColors.whiteSmoke} />
+                <Play
+                  size={40}
+                  color={bondfireColors.whiteSmoke}
+                  fill={bondfireColors.whiteSmoke}
+                />
               )}
             </YStack>
           </YStack>
@@ -453,9 +466,7 @@ function VideoPlayer({
         {/* Right side controls */}
         <YStack position="absolute" right={16} bottom={160} gap={16} alignItems="center">
           {/* Report button - only show when paused */}
-          {!isPlaying && !isLoading && (
-            <ReportButton onPress={() => state$.showReport.set(true)} />
-          )}
+          {!isPlaying && !isLoading && <ReportButton onPress={() => state$.showReport.set(true)} />}
           <Pressable onPress={toggleMute}>
             <YStack
               width={44}
@@ -498,6 +509,7 @@ function formatTime(ms: number): string {
 export default function BondfireDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const router = useRouter()
+  const navigation = useNavigation()
   const flatListRef = useRef<FlatList>(null)
   const isFocused = useIsFocused()
 
@@ -522,6 +534,9 @@ export default function BondfireDetailScreen() {
   const getVideoUrls = useAction(api.videos.getVideoUrls)
   const recordWatchEvent = useMutation(api.watchEvents.record)
   const incrementViews = useMutation(api.bondfires.incrementViews)
+
+  const didRestorePositionRef = useRef(false)
+  const persistPositionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Track app active state (external subscription - keep useEffect)
   useEffect(() => {
@@ -563,6 +578,54 @@ export default function BondfireDetailScreen() {
     markViewed(bondfireId)
     incrementViews({ bondfireId })
   }, [bondfireId, incrementViews])
+
+  // Restore last position within this conversation (camp) once data is available.
+  useEffect(() => {
+    if (!bondfireData) return
+    if (didRestorePositionRef.current) return
+    didRestorePositionRef.current = true
+
+    setFeedActiveBondfireId(bondfireId)
+
+    const total = 1 + bondfireData.videos.length
+    const saved = getBondfireVideoIndex(bondfireId) ?? 0
+    const clamped = Math.max(0, Math.min(saved, total - 1))
+
+    if (clamped === 0) return
+    screenState$.currentVideoIndex.set(clamped)
+    setTimeout(() => {
+      flatListRef.current?.scrollToIndex({ index: clamped, animated: false })
+    }, 0)
+  }, [bondfireData, bondfireId, screenState$, flatListRef])
+
+  // Persist position as the user swipes through the conversation.
+  useEffect(() => {
+    if (!bondfireId) return
+
+    if (persistPositionTimerRef.current) {
+      clearTimeout(persistPositionTimerRef.current)
+    }
+    persistPositionTimerRef.current = setTimeout(() => {
+      setFeedActiveBondfireId(bondfireId)
+      setBondfireVideoIndex(bondfireId, screenState$.currentVideoIndex.get())
+    }, 200)
+
+    return () => {
+      if (persistPositionTimerRef.current) {
+        clearTimeout(persistPositionTimerRef.current)
+        persistPositionTimerRef.current = null
+      }
+    }
+  }, [bondfireId, currentVideoIndex, screenState$])
+
+  const handleBackPress = useCallback(() => {
+    // If opened from a deep link / notification, there may not be a back stack.
+    if (navigation.canGoBack()) {
+      router.back()
+    } else {
+      router.replace('/(main)/(tabs)/feed')
+    }
+  }, [navigation, router])
 
   const handleVideoComplete = useCallback(() => {
     if (!bondfireData) return
@@ -612,7 +675,7 @@ export default function BondfireDetailScreen() {
   )
 
   const handleRespond = useCallback(() => {
-    router.push(`/(main)/create?respondTo=${id}`)
+    router.push(`/(main)/(tabs)/create?respondTo=${id}`)
   }, [router, id])
 
   const onViewableItemsChanged = useCallback(
@@ -697,17 +760,20 @@ export default function BondfireDetailScreen() {
             }}
           />
           <XStack flex={1} justifyContent="space-between" alignItems="center">
-            <Pressable onPress={() => router.back()}>
-              <YStack
-                width={40}
+            <Pressable onPress={handleBackPress}>
+              <XStack
+                paddingHorizontal={12}
                 height={40}
                 borderRadius={20}
                 backgroundColor="rgba(31, 32, 35, 0.8)"
                 alignItems="center"
-                justifyContent="center"
+                gap={6}
               >
-                <ChevronLeft size={24} color={bondfireColors.whiteSmoke} />
-              </YStack>
+                <ChevronLeft size={22} color={bondfireColors.whiteSmoke} />
+                <Text fontSize={13} fontWeight="700" color={bondfireColors.whiteSmoke}>
+                  Campground
+                </Text>
+              </XStack>
             </Pressable>
 
             <YStack alignItems="center">
@@ -715,12 +781,14 @@ export default function BondfireDetailScreen() {
                 {currentVideoIndex + 1} / {totalVideos}
               </Text>
               <Text fontSize={12} color={bondfireColors.ash}>
-                Swipe to navigate
+                Swipe for responses
               </Text>
             </YStack>
 
             <XStack gap={8}>
-              <Pressable onPress={() => screenState$.showSettings.set(!screenState$.showSettings.get())}>
+              <Pressable
+                onPress={() => screenState$.showSettings.set(!screenState$.showSettings.get())}
+              >
                 <YStack
                   width={40}
                   height={40}
@@ -734,7 +802,9 @@ export default function BondfireDetailScreen() {
                   <Settings size={22} color={bondfireColors.whiteSmoke} />
                 </YStack>
               </Pressable>
-              <Pressable onPress={() => screenState$.showNotepad.set(!screenState$.showNotepad.get())}>
+              <Pressable
+                onPress={() => screenState$.showNotepad.set(!screenState$.showNotepad.get())}
+              >
                 <YStack
                   width={40}
                   height={40}

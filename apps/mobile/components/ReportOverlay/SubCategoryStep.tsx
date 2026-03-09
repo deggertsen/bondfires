@@ -22,10 +22,7 @@ export function SubCategoryStep({ onSelect, onBack }: SubCategoryStepProps) {
       <ScrollView style={{ maxHeight: 400 }}>
         <YStack gap={8}>
           {SUBCATEGORIES.map((subCat) => (
-            <Pressable
-              key={subCat.value}
-              onPress={() => onSelect(subCat.value as SubCategory)}
-            >
+            <Pressable key={subCat.value} onPress={() => onSelect(subCat.value as SubCategory)}>
               <XStack
                 padding={16}
                 backgroundColor={bondfireColors.gunmetal}

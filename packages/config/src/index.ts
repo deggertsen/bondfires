@@ -1,1 +1,1 @@
-export { config, tamaguiConfig, bondfireColors } from './tamagui.config'
+export { bondfireColors, config, tamaguiConfig } from './tamagui.config'

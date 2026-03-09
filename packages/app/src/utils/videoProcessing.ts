@@ -1,5 +1,5 @@
 import { File } from 'expo-file-system'
-import { Video, createVideoThumbnail, getVideoMetaData } from 'react-native-compressor'
+import { createVideoThumbnail, getVideoMetaData, Video } from 'react-native-compressor'
 
 export interface VideoMetadata {
   width: number

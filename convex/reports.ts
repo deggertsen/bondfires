@@ -1,7 +1,7 @@
 import { v } from 'convex/values'
+import { internal } from './_generated/api'
 import { internalAction, mutation, query } from './_generated/server'
 import { auth } from './auth'
-import { internal } from './_generated/api'
 
 // Category and subcategory validators
 const categoryValidator = v.union(
@@ -239,12 +239,16 @@ export const sendReportNotificationEmail = internalAction({
                   <td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold;">Category:</td>
                   <td style="padding: 8px; border-bottom: 1px solid #eee;">${categoryLabel}</td>
                 </tr>
-                ${subCategoryLabel ? `
+                ${
+                  subCategoryLabel
+                    ? `
                 <tr>
                   <td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold;">Sub-category:</td>
                   <td style="padding: 8px; border-bottom: 1px solid #eee;">${subCategoryLabel}</td>
                 </tr>
-                ` : ''}
+                `
+                    : ''
+                }
               </table>
 
               <h3 style="color: #333; margin-top: 24px; margin-bottom: 12px;">Reporter Information</h3>
