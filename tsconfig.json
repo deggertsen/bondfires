@@ -14,7 +14,6 @@
     "isolatedModules": true,
     "jsx": "react-jsx",
     "incremental": true,
-    "baseUrl": ".",
     "paths": {
       "@bondfires/ui": ["./packages/ui/src"],
       "@bondfires/app": ["./packages/app/src"],
@@ -24,4 +23,3 @@
   "include": ["**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules", "**/node_modules/**", ".expo", "build", "dist"]
 }
-

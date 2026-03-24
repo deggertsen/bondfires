@@ -74,20 +74,17 @@ export const submit = mutation({
     }
 
     // Prevent duplicate reports from same user on same video
-    let existingReport
-    if (args.bondfireId) {
-      existingReport = await ctx.db
+    const existingReport = args.bondfireId
+      ? await ctx.db
         .query('reports')
         .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
         .filter((q) => q.eq(q.field('reporterUserId'), reporterUserId))
         .first()
-    } else {
-      existingReport = await ctx.db
+      : await ctx.db
         .query('reports')
         .withIndex('by_bondfire_video', (q) => q.eq('bondfireVideoId', args.bondfireVideoId))
         .filter((q) => q.eq(q.field('reporterUserId'), reporterUserId))
         .first()
-    }
 
     if (existingReport) {
       throw new Error('You have already reported this video')
@@ -110,14 +107,18 @@ export const submit = mutation({
     })
 
     // Determine video type and ID for email
+    const targetVideoId = args.bondfireId ?? args.bondfireVideoId
+    if (!targetVideoId) {
+      throw new Error('Missing video ID for report notification')
+    }
+
     const videoType = args.bondfireId ? 'bondfire' : 'response'
-    const videoId = args.bondfireId || args.bondfireVideoId
 
     // Trigger email notification (async, non-blocking)
     await ctx.scheduler.runAfter(0, internal.reports.sendReportNotificationEmail, {
       reportId,
       videoType,
-      videoId: videoId!,
+      videoId: targetVideoId,
       category: args.category,
       subCategory: args.subCategory,
       comments: args.comments.trim(),
@@ -190,7 +191,6 @@ export const sendReportNotificationEmail = internalAction({
   handler: async (_ctx, args): Promise<{ success: boolean; error?: string }> => {
     const apiKey = process.env.RESEND_API_KEY
     if (!apiKey) {
-      console.log('RESEND_API_KEY not set, skipping report email')
       return { success: true }
     }
 
