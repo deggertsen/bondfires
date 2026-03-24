@@ -3,7 +3,10 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "@bondfires/app": ["../../packages/app/src"],
+      "@bondfires/config": ["../../packages/config/src"],
+      "@bondfires/ui": ["../../packages/ui/src"]
     }
   },
   "include": [

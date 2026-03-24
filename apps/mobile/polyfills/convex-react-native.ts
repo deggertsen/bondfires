@@ -14,7 +14,7 @@ import { Platform } from 'react-native'
 
 if (Platform.OS !== 'web') {
   // Ensure window has the browser event methods Convex expects
-  const win = (typeof window !== 'undefined' ? window : global) as Window & typeof globalThis
+  const win = (typeof window !== 'undefined' ? window : globalThis) as Window & typeof globalThis
 
   if (!win.addEventListener) {
     // No-op: React Native handles network state via NetInfo, not browser events
