@@ -1,27 +1,23 @@
 {
-  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.4.6/schema.json",
   "files": {
     "ignoreUnknown": false,
-    "include": ["**"],
-    "ignore": [
-      "**/*.json",
-      "**/*.cjs",
-      "**/*.css",
-      "**/*.js",
-      "**/*.d.ts",
-      "**/*.config.ts",
-      "**/generated/**/*",
-      "**/dist",
-      "**/out",
-      "**/.expo",
-      "**/node_modules",
-      "**/apps/mobile/ios",
-      "**/apps/mobile/android"
+    "includes": [
+      "**",
+      "!**/*.json",
+      "!**/*.cjs",
+      "!**/*.css",
+      "!**/*.js",
+      "!**/*.d.ts",
+      "!**/*.config.ts",
+      "!**/generated/**/*",
+      "!**/dist",
+      "!**/out",
+      "!**/.next",
+      "!**/node_modules"
     ]
   },
-  "organizeImports": {
-    "enabled": true
-  },
+  "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "formatter": {
     "formatWithErrors": false,
     "indentStyle": "space",
@@ -46,10 +42,12 @@
       "style": {
         "noImplicitBoolean": "off",
         "useBlockStatements": "off",
-        "useNamingConvention": "off"
+        "useNamingConvention": "off",
+        "noNonNullAssertion": "error"
       },
       "suspicious": {
         "noShadowRestrictedNames": "off",
+        "noExplicitAny": "error",
         "noConsole": {
           "level": "error",
           "fix": "none",
@@ -57,13 +55,7 @@
             "allow": ["assert", "error", "info", "warn"]
           }
         }
-      },
-      "a11y": {
-        "useSemanticElements": "off"
-      },
-      "performance": {},
-      "security": {},
-      "nursery": {}
+      }
     }
   },
   "javascript": {
