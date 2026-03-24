@@ -82,7 +82,7 @@
     "babel-preset-expo": "~54.0.10",
     "expo-build-properties": "^1.0.10",
     "react-test-renderer": "19.1.0",
-    "typescript": "~5.9.2"
+    "typescript": "^6.0.0"
   },
   "private": true
 }

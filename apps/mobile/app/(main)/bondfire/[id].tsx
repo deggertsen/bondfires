@@ -612,7 +612,7 @@ export default function BondfireDetailScreen() {
   )
 
   const handleRespond = useCallback(() => {
-    router.push(`/(main)/create?respondTo=${id}`)
+    router.push({ pathname: '/create', params: { respondTo: id } })
   }, [router, id])
 
   const onViewableItemsChanged = useCallback(

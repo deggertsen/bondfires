@@ -50,5 +50,5 @@ export default function SplashScreen() {
   }
 
   // User is authenticated, go to main app
-  return <Redirect href="/(main)/feed" />
+  return <Redirect href="/feed" />
 }

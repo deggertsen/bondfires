@@ -400,7 +400,7 @@ function EmptyFeed() {
       <Text fontSize={16} color={bondfireColors.ash} textAlign="center" marginBottom={32}>
         Be the first to share a video!
       </Text>
-      <Button variant="primary" size="$lg" onPress={() => router.push('/(main)/create')}>
+      <Button variant="primary" size="$lg" onPress={() => router.push('/create')}>
         <Flame size={20} color={bondfireColors.whiteSmoke} />
         <Text color={bondfireColors.whiteSmoke}>Spark Bondfire</Text>
       </Button>
@@ -458,7 +458,7 @@ export default function FeedScreen() {
     if (!bondfires) return
 
     const loadVideoUrls = async () => {
-      const currentActiveIndex = feedState$.activeIndex.get()
+      const currentActiveIndex = activeIndex
       // Load URLs for current, previous, and next items
       const indicesToLoad = [currentActiveIndex - 1, currentActiveIndex, currentActiveIndex + 1].filter(
         (i) => i >= 0 && i < bondfires.length,
@@ -499,7 +499,7 @@ export default function FeedScreen() {
 
   const handleRespond = useCallback(
     (bondfireId: string) => {
-      router.push(`/(main)/create?respondTo=${bondfireId}`)
+      router.push({ pathname: '/create', params: { respondTo: bondfireId } })
     },
     [router],
   )

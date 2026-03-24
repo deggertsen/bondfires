@@ -105,7 +105,7 @@ export default function CreateScreen() {
       // Clear respondTo param so user can create a new spark instead of responding
       // Use replace to navigate to clean URL since setParams doesn't properly clear undefined values
       if (respondTo) {
-        router.replace('/(main)/create')
+        router.replace('/create')
       }
     }
   })
@@ -256,7 +256,7 @@ export default function CreateScreen() {
 
   // Completion screen - shown immediately after recording
   if (recordingState === 'completion' && videoUri) {
-    return <CompletionScreen onContinue={() => router.replace('/(main)/feed')} />
+    return <CompletionScreen onContinue={() => router.replace('/feed')} />
   }
 
   // Processing state

@@ -38,7 +38,7 @@ export default function LoginScreen() {
         router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail } })
       } else if (currentUser) {
         // User is verified, go to feed
-        router.replace('/(main)/feed')
+        router.replace('/feed')
       }
       form$.pendingNavigation.set(false)
       form$.isLoading.set(false)
