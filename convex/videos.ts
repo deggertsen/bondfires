@@ -38,6 +38,155 @@ function getBucket(): string {
   return bucket
 }
 
+const BUNNY_TUS_ENDPOINT = 'https://video.bunnycdn.com/tusupload'
+const DEFAULT_BUNNY_UPLOAD_EXPIRES_IN_SECONDS = 24 * 60 * 60
+const DEFAULT_BUNNY_LOW_RESOLUTION = '360'
+
+interface BunnyStreamConfig {
+  apiKey: string
+  libraryId: string
+  cdnBaseUrl: string
+  collectionId?: string
+  lowResolution: string
+}
+
+interface BunnyCreateVideoResponse {
+  guid: string
+}
+
+function normalizeCdnBaseUrl(rawUrl: string): string {
+  const trimmed = rawUrl.trim().replace(/\/+$/, '')
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed
+  }
+
+  return `https://${trimmed}`
+}
+
+function getBunnyStreamConfig(): BunnyStreamConfig {
+  const apiKey = process.env.BUNNY_STREAM_API_KEY
+  const libraryId = process.env.BUNNY_STREAM_LIBRARY_ID
+  const cdnBaseUrl =
+    process.env.BUNNY_STREAM_CDN_BASE_URL ??
+    process.env.BUNNY_STREAM_PULL_ZONE_URL ??
+    process.env.BUNNY_STREAM_CDN_HOSTNAME
+
+  if (!apiKey || !libraryId || !cdnBaseUrl) {
+    throw new Error(
+      'Bunny Stream is not configured. Please set BUNNY_STREAM_API_KEY, BUNNY_STREAM_LIBRARY_ID, and BUNNY_STREAM_CDN_BASE_URL in Convex environment variables.',
+    )
+  }
+
+  return {
+    apiKey,
+    libraryId,
+    cdnBaseUrl: normalizeCdnBaseUrl(cdnBaseUrl),
+    collectionId: process.env.BUNNY_STREAM_COLLECTION_ID,
+    lowResolution: process.env.BUNNY_STREAM_LOW_RESOLUTION ?? DEFAULT_BUNNY_LOW_RESOLUTION,
+  }
+}
+
+function getOptionalBunnyConfigForPlayback(libraryId?: string): Omit<BunnyStreamConfig, 'apiKey'> {
+  const configuredLibraryId = process.env.BUNNY_STREAM_LIBRARY_ID
+  const cdnBaseUrl =
+    process.env.BUNNY_STREAM_CDN_BASE_URL ??
+    process.env.BUNNY_STREAM_PULL_ZONE_URL ??
+    process.env.BUNNY_STREAM_CDN_HOSTNAME
+
+  if (!cdnBaseUrl) {
+    throw new Error(
+      'BUNNY_STREAM_CDN_BASE_URL not configured in Convex environment variables. It is required to resolve Bunny Stream playback URLs.',
+    )
+  }
+
+  return {
+    libraryId: libraryId ?? configuredLibraryId ?? '',
+    cdnBaseUrl: normalizeCdnBaseUrl(cdnBaseUrl),
+    collectionId: process.env.BUNNY_STREAM_COLLECTION_ID,
+    lowResolution: process.env.BUNNY_STREAM_LOW_RESOLUTION ?? DEFAULT_BUNNY_LOW_RESOLUTION,
+  }
+}
+
+function readObject(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Unexpected Bunny Stream API response')
+  }
+
+  return value as Record<string, unknown>
+}
+
+function readString(value: unknown, fieldName: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`Bunny Stream API response is missing ${fieldName}`)
+  }
+
+  return value
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input))
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+function getBunnyUrls(videoId: string, libraryId?: string) {
+  const config = getOptionalBunnyConfigForPlayback(libraryId)
+  const videoBaseUrl = `${config.cdnBaseUrl}/${videoId}`
+
+  return {
+    libraryId: config.libraryId,
+    hdUrl: `${videoBaseUrl}/playlist.m3u8`,
+    sdUrl: `${videoBaseUrl}/play_${config.lowResolution}p.mp4`,
+    thumbnailUrl: `${videoBaseUrl}/thumbnail.jpg`,
+    previewUrl: `${videoBaseUrl}/preview.webp`,
+  }
+}
+
+async function createBunnyVideo(args: {
+  title: string
+  thumbnailTimeMs?: number
+}): Promise<BunnyCreateVideoResponse> {
+  const config = getBunnyStreamConfig()
+  const requestBody: {
+    title: string
+    collectionId?: string
+    thumbnailTime?: number
+  } = {
+    title: args.title,
+  }
+
+  if (config.collectionId) {
+    requestBody.collectionId = config.collectionId
+  }
+
+  if (args.thumbnailTimeMs !== undefined) {
+    requestBody.thumbnailTime = args.thumbnailTimeMs
+  }
+
+  const response = await fetch(`https://video.bunnycdn.com/library/${config.libraryId}/videos`, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      AccessKey: config.apiKey,
+    },
+    body: JSON.stringify(requestBody),
+  })
+
+  if (!response.ok) {
+    const message = await response.text()
+    throw new Error(`Failed to create Bunny Stream video: ${response.status} ${message}`)
+  }
+
+  const payload: unknown = await response.json()
+  const object = readObject(payload)
+
+  return {
+    guid: readString(object.guid, 'guid'),
+  }
+}
+
 // Generate a presigned URL for uploading a video to S3
 export const getUploadUrl = action({
   args: {
@@ -76,6 +225,58 @@ export const getUploadUrl = action({
   },
 })
 
+export const getBunnyUploadCredentials = action({
+  args: {
+    filename: v.string(),
+    contentType: v.string(),
+    title: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      throw new Error('Not authenticated')
+    }
+
+    const config = getBunnyStreamConfig()
+    const title = args.title?.trim() || args.filename
+    const thumbnailTimeMs = Number(process.env.BUNNY_STREAM_THUMBNAIL_TIME_MS ?? 1000)
+    const video = await createBunnyVideo({
+      title,
+      thumbnailTimeMs: Number.isFinite(thumbnailTimeMs) ? thumbnailTimeMs : undefined,
+    })
+
+    const authorizationExpire =
+      Math.floor(Date.now() / 1000) + DEFAULT_BUNNY_UPLOAD_EXPIRES_IN_SECONDS
+    const authorizationSignature = await sha256Hex(
+      `${config.libraryId}${config.apiKey}${authorizationExpire}${video.guid}`,
+    )
+    const urls = getBunnyUrls(video.guid, config.libraryId)
+
+    return {
+      storageProvider: 'bunny',
+      videoId: video.guid,
+      libraryId: config.libraryId,
+      endpoint: BUNNY_TUS_ENDPOINT,
+      authorizationSignature,
+      authorizationExpire,
+      headers: {
+        AuthorizationSignature: authorizationSignature,
+        AuthorizationExpire: authorizationExpire.toString(),
+        LibraryId: config.libraryId,
+        VideoId: video.guid,
+      },
+      metadata: {
+        filetype: args.contentType,
+        title,
+      },
+      playbackUrl: urls.hdUrl,
+      lowBandwidthUrl: urls.sdUrl,
+      thumbnailUrl: urls.thumbnailUrl,
+      expiresIn: DEFAULT_BUNNY_UPLOAD_EXPIRES_IN_SECONDS,
+    }
+  },
+})
+
 // Generate a presigned URL for downloading/streaming a video
 export const getDownloadUrl = action({
   args: {
@@ -102,10 +303,26 @@ export const getDownloadUrl = action({
 // Generate presigned URLs for both HD and SD versions
 export const getVideoUrls = action({
   args: {
-    hdKey: v.string(),
+    hdKey: v.optional(v.string()),
     sdKey: v.optional(v.string()),
+    bunnyVideoId: v.optional(v.string()),
+    bunnyLibraryId: v.optional(v.string()),
   },
   handler: async (_ctx, args) => {
+    if (args.bunnyVideoId) {
+      const urls = getBunnyUrls(args.bunnyVideoId, args.bunnyLibraryId)
+      return {
+        hdUrl: urls.hdUrl,
+        sdUrl: urls.sdUrl,
+        thumbnailUrl: urls.thumbnailUrl,
+        expiresIn: 0,
+      }
+    }
+
+    if (!args.hdKey) {
+      throw new Error('No video storage reference provided')
+    }
+
     const client = getS3Client()
     const bucket = getBucket()
 
@@ -128,6 +345,49 @@ export const getVideoUrls = action({
     return {
       hdUrl,
       sdUrl,
+      thumbnailUrl: null,
+      expiresIn: 3600,
+    }
+  },
+})
+
+export const getThumbnailUrl = action({
+  args: {
+    thumbnailKey: v.optional(v.string()),
+    bunnyVideoId: v.optional(v.string()),
+    bunnyLibraryId: v.optional(v.string()),
+  },
+  handler: async (_ctx, args) => {
+    if (args.bunnyVideoId) {
+      const urls = getBunnyUrls(args.bunnyVideoId, args.bunnyLibraryId)
+      return {
+        thumbnailUrl: urls.thumbnailUrl,
+        previewUrl: urls.previewUrl,
+        expiresIn: 0,
+      }
+    }
+
+    if (!args.thumbnailKey) {
+      return {
+        thumbnailUrl: null,
+        previewUrl: null,
+        expiresIn: 0,
+      }
+    }
+
+    const client = getS3Client()
+    const bucket = getBucket()
+
+    const command = new GetObjectCommand({
+      Bucket: bucket,
+      Key: args.thumbnailKey,
+    })
+
+    const thumbnailUrl = await getSignedUrl(client, command, { expiresIn: 3600 })
+
+    return {
+      thumbnailUrl,
+      previewUrl: null,
       expiresIn: 3600,
     }
   },

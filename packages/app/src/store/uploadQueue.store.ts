@@ -14,20 +14,27 @@ export interface UploadTask {
   lastAttemptAt?: number
   updatedAt?: number
   completedAt?: number
-  presignedUrls?: {
-    // Cached after first fetch
-    hdUrl: string
-    sdUrl: string
-    thumbnailUrl: string
-    hdKey: string
-    sdKey: string
-    thumbnailKey: string
+  bunnyUpload?: {
+    // Cached after Bunny video creation
+    videoId: string
+    libraryId: string
+    endpoint: string
+    authorizationSignature: string
+    authorizationExpire: number
+    headers: {
+      AuthorizationSignature: string
+      AuthorizationExpire: string
+      LibraryId: string
+      VideoId: string
+    }
+    metadata: {
+      filetype: string
+      title: string
+    }
   }
   processedVideo?: {
     // Cached after processing
-    hdUri: string
-    sdUri: string
-    thumbnailUri: string
+    uploadUri: string
     metadata: {
       width: number
       height: number

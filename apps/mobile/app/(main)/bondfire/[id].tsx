@@ -86,15 +86,19 @@ function VideoPlayer({
   const videoQuality = useValue(appStore$.preferences.videoQuality)
   const isMuted = useValue(appStore$.preferences.videoMuted)
 
-  // Determine initial URL based on quality preference
-  const getInitialUrl = () => {
+  // Determine URL based on quality preference and foreground state.
+  const getTargetUrl = useCallback(() => {
+    if (!isActive || !isScreenFocused || !isAppActive) {
+      return videoUrlSd ?? videoUrl
+    }
+
     if (videoQuality === 'sd' && videoUrlSd) return videoUrlSd
     return videoUrl // HD or auto starts with HD
-  }
+  }, [isActive, isScreenFocused, isAppActive, videoQuality, videoUrl, videoUrlSd])
 
   const state$ = useObservable({
     showReport: false,
-    currentUrl: getInitialUrl(),
+    currentUrl: getTargetUrl(),
     hasSwitchedToSD: false,
     progress: 0,
     duration: 0,
@@ -213,6 +217,7 @@ function VideoPlayer({
   useEffect(() => {
     // Only apply adaptive quality switching in 'auto' mode
     if (videoQuality !== 'auto') return
+    if (!isActive || !isScreenFocused || !isAppActive) return
     const hasSwitchedToSD = state$.hasSwitchedToSD.get()
     const currentUrlValue = state$.currentUrl.get()
     if (!videoUrlSd || hasSwitchedToSD || !currentUrlValue || currentUrlValue !== videoUrl) {
@@ -238,17 +243,11 @@ function VideoPlayer({
         clearInterval(bufferingCheckInterval.current)
       }
     }
-  }, [player, videoUrlSd, videoUrl, videoQuality, state$])
+  }, [player, videoUrlSd, videoUrl, videoQuality, isActive, isScreenFocused, isAppActive, state$])
 
-  // Update URL when video quality preference or source URLs change
+  // Update URL when video quality preference, source URLs, or foreground state change.
   useEffect(() => {
-    let targetUrl: string | null = null
-
-    if (videoQuality === 'sd' && videoUrlSd) {
-      targetUrl = videoUrlSd
-    } else if (videoQuality === 'hd' || videoQuality === 'auto') {
-      targetUrl = videoUrl
-    }
+    const targetUrl = getTargetUrl()
 
     const currentUrlValue = state$.currentUrl.get()
     if (targetUrl && currentUrlValue !== targetUrl) {
@@ -258,7 +257,7 @@ function VideoPlayer({
         state$.hasSwitchedToSD.set(false)
       }
     }
-  }, [videoUrl, videoUrlSd, videoQuality, state$])
+  }, [getTargetUrl, videoQuality, state$])
 
   // Keep screen awake while video is playing
   const isPlaying = player?.playing ?? false
@@ -557,10 +556,19 @@ export default function BondfireDetailScreen() {
       const mainUrl = await getVideoUrls({
         hdKey: bondfireData.videoKey,
         sdKey: bondfireData.sdVideoKey,
+        bunnyVideoId: bondfireData.bunnyVideoId,
+        bunnyLibraryId: bondfireData.bunnyLibraryId,
       })
 
       const responseUrls = await Promise.all(
-        bondfireData.videos.map((v) => getVideoUrls({ hdKey: v.videoKey, sdKey: v.sdVideoKey })),
+        bondfireData.videos.map((v) =>
+          getVideoUrls({
+            hdKey: v.videoKey,
+            sdKey: v.sdVideoKey,
+            bunnyVideoId: v.bunnyVideoId,
+            bunnyLibraryId: v.bunnyLibraryId,
+          }),
+        ),
       )
 
       screenState$.videoUrls.set([mainUrl.hdUrl, ...responseUrls.map((r) => r.hdUrl)])
@@ -596,18 +604,19 @@ export default function BondfireDetailScreen() {
     setTimeout(() => {
       flatListRef.current?.scrollToIndex({ index: clamped, animated: false })
     }, 0)
-  }, [bondfireData, bondfireId, screenState$, flatListRef])
+  }, [bondfireData, bondfireId, screenState$])
 
   // Persist position as the user swipes through the conversation.
   useEffect(() => {
     if (!bondfireId) return
+    const indexToPersist = currentVideoIndex
 
     if (persistPositionTimerRef.current) {
       clearTimeout(persistPositionTimerRef.current)
     }
     persistPositionTimerRef.current = setTimeout(() => {
       setFeedActiveBondfireId(bondfireId)
-      setBondfireVideoIndex(bondfireId, screenState$.currentVideoIndex.get())
+      setBondfireVideoIndex(bondfireId, indexToPersist)
     }, 200)
 
     return () => {
@@ -616,7 +625,7 @@ export default function BondfireDetailScreen() {
         persistPositionTimerRef.current = null
       }
     }
-  }, [bondfireId, currentVideoIndex, screenState$])
+  }, [bondfireId, currentVideoIndex])
 
   const handleBackPress = useCallback(() => {
     // If opened from a deep link / notification, there may not be a back stack.

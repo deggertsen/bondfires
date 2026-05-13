@@ -74,7 +74,7 @@ export default function CreateScreen() {
 
   const createBondfire = useMutation(api.bondfires.create)
   const addResponse = useMutation(api.bondfireVideos.addResponse)
-  const getUploadUrls = useAction(api.videos.getUploadUrls)
+  const getBunnyUploadCredentials = useAction(api.videos.getBunnyUploadCredentials)
   const keepAwakeTag = 'create-recording'
 
   // Recording timer (interval-based - keep useEffect)
@@ -233,8 +233,8 @@ export default function CreateScreen() {
   const startPendingUploads = useCallback(async () => {
     await resumePendingUploads({
       isResponse: false,
-      getUploadUrls: async (args) => {
-        return await getUploadUrls(args)
+      getBunnyUploadCredentials: async (args) => {
+        return await getBunnyUploadCredentials(args)
       },
       createBondfire: async (args) => {
         await createBondfire(args)
@@ -246,7 +246,7 @@ export default function CreateScreen() {
         })
       },
     })
-  }, [getUploadUrls, createBondfire, addResponse])
+  }, [getBunnyUploadCredentials, createBondfire, addResponse])
 
   const schedulePendingUploads = useCallback(() => {
     clearUploadStartTimeout()
@@ -331,8 +331,8 @@ export default function CreateScreen() {
             videoUri: uri,
             bondfireId: respondTo,
             isResponse: !!respondTo,
-            getUploadUrls: async (args) => {
-              return await getUploadUrls(args)
+            getBunnyUploadCredentials: async (args) => {
+              return await getBunnyUploadCredentials(args)
             },
             createBondfire: async (args) => {
               await createBondfire(args)
@@ -352,7 +352,7 @@ export default function CreateScreen() {
         return null
       }
     },
-    [respondTo, getUploadUrls, createBondfire, addResponse],
+    [respondTo, getBunnyUploadCredentials, createBondfire, addResponse],
   )
 
   const finalizeRecording = useCallback(

@@ -37,10 +37,13 @@ export default defineSchema({
     userId: v.id('users'),
     creatorName: v.optional(v.string()), // Denormalized for display
 
-    // Video storage (S3 keys)
-    videoKey: v.string(), // HD video key in S3
-    sdVideoKey: v.optional(v.string()), // SD video key in S3
-    thumbnailKey: v.optional(v.string()), // Thumbnail image key
+    // Video storage
+    storageProvider: v.optional(v.union(v.literal('s3'), v.literal('bunny'))),
+    videoKey: v.optional(v.string()), // Legacy HD video key in S3
+    sdVideoKey: v.optional(v.string()), // Legacy SD video key in S3
+    thumbnailKey: v.optional(v.string()), // Legacy thumbnail image key in S3
+    bunnyVideoId: v.optional(v.string()),
+    bunnyLibraryId: v.optional(v.string()),
 
     // Video metadata
     durationMs: v.optional(v.number()),
@@ -76,10 +79,13 @@ export default defineSchema({
     // Position in the bondfire sequence
     sequenceNumber: v.number(),
 
-    // Video storage (S3 keys)
-    videoKey: v.string(), // HD video key in S3
-    sdVideoKey: v.optional(v.string()), // SD video key in S3
-    thumbnailKey: v.optional(v.string()),
+    // Video storage
+    storageProvider: v.optional(v.union(v.literal('s3'), v.literal('bunny'))),
+    videoKey: v.optional(v.string()), // Legacy HD video key in S3
+    sdVideoKey: v.optional(v.string()), // Legacy SD video key in S3
+    thumbnailKey: v.optional(v.string()), // Legacy thumbnail image key in S3
+    bunnyVideoId: v.optional(v.string()),
+    bunnyLibraryId: v.optional(v.string()),
 
     // Video metadata
     durationMs: v.optional(v.number()),

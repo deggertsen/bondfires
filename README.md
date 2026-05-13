@@ -12,8 +12,9 @@ A video sharing social app where users create "bondfires" (video posts) and othe
 | Backend/Database | Convex |
 | Authentication | Convex Auth |
 | Navigation | Expo Router |
-| Video Storage | AWS S3 |
-| Video Processing | react-native-compressor |
+| Video Streaming | Bunny.net Stream |
+| Image / Legacy Video Storage | AWS S3 |
+| Video Metadata | react-native-compressor |
 | Monorepo | Turborepo |
 | Package Manager | Yarn |
 | Infrastructure | Terraform |
@@ -81,6 +82,24 @@ Create a `.env.local` file in the root:
 
 ```env
 EXPO_PUBLIC_CONVEX_URL=your-convex-deployment-url
+```
+
+Set these in the Convex dashboard for video and image storage:
+
+```env
+# Bunny.net Stream for new bondfire videos
+BUNNY_STREAM_API_KEY=your-stream-library-api-key
+BUNNY_STREAM_LIBRARY_ID=your-stream-library-id
+BUNNY_STREAM_CDN_BASE_URL=https://your-stream-pull-zone.b-cdn.net
+BUNNY_STREAM_COLLECTION_ID=optional-collection-id
+BUNNY_STREAM_LOW_RESOLUTION=360
+BUNNY_STREAM_THUMBNAIL_TIME_MS=1000
+
+# S3 remains required for profile photos and legacy S3 video playback
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=your-access-key
+AWS_SECRET_ACCESS_KEY=your-secret-key
+S3_BUCKET_NAME=your-bucket
 ```
 
 ### Development Setup

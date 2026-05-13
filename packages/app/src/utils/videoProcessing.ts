@@ -1,5 +1,5 @@
 import { File } from 'expo-file-system'
-import { createVideoThumbnail, getVideoMetaData, Video } from 'react-native-compressor'
+import { getVideoMetaData } from 'react-native-compressor'
 
 export interface VideoMetadata {
   width: number
@@ -9,15 +9,13 @@ export interface VideoMetadata {
 }
 
 export interface ProcessedVideo {
-  hdUri: string
-  sdUri: string
-  thumbnailUri: string
+  uploadUri: string
   metadata: VideoMetadata
 }
 
 export interface CompressionProgress {
   percentage: number
-  stage: 'hd' | 'sd' | 'thumbnail'
+  stage: 'metadata' | 'ready'
 }
 
 /**
@@ -44,75 +42,24 @@ export async function getVideoMetadata(videoUri: string): Promise<VideoMetadata>
 }
 
 /**
- * Compress a video to a specific quality preset
- */
-async function compressVideo(
-  inputUri: string,
-  quality: 'high' | 'medium' | 'low',
-  onProgress?: (percentage: number) => void,
-): Promise<string> {
-  const result = await Video.compress(
-    inputUri,
-    {
-      compressionMethod: 'auto',
-      maxSize: quality === 'high' ? 1280 : 640,
-      minimumFileSizeForCompress: 0,
-      progressDivider: 10,
-    },
-    (progress: number) => {
-      onProgress?.(progress * 100)
-    },
-  )
-
-  return result
-}
-
-/**
- * Extract a thumbnail from a video
- */
-async function extractThumbnail(inputUri: string): Promise<string> {
-  const result = await createVideoThumbnail(inputUri)
-  return result.path
-}
-
-/**
- * Process a video: compress to HD/SD and extract thumbnail
+ * Prepare a video for Bunny Stream upload. Bunny handles transcoding and thumbnails.
  */
 export async function processVideo(
   inputUri: string,
   onProgress?: (progress: CompressionProgress) => void,
 ): Promise<ProcessedVideo> {
-  // Get original metadata
+  onProgress?.({ percentage: 0, stage: 'metadata' })
   const metadata = await getVideoMetadata(inputUri)
+  onProgress?.({ percentage: 100, stage: 'ready' })
 
-  // Compress to HD (medium compression)
-  onProgress?.({ percentage: 0, stage: 'hd' })
-  const hdUri = await compressVideo(inputUri, 'high', (pct) => {
-    onProgress?.({ percentage: pct * 0.4, stage: 'hd' }) // 0-40%
-  })
-
-  // Compress to SD (high compression)
-  onProgress?.({ percentage: 40, stage: 'sd' })
-  const sdUri = await compressVideo(inputUri, 'medium', (pct) => {
-    onProgress?.({ percentage: 40 + pct * 0.4, stage: 'sd' }) // 40-80%
-  })
-
-  // Extract thumbnail
-  onProgress?.({ percentage: 80, stage: 'thumbnail' })
-  const thumbnailUri = await extractThumbnail(inputUri)
-  onProgress?.({ percentage: 100, stage: 'thumbnail' })
-
-  // Get compressed file metadata using new File API
-  const hdFile = new File(hdUri)
-  const hdSize = hdFile.exists ? (hdFile.size ?? 0) : 0
+  const uploadFile = new File(inputUri)
+  const uploadSize = uploadFile.exists ? (uploadFile.size ?? metadata.size) : metadata.size
 
   return {
-    hdUri,
-    sdUri,
-    thumbnailUri,
+    uploadUri: inputUri,
     metadata: {
       ...metadata,
-      size: hdSize,
+      size: uploadSize,
     },
   }
 }
@@ -136,10 +83,8 @@ export async function cleanupTempVideos(uris: string[]): Promise<void> {
 }
 
 /**
- * Cancel any running compression
- * Note: react-native-compressor handles cancellation internally
+ * Cancel in-flight preparation work if a cancellable processor is added later.
  */
 export function cancelProcessing(): void {
-  // react-native-compressor doesn't expose a cancel API like FFmpeg
-  // If needed, implement via AbortController pattern in the caller
+  // Metadata extraction does not expose cancellation.
 }

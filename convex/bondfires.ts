@@ -67,9 +67,12 @@ export const listByUser = query({
 // Create a new bondfire
 export const create = mutation({
   args: {
-    videoKey: v.string(),
+    storageProvider: v.optional(v.union(v.literal('s3'), v.literal('bunny'))),
+    videoKey: v.optional(v.string()),
     sdVideoKey: v.optional(v.string()),
     thumbnailKey: v.optional(v.string()),
+    bunnyVideoId: v.optional(v.string()),
+    bunnyLibraryId: v.optional(v.string()),
     durationMs: v.optional(v.number()),
     width: v.optional(v.number()),
     height: v.optional(v.number()),
@@ -83,13 +86,25 @@ export const create = mutation({
 
     const user = await ctx.db.get(userId)
     const now = Date.now()
+    const storageProvider = args.storageProvider ?? (args.bunnyVideoId ? 'bunny' : 's3')
+
+    if (storageProvider === 'bunny' && (!args.bunnyVideoId || !args.bunnyLibraryId)) {
+      throw new Error('Bunny video ID and library ID are required for Bunny Stream videos')
+    }
+
+    if (storageProvider === 's3' && !args.videoKey) {
+      throw new Error('S3 video key is required for S3 videos')
+    }
 
     const bondfireId = await ctx.db.insert('bondfires', {
       userId,
       creatorName: user?.displayName ?? user?.name,
+      storageProvider,
       videoKey: args.videoKey,
       sdVideoKey: args.sdVideoKey,
       thumbnailKey: args.thumbnailKey,
+      bunnyVideoId: args.bunnyVideoId,
+      bunnyLibraryId: args.bunnyLibraryId,
       durationMs: args.durationMs,
       width: args.width,
       height: args.height,
