@@ -9,7 +9,7 @@ import { Button, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
 import { Flame, SwitchCamera, X } from '@tamagui/lucide-icons'
-import { useAction, useMutation } from 'convex/react'
+import { useAction } from 'convex/react'
 import {
   type CameraType,
   CameraView,
@@ -72,9 +72,8 @@ export default function CreateScreen() {
   const isCameraReady = useValue(state$.isCameraReady)
   const cameraMountError = useValue(state$.cameraMountError)
 
-  const createBondfire = useMutation(api.bondfires.create)
-  const addResponse = useMutation(api.bondfireVideos.addResponse)
-  const getBunnyUploadCredentials = useAction(api.videos.getBunnyUploadCredentials)
+  const createMuxDirectUpload = useAction(api.videos.createMuxDirectUpload)
+  const getMuxUploadStatus = useAction(api.videos.getMuxUploadStatus)
   const keepAwakeTag = 'create-recording'
 
   // Recording timer (interval-based - keep useEffect)
@@ -233,20 +232,17 @@ export default function CreateScreen() {
   const startPendingUploads = useCallback(async () => {
     await resumePendingUploads({
       isResponse: false,
-      getBunnyUploadCredentials: async (args) => {
-        return await getBunnyUploadCredentials(args)
-      },
-      createBondfire: async (args) => {
-        await createBondfire(args)
-      },
-      addResponse: async (args) => {
-        await addResponse({
+      createMuxDirectUpload: async (args) => {
+        return await createMuxDirectUpload({
           ...args,
-          bondfireId: args.bondfireId as Id<'bondfires'>,
+          bondfireId: args.bondfireId as Id<'bondfires'> | undefined,
         })
       },
+      getMuxUploadStatus: async (args) => {
+        return await getMuxUploadStatus(args)
+      },
     })
-  }, [getBunnyUploadCredentials, createBondfire, addResponse])
+  }, [createMuxDirectUpload, getMuxUploadStatus])
 
   const schedulePendingUploads = useCallback(() => {
     clearUploadStartTimeout()
@@ -331,17 +327,14 @@ export default function CreateScreen() {
             videoUri: uri,
             bondfireId: respondTo,
             isResponse: !!respondTo,
-            getBunnyUploadCredentials: async (args) => {
-              return await getBunnyUploadCredentials(args)
-            },
-            createBondfire: async (args) => {
-              await createBondfire(args)
-            },
-            addResponse: async (args) => {
-              await addResponse({
+            createMuxDirectUpload: async (args) => {
+              return await createMuxDirectUpload({
                 ...args,
-                bondfireId: args.bondfireId as Id<'bondfires'>,
+                bondfireId: args.bondfireId as Id<'bondfires'> | undefined,
               })
+            },
+            getMuxUploadStatus: async (args) => {
+              return await getMuxUploadStatus(args)
             },
           },
           false,
@@ -352,7 +345,7 @@ export default function CreateScreen() {
         return null
       }
     },
-    [respondTo, getBunnyUploadCredentials, createBondfire, addResponse],
+    [respondTo, createMuxDirectUpload, getMuxUploadStatus],
   )
 
   const finalizeRecording = useCallback(

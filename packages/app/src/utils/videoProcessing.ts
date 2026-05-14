@@ -42,7 +42,7 @@ export async function getVideoMetadata(videoUri: string): Promise<VideoMetadata>
 }
 
 /**
- * Prepare a video for Bunny Stream upload. Bunny handles transcoding and thumbnails.
+ * Prepare a video for Mux upload. Mux handles transcoding and thumbnails.
  */
 export async function processVideo(
   inputUri: string,

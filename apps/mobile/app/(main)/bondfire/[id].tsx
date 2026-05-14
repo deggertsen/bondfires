@@ -40,7 +40,7 @@ import {
 } from 'react-native'
 import { Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
-import type { Id } from '../../../../../convex/_generated/dataModel'
+import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { NotepadOverlay } from '../../../components/NotepadOverlay'
 import { ReportButton } from '../../../components/ReportButton'
 import { ReportOverlay } from '../../../components/ReportOverlay'
@@ -556,17 +556,17 @@ export default function BondfireDetailScreen() {
       const mainUrl = await getVideoUrls({
         hdKey: bondfireData.videoKey,
         sdKey: bondfireData.sdVideoKey,
-        bunnyVideoId: bondfireData.bunnyVideoId,
-        bunnyLibraryId: bondfireData.bunnyLibraryId,
+        muxPlaybackId: bondfireData.muxPlaybackId,
+        muxPlaybackPolicy: bondfireData.muxPlaybackPolicy,
       })
 
-      const responseUrls = await Promise.all(
-        bondfireData.videos.map((v) =>
+      const responseUrls: Array<{ hdUrl: string; sdUrl: string | null }> = await Promise.all(
+        bondfireData.videos.map((v: Doc<'bondfireVideos'>) =>
           getVideoUrls({
             hdKey: v.videoKey,
             sdKey: v.sdVideoKey,
-            bunnyVideoId: v.bunnyVideoId,
-            bunnyLibraryId: v.bunnyLibraryId,
+            muxPlaybackId: v.muxPlaybackId,
+            muxPlaybackPolicy: v.muxPlaybackPolicy,
           }),
         ),
       )
@@ -728,7 +728,7 @@ export default function BondfireDetailScreen() {
       isMainVideo: true,
       responseIndex: undefined as number | undefined,
     },
-    ...bondfireData.videos.map((v, i) => ({
+    ...bondfireData.videos.map((v: Doc<'bondfireVideos'>, i: number) => ({
       key: v._id,
       bondfireId: undefined as Id<'bondfires'> | undefined,
       bondfireVideoId: v._id as Id<'bondfireVideos'>,

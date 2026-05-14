@@ -7,11 +7,13 @@ import { auth } from './auth'
 export const listByBondfire = query({
   args: { bondfireId: v.id('bondfires') },
   handler: async (ctx, args) => {
-    return await ctx.db
+    const videos = await ctx.db
       .query('bondfireVideos')
       .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
       .order('asc')
       .collect()
+
+    return videos.filter((video) => (video.videoStatus ?? 'ready') === 'ready')
   },
 })
 
@@ -31,12 +33,22 @@ export const listByUser = query({
 export const addResponse = mutation({
   args: {
     bondfireId: v.id('bondfires'),
-    storageProvider: v.optional(v.union(v.literal('s3'), v.literal('bunny'))),
+    storageProvider: v.optional(v.union(v.literal('s3'), v.literal('mux'))),
     videoKey: v.optional(v.string()),
     sdVideoKey: v.optional(v.string()),
     thumbnailKey: v.optional(v.string()),
-    bunnyVideoId: v.optional(v.string()),
-    bunnyLibraryId: v.optional(v.string()),
+    muxUploadId: v.optional(v.string()),
+    muxAssetId: v.optional(v.string()),
+    muxPlaybackId: v.optional(v.string()),
+    muxPlaybackPolicy: v.optional(v.union(v.literal('public'), v.literal('signed'))),
+    videoStatus: v.optional(
+      v.union(
+        v.literal('waiting_for_upload'),
+        v.literal('processing'),
+        v.literal('ready'),
+        v.literal('errored'),
+      ),
+    ),
     durationMs: v.optional(v.number()),
     width: v.optional(v.number()),
     height: v.optional(v.number()),
@@ -56,10 +68,10 @@ export const addResponse = mutation({
     }
 
     const now = Date.now()
-    const storageProvider = args.storageProvider ?? (args.bunnyVideoId ? 'bunny' : 's3')
+    const storageProvider = args.storageProvider ?? (args.muxAssetId ? 'mux' : 's3')
 
-    if (storageProvider === 'bunny' && (!args.bunnyVideoId || !args.bunnyLibraryId)) {
-      throw new Error('Bunny video ID and library ID are required for Bunny Stream videos')
+    if (storageProvider === 'mux' && (!args.muxAssetId || !args.muxPlaybackId)) {
+      throw new Error('Mux asset ID and playback ID are required for Mux videos')
     }
 
     if (storageProvider === 's3' && !args.videoKey) {
@@ -84,8 +96,12 @@ export const addResponse = mutation({
       videoKey: args.videoKey,
       sdVideoKey: args.sdVideoKey,
       thumbnailKey: args.thumbnailKey,
-      bunnyVideoId: args.bunnyVideoId,
-      bunnyLibraryId: args.bunnyLibraryId,
+      muxUploadId: args.muxUploadId,
+      muxAssetId: args.muxAssetId,
+      muxPlaybackId: args.muxPlaybackId,
+      muxPlaybackPolicy: args.muxPlaybackPolicy,
+      muxAssetStatus: args.videoStatus,
+      videoStatus: args.videoStatus ?? 'ready',
       durationMs: args.durationMs,
       width: args.width,
       height: args.height,

@@ -16,9 +16,11 @@ export const listFeed = query({
       .query('bondfires')
       .withIndex('by_video_count')
       .order('asc')
-      .take(limit)
+      .take(limit * 3)
 
     return bondfires
+      .filter((bondfire) => (bondfire.videoStatus ?? 'ready') === 'ready')
+      .slice(0, limit)
   },
 })
 
@@ -45,9 +47,11 @@ export const getWithVideos = query({
       .order('asc')
       .collect()
 
+    const readyVideos = videos.filter((video) => (video.videoStatus ?? 'ready') === 'ready')
+
     return {
       ...bondfire,
-      videos,
+      videos: readyVideos,
     }
   },
 })
@@ -56,23 +60,35 @@ export const getWithVideos = query({
 export const listByUser = query({
   args: { userId: v.id('users') },
   handler: async (ctx, args) => {
-    return await ctx.db
+    const bondfires = await ctx.db
       .query('bondfires')
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
       .order('desc')
       .collect()
+
+    return bondfires.filter((bondfire) => (bondfire.videoStatus ?? 'ready') === 'ready')
   },
 })
 
 // Create a new bondfire
 export const create = mutation({
   args: {
-    storageProvider: v.optional(v.union(v.literal('s3'), v.literal('bunny'))),
+    storageProvider: v.optional(v.union(v.literal('s3'), v.literal('mux'))),
     videoKey: v.optional(v.string()),
     sdVideoKey: v.optional(v.string()),
     thumbnailKey: v.optional(v.string()),
-    bunnyVideoId: v.optional(v.string()),
-    bunnyLibraryId: v.optional(v.string()),
+    muxUploadId: v.optional(v.string()),
+    muxAssetId: v.optional(v.string()),
+    muxPlaybackId: v.optional(v.string()),
+    muxPlaybackPolicy: v.optional(v.union(v.literal('public'), v.literal('signed'))),
+    videoStatus: v.optional(
+      v.union(
+        v.literal('waiting_for_upload'),
+        v.literal('processing'),
+        v.literal('ready'),
+        v.literal('errored'),
+      ),
+    ),
     durationMs: v.optional(v.number()),
     width: v.optional(v.number()),
     height: v.optional(v.number()),
@@ -86,10 +102,10 @@ export const create = mutation({
 
     const user = await ctx.db.get(userId)
     const now = Date.now()
-    const storageProvider = args.storageProvider ?? (args.bunnyVideoId ? 'bunny' : 's3')
+    const storageProvider = args.storageProvider ?? (args.muxAssetId ? 'mux' : 's3')
 
-    if (storageProvider === 'bunny' && (!args.bunnyVideoId || !args.bunnyLibraryId)) {
-      throw new Error('Bunny video ID and library ID are required for Bunny Stream videos')
+    if (storageProvider === 'mux' && (!args.muxAssetId || !args.muxPlaybackId)) {
+      throw new Error('Mux asset ID and playback ID are required for Mux videos')
     }
 
     if (storageProvider === 's3' && !args.videoKey) {
@@ -100,11 +116,15 @@ export const create = mutation({
       userId,
       creatorName: user?.displayName ?? user?.name,
       storageProvider,
+      videoStatus: args.videoStatus ?? 'ready',
       videoKey: args.videoKey,
       sdVideoKey: args.sdVideoKey,
       thumbnailKey: args.thumbnailKey,
-      bunnyVideoId: args.bunnyVideoId,
-      bunnyLibraryId: args.bunnyLibraryId,
+      muxUploadId: args.muxUploadId,
+      muxAssetId: args.muxAssetId,
+      muxPlaybackId: args.muxPlaybackId,
+      muxPlaybackPolicy: args.muxPlaybackPolicy,
+      muxAssetStatus: args.videoStatus,
       durationMs: args.durationMs,
       width: args.width,
       height: args.height,

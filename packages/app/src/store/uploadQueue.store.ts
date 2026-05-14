@@ -14,24 +14,17 @@ export interface UploadTask {
   lastAttemptAt?: number
   updatedAt?: number
   completedAt?: number
-  bunnyUpload?: {
-    // Cached after Bunny video creation
-    videoId: string
-    libraryId: string
-    endpoint: string
-    authorizationSignature: string
-    authorizationExpire: number
-    headers: {
-      AuthorizationSignature: string
-      AuthorizationExpire: string
-      LibraryId: string
-      VideoId: string
-    }
-    metadata: {
-      filetype: string
-      title: string
-    }
+  uploadFilename?: string
+  uploadContentType?: string
+  muxUpload?: {
+    // Cached after Mux direct upload creation
+    uploadId: string
+    uploadUrl: string
+    recordId: string
+    recordType: 'bondfire' | 'response'
+    expiresIn?: number
   }
+  muxUploadCompletedAt?: number
   processedVideo?: {
     // Cached after processing
     uploadUri: string

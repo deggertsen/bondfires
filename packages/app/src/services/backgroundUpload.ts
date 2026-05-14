@@ -1,10 +1,11 @@
 import {
   cacheDirectory,
   copyAsync,
+  createUploadTask,
+  FileSystemUploadType,
   getInfoAsync,
   makeDirectoryAsync,
 } from 'expo-file-system/legacy'
-import * as tus from 'tus-js-client'
 import { type UploadTask, uploadQueueActions } from '../store/uploadQueue.store'
 import { cleanupTempVideos, type ProcessedVideo, processVideo } from '../utils/videoProcessing'
 
@@ -16,18 +17,32 @@ const activeTaskIds = new Set<string>()
 const PROCESSING_MAX_PROGRESS = 15
 const CREDENTIALS_READY_PROGRESS = 20
 const UPLOAD_END_PROGRESS = 97
+const MUX_READY_PROGRESS = 99
 const COMPLETE_PROGRESS = 100
-type TusUploadOptions = ConstructorParameters<typeof tus.Upload>[1]
-type ReactNativeTusFile = {
-  uri: string
-  name: string
-  type: string
+const MUX_READY_POLL_INTERVAL_MS = 5000
+const MUX_READY_TIMEOUT_MS = 10 * 60 * 1000
+
+interface MuxUploadStatus {
+  uploadStatus: string
+  assetStatus?: string
+  assetId?: string
+  playbackId?: string
+  isReady: boolean
+  isFailed: boolean
 }
-type ReactNativeTusUploadConstructor = new (
-  file: ReactNativeTusFile,
-  options: TusUploadOptions,
-) => tus.Upload
-const ReactNativeTusUpload = tus.Upload as ReactNativeTusUploadConstructor
+
+interface MuxDirectUpload {
+  uploadId: string
+  uploadUrl: string
+  recordId: string
+  recordType: 'bondfire' | 'response'
+  expiresIn?: number
+}
+
+interface UploadFileInfo {
+  filename: string
+  contentType: string
+}
 
 export interface BackgroundUploadCallbacks {
   onProgress?: (progress: number, stage: string) => void
@@ -39,40 +54,16 @@ export interface BackgroundUploadOptions {
   videoUri: string // Original video URI from camera
   bondfireId?: string // If responding to existing bondfire
   isResponse: boolean
-  getBunnyUploadCredentials: (args: { filename: string; contentType: string }) => Promise<{
-    videoId: string
-    libraryId: string
-    endpoint: string
-    authorizationSignature: string
-    authorizationExpire: number
-    headers: {
-      AuthorizationSignature: string
-      AuthorizationExpire: string
-      LibraryId: string
-      VideoId: string
-    }
-    metadata: {
-      filetype: string
-      title: string
-    }
-  }>
-  createBondfire: (args: {
-    storageProvider: 'bunny'
-    bunnyVideoId: string
-    bunnyLibraryId: string
-    durationMs: number
-    width: number
-    height: number
-  }) => Promise<void>
-  addResponse: (args: {
-    bondfireId: string
-    storageProvider: 'bunny'
-    bunnyVideoId: string
-    bunnyLibraryId: string
-    durationMs: number
-    width: number
-    height: number
-  }) => Promise<void>
+  createMuxDirectUpload: (args: {
+    filename: string
+    contentType: string
+    isResponse: boolean
+    bondfireId?: string
+    durationMs?: number
+    width?: number
+    height?: number
+  }) => Promise<MuxDirectUpload>
+  getMuxUploadStatus: (args: { uploadId: string }) => Promise<MuxUploadStatus>
   callbacks?: BackgroundUploadCallbacks
 }
 
@@ -118,11 +109,46 @@ function hasPreparedUpload(
   return !!video && typeof video.uploadUri === 'string'
 }
 
-async function uploadBunnyTusWithProgress(params: {
-  upload: NonNullable<UploadTask['bunnyUpload']>
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function getExtensionFromUri(uri: string): string | null {
+  const path = uri.split('?')[0]?.split('#')[0] ?? uri
+  const lastSegment = path.split('/').pop() ?? ''
+  const match = /\.([a-zA-Z0-9]+)$/.exec(lastSegment)
+  return match?.[1]?.toLowerCase() ?? null
+}
+
+function getContentTypeForExtension(extension: string | null): string {
+  switch (extension) {
+    case 'mov':
+      return 'video/quicktime'
+    case 'm4v':
+    case 'mp4':
+      return 'video/mp4'
+    case 'webm':
+      return 'video/webm'
+    case '3gp':
+    case '3gpp':
+      return 'video/3gpp'
+    default:
+      return 'video/mp4'
+  }
+}
+
+function getUploadFileInfo(uri: string, fallbackTimestamp = Date.now()): UploadFileInfo {
+  const extension = getExtensionFromUri(uri) ?? 'mp4'
+  return {
+    filename: `bondfire-${fallbackTimestamp}.${extension}`,
+    contentType: getContentTypeForExtension(extension),
+  }
+}
+
+async function uploadFileWithProgress(params: {
+  uploadUrl: string
   fileUri: string
   contentType: string
-  filename: string
   onProgress: (fractionComplete: number) => void
 }): Promise<void> {
   const fileInfo = await getInfoAsync(params.fileUri)
@@ -130,42 +156,67 @@ async function uploadBunnyTusWithProgress(params: {
     throw new Error(`Video file not found: ${params.fileUri}`)
   }
 
-  const uploadSize = typeof fileInfo.size === 'number' ? fileInfo.size : undefined
-  const file: ReactNativeTusFile = {
-    uri: params.fileUri,
-    name: params.filename,
-    type: params.contentType,
+  const uploadTask = createUploadTask(
+    params.uploadUrl,
+    params.fileUri,
+    {
+      httpMethod: 'PUT',
+      uploadType: FileSystemUploadType.BINARY_CONTENT,
+      headers: {
+        'Content-Type': params.contentType,
+      },
+    },
+    ({ totalBytesExpectedToSend, totalBytesSent }) => {
+      const fraction =
+        totalBytesExpectedToSend > 0
+          ? totalBytesSent / totalBytesExpectedToSend
+          : totalBytesSent > 0
+            ? 1
+            : 0
+      params.onProgress(Math.max(0, Math.min(1, fraction)))
+    },
+  )
+
+  const result = await uploadTask.uploadAsync()
+  if (!result || result.status < 200 || result.status >= 300) {
+    throw new Error(`Mux upload failed with status ${result?.status ?? 'unknown'}`)
   }
 
-  await new Promise<void>((resolve, reject) => {
-    let lastFraction = -1
+  params.onProgress(1)
+}
 
-    const upload = new ReactNativeTusUpload(file, {
-      endpoint: params.upload.endpoint,
-      retryDelays: [0, 3000, 5000, 10000, 20000, 60000],
-      headers: params.upload.headers,
-      metadata: params.upload.metadata,
-      uploadSize,
-      onProgress: (bytesUploaded, bytesTotal) => {
-        const fraction = bytesTotal > 0 ? bytesUploaded / bytesTotal : bytesUploaded > 0 ? 1 : 0
-        const normalizedFraction = Math.max(0, Math.min(1, fraction))
+async function waitForMuxVideoReady(params: {
+  upload: NonNullable<UploadTask['muxUpload']>
+  options: BackgroundUploadOptions
+  taskId: string
+}): Promise<MuxUploadStatus> {
+  const startedAt = Date.now()
 
-        if (Math.abs(normalizedFraction - lastFraction) >= 0.01 || normalizedFraction === 1) {
-          lastFraction = normalizedFraction
-          params.onProgress(normalizedFraction)
-        }
-      },
-      onError: (error) => {
-        reject(error)
-      },
-      onSuccess: () => {
-        params.onProgress(1)
-        resolve()
-      },
+  while (Date.now() - startedAt < MUX_READY_TIMEOUT_MS) {
+    const status = await params.options.getMuxUploadStatus({
+      uploadId: params.upload.uploadId,
     })
 
-    upload.start()
-  })
+    if (status.isFailed) {
+      throw new Error('Mux failed to process the uploaded video')
+    }
+
+    if (status.isReady) {
+      setTaskProgress(params.taskId, params.options, MUX_READY_PROGRESS, 'Video is ready')
+      return status
+    }
+
+    const statusLabel = status.assetStatus ?? status.uploadStatus
+    setTaskProgress(
+      params.taskId,
+      params.options,
+      UPLOAD_END_PROGRESS,
+      `Waiting for video processing (${statusLabel})...`,
+    )
+    await delay(MUX_READY_POLL_INTERVAL_MS)
+  }
+
+  throw new Error('Mux video is still processing. Upload will resume checking shortly.')
 }
 
 /**
@@ -183,7 +234,8 @@ async function copyToPersistentStorage(uri: string): Promise<string> {
   }
 
   const persistentDir = `${cacheDirectory}uploads/`
-  const persistentPath = `${persistentDir}${Date.now()}-${Math.random().toString(36).substring(7)}.mp4`
+  const extension = getExtensionFromUri(uri) ?? 'mp4'
+  const persistentPath = `${persistentDir}${Date.now()}-${Math.random().toString(36).substring(7)}.${extension}`
 
   // Ensure directory exists
   const dirInfo = await getInfoAsync(persistentDir)
@@ -211,6 +263,7 @@ export async function startBackgroundUpload(
 
   // Copy video to persistent storage
   const persistentPath = await copyToPersistentStorage(options.videoUri)
+  const uploadFileInfo = getUploadFileInfo(persistentPath)
 
   // Create upload task
   const task: UploadTask = {
@@ -221,6 +274,8 @@ export async function startBackgroundUpload(
     status: 'pending',
     progress: 0,
     stage: 'Queued',
+    uploadFilename: uploadFileInfo.filename,
+    uploadContentType: uploadFileInfo.contentType,
     attemptCount: 0,
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -257,6 +312,17 @@ async function processUploadTask(taskId: string, options: BackgroundUploadOption
   try {
     // Step 1: Process video if not already processed
     let processed: ProcessedVideo
+    const uploadFileInfo: UploadFileInfo =
+      task.uploadFilename && task.uploadContentType
+        ? { filename: task.uploadFilename, contentType: task.uploadContentType }
+        : getUploadFileInfo(task.videoFilePath)
+
+    if (!task.uploadFilename || !task.uploadContentType) {
+      uploadQueueActions.updateTask(taskId, {
+        uploadFilename: uploadFileInfo.filename,
+        uploadContentType: uploadFileInfo.contentType,
+      })
+    }
 
     uploadQueueActions.updateTask(taskId, {
       status: 'processing',
@@ -281,70 +347,59 @@ async function processUploadTask(taskId: string, options: BackgroundUploadOption
       setTaskProgress(taskId, options, PROCESSING_MAX_PROGRESS, 'Video processing complete')
     }
 
-    // Step 2: Create Bunny video and get signed TUS credentials if not already obtained
-    let bunnyUpload = task.bunnyUpload
-    const filename = `bondfire-${Date.now()}.mp4`
-    if (!bunnyUpload) {
-      setTaskProgress(taskId, options, PROCESSING_MAX_PROGRESS, 'Creating Bunny upload...')
-      bunnyUpload = await options.getBunnyUploadCredentials({
-        filename,
-        contentType: 'video/mp4',
+    // Step 2: Create Mux direct upload and pending Convex record if needed.
+    let muxUpload = task.muxUpload
+    if (!muxUpload) {
+      setTaskProgress(taskId, options, PROCESSING_MAX_PROGRESS, 'Creating Mux upload...')
+      muxUpload = await options.createMuxDirectUpload({
+        filename: uploadFileInfo.filename,
+        contentType: uploadFileInfo.contentType,
+        isResponse: options.isResponse,
+        bondfireId: options.bondfireId,
+        durationMs: processed.metadata.durationMs,
+        width: processed.metadata.width,
+        height: processed.metadata.height,
       })
 
       uploadQueueActions.updateTask(taskId, {
-        bunnyUpload,
+        muxUpload,
       })
     }
 
     setTaskProgress(taskId, options, CREDENTIALS_READY_PROGRESS, 'Upload ready')
 
-    // Step 3: Upload original video to Bunny Stream with TUS progress
+    // Step 3: Upload original video to Mux with progress.
     uploadQueueActions.updateTask(taskId, { status: 'uploading' })
 
     const uploadRange = UPLOAD_END_PROGRESS - CREDENTIALS_READY_PROGRESS
-    await uploadBunnyTusWithProgress({
-      upload: bunnyUpload,
-      fileUri: processed.uploadUri,
-      contentType: 'video/mp4',
-      filename,
-      onProgress: (fraction) => {
-        setTaskProgress(
-          taskId,
-          options,
-          CREDENTIALS_READY_PROGRESS + uploadRange * fraction,
-          'Uploading video...',
-        )
-      },
-    })
-
-    // Step 4: Create bondfire or response
-    setTaskProgress(
-      taskId,
-      options,
-      UPLOAD_END_PROGRESS,
-      options.isResponse ? 'Publishing response...' : 'Publishing bondfire...',
-    )
-
-    if (options.isResponse && options.bondfireId) {
-      await options.addResponse({
-        bondfireId: options.bondfireId,
-        storageProvider: 'bunny',
-        bunnyVideoId: bunnyUpload.videoId,
-        bunnyLibraryId: bunnyUpload.libraryId,
-        durationMs: processed.metadata.durationMs,
-        width: processed.metadata.width,
-        height: processed.metadata.height,
-      })
+    if (task.muxUploadCompletedAt) {
+      setTaskProgress(taskId, options, UPLOAD_END_PROGRESS, 'Upload complete')
     } else {
-      await options.createBondfire({
-        storageProvider: 'bunny',
-        bunnyVideoId: bunnyUpload.videoId,
-        bunnyLibraryId: bunnyUpload.libraryId,
-        durationMs: processed.metadata.durationMs,
-        width: processed.metadata.width,
-        height: processed.metadata.height,
+      await uploadFileWithProgress({
+        uploadUrl: muxUpload.uploadUrl,
+        fileUri: processed.uploadUri,
+        contentType: uploadFileInfo.contentType,
+        onProgress: (fraction) => {
+          setTaskProgress(
+            taskId,
+            options,
+            CREDENTIALS_READY_PROGRESS + uploadRange * fraction,
+            'Uploading video...',
+          )
+        },
+      })
+
+      uploadQueueActions.updateTask(taskId, {
+        muxUploadCompletedAt: Date.now(),
       })
     }
+
+    // Step 4: Wait for Mux to make the playback ID available.
+    await waitForMuxVideoReady({
+      upload: muxUpload,
+      options,
+      taskId,
+    })
 
     // Step 5: Cleanup
     await cleanupTempVideos([processed.uploadUri])
