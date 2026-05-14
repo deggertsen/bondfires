@@ -17,6 +17,7 @@ export default defineSchema({
     name: v.optional(v.string()),
     displayName: v.optional(v.string()),
     photoUrl: v.optional(v.string()),
+    photoStorageId: v.optional(v.id('_storage')),
 
     // Stats (denormalized for performance)
     bondfireCount: v.optional(v.number()),
@@ -37,10 +38,24 @@ export default defineSchema({
     userId: v.id('users'),
     creatorName: v.optional(v.string()), // Denormalized for display
 
-    // Video storage (S3 keys)
-    videoKey: v.string(), // HD video key in S3
-    sdVideoKey: v.optional(v.string()), // SD video key in S3
-    thumbnailKey: v.optional(v.string()), // Thumbnail image key
+    // Video storage
+    videoStatus: v.optional(
+      v.union(
+        v.literal('waiting_for_upload'),
+        v.literal('processing'),
+        v.literal('ready'),
+        v.literal('errored'),
+      ),
+    ),
+    muxUploadId: v.optional(v.string()),
+    muxAssetId: v.optional(v.string()),
+    muxPlaybackId: v.optional(v.string()),
+    muxPlaybackPolicy: v.optional(v.union(v.literal('public'), v.literal('signed'))),
+    muxAssetStatus: v.optional(v.string()),
+    muxAspectRatio: v.optional(v.string()),
+    muxMaxResolution: v.optional(v.string()),
+    muxLiveStreamId: v.optional(v.string()),
+    muxLivePlaybackId: v.optional(v.string()),
 
     // Video metadata
     durationMs: v.optional(v.number()),
@@ -64,7 +79,9 @@ export default defineSchema({
     // User's bondfires
     .index('by_user', ['userId', 'createdAt'])
     // Recent bondfires
-    .index('by_created', ['createdAt']),
+    .index('by_created', ['createdAt'])
+    .index('by_mux_upload', ['muxUploadId'])
+    .index('by_mux_asset', ['muxAssetId']),
 
   // Bondfire Videos - response videos to bondfires
   bondfireVideos: defineTable({
@@ -76,10 +93,24 @@ export default defineSchema({
     // Position in the bondfire sequence
     sequenceNumber: v.number(),
 
-    // Video storage (S3 keys)
-    videoKey: v.string(), // HD video key in S3
-    sdVideoKey: v.optional(v.string()), // SD video key in S3
-    thumbnailKey: v.optional(v.string()),
+    // Video storage
+    videoStatus: v.optional(
+      v.union(
+        v.literal('waiting_for_upload'),
+        v.literal('processing'),
+        v.literal('ready'),
+        v.literal('errored'),
+      ),
+    ),
+    muxUploadId: v.optional(v.string()),
+    muxAssetId: v.optional(v.string()),
+    muxPlaybackId: v.optional(v.string()),
+    muxPlaybackPolicy: v.optional(v.union(v.literal('public'), v.literal('signed'))),
+    muxAssetStatus: v.optional(v.string()),
+    muxAspectRatio: v.optional(v.string()),
+    muxMaxResolution: v.optional(v.string()),
+    muxLiveStreamId: v.optional(v.string()),
+    muxLivePlaybackId: v.optional(v.string()),
 
     // Video metadata
     durationMs: v.optional(v.number()),
@@ -96,7 +127,42 @@ export default defineSchema({
     // Get all videos for a bondfire in order
     .index('by_bondfire', ['bondfireId', 'sequenceNumber'])
     // User's response videos
-    .index('by_user', ['userId', 'createdAt']),
+    .index('by_user', ['userId', 'createdAt'])
+    .index('by_mux_upload', ['muxUploadId'])
+    .index('by_mux_asset', ['muxAssetId']),
+
+  // Live Sessions - Mux live broadcasts before they become replay assets
+  liveSessions: defineTable({
+    userId: v.id('users'),
+    bondfireId: v.optional(v.id('bondfires')),
+    bondfireVideoId: v.optional(v.id('bondfireVideos')),
+    muxLiveStreamId: v.string(),
+    muxLivePlaybackId: v.optional(v.string()),
+    muxActiveAssetId: v.optional(v.string()),
+    muxRecentAssetId: v.optional(v.string()),
+    status: v.union(
+      v.literal('created'),
+      v.literal('starting'),
+      v.literal('live'),
+      v.literal('ending'),
+      v.literal('ended'),
+      v.literal('errored'),
+    ),
+    startedAt: v.optional(v.number()),
+    endedAt: v.optional(v.number()),
+    errorMessage: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId', 'createdAt'])
+    .index('by_mux_live_stream', ['muxLiveStreamId'])
+    .index('by_status', ['status', 'updatedAt']),
+
+  muxWebhookEvents: defineTable({
+    eventId: v.string(),
+    eventType: v.string(),
+    createdAt: v.number(),
+  }).index('by_event_id', ['eventId']),
 
   // Watch Events - video analytics
   watchEvents: defineTable({

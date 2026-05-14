@@ -14,12 +14,35 @@ const BASE_RETRY_DELAY = 2000 // 2 seconds
 const COMPLETED_TASK_RETENTION_MS = 30000
 const activeTaskIds = new Set<string>()
 
-const PROCESSING_MAX_PROGRESS = 40
-const URLS_READY_PROGRESS = 45
-const HD_UPLOAD_END_PROGRESS = 75
-const SD_UPLOAD_END_PROGRESS = 90
-const THUMB_UPLOAD_END_PROGRESS = 97
+const PROCESSING_MAX_PROGRESS = 15
+const CREDENTIALS_READY_PROGRESS = 20
+const UPLOAD_END_PROGRESS = 97
+const MUX_READY_PROGRESS = 99
 const COMPLETE_PROGRESS = 100
+const MUX_READY_POLL_INTERVAL_MS = 5000
+const MUX_READY_TIMEOUT_MS = 10 * 60 * 1000
+
+interface MuxUploadStatus {
+  uploadStatus: string
+  assetStatus?: string
+  assetId?: string
+  playbackId?: string
+  isReady: boolean
+  isFailed: boolean
+}
+
+interface MuxDirectUpload {
+  uploadId: string
+  uploadUrl: string
+  recordId: string
+  recordType: 'bondfire' | 'response'
+  expiresIn?: number
+}
+
+interface UploadFileInfo {
+  filename: string
+  contentType: string
+}
 
 export interface BackgroundUploadCallbacks {
   onProgress?: (progress: number, stage: string) => void
@@ -31,31 +54,16 @@ export interface BackgroundUploadOptions {
   videoUri: string // Original video URI from camera
   bondfireId?: string // If responding to existing bondfire
   isResponse: boolean
-  getUploadUrls: (args: { filename: string; contentType: string }) => Promise<{
-    hdUrl: string
-    sdUrl: string
-    thumbnailUrl: string
-    hdKey: string
-    sdKey: string
-    thumbnailKey: string
-  }>
-  createBondfire: (args: {
-    videoKey: string
-    sdVideoKey: string
-    thumbnailKey: string
-    durationMs: number
-    width: number
-    height: number
-  }) => Promise<void>
-  addResponse: (args: {
-    bondfireId: string
-    videoKey: string
-    sdVideoKey: string
-    thumbnailKey: string
-    durationMs: number
-    width: number
-    height: number
-  }) => Promise<void>
+  createMuxDirectUpload: (args: {
+    filename: string
+    contentType: string
+    isResponse: boolean
+    bondfireId?: string
+    durationMs?: number
+    width?: number
+    height?: number
+  }) => Promise<MuxDirectUpload>
+  getMuxUploadStatus: (args: { uploadId: string }) => Promise<MuxUploadStatus>
   callbacks?: BackgroundUploadCallbacks
 }
 
@@ -63,16 +71,14 @@ function clampProgress(progress: number): number {
   return Math.max(0, Math.min(100, Math.round(progress)))
 }
 
-function stageLabel(stage: 'hd' | 'sd' | 'thumbnail'): string {
+function stageLabel(stage: 'metadata' | 'ready'): string {
   switch (stage) {
-    case 'hd':
-      return 'Processing HD video...'
-    case 'sd':
-      return 'Processing SD video...'
-    case 'thumbnail':
-      return 'Generating thumbnail...'
+    case 'metadata':
+      return 'Reading video metadata...'
+    case 'ready':
+      return 'Video ready to upload...'
     default:
-      return 'Processing video...'
+      return 'Preparing video...'
   }
 }
 
@@ -97,49 +103,120 @@ function setTaskProgress(
   options.callbacks?.onProgress?.(normalizedProgress, stage)
 }
 
+function hasPreparedUpload(
+  video: UploadTask['processedVideo'] | undefined,
+): video is ProcessedVideo {
+  return !!video && typeof video.uploadUri === 'string'
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function getExtensionFromUri(uri: string): string | null {
+  const path = uri.split('?')[0]?.split('#')[0] ?? uri
+  const lastSegment = path.split('/').pop() ?? ''
+  const match = /\.([a-zA-Z0-9]+)$/.exec(lastSegment)
+  return match?.[1]?.toLowerCase() ?? null
+}
+
+function getContentTypeForExtension(extension: string | null): string {
+  switch (extension) {
+    case 'mov':
+      return 'video/quicktime'
+    case 'm4v':
+    case 'mp4':
+      return 'video/mp4'
+    case 'webm':
+      return 'video/webm'
+    case '3gp':
+    case '3gpp':
+      return 'video/3gpp'
+    default:
+      return 'video/mp4'
+  }
+}
+
+function getUploadFileInfo(uri: string, fallbackTimestamp = Date.now()): UploadFileInfo {
+  const extension = getExtensionFromUri(uri) ?? 'mp4'
+  return {
+    filename: `bondfire-${fallbackTimestamp}.${extension}`,
+    contentType: getContentTypeForExtension(extension),
+  }
+}
+
 async function uploadFileWithProgress(params: {
-  url: string
+  uploadUrl: string
   fileUri: string
   contentType: string
   onProgress: (fractionComplete: number) => void
 }): Promise<void> {
-  let lastFraction = -1
+  const fileInfo = await getInfoAsync(params.fileUri)
+  if (!fileInfo.exists) {
+    throw new Error(`Video file not found: ${params.fileUri}`)
+  }
 
   const uploadTask = createUploadTask(
-    params.url,
+    params.uploadUrl,
     params.fileUri,
     {
       httpMethod: 'PUT',
       uploadType: FileSystemUploadType.BINARY_CONTENT,
-      headers: { 'Content-Type': params.contentType },
+      headers: {
+        'Content-Type': params.contentType,
+      },
     },
-    (progress) => {
-      const expectedBytes = progress.totalBytesExpectedToSend
+    ({ totalBytesExpectedToSend, totalBytesSent }) => {
       const fraction =
-        expectedBytes > 0
-          ? progress.totalBytesSent / expectedBytes
-          : progress.totalBytesSent > 0
+        totalBytesExpectedToSend > 0
+          ? totalBytesSent / totalBytesExpectedToSend
+          : totalBytesSent > 0
             ? 1
             : 0
-      const normalizedFraction = Math.max(0, Math.min(1, fraction))
-
-      // Only update when progress has materially moved (or completes) to avoid noisy re-renders.
-      if (Math.abs(normalizedFraction - lastFraction) >= 0.01 || normalizedFraction === 1) {
-        lastFraction = normalizedFraction
-        params.onProgress(normalizedFraction)
-      }
+      params.onProgress(Math.max(0, Math.min(1, fraction)))
     },
   )
 
-  const response = await uploadTask.uploadAsync()
-  if (!response) {
-    throw new Error('Upload was cancelled before completion')
-  }
-  if (response.status < 200 || response.status >= 300) {
-    throw new Error(`Failed to upload file: ${response.status}`)
+  const result = await uploadTask.uploadAsync()
+  if (!result || result.status < 200 || result.status >= 300) {
+    throw new Error(`Mux upload failed with status ${result?.status ?? 'unknown'}`)
   }
 
   params.onProgress(1)
+}
+
+async function waitForMuxVideoReady(params: {
+  upload: NonNullable<UploadTask['muxUpload']>
+  options: BackgroundUploadOptions
+  taskId: string
+}): Promise<MuxUploadStatus> {
+  const startedAt = Date.now()
+
+  while (Date.now() - startedAt < MUX_READY_TIMEOUT_MS) {
+    const status = await params.options.getMuxUploadStatus({
+      uploadId: params.upload.uploadId,
+    })
+
+    if (status.isFailed) {
+      throw new Error('Mux failed to process the uploaded video')
+    }
+
+    if (status.isReady) {
+      setTaskProgress(params.taskId, params.options, MUX_READY_PROGRESS, 'Video is ready')
+      return status
+    }
+
+    const statusLabel = status.assetStatus ?? status.uploadStatus
+    setTaskProgress(
+      params.taskId,
+      params.options,
+      UPLOAD_END_PROGRESS,
+      `Waiting for video processing (${statusLabel})...`,
+    )
+    await delay(MUX_READY_POLL_INTERVAL_MS)
+  }
+
+  throw new Error('Mux video is still processing. Upload will resume checking shortly.')
 }
 
 /**
@@ -157,7 +234,8 @@ async function copyToPersistentStorage(uri: string): Promise<string> {
   }
 
   const persistentDir = `${cacheDirectory}uploads/`
-  const persistentPath = `${persistentDir}${Date.now()}-${Math.random().toString(36).substring(7)}.mp4`
+  const extension = getExtensionFromUri(uri) ?? 'mp4'
+  const persistentPath = `${persistentDir}${Date.now()}-${Math.random().toString(36).substring(7)}.${extension}`
 
   // Ensure directory exists
   const dirInfo = await getInfoAsync(persistentDir)
@@ -185,6 +263,7 @@ export async function startBackgroundUpload(
 
   // Copy video to persistent storage
   const persistentPath = await copyToPersistentStorage(options.videoUri)
+  const uploadFileInfo = getUploadFileInfo(persistentPath)
 
   // Create upload task
   const task: UploadTask = {
@@ -195,6 +274,8 @@ export async function startBackgroundUpload(
     status: 'pending',
     progress: 0,
     stage: 'Queued',
+    uploadFilename: uploadFileInfo.filename,
+    uploadContentType: uploadFileInfo.contentType,
     attemptCount: 0,
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -231,14 +312,25 @@ async function processUploadTask(taskId: string, options: BackgroundUploadOption
   try {
     // Step 1: Process video if not already processed
     let processed: ProcessedVideo
+    const uploadFileInfo: UploadFileInfo =
+      task.uploadFilename && task.uploadContentType
+        ? { filename: task.uploadFilename, contentType: task.uploadContentType }
+        : getUploadFileInfo(task.videoFilePath)
+
+    if (!task.uploadFilename || !task.uploadContentType) {
+      uploadQueueActions.updateTask(taskId, {
+        uploadFilename: uploadFileInfo.filename,
+        uploadContentType: uploadFileInfo.contentType,
+      })
+    }
 
     uploadQueueActions.updateTask(taskId, {
       status: 'processing',
       errorMessage: undefined,
     })
 
-    if (task.processedVideo) {
-      processed = task.processedVideo as ProcessedVideo
+    if (hasPreparedUpload(task.processedVideo)) {
+      processed = task.processedVideo
       setTaskProgress(taskId, options, PROCESSING_MAX_PROGRESS, 'Video already processed')
     } else {
       setTaskProgress(taskId, options, 0, 'Processing video...')
@@ -255,95 +347,62 @@ async function processUploadTask(taskId: string, options: BackgroundUploadOption
       setTaskProgress(taskId, options, PROCESSING_MAX_PROGRESS, 'Video processing complete')
     }
 
-    // Step 2: Get presigned URLs if not already obtained
-    let presignedUrls = task.presignedUrls
-    if (!presignedUrls) {
-      setTaskProgress(taskId, options, PROCESSING_MAX_PROGRESS, 'Getting upload URLs...')
-      const filename = `bondfire-${Date.now()}.mp4`
-      presignedUrls = await options.getUploadUrls({
-        filename,
-        contentType: 'video/mp4',
+    // Step 2: Create Mux direct upload and pending Convex record if needed.
+    let muxUpload = task.muxUpload
+    if (!muxUpload) {
+      setTaskProgress(taskId, options, PROCESSING_MAX_PROGRESS, 'Creating Mux upload...')
+      muxUpload = await options.createMuxDirectUpload({
+        filename: uploadFileInfo.filename,
+        contentType: uploadFileInfo.contentType,
+        isResponse: options.isResponse,
+        bondfireId: options.bondfireId,
+        durationMs: processed.metadata.durationMs,
+        width: processed.metadata.width,
+        height: processed.metadata.height,
       })
 
       uploadQueueActions.updateTask(taskId, {
-        presignedUrls,
+        muxUpload,
       })
     }
 
-    setTaskProgress(taskId, options, URLS_READY_PROGRESS, 'Upload URLs ready')
+    setTaskProgress(taskId, options, CREDENTIALS_READY_PROGRESS, 'Upload ready')
 
-    // Step 3: Upload files with byte-level progress
+    // Step 3: Upload original video to Mux with progress.
     uploadQueueActions.updateTask(taskId, { status: 'uploading' })
 
-    const hdStart = URLS_READY_PROGRESS
-    const hdRange = HD_UPLOAD_END_PROGRESS - hdStart
-    await uploadFileWithProgress({
-      url: presignedUrls.hdUrl,
-      fileUri: processed.hdUri,
-      contentType: 'video/mp4',
-      onProgress: (fraction) => {
-        setTaskProgress(taskId, options, hdStart + hdRange * fraction, 'Uploading HD video...')
-      },
-    })
-
-    const sdStart = HD_UPLOAD_END_PROGRESS
-    const sdRange = SD_UPLOAD_END_PROGRESS - sdStart
-    await uploadFileWithProgress({
-      url: presignedUrls.sdUrl,
-      fileUri: processed.sdUri,
-      contentType: 'video/mp4',
-      onProgress: (fraction) => {
-        setTaskProgress(taskId, options, sdStart + sdRange * fraction, 'Uploading SD video...')
-      },
-    })
-
-    const thumbStart = SD_UPLOAD_END_PROGRESS
-    const thumbRange = THUMB_UPLOAD_END_PROGRESS - thumbStart
-    await uploadFileWithProgress({
-      url: presignedUrls.thumbnailUrl,
-      fileUri: processed.thumbnailUri,
-      contentType: 'image/jpeg',
-      onProgress: (fraction) => {
-        setTaskProgress(
-          taskId,
-          options,
-          thumbStart + thumbRange * fraction,
-          'Uploading thumbnail...',
-        )
-      },
-    })
-
-    // Step 4: Create bondfire or response
-    setTaskProgress(
-      taskId,
-      options,
-      THUMB_UPLOAD_END_PROGRESS,
-      options.isResponse ? 'Publishing response...' : 'Publishing bondfire...',
-    )
-
-    if (options.isResponse && options.bondfireId) {
-      await options.addResponse({
-        bondfireId: options.bondfireId,
-        videoKey: presignedUrls.hdKey,
-        sdVideoKey: presignedUrls.sdKey,
-        thumbnailKey: presignedUrls.thumbnailKey,
-        durationMs: processed.metadata.durationMs,
-        width: processed.metadata.width,
-        height: processed.metadata.height,
-      })
+    const uploadRange = UPLOAD_END_PROGRESS - CREDENTIALS_READY_PROGRESS
+    if (task.muxUploadCompletedAt) {
+      setTaskProgress(taskId, options, UPLOAD_END_PROGRESS, 'Upload complete')
     } else {
-      await options.createBondfire({
-        videoKey: presignedUrls.hdKey,
-        sdVideoKey: presignedUrls.sdKey,
-        thumbnailKey: presignedUrls.thumbnailKey,
-        durationMs: processed.metadata.durationMs,
-        width: processed.metadata.width,
-        height: processed.metadata.height,
+      await uploadFileWithProgress({
+        uploadUrl: muxUpload.uploadUrl,
+        fileUri: processed.uploadUri,
+        contentType: uploadFileInfo.contentType,
+        onProgress: (fraction) => {
+          setTaskProgress(
+            taskId,
+            options,
+            CREDENTIALS_READY_PROGRESS + uploadRange * fraction,
+            'Uploading video...',
+          )
+        },
+      })
+
+      uploadQueueActions.updateTask(taskId, {
+        muxUploadCompletedAt: Date.now(),
       })
     }
 
+    // Step 4: Wait for Mux to make the playback ID available.
+    await waitForMuxVideoReady({
+      upload: muxUpload,
+      options,
+      taskId,
+    })
+
     // Step 5: Cleanup
-    await cleanupTempVideos([processed.hdUri, processed.sdUri, processed.thumbnailUri])
+    await cleanupTempVideos([processed.uploadUri])
 
     const completedAt = Date.now()
     uploadQueueActions.updateTask(taskId, {

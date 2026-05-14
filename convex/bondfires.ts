@@ -16,9 +16,11 @@ export const listFeed = query({
       .query('bondfires')
       .withIndex('by_video_count')
       .order('asc')
-      .take(limit)
+      .take(limit * 3)
 
     return bondfires
+      .filter((bondfire) => (bondfire.videoStatus ?? 'ready') === 'ready' && bondfire.muxPlaybackId)
+      .slice(0, limit)
   },
 })
 
@@ -35,7 +37,7 @@ export const getWithVideos = query({
   args: { bondfireId: v.id('bondfires') },
   handler: async (ctx, args) => {
     const bondfire = await ctx.db.get(args.bondfireId)
-    if (!bondfire) {
+    if (!bondfire || (bondfire.videoStatus ?? 'ready') !== 'ready' || !bondfire.muxPlaybackId) {
       return null
     }
 
@@ -45,9 +47,13 @@ export const getWithVideos = query({
       .order('asc')
       .collect()
 
+    const readyVideos = videos.filter(
+      (video) => (video.videoStatus ?? 'ready') === 'ready' && video.muxPlaybackId,
+    )
+
     return {
       ...bondfire,
-      videos,
+      videos: readyVideos,
     }
   },
 })
@@ -56,20 +62,33 @@ export const getWithVideos = query({
 export const listByUser = query({
   args: { userId: v.id('users') },
   handler: async (ctx, args) => {
-    return await ctx.db
+    const bondfires = await ctx.db
       .query('bondfires')
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
       .order('desc')
       .collect()
+
+    return bondfires.filter(
+      (bondfire) => (bondfire.videoStatus ?? 'ready') === 'ready' && bondfire.muxPlaybackId,
+    )
   },
 })
 
 // Create a new bondfire
 export const create = mutation({
   args: {
-    videoKey: v.string(),
-    sdVideoKey: v.optional(v.string()),
-    thumbnailKey: v.optional(v.string()),
+    muxUploadId: v.optional(v.string()),
+    muxAssetId: v.optional(v.string()),
+    muxPlaybackId: v.optional(v.string()),
+    muxPlaybackPolicy: v.optional(v.union(v.literal('public'), v.literal('signed'))),
+    videoStatus: v.optional(
+      v.union(
+        v.literal('waiting_for_upload'),
+        v.literal('processing'),
+        v.literal('ready'),
+        v.literal('errored'),
+      ),
+    ),
     durationMs: v.optional(v.number()),
     width: v.optional(v.number()),
     height: v.optional(v.number()),
@@ -84,12 +103,19 @@ export const create = mutation({
     const user = await ctx.db.get(userId)
     const now = Date.now()
 
+    if (!args.muxAssetId || !args.muxPlaybackId) {
+      throw new Error('Mux asset ID and playback ID are required for Mux videos')
+    }
+
     const bondfireId = await ctx.db.insert('bondfires', {
       userId,
       creatorName: user?.displayName ?? user?.name,
-      videoKey: args.videoKey,
-      sdVideoKey: args.sdVideoKey,
-      thumbnailKey: args.thumbnailKey,
+      videoStatus: args.videoStatus ?? 'ready',
+      muxUploadId: args.muxUploadId,
+      muxAssetId: args.muxAssetId,
+      muxPlaybackId: args.muxPlaybackId,
+      muxPlaybackPolicy: args.muxPlaybackPolicy,
+      muxAssetStatus: args.videoStatus,
       durationMs: args.durationMs,
       width: args.width,
       height: args.height,

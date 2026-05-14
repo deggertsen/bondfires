@@ -27,7 +27,6 @@ export const updateProfile = mutation({
   args: {
     name: v.optional(v.string()),
     displayName: v.optional(v.string()),
-    photoUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await auth.getUserId(ctx)
@@ -41,9 +40,50 @@ export const updateProfile = mutation({
 
     if (args.name !== undefined) updates.name = args.name
     if (args.displayName !== undefined) updates.displayName = args.displayName
-    if (args.photoUrl !== undefined) updates.photoUrl = args.photoUrl
 
     await ctx.db.patch(userId, updates)
+    return await ctx.db.get(userId)
+  },
+})
+
+export const generateProfilePhotoUploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      throw new Error('Not authenticated')
+    }
+
+    return await ctx.storage.generateUploadUrl()
+  },
+})
+
+export const updateProfilePhoto = mutation({
+  args: {
+    storageId: v.id('_storage'),
+  },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      throw new Error('Not authenticated')
+    }
+
+    const user = await ctx.db.get(userId)
+    const photoUrl = await ctx.storage.getUrl(args.storageId)
+    if (!photoUrl) {
+      throw new Error('Uploaded photo not found')
+    }
+
+    await ctx.db.patch(userId, {
+      photoStorageId: args.storageId,
+      photoUrl,
+      updatedAt: Date.now(),
+    })
+
+    if (user?.photoStorageId && user.photoStorageId !== args.storageId) {
+      await ctx.storage.delete(user.photoStorageId)
+    }
+
     return await ctx.db.get(userId)
   },
 })
@@ -72,6 +112,11 @@ export const deleteAccount = mutation({
     const userId = await auth.getUserId(ctx)
     if (!userId) {
       throw new Error('Not authenticated')
+    }
+
+    const user = await ctx.db.get(userId)
+    if (user?.photoStorageId) {
+      await ctx.storage.delete(user.photoStorageId)
     }
 
     // 1. Delete all user's response videos (bondfireVideos)

@@ -14,20 +14,20 @@ export interface UploadTask {
   lastAttemptAt?: number
   updatedAt?: number
   completedAt?: number
-  presignedUrls?: {
-    // Cached after first fetch
-    hdUrl: string
-    sdUrl: string
-    thumbnailUrl: string
-    hdKey: string
-    sdKey: string
-    thumbnailKey: string
+  uploadFilename?: string
+  uploadContentType?: string
+  muxUpload?: {
+    // Cached after Mux direct upload creation
+    uploadId: string
+    uploadUrl: string
+    recordId: string
+    recordType: 'bondfire' | 'response'
+    expiresIn?: number
   }
+  muxUploadCompletedAt?: number
   processedVideo?: {
     // Cached after processing
-    hdUri: string
-    sdUri: string
-    thumbnailUri: string
+    uploadUri: string
     metadata: {
       width: number
       height: number

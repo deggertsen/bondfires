@@ -219,7 +219,7 @@ function FeedSubscription({ onResolved }: { onResolved: (bondfires: BondfireData
 export default function FeedScreen() {
   const router = useRouter()
   const insets = useSafeAreaInsets()
-  const getDownloadUrl = useAction(api.videos.getDownloadUrl)
+  const getThumbnailUrl = useAction(api.videos.getThumbnailUrl)
 
   const [viewMode, setViewMode] = useState<ViewMode>('discover')
   const [query, setQuery] = useState('')
@@ -339,21 +339,24 @@ export default function FeedScreen() {
 
   const ensureThumbnailUrl = useCallback(
     async (bondfire: BondfireData) => {
-      if (!bondfire.thumbnailKey) return
+      if (!bondfire.muxPlaybackId) return
       if (state$.thumbnailUrls[bondfire._id].get()) return
       if (loadingThumbsRef.current.has(bondfire._id)) return
 
       loadingThumbsRef.current.add(bondfire._id)
       try {
-        const { downloadUrl } = await getDownloadUrl({ key: bondfire.thumbnailKey })
-        state$.thumbnailUrls[bondfire._id].set(downloadUrl)
+        const { thumbnailUrl } = await getThumbnailUrl({
+          muxPlaybackId: bondfire.muxPlaybackId,
+          muxPlaybackPolicy: bondfire.muxPlaybackPolicy,
+        })
+        state$.thumbnailUrls[bondfire._id].set(thumbnailUrl)
       } catch (error) {
         console.error('Failed to load thumbnail URL for bondfire:', bondfire._id, error)
       } finally {
         loadingThumbsRef.current.delete(bondfire._id)
       }
     },
-    [getDownloadUrl, state$],
+    [getThumbnailUrl, state$],
   )
 
   useEffect(() => {

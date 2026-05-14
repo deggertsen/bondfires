@@ -7,11 +7,15 @@ import { auth } from './auth'
 export const listByBondfire = query({
   args: { bondfireId: v.id('bondfires') },
   handler: async (ctx, args) => {
-    return await ctx.db
+    const videos = await ctx.db
       .query('bondfireVideos')
       .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
       .order('asc')
       .collect()
+
+    return videos.filter(
+      (video) => (video.videoStatus ?? 'ready') === 'ready' && video.muxPlaybackId,
+    )
   },
 })
 
@@ -31,9 +35,18 @@ export const listByUser = query({
 export const addResponse = mutation({
   args: {
     bondfireId: v.id('bondfires'),
-    videoKey: v.string(),
-    sdVideoKey: v.optional(v.string()),
-    thumbnailKey: v.optional(v.string()),
+    muxUploadId: v.optional(v.string()),
+    muxAssetId: v.optional(v.string()),
+    muxPlaybackId: v.optional(v.string()),
+    muxPlaybackPolicy: v.optional(v.union(v.literal('public'), v.literal('signed'))),
+    videoStatus: v.optional(
+      v.union(
+        v.literal('waiting_for_upload'),
+        v.literal('processing'),
+        v.literal('ready'),
+        v.literal('errored'),
+      ),
+    ),
     durationMs: v.optional(v.number()),
     width: v.optional(v.number()),
     height: v.optional(v.number()),
@@ -54,6 +67,10 @@ export const addResponse = mutation({
 
     const now = Date.now()
 
+    if (!args.muxAssetId || !args.muxPlaybackId) {
+      throw new Error('Mux asset ID and playback ID are required for Mux videos')
+    }
+
     // Get the next sequence number
     const existingVideos = await ctx.db
       .query('bondfireVideos')
@@ -68,9 +85,12 @@ export const addResponse = mutation({
       userId,
       creatorName: user?.displayName ?? user?.name,
       sequenceNumber,
-      videoKey: args.videoKey,
-      sdVideoKey: args.sdVideoKey,
-      thumbnailKey: args.thumbnailKey,
+      muxUploadId: args.muxUploadId,
+      muxAssetId: args.muxAssetId,
+      muxPlaybackId: args.muxPlaybackId,
+      muxPlaybackPolicy: args.muxPlaybackPolicy,
+      muxAssetStatus: args.videoStatus,
+      videoStatus: args.videoStatus ?? 'ready',
       durationMs: args.durationMs,
       width: args.width,
       height: args.height,

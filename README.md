@@ -12,8 +12,9 @@ A video sharing social app where users create "bondfires" (video posts) and othe
 | Backend/Database | Convex |
 | Authentication | Convex Auth |
 | Navigation | Expo Router |
-| Video Storage | AWS S3 |
-| Video Processing | react-native-compressor |
+| Video Streaming | Mux Video |
+| Profile Photo Storage | Convex File Storage |
+| Video Metadata | react-native-compressor |
 | Monorepo | Turborepo |
 | Package Manager | Yarn |
 | Infrastructure | Terraform |
@@ -82,6 +83,21 @@ Create a `.env.local` file in the root:
 ```env
 EXPO_PUBLIC_CONVEX_URL=your-convex-deployment-url
 ```
+
+Set these in the Convex dashboard for video and image storage:
+
+```env
+# Mux Video for new bondfire videos
+MUX_TOKEN_ID=your-mux-token-id
+MUX_TOKEN_SECRET=your-mux-token-secret
+MUX_WEBHOOK_SECRET=your-mux-webhook-secret
+MUX_PLAYBACK_POLICY=public
+MUX_UPLOAD_CORS_ORIGIN=*
+MUX_VIDEO_QUALITY=basic
+```
+
+Configure the Mux webhook endpoint to point at the Convex HTTP action path
+`https://<your-convex-deployment>.convex.site/mux/webhook`.
 
 ### Development Setup
 
