@@ -49,7 +49,7 @@ echo "✅ Committed version bump"
 # --- Build + auto-submit both platforms ---
 echo "🚀 Starting EAS builds with auto-submit..."
 cd apps/mobile
-npx eas build \
+npx eas-cli build \
   --platform all \
   --profile production \
   --non-interactive \
