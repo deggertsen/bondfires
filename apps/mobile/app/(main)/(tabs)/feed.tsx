@@ -339,14 +339,13 @@ export default function FeedScreen() {
 
   const ensureThumbnailUrl = useCallback(
     async (bondfire: BondfireData) => {
-      if (!bondfire.thumbnailKey && !bondfire.muxPlaybackId) return
+      if (!bondfire.muxPlaybackId) return
       if (state$.thumbnailUrls[bondfire._id].get()) return
       if (loadingThumbsRef.current.has(bondfire._id)) return
 
       loadingThumbsRef.current.add(bondfire._id)
       try {
         const { thumbnailUrl } = await getThumbnailUrl({
-          thumbnailKey: bondfire.thumbnailKey,
           muxPlaybackId: bondfire.muxPlaybackId,
           muxPlaybackPolicy: bondfire.muxPlaybackPolicy,
         })

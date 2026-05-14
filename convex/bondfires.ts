@@ -19,7 +19,7 @@ export const listFeed = query({
       .take(limit * 3)
 
     return bondfires
-      .filter((bondfire) => (bondfire.videoStatus ?? 'ready') === 'ready')
+      .filter((bondfire) => (bondfire.videoStatus ?? 'ready') === 'ready' && bondfire.muxPlaybackId)
       .slice(0, limit)
   },
 })
@@ -37,7 +37,7 @@ export const getWithVideos = query({
   args: { bondfireId: v.id('bondfires') },
   handler: async (ctx, args) => {
     const bondfire = await ctx.db.get(args.bondfireId)
-    if (!bondfire) {
+    if (!bondfire || (bondfire.videoStatus ?? 'ready') !== 'ready' || !bondfire.muxPlaybackId) {
       return null
     }
 
@@ -47,7 +47,9 @@ export const getWithVideos = query({
       .order('asc')
       .collect()
 
-    const readyVideos = videos.filter((video) => (video.videoStatus ?? 'ready') === 'ready')
+    const readyVideos = videos.filter(
+      (video) => (video.videoStatus ?? 'ready') === 'ready' && video.muxPlaybackId,
+    )
 
     return {
       ...bondfire,
@@ -66,17 +68,15 @@ export const listByUser = query({
       .order('desc')
       .collect()
 
-    return bondfires.filter((bondfire) => (bondfire.videoStatus ?? 'ready') === 'ready')
+    return bondfires.filter(
+      (bondfire) => (bondfire.videoStatus ?? 'ready') === 'ready' && bondfire.muxPlaybackId,
+    )
   },
 })
 
 // Create a new bondfire
 export const create = mutation({
   args: {
-    storageProvider: v.optional(v.union(v.literal('s3'), v.literal('mux'))),
-    videoKey: v.optional(v.string()),
-    sdVideoKey: v.optional(v.string()),
-    thumbnailKey: v.optional(v.string()),
     muxUploadId: v.optional(v.string()),
     muxAssetId: v.optional(v.string()),
     muxPlaybackId: v.optional(v.string()),
@@ -102,24 +102,15 @@ export const create = mutation({
 
     const user = await ctx.db.get(userId)
     const now = Date.now()
-    const storageProvider = args.storageProvider ?? (args.muxAssetId ? 'mux' : 's3')
 
-    if (storageProvider === 'mux' && (!args.muxAssetId || !args.muxPlaybackId)) {
+    if (!args.muxAssetId || !args.muxPlaybackId) {
       throw new Error('Mux asset ID and playback ID are required for Mux videos')
-    }
-
-    if (storageProvider === 's3' && !args.videoKey) {
-      throw new Error('S3 video key is required for S3 videos')
     }
 
     const bondfireId = await ctx.db.insert('bondfires', {
       userId,
       creatorName: user?.displayName ?? user?.name,
-      storageProvider,
       videoStatus: args.videoStatus ?? 'ready',
-      videoKey: args.videoKey,
-      sdVideoKey: args.sdVideoKey,
-      thumbnailKey: args.thumbnailKey,
       muxUploadId: args.muxUploadId,
       muxAssetId: args.muxAssetId,
       muxPlaybackId: args.muxPlaybackId,

@@ -17,6 +17,7 @@ export default defineSchema({
     name: v.optional(v.string()),
     displayName: v.optional(v.string()),
     photoUrl: v.optional(v.string()),
+    photoStorageId: v.optional(v.id('_storage')),
 
     // Stats (denormalized for performance)
     bondfireCount: v.optional(v.number()),
@@ -38,7 +39,6 @@ export default defineSchema({
     creatorName: v.optional(v.string()), // Denormalized for display
 
     // Video storage
-    storageProvider: v.optional(v.union(v.literal('s3'), v.literal('mux'))),
     videoStatus: v.optional(
       v.union(
         v.literal('waiting_for_upload'),
@@ -47,9 +47,6 @@ export default defineSchema({
         v.literal('errored'),
       ),
     ),
-    videoKey: v.optional(v.string()), // Legacy HD video key in S3
-    sdVideoKey: v.optional(v.string()), // Legacy SD video key in S3
-    thumbnailKey: v.optional(v.string()), // Legacy thumbnail image key in S3
     muxUploadId: v.optional(v.string()),
     muxAssetId: v.optional(v.string()),
     muxPlaybackId: v.optional(v.string()),
@@ -97,7 +94,6 @@ export default defineSchema({
     sequenceNumber: v.number(),
 
     // Video storage
-    storageProvider: v.optional(v.union(v.literal('s3'), v.literal('mux'))),
     videoStatus: v.optional(
       v.union(
         v.literal('waiting_for_upload'),
@@ -106,9 +102,6 @@ export default defineSchema({
         v.literal('errored'),
       ),
     ),
-    videoKey: v.optional(v.string()), // Legacy HD video key in S3
-    sdVideoKey: v.optional(v.string()), // Legacy SD video key in S3
-    thumbnailKey: v.optional(v.string()), // Legacy thumbnail image key in S3
     muxUploadId: v.optional(v.string()),
     muxAssetId: v.optional(v.string()),
     muxPlaybackId: v.optional(v.string()),

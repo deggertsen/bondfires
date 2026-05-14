@@ -553,18 +553,20 @@ export default function BondfireDetailScreen() {
     if (!bondfireData) return
 
     const loadUrls = async () => {
+      if (!bondfireData.muxPlaybackId) return
+
       const mainUrl = await getVideoUrls({
-        hdKey: bondfireData.videoKey,
-        sdKey: bondfireData.sdVideoKey,
         muxPlaybackId: bondfireData.muxPlaybackId,
         muxPlaybackPolicy: bondfireData.muxPlaybackPolicy,
       })
 
+      const playableResponses = bondfireData.videos.filter(
+        (v: Doc<'bondfireVideos'>): v is Doc<'bondfireVideos'> & { muxPlaybackId: string } =>
+          !!v.muxPlaybackId,
+      )
       const responseUrls: Array<{ hdUrl: string; sdUrl: string | null }> = await Promise.all(
-        bondfireData.videos.map((v: Doc<'bondfireVideos'>) =>
+        playableResponses.map((v) =>
           getVideoUrls({
-            hdKey: v.videoKey,
-            sdKey: v.sdVideoKey,
             muxPlaybackId: v.muxPlaybackId,
             muxPlaybackPolicy: v.muxPlaybackPolicy,
           }),

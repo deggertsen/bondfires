@@ -17,7 +17,7 @@ import {
   User,
   Video,
 } from '@tamagui/lucide-icons'
-import { useAction, useMutation, useQuery } from 'convex/react'
+import { useMutation, useQuery } from 'convex/react'
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator'
 import * as ImagePicker from 'expo-image-picker'
 import { useRouter } from 'expo-router'
@@ -25,7 +25,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, FlatList, Pressable, RefreshControl, ScrollView, StatusBar } from 'react-native'
 import { Avatar, Separator, Sheet, Spinner, Switch, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
-import type { Doc } from '../../../../../convex/_generated/dataModel'
+import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { UploadProgressCard } from '../../../components/UploadProgressCard'
 
 type CurrentUserData = Doc<'users'> | null
@@ -63,8 +63,9 @@ export default function ProfileScreen() {
   const { signOut } = useAuthActions()
 
   const updateProfile = useMutation(api.users.updateProfile)
+  const generateProfilePhotoUploadUrl = useMutation(api.users.generateProfilePhotoUploadUrl)
+  const updateProfilePhoto = useMutation(api.users.updateProfilePhoto)
   const deleteAccountMutation = useMutation(api.users.deleteAccount)
-  const getProfilePhotoUploadUrl = useAction(api.videos.getProfilePhotoUploadUrl)
 
   const { preferences, setVideoQuality, setAutoplayVideos, setNotificationsEnabled } =
     usePreferences()
@@ -220,12 +221,12 @@ export default function ProfileScreen() {
         { compress: 0.8, format: SaveFormat.JPEG },
       )
 
-      const { uploadUrl, downloadUrl } = await getProfilePhotoUploadUrl()
+      const uploadUrl = await generateProfilePhotoUploadUrl()
 
       const response = await fetch(manipulated.uri)
       const blob = await response.blob()
       const uploadResponse = await fetch(uploadUrl, {
-        method: 'PUT',
+        method: 'POST',
         headers: { 'Content-Type': 'image/jpeg' },
         body: blob,
       })
@@ -234,7 +235,8 @@ export default function ProfileScreen() {
         throw new Error(`Upload failed: ${uploadResponse.status}`)
       }
 
-      await updateProfile({ photoUrl: downloadUrl })
+      const { storageId } = (await uploadResponse.json()) as { storageId: Id<'_storage'> }
+      await updateProfilePhoto({ storageId })
       handleRefresh()
     } catch (error) {
       console.error('Photo upload error:', error)
@@ -242,7 +244,7 @@ export default function ProfileScreen() {
     } finally {
       state$.isUploadingPhoto.set(false)
     }
-  }, [getProfilePhotoUploadUrl, handleRefresh, state$, updateProfile])
+  }, [generateProfilePhotoUploadUrl, handleRefresh, state$, updateProfilePhoto])
 
   useEffect(() => {
     return () => {

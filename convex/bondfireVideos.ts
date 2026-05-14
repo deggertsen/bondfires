@@ -13,7 +13,9 @@ export const listByBondfire = query({
       .order('asc')
       .collect()
 
-    return videos.filter((video) => (video.videoStatus ?? 'ready') === 'ready')
+    return videos.filter(
+      (video) => (video.videoStatus ?? 'ready') === 'ready' && video.muxPlaybackId,
+    )
   },
 })
 
@@ -33,10 +35,6 @@ export const listByUser = query({
 export const addResponse = mutation({
   args: {
     bondfireId: v.id('bondfires'),
-    storageProvider: v.optional(v.union(v.literal('s3'), v.literal('mux'))),
-    videoKey: v.optional(v.string()),
-    sdVideoKey: v.optional(v.string()),
-    thumbnailKey: v.optional(v.string()),
     muxUploadId: v.optional(v.string()),
     muxAssetId: v.optional(v.string()),
     muxPlaybackId: v.optional(v.string()),
@@ -68,14 +66,9 @@ export const addResponse = mutation({
     }
 
     const now = Date.now()
-    const storageProvider = args.storageProvider ?? (args.muxAssetId ? 'mux' : 's3')
 
-    if (storageProvider === 'mux' && (!args.muxAssetId || !args.muxPlaybackId)) {
+    if (!args.muxAssetId || !args.muxPlaybackId) {
       throw new Error('Mux asset ID and playback ID are required for Mux videos')
-    }
-
-    if (storageProvider === 's3' && !args.videoKey) {
-      throw new Error('S3 video key is required for S3 videos')
     }
 
     // Get the next sequence number
@@ -92,10 +85,6 @@ export const addResponse = mutation({
       userId,
       creatorName: user?.displayName ?? user?.name,
       sequenceNumber,
-      storageProvider,
-      videoKey: args.videoKey,
-      sdVideoKey: args.sdVideoKey,
-      thumbnailKey: args.thumbnailKey,
       muxUploadId: args.muxUploadId,
       muxAssetId: args.muxAssetId,
       muxPlaybackId: args.muxPlaybackId,

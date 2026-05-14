@@ -1,10 +1,3 @@
-import {
-  DeleteObjectCommand,
-  GetObjectCommand,
-  PutObjectCommand,
-  S3Client,
-} from '@aws-sdk/client-s3'
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
@@ -18,7 +11,6 @@ type MuxRecord =
   | { table: 'bondfireVideos'; document: Doc<'bondfireVideos'> }
 
 interface MuxDirectUploadResult {
-  storageProvider: 'mux'
   uploadId: string
   uploadUrl: string
   recordId: Id<'bondfires'> | Id<'bondfireVideos'>
@@ -31,35 +23,6 @@ const DEFAULT_MUX_UPLOAD_TIMEOUT_SECONDS = 60 * 60
 const MUX_READY_STATUSES = new Set(['ready'])
 const MUX_FAILED_STATUSES = new Set(['errored', 'cancelled', 'timed_out'])
 const MUX_LIVE_RTMP_ENDPOINT = 'rtmp://global-live.mux.com:5222/app'
-
-// Initialize S3 client
-function getS3Client() {
-  const region = process.env.AWS_REGION
-  const accessKeyId = process.env.AWS_ACCESS_KEY_ID
-  const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY
-
-  if (!region || !accessKeyId || !secretAccessKey) {
-    throw new Error(
-      'AWS credentials not configured. Please set AWS_REGION, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY in Convex environment variables.',
-    )
-  }
-
-  return new S3Client({
-    region,
-    credentials: {
-      accessKeyId,
-      secretAccessKey,
-    },
-  })
-}
-
-function getBucket(): string {
-  const bucket = process.env.S3_BUCKET_NAME
-  if (!bucket) {
-    throw new Error('S3_BUCKET_NAME not configured in Convex environment variables.')
-  }
-  return bucket
-}
 
 function getMuxConfig() {
   const tokenId = process.env.MUX_TOKEN_ID
@@ -263,7 +226,6 @@ async function markRecordReady(
 ) {
   const wasReady = (record.document.videoStatus ?? 'ready') === 'ready'
   const patch = {
-    storageProvider: 'mux' as const,
     videoStatus: 'ready' as const,
     muxAssetStatus: args.assetStatus ?? 'ready',
     muxAssetId: args.assetId,
@@ -357,44 +319,6 @@ function readMuxAssetInfo(asset: Record<string, unknown>) {
   }
 }
 
-// Generate a presigned URL for uploading a video to S3
-export const getUploadUrl = action({
-  args: {
-    filename: v.string(),
-    contentType: v.string(),
-    quality: v.optional(v.union(v.literal('hd'), v.literal('sd'))),
-  },
-  handler: async (ctx, args) => {
-    const userId = await auth.getUserId(ctx)
-    if (!userId) {
-      throw new Error('Not authenticated')
-    }
-
-    const client = getS3Client()
-    const bucket = getBucket()
-
-    // Generate a unique key for the video
-    const timestamp = Date.now()
-    const quality = args.quality ?? 'hd'
-    const sanitizedFilename = args.filename.replace(/[^a-zA-Z0-9.-]/g, '_')
-    const key = `videos/${userId}/${timestamp}-${quality}-${sanitizedFilename}`
-
-    const command = new PutObjectCommand({
-      Bucket: bucket,
-      Key: key,
-      ContentType: args.contentType,
-    })
-
-    const uploadUrl = await getSignedUrl(client, command, { expiresIn: 3600 })
-
-    return {
-      uploadUrl,
-      key,
-      expiresIn: 3600,
-    }
-  },
-})
-
 export const createMuxDirectUpload = action({
   args: {
     filename: v.string(),
@@ -463,7 +387,6 @@ export const createMuxDirectUpload = action({
     })
 
     return {
-      storageProvider: 'mux' as const,
       uploadId,
       uploadUrl,
       recordId: pendingRecord.recordId,
@@ -586,243 +509,40 @@ export const createMuxLiveSession = action({
   },
 })
 
-// Generate a presigned URL for downloading/streaming a video
-export const getDownloadUrl = action({
-  args: {
-    key: v.string(),
-  },
-  handler: async (_ctx, args) => {
-    const client = getS3Client()
-    const bucket = getBucket()
-
-    const command = new GetObjectCommand({
-      Bucket: bucket,
-      Key: args.key,
-    })
-
-    const downloadUrl = await getSignedUrl(client, command, { expiresIn: 3600 })
-
-    return {
-      downloadUrl,
-      expiresIn: 3600,
-    }
-  },
-})
-
-// Generate URLs for Mux playback or legacy S3 objects.
+// Generate URLs for Mux playback.
 export const getVideoUrls = action({
   args: {
-    hdKey: v.optional(v.string()),
-    sdKey: v.optional(v.string()),
-    muxPlaybackId: v.optional(v.string()),
+    muxPlaybackId: v.string(),
     muxPlaybackPolicy: v.optional(v.union(v.literal('public'), v.literal('signed'))),
   },
   handler: async (_ctx, args) => {
-    if (args.muxPlaybackId) {
-      if (args.muxPlaybackPolicy === 'signed') {
-        throw new Error('Signed Mux playback is not implemented yet')
-      }
-
-      return {
-        hdUrl: getMuxPlaybackUrl(args.muxPlaybackId),
-        sdUrl: null,
-        thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
-        expiresIn: 0,
-      }
-    }
-
-    if (!args.hdKey) {
-      throw new Error('No video storage reference provided')
-    }
-
-    const client = getS3Client()
-    const bucket = getBucket()
-
-    const hdCommand = new GetObjectCommand({
-      Bucket: bucket,
-      Key: args.hdKey,
-    })
-
-    const hdUrl = await getSignedUrl(client, hdCommand, { expiresIn: 3600 })
-
-    let sdUrl: string | null = null
-    if (args.sdKey) {
-      const sdCommand = new GetObjectCommand({
-        Bucket: bucket,
-        Key: args.sdKey,
-      })
-      sdUrl = await getSignedUrl(client, sdCommand, { expiresIn: 3600 })
+    if (args.muxPlaybackPolicy === 'signed') {
+      throw new Error('Signed Mux playback is not implemented yet')
     }
 
     return {
-      hdUrl,
-      sdUrl,
-      thumbnailUrl: null,
-      expiresIn: 3600,
+      hdUrl: getMuxPlaybackUrl(args.muxPlaybackId),
+      sdUrl: null,
+      thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
+      expiresIn: 0,
     }
   },
 })
 
 export const getThumbnailUrl = action({
   args: {
-    thumbnailKey: v.optional(v.string()),
-    muxPlaybackId: v.optional(v.string()),
+    muxPlaybackId: v.string(),
     muxPlaybackPolicy: v.optional(v.union(v.literal('public'), v.literal('signed'))),
   },
   handler: async (_ctx, args) => {
-    if (args.muxPlaybackId) {
-      if (args.muxPlaybackPolicy === 'signed') {
-        throw new Error('Signed Mux thumbnails are not implemented yet')
-      }
-
-      return {
-        thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
-        previewUrl: getMuxPreviewUrl(args.muxPlaybackId),
-        expiresIn: 0,
-      }
+    if (args.muxPlaybackPolicy === 'signed') {
+      throw new Error('Signed Mux thumbnails are not implemented yet')
     }
-
-    if (!args.thumbnailKey) {
-      return {
-        thumbnailUrl: null,
-        previewUrl: null,
-        expiresIn: 0,
-      }
-    }
-
-    const client = getS3Client()
-    const bucket = getBucket()
-
-    const command = new GetObjectCommand({
-      Bucket: bucket,
-      Key: args.thumbnailKey,
-    })
-
-    const thumbnailUrl = await getSignedUrl(client, command, { expiresIn: 3600 })
 
     return {
-      thumbnailUrl,
-      previewUrl: null,
-      expiresIn: 3600,
-    }
-  },
-})
-
-// Delete a video from S3
-export const deleteVideo = action({
-  args: {
-    key: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const userId = await auth.getUserId(ctx)
-    if (!userId) {
-      throw new Error('Not authenticated')
-    }
-
-    // Verify the user owns this video (check key path)
-    if (!args.key.includes(`/${userId}/`)) {
-      throw new Error('Not authorized to delete this video')
-    }
-
-    const client = getS3Client()
-    const bucket = getBucket()
-
-    const command = new DeleteObjectCommand({
-      Bucket: bucket,
-      Key: args.key,
-    })
-
-    await client.send(command)
-
-    return { success: true }
-  },
-})
-
-// Generate a presigned upload URL for a profile photo
-export const getProfilePhotoUploadUrl = action({
-  args: {},
-  handler: async (ctx) => {
-    const userId = await auth.getUserId(ctx)
-    if (!userId) {
-      throw new Error('Not authenticated')
-    }
-
-    const client = getS3Client()
-    const bucket = getBucket()
-
-    const timestamp = Date.now()
-    const key = `profile-photos/${userId}/${timestamp}.jpg`
-
-    const uploadUrl = await getSignedUrl(
-      client,
-      new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: 'image/jpeg' }),
-      { expiresIn: 3600 },
-    )
-
-    // Generate a download URL for the uploaded photo
-    const downloadUrl = await getSignedUrl(
-      client,
-      new GetObjectCommand({ Bucket: bucket, Key: key }),
-      { expiresIn: 86400 * 7 }, // 7 day URL
-    )
-
-    return {
-      uploadUrl,
-      downloadUrl,
-      key,
-      expiresIn: 3600,
-    }
-  },
-})
-
-// Generate upload URLs for both HD and SD versions at once
-export const getUploadUrls = action({
-  args: {
-    filename: v.string(),
-    contentType: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const userId = await auth.getUserId(ctx)
-    if (!userId) {
-      throw new Error('Not authenticated')
-    }
-
-    const client = getS3Client()
-    const bucket = getBucket()
-
-    const timestamp = Date.now()
-    const sanitizedFilename = args.filename.replace(/[^a-zA-Z0-9.-]/g, '_')
-
-    const hdKey = `videos/${userId}/${timestamp}-hd-${sanitizedFilename}`
-    const sdKey = `videos/${userId}/${timestamp}-sd-${sanitizedFilename}`
-    const thumbnailKey = `thumbnails/${userId}/${timestamp}-thumb.jpg`
-
-    const [hdUrl, sdUrl, thumbnailUrl] = await Promise.all([
-      getSignedUrl(
-        client,
-        new PutObjectCommand({ Bucket: bucket, Key: hdKey, ContentType: args.contentType }),
-        { expiresIn: 3600 },
-      ),
-      getSignedUrl(
-        client,
-        new PutObjectCommand({ Bucket: bucket, Key: sdKey, ContentType: args.contentType }),
-        { expiresIn: 3600 },
-      ),
-      getSignedUrl(
-        client,
-        new PutObjectCommand({ Bucket: bucket, Key: thumbnailKey, ContentType: 'image/jpeg' }),
-        { expiresIn: 3600 },
-      ),
-    ])
-
-    return {
-      hdKey,
-      hdUrl,
-      sdKey,
-      sdUrl,
-      thumbnailKey,
-      thumbnailUrl,
-      expiresIn: 3600,
+      thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
+      previewUrl: getMuxPreviewUrl(args.muxPlaybackId),
+      expiresIn: 0,
     }
   },
 })
@@ -862,7 +582,6 @@ export const createPendingMuxVideo = internalMutation({
         userId: args.userId,
         creatorName: user?.displayName ?? user?.name,
         sequenceNumber,
-        storageProvider: 'mux',
         videoStatus: 'waiting_for_upload',
         muxUploadId: args.uploadId,
         muxPlaybackPolicy: args.playbackPolicy,
@@ -879,7 +598,6 @@ export const createPendingMuxVideo = internalMutation({
     const recordId = await ctx.db.insert('bondfires', {
       userId: args.userId,
       creatorName: user?.displayName ?? user?.name,
-      storageProvider: 'mux',
       videoStatus: 'waiting_for_upload',
       muxUploadId: args.uploadId,
       muxPlaybackPolicy: args.playbackPolicy,
@@ -894,6 +612,110 @@ export const createPendingMuxVideo = internalMutation({
     })
 
     return { recordId, recordType: 'bondfire' as const }
+  },
+})
+
+export const deleteLegacyVideoOnDemandContent = internalMutation({
+  args: {
+    dryRun: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const [bondfires, responseVideos] = await Promise.all([
+      ctx.db.query('bondfires').collect(),
+      ctx.db.query('bondfireVideos').collect(),
+    ])
+    const legacyBondfires = bondfires.filter(
+      (bondfire) => !bondfire.muxUploadId && !bondfire.muxAssetId && !bondfire.muxPlaybackId,
+    )
+    const legacyBondfireIds = new Set(legacyBondfires.map((bondfire) => bondfire._id))
+    const legacyResponseVideos = responseVideos.filter(
+      (video) =>
+        !video.muxUploadId &&
+        !video.muxAssetId &&
+        !video.muxPlaybackId &&
+        !legacyBondfireIds.has(video.bondfireId),
+    )
+
+    if (args.dryRun) {
+      return {
+        bondfiresToDelete: legacyBondfires.length,
+        responseVideosToDelete: legacyResponseVideos.length,
+      }
+    }
+
+    const affectedUsers = new Set<Id<'users'>>()
+    const affectedBondfires = new Set<Id<'bondfires'>>()
+
+    for (const video of legacyResponseVideos) {
+      affectedUsers.add(video.userId)
+      affectedBondfires.add(video.bondfireId)
+      await ctx.db.delete(video._id)
+    }
+
+    for (const bondfire of legacyBondfires) {
+      affectedUsers.add(bondfire.userId)
+
+      const responses = await ctx.db
+        .query('bondfireVideos')
+        .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
+        .collect()
+
+      for (const response of responses) {
+        affectedUsers.add(response.userId)
+        await ctx.db.delete(response._id)
+      }
+
+      await ctx.db.delete(bondfire._id)
+    }
+
+    for (const bondfireId of affectedBondfires) {
+      const bondfire = await ctx.db.get(bondfireId)
+      if (!bondfire) {
+        continue
+      }
+
+      const readyResponses = await ctx.db
+        .query('bondfireVideos')
+        .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfireId))
+        .collect()
+
+      await ctx.db.patch(bondfireId, {
+        videoCount:
+          1 +
+          readyResponses.filter(
+            (video) => (video.videoStatus ?? 'ready') === 'ready' && video.muxPlaybackId,
+          ).length,
+        updatedAt: Date.now(),
+      })
+    }
+
+    for (const userId of affectedUsers) {
+      const [userBondfires, userResponses] = await Promise.all([
+        ctx.db
+          .query('bondfires')
+          .withIndex('by_user', (q) => q.eq('userId', userId))
+          .collect(),
+        ctx.db
+          .query('bondfireVideos')
+          .withIndex('by_user', (q) => q.eq('userId', userId))
+          .collect(),
+      ])
+
+      await ctx.db.patch(userId, {
+        bondfireCount: userBondfires.filter(
+          (bondfire) => (bondfire.videoStatus ?? 'ready') === 'ready' && bondfire.muxPlaybackId,
+        ).length,
+        responseCount: userResponses.filter(
+          (video) => (video.videoStatus ?? 'ready') === 'ready' && video.muxPlaybackId,
+        ).length,
+        updatedAt: Date.now(),
+      })
+    }
+
+    return {
+      deletedBondfires: legacyBondfires.length,
+      deletedResponseVideos: legacyResponseVideos.length,
+    }
   },
 })
 

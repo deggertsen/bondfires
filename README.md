@@ -13,7 +13,7 @@ A video sharing social app where users create "bondfires" (video posts) and othe
 | Authentication | Convex Auth |
 | Navigation | Expo Router |
 | Video Streaming | Mux Video |
-| Image / Legacy Video Storage | AWS S3 |
+| Profile Photo Storage | Convex File Storage |
 | Video Metadata | react-native-compressor |
 | Monorepo | Turborepo |
 | Package Manager | Yarn |
@@ -94,12 +94,6 @@ MUX_WEBHOOK_SECRET=your-mux-webhook-secret
 MUX_PLAYBACK_POLICY=public
 MUX_UPLOAD_CORS_ORIGIN=*
 MUX_VIDEO_QUALITY=basic
-
-# S3 remains required for profile photos and legacy S3 video playback
-AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=your-access-key
-AWS_SECRET_ACCESS_KEY=your-secret-key
-S3_BUCKET_NAME=your-bucket
 ```
 
 Configure the Mux webhook endpoint to point at the Convex HTTP action path

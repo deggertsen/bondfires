@@ -68,7 +68,7 @@ MUX_VIDEO_QUALITY=basic
 Configure the Mux webhook endpoint to point at the Convex HTTP action path
 `https://<your-convex-deployment>.convex.site/mux/webhook`.
 
-S3 environment variables are still required in Convex for profile photo uploads and playback of legacy S3 video records.
+Profile photos are stored in Convex file storage and do not require separate storage credentials.
 
 ### 4. Build Development Client
 
