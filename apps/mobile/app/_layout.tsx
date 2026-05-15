@@ -48,6 +48,14 @@ if (convexUrl.endsWith('.convex.site')) {
   )
 }
 
+// A trailing slash causes Convex's WebSocket URL builder to produce a double-slash path
+// (e.g. wss://host//api/0/sync) which fails silently and keeps all queries in undefined state forever.
+if (convexUrl.endsWith('/')) {
+  throw new Error(
+    `Invalid Convex URL: ${convexUrl}\nThe URL must not have a trailing slash. Remove the trailing "/" from EXPO_PUBLIC_CONVEX_URL.`,
+  )
+}
+
 // React Native requires unsavedChangesWarning: false to disable browser-specific APIs
 // See: https://docs.convex.dev/quickstart/react-native
 const convex = new ConvexReactClient(convexUrl, {
