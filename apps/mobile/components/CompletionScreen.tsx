@@ -9,9 +9,10 @@ import { YStack } from 'tamagui'
 
 interface CompletionScreenProps {
   onContinue?: () => void
+  detail?: string
 }
 
-export function CompletionScreen({ onContinue }: CompletionScreenProps) {
+export function CompletionScreen({ detail, onContinue }: CompletionScreenProps) {
   const router = useRouter()
   const [message] = useState(() => getRandomCompletionMessage())
 
@@ -44,10 +45,22 @@ export function CompletionScreen({ onContinue }: CompletionScreenProps) {
         fontWeight="700"
         color={bondfireColors.whiteSmoke}
         textAlign="center"
-        marginBottom={48}
+        marginBottom={detail ? 16 : 48}
       >
         {message.message}
       </Text>
+
+      {detail && (
+        <Text
+          color={bondfireColors.ash}
+          fontSize={15}
+          lineHeight={22}
+          textAlign="center"
+          marginBottom={40}
+        >
+          {detail}
+        </Text>
+      )}
 
       {/* Continue button */}
       <Button variant="primary" size="$lg" onPress={handleContinue} icon={Check}>

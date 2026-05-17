@@ -68,6 +68,7 @@ export default function CreateScreen() {
   })
 
   const facing = useValue(state$.facing)
+  const pendingFacing = useValue(state$.pendingFacing)
   const cameraResetCounter = useValue(state$.cameraResetCounter)
   const recordingState = useValue(state$.recordingState)
   const recordingDuration = useValue(state$.recordingDuration)
@@ -82,6 +83,7 @@ export default function CreateScreen() {
   const shouldUseLivePublish = livePublishEnabled && isLivePublisherAvailable
   const liveStatus = useValue(livePublishStore$.status)
   const liveRecordId = useValue(livePublishStore$.recordId)
+  const isSwitchingCamera = recordingState === 'recording' && !!pendingFacing
 
   const createMuxDirectUpload = useAction(api.videos.createMuxDirectUpload)
   const getMuxUploadStatus = useAction(api.videos.getMuxUploadStatus)
@@ -688,13 +690,18 @@ export default function CreateScreen() {
     const nextFacing = currentTargetFacing === 'back' ? 'front' : 'back'
 
     if (state$.recordingState.get() === 'recording') {
-      state$.pendingFacing.set(nextFacing)
-
-      if (recordingActionRef.current === 'swap' || !hasActiveSegmentRef.current) {
+      if (isStartingRecordingRef.current || !cameraRef.current) {
         return
       }
 
-      if (isStartingRecordingRef.current || !cameraRef.current) {
+      state$.pendingFacing.set(nextFacing)
+
+      if (recordingActionRef.current === 'swap' || !hasActiveSegmentRef.current) {
+        if (!hasActiveSegmentRef.current && state$.facing.get() !== nextFacing) {
+          state$.isCameraReady.set(false)
+          state$.cameraMountError.set(null)
+          state$.facing.set(nextFacing)
+        }
         return
       }
 
@@ -838,8 +845,13 @@ export default function CreateScreen() {
 
   // Completion screen - shown immediately after recording
   if (recordingState === 'completion' && videoUri) {
+    const completionDetail = respondTo
+      ? 'Awesome, great video! We are getting your response ready now. It may take up to two minutes to show in activity lists.'
+      : 'Awesome, great video! We are getting it ready now. It may take up to two minutes for your video to show in Discover, Recent, and Active.'
+
     return (
       <CompletionScreen
+        detail={completionDetail}
         onContinue={() => {
           const targetBondfireId = respondTo ?? liveRecordId
           livePublishActions.reset()
@@ -1101,7 +1113,7 @@ export default function CreateScreen() {
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       {shouldRenderCamera ? (
         <CameraView
-          key={cameraResetCounter}
+          key={`${cameraResetCounter}-${facing}`}
           ref={cameraRef}
           style={{ flex: 1 }}
           facing={facing}
@@ -1168,13 +1180,19 @@ export default function CreateScreen() {
                 borderRadius={16}
               >
                 <Text color={bondfireColors.whiteSmoke} fontWeight="700" fontSize={14}>
-                  {Math.floor(recordingDuration / 60)}:
-                  {(recordingDuration % 60).toString().padStart(2, '0')}
+                  {isSwitchingCamera
+                    ? 'Switching...'
+                    : `${Math.floor(recordingDuration / 60)}:${(recordingDuration % 60)
+                        .toString()
+                        .padStart(2, '0')}`}
                 </Text>
               </YStack>
             )}
 
-            <Pressable onPress={toggleFacing}>
+            <Pressable
+              onPress={toggleFacing}
+              disabled={recordingState === 'stopping' || isSwitchingCamera}
+            >
               <YStack
                 width={40}
                 height={40}
@@ -1182,8 +1200,13 @@ export default function CreateScreen() {
                 backgroundColor="rgba(31, 32, 35, 0.7)"
                 alignItems="center"
                 justifyContent="center"
+                opacity={recordingState === 'stopping' || isSwitchingCamera ? 0.5 : 1}
               >
-                <SwitchCamera size={22} color={bondfireColors.whiteSmoke} />
+                {isSwitchingCamera ? (
+                  <Spinner size="small" color={bondfireColors.whiteSmoke} />
+                ) : (
+                  <SwitchCamera size={22} color={bondfireColors.whiteSmoke} />
+                )}
               </YStack>
             </Pressable>
           </XStack>
@@ -1212,6 +1235,18 @@ export default function CreateScreen() {
                 </Text>
                 <Text color={bondfireColors.ash} fontSize={14}>
                   Please wait a moment...
+                </Text>
+              </YStack>
+            )}
+
+            {isSwitchingCamera && (
+              <YStack alignItems="center" gap={12}>
+                <Spinner size="large" color={bondfireColors.whiteSmoke} />
+                <Text color={bondfireColors.whiteSmoke} fontSize={18} fontWeight="700">
+                  Switching camera
+                </Text>
+                <Text color={bondfireColors.ash} fontSize={14}>
+                  Recording will continue automatically.
                 </Text>
               </YStack>
             )}
@@ -1276,7 +1311,9 @@ export default function CreateScreen() {
               {recordingState === 'stopping'
                 ? 'Stopping recording...'
                 : recordingState === 'recording'
-                  ? 'Tap to stop'
+                  ? isSwitchingCamera
+                    ? 'Switching cameras...'
+                    : 'Tap to stop'
                   : cameraMountError
                     ? 'Camera failed to initialize'
                     : isCameraReady
