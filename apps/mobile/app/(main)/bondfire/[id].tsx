@@ -614,6 +614,7 @@ export default function BondfireDetailScreen() {
   const showSettings = useValue(screenState$.showSettings)
   const showNotepad = useValue(screenState$.showNotepad)
   const isAppActive = useValue(screenState$.isAppActive)
+  const currentUserId = useValue(appStore$.userId)
 
   const bondfireId = id as Id<'bondfires'>
   const bondfireData = useQuery(api.bondfires.getWithVideos, { bondfireId })
@@ -676,12 +677,30 @@ export default function BondfireDetailScreen() {
   // Track view count - only once per day per bondfire
   useEffect(() => {
     if (!bondfireId) return
+    if (!bondfireData) return
     if (bondfireData?.videoStatus === 'live') return
+    if (bondfireData.userId === currentUserId) return
     if (hasViewedToday(bondfireId)) return
 
-    markViewed(bondfireId)
-    incrementViews({ bondfireId })
-  }, [bondfireId, bondfireData?.videoStatus, incrementViews])
+    let isCancelled = false
+
+    const recordView = async () => {
+      try {
+        await incrementViews({ bondfireId })
+        if (!isCancelled) {
+          markViewed(bondfireId)
+        }
+      } catch (error) {
+        console.error('Failed to record bondfire view:', error)
+      }
+    }
+
+    recordView()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [bondfireId, bondfireData, currentUserId, incrementViews])
 
   // Restore last position within this conversation (camp) once data is available.
   useEffect(() => {

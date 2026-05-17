@@ -1,5 +1,6 @@
 import {
   appActions,
+  appStore$,
   getBondfireVideoIndex,
   getFeedActiveBondfireId,
   getLastLocation,
@@ -245,6 +246,7 @@ export default function FeedScreen() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [bondfires, setBondfires] = useState<BondfireData[] | undefined>(undefined)
+  const currentUserId = useValue(appStore$.userId)
 
   const state$ = useObservable({
     thumbnailUrls: {} as Record<string, string | null>,
@@ -296,7 +298,7 @@ export default function FeedScreen() {
     let items = bondfires
 
     if (viewMode === 'unseen') {
-      items = items.filter((b) => !hasViewedToday(b._id))
+      items = items.filter((b) => b.userId !== currentUserId && !hasViewedToday(b._id))
     }
 
     if (q.length > 0) {
@@ -334,7 +336,7 @@ export default function FeedScreen() {
     })
 
     return sorted
-  }, [bondfires, query, viewMode])
+  }, [bondfires, currentUserId, query, viewMode])
 
   filteredRef.current = filtered ?? []
 
