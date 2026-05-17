@@ -1,5 +1,6 @@
 export * from './useAdaptiveVideo'
 export * from './useAuth'
+export * from './useLivePublisher'
 export * from './useNetwork'
 export * from './usePushNotifications'
 export * from './useResumeUploads'

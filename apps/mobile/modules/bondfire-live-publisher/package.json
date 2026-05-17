@@ -1,0 +1,13 @@
+{
+  "name": "bondfire-live-publisher",
+  "version": "0.1.0",
+  "main": "index.ts",
+  "private": true,
+  "dependencies": {
+    "expo-modules-core": "*"
+  },
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*"
+  }
+}

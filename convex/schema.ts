@@ -43,10 +43,12 @@ export default defineSchema({
       v.union(
         v.literal('waiting_for_upload'),
         v.literal('processing'),
+        v.literal('live'),
         v.literal('ready'),
         v.literal('errored'),
       ),
     ),
+    liveSessionId: v.optional(v.id('liveSessions')),
     muxUploadId: v.optional(v.string()),
     muxAssetId: v.optional(v.string()),
     muxPlaybackId: v.optional(v.string()),
@@ -81,7 +83,8 @@ export default defineSchema({
     // Recent bondfires
     .index('by_created', ['createdAt'])
     .index('by_mux_upload', ['muxUploadId'])
-    .index('by_mux_asset', ['muxAssetId']),
+    .index('by_mux_asset', ['muxAssetId'])
+    .index('by_live_stream', ['muxLiveStreamId']),
 
   // Bondfire Videos - response videos to bondfires
   bondfireVideos: defineTable({
@@ -98,10 +101,12 @@ export default defineSchema({
       v.union(
         v.literal('waiting_for_upload'),
         v.literal('processing'),
+        v.literal('live'),
         v.literal('ready'),
         v.literal('errored'),
       ),
     ),
+    liveSessionId: v.optional(v.id('liveSessions')),
     muxUploadId: v.optional(v.string()),
     muxAssetId: v.optional(v.string()),
     muxPlaybackId: v.optional(v.string()),
@@ -129,7 +134,8 @@ export default defineSchema({
     // User's response videos
     .index('by_user', ['userId', 'createdAt'])
     .index('by_mux_upload', ['muxUploadId'])
-    .index('by_mux_asset', ['muxAssetId']),
+    .index('by_mux_asset', ['muxAssetId'])
+    .index('by_live_stream', ['muxLiveStreamId']),
 
   // Live Sessions - Mux live broadcasts before they become replay assets
   liveSessions: defineTable({
@@ -140,6 +146,9 @@ export default defineSchema({
     muxLivePlaybackId: v.optional(v.string()),
     muxActiveAssetId: v.optional(v.string()),
     muxRecentAssetId: v.optional(v.string()),
+    muxRecordedAssetId: v.optional(v.string()),
+    transport: v.optional(v.union(v.literal('rtmps'), v.literal('srt'))),
+    latencyMode: v.optional(v.union(v.literal('standard'), v.literal('reduced'), v.literal('low'))),
     status: v.union(
       v.literal('created'),
       v.literal('starting'),

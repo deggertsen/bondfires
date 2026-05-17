@@ -1,8 +1,12 @@
 import {
+  appStore$,
   cancelProcessing,
   cleanupTempVideos,
+  livePublishActions,
+  livePublishStore$,
   resumePendingUploads,
   startBackgroundUpload,
+  useLivePublisher,
 } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
@@ -25,6 +29,7 @@ import { api } from '../../../../../convex/_generated/api'
 import type { Id } from '../../../../../convex/_generated/dataModel'
 import { CompletionScreen } from '../../../components/CompletionScreen'
 import { mergeVideoSegments } from '../../../lib/videoSegmentMerger'
+import { BondfireLivePublisher, LivePublisherView } from '../../../modules/bondfire-live-publisher'
 
 type RecordingState = 'idle' | 'recording' | 'stopping' | 'completion' | 'processing' | 'uploading'
 
@@ -58,6 +63,7 @@ export default function CreateScreen() {
     isAppActive: AppState.currentState === 'active',
     isFocused: isFocused,
     isCameraReady: false,
+    isLivePublisherAvailable: false,
     cameraMountError: null as string | null,
   })
 
@@ -70,17 +76,43 @@ export default function CreateScreen() {
   const progressStage = useValue(state$.progressStage)
   const isAppActive = useValue(state$.isAppActive)
   const isCameraReady = useValue(state$.isCameraReady)
+  const isLivePublisherAvailable = useValue(state$.isLivePublisherAvailable)
   const cameraMountError = useValue(state$.cameraMountError)
+  const livePublishEnabled = useValue(appStore$.preferences.livePublishEnabled)
+  const shouldUseLivePublish = livePublishEnabled && isLivePublisherAvailable
+  const liveStatus = useValue(livePublishStore$.status)
+  const liveRecordId = useValue(livePublishStore$.recordId)
 
   const createMuxDirectUpload = useAction(api.videos.createMuxDirectUpload)
   const getMuxUploadStatus = useAction(api.videos.getMuxUploadStatus)
+  const createLiveStream = useAction(api.videos.createLiveStream)
+  const endLiveStream = useAction(api.videos.endLiveStream)
+  const cancelLiveStream = useAction(api.videos.cancelLiveStream)
+  const livePublisher = useLivePublisher({
+    publisher: BondfireLivePublisher,
+    createLiveStream: async (args) =>
+      await createLiveStream({
+        ...args,
+        bondfireId: args.bondfireId as Id<'bondfires'> | undefined,
+      }),
+    endLiveStream: async (args) =>
+      await endLiveStream({
+        ...args,
+        liveSessionId: args.liveSessionId as Id<'liveSessions'>,
+      }),
+    cancelLiveStream: async (args) =>
+      await cancelLiveStream({
+        ...args,
+        liveSessionId: args.liveSessionId as Id<'liveSessions'>,
+      }),
+  })
   const keepAwakeTag = 'create-recording'
 
   // Recording timer (interval-based - keep useEffect)
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | undefined
 
-    if (recordingState === 'recording') {
+    if (recordingState === 'recording' || liveStatus === 'live') {
       interval = setInterval(() => {
         state$.recordingDuration.set((prev) => prev + 1)
       }, 1000)
@@ -89,7 +121,7 @@ export default function CreateScreen() {
     return () => {
       if (interval) clearInterval(interval)
     }
-  }, [recordingState, state$])
+  }, [recordingState, liveStatus, state$])
 
   // Cleanup on unmount
   useEffect(() => {
@@ -154,7 +186,11 @@ export default function CreateScreen() {
       (recordingState === 'recording' ||
         recordingState === 'stopping' ||
         recordingState === 'processing' ||
-        recordingState === 'uploading')
+        recordingState === 'uploading' ||
+        liveStatus === 'connecting' ||
+        liveStatus === 'live' ||
+        liveStatus === 'reconnecting' ||
+        liveStatus === 'stopping')
 
     if (shouldKeepAwake) {
       activateKeepAwakeAsync(keepAwakeTag)
@@ -165,7 +201,7 @@ export default function CreateScreen() {
     return () => {
       deactivateKeepAwake(keepAwakeTag)
     }
-  }, [recordingState, isFocused, isAppActive])
+  }, [recordingState, liveStatus, isFocused, isAppActive])
 
   const requestPermissions = useCallback(async () => {
     if (!cameraPermission?.granted) {
@@ -179,6 +215,42 @@ export default function CreateScreen() {
   useEffect(() => {
     requestPermissions()
   }, [requestPermissions])
+
+  useEffect(() => {
+    let isCancelled = false
+
+    BondfireLivePublisher.isAvailable()
+      .then((isAvailable) => {
+        if (!isCancelled) {
+          state$.isLivePublisherAvailable.set(isAvailable)
+        }
+      })
+      .catch((error) => {
+        console.warn('Failed to check live publisher availability:', error)
+        if (!isCancelled) {
+          state$.isLivePublisherAvailable.set(false)
+        }
+      })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [state$])
+
+  useEffect(() => {
+    if (!shouldUseLivePublish) {
+      return
+    }
+
+    if (
+      (!isFocused || !isAppActive) &&
+      (liveStatus === 'connecting' || liveStatus === 'live' || liveStatus === 'reconnecting')
+    ) {
+      livePublisher.stop().catch((error) => {
+        console.error('Failed to stop live stream while screen lost focus:', error)
+      })
+    }
+  }, [isAppActive, isFocused, livePublisher, liveStatus, shouldUseLivePublish])
 
   const logRecordingError = useCallback(
     (error: unknown) => {
@@ -648,6 +720,81 @@ export default function CreateScreen() {
     state$.facing.set(nextFacing)
   }, [clearStopTimeout, logRecordingError, resetRecordingState, state$])
 
+  const startLiveRecording = useCallback(async () => {
+    if (liveStatus !== 'idle' && liveStatus !== 'ended' && liveStatus !== 'errored') {
+      return
+    }
+
+    if (!state$.isFocused.get() || !state$.isAppActive.get()) {
+      Alert.alert('Camera Not Ready', 'Please return to the app and try again.')
+      return
+    }
+
+    try {
+      state$.recordingDuration.set(0)
+      state$.videoUri.set(null)
+      await livePublisher.start({
+        respondToBondfireId: respondTo,
+        initialCamera: state$.facing.get() === 'back' ? 'back' : 'front',
+      })
+    } catch (error) {
+      logRecordingError(error)
+      Alert.alert('Live Stream Failed', 'Could not start the live stream. Please try again.')
+    }
+  }, [livePublisher, liveStatus, logRecordingError, respondTo, state$])
+
+  const stopLiveRecording = useCallback(async () => {
+    if (liveStatus !== 'connecting' && liveStatus !== 'live' && liveStatus !== 'reconnecting') {
+      return
+    }
+
+    try {
+      await livePublisher.stop()
+      state$.recordingState.set('completion')
+      state$.videoUri.set('live')
+    } catch (error) {
+      logRecordingError(error)
+      Alert.alert(
+        'Live Stream Stopping',
+        'The live connection stopped locally, but the saved video may still finish processing.',
+      )
+      // Roll back local UI state so the user isn't stuck on the live capture
+      // screen with a publisher session that's already been torn down.
+      livePublishActions.reset()
+      state$.recordingState.set('idle')
+      state$.videoUri.set(null)
+    }
+  }, [livePublisher, liveStatus, logRecordingError, state$])
+
+  const cancelLiveRecording = useCallback(async () => {
+    try {
+      await livePublisher.cancel()
+    } catch (error) {
+      logRecordingError(error)
+      Alert.alert('Error', 'Failed to cancel the live stream cleanly.')
+    } finally {
+      // useLivePublisher.cancel already calls livePublishActions.reset() in its
+      // own finally, but reset here as well so this code path stays correct
+      // even if the hook's behavior changes.
+      livePublishActions.reset()
+      state$.recordingState.set('idle')
+      state$.videoUri.set(null)
+    }
+  }, [livePublisher, logRecordingError, state$])
+
+  const toggleLiveFacing = useCallback(() => {
+    if (liveStatus === 'connecting' || liveStatus === 'live' || liveStatus === 'reconnecting') {
+      livePublisher.swapCamera().catch((error) => {
+        logRecordingError(error)
+        Alert.alert('Error', 'Failed to switch cameras. Please try again.')
+      })
+      state$.facing.set(state$.facing.get() === 'back' ? 'front' : 'back')
+      return
+    }
+
+    toggleFacing()
+  }, [livePublisher, liveStatus, logRecordingError, state$, toggleFacing])
+
   const shouldRenderCamera =
     cameraPermission?.granted && micPermission?.granted && isFocused && isAppActive
 
@@ -691,7 +838,19 @@ export default function CreateScreen() {
 
   // Completion screen - shown immediately after recording
   if (recordingState === 'completion' && videoUri) {
-    return <CompletionScreen onContinue={() => router.replace('/(main)/(tabs)/feed')} />
+    return (
+      <CompletionScreen
+        onContinue={() => {
+          const targetBondfireId = respondTo ?? liveRecordId
+          livePublishActions.reset()
+          if (shouldUseLivePublish && targetBondfireId) {
+            router.replace(`/(main)/bondfire/${targetBondfireId}`)
+            return
+          }
+          router.replace('/(main)/(tabs)/feed')
+        }}
+      />
+    )
   }
 
   // Processing state
@@ -771,6 +930,167 @@ export default function CreateScreen() {
           </YStack>
           <Text color={bondfireColors.ash}>{Math.round(progress)}%</Text>
         </YStack>
+      </YStack>
+    )
+  }
+
+  if (shouldUseLivePublish) {
+    const isLiveRecording =
+      liveStatus === 'connecting' || liveStatus === 'live' || liveStatus === 'reconnecting'
+    const isLiveBusy = liveStatus === 'creating' || liveStatus === 'stopping'
+    const statusLabel =
+      liveStatus === 'creating'
+        ? 'Creating live stream...'
+        : liveStatus === 'connecting'
+          ? 'Connecting...'
+          : liveStatus === 'live'
+            ? 'LIVE'
+            : liveStatus === 'reconnecting'
+              ? 'Reconnecting...'
+              : liveStatus === 'stopping'
+                ? 'Saving live moment...'
+                : 'Tap to go live'
+
+    return (
+      <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
+        <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+        {shouldRenderCamera ? (
+          <>
+            <LivePublisherView style={{ flex: 1 }} />
+
+            <XStack
+              position="absolute"
+              top={0}
+              left={0}
+              right={0}
+              paddingTop={60}
+              paddingHorizontal={20}
+              justifyContent="space-between"
+              alignItems="center"
+            >
+              <Pressable onPress={isLiveRecording ? cancelLiveRecording : () => router.back()}>
+                <YStack
+                  width={40}
+                  height={40}
+                  borderRadius={20}
+                  backgroundColor="rgba(31, 32, 35, 0.7)"
+                  alignItems="center"
+                  justifyContent="center"
+                >
+                  <X size={24} color={bondfireColors.whiteSmoke} />
+                </YStack>
+              </Pressable>
+
+              {isLiveRecording && (
+                <YStack
+                  backgroundColor={bondfireColors.error}
+                  paddingHorizontal={16}
+                  paddingVertical={6}
+                  borderRadius={16}
+                >
+                  <Text color={bondfireColors.whiteSmoke} fontWeight="800" fontSize={14}>
+                    {liveStatus === 'live'
+                      ? `LIVE ${Math.floor(recordingDuration / 60)}:${(recordingDuration % 60)
+                          .toString()
+                          .padStart(2, '0')}`
+                      : statusLabel}
+                  </Text>
+                </YStack>
+              )}
+
+              <Pressable onPress={toggleLiveFacing} disabled={isLiveBusy}>
+                <YStack
+                  width={40}
+                  height={40}
+                  borderRadius={20}
+                  backgroundColor="rgba(31, 32, 35, 0.7)"
+                  alignItems="center"
+                  justifyContent="center"
+                  opacity={isLiveBusy ? 0.5 : 1}
+                >
+                  <SwitchCamera size={22} color={bondfireColors.whiteSmoke} />
+                </YStack>
+              </Pressable>
+            </XStack>
+
+            <YStack
+              position="absolute"
+              left={0}
+              right={0}
+              top="40%"
+              alignItems="center"
+              pointerEvents="none"
+            >
+              {!isLiveRecording && !isLiveBusy && (
+                <YStack alignItems="center" gap={12}>
+                  <XStack alignItems="center" gap={8}>
+                    <Flame size={28} color={bondfireColors.bondfireCopper} />
+                    <Text color={bondfireColors.whiteSmoke} fontSize={22} fontWeight="700">
+                      {respondTo ? 'Respond Live' : 'Spark a Bondfire'}
+                    </Text>
+                  </XStack>
+                  <Text color={bondfireColors.ash} fontSize={14}>
+                    Tap to start a live broadcast
+                  </Text>
+                </YStack>
+              )}
+
+              {isLiveBusy && (
+                <YStack alignItems="center" gap={12}>
+                  <Spinner size="large" color={bondfireColors.whiteSmoke} />
+                  <Text color={bondfireColors.whiteSmoke} fontSize={18} fontWeight="700">
+                    {statusLabel}
+                  </Text>
+                </YStack>
+              )}
+            </YStack>
+
+            <YStack position="absolute" left={0} right={0} bottom={40} alignItems="center">
+              <Pressable
+                disabled={isLiveBusy}
+                onPress={() => {
+                  if (isLiveRecording) {
+                    void stopLiveRecording()
+                    return
+                  }
+
+                  void startLiveRecording()
+                }}
+              >
+                <YStack
+                  width={80}
+                  height={80}
+                  borderRadius={40}
+                  borderWidth={4}
+                  borderColor={bondfireColors.whiteSmoke}
+                  alignItems="center"
+                  justifyContent="center"
+                  backgroundColor={isLiveRecording ? bondfireColors.error : 'transparent'}
+                  opacity={isLiveBusy ? 0.7 : 1}
+                >
+                  {isLiveBusy ? (
+                    <Spinner size="small" color={bondfireColors.whiteSmoke} />
+                  ) : (
+                    <YStack
+                      width={isLiveRecording ? 30 : 60}
+                      height={isLiveRecording ? 30 : 60}
+                      borderRadius={isLiveRecording ? 6 : 30}
+                      backgroundColor={
+                        isLiveRecording ? bondfireColors.whiteSmoke : bondfireColors.bondfireCopper
+                      }
+                    />
+                  )}
+                </YStack>
+              </Pressable>
+
+              <Text color={bondfireColors.ash} fontSize={13} marginTop={12}>
+                {isLiveRecording ? 'Tap to stop' : statusLabel}
+              </Text>
+            </YStack>
+          </>
+        ) : (
+          <YStack flex={1} />
+        )}
       </YStack>
     )
   }

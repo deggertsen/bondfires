@@ -1,0 +1,22 @@
+plugins {
+  id 'com.android.library'
+  id 'org.jetbrains.kotlin.android'
+}
+
+group = 'org.bondfires.livepublisher'
+version = '0.1.0'
+
+android {
+  namespace 'org.bondfires.livepublisher'
+  compileSdk 35
+
+  defaultConfig {
+    minSdk 24
+  }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+  implementation 'io.github.thibaultbee.streampack:streampack-core:3.1.0'
+  implementation 'io.github.thibaultbee.streampack:streampack-rtmp:3.1.0'
+}

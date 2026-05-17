@@ -1,4 +1,5 @@
 export * from './app.store'
+export * from './livePublish.store'
 export * from './notepad.store'
 export * from './ui.store'
 export * from './uploadQueue.store'

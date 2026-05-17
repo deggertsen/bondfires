@@ -13,9 +13,13 @@ export const listByBondfire = query({
       .order('asc')
       .collect()
 
-    return videos.filter(
-      (video) => (video.videoStatus ?? 'ready') === 'ready' && video.muxPlaybackId,
-    )
+    return videos.filter((video) => {
+      const status = video.videoStatus ?? 'ready'
+      return (
+        (status === 'ready' && video.muxPlaybackId) ||
+        (status === 'live' && video.muxLivePlaybackId)
+      )
+    })
   },
 })
 
@@ -43,6 +47,7 @@ export const addResponse = mutation({
       v.union(
         v.literal('waiting_for_upload'),
         v.literal('processing'),
+        v.literal('live'),
         v.literal('ready'),
         v.literal('errored'),
       ),

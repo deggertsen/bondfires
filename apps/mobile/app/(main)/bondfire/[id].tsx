@@ -63,6 +63,7 @@ interface VideoPlayerProps {
   creatorName: string
   isMainVideo: boolean
   responseIndex?: number
+  isLive?: boolean
 }
 
 function VideoPlayer({
@@ -79,22 +80,37 @@ function VideoPlayer({
   creatorName,
   isMainVideo,
   responseIndex,
+  isLive = false,
 }: VideoPlayerProps) {
   // Get the video ID for internal use (keep-awake tag, etc.)
   const videoId = bondfireId || bondfireVideoId || ''
   const autoplayVideos = useValue(appStore$.preferences.autoplayVideos)
   const videoQuality = useValue(appStore$.preferences.videoQuality)
   const isMuted = useValue(appStore$.preferences.videoMuted)
+  const currentUserId = useValue(appStore$.userId)
+  const shouldSuppressPlayback = isLive && currentUserId === videoOwnerId
 
   // Determine URL based on quality preference and foreground state.
   const getTargetUrl = useCallback(() => {
+    if (shouldSuppressPlayback) {
+      return null
+    }
+
     if (!isActive || !isScreenFocused || !isAppActive) {
       return videoUrlSd ?? videoUrl
     }
 
     if (videoQuality === 'sd' && videoUrlSd) return videoUrlSd
     return videoUrl // HD or auto starts with HD
-  }, [isActive, isScreenFocused, isAppActive, videoQuality, videoUrl, videoUrlSd])
+  }, [
+    isActive,
+    isScreenFocused,
+    isAppActive,
+    videoQuality,
+    videoUrl,
+    videoUrlSd,
+    shouldSuppressPlayback,
+  ])
 
   const state$ = useObservable({
     showReport: false,
@@ -144,7 +160,7 @@ function VideoPlayer({
     if (!player) return
 
     // Only play if video is active, screen is focused, AND app is in foreground
-    const shouldPlay = isActive && isScreenFocused && isAppActive
+    const shouldPlay = isActive && isScreenFocused && isAppActive && !shouldSuppressPlayback
 
     if (shouldPlay) {
       player.playbackRate = appStore$.preferences.playbackSpeed.get()
@@ -159,7 +175,15 @@ function VideoPlayer({
         state$.userInitiatedPlay.set(false)
       }
     }
-  }, [player, isActive, isScreenFocused, isAppActive, autoplayVideos, state$])
+  }, [
+    player,
+    isActive,
+    isScreenFocused,
+    isAppActive,
+    autoplayVideos,
+    state$,
+    shouldSuppressPlayback,
+  ])
 
   // Monitor playback status (external subscriptions - keep useEffect)
   useEffect(() => {
@@ -178,7 +202,7 @@ function VideoPlayer({
 
       // Update progress when status changes to readyToPlay
       if (status.status === 'readyToPlay') {
-        if (player.currentTime !== undefined && player.duration) {
+        if (!isLive && player.currentTime !== undefined && player.duration) {
           const currentProgress = player.currentTime / player.duration
           state$.progress.set(currentProgress)
           onProgress(currentProgress)
@@ -199,7 +223,12 @@ function VideoPlayer({
 
     // Update progress periodically (interval-based)
     const progressInterval = setInterval(() => {
-      if (player.status === 'readyToPlay' && player.currentTime !== undefined && player.duration) {
+      if (
+        !isLive &&
+        player.status === 'readyToPlay' &&
+        player.currentTime !== undefined &&
+        player.duration
+      ) {
         const currentProgress = player.currentTime / player.duration
         state$.progress.set(currentProgress)
         onProgress(currentProgress)
@@ -211,7 +240,7 @@ function VideoPlayer({
       endSubscription.remove()
       clearInterval(progressInterval)
     }
-  }, [player, onComplete, onProgress, state$])
+  }, [player, onComplete, onProgress, state$, isLive])
 
   // Buffering detection - switch to SD if buffer is low (only in auto mode)
   useEffect(() => {
@@ -228,7 +257,12 @@ function VideoPlayer({
       if (!player || state$.hasSwitchedToSD.get()) return
 
       // Check if player is buffering and we have SD available
-      if (player.status === 'loading' && player.currentTime !== undefined && player.duration) {
+      if (
+        !isLive &&
+        player.status === 'loading' &&
+        player.currentTime !== undefined &&
+        player.duration
+      ) {
         const remaining = player.duration - player.currentTime
         // Switch to SD if buffering and more than 5 seconds remaining
         if (remaining > 5) {
@@ -243,7 +277,17 @@ function VideoPlayer({
         clearInterval(bufferingCheckInterval.current)
       }
     }
-  }, [player, videoUrlSd, videoUrl, videoQuality, isActive, isScreenFocused, isAppActive, state$])
+  }, [
+    player,
+    videoUrlSd,
+    videoUrl,
+    videoQuality,
+    isActive,
+    isScreenFocused,
+    isAppActive,
+    state$,
+    isLive,
+  ])
 
   // Update URL when video quality preference, source URLs, or foreground state change.
   useEffect(() => {
@@ -303,7 +347,7 @@ function VideoPlayer({
 
   const handleProgressBarPress = useCallback(
     (event: GestureResponderEvent) => {
-      if (!player || !player.duration) return
+      if (!player || !player.duration || isLive) return
 
       const { locationX } = event.nativeEvent
       const { width } = progressBarRef.current
@@ -317,8 +361,38 @@ function VideoPlayer({
         state$.userInitiatedPlay.set(true)
       }
     },
-    [player, state$],
+    [player, state$, isLive],
   )
+
+  if (shouldSuppressPlayback) {
+    return (
+      <YStack
+        flex={1}
+        width={SCREEN_WIDTH}
+        backgroundColor={bondfireColors.obsidian}
+        alignItems="center"
+        justifyContent="center"
+        gap={14}
+      >
+        <YStack
+          backgroundColor={bondfireColors.error}
+          paddingHorizontal={16}
+          paddingVertical={8}
+          borderRadius={16}
+        >
+          <Text color={bondfireColors.whiteSmoke} fontWeight="900" fontSize={13}>
+            LIVE
+          </Text>
+        </YStack>
+        <Text color={bondfireColors.whiteSmoke} fontSize={22} fontWeight="900">
+          You are live
+        </Text>
+        <Text color={bondfireColors.ash} fontSize={14}>
+          Your replay will appear here after Mux finishes saving it.
+        </Text>
+      </YStack>
+    )
+  }
 
   return (
     <Pressable style={{ flex: 1, width: SCREEN_WIDTH }} onPress={togglePlayPause}>
@@ -398,40 +472,53 @@ function VideoPlayer({
           pointerEvents="none"
         />
 
-        {/* Progress bar - interactive for scrubbing */}
-        <YStack position="absolute" bottom={100} left={20} right={20}>
-          <Pressable onPress={handleProgressBarPress} onLayout={handleProgressBarLayout}>
-            <YStack paddingVertical={10}>
-              <YStack height={4} backgroundColor="rgba(255,255,255,0.3)" borderRadius={2}>
-                <YStack
-                  height={4}
-                  backgroundColor={bondfireColors.bondfireCopper}
-                  borderRadius={2}
-                  width={`${progress * 100}%`}
-                />
-                {/* Scrubber thumb */}
-                <YStack
-                  position="absolute"
-                  top={-4}
-                  left={`${progress * 100}%`}
-                  marginLeft={-6}
-                  width={12}
-                  height={12}
-                  borderRadius={6}
-                  backgroundColor={bondfireColors.bondfireCopper}
-                />
-              </YStack>
+        {isLive ? (
+          <YStack position="absolute" bottom={104} left={20}>
+            <YStack
+              backgroundColor={bondfireColors.error}
+              paddingHorizontal={14}
+              paddingVertical={7}
+              borderRadius={16}
+            >
+              <Text color={bondfireColors.whiteSmoke} fontSize={12} fontWeight="900">
+                LIVE
+              </Text>
             </YStack>
-          </Pressable>
-          <XStack justifyContent="space-between" marginTop={4}>
-            <Text fontSize={12} color={bondfireColors.ash}>
-              {formatTime(progress * duration)}
-            </Text>
-            <Text fontSize={12} color={bondfireColors.ash}>
-              {formatTime(duration)}
-            </Text>
-          </XStack>
-        </YStack>
+          </YStack>
+        ) : (
+          <YStack position="absolute" bottom={100} left={20} right={20}>
+            <Pressable onPress={handleProgressBarPress} onLayout={handleProgressBarLayout}>
+              <YStack paddingVertical={10}>
+                <YStack height={4} backgroundColor="rgba(255,255,255,0.3)" borderRadius={2}>
+                  <YStack
+                    height={4}
+                    backgroundColor={bondfireColors.bondfireCopper}
+                    borderRadius={2}
+                    width={`${progress * 100}%`}
+                  />
+                  <YStack
+                    position="absolute"
+                    top={-4}
+                    left={`${progress * 100}%`}
+                    marginLeft={-6}
+                    width={12}
+                    height={12}
+                    borderRadius={6}
+                    backgroundColor={bondfireColors.bondfireCopper}
+                  />
+                </YStack>
+              </YStack>
+            </Pressable>
+            <XStack justifyContent="space-between" marginTop={4}>
+              <Text fontSize={12} color={bondfireColors.ash}>
+                {formatTime(progress * duration)}
+              </Text>
+              <Text fontSize={12} color={bondfireColors.ash}>
+                {formatTime(duration)}
+              </Text>
+            </XStack>
+          </YStack>
+        )}
 
         {/* Creator info */}
         <YStack position="absolute" bottom={140} left={20}>
@@ -553,21 +640,27 @@ export default function BondfireDetailScreen() {
     if (!bondfireData) return
 
     const loadUrls = async () => {
-      if (!bondfireData.muxPlaybackId) return
+      const mainPlaybackId =
+        bondfireData.videoStatus === 'live'
+          ? bondfireData.muxLivePlaybackId
+          : bondfireData.muxPlaybackId
+      if (!mainPlaybackId) return
 
       const mainUrl = await getVideoUrls({
-        muxPlaybackId: bondfireData.muxPlaybackId,
+        muxPlaybackId: mainPlaybackId,
         muxPlaybackPolicy: bondfireData.muxPlaybackPolicy,
       })
 
-      const playableResponses = bondfireData.videos.filter(
-        (v: Doc<'bondfireVideos'>): v is Doc<'bondfireVideos'> & { muxPlaybackId: string } =>
-          !!v.muxPlaybackId,
+      const playableResponses = bondfireData.videos.filter((v: Doc<'bondfireVideos'>) =>
+        v.videoStatus === 'live' ? !!v.muxLivePlaybackId : !!v.muxPlaybackId,
       )
       const responseUrls: Array<{ hdUrl: string; sdUrl: string | null }> = await Promise.all(
         playableResponses.map((v) =>
           getVideoUrls({
-            muxPlaybackId: v.muxPlaybackId,
+            muxPlaybackId:
+              v.videoStatus === 'live'
+                ? (v.muxLivePlaybackId as string)
+                : (v.muxPlaybackId as string),
             muxPlaybackPolicy: v.muxPlaybackPolicy,
           }),
         ),
@@ -583,11 +676,12 @@ export default function BondfireDetailScreen() {
   // Track view count - only once per day per bondfire
   useEffect(() => {
     if (!bondfireId) return
+    if (bondfireData?.videoStatus === 'live') return
     if (hasViewedToday(bondfireId)) return
 
     markViewed(bondfireId)
     incrementViews({ bondfireId })
-  }, [bondfireId, incrementViews])
+  }, [bondfireId, bondfireData?.videoStatus, incrementViews])
 
   // Restore last position within this conversation (camp) once data is available.
   useEffect(() => {
@@ -729,6 +823,7 @@ export default function BondfireDetailScreen() {
       creatorName: bondfireData.creatorName ?? 'Anonymous',
       isMainVideo: true,
       responseIndex: undefined as number | undefined,
+      isLive: bondfireData.videoStatus === 'live',
     },
     ...bondfireData.videos.map((v: Doc<'bondfireVideos'>, i: number) => ({
       key: v._id,
@@ -740,6 +835,7 @@ export default function BondfireDetailScreen() {
       creatorName: v.creatorName ?? 'Anonymous',
       isMainVideo: false,
       responseIndex: i + 1,
+      isLive: v.videoStatus === 'live',
     })),
   ]
 
@@ -853,6 +949,7 @@ export default function BondfireDetailScreen() {
               creatorName={item.creatorName}
               isMainVideo={item.isMainVideo}
               responseIndex={item.responseIndex}
+              isLive={item.isLive}
             />
           )}
           horizontal

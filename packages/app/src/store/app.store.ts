@@ -21,6 +21,7 @@ export interface AppState {
     videoMuted: boolean
     notificationsEnabled: boolean
     playbackSpeed: number // 1.0 to 2.0
+    livePublishEnabled: boolean
   }
 
   // Auth state (managed by Convex, but cached locally)
@@ -36,6 +37,7 @@ const defaultState: AppState = {
     videoMuted: true,
     notificationsEnabled: true,
     playbackSpeed: 1.0,
+    livePublishEnabled: false,
   },
   isAuthenticated: false,
   userId: null,
@@ -75,6 +77,10 @@ export const appActions = {
 
   setPlaybackSpeed: (speed: number) => {
     appStore$.preferences.playbackSpeed.set(speed)
+  },
+
+  setLivePublishEnabled: (enabled: boolean) => {
+    appStore$.preferences.livePublishEnabled.set(enabled)
   },
 
   setAuth: (userId: string | null) => {

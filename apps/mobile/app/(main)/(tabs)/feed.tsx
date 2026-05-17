@@ -21,7 +21,10 @@ import { Separator, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc } from '../../../../../convex/_generated/dataModel'
 
-type BondfireData = Doc<'bondfires'>
+type BondfireData = Doc<'bondfires'> & {
+  isLive?: boolean
+  livePlaybackId?: string
+}
 
 type ViewMode = 'discover' | 'recent' | 'active' | 'unseen'
 
@@ -80,6 +83,7 @@ function BondfireRow({
   const timeAgo = getTimeAgo(bondfire.createdAt)
   const responses = Math.max(0, bondfire.videoCount - 1)
   const viewed = hasViewedToday(bondfire._id)
+  const isLive = bondfire.videoStatus === 'live' || bondfire.isLive
 
   return (
     <Pressable onPress={onOpen}>
@@ -105,6 +109,21 @@ function BondfireRow({
           ) : (
             <Flame size={30} color={bondfireColors.bondfireCopper} />
           )}
+          {isLive && (
+            <YStack
+              position="absolute"
+              top={6}
+              left={6}
+              backgroundColor={bondfireColors.error}
+              paddingHorizontal={7}
+              paddingVertical={3}
+              borderRadius={10}
+            >
+              <Text color={bondfireColors.whiteSmoke} fontSize={9} fontWeight="900">
+                LIVE
+              </Text>
+            </YStack>
+          )}
         </YStack>
 
         <YStack flex={1} gap={6}>
@@ -114,7 +133,7 @@ function BondfireRow({
                 {bondfire.creatorName ?? 'Anonymous'}
               </Text>
               <Text fontSize={12} color={bondfireColors.ash} numberOfLines={1}>
-                {timeAgo} · {viewed ? 'Viewed' : 'New'}
+                {isLive ? 'Live now' : `${timeAgo} · ${viewed ? 'Viewed' : 'New'}`}
               </Text>
             </YStack>
 
@@ -291,12 +310,16 @@ export default function FeedScreen() {
     const sorted = items.slice()
 
     if (viewMode === 'recent') {
-      sorted.sort((a, b) => b.createdAt - a.createdAt)
+      sorted.sort((a, b) => {
+        if (!!a.isLive !== !!b.isLive) return a.isLive ? -1 : 1
+        return b.createdAt - a.createdAt
+      })
       return sorted
     }
 
     if (viewMode === 'active') {
       sorted.sort((a, b) => {
+        if (!!a.isLive !== !!b.isLive) return a.isLive ? -1 : 1
         if (b.videoCount !== a.videoCount) return b.videoCount - a.videoCount
         return (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt)
       })
@@ -305,6 +328,7 @@ export default function FeedScreen() {
 
     // "discover" and "unseen": smallest convos first, but newest within each size.
     sorted.sort((a, b) => {
+      if (!!a.isLive !== !!b.isLive) return a.isLive ? -1 : 1
       if (a.videoCount !== b.videoCount) return a.videoCount - b.videoCount
       return b.createdAt - a.createdAt
     })

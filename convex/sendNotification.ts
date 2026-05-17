@@ -1,6 +1,7 @@
 import { v } from 'convex/values'
 import { api, internal } from './_generated/api'
-import { action, internalAction } from './_generated/server'
+import type { Id } from './_generated/dataModel'
+import { action, internalAction, internalQuery } from './_generated/server'
 
 // Expo Push API types
 interface ExpoPushMessage {
@@ -132,6 +133,21 @@ export const sendToUser = internalAction({
   },
 })
 
+export const getLiveNotificationRecipientIds = internalQuery({
+  args: {
+    creatorId: v.id('users'),
+  },
+  handler: async (ctx, args): Promise<Array<Id<'users'>>> => {
+    // The app does not have a follower/contact graph yet. Use registered push
+    // users as the current live-notification audience, excluding the creator.
+    const tokens = await ctx.db.query('deviceTokens').collect()
+
+    return [...new Set(tokens.map((token) => token.userId))].filter(
+      (userId) => userId !== args.creatorId,
+    )
+  },
+})
+
 // Send notification when someone responds to a bondfire
 export const notifyBondfireResponse = internalAction({
   args: {
@@ -168,6 +184,56 @@ export const notifyBondfireResponse = internalAction({
         bondfireId: args.bondfireId,
       },
     })
+
+    return { success: true }
+  },
+})
+
+// Send notification when a creator's live bondfire becomes watchable.
+export const notifyBondfireLive = internalAction({
+  args: {
+    bondfireId: v.id('bondfires'),
+    creatorId: v.id('users'),
+    creatorName: v.string(),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    success: boolean
+    skipped?: boolean
+    error?: string
+  }> => {
+    const bondfire = await ctx.runQuery(api.bondfires.get, { id: args.bondfireId })
+
+    if (!bondfire) {
+      return { success: false, error: 'Bondfire not found' }
+    }
+
+    const recipientIds: Array<Id<'users'>> = await ctx.runQuery(
+      internal.sendNotification.getLiveNotificationRecipientIds,
+      {
+        creatorId: args.creatorId,
+      },
+    )
+
+    if (recipientIds.length === 0) {
+      return { success: true, skipped: true }
+    }
+
+    await Promise.all(
+      recipientIds.map((userId) =>
+        ctx.runAction(internal.sendNotification.sendToUser, {
+          userId,
+          title: 'Live now',
+          body: `${args.creatorName} is live right now`,
+          data: {
+            type: 'bondfire_live',
+            bondfireId: args.bondfireId,
+          },
+        }),
+      ),
+    )
 
     return { success: true }
   },

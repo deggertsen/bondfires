@@ -11,8 +11,10 @@
 import type * as auth from "../auth.js";
 import type * as bondfireVideos from "../bondfireVideos.js";
 import type * as bondfires from "../bondfires.js";
+import type * as crons from "../crons.js";
 import type * as email from "../email.js";
 import type * as http from "../http.js";
+import type * as liveSessions from "../liveSessions.js";
 import type * as notifications from "../notifications.js";
 import type * as reports from "../reports.js";
 import type * as reviewerAccounts from "../reviewerAccounts.js";
@@ -31,8 +33,10 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   bondfireVideos: typeof bondfireVideos;
   bondfires: typeof bondfires;
+  crons: typeof crons;
   email: typeof email;
   http: typeof http;
+  liveSessions: typeof liveSessions;
   notifications: typeof notifications;
   reports: typeof reports;
   reviewerAccounts: typeof reviewerAccounts;

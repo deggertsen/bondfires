@@ -1,0 +1,9 @@
+{
+  "platforms": ["ios", "android"],
+  "ios": {
+    "modules": ["BondfireLivePublisherModule"]
+  },
+  "android": {
+    "modules": ["org.bondfires.livepublisher.BondfireLivePublisherModule"]
+  }
+}

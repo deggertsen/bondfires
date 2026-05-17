@@ -2,6 +2,31 @@ import { v } from 'convex/values'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
 
+// Works for both `bondfires` and `bondfireVideos` rows — they share the
+// status/playback fields this predicate touches.
+function isPlayableVideoRecord(record: {
+  videoStatus?: string
+  muxPlaybackId?: string
+  muxLivePlaybackId?: string
+}) {
+  const status = record.videoStatus ?? 'ready'
+  return (
+    (status === 'ready' && !!record.muxPlaybackId) ||
+    (status === 'live' && !!record.muxLivePlaybackId)
+  )
+}
+
+function withLiveFlags<T extends { videoStatus?: string; muxLivePlaybackId?: string }>(
+  record: T,
+): T & { isLive: boolean; livePlaybackId?: string } {
+  const isLive = (record.videoStatus ?? 'ready') === 'live' && !!record.muxLivePlaybackId
+  return {
+    ...record,
+    isLive,
+    livePlaybackId: isLive ? record.muxLivePlaybackId : undefined,
+  }
+}
+
 // List bondfires for the feed (ordered by videoCount ASC for discovery)
 export const listFeed = query({
   args: {
@@ -18,9 +43,7 @@ export const listFeed = query({
       .order('asc')
       .take(limit * 3)
 
-    return bondfires
-      .filter((bondfire) => (bondfire.videoStatus ?? 'ready') === 'ready' && bondfire.muxPlaybackId)
-      .slice(0, limit)
+    return bondfires.filter(isPlayableVideoRecord).slice(0, limit).map(withLiveFlags)
   },
 })
 
@@ -37,7 +60,7 @@ export const getWithVideos = query({
   args: { bondfireId: v.id('bondfires') },
   handler: async (ctx, args) => {
     const bondfire = await ctx.db.get(args.bondfireId)
-    if (!bondfire || (bondfire.videoStatus ?? 'ready') !== 'ready' || !bondfire.muxPlaybackId) {
+    if (!bondfire || !isPlayableVideoRecord(bondfire)) {
       return null
     }
 
@@ -47,12 +70,10 @@ export const getWithVideos = query({
       .order('asc')
       .collect()
 
-    const readyVideos = videos.filter(
-      (video) => (video.videoStatus ?? 'ready') === 'ready' && video.muxPlaybackId,
-    )
+    const readyVideos = videos.filter(isPlayableVideoRecord).map(withLiveFlags)
 
     return {
-      ...bondfire,
+      ...withLiveFlags(bondfire),
       videos: readyVideos,
     }
   },
@@ -68,9 +89,7 @@ export const listByUser = query({
       .order('desc')
       .collect()
 
-    return bondfires.filter(
-      (bondfire) => (bondfire.videoStatus ?? 'ready') === 'ready' && bondfire.muxPlaybackId,
-    )
+    return bondfires.filter(isPlayableVideoRecord).map(withLiveFlags)
   },
 })
 
@@ -85,6 +104,7 @@ export const create = mutation({
       v.union(
         v.literal('waiting_for_upload'),
         v.literal('processing'),
+        v.literal('live'),
         v.literal('ready'),
         v.literal('errored'),
       ),
