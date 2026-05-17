@@ -1,4 +1,11 @@
-import { appActions, uploadQueueActions, usePreferences } from '@bondfires/app'
+import {
+  appActions,
+  getBondfireVideoIndex,
+  setBondfireVideoIndex,
+  setFeedActiveBondfireId,
+  uploadQueueActions,
+  usePreferences,
+} from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Card, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
@@ -163,6 +170,16 @@ export default function ProfileScreen() {
       state$.isSaving.set(false)
     }
   }, [handleRefresh, state$, updateProfile])
+
+  const handleOpenBondfire = useCallback(
+    (bondfireId: string) => {
+      setFeedActiveBondfireId(bondfireId)
+      setBondfireVideoIndex(bondfireId, getBondfireVideoIndex(bondfireId) ?? 0)
+      appActions.setVideoMuted(false)
+      router.push(`/(main)/bondfire/${bondfireId}`)
+    },
+    [router],
+  )
 
   const handleDeleteAccount = useCallback(() => {
     Alert.alert(
@@ -537,39 +554,40 @@ export default function ProfileScreen() {
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 renderItem={({ item }) => (
-                  <Pressable onPress={() => router.push(`/(main)/bondfire/${item._id}`)}>
-                    <Card
-                      width={140}
-                      height={180}
-                      marginRight={12}
-                      padding={0}
-                      overflow="hidden"
-                      interactive
+                  <Card
+                    width={140}
+                    height={180}
+                    marginRight={12}
+                    padding={0}
+                    overflow="hidden"
+                    interactive
+                    accessibilityRole="button"
+                    accessibilityLabel="Open Bondfire"
+                    onPress={() => handleOpenBondfire(item._id)}
+                  >
+                    <YStack
+                      flex={1}
+                      backgroundColor={bondfireColors.charcoal}
+                      alignItems="center"
+                      justifyContent="center"
                     >
-                      <YStack
-                        flex={1}
-                        backgroundColor={bondfireColors.charcoal}
-                        alignItems="center"
-                        justifyContent="center"
-                      >
-                        <Flame size={40} color={bondfireColors.bondfireCopper} />
-                      </YStack>
-                      <YStack padding={12} gap={4} backgroundColor={bondfireColors.gunmetal}>
-                        <XStack alignItems="center" gap={6}>
-                          <MessageCircle size={14} color={bondfireColors.ash} />
-                          <Text fontSize={13} color={bondfireColors.whiteSmoke}>
-                            {item.videoCount} videos
-                          </Text>
-                        </XStack>
-                        <XStack alignItems="center" gap={6}>
-                          <Eye size={14} color={bondfireColors.ash} />
-                          <Text fontSize={12} color={bondfireColors.ash}>
-                            {item.viewCount ?? 0} views
-                          </Text>
-                        </XStack>
-                      </YStack>
-                    </Card>
-                  </Pressable>
+                      <Flame size={40} color={bondfireColors.bondfireCopper} />
+                    </YStack>
+                    <YStack padding={12} gap={4} backgroundColor={bondfireColors.gunmetal}>
+                      <XStack alignItems="center" gap={6}>
+                        <MessageCircle size={14} color={bondfireColors.ash} />
+                        <Text fontSize={13} color={bondfireColors.whiteSmoke}>
+                          {item.videoCount} videos
+                        </Text>
+                      </XStack>
+                      <XStack alignItems="center" gap={6}>
+                        <Eye size={14} color={bondfireColors.ash} />
+                        <Text fontSize={12} color={bondfireColors.ash}>
+                          {item.viewCount ?? 0} views
+                        </Text>
+                      </XStack>
+                    </YStack>
+                  </Card>
                 )}
               />
             </YStack>
