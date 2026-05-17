@@ -1,13 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
-# release.sh — Bump version, build iOS + Android, and auto-submit to app stores
+# release.sh — Deploy Convex backend, bump version, build iOS + Android, and auto-submit to app stores
 #
 # Usage:
 #   ./scripts/release.sh [patch|minor|major]
 #
 # Defaults to "patch" if no argument given.
-# Requires: eas-cli, jq
+# Requires: eas-cli, jq, convex CLI (npx convex)
 
 BUMP_TYPE="${1:-patch}"
 APP_JSON="apps/mobile/app.json"
@@ -45,6 +45,11 @@ jq --arg v "$NEW_VERSION" '.expo.version = $v' "$APP_JSON" > "$APP_JSON.tmp" && 
 git add "$APP_JSON"
 git commit -m "chore: bump version to $NEW_VERSION for release"
 echo "✅ Committed version bump"
+
+# --- Deploy Convex backend to production ---
+echo "⚡ Deploying Convex backend to production..."
+npx convex deploy
+echo "✅ Convex backend deployed"
 
 # --- Build + auto-submit both platforms ---
 echo "🚀 Starting EAS builds with auto-submit..."
