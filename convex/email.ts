@@ -4,6 +4,10 @@ import { internalAction } from './_generated/server'
 // Email sending configuration
 // Set RESEND_API_KEY in your Convex dashboard under Settings > Environment Variables
 // Sign up at https://resend.com for an API key
+const DEFAULT_EMAIL_FROM = 'Bondfires <support@bondfires.org>'
+const VERIFY_EMAIL_SUBJECT = 'Verify your Bondfires account'
+const RESET_PASSWORD_SUBJECT = 'Reset your Bondfires password'
+const WELCOME_EMAIL_SUBJECT = 'Welcome to Bondfires'
 
 interface EmailOptions {
   to: string
@@ -25,7 +29,7 @@ async function sendEmail(
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        from: process.env.EMAIL_FROM || 'Bondfires <noreply@bondfires.org>',
+        from: process.env.EMAIL_FROM || DEFAULT_EMAIL_FROM,
         to: options.to,
         subject: options.subject,
         html: options.html,
@@ -64,10 +68,10 @@ export const sendVerificationEmail = internalAction({
 
     return await sendEmail(apiKey, {
       to: args.email,
-      subject: '🔥 Verify your Bondfires account',
+      subject: VERIFY_EMAIL_SUBJECT,
       html: `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <h1 style="color: #FF6B35; margin-bottom: 24px;">🔥 Bondfires</h1>
+          <h1 style="color: #FF6B35; margin-bottom: 24px;">Bondfires</h1>
           <p style="font-size: 16px; color: #333;">${greeting}!</p>
           <p style="font-size: 16px; color: #333;">Welcome to Bondfires! Please verify your email address by entering this code:</p>
           <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; text-align: center; margin: 24px 0;">
@@ -102,10 +106,10 @@ export const sendPasswordResetEmail = internalAction({
 
     return await sendEmail(apiKey, {
       to: args.email,
-      subject: '🔑 Reset your Bondfires password',
+      subject: RESET_PASSWORD_SUBJECT,
       html: `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <h1 style="color: #FF6B35; margin-bottom: 24px;">🔥 Bondfires</h1>
+          <h1 style="color: #FF6B35; margin-bottom: 24px;">Bondfires</h1>
           <p style="font-size: 16px; color: #333;">${greeting}!</p>
           <p style="font-size: 16px; color: #333;">We received a request to reset your password. Use this code to set a new password:</p>
           <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; text-align: center; margin: 24px 0;">
@@ -139,10 +143,10 @@ export const sendWelcomeEmail = internalAction({
 
     return await sendEmail(apiKey, {
       to: args.email,
-      subject: '🎉 Welcome to Bondfires!',
+      subject: WELCOME_EMAIL_SUBJECT,
       html: `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <h1 style="color: #FF6B35; margin-bottom: 24px;">🔥 Bondfires</h1>
+          <h1 style="color: #FF6B35; margin-bottom: 24px;">Bondfires</h1>
           <p style="font-size: 16px; color: #333;">${greeting}!</p>
           <p style="font-size: 16px; color: #333;">Your email has been verified and your Bondfires account is ready to go!</p>
           <p style="font-size: 16px; color: #333;">Here's what you can do next:</p>

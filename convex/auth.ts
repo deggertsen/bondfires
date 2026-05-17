@@ -2,6 +2,10 @@ import Resend from '@auth/core/providers/resend'
 import { Password } from '@convex-dev/auth/providers/Password'
 import { convexAuth } from '@convex-dev/auth/server'
 
+const DEFAULT_EMAIL_FROM = 'Bondfires <support@bondfires.org>'
+const VERIFY_EMAIL_SUBJECT = 'Verify your Bondfires account'
+const RESET_PASSWORD_SUBJECT = 'Reset your Bondfires password'
+
 // Generate a 6-digit numeric OTP using crypto for security
 function generateOTP(): string {
   // Use crypto.getRandomValues for secure random numbers
@@ -16,7 +20,7 @@ function generateOTP(): string {
 const ResendOTP = Resend({
   id: 'resend-otp',
   apiKey: process.env.RESEND_API_KEY,
-  from: process.env.EMAIL_FROM ?? 'Bondfires <noreply@bondfires.org>',
+  from: process.env.EMAIL_FROM ?? DEFAULT_EMAIL_FROM,
   maxAge: 15 * 60, // 15 minutes
   // Generate 6-digit numeric OTP instead of long secure token
   generateVerificationToken: generateOTP,
@@ -29,12 +33,12 @@ const ResendOTP = Resend({
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: process.env.EMAIL_FROM ?? 'Bondfires <noreply@bondfires.org>',
+        from: process.env.EMAIL_FROM ?? DEFAULT_EMAIL_FROM,
         to: email,
-        subject: '🔥 Verify your Bondfires account',
+        subject: VERIFY_EMAIL_SUBJECT,
         html: `
           <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <h1 style="color: #FF6B35; margin-bottom: 24px;">🔥 Bondfires</h1>
+            <h1 style="color: #FF6B35; margin-bottom: 24px;">Bondfires</h1>
             <p style="font-size: 16px; color: #333;">Welcome to Bondfires!</p>
             <p style="font-size: 16px; color: #333;">Please verify your email address by entering this code:</p>
             <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; text-align: center; margin: 24px 0;">
@@ -59,7 +63,7 @@ const ResendOTP = Resend({
 const ResendPasswordReset = Resend({
   id: 'resend-password-reset',
   apiKey: process.env.RESEND_API_KEY,
-  from: process.env.EMAIL_FROM ?? 'Bondfires <noreply@bondfires.org>',
+  from: process.env.EMAIL_FROM ?? DEFAULT_EMAIL_FROM,
   maxAge: 15 * 60, // 15 minutes
   // Generate 6-digit numeric OTP for password reset
   generateVerificationToken: generateOTP,
@@ -72,12 +76,12 @@ const ResendPasswordReset = Resend({
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: process.env.EMAIL_FROM ?? 'Bondfires <noreply@bondfires.org>',
+        from: process.env.EMAIL_FROM ?? DEFAULT_EMAIL_FROM,
         to: email,
-        subject: '🔑 Reset your Bondfires password',
+        subject: RESET_PASSWORD_SUBJECT,
         html: `
           <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <h1 style="color: #FF6B35; margin-bottom: 24px;">🔥 Bondfires</h1>
+            <h1 style="color: #FF6B35; margin-bottom: 24px;">Bondfires</h1>
             <p style="font-size: 16px; color: #333;">We received a request to reset your password.</p>
             <p style="font-size: 16px; color: #333;">Use this code to set a new password:</p>
             <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; text-align: center; margin: 24px 0;">

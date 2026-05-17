@@ -87,6 +87,10 @@ EXPO_PUBLIC_CONVEX_URL=your-convex-deployment-url
 Set these in the Convex dashboard for video and image storage:
 
 ```env
+# Auth email through Resend
+RESEND_API_KEY=your-resend-api-key
+EMAIL_FROM=Bondfires <support@bondfires.org>
+
 # Mux Video for new bondfire videos
 MUX_TOKEN_ID=your-mux-token-id
 MUX_TOKEN_SECRET=your-mux-token-secret
