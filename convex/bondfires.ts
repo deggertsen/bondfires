@@ -156,18 +156,60 @@ export const create = mutation({
   },
 })
 
-// Increment view count
+// Record a unique view for the current user. Views are counted once per
+// viewer/bondfire and never for the creator's own videos.
 export const incrementViews = mutation({
   args: { bondfireId: v.id('bondfires') },
   handler: async (ctx, args) => {
+    const viewerId = await auth.getUserId(ctx)
+    if (!viewerId) {
+      throw new Error('Not authenticated')
+    }
+
     const bondfire = await ctx.db.get(args.bondfireId)
     if (!bondfire) {
       throw new Error('Bondfire not found')
     }
 
+    if (bondfire.userId === viewerId) {
+      return { recorded: false, reason: 'own_video' }
+    }
+
+    const existingView = await ctx.db
+      .query('watchEvents')
+      .withIndex('by_user_video', (q) => q.eq('userId', viewerId).eq('videoId', args.bondfireId))
+      .filter((q) => q.eq(q.field('eventType'), 'start'))
+      .first()
+
+    if (existingView) {
+      return { recorded: false, reason: 'already_viewed' }
+    }
+
+    const now = Date.now()
+    await ctx.db.insert('watchEvents', {
+      userId: viewerId,
+      videoType: 'bondfire',
+      videoId: args.bondfireId,
+      eventType: 'start',
+      positionMs: 0,
+      durationMs: bondfire.durationMs,
+      createdAt: now,
+    })
+
+    const creator = await ctx.db.get(bondfire.userId)
+
     await ctx.db.patch(args.bondfireId, {
       viewCount: (bondfire.viewCount ?? 0) + 1,
-      updatedAt: Date.now(),
+      updatedAt: now,
     })
+
+    if (creator) {
+      await ctx.db.patch(bondfire.userId, {
+        totalViews: (creator.totalViews ?? 0) + 1,
+        updatedAt: now,
+      })
+    }
+
+    return { recorded: true }
   },
 })
