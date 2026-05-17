@@ -2,7 +2,7 @@ import Resend from '@auth/core/providers/resend'
 import { Password } from '@convex-dev/auth/providers/Password'
 import { convexAuth } from '@convex-dev/auth/server'
 
-const DEFAULT_EMAIL_FROM = 'Bondfires <noreply@bondfires.org>'
+const DEFAULT_EMAIL_FROM = 'Bondfires <support@bondfires.org>'
 const VERIFY_EMAIL_SUBJECT = 'Verify your Bondfires account'
 const RESET_PASSWORD_SUBJECT = 'Reset your Bondfires password'
 

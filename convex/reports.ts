@@ -213,7 +213,7 @@ export const sendReportNotificationEmail = internalAction({
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          from: process.env.EMAIL_FROM || 'Bondfires <noreply@bondfires.org>',
+          from: process.env.EMAIL_FROM || 'Bondfires <support@bondfires.org>',
           to: 'safety@bondfires.org',
           subject: `${isHighPriority ? '[HIGH PRIORITY] ' : ''}[Video Report] ${categoryLabel} - ${args.videoType} ${args.videoId}`,
           html: `

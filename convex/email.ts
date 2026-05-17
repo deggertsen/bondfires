@@ -4,7 +4,7 @@ import { internalAction } from './_generated/server'
 // Email sending configuration
 // Set RESEND_API_KEY in your Convex dashboard under Settings > Environment Variables
 // Sign up at https://resend.com for an API key
-const DEFAULT_EMAIL_FROM = 'Bondfires <noreply@bondfires.org>'
+const DEFAULT_EMAIL_FROM = 'Bondfires <support@bondfires.org>'
 const VERIFY_EMAIL_SUBJECT = 'Verify your Bondfires account'
 const RESET_PASSWORD_SUBJECT = 'Reset your Bondfires password'
 const WELCOME_EMAIL_SUBJECT = 'Welcome to Bondfires'
