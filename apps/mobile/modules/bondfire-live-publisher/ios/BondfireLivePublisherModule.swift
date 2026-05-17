@@ -40,8 +40,8 @@ public class BondfireLivePublisherModule: Module {
     }
 
     AsyncFunction("start") { (options: LivePublisherStartOptions) in
-      let publisher = try self.ensurePublisher()
-      sendEvent("statusChange", "connecting")
+      let publisher = try await MainActor.run { try self.ensurePublisher() }
+      await MainActor.run { self.sendEvent("statusChange", ["status": "connecting"]) }
       try await publisher.start(options: options)
     }
 
@@ -77,6 +77,7 @@ public class BondfireLivePublisherModule: Module {
 
   fileprivate var publisher: LivePublisher?
 
+  @MainActor
   private func ensurePublisher() throws -> LivePublisher {
     if let publisher = publisher {
       return publisher
@@ -109,14 +110,22 @@ enum LivePublisherEvent {
 
 @MainActor
 final class LivePublisher {
-  private let mixer = MediaMixer(multiCamSessionEnabled: false)
+  // useManualCapture: true gives us explicit control over when capture starts
+  private let mixer = MediaMixer(multiCamSessionEnabled: false, useManualCapture: true)
   private var session: (any Session)?
   private var currentOptions: LivePublisherStartOptions?
   private var currentCameraPosition: AVCaptureDevice.Position = .front
   private let eventHandler: (LivePublisherEvent) -> Void
 
-  /// The HaishinKit preview screen view. Public so the BondfireLivePublisherView can add it.
-  var previewView: UIView { mixer.screen.view }
+  /// MTHKView registered as a mixer output — HaishinKit 2.x preview approach
+  private lazy var previewView: MTHKView = {
+    let view = MTHKView(frame: .zero)
+    view.videoGravity = .resizeAspectFill
+    return view
+  }()
+
+  /// The preview UIView exposed to BondfireLivePublisherView
+  var cameraPreviewView: UIView { previewView }
 
   init(eventHandler: @escaping (LivePublisherEvent) -> Void) {
     self.eventHandler = eventHandler
@@ -127,14 +136,11 @@ final class LivePublisher {
   func start(options: LivePublisherStartOptions) async throws {
     currentOptions = options
 
-    // Determine camera position
     let position: AVCaptureDevice.Position = options.initialCamera == "back" ? .back : .front
     currentCameraPosition = position
 
-    // Configure audio session
     setupAudioSession()
 
-    // Build RTMP URL: rtmpsUrl + "/" + streamKey
     let urlString: String
     if options.rtmpsUrl.hasSuffix("/") {
       urlString = options.rtmpsUrl + options.streamKey
@@ -148,10 +154,17 @@ final class LivePublisher {
       return
     }
 
-    // Create the RTMP publish session
+    // build() returns (any Session)? — guard-unwrap required
     let newSession: any Session
     do {
-      newSession = try await SessionBuilderFactory.shared.make(url).build()
+      guard let built = try await SessionBuilderFactory.shared.make(url).build() else {
+        emitError("session_build_failed", "Session builder returned nil for URL: \(urlString)")
+        emitStatusChange("errored")
+        throw LivePublisherException(message: "Session builder returned nil")
+      }
+      newSession = built
+    } catch let e as LivePublisherException {
+      throw e
     } catch {
       emitError("session_build_failed", "Failed to build RTMP session: \(error.localizedDescription)")
       emitStatusChange("errored")
@@ -159,13 +172,10 @@ final class LivePublisher {
     }
     self.session = newSession
 
-    // Connect mixer output to the session stream
+    // Wire stream output and preview view into the mixer
     await mixer.addOutput(newSession.stream)
+    await mixer.addOutput(previewView)
 
-    // Set screen size for preview
-    await mixer.screen.size = CGSize(width: options.width, height: options.height)
-
-    // Attach camera
     guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position) else {
       emitError("camera_not_found", "No camera for position: \(position == .back ? "back" : "front")")
       emitStatusChange("errored")
@@ -183,7 +193,6 @@ final class LivePublisher {
       emitError("attachCamera_failed", error.localizedDescription)
     }
 
-    // Attach audio
     if let audioDevice = AVCaptureDevice.default(for: .audio) {
       do {
         try await mixer.attachAudio(audioDevice)
@@ -194,10 +203,8 @@ final class LivePublisher {
       emitError("no_mic", "No audio input device found.")
     }
 
-    // Start capture
     await mixer.startRunning()
 
-    // Configure stream settings
     var videoSettings = await newSession.stream.videoSettings
     videoSettings.bitRate = options.videoBitrate
     await newSession.stream.setVideoSettings(videoSettings)
@@ -206,7 +213,6 @@ final class LivePublisher {
     audioSettings.bitRate = options.audioBitrate
     await newSession.stream.setAudioSettings(audioSettings)
 
-    // Connect to RTMP server
     do {
       try await newSession.connect(.ingest)
     } catch {
@@ -215,7 +221,6 @@ final class LivePublisher {
       throw LivePublisherException(message: "RTMP connection failed: \(error.localizedDescription)")
     }
 
-    // Connection and publish succeeded — we're live
     emitStatusChange("live")
   }
 
@@ -257,7 +262,6 @@ final class LivePublisher {
     }
 
     do {
-      // attachVideo with track: 0 replaces the current main camera
       try await mixer.attachVideo(camera, track: 0) { videoUnit in
         videoUnit.isVideoMirrored = newPosition == .front
       }
@@ -271,15 +275,13 @@ final class LivePublisher {
 
   func setMuted(_ muted: Bool) async {
     var audioSettings = await mixer.audioMixerSettings
-    audioSettings.muted = muted
+    audioSettings.isMuted = muted
     await mixer.setAudioMixerSettings(audioSettings)
   }
 
   // MARK: - Stats
 
   func getStats() async -> [String: Int] {
-    // HaishinKit 2.x doesn't expose real-time bitrate/RTT/frame-drop counters
-    // via a simple public API. Return zeroed stats for now — can be enhanced later.
     return [
       "bitrateBps": 0,
       "rttMs": 0,
@@ -321,8 +323,6 @@ final class BondfireLivePublisherView: ExpoView {
 
   override func didMoveToWindow() {
     super.didMoveToWindow()
-    // When the view mounts, if the module's publisher has an active preview,
-    // add it as a subview.
     attachPreviewIfAvailable()
   }
 
@@ -331,7 +331,7 @@ final class BondfireLivePublisherView: ExpoView {
           let publisher = module.publisher else {
       return
     }
-    let previewView = publisher.previewView
+    let previewView = publisher.cameraPreviewView
     if previewView.superview != self {
       previewView.removeFromSuperview()
       addSubview(previewView)
