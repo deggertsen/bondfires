@@ -17,6 +17,7 @@ android {
 
 dependencies {
   implementation project(':expo-modules-core')
-  implementation 'io.github.thibaultbee.streampack:streampack-core:3.1.0'
-  implementation 'io.github.thibaultbee.streampack:streampack-rtmp:3.1.0'
+  implementation 'io.github.thibaultbee.streampack:streampack-core:3.1.2'
+  implementation 'io.github.thibaultbee.streampack:streampack-rtmp:3.1.2'
+  implementation 'io.github.thibaultbee.streampack:streampack-ui:3.1.2'
 }

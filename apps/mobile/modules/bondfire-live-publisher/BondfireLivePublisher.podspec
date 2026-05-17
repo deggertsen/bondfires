@@ -10,7 +10,7 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
-  s.dependency 'HaishinKit', '~> 2.2'
+  s.dependency 'HaishinKit', '~> 2.0'
 
   s.source_files = 'ios/**/*.{h,m,mm,swift}'
   s.swift_version = '5.9'
