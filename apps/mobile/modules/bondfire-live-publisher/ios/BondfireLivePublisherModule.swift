@@ -354,6 +354,7 @@ final class LivePublisherException: Exception {
 
   init(message: String) {
     self.message = message
+    super.init()
   }
 
   override var reason: String {
