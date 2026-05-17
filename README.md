@@ -87,6 +87,10 @@ EXPO_PUBLIC_CONVEX_URL=your-convex-deployment-url
 Set these in the Convex dashboard for video and image storage:
 
 ```env
+# Auth email through Resend
+RESEND_API_KEY=your-resend-api-key
+EMAIL_FROM=Bondfires <noreply@bondfires.org>
+
 # Mux Video for new bondfire videos
 MUX_TOKEN_ID=your-mux-token-id
 MUX_TOKEN_SECRET=your-mux-token-secret
@@ -98,6 +102,10 @@ MUX_VIDEO_QUALITY=basic
 
 Configure the Mux webhook endpoint to point at the Convex HTTP action path
 `https://<your-convex-deployment>.convex.site/mux/webhook`.
+
+For signup verification delivery, the `EMAIL_FROM` domain must be verified in
+Resend with SPF and DKIM passing. See `docs/email-deliverability.md` before
+debugging mailbox-specific delivery issues such as Yahoo.
 
 ### Development Setup
 
