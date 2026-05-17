@@ -85,7 +85,7 @@ public class BondfireLivePublisherModule: Module {
       guard let self else { return }
       switch event {
       case .statusChange(let status):
-        self.sendEvent("statusChange", status)
+        self.sendEvent("statusChange", ["status": status])
       case .error(let code, let message):
         self.sendEvent("error", [
           "code": code,

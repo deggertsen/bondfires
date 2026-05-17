@@ -27,6 +27,7 @@ export interface LivePublisherStats {
 export interface LivePublisherViewProps extends ViewProps {}
 
 type Status = 'idle' | 'connecting' | 'live' | 'reconnecting' | 'errored' | 'ended'
+type StatusEvent = Status | { status?: Status }
 type EventSubscription = { remove: () => void }
 
 interface NativeLivePublisher {
@@ -76,6 +77,15 @@ const addListener: AddListener = (
 ): EventSubscription => {
   if (!emitter) {
     return { remove: () => {} }
+  }
+
+  if (event === 'statusChange') {
+    return emitter.addListener(event as never, ((payload: StatusEvent) => {
+      const status = typeof payload === 'string' ? payload : payload.status
+      if (status) {
+        ;(cb as (status: Status) => void)(status)
+      }
+    }) as never)
   }
 
   return emitter.addListener(event as never, cb as never)

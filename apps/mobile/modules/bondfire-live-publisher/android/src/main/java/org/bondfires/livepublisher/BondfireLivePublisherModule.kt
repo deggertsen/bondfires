@@ -2,27 +2,28 @@ package org.bondfires.livepublisher
 
 import android.content.Context
 import android.media.AudioFormat
-import android.media.AudioManager
 import android.media.MediaFormat
 import android.util.Log
 import android.util.Size
 import expo.modules.kotlin.exception.CodedException
+import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.records.Field
 import expo.modules.kotlin.records.Record
 import expo.modules.kotlin.views.ExpoView
+import io.github.thibaultbee.streampack.core.elements.encoders.AudioCodecConfig
+import io.github.thibaultbee.streampack.core.elements.encoders.VideoCodecConfig
 import io.github.thibaultbee.streampack.core.elements.sources.audio.audiorecord.MicrophoneSourceFactory
+import io.github.thibaultbee.streampack.core.elements.sources.video.camera.CameraSourceFactory
 import io.github.thibaultbee.streampack.core.interfaces.startStream
-import io.github.thibaultbee.streampack.core.streamers.single.AudioConfig
 import io.github.thibaultbee.streampack.core.streamers.single.SingleStreamer
-import io.github.thibaultbee.streampack.core.streamers.single.VideoConfig
 import io.github.thibaultbee.streampack.core.streamers.single.cameraSingleStreamer
+import io.github.thibaultbee.streampack.ext.rtmp.elements.endpoints.RtmpEndpointFactory
 import io.github.thibaultbee.streampack.ui.views.PreviewView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class LivePublisherStartOptions : Record {
@@ -48,9 +49,9 @@ class BondfireLivePublisherModule : Module() {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
   private var streamer: SingleStreamer? = null
   private var isMuted = false
+  private var currentFacing: String = "front"
 
   var previewView: PreviewView? = null
-    private set
 
   override fun definition() = ModuleDefinition {
     Name("BondfireLivePublisher")
@@ -72,39 +73,43 @@ class BondfireLivePublisherModule : Module() {
       true
     }
 
-    AsyncFunction("start") { options: LivePublisherStartOptions ->
+    AsyncFunction("start") Coroutine { options: LivePublisherStartOptions ->
       val context = appContext.reactContext
         ?: throw LivePublisherException("No React context available")
 
       // Build the RTMPS URL
       val rtmpsUrl = buildRtmpsUrl(options.rtmpsUrl, options.streamKey)
+      currentFacing = options.initialCamera
+      val cameraId = findCameraIdForFacing(currentFacing)
 
       // Create camera + microphone streamer
       val newStreamer = cameraSingleStreamer(
         context,
-        audioSourceFactory = MicrophoneSourceFactory()
+        cameraId = cameraId,
+        audioSourceFactory = MicrophoneSourceFactory(),
+        endpointFactory = RtmpEndpointFactory(),
       )
       streamer = newStreamer
 
       // Configure audio
-      val audioConfig = AudioConfig(
+      val audioConfig = AudioCodecConfig(
         mimeType = MediaFormat.MIMETYPE_AUDIO_AAC,
         startBitrate = options.audioBitrate,
         sampleRate = 44100,
         channelConfig = AudioFormat.CHANNEL_IN_MONO,
+        byteFormat = AudioFormat.ENCODING_PCM_16BIT,
       )
       newStreamer.setAudioConfig(audioConfig)
 
       // Configure video
-      val videoConfig = VideoConfig(
+      val videoConfig = VideoCodecConfig(
+        mimeType = MediaFormat.MIMETYPE_VIDEO_AVC,
         startBitrate = options.videoBitrate,
         resolution = Size(options.width, options.height),
         fps = options.fps,
+        gopDurationInS = 2.0f,
       )
       newStreamer.setVideoConfig(videoConfig)
-
-      // Set initial camera lens facing
-      setLensFacing(newStreamer, options.initialCamera)
 
       // Bind preview if already set
       previewView?.let { pv ->
@@ -116,10 +121,10 @@ class BondfireLivePublisherModule : Module() {
 
       // Connect and start streaming
       try {
-        sendEvent("statusChange", "connecting")
+        sendStatus("connecting")
         newStreamer.startStream(rtmpsUrl)
         // startStream blocks until successful connection or throws
-        sendEvent("statusChange", "live")
+        sendStatus("live")
       } catch (e: Exception) {
         Log.e(TAG, "Failed to start stream", e)
         sendEvent(
@@ -128,39 +133,27 @@ class BondfireLivePublisherModule : Module() {
             "message" to (e.message ?: "Failed to start RTMPS stream")
           )
         )
-        sendEvent("statusChange", "errored")
+        sendStatus("errored")
         throw LivePublisherException("Failed to start RTMPS stream: ${e.message}")
       }
     }
 
-    AsyncFunction("stop") {
-      sendEvent("statusChange", "ended")
+    AsyncFunction("stop") Coroutine { ->
+      sendStatus("ended")
       cleanupStreamer()
     }
 
-    AsyncFunction("swapCamera") {
-      val s = streamer ?: return@AsyncFunction
-      // Toggle between front and back — StreamPack uses camera IDs.
-      // For simplicity, use the front/back lens facing API.
-      val currentFacing = s.getLensFacing() ?: return@AsyncFunction
-      // getLensFacing returns null if camera info is unavailable
-      if (currentFacing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT) {
-        setLensFacing(s, "back")
-      } else {
-        setLensFacing(s, "front")
-      }
+    AsyncFunction("swapCamera") Coroutine { ->
+      val s = streamer ?: return@Coroutine
+      currentFacing = if (currentFacing == "front") "back" else "front"
+      s.setVideoSource(CameraSourceFactory(findCameraIdForFacing(currentFacing)))
+      previewView?.setVideoSourceProvider(s)
     }
 
-    AsyncFunction("setMuted") { muted: Boolean ->
-      val s = streamer ?: return@AsyncFunction
+    AsyncFunction("setMuted") Coroutine { muted: Boolean ->
+      val s = streamer ?: return@Coroutine
       isMuted = muted
-      // StreamPack 3.x doesn't have a direct mute() on the streamer.
-      // We swap audio source: null for mute, MicrophoneSourceFactory for unmute.
-      if (muted) {
-        s.setAudioSource(null)
-      } else {
-        s.setAudioSource(MicrophoneSourceFactory())
-      }
+      s.audioInput?.isMuted = muted
     }
 
     AsyncFunction("getStats") {
@@ -182,25 +175,34 @@ class BondfireLivePublisherModule : Module() {
     }
   }
 
-  private fun setLensFacing(streamer: SingleStreamer, facing: String) {
-    val cameraId = if (facing == "back") {
-      findCameraId(android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK)
+  private fun findCameraIdForFacing(facing: String): String {
+    val lensFacing = if (facing == "back") {
+      android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK
     } else {
-      findCameraId(android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT)
+      android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT
     }
-    if (cameraId != null) {
-      streamer.setCameraId(cameraId)
-    }
-  }
-
-  private fun findCameraId(lensFacing: Int): String? {
-    val context = appContext.reactContext ?: return null
+    val context = appContext.reactContext
+      ?: throw LivePublisherException("No React context available")
     val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? android.hardware.camera2.CameraManager
-      ?: return null
+      ?: throw LivePublisherException("Camera service unavailable")
     return cameraManager.cameraIdList.firstOrNull { id ->
       val characteristics = cameraManager.getCameraCharacteristics(id)
       characteristics.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING) == lensFacing
+    } ?: cameraManager.cameraIdList.firstOrNull()
+      ?: throw LivePublisherException("No camera available")
+  }
+
+  fun attachPreview(view: PreviewView) {
+    previewView = view
+    streamer?.let { s ->
+      scope.launch {
+        view.setVideoSourceProvider(s)
+      }
     }
+  }
+
+  private fun sendStatus(status: String) {
+    sendEvent("statusChange", mapOf("status" to status))
   }
 
   private suspend fun cleanupStreamer() {
@@ -228,17 +230,11 @@ class BondfireLivePublisherModule : Module() {
 class BondfireLivePublisherView(context: Context, appContext: expo.modules.kotlin.AppContext) :
   ExpoView(context, appContext) {
 
-  val previewView: PreviewView = PreviewView(context, appContext)
+  val previewView: PreviewView = PreviewView(context)
 
   init {
     addView(previewView)
-    val module = BondfireLivePublisherModule.currentInstance
-    module?.previewView = previewView
-
-    // Bind video source if streamer already exists
-    module?.let { m ->
-      m.previewView?.setVideoSourceProvider(it)
-    }
+    BondfireLivePublisherModule.currentInstance?.attachPreview(previewView)
   }
 
   override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
