@@ -1,4 +1,5 @@
 import { v } from 'convex/values'
+import { internal } from './_generated/api'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
 
@@ -41,6 +42,23 @@ export const listFeed = query({
       .query('bondfires')
       .withIndex('by_video_count')
       .order('asc')
+      .take(limit * 3)
+
+    return bondfires.filter(isPlayableVideoRecord).slice(0, limit).map(withLiveFlags)
+  },
+})
+
+export const listByCamp = query({
+  args: {
+    campId: v.id('camps'),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 20
+    const bondfires = await ctx.db
+      .query('bondfires')
+      .withIndex('by_camp', (q) => q.eq('campId', args.campId))
+      .order('desc')
       .take(limit * 3)
 
     return bondfires.filter(isPlayableVideoRecord).slice(0, limit).map(withLiveFlags)
@@ -96,6 +114,7 @@ export const listByUser = query({
 // Create a new bondfire
 export const create = mutation({
   args: {
+    campId: v.optional(v.id('camps')),
     muxUploadId: v.optional(v.string()),
     muxAssetId: v.optional(v.string()),
     muxPlaybackId: v.optional(v.string()),
@@ -127,9 +146,26 @@ export const create = mutation({
       throw new Error('Mux asset ID and playback ID are required for Mux videos')
     }
 
+    if (args.campId) {
+      const campId = args.campId
+      const camp = await ctx.db.get(args.campId)
+      if (!camp || camp.status !== 'active') {
+        throw new Error('Camp not found')
+      }
+
+      const membership = await ctx.db
+        .query('campMembers')
+        .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', campId))
+        .first()
+      if (membership?.status !== 'active') {
+        throw new Error('Join this camp before sparking here')
+      }
+    }
+
     const bondfireId = await ctx.db.insert('bondfires', {
       userId,
       creatorName: user?.displayName ?? user?.name,
+      campId: args.campId,
       videoStatus: args.videoStatus ?? 'ready',
       muxUploadId: args.muxUploadId,
       muxAssetId: args.muxAssetId,
@@ -151,6 +187,24 @@ export const create = mutation({
       bondfireCount: (user?.bondfireCount ?? 0) + 1,
       updatedAt: now,
     })
+
+    if (args.campId) {
+      const camp = await ctx.db.get(args.campId)
+      if (camp) {
+        await ctx.db.patch(args.campId, {
+          bondfireCount: (camp.bondfireCount ?? 0) + 1,
+          updatedAt: now,
+        })
+      }
+    }
+
+    if (args.campId && (args.videoStatus ?? 'ready') === 'ready') {
+      await ctx.scheduler.runAfter(0, internal.sendNotification.notifyCampBondfire, {
+        bondfireId,
+        creatorId: userId,
+        creatorName: user?.displayName ?? user?.name ?? 'Someone',
+      })
+    }
 
     return bondfireId
   },

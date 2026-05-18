@@ -109,6 +109,7 @@ const PasswordWithVerification = Password({
     return {
       name: (params.name as string) ?? null,
       email: params.email as string,
+      gender: params.gender as string,
     }
   },
   // Require email verification before allowing sign in

@@ -2,6 +2,25 @@ import { authTables } from '@convex-dev/auth/server'
 import { defineSchema, defineTable } from 'convex/server'
 import { v } from 'convex/values'
 
+const subscriptionTier = v.union(
+  v.literal('free'),
+  v.literal('plus'),
+  v.literal('premium'),
+  v.literal('pro'),
+)
+
+const userGender = v.union(v.literal('male'), v.literal('female'), v.literal('other'))
+
+const campRules = v.object({
+  gender: v.optional(v.union(v.literal('male'), v.literal('female'), v.literal('any'))),
+  minDurationMs: v.optional(v.number()),
+  maxDurationMs: v.optional(v.number()),
+  maxResponses: v.optional(v.number()),
+  requiresTradeTags: v.optional(v.boolean()),
+  allowedTiers: v.optional(v.array(subscriptionTier)),
+  advisoryGuidelines: v.optional(v.array(v.string())),
+})
+
 export default defineSchema({
   // Include auth tables from @convex-dev/auth
   ...authTables,
@@ -18,6 +37,7 @@ export default defineSchema({
     displayName: v.optional(v.string()),
     photoUrl: v.optional(v.string()),
     photoStorageId: v.optional(v.id('_storage')),
+    gender: userGender,
 
     // Stats (denormalized for performance)
     bondfireCount: v.optional(v.number()),
@@ -30,13 +50,94 @@ export default defineSchema({
 
     // Admin flags
     isReviewerAccount: v.optional(v.boolean()), // For Google Play / App Store reviewer accounts
+    isAdmin: v.optional(v.boolean()),
   }).index('email', ['email']), // Required by @convex-dev/auth (must be named exactly 'email')
+
+  // Camps - rule-governed spaces where bondfires live
+  camps: defineTable({
+    slug: v.string(),
+    name: v.string(),
+    theme: v.optional(v.string()),
+    purpose: v.string(),
+    icon: v.optional(v.string()),
+    color: v.optional(v.string()),
+    defaultPrompt: v.optional(v.string()),
+    rules: campRules,
+    crisisBroadcast: v.optional(v.boolean()),
+    welcomeBroadcast: v.optional(v.boolean()),
+    visibility: v.union(v.literal('public'), v.literal('private')),
+    access: v.union(v.literal('open'), v.literal('approval'), v.literal('invite')),
+    status: v.union(v.literal('active'), v.literal('archived')),
+    ownerId: v.optional(v.id('users')),
+    bondfireCount: v.optional(v.number()),
+    activeMemberCount: v.optional(v.number()),
+    isLaunchCamp: v.optional(v.boolean()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_slug', ['slug'])
+    .index('by_status_visibility', ['status', 'visibility'])
+    .index('by_owner', ['ownerId', 'createdAt']),
+
+  // Camp membership, notification preferences, and moderation roles
+  campMembers: defineTable({
+    userId: v.id('users'),
+    campId: v.id('camps'),
+    role: v.union(v.literal('owner'), v.literal('moderator'), v.literal('member')),
+    status: v.union(v.literal('pending'), v.literal('active'), v.literal('banned')),
+    muted: v.boolean(),
+    joinedAt: v.optional(v.number()),
+    requestedAt: v.optional(v.number()),
+    approvedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId', 'status'])
+    .index('by_camp', ['campId', 'createdAt'])
+    .index('by_user_camp', ['userId', 'campId'])
+    .index('by_camp_status', ['campId', 'status']),
+
+  // Invite codes for private/invite-only camps
+  campInvites: defineTable({
+    code: v.string(),
+    campId: v.id('camps'),
+    uses: v.number(),
+    maxUses: v.optional(v.number()),
+    expiresAt: v.optional(v.number()),
+    createdBy: v.id('users'),
+    createdAt: v.number(),
+  })
+    .index('by_code', ['code'])
+    .index('by_camp', ['campId', 'createdAt'])
+    .index('by_created_by', ['createdBy', 'createdAt']),
+
+  // Store subscription state. Store receipt validation lands in Phase 2B.
+  subscriptions: defineTable({
+    userId: v.id('users'),
+    tier: subscriptionTier,
+    status: v.union(
+      v.literal('active'),
+      v.literal('trialing'),
+      v.literal('past_due'),
+      v.literal('canceled'),
+      v.literal('expired'),
+    ),
+    platform: v.union(v.literal('ios'), v.literal('android')),
+    storeProductId: v.string(),
+    storeOriginalTransactionId: v.optional(v.string()),
+    currentPeriodEnd: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId', 'status'])
+    .index('by_store_transaction', ['storeOriginalTransactionId']),
 
   // Bondfires - main video posts
   bondfires: defineTable({
     // Creator reference
     userId: v.id('users'),
     creatorName: v.optional(v.string()), // Denormalized for display
+    campId: v.optional(v.id('camps')),
 
     // Video storage
     videoStatus: v.optional(
@@ -82,6 +183,7 @@ export default defineSchema({
     .index('by_user', ['userId', 'createdAt'])
     // Recent bondfires
     .index('by_created', ['createdAt'])
+    .index('by_camp', ['campId', 'createdAt'])
     .index('by_mux_upload', ['muxUploadId'])
     .index('by_mux_asset', ['muxAssetId'])
     .index('by_live_stream', ['muxLiveStreamId']),

@@ -37,6 +37,13 @@ import { UploadProgressCard } from '../../../components/UploadProgressCard'
 
 type CurrentUserData = Doc<'users'> | null
 type UserBondfireData = Doc<'bondfires'>
+type Gender = 'male' | 'female' | 'other'
+
+const GENDER_OPTIONS: Array<{ value: Gender; label: string }> = [
+  { value: 'male', label: 'Male' },
+  { value: 'female', label: 'Female' },
+  { value: 'other', label: 'Other' },
+]
 
 function ProfileSubscription({
   onResolved,
@@ -87,6 +94,7 @@ export default function ProfileScreen() {
     isEditSheetOpen: false,
     isVideoQualitySheetOpen: false,
     editName: '',
+    editGender: null as Gender | null,
     isSaving: false,
     isDeleting: false,
     isUploadingPhoto: false,
@@ -95,6 +103,7 @@ export default function ProfileScreen() {
   const isEditSheetOpen = useValue(state$.isEditSheetOpen)
   const isVideoQualitySheetOpen = useValue(state$.isVideoQualitySheetOpen)
   const editName = useValue(state$.editName)
+  const editGender = useValue(state$.editGender)
   const isSaving = useValue(state$.isSaving)
   const isDeleting = useValue(state$.isDeleting)
   const isUploadingPhoto = useValue(state$.isUploadingPhoto)
@@ -153,6 +162,7 @@ export default function ProfileScreen() {
 
   const handleEditProfile = useCallback(() => {
     state$.editName.set(currentUser?.displayName ?? currentUser?.name ?? '')
+    state$.editGender.set(currentUser?.gender ?? null)
     state$.isEditSheetOpen.set(true)
   }, [currentUser, state$])
 
@@ -161,6 +171,7 @@ export default function ProfileScreen() {
     try {
       await updateProfile({
         displayName: state$.editName.get(),
+        gender: state$.editGender.get() ?? undefined,
       })
       state$.isEditSheetOpen.set(false)
       handleRefresh()
@@ -383,6 +394,9 @@ export default function ProfileScreen() {
                 </Text>
                 <Text color={bondfireColors.ash} fontSize={14}>
                   {currentUser.email}
+                </Text>
+                <Text color={bondfireColors.ash} fontSize={12} textTransform="capitalize">
+                  {currentUser.gender ?? 'Gender not set'}
                 </Text>
               </YStack>
 
@@ -662,6 +676,33 @@ export default function ProfileScreen() {
                 onChangeText={(text) => state$.editName.set(text)}
                 placeholder="Your name"
               />
+            </YStack>
+
+            <YStack gap={8}>
+              <Text variant="label" color={bondfireColors.whiteSmoke}>
+                Gender
+              </Text>
+              <XStack gap={8}>
+                {GENDER_OPTIONS.map((option) => {
+                  const selected = editGender === option.value
+                  return (
+                    <Button
+                      key={option.value}
+                      variant={selected ? 'primary' : 'outline'}
+                      size="$md"
+                      flex={1}
+                      onPress={() => state$.editGender.set(option.value)}
+                    >
+                      <Text
+                        color={selected ? bondfireColors.whiteSmoke : bondfireColors.ash}
+                        fontWeight="900"
+                      >
+                        {option.label}
+                      </Text>
+                    </Button>
+                  )
+                })}
+              </XStack>
             </YStack>
 
             <XStack gap={12}>
