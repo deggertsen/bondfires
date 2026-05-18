@@ -57,6 +57,7 @@ export function useLivePublisher(options: {
     isResponse: boolean
     bondfireId?: string
     campId?: string
+    tags?: string[]
     width?: number
     height?: number
   }) => Promise<CreateLiveStreamResult>
@@ -112,6 +113,7 @@ export function useLivePublisher(options: {
       args: {
         respondToBondfireId?: string
         campId?: string
+        tags?: string[]
         initialCamera?: 'front' | 'back'
       } = {},
     ) => {
@@ -122,6 +124,7 @@ export function useLivePublisher(options: {
           isResponse: !!args.respondToBondfireId,
           bondfireId: args.respondToBondfireId,
           campId: args.campId,
+          tags: args.tags,
           width: 720,
           height: 1280,
         })

@@ -295,7 +295,9 @@ export default function CampDetailScreen() {
       const result = await joinCamp({ campId })
       if (result.status === 'pending') {
         Alert.alert('Request Sent', 'Your camp membership request is pending approval.')
+        return
       }
+      appActions.setCurrentCampId(campId)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to join camp'
       Alert.alert('Camp Unavailable', message)
@@ -309,6 +311,7 @@ export default function CampDetailScreen() {
 
   const handleSpark = useCallback(() => {
     if (!campId) return
+    appActions.setCurrentCampId(campId)
     router.push({ pathname: '/(main)/(tabs)/create', params: { campId } })
   }, [campId, router])
 

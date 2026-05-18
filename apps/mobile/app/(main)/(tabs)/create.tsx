@@ -1,4 +1,5 @@
 import {
+  appActions,
   appStore$,
   cancelProcessing,
   cleanupTempVideos,
@@ -13,7 +14,7 @@ import { Button, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
 import { Flame, SwitchCamera, X } from '@tamagui/lucide-icons'
-import { useAction } from 'convex/react'
+import { useAction, useMutation, useQuery } from 'convex/react'
 import {
   type CameraType,
   CameraView,
@@ -22,16 +23,18 @@ import {
 } from 'expo-camera'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { useCallback, useEffect, useRef } from 'react'
-import { Alert, AppState, Platform, Pressable, StatusBar } from 'react-native'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { Alert, AppState, Platform, Pressable, ScrollView, StatusBar } from 'react-native'
 import { Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
-import type { Id } from '../../../../../convex/_generated/dataModel'
+import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { CompletionScreen } from '../../../components/CompletionScreen'
 import { mergeVideoSegments } from '../../../lib/videoSegmentMerger'
 import { BondfireLivePublisher, LivePublisherView } from '../../../modules/bondfire-live-publisher'
 
 type RecordingState = 'idle' | 'recording' | 'stopping' | 'completion' | 'processing' | 'uploading'
+type TradeTag = 'need' | 'offer'
+type CampWithMembership = Doc<'camps'> & { membership: Doc<'campMembers'> | null }
 
 export default function CreateScreen() {
   const router = useRouter()
@@ -50,6 +53,7 @@ export default function CreateScreen() {
   const stopTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const uploadStartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const wasFocusedRef = useRef(isFocused)
+  const didRouteFirstSparkRef = useRef(false)
 
   const state$ = useObservable({
     facing: 'front' as CameraType,
@@ -65,6 +69,10 @@ export default function CreateScreen() {
     isCameraReady: false,
     isLivePublisherAvailable: false,
     cameraMountError: null as string | null,
+    selectedCampId: null as Id<'camps'> | null,
+    promptCampId: null as Id<'camps'> | null,
+    promptDismissed: false,
+    tradeTag: null as TradeTag | null,
   })
 
   const facing = useValue(state$.facing)
@@ -79,7 +87,11 @@ export default function CreateScreen() {
   const isCameraReady = useValue(state$.isCameraReady)
   const isLivePublisherAvailable = useValue(state$.isLivePublisherAvailable)
   const cameraMountError = useValue(state$.cameraMountError)
+  const selectedCampId = useValue(state$.selectedCampId)
+  const promptDismissed = useValue(state$.promptDismissed)
+  const tradeTag = useValue(state$.tradeTag)
   const livePublishEnabled = useValue(appStore$.preferences.livePublishEnabled)
+  const currentCampId = useValue(appStore$.currentCampId)
   const shouldUseLivePublish = livePublishEnabled && isLivePublisherAvailable
   const liveStatus = useValue(livePublishStore$.status)
   const liveRecordId = useValue(livePublishStore$.recordId)
@@ -90,6 +102,41 @@ export default function CreateScreen() {
   const createLiveStream = useAction(api.videos.createLiveStream)
   const endLiveStream = useAction(api.videos.endLiveStream)
   const cancelLiveStream = useAction(api.videos.cancelLiveStream)
+  const camps = useQuery(api.camps.list, respondTo ? 'skip' : {})
+  const currentUser = useQuery(api.users.current)
+  const joinCamp = useMutation(api.camps.join)
+  const persistedCampId = currentCampId as Id<'camps'> | null
+  const effectiveCampId = respondTo
+    ? undefined
+    : ((campId as Id<'camps'> | undefined) ?? selectedCampId ?? persistedCampId ?? undefined)
+  const selectedCamp = useMemo(() => {
+    if (!effectiveCampId || !camps) return null
+    return camps.find((camp) => camp._id === effectiveCampId) ?? null
+  }, [camps, effectiveCampId])
+  const isResolvingSelectedCamp = !respondTo && !!effectiveCampId && camps === undefined
+  const isSelectedCampUnavailable =
+    !respondTo && !!effectiveCampId && camps !== undefined && selectedCamp === null
+  const sortedCamps = useMemo(() => {
+    if (!camps) return []
+    const userGender = currentUser?.gender
+    return [...camps].sort((left, right) => {
+      const leftWelcome = left.slug.startsWith('welcome-fires') ? -1 : 0
+      const rightWelcome = right.slug.startsWith('welcome-fires') ? -1 : 0
+      if (leftWelcome !== rightWelcome) return leftWelcome - rightWelcome
+
+      const leftMatch = userGender && left.rules.gender === userGender ? -1 : 0
+      const rightMatch = userGender && right.rules.gender === userGender ? -1 : 0
+      if (leftMatch !== rightMatch) return leftMatch - rightMatch
+
+      return left.name.localeCompare(right.name)
+    })
+  }, [camps, currentUser?.gender])
+  const selectedCampTags = tradeTag ? [tradeTag] : undefined
+  const selectedCampMaxSeconds = selectedCamp?.rules.maxDurationMs
+    ? Math.floor(selectedCamp.rules.maxDurationMs / 1000)
+    : undefined
+  const needsTradeTag =
+    !respondTo && selectedCamp?.rules.requiresTradeTags === true && tradeTag === null
   const livePublisher = useLivePublisher({
     publisher: BondfireLivePublisher,
     createLiveStream: async (args) =>
@@ -97,6 +144,7 @@ export default function CreateScreen() {
         ...args,
         bondfireId: args.bondfireId as Id<'bondfires'> | undefined,
         campId: args.campId as Id<'camps'> | undefined,
+        tags: args.tags,
       }),
     endLiveStream: async (args) =>
       await endLiveStream({
@@ -110,6 +158,93 @@ export default function CreateScreen() {
       }),
   })
   const keepAwakeTag = 'create-recording'
+
+  useEffect(() => {
+    if (respondTo || !campId) {
+      return
+    }
+
+    appActions.setCurrentCampId(campId)
+  }, [campId, respondTo])
+
+  useEffect(() => {
+    if (respondTo || !persistedCampId || camps === undefined) {
+      return
+    }
+
+    if (!camps.some((camp) => camp._id === persistedCampId)) {
+      appActions.setCurrentCampId(null)
+    }
+  }, [camps, persistedCampId, respondTo])
+
+  useEffect(() => {
+    if (
+      respondTo ||
+      campId ||
+      selectedCampId ||
+      persistedCampId ||
+      !currentUser ||
+      (currentUser.bondfireCount ?? 0) !== 0 ||
+      camps === undefined ||
+      didRouteFirstSparkRef.current
+    ) {
+      return
+    }
+
+    const gender =
+      currentUser.gender === 'female' ? 'women' : currentUser.gender === 'male' ? 'men' : null
+    const welcomeCamp =
+      (gender ? camps.find((camp) => camp.slug === ['welcome-fires', gender].join('-')) : null) ??
+      camps.find(
+        (camp) =>
+          camp.slug.startsWith('welcome-fires') &&
+          (camp.rules.gender === currentUser.gender || camp.rules.gender === 'any'),
+      )
+
+    if (!welcomeCamp) {
+      return
+    }
+
+    didRouteFirstSparkRef.current = true
+    joinCamp({ campId: welcomeCamp._id })
+      .then((result) => {
+        if (result.status === 'pending') {
+          return
+        }
+        state$.selectedCampId.set(welcomeCamp._id)
+        state$.tradeTag.set(null)
+        appActions.setCurrentCampId(welcomeCamp._id)
+      })
+      .catch((error) => {
+        didRouteFirstSparkRef.current = false
+        console.error('Failed to route first spark to Welcome Fires:', error)
+      })
+  }, [campId, camps, currentUser, joinCamp, persistedCampId, respondTo, selectedCampId, state$])
+
+  useEffect(() => {
+    if (respondTo || !effectiveCampId) {
+      state$.promptCampId.set(null)
+      state$.promptDismissed.set(true)
+      return
+    }
+
+    if (!selectedCamp) {
+      return
+    }
+
+    if (state$.promptCampId.get() !== selectedCamp._id) {
+      state$.promptCampId.set(effectiveCampId)
+      state$.promptDismissed.set(false)
+    }
+
+    const timeout = setTimeout(() => {
+      if (state$.promptCampId.get() === selectedCamp._id) {
+        state$.promptDismissed.set(true)
+      }
+    }, 3000)
+
+    return () => clearTimeout(timeout)
+  }, [effectiveCampId, respondTo, selectedCamp, state$])
 
   // Recording timer (interval-based - keep useEffect)
   useEffect(() => {
@@ -312,6 +447,7 @@ export default function CreateScreen() {
           ...args,
           bondfireId: args.bondfireId as Id<'bondfires'> | undefined,
           campId: args.campId as Id<'camps'> | undefined,
+          tags: args.tags,
         })
       },
       getMuxUploadStatus: async (args) => {
@@ -402,13 +538,15 @@ export default function CreateScreen() {
           {
             videoUri: uri,
             bondfireId: respondTo,
-            campId,
+            campId: effectiveCampId,
+            tags: selectedCampTags,
             isResponse: !!respondTo,
             createMuxDirectUpload: async (args) => {
               return await createMuxDirectUpload({
                 ...args,
                 bondfireId: args.bondfireId as Id<'bondfires'> | undefined,
                 campId: args.campId as Id<'camps'> | undefined,
+                tags: args.tags,
               })
             },
             getMuxUploadStatus: async (args) => {
@@ -423,7 +561,7 @@ export default function CreateScreen() {
         return null
       }
     },
-    [campId, respondTo, createMuxDirectUpload, getMuxUploadStatus],
+    [effectiveCampId, respondTo, selectedCampTags, createMuxDirectUpload, getMuxUploadStatus],
   )
 
   const finalizeRecording = useCallback(
@@ -563,6 +701,16 @@ export default function CreateScreen() {
   const startRecording = useCallback(async () => {
     const activeCamera = cameraRef.current
 
+    if (!respondTo && (!effectiveCampId || !selectedCamp)) {
+      Alert.alert('Choose a Camp', 'Pick where this Bondfire belongs before recording.')
+      return
+    }
+
+    if (needsTradeTag) {
+      Alert.alert('Choose Need or Offer', 'Trading Post sparks need a need or offer tag.')
+      return
+    }
+
     if (!activeCamera) {
       Alert.alert('Camera Not Ready', 'Please wait a moment and try again.')
       return
@@ -624,8 +772,12 @@ export default function CreateScreen() {
   }, [
     clearStopTimeout,
     clearUploadStartTimeout,
+    effectiveCampId,
     logRecordingError,
+    needsTradeTag,
+    respondTo,
     resetRecordingState,
+    selectedCamp,
     startSegmentRecording,
     state$,
   ])
@@ -736,6 +888,16 @@ export default function CreateScreen() {
       return
     }
 
+    if (!respondTo && (!effectiveCampId || !selectedCamp)) {
+      Alert.alert('Choose a Camp', 'Pick where this Bondfire belongs before going live.')
+      return
+    }
+
+    if (needsTradeTag) {
+      Alert.alert('Choose Need or Offer', 'Trading Post sparks need a need or offer tag.')
+      return
+    }
+
     if (!state$.isFocused.get() || !state$.isAppActive.get()) {
       Alert.alert('Camera Not Ready', 'Please return to the app and try again.')
       return
@@ -746,14 +908,47 @@ export default function CreateScreen() {
       state$.videoUri.set(null)
       await livePublisher.start({
         respondToBondfireId: respondTo,
-        campId,
+        campId: effectiveCampId,
+        tags: selectedCampTags,
         initialCamera: state$.facing.get() === 'back' ? 'back' : 'front',
       })
     } catch (error) {
       logRecordingError(error)
       Alert.alert('Live Stream Failed', 'Could not start the live stream. Please try again.')
     }
-  }, [campId, livePublisher, liveStatus, logRecordingError, respondTo, state$])
+  }, [
+    effectiveCampId,
+    livePublisher,
+    liveStatus,
+    logRecordingError,
+    needsTradeTag,
+    respondTo,
+    selectedCamp,
+    selectedCampTags,
+    state$,
+  ])
+
+  const handleSelectCamp = useCallback(
+    async (camp: CampWithMembership) => {
+      try {
+        if (camp.membership?.status !== 'active') {
+          const result = await joinCamp({ campId: camp._id })
+          if (result.status === 'pending') {
+            Alert.alert('Request Sent', 'Your camp membership request is pending approval.')
+            return
+          }
+        }
+
+        state$.selectedCampId.set(camp._id)
+        state$.tradeTag.set(null)
+        appActions.setCurrentCampId(camp._id)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to join camp'
+        Alert.alert('Camp Unavailable', message)
+      }
+    },
+    [joinCamp, state$],
+  )
 
   const stopLiveRecording = useCallback(async () => {
     if (liveStatus !== 'connecting' && liveStatus !== 'live' && liveStatus !== 'reconnecting') {
@@ -777,6 +972,28 @@ export default function CreateScreen() {
       state$.videoUri.set(null)
     }
   }, [livePublisher, liveStatus, logRecordingError, state$])
+
+  useEffect(() => {
+    if (!selectedCampMaxSeconds || recordingDuration < selectedCampMaxSeconds) {
+      return
+    }
+
+    if (recordingState === 'recording') {
+      stopRecording()
+      return
+    }
+
+    if (liveStatus === 'live' || liveStatus === 'reconnecting') {
+      void stopLiveRecording()
+    }
+  }, [
+    liveStatus,
+    recordingDuration,
+    recordingState,
+    selectedCampMaxSeconds,
+    stopLiveRecording,
+    stopRecording,
+  ])
 
   const cancelLiveRecording = useCallback(async () => {
     try {
@@ -844,6 +1061,197 @@ export default function CreateScreen() {
             Grant Permissions
           </Button>
         </YStack>
+      </YStack>
+    )
+  }
+
+  if (isResolvingSelectedCamp) {
+    return (
+      <YStack
+        flex={1}
+        backgroundColor={bondfireColors.obsidian}
+        alignItems="center"
+        justifyContent="center"
+        gap={14}
+      >
+        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+        <Spinner size="large" color={bondfireColors.bondfireCopper} />
+        <Text color={bondfireColors.ash}>Loading camp...</Text>
+      </YStack>
+    )
+  }
+
+  if (isSelectedCampUnavailable) {
+    return (
+      <YStack
+        flex={1}
+        backgroundColor={bondfireColors.obsidian}
+        alignItems="center"
+        justifyContent="center"
+        padding={24}
+        gap={16}
+      >
+        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+        <Text fontSize={24} fontWeight="900" textAlign="center">
+          Camp unavailable
+        </Text>
+        <Text fontSize={15} color={bondfireColors.ash} textAlign="center" lineHeight={22}>
+          Choose an active camp before recording.
+        </Text>
+        <Button
+          variant="primary"
+          size="$lg"
+          onPress={() => {
+            state$.selectedCampId.set(null)
+            state$.tradeTag.set(null)
+            appActions.setCurrentCampId(null)
+            router.replace('/(main)/(tabs)/create')
+          }}
+        >
+          <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+            Choose Camp
+          </Text>
+        </Button>
+      </YStack>
+    )
+  }
+
+  if (!respondTo && !effectiveCampId) {
+    return (
+      <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
+        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+        <YStack paddingTop={64} paddingHorizontal={20} paddingBottom={16} gap={8}>
+          <Text fontSize={28} fontWeight="900">
+            Choose a Camp
+          </Text>
+          <Text fontSize={14} color={bondfireColors.ash} lineHeight={20}>
+            Every Bondfire starts in a camp.
+          </Text>
+        </YStack>
+        {camps === undefined ? (
+          <YStack flex={1} alignItems="center" justifyContent="center" gap={14}>
+            <Spinner size="large" color={bondfireColors.bondfireCopper} />
+            <Text color={bondfireColors.ash}>Loading camps...</Text>
+          </YStack>
+        ) : (
+          <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 32 }}>
+            <YStack gap={10}>
+              {sortedCamps.map((camp) => {
+                const isActiveMember = camp.membership?.status === 'active'
+                const isPending = camp.membership?.status === 'pending'
+                return (
+                  <Pressable
+                    key={camp._id}
+                    disabled={isPending}
+                    onPress={() => handleSelectCamp(camp)}
+                  >
+                    <YStack
+                      padding={14}
+                      borderRadius={16}
+                      backgroundColor={bondfireColors.gunmetal}
+                      borderWidth={1}
+                      borderColor={camp.color ?? bondfireColors.iron}
+                      opacity={isPending ? 0.65 : 1}
+                      gap={8}
+                    >
+                      <XStack justifyContent="space-between" alignItems="center" gap={12}>
+                        <YStack flex={1} gap={3}>
+                          <Text fontSize={17} fontWeight="900" numberOfLines={1}>
+                            {camp.name}
+                          </Text>
+                          <Text fontSize={12} color={bondfireColors.ash} numberOfLines={1}>
+                            {camp.theme ?? 'Camp'}
+                          </Text>
+                        </YStack>
+                        <Text
+                          fontSize={12}
+                          color={isActiveMember ? bondfireColors.success : bondfireColors.ash}
+                          fontWeight="900"
+                        >
+                          {isPending ? 'Pending' : isActiveMember ? 'Joined' : 'Join'}
+                        </Text>
+                      </XStack>
+                      <Text fontSize={14} color={bondfireColors.whiteSmoke} lineHeight={20}>
+                        {camp.purpose}
+                      </Text>
+                    </YStack>
+                  </Pressable>
+                )
+              })}
+            </YStack>
+          </ScrollView>
+        )}
+      </YStack>
+    )
+  }
+
+  if (!respondTo && selectedCamp && !promptDismissed) {
+    return (
+      <YStack
+        flex={1}
+        backgroundColor={bondfireColors.obsidian}
+        alignItems="center"
+        justifyContent="center"
+        padding={24}
+        gap={18}
+      >
+        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+        <YStack
+          width={78}
+          height={78}
+          borderRadius={22}
+          backgroundColor={selectedCamp.color ?? bondfireColors.gunmetal}
+          alignItems="center"
+          justifyContent="center"
+        >
+          <Flame size={38} color={bondfireColors.whiteSmoke} />
+        </YStack>
+        <Text fontSize={24} fontWeight="900" textAlign="center">
+          {selectedCamp.name}
+        </Text>
+        <Text fontSize={16} color={bondfireColors.whiteSmoke} textAlign="center" lineHeight={23}>
+          {selectedCamp.defaultPrompt ?? selectedCamp.purpose}
+        </Text>
+        <Button variant="primary" size="$lg" onPress={() => state$.promptDismissed.set(true)}>
+          <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+            Continue
+          </Text>
+        </Button>
+      </YStack>
+    )
+  }
+
+  if (needsTradeTag) {
+    return (
+      <YStack
+        flex={1}
+        backgroundColor={bondfireColors.obsidian}
+        padding={24}
+        justifyContent="center"
+        gap={18}
+      >
+        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+        <Text fontSize={24} fontWeight="900" textAlign="center">
+          Need or Offer?
+        </Text>
+        <Text fontSize={15} color={bondfireColors.ash} textAlign="center" lineHeight={22}>
+          Trading Post sparks need a clear tag before recording.
+        </Text>
+        <XStack gap={12}>
+          {(['need', 'offer'] as const).map((tag) => (
+            <Button
+              key={tag}
+              variant="primary"
+              size="$lg"
+              flex={1}
+              onPress={() => state$.tradeTag.set(tag)}
+            >
+              <Text color={bondfireColors.whiteSmoke} fontWeight="900" textTransform="capitalize">
+                {tag}
+              </Text>
+            </Button>
+          ))}
+        </XStack>
       </YStack>
     )
   }
@@ -1043,7 +1451,7 @@ export default function CreateScreen() {
                   <XStack alignItems="center" gap={8}>
                     <Flame size={28} color={bondfireColors.bondfireCopper} />
                     <Text color={bondfireColors.whiteSmoke} fontSize={22} fontWeight="700">
-                      {respondTo ? 'Respond Live' : 'Spark a Bondfire'}
+                      {respondTo ? 'Respond Live' : (selectedCamp?.name ?? 'Spark a Bondfire')}
                     </Text>
                   </XStack>
                   <Text color={bondfireColors.ash} fontSize={14}>
@@ -1223,7 +1631,7 @@ export default function CreateScreen() {
                 <XStack alignItems="center" gap={8}>
                   <Flame size={28} color={bondfireColors.bondfireCopper} />
                   <Text color={bondfireColors.whiteSmoke} fontSize={22} fontWeight="700">
-                    {respondTo ? 'Add Your Response' : 'Spark a Bondfire'}
+                    {respondTo ? 'Add Your Response' : (selectedCamp?.name ?? 'Spark a Bondfire')}
                   </Text>
                 </XStack>
                 <Text color={bondfireColors.ash} fontSize={14}>
@@ -1319,11 +1727,13 @@ export default function CreateScreen() {
                   ? isSwitchingCamera
                     ? 'Switching cameras...'
                     : 'Tap to stop'
-                  : cameraMountError
-                    ? 'Camera failed to initialize'
-                    : isCameraReady
-                      ? 'Tap to record'
-                      : 'Initializing camera...'}
+                  : selectedCampMaxSeconds
+                    ? `Max ${Math.round(selectedCampMaxSeconds / 60)} min`
+                    : cameraMountError
+                      ? 'Camera failed to initialize'
+                      : isCameraReady
+                        ? 'Tap to record'
+                        : 'Initializing camera...'}
             </Text>
 
             {cameraMountError && recordingState === 'idle' && (
