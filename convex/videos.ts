@@ -208,6 +208,10 @@ async function assertUserCanParticipateInCamp(
     throw new Error('Join this camp before sparking here')
   }
 
+  if (args.operation === 'spark' && camp.visibility === 'private' && camp.ownerId !== args.userId) {
+    throw new Error('Only the private camp owner can spark here')
+  }
+
   const campGender = camp.rules.gender
   if (campGender && campGender !== 'any' && user.gender !== campGender) {
     throw new Error('This camp is limited to members who match its gender setting')

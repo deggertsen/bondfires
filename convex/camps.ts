@@ -6,6 +6,7 @@ import { auth } from './auth'
 
 type CampAccess = 'open' | 'approval' | 'invite'
 type CampGender = 'male' | 'female' | 'any'
+type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'
 type CampSeed = {
   slug: string
   name: string
@@ -30,6 +31,33 @@ const memberStatusValidator = v.union(
 const accessValidator = v.union(v.literal('open'), v.literal('approval'), v.literal('invite'))
 
 const ALL_TIERS = ['free', 'plus', 'premium', 'pro'] as const
+const PAID_TIERS = ['plus', 'premium', 'pro'] as const
+const TIER_RANK: Record<SubscriptionTier, number> = {
+  free: 0,
+  plus: 1,
+  premium: 2,
+  pro: 3,
+}
+const INVITE_WORDS = [
+  'amber',
+  'ash',
+  'canyon',
+  'cedar',
+  'ember',
+  'forge',
+  'harbor',
+  'iron',
+  'lantern',
+  'mesa',
+  'oak',
+  'river',
+  'signal',
+  'stone',
+  'summit',
+  'trail',
+  'valley',
+  'watch',
+] as const
 
 const BASE_LAUNCH_CAMPS = [
   {
@@ -198,6 +226,55 @@ async function getCurrentUser(ctx: QueryCtx | MutationCtx) {
   }
 
   return user
+}
+
+async function getActiveSubscriptionTier(
+  ctx: QueryCtx | MutationCtx,
+  userId: Id<'users'>,
+): Promise<SubscriptionTier> {
+  const now = Date.now()
+  const subscriptions = await ctx.db
+    .query('subscriptions')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .collect()
+  const activeSubscriptions = subscriptions.filter(
+    (subscription) =>
+      (subscription.status === 'active' || subscription.status === 'trialing') &&
+      (!subscription.currentPeriodEnd || subscription.currentPeriodEnd > now),
+  )
+
+  return activeSubscriptions.reduce<SubscriptionTier>(
+    (highest, subscription) =>
+      TIER_RANK[subscription.tier] > TIER_RANK[highest] ? subscription.tier : highest,
+    'free',
+  )
+}
+
+function normalizePrivateCampSlug(name: string, userId: Id<'users'>) {
+  const base = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
+
+  return ['private', base || 'camp', userId.slice(-6)].join('-')
+}
+
+function generateInviteCode(seed: string) {
+  let hash = 0
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0
+  }
+
+  const first = INVITE_WORDS[hash % INVITE_WORDS.length]
+  const second = INVITE_WORDS[Math.floor(hash / INVITE_WORDS.length) % INVITE_WORDS.length]
+  const third =
+    INVITE_WORDS[
+      Math.floor(hash / (INVITE_WORDS.length * INVITE_WORDS.length)) % INVITE_WORDS.length
+    ]
+
+  return [first, second, third].join('-')
 }
 
 function isAdmin(user: Doc<'users'>) {
@@ -622,17 +699,30 @@ export const createInvite = mutation({
     }
 
     const user = await assertCanManageCamp(ctx, camp)
-    const code = (args.code ?? [camp.slug, Date.now().toString(36)].join('-')).toLowerCase()
+    let code = (args.code ?? generateInviteCode([camp._id, Date.now()].join('-'))).toLowerCase()
 
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const existing = await ctx.db
+        .query('campInvites')
+        .withIndex('by_code', (q) => q.eq('code', code))
+        .first()
+      if (!existing) {
+        break
+      }
+      if (args.code) {
+        throw new Error('Invite code already exists')
+      }
+      code = generateInviteCode([camp._id, Date.now(), attempt].join('-'))
+    }
     const existing = await ctx.db
       .query('campInvites')
       .withIndex('by_code', (q) => q.eq('code', code))
       .first()
     if (existing) {
-      throw new Error('Invite code already exists')
+      throw new Error('Could not generate a unique invite code')
     }
 
-    return await ctx.db.insert('campInvites', {
+    const inviteId = await ctx.db.insert('campInvites', {
       code,
       campId: camp._id,
       uses: 0,
@@ -641,6 +731,11 @@ export const createInvite = mutation({
       createdBy: user._id,
       createdAt: Date.now(),
     })
+
+    return {
+      inviteId,
+      code,
+    }
   },
 })
 
@@ -793,18 +888,34 @@ export const assignArenaToUnassignedBondfires = mutation({
 export const createPrivateCamp = mutation({
   args: {
     name: v.string(),
-    purpose: v.string(),
+    purpose: v.optional(v.string()),
     defaultPrompt: v.optional(v.string()),
     color: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx)
+    const tier = await getActiveSubscriptionTier(ctx, user._id)
+    if (TIER_RANK[tier] < TIER_RANK.plus) {
+      throw new Error('Private camps require Plus, Premium, or Pro')
+    }
+
+    const existingPrivateCamp = await ctx.db
+      .query('camps')
+      .withIndex('by_owner', (q) => q.eq('ownerId', user._id))
+      .collect()
+    if (
+      existingPrivateCamp.some((camp) => camp.visibility === 'private' && camp.status === 'active')
+    ) {
+      throw new Error('You already have an active private camp')
+    }
+
+    const name = args.name.trim()
+    if (name.length < 3) {
+      throw new Error('Private camp name must be at least 3 characters')
+    }
+
     const now = Date.now()
-    const baseSlug = args.name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-    const slug = [baseSlug || 'private-camp', user._id.slice(-6)].join('-')
+    const slug = normalizePrivateCampSlug(name, user._id)
 
     const existing = await findCampBySlug(ctx, slug)
     if (existing) {
@@ -813,15 +924,26 @@ export const createPrivateCamp = mutation({
 
     const campId = await ctx.db.insert('camps', {
       slug,
-      name: args.name,
-      purpose: args.purpose,
-      color: args.color ?? '#111827',
-      defaultPrompt: args.defaultPrompt,
+      name,
+      theme: 'Private Camp',
+      purpose:
+        args.purpose?.trim() ||
+        ['Private camp hosted by', user.displayName ?? user.name ?? 'this member'].join(' '),
+      icon: 'lock',
+      color: args.color ?? '#334155',
+      defaultPrompt:
+        args.defaultPrompt ?? 'What do you want your private camp to gather around today?',
       rules: {
-        maxDurationMs: 30 * 60 * 1000,
-        allowedTiers: ['plus', 'premium', 'pro'],
-        advisoryGuidelines: ['Private camp content is visible only to invited members.'],
+        gender: 'any',
+        maxDurationMs: tier === 'pro' ? undefined : 30 * 60 * 1000,
+        allowedTiers: [...PAID_TIERS],
+        advisoryGuidelines: [
+          'The camp owner starts new Bondfires here.',
+          'Invited members can respond to fires they can access.',
+        ],
       },
+      crisisBroadcast: false,
+      welcomeBroadcast: false,
       visibility: 'private',
       access: 'invite',
       status: 'active',
