@@ -1,7 +1,7 @@
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
-import type { MutationCtx } from './_generated/server'
+import type { MutationCtx, QueryCtx } from './_generated/server'
 import { action, internalAction, internalMutation, internalQuery } from './_generated/server'
 import { auth } from './auth'
 
@@ -138,6 +138,49 @@ function parseMuxDurationMs(value: unknown): number | undefined {
   return typeof numberValue === 'number' && Number.isFinite(numberValue)
     ? Math.round(numberValue * 1000)
     : undefined
+}
+
+async function assertCanCreateInCamp(
+  ctx: QueryCtx | MutationCtx,
+  args: {
+    userId: Id<'users'>
+    campId: Id<'camps'>
+    durationMs?: number
+    tags?: string[]
+  },
+) {
+  const [user, camp] = await Promise.all([ctx.db.get(args.userId), ctx.db.get(args.campId)])
+  if (!user) {
+    throw new Error('User not found')
+  }
+  if (!camp || camp.status !== 'active') {
+    throw new Error('Camp not found')
+  }
+
+  const membership = await ctx.db
+    .query('campMembers')
+    .withIndex('by_user_camp', (q) => q.eq('userId', args.userId).eq('campId', args.campId))
+    .first()
+
+  if (membership?.status !== 'active') {
+    throw new Error('Join this camp before sparking here')
+  }
+
+  const campGender = camp.rules.gender
+  if (campGender && campGender !== 'any' && user.gender !== campGender) {
+    throw new Error('This camp is limited to members who match its gender setting')
+  }
+
+  if (camp.rules.maxDurationMs && args.durationMs && args.durationMs > camp.rules.maxDurationMs) {
+    throw new Error('This recording is longer than the camp allows')
+  }
+
+  if (camp.rules.requiresTradeTags) {
+    const tags = args.tags ?? []
+    if (!tags.includes('need') && !tags.includes('offer')) {
+      throw new Error('The Trading Post requires a need or offer tag')
+    }
+  }
 }
 
 async function muxRequest(path: string, init: RequestInit = {}): Promise<Record<string, unknown>> {
@@ -461,6 +504,7 @@ export const createMuxDirectUpload = action({
     isResponse: v.boolean(),
     bondfireId: v.optional(v.id('bondfires')),
     campId: v.optional(v.id('camps')),
+    tags: v.optional(v.array(v.string())),
     durationMs: v.optional(v.number()),
     width: v.optional(v.number()),
     height: v.optional(v.number()),
@@ -473,6 +517,19 @@ export const createMuxDirectUpload = action({
 
     if (args.isResponse && !args.bondfireId) {
       throw new Error('A bondfire ID is required when uploading a response')
+    }
+
+    if (!args.isResponse) {
+      if (!args.campId) {
+        throw new Error('Choose a camp before sparking a Bondfire')
+      }
+
+      await ctx.runQuery(internal.videos.validateCreateCampContext, {
+        userId,
+        campId: args.campId,
+        durationMs: args.durationMs,
+        tags: args.tags,
+      })
     }
 
     const config = getMuxConfig()
@@ -493,6 +550,7 @@ export const createMuxDirectUpload = action({
           isResponse: args.isResponse,
           bondfireId: args.bondfireId,
           campId: args.campId,
+          tags: args.tags,
           filename: args.filename,
           contentType: args.contentType,
         }),
@@ -518,6 +576,7 @@ export const createMuxDirectUpload = action({
       isResponse: args.isResponse,
       bondfireId: args.bondfireId,
       campId: args.campId,
+      tags: args.tags,
       playbackPolicy: config.playbackPolicy,
       durationMs: args.durationMs,
       width: args.width,
@@ -623,6 +682,18 @@ export const createLiveStream = action({
 
     if (args.isResponse && !args.bondfireId) {
       throw new Error('A bondfire ID is required when creating a live response')
+    }
+
+    if (!args.isResponse) {
+      if (!args.campId) {
+        throw new Error('Choose a camp before sparking a Bondfire')
+      }
+
+      await ctx.runQuery(internal.videos.validateCreateCampContext, {
+        userId,
+        campId: args.campId,
+        tags: args.tags,
+      })
     }
 
     // Refuse to provision a billable Mux live stream while the user already
@@ -829,6 +900,19 @@ export const getThumbnailUrl = action({
   },
 })
 
+export const validateCreateCampContext = internalQuery({
+  args: {
+    userId: v.id('users'),
+    campId: v.id('camps'),
+    durationMs: v.optional(v.number()),
+    tags: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    await assertCanCreateInCamp(ctx, args)
+    return { valid: true }
+  },
+})
+
 export const createPendingMuxVideo = internalMutation({
   args: {
     userId: v.id('users'),
@@ -836,6 +920,7 @@ export const createPendingMuxVideo = internalMutation({
     isResponse: v.boolean(),
     bondfireId: v.optional(v.id('bondfires')),
     campId: v.optional(v.id('camps')),
+    tags: v.optional(v.array(v.string())),
     playbackPolicy: v.union(v.literal('public'), v.literal('signed')),
     durationMs: v.optional(v.number()),
     width: v.optional(v.number()),
@@ -872,11 +957,23 @@ export const createPendingMuxVideo = internalMutation({
         durationMs: args.durationMs,
         width: args.width,
         height: args.height,
+        tags: args.tags,
         createdAt: now,
       })
 
       return { recordId, recordType: 'response' as const }
     }
+
+    if (!args.campId) {
+      throw new Error('Choose a camp before sparking a Bondfire')
+    }
+
+    await assertCanCreateInCamp(ctx, {
+      userId: args.userId,
+      campId: args.campId,
+      durationMs: args.durationMs,
+      tags: args.tags,
+    })
 
     const recordId = await ctx.db.insert('bondfires', {
       userId: args.userId,
@@ -889,6 +986,7 @@ export const createPendingMuxVideo = internalMutation({
       durationMs: args.durationMs,
       width: args.width,
       height: args.height,
+      tags: args.tags,
       videoCount: 1,
       viewCount: 0,
       createdAt: now,
@@ -1144,6 +1242,16 @@ export const createLinkedMuxLiveSession = internalMutation({
 
       return { liveSessionId, recordId, recordType: 'response' as const }
     }
+
+    if (!args.campId) {
+      throw new Error('Choose a camp before sparking a Bondfire')
+    }
+
+    await assertCanCreateInCamp(ctx, {
+      userId: args.userId,
+      campId: args.campId,
+      tags: args.tags,
+    })
 
     const recordId = await ctx.db.insert('bondfires', {
       userId: args.userId,
