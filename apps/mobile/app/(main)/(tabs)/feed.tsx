@@ -266,8 +266,19 @@ function LoadingFeed() {
   )
 }
 
-function FeedSubscription({ onResolved }: { onResolved: (bondfires: BondfireData[]) => void }) {
-  const bondfires = useQuery(api.bondfires.listFeed, { limit: 50 })
+function FeedSubscription({
+  selectedCampId,
+  onResolved,
+}: {
+  selectedCampId: Doc<'camps'>['_id'] | null
+  onResolved: (bondfires: BondfireData[]) => void
+}) {
+  const allBondfires = useQuery(api.bondfires.listFeed, selectedCampId ? 'skip' : { limit: 50 })
+  const campBondfires = useQuery(
+    api.bondfires.listByCamp,
+    selectedCampId ? { campId: selectedCampId, limit: 50 } : 'skip',
+  )
+  const bondfires = selectedCampId ? campBondfires : allBondfires
 
   useEffect(() => {
     if (bondfires !== undefined) {
@@ -344,19 +355,18 @@ export default function FeedScreen() {
     }
 
     if (!joinedCamps.some((camp) => camp._id === selectedCampId)) {
+      setBondfires(undefined)
+      state$.thumbnailUrls.set({})
+      loadingThumbsRef.current = new Set()
       appActions.setCurrentCampId(null)
     }
-  }, [joinedCamps, selectedCampId])
+  }, [joinedCamps, selectedCampId, state$])
 
   const filtered = useMemo(() => {
     if (!bondfires) return bondfires
 
     const q = query.trim().toLowerCase()
     let items = bondfires
-
-    if (selectedCampId) {
-      items = items.filter((b) => b.campId === selectedCampId)
-    }
 
     if (viewMode === 'unseen') {
       items = items.filter((b) => b.userId !== currentUserId && !hasViewedToday(b._id))
@@ -397,7 +407,7 @@ export default function FeedScreen() {
     })
 
     return sorted
-  }, [bondfires, currentUserId, query, selectedCampId, viewMode])
+  }, [bondfires, currentUserId, query, viewMode])
 
   filteredRef.current = filtered ?? []
 
@@ -479,10 +489,16 @@ export default function FeedScreen() {
     router.push('/(main)/(tabs)/create')
   }, [router, selectedCampId])
 
-  const handleSelectCamp = useCallback((campId: string | null) => {
-    appActions.setCurrentCampId(campId)
-    listRef.current?.scrollToOffset({ offset: 0, animated: true })
-  }, [])
+  const handleSelectCamp = useCallback(
+    (campId: string | null) => {
+      setBondfires(undefined)
+      state$.thumbnailUrls.set({})
+      loadingThumbsRef.current = new Set()
+      appActions.setCurrentCampId(campId)
+      listRef.current?.scrollToOffset({ offset: 0, animated: true })
+    },
+    [state$],
+  )
 
   const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
@@ -533,7 +549,11 @@ export default function FeedScreen() {
   if (bondfires === undefined) {
     return (
       <YStack flex={1}>
-        <FeedSubscription key={refreshKey} onResolved={handleBondfiresResolved} />
+        <FeedSubscription
+          key={`${refreshKey}-${selectedCampId ?? 'all'}`}
+          selectedCampId={selectedCampId}
+          onResolved={handleBondfiresResolved}
+        />
         <LoadingFeed />
       </YStack>
     )
@@ -541,7 +561,11 @@ export default function FeedScreen() {
 
   return (
     <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
-      <FeedSubscription key={refreshKey} onResolved={handleBondfiresResolved} />
+      <FeedSubscription
+        key={`${refreshKey}-${selectedCampId ?? 'all'}`}
+        selectedCampId={selectedCampId}
+        onResolved={handleBondfiresResolved}
+      />
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
       <FlatList

@@ -1,7 +1,18 @@
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
+import type { Id } from './_generated/dataModel'
+import type { MutationCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
+
+type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'
+
+const TIER_RANK: Record<SubscriptionTier, number> = {
+  free: 0,
+  plus: 1,
+  premium: 2,
+  pro: 3,
+}
 
 // Works for both `bondfires` and `bondfireVideos` rows — they share the
 // status/playback fields this predicate touches.
@@ -26,6 +37,28 @@ function withLiveFlags<T extends { videoStatus?: string; muxLivePlaybackId?: str
     isLive,
     livePlaybackId: isLive ? record.muxLivePlaybackId : undefined,
   }
+}
+
+async function getActiveSubscriptionTier(
+  ctx: MutationCtx,
+  userId: Id<'users'>,
+): Promise<SubscriptionTier> {
+  const now = Date.now()
+  const subscriptions = await ctx.db
+    .query('subscriptions')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .collect()
+  const activeSubscriptions = subscriptions.filter(
+    (subscription) =>
+      (subscription.status === 'active' || subscription.status === 'trialing') &&
+      (!subscription.currentPeriodEnd || subscription.currentPeriodEnd > now),
+  )
+
+  return activeSubscriptions.reduce<SubscriptionTier>(
+    (highest, subscription) =>
+      TIER_RANK[subscription.tier] > TIER_RANK[highest] ? subscription.tier : highest,
+    'free',
+  )
 }
 
 // List bondfires for the feed (ordered by videoCount ASC for discovery)
@@ -141,31 +174,67 @@ export const create = mutation({
 
     const user = await ctx.db.get(userId)
     const now = Date.now()
+    if (!user) {
+      throw new Error('User not found')
+    }
 
     if (!args.muxAssetId || !args.muxPlaybackId) {
       throw new Error('Mux asset ID and playback ID are required for Mux videos')
     }
 
-    if (args.campId) {
-      const campId = args.campId
-      const camp = await ctx.db.get(args.campId)
-      if (!camp || camp.status !== 'active') {
-        throw new Error('Camp not found')
-      }
+    if (!args.campId) {
+      throw new Error('Choose a camp before sparking a Bondfire')
+    }
+    const campId = args.campId
 
-      const membership = await ctx.db
-        .query('campMembers')
-        .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', campId))
-        .first()
-      if (membership?.status !== 'active') {
-        throw new Error('Join this camp before sparking here')
+    const camp = await ctx.db.get(campId)
+    if (!camp || camp.status !== 'active') {
+      throw new Error('Camp not found')
+    }
+
+    const membership = await ctx.db
+      .query('campMembers')
+      .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', campId))
+      .first()
+    if (membership?.status !== 'active') {
+      throw new Error('Join this camp before sparking here')
+    }
+
+    const campGender = camp.rules.gender
+    if (campGender && campGender !== 'any' && user.gender !== campGender) {
+      throw new Error('This camp is limited to members who match its gender setting')
+    }
+
+    if (
+      args.durationMs !== undefined &&
+      camp.rules.minDurationMs &&
+      args.durationMs < camp.rules.minDurationMs
+    ) {
+      throw new Error('This recording is shorter than the camp allows')
+    }
+
+    if (camp.rules.maxDurationMs && args.durationMs && args.durationMs > camp.rules.maxDurationMs) {
+      throw new Error('This recording is longer than the camp allows')
+    }
+
+    if (camp.rules.allowedTiers && camp.rules.allowedTiers.length > 0) {
+      const tier = await getActiveSubscriptionTier(ctx, userId)
+      if (!camp.rules.allowedTiers.includes(tier)) {
+        throw new Error('Your membership tier cannot spark in this camp')
+      }
+    }
+
+    if (camp.rules.requiresTradeTags) {
+      const tags = args.tags ?? []
+      if (!tags.includes('need') && !tags.includes('offer')) {
+        throw new Error('The Trading Post requires a need or offer tag')
       }
     }
 
     const bondfireId = await ctx.db.insert('bondfires', {
       userId,
       creatorName: user?.displayName ?? user?.name,
-      campId: args.campId,
+      campId,
       videoStatus: args.videoStatus ?? 'ready',
       muxUploadId: args.muxUploadId,
       muxAssetId: args.muxAssetId,
@@ -188,17 +257,15 @@ export const create = mutation({
       updatedAt: now,
     })
 
-    if (args.campId) {
-      const camp = await ctx.db.get(args.campId)
-      if (camp) {
-        await ctx.db.patch(args.campId, {
-          bondfireCount: (camp.bondfireCount ?? 0) + 1,
-          updatedAt: now,
-        })
-      }
+    const latestCamp = await ctx.db.get(campId)
+    if (latestCamp) {
+      await ctx.db.patch(campId, {
+        bondfireCount: (latestCamp.bondfireCount ?? 0) + 1,
+        updatedAt: now,
+      })
     }
 
-    if (args.campId && (args.videoStatus ?? 'ready') === 'ready') {
+    if ((args.videoStatus ?? 'ready') === 'ready') {
       await ctx.scheduler.runAfter(0, internal.sendNotification.notifyCampBondfire, {
         bondfireId,
         creatorId: userId,

@@ -154,7 +154,7 @@ function variantSlug(baseSlug: string, gender: Exclude<CampGender, 'any'>) {
 }
 
 function getLaunchCampSeeds(): CampSeed[] {
-  return BASE_LAUNCH_CAMPS.flatMap((camp) =>
+  const genderedCamps = BASE_LAUNCH_CAMPS.flatMap((camp) =>
     (['male', 'female'] as const).map((gender) => ({
       ...camp,
       slug: variantSlug(camp.slug, gender),
@@ -162,6 +162,14 @@ function getLaunchCampSeeds(): CampSeed[] {
       gender,
     })),
   )
+  const mixedWelcomeCamp = BASE_LAUNCH_CAMPS.filter((camp) => camp.slug === 'welcome-fires').map(
+    (camp) => ({
+      ...camp,
+      gender: 'any' as const,
+    }),
+  )
+
+  return [...mixedWelcomeCamp, ...genderedCamps]
 }
 
 function getArenaSeed(): CampSeed {

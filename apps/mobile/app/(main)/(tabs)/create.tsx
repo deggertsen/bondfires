@@ -113,6 +113,9 @@ export default function CreateScreen() {
     if (!effectiveCampId || !camps) return null
     return camps.find((camp) => camp._id === effectiveCampId) ?? null
   }, [camps, effectiveCampId])
+  const isResolvingSelectedCamp = !respondTo && !!effectiveCampId && camps === undefined
+  const isSelectedCampUnavailable =
+    !respondTo && !!effectiveCampId && camps !== undefined && selectedCamp === null
   const sortedCamps = useMemo(() => {
     if (!camps) return []
     const userGender = currentUser?.gender
@@ -188,10 +191,15 @@ export default function CreateScreen() {
       return
     }
 
-    const gender = currentUser.gender === 'female' ? 'women' : 'men'
+    const gender =
+      currentUser.gender === 'female' ? 'women' : currentUser.gender === 'male' ? 'men' : null
     const welcomeCamp =
-      camps.find((camp) => camp.slug === ['welcome-fires', gender].join('-')) ??
-      camps.find((camp) => camp.slug.startsWith('welcome-fires-'))
+      (gender ? camps.find((camp) => camp.slug === ['welcome-fires', gender].join('-')) : null) ??
+      camps.find(
+        (camp) =>
+          camp.slug.startsWith('welcome-fires') &&
+          (camp.rules.gender === currentUser.gender || camp.rules.gender === 'any'),
+      )
 
     if (!welcomeCamp) {
       return
@@ -220,19 +228,23 @@ export default function CreateScreen() {
       return
     }
 
-    if (state$.promptCampId.get() !== effectiveCampId) {
+    if (!selectedCamp) {
+      return
+    }
+
+    if (state$.promptCampId.get() !== selectedCamp._id) {
       state$.promptCampId.set(effectiveCampId)
       state$.promptDismissed.set(false)
     }
 
     const timeout = setTimeout(() => {
-      if (state$.promptCampId.get() === effectiveCampId) {
+      if (state$.promptCampId.get() === selectedCamp._id) {
         state$.promptDismissed.set(true)
       }
     }, 3000)
 
     return () => clearTimeout(timeout)
-  }, [effectiveCampId, respondTo, state$])
+  }, [effectiveCampId, respondTo, selectedCamp, state$])
 
   // Recording timer (interval-based - keep useEffect)
   useEffect(() => {
@@ -689,7 +701,7 @@ export default function CreateScreen() {
   const startRecording = useCallback(async () => {
     const activeCamera = cameraRef.current
 
-    if (!respondTo && !effectiveCampId) {
+    if (!respondTo && (!effectiveCampId || !selectedCamp)) {
       Alert.alert('Choose a Camp', 'Pick where this Bondfire belongs before recording.')
       return
     }
@@ -765,6 +777,7 @@ export default function CreateScreen() {
     needsTradeTag,
     respondTo,
     resetRecordingState,
+    selectedCamp,
     startSegmentRecording,
     state$,
   ])
@@ -875,7 +888,7 @@ export default function CreateScreen() {
       return
     }
 
-    if (!respondTo && !effectiveCampId) {
+    if (!respondTo && (!effectiveCampId || !selectedCamp)) {
       Alert.alert('Choose a Camp', 'Pick where this Bondfire belongs before going live.')
       return
     }
@@ -910,6 +923,7 @@ export default function CreateScreen() {
     logRecordingError,
     needsTradeTag,
     respondTo,
+    selectedCamp,
     selectedCampTags,
     state$,
   ])
@@ -1047,6 +1061,57 @@ export default function CreateScreen() {
             Grant Permissions
           </Button>
         </YStack>
+      </YStack>
+    )
+  }
+
+  if (isResolvingSelectedCamp) {
+    return (
+      <YStack
+        flex={1}
+        backgroundColor={bondfireColors.obsidian}
+        alignItems="center"
+        justifyContent="center"
+        gap={14}
+      >
+        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+        <Spinner size="large" color={bondfireColors.bondfireCopper} />
+        <Text color={bondfireColors.ash}>Loading camp...</Text>
+      </YStack>
+    )
+  }
+
+  if (isSelectedCampUnavailable) {
+    return (
+      <YStack
+        flex={1}
+        backgroundColor={bondfireColors.obsidian}
+        alignItems="center"
+        justifyContent="center"
+        padding={24}
+        gap={16}
+      >
+        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+        <Text fontSize={24} fontWeight="900" textAlign="center">
+          Camp unavailable
+        </Text>
+        <Text fontSize={15} color={bondfireColors.ash} textAlign="center" lineHeight={22}>
+          Choose an active camp before recording.
+        </Text>
+        <Button
+          variant="primary"
+          size="$lg"
+          onPress={() => {
+            state$.selectedCampId.set(null)
+            state$.tradeTag.set(null)
+            appActions.setCurrentCampId(null)
+            router.replace('/(main)/(tabs)/create')
+          }}
+        >
+          <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+            Choose Camp
+          </Text>
+        </Button>
       </YStack>
     )
   }
