@@ -56,6 +56,25 @@ function RulePill({ label }: { label: string }) {
   )
 }
 
+function getFirstVisitBanner(camp: Doc<'camps'>) {
+  const slug = camp.slug.toLowerCase()
+  if (slug.startsWith('the-pursuit-')) {
+    return {
+      title: 'First time in The Pursuit',
+      body: 'This camp is for dating toward long-term partnership. Speak with maturity, avoid objectifying language, and keep the other person dignified.',
+    }
+  }
+
+  if (slug.startsWith('the-tempering-')) {
+    return {
+      title: 'First time in The Tempering',
+      body: 'This camp is for discipline, recovery, and resilience. Share plainly without graphic detail that could pull someone else backward.',
+    }
+  }
+
+  return null
+}
+
 function CampHeader({
   camp,
   onBack,
@@ -74,6 +93,7 @@ function CampHeader({
   const muted = camp.membership?.muted === true
   const canJoin = !isActiveMember && !isPending && camp.visibility === 'public'
   const rules = camp.rules
+  const firstVisitBanner = getFirstVisitBanner(camp)
 
   return (
     <YStack paddingTop={58} paddingHorizontal={16} paddingBottom={18} gap={18}>
@@ -144,6 +164,24 @@ function CampHeader({
       <Text fontSize={15} color={bondfireColors.whiteSmoke} lineHeight={22}>
         {camp.purpose}
       </Text>
+
+      {firstVisitBanner ? (
+        <YStack
+          padding={14}
+          borderRadius={16}
+          backgroundColor={bondfireColors.charcoal}
+          borderWidth={1}
+          borderColor={camp.color ?? bondfireColors.iron}
+          gap={6}
+        >
+          <Text fontSize={12} color={bondfireColors.moltenGold} fontWeight="900">
+            {firstVisitBanner.title}
+          </Text>
+          <Text fontSize={14} color={bondfireColors.whiteSmoke} lineHeight={20}>
+            {firstVisitBanner.body}
+          </Text>
+        </YStack>
+      ) : null}
 
       <XStack flexWrap="wrap" gap={8}>
         <RulePill label={getAccessLabel(camp)} />

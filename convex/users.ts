@@ -48,6 +48,35 @@ export const updateProfile = mutation({
   },
 })
 
+export const backfillMissingGender = mutation({
+  args: {
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 1000
+    const users = await ctx.db.query('users').take(limit)
+    let updated = 0
+
+    for (const user of users) {
+      if (user.gender) {
+        continue
+      }
+
+      await ctx.db.patch(user._id, {
+        gender: 'male',
+        updatedAt: Date.now(),
+      })
+      updated += 1
+    }
+
+    return {
+      updated,
+      scanned: users.length,
+      remainingMayExist: users.length === limit,
+    }
+  },
+})
+
 export const generateProfilePhotoUploadUrl = mutation({
   args: {},
   handler: async (ctx) => {

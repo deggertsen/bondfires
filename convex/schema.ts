@@ -37,7 +37,7 @@ export default defineSchema({
     displayName: v.optional(v.string()),
     photoUrl: v.optional(v.string()),
     photoStorageId: v.optional(v.id('_storage')),
-    gender: v.optional(userGender),
+    gender: userGender,
 
     // Stats (denormalized for performance)
     bondfireCount: v.optional(v.number()),

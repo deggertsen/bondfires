@@ -239,6 +239,21 @@ function isCampVisibleToUser(camp: Doc<'camps'>, membership?: Doc<'campMembers'>
   return camp.visibility === 'public' || membership?.status === 'active'
 }
 
+function assertUserMatchesCampGender(user: Doc<'users'>, camp: Doc<'camps'>) {
+  const campGender = camp.rules.gender
+  if (!campGender || campGender === 'any') {
+    return
+  }
+
+  if (!user.gender) {
+    throw new Error('Set your gender before joining gender-specific camps')
+  }
+
+  if (user.gender !== campGender) {
+    throw new Error('This camp is limited to members who match its gender setting')
+  }
+}
+
 async function upsertMembership(
   ctx: MutationCtx,
   args: {
@@ -425,6 +440,7 @@ export const join = mutation({
     if (existing?.status === 'banned') {
       throw new Error('You cannot join this camp')
     }
+    assertUserMatchesCampGender(user, camp)
 
     const status = camp.access === 'approval' ? 'pending' : 'active'
     const membershipId = await upsertMembership(ctx, {
@@ -464,6 +480,7 @@ export const requestJoin = mutation({
     if (existing?.status === 'banned') {
       throw new Error('You cannot join this camp')
     }
+    assertUserMatchesCampGender(user, camp)
 
     const membershipId = await upsertMembership(ctx, {
       userId: user._id,
@@ -646,6 +663,7 @@ export const redeemInvite = mutation({
     if (!camp || camp.status !== 'active') {
       throw new Error('Camp not found')
     }
+    assertUserMatchesCampGender(user, camp)
 
     const membershipId = await upsertMembership(ctx, {
       userId: user._id,

@@ -1,6 +1,6 @@
 import { v } from 'convex/values'
 import { api, internal } from './_generated/api'
-import type { Id } from './_generated/dataModel'
+import type { Doc, Id } from './_generated/dataModel'
 import { action, internalAction, internalQuery } from './_generated/server'
 
 // Expo Push API types
@@ -35,6 +35,31 @@ interface DeviceToken {
 }
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send'
+
+function uniqueUserIds(userIds: Array<Id<'users'>>) {
+  return [...new Set(userIds)]
+}
+
+function getCampNotificationCopy(camp: Doc<'camps'>, creatorName: string) {
+  if (camp.crisisBroadcast) {
+    return {
+      title: 'Signal Fire',
+      body: `${creatorName} asked the camp to gather`,
+    }
+  }
+
+  if (camp.welcomeBroadcast) {
+    return {
+      title: 'Welcome Fire',
+      body: `${creatorName} introduced themselves to the camp`,
+    }
+  }
+
+  return {
+    title: camp.name,
+    body: `${creatorName} sparked a new Bondfire`,
+  }
+}
 
 // Send notification via Expo Push API
 async function sendExpoPushNotification(messages: ExpoPushMessage[]): Promise<ExpoPushTicket[]> {
@@ -136,15 +161,158 @@ export const sendToUser = internalAction({
 export const getLiveNotificationRecipientIds = internalQuery({
   args: {
     creatorId: v.id('users'),
+    campId: v.optional(v.id('camps')),
   },
   handler: async (ctx, args): Promise<Array<Id<'users'>>> => {
-    // The app does not have a follower/contact graph yet. Use registered push
-    // users as the current live-notification audience, excluding the creator.
-    const tokens = await ctx.db.query('deviceTokens').collect()
+    if (args.campId) {
+      const campId = args.campId
+      const memberships = await ctx.db
+        .query('campMembers')
+        .withIndex('by_camp_status', (q) => q.eq('campId', campId).eq('status', 'active'))
+        .collect()
 
-    return [...new Set(tokens.map((token) => token.userId))].filter(
-      (userId) => userId !== args.creatorId,
+      return uniqueUserIds(
+        memberships
+          .filter((membership) => !membership.muted && membership.userId !== args.creatorId)
+          .map((membership) => membership.userId),
+      )
+    }
+
+    return []
+  },
+})
+
+export const getCampNotificationDetails = internalQuery({
+  args: {
+    campId: v.id('camps'),
+  },
+  handler: async (ctx, args): Promise<Doc<'camps'> | null> => {
+    const camp = await ctx.db.get(args.campId)
+    if (!camp || camp.status !== 'active') {
+      return null
+    }
+
+    return camp
+  },
+})
+
+export const getCampNotificationRecipientIds = internalQuery({
+  args: {
+    campId: v.id('camps'),
+    creatorId: v.id('users'),
+  },
+  handler: async (ctx, args): Promise<Array<Id<'users'>>> => {
+    const memberships = await ctx.db
+      .query('campMembers')
+      .withIndex('by_camp_status', (q) => q.eq('campId', args.campId).eq('status', 'active'))
+      .collect()
+
+    return uniqueUserIds(
+      memberships
+        .filter((membership) => !membership.muted && membership.userId !== args.creatorId)
+        .map((membership) => membership.userId),
     )
+  },
+})
+
+export const getResponseNotificationRecipientIds = internalQuery({
+  args: {
+    bondfireId: v.id('bondfires'),
+    responderId: v.id('users'),
+  },
+  handler: async (ctx, args): Promise<Array<Id<'users'>>> => {
+    const bondfire = await ctx.db.get(args.bondfireId)
+    if (!bondfire) {
+      return []
+    }
+
+    const participantIds = new Set<Id<'users'>>([bondfire.userId])
+    const responseVideos = await ctx.db
+      .query('bondfireVideos')
+      .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
+      .collect()
+
+    for (const responseVideo of responseVideos) {
+      participantIds.add(responseVideo.userId)
+    }
+    participantIds.delete(args.responderId)
+
+    if (!bondfire.campId) {
+      return [...participantIds]
+    }
+
+    const campId = bondfire.campId
+    const memberships = await ctx.db
+      .query('campMembers')
+      .withIndex('by_camp_status', (q) => q.eq('campId', campId).eq('status', 'active'))
+      .collect()
+    const notifiedMemberIds = new Set(
+      memberships.filter((membership) => !membership.muted).map((membership) => membership.userId),
+    )
+
+    return [...participantIds].filter((userId) => notifiedMemberIds.has(userId))
+  },
+})
+
+export const notifyCampBondfire = internalAction({
+  args: {
+    bondfireId: v.id('bondfires'),
+    creatorId: v.id('users'),
+    creatorName: v.string(),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    success: boolean
+    skipped?: boolean
+    error?: string
+  }> => {
+    const bondfire = await ctx.runQuery(api.bondfires.get, { id: args.bondfireId })
+    if (!bondfire?.campId) {
+      return { success: true, skipped: true }
+    }
+
+    const camp = await ctx.runQuery(internal.sendNotification.getCampNotificationDetails, {
+      campId: bondfire.campId,
+    })
+    if (!camp) {
+      return { success: false, error: 'Camp not found' }
+    }
+
+    const recipientIds: Array<Id<'users'>> = await ctx.runQuery(
+      internal.sendNotification.getCampNotificationRecipientIds,
+      {
+        campId: bondfire.campId,
+        creatorId: args.creatorId,
+      },
+    )
+
+    if (recipientIds.length === 0) {
+      return { success: true, skipped: true }
+    }
+
+    const copy = getCampNotificationCopy(camp, args.creatorName)
+    await Promise.all(
+      recipientIds.map((userId) =>
+        ctx.runAction(internal.sendNotification.sendToUser, {
+          userId,
+          title: copy.title,
+          body: copy.body,
+          data: {
+            type: camp.crisisBroadcast
+              ? 'camp_crisis'
+              : camp.welcomeBroadcast
+                ? 'camp_welcome'
+                : 'camp_bondfire',
+            bondfireId: args.bondfireId,
+            campId: bondfire.campId,
+          },
+        }),
+      ),
+    )
+
+    return { success: true }
   },
 })
 
@@ -163,27 +331,38 @@ export const notifyBondfireResponse = internalAction({
     skipped?: boolean
     error?: string
   }> => {
-    // Get the bondfire to find the creator
     const bondfire = await ctx.runQuery(api.bondfires.get, { id: args.bondfireId })
 
     if (!bondfire) {
       return { success: false, error: 'Bondfire not found' }
     }
 
-    // Don't notify if user is responding to their own bondfire
-    if (bondfire.userId === args.responderId) {
+    const recipientIds: Array<Id<'users'>> = await ctx.runQuery(
+      internal.sendNotification.getResponseNotificationRecipientIds,
+      {
+        bondfireId: args.bondfireId,
+        responderId: args.responderId,
+      },
+    )
+
+    if (recipientIds.length === 0) {
       return { success: true, skipped: true }
     }
 
-    await ctx.runAction(internal.sendNotification.sendToUser, {
-      userId: bondfire.userId,
-      title: '🔥 New Response!',
-      body: `${args.responderName} added a video to your Bondfire`,
-      data: {
-        type: 'bondfire_response',
-        bondfireId: args.bondfireId,
-      },
-    })
+    await Promise.all(
+      recipientIds.map((userId) =>
+        ctx.runAction(internal.sendNotification.sendToUser, {
+          userId,
+          title: 'New response',
+          body: `${args.responderName} added a video to a Bondfire you're in`,
+          data: {
+            type: 'bondfire_response',
+            bondfireId: args.bondfireId,
+            campId: bondfire.campId,
+          },
+        }),
+      ),
+    )
 
     return { success: true }
   },
@@ -214,6 +393,7 @@ export const notifyBondfireLive = internalAction({
       internal.sendNotification.getLiveNotificationRecipientIds,
       {
         creatorId: args.creatorId,
+        campId: bondfire.campId,
       },
     )
 

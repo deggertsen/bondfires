@@ -2,7 +2,7 @@ import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
 import { Flame, Lock, Search, Users } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
-import { useRouter } from 'expo-router'
+import { type RelativePathString, useRouter } from 'expo-router'
 import { useCallback, useMemo, useState } from 'react'
 import { Alert, FlatList, Pressable, RefreshControl, StatusBar } from 'react-native'
 import { Separator, Spinner, XStack, YStack } from 'tamagui'
@@ -220,7 +220,7 @@ export default function CampsScreen() {
         renderItem={({ item }) => (
           <CampCard
             camp={item}
-            onOpen={() => router.push({ pathname: '/(main)/camp/[id]', params: { id: item._id } })}
+            onOpen={() => router.push(`/(main)/camp/${item._id}` as RelativePathString)}
             onJoin={() => handleJoin(item)}
           />
         )}

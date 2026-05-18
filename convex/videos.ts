@@ -309,6 +309,11 @@ async function markRecordReady(
           })
         }
       }
+      await ctx.scheduler.runAfter(0, internal.sendNotification.notifyCampBondfire, {
+        bondfireId: record.document._id,
+        creatorId: record.document.userId,
+        creatorName: user?.displayName ?? user?.name ?? 'Someone',
+      })
     }
     return
   }

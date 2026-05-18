@@ -5,7 +5,15 @@ import { useObservable, useValue } from '@legendapp/state/react'
 import { Flame, UserPlus } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
 import { KeyboardAvoidingView, Platform, ScrollView, StatusBar } from 'react-native'
-import { Spinner, YStack } from 'tamagui'
+import { Spinner, XStack, YStack } from 'tamagui'
+
+type Gender = 'male' | 'female' | 'other'
+
+const GENDER_OPTIONS: Array<{ value: Gender; label: string }> = [
+  { value: 'male', label: 'Male' },
+  { value: 'female', label: 'Female' },
+  { value: 'other', label: 'Other' },
+]
 
 export default function SignupScreen() {
   const router = useRouter()
@@ -16,6 +24,7 @@ export default function SignupScreen() {
     email: '',
     password: '',
     confirmPassword: '',
+    gender: null as Gender | null,
     isLoading: false,
     error: null as string | null,
   })
@@ -24,6 +33,7 @@ export default function SignupScreen() {
   const email = useValue(form$.email)
   const password = useValue(form$.password)
   const confirmPassword = useValue(form$.confirmPassword)
+  const gender = useValue(form$.gender)
   const isLoading = useValue(form$.isLoading)
   const error = useValue(form$.error)
 
@@ -32,8 +42,9 @@ export default function SignupScreen() {
     const currentEmail = form$.email.get()
     const currentPassword = form$.password.get()
     const currentConfirmPassword = form$.confirmPassword.get()
+    const currentGender = form$.gender.get()
 
-    if (!currentName || !currentEmail || !currentPassword) {
+    if (!currentName || !currentEmail || !currentPassword || !currentGender) {
       form$.error.set('Please fill in all fields')
       return
     }
@@ -56,6 +67,7 @@ export default function SignupScreen() {
         email: currentEmail,
         password: currentPassword,
         name: currentName,
+        gender: currentGender,
         flow: 'signUp',
       })
       // Pass email to verify-email screen for OTP verification
@@ -130,6 +142,33 @@ export default function SignupScreen() {
                   autoCapitalize="none"
                   autoComplete="email"
                 />
+              </YStack>
+
+              <YStack gap={8}>
+                <Text variant="label" color={bondfireColors.whiteSmoke}>
+                  Gender
+                </Text>
+                <XStack gap={8}>
+                  {GENDER_OPTIONS.map((option) => {
+                    const selected = gender === option.value
+                    return (
+                      <Button
+                        key={option.value}
+                        variant={selected ? 'primary' : 'outline'}
+                        size="$md"
+                        flex={1}
+                        onPress={() => form$.gender.set(option.value)}
+                      >
+                        <Text
+                          color={selected ? bondfireColors.whiteSmoke : bondfireColors.ash}
+                          fontWeight="900"
+                        >
+                          {option.label}
+                        </Text>
+                      </Button>
+                    )
+                  })}
+                </XStack>
               </YStack>
 
               <YStack gap={8}>

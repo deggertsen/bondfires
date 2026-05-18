@@ -1,4 +1,5 @@
 import { v } from 'convex/values'
+import { internal } from './_generated/api'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
 
@@ -146,9 +147,18 @@ export const create = mutation({
     }
 
     if (args.campId) {
+      const campId = args.campId
       const camp = await ctx.db.get(args.campId)
       if (!camp || camp.status !== 'active') {
         throw new Error('Camp not found')
+      }
+
+      const membership = await ctx.db
+        .query('campMembers')
+        .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', campId))
+        .first()
+      if (membership?.status !== 'active') {
+        throw new Error('Join this camp before sparking here')
       }
     }
 
@@ -186,6 +196,14 @@ export const create = mutation({
           updatedAt: now,
         })
       }
+    }
+
+    if (args.campId && (args.videoStatus ?? 'ready') === 'ready') {
+      await ctx.scheduler.runAfter(0, internal.sendNotification.notifyCampBondfire, {
+        bondfireId,
+        creatorId: userId,
+        creatorName: user?.displayName ?? user?.name ?? 'Someone',
+      })
     }
 
     return bondfireId
