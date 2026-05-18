@@ -1,5 +1,5 @@
 import { bondfireColors } from '@bondfires/config'
-import { Flame, Home, User } from '@tamagui/lucide-icons'
+import { Flame, Home, Map, User } from '@tamagui/lucide-icons'
 import { Tabs } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
@@ -26,6 +26,13 @@ export default function TabsLayout() {
         },
       }}
     >
+      <Tabs.Screen
+        name="camps"
+        options={{
+          title: 'Camps',
+          tabBarIcon: ({ color, size }) => <Map color={color} size={size} />,
+        }}
+      />
       <Tabs.Screen
         name="feed"
         options={{

@@ -7,6 +7,7 @@ export default function MainLayout() {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="bondfire/[id]" options={{ headerShown: false }} />
+      <Stack.Screen name="camp/[id]" options={{ headerShown: false }} />
     </Stack>
   )
 }

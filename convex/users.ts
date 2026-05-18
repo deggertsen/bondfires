@@ -27,6 +27,7 @@ export const updateProfile = mutation({
   args: {
     name: v.optional(v.string()),
     displayName: v.optional(v.string()),
+    gender: v.optional(v.union(v.literal('male'), v.literal('female'), v.literal('other'))),
   },
   handler: async (ctx, args) => {
     const userId = await auth.getUserId(ctx)
@@ -40,6 +41,7 @@ export const updateProfile = mutation({
 
     if (args.name !== undefined) updates.name = args.name
     if (args.displayName !== undefined) updates.displayName = args.displayName
+    if (args.gender !== undefined) updates.gender = args.gender
 
     await ctx.db.patch(userId, updates)
     return await ctx.db.get(userId)
@@ -177,7 +179,35 @@ export const deleteAccount = mutation({
       await ctx.db.delete(token._id)
     }
 
-    // 5. Delete auth-related data (sessions, accounts, refresh tokens)
+    // 5. Delete camp memberships, invites, and subscriptions
+    const campMemberships = await ctx.db
+      .query('campMembers')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect()
+
+    for (const membership of campMemberships) {
+      await ctx.db.delete(membership._id)
+    }
+
+    const campInvites = await ctx.db
+      .query('campInvites')
+      .withIndex('by_created_by', (q) => q.eq('createdBy', userId))
+      .collect()
+
+    for (const invite of campInvites) {
+      await ctx.db.delete(invite._id)
+    }
+
+    const subscriptions = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect()
+
+    for (const subscription of subscriptions) {
+      await ctx.db.delete(subscription._id)
+    }
+
+    // 6. Delete auth-related data (sessions, accounts, refresh tokens)
     // These tables are created by @convex-dev/auth
     const authSessions = await ctx.db
       .query('authSessions')
@@ -208,7 +238,7 @@ export const deleteAccount = mutation({
       await ctx.db.delete(account._id)
     }
 
-    // 6. Finally, delete the user record itself
+    // 7. Finally, delete the user record itself
     await ctx.db.delete(userId)
 
     return { success: true }

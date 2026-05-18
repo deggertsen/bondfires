@@ -299,6 +299,16 @@ async function markRecordReady(
           updatedAt: Date.now(),
         })
       }
+
+      if (record.document.campId) {
+        const camp = await ctx.db.get(record.document.campId)
+        if (camp) {
+          await ctx.db.patch(record.document.campId, {
+            bondfireCount: (camp.bondfireCount ?? 0) + 1,
+            updatedAt: Date.now(),
+          })
+        }
+      }
     }
     return
   }
@@ -445,6 +455,7 @@ export const createMuxDirectUpload = action({
     contentType: v.string(),
     isResponse: v.boolean(),
     bondfireId: v.optional(v.id('bondfires')),
+    campId: v.optional(v.id('camps')),
     durationMs: v.optional(v.number()),
     width: v.optional(v.number()),
     height: v.optional(v.number()),
@@ -476,6 +487,7 @@ export const createMuxDirectUpload = action({
           userId,
           isResponse: args.isResponse,
           bondfireId: args.bondfireId,
+          campId: args.campId,
           filename: args.filename,
           contentType: args.contentType,
         }),
@@ -500,6 +512,7 @@ export const createMuxDirectUpload = action({
       uploadId,
       isResponse: args.isResponse,
       bondfireId: args.bondfireId,
+      campId: args.campId,
       playbackPolicy: config.playbackPolicy,
       durationMs: args.durationMs,
       width: args.width,
@@ -592,6 +605,7 @@ export const createLiveStream = action({
   args: {
     isResponse: v.boolean(),
     bondfireId: v.optional(v.id('bondfires')),
+    campId: v.optional(v.id('camps')),
     tags: v.optional(v.array(v.string())),
     width: v.optional(v.number()),
     height: v.optional(v.number()),
@@ -658,6 +672,7 @@ export const createLiveStream = action({
       playbackId,
       isResponse: args.isResponse,
       bondfireId: args.bondfireId,
+      campId: args.campId,
       playbackPolicy: config.playbackPolicy,
       latencyMode: config.liveLatencyMode,
       tags: args.tags,
@@ -815,6 +830,7 @@ export const createPendingMuxVideo = internalMutation({
     uploadId: v.string(),
     isResponse: v.boolean(),
     bondfireId: v.optional(v.id('bondfires')),
+    campId: v.optional(v.id('camps')),
     playbackPolicy: v.union(v.literal('public'), v.literal('signed')),
     durationMs: v.optional(v.number()),
     width: v.optional(v.number()),
@@ -860,6 +876,7 @@ export const createPendingMuxVideo = internalMutation({
     const recordId = await ctx.db.insert('bondfires', {
       userId: args.userId,
       creatorName: user?.displayName ?? user?.name,
+      campId: args.campId,
       videoStatus: 'waiting_for_upload',
       muxUploadId: args.uploadId,
       muxPlaybackPolicy: args.playbackPolicy,
@@ -1044,6 +1061,7 @@ export const createLinkedMuxLiveSession = internalMutation({
     playbackId: v.optional(v.string()),
     isResponse: v.boolean(),
     bondfireId: v.optional(v.id('bondfires')),
+    campId: v.optional(v.id('camps')),
     playbackPolicy: v.union(v.literal('public'), v.literal('signed')),
     latencyMode: v.union(v.literal('standard'), v.literal('reduced'), v.literal('low')),
     tags: v.optional(v.array(v.string())),
@@ -1125,6 +1143,7 @@ export const createLinkedMuxLiveSession = internalMutation({
     const recordId = await ctx.db.insert('bondfires', {
       userId: args.userId,
       creatorName: user?.displayName ?? user?.name,
+      campId: args.campId,
       liveSessionId,
       videoStatus: 'live',
       muxLiveStreamId: args.liveStreamId,

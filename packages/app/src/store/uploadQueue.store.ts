@@ -5,6 +5,7 @@ export interface UploadTask {
   id: string
   videoFilePath: string // Persistent path (copied from cache)
   bondfireId?: string // If responding to existing bondfire
+  campId?: string
   isResponse: boolean
   status: 'pending' | 'processing' | 'uploading' | 'completed' | 'failed'
   progress?: number // 0-100 progress for current upload lifecycle

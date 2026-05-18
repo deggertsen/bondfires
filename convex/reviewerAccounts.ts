@@ -252,6 +252,34 @@ export const deleteReviewerAccount = mutation({
       await ctx.db.delete(token._id)
     }
 
+    // Delete camp memberships, invites, and subscriptions
+    const campMemberships = await ctx.db
+      .query('campMembers')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect()
+
+    for (const membership of campMemberships) {
+      await ctx.db.delete(membership._id)
+    }
+
+    const campInvites = await ctx.db
+      .query('campInvites')
+      .withIndex('by_created_by', (q) => q.eq('createdBy', userId))
+      .collect()
+
+    for (const invite of campInvites) {
+      await ctx.db.delete(invite._id)
+    }
+
+    const subscriptions = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect()
+
+    for (const subscription of subscriptions) {
+      await ctx.db.delete(subscription._id)
+    }
+
     // Delete auth sessions
     const authSessions = await ctx.db
       .query('authSessions')

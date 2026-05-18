@@ -35,7 +35,7 @@ type RecordingState = 'idle' | 'recording' | 'stopping' | 'completion' | 'proces
 
 export default function CreateScreen() {
   const router = useRouter()
-  const { respondTo } = useLocalSearchParams<{ respondTo?: string }>()
+  const { campId, respondTo } = useLocalSearchParams<{ campId?: string; respondTo?: string }>()
   const isFocused = useIsFocused()
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions()
@@ -96,6 +96,7 @@ export default function CreateScreen() {
       await createLiveStream({
         ...args,
         bondfireId: args.bondfireId as Id<'bondfires'> | undefined,
+        campId: args.campId as Id<'camps'> | undefined,
       }),
     endLiveStream: async (args) =>
       await endLiveStream({
@@ -310,6 +311,7 @@ export default function CreateScreen() {
         return await createMuxDirectUpload({
           ...args,
           bondfireId: args.bondfireId as Id<'bondfires'> | undefined,
+          campId: args.campId as Id<'camps'> | undefined,
         })
       },
       getMuxUploadStatus: async (args) => {
@@ -400,11 +402,13 @@ export default function CreateScreen() {
           {
             videoUri: uri,
             bondfireId: respondTo,
+            campId,
             isResponse: !!respondTo,
             createMuxDirectUpload: async (args) => {
               return await createMuxDirectUpload({
                 ...args,
                 bondfireId: args.bondfireId as Id<'bondfires'> | undefined,
+                campId: args.campId as Id<'camps'> | undefined,
               })
             },
             getMuxUploadStatus: async (args) => {
@@ -419,7 +423,7 @@ export default function CreateScreen() {
         return null
       }
     },
-    [respondTo, createMuxDirectUpload, getMuxUploadStatus],
+    [campId, respondTo, createMuxDirectUpload, getMuxUploadStatus],
   )
 
   const finalizeRecording = useCallback(
@@ -742,13 +746,14 @@ export default function CreateScreen() {
       state$.videoUri.set(null)
       await livePublisher.start({
         respondToBondfireId: respondTo,
+        campId,
         initialCamera: state$.facing.get() === 'back' ? 'back' : 'front',
       })
     } catch (error) {
       logRecordingError(error)
       Alert.alert('Live Stream Failed', 'Could not start the live stream. Please try again.')
     }
-  }, [livePublisher, liveStatus, logRecordingError, respondTo, state$])
+  }, [campId, livePublisher, liveStatus, logRecordingError, respondTo, state$])
 
   const stopLiveRecording = useCallback(async () => {
     if (liveStatus !== 'connecting' && liveStatus !== 'live' && liveStatus !== 'reconnecting') {

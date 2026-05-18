@@ -56,6 +56,7 @@ export function useLivePublisher(options: {
   createLiveStream: (args: {
     isResponse: boolean
     bondfireId?: string
+    campId?: string
     width?: number
     height?: number
   }) => Promise<CreateLiveStreamResult>
@@ -107,13 +108,20 @@ export function useLivePublisher(options: {
   }, [options.publisher])
 
   const start = useCallback(
-    async (args: { respondToBondfireId?: string; initialCamera?: 'front' | 'back' } = {}) => {
+    async (
+      args: {
+        respondToBondfireId?: string
+        campId?: string
+        initialCamera?: 'front' | 'back'
+      } = {},
+    ) => {
       livePublishActions.beginCreate()
       let provisionedSessionId: string | null = null
       try {
         const liveStream = await options.createLiveStream({
           isResponse: !!args.respondToBondfireId,
           bondfireId: args.respondToBondfireId,
+          campId: args.campId,
           width: 720,
           height: 1280,
         })
