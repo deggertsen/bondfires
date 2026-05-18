@@ -1,4 +1,5 @@
 import {
+  appActions,
   appStore$,
   cancelProcessing,
   cleanupTempVideos,
@@ -52,6 +53,7 @@ export default function CreateScreen() {
   const stopTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const uploadStartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const wasFocusedRef = useRef(isFocused)
+  const didRouteFirstSparkRef = useRef(false)
 
   const state$ = useObservable({
     facing: 'front' as CameraType,
@@ -89,6 +91,7 @@ export default function CreateScreen() {
   const promptDismissed = useValue(state$.promptDismissed)
   const tradeTag = useValue(state$.tradeTag)
   const livePublishEnabled = useValue(appStore$.preferences.livePublishEnabled)
+  const currentCampId = useValue(appStore$.currentCampId)
   const shouldUseLivePublish = livePublishEnabled && isLivePublisherAvailable
   const liveStatus = useValue(livePublishStore$.status)
   const liveRecordId = useValue(livePublishStore$.recordId)
@@ -102,9 +105,10 @@ export default function CreateScreen() {
   const camps = useQuery(api.camps.list, respondTo ? 'skip' : {})
   const currentUser = useQuery(api.users.current)
   const joinCamp = useMutation(api.camps.join)
+  const persistedCampId = currentCampId as Id<'camps'> | null
   const effectiveCampId = respondTo
     ? undefined
-    : ((campId as Id<'camps'> | undefined) ?? selectedCampId ?? undefined)
+    : ((campId as Id<'camps'> | undefined) ?? selectedCampId ?? persistedCampId ?? undefined)
   const selectedCamp = useMemo(() => {
     if (!effectiveCampId || !camps) return null
     return camps.find((camp) => camp._id === effectiveCampId) ?? null
@@ -151,6 +155,63 @@ export default function CreateScreen() {
       }),
   })
   const keepAwakeTag = 'create-recording'
+
+  useEffect(() => {
+    if (respondTo || !campId) {
+      return
+    }
+
+    appActions.setCurrentCampId(campId)
+  }, [campId, respondTo])
+
+  useEffect(() => {
+    if (respondTo || !persistedCampId || camps === undefined) {
+      return
+    }
+
+    if (!camps.some((camp) => camp._id === persistedCampId)) {
+      appActions.setCurrentCampId(null)
+    }
+  }, [camps, persistedCampId, respondTo])
+
+  useEffect(() => {
+    if (
+      respondTo ||
+      campId ||
+      selectedCampId ||
+      persistedCampId ||
+      !currentUser ||
+      (currentUser.bondfireCount ?? 0) !== 0 ||
+      camps === undefined ||
+      didRouteFirstSparkRef.current
+    ) {
+      return
+    }
+
+    const gender = currentUser.gender === 'female' ? 'women' : 'men'
+    const welcomeCamp =
+      camps.find((camp) => camp.slug === ['welcome-fires', gender].join('-')) ??
+      camps.find((camp) => camp.slug.startsWith('welcome-fires-'))
+
+    if (!welcomeCamp) {
+      return
+    }
+
+    didRouteFirstSparkRef.current = true
+    joinCamp({ campId: welcomeCamp._id })
+      .then((result) => {
+        if (result.status === 'pending') {
+          return
+        }
+        state$.selectedCampId.set(welcomeCamp._id)
+        state$.tradeTag.set(null)
+        appActions.setCurrentCampId(welcomeCamp._id)
+      })
+      .catch((error) => {
+        didRouteFirstSparkRef.current = false
+        console.error('Failed to route first spark to Welcome Fires:', error)
+      })
+  }, [campId, camps, currentUser, joinCamp, persistedCampId, respondTo, selectedCampId, state$])
 
   useEffect(() => {
     if (respondTo || !effectiveCampId) {
@@ -866,6 +927,7 @@ export default function CreateScreen() {
 
         state$.selectedCampId.set(camp._id)
         state$.tradeTag.set(null)
+        appActions.setCurrentCampId(camp._id)
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to join camp'
         Alert.alert('Camp Unavailable', message)

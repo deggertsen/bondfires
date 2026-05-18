@@ -16,7 +16,14 @@ import { useAction, useQuery } from 'convex/react'
 import { Image } from 'expo-image'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { FlatList, Pressable, RefreshControl, StatusBar, type ViewToken } from 'react-native'
+import {
+  FlatList,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StatusBar,
+  type ViewToken,
+} from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Separator, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
@@ -26,6 +33,7 @@ type BondfireData = Doc<'bondfires'> & {
   isLive?: boolean
   livePlaybackId?: string
 }
+type JoinedCamp = Doc<'camps'> & { membership: Doc<'campMembers'> }
 
 type ViewMode = 'discover' | 'recent' | 'active' | 'unseen'
 
@@ -62,6 +70,40 @@ function ModePill({
           fontSize={13}
           fontWeight="800"
           color={selected ? bondfireColors.obsidian : bondfireColors.whiteSmoke}
+        >
+          {label}
+        </Text>
+      </YStack>
+    </Pressable>
+  )
+}
+
+function CampPill({
+  label,
+  selected,
+  onPress,
+}: {
+  label: string
+  selected: boolean
+  onPress: () => void
+}) {
+  return (
+    <Pressable onPress={onPress}>
+      <YStack
+        minWidth={74}
+        paddingHorizontal={12}
+        paddingVertical={8}
+        borderRadius={12}
+        backgroundColor={selected ? bondfireColors.bondfireCopper : bondfireColors.gunmetal}
+        borderWidth={1}
+        borderColor={selected ? bondfireColors.bondfireCopper : bondfireColors.iron}
+        alignItems="center"
+      >
+        <Text
+          fontSize={12}
+          fontWeight="900"
+          color={selected ? bondfireColors.obsidian : bondfireColors.whiteSmoke}
+          numberOfLines={1}
         >
           {label}
         </Text>
@@ -247,6 +289,11 @@ export default function FeedScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [bondfires, setBondfires] = useState<BondfireData[] | undefined>(undefined)
   const currentUserId = useValue(appStore$.userId)
+  const currentCampId = useValue(appStore$.currentCampId)
+  const joinedCamps = useQuery(api.camps.listMine, currentUserId ? {} : 'skip') as
+    | JoinedCamp[]
+    | undefined
+  const selectedCampId = currentCampId as Doc<'camps'>['_id'] | null
 
   const state$ = useObservable({
     thumbnailUrls: {} as Record<string, string | null>,
@@ -291,11 +338,25 @@ export default function FeedScreen() {
     [stopRefreshing],
   )
 
+  useEffect(() => {
+    if (!selectedCampId || joinedCamps === undefined) {
+      return
+    }
+
+    if (!joinedCamps.some((camp) => camp._id === selectedCampId)) {
+      appActions.setCurrentCampId(null)
+    }
+  }, [joinedCamps, selectedCampId])
+
   const filtered = useMemo(() => {
     if (!bondfires) return bondfires
 
     const q = query.trim().toLowerCase()
     let items = bondfires
+
+    if (selectedCampId) {
+      items = items.filter((b) => b.campId === selectedCampId)
+    }
 
     if (viewMode === 'unseen') {
       items = items.filter((b) => b.userId !== currentUserId && !hasViewedToday(b._id))
@@ -336,7 +397,7 @@ export default function FeedScreen() {
     })
 
     return sorted
-  }, [bondfires, currentUserId, query, viewMode])
+  }, [bondfires, currentUserId, query, selectedCampId, viewMode])
 
   filteredRef.current = filtered ?? []
 
@@ -408,6 +469,20 @@ export default function FeedScreen() {
     },
     [router],
   )
+
+  const handleSpark = useCallback(() => {
+    if (selectedCampId) {
+      router.push({ pathname: '/(main)/(tabs)/create', params: { campId: selectedCampId } })
+      return
+    }
+
+    router.push('/(main)/(tabs)/create')
+  }, [router, selectedCampId])
+
+  const handleSelectCamp = useCallback((campId: string | null) => {
+    appActions.setCurrentCampId(campId)
+    listRef.current?.scrollToOffset({ offset: 0, animated: true })
+  }, [])
 
   const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
@@ -506,18 +581,14 @@ export default function FeedScreen() {
             <XStack alignItems="baseline" justifyContent="space-between" gap={16}>
               <YStack gap={2} flex={1}>
                 <Text fontSize={26} fontWeight="900" numberOfLines={1}>
-                  Campground
+                  Camp Feed
                 </Text>
                 <Text fontSize={13} color={bondfireColors.ash}>
-                  Pick a camp to play.
+                  Filter by joined camp or scan every fire.
                 </Text>
               </YStack>
 
-              <Button
-                variant="secondary"
-                size="$sm"
-                onPress={() => router.push('/(main)/(tabs)/create')}
-              >
+              <Button variant="secondary" size="$sm" onPress={handleSpark}>
                 <Text color={bondfireColors.whiteSmoke} fontWeight="900">
                   Spark
                 </Text>
@@ -551,6 +622,26 @@ export default function FeedScreen() {
                 </Text>
               ) : null}
             </XStack>
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ gap: 8, paddingRight: 8 }}
+            >
+              <CampPill
+                label="All"
+                selected={!selectedCampId}
+                onPress={() => handleSelectCamp(null)}
+              />
+              {(joinedCamps ?? []).map((camp) => (
+                <CampPill
+                  key={camp._id}
+                  label={camp.name.replace(/ \((Men|Women)\)$/, '')}
+                  selected={selectedCampId === camp._id}
+                  onPress={() => handleSelectCamp(camp._id)}
+                />
+              ))}
+            </ScrollView>
 
             <XStack gap={10} flexWrap="wrap">
               <ModePill

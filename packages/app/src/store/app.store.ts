@@ -27,6 +27,9 @@ export interface AppState {
   // Auth state (managed by Convex, but cached locally)
   isAuthenticated: boolean
   userId: string | null
+
+  // Camp context
+  currentCampId: string | null
 }
 
 const defaultState: AppState = {
@@ -41,6 +44,7 @@ const defaultState: AppState = {
   },
   isAuthenticated: false,
   userId: null,
+  currentCampId: null,
 }
 
 // Create the observable store
@@ -88,9 +92,14 @@ export const appActions = {
     appStore$.userId.set(userId)
   },
 
+  setCurrentCampId: (campId: string | null) => {
+    appStore$.currentCampId.set(campId)
+  },
+
   logout: () => {
     appStore$.isAuthenticated.set(false)
     appStore$.userId.set(null)
+    appStore$.currentCampId.set(null)
   },
 
   reset: () => {
