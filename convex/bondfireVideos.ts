@@ -209,6 +209,15 @@ export const addResponse = mutation({
       throw new Error('Mux asset ID and playback ID are required for Mux videos')
     }
 
+    let requiresSignedPlayback = bondfire.muxPlaybackPolicy === 'signed'
+    if (!requiresSignedPlayback && bondfire.campId) {
+      const camp = await ctx.db.get(bondfire.campId)
+      requiresSignedPlayback = camp?.visibility === 'private'
+    }
+    if (requiresSignedPlayback && args.muxPlaybackPolicy !== 'signed') {
+      throw new Error('Private camp response videos must use signed Mux playback')
+    }
+
     // Get the next sequence number
     const existingVideos = await ctx.db
       .query('bondfireVideos')

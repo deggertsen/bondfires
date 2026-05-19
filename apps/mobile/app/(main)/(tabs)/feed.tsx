@@ -447,6 +447,7 @@ export default function FeedScreen() {
         const { thumbnailUrl } = await getThumbnailUrl({
           muxPlaybackId: bondfire.muxPlaybackId,
           muxPlaybackPolicy: bondfire.muxPlaybackPolicy,
+          bondfireId: bondfire._id,
         })
         state$.thumbnailUrls[bondfire._id].set(thumbnailUrl)
       } catch (error) {

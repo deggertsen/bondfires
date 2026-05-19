@@ -8,6 +8,7 @@ import { auth } from './auth'
 type PlaybackPolicy = 'public' | 'signed'
 type LiveLatencyMode = 'standard' | 'reduced' | 'low'
 type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'
+type MuxSignedAudience = 'v' | 't' | 'g'
 type MuxRecord =
   | { table: 'bondfires'; document: Doc<'bondfires'> }
   | { table: 'bondfireVideos'; document: Doc<'bondfireVideos'> }
@@ -54,6 +55,7 @@ const MUX_READY_STATUSES = new Set(['ready'])
 const MUX_FAILED_STATUSES = new Set(['errored', 'cancelled', 'timed_out'])
 const MUX_LIVE_RTMPS_ENDPOINT = 'rtmps://global-live.mux.com/app'
 const DEFAULT_MUX_LIVE_RECONNECT_WINDOW_SECONDS = 30
+const SIGNED_PLAYBACK_URL_TTL_SECONDS = 12 * 60 * 60
 const PRIVATE_PLUS_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 const TIER_RANK: Record<SubscriptionTier, number> = {
   free: 0,
@@ -75,7 +77,7 @@ function getMuxConfig() {
   return {
     tokenId,
     tokenSecret,
-    playbackPolicy: readPlaybackPolicy(process.env.MUX_PLAYBACK_POLICY),
+    playbackPolicy: getConfiguredPlaybackPolicy(),
     liveLatencyMode: readLiveLatencyMode(process.env.MUX_LIVE_LATENCY_MODE),
     videoQuality: process.env.MUX_VIDEO_QUALITY ?? 'basic',
     uploadCorsOrigin: process.env.MUX_UPLOAD_CORS_ORIGIN ?? '*',
@@ -84,6 +86,10 @@ function getMuxConfig() {
 
 function readPlaybackPolicy(value: string | undefined): PlaybackPolicy {
   return value === 'signed' ? 'signed' : 'public'
+}
+
+function getConfiguredPlaybackPolicy(): PlaybackPolicy {
+  return readPlaybackPolicy(process.env.MUX_PLAYBACK_POLICY)
 }
 
 function readLiveLatencyMode(value: string | undefined): LiveLatencyMode {
@@ -155,6 +161,96 @@ function getMuxPreviewUrl(playbackId: string): string {
   return `https://image.mux.com/${playbackId}/animated.gif`
 }
 
+function base64UrlEncode(input: string | Uint8Array | ArrayBuffer): string {
+  const bytes =
+    typeof input === 'string'
+      ? new TextEncoder().encode(input)
+      : input instanceof Uint8Array
+        ? input
+        : new Uint8Array(input)
+
+  let binary = ''
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte)
+  }
+
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(value.replace(/\s+/g, ''))
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+
+  return bytes
+}
+
+function getMuxSigningConfig() {
+  const keyId = process.env.MUX_SIGNING_KEY_ID
+  const privateKey = process.env.MUX_SIGNING_PRIVATE_KEY
+
+  if (!keyId || !privateKey) {
+    throw new Error(
+      'Mux signed playback is not configured. Set MUX_SIGNING_KEY_ID and MUX_SIGNING_PRIVATE_KEY in Convex environment variables.',
+    )
+  }
+
+  return { keyId, privateKey }
+}
+
+function readMuxSigningPrivateKey(privateKey: string) {
+  const normalizedPrivateKey = privateKey.replace(/\\n/g, '\n').trim()
+  if (normalizedPrivateKey.includes('-----BEGIN PRIVATE KEY-----')) {
+    return normalizedPrivateKey
+  }
+
+  return new TextDecoder().decode(base64ToBytes(normalizedPrivateKey))
+}
+
+async function importMuxSigningKey(encodedPrivateKey: string) {
+  const pem = readMuxSigningPrivateKey(encodedPrivateKey)
+  const derBase64 = pem
+    .replace(/-----BEGIN PRIVATE KEY-----/g, '')
+    .replace(/-----END PRIVATE KEY-----/g, '')
+    .replace(/\s+/g, '')
+  const der = base64ToBytes(derBase64)
+  const keyData = new ArrayBuffer(der.byteLength)
+  new Uint8Array(keyData).set(der)
+
+  return await crypto.subtle.importKey(
+    'pkcs8',
+    keyData,
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+}
+
+async function signMuxPlaybackToken(playbackId: string, aud: MuxSignedAudience) {
+  const { keyId, privateKey } = getMuxSigningConfig()
+  const exp = Math.floor(Date.now() / 1000) + SIGNED_PLAYBACK_URL_TTL_SECONDS
+  const header = { alg: 'RS256', typ: 'JWT', kid: keyId }
+  const payload = { sub: playbackId, aud, exp, kid: keyId }
+  const unsignedToken = [
+    base64UrlEncode(JSON.stringify(header)),
+    base64UrlEncode(JSON.stringify(payload)),
+  ].join('.')
+  const key = await importMuxSigningKey(privateKey)
+  const signature = await crypto.subtle.sign(
+    'RSASSA-PKCS1-v1_5',
+    key,
+    new TextEncoder().encode(unsignedToken),
+  )
+
+  return [unsignedToken, base64UrlEncode(signature)].join('.')
+}
+
+function withMuxToken(url: string, token: string) {
+  return `${url}?token=${token}`
+}
+
 function parseMuxDurationMs(value: unknown): number | undefined {
   const numberValue =
     typeof value === 'string' && value.length > 0 ? Number(value) : readOptionalNumber(value)
@@ -208,6 +304,38 @@ async function getPrivateCampExpiresAt(
 
   const ownerTier = await getActiveSubscriptionTier(ctx, camp.ownerId)
   return ownerTier === 'plus' ? now + PRIVATE_PLUS_RETENTION_MS : undefined
+}
+
+async function assertCanViewBondfire(
+  ctx: QueryCtx,
+  args: { userId: Id<'users'>; bondfire: Doc<'bondfires'> },
+) {
+  const bondfire = args.bondfire
+  if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
+    throw new Error('Bondfire not found')
+  }
+
+  if (!bondfire.campId) {
+    return
+  }
+
+  const camp = await ctx.db.get(bondfire.campId)
+  if (!camp || camp.status !== 'active') {
+    throw new Error('Camp not found')
+  }
+
+  if (camp.visibility === 'public') {
+    return
+  }
+
+  const membership = await ctx.db
+    .query('campMembers')
+    .withIndex('by_user_camp', (q) => q.eq('userId', args.userId).eq('campId', camp._id))
+    .first()
+
+  if (membership?.status !== 'active') {
+    throw new Error('Bondfire not found')
+  }
 }
 
 async function assertUserCanParticipateInCamp(
@@ -687,27 +815,32 @@ export const createMuxDirectUpload = action({
       throw new Error('Not authenticated')
     }
 
+    let playbackPolicy: PlaybackPolicy
     if (args.isResponse) {
       if (!args.bondfireId) {
         throw new Error('A bondfire ID is required when uploading a response')
       }
 
-      await ctx.runQuery(internal.videos.validateRespondCampContext, {
+      const policy = await ctx.runQuery(internal.videos.getMuxPlaybackPolicyForNewRecord, {
         userId,
+        isResponse: args.isResponse,
         bondfireId: args.bondfireId,
         durationMs: args.durationMs,
       })
+      playbackPolicy = policy.playbackPolicy
     } else {
       if (!args.campId) {
         throw new Error('Choose a camp before sparking a Bondfire')
       }
 
-      await ctx.runQuery(internal.videos.validateCreateCampContext, {
+      const policy = await ctx.runQuery(internal.videos.getMuxPlaybackPolicyForNewRecord, {
         userId,
+        isResponse: args.isResponse,
         campId: args.campId,
         durationMs: args.durationMs,
         tags: args.tags,
       })
+      playbackPolicy = policy.playbackPolicy
     }
 
     const config = getMuxConfig()
@@ -721,7 +854,7 @@ export const createMuxDirectUpload = action({
           ? uploadTimeout
           : DEFAULT_MUX_UPLOAD_TIMEOUT_SECONDS,
       new_asset_settings: {
-        playback_policies: [config.playbackPolicy],
+        playback_policies: [playbackPolicy],
         video_quality: config.videoQuality,
         passthrough: JSON.stringify({
           userId,
@@ -755,7 +888,7 @@ export const createMuxDirectUpload = action({
       bondfireId: args.bondfireId,
       campId: args.campId,
       tags: args.tags,
-      playbackPolicy: config.playbackPolicy,
+      playbackPolicy,
       durationMs: args.durationMs,
       width: args.width,
       height: args.height,
@@ -810,7 +943,6 @@ export const getMuxUploadStatus = action({
           uploadId: args.uploadId,
           assetId,
           playbackId,
-          playbackPolicy: getMuxConfig().playbackPolicy,
           assetStatus,
           durationMs,
           muxAspectRatio,
@@ -1029,25 +1161,30 @@ export const createLiveStream = action({
       throw new Error('Not authenticated')
     }
 
+    let playbackPolicy: PlaybackPolicy
     if (args.isResponse) {
       if (!args.bondfireId) {
         throw new Error('A bondfire ID is required when creating a live response')
       }
 
-      await ctx.runQuery(internal.videos.validateRespondCampContext, {
+      const policy = await ctx.runQuery(internal.videos.getMuxPlaybackPolicyForNewRecord, {
         userId,
+        isResponse: args.isResponse,
         bondfireId: args.bondfireId,
       })
+      playbackPolicy = policy.playbackPolicy
     } else {
       if (!args.campId) {
         throw new Error('Choose a camp before sparking a Bondfire')
       }
 
-      await ctx.runQuery(internal.videos.validateCreateCampContext, {
+      const policy = await ctx.runQuery(internal.videos.getMuxPlaybackPolicyForNewRecord, {
         userId,
+        isResponse: args.isResponse,
         campId: args.campId,
         tags: args.tags,
       })
+      playbackPolicy = policy.playbackPolicy
     }
 
     // Refuse to provision a billable Mux live stream while the user already
@@ -1069,14 +1206,14 @@ export const createLiveStream = action({
       await muxRequest('/live-streams', {
         method: 'POST',
         body: JSON.stringify({
-          playback_policies: [config.playbackPolicy],
+          playback_policies: [playbackPolicy],
           latency_mode: config.liveLatencyMode,
           reconnect_window:
             Number.isFinite(reconnectWindow) && reconnectWindow >= 0
               ? reconnectWindow
               : DEFAULT_MUX_LIVE_RECONNECT_WINDOW_SECONDS,
           new_asset_settings: {
-            playback_policies: [config.playbackPolicy],
+            playback_policies: [playbackPolicy],
             video_quality: config.videoQuality,
             passthrough: JSON.stringify({
               userId,
@@ -1103,7 +1240,7 @@ export const createLiveStream = action({
       isResponse: args.isResponse,
       bondfireId: args.bondfireId,
       campId: args.campId,
-      playbackPolicy: config.playbackPolicy,
+      playbackPolicy,
       latencyMode: config.liveLatencyMode,
       tags: args.tags,
       width: args.width,
@@ -1118,7 +1255,8 @@ export const createLiveStream = action({
         rtmpsUrl: MUX_LIVE_RTMPS_ENDPOINT,
         streamKey,
       },
-      playbackUrl: playbackId ? getMuxPlaybackUrl(playbackId) : undefined,
+      playbackUrl:
+        playbackPolicy === 'public' && playbackId ? getMuxPlaybackUrl(playbackId) : undefined,
       recordId: pendingRecord.recordId,
       recordType: pendingRecord.recordType,
     }
@@ -1221,10 +1359,33 @@ export const getVideoUrls = action({
   args: {
     muxPlaybackId: v.string(),
     muxPlaybackPolicy: v.optional(v.union(v.literal('public'), v.literal('signed'))),
+    bondfireId: v.optional(v.id('bondfires')),
+    bondfireVideoId: v.optional(v.id('bondfireVideos')),
   },
-  handler: async (_ctx, args) => {
-    if (args.muxPlaybackPolicy === 'signed') {
-      throw new Error('Signed Mux playback is not implemented yet')
+  handler: async (ctx, args) => {
+    let playbackPolicy = args.muxPlaybackPolicy ?? 'public'
+    if (args.bondfireId || args.bondfireVideoId || playbackPolicy === 'signed') {
+      const userId = (await auth.getUserId(ctx)) ?? undefined
+
+      const access = await ctx.runQuery(internal.videos.validatePlaybackAccess, {
+        userId,
+        muxPlaybackId: args.muxPlaybackId,
+        bondfireId: args.bondfireId,
+        bondfireVideoId: args.bondfireVideoId,
+      })
+      playbackPolicy = access.playbackPolicy
+    }
+
+    if (playbackPolicy === 'signed') {
+      const token = await signMuxPlaybackToken(args.muxPlaybackId, 'v')
+      const thumbnailToken = await signMuxPlaybackToken(args.muxPlaybackId, 't')
+
+      return {
+        hdUrl: withMuxToken(getMuxPlaybackUrl(args.muxPlaybackId), token),
+        sdUrl: null,
+        thumbnailUrl: withMuxToken(getMuxThumbnailUrl(args.muxPlaybackId), thumbnailToken),
+        expiresIn: SIGNED_PLAYBACK_URL_TTL_SECONDS,
+      }
     }
 
     return {
@@ -1240,10 +1401,32 @@ export const getThumbnailUrl = action({
   args: {
     muxPlaybackId: v.string(),
     muxPlaybackPolicy: v.optional(v.union(v.literal('public'), v.literal('signed'))),
+    bondfireId: v.optional(v.id('bondfires')),
+    bondfireVideoId: v.optional(v.id('bondfireVideos')),
   },
-  handler: async (_ctx, args) => {
-    if (args.muxPlaybackPolicy === 'signed') {
-      throw new Error('Signed Mux thumbnails are not implemented yet')
+  handler: async (ctx, args) => {
+    let playbackPolicy = args.muxPlaybackPolicy ?? 'public'
+    if (args.bondfireId || args.bondfireVideoId || playbackPolicy === 'signed') {
+      const userId = (await auth.getUserId(ctx)) ?? undefined
+
+      const access = await ctx.runQuery(internal.videos.validatePlaybackAccess, {
+        userId,
+        muxPlaybackId: args.muxPlaybackId,
+        bondfireId: args.bondfireId,
+        bondfireVideoId: args.bondfireVideoId,
+      })
+      playbackPolicy = access.playbackPolicy
+    }
+
+    if (playbackPolicy === 'signed') {
+      const thumbnailToken = await signMuxPlaybackToken(args.muxPlaybackId, 't')
+      const previewToken = await signMuxPlaybackToken(args.muxPlaybackId, 'g')
+
+      return {
+        thumbnailUrl: withMuxToken(getMuxThumbnailUrl(args.muxPlaybackId), thumbnailToken),
+        previewUrl: withMuxToken(getMuxPreviewUrl(args.muxPlaybackId), previewToken),
+        expiresIn: SIGNED_PLAYBACK_URL_TTL_SECONDS,
+      }
     }
 
     return {
@@ -1276,6 +1459,130 @@ export const validateRespondCampContext = internalQuery({
   handler: async (ctx, args) => {
     await assertCanRespondToBondfire(ctx, args)
     return { valid: true }
+  },
+})
+
+export const getMuxPlaybackPolicyForNewRecord = internalQuery({
+  args: {
+    userId: v.id('users'),
+    isResponse: v.boolean(),
+    bondfireId: v.optional(v.id('bondfires')),
+    campId: v.optional(v.id('camps')),
+    durationMs: v.optional(v.number()),
+    tags: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args): Promise<{ playbackPolicy: PlaybackPolicy }> => {
+    if (args.isResponse) {
+      if (!args.bondfireId) {
+        throw new Error('A bondfire ID is required when creating a response')
+      }
+
+      const bondfire = await assertCanRespondToBondfire(ctx, {
+        userId: args.userId,
+        bondfireId: args.bondfireId,
+        durationMs: args.durationMs,
+      })
+
+      if (bondfire.muxPlaybackPolicy === 'signed') {
+        return { playbackPolicy: 'signed' }
+      }
+
+      if (bondfire.campId) {
+        const camp = await ctx.db.get(bondfire.campId)
+        if (camp?.visibility === 'private') {
+          return { playbackPolicy: 'signed' }
+        }
+      }
+
+      return { playbackPolicy: getConfiguredPlaybackPolicy() }
+    }
+
+    if (!args.campId) {
+      throw new Error('Choose a camp before sparking a Bondfire')
+    }
+
+    const camp = await assertCanCreateInCamp(ctx, {
+      userId: args.userId,
+      campId: args.campId,
+      durationMs: args.durationMs,
+      tags: args.tags,
+    })
+
+    return {
+      playbackPolicy: camp.visibility === 'private' ? 'signed' : getConfiguredPlaybackPolicy(),
+    }
+  },
+})
+
+export const validatePlaybackAccess = internalQuery({
+  args: {
+    userId: v.optional(v.id('users')),
+    muxPlaybackId: v.string(),
+    bondfireId: v.optional(v.id('bondfires')),
+    bondfireVideoId: v.optional(v.id('bondfireVideos')),
+  },
+  handler: async (ctx, args): Promise<{ playbackPolicy: PlaybackPolicy }> => {
+    if (args.bondfireId) {
+      const bondfire = await ctx.db.get(args.bondfireId)
+      if (
+        !bondfire ||
+        (bondfire.muxPlaybackId !== args.muxPlaybackId &&
+          bondfire.muxLivePlaybackId !== args.muxPlaybackId)
+      ) {
+        throw new Error('Video not found')
+      }
+
+      if (bondfire.campId) {
+        const camp = await ctx.db.get(bondfire.campId)
+        if (camp?.visibility === 'private' && bondfire.muxPlaybackPolicy !== 'signed') {
+          throw new Error('Private camp video is missing signed Mux playback')
+        }
+      }
+
+      if (bondfire.muxPlaybackPolicy === 'signed') {
+        if (!args.userId) {
+          throw new Error('Not authenticated')
+        }
+        await assertCanViewBondfire(ctx, { userId: args.userId, bondfire })
+      }
+
+      return { playbackPolicy: bondfire.muxPlaybackPolicy ?? 'public' }
+    }
+
+    if (args.bondfireVideoId) {
+      const video = await ctx.db.get(args.bondfireVideoId)
+      if (
+        !video ||
+        (video.expiresAt !== undefined && video.expiresAt <= Date.now()) ||
+        (video.muxPlaybackId !== args.muxPlaybackId &&
+          video.muxLivePlaybackId !== args.muxPlaybackId)
+      ) {
+        throw new Error('Video not found')
+      }
+
+      const bondfire = await ctx.db.get(video.bondfireId)
+      if (!bondfire) {
+        throw new Error('Bondfire not found')
+      }
+
+      if (bondfire.campId) {
+        const camp = await ctx.db.get(bondfire.campId)
+        if (camp?.visibility === 'private' && video.muxPlaybackPolicy !== 'signed') {
+          throw new Error('Private camp response video is missing signed Mux playback')
+        }
+      }
+
+      if (video.muxPlaybackPolicy === 'signed') {
+        if (!args.userId) {
+          throw new Error('Not authenticated')
+        }
+        await assertCanViewBondfire(ctx, { userId: args.userId, bondfire })
+      }
+
+      return { playbackPolicy: video.muxPlaybackPolicy ?? 'public' }
+    }
+
+    throw new Error('A Bondfire or response ID is required for signed playback')
   },
 })
 

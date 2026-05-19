@@ -650,6 +650,7 @@ export default function BondfireDetailScreen() {
       const mainUrl = await getVideoUrls({
         muxPlaybackId: mainPlaybackId,
         muxPlaybackPolicy: bondfireData.muxPlaybackPolicy,
+        bondfireId: bondfireData._id,
       })
 
       const playableResponses = bondfireData.videos.filter((v: Doc<'bondfireVideos'>) =>
@@ -663,6 +664,7 @@ export default function BondfireDetailScreen() {
                 ? (v.muxLivePlaybackId as string)
                 : (v.muxPlaybackId as string),
             muxPlaybackPolicy: v.muxPlaybackPolicy,
+            bondfireVideoId: v._id,
           }),
         ),
       )

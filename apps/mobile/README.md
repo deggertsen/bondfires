@@ -61,12 +61,17 @@ MUX_TOKEN_ID=your-mux-token-id
 MUX_TOKEN_SECRET=your-mux-token-secret
 MUX_WEBHOOK_SECRET=your-mux-webhook-secret
 MUX_PLAYBACK_POLICY=public
+MUX_SIGNING_KEY_ID=your-mux-signing-key-id
+MUX_SIGNING_PRIVATE_KEY=your-mux-private-key
 MUX_UPLOAD_CORS_ORIGIN=*
 MUX_VIDEO_QUALITY=basic
 ```
 
 Configure the Mux webhook endpoint to point at the Convex HTTP action path
 `https://<your-convex-deployment>.convex.site/mux/webhook`.
+Signing key variables are required for private camp video playback and any other
+video created with a signed Mux playback policy. The private key can be stored as
+raw PEM with escaped newlines or as a base64-encoded PEM.
 
 Profile photos are stored in Convex file storage and do not require separate storage credentials.
 

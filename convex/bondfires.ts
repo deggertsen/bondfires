@@ -376,6 +376,10 @@ export const create = mutation({
       }
     }
 
+    if (camp.visibility === 'private' && args.muxPlaybackPolicy !== 'signed') {
+      throw new Error('Private camp videos must use signed Mux playback')
+    }
+
     const bondfireId = await ctx.db.insert('bondfires', {
       userId,
       creatorName: user?.displayName ?? user?.name,
