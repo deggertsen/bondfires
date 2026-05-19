@@ -768,6 +768,17 @@ export const redeemInvite = mutation({
     }
     assertUserMatchesCampGender(user, camp)
 
+    const existingMembership = await getMembership(ctx, user._id, camp._id)
+    if (existingMembership?.status === 'banned') {
+      throw new Error('You cannot join this camp')
+    }
+    if (existingMembership?.status === 'active') {
+      return {
+        membershipId: existingMembership._id,
+        campId: camp._id,
+      }
+    }
+
     const membershipId = await upsertMembership(ctx, {
       userId: user._id,
       campId: camp._id,
