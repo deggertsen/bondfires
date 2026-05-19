@@ -1,12 +1,125 @@
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
+import type { Doc, Id } from './_generated/dataModel'
+import type { MutationCtx, QueryCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
+
+async function getVisibleCampIds(ctx: QueryCtx, userId: Id<'users'> | null) {
+  if (!userId) {
+    return new Set<Id<'camps'>>()
+  }
+
+  const memberships = await ctx.db
+    .query('campMembers')
+    .withIndex('by_user', (q) => q.eq('userId', userId).eq('status', 'active'))
+    .collect()
+
+  return new Set(memberships.map((membership) => membership.campId))
+}
+
+async function isBondfireVisibleToViewer(
+  ctx: QueryCtx,
+  bondfire: Doc<'bondfires'>,
+  memberCampIds: Set<Id<'camps'>>,
+) {
+  if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
+    return false
+  }
+  if (!bondfire.campId) {
+    return true
+  }
+
+  const camp = await ctx.db.get(bondfire.campId)
+  if (!camp || camp.status !== 'active') {
+    return false
+  }
+
+  return camp.visibility === 'public' || memberCampIds.has(camp._id)
+}
+
+async function assertCanRespondToBondfire(
+  ctx: MutationCtx,
+  args: {
+    userId: Id<'users'>
+    bondfireId: Id<'bondfires'>
+    durationMs?: number
+  },
+): Promise<Doc<'bondfires'>> {
+  const [user, bondfire] = await Promise.all([ctx.db.get(args.userId), ctx.db.get(args.bondfireId)])
+  if (!user) {
+    throw new Error('User not found')
+  }
+  if (!bondfire) {
+    throw new Error('Bondfire not found')
+  }
+  if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
+    throw new Error('Bondfire not found')
+  }
+  if (!bondfire.campId) {
+    return bondfire
+  }
+
+  const camp = await ctx.db.get(bondfire.campId)
+  if (!camp || camp.status !== 'active') {
+    throw new Error('Camp not found')
+  }
+
+  const membership = await ctx.db
+    .query('campMembers')
+    .withIndex('by_user_camp', (q) => q.eq('userId', args.userId).eq('campId', camp._id))
+    .first()
+  if (membership?.status !== 'active') {
+    throw new Error('Join this camp before responding here')
+  }
+
+  const campGender = camp.rules.gender
+  if (campGender && campGender !== 'any' && user.gender !== campGender) {
+    throw new Error('This camp is limited to members who match its gender setting')
+  }
+
+  if (
+    args.durationMs !== undefined &&
+    camp.rules.minDurationMs &&
+    args.durationMs < camp.rules.minDurationMs
+  ) {
+    throw new Error('This recording is shorter than the camp allows')
+  }
+
+  if (camp.rules.maxDurationMs && args.durationMs && args.durationMs > camp.rules.maxDurationMs) {
+    throw new Error('This recording is longer than the camp allows')
+  }
+
+  if (camp.rules.maxResponses !== undefined) {
+    const existingVideos = await ctx.db
+      .query('bondfireVideos')
+      .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
+      .collect()
+    const activeResponses = existingVideos.filter((video) => video.videoStatus !== 'errored')
+    if (activeResponses.length >= camp.rules.maxResponses) {
+      throw new Error('This Bondfire already has the maximum number of responses')
+    }
+  }
+
+  return bondfire
+}
 
 // Get all videos for a bondfire
 export const listByBondfire = query({
   args: { bondfireId: v.id('bondfires') },
   handler: async (ctx, args) => {
+    const bondfire = await ctx.db.get(args.bondfireId)
+    if (!bondfire) {
+      return []
+    }
+
+    const userId = await auth.getUserId(ctx)
+    const memberCampIds = await getVisibleCampIds(ctx, userId)
+    const canViewBondfire = await isBondfireVisibleToViewer(ctx, bondfire, memberCampIds)
+    if (!canViewBondfire) {
+      return []
+    }
+
     const videos = await ctx.db
       .query('bondfireVideos')
       .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
@@ -14,6 +127,10 @@ export const listByBondfire = query({
       .collect()
 
     return videos.filter((video) => {
+      if (video.expiresAt !== undefined && video.expiresAt <= Date.now()) {
+        return false
+      }
+
       const status = video.videoStatus ?? 'ready'
       return (
         (status === 'ready' && video.muxPlaybackId) ||
@@ -27,11 +144,27 @@ export const listByBondfire = query({
 export const listByUser = query({
   args: { userId: v.id('users') },
   handler: async (ctx, args) => {
-    return await ctx.db
+    const viewerId = await auth.getUserId(ctx)
+    const memberCampIds = await getVisibleCampIds(ctx, viewerId)
+    const videos = await ctx.db
       .query('bondfireVideos')
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
       .order('desc')
       .collect()
+
+    const visibleVideos = []
+    for (const video of videos) {
+      if (video.expiresAt !== undefined && video.expiresAt <= Date.now()) {
+        continue
+      }
+
+      const bondfire = await ctx.db.get(video.bondfireId)
+      if (bondfire && (await isBondfireVisibleToViewer(ctx, bondfire, memberCampIds))) {
+        visibleVideos.push(video)
+      }
+    }
+
+    return visibleVideos
   },
 })
 
@@ -64,16 +197,25 @@ export const addResponse = mutation({
     }
 
     const user = await ctx.db.get(userId)
-    const bondfire = await ctx.db.get(args.bondfireId)
-
-    if (!bondfire) {
-      throw new Error('Bondfire not found')
-    }
+    const bondfire = await assertCanRespondToBondfire(ctx, {
+      userId,
+      bondfireId: args.bondfireId,
+      durationMs: args.durationMs,
+    })
 
     const now = Date.now()
 
     if (!args.muxAssetId || !args.muxPlaybackId) {
       throw new Error('Mux asset ID and playback ID are required for Mux videos')
+    }
+
+    let requiresSignedPlayback = bondfire.muxPlaybackPolicy === 'signed'
+    if (!requiresSignedPlayback && bondfire.campId) {
+      const camp = await ctx.db.get(bondfire.campId)
+      requiresSignedPlayback = camp?.visibility === 'private'
+    }
+    if (requiresSignedPlayback && args.muxPlaybackPolicy !== 'signed') {
+      throw new Error('Private camp response videos must use signed Mux playback')
     }
 
     // Get the next sequence number
@@ -100,6 +242,7 @@ export const addResponse = mutation({
       width: args.width,
       height: args.height,
       tags: args.tags,
+      expiresAt: bondfire.expiresAt,
       createdAt: now,
     })
 

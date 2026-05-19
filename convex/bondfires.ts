@@ -1,11 +1,20 @@
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
-import type { Id } from './_generated/dataModel'
-import type { MutationCtx } from './_generated/server'
-import { mutation, query } from './_generated/server'
+import type { Doc, Id } from './_generated/dataModel'
+import type { MutationCtx, QueryCtx } from './_generated/server'
+import { action, internalQuery, mutation, query } from './_generated/server'
 import { auth } from './auth'
 
 type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'
+type ExpiredPrivateCampVideoCleanupResult = {
+  expiredBondfires?: number
+  muxAssetsToDelete?: number
+  deletedBondfires?: number
+  deletedResponses?: number
+  deletedMuxAssets?: number
+  missingMuxAssets?: number
+  remainingMayExist: boolean
+}
 
 const TIER_RANK: Record<SubscriptionTier, number> = {
   free: 0,
@@ -13,6 +22,7 @@ const TIER_RANK: Record<SubscriptionTier, number> = {
   premium: 2,
   pro: 3,
 }
+const PRIVATE_PLUS_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 
 // Works for both `bondfires` and `bondfireVideos` rows — they share the
 // status/playback fields this predicate touches.
@@ -20,12 +30,25 @@ function isPlayableVideoRecord(record: {
   videoStatus?: string
   muxPlaybackId?: string
   muxLivePlaybackId?: string
+  expiresAt?: number
 }) {
+  if (record.expiresAt !== undefined && record.expiresAt <= Date.now()) {
+    return false
+  }
+
   const status = record.videoStatus ?? 'ready'
   return (
     (status === 'ready' && !!record.muxPlaybackId) ||
     (status === 'live' && !!record.muxLivePlaybackId)
   )
+}
+
+function getPrivateCampExpiresAt(camp: Doc<'camps'>, tier: SubscriptionTier, now: number) {
+  if (camp.visibility !== 'private' || tier !== 'plus') {
+    return undefined
+  }
+
+  return now + PRIVATE_PLUS_RETENTION_MS
 }
 
 function withLiveFlags<T extends { videoStatus?: string; muxLivePlaybackId?: string }>(
@@ -61,6 +84,46 @@ async function getActiveSubscriptionTier(
   )
 }
 
+async function getVisibleCampIds(ctx: QueryCtx, userId: Id<'users'> | null) {
+  if (!userId) {
+    return new Set<Id<'camps'>>()
+  }
+
+  const memberships = await ctx.db
+    .query('campMembers')
+    .withIndex('by_user', (q) => q.eq('userId', userId).eq('status', 'active'))
+    .collect()
+
+  return new Set(memberships.map((membership) => membership.campId))
+}
+
+async function isBondfireVisibleToViewer(
+  ctx: QueryCtx,
+  bondfire: Doc<'bondfires'>,
+  memberCampIds: Set<Id<'camps'>>,
+) {
+  if (!bondfire.campId) {
+    return true
+  }
+
+  const camp = await ctx.db.get(bondfire.campId)
+  if (!camp || camp.status !== 'active') {
+    return false
+  }
+
+  return camp.visibility === 'public' || memberCampIds.has(camp._id)
+}
+
+async function filterVisibleBondfires(ctx: QueryCtx, bondfires: Doc<'bondfires'>[]) {
+  const userId = await auth.getUserId(ctx)
+  const memberCampIds = await getVisibleCampIds(ctx, userId)
+  const visibility = await Promise.all(
+    bondfires.map((bondfire) => isBondfireVisibleToViewer(ctx, bondfire, memberCampIds)),
+  )
+
+  return bondfires.filter((_, index) => visibility[index])
+}
+
 // List bondfires for the feed (ordered by videoCount ASC for discovery)
 export const listFeed = query({
   args: {
@@ -75,9 +138,14 @@ export const listFeed = query({
       .query('bondfires')
       .withIndex('by_video_count')
       .order('asc')
-      .take(limit * 3)
+      .take(limit * 5)
 
-    return bondfires.filter(isPlayableVideoRecord).slice(0, limit).map(withLiveFlags)
+    const visibleBondfires = await filterVisibleBondfires(
+      ctx,
+      bondfires.filter(isPlayableVideoRecord),
+    )
+
+    return visibleBondfires.slice(0, limit).map(withLiveFlags)
   },
 })
 
@@ -88,6 +156,27 @@ export const listByCamp = query({
   },
   handler: async (ctx, args) => {
     const limit = args.limit ?? 20
+    const camp = await ctx.db.get(args.campId)
+    if (!camp || camp.status !== 'active') {
+      return []
+    }
+
+    if (camp.visibility === 'private') {
+      const userId = await auth.getUserId(ctx)
+      if (!userId) {
+        return []
+      }
+
+      const membership = await ctx.db
+        .query('campMembers')
+        .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', args.campId))
+        .first()
+
+      if (membership?.status !== 'active') {
+        return []
+      }
+    }
+
     const bondfires = await ctx.db
       .query('bondfires')
       .withIndex('by_camp', (q) => q.eq('campId', args.campId))
@@ -102,7 +191,29 @@ export const listByCamp = query({
 export const get = query({
   args: { id: v.id('bondfires') },
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.id)
+    const bondfire = await ctx.db.get(args.id)
+    if (!bondfire || !isPlayableVideoRecord(bondfire)) {
+      return null
+    }
+
+    const [visible] = await filterVisibleBondfires(ctx, [bondfire])
+    if (!visible) {
+      return null
+    }
+
+    return bondfire
+  },
+})
+
+export const getForNotification = internalQuery({
+  args: { id: v.id('bondfires') },
+  handler: async (ctx, args) => {
+    const bondfire = await ctx.db.get(args.id)
+    if (!bondfire || !isPlayableVideoRecord(bondfire)) {
+      return null
+    }
+
+    return bondfire
   },
 })
 
@@ -112,6 +223,11 @@ export const getWithVideos = query({
   handler: async (ctx, args) => {
     const bondfire = await ctx.db.get(args.bondfireId)
     if (!bondfire || !isPlayableVideoRecord(bondfire)) {
+      return null
+    }
+
+    const [visible] = await filterVisibleBondfires(ctx, [bondfire])
+    if (!visible) {
       return null
     }
 
@@ -140,7 +256,32 @@ export const listByUser = query({
       .order('desc')
       .collect()
 
-    return bondfires.filter(isPlayableVideoRecord).map(withLiveFlags)
+    const visibleBondfires = await filterVisibleBondfires(
+      ctx,
+      bondfires.filter(isPlayableVideoRecord),
+    )
+
+    return visibleBondfires.map(withLiveFlags)
+  },
+})
+
+export const cleanupExpiredPrivateCampVideos = action({
+  args: {
+    dryRun: v.optional(v.boolean()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<ExpiredPrivateCampVideoCleanupResult> => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      throw new Error('Not authenticated')
+    }
+
+    const isAdmin = await ctx.runQuery(internal.videos.isUserAdmin, { userId })
+    if (!isAdmin) {
+      throw new Error('Only admins can clean up expired private camp videos')
+    }
+
+    return await ctx.runAction(internal.videos.cleanupExpiredPrivateCampVideos, args)
   },
 })
 
@@ -200,6 +341,10 @@ export const create = mutation({
       throw new Error('Join this camp before sparking here')
     }
 
+    if (camp.visibility === 'private' && camp.ownerId !== userId) {
+      throw new Error('Only the private camp owner can spark here')
+    }
+
     const campGender = camp.rules.gender
     if (campGender && campGender !== 'any' && user.gender !== campGender) {
       throw new Error('This camp is limited to members who match its gender setting')
@@ -217,8 +362,8 @@ export const create = mutation({
       throw new Error('This recording is longer than the camp allows')
     }
 
+    const tier = await getActiveSubscriptionTier(ctx, userId)
     if (camp.rules.allowedTiers && camp.rules.allowedTiers.length > 0) {
-      const tier = await getActiveSubscriptionTier(ctx, userId)
       if (!camp.rules.allowedTiers.includes(tier)) {
         throw new Error('Your membership tier cannot spark in this camp')
       }
@@ -229,6 +374,10 @@ export const create = mutation({
       if (!tags.includes('need') && !tags.includes('offer')) {
         throw new Error('The Trading Post requires a need or offer tag')
       }
+    }
+
+    if (camp.visibility === 'private' && args.muxPlaybackPolicy !== 'signed') {
+      throw new Error('Private camp videos must use signed Mux playback')
     }
 
     const bondfireId = await ctx.db.insert('bondfires', {
@@ -245,6 +394,7 @@ export const create = mutation({
       width: args.width,
       height: args.height,
       tags: args.tags,
+      expiresAt: getPrivateCampExpiresAt(camp, tier, now),
       videoCount: 1, // Starts with 1 (the original video)
       viewCount: 0,
       createdAt: now,
@@ -290,6 +440,27 @@ export const incrementViews = mutation({
     const bondfire = await ctx.db.get(args.bondfireId)
     if (!bondfire) {
       throw new Error('Bondfire not found')
+    }
+    if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
+      throw new Error('Bondfire not found')
+    }
+
+    if (bondfire.campId) {
+      const camp = await ctx.db.get(bondfire.campId)
+      if (!camp || camp.status !== 'active') {
+        throw new Error('Camp not found')
+      }
+
+      if (camp.visibility === 'private') {
+        const membership = await ctx.db
+          .query('campMembers')
+          .withIndex('by_user_camp', (q) => q.eq('userId', viewerId).eq('campId', camp._id))
+          .first()
+
+        if (membership?.status !== 'active') {
+          throw new Error('Bondfire not found')
+        }
+      }
     }
 
     if (bondfire.userId === viewerId) {

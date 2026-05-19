@@ -14,11 +14,17 @@ Set these variables per Convex deployment:
 MUX_TOKEN_ID=...
 MUX_TOKEN_SECRET=...
 MUX_WEBHOOK_SECRET=...
+MUX_SIGNING_KEY_ID=...
+MUX_SIGNING_PRIVATE_KEY=...
 MUX_LIVE_LATENCY_MODE=low
 MUX_LIVE_RECONNECT_WINDOW_SECONDS=30
 ```
 
 `MUX_PLAYBACK_POLICY`, `MUX_VIDEO_QUALITY`, and `MUX_UPLOAD_CORS_ORIGIN` keep their existing meanings for VOD uploads.
+`MUX_SIGNING_PRIVATE_KEY` can be the raw PEM returned by the Mux signing key API
+with escaped newlines, or a base64-encoded PEM. These signing variables are
+required for private camp videos because private camp assets are created with
+signed playback IDs.
 
 ## Mux Webhook
 

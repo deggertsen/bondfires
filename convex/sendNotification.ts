@@ -268,7 +268,9 @@ export const notifyCampBondfire = internalAction({
     skipped?: boolean
     error?: string
   }> => {
-    const bondfire = await ctx.runQuery(api.bondfires.get, { id: args.bondfireId })
+    const bondfire = await ctx.runQuery(internal.bondfires.getForNotification, {
+      id: args.bondfireId,
+    })
     if (!bondfire?.campId) {
       return { success: true, skipped: true }
     }
@@ -331,7 +333,9 @@ export const notifyBondfireResponse = internalAction({
     skipped?: boolean
     error?: string
   }> => {
-    const bondfire = await ctx.runQuery(api.bondfires.get, { id: args.bondfireId })
+    const bondfire = await ctx.runQuery(internal.bondfires.getForNotification, {
+      id: args.bondfireId,
+    })
 
     if (!bondfire) {
       return { success: false, error: 'Bondfire not found' }
@@ -383,7 +387,9 @@ export const notifyBondfireLive = internalAction({
     skipped?: boolean
     error?: string
   }> => {
-    const bondfire = await ctx.runQuery(api.bondfires.get, { id: args.bondfireId })
+    const bondfire = await ctx.runQuery(internal.bondfires.getForNotification, {
+      id: args.bondfireId,
+    })
 
     if (!bondfire) {
       return { success: false, error: 'Bondfire not found' }

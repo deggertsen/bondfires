@@ -80,16 +80,19 @@ function CampHeader({
   onBack,
   onJoin,
   onMute,
+  onCreateInvite,
   onSpark,
 }: {
   camp: CampWithMembership
   onBack: () => void
   onJoin: () => void
   onMute: () => void
+  onCreateInvite: () => void
   onSpark: () => void
 }) {
   const isActiveMember = camp.membership?.status === 'active'
   const isPending = camp.membership?.status === 'pending'
+  const isOwner = camp.membership?.role === 'owner'
   const muted = camp.membership?.muted === true
   const canJoin = !isActiveMember && !isPending && camp.visibility === 'public'
   const rules = camp.rules
@@ -214,12 +217,23 @@ function CampHeader({
       ) : null}
 
       {isActiveMember ? (
-        <Button variant="primary" size="$lg" onPress={onSpark}>
-          <Flame size={20} color={bondfireColors.whiteSmoke} />
-          <Text color={bondfireColors.whiteSmoke} fontWeight="900">
-            Spark Here
-          </Text>
-        </Button>
+        <YStack gap={10}>
+          {camp.visibility !== 'private' || isOwner ? (
+            <Button variant="primary" size="$lg" onPress={onSpark}>
+              <Flame size={20} color={bondfireColors.whiteSmoke} />
+              <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+                Spark Here
+              </Text>
+            </Button>
+          ) : null}
+          {isOwner && camp.visibility === 'private' ? (
+            <Button variant="outline" size="$lg" onPress={onCreateInvite}>
+              <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+                Create Invite Code
+              </Text>
+            </Button>
+          ) : null}
+        </YStack>
       ) : null}
 
       {canJoin ? (
@@ -288,6 +302,7 @@ export default function CampDetailScreen() {
   const bondfires = useQuery(api.bondfires.listByCamp, campId ? { campId, limit: 50 } : 'skip')
   const joinCamp = useMutation(api.camps.join)
   const muteCamp = useMutation(api.camps.muteCamp)
+  const createInvite = useMutation(api.camps.createInvite)
 
   const handleJoin = useCallback(async () => {
     if (!campId) return
@@ -314,6 +329,17 @@ export default function CampDetailScreen() {
     appActions.setCurrentCampId(campId)
     router.push({ pathname: '/(main)/(tabs)/create', params: { campId } })
   }, [campId, router])
+
+  const handleCreateInvite = useCallback(async () => {
+    if (!campId) return
+    try {
+      const invite = await createInvite({ campId })
+      Alert.alert('Invite Created', ['Share this code:', invite.code].join('\n\n'))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to create invite'
+      Alert.alert('Invite Unavailable', message)
+    }
+  }, [campId, createInvite])
 
   const handleOpenBondfire = useCallback(
     (bondfireId: string) => {
@@ -381,6 +407,7 @@ export default function CampDetailScreen() {
             onBack={() => router.back()}
             onJoin={handleJoin}
             onMute={handleMute}
+            onCreateInvite={handleCreateInvite}
             onSpark={handleSpark}
           />
         }

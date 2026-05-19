@@ -17,6 +17,7 @@ import { Image } from 'expo-image'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Alert,
   FlatList,
   Pressable,
   RefreshControl,
@@ -305,6 +306,7 @@ export default function FeedScreen() {
     | JoinedCamp[]
     | undefined
   const selectedCampId = currentCampId as Doc<'camps'>['_id'] | null
+  const selectedCamp = joinedCamps?.find((camp) => camp._id === selectedCampId)
 
   const state$ = useObservable({
     thumbnailUrls: {} as Record<string, string | null>,
@@ -445,6 +447,7 @@ export default function FeedScreen() {
         const { thumbnailUrl } = await getThumbnailUrl({
           muxPlaybackId: bondfire.muxPlaybackId,
           muxPlaybackPolicy: bondfire.muxPlaybackPolicy,
+          bondfireId: bondfire._id,
         })
         state$.thumbnailUrls[bondfire._id].set(thumbnailUrl)
       } catch (error) {
@@ -481,13 +484,21 @@ export default function FeedScreen() {
   )
 
   const handleSpark = useCallback(() => {
+    if (selectedCamp?.visibility === 'private' && selectedCamp.membership.role !== 'owner') {
+      Alert.alert(
+        'Owner Sparks Only',
+        'Only the private camp owner can start new Bondfires here. You can respond to existing fires.',
+      )
+      return
+    }
+
     if (selectedCampId) {
       router.push({ pathname: '/(main)/(tabs)/create', params: { campId: selectedCampId } })
       return
     }
 
     router.push('/(main)/(tabs)/create')
-  }, [router, selectedCampId])
+  }, [router, selectedCamp, selectedCampId])
 
   const handleSelectCamp = useCallback(
     (campId: string | null) => {

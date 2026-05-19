@@ -119,17 +119,19 @@ export default function CreateScreen() {
   const sortedCamps = useMemo(() => {
     if (!camps) return []
     const userGender = currentUser?.gender
-    return [...camps].sort((left, right) => {
-      const leftWelcome = left.slug.startsWith('welcome-fires') ? -1 : 0
-      const rightWelcome = right.slug.startsWith('welcome-fires') ? -1 : 0
-      if (leftWelcome !== rightWelcome) return leftWelcome - rightWelcome
+    return camps
+      .filter((camp) => camp.visibility !== 'private' || camp.membership?.role === 'owner')
+      .sort((left, right) => {
+        const leftWelcome = left.slug.startsWith('welcome-fires') ? -1 : 0
+        const rightWelcome = right.slug.startsWith('welcome-fires') ? -1 : 0
+        if (leftWelcome !== rightWelcome) return leftWelcome - rightWelcome
 
-      const leftMatch = userGender && left.rules.gender === userGender ? -1 : 0
-      const rightMatch = userGender && right.rules.gender === userGender ? -1 : 0
-      if (leftMatch !== rightMatch) return leftMatch - rightMatch
+        const leftMatch = userGender && left.rules.gender === userGender ? -1 : 0
+        const rightMatch = userGender && right.rules.gender === userGender ? -1 : 0
+        if (leftMatch !== rightMatch) return leftMatch - rightMatch
 
-      return left.name.localeCompare(right.name)
-    })
+        return left.name.localeCompare(right.name)
+      })
   }, [camps, currentUser?.gender])
   const selectedCampTags = tradeTag ? [tradeTag] : undefined
   const selectedCampMaxSeconds = selectedCamp?.rules.maxDurationMs

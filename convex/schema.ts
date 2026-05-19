@@ -168,6 +168,7 @@ export default defineSchema({
     // Content metadata
     tags: v.optional(v.array(v.string())),
     metadata: v.optional(v.any()), // Extensible JSON metadata
+    expiresAt: v.optional(v.number()),
 
     // Stats
     videoCount: v.number(), // Total videos including responses (for feed ordering)
@@ -184,6 +185,7 @@ export default defineSchema({
     // Recent bondfires
     .index('by_created', ['createdAt'])
     .index('by_camp', ['campId', 'createdAt'])
+    .index('by_expires_at', ['expiresAt'])
     .index('by_mux_upload', ['muxUploadId'])
     .index('by_mux_asset', ['muxAssetId'])
     .index('by_live_stream', ['muxLiveStreamId']),
@@ -227,6 +229,7 @@ export default defineSchema({
     // Content metadata
     tags: v.optional(v.array(v.string())),
     metadata: v.optional(v.any()),
+    expiresAt: v.optional(v.number()),
 
     // Timestamps
     createdAt: v.number(),
@@ -235,6 +238,7 @@ export default defineSchema({
     .index('by_bondfire', ['bondfireId', 'sequenceNumber'])
     // User's response videos
     .index('by_user', ['userId', 'createdAt'])
+    .index('by_expires_at', ['expiresAt'])
     .index('by_mux_upload', ['muxUploadId'])
     .index('by_mux_asset', ['muxAssetId'])
     .index('by_live_stream', ['muxLiveStreamId']),
