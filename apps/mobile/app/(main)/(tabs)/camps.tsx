@@ -162,6 +162,7 @@ function SectionHeader({ title, subtitle }: { title: string; subtitle: string })
 export default function CampsScreen() {
   const router = useRouter()
   const camps = useQuery(api.camps.list, {})
+  const subscription = useQuery(api.subscriptions.current, {})
   const joinCamp = useMutation(api.camps.join)
   const createPrivateCamp = useMutation(api.camps.createPrivateCamp)
   const redeemInvite = useMutation(api.camps.redeemInvite)
@@ -173,6 +174,10 @@ export default function CampsScreen() {
   const [privateCampPurpose, setPrivateCampPurpose] = useState('')
   const [inviteCode, setInviteCode] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const canCreatePrivateCamp =
+    subscription?.tier === 'plus' ||
+    subscription?.tier === 'premium' ||
+    subscription?.tier === 'pro'
 
   const filtered = useMemo(() => {
     if (!camps) return camps
@@ -240,6 +245,11 @@ export default function CampsScreen() {
   )
 
   const handleCreatePrivateCamp = useCallback(async () => {
+    if (!canCreatePrivateCamp) {
+      Alert.alert('Membership Required', 'Private camps require Plus, Premium, or Pro.')
+      return
+    }
+
     const name = privateCampName.trim()
     if (name.length < 3) {
       Alert.alert('Name Required', 'Give your private camp a name first.')
@@ -262,7 +272,7 @@ export default function CampsScreen() {
     } finally {
       setIsSubmitting(false)
     }
-  }, [createPrivateCamp, privateCampName, privateCampPurpose, router])
+  }, [canCreatePrivateCamp, createPrivateCamp, privateCampName, privateCampPurpose, router])
 
   const handleRedeemInvite = useCallback(async () => {
     const code = inviteCode.trim().toLowerCase()
@@ -365,6 +375,27 @@ export default function CampsScreen() {
                 </Text>
               </Button>
             </XStack>
+
+            <YStack
+              padding={12}
+              borderRadius={14}
+              backgroundColor={bondfireColors.gunmetal}
+              borderWidth={1}
+              borderColor={bondfireColors.iron}
+              gap={3}
+            >
+              <Text fontSize={12} color={bondfireColors.ash} fontWeight="900">
+                MEMBERSHIP
+              </Text>
+              <Text fontSize={14} color={bondfireColors.whiteSmoke} textTransform="capitalize">
+                {subscription?.tier ?? 'free'} tier
+              </Text>
+              {!canCreatePrivateCamp ? (
+                <Text fontSize={12} color={bondfireColors.ash}>
+                  Private camps unlock with Plus, Premium, or Pro.
+                </Text>
+              ) : null}
+            </YStack>
 
             <XStack
               alignItems="center"

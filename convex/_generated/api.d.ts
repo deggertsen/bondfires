@@ -20,6 +20,7 @@ import type * as notifications from "../notifications.js";
 import type * as reports from "../reports.js";
 import type * as reviewerAccounts from "../reviewerAccounts.js";
 import type * as sendNotification from "../sendNotification.js";
+import type * as subscriptions from "../subscriptions.js";
 import type * as users from "../users.js";
 import type * as videos from "../videos.js";
 import type * as watchEvents from "../watchEvents.js";
@@ -43,6 +44,7 @@ declare const fullApi: ApiFromModules<{
   reports: typeof reports;
   reviewerAccounts: typeof reviewerAccounts;
   sendNotification: typeof sendNotification;
+  subscriptions: typeof subscriptions;
   users: typeof users;
   videos: typeof videos;
   watchEvents: typeof watchEvents;

@@ -39,6 +39,7 @@ const MUX_READY_STATUSES = new Set(['ready'])
 const MUX_FAILED_STATUSES = new Set(['errored', 'cancelled', 'timed_out'])
 const MUX_LIVE_RTMPS_ENDPOINT = 'rtmps://global-live.mux.com/app'
 const DEFAULT_MUX_LIVE_RECONNECT_WINDOW_SECONDS = 30
+const PRIVATE_PLUS_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 const TIER_RANK: Record<SubscriptionTier, number> = {
   free: 0,
   plus: 1,
@@ -156,7 +157,7 @@ async function assertCanCreateInCamp(
     tags?: string[]
   },
 ) {
-  await assertUserCanParticipateInCamp(ctx, { ...args, operation: 'spark' })
+  return await assertUserCanParticipateInCamp(ctx, { ...args, operation: 'spark' })
 }
 
 async function getActiveSubscriptionTier(
@@ -179,6 +180,19 @@ async function getActiveSubscriptionTier(
       TIER_RANK[subscription.tier] > TIER_RANK[highest] ? subscription.tier : highest,
     'free',
   )
+}
+
+async function getPrivateCampExpiresAt(
+  ctx: QueryCtx | MutationCtx,
+  camp: Doc<'camps'>,
+  now: number,
+) {
+  if (camp.visibility !== 'private' || !camp.ownerId) {
+    return undefined
+  }
+
+  const ownerTier = await getActiveSubscriptionTier(ctx, camp.ownerId)
+  return ownerTier === 'plus' ? now + PRIVATE_PLUS_RETENTION_MS : undefined
 }
 
 async function assertUserCanParticipateInCamp(
@@ -1059,7 +1073,7 @@ export const createPendingMuxVideo = internalMutation({
         throw new Error('A bondfire ID is required when creating a pending response upload')
       }
 
-      await assertCanRespondToBondfire(ctx, {
+      const bondfire = await assertCanRespondToBondfire(ctx, {
         userId: args.userId,
         bondfireId: args.bondfireId,
         durationMs: args.durationMs,
@@ -1083,6 +1097,7 @@ export const createPendingMuxVideo = internalMutation({
         width: args.width,
         height: args.height,
         tags: args.tags,
+        expiresAt: bondfire.expiresAt,
         createdAt: now,
       })
 
@@ -1093,12 +1108,13 @@ export const createPendingMuxVideo = internalMutation({
       throw new Error('Choose a camp before sparking a Bondfire')
     }
 
-    await assertCanCreateInCamp(ctx, {
+    const camp = await assertCanCreateInCamp(ctx, {
       userId: args.userId,
       campId: args.campId,
       durationMs: args.durationMs,
       tags: args.tags,
     })
+    const expiresAt = await getPrivateCampExpiresAt(ctx, camp, now)
 
     const recordId = await ctx.db.insert('bondfires', {
       userId: args.userId,
@@ -1112,6 +1128,7 @@ export const createPendingMuxVideo = internalMutation({
       width: args.width,
       height: args.height,
       tags: args.tags,
+      expiresAt,
       videoCount: 1,
       viewCount: 0,
       createdAt: now,
@@ -1299,26 +1316,29 @@ export const createLinkedMuxLiveSession = internalMutation({
   handler: async (ctx, args) => {
     const now = Date.now()
     const user = await ctx.db.get(args.userId)
+    let expiresAt: number | undefined
 
     if (args.isResponse) {
       if (!args.bondfireId) {
         throw new Error('A bondfire ID is required when creating a live response')
       }
 
-      await assertCanRespondToBondfire(ctx, {
+      const bondfire = await assertCanRespondToBondfire(ctx, {
         userId: args.userId,
         bondfireId: args.bondfireId,
       })
+      expiresAt = bondfire.expiresAt
     } else {
       if (!args.campId) {
         throw new Error('Choose a camp before sparking a Bondfire')
       }
 
-      await assertCanCreateInCamp(ctx, {
+      const camp = await assertCanCreateInCamp(ctx, {
         userId: args.userId,
         campId: args.campId,
         tags: args.tags,
       })
+      expiresAt = await getPrivateCampExpiresAt(ctx, camp, now)
     }
 
     const liveSessionId = await ctx.db.insert('liveSessions', {
@@ -1361,6 +1381,7 @@ export const createLinkedMuxLiveSession = internalMutation({
         width: args.width,
         height: args.height,
         tags: args.tags,
+        expiresAt,
         createdAt: now,
       })
 
@@ -1403,6 +1424,7 @@ export const createLinkedMuxLiveSession = internalMutation({
       width: args.width,
       height: args.height,
       tags: args.tags,
+      expiresAt,
       videoCount: 1,
       viewCount: 0,
       createdAt: now,

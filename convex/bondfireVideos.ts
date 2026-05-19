@@ -14,6 +14,10 @@ export const listByBondfire = query({
       .collect()
 
     return videos.filter((video) => {
+      if (video.expiresAt !== undefined && video.expiresAt <= Date.now()) {
+        return false
+      }
+
       const status = video.videoStatus ?? 'ready'
       return (
         (status === 'ready' && video.muxPlaybackId) ||
@@ -27,11 +31,13 @@ export const listByBondfire = query({
 export const listByUser = query({
   args: { userId: v.id('users') },
   handler: async (ctx, args) => {
-    return await ctx.db
+    const videos = await ctx.db
       .query('bondfireVideos')
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
       .order('desc')
       .collect()
+
+    return videos.filter((video) => video.expiresAt === undefined || video.expiresAt > Date.now())
   },
 })
 
@@ -100,6 +106,7 @@ export const addResponse = mutation({
       width: args.width,
       height: args.height,
       tags: args.tags,
+      expiresAt: bondfire.expiresAt,
       createdAt: now,
     })
 
