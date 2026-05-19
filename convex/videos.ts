@@ -11,6 +11,21 @@ type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'
 type MuxRecord =
   | { table: 'bondfires'; document: Doc<'bondfires'> }
   | { table: 'bondfireVideos'; document: Doc<'bondfireVideos'> }
+type ExpiredPrivateCampVideoCleanupBatch = {
+  bondfireIds: Array<Id<'bondfires'>>
+  muxAssetIds: string[]
+  expiredBondfires: number
+  remainingMayExist: boolean
+}
+type ExpiredPrivateCampVideoCleanupResult = {
+  expiredBondfires?: number
+  muxAssetsToDelete?: number
+  deletedBondfires?: number
+  deletedResponses?: number
+  deletedMuxAssets?: number
+  missingMuxAssets?: number
+  remainingMayExist: boolean
+}
 
 interface MuxDirectUploadResult {
   uploadId: string
@@ -272,6 +287,9 @@ async function assertCanRespondToBondfire(
   if (!bondfire) {
     throw new Error('Bondfire not found')
   }
+  if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
+    throw new Error('Bondfire not found')
+  }
 
   if (!bondfire.campId) {
     return bondfire
@@ -316,6 +334,45 @@ async function muxRequest(path: string, init: RequestInit = {}): Promise<Record<
   }
 
   return readObject(await response.json())
+}
+
+async function deleteMuxAsset(assetId: string): Promise<'deleted' | 'missing'> {
+  const config = getMuxConfig()
+  const response = await fetch(`${MUX_API_BASE_URL}/assets/${assetId}`, {
+    method: 'DELETE',
+    headers: {
+      Accept: 'application/json',
+      Authorization: getMuxAuthorizationHeader(config.tokenId, config.tokenSecret),
+    },
+  })
+
+  if (response.status === 404) {
+    return 'missing'
+  }
+
+  if (!response.ok) {
+    const message = await response.text()
+    throw new Error(`Mux asset delete failed: ${response.status} ${message}`)
+  }
+
+  return 'deleted'
+}
+
+function isPlayableVideoRecord(record: {
+  videoStatus?: string
+  muxPlaybackId?: string
+  muxLivePlaybackId?: string
+  expiresAt?: number
+}) {
+  if (record.expiresAt !== undefined && record.expiresAt <= Date.now()) {
+    return false
+  }
+
+  const status = record.videoStatus ?? 'ready'
+  return (
+    (status === 'ready' && !!record.muxPlaybackId) ||
+    (status === 'live' && !!record.muxLivePlaybackId)
+  )
 }
 
 async function findMuxRecordByUpload(
@@ -782,6 +839,177 @@ export const getMuxUploadStatus = action({
       isFailed:
         MUX_FAILED_STATUSES.has(uploadStatus) ||
         (assetStatus !== undefined && MUX_FAILED_STATUSES.has(assetStatus)),
+    }
+  },
+})
+
+export const isUserAdmin = internalQuery({
+  args: {
+    userId: v.id('users'),
+  },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId)
+    return user?.isAdmin === true
+  },
+})
+
+export const listExpiredPrivateCampVideoCleanupBatch = internalQuery({
+  args: {
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<ExpiredPrivateCampVideoCleanupBatch> => {
+    const now = Date.now()
+    const limit = args.limit ?? 100
+    const expiredBondfires = await ctx.db
+      .query('bondfires')
+      .withIndex('by_expires_at', (q) => q.gt('expiresAt', 0).lte('expiresAt', now))
+      .take(limit)
+    const muxAssetIds = new Set<string>()
+
+    for (const bondfire of expiredBondfires) {
+      if (bondfire.muxAssetId) {
+        muxAssetIds.add(bondfire.muxAssetId)
+      }
+
+      const responses = await ctx.db
+        .query('bondfireVideos')
+        .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
+        .collect()
+
+      for (const response of responses) {
+        if (response.muxAssetId) {
+          muxAssetIds.add(response.muxAssetId)
+        }
+      }
+    }
+
+    return {
+      bondfireIds: expiredBondfires.map((bondfire) => bondfire._id),
+      muxAssetIds: [...muxAssetIds],
+      expiredBondfires: expiredBondfires.length,
+      remainingMayExist: expiredBondfires.length === limit,
+    }
+  },
+})
+
+export const deleteExpiredPrivateCampVideoRecords = internalMutation({
+  args: {
+    bondfireIds: v.array(v.id('bondfires')),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now()
+    const affectedUsers = new Set<Id<'users'>>()
+    const affectedCamps = new Set<Id<'camps'>>()
+    let deletedBondfires = 0
+    let deletedResponses = 0
+
+    for (const bondfireId of args.bondfireIds) {
+      const bondfire = await ctx.db.get(bondfireId)
+      if (!bondfire || !bondfire.expiresAt || bondfire.expiresAt > now) {
+        continue
+      }
+
+      affectedUsers.add(bondfire.userId)
+      if (bondfire.campId) {
+        affectedCamps.add(bondfire.campId)
+      }
+
+      const responses = await ctx.db
+        .query('bondfireVideos')
+        .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
+        .collect()
+
+      for (const response of responses) {
+        affectedUsers.add(response.userId)
+        await ctx.db.delete(response._id)
+        deletedResponses += 1
+      }
+
+      await ctx.db.delete(bondfire._id)
+      deletedBondfires += 1
+    }
+
+    for (const campId of affectedCamps) {
+      const campBondfires = await ctx.db
+        .query('bondfires')
+        .withIndex('by_camp', (q) => q.eq('campId', campId))
+        .collect()
+
+      await ctx.db.patch(campId, {
+        bondfireCount: campBondfires.filter(isPlayableVideoRecord).length,
+        updatedAt: now,
+      })
+    }
+
+    for (const affectedUserId of affectedUsers) {
+      const [userBondfires, userResponses] = await Promise.all([
+        ctx.db
+          .query('bondfires')
+          .withIndex('by_user', (q) => q.eq('userId', affectedUserId))
+          .collect(),
+        ctx.db
+          .query('bondfireVideos')
+          .withIndex('by_user', (q) => q.eq('userId', affectedUserId))
+          .collect(),
+      ])
+
+      await ctx.db.patch(affectedUserId, {
+        bondfireCount: userBondfires.filter(isPlayableVideoRecord).length,
+        responseCount: userResponses.filter(isPlayableVideoRecord).length,
+        updatedAt: now,
+      })
+    }
+
+    return {
+      deletedBondfires,
+      deletedResponses,
+    }
+  },
+})
+
+export const cleanupExpiredPrivateCampVideos = internalAction({
+  args: {
+    dryRun: v.optional(v.boolean()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<ExpiredPrivateCampVideoCleanupResult> => {
+    const batch: ExpiredPrivateCampVideoCleanupBatch = await ctx.runQuery(
+      internal.videos.listExpiredPrivateCampVideoCleanupBatch,
+      { limit: args.limit },
+    )
+
+    if (args.dryRun) {
+      return {
+        expiredBondfires: batch.expiredBondfires,
+        muxAssetsToDelete: batch.muxAssetIds.length,
+        remainingMayExist: batch.remainingMayExist,
+      }
+    }
+
+    let deletedMuxAssets = 0
+    let missingMuxAssets = 0
+
+    for (const assetId of batch.muxAssetIds) {
+      const result = await deleteMuxAsset(assetId)
+      if (result === 'missing') {
+        missingMuxAssets += 1
+      } else {
+        deletedMuxAssets += 1
+      }
+    }
+
+    const deletedRecords: {
+      deletedBondfires: number
+      deletedResponses: number
+    } = await ctx.runMutation(internal.videos.deleteExpiredPrivateCampVideoRecords, {
+      bondfireIds: batch.bondfireIds,
+    })
+
+    return {
+      ...deletedRecords,
+      deletedMuxAssets,
+      missingMuxAssets,
+      remainingMayExist: batch.remainingMayExist,
     }
   },
 })
