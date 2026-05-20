@@ -15,6 +15,12 @@ type ExpiredPrivateCampVideoCleanupResult = {
   missingMuxAssets?: number
   remainingMayExist: boolean
 }
+type PublicUser = {
+  _id: Id<'users'>
+  displayName?: string
+  name?: string
+  photoUrl?: string
+}
 
 const TIER_RANK: Record<SubscriptionTier, number> = {
   free: 0,
@@ -41,6 +47,15 @@ function isPlayableVideoRecord(record: {
     (status === 'ready' && !!record.muxPlaybackId) ||
     (status === 'live' && !!record.muxLivePlaybackId)
   )
+}
+
+function toPublicUser(user: Doc<'users'>): PublicUser {
+  return {
+    _id: user._id,
+    displayName: user.displayName,
+    name: user.name,
+    photoUrl: user.photoUrl,
+  }
 }
 
 function getPrivateCampExpiresAt(camp: Doc<'camps'>, tier: SubscriptionTier, now: number) {
@@ -107,7 +122,7 @@ async function getThreadParticipants(ctx: QueryCtx, bondfire: Doc<'bondfires'>) 
 
       return [
         {
-          user: participant,
+          user: toPublicUser(participant),
           latestAt: participation.latestAt,
           videoCount: participation.videoCount,
           isPinned: pinnedUserIds.has(participant._id),

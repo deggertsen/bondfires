@@ -50,8 +50,15 @@ import { SettingsPopover } from '../../../components/SettingsPopover'
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window')
 
+type PublicUser = {
+  _id: Id<'users'>
+  displayName?: string
+  name?: string
+  photoUrl?: string
+}
+
 type ThreadParticipant = {
-  user: Doc<'users'>
+  user: PublicUser
   latestAt: number
   videoCount: number
   isPinned: boolean

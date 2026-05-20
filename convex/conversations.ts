@@ -5,7 +5,7 @@ import { mutation, query } from './_generated/server'
 import { auth } from './auth'
 
 type ThreadParticipant = {
-  user: Doc<'users'>
+  user: PublicUser
   latestAt: number
   videoCount: number
   isPinned: boolean
@@ -16,6 +16,33 @@ type ThreadSummary = Doc<'bondfires'> & {
   lastActivityAt: number
   unread: boolean
   participants: ThreadParticipant[]
+}
+
+type PublicUser = {
+  _id: Id<'users'>
+  displayName?: string
+  name?: string
+  photoUrl?: string
+}
+
+const DEFAULT_THREAD_LIMIT = 50
+const MAX_THREAD_LIMIT = 80
+const THREAD_CANDIDATE_MULTIPLIER = 4
+const CLOSE_CIRCLE_LIMIT = 8
+const CLOSE_CIRCLE_THREAD_CANDIDATE_LIMIT = 80
+const THREAD_RESPONSE_SUMMARY_LIMIT = 250
+
+function toPublicUser(user: Doc<'users'>): PublicUser {
+  return {
+    _id: user._id,
+    displayName: user.displayName,
+    name: user.name,
+    photoUrl: user.photoUrl,
+  }
+}
+
+function clampLimit(limit: number | undefined) {
+  return Math.min(Math.max(limit ?? DEFAULT_THREAD_LIMIT, 1), MAX_THREAD_LIMIT)
 }
 
 function isPlayableVideoRecord(record: {
@@ -61,14 +88,21 @@ async function isBondfireVisibleToViewer(
   return camp.visibility === 'public' || memberCampIds.has(camp._id)
 }
 
-async function getParticipantMap(ctx: QueryCtx, bondfire: Doc<'bondfires'>) {
+async function getParticipantMap(
+  ctx: QueryCtx,
+  bondfire: Doc<'bondfires'>,
+  args?: { responseLimit?: number },
+) {
   const participants = new Map<Id<'users'>, { latestAt: number; videoCount: number }>()
   participants.set(bondfire.userId, { latestAt: bondfire.createdAt, videoCount: 1 })
 
-  const responses = await ctx.db
+  const responseQuery = ctx.db
     .query('bondfireVideos')
     .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
-    .collect()
+    .order('desc')
+  const responses = args?.responseLimit
+    ? await responseQuery.take(args.responseLimit)
+    : await responseQuery.collect()
 
   for (const response of responses.filter(isPlayableVideoRecord)) {
     const current = participants.get(response.userId)
@@ -81,13 +115,14 @@ async function getParticipantMap(ctx: QueryCtx, bondfire: Doc<'bondfires'>) {
   return participants
 }
 
-async function getParticipantThreadIds(ctx: QueryCtx, userId: Id<'users'>) {
+async function getParticipantThreadIds(ctx: QueryCtx, userId: Id<'users'>, candidateLimit: number) {
   const threadIds = new Set<Id<'bondfires'>>()
 
   const ownBondfires = await ctx.db
     .query('bondfires')
     .withIndex('by_user', (q) => q.eq('userId', userId))
-    .collect()
+    .order('desc')
+    .take(candidateLimit)
   for (const bondfire of ownBondfires) {
     threadIds.add(bondfire._id)
   }
@@ -95,7 +130,8 @@ async function getParticipantThreadIds(ctx: QueryCtx, userId: Id<'users'>) {
   const responses = await ctx.db
     .query('bondfireVideos')
     .withIndex('by_user', (q) => q.eq('userId', userId))
-    .collect()
+    .order('desc')
+    .take(candidateLimit)
   for (const response of responses) {
     threadIds.add(response.bondfireId)
   }
@@ -112,6 +148,16 @@ async function getPinnedUserIds(ctx: QueryCtx, ownerId: Id<'users'>) {
   return new Set(pins.map((pin) => pin.pinnedUserId))
 }
 
+function getThreadActivityAt(
+  bondfire: Doc<'bondfires'>,
+  participantMap: Map<Id<'users'>, { latestAt: number; videoCount: number }>,
+) {
+  return Math.max(
+    bondfire.createdAt,
+    ...[...participantMap.values()].map((entry) => entry.latestAt),
+  )
+}
+
 async function buildThreadSummary(
   ctx: QueryCtx,
   args: {
@@ -120,7 +166,9 @@ async function buildThreadSummary(
     pinnedUserIds: Set<Id<'users'>>
   },
 ): Promise<ThreadSummary | null> {
-  const participantMap = await getParticipantMap(ctx, args.bondfire)
+  const participantMap = await getParticipantMap(ctx, args.bondfire, {
+    responseLimit: THREAD_RESPONSE_SUMMARY_LIMIT,
+  })
   const participantUsers = await Promise.all(
     [...participantMap.keys()].map((userId) => ctx.db.get(userId)),
   )
@@ -136,7 +184,7 @@ async function buildThreadSummary(
 
     return [
       {
-        user,
+        user: toPublicUser(user),
         latestAt: participation.latestAt,
         videoCount: participation.videoCount,
         isPinned: args.pinnedUserIds.has(user._id),
@@ -144,13 +192,13 @@ async function buildThreadSummary(
     ]
   })
 
+  const lastActivityAt = getThreadActivityAt(args.bondfire, participantMap)
   const readMarker = await ctx.db
     .query('bondfireThreadReads')
     .withIndex('by_user_bondfire', (q) =>
       q.eq('userId', args.viewerId).eq('bondfireId', args.bondfire._id),
     )
     .first()
-  const lastActivityAt = args.bondfire.updatedAt ?? args.bondfire.createdAt
   const lastViewerActivityAt = participantMap.get(args.viewerId)?.latestAt ?? 0
   const unread =
     lastActivityAt > (readMarker?.lastReadAt ?? 0) && lastActivityAt > lastViewerActivityAt
@@ -173,11 +221,12 @@ async function listSharedThreads(
     memberCampIds: Set<Id<'camps'>>
     pinnedUserIds: Set<Id<'users'>>
     limit: number
+    candidateLimit: number
   },
 ) {
   const [viewerThreadIds, pinnedThreadIds] = await Promise.all([
-    getParticipantThreadIds(ctx, args.viewerId),
-    getParticipantThreadIds(ctx, args.pinnedUserId),
+    getParticipantThreadIds(ctx, args.viewerId, args.candidateLimit),
+    getParticipantThreadIds(ctx, args.pinnedUserId, args.candidateLimit),
   ])
   const sharedThreadIds = [...viewerThreadIds].filter((threadId) => pinnedThreadIds.has(threadId))
 
@@ -212,13 +261,14 @@ async function listVisiblePrivateCampThreadsByUser(
     memberCampIds: Set<Id<'camps'>>
     pinnedUserIds: Set<Id<'users'>>
     limit: number
+    candidateLimit: number
   },
 ) {
   const ownedBondfires = await ctx.db
     .query('bondfires')
     .withIndex('by_user', (q) => q.eq('userId', args.ownerId))
     .order('desc')
-    .collect()
+    .take(args.candidateLimit)
 
   const threads: ThreadSummary[] = []
   for (const bondfire of ownedBondfires) {
@@ -254,8 +304,10 @@ export const listMyFires = query({
       return []
     }
 
+    const limit = clampLimit(args.limit)
+    const candidateLimit = limit * THREAD_CANDIDATE_MULTIPLIER
     const [threadIds, memberCampIds, pinnedUserIds] = await Promise.all([
-      getParticipantThreadIds(ctx, userId),
+      getParticipantThreadIds(ctx, userId, candidateLimit),
       getVisibleCampIds(ctx, userId),
       getPinnedUserIds(ctx, userId),
     ])
@@ -276,7 +328,7 @@ export const listMyFires = query({
       }
     }
 
-    return threads.sort((a, b) => b.lastActivityAt - a.lastActivityAt).slice(0, args.limit ?? 50)
+    return threads.sort((a, b) => b.lastActivityAt - a.lastActivityAt).slice(0, limit)
   },
 })
 
@@ -292,13 +344,13 @@ export const listCloseCircle = query({
       ctx.db
         .query('closeCirclePins')
         .withIndex('by_owner', (q) => q.eq('ownerId', userId))
-        .collect(),
+        .take(CLOSE_CIRCLE_LIMIT),
       getVisibleCampIds(ctx, userId),
       getPinnedUserIds(ctx, userId),
     ])
 
     const entries = []
-    for (const pin of pins.slice(0, 8)) {
+    for (const pin of pins) {
       const user = await ctx.db.get(pin.pinnedUserId)
       if (!user) {
         continue
@@ -311,6 +363,7 @@ export const listCloseCircle = query({
           memberCampIds,
           pinnedUserIds,
           limit: 3,
+          candidateLimit: CLOSE_CIRCLE_THREAD_CANDIDATE_LIMIT,
         }),
         listVisiblePrivateCampThreadsByUser(ctx, {
           viewerId: userId,
@@ -318,6 +371,7 @@ export const listCloseCircle = query({
           memberCampIds,
           pinnedUserIds,
           limit: 3,
+          candidateLimit: CLOSE_CIRCLE_THREAD_CANDIDATE_LIMIT,
         }),
       ])
       const threadsById = new Map<Id<'bondfires'>, ThreadSummary>()
@@ -328,7 +382,7 @@ export const listCloseCircle = query({
 
       entries.push({
         pin,
-        user,
+        user: toPublicUser(user),
         sharedThreads,
         privateCampThreads,
         primaryThread: threads[0] ?? null,

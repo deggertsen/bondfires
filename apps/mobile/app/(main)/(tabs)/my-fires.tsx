@@ -13,10 +13,17 @@ import { useCallback, useMemo, useState } from 'react'
 import { FlatList, Pressable, RefreshControl, StatusBar } from 'react-native'
 import { Avatar, Separator, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
-import type { Doc } from '../../../../../convex/_generated/dataModel'
+import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
+
+type PublicUser = {
+  _id: Id<'users'>
+  displayName?: string
+  name?: string
+  photoUrl?: string
+}
 
 type ThreadParticipant = {
-  user: Doc<'users'>
+  user: PublicUser
   latestAt: number
   videoCount: number
   isPinned: boolean

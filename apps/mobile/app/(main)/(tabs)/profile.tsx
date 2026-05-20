@@ -38,8 +38,14 @@ import { UploadProgressCard } from '../../../components/UploadProgressCard'
 
 type CurrentUserData = Doc<'users'> | null
 type UserBondfireData = Doc<'bondfires'>
+type PublicUser = {
+  _id: Id<'users'>
+  displayName?: string
+  name?: string
+  photoUrl?: string
+}
 type CloseCircleEntry = {
-  user: Doc<'users'>
+  user: PublicUser
   primaryThread: (Doc<'bondfires'> & { lastActivityAt: number }) | null
   sharedThreads: Array<Doc<'bondfires'> & { lastActivityAt: number }>
   privateCampThreads: Array<Doc<'bondfires'> & { lastActivityAt: number }>
