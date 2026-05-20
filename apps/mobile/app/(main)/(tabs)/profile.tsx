@@ -18,6 +18,7 @@ import {
   Flame,
   LogOut,
   MessageCircle,
+  Pin,
   Play,
   Settings,
   Trash2,
@@ -37,6 +38,18 @@ import { UploadProgressCard } from '../../../components/UploadProgressCard'
 
 type CurrentUserData = Doc<'users'> | null
 type UserBondfireData = Doc<'bondfires'>
+type PublicUser = {
+  _id: Id<'users'>
+  displayName?: string
+  name?: string
+  photoUrl?: string
+}
+type CloseCircleEntry = {
+  user: PublicUser
+  primaryThread: (Doc<'bondfires'> & { lastActivityAt: number }) | null
+  sharedThreads: Array<Doc<'bondfires'> & { lastActivityAt: number }>
+  privateCampThreads: Array<Doc<'bondfires'> & { lastActivityAt: number }>
+}
 type Gender = 'male' | 'female' | 'other'
 
 const GENDER_OPTIONS: Array<{ value: Gender; label: string }> = [
@@ -80,6 +93,7 @@ export default function ProfileScreen() {
   const generateProfilePhotoUploadUrl = useMutation(api.users.generateProfilePhotoUploadUrl)
   const updateProfilePhoto = useMutation(api.users.updateProfilePhoto)
   const deleteAccountMutation = useMutation(api.users.deleteAccount)
+  const closeCircle = useQuery(api.conversations.listCloseCircle) as CloseCircleEntry[] | undefined
 
   const { preferences, setVideoQuality, setAutoplayVideos, setNotificationsEnabled } =
     usePreferences()
@@ -190,6 +204,18 @@ export default function ProfileScreen() {
       router.push(`/(main)/bondfire/${bondfireId}`)
     },
     [router],
+  )
+
+  const handleOpenCloseCircle = useCallback(
+    (entry: CloseCircleEntry) => {
+      if (!entry.primaryThread) {
+        Alert.alert('No Shared Fires', 'Shared threads with this person will appear here.')
+        return
+      }
+
+      handleOpenBondfire(entry.primaryThread._id)
+    },
+    [handleOpenBondfire],
   )
 
   const handleDeleteAccount = useCallback(() => {
@@ -460,6 +486,66 @@ export default function ProfileScreen() {
           </Card>
 
           <UploadProgressCard />
+
+          {closeCircle && closeCircle.length > 0 && (
+            <YStack gap={12} marginBottom={24}>
+              <XStack alignItems="center" gap={8}>
+                <Pin size={18} color={bondfireColors.ash} />
+                <Text variant="label" color={bondfireColors.ash} fontSize={13} fontWeight="600">
+                  CLOSE CIRCLE
+                </Text>
+              </XStack>
+
+              <FlatList
+                data={closeCircle}
+                keyExtractor={(item) => item.user._id}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                renderItem={({ item }) => {
+                  const sharedCount = item.sharedThreads.length
+                  const privateCount = item.privateCampThreads.length
+                  return (
+                    <Card
+                      width={156}
+                      minHeight={170}
+                      marginRight={12}
+                      interactive
+                      accessibilityRole="button"
+                      accessibilityLabel="Open close circle fires"
+                      onPress={() => handleOpenCloseCircle(item)}
+                    >
+                      <YStack alignItems="center" gap={10}>
+                        <Avatar circular size="$6">
+                          {item.user.photoUrl ? (
+                            <Avatar.Image source={{ uri: item.user.photoUrl }} />
+                          ) : (
+                            <Avatar.Fallback
+                              backgroundColor={bondfireColors.gunmetal}
+                              borderWidth={1}
+                              borderColor={bondfireColors.bondfireCopper}
+                            >
+                              <User size={24} color={bondfireColors.bondfireCopper} />
+                            </Avatar.Fallback>
+                          )}
+                        </Avatar>
+                        <Text fontSize={15} fontWeight="900" numberOfLines={1} textAlign="center">
+                          {item.user.displayName ?? item.user.name ?? 'Someone'}
+                        </Text>
+                        <YStack gap={4} alignItems="center">
+                          <Text fontSize={12} color={bondfireColors.ash}>
+                            {sharedCount} shared
+                          </Text>
+                          <Text fontSize={12} color={bondfireColors.ash}>
+                            {privateCount} private camp
+                          </Text>
+                        </YStack>
+                      </YStack>
+                    </Card>
+                  )
+                }}
+              />
+            </YStack>
+          )}
 
           <YStack gap={12} marginBottom={24}>
             <XStack alignItems="center" gap={8}>

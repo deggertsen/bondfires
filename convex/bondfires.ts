@@ -15,6 +15,12 @@ type ExpiredPrivateCampVideoCleanupResult = {
   missingMuxAssets?: number
   remainingMayExist: boolean
 }
+type PublicUser = {
+  _id: Id<'users'>
+  displayName?: string
+  name?: string
+  photoUrl?: string
+}
 
 const TIER_RANK: Record<SubscriptionTier, number> = {
   free: 0,
@@ -43,6 +49,15 @@ function isPlayableVideoRecord(record: {
   )
 }
 
+function toPublicUser(user: Doc<'users'>): PublicUser {
+  return {
+    _id: user._id,
+    displayName: user.displayName,
+    name: user.name,
+    photoUrl: user.photoUrl,
+  }
+}
+
 function getPrivateCampExpiresAt(camp: Doc<'camps'>, tier: SubscriptionTier, now: number) {
   if (camp.visibility !== 'private' || tier !== 'plus') {
     return undefined
@@ -60,6 +75,61 @@ function withLiveFlags<T extends { videoStatus?: string; muxLivePlaybackId?: str
     isLive,
     livePlaybackId: isLive ? record.muxLivePlaybackId : undefined,
   }
+}
+
+async function getThreadParticipants(ctx: QueryCtx, bondfire: Doc<'bondfires'>) {
+  const userId = await auth.getUserId(ctx)
+  const pinnedUserIds = new Set<Id<'users'>>()
+  if (userId) {
+    const pins = await ctx.db
+      .query('closeCirclePins')
+      .withIndex('by_owner', (q) => q.eq('ownerId', userId))
+      .collect()
+    for (const pin of pins) {
+      pinnedUserIds.add(pin.pinnedUserId)
+    }
+  }
+
+  const participantMap = new Map<Id<'users'>, { latestAt: number; videoCount: number }>()
+  participantMap.set(bondfire.userId, { latestAt: bondfire.createdAt, videoCount: 1 })
+
+  const videos = await ctx.db
+    .query('bondfireVideos')
+    .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
+    .collect()
+
+  for (const video of videos.filter(isPlayableVideoRecord)) {
+    const current = participantMap.get(video.userId)
+    participantMap.set(video.userId, {
+      latestAt: Math.max(current?.latestAt ?? 0, video.createdAt),
+      videoCount: (current?.videoCount ?? 0) + 1,
+    })
+  }
+
+  const users = await Promise.all(
+    [...participantMap.keys()].map((participantId) => ctx.db.get(participantId)),
+  )
+  return users
+    .flatMap((participant) => {
+      if (!participant) {
+        return []
+      }
+
+      const participation = participantMap.get(participant._id)
+      if (!participation) {
+        return []
+      }
+
+      return [
+        {
+          user: toPublicUser(participant),
+          latestAt: participation.latestAt,
+          videoCount: participation.videoCount,
+          isPinned: pinnedUserIds.has(participant._id),
+        },
+      ]
+    })
+    .sort((a, b) => b.latestAt - a.latestAt)
 }
 
 async function getActiveSubscriptionTier(
@@ -242,6 +312,7 @@ export const getWithVideos = query({
     return {
       ...withLiveFlags(bondfire),
       videos: readyVideos,
+      participants: await getThreadParticipants(ctx, bondfire),
     }
   },
 })

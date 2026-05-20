@@ -198,6 +198,33 @@ export const deleteAccount = mutation({
       await ctx.db.delete(event._id)
     }
 
+    const threadReads = await ctx.db
+      .query('bondfireThreadReads')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect()
+
+    for (const read of threadReads) {
+      await ctx.db.delete(read._id)
+    }
+
+    const ownedPins = await ctx.db
+      .query('closeCirclePins')
+      .withIndex('by_owner', (q) => q.eq('ownerId', userId))
+      .collect()
+
+    for (const pin of ownedPins) {
+      await ctx.db.delete(pin._id)
+    }
+
+    const incomingPins = await ctx.db
+      .query('closeCirclePins')
+      .withIndex('by_pinned_user', (q) => q.eq('pinnedUserId', userId))
+      .collect()
+
+    for (const pin of incomingPins) {
+      await ctx.db.delete(pin._id)
+    }
+
     // 4. Delete all user's device tokens
     const deviceTokens = await ctx.db
       .query('deviceTokens')
