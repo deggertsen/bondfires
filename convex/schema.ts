@@ -243,6 +243,30 @@ export default defineSchema({
     .index('by_mux_asset', ['muxAssetId'])
     .index('by_live_stream', ['muxLiveStreamId']),
 
+  // Per-user read markers for ongoing Bondfire conversations.
+  bondfireThreadReads: defineTable({
+    userId: v.id('users'),
+    bondfireId: v.id('bondfires'),
+    lastReadAt: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId', 'updatedAt'])
+    .index('by_user_bondfire', ['userId', 'bondfireId'])
+    .index('by_bondfire', ['bondfireId']),
+
+  // Profile Close Circle pins. A user can pin up to 8 other participants.
+  closeCirclePins: defineTable({
+    ownerId: v.id('users'),
+    pinnedUserId: v.id('users'),
+    order: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_owner', ['ownerId', 'order'])
+    .index('by_owner_pinned', ['ownerId', 'pinnedUserId'])
+    .index('by_pinned_user', ['pinnedUserId']),
+
   // Live Sessions - Mux live broadcasts before they become replay assets
   liveSessions: defineTable({
     userId: v.id('users'),
