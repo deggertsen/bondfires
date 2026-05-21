@@ -3,13 +3,8 @@ import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
-import {
-  assertCanCreatePrivateCamp,
-  getActiveSubscriptionTier,
-  PAID_TIERS,
-  TIER_RANK,
-} from './entitlements'
 import type { SubscriptionTier } from './entitlements'
+import { assertCanCreatePrivateCamp, PAID_TIERS } from './entitlements'
 
 type CampAccess = 'open' | 'approval' | 'invite'
 type CampGender = 'male' | 'female' | 'any'

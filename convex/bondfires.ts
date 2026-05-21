@@ -1,16 +1,14 @@
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
-import type { MutationCtx, QueryCtx } from './_generated/server'
+import type { QueryCtx } from './_generated/server'
 import { action, internalQuery, mutation, query } from './_generated/server'
 import { auth } from './auth'
 import {
   assertCanCreateBondfire,
   assertVideoDurationWithinTierLimit,
-  getActiveSubscriptionTier,
   getPrivateCampExpiresAt,
 } from './entitlements'
-import type { SubscriptionTier } from './entitlements'
 
 type ExpiredPrivateCampVideoCleanupResult = {
   expiredBondfires?: number
@@ -55,8 +53,6 @@ function toPublicUser(user: Doc<'users'>): PublicUser {
     photoUrl: user.photoUrl,
   }
 }
-
-
 
 function withLiveFlags<T extends { videoStatus?: string; muxLivePlaybackId?: string }>(
   record: T,

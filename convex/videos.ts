@@ -9,10 +9,7 @@ import {
   assertVideoDurationWithinTierLimit,
   getActiveSubscriptionTier,
   getPrivateCampExpiresAt,
-  PLUS_PRIVATE_RETENTION_MS,
-  TIER_RANK,
 } from './entitlements'
-import type { SubscriptionTier } from './entitlements'
 
 type PlaybackPolicy = 'public' | 'signed'
 type LiveLatencyMode = 'standard' | 'reduced' | 'low'
@@ -64,7 +61,7 @@ const MUX_FAILED_STATUSES = new Set(['errored', 'cancelled', 'timed_out'])
 const MUX_LIVE_RTMPS_ENDPOINT = 'rtmps://global-live.mux.com/app'
 const DEFAULT_MUX_LIVE_RECONNECT_WINDOW_SECONDS = 30
 const SIGNED_PLAYBACK_URL_TTL_SECONDS = 12 * 60 * 60
-const PRIVATE_PLUS_RETENTION_MS = PLUS_PRIVATE_RETENTION_MS
+const DURATION_LIMIT_EXCEEDED_STATUS = 'duration_limit_exceeded'
 
 function getMuxConfig() {
   const tokenId = process.env.MUX_TOKEN_ID
@@ -261,6 +258,20 @@ function parseMuxDurationMs(value: unknown): number | undefined {
     : undefined
 }
 
+function assertDurationWithinCampRules(camp: Doc<'camps'>, durationMs: number | undefined) {
+  if (durationMs === undefined) {
+    return
+  }
+
+  if (camp.rules.minDurationMs && durationMs < camp.rules.minDurationMs) {
+    throw new Error('This recording is shorter than the camp allows')
+  }
+
+  if (camp.rules.maxDurationMs && durationMs > camp.rules.maxDurationMs) {
+    throw new Error('This recording is longer than the camp allows')
+  }
+}
+
 async function assertCanCreateInCamp(
   ctx: QueryCtx | MutationCtx,
   args: {
@@ -341,17 +352,7 @@ async function assertUserCanParticipateInCamp(
     throw new Error('This camp is limited to members who match its gender setting')
   }
 
-  if (
-    args.durationMs !== undefined &&
-    camp.rules.minDurationMs &&
-    args.durationMs < camp.rules.minDurationMs
-  ) {
-    throw new Error('This recording is shorter than the camp allows')
-  }
-
-  if (camp.rules.maxDurationMs && args.durationMs && args.durationMs > camp.rules.maxDurationMs) {
-    throw new Error('This recording is longer than the camp allows')
-  }
+  assertDurationWithinCampRules(camp, args.durationMs)
 
   if (args.operation === 'spark' && camp.rules.allowedTiers && camp.rules.allowedTiers.length > 0) {
     const tier = await getActiveSubscriptionTier(ctx, args.userId)
@@ -360,8 +361,6 @@ async function assertUserCanParticipateInCamp(
     }
   }
 
-  // Enforce tier-based Bondfire creation permission (Free cannot create).
-  // Enforce tier-based video duration limit.
   if (args.operation === 'spark') {
     await assertCanCreateBondfire(ctx, args.userId)
     await assertVideoDurationWithinTierLimit(ctx, args.userId, args.durationMs)
@@ -392,6 +391,8 @@ async function assertCanRespondToBondfire(
   if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
     throw new Error('Bondfire not found')
   }
+
+  await assertVideoDurationWithinTierLimit(ctx, args.userId, args.durationMs)
 
   if (!bondfire.campId) {
     return bondfire
@@ -577,6 +578,31 @@ async function markRecordAssetCreated(
   }
 }
 
+async function assertMuxMetadataDurationAllowed(
+  ctx: MutationCtx,
+  record: MuxRecord,
+  durationMs: number | undefined,
+) {
+  await assertVideoDurationWithinTierLimit(ctx, record.document.userId, durationMs)
+
+  if (durationMs === undefined) {
+    return
+  }
+
+  const campId =
+    record.table === 'bondfires'
+      ? record.document.campId
+      : (await ctx.db.get(record.document.bondfireId))?.campId
+  if (!campId) {
+    return
+  }
+
+  const camp = await ctx.db.get(campId)
+  if (camp) {
+    assertDurationWithinCampRules(camp, durationMs)
+  }
+}
+
 async function markRecordReady(
   ctx: MutationCtx,
   record: MuxRecord,
@@ -589,7 +615,18 @@ async function markRecordReady(
     muxAspectRatio?: string
     muxMaxResolution?: string
   },
-) {
+): Promise<'ready' | 'rejected'> {
+  try {
+    await assertMuxMetadataDurationAllowed(ctx, record, args.durationMs)
+  } catch {
+    await markRecordErrored(ctx, record, {
+      assetId: args.assetId,
+      assetStatus: DURATION_LIMIT_EXCEEDED_STATUS,
+      durationMs: args.durationMs,
+    })
+    return 'rejected'
+  }
+
   const wasReady = (record.document.videoStatus ?? 'ready') === 'ready'
   const patch = {
     videoStatus: 'ready' as const,
@@ -599,7 +636,7 @@ async function markRecordReady(
     muxPlaybackPolicy: args.playbackPolicy ?? record.document.muxPlaybackPolicy,
     muxAspectRatio: args.muxAspectRatio,
     muxMaxResolution: args.muxMaxResolution,
-    durationMs: record.document.durationMs ?? args.durationMs,
+    durationMs: args.durationMs ?? record.document.durationMs,
   }
 
   if (record.table === 'bondfires') {
@@ -632,13 +669,13 @@ async function markRecordReady(
         creatorName: user?.displayName ?? user?.name ?? 'Someone',
       })
     }
-    return
+    return 'ready'
   }
 
   await ctx.db.patch(record.document._id, patch)
 
   if (wasReady || record.document.liveSessionId) {
-    return
+    return 'ready'
   }
 
   const [user, bondfire] = await Promise.all([
@@ -665,17 +702,20 @@ async function markRecordReady(
       updatedAt: Date.now(),
     })
   }
+
+  return 'ready'
 }
 
 async function markRecordErrored(
   ctx: MutationCtx,
   record: MuxRecord,
-  args: { assetId?: string; assetStatus?: string },
+  args: { assetId?: string; assetStatus?: string; durationMs?: number },
 ) {
   const patch = {
     videoStatus: 'errored' as const,
     muxAssetId: args.assetId,
     muxAssetStatus: args.assetStatus ?? 'errored',
+    durationMs: args.durationMs,
   }
 
   if (record.table === 'bondfires') {
@@ -913,15 +953,22 @@ export const getMuxUploadStatus = action({
       muxMaxResolution = assetInfo.muxMaxResolution
 
       if (assetStatus && MUX_READY_STATUSES.has(assetStatus) && playbackId) {
-        await ctx.runMutation(internal.videos.markMuxAssetReady, {
-          uploadId: args.uploadId,
-          assetId,
-          playbackId,
-          assetStatus,
-          durationMs,
-          muxAspectRatio,
-          muxMaxResolution,
-        })
+        const result: { updated: boolean; rejected?: boolean } = await ctx.runMutation(
+          internal.videos.markMuxAssetReady,
+          {
+            uploadId: args.uploadId,
+            assetId,
+            playbackId,
+            assetStatus,
+            durationMs,
+            muxAspectRatio,
+            muxMaxResolution,
+          },
+        )
+        if (result.rejected) {
+          assetStatus = DURATION_LIMIT_EXCEEDED_STATUS
+          playbackId = undefined
+        }
       } else if (assetStatus && MUX_FAILED_STATUSES.has(assetStatus)) {
         await ctx.runMutation(internal.videos.markMuxAssetErrored, {
           uploadId: args.uploadId,
@@ -944,7 +991,8 @@ export const getMuxUploadStatus = action({
       isReady: !!playbackId && assetStatus !== undefined && MUX_READY_STATUSES.has(assetStatus),
       isFailed:
         MUX_FAILED_STATUSES.has(uploadStatus) ||
-        (assetStatus !== undefined && MUX_FAILED_STATUSES.has(assetStatus)),
+        (assetStatus !== undefined &&
+          (MUX_FAILED_STATUSES.has(assetStatus) || assetStatus === DURATION_LIMIT_EXCEEDED_STATUS)),
     }
   },
 })
@@ -1786,8 +1834,8 @@ export const markMuxAssetReady = internalMutation({
       return { updated: false }
     }
 
-    await markRecordReady(ctx, record, args)
-    return { updated: true }
+    const status = await markRecordReady(ctx, record, args)
+    return { updated: true, rejected: status === 'rejected' }
   },
 })
 

@@ -125,9 +125,7 @@ export function tierCanCreateBondfires(tier: SubscriptionTier): boolean {
  * Pro has no limit (returns undefined); all other tiers are capped at
  * 30 minutes.
  */
-export function getTierMaxVideoDurationMs(
-  tier: SubscriptionTier,
-): number | undefined {
+export function getTierMaxVideoDurationMs(tier: SubscriptionTier): number | undefined {
   if (TIER_RANK[tier] >= TIER_RANK.pro) {
     return undefined
   }
@@ -211,10 +209,7 @@ export async function assertCanCreatePrivateCamp(
       .query('camps')
       .withIndex('by_owner', (q) => q.eq('ownerId', userId))
       .filter((q) =>
-        q.and(
-          q.eq(q.field('visibility'), 'private'),
-          q.eq(q.field('status'), 'active'),
-        ),
+        q.and(q.eq(q.field('visibility'), 'private'), q.eq(q.field('status'), 'active')),
       )
       .collect()
 
@@ -256,18 +251,11 @@ export async function assertCanCreatePublicCamp(
   const existingPublicCamps = await ctx.db
     .query('camps')
     .withIndex('by_owner', (q) => q.eq('ownerId', userId))
-    .filter((q) =>
-      q.and(
-        q.eq(q.field('visibility'), 'public'),
-        q.eq(q.field('status'), 'active'),
-      ),
-    )
+    .filter((q) => q.and(q.eq(q.field('visibility'), 'public'), q.eq(q.field('status'), 'active')))
     .collect()
 
   if (existingPublicCamps.length >= MAX_PUBLIC_CAMPS_FOR_PRO) {
-    throw new Error(
-      `You have reached the limit of ${MAX_PUBLIC_CAMPS_FOR_PRO} public camps`,
-    )
+    throw new Error(`You have reached the limit of ${MAX_PUBLIC_CAMPS_FOR_PRO} public camps`)
   }
 
   return tier
@@ -338,8 +326,6 @@ export async function assertVideoDurationWithinTierLimit(
 
   if (maxDurationMs !== undefined && durationMs > maxDurationMs) {
     const maxMinutes = Math.round(maxDurationMs / 60000)
-    throw new Error(
-      `Videos longer than ${maxMinutes} minutes require a Pro subscription`,
-    )
+    throw new Error(`Videos longer than ${maxMinutes} minutes require a Pro subscription`)
   }
 }
