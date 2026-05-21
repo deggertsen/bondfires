@@ -86,6 +86,24 @@ export async function getActiveSubscriptionTier(
 }
 
 /**
+ * Returns the tier to use for entitlement checks.
+ *
+ * Reviewer accounts are treated as Pro even when they do not have a real
+ * paid subscription, so app review can exercise gated flows.
+ */
+export async function getEntitlementSubscriptionTier(
+  ctx: QueryCtx | MutationCtx,
+  userId: Id<'users'>,
+): Promise<SubscriptionTier> {
+  const user = await ctx.db.get(userId)
+  if (user?.isReviewerAccount) {
+    return 'pro'
+  }
+
+  return await getActiveSubscriptionTier(ctx, userId)
+}
+
+/**
  * Returns whether the user is at or above the given minimum tier.
  *
  * Free users that are reviewer accounts (isReviewerAccount === true) are
@@ -97,12 +115,7 @@ export async function userHasTier(
   userId: Id<'users'>,
   minimumTier: SubscriptionTier,
 ): Promise<boolean> {
-  const user = await ctx.db.get(userId)
-  if (user?.isReviewerAccount) {
-    return true
-  }
-
-  const tier = await getActiveSubscriptionTier(ctx, userId)
+  const tier = await getEntitlementSubscriptionTier(ctx, userId)
   return TIER_RANK[tier] >= TIER_RANK[minimumTier]
 }
 
