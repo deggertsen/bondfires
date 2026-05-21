@@ -39,7 +39,7 @@ export function SubscriptionStatus({
       backgroundColor={bondfireColors.charcoal}
       borderWidth={1}
       borderColor={bondfireColors.iron}
-      borderRadius={16}
+      borderRadius={12}
       padding={16}
     >
       {/* Current tier display */}
@@ -56,6 +56,14 @@ export function SubscriptionStatus({
             <TierIcon size={20} color={tierColor} />
           </YStack>
           <YStack>
+            <Text
+              color={bondfireColors.ash}
+              fontSize={11}
+              fontWeight="700"
+              textTransform="uppercase"
+            >
+              Subscription
+            </Text>
             <Text color={bondfireColors.whiteSmoke} fontSize={16} fontWeight="700">
               {TIER_LABELS[currentTier]} Plan
             </Text>
@@ -68,7 +76,12 @@ export function SubscriptionStatus({
 
       {/* Action buttons */}
       <XStack gap={12}>
-        <Pressable onPress={onManagePress} style={{ flex: 1 }}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={currentTier === 'free' ? 'Upgrade subscription plan' : 'Manage plan'}
+          onPress={onManagePress}
+          style={{ flex: 1 }}
+        >
           <YStack
             backgroundColor={bondfireColors.bondfireCopper}
             borderRadius={12}
@@ -81,12 +94,18 @@ export function SubscriptionStatus({
           </YStack>
         </Pressable>
 
-        <Pressable onPress={onRestorePress} disabled={isRestoring}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Restore purchases"
+          onPress={onRestorePress}
+          disabled={isRestoring}
+        >
           <YStack
             backgroundColor={bondfireColors.iron}
             borderRadius={12}
             paddingVertical={12}
             paddingHorizontal={16}
+            minWidth={96}
             alignItems="center"
             opacity={isRestoring ? 0.6 : 1}
           >

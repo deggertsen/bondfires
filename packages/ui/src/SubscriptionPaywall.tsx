@@ -1,7 +1,6 @@
 import type { SubscriptionTier, TierInfo } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Check, Crown, Flame, Sparkles, Star, X } from '@tamagui/lucide-icons'
-import { useState } from 'react'
 import { Pressable, ScrollView } from 'react-native'
 import { Card, Sheet, Spinner, Text, XStack, YStack } from 'tamagui'
 import { Button } from './Button'
@@ -37,8 +36,6 @@ export function SubscriptionPaywall({
   purchasingTier,
   lastError,
 }: SubscriptionPaywallProps) {
-  const [selectedTier, setSelectedTier] = useState<SubscriptionTier | null>(null)
-
   if (!open) return null
 
   const handlePurchase = (tier: SubscriptionTier) => {
@@ -76,10 +73,14 @@ export function SubscriptionPaywall({
               Choose Your Plan
             </Text>
             <Text color={bondfireColors.ash} fontSize={14} marginTop={4}>
-              Upgrade to unlock more features
+              Create bondfires with Plus or higher
             </Text>
           </YStack>
-          <Pressable onPress={() => onOpenChange(false)}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close subscription plans"
+            onPress={() => onOpenChange(false)}
+          >
             <YStack
               width={36}
               height={36}
@@ -127,8 +128,6 @@ export function SubscriptionPaywall({
                 { label: 'Private camps', included: false },
               ]}
               isCurrent={currentTier === 'free'}
-              isSelected={selectedTier === 'free'}
-              onSelect={setSelectedTier}
               onPurchase={handlePurchase}
               isPurchasing={isPurchasing && purchasingTier === 'free'}
             />
@@ -146,8 +145,6 @@ export function SubscriptionPaywall({
                   isCurrent={tier.isCurrent}
                   isHighest={tier.isHighest}
                   isAvailable={tier.isAvailable}
-                  isSelected={selectedTier === tier.tier}
-                  onSelect={setSelectedTier}
                   onPurchase={handlePurchase}
                   isPurchasing={isPurchasing && purchasingTier === tier.tier}
                 />
@@ -157,11 +154,16 @@ export function SubscriptionPaywall({
 
         {/* Restore purchases */}
         <XStack justifyContent="center" paddingVertical={12}>
-          <Pressable onPress={onRestore} disabled={isRestoring}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Restore subscription purchases"
+            onPress={onRestore}
+            disabled={isRestoring}
+          >
             <XStack alignItems="center" gap={6}>
               {isRestoring ? <Spinner size="small" color={bondfireColors.ash} /> : null}
               <Text color={bondfireColors.ash} fontSize={13} textDecorationLine="underline">
-                {isRestoring ? 'Restoring...' : 'Restore Purchases'}
+                {isRestoring ? 'Restoring...' : 'Restore purchases'}
               </Text>
             </XStack>
           </Pressable>
@@ -178,9 +180,7 @@ interface TierCardProps {
   features: { label: string; included: boolean }[]
   isCurrent: boolean
   isAvailable?: boolean
-  isSelected?: boolean
   isHighest?: boolean
-  onSelect?: (tier: SubscriptionTier) => void
   onPurchase: (tier: SubscriptionTier) => void
   isPurchasing: boolean
 }
@@ -198,20 +198,23 @@ function TierCard({
 }: TierCardProps) {
   const TierIcon = tier === 'free' ? Star : (TIER_ICONS[tier] ?? Star)
   const isFree = tier === 'free'
+  const isComingSoon = !isFree && !isAvailable
   const accentColor = isHighest
     ? bondfireColors.moltenGold
     : isCurrent
       ? bondfireColors.bondfireCopper
       : bondfireColors.iron
+  const priceColor = isComingSoon ? bondfireColors.ash : bondfireColors.moltenGold
+  const ctaColor = isHighest ? bondfireColors.whiteSmoke : bondfireColors.bondfireCopper
 
   return (
     <Card
       backgroundColor={bondfireColors.charcoal}
       borderWidth={isHighest ? 2 : isCurrent ? 2 : 1}
       borderColor={accentColor}
-      borderRadius={16}
+      borderRadius={12}
       padding={16}
-      opacity={isCurrent ? 0.95 : 0.85}
+      opacity={isComingSoon ? 0.72 : 1}
     >
       {/* Tier header */}
       <XStack justifyContent="space-between" alignItems="center" marginBottom={12}>
@@ -222,10 +225,10 @@ function TierCard({
           </Text>
         </XStack>
         <YStack alignItems="flex-end">
-          <Text color={bondfireColors.moltenGold} fontSize={18} fontWeight="700">
+          <Text color={priceColor} fontSize={18} fontWeight="700">
             {price}
           </Text>
-          {!isFree && (
+          {!isFree && isAvailable && (
             <Text color={bondfireColors.ash} fontSize={11}>
               /month
             </Text>
@@ -242,15 +245,15 @@ function TierCard({
       <YStack gap={8} marginBottom={16}>
         {features.map((feature) => (
           <XStack key={feature.label} alignItems="center" gap={8}>
-            <Check
-              size={14}
-              color={feature.included ? bondfireColors.success : bondfireColors.ash}
-              opacity={feature.included ? 1 : 0.4}
-            />
+            {feature.included ? (
+              <Check size={14} color={bondfireColors.success} />
+            ) : (
+              <X size={14} color={bondfireColors.ash} opacity={0.45} />
+            )}
             <Text
               color={feature.included ? bondfireColors.whiteSmoke : bondfireColors.ash}
               fontSize={13}
-              opacity={feature.included ? 1 : 0.5}
+              opacity={feature.included ? 1 : 0.55}
             >
               {feature.label}
             </Text>
@@ -264,12 +267,12 @@ function TierCard({
           variant="outline"
           size="$md"
           disabled
-          opacity={0.6}
+          opacity={0.7}
           borderColor={bondfireColors.bondfireCopper}
           color={bondfireColors.bondfireCopper}
         >
           <Text color={bondfireColors.bondfireCopper} fontWeight="600">
-            Current Plan
+            Current plan
           </Text>
         </Button>
       ) : (
@@ -279,8 +282,10 @@ function TierCard({
           disabled={isPurchasing || !isAvailable}
           onPress={() => onPurchase(tier)}
           backgroundColor={isHighest ? bondfireColors.bondfireCopper : 'transparent'}
-          borderColor={isHighest ? 'transparent' : bondfireColors.ash}
-          opacity={isPurchasing || !isAvailable ? 0.6 : 1}
+          borderColor={
+            isHighest ? 'transparent' : isAvailable ? bondfireColors.ash : bondfireColors.iron
+          }
+          opacity={isPurchasing || !isAvailable ? 0.65 : 1}
         >
           <XStack alignItems="center" gap={8}>
             {isPurchasing ? (
@@ -289,14 +294,11 @@ function TierCard({
                 color={isHighest ? bondfireColors.whiteSmoke : bondfireColors.bondfireCopper}
               />
             ) : null}
-            <Text
-              color={isHighest ? bondfireColors.whiteSmoke : bondfireColors.bondfireCopper}
-              fontWeight="600"
-            >
+            <Text color={isAvailable ? ctaColor : bondfireColors.ash} fontWeight="600">
               {isFree
-                ? 'Continue Free'
+                ? 'Continue free'
                 : !isAvailable
-                  ? 'Coming Soon'
+                  ? 'Coming soon'
                   : isPurchasing
                     ? 'Processing...'
                     : 'Subscribe'}
