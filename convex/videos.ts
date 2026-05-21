@@ -4,10 +4,18 @@ import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { action, internalAction, internalMutation, internalQuery } from './_generated/server'
 import { auth } from './auth'
+import {
+  assertCanCreateBondfire,
+  assertVideoDurationWithinTierLimit,
+  getActiveSubscriptionTier,
+  getPrivateCampExpiresAt,
+  PLUS_PRIVATE_RETENTION_MS,
+  TIER_RANK,
+} from './entitlements'
+import type { SubscriptionTier } from './entitlements'
 
 type PlaybackPolicy = 'public' | 'signed'
 type LiveLatencyMode = 'standard' | 'reduced' | 'low'
-type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'
 type MuxSignedAudience = 'v' | 't' | 'g'
 type MuxRecord =
   | { table: 'bondfires'; document: Doc<'bondfires'> }
@@ -56,13 +64,7 @@ const MUX_FAILED_STATUSES = new Set(['errored', 'cancelled', 'timed_out'])
 const MUX_LIVE_RTMPS_ENDPOINT = 'rtmps://global-live.mux.com/app'
 const DEFAULT_MUX_LIVE_RECONNECT_WINDOW_SECONDS = 30
 const SIGNED_PLAYBACK_URL_TTL_SECONDS = 12 * 60 * 60
-const PRIVATE_PLUS_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
-const TIER_RANK: Record<SubscriptionTier, number> = {
-  free: 0,
-  plus: 1,
-  premium: 2,
-  pro: 3,
-}
+const PRIVATE_PLUS_RETENTION_MS = PLUS_PRIVATE_RETENTION_MS
 
 function getMuxConfig() {
   const tokenId = process.env.MUX_TOKEN_ID
@@ -271,41 +273,6 @@ async function assertCanCreateInCamp(
   return await assertUserCanParticipateInCamp(ctx, { ...args, operation: 'spark' })
 }
 
-async function getActiveSubscriptionTier(
-  ctx: QueryCtx | MutationCtx,
-  userId: Id<'users'>,
-): Promise<SubscriptionTier> {
-  const now = Date.now()
-  const subscriptions = await ctx.db
-    .query('subscriptions')
-    .withIndex('by_user', (q) => q.eq('userId', userId))
-    .collect()
-  const activeSubscriptions = subscriptions.filter(
-    (subscription) =>
-      (subscription.status === 'active' || subscription.status === 'trialing') &&
-      (!subscription.currentPeriodEnd || subscription.currentPeriodEnd > now),
-  )
-
-  return activeSubscriptions.reduce<SubscriptionTier>(
-    (highest, subscription) =>
-      TIER_RANK[subscription.tier] > TIER_RANK[highest] ? subscription.tier : highest,
-    'free',
-  )
-}
-
-async function getPrivateCampExpiresAt(
-  ctx: QueryCtx | MutationCtx,
-  camp: Doc<'camps'>,
-  now: number,
-) {
-  if (camp.visibility !== 'private' || !camp.ownerId) {
-    return undefined
-  }
-
-  const ownerTier = await getActiveSubscriptionTier(ctx, camp.ownerId)
-  return ownerTier === 'plus' ? now + PRIVATE_PLUS_RETENTION_MS : undefined
-}
-
 async function assertCanViewBondfire(
   ctx: QueryCtx,
   args: { userId: Id<'users'>; bondfire: Doc<'bondfires'> },
@@ -391,6 +358,13 @@ async function assertUserCanParticipateInCamp(
     if (!camp.rules.allowedTiers.includes(tier)) {
       throw new Error('Your membership tier cannot spark in this camp')
     }
+  }
+
+  // Enforce tier-based Bondfire creation permission (Free cannot create).
+  // Enforce tier-based video duration limit.
+  if (args.operation === 'spark') {
+    await assertCanCreateBondfire(ctx, args.userId)
+    await assertVideoDurationWithinTierLimit(ctx, args.userId, args.durationMs)
   }
 
   if (args.operation === 'spark' && camp.rules.requiresTradeTags) {
