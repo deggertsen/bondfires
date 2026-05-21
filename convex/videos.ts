@@ -61,7 +61,6 @@ const MUX_FAILED_STATUSES = new Set(['errored', 'cancelled', 'timed_out'])
 const MUX_LIVE_RTMPS_ENDPOINT = 'rtmps://global-live.mux.com/app'
 const DEFAULT_MUX_LIVE_RECONNECT_WINDOW_SECONDS = 30
 const SIGNED_PLAYBACK_URL_TTL_SECONDS = 12 * 60 * 60
-const DURATION_LIMIT_EXCEEDED_STATUS = 'duration_limit_exceeded'
 
 function getMuxConfig() {
   const tokenId = process.env.MUX_TOKEN_ID
@@ -578,31 +577,6 @@ async function markRecordAssetCreated(
   }
 }
 
-async function assertMuxMetadataDurationAllowed(
-  ctx: MutationCtx,
-  record: MuxRecord,
-  durationMs: number | undefined,
-) {
-  await assertVideoDurationWithinTierLimit(ctx, record.document.userId, durationMs)
-
-  if (durationMs === undefined) {
-    return
-  }
-
-  const campId =
-    record.table === 'bondfires'
-      ? record.document.campId
-      : (await ctx.db.get(record.document.bondfireId))?.campId
-  if (!campId) {
-    return
-  }
-
-  const camp = await ctx.db.get(campId)
-  if (camp) {
-    assertDurationWithinCampRules(camp, durationMs)
-  }
-}
-
 async function markRecordReady(
   ctx: MutationCtx,
   record: MuxRecord,
@@ -615,18 +589,7 @@ async function markRecordReady(
     muxAspectRatio?: string
     muxMaxResolution?: string
   },
-): Promise<'ready' | 'rejected'> {
-  try {
-    await assertMuxMetadataDurationAllowed(ctx, record, args.durationMs)
-  } catch {
-    await markRecordErrored(ctx, record, {
-      assetId: args.assetId,
-      assetStatus: DURATION_LIMIT_EXCEEDED_STATUS,
-      durationMs: args.durationMs,
-    })
-    return 'rejected'
-  }
-
+) {
   const wasReady = (record.document.videoStatus ?? 'ready') === 'ready'
   const patch = {
     videoStatus: 'ready' as const,
@@ -669,13 +632,13 @@ async function markRecordReady(
         creatorName: user?.displayName ?? user?.name ?? 'Someone',
       })
     }
-    return 'ready'
+    return
   }
 
   await ctx.db.patch(record.document._id, patch)
 
   if (wasReady || record.document.liveSessionId) {
-    return 'ready'
+    return
   }
 
   const [user, bondfire] = await Promise.all([
@@ -702,8 +665,6 @@ async function markRecordReady(
       updatedAt: Date.now(),
     })
   }
-
-  return 'ready'
 }
 
 async function markRecordErrored(
@@ -953,22 +914,15 @@ export const getMuxUploadStatus = action({
       muxMaxResolution = assetInfo.muxMaxResolution
 
       if (assetStatus && MUX_READY_STATUSES.has(assetStatus) && playbackId) {
-        const result: { updated: boolean; rejected?: boolean } = await ctx.runMutation(
-          internal.videos.markMuxAssetReady,
-          {
-            uploadId: args.uploadId,
-            assetId,
-            playbackId,
-            assetStatus,
-            durationMs,
-            muxAspectRatio,
-            muxMaxResolution,
-          },
-        )
-        if (result.rejected) {
-          assetStatus = DURATION_LIMIT_EXCEEDED_STATUS
-          playbackId = undefined
-        }
+        await ctx.runMutation(internal.videos.markMuxAssetReady, {
+          uploadId: args.uploadId,
+          assetId,
+          playbackId,
+          assetStatus,
+          durationMs,
+          muxAspectRatio,
+          muxMaxResolution,
+        })
       } else if (assetStatus && MUX_FAILED_STATUSES.has(assetStatus)) {
         await ctx.runMutation(internal.videos.markMuxAssetErrored, {
           uploadId: args.uploadId,
@@ -991,8 +945,7 @@ export const getMuxUploadStatus = action({
       isReady: !!playbackId && assetStatus !== undefined && MUX_READY_STATUSES.has(assetStatus),
       isFailed:
         MUX_FAILED_STATUSES.has(uploadStatus) ||
-        (assetStatus !== undefined &&
-          (MUX_FAILED_STATUSES.has(assetStatus) || assetStatus === DURATION_LIMIT_EXCEEDED_STATUS)),
+        (assetStatus !== undefined && MUX_FAILED_STATUSES.has(assetStatus)),
     }
   },
 })
@@ -1834,8 +1787,8 @@ export const markMuxAssetReady = internalMutation({
       return { updated: false }
     }
 
-    const status = await markRecordReady(ctx, record, args)
-    return { updated: true, rejected: status === 'rejected' }
+    await markRecordReady(ctx, record, args)
+    return { updated: true }
   },
 })
 

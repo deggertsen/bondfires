@@ -1,6 +1,11 @@
 import { query } from './_generated/server'
 import { auth } from './auth'
-import { getActiveSubscriptionTier, TIER_RANK } from './entitlements'
+import {
+  getActiveSubscriptionTier,
+  getTierMaxVideoDurationMs,
+  TIER_RANK,
+  tierCanCreateBondfires,
+} from './entitlements'
 
 export const current = query({
   args: {},
@@ -10,6 +15,7 @@ export const current = query({
       return null
     }
 
+    const user = await ctx.db.get(userId)
     const tier = await getActiveSubscriptionTier(ctx, userId)
     const now = Date.now()
     const subscriptions = await ctx.db
@@ -28,6 +34,9 @@ export const current = query({
     return {
       tier,
       subscription,
+      canCreateBondfires: user?.isReviewerAccount === true || tierCanCreateBondfires(tier),
+      maxVideoDurationMs:
+        user?.isReviewerAccount === true ? undefined : getTierMaxVideoDurationMs(tier),
     }
   },
 })

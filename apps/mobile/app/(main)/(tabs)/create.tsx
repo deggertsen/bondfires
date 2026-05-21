@@ -103,6 +103,7 @@ export default function CreateScreen() {
   const endLiveStream = useAction(api.videos.endLiveStream)
   const cancelLiveStream = useAction(api.videos.cancelLiveStream)
   const camps = useQuery(api.camps.list, respondTo ? 'skip' : {})
+  const subscription = useQuery(api.subscriptions.current, {})
   const currentUser = useQuery(api.users.current)
   const joinCamp = useMutation(api.camps.join)
   const persistedCampId = currentCampId as Id<'camps'> | null
@@ -137,6 +138,31 @@ export default function CreateScreen() {
   const selectedCampMaxSeconds = selectedCamp?.rules.maxDurationMs
     ? Math.floor(selectedCamp.rules.maxDurationMs / 1000)
     : undefined
+  const tierMaxSeconds = subscription?.maxVideoDurationMs
+    ? Math.floor(subscription.maxVideoDurationMs / 1000)
+    : undefined
+  const effectiveMaxRecordingSeconds = useMemo(() => {
+    const limits = [selectedCampMaxSeconds, tierMaxSeconds].filter(
+      (limit): limit is number => typeof limit === 'number' && limit > 0,
+    )
+    return limits.length > 0 ? Math.min(...limits) : undefined
+  }, [selectedCampMaxSeconds, tierMaxSeconds])
+  const recordingTimeRemainingSeconds = effectiveMaxRecordingSeconds
+    ? Math.max(0, effectiveMaxRecordingSeconds - recordingDuration)
+    : undefined
+  const showRecordingLimitCountdown =
+    recordingTimeRemainingSeconds !== undefined &&
+    recordingTimeRemainingSeconds <= 60 &&
+    (recordingState === 'recording' || liveStatus === 'live' || liveStatus === 'reconnecting')
+  const recordingTimerLabel = showRecordingLimitCountdown
+    ? `${Math.floor((recordingTimeRemainingSeconds ?? 0) / 60)}:${(
+        (recordingTimeRemainingSeconds ?? 0) % 60
+      )
+        .toString()
+        .padStart(2, '0')} left`
+    : `${Math.floor(recordingDuration / 60)}:${(recordingDuration % 60)
+        .toString()
+        .padStart(2, '0')}`
   const needsTradeTag =
     !respondTo && selectedCamp?.rules.requiresTradeTags === true && tradeTag === null
   const livePublisher = useLivePublisher({
@@ -976,7 +1002,7 @@ export default function CreateScreen() {
   }, [livePublisher, liveStatus, logRecordingError, state$])
 
   useEffect(() => {
-    if (!selectedCampMaxSeconds || recordingDuration < selectedCampMaxSeconds) {
+    if (!effectiveMaxRecordingSeconds || recordingDuration < effectiveMaxRecordingSeconds) {
       return
     }
 
@@ -992,7 +1018,7 @@ export default function CreateScreen() {
     liveStatus,
     recordingDuration,
     recordingState,
-    selectedCampMaxSeconds,
+    effectiveMaxRecordingSeconds,
     stopLiveRecording,
     stopRecording,
   ])
@@ -1417,9 +1443,9 @@ export default function CreateScreen() {
                 >
                   <Text color={bondfireColors.whiteSmoke} fontWeight="800" fontSize={14}>
                     {liveStatus === 'live'
-                      ? `LIVE ${Math.floor(recordingDuration / 60)}:${(recordingDuration % 60)
-                          .toString()
-                          .padStart(2, '0')}`
+                      ? showRecordingLimitCountdown
+                        ? recordingTimerLabel
+                        : `LIVE ${recordingTimerLabel}`
                       : statusLabel}
                   </Text>
                 </YStack>
@@ -1595,11 +1621,7 @@ export default function CreateScreen() {
                 borderRadius={16}
               >
                 <Text color={bondfireColors.whiteSmoke} fontWeight="700" fontSize={14}>
-                  {isSwitchingCamera
-                    ? 'Switching...'
-                    : `${Math.floor(recordingDuration / 60)}:${(recordingDuration % 60)
-                        .toString()
-                        .padStart(2, '0')}`}
+                  {isSwitchingCamera ? 'Switching...' : recordingTimerLabel}
                 </Text>
               </YStack>
             )}
@@ -1729,8 +1751,8 @@ export default function CreateScreen() {
                   ? isSwitchingCamera
                     ? 'Switching cameras...'
                     : 'Tap to stop'
-                  : selectedCampMaxSeconds
-                    ? `Max ${Math.round(selectedCampMaxSeconds / 60)} min`
+                  : effectiveMaxRecordingSeconds
+                    ? `Max ${Math.round(effectiveMaxRecordingSeconds / 60)} min`
                     : cameraMountError
                       ? 'Camera failed to initialize'
                       : isCameraReady
