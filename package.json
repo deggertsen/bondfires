@@ -31,7 +31,6 @@
   "dependencies": {
     "@auth/core": "~0.37.0",
     "@convex-dev/auth": "^0.0.90",
-    "convex": "^1.31.3",
-    "expo-iap": "^4.3.1"
+    "convex": "^1.31.3"
   }
 }

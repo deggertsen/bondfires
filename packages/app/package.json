@@ -20,6 +20,7 @@
     "expo-constants": "*",
     "expo-device": "*",
     "expo-file-system": "*",
+    "expo-iap": "*",
     "expo-notifications": "*",
     "react": "*",
     "react-native": "*",

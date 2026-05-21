@@ -1,27 +1,10 @@
+import type { SubscriptionTier, TierInfo } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
-import {
-  Check,
-  Crown,
-  Flame,
-  Sparkles,
-  Star,
-  X,
-} from '@tamagui/lucide-icons'
+import { Check, Crown, Flame, Sparkles, Star, X } from '@tamagui/lucide-icons'
 import { useState } from 'react'
 import { Pressable, ScrollView } from 'react-native'
-import {
-  Card,
-  Text,
-  Spinner,
-  XStack,
-  YStack,
-  Sheet,
-} from 'tamagui'
+import { Card, Sheet, Spinner, Text, XStack, YStack } from 'tamagui'
 import { Button } from './Button'
-import type {
-  SubscriptionTier,
-  TierInfo,
-} from '@bondfires/app'
 
 const TIER_ICONS: Record<string, typeof Flame> = {
   plus: Flame,
@@ -157,11 +140,12 @@ export function SubscriptionPaywall({
                 <TierCard
                   key={tier.tier}
                   tier={tier.tier}
-                  price={tier.price ?? '—'}
+                  price={tier.price ?? 'Coming Soon'}
                   description={tier.description}
                   features={tier.features}
                   isCurrent={tier.isCurrent}
                   isHighest={tier.isHighest}
+                  isAvailable={tier.isAvailable}
                   isSelected={selectedTier === tier.tier}
                   onSelect={setSelectedTier}
                   onPurchase={handlePurchase}
@@ -175,14 +159,8 @@ export function SubscriptionPaywall({
         <XStack justifyContent="center" paddingVertical={12}>
           <Pressable onPress={onRestore} disabled={isRestoring}>
             <XStack alignItems="center" gap={6}>
-              {isRestoring ? (
-                <Spinner size="small" color={bondfireColors.ash} />
-              ) : null}
-              <Text
-                color={bondfireColors.ash}
-                fontSize={13}
-                textDecorationLine="underline"
-              >
+              {isRestoring ? <Spinner size="small" color={bondfireColors.ash} /> : null}
+              <Text color={bondfireColors.ash} fontSize={13} textDecorationLine="underline">
                 {isRestoring ? 'Restoring...' : 'Restore Purchases'}
               </Text>
             </XStack>
@@ -199,6 +177,7 @@ interface TierCardProps {
   description: string
   features: { label: string; included: boolean }[]
   isCurrent: boolean
+  isAvailable?: boolean
   isSelected?: boolean
   isHighest?: boolean
   onSelect?: (tier: SubscriptionTier) => void
@@ -212,6 +191,7 @@ function TierCard({
   description,
   features,
   isCurrent,
+  isAvailable = true,
   isHighest,
   onPurchase,
   isPurchasing,
@@ -260,8 +240,8 @@ function TierCard({
 
       {/* Features */}
       <YStack gap={8} marginBottom={16}>
-        {features.map((feature, index) => (
-          <XStack key={index} alignItems="center" gap={8}>
+        {features.map((feature) => (
+          <XStack key={feature.label} alignItems="center" gap={8}>
             <Check
               size={14}
               color={feature.included ? bondfireColors.success : bondfireColors.ash}
@@ -288,21 +268,26 @@ function TierCard({
           borderColor={bondfireColors.bondfireCopper}
           color={bondfireColors.bondfireCopper}
         >
-          <Text color={bondfireColors.bondfireCopper} fontWeight="600">Current Plan</Text>
+          <Text color={bondfireColors.bondfireCopper} fontWeight="600">
+            Current Plan
+          </Text>
         </Button>
       ) : (
         <Button
           variant={isHighest ? 'primary' : 'outline'}
           size="$md"
-          disabled={isPurchasing}
+          disabled={isPurchasing || !isAvailable}
           onPress={() => onPurchase(tier)}
           backgroundColor={isHighest ? bondfireColors.bondfireCopper : 'transparent'}
           borderColor={isHighest ? 'transparent' : bondfireColors.ash}
-          opacity={isPurchasing ? 0.6 : 1}
+          opacity={isPurchasing || !isAvailable ? 0.6 : 1}
         >
           <XStack alignItems="center" gap={8}>
             {isPurchasing ? (
-              <Spinner size="small" color={isHighest ? bondfireColors.whiteSmoke : bondfireColors.bondfireCopper} />
+              <Spinner
+                size="small"
+                color={isHighest ? bondfireColors.whiteSmoke : bondfireColors.bondfireCopper}
+              />
             ) : null}
             <Text
               color={isHighest ? bondfireColors.whiteSmoke : bondfireColors.bondfireCopper}
@@ -310,9 +295,11 @@ function TierCard({
             >
               {isFree
                 ? 'Continue Free'
-                : isPurchasing
-                  ? 'Processing...'
-                  : 'Subscribe'}
+                : !isAvailable
+                  ? 'Coming Soon'
+                  : isPurchasing
+                    ? 'Processing...'
+                    : 'Subscribe'}
             </Text>
           </XStack>
         </Button>

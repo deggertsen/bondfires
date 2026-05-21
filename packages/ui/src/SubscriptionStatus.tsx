@@ -1,12 +1,8 @@
+import { type SubscriptionTier, TIER_LABELS } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
-import {
-  TIER_LABELS,
-  type SubscriptionTier,
-  type TierInfo,
-} from '@bondfires/app'
 import { Crown, Flame, Sparkles, Star } from '@tamagui/lucide-icons'
 import { Pressable } from 'react-native'
-import { Card, Text, Spinner, XStack, YStack } from 'tamagui'
+import { Card, Spinner, Text, XStack, YStack } from 'tamagui'
 
 const TIER_ICONS: Record<string, typeof Star> = {
   free: Star,
@@ -64,9 +60,7 @@ export function SubscriptionStatus({
               {TIER_LABELS[currentTier]} Plan
             </Text>
             <Text color={bondfireColors.ash} fontSize={12}>
-              {currentTier === 'free'
-                ? 'Browse and watch bondfires'
-                : 'Active subscription'}
+              {currentTier === 'free' ? 'Browse and watch bondfires' : 'Active subscription'}
             </Text>
           </YStack>
         </XStack>
@@ -74,10 +68,7 @@ export function SubscriptionStatus({
 
       {/* Action buttons */}
       <XStack gap={12}>
-        <Pressable
-          onPress={onManagePress}
-          style={{ flex: 1 }}
-        >
+        <Pressable onPress={onManagePress} style={{ flex: 1 }}>
           <YStack
             backgroundColor={bondfireColors.bondfireCopper}
             borderRadius={12}

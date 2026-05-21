@@ -8,7 +8,7 @@ import {
   useSubscription,
 } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
-import { Button, Card, Input, Text, SubscriptionStatus } from '@bondfires/ui'
+import { Button, Card, Input, SubscriptionStatus, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
 import {
@@ -99,18 +99,7 @@ export default function ProfileScreen() {
   const { preferences, setVideoQuality, setAutoplayVideos, setNotificationsEnabled } =
     usePreferences()
 
-  const {
-    currentTier,
-    isPurchasing,
-    isRestoring,
-    purchasingTier,
-    lastError,
-    productPrices,
-    productsLoaded,
-    canCreate,
-    restore,
-    showPaywall,
-  } = useSubscription()
+  const { currentTier, isRestoring, restore, showPaywall } = useSubscription()
 
   const [refreshKey, setRefreshKey] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)

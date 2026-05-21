@@ -41,6 +41,7 @@ export interface TierInfo {
   features: TierFeature[]
   isCurrent: boolean
   isHighest: boolean
+  isAvailable: boolean
 }
 
 /**
@@ -100,6 +101,8 @@ export interface SubscriptionState {
   productsLoaded: boolean
   /** Map of productId → localized price string (e.g. "$4.99"). */
   productPrices: Record<string, string>
+  /** Map of productId → Android subscription offer token required for purchase. */
+  productOfferTokens: Record<string, string>
   /** Whether a purchase is in progress. */
   isPurchasing: boolean
   /** Whether a restore is in progress. */
@@ -116,6 +119,7 @@ export const subscriptionStore$ = observable<SubscriptionState>({
   currentTier: 'free',
   productsLoaded: false,
   productPrices: {},
+  productOfferTokens: {},
   isPurchasing: false,
   isRestoring: false,
   purchasingTier: null,
@@ -128,12 +132,17 @@ export const subscriptionActions = {
     subscriptionStore$.currentTier.set(tier)
   },
 
-  setProducts(products: Array<{ productId: string; price: string }>) {
+  setProducts(products: Array<{ productId: string; price: string; offerToken?: string | null }>) {
     const prices: Record<string, string> = {}
+    const offerTokens: Record<string, string> = {}
     for (const p of products) {
       prices[p.productId] = p.price
+      if (p.offerToken) {
+        offerTokens[p.productId] = p.offerToken
+      }
     }
     subscriptionStore$.productPrices.set(prices)
+    subscriptionStore$.productOfferTokens.set(offerTokens)
     subscriptionStore$.productsLoaded.set(true)
   },
 

@@ -1232,6 +1232,7 @@ __metadata:
     expo-constants: "*"
     expo-device: "*"
     expo-file-system: "*"
+    expo-iap: "*"
     expo-notifications: "*"
     react: "*"
     react-native: "*"
@@ -5450,7 +5451,6 @@ __metadata:
     "@convex-dev/auth": "npm:^0.0.90"
     "@types/node": "npm:^25.0.3"
     convex: "npm:^1.31.3"
-    expo-iap: "npm:^4.3.1"
     turbo: "npm:^2.3.0"
     typescript: "npm:^6.0.0"
   languageName: unknown

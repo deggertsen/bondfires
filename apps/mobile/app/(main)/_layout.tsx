@@ -1,9 +1,9 @@
-import { useSubscription, subscriptionStore$, TIER_DEFINITIONS } from '@bondfires/app'
-import { SubscriptionPaywall } from '@bondfires/ui'
 import type { SubscriptionTier, TierInfo } from '@bondfires/app'
+import { subscriptionStore$, TIER_DEFINITIONS, useSubscription } from '@bondfires/app'
+import { SubscriptionPaywall } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
-import { useMemo } from 'react'
 import { Stack } from 'expo-router'
+import { useMemo } from 'react'
 
 function GlobalPaywall() {
   const {
@@ -18,7 +18,7 @@ function GlobalPaywall() {
     restore,
     hidePaywall,
     clearError,
-  } = useSubscription()
+  } = useSubscription({ initializeIap: true })
 
   const isPaywallVisible = useValue(subscriptionStore$.isPaywallVisible)
 
@@ -40,6 +40,7 @@ function GlobalPaywall() {
       ],
       isCurrent: currentTier === 'free',
       isHighest: false,
+      isAvailable: true,
     }
 
     const paidTierNames: Array<'plus' | 'premium' | 'pro'> = ['plus', 'premium', 'pro']
@@ -50,11 +51,12 @@ function GlobalPaywall() {
         tier: tier as SubscriptionTier,
         productId: def.productId,
         displayName: def.displayName,
-        price: price ?? 'Coming Soon',
+        price,
         description: def.description,
         features: def.features.map((f: { label: string }) => ({ label: f.label, included: true })),
         isCurrent: currentTier === tier,
         isHighest: tier === 'pro',
+        isAvailable: price !== null,
       }
     })
 
