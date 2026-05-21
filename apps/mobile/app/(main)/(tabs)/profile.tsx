@@ -109,6 +109,7 @@ export default function ProfileScreen() {
     isVideoQualitySheetOpen: false,
     editName: '',
     editGender: null as Gender | null,
+    editBirthDate: '',
     isSaving: false,
     isDeleting: false,
     isUploadingPhoto: false,
@@ -118,6 +119,7 @@ export default function ProfileScreen() {
   const isVideoQualitySheetOpen = useValue(state$.isVideoQualitySheetOpen)
   const editName = useValue(state$.editName)
   const editGender = useValue(state$.editGender)
+  const editBirthDate = useValue(state$.editBirthDate)
   const isSaving = useValue(state$.isSaving)
   const isDeleting = useValue(state$.isDeleting)
   const isUploadingPhoto = useValue(state$.isUploadingPhoto)
@@ -177,6 +179,7 @@ export default function ProfileScreen() {
   const handleEditProfile = useCallback(() => {
     state$.editName.set(currentUser?.displayName ?? currentUser?.name ?? '')
     state$.editGender.set(currentUser?.gender ?? null)
+    state$.editBirthDate.set(currentUser?.birthDate ?? '')
     state$.isEditSheetOpen.set(true)
   }, [currentUser, state$])
 
@@ -186,6 +189,7 @@ export default function ProfileScreen() {
       await updateProfile({
         displayName: state$.editName.get(),
         gender: state$.editGender.get() ?? undefined,
+        birthDate: state$.editBirthDate.get().trim() || undefined,
       })
       state$.isEditSheetOpen.set(false)
       handleRefresh()
@@ -737,7 +741,7 @@ export default function ProfileScreen() {
       <Sheet
         open={isEditSheetOpen}
         onOpenChange={(open: boolean) => state$.isEditSheetOpen.set(open)}
-        snapPoints={[40]}
+        snapPoints={[50]}
         dismissOnSnapToBottom
       >
         <Sheet.Overlay backgroundColor="rgba(0,0,0,0.6)" />
@@ -789,6 +793,22 @@ export default function ProfileScreen() {
                   )
                 })}
               </XStack>
+            </YStack>
+
+            <YStack gap={8}>
+              <Text variant="label" color={bondfireColors.whiteSmoke}>
+                Birth Date
+              </Text>
+              <Text fontSize={12} color={bondfireColors.ash}>
+                Private — used for age-based camp access
+              </Text>
+              <Input
+                value={editBirthDate}
+                onChangeText={(text) => state$.editBirthDate.set(text)}
+                placeholder="YYYY-MM-DD"
+                keyboardType="numbers-and-punctuation"
+                maxLength={10}
+              />
             </YStack>
 
             <XStack gap={12}>

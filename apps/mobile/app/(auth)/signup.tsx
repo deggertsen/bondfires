@@ -25,6 +25,7 @@ export default function SignupScreen() {
     password: '',
     confirmPassword: '',
     gender: null as Gender | null,
+    birthDate: '',
     isLoading: false,
     error: null as string | null,
   })
@@ -34,6 +35,7 @@ export default function SignupScreen() {
   const password = useValue(form$.password)
   const confirmPassword = useValue(form$.confirmPassword)
   const gender = useValue(form$.gender)
+  const birthDate = useValue(form$.birthDate)
   const isLoading = useValue(form$.isLoading)
   const error = useValue(form$.error)
 
@@ -43,10 +45,34 @@ export default function SignupScreen() {
     const currentPassword = form$.password.get()
     const currentConfirmPassword = form$.confirmPassword.get()
     const currentGender = form$.gender.get()
+    const currentBirthDate = form$.birthDate.get().trim()
 
     if (!currentName || !currentEmail || !currentPassword || !currentGender) {
       form$.error.set('Please fill in all fields')
       return
+    }
+
+    // Birth date is optional but validated if provided
+    if (currentBirthDate) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(currentBirthDate)) {
+        form$.error.set('Birth date must be in YYYY-MM-DD format')
+        return
+      }
+      const birth = new Date(currentBirthDate)
+      if (Number.isNaN(birth.getTime())) {
+        form$.error.set('Invalid birth date')
+        return
+      }
+      const today = new Date()
+      let age = today.getFullYear() - birth.getFullYear()
+      const monthDelta = today.getMonth() - birth.getMonth()
+      if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < birth.getDate())) {
+        age -= 1
+      }
+      if (age < 13) {
+        form$.error.set('You must be at least 13 years old to join')
+        return
+      }
     }
 
     if (currentPassword !== currentConfirmPassword) {
@@ -69,6 +95,7 @@ export default function SignupScreen() {
         name: currentName,
         gender: currentGender,
         flow: 'signUp',
+        ...(currentBirthDate ? { birthDate: currentBirthDate } : {}),
       })
       // Pass email to verify-email screen for OTP verification
       router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail } })
@@ -169,6 +196,23 @@ export default function SignupScreen() {
                     )
                   })}
                 </XStack>
+              </YStack>
+
+              <YStack gap={8}>
+                <Text variant="label" color={bondfireColors.whiteSmoke}>
+                  Birth Date
+                </Text>
+                <Text fontSize={12} color={bondfireColors.ash} marginBottom={4}>
+                  Used for age-based camp access. Private; not shown publicly.
+                </Text>
+                <Input
+                  placeholder="YYYY-MM-DD (optional)"
+                  value={birthDate}
+                  onChangeText={(text) => form$.birthDate.set(text)}
+                  keyboardType="numbers-and-punctuation"
+                  autoCapitalize="none"
+                  maxLength={10}
+                />
               </YStack>
 
               <YStack gap={8}>

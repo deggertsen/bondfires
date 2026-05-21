@@ -28,11 +28,33 @@ export const updateProfile = mutation({
     name: v.optional(v.string()),
     displayName: v.optional(v.string()),
     gender: v.optional(v.union(v.literal('male'), v.literal('female'), v.literal('other'))),
+    birthDate: v.optional(v.string()), // ISO date YYYY-MM-DD
   },
   handler: async (ctx, args) => {
     const userId = await auth.getUserId(ctx)
     if (!userId) {
       throw new Error('Not authenticated')
+    }
+
+    // Validate birthDate format if provided
+    if (args.birthDate !== undefined) {
+      if (args.birthDate !== null && !/^\d{4}-\d{2}-\d{2}$/.test(args.birthDate)) {
+        throw new Error('birthDate must be YYYY-MM-DD format')
+      }
+      // Basic sanity: not in the future, age must be at least 13
+      const birth = new Date(args.birthDate)
+      if (isNaN(birth.getTime())) {
+        throw new Error('Invalid birth date')
+      }
+      const today = new Date()
+      let age = today.getFullYear() - birth.getFullYear()
+      const monthDelta = today.getMonth() - birth.getMonth()
+      if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < birth.getDate())) {
+        age -= 1
+      }
+      if (age < 13) {
+        throw new Error('You must be at least 13 years old')
+      }
     }
 
     const updates: Record<string, unknown> = {
@@ -42,6 +64,7 @@ export const updateProfile = mutation({
     if (args.name !== undefined) updates.name = args.name
     if (args.displayName !== undefined) updates.displayName = args.displayName
     if (args.gender !== undefined) updates.gender = args.gender
+    if (args.birthDate !== undefined) updates.birthDate = args.birthDate
 
     await ctx.db.patch(userId, updates)
     return await ctx.db.get(userId)
