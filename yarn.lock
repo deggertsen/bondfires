@@ -5450,6 +5450,7 @@ __metadata:
     "@convex-dev/auth": "npm:^0.0.90"
     "@types/node": "npm:^25.0.3"
     convex: "npm:^1.31.3"
+    expo-iap: "npm:^4.3.1"
     turbo: "npm:^2.3.0"
     typescript: "npm:^6.0.0"
   languageName: unknown
@@ -6777,6 +6778,17 @@ __metadata:
     react: "*"
     react-native: "*"
   checksum: 10c0/ba74ff17b01dedc4a8145170b7098a95e037a7bd8ac0b8d0bf80bf28589383c22ba1a3f8ab68d901eafa75e311eb2fcd9edc414c18957a8827063623e2af9e0f
+  languageName: node
+  linkType: hard
+
+"expo-iap@npm:^4.3.1":
+  version: 4.3.1
+  resolution: "expo-iap@npm:4.3.1"
+  peerDependencies:
+    expo: "*"
+    react: "*"
+    react-native: "*"
+  checksum: 10c0/bd2f47eb7a0e9e283d600b0ec52004f7a46a36a7ab00ecec6d498d961dd4d58d1dd200d1fd4b991e1935b908d4fd068aaee62c3af7a1102a08e091f14ccb9651
   languageName: node
   linkType: hard
 
@@ -8944,6 +8956,7 @@ __metadata:
     expo-device: "npm:^8.0.10"
     expo-file-system: "npm:^19.0.21"
     expo-font: "npm:~14.0.11"
+    expo-iap: "npm:^4.3.1"
     expo-image: "npm:^3.0.11"
     expo-image-manipulator: "npm:~14.0.8"
     expo-image-picker: "npm:~17.0.10"
