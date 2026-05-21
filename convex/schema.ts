@@ -63,7 +63,7 @@ export default defineSchema({
     photoUrl: v.optional(v.string()),
     photoStorageId: v.optional(v.id('_storage')),
     gender: userGender,
-    birthDate: v.optional(v.string()), // ISO date string (YYYY-MM-DD), private
+    birthDate: v.optional(v.union(v.string(), v.null())), // ISO date string (YYYY-MM-DD), private
 
     // Stats (denormalized for performance)
     bondfireCount: v.optional(v.number()),

@@ -15,6 +15,42 @@ const GENDER_OPTIONS: Array<{ value: Gender; label: string }> = [
   { value: 'other', label: 'Other' },
 ]
 
+function parseBirthDate(birthDate: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(birthDate)
+  if (!match) {
+    return null
+  }
+
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const parsed = new Date(Date.UTC(year, month - 1, day))
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    return null
+  }
+
+  return { year, month, day }
+}
+
+function calculateAge(birthDate: string): number | null {
+  const birth = parseBirthDate(birthDate)
+  if (!birth) {
+    return null
+  }
+
+  const today = new Date()
+  let age = today.getFullYear() - birth.year
+  const monthDelta = today.getMonth() + 1 - birth.month
+  if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < birth.day)) {
+    age -= 1
+  }
+  return age
+}
+
 export default function SignupScreen() {
   const router = useRouter()
   const { signIn } = useAuthActions()
@@ -54,20 +90,10 @@ export default function SignupScreen() {
 
     // Birth date is optional but validated if provided
     if (currentBirthDate) {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(currentBirthDate)) {
-        form$.error.set('Birth date must be in YYYY-MM-DD format')
+      const age = calculateAge(currentBirthDate)
+      if (age === null) {
+        form$.error.set('Birth date must be a valid YYYY-MM-DD date')
         return
-      }
-      const birth = new Date(currentBirthDate)
-      if (Number.isNaN(birth.getTime())) {
-        form$.error.set('Invalid birth date')
-        return
-      }
-      const today = new Date()
-      let age = today.getFullYear() - birth.getFullYear()
-      const monthDelta = today.getMonth() - birth.getMonth()
-      if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < birth.getDate())) {
-        age -= 1
       }
       if (age < 13) {
         form$.error.set('You must be at least 13 years old to join')

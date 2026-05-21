@@ -58,6 +58,42 @@ const GENDER_OPTIONS: Array<{ value: Gender; label: string }> = [
   { value: 'other', label: 'Other' },
 ]
 
+function parseBirthDate(birthDate: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(birthDate)
+  if (!match) {
+    return null
+  }
+
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const parsed = new Date(Date.UTC(year, month - 1, day))
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    return null
+  }
+
+  return { year, month, day }
+}
+
+function calculateAge(birthDate: string): number | null {
+  const birth = parseBirthDate(birthDate)
+  if (!birth) {
+    return null
+  }
+
+  const today = new Date()
+  let age = today.getFullYear() - birth.year
+  const monthDelta = today.getMonth() + 1 - birth.month
+  if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < birth.day)) {
+    age -= 1
+  }
+  return age
+}
+
 function ProfileSubscription({
   onResolved,
 }: {
@@ -184,12 +220,25 @@ export default function ProfileScreen() {
   }, [currentUser, state$])
 
   const handleSaveProfile = useCallback(async () => {
+    const birthDate = state$.editBirthDate.get().trim()
+    if (birthDate) {
+      const age = calculateAge(birthDate)
+      if (age === null) {
+        Alert.alert('Invalid Birth Date', 'Use a valid date in YYYY-MM-DD format.')
+        return
+      }
+      if (age < 13) {
+        Alert.alert('Invalid Birth Date', 'You must be at least 13 years old.')
+        return
+      }
+    }
+
     state$.isSaving.set(true)
     try {
       await updateProfile({
         displayName: state$.editName.get(),
         gender: state$.editGender.get() ?? undefined,
-        birthDate: state$.editBirthDate.get().trim() || undefined,
+        birthDate: birthDate || null,
       })
       state$.isEditSheetOpen.set(false)
       handleRefresh()

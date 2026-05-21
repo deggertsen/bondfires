@@ -341,12 +341,37 @@ async function findCampBySlug(ctx: QueryCtx | MutationCtx, slug: string) {
 
 // ── Centralized Camp Eligibility Helpers ──────────────────────────────────
 
-function calculateAge(birthDate: string): number {
-  const birth = new Date(birthDate)
+function parseBirthDate(birthDate: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(birthDate)
+  if (!match) {
+    return null
+  }
+
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const parsed = new Date(Date.UTC(year, month - 1, day))
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    return null
+  }
+
+  return { year, month, day }
+}
+
+function calculateAge(birthDate: string): number | null {
+  const birth = parseBirthDate(birthDate)
+  if (!birth) {
+    return null
+  }
+
   const today = new Date()
-  let age = today.getFullYear() - birth.getFullYear()
-  const monthDelta = today.getMonth() - birth.getMonth()
-  if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < birth.getDate())) {
+  let age = today.getFullYear() - birth.year
+  const monthDelta = today.getMonth() + 1 - birth.month
+  if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < birth.day)) {
     age -= 1
   }
   return age
@@ -368,6 +393,7 @@ function evaluateVisibilityRules(
   }
 
   const rules = camp.visibilityRules
+  let tierTooLow = false
   if (rules && rules.length > 0) {
     for (const rule of rules) {
       switch (rule.type) {
@@ -386,13 +412,17 @@ function evaluateVisibilityRules(
           break
         case 'minTier':
           if (rule.minTier && TIER_RANK[userTier] < TIER_RANK[rule.minTier]) {
-            return { visible: true, reason: 'tier_too_low' }
+            tierTooLow = true
           }
           break
         case 'inviteRequired':
           return { visible: false, reason: 'invite_only' }
       }
     }
+  }
+
+  if (tierTooLow) {
+    return { visible: true, reason: 'tier_too_low' }
   }
 
   if (camp.access === 'invite') {
@@ -483,10 +513,7 @@ function computeSortRank(
 }
 
 /** Human-readable locked reason from visibilityRules. */
-function lockedReason(
-  camp: Doc<'camps'>,
-  userTier: SubscriptionTier,
-): string | undefined {
+function lockedReason(camp: Doc<'camps'>, userTier: SubscriptionTier): string | undefined {
   const rules = camp.visibilityRules ?? []
   const tierRule = rules.find((r) => r.type === 'minTier')
   if (tierRule?.minTier && TIER_RANK[userTier] < TIER_RANK[tierRule.minTier]) {
@@ -503,27 +530,23 @@ function resolveCampDisplayName(camp: Doc<'camps'>): string {
   return camp.name
 }
 
+function getJoinMembershipStatus(camp: Doc<'camps'>): 'pending' | 'active' {
+  if (
+    camp.access === 'approval' ||
+    camp.joinRules?.some((rule) => rule.type === 'approvalRequired')
+  ) {
+    return 'pending'
+  }
+
+  return 'active'
+}
+
 function isCampVisibleToUser(camp: Doc<'camps'>, membership?: Doc<'campMembers'>) {
   if (camp.status !== 'active') {
     return false
   }
 
   return camp.visibility === 'public' || membership?.status === 'active'
-}
-
-function assertUserMatchesCampGender(user: Doc<'users'>, camp: Doc<'camps'>) {
-  const campGender = camp.rules.gender
-  if (!campGender || campGender === 'any') {
-    return
-  }
-
-  if (!user.gender) {
-    throw new Error('Set your gender before joining gender-specific camps')
-  }
-
-  if (user.gender !== campGender) {
-    throw new Error('This camp is limited to members who match its gender setting')
-  }
 }
 
 async function upsertMembership(
@@ -631,9 +654,8 @@ export const list = query({
 
     // Fetch user + tier for visibility evaluation
     const user = userId ? await ctx.db.get(userId) : null
-    const userTier = user
-      ? await getActiveSubscriptionTier(ctx, userId!)
-      : ('free' as SubscriptionTier)
+    const userTier =
+      user && userId ? await getActiveSubscriptionTier(ctx, userId) : ('free' as SubscriptionTier)
 
     const camps = await ctx.db.query('camps').collect()
 
@@ -653,6 +675,7 @@ export const list = query({
         const reason = lockedReason(camp, userTier)
         return {
           ...camp,
+          name: resolveCampDisplayName(camp),
           membership,
           _sortRank: rank,
           _lockedReason: membership?.status === 'active' ? undefined : reason,
@@ -691,6 +714,9 @@ export const get = query({
     if (!camp) {
       return null
     }
+    if (camp.status !== 'active') {
+      return null
+    }
 
     const userId = await auth.getUserId(ctx)
     const membership = userId ? await getMembership(ctx, userId, camp._id) : null
@@ -698,9 +724,8 @@ export const get = query({
     // Use structured visibility for non-members
     if (membership?.status !== 'active') {
       const user = userId ? await ctx.db.get(userId) : null
-      const userTier = user
-        ? await getActiveSubscriptionTier(ctx, userId!)
-        : ('free' as SubscriptionTier)
+      const userTier =
+        user && userId ? await getActiveSubscriptionTier(ctx, userId) : ('free' as SubscriptionTier)
       const visibility = evaluateVisibilityRules(camp, user, userTier, null)
       if (!visibility.visible) {
         return null
@@ -714,6 +739,7 @@ export const get = query({
 
     return {
       ...camp,
+      name: resolveCampDisplayName(camp),
       membership,
     }
   },
@@ -764,7 +790,7 @@ export const join = mutation({
       throw new Error(messages[eligibility.reason] ?? 'You cannot join this camp')
     }
 
-    const status = camp.access === 'approval' ? 'pending' : 'active'
+    const status = getJoinMembershipStatus(camp)
     const membershipId = await upsertMembership(ctx, {
       userId: user._id,
       campId: camp._id,
@@ -811,20 +837,21 @@ export const requestJoin = mutation({
       throw new Error(messages[eligibility.reason] ?? 'You cannot join this camp')
     }
 
+    const status = getJoinMembershipStatus(camp)
     const membershipId = await upsertMembership(ctx, {
       userId: user._id,
       campId: camp._id,
-      status: camp.access === 'approval' ? 'pending' : 'active',
+      status,
       role: 'member',
     })
 
-    if (camp.access === 'open') {
+    if (status === 'active') {
       await refreshActiveMemberCount(ctx, camp._id)
     }
 
     return {
       membershipId,
-      status: camp.access === 'approval' ? 'pending' : 'active',
+      status,
     }
   },
 })
@@ -1012,11 +1039,22 @@ export const redeemInvite = mutation({
     }
 
     const existingMembership = await getMembership(ctx, user._id, camp._id)
+    if (existingMembership?.status === 'active') {
+      return {
+        membershipId: existingMembership._id,
+        campId: camp._id,
+      }
+    }
+
     const userTier = await getActiveSubscriptionTier(ctx, user._id)
     const eligibility = evaluateJoinRules(camp, user, userTier, existingMembership)
 
     // Invite bypasses invite_only and private — re-check only hard blocks
-    if (!eligibility.canJoin && eligibility.reason !== 'invite_only' && eligibility.reason !== 'private') {
+    if (
+      !eligibility.canJoin &&
+      eligibility.reason !== 'invite_only' &&
+      eligibility.reason !== 'private'
+    ) {
       const messages: Record<string, string> = {
         wrong_gender: 'This camp is limited to members who match its gender setting',
         tier_too_low: 'Your subscription tier is too low to join this camp',

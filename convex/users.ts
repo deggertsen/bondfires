@@ -2,6 +2,42 @@ import { v } from 'convex/values'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
 
+function parseBirthDate(birthDate: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(birthDate)
+  if (!match) {
+    return null
+  }
+
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const parsed = new Date(Date.UTC(year, month - 1, day))
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    return null
+  }
+
+  return { year, month, day }
+}
+
+function calculateAge(birthDate: string): number | null {
+  const birth = parseBirthDate(birthDate)
+  if (!birth) {
+    return null
+  }
+
+  const today = new Date()
+  let age = today.getFullYear() - birth.year
+  const monthDelta = today.getMonth() + 1 - birth.month
+  if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < birth.day)) {
+    age -= 1
+  }
+  return age
+}
+
 // Get the current authenticated user
 export const current = query({
   args: {},
@@ -28,7 +64,7 @@ export const updateProfile = mutation({
     name: v.optional(v.string()),
     displayName: v.optional(v.string()),
     gender: v.optional(v.union(v.literal('male'), v.literal('female'), v.literal('other'))),
-    birthDate: v.optional(v.string()), // ISO date YYYY-MM-DD
+    birthDate: v.optional(v.union(v.string(), v.null())), // ISO date YYYY-MM-DD
   },
   handler: async (ctx, args) => {
     const userId = await auth.getUserId(ctx)
@@ -38,22 +74,14 @@ export const updateProfile = mutation({
 
     // Validate birthDate format if provided
     if (args.birthDate !== undefined) {
-      if (args.birthDate !== null && !/^\d{4}-\d{2}-\d{2}$/.test(args.birthDate)) {
-        throw new Error('birthDate must be YYYY-MM-DD format')
-      }
-      // Basic sanity: not in the future, age must be at least 13
-      const birth = new Date(args.birthDate)
-      if (isNaN(birth.getTime())) {
-        throw new Error('Invalid birth date')
-      }
-      const today = new Date()
-      let age = today.getFullYear() - birth.getFullYear()
-      const monthDelta = today.getMonth() - birth.getMonth()
-      if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < birth.getDate())) {
-        age -= 1
-      }
-      if (age < 13) {
-        throw new Error('You must be at least 13 years old')
+      if (args.birthDate !== null) {
+        const age = calculateAge(args.birthDate)
+        if (age === null) {
+          throw new Error('birthDate must be a valid YYYY-MM-DD date')
+        }
+        if (age < 13) {
+          throw new Error('You must be at least 13 years old')
+        }
       }
     }
 

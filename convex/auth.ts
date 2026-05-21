@@ -106,11 +106,16 @@ const ResendPasswordReset = Resend({
 const PasswordWithVerification = Password({
   // Profile fields to include when creating a user
   profile(params) {
+    const birthDate =
+      typeof params.birthDate === 'string' && params.birthDate.trim()
+        ? params.birthDate.trim()
+        : undefined
+
     return {
       name: (params.name as string) ?? null,
       email: params.email as string,
       gender: params.gender as string,
-      birthDate: (params.birthDate as string) ?? null,
+      ...(birthDate ? { birthDate } : {}),
     }
   },
   // Require email verification before allowing sign in
