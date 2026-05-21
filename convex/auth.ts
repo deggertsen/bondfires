@@ -146,21 +146,23 @@ const PasswordWithVerification = Password({
       typeof params.birthDate === 'string' && params.birthDate.trim()
         ? params.birthDate.trim()
         : undefined
-    if (birthDate) {
-      const age = calculateAge(birthDate)
-      if (age === null) {
-        throw new Error('birthDate must be a valid YYYY-MM-DD date')
-      }
-      if (age < 13) {
-        throw new Error('You must be at least 13 years old')
-      }
+    if (!birthDate) {
+      throw new Error('birthDate is required')
+    }
+
+    const age = calculateAge(birthDate)
+    if (age === null) {
+      throw new Error('birthDate must be a valid YYYY-MM-DD date')
+    }
+    if (age < 13) {
+      throw new Error('You must be at least 13 years old')
     }
 
     return {
       name: (params.name as string) ?? null,
       email: params.email as string,
       gender: params.gender as string,
-      ...(birthDate ? { birthDate } : {}),
+      birthDate,
     }
   },
   // Require email verification before allowing sign in
