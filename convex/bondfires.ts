@@ -1,11 +1,15 @@
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
-import type { MutationCtx, QueryCtx } from './_generated/server'
+import type { QueryCtx } from './_generated/server'
 import { action, internalQuery, mutation, query } from './_generated/server'
 import { auth } from './auth'
+import {
+  assertCanCreateBondfire,
+  assertVideoDurationWithinTierLimit,
+  getPrivateCampExpiresAt,
+} from './entitlements'
 
-type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'
 type ExpiredPrivateCampVideoCleanupResult = {
   expiredBondfires?: number
   muxAssetsToDelete?: number
@@ -21,14 +25,6 @@ type PublicUser = {
   name?: string
   photoUrl?: string
 }
-
-const TIER_RANK: Record<SubscriptionTier, number> = {
-  free: 0,
-  plus: 1,
-  premium: 2,
-  pro: 3,
-}
-const PRIVATE_PLUS_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 
 // Works for both `bondfires` and `bondfireVideos` rows — they share the
 // status/playback fields this predicate touches.
@@ -56,14 +52,6 @@ function toPublicUser(user: Doc<'users'>): PublicUser {
     name: user.name,
     photoUrl: user.photoUrl,
   }
-}
-
-function getPrivateCampExpiresAt(camp: Doc<'camps'>, tier: SubscriptionTier, now: number) {
-  if (camp.visibility !== 'private' || tier !== 'plus') {
-    return undefined
-  }
-
-  return now + PRIVATE_PLUS_RETENTION_MS
 }
 
 function withLiveFlags<T extends { videoStatus?: string; muxLivePlaybackId?: string }>(
@@ -130,28 +118,6 @@ async function getThreadParticipants(ctx: QueryCtx, bondfire: Doc<'bondfires'>) 
       ]
     })
     .sort((a, b) => b.latestAt - a.latestAt)
-}
-
-async function getActiveSubscriptionTier(
-  ctx: MutationCtx,
-  userId: Id<'users'>,
-): Promise<SubscriptionTier> {
-  const now = Date.now()
-  const subscriptions = await ctx.db
-    .query('subscriptions')
-    .withIndex('by_user', (q) => q.eq('userId', userId))
-    .collect()
-  const activeSubscriptions = subscriptions.filter(
-    (subscription) =>
-      (subscription.status === 'active' || subscription.status === 'trialing') &&
-      (!subscription.currentPeriodEnd || subscription.currentPeriodEnd > now),
-  )
-
-  return activeSubscriptions.reduce<SubscriptionTier>(
-    (highest, subscription) =>
-      TIER_RANK[subscription.tier] > TIER_RANK[highest] ? subscription.tier : highest,
-    'free',
-  )
 }
 
 async function getVisibleCampIds(ctx: QueryCtx, userId: Id<'users'> | null) {
@@ -433,7 +399,11 @@ export const create = mutation({
       throw new Error('This recording is longer than the camp allows')
     }
 
-    const tier = await getActiveSubscriptionTier(ctx, userId)
+    // Enforce tier-based video duration limit.
+    await assertVideoDurationWithinTierLimit(ctx, userId, args.durationMs)
+
+    // Enforce tier-based Bondfire creation permission (Free cannot create).
+    const tier = await assertCanCreateBondfire(ctx, userId)
     if (camp.rules.allowedTiers && camp.rules.allowedTiers.length > 0) {
       if (!camp.rules.allowedTiers.includes(tier)) {
         throw new Error('Your membership tier cannot spark in this camp')
@@ -465,7 +435,7 @@ export const create = mutation({
       width: args.width,
       height: args.height,
       tags: args.tags,
-      expiresAt: getPrivateCampExpiresAt(camp, tier, now),
+      expiresAt: await getPrivateCampExpiresAt(ctx, camp, now),
       videoCount: 1, // Starts with 1 (the original video)
       viewCount: 0,
       createdAt: now,

@@ -3,10 +3,16 @@ import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
+import type { SubscriptionTier } from './entitlements'
+import {
+  assertCanCreatePrivateCamp,
+  getActiveSubscriptionTier,
+  PAID_TIERS,
+  TIER_RANK,
+} from './entitlements'
 
 type CampAccess = 'open' | 'approval' | 'invite'
 type CampGender = 'male' | 'female' | 'any'
-type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'
 
 /** Visibility-rule evaluation result. tier_too_low = visible upgrade opp. */
 type CampVisibilityResult = {
@@ -53,14 +59,7 @@ const memberStatusValidator = v.union(
 )
 const accessValidator = v.union(v.literal('open'), v.literal('approval'), v.literal('invite'))
 
-const ALL_TIERS = ['free', 'plus', 'premium', 'pro'] as const
-const PAID_TIERS = ['plus', 'premium', 'pro'] as const
-const TIER_RANK: Record<SubscriptionTier, number> = {
-  free: 0,
-  plus: 1,
-  premium: 2,
-  pro: 3,
-}
+const ALL_TIERS: readonly SubscriptionTier[] = ['free', 'plus', 'premium', 'pro']
 const INVITE_WORDS = [
   'amber',
   'ash',
@@ -249,28 +248,6 @@ async function getCurrentUser(ctx: QueryCtx | MutationCtx) {
   }
 
   return user
-}
-
-async function getActiveSubscriptionTier(
-  ctx: QueryCtx | MutationCtx,
-  userId: Id<'users'>,
-): Promise<SubscriptionTier> {
-  const now = Date.now()
-  const subscriptions = await ctx.db
-    .query('subscriptions')
-    .withIndex('by_user', (q) => q.eq('userId', userId))
-    .collect()
-  const activeSubscriptions = subscriptions.filter(
-    (subscription) =>
-      (subscription.status === 'active' || subscription.status === 'trialing') &&
-      (!subscription.currentPeriodEnd || subscription.currentPeriodEnd > now),
-  )
-
-  return activeSubscriptions.reduce<SubscriptionTier>(
-    (highest, subscription) =>
-      TIER_RANK[subscription.tier] > TIER_RANK[highest] ? subscription.tier : highest,
-    'free',
-  )
 }
 
 function normalizePrivateCampSlug(name: string, userId: Id<'users'>) {
@@ -1201,20 +1178,7 @@ export const createPrivateCamp = mutation({
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx)
-    const tier = await getActiveSubscriptionTier(ctx, user._id)
-    if (TIER_RANK[tier] < TIER_RANK.plus) {
-      throw new Error('Private camps require Plus, Premium, or Pro')
-    }
-
-    const existingPrivateCamp = await ctx.db
-      .query('camps')
-      .withIndex('by_owner', (q) => q.eq('ownerId', user._id))
-      .collect()
-    if (
-      existingPrivateCamp.some((camp) => camp.visibility === 'private' && camp.status === 'active')
-    ) {
-      throw new Error('You already have an active private camp')
-    }
+    const tier = await assertCanCreatePrivateCamp(ctx, user._id)
 
     const name = args.name.trim()
     if (name.length < 3) {
