@@ -18,6 +18,7 @@ export const SUBSCRIPTION_PRODUCT_IDS = {
 
 export type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'
 export type BillingPeriod = 'monthly' | 'annual'
+export type StorePurchaseKind = 'subscription' | 'proExtraCamp'
 
 export const TIER_PRODUCT_IDS: Record<
   Exclude<SubscriptionTier, 'free'>,
@@ -49,6 +50,17 @@ export const PRODUCT_ID_TO_TIER: Record<string, SubscriptionTier | undefined> = 
   [SUBSCRIPTION_PRODUCT_IDS.premiumAnnual]: 'premium',
   [SUBSCRIPTION_PRODUCT_IDS.proMonthly]: 'pro',
   [SUBSCRIPTION_PRODUCT_IDS.proAnnual]: 'pro',
+}
+
+export const PRODUCT_ID_TO_PURCHASE_KIND: Record<string, StorePurchaseKind | undefined> = {
+  [SUBSCRIPTION_PRODUCT_IDS.plusMonthly]: 'subscription',
+  [SUBSCRIPTION_PRODUCT_IDS.plusAnnual]: 'subscription',
+  [SUBSCRIPTION_PRODUCT_IDS.premiumMonthly]: 'subscription',
+  [SUBSCRIPTION_PRODUCT_IDS.premiumAnnual]: 'subscription',
+  [SUBSCRIPTION_PRODUCT_IDS.proMonthly]: 'subscription',
+  [SUBSCRIPTION_PRODUCT_IDS.proAnnual]: 'subscription',
+  [SUBSCRIPTION_PRODUCT_IDS.proExtraCampMonthly]: 'proExtraCamp',
+  [SUBSCRIPTION_PRODUCT_IDS.proExtraCampAnnual]: 'proExtraCamp',
 }
 
 export const ALL_SUBSCRIPTION_PRODUCT_IDS = Object.values(SUBSCRIPTION_PRODUCT_IDS)
@@ -83,6 +95,16 @@ export interface TierInfo {
   features: TierFeature[]
   isCurrent: boolean
   isFeatured: boolean
+  isAvailable: boolean
+}
+
+export interface ProExtraCampAddOnInfo {
+  productId: string
+  annualProductId: string
+  displayName: string
+  description: string
+  price: string | null
+  annualPrice: string | null
   isAvailable: boolean
 }
 
@@ -132,11 +154,18 @@ export const TIER_DEFINITIONS: Record<
     features: [
       { label: 'Everything in Premium' },
       { label: 'Public camp management' },
-      { label: 'Extra private camps available as add-ons' },
+      { label: 'Extra public camps available as add-ons' },
       { label: 'Advanced analytics' },
       { label: 'Early access to new features' },
     ],
   },
+}
+
+export const PRO_EXTRA_CAMP_ADD_ON_DEFINITION = {
+  productId: PRO_EXTRA_CAMP_PRODUCT_IDS.monthly,
+  annualProductId: PRO_EXTRA_CAMP_PRODUCT_IDS.annual,
+  displayName: 'Extra camp',
+  description: 'Add one more public camp to a Pro workspace.',
 }
 
 export interface SubscriptionState {
@@ -154,6 +183,8 @@ export interface SubscriptionState {
   isRestoring: boolean
   /** The tier being purchased, if any. */
   purchasingTier: SubscriptionTier | null
+  /** The store product currently being purchased, if any. */
+  purchasingProductId: string | null
   /** Last purchase or restore error message. */
   lastError: string | null
   /** Whether the paywall sheet is visible. */
@@ -168,6 +199,7 @@ export const subscriptionStore$ = observable<SubscriptionState>({
   isPurchasing: false,
   isRestoring: false,
   purchasingTier: null,
+  purchasingProductId: null,
   lastError: null,
   isPaywallVisible: false,
 })
@@ -195,15 +227,24 @@ export const subscriptionActions = {
     subscriptionStore$.productsLoaded.set(loaded)
   },
 
-  startPurchase(tier: SubscriptionTier) {
+  startPurchase(tier: SubscriptionTier, productId?: string) {
     subscriptionStore$.isPurchasing.set(true)
     subscriptionStore$.purchasingTier.set(tier)
+    subscriptionStore$.purchasingProductId.set(productId ?? null)
+    subscriptionStore$.lastError.set(null)
+  },
+
+  startAddOnPurchase(productId: string) {
+    subscriptionStore$.isPurchasing.set(true)
+    subscriptionStore$.purchasingTier.set(null)
+    subscriptionStore$.purchasingProductId.set(productId)
     subscriptionStore$.lastError.set(null)
   },
 
   completePurchase(success: boolean, tier?: SubscriptionTier) {
     subscriptionStore$.isPurchasing.set(false)
     subscriptionStore$.purchasingTier.set(null)
+    subscriptionStore$.purchasingProductId.set(null)
     if (success && tier) {
       subscriptionStore$.currentTier.set(tier)
     }
@@ -212,6 +253,7 @@ export const subscriptionActions = {
   failPurchase(error: string) {
     subscriptionStore$.isPurchasing.set(false)
     subscriptionStore$.purchasingTier.set(null)
+    subscriptionStore$.purchasingProductId.set(null)
     subscriptionStore$.lastError.set(error)
   },
 

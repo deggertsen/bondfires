@@ -1,5 +1,10 @@
-import type { SubscriptionTier, TierInfo } from '@bondfires/app'
-import { subscriptionStore$, TIER_DEFINITIONS, useSubscription } from '@bondfires/app'
+import type { ProExtraCampAddOnInfo, SubscriptionTier, TierInfo } from '@bondfires/app'
+import {
+  PRO_EXTRA_CAMP_ADD_ON_DEFINITION,
+  subscriptionStore$,
+  TIER_DEFINITIONS,
+  useSubscription,
+} from '@bondfires/app'
 import { SubscriptionPaywall } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
 import { Stack } from 'expo-router'
@@ -10,11 +15,13 @@ function GlobalPaywall() {
     currentTier,
     isPurchasing,
     isRestoring,
+    purchasingProductId,
     purchasingTier,
     lastError,
     productPrices,
     productsLoaded,
     purchase,
+    purchaseProExtraCamp,
     restore,
     hidePaywall,
     clearError,
@@ -65,6 +72,21 @@ function GlobalPaywall() {
     return [freeTier, ...paidTiers]
   }, [currentTier, productPrices, productsLoaded])
 
+  const proExtraCampAddOn = useMemo((): ProExtraCampAddOnInfo | null => {
+    if (!productsLoaded || currentTier !== 'pro') return null
+
+    const def = PRO_EXTRA_CAMP_ADD_ON_DEFINITION
+    const price = productPrices[def.productId] ?? null
+    const annualPrice = productPrices[def.annualProductId] ?? null
+
+    return {
+      ...def,
+      price,
+      annualPrice,
+      isAvailable: price !== null || annualPrice !== null,
+    }
+  }, [currentTier, productPrices, productsLoaded])
+
   if (!tiers) return null
 
   return (
@@ -77,12 +99,15 @@ function GlobalPaywall() {
         }
       }}
       tiers={tiers}
+      proExtraCampAddOn={proExtraCampAddOn}
       currentTier={currentTier}
       onPurchase={purchase}
+      onPurchaseProExtraCamp={purchaseProExtraCamp}
       onRestore={restore}
       isPurchasing={isPurchasing}
       isRestoring={isRestoring}
       purchasingTier={purchasingTier}
+      purchasingProductId={purchasingProductId}
       lastError={lastError}
     />
   )

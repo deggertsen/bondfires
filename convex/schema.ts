@@ -9,6 +9,22 @@ const subscriptionTier = v.union(
   v.literal('pro'),
 )
 
+const storePlatform = v.union(v.literal('ios'), v.literal('android'))
+const storeEntitlementStatus = v.union(
+  v.literal('pending_verification'),
+  v.literal('active'),
+  v.literal('trialing'),
+  v.literal('past_due'),
+  v.literal('canceled'),
+  v.literal('expired'),
+)
+const storeVerificationStatus = v.union(
+  v.literal('pending'),
+  v.literal('verified'),
+  v.literal('failed'),
+)
+const subscriptionAddOnType = v.union(v.literal('pro_extra_public_camp'))
+
 const userGender = v.union(v.literal('male'), v.literal('female'), v.literal('other'))
 
 const campRules = v.object({
@@ -19,6 +35,31 @@ const campRules = v.object({
   requiresTradeTags: v.optional(v.boolean()),
   allowedTiers: v.optional(v.array(subscriptionTier)),
   advisoryGuidelines: v.optional(v.array(v.string())),
+})
+
+const campVisibilityRule = v.object({
+  type: v.union(
+    v.literal('minTier'),
+    v.literal('gender'),
+    v.literal('minAge'),
+    v.literal('inviteRequired'),
+  ),
+  minTier: v.optional(subscriptionTier),
+  gender: v.optional(v.union(v.literal('male'), v.literal('female'))),
+  minAge: v.optional(v.number()),
+})
+
+const campJoinRule = v.object({
+  type: v.union(
+    v.literal('minTier'),
+    v.literal('gender'),
+    v.literal('minAge'),
+    v.literal('inviteRequired'),
+    v.literal('approvalRequired'),
+  ),
+  minTier: v.optional(subscriptionTier),
+  gender: v.optional(v.union(v.literal('male'), v.literal('female'))),
+  minAge: v.optional(v.number()),
 })
 
 export default defineSchema({
@@ -38,6 +79,7 @@ export default defineSchema({
     photoUrl: v.optional(v.string()),
     photoStorageId: v.optional(v.id('_storage')),
     gender: userGender,
+    birthDate: v.optional(v.string()), // ISO date string (YYYY-MM-DD), private
 
     // Stats (denormalized for performance)
     bondfireCount: v.optional(v.number()),
@@ -63,6 +105,10 @@ export default defineSchema({
     color: v.optional(v.string()),
     defaultPrompt: v.optional(v.string()),
     rules: campRules,
+    visibilityRules: v.optional(v.array(campVisibilityRule)),
+    joinRules: v.optional(v.array(campJoinRule)),
+    nameOverride: v.optional(v.string()), // Private camp custom name override
+    ownerDisplayName: v.optional(v.string()), // Denormalized owner display name at camp creation
     crisisBroadcast: v.optional(v.boolean()),
     welcomeBroadcast: v.optional(v.boolean()),
     visibility: v.union(v.literal('public'), v.literal('private')),
@@ -111,23 +157,40 @@ export default defineSchema({
     .index('by_camp', ['campId', 'createdAt'])
     .index('by_created_by', ['createdBy', 'createdAt']),
 
-  // Store subscription state. Store receipt validation lands in Phase 2B.
+  // Store subscription state. Client sync only records pending receipts; entitlement helpers
+  // count active/trialing rows after server-side store validation marks them verified.
   subscriptions: defineTable({
     userId: v.id('users'),
     tier: subscriptionTier,
-    status: v.union(
-      v.literal('active'),
-      v.literal('trialing'),
-      v.literal('past_due'),
-      v.literal('canceled'),
-      v.literal('expired'),
-    ),
-    platform: v.union(v.literal('ios'), v.literal('android')),
+    status: storeEntitlementStatus,
+    verificationStatus: v.optional(storeVerificationStatus),
+    platform: storePlatform,
     storeProductId: v.string(),
     storeTransactionId: v.optional(v.string()),
     storeOriginalTransactionId: v.optional(v.string()),
     storePurchaseToken: v.optional(v.string()),
     currentPeriodEnd: v.optional(v.number()),
+    verifiedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId', 'status'])
+    .index('by_store_transaction', ['storeOriginalTransactionId'])
+    .index('by_store_purchase_token', ['storePurchaseToken']),
+
+  // Store add-ons that extend paid-plan allowances.
+  subscriptionAddOns: defineTable({
+    userId: v.id('users'),
+    type: subscriptionAddOnType,
+    status: storeEntitlementStatus,
+    verificationStatus: storeVerificationStatus,
+    platform: storePlatform,
+    storeProductId: v.string(),
+    storeTransactionId: v.optional(v.string()),
+    storeOriginalTransactionId: v.optional(v.string()),
+    storePurchaseToken: v.optional(v.string()),
+    currentPeriodEnd: v.optional(v.number()),
+    verifiedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

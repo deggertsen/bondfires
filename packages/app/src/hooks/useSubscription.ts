@@ -20,7 +20,9 @@ import { api } from '../../../../convex/_generated/api'
 import {
   ALL_SUBSCRIPTION_PRODUCT_IDS,
   CREATE_REQUIRED_TIER,
-  PRODUCT_ID_TO_TIER,
+  PRO_EXTRA_CAMP_PRODUCT_IDS,
+  PRODUCT_ID_TO_PURCHASE_KIND,
+  type StorePurchaseKind,
   type SubscriptionTier,
   subscriptionActions,
   subscriptionStore$,
@@ -29,8 +31,14 @@ import {
   tierMeetsRequirement,
 } from '../store/subscription.store'
 
-function mapProductIdToTier(productId: string): SubscriptionTier | null {
-  return PRODUCT_ID_TO_TIER[productId] ?? null
+type StorePurchaseSyncResult = {
+  tier: SubscriptionTier
+  kind: StorePurchaseKind
+  status: 'pending_verification' | 'active' | 'trialing'
+}
+
+function mapProductIdToPurchaseKind(productId: string): StorePurchaseKind | null {
+  return PRODUCT_ID_TO_PURCHASE_KIND[productId] ?? null
 }
 
 function getErrorField(error: unknown, field: 'message' | 'debugMessage' | 'code') {
@@ -118,25 +126,31 @@ function getStoreOriginalTransactionId(purchase: Purchase) {
 
 async function processPurchase(
   purchase: Purchase,
-  syncPurchase: (purchase: Purchase) => Promise<SubscriptionTier>,
+  syncPurchase: (purchase: Purchase) => Promise<StorePurchaseSyncResult>,
 ) {
-  const tier = mapProductIdToTier(purchase.productId)
-  if (!tier) return null
+  const kind = mapProductIdToPurchaseKind(purchase.productId)
+  if (!kind) return null
 
-  const syncedTier = await syncPurchase(purchase)
+  const result = await syncPurchase(purchase)
   await finishTransaction({ purchase, isConsumable: false })
-  subscriptionActions.completePurchase(true, syncedTier)
+  subscriptionActions.completePurchase(true, result.tier)
   subscriptionActions.hidePaywall()
-  return syncedTier
+  return result
 }
 
 function subscribeToPurchaseUpdates(
-  syncPurchase: (purchase: Purchase) => Promise<SubscriptionTier>,
+  syncPurchase: (purchase: Purchase) => Promise<StorePurchaseSyncResult>,
 ) {
   if (!purchaseUpdateSub) {
     purchaseUpdateSub = purchaseUpdatedListener(async (purchase) => {
       try {
-        await processPurchase(purchase, syncPurchase)
+        const result = await processPurchase(purchase, syncPurchase)
+        if (result?.status === 'pending_verification') {
+          Alert.alert(
+            'Purchase Received',
+            'Your purchase was recorded and will unlock after store verification completes.',
+          )
+        }
       } catch (err) {
         console.warn('Error processing purchase update:', err)
         subscriptionActions.failPurchase(
@@ -188,6 +202,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
   const isPurchasing = useValue(subscriptionStore$.isPurchasing)
   const isRestoring = useValue(subscriptionStore$.isRestoring)
   const purchasingTier = useValue(subscriptionStore$.purchasingTier)
+  const purchasingProductId = useValue(subscriptionStore$.purchasingProductId)
   const lastError = useValue(subscriptionStore$.lastError)
   const productPrices = useValue(subscriptionStore$.productPrices)
   const productOfferTokens = useValue(subscriptionStore$.productOfferTokens)
@@ -222,7 +237,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
             currentPeriodEnd: getPurchaseNumberField(purchase, 'expirationDateIOS'),
             purchasedAt: purchase.transactionDate,
           })
-          return result.tier
+          return result
         })
         await loadSubscriptionProducts()
       } catch (err) {
@@ -246,29 +261,21 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
     }
   }, [initializeIap, syncStorePurchase])
 
-  const purchase = useCallback(async (tier: SubscriptionTier, productId?: string) => {
-    if (tier === 'free') {
-      subscriptionActions.hidePaywall()
-      return
-    }
-
-    const tierProductId = productId ?? TIER_PRODUCT_IDS[tier].monthly
-    subscriptionActions.startPurchase(tier)
-
+  const requestStorePurchase = useCallback(async (productId: string) => {
     try {
       await ensureIapConnection()
 
-      const offerToken = subscriptionStore$.productOfferTokens[tierProductId].get()
+      const offerToken = subscriptionStore$.productOfferTokens[productId].get()
       if (Platform.OS === 'android' && !offerToken) {
-        throw new Error('This subscription is not available for purchase yet.')
+        throw new Error('This store product is not available for purchase yet.')
       }
 
       await requestPurchase({
         request: {
-          apple: { sku: tierProductId },
+          apple: { sku: productId },
           google: {
-            skus: [tierProductId],
-            subscriptionOffers: offerToken ? [{ sku: tierProductId, offerToken }] : undefined,
+            skus: [productId],
+            subscriptionOffers: offerToken ? [{ sku: productId, offerToken }] : undefined,
           },
         },
         type: 'subs',
@@ -285,6 +292,28 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
     }
   }, [])
 
+  const purchase = useCallback(
+    async (tier: SubscriptionTier, productId?: string) => {
+      if (tier === 'free') {
+        subscriptionActions.hidePaywall()
+        return
+      }
+
+      const tierProductId = productId ?? TIER_PRODUCT_IDS[tier].monthly
+      subscriptionActions.startPurchase(tier, tierProductId)
+      await requestStorePurchase(tierProductId)
+    },
+    [requestStorePurchase],
+  )
+
+  const purchaseProExtraCamp = useCallback(
+    async (productId = PRO_EXTRA_CAMP_PRODUCT_IDS.monthly) => {
+      subscriptionActions.startAddOnPurchase(productId)
+      await requestStorePurchase(productId)
+    },
+    [requestStorePurchase],
+  )
+
   const restore = useCallback(async () => {
     subscriptionActions.startRestore()
 
@@ -298,8 +327,9 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
       }
 
       let highestTier: SubscriptionTier = 'free'
+      let syncedPurchaseCount = 0
       for (const p of purchases) {
-        const tier = await processPurchase(p, async (purchaseToSync) => {
+        const result = await processPurchase(p, async (purchaseToSync) => {
           const result = await syncStorePurchase({
             platform: getPurchasePlatform(purchaseToSync),
             storeProductId: purchaseToSync.productId,
@@ -309,10 +339,13 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
             currentPeriodEnd: getPurchaseNumberField(purchaseToSync, 'expirationDateIOS'),
             purchasedAt: purchaseToSync.transactionDate,
           })
-          return result.tier
+          return result
         })
-        if (tier && TIER_RANK[tier] > TIER_RANK[highestTier]) {
-          highestTier = tier
+        if (result) {
+          syncedPurchaseCount += 1
+        }
+        if (result?.tier && TIER_RANK[result.tier] > TIER_RANK[highestTier]) {
+          highestTier = result.tier
         }
       }
 
@@ -320,6 +353,12 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
         subscriptionActions.setCurrentTier(highestTier)
         subscriptionActions.completeRestore(true)
         Alert.alert('Purchases Restored', `Your ${highestTier} subscription has been restored.`)
+      } else if (syncedPurchaseCount > 0) {
+        subscriptionActions.completeRestore(true)
+        Alert.alert(
+          'Purchases Submitted',
+          'Your purchases were recorded and will unlock after store verification completes.',
+        )
       } else {
         subscriptionActions.completeRestore(false)
         Alert.alert(
@@ -356,12 +395,14 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
     isPurchasing,
     isRestoring,
     purchasingTier,
+    purchasingProductId,
     lastError,
     productPrices,
     productOfferTokens,
     productsLoaded,
     canCreate: tierMeetsRequirement(currentTier, CREATE_REQUIRED_TIER),
     purchase,
+    purchaseProExtraCamp,
     restore,
     managePlan,
     showPaywall: subscriptionActions.showPaywall,

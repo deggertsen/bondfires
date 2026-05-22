@@ -37,7 +37,6 @@ import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { UploadProgressCard } from '../../../components/UploadProgressCard'
 
-type CurrentUserData = Doc<'users'> | null
 type UserBondfireData = Doc<'bondfires'>
 type PublicUser = {
   _id: Id<'users'>
@@ -52,6 +51,21 @@ type CloseCircleEntry = {
   privateCampThreads: Array<Doc<'bondfires'> & { lastActivityAt: number }>
 }
 type Gender = 'male' | 'female' | 'other'
+type CurrentUserData = {
+  _id: Id<'users'>
+  email?: string
+  emailVerified?: boolean
+  name?: string
+  displayName?: string
+  photoUrl?: string
+  gender: Gender
+  age?: number
+  bondfireCount: number
+  responseCount: number
+  totalViews: number
+  isAdmin?: boolean
+  isReviewerAccount?: boolean
+} | null
 
 const GENDER_OPTIONS: Array<{ value: Gender; label: string }> = [
   { value: 'male', label: 'Male' },
@@ -750,7 +764,7 @@ export default function ProfileScreen() {
       <Sheet
         open={isEditSheetOpen}
         onOpenChange={(open: boolean) => state$.isEditSheetOpen.set(open)}
-        snapPoints={[40]}
+        snapPoints={[50]}
         dismissOnSnapToBottom
       >
         <Sheet.Overlay backgroundColor="rgba(0,0,0,0.6)" />
@@ -802,6 +816,18 @@ export default function ProfileScreen() {
                   )
                 })}
               </XStack>
+            </YStack>
+
+            <YStack gap={8}>
+              <Text variant="label" color={bondfireColors.whiteSmoke}>
+                Age
+              </Text>
+              <Text fontSize={12} color={bondfireColors.ash}>
+                {currentUser?.age !== undefined ? currentUser.age : 'Not set'}
+              </Text>
+              <Text fontSize={12} color={bondfireColors.ash}>
+                Based on your private birth date. Contact support to request a correction.
+              </Text>
             </YStack>
 
             <XStack gap={12}>
