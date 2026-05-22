@@ -36,6 +36,21 @@ type RecordingState = 'idle' | 'recording' | 'stopping' | 'completion' | 'proces
 type TradeTag = 'need' | 'offer'
 type CampWithMembership = Doc<'camps'> & { membership: Doc<'campMembers'> | null }
 
+function formatRecordingClock(seconds: number) {
+  const normalizedSeconds = Math.max(0, Math.floor(seconds))
+  const minutes = Math.floor(normalizedSeconds / 60)
+  const remainingSeconds = normalizedSeconds % 60
+  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`
+}
+
+function formatMaxDuration(seconds: number) {
+  if (seconds % 60 === 0) {
+    return `${Math.floor(seconds / 60)} min`
+  }
+
+  return formatRecordingClock(seconds)
+}
+
 export default function CreateScreen() {
   const router = useRouter()
   const { campId, respondTo } = useLocalSearchParams<{ campId?: string; respondTo?: string }>()
@@ -154,15 +169,19 @@ export default function CreateScreen() {
     recordingTimeRemainingSeconds !== undefined &&
     recordingTimeRemainingSeconds <= 60 &&
     (recordingState === 'recording' || liveStatus === 'live' || liveStatus === 'reconnecting')
+  const recordingLimitClock =
+    recordingTimeRemainingSeconds !== undefined
+      ? formatRecordingClock(recordingTimeRemainingSeconds)
+      : undefined
   const recordingTimerLabel = showRecordingLimitCountdown
-    ? `${Math.floor((recordingTimeRemainingSeconds ?? 0) / 60)}:${(
-        (recordingTimeRemainingSeconds ?? 0) % 60
-      )
-        .toString()
-        .padStart(2, '0')} left`
-    : `${Math.floor(recordingDuration / 60)}:${(recordingDuration % 60)
-        .toString()
-        .padStart(2, '0')}`
+    ? `${recordingLimitClock} left`
+    : formatRecordingClock(recordingDuration)
+  const autoStopStatusLabel = recordingLimitClock
+    ? `Auto-stops in ${recordingLimitClock}`
+    : undefined
+  const maxRecordingLabel = effectiveMaxRecordingSeconds
+    ? `Max ${formatMaxDuration(effectiveMaxRecordingSeconds)}`
+    : undefined
   const needsTradeTag =
     !respondTo && selectedCamp?.rules.requiresTradeTags === true && tradeTag === null
   const livePublisher = useLivePublisher({
@@ -1436,17 +1455,15 @@ export default function CreateScreen() {
 
               {isLiveRecording && (
                 <YStack
-                  backgroundColor={bondfireColors.error}
+                  backgroundColor={
+                    showRecordingLimitCountdown ? bondfireColors.warningDark : bondfireColors.error
+                  }
                   paddingHorizontal={16}
                   paddingVertical={6}
                   borderRadius={16}
                 >
                   <Text color={bondfireColors.whiteSmoke} fontWeight="800" fontSize={14}>
-                    {liveStatus === 'live'
-                      ? showRecordingLimitCountdown
-                        ? recordingTimerLabel
-                        : `LIVE ${recordingTimerLabel}`
-                      : statusLabel}
+                    {liveStatus === 'live' ? `LIVE ${recordingTimerLabel}` : statusLabel}
                   </Text>
                 </YStack>
               )}
@@ -1537,7 +1554,11 @@ export default function CreateScreen() {
               </Pressable>
 
               <Text color={bondfireColors.ash} fontSize={13} marginTop={12}>
-                {isLiveRecording ? 'Tap to stop' : statusLabel}
+                {isLiveRecording
+                  ? showRecordingLimitCountdown && autoStopStatusLabel
+                    ? autoStopStatusLabel
+                    : 'Tap to stop'
+                  : statusLabel}
               </Text>
             </YStack>
           </>
@@ -1615,7 +1636,9 @@ export default function CreateScreen() {
 
             {recordingState === 'recording' && (
               <YStack
-                backgroundColor={bondfireColors.error}
+                backgroundColor={
+                  showRecordingLimitCountdown ? bondfireColors.warningDark : bondfireColors.error
+                }
                 paddingHorizontal={16}
                 paddingVertical={6}
                 borderRadius={16}
@@ -1750,9 +1773,11 @@ export default function CreateScreen() {
                 : recordingState === 'recording'
                   ? isSwitchingCamera
                     ? 'Switching cameras...'
-                    : 'Tap to stop'
-                  : effectiveMaxRecordingSeconds
-                    ? `Max ${Math.round(effectiveMaxRecordingSeconds / 60)} min`
+                    : showRecordingLimitCountdown && autoStopStatusLabel
+                      ? autoStopStatusLabel
+                      : 'Tap to stop'
+                  : maxRecordingLabel
+                    ? maxRecordingLabel
                     : cameraMountError
                       ? 'Camera failed to initialize'
                       : isCameraReady
