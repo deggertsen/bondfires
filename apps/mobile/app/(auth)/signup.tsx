@@ -15,6 +15,42 @@ const GENDER_OPTIONS: Array<{ value: Gender; label: string }> = [
   { value: 'other', label: 'Other' },
 ]
 
+function parseBirthDate(birthDate: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(birthDate)
+  if (!match) {
+    return null
+  }
+
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const parsed = new Date(Date.UTC(year, month - 1, day))
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    return null
+  }
+
+  return { year, month, day }
+}
+
+function calculateAge(birthDate: string): number | null {
+  const birth = parseBirthDate(birthDate)
+  if (!birth) {
+    return null
+  }
+
+  const today = new Date()
+  let age = today.getFullYear() - birth.year
+  const monthDelta = today.getMonth() + 1 - birth.month
+  if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < birth.day)) {
+    age -= 1
+  }
+  return age
+}
+
 export default function SignupScreen() {
   const router = useRouter()
   const { signIn } = useAuthActions()
@@ -25,6 +61,7 @@ export default function SignupScreen() {
     password: '',
     confirmPassword: '',
     gender: null as Gender | null,
+    birthDate: '',
     isLoading: false,
     error: null as string | null,
   })
@@ -34,6 +71,7 @@ export default function SignupScreen() {
   const password = useValue(form$.password)
   const confirmPassword = useValue(form$.confirmPassword)
   const gender = useValue(form$.gender)
+  const birthDate = useValue(form$.birthDate)
   const isLoading = useValue(form$.isLoading)
   const error = useValue(form$.error)
 
@@ -43,9 +81,20 @@ export default function SignupScreen() {
     const currentPassword = form$.password.get()
     const currentConfirmPassword = form$.confirmPassword.get()
     const currentGender = form$.gender.get()
+    const currentBirthDate = form$.birthDate.get().trim()
 
-    if (!currentName || !currentEmail || !currentPassword || !currentGender) {
+    if (!currentName || !currentEmail || !currentPassword || !currentGender || !currentBirthDate) {
       form$.error.set('Please fill in all fields')
+      return
+    }
+
+    const age = calculateAge(currentBirthDate)
+    if (age === null) {
+      form$.error.set('Birth date must be a valid YYYY-MM-DD date')
+      return
+    }
+    if (age < 13) {
+      form$.error.set('You must be at least 13 years old to join')
       return
     }
 
@@ -69,6 +118,7 @@ export default function SignupScreen() {
         name: currentName,
         gender: currentGender,
         flow: 'signUp',
+        birthDate: currentBirthDate,
       })
       // Pass email to verify-email screen for OTP verification
       router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail } })
@@ -169,6 +219,23 @@ export default function SignupScreen() {
                     )
                   })}
                 </XStack>
+              </YStack>
+
+              <YStack gap={8}>
+                <Text variant="label" color={bondfireColors.whiteSmoke}>
+                  Birth Date
+                </Text>
+                <Text fontSize={12} color={bondfireColors.ash} marginBottom={4}>
+                  Required. You must be at least 13. Private; not shown publicly.
+                </Text>
+                <Input
+                  placeholder="YYYY-MM-DD"
+                  value={birthDate}
+                  onChangeText={(text) => form$.birthDate.set(text)}
+                  keyboardType="numbers-and-punctuation"
+                  autoCapitalize="none"
+                  maxLength={10}
+                />
               </YStack>
 
               <YStack gap={8}>
