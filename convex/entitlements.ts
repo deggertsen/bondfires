@@ -11,8 +11,8 @@
  *   plus     — create Bondfires in public camps, own ONE private camp, 30-min video limit,
  *              private camp videos retained for 1 month
  *   premium  — plus perks + unlimited private-camp video retention, 30-min video limit
- *   pro      — premium perks + create/manage up to 3 public camps, unlimited video length,
- *              analytics, custom camp branding
+ *   pro      — premium perks + create/manage up to 3 public camps plus verified add-ons,
+ *              unlimited video length, analytics, custom camp branding
  */
 
 import type { Doc, Id } from './_generated/dataModel'
@@ -51,6 +51,9 @@ export const MAX_PRIVATE_CAMPS_FOR_NON_PRO = 1
 /** Maximum public camps a Pro user may own/manage. */
 export const MAX_PUBLIC_CAMPS_FOR_PRO = 3
 
+/** Additional public-camp capacity granted by one verified Pro extra-camp add-on. */
+export const PRO_EXTRA_PUBLIC_CAMPS_PER_ADD_ON = 1
+
 // ---------------------------------------------------------------------------
 // Core helpers
 // ---------------------------------------------------------------------------
@@ -75,6 +78,7 @@ export async function getActiveSubscriptionTier(
 
   const activeSubscriptions = subscriptions.filter(
     (sub) =>
+      sub.verificationStatus === 'verified' &&
       (sub.status === 'active' || sub.status === 'trialing') &&
       (!sub.currentPeriodEnd || sub.currentPeriodEnd > now),
   )
@@ -83,6 +87,49 @@ export async function getActiveSubscriptionTier(
     (highest, sub) => (TIER_RANK[sub.tier] > TIER_RANK[highest] ? sub.tier : highest),
     'free',
   )
+}
+
+/**
+ * Returns the number of active, verified Pro extra-camp add-ons for a user.
+ *
+ * Client-submitted pending store receipts are intentionally ignored here. Store
+ * validation must mark an add-on `active`/`trialing` and `verified` before it
+ * can expand a user's camp allowance.
+ */
+export async function getActiveProExtraPublicCampAddOnCount(
+  ctx: QueryCtx | MutationCtx,
+  userId: Id<'users'>,
+): Promise<number> {
+  const now = Date.now()
+  const addOns = await ctx.db
+    .query('subscriptionAddOns')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .collect()
+
+  return addOns.filter(
+    (addOn) =>
+      addOn.type === 'pro_extra_public_camp' &&
+      addOn.verificationStatus === 'verified' &&
+      (addOn.status === 'active' || addOn.status === 'trialing') &&
+      (!addOn.currentPeriodEnd || addOn.currentPeriodEnd > now),
+  ).length
+}
+
+/**
+ * Returns the current public-camp allowance for a Pro user, including verified
+ * extra-camp add-ons. Non-Pro users have no public-camp creation allowance.
+ */
+export async function getPublicCampLimit(
+  ctx: QueryCtx | MutationCtx,
+  userId: Id<'users'>,
+): Promise<number> {
+  const tier = await getActiveSubscriptionTier(ctx, userId)
+  if (TIER_RANK[tier] < TIER_RANK.pro) {
+    return 0
+  }
+
+  const extraCampAddOns = await getActiveProExtraPublicCampAddOnCount(ctx, userId)
+  return MAX_PUBLIC_CAMPS_FOR_PRO + extraCampAddOns * PRO_EXTRA_PUBLIC_CAMPS_PER_ADD_ON
 }
 
 /**
@@ -260,15 +307,16 @@ export async function assertCanCreatePublicCamp(
     throw new Error('Creating public camps requires a Pro subscription')
   }
 
-  // Pro users may own at most MAX_PUBLIC_CAMPS_FOR_PRO public camps.
+  // Pro users may own at most the base Pro allowance plus verified add-ons.
+  const publicCampLimit = await getPublicCampLimit(ctx, userId)
   const existingPublicCamps = await ctx.db
     .query('camps')
     .withIndex('by_owner', (q) => q.eq('ownerId', userId))
     .filter((q) => q.and(q.eq(q.field('visibility'), 'public'), q.eq(q.field('status'), 'active')))
     .collect()
 
-  if (existingPublicCamps.length >= MAX_PUBLIC_CAMPS_FOR_PRO) {
-    throw new Error(`You have reached the limit of ${MAX_PUBLIC_CAMPS_FOR_PRO} public camps`)
+  if (existingPublicCamps.length >= publicCampLimit) {
+    throw new Error(`You have reached the limit of ${publicCampLimit} public camps`)
   }
 
   return tier

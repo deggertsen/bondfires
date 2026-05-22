@@ -1,13 +1,127 @@
+import type { ProExtraCampAddOnInfo, SubscriptionTier, TierInfo } from '@bondfires/app'
+import {
+  PRO_EXTRA_CAMP_ADD_ON_DEFINITION,
+  subscriptionStore$,
+  TIER_DEFINITIONS,
+  useSubscription,
+} from '@bondfires/app'
+import { SubscriptionPaywall } from '@bondfires/ui'
+import { useValue } from '@legendapp/state/react'
 import { Stack } from 'expo-router'
+import { useMemo } from 'react'
+
+function GlobalPaywall() {
+  const {
+    currentTier,
+    isPurchasing,
+    isRestoring,
+    purchasingProductId,
+    purchasingTier,
+    lastError,
+    productPrices,
+    productsLoaded,
+    purchase,
+    purchaseProExtraCamp,
+    restore,
+    hidePaywall,
+    clearError,
+  } = useSubscription({ initializeIap: true })
+
+  const isPaywallVisible = useValue(subscriptionStore$.isPaywallVisible)
+
+  const tiers = useMemo((): TierInfo[] | null => {
+    if (!productsLoaded) return null
+
+    const freeTier: TierInfo = {
+      tier: 'free' as SubscriptionTier,
+      productId: null,
+      displayName: 'Free',
+      price: '$0',
+      description: 'Browse, join, and watch bondfires.',
+      features: [
+        { label: 'Browse camps and bondfires', included: true },
+        { label: 'Watch and respond to bondfires', included: true },
+        { label: 'Up to 30 minutes of viewing', included: true },
+        { label: 'Create your own bondfires', included: false },
+        { label: 'Private camps', included: false },
+      ],
+      isCurrent: currentTier === 'free',
+      isFeatured: false,
+      isAvailable: true,
+    }
+
+    const paidTierNames: Array<'plus' | 'premium' | 'pro'> = ['plus', 'premium', 'pro']
+    const paidTiers: TierInfo[] = paidTierNames.map((tier) => {
+      const def = TIER_DEFINITIONS[tier]
+      const price = productPrices[def.productId] ?? null
+      return {
+        tier: tier as SubscriptionTier,
+        productId: def.productId,
+        annualProductId: def.annualProductId,
+        displayName: def.displayName,
+        price,
+        annualPrice: productPrices[def.annualProductId] ?? null,
+        description: def.description,
+        features: def.features.map((f: { label: string }) => ({ label: f.label, included: true })),
+        isCurrent: currentTier === tier,
+        isFeatured: tier === 'premium',
+        isAvailable: price !== null || productPrices[def.annualProductId] !== undefined,
+      }
+    })
+
+    return [freeTier, ...paidTiers]
+  }, [currentTier, productPrices, productsLoaded])
+
+  const proExtraCampAddOn = useMemo((): ProExtraCampAddOnInfo | null => {
+    if (!productsLoaded || currentTier !== 'pro') return null
+
+    const def = PRO_EXTRA_CAMP_ADD_ON_DEFINITION
+    const price = productPrices[def.productId] ?? null
+    const annualPrice = productPrices[def.annualProductId] ?? null
+
+    return {
+      ...def,
+      price,
+      annualPrice,
+      isAvailable: price !== null || annualPrice !== null,
+    }
+  }, [currentTier, productPrices, productsLoaded])
+
+  if (!tiers) return null
+
+  return (
+    <SubscriptionPaywall
+      open={isPaywallVisible}
+      onOpenChange={(open) => {
+        if (!open) {
+          hidePaywall()
+          clearError()
+        }
+      }}
+      tiers={tiers}
+      proExtraCampAddOn={proExtraCampAddOn}
+      currentTier={currentTier}
+      onPurchase={purchase}
+      onPurchaseProExtraCamp={purchaseProExtraCamp}
+      onRestore={restore}
+      isPurchasing={isPurchasing}
+      isRestoring={isRestoring}
+      purchasingTier={purchasingTier}
+      purchasingProductId={purchasingProductId}
+      lastError={lastError}
+    />
+  )
+}
 
 export default function MainLayout() {
-  // Keep tabs as the main surface, and push conversation screens on top.
-  // This avoids the "hidden tab screen" pattern which breaks back navigation clarity.
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="bondfire/[id]" options={{ headerShown: false }} />
-      <Stack.Screen name="camp/[id]" options={{ headerShown: false }} />
-    </Stack>
+    <>
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="bondfire/[id]" options={{ headerShown: false }} />
+        <Stack.Screen name="camp/[id]" options={{ headerShown: false }} />
+      </Stack>
+      <GlobalPaywall />
+    </>
   )
 }

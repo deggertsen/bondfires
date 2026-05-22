@@ -9,6 +9,22 @@ const subscriptionTier = v.union(
   v.literal('pro'),
 )
 
+const storePlatform = v.union(v.literal('ios'), v.literal('android'))
+const storeEntitlementStatus = v.union(
+  v.literal('pending_verification'),
+  v.literal('active'),
+  v.literal('trialing'),
+  v.literal('past_due'),
+  v.literal('canceled'),
+  v.literal('expired'),
+)
+const storeVerificationStatus = v.union(
+  v.literal('pending'),
+  v.literal('verified'),
+  v.literal('failed'),
+)
+const subscriptionAddOnType = v.union(v.literal('pro_extra_public_camp'))
+
 const userGender = v.union(v.literal('male'), v.literal('female'), v.literal('other'))
 
 const campRules = v.object({
@@ -141,26 +157,46 @@ export default defineSchema({
     .index('by_camp', ['campId', 'createdAt'])
     .index('by_created_by', ['createdBy', 'createdAt']),
 
-  // Store subscription state. Store receipt validation lands in Phase 2B.
+  // Store subscription state. Client sync only records pending receipts; entitlement helpers
+  // count active/trialing rows after server-side store validation marks them verified.
   subscriptions: defineTable({
     userId: v.id('users'),
     tier: subscriptionTier,
-    status: v.union(
-      v.literal('active'),
-      v.literal('trialing'),
-      v.literal('past_due'),
-      v.literal('canceled'),
-      v.literal('expired'),
-    ),
-    platform: v.union(v.literal('ios'), v.literal('android')),
+    status: storeEntitlementStatus,
+    verificationStatus: v.optional(storeVerificationStatus),
+    platform: storePlatform,
     storeProductId: v.string(),
+    storeTransactionId: v.optional(v.string()),
     storeOriginalTransactionId: v.optional(v.string()),
+    storePurchaseToken: v.optional(v.string()),
     currentPeriodEnd: v.optional(v.number()),
+    verifiedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index('by_user', ['userId', 'status'])
-    .index('by_store_transaction', ['storeOriginalTransactionId']),
+    .index('by_store_transaction', ['storeOriginalTransactionId'])
+    .index('by_store_purchase_token', ['storePurchaseToken']),
+
+  // Store add-ons that extend paid-plan allowances.
+  subscriptionAddOns: defineTable({
+    userId: v.id('users'),
+    type: subscriptionAddOnType,
+    status: storeEntitlementStatus,
+    verificationStatus: storeVerificationStatus,
+    platform: storePlatform,
+    storeProductId: v.string(),
+    storeTransactionId: v.optional(v.string()),
+    storeOriginalTransactionId: v.optional(v.string()),
+    storePurchaseToken: v.optional(v.string()),
+    currentPeriodEnd: v.optional(v.number()),
+    verifiedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId', 'status'])
+    .index('by_store_transaction', ['storeOriginalTransactionId'])
+    .index('by_store_purchase_token', ['storePurchaseToken']),
 
   // Bondfires - main video posts
   bondfires: defineTable({

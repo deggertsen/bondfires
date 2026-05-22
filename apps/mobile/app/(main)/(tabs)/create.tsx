@@ -8,6 +8,7 @@ import {
   resumePendingUploads,
   startBackgroundUpload,
   useLivePublisher,
+  useSubscription,
 } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
@@ -58,6 +59,9 @@ export default function CreateScreen() {
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions()
   const [micPermission, requestMicPermission] = useMicrophonePermissions()
+
+  // Subscription gating for Spark/create actions
+  const { canCreate, showPaywall } = useSubscription()
 
   const cameraRef = useRef<CameraView>(null)
   const isStartingRecordingRef = useRef(false)
@@ -748,6 +752,24 @@ export default function CreateScreen() {
   const startRecording = useCallback(async () => {
     const activeCamera = cameraRef.current
 
+    // Gate: Free users cannot create bondfires
+    if (!respondTo && !canCreate) {
+      Alert.alert(
+        'Upgrade to Create',
+        'Free accounts can browse and watch, but creating bondfires requires a Plus subscription or higher.',
+        [
+          { text: 'Not Now', style: 'cancel' },
+          {
+            text: 'View Plans',
+            onPress: () => {
+              showPaywall()
+            },
+          },
+        ],
+      )
+      return
+    }
+
     if (!respondTo && (!effectiveCampId || !selectedCamp)) {
       Alert.alert('Choose a Camp', 'Pick where this Bondfire belongs before recording.')
       return
@@ -817,6 +839,7 @@ export default function CreateScreen() {
       }
     }
   }, [
+    canCreate,
     clearStopTimeout,
     clearUploadStartTimeout,
     effectiveCampId,
@@ -825,6 +848,7 @@ export default function CreateScreen() {
     respondTo,
     resetRecordingState,
     selectedCamp,
+    showPaywall,
     startSegmentRecording,
     state$,
   ])

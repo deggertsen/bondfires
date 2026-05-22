@@ -1232,6 +1232,7 @@ __metadata:
     expo-constants: "*"
     expo-device: "*"
     expo-file-system: "*"
+    expo-iap: "*"
     expo-notifications: "*"
     react: "*"
     react-native: "*"
@@ -6780,6 +6781,17 @@ __metadata:
   languageName: node
   linkType: hard
 
+"expo-iap@npm:^4.3.1":
+  version: 4.3.1
+  resolution: "expo-iap@npm:4.3.1"
+  peerDependencies:
+    expo: "*"
+    react: "*"
+    react-native: "*"
+  checksum: 10c0/bd2f47eb7a0e9e283d600b0ec52004f7a46a36a7ab00ecec6d498d961dd4d58d1dd200d1fd4b991e1935b908d4fd068aaee62c3af7a1102a08e091f14ccb9651
+  languageName: node
+  linkType: hard
+
 "expo-image-loader@npm:~6.0.0":
   version: 6.0.0
   resolution: "expo-image-loader@npm:6.0.0"
@@ -8944,6 +8956,7 @@ __metadata:
     expo-device: "npm:^8.0.10"
     expo-file-system: "npm:^19.0.21"
     expo-font: "npm:~14.0.11"
+    expo-iap: "npm:^4.3.1"
     expo-image: "npm:^3.0.11"
     expo-image-manipulator: "npm:~14.0.8"
     expo-image-picker: "npm:~17.0.10"

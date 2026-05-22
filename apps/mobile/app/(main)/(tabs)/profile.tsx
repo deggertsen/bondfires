@@ -5,9 +5,10 @@ import {
   setFeedActiveBondfireId,
   uploadQueueActions,
   usePreferences,
+  useSubscription,
 } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
-import { Button, Card, Input, Text } from '@bondfires/ui'
+import { Button, Card, Input, SubscriptionStatus, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
 import {
@@ -111,6 +112,8 @@ export default function ProfileScreen() {
 
   const { preferences, setVideoQuality, setAutoplayVideos, setNotificationsEnabled } =
     usePreferences()
+
+  const { currentTier, isRestoring, managePlan, restore, showPaywall } = useSubscription()
 
   const [refreshKey, setRefreshKey] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -500,6 +503,16 @@ export default function ProfileScreen() {
           </Card>
 
           <UploadProgressCard />
+
+          {/* Subscription Status */}
+          <YStack marginBottom={24}>
+            <SubscriptionStatus
+              currentTier={currentTier}
+              isRestoring={isRestoring}
+              onManagePress={currentTier === 'free' ? showPaywall : managePlan}
+              onRestorePress={restore}
+            />
+          </YStack>
 
           {closeCircle && closeCircle.length > 0 && (
             <YStack gap={12} marginBottom={24}>
