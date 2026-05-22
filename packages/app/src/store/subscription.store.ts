@@ -6,12 +6,52 @@ import { observable } from '@legendapp/state'
  * and Google Play Console.
  */
 export const SUBSCRIPTION_PRODUCT_IDS = {
-  plus: 'bondfires.plus.monthly',
-  premium: 'bondfires.premium.monthly',
-  pro: 'bondfires.pro.monthly',
+  plusMonthly: 'bondfires.plus.monthly',
+  plusAnnual: 'bondfires.plus.annual',
+  premiumMonthly: 'bondfires.premium.monthly',
+  premiumAnnual: 'bondfires.premium.annual',
+  proMonthly: 'bondfires.pro.monthly',
+  proAnnual: 'bondfires.pro.annual',
+  proExtraCampMonthly: 'bondfires.pro.extra_camp.monthly',
+  proExtraCampAnnual: 'bondfires.pro.extra_camp.annual',
 } as const
 
 export type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'
+export type BillingPeriod = 'monthly' | 'annual'
+
+export const TIER_PRODUCT_IDS: Record<
+  Exclude<SubscriptionTier, 'free'>,
+  Record<BillingPeriod, string>
+> = {
+  plus: {
+    monthly: SUBSCRIPTION_PRODUCT_IDS.plusMonthly,
+    annual: SUBSCRIPTION_PRODUCT_IDS.plusAnnual,
+  },
+  premium: {
+    monthly: SUBSCRIPTION_PRODUCT_IDS.premiumMonthly,
+    annual: SUBSCRIPTION_PRODUCT_IDS.premiumAnnual,
+  },
+  pro: {
+    monthly: SUBSCRIPTION_PRODUCT_IDS.proMonthly,
+    annual: SUBSCRIPTION_PRODUCT_IDS.proAnnual,
+  },
+}
+
+export const PRO_EXTRA_CAMP_PRODUCT_IDS: Record<BillingPeriod, string> = {
+  monthly: SUBSCRIPTION_PRODUCT_IDS.proExtraCampMonthly,
+  annual: SUBSCRIPTION_PRODUCT_IDS.proExtraCampAnnual,
+}
+
+export const PRODUCT_ID_TO_TIER: Record<string, SubscriptionTier | undefined> = {
+  [SUBSCRIPTION_PRODUCT_IDS.plusMonthly]: 'plus',
+  [SUBSCRIPTION_PRODUCT_IDS.plusAnnual]: 'plus',
+  [SUBSCRIPTION_PRODUCT_IDS.premiumMonthly]: 'premium',
+  [SUBSCRIPTION_PRODUCT_IDS.premiumAnnual]: 'premium',
+  [SUBSCRIPTION_PRODUCT_IDS.proMonthly]: 'pro',
+  [SUBSCRIPTION_PRODUCT_IDS.proAnnual]: 'pro',
+}
+
+export const ALL_SUBSCRIPTION_PRODUCT_IDS = Object.values(SUBSCRIPTION_PRODUCT_IDS)
 
 export const TIER_RANK: Record<SubscriptionTier, number> = {
   free: 0,
@@ -35,8 +75,10 @@ export interface TierFeature {
 export interface TierInfo {
   tier: SubscriptionTier
   productId: string | null
+  annualProductId?: string | null
   displayName: string
   price: string | null
+  annualPrice?: string | null
   description: string
   features: TierFeature[]
   isCurrent: boolean
@@ -52,42 +94,45 @@ export const TIER_DEFINITIONS: Record<
   Exclude<SubscriptionTier, 'free'>,
   {
     productId: string
+    annualProductId: string
     displayName: string
     description: string
     features: { label: string }[]
   }
 > = {
   plus: {
-    productId: SUBSCRIPTION_PRODUCT_IDS.plus,
+    productId: TIER_PRODUCT_IDS.plus.monthly,
+    annualProductId: TIER_PRODUCT_IDS.plus.annual,
     displayName: 'Plus',
     description: 'Create in public camps and one private camp.',
     features: [
       { label: 'Create bondfires in public camps' },
       { label: 'One private camp' },
       { label: 'Up to 30-minute recordings' },
-      { label: '1-month video retention' },
+      { label: '1-month private camp video storage' },
     ],
   },
   premium: {
-    productId: SUBSCRIPTION_PRODUCT_IDS.premium,
+    productId: TIER_PRODUCT_IDS.premium.monthly,
+    annualProductId: TIER_PRODUCT_IDS.premium.annual,
     displayName: 'Premium',
-    description: 'Create anywhere with extended limits.',
+    description: 'Keep private camp videos without the Plus storage limit.',
     features: [
       { label: 'Everything in Plus' },
-      { label: 'Unlimited private camps' },
-      { label: 'Up to 60-minute recordings' },
-      { label: '3-month video retention' },
+      { label: 'Unlimited private camp video storage' },
+      { label: 'Up to 30-minute recordings' },
       { label: 'Priority support' },
     ],
   },
   pro: {
-    productId: SUBSCRIPTION_PRODUCT_IDS.pro,
+    productId: TIER_PRODUCT_IDS.pro.monthly,
+    annualProductId: TIER_PRODUCT_IDS.pro.annual,
     displayName: 'Pro',
-    description: 'Full creative freedom, unlimited everything.',
+    description: 'Manage public camps up to the included allowance.',
     features: [
       { label: 'Everything in Premium' },
-      { label: 'Unlimited recording duration' },
-      { label: 'Permanent video retention' },
+      { label: 'Public camp management' },
+      { label: 'Extra private camps available as add-ons' },
       { label: 'Advanced analytics' },
       { label: 'Early access to new features' },
     ],

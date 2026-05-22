@@ -99,7 +99,7 @@ export default function ProfileScreen() {
   const { preferences, setVideoQuality, setAutoplayVideos, setNotificationsEnabled } =
     usePreferences()
 
-  const { currentTier, isRestoring, restore, showPaywall } = useSubscription()
+  const { currentTier, isRestoring, managePlan, restore, showPaywall } = useSubscription()
 
   const [refreshKey, setRefreshKey] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -495,7 +495,7 @@ export default function ProfileScreen() {
             <SubscriptionStatus
               currentTier={currentTier}
               isRestoring={isRestoring}
-              onManagePress={showPaywall}
+              onManagePress={currentTier === 'free' ? showPaywall : managePlan}
               onRestorePress={restore}
             />
           </YStack>

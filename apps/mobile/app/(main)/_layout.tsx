@@ -50,13 +50,15 @@ function GlobalPaywall() {
       return {
         tier: tier as SubscriptionTier,
         productId: def.productId,
+        annualProductId: def.annualProductId,
         displayName: def.displayName,
         price,
+        annualPrice: productPrices[def.annualProductId] ?? null,
         description: def.description,
         features: def.features.map((f: { label: string }) => ({ label: f.label, included: true })),
         isCurrent: currentTier === tier,
         isHighest: tier === 'pro',
-        isAvailable: price !== null,
+        isAvailable: price !== null || productPrices[def.annualProductId] !== undefined,
       }
     })
 

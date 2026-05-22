@@ -1,6 +1,7 @@
-import type { SubscriptionTier, TierInfo } from '@bondfires/app'
+import type { BillingPeriod, SubscriptionTier, TierInfo } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Check, Crown, Flame, Sparkles, Star, X } from '@tamagui/lucide-icons'
+import { useState } from 'react'
 import { Pressable, ScrollView } from 'react-native'
 import { Card, Sheet, Spinner, Text, XStack, YStack } from 'tamagui'
 import { Button } from './Button'
@@ -16,7 +17,7 @@ interface SubscriptionPaywallProps {
   onOpenChange: (open: boolean) => void
   tiers: TierInfo[]
   currentTier: SubscriptionTier
-  onPurchase: (tier: SubscriptionTier) => void
+  onPurchase: (tier: SubscriptionTier, productId?: string) => void
   onRestore: () => void
   isPurchasing: boolean
   isRestoring: boolean
@@ -36,14 +37,22 @@ export function SubscriptionPaywall({
   purchasingTier,
   lastError,
 }: SubscriptionPaywallProps) {
+  const [selectedPeriods, setSelectedPeriods] = useState<
+    Partial<Record<SubscriptionTier, BillingPeriod>>
+  >({})
+
   if (!open) return null
 
-  const handlePurchase = (tier: SubscriptionTier) => {
+  const handlePurchase = (tier: SubscriptionTier, productId?: string) => {
     if (tier === 'free' || tier === currentTier) {
       onOpenChange(false)
       return
     }
-    onPurchase(tier)
+    onPurchase(tier, productId)
+  }
+
+  const handlePeriodChange = (tier: SubscriptionTier, period: BillingPeriod) => {
+    setSelectedPeriods((current) => ({ ...current, [tier]: period }))
   }
 
   return (
@@ -140,11 +149,16 @@ export function SubscriptionPaywall({
                   key={tier.tier}
                   tier={tier.tier}
                   price={tier.price ?? 'Coming Soon'}
+                  annualPrice={tier.annualPrice ?? null}
+                  productId={tier.productId}
+                  annualProductId={tier.annualProductId ?? null}
                   description={tier.description}
                   features={tier.features}
                   isCurrent={tier.isCurrent}
                   isHighest={tier.isHighest}
                   isAvailable={tier.isAvailable}
+                  selectedPeriod={selectedPeriods[tier.tier] ?? 'monthly'}
+                  onPeriodChange={handlePeriodChange}
                   onPurchase={handlePurchase}
                   isPurchasing={isPurchasing && purchasingTier === tier.tier}
                 />
@@ -176,29 +190,51 @@ export function SubscriptionPaywall({
 interface TierCardProps {
   tier: SubscriptionTier
   price: string
+  annualPrice?: string | null
+  productId?: string | null
+  annualProductId?: string | null
   description: string
   features: { label: string; included: boolean }[]
   isCurrent: boolean
   isAvailable?: boolean
   isHighest?: boolean
-  onPurchase: (tier: SubscriptionTier) => void
+  selectedPeriod?: BillingPeriod
+  onPeriodChange?: (tier: SubscriptionTier, period: BillingPeriod) => void
+  onPurchase: (tier: SubscriptionTier, productId?: string) => void
   isPurchasing: boolean
 }
 
 function TierCard({
   tier,
   price,
+  annualPrice,
+  productId,
+  annualProductId,
   description,
   features,
   isCurrent,
   isAvailable = true,
   isHighest,
+  selectedPeriod = 'monthly',
+  onPeriodChange,
   onPurchase,
   isPurchasing,
 }: TierCardProps) {
   const TierIcon = tier === 'free' ? Star : (TIER_ICONS[tier] ?? Star)
   const isFree = tier === 'free'
-  const isComingSoon = !isFree && !isAvailable
+  const monthlyAvailable = !!productId && !!price
+  const annualAvailable = !!annualProductId && !!annualPrice
+  const activePeriod =
+    selectedPeriod === 'annual' && annualAvailable
+      ? 'annual'
+      : monthlyAvailable
+        ? 'monthly'
+        : annualAvailable
+          ? 'annual'
+          : 'monthly'
+  const selectedProductId = activePeriod === 'annual' ? annualProductId : productId
+  const selectedPrice = activePeriod === 'annual' ? annualPrice : price
+  const isComingSoon = !isFree && (!isAvailable || !selectedProductId || !selectedPrice)
   const accentColor = isHighest
     ? bondfireColors.moltenGold
     : isCurrent
@@ -226,11 +262,11 @@ function TierCard({
         </XStack>
         <YStack alignItems="flex-end">
           <Text color={priceColor} fontSize={18} fontWeight="700">
-            {price}
+            {selectedPrice ?? 'Coming Soon'}
           </Text>
-          {!isFree && isAvailable && (
+          {!isFree && !isComingSoon && (
             <Text color={bondfireColors.ash} fontSize={11}>
-              /month
+              /{activePeriod === 'annual' ? 'year' : 'month'}
             </Text>
           )}
         </YStack>
@@ -240,6 +276,25 @@ function TierCard({
       <Text color={bondfireColors.ash} fontSize={13} marginBottom={12}>
         {description}
       </Text>
+
+      {!isFree && annualProductId ? (
+        <XStack gap={8} marginBottom={12}>
+          <BillingOption
+            label="Monthly"
+            price={price}
+            selected={activePeriod === 'monthly'}
+            disabled={!productId || !price}
+            onPress={() => onPeriodChange?.(tier, 'monthly')}
+          />
+          <BillingOption
+            label="Annual"
+            price={annualPrice ?? 'Coming Soon'}
+            selected={activePeriod === 'annual'}
+            disabled={!annualProductId || !annualPrice}
+            onPress={() => onPeriodChange?.(tier, 'annual')}
+          />
+        </XStack>
+      ) : null}
 
       {/* Features */}
       <YStack gap={8} marginBottom={16}>
@@ -279,13 +334,13 @@ function TierCard({
         <Button
           variant={isHighest ? 'primary' : 'outline'}
           size="$md"
-          disabled={isPurchasing || !isAvailable}
-          onPress={() => onPurchase(tier)}
+          disabled={isPurchasing || isComingSoon}
+          onPress={() => onPurchase(tier, selectedProductId ?? undefined)}
           backgroundColor={isHighest ? bondfireColors.bondfireCopper : 'transparent'}
           borderColor={
             isHighest ? 'transparent' : isAvailable ? bondfireColors.ash : bondfireColors.iron
           }
-          opacity={isPurchasing || !isAvailable ? 0.65 : 1}
+          opacity={isPurchasing || isComingSoon ? 0.65 : 1}
         >
           <XStack alignItems="center" gap={8}>
             {isPurchasing ? (
@@ -294,10 +349,10 @@ function TierCard({
                 color={isHighest ? bondfireColors.whiteSmoke : bondfireColors.bondfireCopper}
               />
             ) : null}
-            <Text color={isAvailable ? ctaColor : bondfireColors.ash} fontWeight="600">
+            <Text color={isComingSoon ? bondfireColors.ash : ctaColor} fontWeight="600">
               {isFree
                 ? 'Continue free'
-                : !isAvailable
+                : isComingSoon
                   ? 'Coming soon'
                   : isPurchasing
                     ? 'Processing...'
@@ -307,5 +362,42 @@ function TierCard({
         </Button>
       )}
     </Card>
+  )
+}
+
+interface BillingOptionProps {
+  label: string
+  price: string | null
+  selected: boolean
+  disabled: boolean
+  onPress: () => void
+}
+
+function BillingOption({ label, price, selected, disabled, onPress }: BillingOptionProps) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected, disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={{ flex: 1 }}
+    >
+      <YStack
+        borderWidth={1}
+        borderColor={selected ? bondfireColors.bondfireCopper : bondfireColors.iron}
+        backgroundColor={selected ? `${bondfireColors.bondfireCopper}20` : bondfireColors.gunmetal}
+        borderRadius={10}
+        paddingVertical={8}
+        paddingHorizontal={10}
+        opacity={disabled ? 0.55 : 1}
+      >
+        <Text color={bondfireColors.whiteSmoke} fontSize={12} fontWeight="700">
+          {label}
+        </Text>
+        <Text color={bondfireColors.ash} fontSize={11} numberOfLines={1}>
+          {price ?? 'Coming Soon'}
+        </Text>
+      </YStack>
+    </Pressable>
   )
 }

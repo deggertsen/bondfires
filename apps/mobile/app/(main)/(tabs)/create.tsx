@@ -794,6 +794,7 @@ export default function CreateScreen() {
       }
     }
   }, [
+    canCreate,
     clearStopTimeout,
     clearUploadStartTimeout,
     effectiveCampId,
@@ -802,6 +803,7 @@ export default function CreateScreen() {
     respondTo,
     resetRecordingState,
     selectedCamp,
+    showPaywall,
     startSegmentRecording,
     state$,
   ])

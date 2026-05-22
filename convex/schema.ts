@@ -124,13 +124,16 @@ export default defineSchema({
     ),
     platform: v.union(v.literal('ios'), v.literal('android')),
     storeProductId: v.string(),
+    storeTransactionId: v.optional(v.string()),
     storeOriginalTransactionId: v.optional(v.string()),
+    storePurchaseToken: v.optional(v.string()),
     currentPeriodEnd: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index('by_user', ['userId', 'status'])
-    .index('by_store_transaction', ['storeOriginalTransactionId']),
+    .index('by_store_transaction', ['storeOriginalTransactionId'])
+    .index('by_store_purchase_token', ['storePurchaseToken']),
 
   // Bondfires - main video posts
   bondfires: defineTable({
