@@ -6,13 +6,66 @@ import { auth } from './auth'
 function publicUser(user: Doc<'users'>) {
   return {
     _id: user._id,
-    _creationTime: user._creationTime,
     name: user.name,
     displayName: user.displayName,
     photoUrl: user.photoUrl,
     bondfireCount: user.bondfireCount ?? 0,
     responseCount: user.responseCount ?? 0,
     totalViews: user.totalViews ?? 0,
+  }
+}
+
+function parseBirthDate(birthDate: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(birthDate)
+  if (!match) {
+    return null
+  }
+
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const parsed = new Date(Date.UTC(year, month - 1, day))
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    return null
+  }
+
+  return { year, month, day }
+}
+
+function calculateAge(birthDate: string): number | undefined {
+  const birth = parseBirthDate(birthDate)
+  if (!birth) {
+    return undefined
+  }
+
+  const today = new Date()
+  let age = today.getFullYear() - birth.year
+  const monthDelta = today.getMonth() + 1 - birth.month
+  if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < birth.day)) {
+    age -= 1
+  }
+  return age
+}
+
+function currentUser(user: Doc<'users'>) {
+  return {
+    _id: user._id,
+    email: user.email,
+    emailVerified: user.emailVerified,
+    name: user.name,
+    displayName: user.displayName,
+    photoUrl: user.photoUrl,
+    gender: user.gender,
+    age: user.birthDate ? calculateAge(user.birthDate) : undefined,
+    bondfireCount: user.bondfireCount ?? 0,
+    responseCount: user.responseCount ?? 0,
+    totalViews: user.totalViews ?? 0,
+    isAdmin: user.isAdmin,
+    isReviewerAccount: user.isReviewerAccount,
   }
 }
 
@@ -24,7 +77,8 @@ export const current = query({
     if (!userId) {
       return null
     }
-    return await ctx.db.get(userId)
+    const user = await ctx.db.get(userId)
+    return user ? currentUser(user) : null
   },
 })
 
@@ -59,7 +113,8 @@ export const updateProfile = mutation({
     if (args.gender !== undefined) updates.gender = args.gender
 
     await ctx.db.patch(userId, updates)
-    return await ctx.db.get(userId)
+    const user = await ctx.db.get(userId)
+    return user ? currentUser(user) : null
   },
 })
 
@@ -130,7 +185,8 @@ export const updateProfilePhoto = mutation({
       await ctx.storage.delete(user.photoStorageId)
     }
 
-    return await ctx.db.get(userId)
+    const updatedUser = await ctx.db.get(userId)
+    return updatedUser ? currentUser(updatedUser) : null
   },
 })
 

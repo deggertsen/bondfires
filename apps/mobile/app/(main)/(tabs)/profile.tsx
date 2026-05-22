@@ -36,7 +36,6 @@ import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { UploadProgressCard } from '../../../components/UploadProgressCard'
 
-type CurrentUserData = Doc<'users'> | null
 type UserBondfireData = Doc<'bondfires'>
 type PublicUser = {
   _id: Id<'users'>
@@ -51,6 +50,21 @@ type CloseCircleEntry = {
   privateCampThreads: Array<Doc<'bondfires'> & { lastActivityAt: number }>
 }
 type Gender = 'male' | 'female' | 'other'
+type CurrentUserData = {
+  _id: Id<'users'>
+  email?: string
+  emailVerified?: boolean
+  name?: string
+  displayName?: string
+  photoUrl?: string
+  gender: Gender
+  age?: number
+  bondfireCount: number
+  responseCount: number
+  totalViews: number
+  isAdmin?: boolean
+  isReviewerAccount?: boolean
+} | null
 
 const GENDER_OPTIONS: Array<{ value: Gender; label: string }> = [
   { value: 'male', label: 'Male' },
@@ -793,13 +807,13 @@ export default function ProfileScreen() {
 
             <YStack gap={8}>
               <Text variant="label" color={bondfireColors.whiteSmoke}>
-                Birth Date
+                Age
               </Text>
               <Text fontSize={12} color={bondfireColors.ash}>
-                {currentUser?.birthDate ?? 'Not set'}
+                {currentUser?.age !== undefined ? currentUser.age : 'Not set'}
               </Text>
               <Text fontSize={12} color={bondfireColors.ash}>
-                Contact support to request a change.
+                Based on your private birth date. Contact support to request a correction.
               </Text>
             </YStack>
 
