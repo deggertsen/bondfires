@@ -1,6 +1,20 @@
 import { v } from 'convex/values'
+import type { Doc } from './_generated/dataModel'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
+
+function publicUser(user: Doc<'users'>) {
+  return {
+    _id: user._id,
+    _creationTime: user._creationTime,
+    name: user.name,
+    displayName: user.displayName,
+    photoUrl: user.photoUrl,
+    bondfireCount: user.bondfireCount ?? 0,
+    responseCount: user.responseCount ?? 0,
+    totalViews: user.totalViews ?? 0,
+  }
+}
 
 // Get the current authenticated user
 export const current = query({
@@ -18,7 +32,8 @@ export const current = query({
 export const get = query({
   args: { userId: v.id('users') },
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.userId)
+    const user = await ctx.db.get(args.userId)
+    return user ? publicUser(user) : null
   },
 })
 
