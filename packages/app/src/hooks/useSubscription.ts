@@ -1,5 +1,5 @@
 import { useValue } from '@legendapp/state/react'
-import { useMutation, useQuery } from 'convex/react'
+import { useAction, useMutation, useQuery } from 'convex/react'
 import Constants from 'expo-constants'
 import {
   deepLinkToSubscriptions,
@@ -34,7 +34,7 @@ import {
 type StorePurchaseSyncResult = {
   tier: SubscriptionTier
   kind: StorePurchaseKind
-  status: 'pending_verification' | 'active' | 'trialing'
+  status: 'pending_verification' | 'active' | 'trialing' | 'past_due' | 'canceled' | 'expired'
 }
 
 function mapProductIdToPurchaseKind(productId: string): StorePurchaseKind | null {
@@ -124,6 +124,33 @@ function getStoreOriginalTransactionId(purchase: Purchase) {
   )
 }
 
+function getStorePurchaseSyncArgs(purchase: Purchase) {
+  return {
+    platform: getPurchasePlatform(purchase),
+    storeProductId: purchase.productId,
+    storeTransactionId: purchase.transactionId ?? purchase.id,
+    storeOriginalTransactionId: getStoreOriginalTransactionId(purchase),
+    storePurchaseToken: purchase.purchaseToken ?? undefined,
+    currentPeriodEnd: getPurchaseNumberField(purchase, 'expirationDateIOS'),
+    purchasedAt: purchase.transactionDate,
+  }
+}
+
+function getStorePurchaseVerifyArgs(purchase: Purchase) {
+  const syncArgs = getStorePurchaseSyncArgs(purchase)
+  return {
+    platform: syncArgs.platform,
+    storeProductId: syncArgs.storeProductId,
+    storeTransactionId: syncArgs.storeTransactionId,
+    storeOriginalTransactionId: syncArgs.storeOriginalTransactionId,
+    storePurchaseToken: syncArgs.storePurchaseToken,
+  }
+}
+
+function storeStatusUnlocksEntitlements(status: StorePurchaseSyncResult['status']) {
+  return status === 'active' || status === 'trialing'
+}
+
 async function processPurchase(
   purchase: Purchase,
   syncPurchase: (purchase: Purchase) => Promise<StorePurchaseSyncResult>,
@@ -132,6 +159,15 @@ async function processPurchase(
   if (!kind) return null
 
   const result = await syncPurchase(purchase)
+  if (!storeStatusUnlocksEntitlements(result.status)) {
+    subscriptionActions.failPurchase(
+      result.status === 'pending_verification'
+        ? 'Purchase is still pending store verification. Please restore purchases after it completes.'
+        : 'Purchase is not currently active.',
+    )
+    return result
+  }
+
   await finishTransaction({ purchase, isConsumable: false })
   subscriptionActions.completePurchase(true, result.tier)
   subscriptionActions.hidePaywall()
@@ -147,14 +183,14 @@ function subscribeToPurchaseUpdates(
         const result = await processPurchase(purchase, syncPurchase)
         if (result?.status === 'pending_verification') {
           Alert.alert(
-            'Purchase Received',
-            'Your purchase was recorded and will unlock after store verification completes.',
+            'Purchase Pending',
+            'Your purchase was recorded but is still pending store verification. Please restore purchases after it completes.',
           )
         }
       } catch (err) {
         console.warn('Error processing purchase update:', err)
         subscriptionActions.failPurchase(
-          'Purchase completed, but could not be synced. Please restore purchases.',
+          'Purchase completed, but could not be verified. Please restore purchases.',
         )
       }
     })
@@ -198,6 +234,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
   // Convex subscription state
   const subscriptionQuery = useQuery(api.subscriptions.current)
   const syncStorePurchase = useMutation(api.subscriptions.syncStorePurchase)
+  const verifyStorePurchase = useAction(api.subscriptions.verifyStorePurchase)
   const currentTier = useValue(subscriptionStore$.currentTier)
   const isPurchasing = useValue(subscriptionStore$.isPurchasing)
   const isRestoring = useValue(subscriptionStore$.isRestoring)
@@ -228,16 +265,8 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
         if (!mounted) return
 
         subscribeToPurchaseUpdates(async (purchase) => {
-          const result = await syncStorePurchase({
-            platform: getPurchasePlatform(purchase),
-            storeProductId: purchase.productId,
-            storeTransactionId: purchase.transactionId ?? purchase.id,
-            storeOriginalTransactionId: getStoreOriginalTransactionId(purchase),
-            storePurchaseToken: purchase.purchaseToken ?? undefined,
-            currentPeriodEnd: getPurchaseNumberField(purchase, 'expirationDateIOS'),
-            purchasedAt: purchase.transactionDate,
-          })
-          return result
+          await syncStorePurchase(getStorePurchaseSyncArgs(purchase))
+          return await verifyStorePurchase(getStorePurchaseVerifyArgs(purchase))
         })
         await loadSubscriptionProducts()
       } catch (err) {
@@ -259,7 +288,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
         })
       }
     }
-  }, [initializeIap, syncStorePurchase])
+  }, [initializeIap, syncStorePurchase, verifyStorePurchase])
 
   const requestStorePurchase = useCallback(async (productId: string) => {
     try {
@@ -330,21 +359,17 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
       let syncedPurchaseCount = 0
       for (const p of purchases) {
         const result = await processPurchase(p, async (purchaseToSync) => {
-          const result = await syncStorePurchase({
-            platform: getPurchasePlatform(purchaseToSync),
-            storeProductId: purchaseToSync.productId,
-            storeTransactionId: purchaseToSync.transactionId ?? purchaseToSync.id,
-            storeOriginalTransactionId: getStoreOriginalTransactionId(purchaseToSync),
-            storePurchaseToken: purchaseToSync.purchaseToken ?? undefined,
-            currentPeriodEnd: getPurchaseNumberField(purchaseToSync, 'expirationDateIOS'),
-            purchasedAt: purchaseToSync.transactionDate,
-          })
-          return result
+          await syncStorePurchase(getStorePurchaseSyncArgs(purchaseToSync))
+          return await verifyStorePurchase(getStorePurchaseVerifyArgs(purchaseToSync))
         })
-        if (result) {
+        if (result && storeStatusUnlocksEntitlements(result.status)) {
           syncedPurchaseCount += 1
         }
-        if (result?.tier && TIER_RANK[result.tier] > TIER_RANK[highestTier]) {
+        if (
+          result?.tier &&
+          storeStatusUnlocksEntitlements(result.status) &&
+          TIER_RANK[result.tier] > TIER_RANK[highestTier]
+        ) {
           highestTier = result.tier
         }
       }
@@ -371,7 +396,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
       subscriptionActions.failRestore(message)
       Alert.alert('Restore Failed', message)
     }
-  }, [syncStorePurchase])
+  }, [syncStorePurchase, verifyStorePurchase])
 
   const managePlan = useCallback(async () => {
     try {
