@@ -15,14 +15,6 @@ const GENDER_OPTIONS: Array<{ value: Gender; label: string }> = [
   { value: 'other', label: 'Other' },
 ]
 
-function getDefaultBirthDate() {
-  const today = new Date()
-  const defaultDate = new Date(
-    Date.UTC(today.getFullYear() - 30, today.getMonth(), today.getDate()),
-  )
-  return defaultDate.toISOString().slice(0, 10)
-}
-
 function parseBirthDate(birthDate: string) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(birthDate)
   if (!match) {
@@ -69,7 +61,7 @@ export default function SignupScreen() {
     password: '',
     confirmPassword: '',
     gender: null as Gender | null,
-    birthDate: getDefaultBirthDate(),
+    birthDate: '',
     isLoading: false,
     error: null as string | null,
   })

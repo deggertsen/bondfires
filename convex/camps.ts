@@ -377,6 +377,10 @@ function calculateAge(birthDate: string): number | null {
   return age
 }
 
+function userMatchesCampGender(user: Doc<'users'> | null, campGender: CampGender | undefined) {
+  return !campGender || campGender === 'any' || user?.gender === campGender
+}
+
 /**
  * Evaluate structured visibilityRules.
  * Tier-locked → visible (upgrade opportunity).
@@ -419,6 +423,13 @@ function evaluateVisibilityRules(
           return { visible: false, reason: 'invite_only' }
       }
     }
+  }
+
+  if (
+    !rules?.some((rule) => rule.type === 'gender') &&
+    !userMatchesCampGender(user, camp.rules.gender)
+  ) {
+    return { visible: false, reason: 'wrong_gender' }
   }
 
   if (tierTooLow) {
@@ -484,8 +495,7 @@ function evaluateJoinRules(
   }
 
   // Legacy fallback: camp.rules.gender
-  const campGender = camp.rules.gender
-  if (campGender && campGender !== 'any' && user.gender !== campGender) {
+  if (!userMatchesCampGender(user, camp.rules.gender)) {
     return { canJoin: false, reason: 'wrong_gender' }
   }
 
