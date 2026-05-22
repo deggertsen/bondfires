@@ -11,6 +11,13 @@ const TIER_ICONS: Record<string, typeof Star> = {
   pro: Sparkles,
 }
 
+const TIER_SUMMARIES: Record<SubscriptionTier, string> = {
+  free: 'Browse, watch, and respond',
+  plus: 'Public sparks and one private camp',
+  premium: 'Unlimited private camp video storage',
+  pro: 'Public camp management tools',
+}
+
 interface SubscriptionStatusProps {
   currentTier: SubscriptionTier
   isRestoring: boolean
@@ -68,7 +75,7 @@ export function SubscriptionStatus({
               {TIER_LABELS[currentTier]} Plan
             </Text>
             <Text color={bondfireColors.ash} fontSize={12}>
-              {currentTier === 'free' ? 'Browse and watch bondfires' : 'Active subscription'}
+              {TIER_SUMMARIES[currentTier]}
             </Text>
           </YStack>
         </XStack>
@@ -89,7 +96,7 @@ export function SubscriptionStatus({
             alignItems="center"
           >
             <Text color={bondfireColors.whiteSmoke} fontSize={14} fontWeight="600">
-              {currentTier === 'free' ? 'Upgrade Plan' : 'Manage Plan'}
+              {currentTier === 'free' ? 'Upgrade' : 'Manage'}
             </Text>
           </YStack>
         </Pressable>

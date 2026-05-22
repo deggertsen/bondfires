@@ -79,7 +79,7 @@ export function SubscriptionPaywall({
         <XStack justifyContent="space-between" alignItems="center" marginBottom={20}>
           <YStack>
             <Text color={bondfireColors.whiteSmoke} fontSize={22} fontWeight="700">
-              Choose Your Plan
+              Choose a Plan
             </Text>
             <Text color={bondfireColors.ash} fontSize={14} marginTop={4}>
               Create bondfires with Plus or higher
@@ -127,6 +127,7 @@ export function SubscriptionPaywall({
             {/* Free tier */}
             <TierCard
               tier="free"
+              displayName="Free"
               price="$0"
               description="Browse, join, and watch."
               features={[
@@ -148,6 +149,7 @@ export function SubscriptionPaywall({
                 <TierCard
                   key={tier.tier}
                   tier={tier.tier}
+                  displayName={tier.displayName}
                   price={tier.price ?? 'Coming Soon'}
                   annualPrice={tier.annualPrice ?? null}
                   productId={tier.productId}
@@ -155,7 +157,7 @@ export function SubscriptionPaywall({
                   description={tier.description}
                   features={tier.features}
                   isCurrent={tier.isCurrent}
-                  isHighest={tier.isHighest}
+                  isFeatured={tier.isFeatured}
                   isAvailable={tier.isAvailable}
                   selectedPeriod={selectedPeriods[tier.tier] ?? 'monthly'}
                   onPeriodChange={handlePeriodChange}
@@ -189,6 +191,7 @@ export function SubscriptionPaywall({
 
 interface TierCardProps {
   tier: SubscriptionTier
+  displayName: string
   price: string
   annualPrice?: string | null
   productId?: string | null
@@ -197,7 +200,7 @@ interface TierCardProps {
   features: { label: string; included: boolean }[]
   isCurrent: boolean
   isAvailable?: boolean
-  isHighest?: boolean
+  isFeatured?: boolean
   selectedPeriod?: BillingPeriod
   onPeriodChange?: (tier: SubscriptionTier, period: BillingPeriod) => void
   onPurchase: (tier: SubscriptionTier, productId?: string) => void
@@ -206,6 +209,7 @@ interface TierCardProps {
 
 function TierCard({
   tier,
+  displayName,
   price,
   annualPrice,
   productId,
@@ -214,7 +218,7 @@ function TierCard({
   features,
   isCurrent,
   isAvailable = true,
-  isHighest,
+  isFeatured,
   selectedPeriod = 'monthly',
   onPeriodChange,
   onPurchase,
@@ -235,18 +239,19 @@ function TierCard({
   const selectedProductId = activePeriod === 'annual' ? annualProductId : productId
   const selectedPrice = activePeriod === 'annual' ? annualPrice : price
   const isComingSoon = !isFree && (!isAvailable || !selectedProductId || !selectedPrice)
-  const accentColor = isHighest
+  const accentColor = isFeatured
     ? bondfireColors.moltenGold
     : isCurrent
       ? bondfireColors.bondfireCopper
       : bondfireColors.iron
   const priceColor = isComingSoon ? bondfireColors.ash : bondfireColors.moltenGold
-  const ctaColor = isHighest ? bondfireColors.whiteSmoke : bondfireColors.bondfireCopper
+  const ctaColor = isFeatured ? bondfireColors.whiteSmoke : bondfireColors.bondfireCopper
+  const ctaLabel = isFree ? 'Continue free' : `Choose ${displayName}`
 
   return (
     <Card
       backgroundColor={bondfireColors.charcoal}
-      borderWidth={isHighest ? 2 : isCurrent ? 2 : 1}
+      borderWidth={isFeatured ? 2 : isCurrent ? 2 : 1}
       borderColor={accentColor}
       borderRadius={12}
       padding={16}
@@ -256,9 +261,19 @@ function TierCard({
       <XStack justifyContent="space-between" alignItems="center" marginBottom={12}>
         <XStack alignItems="center" gap={8}>
           <TierIcon size={20} color={bondfireColors.bondfireCopper} />
-          <Text color={bondfireColors.whiteSmoke} fontSize={18} fontWeight="700">
-            {tier === 'free' ? 'Free' : tier.charAt(0).toUpperCase() + tier.slice(1)}
-          </Text>
+          <YStack gap={2}>
+            <XStack alignItems="center" gap={8}>
+              <Text color={bondfireColors.whiteSmoke} fontSize={18} fontWeight="700">
+                {displayName}
+              </Text>
+              {isFeatured ? <PlanBadge label="Recommended" /> : null}
+            </XStack>
+            {isCurrent ? (
+              <Text color={bondfireColors.bondfireCopper} fontSize={11}>
+                Current
+              </Text>
+            ) : null}
+          </YStack>
         </XStack>
         <YStack alignItems="flex-end">
           <Text color={priceColor} fontSize={18} fontWeight="700">
@@ -332,13 +347,13 @@ function TierCard({
         </Button>
       ) : (
         <Button
-          variant={isHighest ? 'primary' : 'outline'}
+          variant={isFeatured ? 'primary' : 'outline'}
           size="$md"
           disabled={isPurchasing || isComingSoon}
           onPress={() => onPurchase(tier, selectedProductId ?? undefined)}
-          backgroundColor={isHighest ? bondfireColors.bondfireCopper : 'transparent'}
+          backgroundColor={isFeatured ? bondfireColors.bondfireCopper : 'transparent'}
           borderColor={
-            isHighest ? 'transparent' : isAvailable ? bondfireColors.ash : bondfireColors.iron
+            isFeatured ? 'transparent' : isAvailable ? bondfireColors.ash : bondfireColors.iron
           }
           opacity={isPurchasing || isComingSoon ? 0.65 : 1}
         >
@@ -346,22 +361,39 @@ function TierCard({
             {isPurchasing ? (
               <Spinner
                 size="small"
-                color={isHighest ? bondfireColors.whiteSmoke : bondfireColors.bondfireCopper}
+                color={isFeatured ? bondfireColors.whiteSmoke : bondfireColors.bondfireCopper}
               />
             ) : null}
             <Text color={isComingSoon ? bondfireColors.ash : ctaColor} fontWeight="600">
               {isFree
-                ? 'Continue free'
+                ? ctaLabel
                 : isComingSoon
                   ? 'Coming soon'
                   : isPurchasing
                     ? 'Processing...'
-                    : 'Subscribe'}
+                    : ctaLabel}
             </Text>
           </XStack>
         </Button>
       )}
     </Card>
+  )
+}
+
+function PlanBadge({ label }: { label: string }) {
+  return (
+    <YStack
+      backgroundColor={`${bondfireColors.moltenGold}20`}
+      borderColor={bondfireColors.moltenGold}
+      borderWidth={1}
+      borderRadius={999}
+      paddingHorizontal={8}
+      paddingVertical={2}
+    >
+      <Text color={bondfireColors.moltenGold} fontSize={10} fontWeight="700">
+        {label}
+      </Text>
+    </YStack>
   )
 }
 

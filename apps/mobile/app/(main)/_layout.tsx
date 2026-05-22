@@ -39,7 +39,7 @@ function GlobalPaywall() {
         { label: 'Private camps', included: false },
       ],
       isCurrent: currentTier === 'free',
-      isHighest: false,
+      isFeatured: false,
       isAvailable: true,
     }
 
@@ -57,7 +57,7 @@ function GlobalPaywall() {
         description: def.description,
         features: def.features.map((f: { label: string }) => ({ label: f.label, included: true })),
         isCurrent: currentTier === tier,
-        isHighest: tier === 'pro',
+        isFeatured: tier === 'premium',
         isAvailable: price !== null || productPrices[def.annualProductId] !== undefined,
       }
     })

@@ -82,7 +82,7 @@ export interface TierInfo {
   description: string
   features: TierFeature[]
   isCurrent: boolean
-  isHighest: boolean
+  isFeatured: boolean
   isAvailable: boolean
 }
 
