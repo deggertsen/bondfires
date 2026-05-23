@@ -35,10 +35,8 @@ export default function VerifyEmailScreen() {
         flow: 'email-verification',
       })
       setSuccess(true)
-      // Small delay to ensure auth session propagates before navigation
-      setTimeout(() => {
-        router.replace('/(main)/(tabs)/feed')
-      }, 300)
+      // Navigate to feed after successful verification
+      router.replace('/(main)/(tabs)/feed')
     } catch {
       setError('Invalid or expired code. Please try again.')
     } finally {
