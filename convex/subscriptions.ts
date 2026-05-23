@@ -5,6 +5,8 @@ import type { MutationCtx } from './_generated/server'
 import { action, internalMutation, mutation, query } from './_generated/server'
 import { auth } from './auth'
 import {
+  freezeExcessOwnedCamps,
+  getActiveSubscriptionTier,
   getEntitlementSubscriptionTier,
   getExtraCampAddOnCount,
   getPublicCampLimit,
@@ -472,6 +474,10 @@ function getVerificationStateForStatus(status: StoreSyncStatus): 'pending' | 've
   return status === 'pending_verification' ? 'pending' : 'verified'
 }
 
+function statusUnlocksEntitlements(status: StoreSyncStatus) {
+  return status === 'active' || status === 'trialing'
+}
+
 async function findExistingSubscription(
   ctx: MutationCtx,
   args: {
@@ -773,6 +779,7 @@ export const applyStorePurchaseVerification = internalMutation({
     }
 
     if (args.kind === 'subscription') {
+      const previousEffectiveTier = await getActiveSubscriptionTier(ctx, args.userId)
       const tier = getTierForStoreProduct(args.storeProductId)
       if (!tier) {
         throw new Error(`Unsupported subscription product: ${args.storeProductId}`)
@@ -807,28 +814,24 @@ export const applyStorePurchaseVerification = internalMutation({
       }
 
       if (existing) {
-        const previousTier = existing.tier
         await ctx.db.patch(existing._id, fields)
-
-        // Detect tier changes and freeze/unfreeze camps accordingly
-        if (args.kind === 'subscription' && verificationStatus === 'verified') {
-          const newTier = fields.tier
-          if (TIER_RANK[newTier] < TIER_RANK[previousTier]) {
-            await handleTierDowngrade(ctx, args.userId, previousTier, newTier)
-          } else if (TIER_RANK[newTier] > TIER_RANK[previousTier]) {
-            await handleTierUpgrade(ctx, args.userId, previousTier, newTier)
-            // Also attempt to reclaim any frozen camps the user had from
-            // a previous downgrade that may now fit within new limits.
-            if (TIER_RANK[newTier] >= TIER_RANK.pro) {
-              await reclaimFrozenCamps(ctx, args.userId, newTier)
-            }
-          }
-        }
       } else {
         await ctx.db.insert('subscriptions', {
           ...fields,
           createdAt: now,
         })
+      }
+
+      if (verificationStatus === 'verified') {
+        const newEffectiveTier = await getActiveSubscriptionTier(ctx, args.userId)
+        if (TIER_RANK[newEffectiveTier] < TIER_RANK[previousEffectiveTier]) {
+          await handleTierDowngrade(ctx, args.userId, previousEffectiveTier, newEffectiveTier)
+        } else if (TIER_RANK[newEffectiveTier] > TIER_RANK[previousEffectiveTier]) {
+          await handleTierUpgrade(ctx, args.userId, previousEffectiveTier, newEffectiveTier)
+          if (TIER_RANK[newEffectiveTier] >= TIER_RANK.pro) {
+            await reclaimFrozenCamps(ctx, args.userId, newEffectiveTier)
+          }
+        }
       }
     } else {
       const existing =
@@ -858,33 +861,29 @@ export const applyStorePurchaseVerification = internalMutation({
         verifiedAt: verificationStatus === 'verified' ? now : undefined,
         updatedAt: now,
       }
+      const userTier = await getEntitlementSubscriptionTier(ctx, args.userId)
+      const canActivateAddOn =
+        !statusUnlocksEntitlements(args.status) || TIER_RANK[userTier] >= TIER_RANK.pro
+      const appliedFields = {
+        ...fields,
+        status: canActivateAddOn ? fields.status : ('expired' as const),
+      }
 
       if (existing) {
-        // For add-ons: if this is an extra_camp and the user is no longer Pro,
-        // don't activate it — the user must have an active Pro subscription.
-        if (
-          args.kind === 'extraCamp' &&
-          verificationStatus === 'verified' &&
-          (args.status === 'active' || args.status === 'trialing')
-        ) {
-          const userTier = await getEntitlementSubscriptionTier(ctx, args.userId)
-          if (TIER_RANK[userTier] < TIER_RANK.pro) {
-            // Mark the add-on as expired since Pro is required
-            await ctx.db.patch(existing._id, {
-              ...fields,
-              status: 'expired',
-            })
-          } else {
-            await ctx.db.patch(existing._id, fields)
-          }
-        } else {
-          await ctx.db.patch(existing._id, fields)
-        }
+        await ctx.db.patch(existing._id, appliedFields)
       } else {
         await ctx.db.insert('subscriptionAddOns', {
-          ...fields,
+          ...appliedFields,
           createdAt: now,
         })
+      }
+
+      if (verificationStatus === 'verified') {
+        if (statusUnlocksEntitlements(appliedFields.status)) {
+          await reclaimFrozenCamps(ctx, args.userId, userTier)
+        } else {
+          await freezeExcessOwnedCamps(ctx, args.userId, userTier)
+        }
       }
     }
 

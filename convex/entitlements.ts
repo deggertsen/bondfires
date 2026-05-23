@@ -109,6 +109,19 @@ export async function getExtraCampAddOnCount(
   ).length
 }
 
+async function getPublicCampLimitForTier(
+  ctx: QueryCtx | MutationCtx,
+  userId: Id<'users'>,
+  tier: SubscriptionTier,
+): Promise<number> {
+  if (TIER_RANK[tier] < TIER_RANK.pro) {
+    return 0
+  }
+
+  const extraCampAddOns = await getExtraCampAddOnCount(ctx, userId)
+  return TIER_CAMP_LIMITS.pro.publicCamps + extraCampAddOns * EXTRA_CAMPS_PER_ADD_ON
+}
+
 /** Base camp limits by tier. Only Pro can create public camps. */
 export const TIER_CAMP_LIMITS: Record<
   SubscriptionTier,
@@ -129,12 +142,7 @@ export async function getPublicCampLimit(
   userId: Id<'users'>,
 ): Promise<number> {
   const tier = await getActiveSubscriptionTier(ctx, userId)
-  if (TIER_RANK[tier] < TIER_RANK.pro) {
-    return 0
-  }
-
-  const extraCampAddOns = await getExtraCampAddOnCount(ctx, userId)
-  return TIER_CAMP_LIMITS.pro.publicCamps + extraCampAddOns * EXTRA_CAMPS_PER_ADD_ON
+  return await getPublicCampLimitForTier(ctx, userId, tier)
 }
 
 /**
@@ -408,6 +416,71 @@ export async function assertVideoDurationWithinTierLimit(
 // Downgrade handling
 // ---------------------------------------------------------------------------
 
+async function getCampLimitsForTier(
+  ctx: QueryCtx | MutationCtx,
+  userId: Id<'users'>,
+  tier: SubscriptionTier,
+) {
+  return {
+    publicCamps: await getPublicCampLimitForTier(ctx, userId, tier),
+    privateCamps: TIER_CAMP_LIMITS[tier].privateCamps,
+  }
+}
+
+async function getOwnedCampCount(
+  ctx: QueryCtx | MutationCtx,
+  userId: Id<'users'>,
+  visibility: 'public' | 'private',
+) {
+  const ownedCamps = await ctx.db
+    .query('camps')
+    .withIndex('by_owner', (q) => q.eq('ownerId', userId))
+    .collect()
+
+  return ownedCamps.filter(
+    (camp) =>
+      camp.visibility === visibility && (camp.status === 'active' || camp.status === 'frozen'),
+  ).length
+}
+
+export async function freezeExcessOwnedCamps(
+  ctx: MutationCtx,
+  userId: Id<'users'>,
+  tier: SubscriptionTier,
+): Promise<{ campsFrozen: number }> {
+  const now = Date.now()
+  const limits = await getCampLimitsForTier(ctx, userId, tier)
+  const userCamps = await ctx.db
+    .query('camps')
+    .withIndex('by_owner', (q) => q.eq('ownerId', userId))
+    .collect()
+
+  const activePublicCamps = userCamps
+    .filter((camp) => camp.visibility === 'public' && camp.status === 'active')
+    .sort((left, right) => left.createdAt - right.createdAt)
+  const activePrivateCamps = userCamps
+    .filter((camp) => camp.visibility === 'private' && camp.status === 'active')
+    .sort((left, right) => left.createdAt - right.createdAt)
+
+  let campsFrozen = 0
+  const excessCamps = [
+    ...activePublicCamps.slice(limits.publicCamps),
+    ...activePrivateCamps.slice(limits.privateCamps),
+  ]
+
+  for (const camp of excessCamps) {
+    await ctx.db.patch(camp._id, {
+      status: 'frozen',
+      frozenAt: now,
+      reclaimDeadline: now + CAMP_RECLAIM_WINDOW_MS,
+      updatedAt: now,
+    })
+    campsFrozen++
+  }
+
+  return { campsFrozen }
+}
+
 /**
  * When a user's subscription tier changes, freeze excess camps and revoke
  * extra-camp add-ons if the user is no longer Pro.
@@ -456,46 +529,7 @@ export async function handleTierDowngrade(
     }
   }
 
-  // Freeze excess camps
-  const limits = TIER_CAMP_LIMITS[newTier]
-  const userCamps = await ctx.db
-    .query('camps')
-    .withIndex('by_owner', (q) => q.eq('ownerId', userId))
-    .collect()
-
-  const activePublicCamps = userCamps.filter(
-    (c) => c.visibility === 'public' && c.status === 'active',
-  )
-  const activePrivateCamps = userCamps.filter(
-    (c) => c.visibility === 'private' && c.status === 'active',
-  )
-
-  let campsFrozen = 0
-
-  // Freeze excess public camps (only Pro can have public camps)
-  const maxPublic = TIER_RANK[newTier] >= TIER_RANK.pro ? limits.publicCamps : 0
-  for (let i = maxPublic; i < activePublicCamps.length; i++) {
-    await ctx.db.patch(activePublicCamps[i]._id, {
-      status: 'frozen',
-      frozenAt: Date.now(),
-      reclaimDeadline: Date.now() + CAMP_RECLAIM_WINDOW_MS,
-      updatedAt: Date.now(),
-    })
-    campsFrozen++
-  }
-
-  // Freeze excess private camps
-  const maxPrivate = limits.privateCamps
-  for (let i = maxPrivate; i < activePrivateCamps.length; i++) {
-    await ctx.db.patch(activePrivateCamps[i]._id, {
-      status: 'frozen',
-      frozenAt: Date.now(),
-      reclaimDeadline: Date.now() + CAMP_RECLAIM_WINDOW_MS,
-      updatedAt: Date.now(),
-    })
-    campsFrozen++
-  }
-
+  const { campsFrozen } = await freezeExcessOwnedCamps(ctx, userId, newTier)
   return { campsFrozen, addOnsRevoked }
 }
 
@@ -549,6 +583,8 @@ export async function handleTierUpgrade(
     if (camp.visibility === 'public' && publicSlotsLeft > 0) {
       await ctx.db.patch(camp._id, {
         status: 'active',
+        frozenAt: undefined,
+        reclaimDeadline: undefined,
         updatedAt: Date.now(),
       })
       publicSlotsLeft--
@@ -556,6 +592,8 @@ export async function handleTierUpgrade(
     } else if (camp.visibility === 'private' && privateSlotsLeft > 0) {
       await ctx.db.patch(camp._id, {
         status: 'active',
+        frozenAt: undefined,
+        reclaimDeadline: undefined,
         updatedAt: Date.now(),
       })
       privateSlotsLeft--
@@ -687,8 +725,25 @@ export async function processExpiredReclaims(
     const eligibleMembers = members.filter(
       (m) => m.userId !== camp.ownerId && m.status !== 'banned',
     )
+    const eligibleProMembers = []
 
-    if (eligibleMembers.length === 0) {
+    for (const member of eligibleMembers.sort(
+      (left, right) => (left.joinedAt ?? left.createdAt) - (right.joinedAt ?? right.createdAt),
+    )) {
+      const memberTier = await getActiveSubscriptionTier(ctx, member.userId)
+      if (TIER_RANK[memberTier] < TIER_RANK.pro) {
+        continue
+      }
+
+      const limits = await getCampLimitsForTier(ctx, member.userId, memberTier)
+      const ownedCampCount = await getOwnedCampCount(ctx, member.userId, camp.visibility)
+      const limit = camp.visibility === 'public' ? limits.publicCamps : limits.privateCamps
+      if (ownedCampCount < limit) {
+        eligibleProMembers.push(member)
+      }
+    }
+
+    if (eligibleProMembers.length === 0) {
       // No eligible member to transfer to — archive
       await ctx.db.patch(camp._id, {
         status: 'archived',
@@ -702,7 +757,7 @@ export async function processExpiredReclaims(
 
     // For now, assign to the first eligible Pro member.
     // A future enhancement could add a claim button in the UI.
-    const newOwnerId = eligibleMembers[0].userId
+    const newOwnerId = eligibleProMembers[0].userId
 
     await ctx.db.patch(camp._id, {
       ownerId: newOwnerId,
