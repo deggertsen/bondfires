@@ -1,6 +1,6 @@
-import type { ProExtraCampAddOnInfo, SubscriptionTier, TierInfo } from '@bondfires/app'
+import type { ExtraCampAddOnInfo, SubscriptionTier, TierInfo } from '@bondfires/app'
 import {
-  PRO_EXTRA_CAMP_ADD_ON_DEFINITION,
+  EXTRA_CAMP_ADD_ON_DEFINITION,
   subscriptionStore$,
   TIER_DEFINITIONS,
   useSubscription,
@@ -13,6 +13,7 @@ import { useMemo } from 'react'
 function GlobalPaywall() {
   const {
     currentTier,
+    showExtraCampAddon,
     isPurchasing,
     isRestoring,
     purchasingProductId,
@@ -21,7 +22,7 @@ function GlobalPaywall() {
     productPrices,
     productsLoaded,
     purchase,
-    purchaseProExtraCamp,
+    purchaseExtraCamp,
     restore,
     hidePaywall,
     clearError,
@@ -72,10 +73,10 @@ function GlobalPaywall() {
     return [freeTier, ...paidTiers]
   }, [currentTier, productPrices, productsLoaded])
 
-  const proExtraCampAddOn = useMemo((): ProExtraCampAddOnInfo | null => {
-    if (!productsLoaded || currentTier !== 'pro') return null
+  const extraCampAddOn = useMemo((): ExtraCampAddOnInfo | null => {
+    if (!productsLoaded || !showExtraCampAddon) return null
 
-    const def = PRO_EXTRA_CAMP_ADD_ON_DEFINITION
+    const def = EXTRA_CAMP_ADD_ON_DEFINITION
     const price = productPrices[def.productId] ?? null
     const annualPrice = productPrices[def.annualProductId] ?? null
 
@@ -85,7 +86,7 @@ function GlobalPaywall() {
       annualPrice,
       isAvailable: price !== null || annualPrice !== null,
     }
-  }, [currentTier, productPrices, productsLoaded])
+  }, [productPrices, productsLoaded, showExtraCampAddon])
 
   if (!tiers) return null
 
@@ -99,10 +100,10 @@ function GlobalPaywall() {
         }
       }}
       tiers={tiers}
-      proExtraCampAddOn={proExtraCampAddOn}
+      extraCampAddOn={extraCampAddOn}
       currentTier={currentTier}
       onPurchase={purchase}
-      onPurchaseProExtraCamp={purchaseProExtraCamp}
+      onPurchaseExtraCamp={purchaseExtraCamp}
       onRestore={restore}
       isPurchasing={isPurchasing}
       isRestoring={isRestoring}

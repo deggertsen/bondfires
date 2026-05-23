@@ -16,4 +16,12 @@ crons.daily(
   { limit: 100 },
 )
 
+// Process frozen camps whose 30-day reclaim window has expired.
+// Runs daily at 9:00 UTC to catch expired reclaim deadlines.
+crons.daily(
+  'process expired camp reclaims',
+  { hourUTC: 9, minuteUTC: 0 },
+  internal.subscriptions.processExpiredReclaims,
+)
+
 export default crons

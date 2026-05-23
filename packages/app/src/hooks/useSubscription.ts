@@ -20,7 +20,8 @@ import { api } from '../../../../convex/_generated/api'
 import {
   ALL_SUBSCRIPTION_PRODUCT_IDS,
   CREATE_REQUIRED_TIER,
-  PRO_EXTRA_CAMP_PRODUCT_IDS,
+  EXTRA_CAMP_PRODUCT_IDS,
+  isExtraCampProductId,
   PRODUCT_ID_TO_PURCHASE_KIND,
   type StorePurchaseKind,
   type SubscriptionTier,
@@ -86,12 +87,15 @@ async function ensureIapConnection() {
   await iapConnectionPromise
 }
 
-async function loadSubscriptionProducts() {
+async function loadSubscriptionProducts(showExtraCampAddon: boolean) {
   const products = await fetchProducts({ skus: ALL_SUBSCRIPTION_PRODUCT_IDS, type: 'subs' })
   const productList = Array.isArray(products) ? products : [products]
+  const visibleProducts = showExtraCampAddon
+    ? productList
+    : productList.filter((product) => !product?.id || !isExtraCampProductId(product.id))
 
   subscriptionActions.setProducts(
-    productList
+    visibleProducts
       .filter((product): product is ProductSubscription => !!product?.id)
       .map((product) => ({
         productId: product.id,
@@ -236,6 +240,9 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
   const syncStorePurchase = useMutation(api.subscriptions.syncStorePurchase)
   const verifyStorePurchase = useAction(api.subscriptions.verifyStorePurchase)
   const currentTier = useValue(subscriptionStore$.currentTier)
+  const showExtraCampAddon = currentTier === 'pro'
+  /** Whether the user owns camps that would be frozen on downgrade from a paid tier. */
+  const hasCampsAtRisk = currentTier !== 'free' && subscriptionQuery?.tier === currentTier
   const isPurchasing = useValue(subscriptionStore$.isPurchasing)
   const isRestoring = useValue(subscriptionStore$.isRestoring)
   const purchasingTier = useValue(subscriptionStore$.purchasingTier)
@@ -268,7 +275,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
           await syncStorePurchase(getStorePurchaseSyncArgs(purchase))
           return await verifyStorePurchase(getStorePurchaseVerifyArgs(purchase))
         })
-        await loadSubscriptionProducts()
+        await loadSubscriptionProducts(showExtraCampAddon)
       } catch (err) {
         console.warn('Failed to initialize IAP:', err)
         if (mounted) {
@@ -288,7 +295,12 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
         })
       }
     }
-  }, [initializeIap, syncStorePurchase, verifyStorePurchase])
+  }, [initializeIap, syncStorePurchase, verifyStorePurchase, showExtraCampAddon])
+
+  useEffect(() => {
+    if (!initializeIap || !productsLoaded) return
+    void loadSubscriptionProducts(showExtraCampAddon)
+  }, [initializeIap, productsLoaded, showExtraCampAddon])
 
   const requestStorePurchase = useCallback(async (productId: string) => {
     try {
@@ -335,8 +347,8 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
     [requestStorePurchase],
   )
 
-  const purchaseProExtraCamp = useCallback(
-    async (productId = PRO_EXTRA_CAMP_PRODUCT_IDS.monthly) => {
+  const purchaseExtraCamp = useCallback(
+    async (productId = EXTRA_CAMP_PRODUCT_IDS.monthly) => {
       subscriptionActions.startAddOnPurchase(productId)
       await requestStorePurchase(productId)
     },
@@ -399,21 +411,44 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
   }, [syncStorePurchase, verifyStorePurchase])
 
   const managePlan = useCallback(async () => {
-    try {
-      await ensureIapConnection()
-      const activeProductId = subscriptionQuery?.subscription?.storeProductId
-      await deepLinkToSubscriptions({
-        skuAndroid: activeProductId ?? TIER_PRODUCT_IDS.plus.monthly,
-        packageNameAndroid:
-          Constants.expoConfig?.android?.package ??
-          Constants.expoConfig?.ios?.bundleIdentifier ??
-          'org.bondfires',
-      })
-    } catch (err: unknown) {
-      const message = getIapErrorMessage(err, 'Could not open subscription management.')
-      Alert.alert('Manage Subscription', message)
+    /** Opens the OS-level subscription management screen. */
+    async function openSubscriptionManagement(activeProductId?: string) {
+      try {
+        await ensureIapConnection()
+        await deepLinkToSubscriptions({
+          skuAndroid: activeProductId ?? TIER_PRODUCT_IDS.plus.monthly,
+          packageNameAndroid:
+            Constants.expoConfig?.android?.package ??
+            Constants.expoConfig?.ios?.bundleIdentifier ??
+            'org.bondfires',
+        })
+      } catch (err: unknown) {
+        const message = getIapErrorMessage(err, 'Could not open subscription management.')
+        Alert.alert('Manage Subscription', message)
+      }
     }
-  }, [subscriptionQuery?.subscription?.storeProductId])
+
+    // Warn before redirecting to OS subscription management if the user
+    // has camps that would be frozen on downgrade/cancellation.
+    if (hasCampsAtRisk) {
+      Alert.alert(
+        'Your Camps Will Be Frozen',
+        "If you downgrade or cancel your subscription, any camps beyond your new tier's limit will become read-only. You will have 30 days to resubscribe and reclaim them before they become eligible for another Pro member to take over as camp owner.",
+        [
+          { text: 'Go Back', style: 'cancel' },
+          {
+            text: 'Continue to Manage',
+            style: 'destructive',
+            onPress: () =>
+              openSubscriptionManagement(subscriptionQuery?.subscription?.storeProductId),
+          },
+        ],
+      )
+      return
+    }
+
+    await openSubscriptionManagement(subscriptionQuery?.subscription?.storeProductId)
+  }, [subscriptionQuery?.subscription?.storeProductId, hasCampsAtRisk])
 
   return {
     currentTier,
@@ -425,9 +460,10 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
     productPrices,
     productOfferTokens,
     productsLoaded,
+    showExtraCampAddon,
     canCreate: tierMeetsRequirement(currentTier, CREATE_REQUIRED_TIER),
     purchase,
-    purchaseProExtraCamp,
+    purchaseExtraCamp,
     restore,
     managePlan,
     showPaywall: subscriptionActions.showPaywall,

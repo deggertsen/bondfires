@@ -143,8 +143,12 @@ async function isBondfireVisibleToViewer(
   }
 
   const camp = await ctx.db.get(bondfire.campId)
-  if (!camp || camp.status !== 'active') {
+  if (!camp || (camp.status !== 'active' && camp.status !== 'frozen')) {
     return false
+  }
+
+  if (camp.status === 'frozen') {
+    return memberCampIds.has(camp._id)
   }
 
   return camp.visibility === 'public' || memberCampIds.has(camp._id)
@@ -193,11 +197,11 @@ export const listByCamp = query({
   handler: async (ctx, args) => {
     const limit = args.limit ?? 20
     const camp = await ctx.db.get(args.campId)
-    if (!camp || camp.status !== 'active') {
+    if (!camp || (camp.status !== 'active' && camp.status !== 'frozen')) {
       return []
     }
 
-    if (camp.visibility === 'private') {
+    if (camp.status === 'frozen' || camp.visibility === 'private') {
       const userId = await auth.getUserId(ctx)
       if (!userId) {
         return []
@@ -366,8 +370,15 @@ export const create = mutation({
     const campId = args.campId
 
     const camp = await ctx.db.get(campId)
-    if (!camp || camp.status !== 'active') {
+    if (!camp || (camp.status !== 'active' && camp.status !== 'frozen')) {
       throw new Error('Camp not found')
+    }
+
+    // Frozen camps do not allow new videos
+    if (camp.status === 'frozen') {
+      throw new Error(
+        'This camp is currently frozen. Upgrade your subscription to create content here.',
+      )
     }
 
     const membership = await ctx.db
@@ -488,11 +499,11 @@ export const incrementViews = mutation({
 
     if (bondfire.campId) {
       const camp = await ctx.db.get(bondfire.campId)
-      if (!camp || camp.status !== 'active') {
+      if (!camp || (camp.status !== 'active' && camp.status !== 'frozen')) {
         throw new Error('Camp not found')
       }
 
-      if (camp.visibility === 'private') {
+      if (camp.status === 'frozen' || camp.visibility === 'private') {
         const membership = await ctx.db
           .query('campMembers')
           .withIndex('by_user_camp', (q) => q.eq('userId', viewerId).eq('campId', camp._id))

@@ -12,13 +12,13 @@ export const SUBSCRIPTION_PRODUCT_IDS = {
   premiumAnnual: 'bondfires.premium.annual',
   proMonthly: 'bondfires.pro.monthly',
   proAnnual: 'bondfires.pro.annual',
-  proExtraCampMonthly: 'bondfires.pro.extra_camp.monthly',
-  proExtraCampAnnual: 'bondfires.pro.extra_camp.annual',
+  extraCampMonthly: 'bondfires.extra_camp.monthly',
+  extraCampAnnual: 'bondfires.extra_camp.annual',
 } as const
 
 export type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'
 export type BillingPeriod = 'monthly' | 'annual'
-export type StorePurchaseKind = 'subscription' | 'proExtraCamp'
+export type StorePurchaseKind = 'subscription' | 'extraCamp'
 
 export const TIER_PRODUCT_IDS: Record<
   Exclude<SubscriptionTier, 'free'>,
@@ -38,9 +38,16 @@ export const TIER_PRODUCT_IDS: Record<
   },
 }
 
-export const PRO_EXTRA_CAMP_PRODUCT_IDS: Record<BillingPeriod, string> = {
-  monthly: SUBSCRIPTION_PRODUCT_IDS.proExtraCampMonthly,
-  annual: SUBSCRIPTION_PRODUCT_IDS.proExtraCampAnnual,
+export const EXTRA_CAMP_PRODUCT_IDS: Record<BillingPeriod, string> = {
+  monthly: SUBSCRIPTION_PRODUCT_IDS.extraCampMonthly,
+  annual: SUBSCRIPTION_PRODUCT_IDS.extraCampAnnual,
+}
+
+export function isExtraCampProductId(productId: string) {
+  return (
+    productId === SUBSCRIPTION_PRODUCT_IDS.extraCampMonthly ||
+    productId === SUBSCRIPTION_PRODUCT_IDS.extraCampAnnual
+  )
 }
 
 export const PRODUCT_ID_TO_TIER: Record<string, SubscriptionTier | undefined> = {
@@ -59,8 +66,8 @@ export const PRODUCT_ID_TO_PURCHASE_KIND: Record<string, StorePurchaseKind | und
   [SUBSCRIPTION_PRODUCT_IDS.premiumAnnual]: 'subscription',
   [SUBSCRIPTION_PRODUCT_IDS.proMonthly]: 'subscription',
   [SUBSCRIPTION_PRODUCT_IDS.proAnnual]: 'subscription',
-  [SUBSCRIPTION_PRODUCT_IDS.proExtraCampMonthly]: 'proExtraCamp',
-  [SUBSCRIPTION_PRODUCT_IDS.proExtraCampAnnual]: 'proExtraCamp',
+  [SUBSCRIPTION_PRODUCT_IDS.extraCampMonthly]: 'extraCamp',
+  [SUBSCRIPTION_PRODUCT_IDS.extraCampAnnual]: 'extraCamp',
 }
 
 export const ALL_SUBSCRIPTION_PRODUCT_IDS = Object.values(SUBSCRIPTION_PRODUCT_IDS)
@@ -98,7 +105,7 @@ export interface TierInfo {
   isAvailable: boolean
 }
 
-export interface ProExtraCampAddOnInfo {
+export interface ExtraCampAddOnInfo {
   productId: string
   annualProductId: string
   displayName: string
@@ -161,12 +168,26 @@ export const TIER_DEFINITIONS: Record<
   },
 }
 
-export const PRO_EXTRA_CAMP_ADD_ON_DEFINITION = {
-  productId: PRO_EXTRA_CAMP_PRODUCT_IDS.monthly,
-  annualProductId: PRO_EXTRA_CAMP_PRODUCT_IDS.annual,
+export const EXTRA_CAMP_ADD_ON_DEFINITION = {
+  productId: EXTRA_CAMP_PRODUCT_IDS.monthly,
+  annualProductId: EXTRA_CAMP_PRODUCT_IDS.annual,
   displayName: 'Extra camp',
   description: 'Add one more public camp to a Pro workspace.',
 }
+
+/** Base camp limits by tier. Only Pro can create public camps. */
+export const TIER_CAMP_LIMITS: Record<
+  SubscriptionTier,
+  { publicCamps: number; privateCamps: number }
+> = {
+  free: { publicCamps: 0, privateCamps: 0 },
+  plus: { publicCamps: 0, privateCamps: 1 },
+  premium: { publicCamps: 0, privateCamps: 1 },
+  pro: { publicCamps: 3, privateCamps: 1 },
+}
+
+/** Additional public-camp capacity granted by one verified extra-camp add-on. */
+export const EXTRA_CAMPS_PER_ADD_ON = 1
 
 export interface SubscriptionState {
   /** The user's current active tier from Convex (or 'free' if none). */

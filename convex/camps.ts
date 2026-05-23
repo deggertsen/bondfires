@@ -529,7 +529,7 @@ function getJoinMembershipStatus(camp: Doc<'camps'>): 'pending' | 'active' {
 }
 
 function isCampVisibleToUser(camp: Doc<'camps'>, membership?: Doc<'campMembers'>) {
-  if (camp.status !== 'active') {
+  if (camp.status !== 'active' && camp.status !== 'frozen') {
     return false
   }
 
@@ -647,8 +647,15 @@ export const list = query({
     const camps = await ctx.db.query('camps').collect()
 
     return camps
-      .filter((camp) => args.includeArchived || camp.status === 'active')
+      .filter(
+        (camp) => args.includeArchived || camp.status === 'active' || camp.status === 'frozen',
+      )
       .filter((camp) => {
+        // Frozen camps: only visible to active members
+        if (camp.status === 'frozen') {
+          const membership = membershipsByCamp.get(camp._id)
+          return membership?.status === 'active'
+        }
         // Always show public camps + camps with active membership
         if (camp.visibility === 'public') {
           return true
@@ -664,8 +671,14 @@ export const list = query({
           ...camp,
           name: resolveCampDisplayName(camp),
           membership,
-          _sortRank: rank,
-          _lockedReason: membership?.status === 'active' ? undefined : reason,
+          _sortRank: camp.status === 'frozen' ? 1 : rank,
+          _lockedReason:
+            camp.status === 'frozen'
+              ? 'Frozen — upgrade to manage this camp'
+              : membership?.status === 'active'
+                ? undefined
+                : reason,
+          frozen: camp.status === 'frozen',
         }
       })
       .filter((camp) => camp._sortRank < 2) // Exclude hidden camps
@@ -701,12 +714,25 @@ export const get = query({
     if (!camp) {
       return null
     }
-    if (camp.status !== 'active') {
+    if (camp.status !== 'active' && camp.status !== 'frozen') {
       return null
     }
 
     const userId = await auth.getUserId(ctx)
     const membership = userId ? await getMembership(ctx, userId, camp._id) : null
+
+    // Frozen camps: existing members can view but not create content
+    if (camp.status === 'frozen') {
+      if (!membership || membership.status !== 'active') {
+        return null
+      }
+      return {
+        ...camp,
+        name: resolveCampDisplayName(camp),
+        membership,
+        frozen: true,
+      }
+    }
 
     // Use structured visibility for non-members
     if (membership?.status !== 'active') {
@@ -744,7 +770,10 @@ export const listMine = query({
     const camps = await Promise.all(memberships.map((membership) => ctx.db.get(membership.campId)))
     return camps
       .map((camp, index) => (camp ? { ...camp, membership: memberships[index] } : null))
-      .filter((camp): camp is NonNullable<typeof camp> => !!camp && camp.status === 'active')
+      .filter(
+        (camp): camp is NonNullable<typeof camp> =>
+          !!camp && (camp.status === 'active' || camp.status === 'frozen'),
+      )
       .sort((left, right) => left.name.localeCompare(right.name))
   },
 })
@@ -756,8 +785,13 @@ export const join = mutation({
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx)
     const camp = await ctx.db.get(args.campId)
-    if (!camp || camp.status !== 'active') {
+    if (!camp || (camp.status !== 'active' && camp.status !== 'frozen')) {
       throw new Error('Camp not found')
+    }
+
+    // Frozen camps do not accept new members
+    if (camp.status === 'frozen') {
+      throw new Error('This camp is currently frozen. Upgrade your subscription to manage it.')
     }
 
     const existing = await getMembership(ctx, user._id, camp._id)
@@ -803,8 +837,13 @@ export const requestJoin = mutation({
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx)
     const camp = await ctx.db.get(args.campId)
-    if (!camp || camp.status !== 'active') {
+    if (!camp || (camp.status !== 'active' && camp.status !== 'frozen')) {
       throw new Error('Camp not found')
+    }
+
+    // Frozen camps do not accept new join requests
+    if (camp.status === 'frozen') {
+      throw new Error('This camp is currently frozen. Upgrade your subscription to manage it.')
     }
 
     const existing = await getMembership(ctx, user._id, camp._id)
@@ -952,8 +991,13 @@ export const createInvite = mutation({
   },
   handler: async (ctx, args) => {
     const camp = await ctx.db.get(args.campId)
-    if (!camp || camp.status !== 'active') {
+    if (!camp || (camp.status !== 'active' && camp.status !== 'frozen')) {
       throw new Error('Camp not found')
+    }
+
+    // Frozen camps cannot create new invites
+    if (camp.status === 'frozen') {
+      throw new Error('This camp is currently frozen. Upgrade your subscription to manage it.')
     }
 
     const user = await assertCanManageCamp(ctx, camp)
@@ -1021,8 +1065,13 @@ export const redeemInvite = mutation({
     }
 
     const camp = await ctx.db.get(invite.campId)
-    if (!camp || camp.status !== 'active') {
+    if (!camp || (camp.status !== 'active' && camp.status !== 'frozen')) {
       throw new Error('Camp not found')
+    }
+
+    // Frozen camps do not accept new members via invite
+    if (camp.status === 'frozen') {
+      throw new Error('This camp is currently frozen. Upgrade your subscription to manage it.')
     }
 
     const existingMembership = await getMembership(ctx, user._id, camp._id)
@@ -1080,6 +1129,10 @@ export const setCampAccess = mutation({
     const camp = await ctx.db.get(args.campId)
     if (!camp) {
       throw new Error('Camp not found')
+    }
+
+    if (camp.status === 'frozen') {
+      throw new Error('This camp is currently frozen. Upgrade your subscription to manage it.')
     }
 
     const user = await getCurrentUser(ctx)

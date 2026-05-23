@@ -11,6 +11,7 @@ import type { Doc } from '../../../../../convex/_generated/dataModel'
 
 type CampWithMembership = Doc<'camps'> & {
   membership: Doc<'campMembers'> | null
+  frozen?: boolean
 }
 type CampListItem =
   | { type: 'section'; id: string; title: string; subtitle: string }
@@ -39,6 +40,7 @@ function CampCard({
   const isActiveMember = camp.membership?.status === 'active'
   const isPending = camp.membership?.status === 'pending'
   const canJoinFromList = !isActiveMember && !isPending && camp.visibility === 'public'
+  const isFrozen = camp.frozen === true || camp.status === 'frozen'
 
   return (
     <Pressable onPress={onOpen}>
@@ -70,7 +72,20 @@ function CampCard({
                 </Text>
               </YStack>
 
-              {isActiveMember ? (
+              {isFrozen ? (
+                <YStack
+                  borderRadius={999}
+                  paddingHorizontal={10}
+                  paddingVertical={5}
+                  backgroundColor={`${bondfireColors.warning}20`}
+                  borderWidth={1}
+                  borderColor={bondfireColors.warning}
+                >
+                  <Text fontSize={11} color={bondfireColors.warning} fontWeight="900">
+                    🔒 Frozen
+                  </Text>
+                </YStack>
+              ) : isActiveMember ? (
                 <YStack
                   borderRadius={999}
                   paddingHorizontal={10}

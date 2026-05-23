@@ -5,17 +5,23 @@ import type { MutationCtx } from './_generated/server'
 import { action, internalMutation, mutation, query } from './_generated/server'
 import { auth } from './auth'
 import {
-  getActiveProExtraPublicCampAddOnCount,
+  freezeExcessOwnedCamps,
+  getActiveSubscriptionTier,
   getEntitlementSubscriptionTier,
+  getExtraCampAddOnCount,
   getPublicCampLimit,
   getTierMaxVideoDurationMs,
+  handleTierDowngrade,
+  handleTierUpgrade,
+  processExpiredReclaims as processExpiredReclaimsImpl,
+  reclaimFrozenCamps,
   type SubscriptionTier,
   TIER_RANK,
   tierCanCreateBondfires,
 } from './entitlements'
 
 type SubscriptionPlatform = 'ios' | 'android'
-type StorePurchaseKind = 'subscription' | 'proExtraCamp'
+type StorePurchaseKind = 'subscription' | 'extraCamp'
 type VerifiedStoreStatus = 'active' | 'trialing' | 'past_due' | 'canceled' | 'expired'
 type StoreSyncStatus = 'pending_verification' | VerifiedStoreStatus
 
@@ -60,7 +66,7 @@ const storeStatusValidator = v.union(
   v.literal('expired'),
 )
 
-const storePurchaseKindValidator = v.union(v.literal('subscription'), v.literal('proExtraCamp'))
+const storePurchaseKindValidator = v.union(v.literal('subscription'), v.literal('extraCamp'))
 
 const PRODUCT_ID_TO_TIER: Record<string, SubscriptionTier | undefined> = {
   'bondfires.plus.monthly': 'plus',
@@ -71,9 +77,9 @@ const PRODUCT_ID_TO_TIER: Record<string, SubscriptionTier | undefined> = {
   'bondfires.pro.annual': 'pro',
 }
 
-const PRO_EXTRA_CAMP_PRODUCT_IDS = new Set([
-  'bondfires.pro.extra_camp.monthly',
-  'bondfires.pro.extra_camp.annual',
+const EXTRA_CAMP_PRODUCT_IDS = new Set([
+  'bondfires.extra_camp.monthly',
+  'bondfires.extra_camp.annual',
 ])
 
 function getStorePurchaseKind(storeProductId: string): StorePurchaseKind | null {
@@ -81,8 +87,8 @@ function getStorePurchaseKind(storeProductId: string): StorePurchaseKind | null 
     return 'subscription'
   }
 
-  if (PRO_EXTRA_CAMP_PRODUCT_IDS.has(storeProductId)) {
-    return 'proExtraCamp'
+  if (EXTRA_CAMP_PRODUCT_IDS.has(storeProductId)) {
+    return 'extraCamp'
   }
 
   return null
@@ -468,6 +474,10 @@ function getVerificationStateForStatus(status: StoreSyncStatus): 'pending' | 've
   return status === 'pending_verification' ? 'pending' : 'verified'
 }
 
+function statusUnlocksEntitlements(status: StoreSyncStatus) {
+  return status === 'active' || status === 'trialing'
+}
+
 async function findExistingSubscription(
   ctx: MutationCtx,
   args: {
@@ -589,7 +599,7 @@ export const current = query({
       canCreateBondfires: user?.isReviewerAccount === true || tierCanCreateBondfires(tier),
       maxVideoDurationMs:
         user?.isReviewerAccount === true ? undefined : getTierMaxVideoDurationMs(tier),
-      proExtraPublicCampAddOns: await getActiveProExtraPublicCampAddOnCount(ctx, userId),
+      extraCampAddOns: await getExtraCampAddOnCount(ctx, userId),
       publicCampLimit:
         user?.isReviewerAccount === true ? undefined : await getPublicCampLimit(ctx, userId),
       pendingStorePurchaseCount,
@@ -717,13 +727,13 @@ export const syncStorePurchase = mutation({
         } else {
           await ctx.db.patch(existing._id, {
             ...pendingStoreFields,
-            type: 'pro_extra_public_camp',
+            type: 'extra_camp',
           })
         }
       } else {
         await ctx.db.insert('subscriptionAddOns', {
           ...pendingStoreFields,
-          type: 'pro_extra_public_camp',
+          type: 'extra_camp',
           createdAt: args.purchasedAt ?? now,
         })
       }
@@ -757,6 +767,7 @@ export const applyStorePurchaseVerification = internalMutation({
     assertStoreProductMatchesKind(args.storeProductId, args.kind)
 
     const now = Date.now()
+    let appliedStatus: StoreSyncStatus = args.status
     const verificationStatus = getVerificationStateForStatus(args.status)
     const lookup = {
       userId: args.userId,
@@ -769,6 +780,7 @@ export const applyStorePurchaseVerification = internalMutation({
     }
 
     if (args.kind === 'subscription') {
+      const previousEffectiveTier = await getActiveSubscriptionTier(ctx, args.userId)
       const tier = getTierForStoreProduct(args.storeProductId)
       if (!tier) {
         throw new Error(`Unsupported subscription product: ${args.storeProductId}`)
@@ -810,6 +822,18 @@ export const applyStorePurchaseVerification = internalMutation({
           createdAt: now,
         })
       }
+
+      if (verificationStatus === 'verified') {
+        const newEffectiveTier = await getActiveSubscriptionTier(ctx, args.userId)
+        if (TIER_RANK[newEffectiveTier] < TIER_RANK[previousEffectiveTier]) {
+          await handleTierDowngrade(ctx, args.userId, previousEffectiveTier, newEffectiveTier)
+        } else if (TIER_RANK[newEffectiveTier] > TIER_RANK[previousEffectiveTier]) {
+          await handleTierUpgrade(ctx, args.userId, previousEffectiveTier, newEffectiveTier)
+          if (TIER_RANK[newEffectiveTier] >= TIER_RANK.pro) {
+            await reclaimFrozenCamps(ctx, args.userId, newEffectiveTier)
+          }
+        }
+      }
     } else {
       const existing =
         (await findExistingAddOn(ctx, lookup)) ??
@@ -826,7 +850,7 @@ export const applyStorePurchaseVerification = internalMutation({
 
       const fields = {
         userId: args.userId,
-        type: 'pro_extra_public_camp' as const,
+        type: 'extra_camp' as const,
         status: args.status,
         verificationStatus,
         platform: args.platform,
@@ -838,20 +862,36 @@ export const applyStorePurchaseVerification = internalMutation({
         verifiedAt: verificationStatus === 'verified' ? now : undefined,
         updatedAt: now,
       }
+      const userTier = await getEntitlementSubscriptionTier(ctx, args.userId)
+      const canActivateAddOn =
+        !statusUnlocksEntitlements(args.status) || TIER_RANK[userTier] >= TIER_RANK.pro
+      const appliedFields = {
+        ...fields,
+        status: canActivateAddOn ? fields.status : ('expired' as const),
+      }
+      appliedStatus = appliedFields.status
 
       if (existing) {
-        await ctx.db.patch(existing._id, fields)
+        await ctx.db.patch(existing._id, appliedFields)
       } else {
         await ctx.db.insert('subscriptionAddOns', {
-          ...fields,
+          ...appliedFields,
           createdAt: now,
         })
+      }
+
+      if (verificationStatus === 'verified') {
+        if (statusUnlocksEntitlements(appliedFields.status)) {
+          await reclaimFrozenCamps(ctx, args.userId, userTier)
+        } else {
+          await freezeExcessOwnedCamps(ctx, args.userId, userTier)
+        }
       }
     }
 
     return {
       tier: await getEntitlementSubscriptionTier(ctx, args.userId),
-      status: args.status,
+      status: appliedStatus,
     }
   },
 })
@@ -953,5 +993,17 @@ export const verifyStorePurchase = action({
       })
       throw error
     }
+  },
+})
+
+export const processExpiredReclaims = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const result = await processExpiredReclaimsImpl(ctx)
+    // biome-ignore lint/suspicious/noConsole: cron job diagnostic logging
+    console.log(
+      `Reclaim processed: ${result.campsTransferred} transferred, ${result.campsArchived} archived`,
+    )
+    return result
   },
 })
