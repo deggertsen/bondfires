@@ -1,8 +1,6 @@
 import type { ExtraCampAddOnInfo, SubscriptionTier, TierInfo } from '@bondfires/app'
 import {
   EXTRA_CAMP_ADD_ON_DEFINITION,
-  TIER_CAMP_LIMITS,
-  EXTRA_CAMPS_PER_ADD_ON,
   subscriptionStore$,
   TIER_DEFINITIONS,
   useSubscription,

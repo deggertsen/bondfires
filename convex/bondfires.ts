@@ -372,7 +372,9 @@ export const create = mutation({
 
     // Frozen camps do not allow new videos
     if (camp.status === 'frozen') {
-      throw new Error('This camp is currently frozen. Upgrade your subscription to create content here.')
+      throw new Error(
+        'This camp is currently frozen. Upgrade your subscription to create content here.',
+      )
     }
 
     const membership = await ctx.db

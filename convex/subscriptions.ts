@@ -593,7 +593,7 @@ export const current = query({
       canCreateBondfires: user?.isReviewerAccount === true || tierCanCreateBondfires(tier),
       maxVideoDurationMs:
         user?.isReviewerAccount === true ? undefined : getTierMaxVideoDurationMs(tier),
-      proExtraPublicCampAddOns: await getExtraCampAddOnCount(ctx, userId),
+      extraCampAddOns: await getExtraCampAddOnCount(ctx, userId),
       publicCampLimit:
         user?.isReviewerAccount === true ? undefined : await getPublicCampLimit(ctx, userId),
       pendingStorePurchaseCount,

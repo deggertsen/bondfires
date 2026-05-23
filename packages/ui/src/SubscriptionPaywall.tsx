@@ -1,9 +1,4 @@
-import type {
-  BillingPeriod,
-  ExtraCampAddOnInfo,
-  SubscriptionTier,
-  TierInfo,
-} from '@bondfires/app'
+import type { BillingPeriod, ExtraCampAddOnInfo, SubscriptionTier, TierInfo } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Check, Crown, Flame, Sparkles, Star, X } from '@tamagui/lucide-icons'
 import { useState } from 'react'

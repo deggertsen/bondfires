@@ -17,6 +17,7 @@ import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 
 type CampWithMembership = Doc<'camps'> & {
   membership: Doc<'campMembers'> | null
+  frozen?: boolean
 }
 
 type BondfireData = Doc<'bondfires'> & {
@@ -95,11 +96,28 @@ function CampHeader({
   const isOwner = camp.membership?.role === 'owner'
   const muted = camp.membership?.muted === true
   const canJoin = !isActiveMember && !isPending && camp.visibility === 'public'
+  const isFrozen = camp.frozen === true || camp.status === 'frozen'
   const rules = camp.rules
   const firstVisitBanner = getFirstVisitBanner(camp)
 
   return (
     <YStack paddingTop={58} paddingHorizontal={16} paddingBottom={18} gap={18}>
+      {isFrozen ? (
+        <YStack
+          backgroundColor={`${bondfireColors.warning}20`}
+          borderColor={bondfireColors.warning}
+          borderWidth={1}
+          borderRadius={12}
+          padding={12}
+        >
+          <Text color={bondfireColors.warning} fontSize={14} fontWeight="600">
+            🔒 This camp is frozen
+          </Text>
+          <Text color={bondfireColors.ash} fontSize={12} marginTop={4}>
+            No new videos can be created here. Upgrade to manage this camp.
+          </Text>
+        </YStack>
+      ) : null}
       <XStack alignItems="center" justifyContent="space-between">
         <Pressable onPress={onBack}>
           <YStack
@@ -216,7 +234,7 @@ function CampHeader({
         </YStack>
       ) : null}
 
-      {isActiveMember ? (
+      {isActiveMember && !isFrozen ? (
         <YStack gap={10}>
           {camp.visibility !== 'private' || isOwner ? (
             <Button variant="primary" size="$lg" onPress={onSpark}>

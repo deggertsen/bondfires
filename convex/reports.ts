@@ -76,15 +76,15 @@ export const submit = mutation({
     // Prevent duplicate reports from same user on same video
     const existingReport = args.bondfireId
       ? await ctx.db
-        .query('reports')
-        .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
-        .filter((q) => q.eq(q.field('reporterUserId'), reporterUserId))
-        .first()
+          .query('reports')
+          .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
+          .filter((q) => q.eq(q.field('reporterUserId'), reporterUserId))
+          .first()
       : await ctx.db
-        .query('reports')
-        .withIndex('by_bondfire_video', (q) => q.eq('bondfireVideoId', args.bondfireVideoId))
-        .filter((q) => q.eq(q.field('reporterUserId'), reporterUserId))
-        .first()
+          .query('reports')
+          .withIndex('by_bondfire_video', (q) => q.eq('bondfireVideoId', args.bondfireVideoId))
+          .filter((q) => q.eq(q.field('reporterUserId'), reporterUserId))
+          .first()
 
     if (existingReport) {
       throw new Error('You have already reported this video')

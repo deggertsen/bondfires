@@ -647,7 +647,9 @@ export const list = query({
     const camps = await ctx.db.query('camps').collect()
 
     return camps
-      .filter((camp) => args.includeArchived || camp.status === 'active' || camp.status === 'frozen')
+      .filter(
+        (camp) => args.includeArchived || camp.status === 'active' || camp.status === 'frozen',
+      )
       .filter((camp) => {
         // Frozen camps: only visible to active members
         if (camp.status === 'frozen') {
@@ -670,7 +672,12 @@ export const list = query({
           name: resolveCampDisplayName(camp),
           membership,
           _sortRank: camp.status === 'frozen' ? 1 : rank,
-          _lockedReason: camp.status === 'frozen' ? 'Frozen — upgrade to manage this camp' : (membership?.status === 'active' ? undefined : reason),
+          _lockedReason:
+            camp.status === 'frozen'
+              ? 'Frozen — upgrade to manage this camp'
+              : membership?.status === 'active'
+                ? undefined
+                : reason,
           frozen: camp.status === 'frozen',
         }
       })
@@ -763,7 +770,10 @@ export const listMine = query({
     const camps = await Promise.all(memberships.map((membership) => ctx.db.get(membership.campId)))
     return camps
       .map((camp, index) => (camp ? { ...camp, membership: memberships[index] } : null))
-      .filter((camp): camp is NonNullable<typeof camp> => !!camp && (camp.status === 'active' || camp.status === 'frozen'))
+      .filter(
+        (camp): camp is NonNullable<typeof camp> =>
+          !!camp && (camp.status === 'active' || camp.status === 'frozen'),
+      )
       .sort((left, right) => left.name.localeCompare(right.name))
   },
 })
