@@ -163,8 +163,12 @@ const PasswordWithVerification = Password({
       }
     }
 
+    const firstName = (params.firstName as string) ?? (params.name as string) ?? null
+    const lastName = (params.lastName as string) ?? null
     const profile = {
-      name: (params.name as string) ?? null,
+      name: firstName && lastName ? `${firstName} ${lastName}` : (firstName ?? 'User'),
+      firstName: firstName,
+      lastName: lastName,
       email: params.email as string,
       gender: (params.gender as string) ?? null,
     }

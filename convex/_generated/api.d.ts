@@ -15,6 +15,7 @@ import type * as camps from "../camps.js";
 import type * as conversations from "../conversations.js";
 import type * as crons from "../crons.js";
 import type * as email from "../email.js";
+import type * as entitlements from "../entitlements.js";
 import type * as http from "../http.js";
 import type * as liveSessions from "../liveSessions.js";
 import type * as notifications from "../notifications.js";
@@ -40,6 +41,7 @@ declare const fullApi: ApiFromModules<{
   conversations: typeof conversations;
   crons: typeof crons;
   email: typeof email;
+  entitlements: typeof entitlements;
   http: typeof http;
   liveSessions: typeof liveSessions;
   notifications: typeof notifications;

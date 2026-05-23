@@ -95,7 +95,8 @@
       ],
       "expo-video",
       "expo-font",
-      "expo-iap"
+      "expo-iap",
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true

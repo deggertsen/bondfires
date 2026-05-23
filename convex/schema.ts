@@ -75,6 +75,8 @@ export default defineSchema({
 
     // Profile fields
     name: v.optional(v.string()),
+    firstName: v.optional(v.string()),
+    lastName: v.optional(v.string()),
     displayName: v.optional(v.string()),
     photoUrl: v.optional(v.string()),
     photoStorageId: v.optional(v.id('_storage')),

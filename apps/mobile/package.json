@@ -33,6 +33,7 @@
     "@convex-dev/auth": "^0.0.90",
     "@expo/vector-icons": "^15.0.3",
     "@legendapp/state": "^3.0.0-beta.27",
+    "@react-native-community/datetimepicker": "8.4.4",
     "@react-navigation/native": "^7.1.8",
     "@tamagui/animations-react-native": "^1.144.0",
     "@tamagui/babel-plugin": "^1.144.0",
