@@ -767,6 +767,7 @@ export const applyStorePurchaseVerification = internalMutation({
     assertStoreProductMatchesKind(args.storeProductId, args.kind)
 
     const now = Date.now()
+    let appliedStatus: StoreSyncStatus = args.status
     const verificationStatus = getVerificationStateForStatus(args.status)
     const lookup = {
       userId: args.userId,
@@ -868,6 +869,7 @@ export const applyStorePurchaseVerification = internalMutation({
         ...fields,
         status: canActivateAddOn ? fields.status : ('expired' as const),
       }
+      appliedStatus = appliedFields.status
 
       if (existing) {
         await ctx.db.patch(existing._id, appliedFields)
@@ -889,7 +891,7 @@ export const applyStorePurchaseVerification = internalMutation({
 
     return {
       tier: await getEntitlementSubscriptionTier(ctx, args.userId),
-      status: args.status,
+      status: appliedStatus,
     }
   },
 })
