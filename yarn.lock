@@ -1227,6 +1227,7 @@ __metadata:
     "@legendapp/state": "npm:^3.0.0-beta.27"
     "@types/react": "npm:^19.1.0"
     convex: "npm:^1.31.3"
+    expo-iap: "npm:^4.3.1"
     typescript: "npm:^6.0.0"
   peerDependencies:
     expo-constants: "*"
