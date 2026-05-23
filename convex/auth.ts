@@ -140,30 +140,38 @@ const ResendPasswordReset = Resend({
 
 // Password provider with email verification, password reset, and profile support
 const PasswordWithVerification = Password({
-  // Profile fields to include when creating a user
+  // Profile fields to include when creating a user.
+  // Only requires birthDate during signUp flow.
   profile(params) {
+    const flow = params.flow as string
     const birthDate =
       typeof params.birthDate === 'string' && params.birthDate.trim()
         ? params.birthDate.trim()
         : undefined
-    if (!birthDate) {
-      throw new Error('birthDate is required')
+
+    if (flow === 'signUp') {
+      if (!birthDate) {
+        throw new Error('birthDate is required')
+      }
+
+      const age = calculateAge(birthDate)
+      if (age === null) {
+        throw new Error('birthDate must be a valid YYYY-MM-DD date')
+      }
+      if (age < 13) {
+        throw new Error('You must be at least 13 years old')
+      }
     }
 
-    const age = calculateAge(birthDate)
-    if (age === null) {
-      throw new Error('birthDate must be a valid YYYY-MM-DD date')
-    }
-    if (age < 13) {
-      throw new Error('You must be at least 13 years old')
-    }
-
-    return {
+    const profile = {
       name: (params.name as string) ?? null,
       email: params.email as string,
-      gender: params.gender as string,
-      birthDate,
+      gender: (params.gender as string) ?? null,
     }
+    if (birthDate) {
+      ;(profile as Record<string, unknown>).birthDate = birthDate
+    }
+    return profile
   },
   // Require email verification before allowing sign in
   verify: ResendOTP,
