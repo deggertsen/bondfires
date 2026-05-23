@@ -1,6 +1,6 @@
 import type {
   BillingPeriod,
-  ProExtraCampAddOnInfo,
+  ExtraCampAddOnInfo,
   SubscriptionTier,
   TierInfo,
 } from '@bondfires/app'
@@ -21,10 +21,10 @@ interface SubscriptionPaywallProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   tiers: TierInfo[]
-  proExtraCampAddOn?: ProExtraCampAddOnInfo | null
+  extraCampAddOn?: ExtraCampAddOnInfo | null
   currentTier: SubscriptionTier
   onPurchase: (tier: SubscriptionTier, productId?: string) => void
-  onPurchaseProExtraCamp?: (productId?: string) => void
+  onPurchaseExtraCamp?: (productId?: string) => void
   onRestore: () => void
   isPurchasing: boolean
   isRestoring: boolean
@@ -37,10 +37,10 @@ export function SubscriptionPaywall({
   open,
   onOpenChange,
   tiers,
-  proExtraCampAddOn,
+  extraCampAddOn,
   currentTier,
   onPurchase,
-  onPurchaseProExtraCamp,
+  onPurchaseExtraCamp,
   onRestore,
   isPurchasing,
   isRestoring,
@@ -178,17 +178,17 @@ export function SubscriptionPaywall({
                 />
               ))}
 
-            {proExtraCampAddOn && onPurchaseProExtraCamp ? (
+            {extraCampAddOn && onPurchaseExtraCamp ? (
               <AddOnCard
-                addOn={proExtraCampAddOn}
+                addOn={extraCampAddOn}
                 selectedPeriod={selectedAddOnPeriod}
                 onPeriodChange={setSelectedAddOnPeriod}
-                onPurchase={onPurchaseProExtraCamp}
+                onPurchase={onPurchaseExtraCamp}
                 isPurchasing={
                   isPurchasing &&
                   !!purchasingProductId &&
-                  (purchasingProductId === proExtraCampAddOn.productId ||
-                    purchasingProductId === proExtraCampAddOn.annualProductId)
+                  (purchasingProductId === extraCampAddOn.productId ||
+                    purchasingProductId === extraCampAddOn.annualProductId)
                 }
               />
             ) : null}
@@ -408,7 +408,7 @@ function TierCard({
 }
 
 interface AddOnCardProps {
-  addOn: ProExtraCampAddOnInfo
+  addOn: ExtraCampAddOnInfo
   selectedPeriod: BillingPeriod
   onPeriodChange: (period: BillingPeriod) => void
   onPurchase: (productId?: string) => void

@@ -366,8 +366,13 @@ export const create = mutation({
     const campId = args.campId
 
     const camp = await ctx.db.get(campId)
-    if (!camp || camp.status !== 'active') {
+    if (!camp || (camp.status !== 'active' && camp.status !== 'frozen')) {
       throw new Error('Camp not found')
+    }
+
+    // Frozen camps do not allow new videos
+    if (camp.status === 'frozen') {
+      throw new Error('This camp is currently frozen. Upgrade your subscription to create content here.')
     }
 
     const membership = await ctx.db

@@ -5,17 +5,21 @@ import type { MutationCtx } from './_generated/server'
 import { action, internalMutation, mutation, query } from './_generated/server'
 import { auth } from './auth'
 import {
-  getActiveProExtraPublicCampAddOnCount,
   getEntitlementSubscriptionTier,
+  getExtraCampAddOnCount,
   getPublicCampLimit,
   getTierMaxVideoDurationMs,
+  handleTierDowngrade,
+  handleTierUpgrade,
+  processExpiredReclaims as processExpiredReclaimsImpl,
+  reclaimFrozenCamps,
   type SubscriptionTier,
   TIER_RANK,
   tierCanCreateBondfires,
 } from './entitlements'
 
 type SubscriptionPlatform = 'ios' | 'android'
-type StorePurchaseKind = 'subscription' | 'proExtraCamp'
+type StorePurchaseKind = 'subscription' | 'extraCamp'
 type VerifiedStoreStatus = 'active' | 'trialing' | 'past_due' | 'canceled' | 'expired'
 type StoreSyncStatus = 'pending_verification' | VerifiedStoreStatus
 
@@ -60,7 +64,7 @@ const storeStatusValidator = v.union(
   v.literal('expired'),
 )
 
-const storePurchaseKindValidator = v.union(v.literal('subscription'), v.literal('proExtraCamp'))
+const storePurchaseKindValidator = v.union(v.literal('subscription'), v.literal('extraCamp'))
 
 const PRODUCT_ID_TO_TIER: Record<string, SubscriptionTier | undefined> = {
   'bondfires.plus.monthly': 'plus',
@@ -82,7 +86,7 @@ function getStorePurchaseKind(storeProductId: string): StorePurchaseKind | null 
   }
 
   if (EXTRA_CAMP_PRODUCT_IDS.has(storeProductId)) {
-    return 'proExtraCamp'
+    return 'extraCamp'
   }
 
   return null
@@ -589,7 +593,7 @@ export const current = query({
       canCreateBondfires: user?.isReviewerAccount === true || tierCanCreateBondfires(tier),
       maxVideoDurationMs:
         user?.isReviewerAccount === true ? undefined : getTierMaxVideoDurationMs(tier),
-      proExtraPublicCampAddOns: await getActiveProExtraPublicCampAddOnCount(ctx, userId),
+      proExtraPublicCampAddOns: await getExtraCampAddOnCount(ctx, userId),
       publicCampLimit:
         user?.isReviewerAccount === true ? undefined : await getPublicCampLimit(ctx, userId),
       pendingStorePurchaseCount,
@@ -717,13 +721,13 @@ export const syncStorePurchase = mutation({
         } else {
           await ctx.db.patch(existing._id, {
             ...pendingStoreFields,
-            type: 'pro_extra_public_camp',
+            type: 'extra_camp',
           })
         }
       } else {
         await ctx.db.insert('subscriptionAddOns', {
           ...pendingStoreFields,
-          type: 'pro_extra_public_camp',
+          type: 'extra_camp',
           createdAt: args.purchasedAt ?? now,
         })
       }
@@ -803,7 +807,23 @@ export const applyStorePurchaseVerification = internalMutation({
       }
 
       if (existing) {
+        const previousTier = existing.tier
         await ctx.db.patch(existing._id, fields)
+
+        // Detect tier changes and freeze/unfreeze camps accordingly
+        if (args.kind === 'subscription' && verificationStatus === 'verified') {
+          const newTier = fields.tier
+          if (TIER_RANK[newTier] < TIER_RANK[previousTier]) {
+            await handleTierDowngrade(ctx, args.userId, previousTier, newTier)
+          } else if (TIER_RANK[newTier] > TIER_RANK[previousTier]) {
+            await handleTierUpgrade(ctx, args.userId, previousTier, newTier)
+            // Also attempt to reclaim any frozen camps the user had from
+            // a previous downgrade that may now fit within new limits.
+            if (TIER_RANK[newTier] >= TIER_RANK.pro) {
+              await reclaimFrozenCamps(ctx, args.userId, newTier)
+            }
+          }
+        }
       } else {
         await ctx.db.insert('subscriptions', {
           ...fields,
@@ -826,7 +846,7 @@ export const applyStorePurchaseVerification = internalMutation({
 
       const fields = {
         userId: args.userId,
-        type: 'pro_extra_public_camp' as const,
+        type: 'extra_camp' as const,
         status: args.status,
         verificationStatus,
         platform: args.platform,
@@ -840,7 +860,26 @@ export const applyStorePurchaseVerification = internalMutation({
       }
 
       if (existing) {
-        await ctx.db.patch(existing._id, fields)
+        // For add-ons: if this is an extra_camp and the user is no longer Pro,
+        // don't activate it — the user must have an active Pro subscription.
+        if (
+          args.kind === 'extraCamp' &&
+          verificationStatus === 'verified' &&
+          (args.status === 'active' || args.status === 'trialing')
+        ) {
+          const userTier = await getEntitlementSubscriptionTier(ctx, args.userId)
+          if (TIER_RANK[userTier] < TIER_RANK.pro) {
+            // Mark the add-on as expired since Pro is required
+            await ctx.db.patch(existing._id, {
+              ...fields,
+              status: 'expired',
+            })
+          } else {
+            await ctx.db.patch(existing._id, fields)
+          }
+        } else {
+          await ctx.db.patch(existing._id, fields)
+        }
       } else {
         await ctx.db.insert('subscriptionAddOns', {
           ...fields,
@@ -953,5 +992,17 @@ export const verifyStorePurchase = action({
       })
       throw error
     }
+  },
+})
+
+export const processExpiredReclaims = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const result = await processExpiredReclaimsImpl(ctx)
+    // biome-ignore lint/suspicious/noConsole: cron job diagnostic logging
+    console.log(
+      `Reclaim processed: ${result.campsTransferred} transferred, ${result.campsArchived} archived`,
+    )
+    return result
   },
 })

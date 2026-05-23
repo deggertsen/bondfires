@@ -1,6 +1,8 @@
-import type { ProExtraCampAddOnInfo, SubscriptionTier, TierInfo } from '@bondfires/app'
+import type { ExtraCampAddOnInfo, SubscriptionTier, TierInfo } from '@bondfires/app'
 import {
-  PRO_EXTRA_CAMP_ADD_ON_DEFINITION,
+  EXTRA_CAMP_ADD_ON_DEFINITION,
+  TIER_CAMP_LIMITS,
+  EXTRA_CAMPS_PER_ADD_ON,
   subscriptionStore$,
   TIER_DEFINITIONS,
   useSubscription,
@@ -22,7 +24,7 @@ function GlobalPaywall() {
     productPrices,
     productsLoaded,
     purchase,
-    purchaseProExtraCamp,
+    purchaseExtraCamp,
     restore,
     hidePaywall,
     clearError,
@@ -73,10 +75,10 @@ function GlobalPaywall() {
     return [freeTier, ...paidTiers]
   }, [currentTier, productPrices, productsLoaded])
 
-  const proExtraCampAddOn = useMemo((): ProExtraCampAddOnInfo | null => {
+  const extraCampAddOn = useMemo((): ExtraCampAddOnInfo | null => {
     if (!productsLoaded || !showExtraCampAddon) return null
 
-    const def = PRO_EXTRA_CAMP_ADD_ON_DEFINITION
+    const def = EXTRA_CAMP_ADD_ON_DEFINITION
     const price = productPrices[def.productId] ?? null
     const annualPrice = productPrices[def.annualProductId] ?? null
 
@@ -100,10 +102,10 @@ function GlobalPaywall() {
         }
       }}
       tiers={tiers}
-      proExtraCampAddOn={proExtraCampAddOn}
+      extraCampAddOn={extraCampAddOn}
       currentTier={currentTier}
       onPurchase={purchase}
-      onPurchaseProExtraCamp={purchaseProExtraCamp}
+      onPurchaseExtraCamp={purchaseExtraCamp}
       onRestore={restore}
       isPurchasing={isPurchasing}
       isRestoring={isRestoring}
