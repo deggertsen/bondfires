@@ -21,6 +21,7 @@ import {
   ALL_SUBSCRIPTION_PRODUCT_IDS,
   CREATE_REQUIRED_TIER,
   PRO_EXTRA_CAMP_PRODUCT_IDS,
+  isProExtraCampProductId,
   PRODUCT_ID_TO_PURCHASE_KIND,
   type StorePurchaseKind,
   type SubscriptionTier,
@@ -86,12 +87,15 @@ async function ensureIapConnection() {
   await iapConnectionPromise
 }
 
-async function loadSubscriptionProducts() {
+async function loadSubscriptionProducts(showExtraCampAddon: boolean) {
   const products = await fetchProducts({ skus: ALL_SUBSCRIPTION_PRODUCT_IDS, type: 'subs' })
   const productList = Array.isArray(products) ? products : [products]
+  const visibleProducts = showExtraCampAddon
+    ? productList
+    : productList.filter((product) => !product?.id || !isProExtraCampProductId(product.id))
 
   subscriptionActions.setProducts(
-    productList
+    visibleProducts
       .filter((product): product is ProductSubscription => !!product?.id)
       .map((product) => ({
         productId: product.id,
@@ -236,6 +240,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
   const syncStorePurchase = useMutation(api.subscriptions.syncStorePurchase)
   const verifyStorePurchase = useAction(api.subscriptions.verifyStorePurchase)
   const currentTier = useValue(subscriptionStore$.currentTier)
+  const showExtraCampAddon = currentTier === 'pro'
   const isPurchasing = useValue(subscriptionStore$.isPurchasing)
   const isRestoring = useValue(subscriptionStore$.isRestoring)
   const purchasingTier = useValue(subscriptionStore$.purchasingTier)
@@ -268,7 +273,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
           await syncStorePurchase(getStorePurchaseSyncArgs(purchase))
           return await verifyStorePurchase(getStorePurchaseVerifyArgs(purchase))
         })
-        await loadSubscriptionProducts()
+        await loadSubscriptionProducts(showExtraCampAddon)
       } catch (err) {
         console.warn('Failed to initialize IAP:', err)
         if (mounted) {
@@ -289,6 +294,11 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
       }
     }
   }, [initializeIap, syncStorePurchase, verifyStorePurchase])
+
+  useEffect(() => {
+    if (!initializeIap || !productsLoaded) return
+    void loadSubscriptionProducts(showExtraCampAddon)
+  }, [initializeIap, productsLoaded, showExtraCampAddon])
 
   const requestStorePurchase = useCallback(async (productId: string) => {
     try {
@@ -425,6 +435,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
     productPrices,
     productOfferTokens,
     productsLoaded,
+    showExtraCampAddon,
     canCreate: tierMeetsRequirement(currentTier, CREATE_REQUIRED_TIER),
     purchase,
     purchaseProExtraCamp,

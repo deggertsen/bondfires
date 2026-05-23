@@ -48,11 +48,8 @@ export const PLUS_PRIVATE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 /** Maximum active private camps a Plus/Premium user may own. */
 export const MAX_PRIVATE_CAMPS_FOR_NON_PRO = 1
 
-/** Maximum public camps a Pro user may own/manage. */
-export const MAX_PUBLIC_CAMPS_FOR_PRO = 3
-
-/** Additional public-camp capacity granted by one verified Pro extra-camp add-on. */
-export const PRO_EXTRA_PUBLIC_CAMPS_PER_ADD_ON = 1
+/** Additional public-camp capacity granted by one verified extra-camp add-on. */
+export const EXTRA_CAMPS_PER_ADD_ON = 1
 
 // ---------------------------------------------------------------------------
 // Core helpers
@@ -89,14 +86,7 @@ export async function getActiveSubscriptionTier(
   )
 }
 
-/**
- * Returns the number of active, verified Pro extra-camp add-ons for a user.
- *
- * Client-submitted pending store receipts are intentionally ignored here. Store
- * validation must mark an add-on `active`/`trialing` and `verified` before it
- * can expand a user's camp allowance.
- */
-export async function getActiveProExtraPublicCampAddOnCount(
+export async function getExtraCampAddOnCount(
   ctx: QueryCtx | MutationCtx,
   userId: Id<'users'>,
 ): Promise<number> {
@@ -108,11 +98,19 @@ export async function getActiveProExtraPublicCampAddOnCount(
 
   return addOns.filter(
     (addOn) =>
-      addOn.type === 'pro_extra_public_camp' &&
+      addOn.type === 'extra_camp' &&
       addOn.verificationStatus === 'verified' &&
       (addOn.status === 'active' || addOn.status === 'trialing') &&
       (!addOn.currentPeriodEnd || addOn.currentPeriodEnd > now),
   ).length
+}
+
+/** Base camp limits by tier. Only Pro can create public camps. */
+export const TIER_CAMP_LIMITS: Record<SubscriptionTier, { publicCamps: number; privateCamps: number }> = {
+  free: { publicCamps: 0, privateCamps: 0 },
+  plus: { publicCamps: 0, privateCamps: 1 },
+  premium: { publicCamps: 0, privateCamps: 1 },
+  pro: { publicCamps: 3, privateCamps: 1 },
 }
 
 /**
@@ -128,8 +126,8 @@ export async function getPublicCampLimit(
     return 0
   }
 
-  const extraCampAddOns = await getActiveProExtraPublicCampAddOnCount(ctx, userId)
-  return MAX_PUBLIC_CAMPS_FOR_PRO + extraCampAddOns * PRO_EXTRA_PUBLIC_CAMPS_PER_ADD_ON
+  const extraCampAddOns = await getExtraCampAddOnCount(ctx, userId)
+  return TIER_CAMP_LIMITS.pro.publicCamps + extraCampAddOns * EXTRA_CAMPS_PER_ADD_ON
 }
 
 /**
@@ -312,7 +310,12 @@ export async function assertCanCreatePublicCamp(
   const existingPublicCamps = await ctx.db
     .query('camps')
     .withIndex('by_owner', (q) => q.eq('ownerId', userId))
-    .filter((q) => q.and(q.eq(q.field('visibility'), 'public'), q.eq(q.field('status'), 'active')))
+    .filter((q) =>
+      q.and(
+        q.eq(q.field('visibility'), 'public'),
+        q.or(q.eq(q.field('status'), 'active'), q.eq(q.field('status'), 'frozen')),
+      ),
+    )
     .collect()
 
   if (existingPublicCamps.length >= publicCampLimit) {
@@ -389,4 +392,162 @@ export async function assertVideoDurationWithinTierLimit(
     const maxMinutes = Math.round(maxDurationMs / 60000)
     throw new Error(`Videos longer than ${maxMinutes} minutes require a Pro subscription`)
   }
+}
+
+// ---------------------------------------------------------------------------
+// Downgrade handling
+// ---------------------------------------------------------------------------
+
+/**
+ * When a user's subscription tier changes, freeze excess camps and revoke
+ * extra-camp add-ons if the user is no longer Pro.
+ *
+ * Called from subscription sync/verification after a tier change is detected.
+ *
+ * Rules:
+ *  - If the user is no longer Pro, revoke all active extra_camp add-ons.
+ *  - Freeze excess public camps that exceed the new tier's allowance.
+ *  - Freeze excess private camps that exceed the new tier's allowance.
+ *  - Frozen camps are NOT deleted. Existing members can still view, but no new
+ *    videos can be recorded and no new members can join.
+ */
+export async function handleTierDowngrade(
+  ctx: MutationCtx,
+  userId: Id<'users'>,
+  previousTier: SubscriptionTier,
+  newTier: SubscriptionTier,
+): Promise<{ campsFrozen: number; addOnsRevoked: number }> {
+  // Only act on actual downgrades
+  if (TIER_RANK[newTier] >= TIER_RANK[previousTier]) {
+    return { campsFrozen: 0, addOnsRevoked: 0 }
+  }
+
+  let addOnsRevoked = 0
+
+  // Revoke extra-camp add-ons if no longer Pro
+  if (TIER_RANK[newTier] < TIER_RANK.pro) {
+    const addOns = await ctx.db
+      .query('subscriptionAddOns')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect()
+
+    for (const addOn of addOns) {
+      if (
+        addOn.type === 'extra_camp' &&
+        addOn.verificationStatus === 'verified' &&
+        (addOn.status === 'active' || addOn.status === 'trialing')
+      ) {
+        await ctx.db.patch(addOn._id, {
+          status: 'expired',
+          updatedAt: Date.now(),
+        })
+        addOnsRevoked++
+      }
+    }
+  }
+
+  // Freeze excess camps
+  const limits = TIER_CAMP_LIMITS[newTier]
+  const userCamps = await ctx.db
+    .query('camps')
+    .withIndex('by_owner', (q) => q.eq('ownerId', userId))
+    .collect()
+
+  const activePublicCamps = userCamps.filter(
+    (c) => c.visibility === 'public' && c.status === 'active',
+  )
+  const activePrivateCamps = userCamps.filter(
+    (c) => c.visibility === 'private' && c.status === 'active',
+  )
+
+  let campsFrozen = 0
+
+  // Freeze excess public camps (only Pro can have public camps)
+  const maxPublic = TIER_RANK[newTier] >= TIER_RANK.pro ? limits.publicCamps : 0
+  for (let i = maxPublic; i < activePublicCamps.length; i++) {
+    await ctx.db.patch(activePublicCamps[i]._id, {
+      status: 'frozen',
+      updatedAt: Date.now(),
+    })
+    campsFrozen++
+  }
+
+  // Freeze excess private camps
+  const maxPrivate = limits.privateCamps
+  for (let i = maxPrivate; i < activePrivateCamps.length; i++) {
+    await ctx.db.patch(activePrivateCamps[i]._id, {
+      status: 'frozen',
+      updatedAt: Date.now(),
+    })
+    campsFrozen++
+  }
+
+  return { campsFrozen, addOnsRevoked }
+}
+
+/**
+ * Unfreeze camps when a user upgrades their subscription.
+ *
+ * Activates previously frozen camps up to the new tier's allowance.
+ * Public camps are reactivated first (oldest first), then private camps.
+ */
+export async function handleTierUpgrade(
+  ctx: MutationCtx,
+  userId: Id<'users'>,
+  previousTier: SubscriptionTier,
+  newTier: SubscriptionTier,
+): Promise<{ campsUnfrozen: number }> {
+  // Only act on actual upgrades
+  if (TIER_RANK[newTier] <= TIER_RANK[previousTier]) {
+    return { campsUnfrozen: 0 }
+  }
+
+  const limits = TIER_CAMP_LIMITS[newTier]
+  const userCamps = await ctx.db
+    .query('camps')
+    .withIndex('by_owner', (q) => q.eq('ownerId', userId))
+    .collect()
+
+  // Count currently active camps
+  const activePublicCamps = userCamps.filter(
+    (c) => c.visibility === 'public' && c.status === 'active',
+  )
+  const activePrivateCamps = userCamps.filter(
+    (c) => c.visibility === 'private' && c.status === 'active',
+  )
+
+  const frozenCamps = userCamps
+    .filter((c) => c.status === 'frozen')
+    .sort((a, b) => a.createdAt - b.createdAt) // Oldest first
+
+  let campsUnfrozen = 0
+  let publicSlotsLeft =
+    (TIER_RANK[newTier] >= TIER_RANK.pro ? limits.publicCamps : 0) - activePublicCamps.length
+  let privateSlotsLeft = limits.privateCamps - activePrivateCamps.length
+
+  // Extra camp add-ons increase public camp allowance for Pro
+  if (TIER_RANK[newTier] >= TIER_RANK.pro) {
+    const extraCamps = await getExtraCampAddOnCount(ctx, userId)
+    publicSlotsLeft += extraCamps * EXTRA_CAMPS_PER_ADD_ON
+  }
+
+  for (const camp of frozenCamps) {
+    if (camp.visibility === 'public' && publicSlotsLeft > 0) {
+      await ctx.db.patch(camp._id, {
+        status: 'active',
+        updatedAt: Date.now(),
+      })
+      publicSlotsLeft--
+      campsUnfrozen++
+    } else if (camp.visibility === 'private' && privateSlotsLeft > 0) {
+      await ctx.db.patch(camp._id, {
+        status: 'active',
+        updatedAt: Date.now(),
+      })
+      privateSlotsLeft--
+      campsUnfrozen++
+    }
+  }
+
+  return { campsUnfrozen }
 }

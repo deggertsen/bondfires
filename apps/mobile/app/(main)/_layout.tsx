@@ -13,6 +13,7 @@ import { useMemo } from 'react'
 function GlobalPaywall() {
   const {
     currentTier,
+    showExtraCampAddon,
     isPurchasing,
     isRestoring,
     purchasingProductId,
@@ -73,7 +74,7 @@ function GlobalPaywall() {
   }, [currentTier, productPrices, productsLoaded])
 
   const proExtraCampAddOn = useMemo((): ProExtraCampAddOnInfo | null => {
-    if (!productsLoaded || currentTier !== 'pro') return null
+    if (!productsLoaded || !showExtraCampAddon) return null
 
     const def = PRO_EXTRA_CAMP_ADD_ON_DEFINITION
     const price = productPrices[def.productId] ?? null
@@ -85,7 +86,7 @@ function GlobalPaywall() {
       annualPrice,
       isAvailable: price !== null || annualPrice !== null,
     }
-  }, [currentTier, productPrices, productsLoaded])
+  }, [productPrices, productsLoaded, showExtraCampAddon])
 
   if (!tiers) return null
 

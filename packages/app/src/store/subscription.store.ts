@@ -12,8 +12,8 @@ export const SUBSCRIPTION_PRODUCT_IDS = {
   premiumAnnual: 'bondfires.premium.annual',
   proMonthly: 'bondfires.pro.monthly',
   proAnnual: 'bondfires.pro.annual',
-  proExtraCampMonthly: 'bondfires.pro.extra_camp.monthly',
-  proExtraCampAnnual: 'bondfires.pro.extra_camp.annual',
+  proExtraCampMonthly: 'bondfires.extra_camp.monthly',
+  proExtraCampAnnual: 'bondfires.extra_camp.annual',
 } as const
 
 export type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'
@@ -41,6 +41,13 @@ export const TIER_PRODUCT_IDS: Record<
 export const PRO_EXTRA_CAMP_PRODUCT_IDS: Record<BillingPeriod, string> = {
   monthly: SUBSCRIPTION_PRODUCT_IDS.proExtraCampMonthly,
   annual: SUBSCRIPTION_PRODUCT_IDS.proExtraCampAnnual,
+}
+
+export function isProExtraCampProductId(productId: string) {
+  return (
+    productId === SUBSCRIPTION_PRODUCT_IDS.proExtraCampMonthly ||
+    productId === SUBSCRIPTION_PRODUCT_IDS.proExtraCampAnnual
+  )
 }
 
 export const PRODUCT_ID_TO_TIER: Record<string, SubscriptionTier | undefined> = {

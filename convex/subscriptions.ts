@@ -71,9 +71,9 @@ const PRODUCT_ID_TO_TIER: Record<string, SubscriptionTier | undefined> = {
   'bondfires.pro.annual': 'pro',
 }
 
-const PRO_EXTRA_CAMP_PRODUCT_IDS = new Set([
-  'bondfires.pro.extra_camp.monthly',
-  'bondfires.pro.extra_camp.annual',
+const EXTRA_CAMP_PRODUCT_IDS = new Set([
+  'bondfires.extra_camp.monthly',
+  'bondfires.extra_camp.annual',
 ])
 
 function getStorePurchaseKind(storeProductId: string): StorePurchaseKind | null {
@@ -81,7 +81,7 @@ function getStorePurchaseKind(storeProductId: string): StorePurchaseKind | null 
     return 'subscription'
   }
 
-  if (PRO_EXTRA_CAMP_PRODUCT_IDS.has(storeProductId)) {
+  if (EXTRA_CAMP_PRODUCT_IDS.has(storeProductId)) {
     return 'proExtraCamp'
   }
 

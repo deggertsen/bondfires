@@ -23,7 +23,7 @@ const storeVerificationStatus = v.union(
   v.literal('verified'),
   v.literal('failed'),
 )
-const subscriptionAddOnType = v.union(v.literal('pro_extra_public_camp'))
+const subscriptionAddOnType = v.union(v.literal('extra_camp'))
 
 const userGender = v.union(v.literal('male'), v.literal('female'), v.literal('other'))
 
@@ -113,7 +113,8 @@ export default defineSchema({
     welcomeBroadcast: v.optional(v.boolean()),
     visibility: v.union(v.literal('public'), v.literal('private')),
     access: v.union(v.literal('open'), v.literal('approval'), v.literal('invite')),
-    status: v.union(v.literal('active'), v.literal('archived')),
+    status: v.union(v.literal('active'), v.literal('frozen'), v.literal('archived')),
+    frozen: v.optional(v.boolean()),
     ownerId: v.optional(v.id('users')),
     bondfireCount: v.optional(v.number()),
     activeMemberCount: v.optional(v.number()),
