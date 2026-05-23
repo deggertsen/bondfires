@@ -8,7 +8,7 @@ import { useFonts } from 'expo-font'
 import type * as Notifications from 'expo-notifications'
 import { Stack, useRouter } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
-import { Component, type ErrorInfo, type ReactNode, useCallback, useEffect } from 'react'
+import { Component, type ErrorInfo, type ReactNode, useCallback, useEffect, useRef } from 'react'
 import { useColorScheme } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { TamaguiProvider, Theme, YStack } from 'tamagui'
@@ -182,12 +182,25 @@ function AppContent() {
     },
   })
 
-  // Observe notifications preference and register/unregister accordingly
+  // Observe notifications preference and register/unregister accordingly.
+  // We use refs to avoid stale closure captures — useObserve binds callbacks
+  // at mount time, so mutation functions from subsequent renders aren't seen.
+  const registerDeviceRef = useRef(registerDevice)
+  registerDeviceRef.current = registerDevice
+  const unregisterDeviceRef = useRef(unregisterDevice)
+  unregisterDeviceRef.current = unregisterDevice
+  const requestPermissionsRef = useRef(requestPermissions)
+  requestPermissionsRef.current = requestPermissions
+  const unregisterRef = useRef(unregister)
+  unregisterRef.current = unregister
+  const handleNotificationResponseRef = useRef(handleNotificationResponse)
+  handleNotificationResponseRef.current = handleNotificationResponse
+
   useObserve(appStore$.preferences.notificationsEnabled, ({ value: notificationsEnabled }) => {
     if (notificationsEnabled) {
-      requestPermissions()
+      requestPermissionsRef.current()
     } else {
-      unregister()
+      unregisterRef.current()
     }
   })
 

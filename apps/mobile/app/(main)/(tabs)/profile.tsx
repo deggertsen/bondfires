@@ -169,6 +169,12 @@ export default function ProfileScreen() {
       currentUser: CurrentUserData
       userBondfires: UserBondfireData[] | undefined
     }) => {
+      // Guard against null — the session may have expired while the query was in flight
+      if (nextCurrentUser === null) {
+        console.warn('Profile resolved with null user — session may have expired')
+        stopRefreshing()
+        return
+      }
       setCurrentUser(nextCurrentUser)
       setUserBondfires(nextUserBondfires)
       stopRefreshing()
