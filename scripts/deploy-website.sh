@@ -12,13 +12,6 @@ if ! command -v npx >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
-  echo "Set CLOUDFLARE_API_TOKEN before deploying."
-  echo "Create one at: https://dash.cloudflare.com/profile/api-tokens"
-  echo "Required permissions: Account > Cloudflare Pages > Edit"
-  exit 1
-fi
-
 echo "Deploying apps/website to Cloudflare Pages project: $PROJECT_NAME"
 
 npx --yes wrangler@4 pages deploy apps/website \
