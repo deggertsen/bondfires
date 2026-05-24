@@ -1,7 +1,7 @@
 # Website Purpose and Design Document
 
 > ⚠️ **ARCHIVAL — Planning Document (Jan 2026)**  
-> This document was the initial design specification for the Bondfires marketing website. The site has since been built as static HTML/CSS/JS, deployed to AWS S3 + CloudFront, and has evolved beyond this spec. Keep for historical reference; refer to `apps/website/README.md` and the actual HTML files for current state.
+> This document was the initial design specification for the Bondfires marketing website. The site now lives in https://github.com/deggertsen/bondfires-website (static HTML/CSS/JS on Cloudflare Pages). Keep for historical reference.
 
 ## 1. Website Objectives (Prioritized)
 

@@ -1,7 +1,7 @@
 ## Website Objective
 
 > ⚠️ **ARCHIVAL — Early Brainstorming Doc (Jan 2026)**  
-> This was the original brainstorming document that evolved into `Web Site Purpose and Design - Refined.md`. The website is now built and live. See `apps/website/` for current source.
+> This was the original brainstorming document that evolved into `Web Site Purpose and Design - Refined.md`. The website now lives in https://github.com/deggertsen/bondfires-website
 
 Working out the main purpose of the website. Here are some potential purposes:
 -an entry point into the app

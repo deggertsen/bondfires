@@ -35,31 +35,14 @@ output "website_deployment_instructions" {
     WEBSITE DEPLOYMENT INSTRUCTIONS
     ==========================================
     
-    To deploy the website (run from repository root):
+    Website source: https://github.com/deggertsen/bondfires-website
     
-    1. Sync files to S3 bucket:
+    This Terraform stack is legacy. The site is now deployed via Cloudflare Pages.
     
-       aws s3 sync apps/website/ s3://${aws_s3_bucket.website.id}/ \
-         --delete \
-         --exclude "README.md"
+    To destroy this stack after bondfires.org is live on Pages:
     
-    2. Invalidate CloudFront cache:
-    
-       aws cloudfront create-invalidation \
-         --distribution-id ${aws_cloudfront_distribution.website.id} \
-         --paths "/*"
-    
-    3. Website will be available at:
-    
-       https://${aws_cloudfront_distribution.website.domain_name}
-    
-    Quick one-liner:
-    
-       aws s3 sync apps/website/ s3://${aws_s3_bucket.website.id}/ --delete --exclude "README.md" && \
-       aws cloudfront create-invalidation --distribution-id ${aws_cloudfront_distribution.website.id} --paths "/*"
-    
-    For custom domain, configure Route53 and update CloudFront with ACM certificate.
-    See apps/website/README.md for detailed deployment documentation.
+       cd infrastructure/terraform
+       terraform destroy -var-file=environments/prod/prod.tfvars
     
   EOT
 }

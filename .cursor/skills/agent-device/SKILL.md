@@ -177,5 +177,5 @@ agent-device network dump 50 --session bondfires-ios
 ## When to use
 
 - **Use `agent-device`** for local simulator/emulator automation of Bondfires mobile UI flows.
-- **Use in-browser / web automation tools** for `apps/website/` or other web targets — not this skill.
+- **Use in-browser / web automation tools** for the marketing site ([bondfires-website](https://github.com/deggertsen/bondfires-website)) or other web targets — not this skill.
 - **Do not rely on this skill** for remote device farms unless that integration is explicitly available in your environment.

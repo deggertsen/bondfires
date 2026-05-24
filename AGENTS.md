@@ -12,14 +12,15 @@ React Native (Expo) + Tamagui + Legend State + Convex (backend/DB/auth/file stor
 
 ```
 apps/mobile/                    — Expo mobile app
-apps/website/                   — Marketing / landing site (static HTML)
 convex/                         — Convex backend, auth, and HTTP actions
-infrastructure/terraform/       — AWS/Terraform infrastructure
+infrastructure/terraform/       — Legacy AWS website infra (deprecated)
 packages/ui/                    — Shared Tamagui components
 packages/app/                   — Features, hooks, Legend State stores
 packages/config/                — Tamagui configuration
 packages/video-segment-merger/  — Native video processing package (iOS/Android)
 ```
+
+Marketing website: separate repo at https://github.com/deggertsen/bondfires-website (Cloudflare Pages).
 
 ## How to Run
 

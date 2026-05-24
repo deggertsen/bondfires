@@ -1,6 +1,6 @@
 # Bondfires Terraform Infrastructure
 
-> **Note:** The Bondfires marketing website has moved to Cloudflare Pages. This Terraform stack is legacy and can be destroyed once `bondfires.org` is confirmed live on Pages. See `apps/website/README.md`.
+> **Note:** The Bondfires marketing website lives in [bondfires-website](https://github.com/deggertsen/bondfires-website) and is hosted on Cloudflare Pages. This Terraform stack is legacy and can be destroyed once `bondfires.org` is confirmed live on Pages.
 
 This Terraform configuration previously managed AWS S3 + CloudFront for the Bondfires website.
 
