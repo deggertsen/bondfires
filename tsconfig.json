@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ESNext",
-    "lib": ["DOM", "DOM.Iterable", "ESNext"],
+    "lib": [
+      "DOM",
+      "DOM.Iterable",
+      "ESNext"
+    ],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
@@ -15,11 +19,27 @@
     "jsx": "react-jsx",
     "incremental": true,
     "paths": {
-      "@bondfires/ui": ["./packages/ui/src"],
-      "@bondfires/app": ["./packages/app/src"],
-      "@bondfires/config": ["./packages/config/src"]
+      "@bondfires/ui": [
+        "./packages/ui/src"
+      ],
+      "@bondfires/app": [
+        "./packages/app/src"
+      ],
+      "@bondfires/config": [
+        "./packages/config/src"
+      ]
     }
   },
-  "include": ["**/*.ts", "**/*.tsx"],
-  "exclude": ["node_modules", "**/node_modules/**", ".expo", "build", "dist"]
+  "include": [
+    "**/*.ts",
+    "**/*.tsx"
+  ],
+  "exclude": [
+    "node_modules",
+    "**/node_modules/**",
+    ".expo",
+    "build",
+    "dist"
+  ],
+  "extends": "expo/tsconfig.base"
 }
