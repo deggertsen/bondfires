@@ -3,7 +3,7 @@ import '../polyfills/convex-react-native'
 
 import { Button, Text } from '@bondfires/ui'
 import { ConvexAuthProvider } from '@convex-dev/auth/react'
-import { ConvexProvider, ConvexReactClient, useMutation } from 'convex/react'
+import { ConvexReactClient, useMutation } from 'convex/react'
 import { useFonts } from 'expo-font'
 import type * as Notifications from 'expo-notifications'
 import { Stack, useRouter } from 'expo-router'
@@ -88,10 +88,9 @@ function ErrorFallback({ error, retry }: ErrorFallbackProps) {
   )
 }
 
-// Custom ErrorBoundary that wraps the fallback in ConvexProvider
-// This prevents the "Could not find Convex client" cascade when errors
-// are caught by expo-router's default ErrorBoundary which renders
-// completely outside all providers.
+// Custom ErrorBoundary that wraps AppContent.
+// Catches errors from routes and renders a fallback UI.
+// ErrorFallback doesn't use Convex hooks, so we only need TamaguiProvider here.
 class LayoutErrorBoundary extends Component<
   { children: ReactNode },
   { hasError: boolean; error: Error | null }
@@ -116,24 +115,28 @@ class LayoutErrorBoundary extends Component<
   render() {
     if (this.state.hasError && this.state.error) {
       return (
-        <ConvexProvider client={convex}>
-          <ConvexAuthProvider client={convex} storage={mmkvStorage}>
-            <TamaguiProvider config={config} defaultTheme="dark">
-              <Theme name="dark">
-                <ErrorFallback error={this.state.error} retry={this.handleRetry} />
-              </Theme>
-            </TamaguiProvider>
-          </ConvexAuthProvider>
-        </ConvexProvider>
+        <TamaguiProvider config={config} defaultTheme="dark">
+          <Theme name="dark">
+            <ErrorFallback error={this.state.error} retry={this.handleRetry} />
+          </Theme>
+        </TamaguiProvider>
       )
     }
     return this.props.children
   }
 }
 
-// Override expo-router's default ErrorBoundary
+// Override expo-router's default ErrorBoundary.
+// expo-router renders this in place of the route component when an error occurs.
+// ErrorFallback doesn't use Convex hooks, so no ConvexProvider needed here.
 export function ErrorBoundary(props: { error: Error; retry: () => void }) {
-  return <ErrorFallback error={props.error} retry={props.retry} />
+  return (
+    <TamaguiProvider config={config} defaultTheme="dark">
+      <Theme name="dark">
+        <ErrorFallback error={props.error} retry={props.retry} />
+      </Theme>
+    </TamaguiProvider>
+  )
 }
 
 function AppContent() {
@@ -249,14 +252,12 @@ export default function RootLayout() {
   }
 
   return (
-    <ConvexProvider client={convex}>
-      <ConvexAuthProvider client={convex} storage={mmkvStorage}>
-        <SafeAreaProvider>
-          <LayoutErrorBoundary>
-            <AppContent />
-          </LayoutErrorBoundary>
-        </SafeAreaProvider>
-      </ConvexAuthProvider>
-    </ConvexProvider>
+    <ConvexAuthProvider client={convex} storage={mmkvStorage}>
+      <SafeAreaProvider>
+        <LayoutErrorBoundary>
+          <AppContent />
+        </LayoutErrorBoundary>
+      </SafeAreaProvider>
+    </ConvexAuthProvider>
   )
 }
