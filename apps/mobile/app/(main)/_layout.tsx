@@ -1,6 +1,7 @@
-import type { ExtraCampAddOnInfo, SubscriptionTier, TierInfo } from '@bondfires/app'
+import type { ExtraCampSlotInfo, SubscriptionTier, TierInfo } from '@bondfires/app'
 import {
-  EXTRA_CAMP_ADD_ON_DEFINITION,
+  EXTRA_CAMP_SLOT_PRODUCTS,
+  getExtraCampSlotCount,
   subscriptionStore$,
   TIER_DEFINITIONS,
   useSubscription,
@@ -22,7 +23,7 @@ function GlobalPaywall() {
     productPrices,
     productsLoaded,
     purchase,
-    purchaseExtraCamp,
+    purchaseExtraCampSlots,
     restore,
     hidePaywall,
     clearError,
@@ -73,19 +74,20 @@ function GlobalPaywall() {
     return [freeTier, ...paidTiers]
   }, [currentTier, productPrices, productsLoaded])
 
-  const extraCampAddOn = useMemo((): ExtraCampAddOnInfo | null => {
-    if (!productsLoaded || !showExtraCampAddon) return null
+  const extraCampSlots = useMemo((): ExtraCampSlotInfo[] => {
+    if (!productsLoaded || !showExtraCampAddon) return []
 
-    const def = EXTRA_CAMP_ADD_ON_DEFINITION
-    const price = productPrices[def.productId] ?? null
-    const annualPrice = productPrices[def.annualProductId] ?? null
-
-    return {
-      ...def,
-      price,
-      annualPrice,
-      isAvailable: price !== null || annualPrice !== null,
-    }
+    return Object.values(EXTRA_CAMP_SLOT_PRODUCTS).map((productId) => {
+      const slotCount = getExtraCampSlotCount(productId)
+      const price = productPrices[productId] ?? null
+      return {
+        productId,
+        displayName: `${slotCount} pack`,
+        slotCount,
+        price,
+        isAvailable: price !== null,
+      }
+    })
   }, [productPrices, productsLoaded, showExtraCampAddon])
 
   if (!tiers) return null
@@ -100,10 +102,10 @@ function GlobalPaywall() {
         }
       }}
       tiers={tiers}
-      extraCampAddOn={extraCampAddOn}
+      extraCampSlots={extraCampSlots}
       currentTier={currentTier}
       onPurchase={purchase}
-      onPurchaseExtraCamp={purchaseExtraCamp}
+      onPurchaseExtraCampSlots={purchaseExtraCampSlots}
       onRestore={restore}
       isPurchasing={isPurchasing}
       isRestoring={isRestoring}

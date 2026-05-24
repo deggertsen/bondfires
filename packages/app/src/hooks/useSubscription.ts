@@ -18,10 +18,11 @@ import { useCallback, useEffect } from 'react'
 import { Alert, Platform } from 'react-native'
 import { api } from '../../../../convex/_generated/api'
 import {
-  ALL_SUBSCRIPTION_PRODUCT_IDS,
+  ALL_EXTRA_CAMP_SLOT_PRODUCT_IDS,
+  ALL_PRODUCT_IDS,
   CREATE_REQUIRED_TIER,
-  EXTRA_CAMP_PRODUCT_IDS,
-  isExtraCampProductId,
+  getExtraCampSlotCount,
+  isExtraCampSlotProduct,
   PRODUCT_ID_TO_PURCHASE_KIND,
   type StorePurchaseKind,
   type SubscriptionTier,
@@ -31,12 +32,6 @@ import {
   TIER_RANK,
   tierMeetsRequirement,
 } from '../store/subscription.store'
-
-type StorePurchaseSyncResult = {
-  tier: SubscriptionTier
-  kind: StorePurchaseKind
-  status: 'pending_verification' | 'active' | 'trialing' | 'past_due' | 'canceled' | 'expired'
-}
 
 function mapProductIdToPurchaseKind(productId: string): StorePurchaseKind | null {
   return PRODUCT_ID_TO_PURCHASE_KIND[productId] ?? null
@@ -87,15 +82,13 @@ async function ensureIapConnection() {
   await iapConnectionPromise
 }
 
-async function loadSubscriptionProducts(showExtraCampAddon: boolean) {
-  const products = await fetchProducts({ skus: ALL_SUBSCRIPTION_PRODUCT_IDS, type: 'subs' })
+async function loadAllProducts() {
+  // Fetch both subscription products and consumable slot products
+  const products = await fetchProducts({ skus: ALL_PRODUCT_IDS, type: 'subs' })
   const productList = Array.isArray(products) ? products : [products]
-  const visibleProducts = showExtraCampAddon
-    ? productList
-    : productList.filter((product) => !product?.id || !isExtraCampProductId(product.id))
 
   subscriptionActions.setProducts(
-    visibleProducts
+    productList
       .filter((product): product is ProductSubscription => !!product?.id)
       .map((product) => ({
         productId: product.id,
@@ -151,18 +144,28 @@ function getStorePurchaseVerifyArgs(purchase: Purchase) {
   }
 }
 
-function storeStatusUnlocksEntitlements(status: StorePurchaseSyncResult['status']) {
+function storeStatusUnlocksEntitlements(status: string) {
   return status === 'active' || status === 'trialing'
 }
 
 async function processPurchase(
   purchase: Purchase,
-  syncPurchase: (purchase: Purchase) => Promise<StorePurchaseSyncResult>,
+  syncPurchase: (purchase: Purchase) => Promise<{ tier?: SubscriptionTier; kind: StorePurchaseKind; status: string }>,
 ) {
   const kind = mapProductIdToPurchaseKind(purchase.productId)
   if (!kind) return null
 
   const result = await syncPurchase(purchase)
+
+  if (kind === 'consumable') {
+    // Consumable purchases (extra camp slots) — finish immediately after sync
+    await finishTransaction({ purchase, isConsumable: true })
+    subscriptionActions.completePurchase(true)
+    subscriptionActions.hidePaywall()
+    return result
+  }
+
+  // Subscription purchases — need active/trialing status to unlock entitlements
   if (!storeStatusUnlocksEntitlements(result.status)) {
     subscriptionActions.failPurchase(
       result.status === 'pending_verification'
@@ -179,7 +182,7 @@ async function processPurchase(
 }
 
 function subscribeToPurchaseUpdates(
-  syncPurchase: (purchase: Purchase) => Promise<StorePurchaseSyncResult>,
+  syncPurchase: (purchase: Purchase) => Promise<{ tier?: SubscriptionTier; kind: StorePurchaseKind; status: string }>,
 ) {
   if (!purchaseUpdateSub) {
     purchaseUpdateSub = purchaseUpdatedListener(async (purchase) => {
@@ -223,15 +226,15 @@ interface UseSubscriptionOptions {
 }
 
 /**
- * useSubscription - Main hook for subscription IAP.
+ * useSubscription - Main hook for subscription and consumable IAP.
  *
  * Provides:
  * - currentTier: user's active subscription tier
- * - tiers: list of all tiers with prices and feature info
- * - purchase: initiate a purchase for a given tier
+ * - purchase: initiate a subscription purchase for a given tier
+ * - purchaseExtraCampSlots: purchase extra camp slots as consumable IAP
  * - restore: restore previous purchases
  * - canCreate: whether the user can create bondfires
- * - showUpgradePrompt: show the paywall for upgrades
+ * - showPaywall: show the paywall for upgrades
  */
 export function useSubscription(options: UseSubscriptionOptions = {}) {
   const { initializeIap = false } = options
@@ -275,7 +278,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
           await syncStorePurchase(getStorePurchaseSyncArgs(purchase))
           return await verifyStorePurchase(getStorePurchaseVerifyArgs(purchase))
         })
-        await loadSubscriptionProducts(showExtraCampAddon)
+        await loadAllProducts()
       } catch (err) {
         console.warn('Failed to initialize IAP:', err)
         if (mounted) {
@@ -295,43 +298,52 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
         })
       }
     }
-  }, [initializeIap, syncStorePurchase, verifyStorePurchase, showExtraCampAddon])
+  }, [initializeIap, syncStorePurchase, verifyStorePurchase])
 
   useEffect(() => {
     if (!initializeIap || !productsLoaded) return
-    void loadSubscriptionProducts(showExtraCampAddon)
-  }, [initializeIap, productsLoaded, showExtraCampAddon])
+    void loadAllProducts()
+  }, [initializeIap, productsLoaded])
 
-  const requestStorePurchase = useCallback(async (productId: string) => {
-    try {
-      await ensureIapConnection()
+  const requestStorePurchase = useCallback(
+    async (productId: string, isConsumable: boolean) => {
+      try {
+        await ensureIapConnection()
 
-      const offerToken = subscriptionStore$.productOfferTokens[productId].get()
-      if (Platform.OS === 'android' && !offerToken) {
-        throw new Error('This store product is not available for purchase yet.')
-      }
+        if (!isConsumable) {
+          const offerToken = subscriptionStore$.productOfferTokens[productId].get()
+          if (Platform.OS === 'android' && !offerToken) {
+            throw new Error('This store product is not available for purchase yet.')
+          }
+        }
 
-      await requestPurchase({
-        request: {
-          apple: { sku: productId },
-          google: {
-            skus: [productId],
-            subscriptionOffers: offerToken ? [{ sku: productId, offerToken }] : undefined,
+        await requestPurchase({
+          request: {
+            apple: { sku: productId },
+            google: {
+              skus: [productId],
+              subscriptionOffers: !isConsumable
+                ? subscriptionStore$.productOfferTokens[productId].get()
+                  ? [{ sku: productId, offerToken: subscriptionStore$.productOfferTokens[productId].get() }]
+                  : undefined
+                : undefined,
+            },
           },
-        },
-        type: 'subs',
-      })
-      // Purchase result handled by purchaseUpdatedListener
-    } catch (err: unknown) {
-      const message = getIapErrorMessage(err, 'Purchase was not completed.')
-      if (isUserCancelledPurchase(err, message)) {
-        subscriptionActions.completePurchase(false)
-      } else {
-        subscriptionActions.failPurchase(message)
-        Alert.alert('Purchase Failed', message)
+          type: 'subs',
+        })
+        // Purchase result handled by purchaseUpdatedListener
+      } catch (err: unknown) {
+        const message = getIapErrorMessage(err, 'Purchase was not completed.')
+        if (isUserCancelledPurchase(err, message)) {
+          subscriptionActions.completePurchase(false)
+        } else {
+          subscriptionActions.failPurchase(message)
+          Alert.alert('Purchase Failed', message)
+        }
       }
-    }
-  }, [])
+    },
+    [],
+  )
 
   const purchase = useCallback(
     async (tier: SubscriptionTier, productId?: string) => {
@@ -342,15 +354,15 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
 
       const tierProductId = productId ?? TIER_PRODUCT_IDS[tier].monthly
       subscriptionActions.startPurchase(tier, tierProductId)
-      await requestStorePurchase(tierProductId)
+      await requestStorePurchase(tierProductId, false)
     },
     [requestStorePurchase],
   )
 
-  const purchaseExtraCamp = useCallback(
-    async (productId = EXTRA_CAMP_PRODUCT_IDS.monthly) => {
-      subscriptionActions.startAddOnPurchase(productId)
-      await requestStorePurchase(productId)
+  const purchaseExtraCampSlots = useCallback(
+    async (productId: string) => {
+      subscriptionActions.startConsumablePurchase(productId)
+      await requestStorePurchase(productId, true)
     },
     [requestStorePurchase],
   )
@@ -370,6 +382,8 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
       let highestTier: SubscriptionTier = 'free'
       let syncedPurchaseCount = 0
       for (const p of purchases) {
+        const kind = mapProductIdToPurchaseKind(p.productId)
+
         const result = await processPurchase(p, async (purchaseToSync) => {
           await syncStorePurchase(getStorePurchaseSyncArgs(purchaseToSync))
           return await verifyStorePurchase(getStorePurchaseVerifyArgs(purchaseToSync))
@@ -463,7 +477,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
     showExtraCampAddon,
     canCreate: tierMeetsRequirement(currentTier, CREATE_REQUIRED_TIER),
     purchase,
-    purchaseExtraCamp,
+    purchaseExtraCampSlots,
     restore,
     managePlan,
     showPaywall: subscriptionActions.showPaywall,
