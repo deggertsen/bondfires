@@ -18,6 +18,7 @@ apps/website/
 ├── delete-account.html         # Account Deletion
 ├── 404.html                    # Custom 404 error page
 ├── _headers                    # Cloudflare Pages cache headers
+├── deploy.sh                   # Cloudflare hosted deploy command
 ├── wrangler.toml               # Cloudflare Pages / Wrangler config
 ├── css/
 │   ├── variables.css           # CSS custom properties (design tokens)
@@ -83,8 +84,8 @@ The site is a plain static directory — no build step required.
    - **Production branch:** `main`
    - **Framework preset:** None
    - **Build command:** leave empty
-   - **Build output directory:** leave empty
-   - **Root directory:** `apps/website`
+   - **Deploy command:** `bash deploy.sh`
+   - **Path:** `/apps/website`
 4. Deploy. Every push to `main` will publish automatically.
 5. Attach custom domains under **Custom domains**:
    - `bondfires.org`
