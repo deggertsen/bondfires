@@ -1,6 +1,8 @@
 # Bondfires Terraform Infrastructure
 
-This Terraform configuration manages the AWS infrastructure for the Bondfires website.
+> **Note:** The Bondfires marketing website has moved to Cloudflare Pages. This Terraform stack is legacy and can be destroyed once `bondfires.org` is confirmed live on Pages. See `apps/website/README.md`.
+
+This Terraform configuration previously managed AWS S3 + CloudFront for the Bondfires website.
 
 ## Resources Created
 

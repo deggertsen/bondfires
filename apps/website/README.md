@@ -1,6 +1,6 @@
 # Bondfires Website
 
-A static marketing website for Bondfires, built with vanilla HTML/CSS/JS and hosted on AWS S3 with CloudFront for HTTPS and global CDN.
+A static marketing website for Bondfires, built with vanilla HTML/CSS/JS and hosted on [Cloudflare Pages](https://pages.cloudflare.com/).
 
 ## Project Structure
 
@@ -17,6 +17,8 @@ apps/website/
 ├── child-safety.html           # Child Safety
 ├── delete-account.html         # Account Deletion
 ├── 404.html                    # Custom 404 error page
+├── _headers                    # Cloudflare Pages cache headers
+├── wrangler.toml               # Cloudflare Pages / Wrangler config
 ├── css/
 │   ├── variables.css           # CSS custom properties (design tokens)
 │   └── styles.css              # Main styles
@@ -68,195 +70,92 @@ Then visit `http://localhost:8000` in your browser.
 3. **Interactions:** Update `js/main.js`
 4. **Assets:** Replace placeholders in `images/` directory
 
-## Deployment
+## Deployment (Cloudflare Pages)
 
-### Prerequisites
+The site is a plain static directory — no build step required.
 
-1. **AWS CLI configured** with appropriate credentials
-2. **Terraform applied** to create S3 bucket and CloudFront distribution
+### Option A: Git integration (recommended)
 
-Get your deployment details from Terraform outputs:
+1. In the [Cloudflare dashboard](https://dash.cloudflare.com/), go to **Workers & Pages → Create → Pages → Connect to Git**
+2. Select the `bondfires` repository
+3. Configure the project:
+   - **Project name:** `bondfires-website`
+   - **Production branch:** `main`
+   - **Framework preset:** None
+   - **Build command:** leave empty
+   - **Build output directory:** leave empty
+   - **Root directory:** `apps/website`
+4. Deploy. Every push to `main` will publish automatically.
+5. Attach custom domains under **Custom domains**:
+   - `bondfires.org`
+   - `www.bondfires.org`
 
-```bash
-cd infrastructure/terraform
-terraform output website_bucket_name
-terraform output website_cloudfront_distribution_id
-terraform output website_url
-```
+Cloudflare Pages serves `404.html` automatically and applies cache rules from `_headers`.
 
-### Before First Deployment
+### Option B: Manual deploy with Wrangler
 
-1. **Update OG Image URLs:** Edit `index.html` and replace `https://bondfires.org/` with your actual domain (CloudFront URL or custom domain).
-
-2. **Add Required Assets:**
-   - `images/og-image.png` - Social sharing preview image (1200x630px recommended)
-   - Replace placeholder logo SVG with actual logo if available
-
-### Deploy to S3
-
-Deploy from the **repository root** directory (not from `apps/website/`):
+Useful for one-off deploys or before Git integration is wired up.
 
 ```bash
 # From repository root
-aws s3 sync apps/website/ s3://YOUR_BUCKET_NAME/ \
-  --delete \
-  --cache-control "max-age=31536000" \
-  --exclude "*.html" \
-  --exclude "README.md"
-
-# Upload HTML files with shorter cache and correct content type
-aws s3 sync apps/website/ s3://YOUR_BUCKET_NAME/ \
-  --exclude "*" \
-  --include "*.html" \
-  --content-type "text/html" \
-  --cache-control "max-age=300"
+export CLOUDFLARE_API_TOKEN=your-token
+yarn deploy:website
 ```
 
-Replace `YOUR_BUCKET_NAME` with the bucket name from Terraform output.
+Create an API token at [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens) with **Cloudflare Pages → Edit** permission.
 
-**Note:**
+### DNS for bondfires.org
 
-- `--delete` removes files from S3 that no longer exist locally
-- HTML files get a 5-minute cache; assets get 1-year cache (CloudFront will invalidate)
-- `README.md` is excluded from deployment
+DNS for `bondfires.org` is already on Cloudflare. Once the Pages project exists:
 
-### Invalidate CloudFront Cache
+1. Open the Pages project → **Custom domains**
+2. Add `bondfires.org` and `www.bondfires.org`
+3. Cloudflare will create/update the DNS records for you
+4. Remove any old records pointing at AWS CloudFront or a broken origin (a misconfigured origin causes Cloudflare error **1016** / HTTP **530**)
 
-After deploying, invalidate the CloudFront cache to ensure changes are visible immediately:
+If you previously had manual DNS records (A/CNAME) pointing at CloudFront, delete those after the Pages custom domain is active.
+
+### Before First Deployment
+
+1. **OG image URLs:** `index.html` already uses `https://bondfires.org/` — keep that once the custom domain is live.
+2. **Add required assets:**
+   - `images/og-image.png` — social sharing preview (1200x630px recommended)
+   - Replace placeholder logo SVG with actual logo if available
+
+## Legacy AWS hosting
+
+The previous setup used AWS S3 + CloudFront, managed in `infrastructure/terraform/`. That stack can be torn down after Cloudflare Pages is live:
 
 ```bash
-aws cloudfront create-invalidation \
-  --distribution-id YOUR_DISTRIBUTION_ID \
-  --paths "/*"
+cd infrastructure/terraform
+terraform destroy -var-file=environments/prod/prod.tfvars
 ```
 
-Replace `YOUR_DISTRIBUTION_ID` with the distribution ID from Terraform output.
-
-### Complete Deployment Script
-
-Create a deployment script at the **repository root** (e.g., `scripts/deploy-website.sh`):
-
-```bash
-#!/bin/bash
-set -e
-
-# Configuration - update these or use terraform output
-BUCKET_NAME="${WEBSITE_BUCKET_NAME:-$(cd infrastructure/terraform && terraform output -raw website_bucket_name)}"
-DISTRIBUTION_ID="${WEBSITE_DISTRIBUTION_ID:-$(cd infrastructure/terraform && terraform output -raw website_cloudfront_distribution_id)}"
-
-echo "Deploying website to S3 bucket: $BUCKET_NAME"
-
-# Sync static assets (long cache)
-aws s3 sync apps/website/ s3://bondfires-prod-website/ \
-  --delete \
-  --cache-control "max-age=31536000" \
-  --exclude "*.html" \
-  --exclude "README.md"
-
-# Sync HTML files (short cache, explicit content type)
-aws s3 sync apps/website/ s3://bondfires-prod-website/ \
-  --exclude "*" \
-  --include "*.html" \
-  --content-type "text/html" \
-  --cache-control "max-age=300"
-
-echo "Invalidating CloudFront distribution: $DISTRIBUTION_ID"
-aws cloudfront create-invalidation \
-  --distribution-id $DISTRIBUTION_ID \
-  --paths "/*"
-
-echo ""
-echo "Deployment complete!"
-echo "Website URL: https://$(cd infrastructure/terraform && terraform output -raw website_cloudfront_domain_name)"
-```
-
-Make it executable and run:
-
-```bash
-chmod +x scripts/deploy-website.sh
-./scripts/deploy-website.sh
-```
-
-### Quick Deploy (One-liner)
-
-From repository root:
-
-```bash
-BUCKET=$(cd infrastructure/terraform && terraform output -raw website_bucket_name) && \
-DIST=$(cd infrastructure/terraform && terraform output -raw website_cloudfront_distribution_id) && \
-aws s3 sync apps/website/ s3://$BUCKET/ --delete --exclude "README.md" && \
-aws cloudfront create-invalidation --distribution-id $DIST --paths "/*"
-```
-
-## Infrastructure
-
-The website infrastructure is managed by Terraform in `infrastructure/terraform/`. It includes:
-
-- **S3 Bucket:** For static website hosting
-- **CloudFront Distribution:** For HTTPS, CDN, and global distribution
-- **Origin Access Control (OAC):** For secure S3 access (bucket is not publicly accessible)
-
-### Setting Up Infrastructure
-
-1. Navigate to Terraform directory:
-
-   ```bash
-   cd infrastructure/terraform
-   ```
-
-2. Initialize Terraform:
-
-   ```bash
-   terraform init
-   ```
-
-3. Review the plan:
-
-   ```bash
-   terraform plan
-   ```
-
-4. Apply the infrastructure:
-
-   ```bash
-   terraform apply
-   ```
-
-5. Get deployment outputs:
-   ```bash
-   terraform output website_deployment_instructions
-   ```
+Only run this once `https://bondfires.org` is serving correctly from Pages.
 
 ## Assets & Placeholders
 
 The following assets are currently placeholders and should be replaced:
 
 - **Logo:** Inline SVG flame icon in navigation (replace with actual logo)
-- **OG Image:** Social sharing preview image (`images/og-image.png`) - Required for social media sharing
+- **OG Image:** Social sharing preview image (`images/og-image.png`)
   - Recommended size: 1200x630px
-  - Update the absolute URL in `index.html` meta tags with your domain
 - **App Store Badges:** iOS and Android download badges in `download.html`
-  - Get official badges from [Apple](https://developer.apple.com/app-store/marketing/guidelines/) and [Google](https://play.google.com/intl/en_us/badges/)
 - **QR Codes:** App store QR codes in `download.html`
 - **Favicon:** Add `favicon.ico` to the root directory
 
 All placeholders are clearly marked with comments in the HTML.
 
-### Important: OG Image URLs
-
-The `og:image` and `twitter:image` meta tags in `index.html` require **absolute URLs** (e.g., `https://bondfires.org/images/og-image.png`). Update these with your actual domain before deployment.
-
 ## Features
 
-- ✅ Mobile-first responsive design
-- ✅ Accessibility (WCAG 2.1 AA compliance)
-- ✅ SEO meta tags and structured data
-- ✅ Mobile navigation with hamburger menu
-- ✅ Smooth scroll and interactions
-- ✅ Brand-consistent design system
-- ✅ Fast performance (static HTML/CSS/JS)
-- ✅ HTTPS via CloudFront
-- ✅ Global CDN distribution
+- Mobile-first responsive design
+- Accessibility (WCAG 2.1 AA compliance)
+- SEO meta tags and structured data
+- Mobile navigation with hamburger menu
+- Smooth scroll and interactions
+- Brand-consistent design system
+- Fast performance (static HTML/CSS/JS)
+- HTTPS and global CDN via Cloudflare Pages
 
 ## Browser Support
 

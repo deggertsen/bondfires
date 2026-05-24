@@ -19,6 +19,7 @@
     "release": "./scripts/release.sh",
     "release:minor": "./scripts/release.sh minor",
     "release:major": "./scripts/release.sh major",
+    "deploy:website": "./scripts/deploy-website.sh",
     "eas-build-pre-install": "corepack enable && corepack prepare yarn@4.12.0 --activate"
   },
   "devDependencies": {
