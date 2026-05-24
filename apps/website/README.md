@@ -14,6 +14,8 @@ apps/website/
 ├── privacy.html                # Privacy Policy
 ├── terms.html                  # Terms of Service
 ├── community-guidelines.html   # Community Guidelines
+├── child-safety.html           # Child Safety
+├── delete-account.html         # Account Deletion
 ├── 404.html                    # Custom 404 error page
 ├── css/
 │   ├── variables.css           # CSS custom properties (design tokens)
