@@ -88,7 +88,18 @@ The site is a plain static directory — no build step required.
    - **Path:** `/apps/website`
    - **Build variables:**
      - `SKIP_DEPENDENCY_INSTALL=true`
+     - `CLOUDFLARE_ACCOUNT_ID` = your account ID (from the dashboard URL or build logs)
+     - `CLOUDFLARE_API_TOKEN` = a custom API token (encrypted) — see below
 4. Deploy. Every push to `main` will publish automatically.
+
+**Important:** The "Create new token" option in Workers Builds usually creates a Workers-scoped token. `wrangler pages deploy` needs a separate token with **Cloudflare Pages → Edit** permission. Create one manually at [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens):
+
+| Permission | Access |
+|---|---|
+| Account → Cloudflare Pages | Edit |
+| Account → Account Settings | Read |
+
+Add that token value as an encrypted build variable named `CLOUDFLARE_API_TOKEN`. Do not rely on the auto-created Workers token for Pages deploys.
 5. Attach custom domains under **Custom domains**:
    - `bondfires.org`
    - `www.bondfires.org`
