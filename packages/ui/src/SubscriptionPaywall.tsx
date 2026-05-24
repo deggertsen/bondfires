@@ -1,11 +1,10 @@
-import type { ExtraCampSlotInfo, SubscriptionTier, TierInfo } from '@bondfires/app'
+import type { BillingPeriod, ExtraCampAddOnInfo, SubscriptionTier, TierInfo } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
-import { Check, Crown, Flame, ShoppingCart, Sparkles, Star, X } from '@tamagui/lucide-icons'
+import { Check, Crown, Flame, Sparkles, Star, X } from '@tamagui/lucide-icons'
 import { useState } from 'react'
 import { Pressable, ScrollView } from 'react-native'
 import { Card, Sheet, Spinner, Text, XStack, YStack } from 'tamagui'
 import { Button } from './Button'
-import type { BillingPeriod } from '@bondfires/app'
 
 const TIER_ICONS: Record<string, typeof Flame> = {
   plus: Flame,
@@ -17,10 +16,10 @@ interface SubscriptionPaywallProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   tiers: TierInfo[]
-  extraCampSlots?: ExtraCampSlotInfo[]
+  extraCampAddOn?: ExtraCampAddOnInfo | null
   currentTier: SubscriptionTier
   onPurchase: (tier: SubscriptionTier, productId?: string) => void
-  onPurchaseExtraCampSlots?: (productId: string) => void
+  onPurchaseExtraCamp?: (productId?: string) => void
   onRestore: () => void
   isPurchasing: boolean
   isRestoring: boolean
@@ -33,10 +32,10 @@ export function SubscriptionPaywall({
   open,
   onOpenChange,
   tiers,
-  extraCampSlots,
+  extraCampAddOn,
   currentTier,
   onPurchase,
-  onPurchaseExtraCampSlots,
+  onPurchaseExtraCamp,
   onRestore,
   isPurchasing,
   isRestoring,
@@ -47,6 +46,7 @@ export function SubscriptionPaywall({
   const [selectedPeriods, setSelectedPeriods] = useState<
     Partial<Record<SubscriptionTier, BillingPeriod>>
   >({})
+  const [selectedAddOnPeriod, setSelectedAddOnPeriod] = useState<BillingPeriod>('monthly')
 
   if (!open) return null
 
@@ -173,13 +173,18 @@ export function SubscriptionPaywall({
                 />
               ))}
 
-            {/* Extra camp slots — consumable purchases for Pro users */}
-            {extraCampSlots && extraCampSlots.length > 0 && onPurchaseExtraCampSlots ? (
-              <ExtraCampSlotCards
-                slots={extraCampSlots}
-                onPurchase={onPurchaseExtraCampSlots}
-                isPurchasing={isPurchasing}
-                purchasingProductId={purchasingProductId}
+            {extraCampAddOn && onPurchaseExtraCamp ? (
+              <AddOnCard
+                addOn={extraCampAddOn}
+                selectedPeriod={selectedAddOnPeriod}
+                onPeriodChange={setSelectedAddOnPeriod}
+                onPurchase={onPurchaseExtraCamp}
+                isPurchasing={
+                  isPurchasing &&
+                  !!purchasingProductId &&
+                  (purchasingProductId === extraCampAddOn.productId ||
+                    purchasingProductId === extraCampAddOn.annualProductId)
+                }
               />
             ) : null}
           </YStack>
@@ -397,97 +402,115 @@ function TierCard({
   )
 }
 
-interface ExtraCampSlotCardsProps {
-  slots: ExtraCampSlotInfo[]
-  onPurchase: (productId: string) => void
+interface AddOnCardProps {
+  addOn: ExtraCampAddOnInfo
+  selectedPeriod: BillingPeriod
+  onPeriodChange: (period: BillingPeriod) => void
+  onPurchase: (productId?: string) => void
   isPurchasing: boolean
-  purchasingProductId?: string | null
 }
 
-function ExtraCampSlotCards({
-  slots,
+function AddOnCard({
+  addOn,
+  selectedPeriod,
+  onPeriodChange,
   onPurchase,
   isPurchasing,
-  purchasingProductId,
-}: ExtraCampSlotCardsProps) {
+}: AddOnCardProps) {
+  const monthlyAvailable = !!addOn.productId && !!addOn.price
+  const annualAvailable = !!addOn.annualProductId && !!addOn.annualPrice
+  const activePeriod =
+    selectedPeriod === 'annual' && annualAvailable
+      ? 'annual'
+      : monthlyAvailable
+        ? 'monthly'
+        : annualAvailable
+          ? 'annual'
+          : 'monthly'
+  const selectedProductId = activePeriod === 'annual' ? addOn.annualProductId : addOn.productId
+  const selectedPrice = activePeriod === 'annual' ? addOn.annualPrice : addOn.price
+  const isComingSoon = !addOn.isAvailable || !selectedProductId || !selectedPrice
+
   return (
-    <YStack gap={8}>
-      <XStack alignItems="center" gap={8} marginBottom={4}>
-        <ShoppingCart size={18} color={bondfireColors.moltenGold} />
-        <Text color={bondfireColors.whiteSmoke} fontSize={16} fontWeight="700">
-          Extra Camp Slots
-        </Text>
-        <PlanBadge label="One-time purchase" />
+    <Card
+      backgroundColor={bondfireColors.charcoal}
+      borderWidth={1}
+      borderColor={bondfireColors.iron}
+      borderRadius={12}
+      padding={16}
+      opacity={isComingSoon ? 0.72 : 1}
+    >
+      <XStack justifyContent="space-between" alignItems="center" marginBottom={12}>
+        <XStack alignItems="center" gap={8}>
+          <Sparkles size={20} color={bondfireColors.moltenGold} />
+          <YStack gap={2}>
+            <XStack alignItems="center" gap={8}>
+              <Text color={bondfireColors.whiteSmoke} fontSize={18} fontWeight="700">
+                {addOn.displayName}
+              </Text>
+              <PlanBadge label="Pro add-on" />
+            </XStack>
+            <Text color={bondfireColors.ash} fontSize={11}>
+              Adds one public camp slot
+            </Text>
+          </YStack>
+        </XStack>
+        <YStack alignItems="flex-end">
+          <Text
+            color={isComingSoon ? bondfireColors.ash : bondfireColors.moltenGold}
+            fontSize={18}
+            fontWeight="700"
+          >
+            {selectedPrice ?? 'Coming Soon'}
+          </Text>
+          {!isComingSoon ? (
+            <Text color={bondfireColors.ash} fontSize={11}>
+              /{activePeriod === 'annual' ? 'year' : 'month'}
+            </Text>
+          ) : null}
+        </YStack>
       </XStack>
-      <Text color={bondfireColors.ash} fontSize={12} marginBottom={4}>
-        Purchase additional camp slots for your Pro workspace. These are permanent — once bought,
-        they're yours for as long as you stay Pro. Buy more anytime.
+
+      <Text color={bondfireColors.ash} fontSize={13} marginBottom={12}>
+        {addOn.description}
       </Text>
-      <XStack gap={8}>
-        {slots.map((slot) => {
-          const isComingSoon = !slot.isAvailable || !slot.price
-          const isThisPurchasing =
-            isPurchasing && purchasingProductId === slot.productId
-          return (
-            <Card
-              key={slot.productId}
-              backgroundColor={bondfireColors.charcoal}
-              borderWidth={1}
-              borderColor={bondfireColors.iron}
-              borderRadius={12}
-              padding={12}
-              flex={1}
-              opacity={isComingSoon ? 0.72 : 1}
-            >
-              <YStack alignItems="center" gap={8} flex={1}>
-                <Text color={bondfireColors.whiteSmoke} fontSize={24} fontWeight="700">
-                  {slot.slotCount}
-                </Text>
-                <Text color={bondfireColors.ash} fontSize={11} textAlign="center">
-                  camp{slot.slotCount === 1 ? '' : 's'}
-                </Text>
-                <Text
-                  color={
-                    isComingSoon ? bondfireColors.ash : bondfireColors.moltenGold
-                  }
-                  fontSize={16}
-                  fontWeight="700"
-                >
-                  {slot.price ?? '—'}
-                </Text>
-                <Button
-                  variant="outline"
-                  size="$sm"
-                  disabled={isThisPurchasing || isComingSoon}
-                  onPress={() => onPurchase(slot.productId)}
-                  borderColor={
-                    slot.isAvailable ? bondfireColors.ash : bondfireColors.iron
-                  }
-                  opacity={isThisPurchasing || isComingSoon ? 0.65 : 1}
-                >
-                  {isThisPurchasing ? (
-                    <Spinner
-                      size="small"
-                      color={bondfireColors.bondfireCopper}
-                    />
-                  ) : (
-                    <Text
-                      color={
-                        isComingSoon ? bondfireColors.ash : bondfireColors.bondfireCopper
-                      }
-                      fontWeight="600"
-                      fontSize={13}
-                    >
-                      {isComingSoon ? 'Soon' : 'Buy'}
-                    </Text>
-                  )}
-                </Button>
-              </YStack>
-            </Card>
-          )
-        })}
+
+      <XStack gap={8} marginBottom={16}>
+        <BillingOption
+          label="Monthly"
+          price={addOn.price}
+          selected={activePeriod === 'monthly'}
+          disabled={!monthlyAvailable}
+          onPress={() => onPeriodChange('monthly')}
+        />
+        <BillingOption
+          label="Annual"
+          price={addOn.annualPrice ?? 'Coming Soon'}
+          selected={activePeriod === 'annual'}
+          disabled={!annualAvailable}
+          onPress={() => onPeriodChange('annual')}
+        />
       </XStack>
-    </YStack>
+
+      <Button
+        variant="outline"
+        size="$md"
+        disabled={isPurchasing || isComingSoon}
+        onPress={() => onPurchase(selectedProductId)}
+        borderColor={addOn.isAvailable ? bondfireColors.ash : bondfireColors.iron}
+        opacity={isPurchasing || isComingSoon ? 0.65 : 1}
+      >
+        <XStack alignItems="center" gap={8}>
+          {isPurchasing ? <Spinner size="small" color={bondfireColors.bondfireCopper} /> : null}
+          <Text
+            color={isComingSoon ? bondfireColors.ash : bondfireColors.bondfireCopper}
+            fontWeight="600"
+          >
+            {isComingSoon ? 'Coming soon' : isPurchasing ? 'Processing...' : 'Add camp slot'}
+          </Text>
+        </XStack>
+      </Button>
+    </Card>
   )
 }
 

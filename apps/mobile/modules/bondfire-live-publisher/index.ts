@@ -80,12 +80,15 @@ const addListener: AddListener = (
   }
 
   if (event === 'statusChange') {
-    return emitter.addListener(event as never, ((payload: StatusEvent) => {
-      const status = typeof payload === 'string' ? payload : payload.status
-      if (status) {
-        ;(cb as (status: Status) => void)(status)
-      }
-    }) as never)
+    return emitter.addListener(
+      event as never,
+      ((payload: StatusEvent) => {
+        const status = typeof payload === 'string' ? payload : payload.status
+        if (status) {
+          ;(cb as (status: Status) => void)(status)
+        }
+      }) as never,
+    )
   }
 
   return emitter.addListener(event as never, cb as never)

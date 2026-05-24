@@ -90,34 +90,23 @@ export async function getActiveSubscriptionTier(
   )
 }
 
-/**
- * Returns the user's remaining extra camp slot balance.
- *
- * Only Pro users can hold and spend extra camp slots. The slot balance is stored
- * directly on the user document as a denormalized counter, incremented on verified
- * consumable purchase and decremented on camp creation.
- */
-export async function getExtraCampSlotBalance(
+export async function getExtraCampAddOnCount(
   ctx: QueryCtx | MutationCtx,
   userId: Id<'users'>,
 ): Promise<number> {
-  const user = await ctx.db.get(userId)
-  return user?.extraCampSlots ?? 0
-}
+  const now = Date.now()
+  const addOns = await ctx.db
+    .query('subscriptionAddOns')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .collect()
 
-/**
- * Returns the maximum number of extra camp slots the user can hold.
- * Currently unlimited for Pro users, 0 for others.
- */
-export async function getExtraCampSlotLimit(
-  ctx: QueryCtx | MutationCtx,
-  userId: Id<'users'>,
-): Promise<number | undefined> {
-  const tier = await getActiveSubscriptionTier(ctx, userId)
-  if (TIER_RANK[tier] >= TIER_RANK.pro) {
-    return undefined // unlimited
-  }
-  return 0
+  return addOns.filter(
+    (addOn) =>
+      addOn.type === 'extra_camp' &&
+      addOn.verificationStatus === 'verified' &&
+      (addOn.status === 'active' || addOn.status === 'trialing') &&
+      (!addOn.currentPeriodEnd || addOn.currentPeriodEnd > now),
+  ).length
 }
 
 async function getPublicCampLimitForTier(
@@ -129,8 +118,8 @@ async function getPublicCampLimitForTier(
     return 0
   }
 
-  const extraCampSlots = await getExtraCampSlotBalance(ctx, userId)
-  return TIER_CAMP_LIMITS.pro.publicCamps + extraCampSlots * EXTRA_CAMPS_PER_ADD_ON
+  const extraCampAddOns = await getExtraCampAddOnCount(ctx, userId)
+  return TIER_CAMP_LIMITS.pro.publicCamps + extraCampAddOns * EXTRA_CAMPS_PER_ADD_ON
 }
 
 /** Base camp limits by tier. Only Pro can create public camps. */
@@ -493,13 +482,13 @@ export async function freezeExcessOwnedCamps(
 }
 
 /**
- * When a user's subscription tier changes, freeze excess camps and clear
- * extra camp slots if the user is no longer Pro.
+ * When a user's subscription tier changes, freeze excess camps and revoke
+ * extra-camp add-ons if the user is no longer Pro.
  *
  * Called from subscription sync/verification after a tier change is detected.
  *
  * Rules:
- *  - If the user is no longer Pro, clear all extra camp slot balance.
+ *  - If the user is no longer Pro, revoke all active extra_camp add-ons.
  *  - Freeze excess public camps that exceed the new tier's allowance.
  *  - Freeze excess private camps that exceed the new tier's allowance.
  *  - Frozen camps are NOT deleted. Existing members can still view, but no new
@@ -510,31 +499,38 @@ export async function handleTierDowngrade(
   userId: Id<'users'>,
   previousTier: SubscriptionTier,
   newTier: SubscriptionTier,
-): Promise<{ campsFrozen: number; slotsCleared: number }> {
+): Promise<{ campsFrozen: number; addOnsRevoked: number }> {
   // Only act on actual downgrades
   if (TIER_RANK[newTier] >= TIER_RANK[previousTier]) {
-    return { campsFrozen: 0, slotsCleared: 0 }
+    return { campsFrozen: 0, addOnsRevoked: 0 }
   }
 
-  const user = await ctx.db.get(userId)
-  let slotsCleared = 0
+  let addOnsRevoked = 0
 
-  // Clear extra camp slots if no longer Pro
-  if (TIER_RANK[newTier] < TIER_RANK.pro && (user?.extraCampSlots ?? 0) > 0) {
-    const clearedSlots = user!.extraCampSlots!
-    await ctx.db.patch(userId, { extraCampSlots: 0 })
-    await ctx.db.insert('campSlotTransactions', {
-      userId,
-      type: 'admin_revoke',
-      amount: -clearedSlots,
-      balanceAfter: 0,
-      metadata: { reason: 'tier_downgrade', from: previousTier, to: newTier },
-    })
-    slotsCleared = clearedSlots
+  // Revoke extra-camp add-ons if no longer Pro
+  if (TIER_RANK[newTier] < TIER_RANK.pro) {
+    const addOns = await ctx.db
+      .query('subscriptionAddOns')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect()
+
+    for (const addOn of addOns) {
+      if (
+        addOn.type === 'extra_camp' &&
+        addOn.verificationStatus === 'verified' &&
+        (addOn.status === 'active' || addOn.status === 'trialing')
+      ) {
+        await ctx.db.patch(addOn._id, {
+          status: 'expired',
+          updatedAt: Date.now(),
+        })
+        addOnsRevoked++
+      }
+    }
   }
 
   const { campsFrozen } = await freezeExcessOwnedCamps(ctx, userId, newTier)
-  return { campsFrozen, slotsCleared }
+  return { campsFrozen, addOnsRevoked }
 }
 
 /**
@@ -577,10 +573,10 @@ export async function handleTierUpgrade(
     (TIER_RANK[newTier] >= TIER_RANK.pro ? limits.publicCamps : 0) - activePublicCamps.length
   let privateSlotsLeft = limits.privateCamps - activePrivateCamps.length
 
-  // Extra camp slots increase public camp allowance for Pro
+  // Extra camp add-ons increase public camp allowance for Pro
   if (TIER_RANK[newTier] >= TIER_RANK.pro) {
-    const extraCampSlots = await getExtraCampSlotBalance(ctx, userId)
-    publicSlotsLeft += extraCampSlots * EXTRA_CAMPS_PER_ADD_ON
+    const extraCamps = await getExtraCampAddOnCount(ctx, userId)
+    publicSlotsLeft += extraCamps * EXTRA_CAMPS_PER_ADD_ON
   }
 
   for (const camp of frozenCamps) {
@@ -651,10 +647,10 @@ export async function reclaimFrozenCamps(
     (TIER_RANK[tier] >= TIER_RANK.pro ? limits.publicCamps : 0) - activePublicCamps.length
   let privateSlotsLeft = limits.privateCamps - activePrivateCamps.length
 
-  // Extra camp slots increase public camp allowance for Pro
+  // Extra camp add-ons increase public camp allowance for Pro
   if (TIER_RANK[tier] >= TIER_RANK.pro) {
-    const extraCampSlots = await getExtraCampSlotBalance(ctx, userId)
-    publicSlotsLeft += extraCampSlots * EXTRA_CAMPS_PER_ADD_ON
+    const extraCamps = await getExtraCampAddOnCount(ctx, userId)
+    publicSlotsLeft += extraCamps * EXTRA_CAMPS_PER_ADD_ON
   }
 
   let campsReclaimed = 0

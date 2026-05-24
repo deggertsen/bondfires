@@ -7,6 +7,8 @@ function publicUser(user: Doc<'users'>) {
   return {
     _id: user._id,
     name: user.name,
+    firstName: user.firstName,
+    lastName: user.lastName,
     displayName: user.displayName,
     photoUrl: user.photoUrl,
     bondfireCount: user.bondfireCount ?? 0,
@@ -57,6 +59,8 @@ function currentUser(user: Doc<'users'>) {
     email: user.email,
     emailVerified: user.emailVerified,
     name: user.name,
+    firstName: user.firstName,
+    lastName: user.lastName,
     displayName: user.displayName,
     photoUrl: user.photoUrl,
     gender: user.gender,
@@ -95,6 +99,8 @@ export const get = query({
 export const updateProfile = mutation({
   args: {
     name: v.optional(v.string()),
+    firstName: v.optional(v.string()),
+    lastName: v.optional(v.string()),
     displayName: v.optional(v.string()),
     gender: v.optional(v.union(v.literal('male'), v.literal('female'), v.literal('other'))),
   },
@@ -109,6 +115,8 @@ export const updateProfile = mutation({
     }
 
     if (args.name !== undefined) updates.name = args.name
+    if (args.firstName !== undefined) updates.firstName = args.firstName
+    if (args.lastName !== undefined) updates.lastName = args.lastName
     if (args.displayName !== undefined) updates.displayName = args.displayName
     if (args.gender !== undefined) updates.gender = args.gender
 

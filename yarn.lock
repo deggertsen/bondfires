@@ -1227,6 +1227,7 @@ __metadata:
     "@legendapp/state": "npm:^3.0.0-beta.27"
     "@types/react": "npm:^19.1.0"
     convex: "npm:^1.31.3"
+    expo-iap: "npm:^4.3.1"
     typescript: "npm:^6.0.0"
   peerDependencies:
     expo-constants: "*"
@@ -2927,6 +2928,25 @@ __metadata:
     "@types/react":
       optional: true
   checksum: 10c0/9f98fdaba008dfc58050de60a77670b885792df473cf82c1cef8daee919a5dd5a77d270209f5f0b0abfaac78cb1627396e3ff56c81b735be550409426fe8b040
+  languageName: node
+  linkType: hard
+
+"@react-native-community/datetimepicker@npm:8.4.4":
+  version: 8.4.4
+  resolution: "@react-native-community/datetimepicker@npm:8.4.4"
+  dependencies:
+    invariant: "npm:^2.2.4"
+  peerDependencies:
+    expo: ">=52.0.0"
+    react: "*"
+    react-native: "*"
+    react-native-windows: "*"
+  peerDependenciesMeta:
+    expo:
+      optional: true
+    react-native-windows:
+      optional: true
+  checksum: 10c0/05794d2746584be85bd74f86593951714407da2bebf49e63e676d58d40a5c85923ae87342a930fde59b60bd5f18e6c878fe747a92f67271d339ed4b1fde6479e
   languageName: node
   linkType: hard
 
@@ -8934,6 +8954,7 @@ __metadata:
     "@convex-dev/auth": "npm:^0.0.90"
     "@expo/vector-icons": "npm:^15.0.3"
     "@legendapp/state": "npm:^3.0.0-beta.27"
+    "@react-native-community/datetimepicker": "npm:8.4.4"
     "@react-navigation/native": "npm:^7.1.8"
     "@tamagui/animations-react-native": "npm:^1.144.0"
     "@tamagui/babel-plugin": "npm:^1.144.0"

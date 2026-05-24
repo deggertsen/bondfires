@@ -1,29 +1,26 @@
 // Convex React Native polyfill - MUST be imported before any Convex imports
 import '../polyfills/convex-react-native'
 
+import { Button, Text } from '@bondfires/ui'
 import { ConvexAuthProvider } from '@convex-dev/auth/react'
 import { ConvexProvider, ConvexReactClient, useMutation } from 'convex/react'
 import { useFonts } from 'expo-font'
 import type * as Notifications from 'expo-notifications'
 import { Stack, useRouter } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
-import { useCallback, useEffect } from 'react'
+import { Component, type ErrorInfo, type ReactNode, useCallback, useEffect, useRef } from 'react'
 import { useColorScheme } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
-import { TamaguiProvider, Theme } from 'tamagui'
+import { TamaguiProvider, Theme, YStack } from 'tamagui'
 // Import config for TamaguiProvider
 import config from '../tamagui.config'
 import 'react-native-reanimated'
 
 import { appStore$, mmkvStorage, usePushNotifications } from '@bondfires/app'
+import { bondfireColors } from '@bondfires/config'
 import { useObserve } from '@legendapp/state/react'
 import type { RelativePathString } from 'expo-router/build/types'
 import { api } from '../../../convex/_generated/api'
-
-export {
-  // Catch any errors thrown by the Layout component.
-  ErrorBoundary,
-} from 'expo-router'
 
 export const unstable_settings = {
   // Ensure that reloading keeps proper navigation state
@@ -61,6 +58,83 @@ if (convexUrl.endsWith('/')) {
 const convex = new ConvexReactClient(convexUrl, {
   unsavedChangesWarning: false,
 })
+
+// Props for the error fallback component
+interface ErrorFallbackProps {
+  error: Error
+  retry: () => void
+}
+
+function ErrorFallback({ error, retry }: ErrorFallbackProps) {
+  return (
+    <YStack
+      flex={1}
+      backgroundColor={bondfireColors.obsidian}
+      alignItems="center"
+      justifyContent="center"
+      paddingHorizontal={24}
+      gap={16}
+    >
+      <Text fontSize={28} fontWeight="700" color={bondfireColors.whiteSmoke} textAlign="center">
+        Something went wrong
+      </Text>
+      <Text fontSize={14} color={bondfireColors.ash} textAlign="center">
+        {error.message}
+      </Text>
+      <Button variant="primary" onPress={retry}>
+        Retry
+      </Button>
+    </YStack>
+  )
+}
+
+// Custom ErrorBoundary that wraps the fallback in ConvexProvider
+// This prevents the "Could not find Convex client" cascade when errors
+// are caught by expo-router's default ErrorBoundary which renders
+// completely outside all providers.
+class LayoutErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props)
+    this.state = { hasError: false, error: null }
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error }
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('RootLayout error boundary caught:', error, errorInfo)
+  }
+
+  handleRetry = () => {
+    this.setState({ hasError: false, error: null })
+  }
+
+  render() {
+    if (this.state.hasError && this.state.error) {
+      return (
+        <ConvexProvider client={convex}>
+          <ConvexAuthProvider client={convex} storage={mmkvStorage}>
+            <TamaguiProvider config={config} defaultTheme="dark">
+              <Theme name="dark">
+                <ErrorFallback error={this.state.error} retry={this.handleRetry} />
+              </Theme>
+            </TamaguiProvider>
+          </ConvexAuthProvider>
+        </ConvexProvider>
+      )
+    }
+    return this.props.children
+  }
+}
+
+// Override expo-router's default ErrorBoundary
+export function ErrorBoundary(props: { error: Error; retry: () => void }) {
+  return <ErrorFallback error={props.error} retry={props.retry} />
+}
 
 function AppContent() {
   const colorScheme = useColorScheme()
@@ -108,12 +182,25 @@ function AppContent() {
     },
   })
 
-  // Observe notifications preference and register/unregister accordingly
+  // Observe notifications preference and register/unregister accordingly.
+  // We use refs to avoid stale closure captures — useObserve binds callbacks
+  // at mount time, so mutation functions from subsequent renders aren't seen.
+  const registerDeviceRef = useRef(registerDevice)
+  registerDeviceRef.current = registerDevice
+  const unregisterDeviceRef = useRef(unregisterDevice)
+  unregisterDeviceRef.current = unregisterDevice
+  const requestPermissionsRef = useRef(requestPermissions)
+  requestPermissionsRef.current = requestPermissions
+  const unregisterRef = useRef(unregister)
+  unregisterRef.current = unregister
+  const handleNotificationResponseRef = useRef(handleNotificationResponse)
+  handleNotificationResponseRef.current = handleNotificationResponse
+
   useObserve(appStore$.preferences.notificationsEnabled, ({ value: notificationsEnabled }) => {
     if (notificationsEnabled) {
-      requestPermissions()
+      requestPermissionsRef.current()
     } else {
-      unregister()
+      unregisterRef.current()
     }
   })
 
@@ -165,7 +252,9 @@ export default function RootLayout() {
     <ConvexProvider client={convex}>
       <ConvexAuthProvider client={convex} storage={mmkvStorage}>
         <SafeAreaProvider>
-          <AppContent />
+          <LayoutErrorBoundary>
+            <AppContent />
+          </LayoutErrorBoundary>
         </SafeAreaProvider>
       </ConvexAuthProvider>
     </ConvexProvider>

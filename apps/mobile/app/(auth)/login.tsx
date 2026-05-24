@@ -5,7 +5,7 @@ import { useObservable, useValue } from '@legendapp/state/react'
 import { Flame } from '@tamagui/lucide-icons'
 import { useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { KeyboardAvoidingView, Platform, ScrollView, StatusBar } from 'react-native'
 import { Spinner, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
@@ -27,23 +27,25 @@ export default function LoginScreen() {
   const password = useValue(form$.password)
   const isLoading = useValue(form$.isLoading)
   const error = useValue(form$.error)
-  const pendingNavigation = useValue(form$.pendingNavigation)
 
-  // Check email verification after successful login
+  // Use a ref to track pending navigation intent, avoiding useEffect dependency loops.
+  // The effect reacts to currentUser resolving exactly once per auth outcome.
+  const pendingNavRef = useRef(false)
+
+  // React to auth completion — fires when currentUser resolves after signIn.
   useEffect(() => {
-    if (pendingNavigation && currentUser !== undefined) {
-      const currentEmail = form$.email.get()
-      if (currentUser && currentUser.emailVerified === false) {
-        // User not verified, redirect to verification screen
-        router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail } })
-      } else if (currentUser) {
-        // User is verified, go to feed
-        router.replace('/(main)/(tabs)/feed')
-      }
-      form$.pendingNavigation.set(false)
-      form$.isLoading.set(false)
+    if (!pendingNavRef.current || currentUser === undefined) return
+
+    pendingNavRef.current = false
+    form$.isLoading.set(false)
+
+    const currentEmail = form$.email.peek()
+    if (currentUser && currentUser.emailVerified === false) {
+      router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail } })
+    } else if (currentUser) {
+      router.replace('/(main)/(tabs)/feed')
     }
-  }, [currentUser, pendingNavigation, router, form$])
+  }, [currentUser, router, form$])
 
   const handleLogin = async () => {
     const currentEmail = form$.email.get()
@@ -77,14 +79,17 @@ export default function LoginScreen() {
         return
       }
 
-      // Set pending navigation to wait for user data to load
-      form$.pendingNavigation.set(true)
+      // Set pending navigation — the effect above will react when currentUser resolves
+      pendingNavRef.current = true
     } catch (err) {
-      // Check if error is about email verification
+      // Check if error is about email verification.
+      // Only redirect if we haven't already navigated above.
       const errorMessage = err instanceof Error ? err.message : String(err)
       if (errorMessage.includes('verify') || errorMessage.includes('verification')) {
-        // Redirect to verification screen
-        router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail } })
+        // Don't double-navigate — if signIn already directed us to verification, skip
+        if (!pendingNavRef.current) {
+          router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail } })
+        }
       } else {
         form$.error.set('Invalid email or password')
       }

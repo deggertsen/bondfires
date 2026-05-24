@@ -12,6 +12,7 @@
       "!**/*.config.ts",
       "!**/generated/**/*",
       "!**/dist",
+      "!**/build",
       "!**/out",
       "!**/.next",
       "!**/node_modules"

@@ -23,6 +23,8 @@ const storeVerificationStatus = v.union(
   v.literal('verified'),
   v.literal('failed'),
 )
+const subscriptionAddOnType = v.union(v.literal('extra_camp'))
+
 const userGender = v.union(v.literal('male'), v.literal('female'), v.literal('other'))
 
 const campRules = v.object({
@@ -73,6 +75,8 @@ export default defineSchema({
 
     // Profile fields
     name: v.optional(v.string()),
+    firstName: v.optional(v.string()),
+    lastName: v.optional(v.string()),
     displayName: v.optional(v.string()),
     photoUrl: v.optional(v.string()),
     photoStorageId: v.optional(v.id('_storage')),
@@ -91,10 +95,6 @@ export default defineSchema({
     // Admin flags
     isReviewerAccount: v.optional(v.boolean()), // For Google Play / App Store reviewer accounts
     isAdmin: v.optional(v.boolean()),
-
-  // Extra camp slots — purchased as consumable IAPs. Pro users can hold and spend them
-  // to create public camps. Incremented on verified purchase, decremented on camp creation.
-  extraCampSlots: v.optional(v.number()),
   }).index('email', ['email']), // Required by @convex-dev/auth (must be named exactly 'email')
 
   // Camps - rule-governed spaces where bondfires live
@@ -182,65 +182,25 @@ export default defineSchema({
     .index('by_store_transaction', ['storeOriginalTransactionId'])
     .index('by_store_purchase_token', ['storePurchaseToken']),
 
-  // Consumable IAP purchases — tracks verified consumable purchases (e.g., extra camp slots).
-  // Unlike subscriptions, these are one-time purchases and the purchased quantity is applied
-  // to the user's balance immediately on verification.
-  consumablePurchases: defineTable({
+  // Store add-ons that extend paid-plan allowances.
+  subscriptionAddOns: defineTable({
     userId: v.id('users'),
-    productId: v.string(),
-    quantity: v.number(),
+    type: subscriptionAddOnType,
+    status: storeEntitlementStatus,
+    verificationStatus: storeVerificationStatus,
     platform: storePlatform,
+    storeProductId: v.string(),
     storeTransactionId: v.optional(v.string()),
     storeOriginalTransactionId: v.optional(v.string()),
     storePurchaseToken: v.optional(v.string()),
+    currentPeriodEnd: v.optional(v.number()),
     verifiedAt: v.optional(v.number()),
     createdAt: v.number(),
+    updatedAt: v.number(),
   })
-    .index('by_user', ['userId', 'createdAt'])
+    .index('by_user', ['userId', 'status'])
     .index('by_store_transaction', ['storeOriginalTransactionId'])
     .index('by_store_purchase_token', ['storePurchaseToken']),
-
-  // Immutable ledger for camp slot transactions. Every grant (purchase),
-  // consumption, refund, and admin adjustment leaves a permanent audit record.
-  // This is the source of truth for reconciliation.
-  campSlotTransactions: defineTable({
-    userId: v.id('users'),
-    type: v.union(
-      v.literal('purchase'),
-      v.literal('consumption'),
-      v.literal('refund'),
-      v.literal('admin_grant'),
-      v.literal('admin_revoke'),
-      v.literal('reconciliation'),
-    ),
-    amount: v.number(),              // Positive = grant, negative = deduction
-    balanceAfter: v.number(),        // User's total unused slots after this transaction
-    storeProductId: v.optional(v.string()),
-    storeTransactionId: v.optional(v.string()),
-    storeOriginalTransactionId: v.optional(v.string()),
-    storePurchaseToken: v.optional(v.string()),
-    campId: v.optional(v.id('camps')),
-    platform: v.optional(storePlatform),
-    metadata: v.optional(v.any()),
-  })
-    .index('by_user', ['userId'])
-    .index('by_store_transaction', ['storeTransactionId'])
-    .index('by_user_type', ['userId', 'type']),
-
-  // Reconciliation log for daily cross-reference runs against Apple/Google.
-  reconciliationLog: defineTable({
-    runAt: v.number(),
-    platform: storePlatform,
-    direction: v.union(v.literal('store_to_ledger'), v.literal('ledger_to_store')),
-    severity: v.union(v.literal('info'), v.literal('warning'), v.literal('error')),
-    message: v.string(),
-    storeTransactionId: v.optional(v.string()),
-    ledgerTransactionId: v.optional(v.id('campSlotTransactions')),
-    resolved: v.boolean(),
-    resolvedAt: v.optional(v.number()),
-  })
-    .index('by_run', ['runAt'])
-    .index('by_resolved', ['resolved']),
 
   // Bondfires - main video posts
   bondfires: defineTable({

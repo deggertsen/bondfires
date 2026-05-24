@@ -12,37 +12,13 @@ export const SUBSCRIPTION_PRODUCT_IDS = {
   premiumAnnual: 'bondfires.premium.annual',
   proMonthly: 'bondfires.pro.monthly',
   proAnnual: 'bondfires.pro.annual',
+  extraCampMonthly: 'bondfires.extra_camp.monthly',
+  extraCampAnnual: 'bondfires.extra_camp.annual',
 } as const
-
-/**
- * Consumable IAP product IDs for purchasing extra camp slots.
- * These are one-time purchases (not subscriptions). Each purchase adds
- * the specified number of slots to the user's balance.
- */
-export const EXTRA_CAMP_SLOT_PRODUCTS = {
-  single: 'bondfires.extra_camp.1',
-  pack5: 'bondfires.extra_camp.5',
-  pack10: 'bondfires.extra_camp.10',
-} as const
-
-/** Product ID → number of slots granted */
-export const EXTRA_CAMP_SLOT_COUNTS: Record<string, number> = {
-  [EXTRA_CAMP_SLOT_PRODUCTS.single]: 1,
-  [EXTRA_CAMP_SLOT_PRODUCTS.pack5]: 5,
-  [EXTRA_CAMP_SLOT_PRODUCTS.pack10]: 10,
-}
-
-export function isExtraCampSlotProduct(productId: string): boolean {
-  return productId in EXTRA_CAMP_SLOT_COUNTS
-}
-
-export function getExtraCampSlotCount(productId: string): number {
-  return EXTRA_CAMP_SLOT_COUNTS[productId] ?? 0
-}
 
 export type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'
 export type BillingPeriod = 'monthly' | 'annual'
-export type StorePurchaseKind = 'subscription' | 'consumable'
+export type StorePurchaseKind = 'subscription' | 'extraCamp'
 
 export const TIER_PRODUCT_IDS: Record<
   Exclude<SubscriptionTier, 'free'>,
@@ -62,6 +38,18 @@ export const TIER_PRODUCT_IDS: Record<
   },
 }
 
+export const EXTRA_CAMP_PRODUCT_IDS: Record<BillingPeriod, string> = {
+  monthly: SUBSCRIPTION_PRODUCT_IDS.extraCampMonthly,
+  annual: SUBSCRIPTION_PRODUCT_IDS.extraCampAnnual,
+}
+
+export function isExtraCampProductId(productId: string) {
+  return (
+    productId === SUBSCRIPTION_PRODUCT_IDS.extraCampMonthly ||
+    productId === SUBSCRIPTION_PRODUCT_IDS.extraCampAnnual
+  )
+}
+
 export const PRODUCT_ID_TO_TIER: Record<string, SubscriptionTier | undefined> = {
   [SUBSCRIPTION_PRODUCT_IDS.plusMonthly]: 'plus',
   [SUBSCRIPTION_PRODUCT_IDS.plusAnnual]: 'plus',
@@ -78,17 +66,11 @@ export const PRODUCT_ID_TO_PURCHASE_KIND: Record<string, StorePurchaseKind | und
   [SUBSCRIPTION_PRODUCT_IDS.premiumAnnual]: 'subscription',
   [SUBSCRIPTION_PRODUCT_IDS.proMonthly]: 'subscription',
   [SUBSCRIPTION_PRODUCT_IDS.proAnnual]: 'subscription',
-  [EXTRA_CAMP_SLOT_PRODUCTS.single]: 'consumable',
-  [EXTRA_CAMP_SLOT_PRODUCTS.pack5]: 'consumable',
-  [EXTRA_CAMP_SLOT_PRODUCTS.pack10]: 'consumable',
+  [SUBSCRIPTION_PRODUCT_IDS.extraCampMonthly]: 'extraCamp',
+  [SUBSCRIPTION_PRODUCT_IDS.extraCampAnnual]: 'extraCamp',
 }
 
-export const ALL_SUBSCRIPTION_PRODUCT_IDS: string[] = Object.values(SUBSCRIPTION_PRODUCT_IDS)
-export const ALL_EXTRA_CAMP_SLOT_PRODUCT_IDS: string[] = Object.values(EXTRA_CAMP_SLOT_PRODUCTS)
-export const ALL_PRODUCT_IDS: string[] = [
-  ...ALL_SUBSCRIPTION_PRODUCT_IDS,
-  ...ALL_EXTRA_CAMP_SLOT_PRODUCT_IDS,
-]
+export const ALL_SUBSCRIPTION_PRODUCT_IDS = Object.values(SUBSCRIPTION_PRODUCT_IDS)
 
 export const TIER_RANK: Record<SubscriptionTier, number> = {
   free: 0,
@@ -123,11 +105,13 @@ export interface TierInfo {
   isAvailable: boolean
 }
 
-export interface ExtraCampSlotInfo {
+export interface ExtraCampAddOnInfo {
   productId: string
+  annualProductId: string
   displayName: string
-  slotCount: number
+  description: string
   price: string | null
+  annualPrice: string | null
   isAvailable: boolean
 }
 
@@ -177,11 +161,18 @@ export const TIER_DEFINITIONS: Record<
     features: [
       { label: 'Everything in Premium' },
       { label: 'Public camp management' },
-      { label: 'Extra public camp slots available as one-time purchases' },
+      { label: 'Extra public camps available as add-ons' },
       { label: 'Advanced analytics' },
       { label: 'Early access to new features' },
     ],
   },
+}
+
+export const EXTRA_CAMP_ADD_ON_DEFINITION = {
+  productId: EXTRA_CAMP_PRODUCT_IDS.monthly,
+  annualProductId: EXTRA_CAMP_PRODUCT_IDS.annual,
+  displayName: 'Extra camp',
+  description: 'Add one more public camp to a Pro workspace.',
 }
 
 /** Base camp limits by tier. Only Pro can create public camps. */
@@ -194,6 +185,9 @@ export const TIER_CAMP_LIMITS: Record<
   premium: { publicCamps: 0, privateCamps: 1 },
   pro: { publicCamps: 3, privateCamps: 1 },
 }
+
+/** Additional public-camp capacity granted by one verified extra-camp add-on. */
+export const EXTRA_CAMPS_PER_ADD_ON = 1
 
 export interface SubscriptionState {
   /** The user's current active tier from Convex (or 'free' if none). */
@@ -261,7 +255,7 @@ export const subscriptionActions = {
     subscriptionStore$.lastError.set(null)
   },
 
-  startConsumablePurchase(productId: string) {
+  startAddOnPurchase(productId: string) {
     subscriptionStore$.isPurchasing.set(true)
     subscriptionStore$.purchasingTier.set(null)
     subscriptionStore$.purchasingProductId.set(productId)
