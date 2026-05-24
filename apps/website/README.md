@@ -83,9 +83,11 @@ The site is a plain static directory — no build step required.
    - **Project name:** `bondfires-website`
    - **Production branch:** `main`
    - **Framework preset:** None
-   - **Build command:** leave empty
+   - **Build command:** `true`
    - **Deploy command:** `bash deploy.sh`
    - **Path:** `/apps/website`
+   - **Build variables:**
+     - `SKIP_DEPENDENCY_INSTALL=true`
 4. Deploy. Every push to `main` will publish automatically.
 5. Attach custom domains under **Custom domains**:
    - `bondfires.org`
