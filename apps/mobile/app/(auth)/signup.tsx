@@ -6,7 +6,8 @@ import DateTimePicker, { type DateTimePickerEvent } from '@react-native-communit
 import { Flame, UserPlus } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
 import { useState } from 'react'
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StatusBar } from 'react-native'
+import { Platform, Pressable, StatusBar } from 'react-native'
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { Spinner, XStack, YStack } from 'tamagui'
 
 type Gender = 'male' | 'female' | 'other'
@@ -175,197 +176,193 @@ export default function SignupScreen() {
   return (
     <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
       <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      <KeyboardAwareScrollView
+        contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+        keyboardShouldPersistTaps="handled"
         style={{ flex: 1 }}
       >
-        <ScrollView
-          contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
-          keyboardShouldPersistTaps="handled"
-        >
-          <YStack justifyContent="center" paddingHorizontal={24} paddingVertical={40} gap={28}>
-            {/* Header */}
-            <YStack alignItems="center" gap={16}>
-              <YStack
-                width={80}
-                height={80}
-                borderRadius={40}
-                backgroundColor={bondfireColors.gunmetal}
-                alignItems="center"
-                justifyContent="center"
-                borderWidth={2}
-                borderColor={bondfireColors.moltenGold}
-              >
-                <UserPlus size={36} color={bondfireColors.moltenGold} />
-              </YStack>
-              <YStack alignItems="center" gap={8}>
-                <Text fontSize={28} fontWeight="700">
-                  Create account
-                </Text>
-                <Text fontSize={15} color={bondfireColors.ash}>
-                  Join Bondfires and start sharing
-                </Text>
-              </YStack>
+        <YStack justifyContent="center" paddingHorizontal={24} paddingVertical={40} gap={28}>
+          {/* Header */}
+          <YStack alignItems="center" gap={16}>
+            <YStack
+              width={80}
+              height={80}
+              borderRadius={40}
+              backgroundColor={bondfireColors.gunmetal}
+              alignItems="center"
+              justifyContent="center"
+              borderWidth={2}
+              borderColor={bondfireColors.moltenGold}
+            >
+              <UserPlus size={36} color={bondfireColors.moltenGold} />
+            </YStack>
+            <YStack alignItems="center" gap={8}>
+              <Text fontSize={28} fontWeight="700">
+                Create account
+              </Text>
+              <Text fontSize={15} color={bondfireColors.ash}>
+                Join Bondfires and start sharing
+              </Text>
+            </YStack>
+          </YStack>
+
+          {/* Form */}
+          <YStack gap={16}>
+            {/* First Name */}
+            <YStack gap={8}>
+              <Text variant="label" color={bondfireColors.whiteSmoke}>
+                First Name
+              </Text>
+              <Input
+                placeholder="First name"
+                value={firstName}
+                onChangeText={(text) => form$.firstName.set(text)}
+                autoCapitalize="words"
+                autoComplete="given-name"
+              />
             </YStack>
 
-            {/* Form */}
-            <YStack gap={16}>
-              {/* First Name */}
-              <YStack gap={8}>
-                <Text variant="label" color={bondfireColors.whiteSmoke}>
-                  First Name
-                </Text>
-                <Input
-                  placeholder="First name"
-                  value={firstName}
-                  onChangeText={(text) => form$.firstName.set(text)}
-                  autoCapitalize="words"
-                  autoComplete="given-name"
-                />
-              </YStack>
+            {/* Last Name */}
+            <YStack gap={8}>
+              <Text variant="label" color={bondfireColors.whiteSmoke}>
+                Last Name
+              </Text>
+              <Input
+                placeholder="Last name"
+                value={lastName}
+                onChangeText={(text) => form$.lastName.set(text)}
+                autoCapitalize="words"
+                autoComplete="family-name"
+              />
+            </YStack>
 
-              {/* Last Name */}
-              <YStack gap={8}>
-                <Text variant="label" color={bondfireColors.whiteSmoke}>
-                  Last Name
-                </Text>
-                <Input
-                  placeholder="Last name"
-                  value={lastName}
-                  onChangeText={(text) => form$.lastName.set(text)}
-                  autoCapitalize="words"
-                  autoComplete="family-name"
-                />
-              </YStack>
+            {/* Email */}
+            <YStack gap={8}>
+              <Text variant="label" color={bondfireColors.whiteSmoke}>
+                Email
+              </Text>
+              <Input
+                placeholder="you@example.com"
+                value={email}
+                onChangeText={(text) => form$.email.set(text)}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoComplete="email"
+              />
+            </YStack>
 
-              {/* Email */}
-              <YStack gap={8}>
-                <Text variant="label" color={bondfireColors.whiteSmoke}>
-                  Email
-                </Text>
-                <Input
-                  placeholder="you@example.com"
-                  value={email}
-                  onChangeText={(text) => form$.email.set(text)}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoComplete="email"
-                />
-              </YStack>
-
-              {/* Gender */}
-              <YStack gap={8}>
-                <Text variant="label" color={bondfireColors.whiteSmoke}>
-                  Gender
-                </Text>
-                <XStack gap={8}>
-                  {GENDER_OPTIONS.map((option) => {
-                    const selected = gender === option.value
-                    return (
-                      <Button
-                        key={option.value}
-                        variant={selected ? 'primary' : 'outline'}
-                        size="$md"
-                        flex={1}
-                        onPress={() => form$.gender.set(option.value)}
+            {/* Gender */}
+            <YStack gap={8}>
+              <Text variant="label" color={bondfireColors.whiteSmoke}>
+                Gender
+              </Text>
+              <XStack gap={8}>
+                {GENDER_OPTIONS.map((option) => {
+                  const selected = gender === option.value
+                  return (
+                    <Button
+                      key={option.value}
+                      variant={selected ? 'primary' : 'outline'}
+                      size="$md"
+                      flex={1}
+                      onPress={() => form$.gender.set(option.value)}
+                    >
+                      <Text
+                        color={selected ? bondfireColors.whiteSmoke : bondfireColors.ash}
+                        fontWeight="900"
                       >
-                        <Text
-                          color={selected ? bondfireColors.whiteSmoke : bondfireColors.ash}
-                          fontWeight="900"
-                        >
-                          {option.label}
-                        </Text>
-                      </Button>
-                    )
-                  })}
-                </XStack>
-              </YStack>
+                        {option.label}
+                      </Text>
+                    </Button>
+                  )
+                })}
+              </XStack>
+            </YStack>
 
-              {/* Birth Date with Calendar Picker */}
-              <YStack gap={8}>
-                <Text variant="label" color={bondfireColors.whiteSmoke}>
-                  Birth Date
-                </Text>
-                <Text fontSize={12} color={bondfireColors.ash} marginBottom={4}>
-                  Required. You must be at least 13. Private; not shown publicly.
-                </Text>
-                <Pressable onPress={() => setShowDatePicker(true)}>
-                  <YStack pointerEvents="none">
-                    <Input
-                      placeholder="YYYY-MM-DD"
-                      value={birthDate}
-                      editable={false}
-                      autoCapitalize="none"
-                    />
-                  </YStack>
-                </Pressable>
-                {showDatePicker && (
-                  <DateTimePicker
-                    value={birthDate ? new Date(`${birthDate}T00:00:00`) : getMinBirthDate()}
-                    mode="date"
-                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                    maximumDate={getMinBirthDate()}
-                    onChange={handleDateChange}
+            {/* Birth Date with Calendar Picker */}
+            <YStack gap={8}>
+              <Text variant="label" color={bondfireColors.whiteSmoke}>
+                Birth Date
+              </Text>
+              <Text fontSize={12} color={bondfireColors.ash} marginBottom={4}>
+                Required. You must be at least 13. Private; not shown publicly.
+              </Text>
+              <Pressable onPress={() => setShowDatePicker(true)}>
+                <YStack pointerEvents="none">
+                  <Input
+                    placeholder="YYYY-MM-DD"
+                    value={birthDate}
+                    editable={false}
+                    autoCapitalize="none"
                   />
-                )}
-              </YStack>
-
-              {/* Password */}
-              <YStack gap={8}>
-                <Text variant="label" color={bondfireColors.whiteSmoke}>
-                  Password
-                </Text>
-                <Input
-                  placeholder="At least 8 characters"
-                  value={password}
-                  onChangeText={(text) => form$.password.set(text)}
-                  secureTextEntry
-                  autoComplete="new-password"
+                </YStack>
+              </Pressable>
+              {showDatePicker && (
+                <DateTimePicker
+                  value={birthDate ? new Date(`${birthDate}T00:00:00`) : getMinBirthDate()}
+                  mode="date"
+                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                  maximumDate={getMinBirthDate()}
+                  onChange={handleDateChange}
                 />
-              </YStack>
-
-              {/* Confirm Password */}
-              <YStack gap={8}>
-                <Text variant="label" color={bondfireColors.whiteSmoke}>
-                  Confirm Password
-                </Text>
-                <Input
-                  placeholder="Confirm your password"
-                  value={confirmPassword}
-                  onChangeText={(text) => form$.confirmPassword.set(text)}
-                  secureTextEntry
-                  autoComplete="new-password"
-                  error={confirmPassword.length > 0 && password !== confirmPassword}
-                />
-              </YStack>
-
-              {error && (
-                <Text color={bondfireColors.error} fontSize={14}>
-                  {error}
-                </Text>
               )}
             </YStack>
 
-            {/* Actions */}
-            <YStack gap={12}>
-              <Button variant="primary" size="$lg" onPress={handleSignup} disabled={isLoading}>
-                {isLoading ? (
-                  <Spinner color={bondfireColors.whiteSmoke} />
-                ) : (
-                  <>
-                    <Flame size={20} color={bondfireColors.whiteSmoke} />
-                    <Text color={bondfireColors.whiteSmoke}>Create Account</Text>
-                  </>
-                )}
-              </Button>
-
-              <Button variant="ghost" size="$md" onPress={() => router.push('/(auth)/login')}>
-                <Text>Already have an account? Sign in</Text>
-              </Button>
+            {/* Password */}
+            <YStack gap={8}>
+              <Text variant="label" color={bondfireColors.whiteSmoke}>
+                Password
+              </Text>
+              <Input
+                placeholder="At least 8 characters"
+                value={password}
+                onChangeText={(text) => form$.password.set(text)}
+                secureTextEntry
+                autoComplete="new-password"
+              />
             </YStack>
+
+            {/* Confirm Password */}
+            <YStack gap={8}>
+              <Text variant="label" color={bondfireColors.whiteSmoke}>
+                Confirm Password
+              </Text>
+              <Input
+                placeholder="Confirm your password"
+                value={confirmPassword}
+                onChangeText={(text) => form$.confirmPassword.set(text)}
+                secureTextEntry
+                autoComplete="new-password"
+                error={confirmPassword.length > 0 && password !== confirmPassword}
+              />
+            </YStack>
+
+            {error && (
+              <Text color={bondfireColors.error} fontSize={14}>
+                {error}
+              </Text>
+            )}
           </YStack>
-        </ScrollView>
-      </KeyboardAvoidingView>
+
+          {/* Actions */}
+          <YStack gap={12}>
+            <Button variant="primary" size="$lg" onPress={handleSignup} disabled={isLoading}>
+              {isLoading ? (
+                <Spinner color={bondfireColors.whiteSmoke} />
+              ) : (
+                <>
+                  <Flame size={20} color={bondfireColors.whiteSmoke} />
+                  <Text color={bondfireColors.whiteSmoke}>Create Account</Text>
+                </>
+              )}
+            </Button>
+
+            <Button variant="ghost" size="$md" onPress={() => router.push('/(auth)/login')}>
+              <Text>Already have an account? Sign in</Text>
+            </Button>
+          </YStack>
+        </YStack>
+      </KeyboardAwareScrollView>
     </YStack>
   )
 }

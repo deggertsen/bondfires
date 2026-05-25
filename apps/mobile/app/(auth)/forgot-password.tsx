@@ -5,7 +5,8 @@ import { ChevronLeft, Mail } from '@tamagui/lucide-icons'
 import type { RelativePathString } from 'expo-router'
 import { useRouter } from 'expo-router'
 import { useState } from 'react'
-import { KeyboardAvoidingView, Platform, Pressable, StatusBar } from 'react-native'
+import { Pressable, StatusBar } from 'react-native'
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { Spinner, YStack } from 'tamagui'
 
 export default function ForgotPasswordScreen() {
@@ -63,8 +64,9 @@ export default function ForgotPasswordScreen() {
         </Pressable>
       </YStack>
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      <KeyboardAwareScrollView
+        contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+        keyboardShouldPersistTaps="handled"
         style={{ flex: 1 }}
       >
         <YStack flex={1} justifyContent="center" paddingHorizontal={24} gap={32}>
@@ -123,7 +125,7 @@ export default function ForgotPasswordScreen() {
             </Button>
           </YStack>
         </YStack>
-      </KeyboardAvoidingView>
+      </KeyboardAwareScrollView>
     </YStack>
   )
 }

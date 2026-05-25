@@ -4,7 +4,8 @@ import { useAuthActions } from '@convex-dev/auth/react'
 import { CheckCircle, Mail } from '@tamagui/lucide-icons'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useState } from 'react'
-import { KeyboardAvoidingView, Platform, StatusBar } from 'react-native'
+import { StatusBar } from 'react-native'
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { Spinner, YStack } from 'tamagui'
 
 export default function VerifyEmailScreen() {
@@ -70,11 +71,16 @@ export default function VerifyEmailScreen() {
   return (
     <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
       <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      <KeyboardAwareScrollView
+        contentContainerStyle={{
+          flexGrow: 1,
+          justifyContent: 'center',
+          alignItems: 'center',
+        }}
+        keyboardShouldPersistTaps="handled"
         style={{ flex: 1 }}
       >
-        <YStack flex={1} paddingHorizontal={24} alignItems="center" justifyContent="center">
+        <YStack paddingHorizontal={24} alignItems="center" justifyContent="center">
           <YStack alignItems="center" gap={32} maxWidth={320} width="100%">
             {/* Icon */}
             <YStack
@@ -159,7 +165,7 @@ export default function VerifyEmailScreen() {
             )}
           </YStack>
         </YStack>
-      </KeyboardAvoidingView>
+      </KeyboardAwareScrollView>
     </YStack>
   )
 }
