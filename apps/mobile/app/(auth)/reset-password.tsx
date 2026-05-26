@@ -72,8 +72,10 @@ export default function ResetPasswordScreen() {
       setTimeout(() => {
         router.replace('/(auth)/login')
       }, 2000)
-    } catch {
-      form$.error.set('Invalid or expired code. Please try again.')
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Invalid or expired code. Please try again.'
+      form$.error.set(message)
     } finally {
       form$.isLoading.set(false)
     }
@@ -94,8 +96,10 @@ export default function ResetPasswordScreen() {
         email: params.email,
         flow: 'reset',
       })
-    } catch {
-      form$.error.set('Failed to resend code. Please try again.')
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to resend code. Please try again.'
+      form$.error.set(message)
     } finally {
       form$.isResending.set(false)
     }

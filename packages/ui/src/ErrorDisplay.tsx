@@ -1,0 +1,211 @@
+import { bondfireColors } from '@bondfires/config'
+import { AlertTriangle, RefreshCw, Send } from '@tamagui/lucide-icons'
+import { Linking } from 'react-native'
+import { YStack } from 'tamagui'
+import { Button } from './Button'
+import { Text } from './Text'
+
+/** Context passed alongside the error for reporting. */
+export interface ErrorContext {
+  userId?: string | null
+  bondfireId?: string
+  [key: string]: unknown
+}
+
+export interface ErrorDisplayProps {
+  /**
+   * The raw caught error. The component derives the message and type from it.
+   * If provided, takes precedence over `message` + `isNetworkError`.
+   */
+  error?: unknown
+  /** The error message to display. Used when `error` is not provided. */
+  message?: string
+  /** Whether this is a network error (shows retry button). */
+  isNetworkError?: boolean
+  /** Called when the user taps Retry (network errors only). */
+  onRetry?: () => void
+  /** Called when the user taps Report Issue. If omitted, opens mailto. */
+  onReport?: () => void
+  /** Pre-built mailto URL. If provided, Report Issue opens this URL. */
+  reportUrl?: string
+  /** Additional context for error reporting. */
+  context?: ErrorContext
+  /** If true, shows a compact inline layout instead of a centered card. */
+  compact?: boolean
+  /** If true, renders nothing — used for cases where error is handled elsewhere. */
+  hidden?: boolean
+}
+
+/**
+ * Detect whether an error is a network/fetch failure.
+ */
+function detectNetworkError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase()
+    return (
+      msg.includes('network request failed') ||
+      msg.includes('failed to fetch') ||
+      msg.includes('network error') ||
+      msg.includes('internet connection') ||
+      msg.includes('timeout') ||
+      msg.includes('abort') ||
+      msg.includes('offline')
+    )
+  }
+  return false
+}
+
+/**
+ * Extract a human-readable message from any caught error.
+ */
+function extractMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message || 'Something went wrong'
+  }
+  if (typeof error === 'string') {
+    return error || 'Something went wrong'
+  }
+  return 'Something went wrong'
+}
+
+/**
+ * Build a mailto URL from the error and optional context.
+ */
+function buildDefaultReportUrl(message: string, context?: ErrorContext): string {
+  const subject = encodeURIComponent(`Bug Report: ${message.slice(0, 80)}`)
+
+  const bodyLines = [`Error: ${message}`]
+
+  if (context?.userId) {
+    bodyLines.push(`User ID: ${context.userId}`)
+  }
+  if (context?.bondfireId) {
+    bodyLines.push(`Bondfire ID: ${context.bondfireId}`)
+  }
+
+  bodyLines.push(`Timestamp: ${new Date().toISOString()}`)
+  bodyLines.push('')
+  bodyLines.push('--- Describe what you were doing when the error occurred: ---')
+
+  const body = encodeURIComponent(bodyLines.join('\n'))
+  return `mailto:support@bondfires.org?subject=${subject}&body=${body}`
+}
+
+/**
+ * Reusable error display component.
+ *
+ * Accepts either a raw `error` object (derives message + type automatically)
+ * or explicit `message` + `isNetworkError` props.
+ *
+ * Shows different UX depending on error type:
+ * - Network errors: "No internet connection" message + [Try Again] button
+ * - Server errors: actual error message + [Report Issue] button
+ *
+ * Uses Tamagui components and bondfireColors for visual consistency.
+ */
+export function ErrorDisplay({
+  error,
+  message: explicitMessage,
+  isNetworkError: explicitIsNetworkError,
+  onRetry,
+  onReport,
+  reportUrl,
+  context,
+  compact = false,
+  hidden = false,
+}: ErrorDisplayProps) {
+  if (hidden) return null
+
+  // Derive message and network flag from the raw error when provided
+  const message = error ? extractMessage(error) : (explicitMessage ?? 'Something went wrong')
+  const isNetworkError = error ? detectNetworkError(error) : (explicitIsNetworkError ?? false)
+
+  const handleReport = () => {
+    if (onReport) {
+      onReport()
+      return
+    }
+    const url = reportUrl ?? buildDefaultReportUrl(message, context)
+    Linking.openURL(url).catch(() => {
+      // Silently fail if mail client isn't available
+    })
+  }
+
+  const showReportButton = !isNetworkError && (onReport || reportUrl || !!context)
+
+  const icon = isNetworkError ? (
+    <RefreshCw size={24} color={bondfireColors.warning} />
+  ) : (
+    <AlertTriangle size={24} color={bondfireColors.error} />
+  )
+
+  if (compact) {
+    return (
+      <YStack gap={8} paddingHorizontal={16} paddingVertical={12}>
+        <YStack flexDirection="row" alignItems="flex-start" gap={8}>
+          {icon}
+          <Text fontSize={14} color={bondfireColors.ash} flexShrink={1} lineHeight={20}>
+            {isNetworkError ? 'No internet connection' : message}
+          </Text>
+        </YStack>
+        {isNetworkError && onRetry ? (
+          <Button variant="secondary" size="$sm" marginTop={4} onPress={onRetry}>
+            Try Again
+          </Button>
+        ) : showReportButton ? (
+          <Button
+            variant="ghost"
+            size="$sm"
+            marginTop={4}
+            icon={<Send size={14} color={bondfireColors.ash} />}
+            onPress={handleReport}
+          >
+            Report Issue
+          </Button>
+        ) : null}
+      </YStack>
+    )
+  }
+
+  return (
+    <YStack
+      alignItems="center"
+      justifyContent="center"
+      gap={16}
+      paddingHorizontal={24}
+      paddingVertical={32}
+    >
+      {icon}
+      <YStack gap={4} alignItems="center">
+        <Text fontSize={16} fontWeight="600" color={bondfireColors.whiteSmoke} textAlign="center">
+          {isNetworkError ? 'No internet connection' : 'Something went wrong'}
+        </Text>
+        <Text fontSize={14} color={bondfireColors.ash} textAlign="center" lineHeight={20}>
+          {isNetworkError ? 'Check your connection and try again.' : message}
+        </Text>
+      </YStack>
+      <YStack gap={8} width="100%" maxWidth={280}>
+        {isNetworkError && onRetry ? (
+          <Button
+            icon={<RefreshCw size={16} color={bondfireColors.whiteSmoke} />}
+            variant="primary"
+            size="$md"
+            onPress={onRetry}
+          >
+            Try Again
+          </Button>
+        ) : null}
+        {showReportButton ? (
+          <Button
+            icon={<Send size={16} color={bondfireColors.ash} />}
+            variant="secondary"
+            size="$md"
+            onPress={handleReport}
+          >
+            Report Issue
+          </Button>
+        ) : null}
+      </YStack>
+    </YStack>
+  )
+}

@@ -1,6 +1,7 @@
 import {
   appActions,
   getBondfireVideoIndex,
+  parseError,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
   uploadQueueActions,
@@ -239,8 +240,9 @@ export default function ProfileScreen() {
       })
       state$.isEditSheetOpen.set(false)
       handleRefresh()
-    } catch {
-      Alert.alert('Error', 'Failed to update profile')
+    } catch (error) {
+      const message = parseError(error).message
+      Alert.alert('Error', message)
     } finally {
       state$.isSaving.set(false)
     }
@@ -293,8 +295,9 @@ export default function ProfileScreen() {
                       await signOut()
                       appActions.logout()
                       router.replace('/(auth)/login')
-                    } catch {
-                      Alert.alert('Error', 'Failed to delete account. Please try again.')
+                    } catch (error) {
+                      const message = parseError(error).message
+                      Alert.alert('Error', message)
                       state$.isDeleting.set(false)
                     }
                   },
@@ -344,7 +347,8 @@ export default function ProfileScreen() {
       handleRefresh()
     } catch (error) {
       console.error('Photo upload error:', error)
-      Alert.alert('Error', 'Failed to upload photo. Please try again.')
+      const message = parseError(error).message
+      Alert.alert('Error', message)
     } finally {
       state$.isUploadingPhoto.set(false)
     }

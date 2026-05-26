@@ -158,8 +158,10 @@ export default function SignupScreen() {
       })
       // Pass email to verify-email screen for OTP verification
       router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail } })
-    } catch {
-      form$.error.set('Could not create account. Please try again.')
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not create account. Please try again.'
+      form$.error.set(message)
     } finally {
       form$.isLoading.set(false)
     }

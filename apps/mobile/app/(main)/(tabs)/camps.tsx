@@ -1,3 +1,4 @@
+import { parseError } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
 import { Flame, Lock, Search, Users } from '@tamagui/lucide-icons'
@@ -252,7 +253,7 @@ export default function CampsScreen() {
           Alert.alert('Request Sent', 'Your camp membership request is pending approval.')
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to join camp'
+        const message = parseError(error).message
         Alert.alert('Camp Unavailable', message)
       }
     },
@@ -282,7 +283,7 @@ export default function CampsScreen() {
       setIsCreatePrivateOpen(false)
       router.push(`/(main)/camp/${campId}` as RelativePathString)
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to create private camp'
+      const message = parseError(error).message
       Alert.alert('Private Camp Unavailable', message)
     } finally {
       setIsSubmitting(false)
@@ -303,7 +304,7 @@ export default function CampsScreen() {
       setIsRedeemInviteOpen(false)
       router.push(`/(main)/camp/${result.campId}` as RelativePathString)
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to redeem invite'
+      const message = parseError(error).message
       Alert.alert('Invite Unavailable', message)
     } finally {
       setIsSubmitting(false)

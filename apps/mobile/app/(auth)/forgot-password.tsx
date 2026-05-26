@@ -37,8 +37,10 @@ export default function ForgotPasswordScreen() {
         pathname: '/(auth)/reset-password' as RelativePathString,
         params: { email },
       })
-    } catch {
-      setError('Could not send reset email. Please try again.')
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not send reset email. Please try again.'
+      setError(message)
     } finally {
       setIsLoading(false)
     }

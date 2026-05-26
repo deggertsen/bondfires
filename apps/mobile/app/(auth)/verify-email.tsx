@@ -38,8 +38,10 @@ export default function VerifyEmailScreen() {
       setSuccess(true)
       // Navigate to feed after successful verification
       router.replace('/(main)/(tabs)/feed')
-    } catch {
-      setError('Invalid or expired code. Please try again.')
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Invalid or expired code. Please try again.'
+      setError(message)
     } finally {
       setIsVerifying(false)
     }
@@ -61,8 +63,10 @@ export default function VerifyEmailScreen() {
         flow: 'email-verification',
       })
       setError(null)
-    } catch {
-      setError('Failed to resend code. Please try again.')
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to resend code. Please try again.'
+      setError(message)
     } finally {
       setIsResending(false)
     }
