@@ -278,7 +278,25 @@ function generateInviteCode(seed: string) {
 }
 
 function isAdmin(user: Doc<'users'>) {
-  return user.isAdmin === true
+  return user.isAdmin === true || user.role === 'admin'
+}
+
+/** Find the canonical admin user. Prefer the owned inbox, then role, then legacy flag. */
+async function findAdminUser(ctx: QueryCtx | MutationCtx): Promise<Doc<'users'> | null> {
+  const adminByEmail = await ctx.db
+    .query('users')
+    .withIndex('email', (q) => q.eq('email', 'admin@bondfires.org'))
+    .first()
+  if (adminByEmail) return adminByEmail
+
+  const adminByRole = await ctx.db
+    .query('users')
+    .withIndex('by_role', (q) => q.eq('role', 'admin'))
+    .first()
+  if (adminByRole) return adminByRole
+
+  const users = await ctx.db.query('users').collect()
+  return users.find((u) => u.isAdmin === true) ?? null
 }
 
 async function getMembership(
@@ -582,7 +600,11 @@ async function refreshActiveMemberCount(ctx: MutationCtx, campId: Id<'camps'>) {
   })
 }
 
-async function ensureCamp(ctx: MutationCtx, seed: CampSeed, args?: { isLaunchCamp?: boolean }) {
+async function ensureCamp(
+  ctx: MutationCtx,
+  seed: CampSeed,
+  args?: { isLaunchCamp?: boolean; ownerId?: Id<'users'> },
+) {
   const now = Date.now()
   const existing = await findCampBySlug(ctx, seed.slug)
   const campFields = {
@@ -612,12 +634,22 @@ async function ensureCamp(ctx: MutationCtx, seed: CampSeed, args?: { isLaunchCam
   }
 
   if (existing) {
-    await ctx.db.patch(existing._id, campFields)
+    // Update ownerId if provided and not already set
+    const patchFields: Record<string, unknown> = { ...campFields }
+    if (args?.ownerId && !existing.ownerId) {
+      patchFields.ownerId = args.ownerId
+    }
+    await ctx.db.patch(existing._id, patchFields)
     return existing._id
+  }
+
+  if (!args?.ownerId) {
+    throw new Error('ownerId is required when creating a new camp')
   }
 
   return await ctx.db.insert('camps', {
     ...campFields,
+    ownerId: args.ownerId,
     createdAt: now,
   })
 }
@@ -1157,17 +1189,20 @@ export const seedLaunchCamps = mutation({
   args: {},
   handler: async (ctx) => {
     const existingCamps = await ctx.db.query('camps').take(1)
+    const user = await getCurrentUser(ctx)
     if (existingCamps.length > 0) {
-      const user = await getCurrentUser(ctx)
       if (!isAdmin(user)) {
         throw new Error('Only admins can reseed camps')
       }
     }
 
-    const arenaId = await ensureCamp(ctx, getArenaSeed(), { isLaunchCamp: false })
+    const arenaId = await ensureCamp(ctx, getArenaSeed(), {
+      isLaunchCamp: false,
+      ownerId: user._id,
+    })
     const launchCampIds = []
     for (const seed of getLaunchCampSeeds()) {
-      launchCampIds.push(await ensureCamp(ctx, seed, { isLaunchCamp: true }))
+      launchCampIds.push(await ensureCamp(ctx, seed, { isLaunchCamp: true, ownerId: user._id }))
     }
 
     return {
@@ -1291,6 +1326,323 @@ export const createPrivateCamp = mutation({
       role: 'owner',
       status: 'active',
     })
+
+    const adminUser = await findAdminUser(ctx)
+    if (adminUser && adminUser._id !== user._id) {
+      await upsertMembership(ctx, {
+        userId: adminUser._id,
+        campId,
+        role: 'moderator',
+        status: 'active',
+      })
+      await refreshActiveMemberCount(ctx, campId)
+    }
+
+    return campId
+  },
+})
+
+// ── Backfill Migration: Admin account setup + required camp ownership ──
+
+/**
+ * Backfill mutation to:
+ * 1. Set ownerId on all camps that don't have one
+ * 2. Add admin@bondfires.org as an active camp member
+ *    - owner when the admin account owns the camp
+ *    - moderator when another user owns the camp
+ * 3. Set admin roles without demoting legacy isAdmin accounts
+ *
+ * Run against prod via Convex dashboard or CLI:
+ *   npx convex run --prod camps:adminBackfill
+ */
+export const adminBackfill = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getCurrentUser(ctx)
+    if (!isAdmin(user)) {
+      throw new Error('Only admins can run this backfill')
+    }
+
+    const now = Date.now()
+
+    // Find the canonical admin user
+    const adminUser = await ctx.db
+      .query('users')
+      .withIndex('email', (q) => q.eq('email', 'admin@bondfires.org'))
+      .first()
+
+    if (!adminUser) {
+      return {
+        error: 'Admin user admin@bondfires.org not found. Create the admin account first.',
+      }
+    }
+
+    const result = {
+      campsOwnerSet: 0,
+      campsAlreadyOwned: 0,
+      adminMembershipsAdded: 0,
+      adminMembershipsUpdated: 0,
+      adminMembershipsAlreadyPresent: 0,
+      activeMemberCountsRefreshed: 0,
+      adminRoleSet: 0,
+      adminFlagSet: 0,
+      userRolesSet: 0,
+      usersScanned: 0,
+    }
+
+    const camps = await ctx.db.query('camps').collect()
+    for (const camp of camps) {
+      let ownerId = camp.ownerId
+      if (!camp.ownerId) {
+        await ctx.db.patch(camp._id, {
+          ownerId: adminUser._id,
+          updatedAt: now,
+        })
+        ownerId = adminUser._id
+        result.campsOwnerSet += 1
+      } else {
+        result.campsAlreadyOwned += 1
+      }
+
+      const adminMembershipRole = ownerId === adminUser._id ? 'owner' : 'moderator'
+      const existingMembership = await getMembership(ctx, adminUser._id, camp._id)
+      if (!existingMembership) {
+        await upsertMembership(ctx, {
+          userId: adminUser._id,
+          campId: camp._id,
+          role: adminMembershipRole,
+          status: 'active',
+        })
+        result.adminMembershipsAdded += 1
+        await refreshActiveMemberCount(ctx, camp._id)
+        result.activeMemberCountsRefreshed += 1
+      } else if (
+        existingMembership.role !== adminMembershipRole ||
+        existingMembership.status !== 'active'
+      ) {
+        await upsertMembership(ctx, {
+          userId: adminUser._id,
+          campId: camp._id,
+          role: adminMembershipRole,
+          status: 'active',
+        })
+        result.adminMembershipsUpdated += 1
+        await refreshActiveMemberCount(ctx, camp._id)
+        result.activeMemberCountsRefreshed += 1
+      } else {
+        result.adminMembershipsAlreadyPresent += 1
+      }
+    }
+
+    const users = await ctx.db.query('users').collect()
+    result.usersScanned = users.length
+
+    for (const u of users) {
+      const updates: { role?: 'admin' | 'user'; isAdmin?: true; updatedAt?: number } = {}
+      if (u._id === adminUser._id) {
+        if (u.role !== 'admin') {
+          updates.role = 'admin'
+          result.adminRoleSet += 1
+        }
+        if (u.isAdmin !== true) {
+          updates.isAdmin = true
+          result.adminFlagSet += 1
+        }
+      } else if (u.isAdmin === true && u.role !== 'admin') {
+        updates.role = 'admin'
+        result.adminRoleSet += 1
+      } else if (!u.role) {
+        updates.role = 'user'
+        result.userRolesSet += 1
+      }
+
+      if (Object.keys(updates).length > 0) {
+        await ctx.db.patch(u._id, {
+          ...updates,
+          updatedAt: now,
+        })
+      }
+    }
+
+    return result
+  },
+})
+
+// ── Admin-Only Mutations ──
+
+/**
+ * Transfer camp ownership to another user.
+ * Only callable by admin users (checked via user.role).
+ */
+export const setOwner = mutation({
+  args: {
+    campId: v.id('camps'),
+    newOwnerId: v.id('users'),
+  },
+  handler: async (ctx, args) => {
+    const currentUser = await getCurrentUser(ctx)
+    if (!isAdmin(currentUser)) {
+      throw new Error('Only admins can transfer camp ownership')
+    }
+
+    const camp = await ctx.db.get(args.campId)
+    if (!camp) {
+      throw new Error('Camp not found')
+    }
+
+    const newOwner = await ctx.db.get(args.newOwnerId)
+    if (!newOwner) {
+      throw new Error('New owner user not found')
+    }
+
+    const previousOwnerId = camp.ownerId
+    const now = Date.now()
+
+    // Update camp ownerId
+    await ctx.db.patch(args.campId, {
+      ownerId: args.newOwnerId,
+      ownerDisplayName: newOwner.displayName ?? newOwner.name ?? undefined,
+      updatedAt: now,
+    })
+
+    const newOwnerMembership = await getMembership(ctx, args.newOwnerId, args.campId)
+    const newOwnerWasActive = newOwnerMembership?.status === 'active'
+    await upsertMembership(ctx, {
+      userId: args.newOwnerId,
+      campId: args.campId,
+      role: 'owner',
+      status: 'active',
+    })
+    if (!newOwnerWasActive) {
+      await refreshActiveMemberCount(ctx, args.campId)
+    }
+
+    if (previousOwnerId && previousOwnerId !== args.newOwnerId) {
+      const prevOwnerMembership = await getMembership(ctx, previousOwnerId, args.campId)
+      if (prevOwnerMembership && prevOwnerMembership.role === 'owner') {
+        await ctx.db.patch(prevOwnerMembership._id, {
+          role: 'member',
+          updatedAt: now,
+        })
+      }
+    }
+
+    return { campId: args.campId, previousOwnerId, newOwnerId: args.newOwnerId }
+  },
+})
+
+const campSettingsFields = {
+  name: v.optional(v.string()),
+  theme: v.optional(v.string()),
+  purpose: v.optional(v.string()),
+  icon: v.optional(v.string()),
+  color: v.optional(v.string()),
+  defaultPrompt: v.optional(v.string()),
+  rules: v.optional(
+    v.object({
+      gender: v.optional(v.union(v.literal('male'), v.literal('female'), v.literal('any'))),
+      minDurationMs: v.optional(v.number()),
+      maxDurationMs: v.optional(v.number()),
+      maxResponses: v.optional(v.number()),
+      requiresTradeTags: v.optional(v.boolean()),
+      allowedTiers: v.optional(
+        v.array(
+          v.union(v.literal('free'), v.literal('plus'), v.literal('premium'), v.literal('pro')),
+        ),
+      ),
+      advisoryGuidelines: v.optional(v.array(v.string())),
+    }),
+  ),
+  visibilityRules: v.optional(
+    v.array(
+      v.object({
+        type: v.union(
+          v.literal('minTier'),
+          v.literal('gender'),
+          v.literal('minAge'),
+          v.literal('inviteRequired'),
+        ),
+        minTier: v.optional(
+          v.union(v.literal('free'), v.literal('plus'), v.literal('premium'), v.literal('pro')),
+        ),
+        gender: v.optional(v.union(v.literal('male'), v.literal('female'))),
+        minAge: v.optional(v.number()),
+      }),
+    ),
+  ),
+  joinRules: v.optional(
+    v.array(
+      v.object({
+        type: v.union(
+          v.literal('minTier'),
+          v.literal('gender'),
+          v.literal('minAge'),
+          v.literal('inviteRequired'),
+          v.literal('approvalRequired'),
+        ),
+        minTier: v.optional(
+          v.union(v.literal('free'), v.literal('plus'), v.literal('premium'), v.literal('pro')),
+        ),
+        gender: v.optional(v.union(v.literal('male'), v.literal('female'))),
+        minAge: v.optional(v.number()),
+      }),
+    ),
+  ),
+  nameOverride: v.optional(v.string()),
+  visibility: v.optional(v.union(v.literal('public'), v.literal('private'))),
+  access: v.optional(v.union(v.literal('open'), v.literal('approval'), v.literal('invite'))),
+  status: v.optional(v.union(v.literal('active'), v.literal('frozen'), v.literal('archived'))),
+}
+
+/**
+ * Update camp settings.
+ * Callable by the camp owner or an admin.
+ */
+export const updateSettings = mutation({
+  args: {
+    campId: v.id('camps'),
+    ...campSettingsFields,
+  },
+  handler: async (ctx, args) => {
+    const { campId, ...fields } = args
+    const user = await getCurrentUser(ctx)
+
+    const camp = await ctx.db.get(campId)
+    if (!camp) {
+      throw new Error('Camp not found')
+    }
+
+    if (!isAdmin(user) && camp.ownerId !== user._id) {
+      throw new Error('Only the camp owner or an admin can update camp settings')
+    }
+
+    if (fields.status !== undefined) {
+      if (!isAdmin(user)) {
+        const ownerStatusChange =
+          camp.ownerId === user._id && (fields.status === 'frozen' || fields.status === 'archived')
+        if (!ownerStatusChange) {
+          throw new Error('Only admins can change camp status')
+        }
+      }
+    }
+
+    const updates: Record<string, unknown> = { updatedAt: Date.now() }
+
+    if (fields.name !== undefined) updates.name = fields.name
+    if (fields.theme !== undefined) updates.theme = fields.theme
+    if (fields.purpose !== undefined) updates.purpose = fields.purpose
+    if (fields.icon !== undefined) updates.icon = fields.icon
+    if (fields.color !== undefined) updates.color = fields.color
+    if (fields.defaultPrompt !== undefined) updates.defaultPrompt = fields.defaultPrompt
+    if (fields.rules !== undefined) updates.rules = fields.rules
+    if (fields.visibilityRules !== undefined) updates.visibilityRules = fields.visibilityRules
+    if (fields.joinRules !== undefined) updates.joinRules = fields.joinRules
+    if (fields.nameOverride !== undefined) updates.nameOverride = fields.nameOverride
+    if (fields.visibility !== undefined) updates.visibility = fields.visibility
+    if (fields.access !== undefined) updates.access = fields.access
+    if (fields.status !== undefined) updates.status = fields.status
+
+    await ctx.db.patch(campId, updates)
 
     return campId
   },

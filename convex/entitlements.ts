@@ -699,7 +699,6 @@ export async function processExpiredReclaims(
 
   for (const camp of expiredCamps) {
     if (!camp.ownerId) {
-      // No owner to transfer from — archive
       await ctx.db.patch(camp._id, {
         status: 'archived',
         frozenAt: undefined,
@@ -775,7 +774,7 @@ export async function processExpiredReclaims(
     }
 
     // Demote old owner to member or remove
-    const previousOwnerId = camp.ownerId as Id<'users'>
+    const previousOwnerId = camp.ownerId
     const oldOwnerMembership = await ctx.db
       .query('campMembers')
       .withIndex('by_user_camp', (q) => q.eq('userId', previousOwnerId).eq('campId', camp._id))
