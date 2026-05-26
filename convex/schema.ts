@@ -70,31 +70,6 @@ const campRules = v.object({
   }),
 })
 
-const campVisibilityRule = v.object({
-  type: v.union(
-    v.literal('minTier'),
-    v.literal('gender'),
-    v.literal('minAge'),
-    v.literal('inviteRequired'),
-  ),
-  minTier: v.optional(subscriptionTier),
-  gender: v.optional(v.union(v.literal('male'), v.literal('female'))),
-  minAge: v.optional(v.number()),
-})
-
-const campJoinRule = v.object({
-  type: v.union(
-    v.literal('minTier'),
-    v.literal('gender'),
-    v.literal('minAge'),
-    v.literal('inviteRequired'),
-    v.literal('approvalRequired'),
-  ),
-  minTier: v.optional(subscriptionTier),
-  gender: v.optional(v.union(v.literal('male'), v.literal('female'))),
-  minAge: v.optional(v.number()),
-})
-
 export default defineSchema({
   // Include auth tables from @convex-dev/auth
   ...authTables,
@@ -160,8 +135,6 @@ export default defineSchema({
     color: v.optional(v.string()),
     defaultPrompt: v.optional(v.string()),
     rules: campRules,
-    visibilityRules: v.optional(v.array(campVisibilityRule)),
-    joinRules: v.optional(v.array(campJoinRule)),
     nameOverride: v.optional(v.string()), // Private camp custom name override
     ownerDisplayName: v.optional(v.string()), // Denormalized owner display name at camp creation
     crisisBroadcast: v.optional(v.boolean()),
