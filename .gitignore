@@ -67,11 +67,3 @@ infrastructure/terraform/.terraform.lock.hcl
 *.pem
 Thumbs.db
 
-# OpenClaw workspace
-.openclaw/
-HEARTBEAT.md
-SOUL.md
-IDENTITY.md
-TOOLS.md
-USER.md
-
