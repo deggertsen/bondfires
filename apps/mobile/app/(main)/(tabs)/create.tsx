@@ -4,10 +4,12 @@ import {
   buildErrorReportMailto,
   cancelProcessing,
   cleanupTempVideos,
+  getUserFacingErrorMessage,
   livePublishActions,
   livePublishStore$,
   parseError,
   resumePendingUploads,
+  shouldShowReportIssue,
   startBackgroundUpload,
   useLivePublisher,
   useSubscription,
@@ -612,11 +614,10 @@ export default function CreateScreen() {
         console.error('Failed to queue upload:', error)
         const errorInfo = parseError(error)
         Alert.alert(
-          errorInfo.isNetworkError ? 'No Internet Connection' : 'Upload Failed',
-          errorInfo.message,
-          errorInfo.isNetworkError
-            ? [{ text: 'OK', style: 'default' }]
-            : [
+          errorInfo.isNetworkError ? 'No internet connection' : 'Upload Failed',
+          getUserFacingErrorMessage(errorInfo),
+          shouldShowReportIssue(errorInfo)
+            ? [
                 { text: 'OK', style: 'default' },
                 {
                   text: 'Report Issue',
@@ -624,12 +625,13 @@ export default function CreateScreen() {
                     const url = buildErrorReportMailto({
                       error,
                       userId: currentUser?._id,
-                      context: 'queueBackgroundUpload',
+                      context: 'Starting upload',
                     })
                     Linking.openURL(url).catch(() => {})
                   },
                 },
-              ],
+              ]
+            : [{ text: 'OK', style: 'default' }],
         )
         return null
       }
@@ -689,8 +691,8 @@ export default function CreateScreen() {
         resetRecordingState()
         const errorInfo = parseError(error)
         Alert.alert(
-          errorInfo.isNetworkError ? 'No Internet Connection' : 'Upload Failed',
-          errorInfo.message,
+          errorInfo.isNetworkError ? 'No internet connection' : 'Upload Failed',
+          getUserFacingErrorMessage(errorInfo),
         )
       }
     },
@@ -774,8 +776,8 @@ export default function CreateScreen() {
         resetRecordingState()
         const errorInfo = parseError(error)
         Alert.alert(
-          errorInfo.isNetworkError ? 'No Internet Connection' : 'Recording Failed',
-          errorInfo.message,
+          errorInfo.isNetworkError ? 'No internet connection' : 'Recording Failed',
+          getUserFacingErrorMessage(errorInfo),
         )
       } finally {
         if (recordingSessionRef.current === sessionId) {
@@ -870,7 +872,7 @@ export default function CreateScreen() {
       logRecordingError(error)
       resetRecordingState()
       const errorInfo = parseError(error)
-      Alert.alert('Recording Failed', errorInfo.message)
+      Alert.alert('Recording Failed', getUserFacingErrorMessage(errorInfo))
     } finally {
       if (recordingSessionRef.current === sessionId) {
         isStartingRecordingRef.current = false
@@ -947,7 +949,7 @@ export default function CreateScreen() {
       isStartingRecordingRef.current = false
       resetRecordingState()
       const errorInfo = parseError(error)
-      Alert.alert('Recording Stopped', errorInfo.message)
+      Alert.alert('Recording Stopped', getUserFacingErrorMessage(errorInfo))
     }
   }, [clearStopTimeout, finalizeRecording, logRecordingError, resetRecordingState, state$])
 
@@ -979,7 +981,7 @@ export default function CreateScreen() {
         logRecordingError(error)
         resetRecordingState()
         const errorInfo = parseError(error)
-        Alert.alert('Switch Camera Failed', errorInfo.message)
+        Alert.alert('Switch Camera Failed', getUserFacingErrorMessage(errorInfo))
       }
       return
     }
@@ -1027,11 +1029,10 @@ export default function CreateScreen() {
       logRecordingError(error)
       const errorInfo = parseError(error)
       Alert.alert(
-        errorInfo.isNetworkError ? 'No Internet Connection' : 'Live Stream Failed',
-        errorInfo.message,
-        errorInfo.isNetworkError
-          ? [{ text: 'OK', style: 'default' }]
-          : [
+        errorInfo.isNetworkError ? 'No internet connection' : 'Live Stream Failed',
+        getUserFacingErrorMessage(errorInfo),
+        shouldShowReportIssue(errorInfo)
+          ? [
               { text: 'OK', style: 'default' },
               {
                 text: 'Report Issue',
@@ -1039,12 +1040,13 @@ export default function CreateScreen() {
                   const url = buildErrorReportMailto({
                     error,
                     userId: currentUser?._id,
-                    context: 'handleLiveStream',
+                    context: 'Starting live stream',
                   })
                   Linking.openURL(url).catch(() => {})
                 },
               },
-            ],
+            ]
+          : [{ text: 'OK', style: 'default' }],
       )
     }
   }, [
@@ -1133,7 +1135,7 @@ export default function CreateScreen() {
     } catch (error) {
       logRecordingError(error)
       const errorInfo = parseError(error)
-      Alert.alert('Live Stream', errorInfo.message)
+      Alert.alert('Live Stream', getUserFacingErrorMessage(errorInfo))
     } finally {
       // useLivePublisher.cancel already calls livePublishActions.reset() in its
       // own finally, but reset here as well so this code path stays correct
@@ -1149,7 +1151,7 @@ export default function CreateScreen() {
       livePublisher.swapCamera().catch((error) => {
         logRecordingError(error)
         const errorInfo = parseError(error)
-        Alert.alert('Switch Camera Failed', errorInfo.message)
+        Alert.alert('Switch Camera Failed', getUserFacingErrorMessage(errorInfo))
       })
       state$.facing.set(state$.facing.get() === 'back' ? 'front' : 'back')
       return

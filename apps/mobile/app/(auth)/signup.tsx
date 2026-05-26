@@ -1,4 +1,4 @@
-import { parseError } from '@bondfires/app'
+import { getAuthErrorMessage } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
@@ -160,7 +160,7 @@ export default function SignupScreen() {
       // Pass email to verify-email screen for OTP verification
       router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail } })
     } catch (error) {
-      form$.error.set(parseError(error).message)
+      form$.error.set(getAuthErrorMessage(error))
     } finally {
       form$.isLoading.set(false)
     }

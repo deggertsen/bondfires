@@ -8,6 +8,7 @@
 
 /** Support email used for error reporting. */
 export const SUPPORT_EMAIL = 'support@bondfires.org'
+export const NETWORK_ERROR_MESSAGE = 'Check your connection and try again.'
 
 /** Structured error info extracted from a caught error. */
 export interface ErrorInfo {
@@ -118,14 +119,79 @@ export function parseError(error: unknown): ErrorInfo {
   }
 }
 
+export function getUserFacingErrorMessage(errorInfo: ErrorInfo): string {
+  return errorInfo.isNetworkError ? NETWORK_ERROR_MESSAGE : errorInfo.message
+}
+
+export function shouldShowReportIssue(errorInfo: ErrorInfo): boolean {
+  return !errorInfo.isNetworkError && !errorInfo.isConvexError
+}
+
+export function getAuthErrorMessage(error: unknown): string {
+  const errorInfo = parseError(error)
+  if (errorInfo.isNetworkError) {
+    return NETWORK_ERROR_MESSAGE
+  }
+
+  const message = errorInfo.message.trim()
+  const normalized = message.toLowerCase()
+
+  if (
+    (normalized.includes('invalid') || normalized.includes('expired')) &&
+    (normalized.includes('code') ||
+      normalized.includes('token') ||
+      normalized.includes('verification') ||
+      normalized.includes('otp'))
+  ) {
+    return 'That code is invalid or expired. Request a new code and try again.'
+  }
+
+  if (
+    normalized.includes('too many') ||
+    normalized.includes('rate limit') ||
+    normalized.includes('rate-limit')
+  ) {
+    return 'Too many attempts. Please wait a moment and try again.'
+  }
+
+  if (
+    normalized.includes('already exists') ||
+    normalized.includes('already in use') ||
+    normalized.includes('email is taken')
+  ) {
+    return 'An account with this email already exists.'
+  }
+
+  if (normalized.includes('invalid email') || normalized.includes('email is invalid')) {
+    return 'Enter a valid email address.'
+  }
+
+  if (
+    normalized.includes('weak password') ||
+    normalized.includes('password is too short') ||
+    normalized.includes('password must')
+  ) {
+    return 'Choose a stronger password.'
+  }
+
+  if (
+    normalized.includes('invalid credentials') ||
+    normalized.includes('incorrect password') ||
+    normalized.includes('wrong password')
+  ) {
+    return 'Check your email and password and try again.'
+  }
+
+  return message || 'Something went wrong. Please try again.'
+}
+
 /**
  * Get a user-facing error message string from any caught error.
  * Convenience wrapper around extractErrorMessage — returns the Convex/server message
- * when available, "No internet connection" for network errors, or a generic fallback.
+ * when available, a friendly retry message for network errors, or a generic fallback.
  */
 export function getErrorMessage(error: unknown): string {
-  if (isNetworkError(error)) return 'No internet connection'
-  return extractErrorMessage(error)
+  return getUserFacingErrorMessage(parseError(error))
 }
 
 /**
@@ -172,7 +238,7 @@ export function buildErrorReportMailto(params: {
   }
 
   if (params.context) {
-    bodyLines.push(`Context: ${params.context}`)
+    bodyLines.push(`Where: ${params.context}`)
   }
 
   bodyLines.push(`Timestamp: ${new Date().toISOString()}`)

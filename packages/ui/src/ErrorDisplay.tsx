@@ -76,6 +76,14 @@ function detectNetworkError(error: unknown): boolean {
   return false
 }
 
+function detectConvexError(error: unknown): boolean {
+  if (!isRecord(error)) return false
+  if (error.name === 'ConvexError') return true
+  if ('data' in error && error.data !== undefined) return true
+  const convexSymbol = Symbol.for('ConvexError')
+  return convexSymbol in error
+}
+
 /**
  * Extract a human-readable message from any caught error.
  */
@@ -135,7 +143,8 @@ function buildDefaultReportUrl(message: string, context?: ErrorContext): string 
  *
  * Shows different UX depending on error type:
  * - Network errors: "No internet connection" message + [Try Again] button
- * - Server errors: actual error message + [Report Issue] button
+ * - App errors: actual error message
+ * - Unexpected errors: actual error message + [Report Issue] button
  *
  * Uses Tamagui components and bondfireColors for visual consistency.
  */
@@ -155,6 +164,7 @@ export function ErrorDisplay({
   // Derive message and network flag from the raw error when provided
   const message = error ? extractMessage(error) : (explicitMessage ?? 'Something went wrong')
   const isNetworkError = error ? detectNetworkError(error) : (explicitIsNetworkError ?? false)
+  const isConvexError = error ? detectConvexError(error) : false
 
   const handleReport = () => {
     if (onReport) {
@@ -167,7 +177,13 @@ export function ErrorDisplay({
     })
   }
 
-  const showReportButton = !isNetworkError && (onReport || reportUrl || !!context)
+  const showReportButton =
+    !isNetworkError && !isConvexError && (error !== undefined || onReport || reportUrl || !!context)
+  const title = isNetworkError
+    ? 'No internet connection'
+    : isConvexError
+      ? 'Action needed'
+      : 'Something went wrong'
 
   const icon = isNetworkError ? (
     <RefreshCw size={24} color={bondfireColors.warning} />
@@ -181,7 +197,7 @@ export function ErrorDisplay({
         <YStack flexDirection="row" alignItems="flex-start" gap={8}>
           {icon}
           <Text fontSize={14} color={bondfireColors.ash} flexShrink={1} lineHeight={20}>
-            {isNetworkError ? 'No internet connection' : message}
+            {isNetworkError ? 'Check your connection and try again.' : message}
           </Text>
         </YStack>
         {isNetworkError && onRetry ? (
@@ -214,7 +230,7 @@ export function ErrorDisplay({
       {icon}
       <YStack gap={4} alignItems="center">
         <Text fontSize={16} fontWeight="600" color={bondfireColors.whiteSmoke} textAlign="center">
-          {isNetworkError ? 'No internet connection' : 'Something went wrong'}
+          {title}
         </Text>
         <Text fontSize={14} color={bondfireColors.ash} textAlign="center" lineHeight={20}>
           {isNetworkError ? 'Check your connection and try again.' : message}

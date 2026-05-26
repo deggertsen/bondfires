@@ -1,4 +1,4 @@
-import { parseError } from '@bondfires/app'
+import { getAuthErrorMessage } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
@@ -74,7 +74,7 @@ export default function ResetPasswordScreen() {
         router.replace('/(auth)/login')
       }, 2000)
     } catch (error) {
-      form$.error.set(parseError(error).message)
+      form$.error.set(getAuthErrorMessage(error))
     } finally {
       form$.isLoading.set(false)
     }
@@ -96,7 +96,7 @@ export default function ResetPasswordScreen() {
         flow: 'reset',
       })
     } catch (error) {
-      form$.error.set(parseError(error).message)
+      form$.error.set(getAuthErrorMessage(error))
     } finally {
       form$.isResending.set(false)
     }

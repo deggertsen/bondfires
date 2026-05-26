@@ -1,4 +1,4 @@
-import { parseError } from '@bondfires/app'
+import { getAuthErrorMessage } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
@@ -40,7 +40,7 @@ export default function VerifyEmailScreen() {
       // Navigate to feed after successful verification
       router.replace('/(main)/(tabs)/feed')
     } catch (error) {
-      setError(parseError(error).message)
+      setError(getAuthErrorMessage(error))
     } finally {
       setIsVerifying(false)
     }
@@ -63,7 +63,7 @@ export default function VerifyEmailScreen() {
       })
       setError(null)
     } catch (error) {
-      setError(parseError(error).message)
+      setError(getAuthErrorMessage(error))
     } finally {
       setIsResending(false)
     }

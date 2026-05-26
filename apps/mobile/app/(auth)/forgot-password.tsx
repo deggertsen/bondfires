@@ -1,4 +1,4 @@
-import { parseError } from '@bondfires/app'
+import { getAuthErrorMessage } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
@@ -39,7 +39,7 @@ export default function ForgotPasswordScreen() {
         params: { email },
       })
     } catch (error) {
-      setError(parseError(error).message)
+      setError(getAuthErrorMessage(error))
     } finally {
       setIsLoading(false)
     }
