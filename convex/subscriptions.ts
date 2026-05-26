@@ -564,7 +564,6 @@ export const current = query({
       return null
     }
 
-    const user = await ctx.db.get(userId)
     const tier = await getEntitlementSubscriptionTier(ctx, userId)
     const now = Date.now()
     const subscriptions = await ctx.db
@@ -596,12 +595,10 @@ export const current = query({
     return {
       tier,
       subscription,
-      canCreateBondfires: user?.isReviewerAccount === true || tierCanCreateBondfires(tier),
-      maxVideoDurationMs:
-        user?.isReviewerAccount === true ? undefined : getTierMaxVideoDurationMs(tier),
+      canCreateBondfires: tierCanCreateBondfires(tier),
+      maxVideoDurationMs: getTierMaxVideoDurationMs(tier),
       extraCampAddOns: await getExtraCampAddOnCount(ctx, userId),
-      publicCampLimit:
-        user?.isReviewerAccount === true ? undefined : await getPublicCampLimit(ctx, userId),
+      publicCampLimit: await getPublicCampLimit(ctx, userId),
       pendingStorePurchaseCount,
     }
   },
@@ -613,11 +610,6 @@ export const canCreatePrivateCamp = query({
     const userId = await auth.getUserId(ctx)
     if (!userId) {
       return false
-    }
-
-    const user = await ctx.db.get(userId)
-    if (user?.isReviewerAccount) {
-      return true
     }
 
     const tier = await getEntitlementSubscriptionTier(ctx, userId)

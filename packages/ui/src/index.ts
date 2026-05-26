@@ -38,6 +38,7 @@ export {
   YStack,
   ZStack,
 } from 'tamagui'
+export * from './AdminPanel'
 export * from './Button'
 export * from './Card'
 export * from './Container'

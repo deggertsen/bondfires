@@ -69,7 +69,6 @@ function currentUser(user: Doc<'users'>) {
     responseCount: user.responseCount ?? 0,
     totalViews: user.totalViews ?? 0,
     isAdmin: user.isAdmin,
-    isReviewerAccount: user.isReviewerAccount,
   }
 }
 

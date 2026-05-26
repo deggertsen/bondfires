@@ -8,7 +8,7 @@ import {
   useSubscription,
 } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
-import { Button, Card, Input, SubscriptionStatus, Text } from '@bondfires/ui'
+import { AdminPanel, Button, Card, Input, SubscriptionStatus, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
 import {
@@ -26,7 +26,7 @@ import {
   User,
   Video,
 } from '@tamagui/lucide-icons'
-import { useMutation, useQuery } from 'convex/react'
+import { useConvex, useMutation, useQuery } from 'convex/react'
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator'
 import * as ImagePicker from 'expo-image-picker'
 import { useRouter } from 'expo-router'
@@ -64,7 +64,6 @@ type CurrentUserData = {
   responseCount: number
   totalViews: number
   isAdmin?: boolean
-  isReviewerAccount?: boolean
 } | null
 
 const GENDER_OPTIONS: Array<{ value: Gender; label: string }> = [
@@ -103,11 +102,13 @@ function ProfileSubscription({
 export default function ProfileScreen() {
   const router = useRouter()
   const { signOut } = useAuthActions()
+  const convex = useConvex()
 
   const updateProfile = useMutation(api.users.updateProfile)
   const generateProfilePhotoUploadUrl = useMutation(api.users.generateProfilePhotoUploadUrl)
   const updateProfilePhoto = useMutation(api.users.updateProfilePhoto)
   const deleteAccountMutation = useMutation(api.users.deleteAccount)
+  const adminSetForcedTier = useMutation(api.admin.adminSetForcedTier)
   const closeCircle = useQuery(api.conversations.listCloseCircle) as CloseCircleEntry[] | undefined
 
   const { preferences, setVideoQuality, setAutoplayVideos, setNotificationsEnabled } =
@@ -196,6 +197,32 @@ export default function ProfileScreen() {
       },
     ])
   }, [signOut, router])
+
+  type AdminSearchResult = {
+    _id: string
+    email?: string
+    name?: string
+    forcedTier: 'free' | 'plus' | 'premium' | 'pro' | null
+  }
+
+  const handleAdminSearch = useCallback(
+    async (emailQuery: string): Promise<AdminSearchResult[]> => {
+      const result = await convex.query(api.admin.adminSearchUsers, { emailQuery })
+      return result.users as AdminSearchResult[]
+    },
+    [convex],
+  )
+
+  const handleAdminSetTier = useCallback(
+    async (
+      email: string,
+      tier: 'free' | 'plus' | 'premium' | 'pro' | null,
+    ): Promise<AdminSearchResult | null> => {
+      const result = await adminSetForcedTier({ email, tier })
+      return result as AdminSearchResult | null
+    },
+    [adminSetForcedTier],
+  )
 
   const handleEditProfile = useCallback(() => {
     state$.editName.set(currentUser?.displayName ?? currentUser?.name ?? '')
@@ -519,6 +546,15 @@ export default function ProfileScreen() {
               onRestorePress={restore}
             />
           </YStack>
+
+          {/* Admin Panel — only visible to admin users */}
+          {currentUser.isAdmin && (
+            <AdminPanel
+              isAdmin={currentUser.isAdmin}
+              onSearch={handleAdminSearch}
+              onSetTier={handleAdminSetTier}
+            />
+          )}
 
           {closeCircle && closeCircle.length > 0 && (
             <YStack gap={12} marginBottom={24}>

@@ -93,9 +93,27 @@ export default defineSchema({
     updatedAt: v.optional(v.number()),
 
     // Admin flags
-    isReviewerAccount: v.optional(v.boolean()), // For Google Play / App Store reviewer accounts
     isAdmin: v.optional(v.boolean()),
-  }).index('email', ['email']), // Required by @convex-dev/auth (must be named exactly 'email')
+
+    // Admin-forced subscription tier override for QA and app review.
+    // When set, this overrides any store-based subscription in entitlements.
+    forcedTier: v.optional(subscriptionTier),
+  })
+    .index('email', ['email']) // Required by @convex-dev/auth (must be named exactly 'email')
+    .searchIndex('search_email', { searchField: 'email' }),
+
+  // Audit log for admin-forced subscription tier changes
+  tierAuditLog: defineTable({
+    action: v.union(v.literal('set'), v.literal('cleared')),
+    targetUserId: v.id('users'),
+    targetEmail: v.string(),
+    tier: v.optional(subscriptionTier),
+    adminUserId: v.id('users'),
+    adminEmail: v.string(),
+    timestamp: v.number(),
+  })
+    .index('by_target', ['targetUserId'])
+    .index('by_admin', ['adminUserId']),
 
   // Camps - rule-governed spaces where bondfires live
   camps: defineTable({
