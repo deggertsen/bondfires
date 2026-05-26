@@ -148,16 +148,18 @@ export async function getPublicCampLimit(
 /**
  * Returns the tier to use for entitlement checks.
  *
- * Reviewer accounts are treated as Pro even when they do not have a real
- * paid subscription, so app review can exercise gated flows.
+ * When a user has an admin-forced tier override (`forcedTier`), it takes
+ * precedence over any store-based subscription.  This allows admins to
+ * grant specific tiers for QA and app review without requiring a real
+ * purchase.
  */
 export async function getEntitlementSubscriptionTier(
   ctx: QueryCtx | MutationCtx,
   userId: Id<'users'>,
 ): Promise<SubscriptionTier> {
   const user = await ctx.db.get(userId)
-  if (user?.isReviewerAccount) {
-    return 'pro'
+  if (user?.forcedTier) {
+    return user.forcedTier
   }
 
   return await getActiveSubscriptionTier(ctx, userId)
@@ -166,9 +168,8 @@ export async function getEntitlementSubscriptionTier(
 /**
  * Returns whether the user is at or above the given minimum tier.
  *
- * Free users that are reviewer accounts (isReviewerAccount === true) are
- * treated as Pro so that App Store / Google Play reviewers can exercise
- * every entitlement without requiring a real purchase.
+ * Admin-forced tier overrides (forcedTier) are respected through
+ * getEntitlementSubscriptionTier.
  */
 export async function userHasTier(
   ctx: QueryCtx | MutationCtx,
@@ -265,12 +266,9 @@ export async function assertCanCreatePrivateCamp(
     throw new Error('User not found')
   }
 
-  // Reviewer accounts can always create private camps.
-  if (user.isReviewerAccount) {
-    return 'pro'
-  }
-
-  const tier = await getActiveSubscriptionTier(ctx, userId)
+  // Admin-forced tier overrides are respected through
+  // getEntitlementSubscriptionTier — no separate reviewer check needed.
+  const tier = await getEntitlementSubscriptionTier(ctx, userId)
 
   if (!tierCanOwnPrivateCamp(tier)) {
     throw new Error('Private camps require Plus, Premium, or Pro')
@@ -300,8 +298,9 @@ export async function assertCanCreatePrivateCamp(
 /**
  * Asserts that the user is allowed to create/manage a public camp.
  *
- * Currently only Pro users (or reviewer accounts) may create public camps.
- *
+ * Currently only Pro users may create public camps.
+ * Admin-forced tier overrides are respected through
+ * getEntitlementSubscriptionTier.
  * Throws with a user-facing message when the user lacks Pro entitlements.
  */
 export async function assertCanCreatePublicCamp(
@@ -313,11 +312,9 @@ export async function assertCanCreatePublicCamp(
     throw new Error('User not found')
   }
 
-  if (user.isReviewerAccount) {
-    return 'pro'
-  }
-
-  const tier = await getActiveSubscriptionTier(ctx, userId)
+  // Admin-forced tier overrides are respected through
+  // getEntitlementSubscriptionTier.
+  const tier = await getEntitlementSubscriptionTier(ctx, userId)
 
   if (TIER_RANK[tier] < TIER_RANK.pro) {
     throw new Error('Creating public camps requires a Pro subscription')
@@ -351,7 +348,8 @@ export async function assertCanCreatePublicCamp(
  * Asserts that the user may create a Bondfire.
  *
  * Free users cannot create Bondfires.  This is a server-side enforcement
- * independent of the UI paywall.  Reviewer accounts bypass this check.
+ * independent of the UI paywall.  Admin-forced tier overrides are respected
+ * through getEntitlementSubscriptionTier.
  */
 export async function assertCanCreateBondfire(
   ctx: QueryCtx | MutationCtx,
@@ -362,11 +360,9 @@ export async function assertCanCreateBondfire(
     throw new Error('User not found')
   }
 
-  if (user.isReviewerAccount) {
-    return 'pro'
-  }
-
-  const tier = await getActiveSubscriptionTier(ctx, userId)
+  // Admin-forced tier overrides are respected through
+  // getEntitlementSubscriptionTier.
+  const tier = await getEntitlementSubscriptionTier(ctx, userId)
 
   if (!tierCanCreateBondfires(tier)) {
     throw new Error(
@@ -384,7 +380,8 @@ export async function assertCanCreateBondfire(
 /**
  * Asserts that the given duration in milliseconds is within the user's
  * tier limit.  Throws with a user-facing error when the duration exceeds
- * the cap.  Pro users have no cap.  Reviewer accounts bypass this check.
+ * the cap.  Pro users have no cap.  Admin-forced tier overrides are
+ * respected through getEntitlementSubscriptionTier.
  *
  * Callers should pass a valid `userId` (already authenticated) and
  * `durationMs` (from Mux metadata or the upload request).
@@ -398,12 +395,9 @@ export async function assertVideoDurationWithinTierLimit(
     return
   }
 
-  const user = await ctx.db.get(userId)
-  if (user?.isReviewerAccount) {
-    return
-  }
-
-  const tier = await getActiveSubscriptionTier(ctx, userId)
+  // Admin-forced Pro tier users get unlimited video duration via
+  // getEntitlementSubscriptionTier.
+  const tier = await getEntitlementSubscriptionTier(ctx, userId)
   const maxDurationMs = getTierMaxVideoDurationMs(tier)
 
   if (maxDurationMs !== undefined && durationMs > maxDurationMs) {
