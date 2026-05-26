@@ -264,7 +264,10 @@ function assertDurationWithinCampRules(camp: Doc<'camps'>, durationMs: number | 
     return
   }
 
-  if (camp.rules.participation.maxDurationMs && durationMs > camp.rules.participation.maxDurationMs) {
+  if (
+    camp.rules.participation.maxDurationMs &&
+    durationMs > camp.rules.participation.maxDurationMs
+  ) {
     throwUserError('This recording is longer than the camp allows')
   }
 }
@@ -299,7 +302,7 @@ async function assertCanViewBondfire(
     throwUserError('Camp not found')
   }
 
-  if (camp.isLaunchCamp) {
+  if (camp.access !== 'invite') {
     return
   }
 
@@ -340,7 +343,7 @@ async function assertUserCanParticipateInCamp(
     throwUserError('Join this camp before sparking here')
   }
 
-  if (args.operation === 'spark' && !camp.isLaunchCamp && camp.ownerId && camp.ownerId !== args.userId) {
+  if (args.operation === 'spark' && camp.access === 'invite' && camp.ownerId !== args.userId) {
     throwUserError('Only the private camp owner can spark here')
   }
 
@@ -351,7 +354,11 @@ async function assertUserCanParticipateInCamp(
 
   assertDurationWithinCampRules(camp, args.durationMs)
 
-  if (args.operation === 'spark' && camp.rules.access.allowedTiers?.value && camp.rules.access.allowedTiers.value.length > 0) {
+  if (
+    args.operation === 'spark' &&
+    camp.rules.access.allowedTiers?.value &&
+    camp.rules.access.allowedTiers.value.length > 0
+  ) {
     const tier = await getEntitlementSubscriptionTier(ctx, args.userId)
     if (!camp.rules.access.allowedTiers.value.includes(tier)) {
       throwUserError('Your membership tier cannot spark in this camp')
@@ -1508,7 +1515,7 @@ export const getMuxPlaybackPolicyForNewRecord = internalQuery({
 
       if (bondfire.campId) {
         const camp = await ctx.db.get(bondfire.campId)
-        if (camp?.ownerId && !camp?.isLaunchCamp) {
+        if (camp?.access === 'invite') {
           return { playbackPolicy: 'signed' }
         }
       }
@@ -1528,7 +1535,7 @@ export const getMuxPlaybackPolicyForNewRecord = internalQuery({
     })
 
     return {
-      playbackPolicy: (camp.ownerId && !camp.isLaunchCamp) ? 'signed' : getConfiguredPlaybackPolicy(),
+      playbackPolicy: camp.access === 'invite' ? 'signed' : getConfiguredPlaybackPolicy(),
     }
   },
 })
@@ -1553,7 +1560,7 @@ export const validatePlaybackAccess = internalQuery({
 
       if (bondfire.campId) {
         const camp = await ctx.db.get(bondfire.campId)
-        if (camp?.ownerId && !camp?.isLaunchCamp && bondfire.muxPlaybackPolicy !== 'signed') {
+        if (camp?.access === 'invite' && bondfire.muxPlaybackPolicy !== 'signed') {
           throw new Error('Private camp video is missing signed Mux playback')
         }
       }
@@ -1586,7 +1593,7 @@ export const validatePlaybackAccess = internalQuery({
 
       if (bondfire.campId) {
         const camp = await ctx.db.get(bondfire.campId)
-        if (camp?.ownerId && !camp?.isLaunchCamp && video.muxPlaybackPolicy !== 'signed') {
+        if (camp?.access === 'invite' && video.muxPlaybackPolicy !== 'signed') {
           throw new Error('Private camp response video is missing signed Mux playback')
         }
       }

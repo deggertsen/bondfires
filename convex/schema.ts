@@ -26,13 +26,14 @@ const storeVerificationStatus = v.union(
 const subscriptionAddOnType = v.union(v.literal('extra_camp'))
 
 const userGender = v.union(v.literal('male'), v.literal('female'), v.literal('other'))
+const campAccessVisibilityMode = v.union(v.literal('hide'), v.literal('gate'))
 
 const campRules = v.object({
   access: v.object({
     gender: v.optional(
       v.object({
         value: v.union(v.literal('male'), v.literal('female'), v.literal('any')),
-        visibilityMode: v.literal('hide'),
+        visibilityMode: campAccessVisibilityMode,
       }),
     ),
     allowedTiers: v.optional(
@@ -44,19 +45,19 @@ const campRules = v.object({
     inviteOnly: v.optional(
       v.object({
         value: v.boolean(),
-        visibilityMode: v.literal('hide'),
+        visibilityMode: campAccessVisibilityMode,
       }),
     ),
     minAge: v.optional(
       v.object({
         value: v.number(),
-        visibilityMode: v.literal('hide'),
+        visibilityMode: campAccessVisibilityMode,
       }),
     ),
     maxAge: v.optional(
       v.object({
         value: v.number(),
-        visibilityMode: v.literal('hide'),
+        visibilityMode: campAccessVisibilityMode,
       }),
     ),
   }),

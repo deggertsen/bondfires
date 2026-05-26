@@ -151,8 +151,7 @@ async function isBondfireVisibleToViewer(
     return memberCampIds.has(camp._id)
   }
 
-  // Launch camps are always publicly visible; owned non-launch camps require membership
-  if (camp.isLaunchCamp) {
+  if (camp.access !== 'invite') {
     return true
   }
   return memberCampIds.has(camp._id)
@@ -205,7 +204,7 @@ export const listByCamp = query({
       return []
     }
 
-    if (camp.status === 'frozen' || !camp.isLaunchCamp) {
+    if (camp.status === 'frozen' || camp.access === 'invite') {
       const userId = await auth.getUserId(ctx)
       if (!userId) {
         return []
@@ -393,8 +392,7 @@ export const create = mutation({
       throw new Error('Join this camp before sparking here')
     }
 
-    // Private camp detection: owned camps with no isLaunchCamp flag
-    if (!camp.isLaunchCamp && camp.ownerId && camp.ownerId !== userId) {
+    if (camp.access === 'invite' && camp.ownerId !== userId) {
       throw new Error('Only the private camp owner can spark here')
     }
 
@@ -403,7 +401,11 @@ export const create = mutation({
       throw new Error('This camp is limited to members who match its gender setting')
     }
 
-    if (camp.rules.participation.maxDurationMs && args.durationMs && args.durationMs > camp.rules.participation.maxDurationMs) {
+    if (
+      camp.rules.participation.maxDurationMs &&
+      args.durationMs &&
+      args.durationMs > camp.rules.participation.maxDurationMs
+    ) {
       throw new Error('This recording is longer than the camp allows')
     }
 
@@ -425,7 +427,7 @@ export const create = mutation({
       }
     }
 
-    if (!camp.isLaunchCamp && camp.ownerId && args.muxPlaybackPolicy !== 'signed') {
+    if (camp.access === 'invite' && args.muxPlaybackPolicy !== 'signed') {
       throw new Error('Private camp videos must use signed Mux playback')
     }
 
@@ -500,7 +502,7 @@ export const incrementViews = mutation({
         throw new Error('Camp not found')
       }
 
-      if (camp.status === 'frozen' || !camp.isLaunchCamp) {
+      if (camp.status === 'frozen' || camp.access === 'invite') {
         const membership = await ctx.db
           .query('campMembers')
           .withIndex('by_user_camp', (q) => q.eq('userId', viewerId).eq('campId', camp._id))

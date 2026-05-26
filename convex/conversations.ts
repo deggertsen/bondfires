@@ -86,7 +86,7 @@ async function isBondfireVisibleToViewer(
     return false
   }
 
-  if (camp.isLaunchCamp) {
+  if (camp.access !== 'invite') {
     return true
   }
   return memberCampIds.has(camp._id)
@@ -281,7 +281,7 @@ async function listVisiblePrivateCampThreadsByUser(
     }
 
     const camp = await ctx.db.get(bondfire.campId)
-    if (!camp || camp.isLaunchCamp === true || !args.memberCampIds.has(camp._id)) {
+    if (!camp || camp.access !== 'invite' || !args.memberCampIds.has(camp._id)) {
       continue
     }
 

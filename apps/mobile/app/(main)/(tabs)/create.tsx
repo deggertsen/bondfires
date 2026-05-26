@@ -144,7 +144,7 @@ export default function CreateScreen() {
     if (!camps) return []
     const userGender = currentUser?.gender
     return camps
-      .filter((camp) => !camp.ownerId || camp.isLaunchCamp === true || camp.membership?.role === 'owner')
+      .filter((camp) => camp.access !== 'invite' || camp.membership?.role === 'owner')
       .sort((left, right) => {
         const leftWelcome = left.slug.startsWith('welcome-fires') ? -1 : 0
         const rightWelcome = right.slug.startsWith('welcome-fires') ? -1 : 0
@@ -253,7 +253,8 @@ export default function CreateScreen() {
       camps.find(
         (camp) =>
           camp.slug.startsWith('welcome-fires') &&
-          (camp.rules.access.gender?.value === currentUser.gender || camp.rules.access.gender?.value === 'any'),
+          (camp.rules.access.gender?.value === currentUser.gender ||
+            camp.rules.access.gender?.value === 'any'),
       )
 
     if (!welcomeCamp) {

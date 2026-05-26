@@ -27,7 +27,7 @@ type BondfireData = Doc<'bondfires'> & {
 }
 
 function getAccessLabel(camp: Doc<'camps'>) {
-  if (camp.ownerId && !camp.isLaunchCamp) return 'Invite only'
+  if (camp.access === 'invite') return 'Invite only'
   if (camp.access === 'approval') return 'Approval required'
   return 'Open camp'
 }
@@ -96,7 +96,7 @@ function CampHeader({
   const isPending = camp.membership?.status === 'pending'
   const isOwner = camp.membership?.role === 'owner'
   const muted = camp.membership?.muted === true
-  const canJoin = !isActiveMember && !isPending && (!camp.ownerId || camp.isLaunchCamp === true)
+  const canJoin = !isActiveMember && !isPending && camp.access !== 'invite'
   const isFrozen = camp.frozen === true || camp.status === 'frozen'
   const rules = camp.rules
   const firstVisitBanner = getFirstVisitBanner(camp)
@@ -166,7 +166,7 @@ function CampHeader({
           alignItems="center"
           justifyContent="center"
         >
-          {camp.ownerId && !camp.isLaunchCamp ? (
+          {camp.access === 'invite' ? (
             <Lock size={32} color={bondfireColors.whiteSmoke} />
           ) : (
             <Flame size={36} color={bondfireColors.whiteSmoke} />
@@ -209,10 +209,14 @@ function CampHeader({
         <RulePill label={getAccessLabel(camp)} />
         <RulePill label={[camp.activeMemberCount ?? 0, 'members'].join(' ')} />
         {rules.access.gender?.value ? (
-          <RulePill label={rules.access.gender.value === 'any' ? 'All genders' : rules.access.gender.value} />
+          <RulePill
+            label={rules.access.gender.value === 'any' ? 'All genders' : rules.access.gender.value}
+          />
         ) : null}
         {rules.participation.maxDurationMs ? (
-          <RulePill label={['Max', Math.round(rules.participation.maxDurationMs / 60000), 'min'].join(' ')} />
+          <RulePill
+            label={['Max', Math.round(rules.participation.maxDurationMs / 60000), 'min'].join(' ')}
+          />
         ) : null}
         {rules.advisory.requiresTradeTags ? <RulePill label="Need/offer tags" /> : null}
       </XStack>
@@ -237,7 +241,7 @@ function CampHeader({
 
       {isActiveMember && !isFrozen ? (
         <YStack gap={10}>
-          {(!camp.ownerId || camp.isLaunchCamp === true) || isOwner ? (
+          {camp.access !== 'invite' || isOwner ? (
             <Button variant="primary" size="$lg" onPress={onSpark}>
               <Flame size={20} color={bondfireColors.whiteSmoke} />
               <Text color={bondfireColors.whiteSmoke} fontWeight="900">
@@ -245,7 +249,7 @@ function CampHeader({
               </Text>
             </Button>
           ) : null}
-          {isOwner && camp.ownerId && !camp.isLaunchCamp ? (
+          {isOwner && camp.access === 'invite' ? (
             <Button variant="outline" size="$lg" onPress={onCreateInvite}>
               <Text color={bondfireColors.whiteSmoke} fontWeight="900">
                 Create Invite Code

@@ -35,7 +35,7 @@ async function isBondfireVisibleToViewer(
     return false
   }
 
-  if (camp.isLaunchCamp) {
+  if (camp.access !== 'invite') {
     return true
   }
   return memberCampIds.has(camp._id)
@@ -81,7 +81,11 @@ async function assertCanRespondToBondfire(
     throw new Error('This camp is limited to members who match its gender setting')
   }
 
-  if (camp.rules.participation.maxDurationMs && args.durationMs && args.durationMs > camp.rules.participation.maxDurationMs) {
+  if (
+    camp.rules.participation.maxDurationMs &&
+    args.durationMs &&
+    args.durationMs > camp.rules.participation.maxDurationMs
+  ) {
     throw new Error('This recording is longer than the camp allows')
   }
 
@@ -207,7 +211,7 @@ export const addResponse = mutation({
     let requiresSignedPlayback = bondfire.muxPlaybackPolicy === 'signed'
     if (!requiresSignedPlayback && bondfire.campId) {
       const camp = await ctx.db.get(bondfire.campId)
-      requiresSignedPlayback = !!camp?.ownerId && !camp?.isLaunchCamp
+      requiresSignedPlayback = camp?.access === 'invite'
     }
     if (requiresSignedPlayback && args.muxPlaybackPolicy !== 'signed') {
       throw new Error('Private camp response videos must use signed Mux playback')
