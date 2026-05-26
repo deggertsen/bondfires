@@ -1,3 +1,4 @@
+import { parseError } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
@@ -73,9 +74,7 @@ export default function ResetPasswordScreen() {
         router.replace('/(auth)/login')
       }, 2000)
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Invalid or expired code. Please try again.'
-      form$.error.set(message)
+      form$.error.set(parseError(error).message)
     } finally {
       form$.isLoading.set(false)
     }
@@ -97,9 +96,7 @@ export default function ResetPasswordScreen() {
         flow: 'reset',
       })
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Failed to resend code. Please try again.'
-      form$.error.set(message)
+      form$.error.set(parseError(error).message)
     } finally {
       form$.isResending.set(false)
     }

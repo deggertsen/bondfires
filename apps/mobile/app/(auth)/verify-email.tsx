@@ -1,3 +1,4 @@
+import { parseError } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
@@ -39,9 +40,7 @@ export default function VerifyEmailScreen() {
       // Navigate to feed after successful verification
       router.replace('/(main)/(tabs)/feed')
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Invalid or expired code. Please try again.'
-      setError(message)
+      setError(parseError(error).message)
     } finally {
       setIsVerifying(false)
     }
@@ -64,9 +63,7 @@ export default function VerifyEmailScreen() {
       })
       setError(null)
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Failed to resend code. Please try again.'
-      setError(message)
+      setError(parseError(error).message)
     } finally {
       setIsResending(false)
     }

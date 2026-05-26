@@ -10,6 +10,7 @@ import {
   PAID_TIERS,
   TIER_RANK,
 } from './entitlements'
+import { throwUserError } from './errors'
 
 type CampAccess = 'open' | 'approval' | 'invite'
 type CampGender = 'male' | 'female' | 'any'
@@ -239,12 +240,12 @@ function getArenaSeed(): CampSeed {
 async function getCurrentUser(ctx: QueryCtx | MutationCtx) {
   const userId = await auth.getUserId(ctx)
   if (!userId) {
-    throw new Error('Not authenticated')
+    throwUserError('Not authenticated')
   }
 
   const user = await ctx.db.get(userId)
   if (!user) {
-    throw new Error('User not found')
+    throwUserError('User not found')
   }
 
   return user
@@ -306,7 +307,7 @@ async function assertCanManageCamp(ctx: QueryCtx | MutationCtx, camp: Doc<'camps
     return user
   }
 
-  throw new Error('You do not have permission to manage this camp')
+  throwUserError('You do not have permission to manage this camp')
 }
 
 async function findCampBySlug(ctx: QueryCtx | MutationCtx, slug: string) {
@@ -790,12 +791,12 @@ export const join = mutation({
     const user = await getCurrentUser(ctx)
     const camp = await ctx.db.get(args.campId)
     if (!camp || (camp.status !== 'active' && camp.status !== 'frozen')) {
-      throw new Error('Camp not found')
+      throwUserError('Camp not found')
     }
 
     // Frozen camps do not accept new members
     if (camp.status === 'frozen') {
-      throw new Error('This camp is currently frozen. Upgrade your subscription to manage it.')
+      throwUserError('This camp is currently frozen. Upgrade your subscription to manage it.')
     }
 
     const existing = await getMembership(ctx, user._id, camp._id)
@@ -812,7 +813,7 @@ export const join = mutation({
         already_member: 'You are already a member of this camp',
         private: 'This is a private camp',
       }
-      throw new Error(messages[eligibility.reason] ?? 'You cannot join this camp')
+      throwUserError(messages[eligibility.reason] ?? 'You cannot join this camp')
     }
 
     const status = getJoinMembershipStatus(camp)
@@ -842,12 +843,12 @@ export const requestJoin = mutation({
     const user = await getCurrentUser(ctx)
     const camp = await ctx.db.get(args.campId)
     if (!camp || (camp.status !== 'active' && camp.status !== 'frozen')) {
-      throw new Error('Camp not found')
+      throwUserError('Camp not found')
     }
 
     // Frozen camps do not accept new join requests
     if (camp.status === 'frozen') {
-      throw new Error('This camp is currently frozen. Upgrade your subscription to manage it.')
+      throwUserError('This camp is currently frozen. Upgrade your subscription to manage it.')
     }
 
     const existing = await getMembership(ctx, user._id, camp._id)
@@ -864,7 +865,7 @@ export const requestJoin = mutation({
         already_member: 'You are already a member of this camp',
         private: 'This is a private camp',
       }
-      throw new Error(messages[eligibility.reason] ?? 'You cannot join this camp')
+      throwUserError(messages[eligibility.reason] ?? 'You cannot join this camp')
     }
 
     const status = getJoinMembershipStatus(camp)
@@ -895,7 +896,7 @@ export const approveMember = mutation({
   handler: async (ctx, args) => {
     const camp = await ctx.db.get(args.campId)
     if (!camp) {
-      throw new Error('Camp not found')
+      throwUserError('Camp not found')
     }
     await assertCanManageCamp(ctx, camp)
 
@@ -920,13 +921,13 @@ export const updateMemberStatus = mutation({
   handler: async (ctx, args) => {
     const camp = await ctx.db.get(args.campId)
     if (!camp) {
-      throw new Error('Camp not found')
+      throwUserError('Camp not found')
     }
     await assertCanManageCamp(ctx, camp)
 
     const membership = await getMembership(ctx, args.userId, args.campId)
     if (!membership) {
-      throw new Error('Membership not found')
+      throwUserError('Membership not found')
     }
 
     await ctx.db.patch(membership._id, {
@@ -955,7 +956,7 @@ export const leave = mutation({
     }
 
     if (membership.role === 'owner') {
-      throw new Error('Camp owners cannot leave their own camp')
+      throwUserError('Camp owners cannot leave their own camp')
     }
 
     await ctx.db.delete(membership._id)
@@ -974,7 +975,7 @@ export const muteCamp = mutation({
     const user = await getCurrentUser(ctx)
     const membership = await getMembership(ctx, user._id, args.campId)
     if (!membership) {
-      throw new Error('You are not a member of this camp')
+      throwUserError('You are not a member of this camp')
     }
 
     await ctx.db.patch(membership._id, {
@@ -996,12 +997,12 @@ export const createInvite = mutation({
   handler: async (ctx, args) => {
     const camp = await ctx.db.get(args.campId)
     if (!camp || (camp.status !== 'active' && camp.status !== 'frozen')) {
-      throw new Error('Camp not found')
+      throwUserError('Camp not found')
     }
 
     // Frozen camps cannot create new invites
     if (camp.status === 'frozen') {
-      throw new Error('This camp is currently frozen. Upgrade your subscription to manage it.')
+      throwUserError('This camp is currently frozen. Upgrade your subscription to manage it.')
     }
 
     const user = await assertCanManageCamp(ctx, camp)
@@ -1016,7 +1017,7 @@ export const createInvite = mutation({
         break
       }
       if (args.code) {
-        throw new Error('Invite code already exists')
+        throwUserError('Invite code already exists')
       }
       code = generateInviteCode([camp._id, Date.now(), attempt].join('-'))
     }
@@ -1025,7 +1026,7 @@ export const createInvite = mutation({
       .withIndex('by_code', (q) => q.eq('code', code))
       .first()
     if (existing) {
-      throw new Error('Could not generate a unique invite code')
+      throwUserError('Could not generate a unique invite code')
     }
 
     const inviteId = await ctx.db.insert('campInvites', {
@@ -1057,25 +1058,25 @@ export const redeemInvite = mutation({
       .first()
 
     if (!invite) {
-      throw new Error('Invite not found')
+      throwUserError('Invite not found')
     }
 
     if (invite.expiresAt && invite.expiresAt <= Date.now()) {
-      throw new Error('Invite has expired')
+      throwUserError('Invite has expired')
     }
 
     if (invite.maxUses !== undefined && invite.uses >= invite.maxUses) {
-      throw new Error('Invite has already been used')
+      throwUserError('Invite has already been used')
     }
 
     const camp = await ctx.db.get(invite.campId)
     if (!camp || (camp.status !== 'active' && camp.status !== 'frozen')) {
-      throw new Error('Camp not found')
+      throwUserError('Camp not found')
     }
 
     // Frozen camps do not accept new members via invite
     if (camp.status === 'frozen') {
-      throw new Error('This camp is currently frozen. Upgrade your subscription to manage it.')
+      throwUserError('This camp is currently frozen. Upgrade your subscription to manage it.')
     }
 
     const existingMembership = await getMembership(ctx, user._id, camp._id)
@@ -1102,7 +1103,7 @@ export const redeemInvite = mutation({
         banned: 'You cannot join this camp',
         already_member: 'You are already a member of this camp',
       }
-      throw new Error(messages[eligibility.reason] ?? 'You cannot join this camp')
+      throwUserError(messages[eligibility.reason] ?? 'You cannot join this camp')
     }
 
     const membershipId = await upsertMembership(ctx, {
@@ -1132,16 +1133,16 @@ export const setCampAccess = mutation({
   handler: async (ctx, args) => {
     const camp = await ctx.db.get(args.campId)
     if (!camp) {
-      throw new Error('Camp not found')
+      throwUserError('Camp not found')
     }
 
     if (camp.status === 'frozen') {
-      throw new Error('This camp is currently frozen. Upgrade your subscription to manage it.')
+      throwUserError('This camp is currently frozen. Upgrade your subscription to manage it.')
     }
 
     const user = await getCurrentUser(ctx)
     if (!isAdmin(user) && camp.ownerId !== user._id) {
-      throw new Error('Only admins and camp owners can change camp access')
+      throwUserError('Only admins and camp owners can change camp access')
     }
 
     await ctx.db.patch(args.campId, {
@@ -1239,7 +1240,7 @@ export const createPrivateCamp = mutation({
 
     const name = args.name.trim()
     if (name.length < 3) {
-      throw new Error('Private camp name must be at least 3 characters')
+      throwUserError('Private camp name must be at least 3 characters')
     }
 
     const now = Date.now()
@@ -1247,7 +1248,7 @@ export const createPrivateCamp = mutation({
 
     const existing = await findCampBySlug(ctx, slug)
     if (existing) {
-      throw new Error('Private camp already exists')
+      throwUserError('Private camp already exists')
     }
 
     const campId = await ctx.db.insert('camps', {

@@ -614,20 +614,22 @@ export default function CreateScreen() {
         Alert.alert(
           errorInfo.isNetworkError ? 'No Internet Connection' : 'Upload Failed',
           errorInfo.message,
-          [
-            { text: 'OK', style: 'default' },
-            {
-              text: 'Report Issue',
-              onPress: () => {
-                const url = buildErrorReportMailto({
-                  error,
-                  userId: currentUser?._id,
-                  context: 'queueBackgroundUpload',
-                })
-                Linking.openURL(url).catch(() => {})
-              },
-            },
-          ],
+          errorInfo.isNetworkError
+            ? [{ text: 'OK', style: 'default' }]
+            : [
+                { text: 'OK', style: 'default' },
+                {
+                  text: 'Report Issue',
+                  onPress: () => {
+                    const url = buildErrorReportMailto({
+                      error,
+                      userId: currentUser?._id,
+                      context: 'queueBackgroundUpload',
+                    })
+                    Linking.openURL(url).catch(() => {})
+                  },
+                },
+              ],
         )
         return null
       }
@@ -1027,20 +1029,22 @@ export default function CreateScreen() {
       Alert.alert(
         errorInfo.isNetworkError ? 'No Internet Connection' : 'Live Stream Failed',
         errorInfo.message,
-        [
-          { text: 'OK', style: 'default' },
-          {
-            text: 'Report Issue',
-            onPress: () => {
-              const url = buildErrorReportMailto({
-                error,
-                userId: currentUser?._id,
-                context: 'handleLiveStream',
-              })
-              Linking.openURL(url).catch(() => {})
-            },
-          },
-        ],
+        errorInfo.isNetworkError
+          ? [{ text: 'OK', style: 'default' }]
+          : [
+              { text: 'OK', style: 'default' },
+              {
+                text: 'Report Issue',
+                onPress: () => {
+                  const url = buildErrorReportMailto({
+                    error,
+                    userId: currentUser?._id,
+                    context: 'handleLiveStream',
+                  })
+                  Linking.openURL(url).catch(() => {})
+                },
+              },
+            ],
       )
     }
   }, [

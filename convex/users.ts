@@ -2,6 +2,7 @@ import { v } from 'convex/values'
 import type { Doc } from './_generated/dataModel'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
+import { throwUserError } from './errors'
 
 function publicUser(user: Doc<'users'>) {
   return {
@@ -106,7 +107,7 @@ export const updateProfile = mutation({
   handler: async (ctx, args) => {
     const userId = await auth.getUserId(ctx)
     if (!userId) {
-      throw new Error('Not authenticated')
+      throwUserError('Not authenticated')
     }
 
     const updates: Record<string, unknown> = {
@@ -159,7 +160,7 @@ export const generateProfilePhotoUploadUrl = mutation({
   handler: async (ctx) => {
     const userId = await auth.getUserId(ctx)
     if (!userId) {
-      throw new Error('Not authenticated')
+      throwUserError('Not authenticated')
     }
 
     return await ctx.storage.generateUploadUrl()
@@ -173,13 +174,13 @@ export const updateProfilePhoto = mutation({
   handler: async (ctx, args) => {
     const userId = await auth.getUserId(ctx)
     if (!userId) {
-      throw new Error('Not authenticated')
+      throwUserError('Not authenticated')
     }
 
     const user = await ctx.db.get(userId)
     const photoUrl = await ctx.storage.getUrl(args.storageId)
     if (!photoUrl) {
-      throw new Error('Uploaded photo not found')
+      throwUserError('Uploaded photo not found')
     }
 
     await ctx.db.patch(userId, {
@@ -220,7 +221,7 @@ export const deleteAccount = mutation({
   handler: async (ctx) => {
     const userId = await auth.getUserId(ctx)
     if (!userId) {
-      throw new Error('Not authenticated')
+      throwUserError('Not authenticated')
     }
 
     const user = await ctx.db.get(userId)

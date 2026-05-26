@@ -1,3 +1,4 @@
+import { parseError } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
@@ -38,9 +39,7 @@ export default function ForgotPasswordScreen() {
         params: { email },
       })
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Could not send reset email. Please try again.'
-      setError(message)
+      setError(parseError(error).message)
     } finally {
       setIsLoading(false)
     }

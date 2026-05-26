@@ -1,7 +1,7 @@
 /**
  * Error utility for surfacing Convex errors consistently across the app.
  *
- * Convex wraps server-side `throw new Error(...)` into `ConvexError` on the client.
+ * Convex application errors carry user-facing messages in `ConvexError.data`.
  * Network/fetch failures surface as native `TypeError` with messages like
  * "Network request failed" — we detect those separately for a retry UX.
  */
@@ -21,10 +21,50 @@ export interface ErrorInfo {
   originalError: unknown
 }
 
+function isRecord(value: unknown): value is Record<string | symbol, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function extractConvexErrorDataMessage(error: unknown): string | undefined {
+  if (!isRecord(error) || !('data' in error)) {
+    return undefined
+  }
+
+  const data = error.data
+  if (typeof data === 'string' && data.trim().length > 0) {
+    return data
+  }
+
+  if (isRecord(data) && typeof data.message === 'string' && data.message.trim().length > 0) {
+    return data.message
+  }
+
+  return undefined
+}
+
+function extractThrownErrorMessage(error: Error): string {
+  const lines = error.message
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const uncaughtLine = lines.find((line) => line.startsWith('Uncaught Error: '))
+
+  if (uncaughtLine) {
+    return uncaughtLine.replace(/^Uncaught Error:\s*/, '')
+  }
+
+  return error.message || 'Something went wrong'
+}
+
 /** Extract a human-readable error message from any caught value. */
 export function extractErrorMessage(error: unknown): string {
+  const convexMessage = extractConvexErrorDataMessage(error)
+  if (convexMessage) {
+    return convexMessage
+  }
+
   if (error instanceof Error) {
-    return error.message || 'Something went wrong'
+    return extractThrownErrorMessage(error)
   }
   if (typeof error === 'string') {
     return error || 'Something went wrong'
@@ -51,13 +91,14 @@ export function isNetworkError(error: unknown): boolean {
 
 /** Determine if the error is a ConvexError. */
 export function isConvexError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false
+  if (!isRecord(error)) return false
   // ConvexError sets name = "ConvexError" on the client
-  const err = error as unknown as Record<string, unknown>
-  if (err.name === 'ConvexError') return true
+  if (error.name === 'ConvexError') return true
+  // ConvexError application payloads are exposed as `data`.
+  if ('data' in error && error.data !== undefined) return true
   // ConvexError has a unique symbol
   const convexSymbol = Symbol.for('ConvexError')
-  return convexSymbol in (error as unknown as Record<string | symbol, unknown>)
+  return convexSymbol in error
 }
 
 /**
@@ -140,5 +181,5 @@ export function buildErrorReportMailto(params: {
 
   const body = encodeURIComponent(bodyLines.join('\n'))
 
-  return `mailto:support@bondfires.org?subject=${subject}&body=${body}`
+  return `mailto:${SUPPORT_EMAIL}?subject=${subject}&body=${body}`
 }

@@ -36,6 +36,27 @@ export interface ErrorDisplayProps {
   hidden?: boolean
 }
 
+function isRecord(value: unknown): value is Record<string | symbol, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function extractConvexDataMessage(error: unknown): string | undefined {
+  if (!isRecord(error) || !('data' in error)) {
+    return undefined
+  }
+
+  const data = error.data
+  if (typeof data === 'string' && data.trim().length > 0) {
+    return data
+  }
+
+  if (isRecord(data) && typeof data.message === 'string' && data.message.trim().length > 0) {
+    return data.message
+  }
+
+  return undefined
+}
+
 /**
  * Detect whether an error is a network/fetch failure.
  */
@@ -59,7 +80,22 @@ function detectNetworkError(error: unknown): boolean {
  * Extract a human-readable message from any caught error.
  */
 function extractMessage(error: unknown): string {
+  const convexMessage = extractConvexDataMessage(error)
+  if (convexMessage) {
+    return convexMessage
+  }
+
   if (error instanceof Error) {
+    const lines = error.message
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+    const uncaughtLine = lines.find((line) => line.startsWith('Uncaught Error: '))
+
+    if (uncaughtLine) {
+      return uncaughtLine.replace(/^Uncaught Error:\s*/, '')
+    }
+
     return error.message || 'Something went wrong'
   }
   if (typeof error === 'string') {
