@@ -1,3 +1,4 @@
+import { getAuthErrorMessage } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
@@ -158,8 +159,8 @@ export default function SignupScreen() {
       })
       // Pass email to verify-email screen for OTP verification
       router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail } })
-    } catch {
-      form$.error.set('Could not create account. Please try again.')
+    } catch (error) {
+      form$.error.set(getAuthErrorMessage(error))
     } finally {
       form$.isLoading.set(false)
     }

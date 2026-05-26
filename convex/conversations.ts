@@ -3,6 +3,7 @@ import type { Doc, Id } from './_generated/dataModel'
 import type { QueryCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
+import { throwUserError } from './errors'
 
 type ThreadParticipant = {
   user: PublicUser
@@ -400,17 +401,17 @@ export const markThreadRead = mutation({
   handler: async (ctx, args) => {
     const userId = await auth.getUserId(ctx)
     if (!userId) {
-      throw new Error('Not authenticated')
+      throwUserError('Not authenticated')
     }
 
     const bondfire = await ctx.db.get(args.bondfireId)
     if (!bondfire) {
-      throw new Error('Bondfire not found')
+      throwUserError('Bondfire not found')
     }
 
     const participantMap = await getParticipantMap(ctx, bondfire)
     if (!participantMap.has(userId)) {
-      throw new Error('Only thread participants can mark this Bondfire read')
+      throwUserError('Only thread participants can mark this Bondfire read')
     }
 
     const now = Date.now()
@@ -446,15 +447,15 @@ export const pinPerson = mutation({
   handler: async (ctx, args) => {
     const ownerId = await auth.getUserId(ctx)
     if (!ownerId) {
-      throw new Error('Not authenticated')
+      throwUserError('Not authenticated')
     }
     if (ownerId === args.userId) {
-      throw new Error('You cannot pin yourself')
+      throwUserError('You cannot pin yourself')
     }
 
     const pinnedUser = await ctx.db.get(args.userId)
     if (!pinnedUser) {
-      throw new Error('User not found')
+      throwUserError('User not found')
     }
 
     const existing = await ctx.db
@@ -470,7 +471,7 @@ export const pinPerson = mutation({
       .withIndex('by_owner', (q) => q.eq('ownerId', ownerId))
       .collect()
     if (pins.length >= 8) {
-      throw new Error('Close Circle is full')
+      throwUserError('Close Circle is full')
     }
 
     const now = Date.now()
@@ -492,7 +493,7 @@ export const unpinPerson = mutation({
   handler: async (ctx, args) => {
     const ownerId = await auth.getUserId(ctx)
     if (!ownerId) {
-      throw new Error('Not authenticated')
+      throwUserError('Not authenticated')
     }
 
     const existing = await ctx.db

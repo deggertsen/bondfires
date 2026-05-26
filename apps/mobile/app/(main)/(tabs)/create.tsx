@@ -1,11 +1,15 @@
 import {
   appActions,
   appStore$,
+  buildErrorReportMailto,
   cancelProcessing,
   cleanupTempVideos,
+  getUserFacingErrorMessage,
   livePublishActions,
   livePublishStore$,
+  parseError,
   resumePendingUploads,
+  shouldShowReportIssue,
   startBackgroundUpload,
   useLivePublisher,
   useSubscription,
@@ -25,7 +29,7 @@ import {
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
-import { Alert, AppState, Platform, Pressable, ScrollView, StatusBar } from 'react-native'
+import { Alert, AppState, Linking, Platform, Pressable, ScrollView, StatusBar } from 'react-native'
 import { Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
@@ -608,11 +612,38 @@ export default function CreateScreen() {
         )
       } catch (error) {
         console.error('Failed to queue upload:', error)
-        Alert.alert('Error', 'Failed to start upload. Please try again.')
+        const errorInfo = parseError(error)
+        Alert.alert(
+          errorInfo.isNetworkError ? 'No internet connection' : 'Upload Failed',
+          getUserFacingErrorMessage(errorInfo),
+          shouldShowReportIssue(errorInfo)
+            ? [
+                { text: 'OK', style: 'default' },
+                {
+                  text: 'Report Issue',
+                  onPress: () => {
+                    const url = buildErrorReportMailto({
+                      error,
+                      userId: currentUser?._id,
+                      context: 'Starting upload',
+                    })
+                    Linking.openURL(url).catch(() => {})
+                  },
+                },
+              ]
+            : [{ text: 'OK', style: 'default' }],
+        )
         return null
       }
     },
-    [effectiveCampId, respondTo, selectedCampTags, createMuxDirectUpload, getMuxUploadStatus],
+    [
+      effectiveCampId,
+      respondTo,
+      selectedCampTags,
+      createMuxDirectUpload,
+      getMuxUploadStatus,
+      currentUser?._id,
+    ],
   )
 
   const finalizeRecording = useCallback(
@@ -658,7 +689,11 @@ export default function CreateScreen() {
       } catch (error) {
         logRecordingError(error)
         resetRecordingState()
-        Alert.alert('Error', 'Failed to prepare the recording. Please try again.')
+        const errorInfo = parseError(error)
+        Alert.alert(
+          errorInfo.isNetworkError ? 'No internet connection' : 'Upload Failed',
+          getUserFacingErrorMessage(errorInfo),
+        )
       }
     },
     [logRecordingError, queueBackgroundUpload, resetRecordingState, state$],
@@ -739,7 +774,11 @@ export default function CreateScreen() {
         clearStopTimeout()
         logRecordingError(error)
         resetRecordingState()
-        Alert.alert('Error', 'Failed to record video. Please try again.')
+        const errorInfo = parseError(error)
+        Alert.alert(
+          errorInfo.isNetworkError ? 'No internet connection' : 'Recording Failed',
+          getUserFacingErrorMessage(errorInfo),
+        )
       } finally {
         if (recordingSessionRef.current === sessionId) {
           isStartingRecordingRef.current = false
@@ -832,7 +871,8 @@ export default function CreateScreen() {
       clearStopTimeout()
       logRecordingError(error)
       resetRecordingState()
-      Alert.alert('Error', 'Failed to record video. Please try again.')
+      const errorInfo = parseError(error)
+      Alert.alert('Recording Failed', getUserFacingErrorMessage(errorInfo))
     } finally {
       if (recordingSessionRef.current === sessionId) {
         isStartingRecordingRef.current = false
@@ -908,7 +948,8 @@ export default function CreateScreen() {
       hasActiveSegmentRef.current = false
       isStartingRecordingRef.current = false
       resetRecordingState()
-      Alert.alert('Error', 'Failed to stop recording cleanly. Please try again.')
+      const errorInfo = parseError(error)
+      Alert.alert('Recording Stopped', getUserFacingErrorMessage(errorInfo))
     }
   }, [clearStopTimeout, finalizeRecording, logRecordingError, resetRecordingState, state$])
 
@@ -939,7 +980,8 @@ export default function CreateScreen() {
         clearStopTimeout()
         logRecordingError(error)
         resetRecordingState()
-        Alert.alert('Error', 'Failed to switch cameras. Please try again.')
+        const errorInfo = parseError(error)
+        Alert.alert('Switch Camera Failed', getUserFacingErrorMessage(errorInfo))
       }
       return
     }
@@ -985,7 +1027,27 @@ export default function CreateScreen() {
       })
     } catch (error) {
       logRecordingError(error)
-      Alert.alert('Live Stream Failed', 'Could not start the live stream. Please try again.')
+      const errorInfo = parseError(error)
+      Alert.alert(
+        errorInfo.isNetworkError ? 'No internet connection' : 'Live Stream Failed',
+        getUserFacingErrorMessage(errorInfo),
+        shouldShowReportIssue(errorInfo)
+          ? [
+              { text: 'OK', style: 'default' },
+              {
+                text: 'Report Issue',
+                onPress: () => {
+                  const url = buildErrorReportMailto({
+                    error,
+                    userId: currentUser?._id,
+                    context: 'Starting live stream',
+                  })
+                  Linking.openURL(url).catch(() => {})
+                },
+              },
+            ]
+          : [{ text: 'OK', style: 'default' }],
+      )
     }
   }, [
     effectiveCampId,
@@ -997,6 +1059,7 @@ export default function CreateScreen() {
     selectedCamp,
     selectedCampTags,
     state$,
+    currentUser?._id,
   ])
 
   const handleSelectCamp = useCallback(
@@ -1014,7 +1077,7 @@ export default function CreateScreen() {
         state$.tradeTag.set(null)
         appActions.setCurrentCampId(camp._id)
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to join camp'
+        const message = parseError(error).message
         Alert.alert('Camp Unavailable', message)
       }
     },
@@ -1071,7 +1134,8 @@ export default function CreateScreen() {
       await livePublisher.cancel()
     } catch (error) {
       logRecordingError(error)
-      Alert.alert('Error', 'Failed to cancel the live stream cleanly.')
+      const errorInfo = parseError(error)
+      Alert.alert('Live Stream', getUserFacingErrorMessage(errorInfo))
     } finally {
       // useLivePublisher.cancel already calls livePublishActions.reset() in its
       // own finally, but reset here as well so this code path stays correct
@@ -1086,7 +1150,8 @@ export default function CreateScreen() {
     if (liveStatus === 'connecting' || liveStatus === 'live' || liveStatus === 'reconnecting') {
       livePublisher.swapCamera().catch((error) => {
         logRecordingError(error)
-        Alert.alert('Error', 'Failed to switch cameras. Please try again.')
+        const errorInfo = parseError(error)
+        Alert.alert('Switch Camera Failed', getUserFacingErrorMessage(errorInfo))
       })
       state$.facing.set(state$.facing.get() === 'back' ? 'front' : 'back')
       return

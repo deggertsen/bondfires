@@ -1,6 +1,7 @@
 import {
   appActions,
   getBondfireVideoIndex,
+  parseError,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
 } from '@bondfires/app'
@@ -332,7 +333,7 @@ export default function CampDetailScreen() {
       }
       appActions.setCurrentCampId(campId)
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to join camp'
+      const message = parseError(error).message
       Alert.alert('Camp Unavailable', message)
     }
   }, [campId, joinCamp])
@@ -354,7 +355,7 @@ export default function CampDetailScreen() {
       const invite = await createInvite({ campId })
       Alert.alert('Invite Created', ['Share this code:', invite.code].join('\n\n'))
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to create invite'
+      const message = parseError(error).message
       Alert.alert('Invite Unavailable', message)
     }
   }, [campId, createInvite])

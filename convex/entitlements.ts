@@ -17,6 +17,7 @@
 
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
+import { throwUserError } from './errors'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -263,7 +264,7 @@ export async function assertCanCreatePrivateCamp(
 ): Promise<SubscriptionTier> {
   const user = await ctx.db.get(userId)
   if (!user) {
-    throw new Error('User not found')
+    throwUserError('User not found')
   }
 
   // Admin-forced tier overrides are respected through
@@ -271,7 +272,7 @@ export async function assertCanCreatePrivateCamp(
   const tier = await getEntitlementSubscriptionTier(ctx, userId)
 
   if (!tierCanOwnPrivateCamp(tier)) {
-    throw new Error('Private camps require Plus, Premium, or Pro')
+    throwUserError('Private camps require Plus, Premium, or Pro')
   }
 
   // Plus and Premium users may own at most one private camp.
@@ -288,7 +289,7 @@ export async function assertCanCreatePrivateCamp(
       .collect()
 
     if (existingPrivateCamps.length >= MAX_PRIVATE_CAMPS_FOR_NON_PRO) {
-      throw new Error('You already have an active private camp')
+      throwUserError('You already have an active private camp')
     }
   }
 
@@ -309,7 +310,7 @@ export async function assertCanCreatePublicCamp(
 ): Promise<SubscriptionTier> {
   const user = await ctx.db.get(userId)
   if (!user) {
-    throw new Error('User not found')
+    throwUserError('User not found')
   }
 
   // Admin-forced tier overrides are respected through
@@ -317,7 +318,7 @@ export async function assertCanCreatePublicCamp(
   const tier = await getEntitlementSubscriptionTier(ctx, userId)
 
   if (TIER_RANK[tier] < TIER_RANK.pro) {
-    throw new Error('Creating public camps requires a Pro subscription')
+    throwUserError('Creating public camps requires a Pro subscription')
   }
 
   // Pro users may own at most the base Pro allowance plus verified add-ons.
@@ -334,7 +335,7 @@ export async function assertCanCreatePublicCamp(
     .collect()
 
   if (existingPublicCamps.length >= publicCampLimit) {
-    throw new Error(`You have reached the limit of ${publicCampLimit} public camps`)
+    throwUserError(`You have reached the limit of ${publicCampLimit} public camps`)
   }
 
   return tier
@@ -357,7 +358,7 @@ export async function assertCanCreateBondfire(
 ): Promise<SubscriptionTier> {
   const user = await ctx.db.get(userId)
   if (!user) {
-    throw new Error('User not found')
+    throwUserError('User not found')
   }
 
   // Admin-forced tier overrides are respected through
@@ -365,7 +366,7 @@ export async function assertCanCreateBondfire(
   const tier = await getEntitlementSubscriptionTier(ctx, userId)
 
   if (!tierCanCreateBondfires(tier)) {
-    throw new Error(
+    throwUserError(
       'Spark a Bondfire with Plus, Premium, or Pro. Your free membership includes watching and responding.',
     )
   }
@@ -402,7 +403,7 @@ export async function assertVideoDurationWithinTierLimit(
 
   if (maxDurationMs !== undefined && durationMs > maxDurationMs) {
     const maxMinutes = Math.round(maxDurationMs / 60000)
-    throw new Error(`Videos longer than ${maxMinutes} minutes require a Pro subscription`)
+    throwUserError(`Videos longer than ${maxMinutes} minutes require a Pro subscription`)
   }
 }
 

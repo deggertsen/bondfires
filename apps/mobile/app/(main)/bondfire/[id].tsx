@@ -4,6 +4,7 @@ import {
   getBondfireVideoIndex,
   hasViewedToday,
   markViewed,
+  parseError,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
 } from '@bondfires/app'
@@ -928,7 +929,7 @@ export default function BondfireDetailScreen() {
                   await pinPerson({ userId: participant.user._id })
                 }
               } catch (error) {
-                const message = error instanceof Error ? error.message : 'Could not update pin'
+                const message = parseError(error).message
                 Alert.alert('Close Circle Unavailable', message)
               }
             },
