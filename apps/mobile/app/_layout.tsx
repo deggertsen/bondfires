@@ -10,6 +10,7 @@ import { Stack, useRouter } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
 import { Component, type ErrorInfo, type ReactNode, useCallback, useEffect, useRef } from 'react'
 import { useColorScheme } from 'react-native'
+import { KeyboardProvider } from 'react-native-keyboard-controller'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { TamaguiProvider, Theme, YStack } from 'tamagui'
 // Import config for TamaguiProvider
@@ -254,9 +255,11 @@ export default function RootLayout() {
   return (
     <ConvexAuthProvider client={convex} storage={mmkvStorage}>
       <SafeAreaProvider>
-        <LayoutErrorBoundary>
-          <AppContent />
-        </LayoutErrorBoundary>
+        <KeyboardProvider>
+          <LayoutErrorBoundary>
+            <AppContent />
+          </LayoutErrorBoundary>
+        </KeyboardProvider>
       </SafeAreaProvider>
     </ConvexAuthProvider>
   )
