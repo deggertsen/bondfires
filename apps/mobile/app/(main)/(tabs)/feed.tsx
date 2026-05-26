@@ -484,7 +484,7 @@ export default function FeedScreen() {
   )
 
   const handleSpark = useCallback(() => {
-    if (selectedCamp?.visibility === 'private' && selectedCamp.membership.role !== 'owner') {
+    if (selectedCamp?.ownerId && !selectedCamp?.isLaunchCamp && selectedCamp.membership.role !== 'owner') {
       Alert.alert(
         'Owner Sparks Only',
         'Only the private camp owner can start new Bondfires here. You can respond to existing fires.',

@@ -28,13 +28,46 @@ const subscriptionAddOnType = v.union(v.literal('extra_camp'))
 const userGender = v.union(v.literal('male'), v.literal('female'), v.literal('other'))
 
 const campRules = v.object({
-  gender: v.optional(v.union(v.literal('male'), v.literal('female'), v.literal('any'))),
-  minDurationMs: v.optional(v.number()),
-  maxDurationMs: v.optional(v.number()),
-  maxResponses: v.optional(v.number()),
-  requiresTradeTags: v.optional(v.boolean()),
-  allowedTiers: v.optional(v.array(subscriptionTier)),
-  advisoryGuidelines: v.optional(v.array(v.string())),
+  access: v.object({
+    gender: v.optional(
+      v.object({
+        value: v.union(v.literal('male'), v.literal('female'), v.literal('any')),
+        visibilityMode: v.literal('hide'),
+      }),
+    ),
+    allowedTiers: v.optional(
+      v.object({
+        value: v.array(subscriptionTier),
+        visibilityMode: v.union(v.literal('hide'), v.literal('gate')),
+      }),
+    ),
+    inviteOnly: v.optional(
+      v.object({
+        value: v.boolean(),
+        visibilityMode: v.literal('hide'),
+      }),
+    ),
+    minAge: v.optional(
+      v.object({
+        value: v.number(),
+        visibilityMode: v.literal('hide'),
+      }),
+    ),
+    maxAge: v.optional(
+      v.object({
+        value: v.number(),
+        visibilityMode: v.literal('hide'),
+      }),
+    ),
+  }),
+  participation: v.object({
+    maxDurationMs: v.optional(v.number()),
+    maxResponses: v.optional(v.number()),
+  }),
+  advisory: v.object({
+    guidelines: v.optional(v.array(v.string())),
+    requiresTradeTags: v.optional(v.boolean()),
+  }),
 })
 
 const campVisibilityRule = v.object({
@@ -133,7 +166,6 @@ export default defineSchema({
     ownerDisplayName: v.optional(v.string()), // Denormalized owner display name at camp creation
     crisisBroadcast: v.optional(v.boolean()),
     welcomeBroadcast: v.optional(v.boolean()),
-    visibility: v.union(v.literal('public'), v.literal('private')),
     access: v.union(v.literal('open'), v.literal('approval'), v.literal('invite')),
     status: v.union(v.literal('active'), v.literal('frozen'), v.literal('archived')),
     frozenAt: v.optional(v.number()),
@@ -147,7 +179,6 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_slug', ['slug'])
-    .index('by_status_visibility', ['status', 'visibility'])
     .index('by_owner', ['ownerId', 'createdAt']),
 
   // Camp membership, notification preferences, and moderation roles

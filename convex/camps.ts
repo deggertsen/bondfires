@@ -15,12 +15,6 @@ import { throwUserError } from './errors'
 type CampAccess = 'open' | 'approval' | 'invite'
 type CampGender = 'male' | 'female' | 'any'
 
-/** Visibility-rule evaluation result. tier_too_low = visible upgrade opp. */
-type CampVisibilityResult = {
-  visible: boolean
-  reason: 'member' | 'ok' | 'wrong_gender' | 'tier_too_low' | 'underage' | 'invite_only'
-}
-
 /** Join-eligibility evaluation result. */
 type CampJoinResult = {
   canJoin: boolean
@@ -373,74 +367,67 @@ function calculateAge(birthDate: string): number | null {
   return age
 }
 
-function userMatchesCampGender(user: Doc<'users'> | null, campGender: CampGender | undefined) {
-  return !campGender || campGender === 'any' || user?.gender === campGender
-}
-
 /**
- * Evaluate structured visibilityRules.
- * Tier-locked → visible (upgrade opportunity).
- * Gender/age/invite mismatch → hidden.
+ * Compute camp visibility based on access rules with visibility modes.
+ * - 'hide' mode: user doesn't match → camp is invisible (visible=false)
+ * - 'gate' mode: user doesn't match → camp is visible but join is blocked (accessDeniedReason set)
+ * - If no access rules trigger hide → visible=true
  */
-function evaluateVisibilityRules(
+function computeVisibility(
   camp: Doc<'camps'>,
-  user: Doc<'users'> | null,
-  userTier: SubscriptionTier,
-  membership: Doc<'campMembers'> | null,
-): CampVisibilityResult {
-  if (membership?.status === 'active') {
-    return { visible: true, reason: 'member' }
-  }
+  user: { gender: string; tier: SubscriptionTier; birthDate?: string },
+): { visible: boolean; accessDeniedReason?: string } {
+  const access = camp.rules.access
 
-  const rules = camp.visibilityRules
-  let tierTooLow = false
-  if (rules && rules.length > 0) {
-    for (const rule of rules) {
-      switch (rule.type) {
-        case 'gender':
-          if (rule.gender && (!user || user.gender !== rule.gender)) {
-            return { visible: false, reason: 'wrong_gender' }
-          }
-          break
-        case 'minAge':
-          if (rule.minAge !== undefined) {
-            const age = user?.birthDate ? calculateAge(user.birthDate) : null
-            if (age === null || age < rule.minAge) {
-              return { visible: false, reason: 'underage' }
-            }
-          }
-          break
-        case 'minTier':
-          if (rule.minTier && TIER_RANK[userTier] < TIER_RANK[rule.minTier]) {
-            tierTooLow = true
-          }
-          break
-        case 'inviteRequired':
-          return { visible: false, reason: 'invite_only' }
-      }
+  // Check gender rule (forced hide mode)
+  if (access.gender) {
+    const genderValue = access.gender.value
+    if (genderValue !== 'any' && user.gender !== genderValue) {
+      return { visible: false, accessDeniedReason: 'This camp is limited to members who match its gender setting' }
     }
   }
 
-  if (
-    !rules?.some((rule) => rule.type === 'gender') &&
-    !userMatchesCampGender(user, camp.rules.gender)
-  ) {
-    return { visible: false, reason: 'wrong_gender' }
+  // Check inviteOnly (forced hide mode)
+  if (access.inviteOnly?.value) {
+    // For visibility: invite-only camps are hidden from non-members
+    // (membership check happens at the query layer)
+    return { visible: false, accessDeniedReason: 'This camp requires an invite' }
   }
 
-  if (tierTooLow) {
-    return { visible: true, reason: 'tier_too_low' }
+  // Check minAge (forced hide mode)
+  if (access.minAge) {
+    const age = user.birthDate ? calculateAge(user.birthDate) : null
+    if (age === null || age < access.minAge.value) {
+      return { visible: false, accessDeniedReason: 'You do not meet the age requirement for this camp' }
+    }
   }
 
-  if (camp.access === 'invite') {
-    return { visible: false, reason: 'invite_only' }
+  // Check maxAge (forced hide mode)
+  if (access.maxAge) {
+    const age = user.birthDate ? calculateAge(user.birthDate) : null
+    if (age === null || age > access.maxAge.value) {
+      return { visible: false, accessDeniedReason: 'You do not meet the age requirement for this camp' }
+    }
   }
 
-  return { visible: true, reason: 'ok' }
+  // Check allowedTiers — can be hide or gate
+  if (access.allowedTiers) {
+    const tiers = access.allowedTiers.value
+    if (!tiers.includes(user.tier)) {
+      if (access.allowedTiers.visibilityMode === 'hide') {
+        return { visible: false, accessDeniedReason: 'Your subscription tier cannot join this camp' }
+      }
+      // gate mode: visible but blocked
+      return { visible: true, accessDeniedReason: 'Your subscription tier cannot join this camp' }
+    }
+  }
+
+  return { visible: true }
 }
 
 /**
- * Evaluate structured joinRules for server-side enforcement.
+ * Evaluate join rules using the new rules.access structure.
+ * Also checks legacy visibilityRules/joinRules if present.
  */
 function evaluateJoinRules(
   camp: Doc<'camps'>,
@@ -455,10 +442,35 @@ function evaluateJoinRules(
     return { canJoin: false, reason: 'already_member' }
   }
 
-  if (camp.visibility === 'private') {
-    return { canJoin: false, reason: 'private' }
+  // Use new computeVisibility for access rule checks
+  const visibility = computeVisibility(camp, {
+    gender: user.gender,
+    tier: userTier,
+    birthDate: user.birthDate,
+  })
+
+  if (visibility.accessDeniedReason) {
+    if (!visibility.visible) {
+      // Map denied reasons to join result reasons
+      if (visibility.accessDeniedReason.includes('gender')) {
+        return { canJoin: false, reason: 'wrong_gender' }
+      }
+      if (visibility.accessDeniedReason.includes('tier')) {
+        return { canJoin: false, reason: 'tier_too_low' }
+      }
+      if (visibility.accessDeniedReason.includes('age')) {
+        return { canJoin: false, reason: 'underage' }
+      }
+      if (visibility.accessDeniedReason.includes('invite')) {
+        return { canJoin: false, reason: 'invite_only' }
+      }
+      return { canJoin: false, reason: 'not_found' }
+    }
+    // Gate mode: visible but blocked
+    return { canJoin: false, reason: 'tier_too_low' }
   }
 
+  // Check legacy joinRules if present
   const rules = camp.joinRules
   if (rules && rules.length > 0) {
     for (const rule of rules) {
@@ -490,11 +502,6 @@ function evaluateJoinRules(
     }
   }
 
-  // Legacy fallback: camp.rules.gender
-  if (!userMatchesCampGender(user, camp.rules.gender)) {
-    return { canJoin: false, reason: 'wrong_gender' }
-  }
-
   return { canJoin: true, reason: 'ok' }
 }
 
@@ -508,29 +515,51 @@ function computeSortRank(
   userTier: SubscriptionTier,
   membership: Doc<'campMembers'> | null,
 ): number {
-  const visibility = evaluateVisibilityRules(camp, user, userTier, membership)
+  if (membership?.status === 'active') {
+    return 0
+  }
+
+  if (!user) {
+    // Anonymous user — compute visibility without user context
+    const visibility = computeVisibility(camp, {
+      gender: 'other',
+      tier: 'free' as SubscriptionTier,
+      birthDate: undefined,
+    })
+    return visibility.visible ? 0 : 2
+  }
+
+  const visibility = computeVisibility(camp, {
+    gender: user.gender,
+    tier: userTier,
+    birthDate: user.birthDate,
+  })
+
   if (!visibility.visible) {
     return 2
   }
-  if (visibility.reason === 'member' || visibility.reason === 'ok') {
-    return 0
+  if (visibility.accessDeniedReason) {
+    return 1
   }
-  return 1
+  return 0
 }
 
-/** Human-readable locked reason from visibilityRules. */
+/** Human-readable locked reason from access rules. */
 function lockedReason(camp: Doc<'camps'>, userTier: SubscriptionTier): string | undefined {
-  const rules = camp.visibilityRules ?? []
-  const tierRule = rules.find((r) => r.type === 'minTier')
-  if (tierRule?.minTier && TIER_RANK[userTier] < TIER_RANK[tierRule.minTier]) {
-    return `Requires ${tierRule.minTier} tier`
+  const access = camp.rules.access
+  if (access.allowedTiers) {
+    if (!access.allowedTiers.value.includes(userTier)) {
+      const minTier = access.allowedTiers.value[0]
+      return `Requires ${minTier} tier`
+    }
   }
   return undefined
 }
 
 /** Resolve camp display name — private camps use nameOverride or ownerDisplayName. */
 function resolveCampDisplayName(camp: Doc<'camps'>): string {
-  if (camp.visibility === 'private') {
+  // Private camp detection: uses ownerId and no isLaunchCamp flag (or owned by user, not a launch camp)
+  if (camp.ownerId && !camp.isLaunchCamp) {
     return camp.nameOverride ?? camp.ownerDisplayName ?? camp.name
   }
   return camp.name
@@ -552,7 +581,7 @@ function isCampVisibleToUser(camp: Doc<'camps'>, membership?: Doc<'campMembers'>
     return false
   }
 
-  return camp.visibility === 'public' || membership?.status === 'active'
+  return membership?.status === 'active'
 }
 
 async function upsertMembership(
@@ -617,15 +646,20 @@ async function ensureCamp(
     color: seed.color,
     defaultPrompt: seed.defaultPrompt,
     rules: {
-      gender: seed.gender,
-      maxDurationMs: 30 * 60 * 1000,
-      requiresTradeTags: seed.requiresTradeTags ?? false,
-      allowedTiers: [...ALL_TIERS],
-      advisoryGuidelines: [...seed.advisoryGuidelines],
+      access: {
+        gender: { value: seed.gender, visibilityMode: 'hide' as const },
+        allowedTiers: { value: [...ALL_TIERS], visibilityMode: 'gate' as const },
+      },
+      participation: {
+        maxDurationMs: 30 * 60 * 1000,
+      },
+      advisory: {
+        guidelines: [...seed.advisoryGuidelines],
+        requiresTradeTags: seed.requiresTradeTags ?? false,
+      },
     },
     crisisBroadcast: seed.crisisBroadcast ?? false,
     welcomeBroadcast: seed.welcomeBroadcast ?? false,
-    visibility: 'public' as const,
     access: 'open' as const,
     status: 'active' as const,
     bondfireCount: existing?.bondfireCount ?? 0,
@@ -691,12 +725,27 @@ export const list = query({
           const membership = membershipsByCamp.get(camp._id)
           return membership?.status === 'active'
         }
-        // Always show public camps + camps with active membership
-        if (camp.visibility === 'public') {
+        // Active members always see their camps
+        const membership = membershipsByCamp.get(camp._id)
+        if (membership?.status === 'active') {
           return true
         }
-        const membership = membershipsByCamp.get(camp._id)
-        return membership?.status === 'active'
+        // Use computeVisibility for non-members
+        if (!user) {
+          // Anonymous user
+          const visibility = computeVisibility(camp, {
+            gender: 'other',
+            tier: 'free' as SubscriptionTier,
+            birthDate: undefined,
+          })
+          return visibility.visible
+        }
+        const visibility = computeVisibility(camp, {
+          gender: user.gender,
+          tier: userTier,
+          birthDate: user.birthDate,
+        })
+        return visibility.visible
       })
       .map((camp) => {
         const membership = membershipsByCamp.get(camp._id) ?? null
@@ -769,22 +818,31 @@ export const get = query({
       }
     }
 
-    // Use structured visibility for non-members
-    if (membership?.status !== 'active') {
-      const user = userId ? await ctx.db.get(userId) : null
-      const userTier =
-        user && userId
-          ? await getEntitlementSubscriptionTier(ctx, userId)
-          : ('free' as SubscriptionTier)
-      const visibility = evaluateVisibilityRules(camp, user, userTier, null)
-      if (!visibility.visible) {
-        return null
+    // Active members can always get their camps
+    if (membership?.status === 'active') {
+      return {
+        ...camp,
+        name: resolveCampDisplayName(camp),
+        membership,
       }
-    } else {
-      // Fallback: private camp without membership
-      if (!isCampVisibleToUser(camp, membership ?? undefined)) {
-        return null
-      }
+    }
+
+    // For non-members, use computeVisibility
+    const user = userId ? await ctx.db.get(userId) : null
+    const userTier =
+      user && userId
+        ? await getEntitlementSubscriptionTier(ctx, userId)
+        : ('free' as SubscriptionTier)
+
+    const visibility = computeVisibility(camp, {
+      gender: user?.gender ?? 'other',
+      tier: userTier,
+      birthDate: user?.birthDate,
+    })
+
+    if (!visibility.visible) {
+      // If camp has hide-mode rules user doesn't match, throw same as not found
+      return null
     }
 
     return {
@@ -1214,6 +1272,81 @@ export const seedLaunchCamps = mutation({
   },
 })
 
+/**
+ * Admin-only mutation to delete all camps (and their associated data)
+ * and re-seed from scratch. Used during the camp rules restructure migration.
+ */
+export const resetAndReseed = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getCurrentUser(ctx)
+    if (!isAdmin(user)) {
+      throwUserError('Only admins can reset and reseed camps')
+    }
+
+    // Delete all data that references camps
+    const allCamps = await ctx.db.query('camps').collect()
+
+    for (const camp of allCamps) {
+      // Delete bondfires in this camp
+      const bondfires = await ctx.db
+        .query('bondfires')
+        .withIndex('by_camp', (q) => q.eq('campId', camp._id))
+        .collect()
+
+      for (const bondfire of bondfires) {
+        // Delete response videos for each bondfire
+        const videos = await ctx.db
+          .query('bondfireVideos')
+          .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
+          .collect()
+        for (const video of videos) {
+          await ctx.db.delete(video._id)
+        }
+        await ctx.db.delete(bondfire._id)
+      }
+
+      // Delete camp memberships
+      const memberships = await ctx.db
+        .query('campMembers')
+        .withIndex('by_camp', (q) => q.eq('campId', camp._id))
+        .collect()
+      for (const membership of memberships) {
+        await ctx.db.delete(membership._id)
+      }
+
+      // Delete camp invites
+      const invites = await ctx.db
+        .query('campInvites')
+        .withIndex('by_camp', (q) => q.eq('campId', camp._id))
+        .collect()
+      for (const invite of invites) {
+        await ctx.db.delete(invite._id)
+      }
+
+      // Delete the camp itself
+      await ctx.db.delete(camp._id)
+    }
+
+    // Re-seed
+    const arenaId = await ensureCamp(ctx, getArenaSeed(), {
+      isLaunchCamp: false,
+      ownerId: user._id,
+    })
+    const launchCampIds = []
+    for (const seed of getLaunchCampSeeds()) {
+      launchCampIds.push(await ensureCamp(ctx, seed, { isLaunchCamp: true, ownerId: user._id }))
+    }
+
+    return {
+      deletedCamps: allCamps.length,
+      arenaId,
+      launchCampIds,
+      launchCampCount: launchCampIds.length,
+    }
+  },
+})
+
 export const assignArenaToUnassignedBondfires = mutation({
   args: {
     limit: v.optional(v.number()),
@@ -1298,19 +1431,24 @@ export const createPrivateCamp = mutation({
       defaultPrompt:
         args.defaultPrompt ?? 'What do you want your private camp to gather around today?',
       rules: {
-        gender: 'any',
-        maxDurationMs: tier === 'pro' ? undefined : 30 * 60 * 1000,
-        allowedTiers: [...PAID_TIERS],
-        advisoryGuidelines: [
-          'The camp owner starts new Bondfires here.',
-          'Invited members can respond to fires they can access.',
-        ],
+        access: {
+          gender: { value: 'any', visibilityMode: 'hide' },
+          allowedTiers: { value: [...PAID_TIERS], visibilityMode: 'hide' },
+        },
+        participation: {
+          maxDurationMs: tier === 'pro' ? undefined : 30 * 60 * 1000,
+        },
+        advisory: {
+          guidelines: [
+            'The camp owner starts new Bondfires here.',
+            'Invited members can respond to fires they can access.',
+          ],
+        },
       },
       nameOverride: name, // Custom name set by owner
       ownerDisplayName: user.displayName ?? user.name ?? undefined, // Default fallback
       crisisBroadcast: false,
       welcomeBroadcast: false,
-      visibility: 'private',
       access: 'invite',
       status: 'active',
       ownerId: user._id,
@@ -1541,17 +1679,48 @@ const campSettingsFields = {
   defaultPrompt: v.optional(v.string()),
   rules: v.optional(
     v.object({
-      gender: v.optional(v.union(v.literal('male'), v.literal('female'), v.literal('any'))),
-      minDurationMs: v.optional(v.number()),
-      maxDurationMs: v.optional(v.number()),
-      maxResponses: v.optional(v.number()),
-      requiresTradeTags: v.optional(v.boolean()),
-      allowedTiers: v.optional(
-        v.array(
-          v.union(v.literal('free'), v.literal('plus'), v.literal('premium'), v.literal('pro')),
+      access: v.object({
+        gender: v.optional(
+          v.object({
+            value: v.union(v.literal('male'), v.literal('female'), v.literal('any')),
+            visibilityMode: v.literal('hide'),
+          }),
         ),
-      ),
-      advisoryGuidelines: v.optional(v.array(v.string())),
+        allowedTiers: v.optional(
+          v.object({
+            value: v.array(
+              v.union(v.literal('free'), v.literal('plus'), v.literal('premium'), v.literal('pro')),
+            ),
+            visibilityMode: v.union(v.literal('hide'), v.literal('gate')),
+          }),
+        ),
+        inviteOnly: v.optional(
+          v.object({
+            value: v.boolean(),
+            visibilityMode: v.literal('hide'),
+          }),
+        ),
+        minAge: v.optional(
+          v.object({
+            value: v.number(),
+            visibilityMode: v.literal('hide'),
+          }),
+        ),
+        maxAge: v.optional(
+          v.object({
+            value: v.number(),
+            visibilityMode: v.literal('hide'),
+          }),
+        ),
+      }),
+      participation: v.object({
+        maxDurationMs: v.optional(v.number()),
+        maxResponses: v.optional(v.number()),
+      }),
+      advisory: v.object({
+        guidelines: v.optional(v.array(v.string())),
+        requiresTradeTags: v.optional(v.boolean()),
+      }),
     }),
   ),
   visibilityRules: v.optional(
@@ -1590,7 +1759,6 @@ const campSettingsFields = {
     ),
   ),
   nameOverride: v.optional(v.string()),
-  visibility: v.optional(v.union(v.literal('public'), v.literal('private'))),
   access: v.optional(v.union(v.literal('open'), v.literal('approval'), v.literal('invite'))),
   status: v.optional(v.union(v.literal('active'), v.literal('frozen'), v.literal('archived'))),
 }
@@ -1639,7 +1807,6 @@ export const updateSettings = mutation({
     if (fields.visibilityRules !== undefined) updates.visibilityRules = fields.visibilityRules
     if (fields.joinRules !== undefined) updates.joinRules = fields.joinRules
     if (fields.nameOverride !== undefined) updates.nameOverride = fields.nameOverride
-    if (fields.visibility !== undefined) updates.visibility = fields.visibility
     if (fields.access !== undefined) updates.access = fields.access
     if (fields.status !== undefined) updates.status = fields.status
 

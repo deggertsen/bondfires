@@ -151,7 +151,11 @@ async function isBondfireVisibleToViewer(
     return memberCampIds.has(camp._id)
   }
 
-  return camp.visibility === 'public' || memberCampIds.has(camp._id)
+  // Launch camps are always publicly visible; owned non-launch camps require membership
+  if (camp.isLaunchCamp) {
+    return true
+  }
+  return memberCampIds.has(camp._id)
 }
 
 async function filterVisibleBondfires(ctx: QueryCtx, bondfires: Doc<'bondfires'>[]) {
@@ -201,7 +205,7 @@ export const listByCamp = query({
       return []
     }
 
-    if (camp.status === 'frozen' || camp.visibility === 'private') {
+    if (camp.status === 'frozen' || !camp.isLaunchCamp) {
       const userId = await auth.getUserId(ctx)
       if (!userId) {
         return []
@@ -389,24 +393,17 @@ export const create = mutation({
       throw new Error('Join this camp before sparking here')
     }
 
-    if (camp.visibility === 'private' && camp.ownerId !== userId) {
+    // Private camp detection: owned camps with no isLaunchCamp flag
+    if (!camp.isLaunchCamp && camp.ownerId && camp.ownerId !== userId) {
       throw new Error('Only the private camp owner can spark here')
     }
 
-    const campGender = camp.rules.gender
+    const campGender = camp.rules.access.gender?.value
     if (campGender && campGender !== 'any' && user.gender !== campGender) {
       throw new Error('This camp is limited to members who match its gender setting')
     }
 
-    if (
-      args.durationMs !== undefined &&
-      camp.rules.minDurationMs &&
-      args.durationMs < camp.rules.minDurationMs
-    ) {
-      throw new Error('This recording is shorter than the camp allows')
-    }
-
-    if (camp.rules.maxDurationMs && args.durationMs && args.durationMs > camp.rules.maxDurationMs) {
+    if (camp.rules.participation.maxDurationMs && args.durationMs && args.durationMs > camp.rules.participation.maxDurationMs) {
       throw new Error('This recording is longer than the camp allows')
     }
 
@@ -415,20 +412,20 @@ export const create = mutation({
 
     // Enforce tier-based Bondfire creation permission (Free cannot create).
     const tier = await assertCanCreateBondfire(ctx, userId)
-    if (camp.rules.allowedTiers && camp.rules.allowedTiers.length > 0) {
-      if (!camp.rules.allowedTiers.includes(tier)) {
+    if (camp.rules.access.allowedTiers?.value && camp.rules.access.allowedTiers.value.length > 0) {
+      if (!camp.rules.access.allowedTiers.value.includes(tier)) {
         throw new Error('Your membership tier cannot spark in this camp')
       }
     }
 
-    if (camp.rules.requiresTradeTags) {
+    if (camp.rules.advisory.requiresTradeTags) {
       const tags = args.tags ?? []
       if (!tags.includes('need') && !tags.includes('offer')) {
         throw new Error('The Trading Post requires a need or offer tag')
       }
     }
 
-    if (camp.visibility === 'private' && args.muxPlaybackPolicy !== 'signed') {
+    if (!camp.isLaunchCamp && camp.ownerId && args.muxPlaybackPolicy !== 'signed') {
       throw new Error('Private camp videos must use signed Mux playback')
     }
 
@@ -503,7 +500,7 @@ export const incrementViews = mutation({
         throw new Error('Camp not found')
       }
 
-      if (camp.status === 'frozen' || camp.visibility === 'private') {
+      if (camp.status === 'frozen' || !camp.isLaunchCamp) {
         const membership = await ctx.db
           .query('campMembers')
           .withIndex('by_user_camp', (q) => q.eq('userId', viewerId).eq('campId', camp._id))
