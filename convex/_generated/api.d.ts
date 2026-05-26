@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as admin from "../admin.js";
 import type * as auth from "../auth.js";
 import type * as bondfireVideos from "../bondfireVideos.js";
 import type * as bondfires from "../bondfires.js";
@@ -20,7 +21,6 @@ import type * as http from "../http.js";
 import type * as liveSessions from "../liveSessions.js";
 import type * as notifications from "../notifications.js";
 import type * as reports from "../reports.js";
-import type * as reviewerAccounts from "../reviewerAccounts.js";
 import type * as sendNotification from "../sendNotification.js";
 import type * as subscriptions from "../subscriptions.js";
 import type * as users from "../users.js";
@@ -34,6 +34,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  admin: typeof admin;
   auth: typeof auth;
   bondfireVideos: typeof bondfireVideos;
   bondfires: typeof bondfires;
@@ -46,7 +47,6 @@ declare const fullApi: ApiFromModules<{
   liveSessions: typeof liveSessions;
   notifications: typeof notifications;
   reports: typeof reports;
-  reviewerAccounts: typeof reviewerAccounts;
   sendNotification: typeof sendNotification;
   subscriptions: typeof subscriptions;
   users: typeof users;

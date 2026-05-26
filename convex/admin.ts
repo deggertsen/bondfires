@@ -6,6 +6,8 @@
  */
 
 import { v } from 'convex/values'
+import type { Doc } from './_generated/dataModel'
+import type { MutationCtx, QueryCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
 
@@ -16,8 +18,31 @@ const subscriptionTier = v.union(
   v.literal('pro'),
 )
 
+function adminUserResult(user: Doc<'users'>) {
+  return {
+    _id: user._id,
+    email: user.email,
+    name: user.name,
+    forcedTier: user.forcedTier ?? null,
+  }
+}
+
+async function requireAdmin(ctx: QueryCtx | MutationCtx) {
+  const currentUserId = await auth.getUserId(ctx)
+  if (!currentUserId) {
+    throw new Error('Not authenticated')
+  }
+
+  const currentUser = await ctx.db.get(currentUserId)
+  if (!currentUser?.isAdmin) {
+    throw new Error('Admin access required')
+  }
+
+  return { currentUserId, currentUser }
+}
+
 /**
- * Search for users by email prefix.
+ * Search for users by email.
  *
  * Returns up to 20 matching users with their email, name, and current forcedTier.
  */
@@ -26,28 +51,31 @@ export const adminSearchUsers = query({
     emailQuery: v.string(),
   },
   handler: async (ctx, args) => {
-    const currentUserId = await auth.getUserId(ctx)
-    if (!currentUserId) {
-      throw new Error('Not authenticated')
+    await requireAdmin(ctx)
+
+    const emailQuery = args.emailQuery.toLowerCase().trim()
+    if (emailQuery.length < 2) {
+      return { users: [] }
     }
 
-    const currentUser = await ctx.db.get(currentUserId)
-    if (!currentUser?.isAdmin) {
-      throw new Error('Admin access required')
+    const exactMatch = await ctx.db
+      .query('users')
+      .withIndex('email', (q) => q.eq('email', emailQuery))
+      .first()
+    const searchMatches = await ctx.db
+      .query('users')
+      .withSearchIndex('search_email', (q) => q.search('email', emailQuery))
+      .take(20)
+
+    const matchesById = new Map<Doc<'users'>['_id'], Doc<'users'>>()
+    if (exactMatch) {
+      matchesById.set(exactMatch._id, exactMatch)
+    }
+    for (const user of searchMatches) {
+      matchesById.set(user._id, user)
     }
 
-    const query = args.emailQuery.toLowerCase().trim()
-    const allUsers = await ctx.db.query('users').take(50)
-
-    const matches = allUsers
-      .filter((user) => user.email?.toLowerCase().includes(query))
-      .slice(0, 20)
-      .map((user) => ({
-        _id: user._id,
-        email: user.email,
-        name: user.name,
-        forcedTier: user.forcedTier ?? null,
-      }))
+    const matches = Array.from(matchesById.values()).slice(0, 20).map(adminUserResult)
 
     return { users: matches }
   },
@@ -65,15 +93,7 @@ export const adminSetForcedTier = mutation({
     tier: v.union(v.null(), subscriptionTier),
   },
   handler: async (ctx, args) => {
-    const currentUserId = await auth.getUserId(ctx)
-    if (!currentUserId) {
-      throw new Error('Not authenticated')
-    }
-
-    const currentUser = await ctx.db.get(currentUserId)
-    if (!currentUser?.isAdmin) {
-      throw new Error('Admin access required')
-    }
+    const { currentUserId, currentUser } = await requireAdmin(ctx)
 
     const email = args.email.toLowerCase().trim()
 
@@ -122,11 +142,6 @@ export const adminSetForcedTier = mutation({
     }
 
     const updatedUser = await ctx.db.get(targetUser._id)
-    return {
-      _id: updatedUser?._id,
-      email: updatedUser?.email,
-      name: updatedUser?.name,
-      forcedTier: updatedUser?.forcedTier ?? null,
-    }
+    return updatedUser ? adminUserResult(updatedUser) : null
   },
 })

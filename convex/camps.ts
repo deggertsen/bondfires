@@ -6,7 +6,7 @@ import { auth } from './auth'
 import type { SubscriptionTier } from './entitlements'
 import {
   assertCanCreatePrivateCamp,
-  getActiveSubscriptionTier,
+  getEntitlementSubscriptionTier,
   PAID_TIERS,
   TIER_RANK,
 } from './entitlements'
@@ -642,7 +642,9 @@ export const list = query({
     // Fetch user + tier for visibility evaluation
     const user = userId ? await ctx.db.get(userId) : null
     const userTier =
-      user && userId ? await getActiveSubscriptionTier(ctx, userId) : ('free' as SubscriptionTier)
+      user && userId
+        ? await getEntitlementSubscriptionTier(ctx, userId)
+        : ('free' as SubscriptionTier)
 
     const camps = await ctx.db.query('camps').collect()
 
@@ -738,7 +740,9 @@ export const get = query({
     if (membership?.status !== 'active') {
       const user = userId ? await ctx.db.get(userId) : null
       const userTier =
-        user && userId ? await getActiveSubscriptionTier(ctx, userId) : ('free' as SubscriptionTier)
+        user && userId
+          ? await getEntitlementSubscriptionTier(ctx, userId)
+          : ('free' as SubscriptionTier)
       const visibility = evaluateVisibilityRules(camp, user, userTier, null)
       if (!visibility.visible) {
         return null
@@ -795,7 +799,7 @@ export const join = mutation({
     }
 
     const existing = await getMembership(ctx, user._id, camp._id)
-    const userTier = await getActiveSubscriptionTier(ctx, user._id)
+    const userTier = await getEntitlementSubscriptionTier(ctx, user._id)
     const eligibility = evaluateJoinRules(camp, user, userTier, existing)
 
     if (!eligibility.canJoin) {
@@ -847,7 +851,7 @@ export const requestJoin = mutation({
     }
 
     const existing = await getMembership(ctx, user._id, camp._id)
-    const userTier = await getActiveSubscriptionTier(ctx, user._id)
+    const userTier = await getEntitlementSubscriptionTier(ctx, user._id)
     const eligibility = evaluateJoinRules(camp, user, userTier, existing)
 
     if (!eligibility.canJoin) {
@@ -1082,7 +1086,7 @@ export const redeemInvite = mutation({
       }
     }
 
-    const userTier = await getActiveSubscriptionTier(ctx, user._id)
+    const userTier = await getEntitlementSubscriptionTier(ctx, user._id)
     const eligibility = evaluateJoinRules(camp, user, userTier, existingMembership)
 
     // Invite bypasses invite_only and private — re-check only hard blocks

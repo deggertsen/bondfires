@@ -98,7 +98,9 @@ export default defineSchema({
     // Admin-forced subscription tier override for QA and app review.
     // When set, this overrides any store-based subscription in entitlements.
     forcedTier: v.optional(subscriptionTier),
-  }).index('email', ['email']), // Required by @convex-dev/auth (must be named exactly 'email')
+  })
+    .index('email', ['email']) // Required by @convex-dev/auth (must be named exactly 'email')
+    .searchIndex('search_email', { searchField: 'email' }),
 
   // Audit log for admin-forced subscription tier changes
   tierAuditLog: defineTable({

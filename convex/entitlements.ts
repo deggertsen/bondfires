@@ -141,7 +141,7 @@ export async function getPublicCampLimit(
   ctx: QueryCtx | MutationCtx,
   userId: Id<'users'>,
 ): Promise<number> {
-  const tier = await getActiveSubscriptionTier(ctx, userId)
+  const tier = await getEntitlementSubscriptionTier(ctx, userId)
   return await getPublicCampLimitForTier(ctx, userId, tier)
 }
 
@@ -234,7 +234,7 @@ export async function getPrivateCampExpiresAt(
     return undefined
   }
 
-  const ownerTier = await getActiveSubscriptionTier(ctx, camp.ownerId)
+  const ownerTier = await getEntitlementSubscriptionTier(ctx, camp.ownerId)
   if (ownerTier === 'plus') {
     return now + PLUS_PRIVATE_RETENTION_MS
   }

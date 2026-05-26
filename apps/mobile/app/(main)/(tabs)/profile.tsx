@@ -26,7 +26,7 @@ import {
   User,
   Video,
 } from '@tamagui/lucide-icons'
-import { useMutation, useQuery } from 'convex/react'
+import { useConvex, useMutation, useQuery } from 'convex/react'
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator'
 import * as ImagePicker from 'expo-image-picker'
 import { useRouter } from 'expo-router'
@@ -102,12 +102,12 @@ function ProfileSubscription({
 export default function ProfileScreen() {
   const router = useRouter()
   const { signOut } = useAuthActions()
+  const convex = useConvex()
 
   const updateProfile = useMutation(api.users.updateProfile)
   const generateProfilePhotoUploadUrl = useMutation(api.users.generateProfilePhotoUploadUrl)
   const updateProfilePhoto = useMutation(api.users.updateProfilePhoto)
   const deleteAccountMutation = useMutation(api.users.deleteAccount)
-  const adminSearchUsers = useMutation(api.admin.adminSearchUsers)
   const adminSetForcedTier = useMutation(api.admin.adminSetForcedTier)
   const closeCircle = useQuery(api.conversations.listCloseCircle) as CloseCircleEntry[] | undefined
 
@@ -207,19 +207,19 @@ export default function ProfileScreen() {
 
   const handleAdminSearch = useCallback(
     async (emailQuery: string): Promise<AdminSearchResult[]> => {
-      const result = await adminSearchUsers({ emailQuery })
+      const result = await convex.query(api.admin.adminSearchUsers, { emailQuery })
       return result.users as AdminSearchResult[]
     },
-    [adminSearchUsers],
+    [convex],
   )
 
   const handleAdminSetTier = useCallback(
     async (
       email: string,
       tier: 'free' | 'plus' | 'premium' | 'pro' | null,
-    ): Promise<AdminSearchResult> => {
+    ): Promise<AdminSearchResult | null> => {
       const result = await adminSetForcedTier({ email, tier })
-      return result as AdminSearchResult
+      return result as AdminSearchResult | null
     },
     [adminSetForcedTier],
   )

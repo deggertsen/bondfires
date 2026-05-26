@@ -1,4 +1,5 @@
 import { bondfireColors } from '@bondfires/config'
+import { ChevronDown, ChevronUp, Search, Shield } from '@tamagui/lucide-icons'
 import { useCallback, useState } from 'react'
 import { Alert, Pressable } from 'react-native'
 import { ScrollView, Spinner, XStack, YStack } from 'tamagui'
@@ -34,7 +35,7 @@ type AdminSearchResult = {
 type AdminPanelProps = {
   isAdmin: boolean
   onSearch: (emailQuery: string) => Promise<AdminSearchResult[]>
-  onSetTier: (email: string, tier: SubscriptionTier | null) => Promise<AdminSearchResult>
+  onSetTier: (email: string, tier: SubscriptionTier | null) => Promise<AdminSearchResult | null>
 }
 
 export function AdminPanel({ isAdmin, onSearch, onSetTier }: AdminPanelProps) {
@@ -46,11 +47,12 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier }: AdminPanelProps) {
   const [expanded, setExpanded] = useState(false)
 
   const handleSearch = useCallback(async () => {
-    if (!emailQuery.trim()) return
+    const query = emailQuery.trim()
+    if (query.length < 2) return
     setIsSearching(true)
     setSearchError(null)
     try {
-      const result = await onSearch(emailQuery.trim())
+      const result = await onSearch(query)
       setSearchResults(result)
     } catch (err) {
       setSearchError(err instanceof Error ? err.message : 'Search failed')
@@ -70,7 +72,9 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier }: AdminPanelProps) {
             setUpdatingId(email)
             try {
               const updated = await onSetTier(email, tier)
-              setSearchResults((prev) => prev.map((u) => (u.email === email ? updated : u)))
+              if (updated) {
+                setSearchResults((prev) => prev.map((u) => (u.email === email ? updated : u)))
+              }
             } catch (err) {
               Alert.alert('Error', err instanceof Error ? err.message : 'Failed to update tier')
             } finally {
@@ -95,13 +99,16 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier }: AdminPanelProps) {
         <Card interactive>
           <XStack justifyContent="space-between" alignItems="center">
             <XStack alignItems="center" gap={8}>
+              <Shield size={18} color={bondfireColors.moltenGold} />
               <Text fontSize={16} fontWeight="700">
-                🔧 Admin Panel
+                Admin Panel
               </Text>
             </XStack>
-            <Text color={bondfireColors.ash} fontSize={14}>
-              {expanded ? '▲' : '▼'}
-            </Text>
+            {expanded ? (
+              <ChevronUp size={18} color={bondfireColors.ash} />
+            ) : (
+              <ChevronDown size={18} color={bondfireColors.ash} />
+            )}
           </XStack>
         </Card>
       </Pressable>
@@ -109,10 +116,6 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier }: AdminPanelProps) {
       {expanded && (
         <Card>
           <YStack gap={16}>
-            <Text fontSize={14} color={bondfireColors.ash}>
-              Search for a user by email to manage their forced subscription tier.
-            </Text>
-
             <XStack gap={8}>
               <Input
                 flex={1}
@@ -128,12 +131,15 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier }: AdminPanelProps) {
                 variant="primary"
                 size="$sm"
                 onPress={handleSearch}
-                disabled={isSearching || !emailQuery.trim()}
+                disabled={isSearching || emailQuery.trim().length < 2}
               >
                 {isSearching ? (
                   <Spinner size="small" color={bondfireColors.whiteSmoke} />
                 ) : (
-                  <Text color={bondfireColors.whiteSmoke}>Search</Text>
+                  <>
+                    <Search size={16} color={bondfireColors.whiteSmoke} />
+                    <Text color={bondfireColors.whiteSmoke}>Search</Text>
+                  </>
                 )}
               </Button>
             </XStack>
