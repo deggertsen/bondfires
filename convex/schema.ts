@@ -94,12 +94,14 @@ export default defineSchema({
 
     // Admin flags
     isAdmin: v.optional(v.boolean()),
+    role: v.optional(v.union(v.literal('admin'), v.literal('user'))),
 
     // Admin-forced subscription tier override for QA and app review.
     // When set, this overrides any store-based subscription in entitlements.
     forcedTier: v.optional(subscriptionTier),
   })
     .index('email', ['email']) // Required by @convex-dev/auth (must be named exactly 'email')
+    .index('by_role', ['role'])
     .searchIndex('search_email', { searchField: 'email' }),
 
   // Audit log for admin-forced subscription tier changes
@@ -136,6 +138,7 @@ export default defineSchema({
     status: v.union(v.literal('active'), v.literal('frozen'), v.literal('archived')),
     frozenAt: v.optional(v.number()),
     reclaimDeadline: v.optional(v.number()),
+    // Optional until the production backfill has run; all new writes set this.
     ownerId: v.optional(v.id('users')),
     bondfireCount: v.optional(v.number()),
     activeMemberCount: v.optional(v.number()),

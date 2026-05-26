@@ -69,6 +69,7 @@ function currentUser(user: Doc<'users'>) {
     responseCount: user.responseCount ?? 0,
     totalViews: user.totalViews ?? 0,
     isAdmin: user.isAdmin,
+    role: user.role,
   }
 }
 
@@ -376,5 +377,17 @@ export const deleteAccount = mutation({
     await ctx.db.delete(userId)
 
     return { success: true }
+  },
+})
+
+// Check if the current user is an admin
+export const isAdmin = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) return false
+
+    const user = await ctx.db.get(userId)
+    return user?.role === 'admin' || user?.isAdmin === true
   },
 })

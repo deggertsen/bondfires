@@ -34,7 +34,7 @@ async function requireAdmin(ctx: QueryCtx | MutationCtx) {
   }
 
   const currentUser = await ctx.db.get(currentUserId)
-  if (!currentUser?.isAdmin) {
+  if (!currentUser?.isAdmin && currentUser?.role !== 'admin') {
     throw new Error('Admin access required')
   }
 
