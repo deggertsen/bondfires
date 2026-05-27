@@ -19,7 +19,7 @@ import { Button, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
 import { Flame, SwitchCamera, X } from '@tamagui/lucide-icons'
-import { useAction, useMutation, useQuery } from 'convex/react'
+import { useAction, useConvex, useMutation, useQuery } from 'convex/react'
 import {
   type CameraType,
   CameraView,
@@ -122,6 +122,7 @@ export default function CreateScreen() {
 
   const createMuxDirectUpload = useAction(api.videos.createMuxDirectUpload)
   const getMuxUploadStatus = useAction(api.videos.getMuxUploadStatus)
+  const convex = useConvex()
   const createLiveStream = useAction(api.videos.createLiveStream)
   const endLiveStream = useAction(api.videos.endLiveStream)
   const cancelLiveStream = useAction(api.videos.cancelLiveStream)
@@ -590,6 +591,27 @@ export default function CreateScreen() {
   const queueBackgroundUpload = useCallback(
     async (uri: string) => {
       try {
+        // Validate camp context before starting the upload so users get
+        // immediate feedback instead of waiting for the upload to fail.
+        if (respondTo) {
+          const result = await convex.query(api.videos.validateRespondCamp, {
+            bondfireId: respondTo as Id<'bondfires'>,
+          })
+          if (!result.valid) {
+            Alert.alert('Cannot Respond', result.error ?? 'You cannot respond to this Bondfire')
+            return null
+          }
+        } else if (effectiveCampId) {
+          const result = await convex.query(api.videos.validateCreateCamp, {
+            campId: effectiveCampId,
+            tags: selectedCampTags,
+          })
+          if (!result.valid) {
+            Alert.alert('Cannot Spark', result.error ?? 'You cannot spark in this camp')
+            return null
+          }
+        }
+
         return await startBackgroundUpload(
           {
             videoUri: uri,
@@ -644,6 +666,7 @@ export default function CreateScreen() {
       createMuxDirectUpload,
       getMuxUploadStatus,
       currentUser?._id,
+      convex,
     ],
   )
 
