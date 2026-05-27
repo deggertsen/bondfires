@@ -144,22 +144,22 @@ export default function CreateScreen() {
     if (!camps) return []
     const userGender = currentUser?.gender
     return camps
-      .filter((camp) => camp.visibility !== 'private' || camp.membership?.role === 'owner')
+      .filter((camp) => camp.access !== 'invite' || camp.membership?.role === 'owner')
       .sort((left, right) => {
         const leftWelcome = left.slug.startsWith('welcome-fires') ? -1 : 0
         const rightWelcome = right.slug.startsWith('welcome-fires') ? -1 : 0
         if (leftWelcome !== rightWelcome) return leftWelcome - rightWelcome
 
-        const leftMatch = userGender && left.rules.gender === userGender ? -1 : 0
-        const rightMatch = userGender && right.rules.gender === userGender ? -1 : 0
+        const leftMatch = userGender && left.rules.access.gender?.value === userGender ? -1 : 0
+        const rightMatch = userGender && right.rules.access.gender?.value === userGender ? -1 : 0
         if (leftMatch !== rightMatch) return leftMatch - rightMatch
 
         return left.name.localeCompare(right.name)
       })
   }, [camps, currentUser?.gender])
   const selectedCampTags = tradeTag ? [tradeTag] : undefined
-  const selectedCampMaxSeconds = selectedCamp?.rules.maxDurationMs
-    ? Math.floor(selectedCamp.rules.maxDurationMs / 1000)
+  const selectedCampMaxSeconds = selectedCamp?.rules.participation.maxDurationMs
+    ? Math.floor(selectedCamp.rules.participation.maxDurationMs / 1000)
     : undefined
   const tierMaxSeconds = subscription?.maxVideoDurationMs
     ? Math.floor(subscription.maxVideoDurationMs / 1000)
@@ -191,7 +191,7 @@ export default function CreateScreen() {
     ? `Max ${formatMaxDuration(effectiveMaxRecordingSeconds)}`
     : undefined
   const needsTradeTag =
-    !respondTo && selectedCamp?.rules.requiresTradeTags === true && tradeTag === null
+    !respondTo && selectedCamp?.rules.advisory.requiresTradeTags === true && tradeTag === null
   const livePublisher = useLivePublisher({
     publisher: BondfireLivePublisher,
     createLiveStream: async (args) =>
@@ -253,7 +253,8 @@ export default function CreateScreen() {
       camps.find(
         (camp) =>
           camp.slug.startsWith('welcome-fires') &&
-          (camp.rules.gender === currentUser.gender || camp.rules.gender === 'any'),
+          (camp.rules.access.gender?.value === currentUser.gender ||
+            camp.rules.access.gender?.value === 'any'),
       )
 
     if (!welcomeCamp) {

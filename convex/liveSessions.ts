@@ -29,7 +29,7 @@ async function canViewBondfire(ctx: QueryCtx, bondfire: Doc<'bondfires'>) {
   if (!camp || camp.status !== 'active') {
     return false
   }
-  if (camp.visibility === 'public') {
+  if (camp.access !== 'invite') {
     return true
   }
 

@@ -19,7 +19,7 @@ type CampListItem =
   | { type: 'camp'; camp: CampWithMembership }
 
 function getAccessLabel(camp: Doc<'camps'>) {
-  if (camp.visibility === 'private') return 'Invite only'
+  if (camp.access === 'invite') return 'Invite only'
   if (camp.access === 'approval') return 'Approval'
   return 'Open'
 }
@@ -40,7 +40,7 @@ function CampCard({
 }) {
   const isActiveMember = camp.membership?.status === 'active'
   const isPending = camp.membership?.status === 'pending'
-  const canJoinFromList = !isActiveMember && !isPending && camp.visibility === 'public'
+  const canJoinFromList = !isActiveMember && !isPending && camp.access !== 'invite'
   const isFrozen = camp.frozen === true || camp.status === 'frozen'
 
   return (
@@ -55,7 +55,7 @@ function CampCard({
             alignItems="center"
             justifyContent="center"
           >
-            {camp.visibility === 'private' ? (
+            {camp.access === 'invite' ? (
               <Lock size={25} color={bondfireColors.whiteSmoke} />
             ) : (
               <Flame size={28} color={bondfireColors.whiteSmoke} />
@@ -213,8 +213,8 @@ export default function CampsScreen() {
   const listItems = useMemo<CampListItem[]>(() => {
     if (!filtered) return []
 
-    const privateCamps = filtered.filter((camp) => camp.visibility === 'private')
-    const publicCamps = filtered.filter((camp) => camp.visibility !== 'private')
+    const privateCamps = filtered.filter((camp) => camp.access === 'invite')
+    const publicCamps = filtered.filter((camp) => camp.access !== 'invite')
     const items: CampListItem[] = []
 
     if (privateCamps.length > 0) {

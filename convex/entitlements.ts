@@ -231,7 +231,7 @@ export async function getPrivateCampExpiresAt(
   camp: Doc<'camps'>,
   now: number,
 ): Promise<number | undefined> {
-  if (camp.visibility !== 'private' || !camp.ownerId) {
+  if (!camp.ownerId || camp.access !== 'invite') {
     return undefined
   }
 
@@ -280,15 +280,12 @@ export async function assertCanCreatePrivateCamp(
     const existingPrivateCamps = await ctx.db
       .query('camps')
       .withIndex('by_owner', (q) => q.eq('ownerId', userId))
-      .filter((q) =>
-        q.and(
-          q.eq(q.field('visibility'), 'private'),
-          q.or(q.eq(q.field('status'), 'active'), q.eq(q.field('status'), 'frozen')),
-        ),
-      )
       .collect()
+    const activePrivateCampCount = existingPrivateCamps.filter(
+      (camp) => camp.access === 'invite' && (camp.status === 'active' || camp.status === 'frozen'),
+    ).length
 
-    if (existingPrivateCamps.length >= MAX_PRIVATE_CAMPS_FOR_NON_PRO) {
+    if (activePrivateCampCount >= MAX_PRIVATE_CAMPS_FOR_NON_PRO) {
       throwUserError('You already have an active private camp')
     }
   }
@@ -326,15 +323,12 @@ export async function assertCanCreatePublicCamp(
   const existingPublicCamps = await ctx.db
     .query('camps')
     .withIndex('by_owner', (q) => q.eq('ownerId', userId))
-    .filter((q) =>
-      q.and(
-        q.eq(q.field('visibility'), 'public'),
-        q.or(q.eq(q.field('status'), 'active'), q.eq(q.field('status'), 'frozen')),
-      ),
-    )
     .collect()
+  const activePublicCampCount = existingPublicCamps.filter(
+    (camp) => camp.access !== 'invite' && (camp.status === 'active' || camp.status === 'frozen'),
+  ).length
 
-  if (existingPublicCamps.length >= publicCampLimit) {
+  if (activePublicCampCount >= publicCampLimit) {
     throwUserError(`You have reached the limit of ${publicCampLimit} public camps`)
   }
 
@@ -425,7 +419,7 @@ async function getCampLimitsForTier(
 async function getOwnedCampCount(
   ctx: QueryCtx | MutationCtx,
   userId: Id<'users'>,
-  visibility: 'public' | 'private',
+  isPublic: boolean,
 ) {
   const ownedCamps = await ctx.db
     .query('camps')
@@ -434,7 +428,8 @@ async function getOwnedCampCount(
 
   return ownedCamps.filter(
     (camp) =>
-      camp.visibility === visibility && (camp.status === 'active' || camp.status === 'frozen'),
+      (isPublic ? camp.access !== 'invite' : camp.access === 'invite') &&
+      (camp.status === 'active' || camp.status === 'frozen'),
   ).length
 }
 
@@ -451,10 +446,10 @@ export async function freezeExcessOwnedCamps(
     .collect()
 
   const activePublicCamps = userCamps
-    .filter((camp) => camp.visibility === 'public' && camp.status === 'active')
+    .filter((camp) => camp.access !== 'invite' && camp.status === 'active')
     .sort((left, right) => left.createdAt - right.createdAt)
   const activePrivateCamps = userCamps
-    .filter((camp) => camp.visibility === 'private' && camp.status === 'active')
+    .filter((camp) => camp.access === 'invite' && camp.status === 'active')
     .sort((left, right) => left.createdAt - right.createdAt)
 
   let campsFrozen = 0
@@ -552,12 +547,8 @@ export async function handleTierUpgrade(
     .collect()
 
   // Count currently active camps
-  const activePublicCamps = userCamps.filter(
-    (c) => c.visibility === 'public' && c.status === 'active',
-  )
-  const activePrivateCamps = userCamps.filter(
-    (c) => c.visibility === 'private' && c.status === 'active',
-  )
+  const activePublicCamps = userCamps.filter((c) => c.access !== 'invite' && c.status === 'active')
+  const activePrivateCamps = userCamps.filter((c) => c.access === 'invite' && c.status === 'active')
 
   const frozenCamps = userCamps
     .filter((c) => c.status === 'frozen')
@@ -575,7 +566,7 @@ export async function handleTierUpgrade(
   }
 
   for (const camp of frozenCamps) {
-    if (camp.visibility === 'public' && publicSlotsLeft > 0) {
+    if (camp.access !== 'invite' && publicSlotsLeft > 0) {
       await ctx.db.patch(camp._id, {
         status: 'active',
         frozenAt: undefined,
@@ -584,7 +575,7 @@ export async function handleTierUpgrade(
       })
       publicSlotsLeft--
       campsUnfrozen++
-    } else if (camp.visibility === 'private' && privateSlotsLeft > 0) {
+    } else if (camp.access === 'invite' && privateSlotsLeft > 0) {
       await ctx.db.patch(camp._id, {
         status: 'active',
         frozenAt: undefined,
@@ -632,10 +623,10 @@ export async function reclaimFrozenCamps(
 
   // Count currently active camps
   const activePublicCamps = frozenUserCamps.filter(
-    (c) => c.visibility === 'public' && c.status === 'active',
+    (c) => c.access !== 'invite' && c.status === 'active',
   )
   const activePrivateCamps = frozenUserCamps.filter(
-    (c) => c.visibility === 'private' && c.status === 'active',
+    (c) => c.access === 'invite' && c.status === 'active',
   )
 
   let publicSlotsLeft =
@@ -651,7 +642,7 @@ export async function reclaimFrozenCamps(
   let campsReclaimed = 0
 
   for (const camp of eligibleFrozenCamps) {
-    if (camp.visibility === 'public' && publicSlotsLeft > 0) {
+    if (camp.access !== 'invite' && publicSlotsLeft > 0) {
       await ctx.db.patch(camp._id, {
         status: 'active',
         frozenAt: undefined,
@@ -660,7 +651,7 @@ export async function reclaimFrozenCamps(
       })
       publicSlotsLeft--
       campsReclaimed++
-    } else if (camp.visibility === 'private' && privateSlotsLeft > 0) {
+    } else if (camp.access === 'invite' && privateSlotsLeft > 0) {
       await ctx.db.patch(camp._id, {
         status: 'active',
         frozenAt: undefined,
@@ -730,8 +721,9 @@ export async function processExpiredReclaims(
       }
 
       const limits = await getCampLimitsForTier(ctx, member.userId, memberTier)
-      const ownedCampCount = await getOwnedCampCount(ctx, member.userId, camp.visibility)
-      const limit = camp.visibility === 'public' ? limits.publicCamps : limits.privateCamps
+      const isPublicCamp = camp.access !== 'invite'
+      const ownedCampCount = await getOwnedCampCount(ctx, member.userId, isPublicCamp)
+      const limit = isPublicCamp ? limits.publicCamps : limits.privateCamps
       if (ownedCampCount < limit) {
         eligibleProMembers.push(member)
       }

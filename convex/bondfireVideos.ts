@@ -35,7 +35,10 @@ async function isBondfireVisibleToViewer(
     return false
   }
 
-  return camp.visibility === 'public' || memberCampIds.has(camp._id)
+  if (camp.access !== 'invite') {
+    return true
+  }
+  return memberCampIds.has(camp._id)
 }
 
 async function assertCanRespondToBondfire(
@@ -73,30 +76,26 @@ async function assertCanRespondToBondfire(
     throw new Error('Join this camp before responding here')
   }
 
-  const campGender = camp.rules.gender
+  const campGender = camp.rules.access.gender?.value
   if (campGender && campGender !== 'any' && user.gender !== campGender) {
     throw new Error('This camp is limited to members who match its gender setting')
   }
 
   if (
-    args.durationMs !== undefined &&
-    camp.rules.minDurationMs &&
-    args.durationMs < camp.rules.minDurationMs
+    camp.rules.participation.maxDurationMs &&
+    args.durationMs &&
+    args.durationMs > camp.rules.participation.maxDurationMs
   ) {
-    throw new Error('This recording is shorter than the camp allows')
-  }
-
-  if (camp.rules.maxDurationMs && args.durationMs && args.durationMs > camp.rules.maxDurationMs) {
     throw new Error('This recording is longer than the camp allows')
   }
 
-  if (camp.rules.maxResponses !== undefined) {
+  if (camp.rules.participation.maxResponses !== undefined) {
     const existingVideos = await ctx.db
       .query('bondfireVideos')
       .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
       .collect()
     const activeResponses = existingVideos.filter((video) => video.videoStatus !== 'errored')
-    if (activeResponses.length >= camp.rules.maxResponses) {
+    if (activeResponses.length >= camp.rules.participation.maxResponses) {
       throw new Error('This Bondfire already has the maximum number of responses')
     }
   }
@@ -212,7 +211,7 @@ export const addResponse = mutation({
     let requiresSignedPlayback = bondfire.muxPlaybackPolicy === 'signed'
     if (!requiresSignedPlayback && bondfire.campId) {
       const camp = await ctx.db.get(bondfire.campId)
-      requiresSignedPlayback = camp?.visibility === 'private'
+      requiresSignedPlayback = camp?.access === 'invite'
     }
     if (requiresSignedPlayback && args.muxPlaybackPolicy !== 'signed') {
       throw new Error('Private camp response videos must use signed Mux playback')
