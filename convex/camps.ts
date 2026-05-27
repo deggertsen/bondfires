@@ -1,7 +1,7 @@
 import { v } from 'convex/values'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
-import { mutation, query } from './_generated/server'
+import { internalMutation, mutation, query } from './_generated/server'
 import { auth } from './auth'
 import type { SubscriptionTier } from './entitlements'
 import {
@@ -1346,6 +1346,71 @@ export const resetAndReseed = mutation({
     const launchCampIds = []
     for (const seed of getLaunchCampSeeds()) {
       launchCampIds.push(await ensureCamp(ctx, seed, { isLaunchCamp: true, ownerId: user._id }))
+    }
+
+    return {
+      deletedCamps: allCamps.length,
+      arenaId,
+      launchCampIds,
+      launchCampCount: launchCampIds.length,
+    }
+  },
+})
+
+// Internal version for admin tooling — bypasses authentication check.
+// Run via: npx convex run "internal:camps:resetAndReseedAdmin"
+export const resetAndReseedAdmin = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    // Delete all data that references camps
+    const allCamps = await ctx.db.query('camps').collect()
+
+    for (const camp of allCamps) {
+      const bondfires = await ctx.db
+        .query('bondfires')
+        .withIndex('by_camp', (q) => q.eq('campId', camp._id))
+        .collect()
+      for (const bondfire of bondfires) {
+        const videos = await ctx.db
+          .query('bondfireVideos')
+          .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
+          .collect()
+        for (const video of videos) {
+          await ctx.db.delete(video._id)
+        }
+        await ctx.db.delete(bondfire._id)
+      }
+      const memberships = await ctx.db
+        .query('campMembers')
+        .withIndex('by_camp', (q) => q.eq('campId', camp._id))
+        .collect()
+      for (const membership of memberships) {
+        await ctx.db.delete(membership._id)
+      }
+      const invites = await ctx.db
+        .query('campInvites')
+        .withIndex('by_camp', (q) => q.eq('campId', camp._id))
+        .collect()
+      for (const invite of invites) {
+        await ctx.db.delete(invite._id)
+      }
+      await ctx.db.delete(camp._id)
+    }
+
+    const adminUser = await ctx.db
+      .query('users')
+      .withIndex('email', (q) => q.eq('email', 'admin@bondfires.org'))
+      .first()
+    const ownerId = adminUser?._id ?? (await ctx.db.query('users').first())?._id
+    if (!ownerId) throw new Error('No users found to assign as camp owner')
+
+    const arenaId = await ensureCamp(ctx, getArenaSeed(), {
+      isLaunchCamp: false,
+      ownerId,
+    })
+    const launchCampIds = []
+    for (const seed of getLaunchCampSeeds()) {
+      launchCampIds.push(await ensureCamp(ctx, seed, { isLaunchCamp: true, ownerId }))
     }
 
     return {
