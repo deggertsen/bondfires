@@ -863,6 +863,18 @@ export const applyStorePurchaseVerification = internalMutation({
       }
       appliedStatus = appliedFields.status
 
+      if (!canActivateAddOn && statusUnlocksEntitlements(args.status)) {
+        console.warn(
+          '[subscriptions] Extra-camp add-on is active while Pro is no longer active; revoking entitlement',
+          {
+            userId: args.userId,
+            storeProductId: args.storeProductId,
+            userTier,
+            status: args.status,
+          },
+        )
+      }
+
       if (existing) {
         await ctx.db.patch(existing._id, appliedFields)
       } else {

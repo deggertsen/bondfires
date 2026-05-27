@@ -510,6 +510,16 @@ export async function handleTierDowngrade(
         addOn.verificationStatus === 'verified' &&
         (addOn.status === 'active' || addOn.status === 'trialing')
       ) {
+        console.warn(
+          '[entitlements] Revoking active extra-camp add-on because Pro is no longer active',
+          {
+            userId,
+            addOnId: addOn._id,
+            storeProductId: addOn.storeProductId,
+            previousTier,
+            newTier,
+          },
+        )
         await ctx.db.patch(addOn._id, {
           status: 'expired',
           updatedAt: Date.now(),

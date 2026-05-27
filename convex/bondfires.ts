@@ -435,6 +435,7 @@ export const create = mutation({
       userId,
       creatorName: user?.displayName ?? user?.name,
       campId,
+      frozen: false,
       videoStatus: args.videoStatus ?? 'ready',
       muxUploadId: args.muxUploadId,
       muxAssetId: args.muxAssetId,
