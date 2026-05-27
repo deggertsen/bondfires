@@ -1488,8 +1488,7 @@ export const validateRespondCampContext = internalQuery({
   },
 })
 
-// Public wrappers for the internal validation queries so the client
-// can validate camp context before initiating an upload.
+// Public validation queries let the client fail fast before initiating an upload.
 export const validateCreateCamp = query({
   args: {
     campId: v.id('camps'),
@@ -1502,7 +1501,7 @@ export const validateCreateCamp = query({
       return { valid: false, error: 'You must have an account to spark a Bondfire' }
     }
     try {
-      await ctx.runQuery(internal.videos.validateCreateCampContext, {
+      await assertCanCreateInCamp(ctx, {
         userId,
         campId: args.campId,
         durationMs: args.durationMs,
@@ -1529,7 +1528,7 @@ export const validateRespondCamp = query({
       return { valid: false, error: 'You must have an account to respond to a Bondfire' }
     }
     try {
-      await ctx.runQuery(internal.videos.validateRespondCampContext, {
+      await assertCanRespondToBondfire(ctx, {
         userId,
         bondfireId: args.bondfireId,
         durationMs: args.durationMs,
