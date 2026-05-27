@@ -135,7 +135,9 @@ export default defineSchema({
     icon: v.optional(v.string()),
     color: v.optional(v.string()),
     defaultPrompt: v.optional(v.string()),
-    rules: campRules,
+    // Migration step: accept both old flat format and new nested format.
+    // After running camps:resetAndReseed, this should be locked to campRules only.
+    rules: v.any(),
     nameOverride: v.optional(v.string()), // Private camp custom name override
     ownerDisplayName: v.optional(v.string()), // Denormalized owner display name at camp creation
     crisisBroadcast: v.optional(v.boolean()),
