@@ -2,7 +2,7 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
-import { action, internalAction, internalMutation, internalQuery } from './_generated/server'
+import { action, internalAction, internalMutation, internalQuery, query } from './_generated/server'
 import { auth } from './auth'
 import {
   assertCanCreateBondfire,
@@ -1485,6 +1485,62 @@ export const validateRespondCampContext = internalQuery({
   handler: async (ctx, args) => {
     await assertCanRespondToBondfire(ctx, args)
     return { valid: true }
+  },
+})
+
+// Public wrappers for the internal validation queries so the client
+// can validate camp context before initiating an upload.
+export const validateCreateCamp = query({
+  args: {
+    campId: v.id('camps'),
+    durationMs: v.optional(v.number()),
+    tags: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      return { valid: false, error: 'You must have an account to spark a Bondfire' }
+    }
+    try {
+      await ctx.runQuery(internal.videos.validateCreateCampContext, {
+        userId,
+        campId: args.campId,
+        durationMs: args.durationMs,
+        tags: args.tags,
+      })
+      return { valid: true }
+    } catch (error) {
+      return {
+        valid: false,
+        error: error instanceof Error ? error.message : 'Cannot spark in this camp',
+      }
+    }
+  },
+})
+
+export const validateRespondCamp = query({
+  args: {
+    bondfireId: v.id('bondfires'),
+    durationMs: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      return { valid: false, error: 'You must have an account to respond to a Bondfire' }
+    }
+    try {
+      await ctx.runQuery(internal.videos.validateRespondCampContext, {
+        userId,
+        bondfireId: args.bondfireId,
+        durationMs: args.durationMs,
+      })
+      return { valid: true }
+    } catch (error) {
+      return {
+        valid: false,
+        error: error instanceof Error ? error.message : 'Cannot respond to this Bondfire',
+      }
+    }
   },
 })
 
