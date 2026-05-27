@@ -1682,6 +1682,113 @@ export const adminBackfill = mutation({
   },
 })
 
+export const adminBackfillAdmin = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now()
+
+    const adminUser = await ctx.db
+      .query('users')
+      .withIndex('email', (q) => q.eq('email', 'admin@bondfires.org'))
+      .first()
+
+    if (!adminUser) {
+      return {
+        error: 'Admin user admin@bondfires.org not found. Create the admin account first.',
+      }
+    }
+
+    const result = {
+      campsOwnerSet: 0,
+      campsAlreadyOwned: 0,
+      adminMembershipsAdded: 0,
+      adminMembershipsUpdated: 0,
+      adminMembershipsAlreadyPresent: 0,
+      activeMemberCountsRefreshed: 0,
+      adminRoleSet: 0,
+      adminFlagSet: 0,
+      userRolesSet: 0,
+      usersScanned: 0,
+    }
+
+    const camps = await ctx.db.query('camps').collect()
+    for (const camp of camps) {
+      let ownerId = camp.ownerId
+      if (!camp.ownerId) {
+        await ctx.db.patch(camp._id, {
+          ownerId: adminUser._id,
+          updatedAt: now,
+        })
+        ownerId = adminUser._id
+        result.campsOwnerSet += 1
+      } else {
+        result.campsAlreadyOwned += 1
+      }
+
+      const adminMembershipRole = ownerId === adminUser._id ? 'owner' : 'moderator'
+      const existingMembership = await getMembership(ctx, adminUser._id, camp._id)
+      if (!existingMembership) {
+        await upsertMembership(ctx, {
+          userId: adminUser._id,
+          campId: camp._id,
+          role: adminMembershipRole,
+          status: 'active',
+        })
+        result.adminMembershipsAdded += 1
+        await refreshActiveMemberCount(ctx, camp._id)
+        result.activeMemberCountsRefreshed += 1
+      } else if (
+        existingMembership.role !== adminMembershipRole ||
+        existingMembership.status !== 'active'
+      ) {
+        await upsertMembership(ctx, {
+          userId: adminUser._id,
+          campId: camp._id,
+          role: adminMembershipRole,
+          status: 'active',
+        })
+        result.adminMembershipsUpdated += 1
+        await refreshActiveMemberCount(ctx, camp._id)
+        result.activeMemberCountsRefreshed += 1
+      } else {
+        result.adminMembershipsAlreadyPresent += 1
+      }
+    }
+
+    const users = await ctx.db.query('users').collect()
+    result.usersScanned = users.length
+
+    for (const u of users) {
+      const updates: { role?: 'admin' | 'user'; isAdmin?: true; updatedAt?: number } = {}
+      if (u._id === adminUser._id) {
+        if (u.role !== 'admin') {
+          updates.role = 'admin'
+          result.adminRoleSet += 1
+        }
+        if (u.isAdmin !== true) {
+          updates.isAdmin = true
+          result.adminFlagSet += 1
+        }
+      } else if (u.isAdmin === true && u.role !== 'admin') {
+        updates.role = 'admin'
+        result.adminRoleSet += 1
+      } else if (!u.role) {
+        updates.role = 'user'
+        result.userRolesSet += 1
+      }
+
+      if (Object.keys(updates).length > 0) {
+        await ctx.db.patch(u._id, {
+          ...updates,
+          updatedAt: now,
+        })
+      }
+    }
+
+    return result
+  },
+})
+
 // ── Admin-Only Mutations ──
 
 /**
