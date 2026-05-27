@@ -138,6 +138,8 @@ export default defineSchema({
     // Migration step: accept both old flat format and new nested format.
     // After running camps:resetAndReseed, this should be locked to campRules only.
     rules: v.any(),
+    // TEMPORARY: accept old visibility field until migration runs. REMOVE after resetAndReseed.
+    visibility: v.optional(v.union(v.literal('public'), v.literal('private'))),
     nameOverride: v.optional(v.string()), // Private camp custom name override
     ownerDisplayName: v.optional(v.string()), // Denormalized owner display name at camp creation
     crisisBroadcast: v.optional(v.boolean()),
