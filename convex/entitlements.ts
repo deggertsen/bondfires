@@ -18,6 +18,7 @@
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { throwUserError } from './errors'
+import { consumeCampSlotForCamp, computeSlotBalance } from './campSlots'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -490,18 +491,23 @@ export async function handleTierUpgrade(
   let campsUnfrozen = 0
   // Pro has no hard public camp limit (governed by slot balance).
   // Private camp limit is per TIER_CAMP_LIMITS.
-  let publicSlotsLeft = TIER_RANK[newTier] >= TIER_RANK.pro ? Number.POSITIVE_INFINITY : 0
+
+  // Pre-compute slot balance so we can check before unfreezing each public camp
+  const isPro = TIER_RANK[newTier] >= TIER_RANK.pro
+  let slotBalance = isPro ? await computeSlotBalance(ctx, userId) : 0
+
   let privateSlotsLeft = limits.privateCamps - activePrivateCamps.length
 
   for (const camp of frozenCamps) {
-    if (camp.access !== 'invite' && publicSlotsLeft > 0) {
+    if (camp.access !== 'invite' && isPro && slotBalance >= 1) {
+      await consumeCampSlotForCamp(ctx, { userId, campId: camp._id })
       await ctx.db.patch(camp._id, {
         status: 'active',
         frozenAt: undefined,
         reclaimDeadline: undefined,
         updatedAt: Date.now(),
       })
-      publicSlotsLeft--
+      slotBalance--
       campsUnfrozen++
     } else if (camp.access === 'invite' && privateSlotsLeft > 0) {
       await ctx.db.patch(camp._id, {
@@ -554,20 +560,23 @@ export async function reclaimFrozenCamps(
     (c) => c.access === 'invite' && c.status === 'active',
   )
 
-  let publicSlotsLeft = TIER_RANK[tier] >= TIER_RANK.pro ? Number.POSITIVE_INFINITY : 0
+  // Compute slot balance for public camp reclaims
+  const isPro = TIER_RANK[tier] >= TIER_RANK.pro
+  let slotBalance = isPro ? await computeSlotBalance(ctx, userId) : 0
   let privateSlotsLeft = limits.privateCamps - activePrivateCamps.length
 
   let campsReclaimed = 0
 
   for (const camp of eligibleFrozenCamps) {
-    if (camp.access !== 'invite' && publicSlotsLeft > 0) {
+    if (camp.access !== 'invite' && isPro && slotBalance >= 1) {
+      await consumeCampSlotForCamp(ctx, { userId, campId: camp._id })
       await ctx.db.patch(camp._id, {
         status: 'active',
         frozenAt: undefined,
         reclaimDeadline: undefined,
         updatedAt: now,
       })
-      publicSlotsLeft--
+      slotBalance--
       campsReclaimed++
     } else if (camp.access === 'invite' && privateSlotsLeft > 0) {
       await ctx.db.patch(camp._id, {
