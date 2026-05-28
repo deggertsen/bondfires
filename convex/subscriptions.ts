@@ -49,6 +49,15 @@ type GoogleSubscriptionPurchase = {
   subscriptionState?: string
 }
 
+type GoogleProductPurchase = {
+  orderId?: string
+  purchaseState?: number
+  purchaseTimeMillis?: string
+  consumptionState?: number
+  acknowledgementState?: number
+  quantity?: number
+}
+
 const APPLE_PRODUCTION_API_BASE = 'https://api.storekit.itunes.apple.com'
 const APPLE_SANDBOX_API_BASE = 'https://api.storekit-sandbox.itunes.apple.com'
 const GOOGLE_ANDROID_PUBLISHER_SCOPE = 'https://www.googleapis.com/auth/androidpublisher'
@@ -192,7 +201,17 @@ function decodeAppleSignedTransactionInfo(jws: string): AppleTransactionPayload 
   return JSON.parse(base64UrlDecode(payload)) as AppleTransactionPayload
 }
 
-function mapAppleTransactionStatus(payload: AppleTransactionPayload): VerifiedStoreStatus {
+function mapAppleTransactionStatus(
+  payload: AppleTransactionPayload,
+  kind: StorePurchaseKind,
+): VerifiedStoreStatus {
+  if (kind === 'consumable') {
+    if (payload.type !== 'Consumable') {
+      throw new Error(`Unsupported Apple transaction type: ${payload.type ?? 'unknown'}`)
+    }
+    return 'active'
+  }
+
   if (payload.type !== 'Auto-Renewable Subscription') {
     throw new Error(`Unsupported Apple transaction type: ${payload.type ?? 'unknown'}`)
   }
@@ -202,6 +221,16 @@ function mapAppleTransactionStatus(payload: AppleTransactionPayload): VerifiedSt
   }
 
   return 'expired'
+}
+
+function mapGoogleProductStatus(product: GoogleProductPurchase): StoreSyncStatus {
+  if (product.purchaseState === 0) {
+    return 'active'
+  }
+  if (product.purchaseState === 2) {
+    return 'pending_verification'
+  }
+  return product.purchaseState === 1 ? 'canceled' : 'pending_verification'
 }
 
 function mapGoogleSubscriptionStatus(
@@ -260,6 +289,7 @@ function getGoogleProductId(subscription: GoogleSubscriptionPurchase, fallbackPr
 }
 
 async function verifyAppleStorePurchase(args: {
+  kind: StorePurchaseKind
   storeProductId: string
   storeTransactionId?: string
   storeOriginalTransactionId?: string
@@ -326,12 +356,12 @@ async function verifyAppleStorePurchase(args: {
     }
 
     return {
-      status: mapAppleTransactionStatus(payload),
+      status: mapAppleTransactionStatus(payload, args.kind),
       storeProductId: payload.productId,
       storeTransactionId: payload.transactionId ?? args.storeTransactionId,
       storeOriginalTransactionId:
         payload.originalTransactionId ?? args.storeOriginalTransactionId ?? payload.transactionId,
-      currentPeriodEnd: payload.expiresDate,
+      currentPeriodEnd: args.kind === 'subscription' ? payload.expiresDate : undefined,
     }
   }
 
@@ -381,6 +411,7 @@ async function getGoogleAccessToken() {
 }
 
 async function verifyGoogleStorePurchase(args: {
+  kind: StorePurchaseKind
   storeProductId: string
   storePurchaseToken?: string
 }): Promise<StoreVerificationResult> {
@@ -390,6 +421,36 @@ async function verifyGoogleStorePurchase(args: {
 
   const packageName = readRequiredEnv('GOOGLE_PLAY_PACKAGE_NAME')
   const accessToken = await getGoogleAccessToken()
+  if (args.kind === 'consumable') {
+    const response = await fetch(
+      `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${encodeURIComponent(
+        packageName,
+      )}/purchases/products/${encodeURIComponent(args.storeProductId)}/tokens/${encodeURIComponent(
+        args.storePurchaseToken,
+      )}`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      },
+    )
+
+    if (!response.ok) {
+      throw new Error(
+        `Google purchase verification failed: ${response.status} ${await response.text()}`,
+      )
+    }
+
+    const product = (await response.json()) as GoogleProductPurchase
+    return {
+      status: mapGoogleProductStatus(product),
+      storeProductId: args.storeProductId,
+      storeTransactionId: product.orderId,
+      storeOriginalTransactionId: args.storePurchaseToken,
+      storePurchaseToken: args.storePurchaseToken,
+    }
+  }
+
   const response = await fetch(
     `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${encodeURIComponent(
       packageName,
@@ -538,15 +599,37 @@ async function findExistingConsumablePurchase(
     userId: Id<'users'>
     storeProductId: string
     storeTransactionId?: string
+    storeOriginalTransactionId?: string
+    storePurchaseToken?: string
   },
 ) {
   if (args.storeTransactionId) {
-    const txId = args.storeTransactionId
+    const storeTransactionId = args.storeTransactionId
     const byTransaction = await ctx.db
       .query('consumablePurchases')
-      .withIndex('by_transaction', (q) => q.eq('storeTransactionId', txId))
+      .withIndex('by_transaction', (q) => q.eq('storeTransactionId', storeTransactionId))
       .first()
     if (byTransaction) return byTransaction
+  }
+
+  if (args.storeOriginalTransactionId) {
+    const storeOriginalTransactionId = args.storeOriginalTransactionId
+    const byOriginalTransaction = await ctx.db
+      .query('consumablePurchases')
+      .withIndex('by_store_transaction', (q) =>
+        q.eq('storeOriginalTransactionId', storeOriginalTransactionId),
+      )
+      .first()
+    if (byOriginalTransaction) return byOriginalTransaction
+  }
+
+  if (args.storePurchaseToken) {
+    const storePurchaseToken = args.storePurchaseToken
+    const byPurchaseToken = await ctx.db
+      .query('consumablePurchases')
+      .withIndex('by_store_purchase_token', (q) => q.eq('storePurchaseToken', storePurchaseToken))
+      .first()
+    if (byPurchaseToken) return byPurchaseToken
   }
 
   const pendingPurchases = await ctx.db
@@ -659,8 +742,16 @@ export const syncStorePurchase = mutation({
     const now = Date.now()
     const storeOriginalTransactionId = getStoreOriginalTransactionId(args)
     let syncStatus: StoreSyncStatus = 'pending_verification'
+    const consumableStoreTransactionId =
+      args.storeTransactionId ?? storeOriginalTransactionId ?? args.storePurchaseToken
     const receiptFields = {
       storeTransactionId: args.storeTransactionId,
+      storeOriginalTransactionId,
+      storePurchaseToken: args.storePurchaseToken,
+      updatedAt: now,
+    }
+    const consumableReceiptFields = {
+      storeTransactionId: consumableStoreTransactionId,
       storeOriginalTransactionId,
       storePurchaseToken: args.storePurchaseToken,
       updatedAt: now,
@@ -716,7 +807,9 @@ export const syncStorePurchase = mutation({
       const existing = await findExistingConsumablePurchase(ctx, {
         userId,
         storeProductId: args.storeProductId,
-        storeTransactionId: args.storeTransactionId,
+        storeTransactionId: consumableStoreTransactionId,
+        storeOriginalTransactionId,
+        storePurchaseToken: args.storePurchaseToken,
       })
       if (existing && existing.userId !== userId) {
         throw new Error('This store purchase is already linked to another account')
@@ -728,17 +821,24 @@ export const syncStorePurchase = mutation({
           if (existing.storeProductId !== args.storeProductId) {
             throw new Error('Store product changes require server verification')
           }
-          await ctx.db.patch(existing._id, receiptFields)
+          await ctx.db.patch(existing._id, consumableReceiptFields)
         } else {
           await ctx.db.patch(existing._id, {
-            ...pendingStoreFields,
+            userId,
             verificationStatus: 'pending' as const,
+            platform: args.platform,
+            storeProductId: args.storeProductId,
+            ...consumableReceiptFields,
+            quantity: getSlotQuantityForProduct(args.storeProductId),
           })
         }
       } else {
         await ctx.db.insert('consumablePurchases', {
-          ...pendingStoreFields,
-          storeTransactionId: args.storeTransactionId ?? '',
+          userId,
+          verificationStatus: 'pending' as const,
+          platform: args.platform,
+          storeProductId: args.storeProductId,
+          ...consumableReceiptFields,
           quantity: getSlotQuantityForProduct(args.storeProductId),
           createdAt: args.purchasedAt ?? now,
         })
@@ -845,14 +945,21 @@ export const applyStorePurchaseVerification = internalMutation({
       const consumableLookup = {
         userId: args.userId,
         storeProductId: args.storeProductId,
-        storeTransactionId: args.storeTransactionId ?? '',
+        storeTransactionId: args.storeTransactionId,
+        storeOriginalTransactionId: args.storeOriginalTransactionId,
+        storePurchaseToken: args.storePurchaseToken,
       }
       const existing =
         (await findExistingConsumablePurchase(ctx, consumableLookup)) ??
         (await findExistingConsumablePurchase(ctx, {
           userId: args.userId,
           storeProductId: args.requestedStoreProductId,
-          storeTransactionId: args.lookupStoreTransactionId ?? '',
+          storeTransactionId: args.lookupStoreTransactionId,
+          storeOriginalTransactionId:
+            args.lookupStoreOriginalTransactionId ??
+            args.lookupStoreTransactionId ??
+            args.lookupStorePurchaseToken,
+          storePurchaseToken: args.lookupStorePurchaseToken,
         }))
 
       if (existing && existing.userId !== args.userId) {
@@ -864,16 +971,24 @@ export const applyStorePurchaseVerification = internalMutation({
         userId: args.userId,
         platform: args.platform as 'ios' | 'android',
         storeProductId: args.storeProductId,
-        storeTransactionId: args.storeTransactionId ?? '',
+        storeTransactionId:
+          args.storeTransactionId ?? args.storeOriginalTransactionId ?? args.storePurchaseToken,
+        storeOriginalTransactionId:
+          args.storeOriginalTransactionId ?? args.storeTransactionId ?? args.storePurchaseToken,
+        storePurchaseToken: args.storePurchaseToken,
         quantity,
         verificationStatus,
         verifiedAt: verificationStatus === 'verified' ? now : undefined,
+        updatedAt: now,
       }
+      const alreadyVerified = existing?.verificationStatus === 'verified'
+      let consumablePurchaseId: Id<'consumablePurchases'>
 
       if (existing) {
         await ctx.db.patch(existing._id, fields)
+        consumablePurchaseId = existing._id
       } else {
-        await ctx.db.insert('consumablePurchases', {
+        consumablePurchaseId = await ctx.db.insert('consumablePurchases', {
           ...fields,
           createdAt: now,
         })
@@ -882,14 +997,21 @@ export const applyStorePurchaseVerification = internalMutation({
       appliedStatus = args.status
 
       // On verified consumable purchase, insert iap_purchase ledger entry
-      if (verificationStatus === 'verified' && statusUnlocksEntitlements(args.status)) {
+      if (
+        !alreadyVerified &&
+        verificationStatus === 'verified' &&
+        statusUnlocksEntitlements(args.status)
+      ) {
         await ctx.db.insert('campSlotTransactions', {
           userId: args.userId,
           type: 'iap_purchase',
           amount: quantity,
           metadata: {
+            consumablePurchaseId,
             storeProductId: args.storeProductId,
             storeTransactionId: args.storeTransactionId,
+            storeOriginalTransactionId: args.storeOriginalTransactionId,
+            storePurchaseToken: args.storePurchaseToken,
             platform: args.platform,
           },
           createdAt: now,
@@ -924,7 +1046,10 @@ export const markStorePurchaseVerificationFailed = internalMutation({
     const consumableLookup = {
       userId: args.userId,
       storeProductId: args.storeProductId,
-      storeTransactionId: args.storeTransactionId ?? '',
+      storeTransactionId: args.storeTransactionId,
+      storeOriginalTransactionId:
+        args.storeOriginalTransactionId ?? args.storeTransactionId ?? args.storePurchaseToken,
+      storePurchaseToken: args.storePurchaseToken,
     }
     const existing =
       args.kind === 'subscription'
@@ -969,8 +1094,8 @@ export const verifyStorePurchase = action({
     try {
       const verification =
         args.platform === 'ios'
-          ? await verifyAppleStorePurchase(args)
-          : await verifyGoogleStorePurchase(args)
+          ? await verifyAppleStorePurchase({ ...args, kind })
+          : await verifyGoogleStorePurchase({ ...args, kind })
 
       assertStoreProductMatchesKind(verification.storeProductId, kind)
 

@@ -244,14 +244,19 @@ export default defineSchema({
     userId: v.id('users'),
     platform: storePlatform,
     storeProductId: v.string(),
-    storeTransactionId: v.string(),
+    storeTransactionId: v.optional(v.string()),
+    storeOriginalTransactionId: v.optional(v.string()),
+    storePurchaseToken: v.optional(v.string()),
     quantity: v.number(), // how many slots purchased
     verificationStatus: storeVerificationStatus,
     verifiedAt: v.optional(v.number()),
     createdAt: v.number(),
+    updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
-    .index('by_transaction', ['storeTransactionId']),
+    .index('by_transaction', ['storeTransactionId'])
+    .index('by_store_transaction', ['storeOriginalTransactionId'])
+    .index('by_store_purchase_token', ['storePurchaseToken']),
 
   // Bondfires - main video posts
   bondfires: defineTable({

@@ -1,9 +1,9 @@
 import { v } from 'convex/values'
-import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalMutation, mutation, query } from './_generated/server'
 import { auth } from './auth'
+import { consumeCampSlotForCamp } from './campSlots'
 import type { SubscriptionTier } from './entitlements'
 import {
   assertCanCreatePrivateCamp,
@@ -1631,8 +1631,8 @@ export const createPublicCamp = mutation({
       await refreshActiveMemberCount(ctx, campId)
     }
 
-    // Consume 1 slot for the first month
-    await ctx.runMutation(internal.campSlots.consumeCampSlot, {
+    // Consume 1 slot for the first month in the same transaction.
+    await consumeCampSlotForCamp(ctx, {
       userId: user._id,
       campId,
     })

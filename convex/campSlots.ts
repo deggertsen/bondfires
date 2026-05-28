@@ -26,7 +26,7 @@ import { throwUserError } from './errors'
  * Balance = SUM(positive amounts) − SUM(absolute value of negative amounts).
  * Always computed, never stored.
  */
-async function computeSlotBalance(
+export async function computeSlotBalance(
   ctx: QueryCtx | MutationCtx,
   userId: Id<'users'>,
 ): Promise<number> {
@@ -36,6 +36,32 @@ async function computeSlotBalance(
     .collect()
 
   return transactions.reduce((balance, tx) => balance + tx.amount, 0)
+}
+
+export async function consumeCampSlotForCamp(
+  ctx: MutationCtx,
+  args: { userId: Id<'users'>; campId: Id<'camps'> },
+): Promise<{ newBalance: number }> {
+  const balance = await computeSlotBalance(ctx, args.userId)
+
+  if (balance < 1) {
+    throw new Error(
+      `Insufficient slot balance: ${balance} available, 1 required for camp ${args.campId}`,
+    )
+  }
+
+  const now = Date.now()
+  await ctx.db.insert('campSlotTransactions', {
+    userId: args.userId,
+    type: 'monthly_consumption',
+    amount: -1,
+    campId: args.campId,
+    periodStart: now,
+    periodEnd: now + 30 * 24 * 60 * 60 * 1000,
+    createdAt: now,
+  })
+
+  return { newBalance: balance - 1 }
 }
 
 // ── Queries ─────────────────────────────────────────────────────────────────
@@ -94,26 +120,7 @@ export const consumeCampSlot = internalMutation({
     campId: v.id('camps'),
   },
   handler: async (ctx, args): Promise<{ newBalance: number }> => {
-    const balance = await computeSlotBalance(ctx, args.userId)
-
-    if (balance < 1) {
-      throw new Error(
-        `Insufficient slot balance: ${balance} available, 1 required for camp ${args.campId}`,
-      )
-    }
-
-    const now = Date.now()
-    await ctx.db.insert('campSlotTransactions', {
-      userId: args.userId,
-      type: 'monthly_consumption',
-      amount: -1,
-      campId: args.campId,
-      periodStart: now,
-      periodEnd: now + 30 * 24 * 60 * 60 * 1000, // 30 days
-      createdAt: now,
-    })
-
-    return { newBalance: balance - 1 }
+    return await consumeCampSlotForCamp(ctx, args)
   },
 })
 
