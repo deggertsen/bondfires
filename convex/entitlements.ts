@@ -49,9 +49,6 @@ export const PLUS_PRIVATE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 /** Maximum active private camps a Plus/Premium user may own. */
 export const MAX_PRIVATE_CAMPS_FOR_NON_PRO = 1
 
-/** Additional public-camp capacity granted by one verified extra-camp add-on. */
-export const EXTRA_CAMPS_PER_ADD_ON = 1
-
 /** Reclaim window: owners have this many milliseconds to resubscribe and reclaim
  * frozen camps before they become eligible for transfer to another Pro member. */
 export const CAMP_RECLAIM_WINDOW_MS = 30 * 24 * 60 * 60 * 1000 // 30 days
@@ -91,59 +88,16 @@ export async function getActiveSubscriptionTier(
   )
 }
 
-export async function getExtraCampAddOnCount(
-  ctx: QueryCtx | MutationCtx,
-  userId: Id<'users'>,
-): Promise<number> {
-  const now = Date.now()
-  const addOns = await ctx.db
-    .query('subscriptionAddOns')
-    .withIndex('by_user', (q) => q.eq('userId', userId))
-    .collect()
-
-  return addOns.filter(
-    (addOn) =>
-      addOn.type === 'extra_camp' &&
-      addOn.verificationStatus === 'verified' &&
-      (addOn.status === 'active' || addOn.status === 'trialing') &&
-      (!addOn.currentPeriodEnd || addOn.currentPeriodEnd > now),
-  ).length
-}
-
-async function getPublicCampLimitForTier(
-  ctx: QueryCtx | MutationCtx,
-  userId: Id<'users'>,
-  tier: SubscriptionTier,
-): Promise<number> {
-  if (TIER_RANK[tier] < TIER_RANK.pro) {
-    return 0
-  }
-
-  const extraCampAddOns = await getExtraCampAddOnCount(ctx, userId)
-  return TIER_CAMP_LIMITS.pro.publicCamps + extraCampAddOns * EXTRA_CAMPS_PER_ADD_ON
-}
-
-/** Base camp limits by tier. Only Pro can create public camps. */
+/** Base camp limits by tier. Pro public camp limit is governed by slot balance, not a hard cap. */
 export const TIER_CAMP_LIMITS: Record<
   SubscriptionTier,
-  { publicCamps: number; privateCamps: number }
+  { publicCamps?: number; privateCamps: number }
 > = {
-  free: { publicCamps: 0, privateCamps: 0 },
-  plus: { publicCamps: 0, privateCamps: 1 },
-  premium: { publicCamps: 0, privateCamps: 1 },
-  pro: { publicCamps: 3, privateCamps: 1 },
-}
-
-/**
- * Returns the current public-camp allowance for a Pro user, including verified
- * extra-camp add-ons. Non-Pro users have no public-camp creation allowance.
- */
-export async function getPublicCampLimit(
-  ctx: QueryCtx | MutationCtx,
-  userId: Id<'users'>,
-): Promise<number> {
-  const tier = await getEntitlementSubscriptionTier(ctx, userId)
-  return await getPublicCampLimitForTier(ctx, userId, tier)
+  free: { privateCamps: 0 },
+  plus: { privateCamps: 1 },
+  premium: { privateCamps: 1 },
+  pro: { privateCamps: 1 },
+  // Pro public camps are limited by slot balance only — no hard cap.
 }
 
 /**
@@ -318,18 +272,18 @@ export async function assertCanCreatePublicCamp(
     throwUserError('Creating public camps requires a Pro subscription')
   }
 
-  // Pro users may own at most the base Pro allowance plus verified add-ons.
-  const publicCampLimit = await getPublicCampLimit(ctx, userId)
-  const existingPublicCamps = await ctx.db
-    .query('camps')
-    .withIndex('by_owner', (q) => q.eq('ownerId', userId))
+  // Public camp creation is limited by slot balance, not a hard count cap.
+  // The calling mutation (createPublicCamp) will also call consumeCampSlot
+  // which enforces balance ≥ 1. We do a lightweight balance check here to
+  // give an earlier, clearer error message.
+  const transactions = await ctx.db
+    .query('campSlotTransactions')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
     .collect()
-  const activePublicCampCount = existingPublicCamps.filter(
-    (camp) => camp.access !== 'invite' && (camp.status === 'active' || camp.status === 'frozen'),
-  ).length
+  const balance = transactions.reduce((sum, tx) => sum + tx.amount, 0)
 
-  if (activePublicCampCount >= publicCampLimit) {
-    throwUserError(`You have reached the limit of ${publicCampLimit} public camps`)
+  if (balance < 1) {
+    throwUserError('You need at least 1 available slot to create a public camp')
   }
 
   return tier
@@ -406,12 +360,14 @@ export async function assertVideoDurationWithinTierLimit(
 // ---------------------------------------------------------------------------
 
 async function getCampLimitsForTier(
-  ctx: QueryCtx | MutationCtx,
-  userId: Id<'users'>,
+  _ctx: QueryCtx | MutationCtx,
+  _userId: Id<'users'>,
   tier: SubscriptionTier,
 ) {
+  // For public camps: Pro has no hard cap — limited by slot balance.
+  // For private camps: limits are per TIER_CAMP_LIMITS.
   return {
-    publicCamps: await getPublicCampLimitForTier(ctx, userId, tier),
+    publicCamps: TIER_RANK[tier] >= TIER_RANK.pro ? Number.POSITIVE_INFINITY : 0,
     privateCamps: TIER_CAMP_LIMITS[tier].privateCamps,
   }
 }
@@ -489,49 +445,16 @@ export async function handleTierDowngrade(
   userId: Id<'users'>,
   previousTier: SubscriptionTier,
   newTier: SubscriptionTier,
-): Promise<{ campsFrozen: number; addOnsRevoked: number }> {
+): Promise<{ campsFrozen: number }> {
   // Only act on actual downgrades
   if (TIER_RANK[newTier] >= TIER_RANK[previousTier]) {
-    return { campsFrozen: 0, addOnsRevoked: 0 }
+    return { campsFrozen: 0 }
   }
 
-  let addOnsRevoked = 0
-
-  // Revoke extra-camp add-ons if no longer Pro
-  if (TIER_RANK[newTier] < TIER_RANK.pro) {
-    const now = Date.now()
-    const addOns = await ctx.db
-      .query('subscriptionAddOns')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .collect()
-
-    for (const addOn of addOns) {
-      if (
-        addOn.type === 'extra_camp' &&
-        addOn.verificationStatus === 'verified' &&
-        (addOn.status === 'active' || addOn.status === 'trialing')
-      ) {
-        console.warn(
-          '[entitlements] Revoking active extra-camp add-on because Pro is no longer active',
-          {
-            userId,
-            addOnId: addOn._id,
-            storeProductId: addOn.storeProductId,
-            previousTier,
-            newTier,
-          },
-        )
-        await ctx.db.patch(addOn._id, {
-          status: 'expired',
-          updatedAt: now,
-        })
-        addOnsRevoked++
-      }
-    }
-  }
-
+  // No more add-ons to revoke — slots are consumable.
+  // Just freeze excess owned camps based on the new tier's limits.
   const { campsFrozen } = await freezeExcessOwnedCamps(ctx, userId, newTier)
-  return { campsFrozen, addOnsRevoked }
+  return { campsFrozen }
 }
 
 /**
@@ -558,7 +481,6 @@ export async function handleTierUpgrade(
     .collect()
 
   // Count currently active camps
-  const activePublicCamps = userCamps.filter((c) => c.access !== 'invite' && c.status === 'active')
   const activePrivateCamps = userCamps.filter((c) => c.access === 'invite' && c.status === 'active')
 
   const frozenCamps = userCamps
@@ -566,15 +488,10 @@ export async function handleTierUpgrade(
     .sort((a, b) => a.createdAt - b.createdAt) // Oldest first
 
   let campsUnfrozen = 0
-  let publicSlotsLeft =
-    (TIER_RANK[newTier] >= TIER_RANK.pro ? limits.publicCamps : 0) - activePublicCamps.length
+  // Pro has no hard public camp limit (governed by slot balance).
+  // Private camp limit is per TIER_CAMP_LIMITS.
+  let publicSlotsLeft = TIER_RANK[newTier] >= TIER_RANK.pro ? Number.POSITIVE_INFINITY : 0
   let privateSlotsLeft = limits.privateCamps - activePrivateCamps.length
-
-  // Extra camp add-ons increase public camp allowance for Pro
-  if (TIER_RANK[newTier] >= TIER_RANK.pro) {
-    const extraCamps = await getExtraCampAddOnCount(ctx, userId)
-    publicSlotsLeft += extraCamps * EXTRA_CAMPS_PER_ADD_ON
-  }
 
   for (const camp of frozenCamps) {
     if (camp.access !== 'invite' && publicSlotsLeft > 0) {
@@ -633,22 +550,12 @@ export async function reclaimFrozenCamps(
   }
 
   // Count currently active camps
-  const activePublicCamps = frozenUserCamps.filter(
-    (c) => c.access !== 'invite' && c.status === 'active',
-  )
   const activePrivateCamps = frozenUserCamps.filter(
     (c) => c.access === 'invite' && c.status === 'active',
   )
 
-  let publicSlotsLeft =
-    (TIER_RANK[tier] >= TIER_RANK.pro ? limits.publicCamps : 0) - activePublicCamps.length
+  let publicSlotsLeft = TIER_RANK[tier] >= TIER_RANK.pro ? Number.POSITIVE_INFINITY : 0
   let privateSlotsLeft = limits.privateCamps - activePrivateCamps.length
-
-  // Extra camp add-ons increase public camp allowance for Pro
-  if (TIER_RANK[tier] >= TIER_RANK.pro) {
-    const extraCamps = await getExtraCampAddOnCount(ctx, userId)
-    publicSlotsLeft += extraCamps * EXTRA_CAMPS_PER_ADD_ON
-  }
 
   let campsReclaimed = 0
 

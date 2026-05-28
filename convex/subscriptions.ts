@@ -5,11 +5,8 @@ import type { MutationCtx } from './_generated/server'
 import { action, internalMutation, mutation, query } from './_generated/server'
 import { auth } from './auth'
 import {
-  freezeExcessOwnedCamps,
   getActiveSubscriptionTier,
   getEntitlementSubscriptionTier,
-  getExtraCampAddOnCount,
-  getPublicCampLimit,
   getTierMaxVideoDurationMs,
   handleTierDowngrade,
   handleTierUpgrade,
@@ -21,7 +18,7 @@ import {
 } from './entitlements'
 
 type SubscriptionPlatform = 'ios' | 'android'
-type StorePurchaseKind = 'subscription' | 'extraCamp'
+type StorePurchaseKind = 'subscription' | 'consumable'
 type VerifiedStoreStatus = 'active' | 'trialing' | 'past_due' | 'canceled' | 'expired'
 type StoreSyncStatus = 'pending_verification' | VerifiedStoreStatus
 
@@ -66,7 +63,7 @@ const storeStatusValidator = v.union(
   v.literal('expired'),
 )
 
-const storePurchaseKindValidator = v.union(v.literal('subscription'), v.literal('extraCamp'))
+const storePurchaseKindValidator = v.union(v.literal('subscription'), v.literal('consumable'))
 
 const PRODUCT_ID_TO_TIER: Record<string, SubscriptionTier | undefined> = {
   'bondfires.plus.monthly': 'plus',
@@ -77,18 +74,16 @@ const PRODUCT_ID_TO_TIER: Record<string, SubscriptionTier | undefined> = {
   'bondfires.pro.annual': 'pro',
 }
 
-const EXTRA_CAMP_PRODUCT_IDS = new Set([
-  'bondfires.extra_camp.monthly',
-  'bondfires.extra_camp.annual',
-])
+/** Product IDs matching consumable slot pack purchases. */
+const CONSUMABLE_PRODUCT_PATTERN = /^bondfires\.extra_camp\./
 
 function getStorePurchaseKind(storeProductId: string): StorePurchaseKind | null {
   if (PRODUCT_ID_TO_TIER[storeProductId]) {
     return 'subscription'
   }
 
-  if (EXTRA_CAMP_PRODUCT_IDS.has(storeProductId)) {
-    return 'extraCamp'
+  if (CONSUMABLE_PRODUCT_PATTERN.test(storeProductId)) {
+    return 'consumable'
   }
 
   return null
@@ -453,20 +448,27 @@ function assertStoreIdentifiers(args: {
 }
 
 function getVerifiedSyncStatus(existing?: {
-  status: string
+  status?: string
   verificationStatus?: string
 }): StoreSyncStatus {
+  // Subscriptions have separate status + verificationStatus
   if (
     existing?.verificationStatus === 'verified' &&
+    existing?.status &&
     (existing.status === 'active' || existing.status === 'trialing')
   ) {
     return existing.status
   }
 
+  // Consumable purchases are verified once; no separate status field
+  if (existing?.verificationStatus === 'verified') {
+    return 'active'
+  }
+
   return 'pending_verification'
 }
 
-function isVerifiedActiveStoreRecord(existing?: { status: string; verificationStatus?: string }) {
+function isVerifiedActiveStoreRecord(existing?: { status?: string; verificationStatus?: string }) {
   return getVerifiedSyncStatus(existing) !== 'pending_verification'
 }
 
@@ -519,41 +521,46 @@ async function findExistingSubscription(
   )
 }
 
-async function findExistingAddOn(
+function getSlotQuantityForProduct(storeProductId: string): number {
+  // Product IDs: bondfires.extra_camp.1, bondfires.extra_camp.5, bondfires.extra_camp.10
+  const match = storeProductId.match(/\.(\d+)$/)
+  if (match) {
+    const qty = Number.parseInt(match[1], 10)
+    if (qty > 0) return qty
+  }
+  // Fallback for legacy product IDs
+  return 1
+}
+
+async function findExistingConsumablePurchase(
   ctx: MutationCtx,
   args: {
     userId: Id<'users'>
     storeProductId: string
-    storeOriginalTransactionId?: string
-    storePurchaseToken?: string
+    storeTransactionId?: string
   },
 ) {
-  if (args.storeOriginalTransactionId) {
-    const byOriginalTransaction = await ctx.db
-      .query('subscriptionAddOns')
-      .withIndex('by_store_transaction', (q) =>
-        q.eq('storeOriginalTransactionId', args.storeOriginalTransactionId),
-      )
+  if (args.storeTransactionId) {
+    const txId = args.storeTransactionId
+    const byTransaction = await ctx.db
+      .query('consumablePurchases')
+      .withIndex('by_transaction', (q) => q.eq('storeTransactionId', txId))
       .first()
-    if (byOriginalTransaction) return byOriginalTransaction
+    if (byTransaction) return byTransaction
   }
 
-  if (args.storePurchaseToken) {
-    const byPurchaseToken = await ctx.db
-      .query('subscriptionAddOns')
-      .withIndex('by_store_purchase_token', (q) =>
-        q.eq('storePurchaseToken', args.storePurchaseToken),
-      )
-      .first()
-    if (byPurchaseToken) return byPurchaseToken
-  }
-
-  const pendingAddOns = await ctx.db
-    .query('subscriptionAddOns')
-    .withIndex('by_user', (q) => q.eq('userId', args.userId).eq('status', 'pending_verification'))
+  const pendingPurchases = await ctx.db
+    .query('consumablePurchases')
+    .withIndex('by_user', (q) => q.eq('userId', args.userId))
     .collect()
 
-  return pendingAddOns.find((addOn) => addOn.storeProductId === args.storeProductId) ?? null
+  return (
+    pendingPurchases.find(
+      (purchase) =>
+        purchase.storeProductId === args.storeProductId &&
+        purchase.verificationStatus === 'pending',
+    ) ?? null
+  )
 }
 
 export const current = query({
@@ -587,18 +594,24 @@ export const current = query({
       ).length +
       (
         await ctx.db
-          .query('subscriptionAddOns')
-          .withIndex('by_user', (q) => q.eq('userId', userId).eq('status', 'pending_verification'))
+          .query('consumablePurchases')
+          .withIndex('by_user', (q) => q.eq('userId', userId))
           .collect()
-      ).filter((addOn) => addOn.verificationStatus === 'pending').length
+      ).filter((purchase) => purchase.verificationStatus === 'pending').length
+
+    // Compute slot balance from ledger
+    const slotTransactions = await ctx.db
+      .query('campSlotTransactions')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect()
+    const slotBalance = slotTransactions.reduce((sum, tx) => sum + tx.amount, 0)
 
     return {
       tier,
       subscription,
       canCreateBondfires: tierCanCreateBondfires(tier),
       maxVideoDurationMs: getTierMaxVideoDurationMs(tier),
-      extraCampAddOns: await getExtraCampAddOnCount(ctx, userId),
-      publicCampLimit: await getPublicCampLimit(ctx, userId),
+      slotBalance,
       pendingStorePurchaseCount,
     }
   },
@@ -699,33 +712,34 @@ export const syncStorePurchase = mutation({
         })
       }
     } else {
-      const existing = await findExistingAddOn(ctx, {
+      // Consumable purchase (slot pack)
+      const existing = await findExistingConsumablePurchase(ctx, {
         userId,
         storeProductId: args.storeProductId,
-        storeOriginalTransactionId,
-        storePurchaseToken: args.storePurchaseToken,
+        storeTransactionId: args.storeTransactionId,
       })
       if (existing && existing.userId !== userId) {
-        throw new Error('This store add-on is already linked to another account')
+        throw new Error('This store purchase is already linked to another account')
       }
 
       if (existing) {
         syncStatus = getVerifiedSyncStatus(existing)
         if (isVerifiedActiveStoreRecord(existing)) {
           if (existing.storeProductId !== args.storeProductId) {
-            throw new Error('Store add-on product changes require server verification')
+            throw new Error('Store product changes require server verification')
           }
           await ctx.db.patch(existing._id, receiptFields)
         } else {
           await ctx.db.patch(existing._id, {
             ...pendingStoreFields,
-            type: 'extra_camp',
+            verificationStatus: 'pending' as const,
           })
         }
       } else {
-        await ctx.db.insert('subscriptionAddOns', {
+        await ctx.db.insert('consumablePurchases', {
           ...pendingStoreFields,
-          type: 'extra_camp',
+          storeTransactionId: args.storeTransactionId ?? '',
+          quantity: getSlotQuantityForProduct(args.storeProductId),
           createdAt: args.purchasedAt ?? now,
         })
       }
@@ -827,69 +841,59 @@ export const applyStorePurchaseVerification = internalMutation({
         }
       }
     } else {
+      // Consumable purchase verification (slot pack)
+      const consumableLookup = {
+        userId: args.userId,
+        storeProductId: args.storeProductId,
+        storeTransactionId: args.storeTransactionId ?? '',
+      }
       const existing =
-        (await findExistingAddOn(ctx, lookup)) ??
-        (await findExistingAddOn(ctx, {
+        (await findExistingConsumablePurchase(ctx, consumableLookup)) ??
+        (await findExistingConsumablePurchase(ctx, {
           userId: args.userId,
-          storeProductId: args.storeProductId,
-          storeOriginalTransactionId: args.storeOriginalTransactionId,
-          storePurchaseToken: args.storePurchaseToken,
+          storeProductId: args.requestedStoreProductId,
+          storeTransactionId: args.lookupStoreTransactionId ?? '',
         }))
 
       if (existing && existing.userId !== args.userId) {
-        throw new Error('This store add-on is already linked to another account')
+        throw new Error('This store purchase is already linked to another account')
       }
 
+      const quantity = getSlotQuantityForProduct(args.storeProductId)
       const fields = {
         userId: args.userId,
-        type: 'extra_camp' as const,
-        status: args.status,
-        verificationStatus,
-        platform: args.platform,
+        platform: args.platform as 'ios' | 'android',
         storeProductId: args.storeProductId,
-        storeTransactionId: args.storeTransactionId,
-        storeOriginalTransactionId: args.storeOriginalTransactionId,
-        storePurchaseToken: args.storePurchaseToken,
-        currentPeriodEnd: args.currentPeriodEnd,
+        storeTransactionId: args.storeTransactionId ?? '',
+        quantity,
+        verificationStatus,
         verifiedAt: verificationStatus === 'verified' ? now : undefined,
-        updatedAt: now,
-      }
-      const userTier = await getEntitlementSubscriptionTier(ctx, args.userId)
-      const statusWouldUnlockEntitlement = statusUnlocksEntitlements(args.status)
-      const canActivateAddOn = !statusWouldUnlockEntitlement || TIER_RANK[userTier] >= TIER_RANK.pro
-      const appliedFields = {
-        ...fields,
-        status: canActivateAddOn ? fields.status : ('expired' as const),
-      }
-      appliedStatus = appliedFields.status
-
-      if (!canActivateAddOn && statusWouldUnlockEntitlement) {
-        console.warn(
-          '[subscriptions] Extra-camp add-on is active while Pro is no longer active; revoking entitlement',
-          {
-            userId: args.userId,
-            storeProductId: args.storeProductId,
-            userTier,
-            status: args.status,
-          },
-        )
       }
 
       if (existing) {
-        await ctx.db.patch(existing._id, appliedFields)
+        await ctx.db.patch(existing._id, fields)
       } else {
-        await ctx.db.insert('subscriptionAddOns', {
-          ...appliedFields,
+        await ctx.db.insert('consumablePurchases', {
+          ...fields,
           createdAt: now,
         })
       }
 
-      if (verificationStatus === 'verified') {
-        if (statusUnlocksEntitlements(appliedFields.status)) {
-          await reclaimFrozenCamps(ctx, args.userId, userTier)
-        } else {
-          await freezeExcessOwnedCamps(ctx, args.userId, userTier)
-        }
+      appliedStatus = args.status
+
+      // On verified consumable purchase, insert iap_purchase ledger entry
+      if (verificationStatus === 'verified' && statusUnlocksEntitlements(args.status)) {
+        await ctx.db.insert('campSlotTransactions', {
+          userId: args.userId,
+          type: 'iap_purchase',
+          amount: quantity,
+          metadata: {
+            storeProductId: args.storeProductId,
+            storeTransactionId: args.storeTransactionId,
+            platform: args.platform,
+          },
+          createdAt: now,
+        })
       }
     }
 
@@ -917,10 +921,15 @@ export const markStorePurchaseVerificationFailed = internalMutation({
         args.storeOriginalTransactionId ?? args.storeTransactionId ?? args.storePurchaseToken,
       storePurchaseToken: args.storePurchaseToken,
     }
+    const consumableLookup = {
+      userId: args.userId,
+      storeProductId: args.storeProductId,
+      storeTransactionId: args.storeTransactionId ?? '',
+    }
     const existing =
       args.kind === 'subscription'
         ? await findExistingSubscription(ctx, lookup)
-        : await findExistingAddOn(ctx, lookup)
+        : await findExistingConsumablePurchase(ctx, consumableLookup)
 
     if (!existing || existing.userId !== args.userId || isVerifiedActiveStoreRecord(existing)) {
       return

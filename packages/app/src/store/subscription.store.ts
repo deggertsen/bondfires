@@ -18,7 +18,7 @@ export const SUBSCRIPTION_PRODUCT_IDS = {
 
 export type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'
 export type BillingPeriod = 'monthly' | 'annual'
-export type StorePurchaseKind = 'subscription' | 'extraCamp'
+export type StorePurchaseKind = 'subscription' | 'consumable'
 
 export const TIER_PRODUCT_IDS: Record<
   Exclude<SubscriptionTier, 'free'>,
@@ -66,8 +66,8 @@ export const PRODUCT_ID_TO_PURCHASE_KIND: Record<string, StorePurchaseKind | und
   [SUBSCRIPTION_PRODUCT_IDS.premiumAnnual]: 'subscription',
   [SUBSCRIPTION_PRODUCT_IDS.proMonthly]: 'subscription',
   [SUBSCRIPTION_PRODUCT_IDS.proAnnual]: 'subscription',
-  [SUBSCRIPTION_PRODUCT_IDS.extraCampMonthly]: 'extraCamp',
-  [SUBSCRIPTION_PRODUCT_IDS.extraCampAnnual]: 'extraCamp',
+  [SUBSCRIPTION_PRODUCT_IDS.extraCampMonthly]: 'consumable',
+  [SUBSCRIPTION_PRODUCT_IDS.extraCampAnnual]: 'consumable',
 }
 
 export const ALL_SUBSCRIPTION_PRODUCT_IDS = Object.values(SUBSCRIPTION_PRODUCT_IDS)

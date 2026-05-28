@@ -1,4 +1,5 @@
 import { v } from 'convex/values'
+import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalMutation, mutation, query } from './_generated/server'
@@ -6,6 +7,7 @@ import { auth } from './auth'
 import type { SubscriptionTier } from './entitlements'
 import {
   assertCanCreatePrivateCamp,
+  assertCanCreatePublicCamp,
   getEntitlementSubscriptionTier,
   PAID_TIERS,
   TIER_RANK,
@@ -258,6 +260,15 @@ async function getCurrentUser(ctx: QueryCtx | MutationCtx) {
   }
 
   return user
+}
+
+function normalizeCampSlug(name: string) {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64)
 }
 
 function normalizePrivateCampSlug(name: string, userId: Id<'users'>) {
@@ -1467,6 +1478,166 @@ export const assignArenaToUnassignedBondfires = mutation({
       updated,
       remainingMayExist: bondfires.length === limit,
     }
+  },
+})
+
+/**
+ * Create a public camp. Requires Pro subscription and at least 1 available slot.
+ * Immediately consumes 1 slot for the first month.
+ */
+export const createPublicCamp = mutation({
+  args: {
+    name: v.string(),
+    purpose: v.string(),
+    defaultPrompt: v.optional(v.string()),
+    icon: v.optional(v.string()),
+    color: v.optional(v.string()),
+    access: v.optional(v.union(v.literal('open'), v.literal('approval'))),
+    rules: v.optional(
+      v.object({
+        access: v.optional(
+          v.object({
+            gender: v.optional(
+              v.object({
+                value: v.union(v.literal('male'), v.literal('female'), v.literal('any')),
+                visibilityMode: v.optional(v.union(v.literal('hide'), v.literal('gate'))),
+              }),
+            ),
+            allowedTiers: v.optional(
+              v.object({
+                value: v.optional(
+                  v.array(
+                    v.union(
+                      v.literal('free'),
+                      v.literal('plus'),
+                      v.literal('premium'),
+                      v.literal('pro'),
+                    ),
+                  ),
+                ),
+                visibilityMode: v.optional(v.union(v.literal('hide'), v.literal('gate'))),
+              }),
+            ),
+            minAge: v.optional(
+              v.object({
+                value: v.optional(v.number()),
+                visibilityMode: v.optional(v.union(v.literal('hide'), v.literal('gate'))),
+              }),
+            ),
+          }),
+        ),
+        advisory: v.optional(
+          v.object({
+            guidelines: v.optional(v.array(v.string())),
+          }),
+        ),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUser(ctx)
+
+    // Validate Pro subscription and slot balance
+    await assertCanCreatePublicCamp(ctx, user._id)
+
+    const name = args.name.trim()
+    if (name.length < 3) {
+      throwUserError('Camp name must be at least 3 characters')
+    }
+
+    const purpose = args.purpose.trim()
+    if (purpose.length < 10) {
+      throwUserError('Purpose must be at least 10 characters')
+    }
+
+    const now = Date.now()
+    const slug = normalizeCampSlug(name)
+
+    // Idempotency: slug uniqueness enforced
+    const existingSlug = await findCampBySlug(ctx, slug)
+    if (existingSlug) {
+      throwUserError('A camp with a similar name already exists')
+    }
+
+    const campId = await ctx.db.insert('camps', {
+      slug,
+      name,
+      purpose,
+      icon: args.icon ?? 'campfire',
+      color: args.color ?? '#f97316',
+      defaultPrompt: args.defaultPrompt ?? 'What does this camp mean to you?',
+      rules: {
+        access: {
+          gender: args.rules?.access?.gender?.value
+            ? {
+                value: args.rules.access.gender.value,
+                visibilityMode: args.rules.access.gender.visibilityMode ?? 'hide',
+              }
+            : { value: 'any' as const, visibilityMode: 'hide' as const },
+          allowedTiers: args.rules?.access?.allowedTiers?.value
+            ? {
+                value: [...args.rules.access.allowedTiers.value],
+                visibilityMode: args.rules.access.allowedTiers.visibilityMode ?? 'gate',
+              }
+            : {
+                value: [...ALL_TIERS] as const,
+                visibilityMode: 'gate' as const,
+              },
+          minAge:
+            args.rules?.access?.minAge?.value !== undefined
+              ? {
+                  value: args.rules.access.minAge.value,
+                  visibilityMode: args.rules.access.minAge.visibilityMode ?? 'gate',
+                }
+              : undefined,
+        },
+        participation: {
+          maxDurationMs: 30 * 60 * 1000,
+        },
+        advisory: {
+          guidelines: args.rules?.advisory?.guidelines ?? [],
+        },
+      },
+      ownerDisplayName: user.displayName ?? user.name ?? undefined,
+      crisisBroadcast: false,
+      welcomeBroadcast: false,
+      access: args.access ?? 'open',
+      status: 'active',
+      ownerId: user._id,
+      bondfireCount: 0,
+      activeMemberCount: 1,
+      isLaunchCamp: false,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    // Create camp membership for the owner
+    await upsertMembership(ctx, {
+      userId: user._id,
+      campId,
+      role: 'owner',
+      status: 'active',
+    })
+
+    // Add admin as moderator
+    const adminUser = await findAdminUser(ctx)
+    if (adminUser && adminUser._id !== user._id) {
+      await upsertMembership(ctx, {
+        userId: adminUser._id,
+        campId,
+        role: 'moderator',
+        status: 'active',
+      })
+      await refreshActiveMemberCount(ctx, campId)
+    }
+
+    // Consume 1 slot for the first month
+    await ctx.runMutation(internal.campSlots.consumeCampSlot, {
+      userId: user._id,
+      campId,
+    })
+
+    return campId
   },
 })
 

@@ -23,8 +23,6 @@ const storeVerificationStatus = v.union(
   v.literal('verified'),
   v.literal('failed'),
 )
-const subscriptionAddOnType = v.union(v.literal('extra_camp'))
-
 const userGender = v.union(v.literal('male'), v.literal('female'), v.literal('other'))
 const campAccessVisibilityMode = v.union(v.literal('hide'), v.literal('gate'))
 
@@ -143,9 +141,16 @@ export default defineSchema({
     crisisBroadcast: v.optional(v.boolean()),
     welcomeBroadcast: v.optional(v.boolean()),
     access: v.union(v.literal('open'), v.literal('approval'), v.literal('invite')),
-    status: v.union(v.literal('active'), v.literal('frozen'), v.literal('archived')),
+    status: v.union(
+      v.literal('active'),
+      v.literal('frozen'),
+      v.literal('grace'),
+      v.literal('archived'),
+    ),
     frozenAt: v.optional(v.number()),
     reclaimDeadline: v.optional(v.number()),
+    gracePeriodStart: v.optional(v.number()),
+    gracePeriodEnd: v.optional(v.number()),
     // Optional until the production backfill has run; all new writes set this.
     ownerId: v.optional(v.id('users')),
     bondfireCount: v.optional(v.number()),
@@ -210,25 +215,43 @@ export default defineSchema({
     .index('by_store_transaction', ['storeOriginalTransactionId'])
     .index('by_store_purchase_token', ['storePurchaseToken']),
 
-  // Store add-ons that extend paid-plan allowances.
-  subscriptionAddOns: defineTable({
+  // Immutable ledger of all camp slot movements.
+  // Balance is always computed from this table, never stored.
+  campSlotTransactions: defineTable({
     userId: v.id('users'),
-    type: subscriptionAddOnType,
-    status: storeEntitlementStatus,
-    verificationStatus: storeVerificationStatus,
+    type: v.union(
+      v.literal('monthly_grant'),
+      v.literal('iap_purchase'),
+      v.literal('monthly_consumption'),
+      v.literal('refund'),
+      v.literal('grace_period_entry'),
+      v.literal('reactivation'),
+      v.literal('member_claim'),
+    ),
+    amount: v.number(), // positive = credit, negative = debit
+    campId: v.optional(v.id('camps')),
+    periodStart: v.optional(v.number()),
+    periodEnd: v.optional(v.number()),
+    metadata: v.optional(v.any()),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId', 'createdAt'])
+    .index('by_camp', ['campId', 'createdAt'])
+    .index('by_user_camp', ['userId', 'campId']),
+
+  // Tracks IAP consumable purchases from stores (slot packs).
+  consumablePurchases: defineTable({
+    userId: v.id('users'),
     platform: storePlatform,
     storeProductId: v.string(),
-    storeTransactionId: v.optional(v.string()),
-    storeOriginalTransactionId: v.optional(v.string()),
-    storePurchaseToken: v.optional(v.string()),
-    currentPeriodEnd: v.optional(v.number()),
+    storeTransactionId: v.string(),
+    quantity: v.number(), // how many slots purchased
+    verificationStatus: storeVerificationStatus,
     verifiedAt: v.optional(v.number()),
     createdAt: v.number(),
-    updatedAt: v.number(),
   })
-    .index('by_user', ['userId', 'status'])
-    .index('by_store_transaction', ['storeOriginalTransactionId'])
-    .index('by_store_purchase_token', ['storePurchaseToken']),
+    .index('by_user', ['userId'])
+    .index('by_transaction', ['storeTransactionId']),
 
   // Bondfires - main video posts
   bondfires: defineTable({

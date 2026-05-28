@@ -12,6 +12,7 @@ import type * as admin from "../admin.js";
 import type * as auth from "../auth.js";
 import type * as bondfireVideos from "../bondfireVideos.js";
 import type * as bondfires from "../bondfires.js";
+import type * as campSlots from "../campSlots.js";
 import type * as camps from "../camps.js";
 import type * as conversations from "../conversations.js";
 import type * as crons from "../crons.js";
@@ -39,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   bondfireVideos: typeof bondfireVideos;
   bondfires: typeof bondfires;
+  campSlots: typeof campSlots;
   camps: typeof camps;
   conversations: typeof conversations;
   crons: typeof crons;
