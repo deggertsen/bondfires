@@ -855,15 +855,15 @@ export const applyStorePurchaseVerification = internalMutation({
         updatedAt: now,
       }
       const userTier = await getEntitlementSubscriptionTier(ctx, args.userId)
-      const canActivateAddOn =
-        !statusUnlocksEntitlements(args.status) || TIER_RANK[userTier] >= TIER_RANK.pro
+      const statusWouldUnlockEntitlement = statusUnlocksEntitlements(args.status)
+      const canActivateAddOn = !statusWouldUnlockEntitlement || TIER_RANK[userTier] >= TIER_RANK.pro
       const appliedFields = {
         ...fields,
         status: canActivateAddOn ? fields.status : ('expired' as const),
       }
       appliedStatus = appliedFields.status
 
-      if (!canActivateAddOn && statusUnlocksEntitlements(args.status)) {
+      if (!canActivateAddOn && statusWouldUnlockEntitlement) {
         console.warn(
           '[subscriptions] Extra-camp add-on is active while Pro is no longer active; revoking entitlement',
           {

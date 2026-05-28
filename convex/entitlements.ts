@@ -499,6 +499,7 @@ export async function handleTierDowngrade(
 
   // Revoke extra-camp add-ons if no longer Pro
   if (TIER_RANK[newTier] < TIER_RANK.pro) {
+    const now = Date.now()
     const addOns = await ctx.db
       .query('subscriptionAddOns')
       .withIndex('by_user', (q) => q.eq('userId', userId))
@@ -522,7 +523,7 @@ export async function handleTierDowngrade(
         )
         await ctx.db.patch(addOn._id, {
           status: 'expired',
-          updatedAt: Date.now(),
+          updatedAt: now,
         })
         addOnsRevoked++
       }
