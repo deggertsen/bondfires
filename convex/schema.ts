@@ -236,6 +236,7 @@ export default defineSchema({
     userId: v.id('users'),
     creatorName: v.optional(v.string()), // Denormalized for display
     campId: v.optional(v.id('camps')),
+    frozen: v.optional(v.boolean()),
 
     // Video storage
     videoStatus: v.optional(
