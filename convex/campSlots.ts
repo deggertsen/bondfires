@@ -227,3 +227,162 @@ export const grantMonthlySlots = internalMutation({
     return { newBalance: balance + 3, alreadyGranted: false }
   },
 })
+
+// ── Cron Job Handlers ───────────────────────────────────────────────────────
+
+/**
+ * Daily cron: consumes 1 slot for each active public camp whose creation
+ * anniversary has passed since the last consumption period.
+ *
+ * Idempotent — safe to run multiple times a day. Uses startOfMonth for
+ * period boundaries so grant and consumption periods stay aligned.
+ */
+export const burnDailyCampSlots = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now()
+    const currentPeriodStart = startOfMonth(now)
+
+    // Find all active public camps whose owner has not yet had a
+    // monthly_consumption entry for this month.
+    //
+    // Strategy: get all active public camps (access !== 'invite',
+    // status === 'active'), then for each camp check whether the owner
+    // already has a consumption entry with periodStart === currentPeriodStart.
+    const activePublicCamps = await ctx.db
+      .query('camps')
+      .filter((q) => q.and(q.neq(q.field('access'), 'invite'), q.eq(q.field('status'), 'active')))
+      .collect()
+
+    let consumed = 0
+    let graceEntered = 0
+    let skipped = 0
+
+    for (const camp of activePublicCamps) {
+      if (!camp.ownerId) {
+        skipped++
+        continue
+      }
+
+      // Idempotency: check if this camp already had a consumption in
+      // the current period. consumeCampSlotForCamp does this internally,
+      // but doing an early check saves work.
+      const alreadyConsumed = await consumptionExistsInPeriod(
+        ctx,
+        camp.ownerId,
+        camp._id,
+        currentPeriodStart,
+      )
+      if (alreadyConsumed) {
+        skipped++
+        continue
+      }
+
+      const result = await consumeCampSlotForCamp(ctx, {
+        userId: camp.ownerId,
+        campId: camp._id,
+      })
+
+      if (result.alreadyConsumed) {
+        skipped++
+        continue
+      }
+
+      if (result.insufficientBalance) {
+        // Transition camp to grace period
+        const gracePeriodEnd = now + 30 * 24 * 60 * 60 * 1000
+        await ctx.db.patch(camp._id, {
+          status: 'grace',
+          gracePeriodStart: now,
+          gracePeriodEnd,
+        })
+        graceEntered++
+      } else {
+        consumed++
+      }
+    }
+
+    // biome-ignore lint/suspicious/noConsole: cron job diagnostic logging
+    console.log(
+      `Daily camp slot burn: ${consumed} consumed, ${graceEntered} entered grace, ${skipped} skipped`,
+    )
+
+    return { consumed, graceEntered, skipped }
+  },
+})
+
+/**
+ * Daily cron: grants 3 free monthly slots to Pro users whose billing
+ * date has passed since the last grant.
+ *
+ * A user is eligible if they have an active Pro subscription and
+ * haven't received a monthly_grant with periodStart === startOfMonth(now).
+ * Idempotent — safe to run multiple times a day.
+ *
+ * Handles both store-subscription Pro users AND admin-forced Pro tier
+ * users (via getEntitlementSubscriptionTier).
+ */
+export const grantDailyProSlots = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now()
+    const currentPeriodStart = startOfMonth(now)
+    const periodEnd = startOfMonth(now + 32 * 24 * 60 * 60 * 1000)
+
+    // Find all users with active Pro subscriptions (store-based)
+    const allSubscriptions = await ctx.db.query('subscriptions').collect()
+
+    const proUserIds = new Set<string>()
+    for (const sub of allSubscriptions) {
+      if (
+        sub.verificationStatus === 'verified' &&
+        (sub.status === 'active' || sub.status === 'trialing') &&
+        (!sub.currentPeriodEnd || sub.currentPeriodEnd > now) &&
+        sub.tier === 'pro'
+      ) {
+        proUserIds.add(sub.userId)
+      }
+    }
+
+    // Also include users with admin-forced Pro tier
+    const forcedProUsers = await ctx.db
+      .query('users')
+      .filter((q) => q.eq(q.field('forcedTier'), 'pro'))
+      .collect()
+    for (const user of forcedProUsers) {
+      proUserIds.add(user._id)
+    }
+
+    let granted = 0
+    let alreadyGranted = 0
+
+    for (const userId of proUserIds) {
+      // Idempotency: check if grant already issued this month
+      if (await grantExistsInPeriod(ctx, userId as Id<'users'>, currentPeriodStart)) {
+        alreadyGranted++
+        continue
+      }
+
+      // Verify the user is actually Pro-tier (handles forcedTier too)
+      const tier = await getEntitlementSubscriptionTier(ctx, userId as Id<'users'>)
+      if (TIER_RANK[tier] < TIER_RANK.pro) {
+        continue
+      }
+
+      await ctx.db.insert('campSlotTransactions', {
+        userId: userId as Id<'users'>,
+        type: 'monthly_grant',
+        amount: 3,
+        periodStart: currentPeriodStart,
+        periodEnd,
+        createdAt: now,
+      })
+      granted++
+    }
+
+    // biome-ignore lint/suspicious/noConsole: cron job diagnostic logging
+    console.log(`Daily Pro slot grant: ${granted} granted, ${alreadyGranted} already granted`)
+
+    return { granted, alreadyGranted }
+  },
+})
