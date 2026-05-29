@@ -12,7 +12,7 @@
  */
 
 import { v } from 'convex/values'
-import type { Id } from './_generated/dataModel'
+import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalMutation, internalQuery, query } from './_generated/server'
 import { auth } from './auth'
@@ -20,6 +20,9 @@ import { getEntitlementSubscriptionTier, TIER_RANK } from './entitlements'
 import { throwUserError } from './errors'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+const MONTHLY_PRO_SLOT_GRANT = 3
+const GRACE_PERIOD_MS = 30 * 24 * 60 * 60 * 1000
 
 /**
  * Computes the current slot balance for a user from the immutable ledger.
@@ -38,54 +41,171 @@ export async function computeSlotBalance(
   return transactions.reduce((balance, tx) => balance + tx.amount, 0)
 }
 
-/**
- * Round a timestamp down to the start of the month (UTC midnight of the 1st).
- * This gives us stable period boundaries for idempotency checks.
- */
-function startOfMonth(ts: number): number {
+function startOfUtcMonth(ts: number): number {
   const d = new Date(ts)
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)
 }
 
+function addUtcMonths(ts: number, months: number): number {
+  const d = new Date(ts)
+  const year = d.getUTCFullYear()
+  const month = d.getUTCMonth() + months
+  const day = d.getUTCDate()
+  const lastDayOfTargetMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
+
+  return Date.UTC(
+    year,
+    month,
+    Math.min(day, lastDayOfTargetMonth),
+    d.getUTCHours(),
+    d.getUTCMinutes(),
+    d.getUTCSeconds(),
+    d.getUTCMilliseconds(),
+  )
+}
+
+function getCalendarMonthPeriod(ts: number): { periodStart: number; periodEnd: number } {
+  const periodStart = startOfUtcMonth(ts)
+  return {
+    periodStart,
+    periodEnd: addUtcMonths(periodStart, 1),
+  }
+}
+
+function getAnchoredMonthlyPeriod(
+  anchorTs: number,
+  ts: number,
+): { periodStart: number; periodEnd: number } {
+  const createdAt = new Date(anchorTs)
+  const current = new Date(ts)
+  let monthOffset =
+    (current.getUTCFullYear() - createdAt.getUTCFullYear()) * 12 +
+    (current.getUTCMonth() - createdAt.getUTCMonth())
+
+  let periodStart = addUtcMonths(anchorTs, monthOffset)
+  if (periodStart > ts) {
+    monthOffset--
+    periodStart = addUtcMonths(anchorTs, monthOffset)
+  }
+
+  return {
+    periodStart,
+    periodEnd: addUtcMonths(anchorTs, monthOffset + 1),
+  }
+}
+
+function getSubscriptionGrantPeriod(
+  subscription: Doc<'subscriptions'> | null,
+  ts: number,
+): { periodStart: number; periodEnd: number } {
+  if (!subscription) {
+    return getCalendarMonthPeriod(ts)
+  }
+
+  // Annual Pro plans still receive monthly slots, anchored to the purchase date.
+  if (subscription.storeProductId.endsWith('.annual')) {
+    return getAnchoredMonthlyPeriod(subscription.createdAt, ts)
+  }
+
+  if (!subscription.currentPeriodEnd) {
+    return getCalendarMonthPeriod(ts)
+  }
+
+  return {
+    periodStart: addUtcMonths(subscription.currentPeriodEnd, -1),
+    periodEnd: subscription.currentPeriodEnd,
+  }
+}
+
+function periodsOverlap(
+  leftStart: number,
+  leftEnd: number,
+  rightStart: number,
+  rightEnd: number,
+): boolean {
+  return leftStart < rightEnd && rightStart < leftEnd
+}
+
+async function getBestActiveProSubscription(
+  ctx: QueryCtx | MutationCtx,
+  userId: Id<'users'>,
+  now: number,
+): Promise<Doc<'subscriptions'> | null> {
+  const subscriptions = await ctx.db
+    .query('subscriptions')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .collect()
+
+  return (
+    subscriptions
+      .filter(
+        (sub) =>
+          sub.verificationStatus === 'verified' &&
+          (sub.status === 'active' || sub.status === 'trialing') &&
+          (!sub.currentPeriodEnd || sub.currentPeriodEnd > now) &&
+          sub.tier === 'pro',
+      )
+      .sort((left, right) => (right.currentPeriodEnd ?? 0) - (left.currentPeriodEnd ?? 0))[0] ??
+    null
+  )
+}
+
 /**
- * Check if a monthly_consumption already exists for this camp in the current
- * monthly period. Period is keyed by startOfMonth to match grant periods.
+ * Check if a monthly_consumption already covers this camp in the supplied
+ * period. Overlap checks avoid double-charging camps whose first transaction
+ * used an older calendar-month period before the anniversary model landed.
  */
-async function consumptionExistsInPeriod(
+async function consumptionExistsForPeriod(
   ctx: MutationCtx,
   userId: Id<'users'>,
   campId: Id<'camps'>,
   periodStart: number,
+  periodEnd: number,
 ): Promise<boolean> {
-  const existing = await ctx.db
+  const transactions = await ctx.db
     .query('campSlotTransactions')
     .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', campId))
-    .filter((q) =>
-      q.and(
-        q.eq(q.field('type'), 'monthly_consumption'),
-        q.eq(q.field('periodStart'), periodStart),
-      ),
-    )
-    .first()
-  return existing !== null
+    .filter((q) => q.eq(q.field('type'), 'monthly_consumption'))
+    .collect()
+
+  return transactions.some((tx) => {
+    const txPeriodStart = tx.periodStart ?? tx.createdAt
+    const txPeriodEnd = tx.periodEnd ?? addUtcMonths(txPeriodStart, 1)
+    return periodsOverlap(txPeriodStart, txPeriodEnd, periodStart, periodEnd)
+  })
 }
 
 /**
- * Check if a monthly_grant already exists for this user in the current period.
+ * Check if a monthly_grant already covers this user in the supplied period.
+ * Overlap checks preserve idempotency across the calendar-month to billing-
+ * period transition.
  */
-async function grantExistsInPeriod(
+async function grantExistsForPeriod(
   ctx: MutationCtx,
   userId: Id<'users'>,
   periodStart: number,
+  periodEnd: number,
 ): Promise<boolean> {
-  const existing = await ctx.db
+  const transactions = await ctx.db
     .query('campSlotTransactions')
     .withIndex('by_user', (q) => q.eq('userId', userId))
-    .filter((q) =>
-      q.and(q.eq(q.field('type'), 'monthly_grant'), q.eq(q.field('periodStart'), periodStart)),
-    )
-    .first()
-  return existing !== null
+    .filter((q) => q.eq(q.field('type'), 'monthly_grant'))
+    .collect()
+
+  return transactions.some((tx) => {
+    const txPeriodStart = tx.periodStart ?? tx.createdAt
+    const txPeriodEnd = tx.periodEnd ?? addUtcMonths(txPeriodStart, 1)
+    return periodsOverlap(txPeriodStart, txPeriodEnd, periodStart, periodEnd)
+  })
+}
+
+async function getMonthlySlotGrantPeriod(
+  ctx: QueryCtx | MutationCtx,
+  userId: Id<'users'>,
+  now: number,
+): Promise<{ periodStart: number; periodEnd: number }> {
+  const subscription = await getBestActiveProSubscription(ctx, userId, now)
+  return getSubscriptionGrantPeriod(subscription, now)
 }
 
 export async function consumeCampSlotForCamp(
@@ -93,11 +213,14 @@ export async function consumeCampSlotForCamp(
   args: { userId: Id<'users'>; campId: Id<'camps'> },
 ): Promise<{ newBalance: number; alreadyConsumed: boolean; insufficientBalance?: true }> {
   const now = Date.now()
-  const periodStart = startOfMonth(now)
-  const periodEnd = startOfMonth(now + 32 * 24 * 60 * 60 * 1000) // start of next month
+  const camp = await ctx.db.get(args.campId)
+  if (!camp) {
+    throw new Error('Camp not found')
+  }
+  const { periodStart, periodEnd } = getAnchoredMonthlyPeriod(camp.createdAt, now)
 
-  // Idempotency: if this camp already consumed a slot this period, skip
-  if (await consumptionExistsInPeriod(ctx, args.userId, args.campId, periodStart)) {
+  // Idempotency: if this camp already has coverage for this period, skip.
+  if (await consumptionExistsForPeriod(ctx, args.userId, args.campId, periodStart, periodEnd)) {
     const balance = await computeSlotBalance(ctx, args.userId)
     return { newBalance: balance, alreadyConsumed: true }
   }
@@ -167,7 +290,7 @@ export const internalGetSlotBalance = internalQuery({
  * Consumes 1 slot for a specific camp for the current monthly period.
  *
  * - Computes current balance from ledger
- * - Balance can NEVER go negative — throws hard error if insufficient
+ * - Balance can NEVER go negative — reports insufficient balance without inserting
  * - Inserts a monthly_consumption ledger entry with campId, periodStart, periodEnd
  * - Returns the new balance after consumption
  */
@@ -204,11 +327,10 @@ export const grantMonthlySlots = internalMutation({
     }
 
     const now = Date.now()
-    const periodStart = startOfMonth(now)
-    const periodEnd = startOfMonth(now + 32 * 24 * 60 * 60 * 1000)
+    const { periodStart, periodEnd } = await getMonthlySlotGrantPeriod(ctx, args.userId, now)
 
-    // Idempotency: if grant already issued this month, skip
-    if (await grantExistsInPeriod(ctx, args.userId, periodStart)) {
+    // Idempotency: if grant already covers this billing period, skip.
+    if (await grantExistsForPeriod(ctx, args.userId, periodStart, periodEnd)) {
       const balance = await computeSlotBalance(ctx, args.userId)
       return { newBalance: balance, alreadyGranted: true }
     }
@@ -218,12 +340,188 @@ export const grantMonthlySlots = internalMutation({
     await ctx.db.insert('campSlotTransactions', {
       userId: args.userId,
       type: 'monthly_grant',
-      amount: 3,
+      amount: MONTHLY_PRO_SLOT_GRANT,
       periodStart,
       periodEnd,
       createdAt: now,
     })
 
-    return { newBalance: balance + 3, alreadyGranted: false }
+    return { newBalance: balance + MONTHLY_PRO_SLOT_GRANT, alreadyGranted: false }
+  },
+})
+
+// ── Cron Job Handlers ───────────────────────────────────────────────────────
+
+/**
+ * Daily cron: consumes 1 slot for each active public camp that lacks coverage
+ * for its current creation-anniversary period.
+ *
+ * Idempotent — safe to run multiple times a day. Per owner, oldest due camps
+ * consume first so newer camps enter grace when balance is insufficient.
+ */
+export const burnDailyCampSlots = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now()
+
+    const activePublicCamps = await ctx.db
+      .query('camps')
+      .filter((q) => q.and(q.neq(q.field('access'), 'invite'), q.eq(q.field('status'), 'active')))
+      .collect()
+
+    const dueCampsByOwner = new Map<Id<'users'>, Doc<'camps'>[]>()
+    let consumed = 0
+    let graceEntered = 0
+    let skipped = 0
+
+    for (const camp of activePublicCamps) {
+      if (!camp.ownerId) {
+        skipped++
+        continue
+      }
+
+      const { periodStart, periodEnd } = getAnchoredMonthlyPeriod(camp.createdAt, now)
+      const alreadyConsumed = await consumptionExistsForPeriod(
+        ctx,
+        camp.ownerId,
+        camp._id,
+        periodStart,
+        periodEnd,
+      )
+      if (alreadyConsumed) {
+        skipped++
+        continue
+      }
+
+      const ownerDueCamps = dueCampsByOwner.get(camp.ownerId) ?? []
+      ownerDueCamps.push(camp)
+      dueCampsByOwner.set(camp.ownerId, ownerDueCamps)
+    }
+
+    for (const [ownerId, dueCamps] of dueCampsByOwner) {
+      dueCamps.sort((left, right) => left.createdAt - right.createdAt)
+
+      for (const camp of dueCamps) {
+        const result = await consumeCampSlotForCamp(ctx, {
+          userId: ownerId,
+          campId: camp._id,
+        })
+
+        if (result.alreadyConsumed) {
+          skipped++
+          continue
+        }
+
+        if (result.insufficientBalance) {
+          const gracePeriodEnd = now + GRACE_PERIOD_MS
+          await ctx.db.insert('campSlotTransactions', {
+            userId: ownerId,
+            type: 'grace_period_entry',
+            amount: 0,
+            campId: camp._id,
+            metadata: {
+              reason: 'insufficient_slot_balance',
+            },
+            createdAt: now,
+          })
+          await ctx.db.patch(camp._id, {
+            status: 'grace',
+            gracePeriodStart: now,
+            gracePeriodEnd,
+            updatedAt: now,
+          })
+          graceEntered++
+        } else {
+          consumed++
+        }
+      }
+    }
+
+    // biome-ignore lint/suspicious/noConsole: cron job diagnostic logging
+    console.log(
+      `Daily camp slot burn: ${consumed} consumed, ${graceEntered} entered grace, ${skipped} skipped`,
+    )
+
+    return { consumed, graceEntered, skipped }
+  },
+})
+
+/**
+ * Daily cron: grants free monthly slots to Pro users once per active billing
+ * period.
+ *
+ * A user is eligible if they have an active Pro subscription and have not
+ * received a monthly_grant covering the current billing period.
+ * Idempotent — safe to run multiple times a day.
+ *
+ * Handles both store-subscription Pro users AND admin-forced Pro tier
+ * users (via getEntitlementSubscriptionTier).
+ */
+export const grantDailyProSlots = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now()
+
+    // Find all users with active Pro subscriptions (store-based)
+    const allSubscriptions = await ctx.db.query('subscriptions').collect()
+
+    const proUserIds = new Set<Id<'users'>>()
+    for (const sub of allSubscriptions) {
+      if (
+        sub.verificationStatus === 'verified' &&
+        (sub.status === 'active' || sub.status === 'trialing') &&
+        (!sub.currentPeriodEnd || sub.currentPeriodEnd > now) &&
+        sub.tier === 'pro'
+      ) {
+        proUserIds.add(sub.userId)
+      }
+    }
+
+    // Also include users with admin-forced Pro tier
+    const forcedProUsers = await ctx.db
+      .query('users')
+      .filter((q) => q.eq(q.field('forcedTier'), 'pro'))
+      .collect()
+    for (const user of forcedProUsers) {
+      proUserIds.add(user._id)
+    }
+
+    let granted = 0
+    let alreadyGranted = 0
+    let ineligible = 0
+
+    for (const userId of proUserIds) {
+      // Verify the user is actually Pro-tier (handles forcedTier too)
+      const tier = await getEntitlementSubscriptionTier(ctx, userId)
+      if (TIER_RANK[tier] < TIER_RANK.pro) {
+        ineligible++
+        continue
+      }
+
+      const { periodStart, periodEnd } = await getMonthlySlotGrantPeriod(ctx, userId, now)
+
+      // Idempotency: check if grant already issued for this billing period.
+      if (await grantExistsForPeriod(ctx, userId, periodStart, periodEnd)) {
+        alreadyGranted++
+        continue
+      }
+
+      await ctx.db.insert('campSlotTransactions', {
+        userId,
+        type: 'monthly_grant',
+        amount: MONTHLY_PRO_SLOT_GRANT,
+        periodStart,
+        periodEnd,
+        createdAt: now,
+      })
+      granted++
+    }
+
+    // biome-ignore lint/suspicious/noConsole: cron job diagnostic logging
+    console.log(
+      `Daily Pro slot grant: ${granted} granted, ${alreadyGranted} already granted, ${ineligible} ineligible`,
+    )
+
+    return { granted, alreadyGranted, ineligible }
   },
 })

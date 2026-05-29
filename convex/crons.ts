@@ -24,4 +24,22 @@ crons.daily(
   internal.subscriptions.processExpiredReclaims,
 )
 
+// Grant 3 free monthly slots to Pro subscribers.
+// Idempotent: uses billing-period checks so it's safe to run multiple times.
+// Runs daily at 10:00 UTC, before camp slot consumption.
+crons.daily(
+  'grant daily pro slots',
+  { hourUTC: 10, minuteUTC: 0 },
+  internal.campSlots.grantDailyProSlots,
+)
+
+// Burn 1 slot per active public camp on its monthly consumption anniversary.
+// Idempotent: uses camp-period checks so it's safe to run multiple times.
+// Runs daily at 10:30 UTC after monthly grants have landed.
+crons.daily(
+  'burn daily camp slots',
+  { hourUTC: 10, minuteUTC: 30 },
+  internal.campSlots.burnDailyCampSlots,
+)
+
 export default crons
