@@ -1727,6 +1727,76 @@ export const createPrivateCamp = mutation({
   },
 })
 
+export const claimInactivePublicCamp = mutation({
+  args: {
+    campId: v.id('camps'),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUser(ctx)
+    const camp = await ctx.db.get(args.campId)
+
+    if (!camp || camp.access === 'invite' || camp.status !== 'inactive') {
+      return { success: false as const, reason: 'not_claimable' as const }
+    }
+
+    const tier = await getEntitlementSubscriptionTier(ctx, user._id)
+    if (TIER_RANK[tier] < TIER_RANK.pro) {
+      return { success: false as const, reason: 'not_pro' as const }
+    }
+
+    const slotResult = await consumeCampSlotForCamp(ctx, {
+      userId: user._id,
+      campId: camp._id,
+    })
+
+    if (slotResult.insufficientBalance) {
+      return { success: false as const, reason: 'insufficient_slots' as const }
+    }
+
+    const previousOwnerId = camp.ownerId
+    const now = Date.now()
+
+    await ctx.db.patch(camp._id, {
+      ownerId: user._id,
+      ownerDisplayName: user.displayName ?? user.name ?? undefined,
+      status: 'active',
+      gracePeriodStart: undefined,
+      gracePeriodEnd: undefined,
+      updatedAt: now,
+    })
+
+    const claimantMembership = await getMembership(ctx, user._id, camp._id)
+    const claimantWasActive = claimantMembership?.status === 'active'
+    await upsertMembership(ctx, {
+      userId: user._id,
+      campId: camp._id,
+      role: 'owner',
+      status: 'active',
+    })
+
+    if (previousOwnerId && previousOwnerId !== user._id) {
+      const previousOwnerMembership = await getMembership(ctx, previousOwnerId, camp._id)
+      if (previousOwnerMembership?.role === 'owner') {
+        await ctx.db.patch(previousOwnerMembership._id, {
+          role: 'member',
+          updatedAt: now,
+        })
+      }
+    }
+
+    if (!claimantWasActive) {
+      await refreshActiveMemberCount(ctx, camp._id)
+    }
+
+    const claimedCamp = await ctx.db.get(camp._id)
+    if (!claimedCamp) {
+      throwUserError('Camp not found')
+    }
+
+    return { success: true as const, camp: claimedCamp }
+  },
+})
+
 // ── Backfill Migration: Admin account setup + required camp ownership ──
 
 /**
@@ -2078,7 +2148,15 @@ const campSettingsFields = {
   ),
   nameOverride: v.optional(v.string()),
   access: v.optional(v.union(v.literal('open'), v.literal('approval'), v.literal('invite'))),
-  status: v.optional(v.union(v.literal('active'), v.literal('frozen'), v.literal('archived'))),
+  status: v.optional(
+    v.union(
+      v.literal('active'),
+      v.literal('frozen'),
+      v.literal('grace'),
+      v.literal('inactive'),
+      v.literal('archived'),
+    ),
+  ),
 }
 
 /**

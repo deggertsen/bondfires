@@ -525,3 +525,52 @@ export const grantDailyProSlots = internalMutation({
     return { granted, alreadyGranted, ineligible }
   },
 })
+
+/**
+ * Daily cron: transitions camps out of grace once their grace period has ended.
+ *
+ * Idempotent — only patches camps currently in grace. Camps missing
+ * gracePeriodEnd are treated as expired because grace without an end date
+ * should not remain open indefinitely.
+ */
+export const expireGracePeriodCamps = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now()
+    const graceCamps = await ctx.db
+      .query('camps')
+      .filter((q) => q.eq(q.field('status'), 'grace'))
+      .collect()
+
+    let expired = 0
+    let missingGracePeriodEnd = 0
+    let skipped = 0
+
+    for (const camp of graceCamps) {
+      if (camp.gracePeriodEnd !== undefined && camp.gracePeriodEnd >= now) {
+        skipped++
+        continue
+      }
+
+      if (camp.gracePeriodEnd === undefined) {
+        missingGracePeriodEnd++
+        console.warn(`Grace camp ${camp._id} is missing gracePeriodEnd; marking inactive`)
+      }
+
+      await ctx.db.patch(camp._id, {
+        status: 'inactive',
+        gracePeriodStart: undefined,
+        gracePeriodEnd: undefined,
+        updatedAt: now,
+      })
+      expired++
+    }
+
+    // biome-ignore lint/suspicious/noConsole: cron job diagnostic logging
+    console.log(
+      `Grace expiration: ${expired} inactive, ${missingGracePeriodEnd} missing gracePeriodEnd, ${skipped} skipped`,
+    )
+
+    return { expired, missingGracePeriodEnd, skipped }
+  },
+})

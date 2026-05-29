@@ -145,6 +145,7 @@ export default defineSchema({
       v.literal('active'),
       v.literal('frozen'),
       v.literal('grace'),
+      v.literal('inactive'),
       v.literal('archived'),
     ),
     frozenAt: v.optional(v.number()),

@@ -42,4 +42,12 @@ crons.daily(
   internal.campSlots.burnDailyCampSlots,
 )
 
+// Move expired grace-period public camps to inactive.
+// Runs daily at 11:00 UTC after monthly camp slot consumption.
+crons.daily(
+  'expire grace period camps',
+  { hourUTC: 11, minuteUTC: 0 },
+  internal.campSlots.expireGracePeriodCamps,
+)
+
 export default crons
