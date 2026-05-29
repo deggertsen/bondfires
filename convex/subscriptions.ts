@@ -4,7 +4,6 @@ import type { Id } from './_generated/dataModel'
 import type { MutationCtx } from './_generated/server'
 import { action, internalMutation, mutation, query } from './_generated/server'
 import { auth } from './auth'
-import { internalGetSlotBalance } from './campSlots'
 import {
   getActiveSubscriptionTier,
   getEntitlementSubscriptionTier,
@@ -932,6 +931,13 @@ export const applyStorePurchaseVerification = internalMutation({
 
       if (verificationStatus === 'verified') {
         const newEffectiveTier = await getActiveSubscriptionTier(ctx, args.userId)
+
+        // Grant the 3 free monthly slots first so that reclaim/upgrade
+        // logic has slots available to consume for public camps.
+        if (TIER_RANK[newEffectiveTier] >= TIER_RANK.pro) {
+          await ctx.runMutation(internal.campSlots.grantMonthlySlots, { userId: args.userId })
+        }
+
         if (TIER_RANK[newEffectiveTier] < TIER_RANK[previousEffectiveTier]) {
           await handleTierDowngrade(ctx, args.userId, previousEffectiveTier, newEffectiveTier)
         } else if (TIER_RANK[newEffectiveTier] > TIER_RANK[previousEffectiveTier]) {
@@ -939,11 +945,6 @@ export const applyStorePurchaseVerification = internalMutation({
           if (TIER_RANK[newEffectiveTier] >= TIER_RANK.pro) {
             await reclaimFrozenCamps(ctx, args.userId, newEffectiveTier)
           }
-        }
-        // Grant the 3 free monthly slots to any verified Pro subscriber.
-        // Idempotent: safe to call on every verification (renewal, restore, etc.).
-        if (TIER_RANK[newEffectiveTier] >= TIER_RANK.pro) {
-          await ctx.runMutation(internal.campSlots.grantMonthlySlots, { userId: args.userId })
         }
       }
     } else {

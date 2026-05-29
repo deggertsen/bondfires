@@ -17,8 +17,8 @@
 
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
+import { computeSlotBalance, consumeCampSlotForCamp } from './campSlots'
 import { throwUserError } from './errors'
-import { consumeCampSlotForCamp, computeSlotBalance } from './campSlots'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -650,8 +650,15 @@ export async function processExpiredReclaims(
       const limits = await getCampLimitsForTier(ctx, member.userId, memberTier)
       const isPublicCamp = camp.access !== 'invite'
       const ownedCampCount = await getOwnedCampCount(ctx, member.userId, isPublicCamp)
-      const limit = isPublicCamp ? limits.publicCamps : limits.privateCamps
-      if (ownedCampCount < limit) {
+      const privateLimit = limits.privateCamps
+
+      if (isPublicCamp) {
+        // Public camp eligibility is governed by slot balance, not a hard cap.
+        const slotBalance = await computeSlotBalance(ctx, member.userId)
+        if (slotBalance >= 1) {
+          eligibleProMembers.push(member)
+        }
+      } else if (ownedCampCount < privateLimit) {
         eligibleProMembers.push(member)
       }
     }
@@ -671,6 +678,11 @@ export async function processExpiredReclaims(
     // For now, assign to the first eligible Pro member.
     // A future enhancement could add a claim button in the UI.
     const newOwnerId = eligibleProMembers[0].userId
+
+    // Consume a slot for the transferred public camp.
+    if (camp.access !== 'invite') {
+      await consumeCampSlotForCamp(ctx, { userId: newOwnerId, campId: camp._id })
+    }
 
     await ctx.db.patch(camp._id, {
       ownerId: newOwnerId,

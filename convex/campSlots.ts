@@ -59,9 +59,7 @@ async function consumptionExistsInPeriod(
 ): Promise<boolean> {
   const existing = await ctx.db
     .query('campSlotTransactions')
-    .withIndex('by_user_camp', (q) =>
-      q.eq('userId', userId).eq('campId', campId),
-    )
+    .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', campId))
     .filter((q) =>
       q.and(
         q.eq(q.field('type'), 'monthly_consumption'),
@@ -84,10 +82,7 @@ async function grantExistsInPeriod(
     .query('campSlotTransactions')
     .withIndex('by_user', (q) => q.eq('userId', userId))
     .filter((q) =>
-      q.and(
-        q.eq(q.field('type'), 'monthly_grant'),
-        q.eq(q.field('periodStart'), periodStart),
-      ),
+      q.and(q.eq(q.field('type'), 'monthly_grant'), q.eq(q.field('periodStart'), periodStart)),
     )
     .first()
   return existing !== null
