@@ -18,7 +18,7 @@ export const SUBSCRIPTION_PRODUCT_IDS = {
 
 export type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'
 export type BillingPeriod = 'monthly' | 'annual'
-export type StorePurchaseKind = 'subscription' | 'extraCamp'
+export type StorePurchaseKind = 'subscription' | 'consumable'
 
 export const TIER_PRODUCT_IDS: Record<
   Exclude<SubscriptionTier, 'free'>,
@@ -66,8 +66,8 @@ export const PRODUCT_ID_TO_PURCHASE_KIND: Record<string, StorePurchaseKind | und
   [SUBSCRIPTION_PRODUCT_IDS.premiumAnnual]: 'subscription',
   [SUBSCRIPTION_PRODUCT_IDS.proMonthly]: 'subscription',
   [SUBSCRIPTION_PRODUCT_IDS.proAnnual]: 'subscription',
-  [SUBSCRIPTION_PRODUCT_IDS.extraCampMonthly]: 'extraCamp',
-  [SUBSCRIPTION_PRODUCT_IDS.extraCampAnnual]: 'extraCamp',
+  [SUBSCRIPTION_PRODUCT_IDS.extraCampMonthly]: 'consumable',
+  [SUBSCRIPTION_PRODUCT_IDS.extraCampAnnual]: 'consumable',
 }
 
 export const ALL_SUBSCRIPTION_PRODUCT_IDS = Object.values(SUBSCRIPTION_PRODUCT_IDS)
@@ -157,11 +157,12 @@ export const TIER_DEFINITIONS: Record<
     productId: TIER_PRODUCT_IDS.pro.monthly,
     annualProductId: TIER_PRODUCT_IDS.pro.annual,
     displayName: 'Pro',
-    description: 'Manage public camps up to the included allowance.',
+    description: 'Manage public camps with monthly camp slots.',
     features: [
       { label: 'Everything in Premium' },
       { label: 'Public camp management' },
-      { label: 'Extra public camps available as add-ons' },
+      { label: '3 included public camp slots each month' },
+      { label: 'Extra camp slots available as consumables' },
       { label: 'Advanced analytics' },
       { label: 'Early access to new features' },
     ],
@@ -171,23 +172,20 @@ export const TIER_DEFINITIONS: Record<
 export const EXTRA_CAMP_ADD_ON_DEFINITION = {
   productId: EXTRA_CAMP_PRODUCT_IDS.monthly,
   annualProductId: EXTRA_CAMP_PRODUCT_IDS.annual,
-  displayName: 'Extra camp',
-  description: 'Add one more public camp to a Pro workspace.',
+  displayName: 'Camp slot',
+  description: 'Add one more public camp slot to your balance.',
 }
 
-/** Base camp limits by tier. Only Pro can create public camps. */
+/** Base private-camp limits by tier. Pro public camps are governed by slot balance. */
 export const TIER_CAMP_LIMITS: Record<
   SubscriptionTier,
-  { publicCamps: number; privateCamps: number }
+  { publicCamps?: number; privateCamps: number }
 > = {
-  free: { publicCamps: 0, privateCamps: 0 },
-  plus: { publicCamps: 0, privateCamps: 1 },
-  premium: { publicCamps: 0, privateCamps: 1 },
-  pro: { publicCamps: 3, privateCamps: 1 },
+  free: { privateCamps: 0 },
+  plus: { privateCamps: 1 },
+  premium: { privateCamps: 1 },
+  pro: { privateCamps: 1 },
 }
-
-/** Additional public-camp capacity granted by one verified extra-camp add-on. */
-export const EXTRA_CAMPS_PER_ADD_ON = 1
 
 export interface SubscriptionState {
   /** The user's current active tier from Convex (or 'free' if none). */

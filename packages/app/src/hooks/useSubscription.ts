@@ -8,6 +8,7 @@ import {
   finishTransaction,
   getAvailablePurchases,
   initConnection,
+  type Product,
   type ProductSubscription,
   type Purchase,
   purchaseErrorListener,
@@ -62,11 +63,21 @@ function isUserCancelledPurchase(error: unknown, message: string) {
   )
 }
 
-function getAndroidOfferToken(product: ProductSubscription): string | null {
+type StoreProduct = Product | ProductSubscription
+type AndroidOfferProduct = {
+  subscriptionOffers?: Array<{ offerTokenAndroid?: string | null }> | null
+  subscriptionOfferDetailsAndroid?: Array<{ offerToken?: string | null }> | null
+}
+
+function getAndroidOfferToken(product: StoreProduct): string | null {
   if (product.platform !== 'android') return null
+  if (!('subscriptionOffers' in product) && !('subscriptionOfferDetailsAndroid' in product)) {
+    return null
+  }
+  const subscription = product as AndroidOfferProduct
   return (
-    product.subscriptionOffers?.[0]?.offerTokenAndroid ??
-    product.subscriptionOfferDetailsAndroid?.[0]?.offerToken ??
+    subscription.subscriptionOffers?.[0]?.offerTokenAndroid ??
+    subscription.subscriptionOfferDetailsAndroid?.[0]?.offerToken ??
     null
   )
 }
@@ -88,7 +99,7 @@ async function ensureIapConnection() {
 }
 
 async function loadSubscriptionProducts(showExtraCampAddon: boolean) {
-  const products = await fetchProducts({ skus: ALL_SUBSCRIPTION_PRODUCT_IDS, type: 'subs' })
+  const products = await fetchProducts({ skus: ALL_SUBSCRIPTION_PRODUCT_IDS, type: 'all' })
   const productList = Array.isArray(products) ? products : [products]
   const visibleProducts = showExtraCampAddon
     ? productList
@@ -96,7 +107,7 @@ async function loadSubscriptionProducts(showExtraCampAddon: boolean) {
 
   subscriptionActions.setProducts(
     visibleProducts
-      .filter((product): product is ProductSubscription => !!product?.id)
+      .filter((product): product is StoreProduct => !!product?.id)
       .map((product) => ({
         productId: product.id,
         price: product.displayPrice,
@@ -172,7 +183,7 @@ async function processPurchase(
     return result
   }
 
-  await finishTransaction({ purchase, isConsumable: false })
+  await finishTransaction({ purchase, isConsumable: kind === 'consumable' })
   subscriptionActions.completePurchase(true, result.tier)
   subscriptionActions.hidePaywall()
   return result
@@ -306,21 +317,35 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
     try {
       await ensureIapConnection()
 
+      const kind = mapProductIdToPurchaseKind(productId)
+      if (!kind) {
+        throw new Error('Unsupported store product.')
+      }
       const offerToken = subscriptionStore$.productOfferTokens[productId].get()
-      if (Platform.OS === 'android' && !offerToken) {
+      if (kind === 'subscription' && Platform.OS === 'android' && !offerToken) {
         throw new Error('This store product is not available for purchase yet.')
       }
 
-      await requestPurchase({
-        request: {
-          apple: { sku: productId },
-          google: {
-            skus: [productId],
-            subscriptionOffers: offerToken ? [{ sku: productId, offerToken }] : undefined,
+      if (kind === 'consumable') {
+        await requestPurchase({
+          request: {
+            apple: { sku: productId },
+            google: { skus: [productId] },
           },
-        },
-        type: 'subs',
-      })
+          type: 'in-app',
+        })
+      } else {
+        await requestPurchase({
+          request: {
+            apple: { sku: productId },
+            google: {
+              skus: [productId],
+              subscriptionOffers: offerToken ? [{ sku: productId, offerToken }] : undefined,
+            },
+          },
+          type: 'subs',
+        })
+      }
       // Purchase result handled by purchaseUpdatedListener
     } catch (err: unknown) {
       const message = getIapErrorMessage(err, 'Purchase was not completed.')
