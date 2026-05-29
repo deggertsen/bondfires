@@ -499,13 +499,13 @@ export async function handleTierUpgrade(
 
   for (const camp of frozenCamps) {
     if (camp.access !== 'invite' && isPro) {
-      const { alreadyConsumed, newBalance } = await consumeCampSlotForCamp(ctx, {
+      const { alreadyConsumed, insufficientBalance } = await consumeCampSlotForCamp(ctx, {
         userId,
         campId: camp._id,
       })
-      // alreadyConsumed covers same-month reactivation (slot already paid).
-      // newBalance covers fresh consumption that succeeded.
-      if (alreadyConsumed || newBalance >= 0) {
+      // alreadyConsumed: same-month reactivation, slot already paid this period.
+      // insufficientBalance: no slots available, skip this camp gracefully.
+      if (alreadyConsumed || !insufficientBalance) {
         await ctx.db.patch(camp._id, {
           status: 'active',
           frozenAt: undefined,
@@ -572,11 +572,11 @@ export async function reclaimFrozenCamps(
 
   for (const camp of eligibleFrozenCamps) {
     if (camp.access !== 'invite' && isPro) {
-      const { alreadyConsumed, newBalance } = await consumeCampSlotForCamp(ctx, {
+      const { alreadyConsumed, insufficientBalance } = await consumeCampSlotForCamp(ctx, {
         userId,
         campId: camp._id,
       })
-      if (alreadyConsumed || newBalance >= 0) {
+      if (alreadyConsumed || !insufficientBalance) {
         await ctx.db.patch(camp._id, {
           status: 'active',
           frozenAt: undefined,

@@ -91,7 +91,7 @@ async function grantExistsInPeriod(
 export async function consumeCampSlotForCamp(
   ctx: MutationCtx,
   args: { userId: Id<'users'>; campId: Id<'camps'> },
-): Promise<{ newBalance: number; alreadyConsumed: boolean }> {
+): Promise<{ newBalance: number; alreadyConsumed: boolean; insufficientBalance?: true }> {
   const now = Date.now()
   const periodStart = startOfMonth(now)
   const periodEnd = startOfMonth(now + 32 * 24 * 60 * 60 * 1000) // start of next month
@@ -105,9 +105,7 @@ export async function consumeCampSlotForCamp(
   const balance = await computeSlotBalance(ctx, args.userId)
 
   if (balance < 1) {
-    throw new Error(
-      `Insufficient slot balance: ${balance} available, 1 required for camp ${args.campId}`,
-    )
+    return { newBalance: balance, alreadyConsumed: false, insufficientBalance: true as const }
   }
 
   await ctx.db.insert('campSlotTransactions', {
@@ -178,7 +176,10 @@ export const consumeCampSlot = internalMutation({
     userId: v.id('users'),
     campId: v.id('camps'),
   },
-  handler: async (ctx, args): Promise<{ newBalance: number; alreadyConsumed: boolean }> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ newBalance: number; alreadyConsumed: boolean; insufficientBalance?: true }> => {
     return await consumeCampSlotForCamp(ctx, args)
   },
 })
