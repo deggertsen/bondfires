@@ -12,8 +12,12 @@ export const SUBSCRIPTION_PRODUCT_IDS = {
   premiumAnnual: 'bondfires.premium.annual',
   proMonthly: 'bondfires.pro.monthly',
   proAnnual: 'bondfires.pro.annual',
-  extraCampMonthly: 'bondfires.extra_camp.monthly',
-  extraCampAnnual: 'bondfires.extra_camp.annual',
+} as const
+
+/** Slot pack product IDs — consumable IAPs for extra camp slots. */
+export const SLOT_PACK_PRODUCT_IDS = {
+  campSlot3Pack: 'bondfires.camp_slots.3pack',
+  campSlot10Pack: 'bondfires.camp_slots.10pack',
 } as const
 
 export type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'
@@ -38,15 +42,15 @@ export const TIER_PRODUCT_IDS: Record<
   },
 }
 
-export const EXTRA_CAMP_PRODUCT_IDS: Record<BillingPeriod, string> = {
-  monthly: SUBSCRIPTION_PRODUCT_IDS.extraCampMonthly,
-  annual: SUBSCRIPTION_PRODUCT_IDS.extraCampAnnual,
+export const EXTRA_CAMP_PRODUCT_IDS = {
+  campSlot3Pack: SLOT_PACK_PRODUCT_IDS.campSlot3Pack,
+  campSlot10Pack: SLOT_PACK_PRODUCT_IDS.campSlot10Pack,
 }
 
 export function isExtraCampProductId(productId: string) {
   return (
-    productId === SUBSCRIPTION_PRODUCT_IDS.extraCampMonthly ||
-    productId === SUBSCRIPTION_PRODUCT_IDS.extraCampAnnual
+    productId === SLOT_PACK_PRODUCT_IDS.campSlot3Pack ||
+    productId === SLOT_PACK_PRODUCT_IDS.campSlot10Pack
   )
 }
 
@@ -66,8 +70,8 @@ export const PRODUCT_ID_TO_PURCHASE_KIND: Record<string, StorePurchaseKind | und
   [SUBSCRIPTION_PRODUCT_IDS.premiumAnnual]: 'subscription',
   [SUBSCRIPTION_PRODUCT_IDS.proMonthly]: 'subscription',
   [SUBSCRIPTION_PRODUCT_IDS.proAnnual]: 'subscription',
-  [SUBSCRIPTION_PRODUCT_IDS.extraCampMonthly]: 'consumable',
-  [SUBSCRIPTION_PRODUCT_IDS.extraCampAnnual]: 'consumable',
+  [SLOT_PACK_PRODUCT_IDS.campSlot3Pack]: 'consumable',
+  [SLOT_PACK_PRODUCT_IDS.campSlot10Pack]: 'consumable',
 }
 
 export const ALL_SUBSCRIPTION_PRODUCT_IDS = Object.values(SUBSCRIPTION_PRODUCT_IDS)
@@ -170,10 +174,10 @@ export const TIER_DEFINITIONS: Record<
 }
 
 export const EXTRA_CAMP_ADD_ON_DEFINITION = {
-  productId: EXTRA_CAMP_PRODUCT_IDS.monthly,
-  annualProductId: EXTRA_CAMP_PRODUCT_IDS.annual,
-  displayName: 'Camp slot',
-  description: 'Add one more public camp slot to your balance.',
+  productId: EXTRA_CAMP_PRODUCT_IDS.campSlot3Pack,
+  annualProductId: EXTRA_CAMP_PRODUCT_IDS.campSlot10Pack,
+  displayName: 'Camp slots',
+  description: 'Add more public camp slots to your balance.',
 }
 
 /** Base private-camp limits by tier. Pro public camps are governed by slot balance. */

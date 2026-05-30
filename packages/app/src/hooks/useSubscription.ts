@@ -373,7 +373,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
   )
 
   const purchaseExtraCamp = useCallback(
-    async (productId = EXTRA_CAMP_PRODUCT_IDS.monthly) => {
+    async (productId: string = EXTRA_CAMP_PRODUCT_IDS.campSlot3Pack) => {
       subscriptionActions.startAddOnPurchase(productId)
       await requestStorePurchase(productId)
     },

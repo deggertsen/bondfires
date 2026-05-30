@@ -185,6 +185,46 @@ export const consumeCampSlot = internalMutation({
 })
 
 /**
+ * Internal mutation: credits slot balance from a consumable purchase.
+ * Inserts N slot_credit entries (one per slot) with the current period.
+ * Slot credits never expire (periodEnd = Infinity) — they are permanent
+ * balance additions, not monthly grants.
+ */
+export const creditSlotPurchase = internalMutation({
+  args: {
+    userId: v.id('users'),
+    slotCount: v.number(),
+    metadata: v.optional(
+      v.object({
+        productId: v.string(),
+        transactionId: v.string(),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now()
+    const periodStart = startOfMonth(now)
+    const metadata = args.metadata ?? {}
+    for (let i = 0; i < args.slotCount; i++) {
+      await ctx.db.insert('campSlotTransactions', {
+        userId: args.userId,
+        campId: undefined,
+        type: 'slot_credit',
+        amount: 1,
+        periodStart,
+        periodEnd: Number.POSITIVE_INFINITY,
+        metadata: {
+          productId: (metadata as Record<string, string>).productId,
+          transactionId: (metadata as Record<string, string>).transactionId,
+        },
+        createdAt: now,
+      })
+    }
+    return { credited: args.slotCount }
+  },
+})
+
+/**
  * Grants 3 free monthly slots to a Pro user on their billing date.
  *
  * - Only runs for users with an active Pro subscription

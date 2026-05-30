@@ -84,7 +84,7 @@ const PRODUCT_ID_TO_TIER: Record<string, SubscriptionTier | undefined> = {
 }
 
 /** Product IDs matching consumable slot pack purchases. */
-const CONSUMABLE_PRODUCT_PATTERN = /^bondfires\.extra_camp\./
+const CONSUMABLE_PRODUCT_PATTERN = /^bondfires\.camp_slots\./
 
 function getStorePurchaseKind(storeProductId: string): StorePurchaseKind | null {
   if (PRODUCT_ID_TO_TIER[storeProductId]) {
@@ -583,13 +583,21 @@ async function findExistingSubscription(
 }
 
 function getSlotQuantityForProduct(storeProductId: string): number {
-  // Product IDs: bondfires.extra_camp.1, bondfires.extra_camp.5, bondfires.extra_camp.10
-  const match = storeProductId.match(/\.(\d+)$/)
-  if (match) {
-    const qty = Number.parseInt(match[1], 10)
+  // Product IDs: bondfires.camp_slots.3pack, bondfires.camp_slots.10pack
+  const packMap: Record<string, number> = {
+    'bondfires.camp_slots.3pack': 3,
+    'bondfires.camp_slots.10pack': 10,
+  }
+  if (packMap[storeProductId]) {
+    return packMap[storeProductId]
+  }
+  // Legacy pattern: bondfires.extra_camp.N
+  const legacyMatch = storeProductId.match(/\.(\d+)$/)
+  if (legacyMatch) {
+    const qty = Number.parseInt(legacyMatch[1], 10)
     if (qty > 0) return qty
   }
-  // Fallback for legacy product IDs
+  // Fallback
   return 1
 }
 
@@ -989,13 +997,11 @@ export const applyStorePurchaseVerification = internalMutation({
         updatedAt: now,
       }
       const alreadyVerified = existing?.verificationStatus === 'verified'
-      let consumablePurchaseId: Id<'consumablePurchases'>
 
       if (existing) {
         await ctx.db.patch(existing._id, fields)
-        consumablePurchaseId = existing._id
       } else {
-        consumablePurchaseId = await ctx.db.insert('consumablePurchases', {
+        await ctx.db.insert('consumablePurchases', {
           ...fields,
           createdAt: now,
         })
@@ -1003,25 +1009,23 @@ export const applyStorePurchaseVerification = internalMutation({
 
       appliedStatus = args.status
 
-      // On verified consumable purchase, insert iap_purchase ledger entry
+      // On verified consumable purchase, credit slot balance via internal mutation.
       if (
         !alreadyVerified &&
         verificationStatus === 'verified' &&
         statusUnlocksEntitlements(args.status)
       ) {
-        await ctx.db.insert('campSlotTransactions', {
+        await ctx.runMutation(internal.campSlots.creditSlotPurchase, {
           userId: args.userId,
-          type: 'iap_purchase',
-          amount: quantity,
+          slotCount: quantity,
           metadata: {
-            consumablePurchaseId,
-            storeProductId: args.storeProductId,
-            storeTransactionId: args.storeTransactionId,
-            storeOriginalTransactionId: args.storeOriginalTransactionId,
-            storePurchaseToken: args.storePurchaseToken,
-            platform: args.platform,
+            productId: args.storeProductId,
+            transactionId:
+              args.storeTransactionId ??
+              args.storeOriginalTransactionId ??
+              args.storePurchaseToken ??
+              '',
           },
-          createdAt: now,
         })
       }
     }
