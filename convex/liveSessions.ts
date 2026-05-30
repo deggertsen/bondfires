@@ -3,6 +3,7 @@ import type { Doc, Id } from './_generated/dataModel'
 import type { QueryCtx } from './_generated/server'
 import { query } from './_generated/server'
 import { auth } from './auth'
+import { isCampVisibleStatus, requiresActiveMembershipForVisibility } from './campLifecycle'
 
 async function getVisibleCampIds(ctx: QueryCtx, userId: Id<'users'> | null) {
   if (!userId) {
@@ -26,10 +27,10 @@ async function canViewBondfire(ctx: QueryCtx, bondfire: Doc<'bondfires'>) {
   }
 
   const camp = await ctx.db.get(bondfire.campId)
-  if (!camp || camp.status !== 'active') {
+  if (!camp || !isCampVisibleStatus(camp.status)) {
     return false
   }
-  if (camp.access !== 'invite') {
+  if (!requiresActiveMembershipForVisibility(camp)) {
     return true
   }
 

@@ -23,6 +23,7 @@ import { throwUserError } from './errors'
 
 const MONTHLY_PRO_SLOT_GRANT = 3
 const GRACE_PERIOD_MS = 30 * 24 * 60 * 60 * 1000
+const INACTIVE_CLAIM_WINDOW_MS = 90 * 24 * 60 * 60 * 1000
 
 /**
  * Computes the current slot balance for a user from the immutable ledger.
@@ -527,7 +528,8 @@ export const grantDailyProSlots = internalMutation({
 })
 
 /**
- * Daily cron: transitions camps out of grace once their grace period has ended.
+ * Daily cron: transitions camps out of grace once their grace period has ended
+ * and archives inactive camps whose claim window has expired.
  *
  * Idempotent — only patches camps currently in grace. Camps missing
  * gracePeriodEnd are treated as expired because grace without an end date
@@ -544,6 +546,7 @@ export const expireGracePeriodCamps = internalMutation({
 
     let expired = 0
     let missingGracePeriodEnd = 0
+    let archived = 0
     let skipped = 0
 
     for (const camp of graceCamps) {
@@ -561,16 +564,37 @@ export const expireGracePeriodCamps = internalMutation({
         status: 'inactive',
         gracePeriodStart: undefined,
         gracePeriodEnd: undefined,
+        reclaimDeadline: now + INACTIVE_CLAIM_WINDOW_MS,
         updatedAt: now,
       })
       expired++
     }
 
+    const inactiveCamps = await ctx.db
+      .query('camps')
+      .filter((q) =>
+        q.and(
+          q.neq(q.field('access'), 'invite'),
+          q.eq(q.field('status'), 'inactive'),
+          q.lte(q.field('reclaimDeadline'), now),
+        ),
+      )
+      .collect()
+
+    for (const camp of inactiveCamps) {
+      await ctx.db.patch(camp._id, {
+        status: 'archived',
+        reclaimDeadline: undefined,
+        updatedAt: now,
+      })
+      archived++
+    }
+
     // biome-ignore lint/suspicious/noConsole: cron job diagnostic logging
     console.log(
-      `Grace expiration: ${expired} inactive, ${missingGracePeriodEnd} missing gracePeriodEnd, ${skipped} skipped`,
+      `Grace expiration: ${expired} inactive, ${missingGracePeriodEnd} missing gracePeriodEnd, ${archived} archived, ${skipped} skipped`,
     )
 
-    return { expired, missingGracePeriodEnd, skipped }
+    return { expired, missingGracePeriodEnd, archived, skipped }
   },
 })

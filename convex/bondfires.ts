@@ -5,6 +5,11 @@ import type { QueryCtx } from './_generated/server'
 import { action, internalQuery, mutation, query } from './_generated/server'
 import { auth } from './auth'
 import {
+  isCampParticipableStatus,
+  isCampVisibleStatus,
+  requiresActiveMembershipForVisibility,
+} from './campLifecycle'
+import {
   assertCanCreateBondfire,
   assertVideoDurationWithinTierLimit,
   getPrivateCampExpiresAt,
@@ -143,18 +148,15 @@ async function isBondfireVisibleToViewer(
   }
 
   const camp = await ctx.db.get(bondfire.campId)
-  if (!camp || (camp.status !== 'active' && camp.status !== 'frozen')) {
+  if (!camp || !isCampVisibleStatus(camp.status)) {
     return false
   }
 
-  if (camp.status === 'frozen') {
+  if (requiresActiveMembershipForVisibility(camp)) {
     return memberCampIds.has(camp._id)
   }
 
-  if (camp.access !== 'invite') {
-    return true
-  }
-  return memberCampIds.has(camp._id)
+  return true
 }
 
 async function filterVisibleBondfires(ctx: QueryCtx, bondfires: Doc<'bondfires'>[]) {
@@ -200,11 +202,11 @@ export const listByCamp = query({
   handler: async (ctx, args) => {
     const limit = args.limit ?? 20
     const camp = await ctx.db.get(args.campId)
-    if (!camp || (camp.status !== 'active' && camp.status !== 'frozen')) {
+    if (!camp || !isCampVisibleStatus(camp.status)) {
       return []
     }
 
-    if (camp.status === 'frozen' || camp.access === 'invite') {
+    if (requiresActiveMembershipForVisibility(camp)) {
       const userId = await auth.getUserId(ctx)
       if (!userId) {
         return []
@@ -373,15 +375,8 @@ export const create = mutation({
     const campId = args.campId
 
     const camp = await ctx.db.get(campId)
-    if (!camp || (camp.status !== 'active' && camp.status !== 'frozen')) {
+    if (!camp || !isCampParticipableStatus(camp.status)) {
       throw new Error('Camp not found')
-    }
-
-    // Frozen camps do not allow new videos
-    if (camp.status === 'frozen') {
-      throw new Error(
-        'This camp is currently frozen. Upgrade your subscription to create content here.',
-      )
     }
 
     const membership = await ctx.db
@@ -499,11 +494,11 @@ export const incrementViews = mutation({
 
     if (bondfire.campId) {
       const camp = await ctx.db.get(bondfire.campId)
-      if (!camp || (camp.status !== 'active' && camp.status !== 'frozen')) {
+      if (!camp || !isCampVisibleStatus(camp.status)) {
         throw new Error('Camp not found')
       }
 
-      if (camp.status === 'frozen' || camp.access === 'invite') {
+      if (requiresActiveMembershipForVisibility(camp)) {
         const membership = await ctx.db
           .query('campMembers')
           .withIndex('by_user_camp', (q) => q.eq('userId', viewerId).eq('campId', camp._id))
