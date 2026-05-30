@@ -5,6 +5,11 @@ import type { MutationCtx, QueryCtx } from './_generated/server'
 import { action, internalAction, internalMutation, internalQuery, query } from './_generated/server'
 import { auth } from './auth'
 import {
+  isCampParticipableStatus,
+  isCampVisibleStatus,
+  requiresActiveMembershipForVisibility,
+} from './campLifecycle'
+import {
   assertCanCreateBondfire,
   assertVideoDurationWithinTierLimit,
   getEntitlementSubscriptionTier,
@@ -298,11 +303,11 @@ async function assertCanViewBondfire(
   }
 
   const camp = await ctx.db.get(bondfire.campId)
-  if (!camp || camp.status !== 'active') {
+  if (!camp || !isCampVisibleStatus(camp.status)) {
     throwUserError('Camp not found')
   }
 
-  if (camp.access !== 'invite') {
+  if (!requiresActiveMembershipForVisibility(camp)) {
     return
   }
 
@@ -330,7 +335,7 @@ async function assertUserCanParticipateInCamp(
   if (!user) {
     throwUserError('User not found')
   }
-  if (!camp || camp.status !== 'active') {
+  if (!camp || !isCampParticipableStatus(camp.status)) {
     throwUserError('Camp not found')
   }
 

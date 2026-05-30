@@ -2,6 +2,7 @@ import { v } from 'convex/values'
 import { api, internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import { action, internalAction, internalQuery } from './_generated/server'
+import { isCampParticipableStatus } from './campLifecycle'
 
 // Expo Push API types
 interface ExpoPushMessage {
@@ -188,7 +189,7 @@ export const getCampNotificationDetails = internalQuery({
   },
   handler: async (ctx, args): Promise<Doc<'camps'> | null> => {
     const camp = await ctx.db.get(args.campId)
-    if (!camp || camp.status !== 'active') {
+    if (!camp || !isCampParticipableStatus(camp.status)) {
       return null
     }
 

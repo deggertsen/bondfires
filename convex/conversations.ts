@@ -3,6 +3,7 @@ import type { Doc, Id } from './_generated/dataModel'
 import type { QueryCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
+import { isCampVisibleStatus, requiresActiveMembershipForVisibility } from './campLifecycle'
 import { throwUserError } from './errors'
 
 type ThreadParticipant = {
@@ -82,14 +83,14 @@ async function isBondfireVisibleToViewer(
   }
 
   const camp = await ctx.db.get(bondfire.campId)
-  if (!camp || camp.status !== 'active') {
+  if (!camp || !isCampVisibleStatus(camp.status)) {
     return false
   }
 
-  if (camp.access !== 'invite') {
-    return true
+  if (requiresActiveMembershipForVisibility(camp)) {
+    return memberCampIds.has(camp._id)
   }
-  return memberCampIds.has(camp._id)
+  return true
 }
 
 async function getParticipantMap(
