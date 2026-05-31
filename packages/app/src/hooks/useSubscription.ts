@@ -19,7 +19,7 @@ import { useCallback, useEffect } from 'react'
 import { Alert, Platform } from 'react-native'
 import { api } from '../../../../convex/_generated/api'
 import {
-  ALL_SUBSCRIPTION_PRODUCT_IDS,
+  ALL_STORE_PRODUCT_IDS,
   CREATE_REQUIRED_TIER,
   EXTRA_CAMP_PRODUCT_IDS,
   isExtraCampProductId,
@@ -99,7 +99,7 @@ async function ensureIapConnection() {
 }
 
 async function loadSubscriptionProducts(showExtraCampAddon: boolean) {
-  const products = await fetchProducts({ skus: ALL_SUBSCRIPTION_PRODUCT_IDS, type: 'all' })
+  const products = await fetchProducts({ skus: ALL_STORE_PRODUCT_IDS, type: 'all' })
   const productList = Array.isArray(products) ? products : [products]
   const visibleProducts = showExtraCampAddon
     ? productList

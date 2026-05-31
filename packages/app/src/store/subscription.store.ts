@@ -22,6 +22,7 @@ export const SLOT_PACK_PRODUCT_IDS = {
 
 export type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'
 export type BillingPeriod = 'monthly' | 'annual'
+export type SlotPackSize = 'threePack' | 'tenPack'
 export type StorePurchaseKind = 'subscription' | 'consumable'
 
 export const TIER_PRODUCT_IDS: Record<
@@ -75,6 +76,10 @@ export const PRODUCT_ID_TO_PURCHASE_KIND: Record<string, StorePurchaseKind | und
 }
 
 export const ALL_SUBSCRIPTION_PRODUCT_IDS = Object.values(SUBSCRIPTION_PRODUCT_IDS)
+export const ALL_STORE_PRODUCT_IDS = [
+  ...Object.values(SUBSCRIPTION_PRODUCT_IDS),
+  ...Object.values(SLOT_PACK_PRODUCT_IDS),
+]
 
 export const TIER_RANK: Record<SubscriptionTier, number> = {
   free: 0,
@@ -110,12 +115,12 @@ export interface TierInfo {
 }
 
 export interface ExtraCampAddOnInfo {
-  productId: string
-  annualProductId: string
+  threePackProductId: string
+  tenPackProductId: string
   displayName: string
   description: string
-  price: string | null
-  annualPrice: string | null
+  threePackPrice: string | null
+  tenPackPrice: string | null
   isAvailable: boolean
 }
 
@@ -174,10 +179,10 @@ export const TIER_DEFINITIONS: Record<
 }
 
 export const EXTRA_CAMP_ADD_ON_DEFINITION = {
-  productId: EXTRA_CAMP_PRODUCT_IDS.campSlot3Pack,
-  annualProductId: EXTRA_CAMP_PRODUCT_IDS.campSlot10Pack,
+  threePackProductId: EXTRA_CAMP_PRODUCT_IDS.campSlot3Pack,
+  tenPackProductId: EXTRA_CAMP_PRODUCT_IDS.campSlot10Pack,
   displayName: 'Camp slots',
-  description: 'Add more public camp slots to your balance.',
+  description: 'Add permanent public camp slots to your balance.',
 }
 
 /** Base private-camp limits by tier. Pro public camps are governed by slot balance. */

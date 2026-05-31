@@ -19,6 +19,15 @@ import { auth } from './auth'
 import { getEntitlementSubscriptionTier, TIER_RANK } from './entitlements'
 import { throwUserError } from './errors'
 
+const slotCreditMetadataValidator = v.object({
+  consumablePurchaseId: v.id('consumablePurchases'),
+  storeProductId: v.string(),
+  storeTransactionId: v.optional(v.string()),
+  storeOriginalTransactionId: v.optional(v.string()),
+  storePurchaseToken: v.optional(v.string()),
+  platform: v.union(v.literal('ios'), v.literal('android')),
+})
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /**
@@ -194,17 +203,15 @@ export const creditSlotPurchase = internalMutation({
   args: {
     userId: v.id('users'),
     slotCount: v.number(),
-    metadata: v.optional(
-      v.object({
-        productId: v.string(),
-        transactionId: v.string(),
-      }),
-    ),
+    metadata: v.optional(slotCreditMetadataValidator),
   },
   handler: async (ctx, args) => {
+    if (!Number.isInteger(args.slotCount) || args.slotCount <= 0) {
+      throw new Error('slotCount must be a positive integer')
+    }
+
     const now = Date.now()
     const periodStart = startOfMonth(now)
-    const metadata = args.metadata ?? {}
     for (let i = 0; i < args.slotCount; i++) {
       await ctx.db.insert('campSlotTransactions', {
         userId: args.userId,
@@ -213,10 +220,7 @@ export const creditSlotPurchase = internalMutation({
         amount: 1,
         periodStart,
         periodEnd: Number.POSITIVE_INFINITY,
-        metadata: {
-          productId: (metadata as Record<string, string>).productId,
-          transactionId: (metadata as Record<string, string>).transactionId,
-        },
+        ...(args.metadata ? { metadata: args.metadata } : {}),
         createdAt: now,
       })
     }

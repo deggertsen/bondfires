@@ -1,4 +1,10 @@
-import type { BillingPeriod, ExtraCampAddOnInfo, SubscriptionTier, TierInfo } from '@bondfires/app'
+import type {
+  BillingPeriod,
+  ExtraCampAddOnInfo,
+  SlotPackSize,
+  SubscriptionTier,
+  TierInfo,
+} from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Check, Crown, Flame, Sparkles, Star, X } from '@tamagui/lucide-icons'
 import { useState } from 'react'
@@ -46,7 +52,7 @@ export function SubscriptionPaywall({
   const [selectedPeriods, setSelectedPeriods] = useState<
     Partial<Record<SubscriptionTier, BillingPeriod>>
   >({})
-  const [selectedAddOnPeriod, setSelectedAddOnPeriod] = useState<BillingPeriod>('monthly')
+  const [selectedSlotPackSize, setSelectedSlotPackSize] = useState<SlotPackSize>('threePack')
 
   if (!open) return null
 
@@ -176,14 +182,14 @@ export function SubscriptionPaywall({
             {extraCampAddOn && onPurchaseExtraCamp ? (
               <AddOnCard
                 addOn={extraCampAddOn}
-                selectedPeriod={selectedAddOnPeriod}
-                onPeriodChange={setSelectedAddOnPeriod}
+                selectedSize={selectedSlotPackSize}
+                onSizeChange={setSelectedSlotPackSize}
                 onPurchase={onPurchaseExtraCamp}
                 isPurchasing={
                   isPurchasing &&
                   !!purchasingProductId &&
-                  (purchasingProductId === extraCampAddOn.productId ||
-                    purchasingProductId === extraCampAddOn.annualProductId)
+                  (purchasingProductId === extraCampAddOn.threePackProductId ||
+                    purchasingProductId === extraCampAddOn.tenPackProductId)
                 }
               />
             ) : null}
@@ -404,31 +410,32 @@ function TierCard({
 
 interface AddOnCardProps {
   addOn: ExtraCampAddOnInfo
-  selectedPeriod: BillingPeriod
-  onPeriodChange: (period: BillingPeriod) => void
+  selectedSize: SlotPackSize
+  onSizeChange: (size: SlotPackSize) => void
   onPurchase: (productId?: string) => void
   isPurchasing: boolean
 }
 
 function AddOnCard({
   addOn,
-  selectedPeriod,
-  onPeriodChange,
+  selectedSize,
+  onSizeChange,
   onPurchase,
   isPurchasing,
 }: AddOnCardProps) {
-  const monthlyAvailable = !!addOn.productId && !!addOn.price
-  const annualAvailable = !!addOn.annualProductId && !!addOn.annualPrice
-  const activePeriod =
-    selectedPeriod === 'annual' && annualAvailable
-      ? 'annual'
-      : monthlyAvailable
-        ? 'monthly'
-        : annualAvailable
-          ? 'annual'
-          : 'monthly'
-  const selectedProductId = activePeriod === 'annual' ? addOn.annualProductId : addOn.productId
-  const selectedPrice = activePeriod === 'annual' ? addOn.annualPrice : addOn.price
+  const threePackAvailable = !!addOn.threePackProductId && !!addOn.threePackPrice
+  const tenPackAvailable = !!addOn.tenPackProductId && !!addOn.tenPackPrice
+  const activeSize =
+    selectedSize === 'tenPack' && tenPackAvailable
+      ? 'tenPack'
+      : threePackAvailable
+        ? 'threePack'
+        : tenPackAvailable
+          ? 'tenPack'
+          : 'threePack'
+  const selectedProductId =
+    activeSize === 'tenPack' ? addOn.tenPackProductId : addOn.threePackProductId
+  const selectedPrice = activeSize === 'tenPack' ? addOn.tenPackPrice : addOn.threePackPrice
   const isComingSoon = !addOn.isAvailable || !selectedProductId || !selectedPrice
 
   return (
@@ -451,7 +458,7 @@ function AddOnCard({
               <PlanBadge label="Pro add-on" />
             </XStack>
             <Text color={bondfireColors.ash} fontSize={11}>
-              Adds one public camp slot
+              Permanent public camp slot packs
             </Text>
           </YStack>
         </XStack>
@@ -465,7 +472,7 @@ function AddOnCard({
           </Text>
           {!isComingSoon ? (
             <Text color={bondfireColors.ash} fontSize={11}>
-              /{activePeriod === 'annual' ? 'year' : 'month'}
+              {activeSize === 'tenPack' ? '10 slots' : '3 slots'}
             </Text>
           ) : null}
         </YStack>
@@ -476,19 +483,19 @@ function AddOnCard({
       </Text>
 
       <XStack gap={8} marginBottom={16}>
-        <BillingOption
-          label="Monthly"
-          price={addOn.price}
-          selected={activePeriod === 'monthly'}
-          disabled={!monthlyAvailable}
-          onPress={() => onPeriodChange('monthly')}
+        <PackOption
+          label="3-pack"
+          price={addOn.threePackPrice}
+          selected={activeSize === 'threePack'}
+          disabled={!threePackAvailable}
+          onPress={() => onSizeChange('threePack')}
         />
-        <BillingOption
-          label="Annual"
-          price={addOn.annualPrice ?? 'Coming Soon'}
-          selected={activePeriod === 'annual'}
-          disabled={!annualAvailable}
-          onPress={() => onPeriodChange('annual')}
+        <PackOption
+          label="10-pack"
+          price={addOn.tenPackPrice ?? 'Coming Soon'}
+          selected={activeSize === 'tenPack'}
+          disabled={!tenPackAvailable}
+          onPress={() => onSizeChange('tenPack')}
         />
       </XStack>
 
@@ -506,7 +513,7 @@ function AddOnCard({
             color={isComingSoon ? bondfireColors.ash : bondfireColors.bondfireCopper}
             fontWeight="600"
           >
-            {isComingSoon ? 'Coming soon' : isPurchasing ? 'Processing...' : 'Add camp slot'}
+            {isComingSoon ? 'Coming soon' : isPurchasing ? 'Processing...' : 'Buy slot pack'}
           </Text>
         </XStack>
       </Button>
@@ -537,6 +544,10 @@ interface BillingOptionProps {
   selected: boolean
   disabled: boolean
   onPress: () => void
+}
+
+function PackOption(props: BillingOptionProps) {
+  return <BillingOption {...props} />
 }
 
 function BillingOption({ label, price, selected, disabled, onPress }: BillingOptionProps) {

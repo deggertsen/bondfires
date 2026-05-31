@@ -997,11 +997,13 @@ export const applyStorePurchaseVerification = internalMutation({
         updatedAt: now,
       }
       const alreadyVerified = existing?.verificationStatus === 'verified'
+      let consumablePurchaseId: Id<'consumablePurchases'>
 
       if (existing) {
         await ctx.db.patch(existing._id, fields)
+        consumablePurchaseId = existing._id
       } else {
-        await ctx.db.insert('consumablePurchases', {
+        consumablePurchaseId = await ctx.db.insert('consumablePurchases', {
           ...fields,
           createdAt: now,
         })
@@ -1019,12 +1021,12 @@ export const applyStorePurchaseVerification = internalMutation({
           userId: args.userId,
           slotCount: quantity,
           metadata: {
-            productId: args.storeProductId,
-            transactionId:
-              args.storeTransactionId ??
-              args.storeOriginalTransactionId ??
-              args.storePurchaseToken ??
-              '',
+            consumablePurchaseId,
+            storeProductId: args.storeProductId,
+            storeTransactionId: args.storeTransactionId,
+            storeOriginalTransactionId: args.storeOriginalTransactionId,
+            storePurchaseToken: args.storePurchaseToken,
+            platform: args.platform,
           },
         })
       }
