@@ -77,14 +77,14 @@ function GlobalPaywall() {
     if (!productsLoaded || !showExtraCampAddon) return null
 
     const def = EXTRA_CAMP_ADD_ON_DEFINITION
-    const price = productPrices[def.productId] ?? null
-    const annualPrice = productPrices[def.annualProductId] ?? null
+    const threePackPrice = productPrices[def.threePackProductId] ?? null
+    const tenPackPrice = productPrices[def.tenPackProductId] ?? null
 
     return {
       ...def,
-      price,
-      annualPrice,
-      isAvailable: price !== null || annualPrice !== null,
+      threePackPrice,
+      tenPackPrice,
+      isAvailable: threePackPrice !== null || tenPackPrice !== null,
     }
   }, [productPrices, productsLoaded, showExtraCampAddon])
 

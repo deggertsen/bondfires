@@ -19,6 +19,15 @@ import { auth } from './auth'
 import { getEntitlementSubscriptionTier, TIER_RANK } from './entitlements'
 import { throwUserError } from './errors'
 
+const slotCreditMetadataValidator = v.object({
+  consumablePurchaseId: v.id('consumablePurchases'),
+  storeProductId: v.string(),
+  storeTransactionId: v.optional(v.string()),
+  storeOriginalTransactionId: v.optional(v.string()),
+  storePurchaseToken: v.optional(v.string()),
+  platform: v.union(v.literal('ios'), v.literal('android')),
+})
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 const MONTHLY_PRO_SLOT_GRANT = 3
@@ -305,6 +314,41 @@ export const consumeCampSlot = internalMutation({
     args,
   ): Promise<{ newBalance: number; alreadyConsumed: boolean; insufficientBalance?: true }> => {
     return await consumeCampSlotForCamp(ctx, args)
+  },
+})
+
+/**
+ * Internal mutation: credits slot balance from a consumable purchase.
+ * Inserts N slot_credit entries (one per slot) with the current period.
+ * Slot credits never expire (periodEnd = Infinity) — they are permanent
+ * balance additions, not monthly grants.
+ */
+export const creditSlotPurchase = internalMutation({
+  args: {
+    userId: v.id('users'),
+    slotCount: v.number(),
+    metadata: v.optional(slotCreditMetadataValidator),
+  },
+  handler: async (ctx, args) => {
+    if (!Number.isInteger(args.slotCount) || args.slotCount <= 0) {
+      throw new Error('slotCount must be a positive integer')
+    }
+
+    const now = Date.now()
+    const periodStart = startOfMonth(now)
+    for (let i = 0; i < args.slotCount; i++) {
+      await ctx.db.insert('campSlotTransactions', {
+        userId: args.userId,
+        campId: undefined,
+        type: 'slot_credit',
+        amount: 1,
+        periodStart,
+        periodEnd: Number.POSITIVE_INFINITY,
+        ...(args.metadata ? { metadata: args.metadata } : {}),
+        createdAt: now,
+      })
+    }
+    return { credited: args.slotCount }
   },
 })
 

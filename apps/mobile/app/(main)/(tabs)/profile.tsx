@@ -6,6 +6,7 @@ import {
   setFeedActiveBondfireId,
   uploadQueueActions,
   usePreferences,
+  useSlotBalance,
   useSubscription,
 } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
@@ -116,6 +117,7 @@ export default function ProfileScreen() {
     usePreferences()
 
   const { currentTier, isRestoring, managePlan, restore, showPaywall } = useSubscription()
+  const { balance: slotBalance, isLoading: slotBalanceLoading } = useSlotBalance()
 
   const [refreshKey, setRefreshKey] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -540,6 +542,31 @@ export default function ProfileScreen() {
           </Card>
 
           <UploadProgressCard />
+
+          {/* Camp Slot Balance */}
+          {!slotBalanceLoading && currentTier === 'pro' ? (
+            <Card marginBottom={24}>
+              <XStack alignItems="center" justifyContent="space-between" padding={16}>
+                <YStack gap={4}>
+                  <Text fontSize={15} fontWeight="600">
+                    Camp Slots
+                  </Text>
+                  <Text fontSize={13} color={bondfireColors.ash}>
+                    {slotBalance > 0
+                      ? `${slotBalance} slot${slotBalance === 1 ? '' : 's'} available`
+                      : 'No slots available'}
+                  </Text>
+                </YStack>
+                {slotBalance < 3 && (
+                  <Button variant="primary" size="$sm" onPress={showPaywall}>
+                    <Text color={bondfireColors.whiteSmoke} fontWeight="600" fontSize={13}>
+                      Get More
+                    </Text>
+                  </Button>
+                )}
+              </XStack>
+            </Card>
+          ) : null}
 
           {/* Subscription Status */}
           <YStack marginBottom={24}>

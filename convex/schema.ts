@@ -224,6 +224,7 @@ export default defineSchema({
       v.literal('monthly_grant'),
       v.literal('iap_purchase'),
       v.literal('monthly_consumption'),
+      v.literal('slot_credit'),
       v.literal('refund'),
       v.literal('grace_period_entry'),
       v.literal('reactivation'),
