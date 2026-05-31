@@ -179,7 +179,10 @@ export default function CampsScreen() {
   const router = useRouter()
   const camps = useQuery(api.camps.list, {})
   const subscription = useQuery(api.subscriptions.current, {})
-  const slotBalance = useQuery(api.campSlots.getSlotBalance, {})
+  const slotBalance = useQuery(
+    api.campSlots.getSlotBalance,
+    subscription?.tier === 'pro' ? {} : 'skip',
+  )
   const joinCamp = useMutation(api.camps.join)
   const createPrivateCamp = useMutation(api.camps.createPrivateCamp)
   const redeemInvite = useMutation(api.camps.redeemInvite)
@@ -273,6 +276,11 @@ export default function CampsScreen() {
       return
     }
 
+    if (subscription?.tier === 'pro' && slotBalance !== undefined && slotBalance.balance < 1) {
+      Alert.alert('Camp Slots Required', 'Buy a slot pack to create more private camps.')
+      return
+    }
+
     setIsSubmitting(true)
     try {
       const campId = await createPrivateCamp({
@@ -289,7 +297,15 @@ export default function CampsScreen() {
     } finally {
       setIsSubmitting(false)
     }
-  }, [canCreatePrivateCamp, createPrivateCamp, privateCampName, privateCampPurpose, router])
+  }, [
+    canCreatePrivateCamp,
+    createPrivateCamp,
+    privateCampName,
+    privateCampPurpose,
+    router,
+    slotBalance,
+    subscription?.tier,
+  ])
 
   const handleRedeemInvite = useCallback(async () => {
     const code = inviteCode.trim().toLowerCase()
@@ -506,7 +522,10 @@ export default function CampsScreen() {
           <Button
             variant="primary"
             size="$lg"
-            disabled={isSubmitting}
+            disabled={
+              isSubmitting ||
+              (subscription?.tier === 'pro' && slotBalance !== undefined && slotBalance.balance < 1)
+            }
             onPress={handleCreatePrivateCamp}
           >
             {isSubmitting ? (

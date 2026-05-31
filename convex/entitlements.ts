@@ -458,20 +458,20 @@ export async function handleTierUpgrade(
     return { campsUnfrozen: 0 }
   }
 
+  const limits = TIER_CAMP_LIMITS[newTier]
   const userCamps = await ctx.db
     .query('camps')
     .withIndex('by_owner', (q) => q.eq('ownerId', userId))
     .collect()
 
+  const activePrivateCamps = userCamps.filter((c) => c.access === 'invite' && c.status === 'active')
   const frozenCamps = userCamps
     .filter((c) => c.status === 'frozen')
     .sort((a, b) => a.createdAt - b.createdAt) // Oldest first
 
   let campsUnfrozen = 0
-  // Pro has no hard camp limit (governed by slot balance).
-  // All Pro-created camps (public and private) consume slots on reactivation.
-
   const isPro = TIER_RANK[newTier] >= TIER_RANK.pro
+  let privateSlotsLeft = limits.privateCamps - activePrivateCamps.length
 
   for (const camp of frozenCamps) {
     if (isPro) {
@@ -491,6 +491,15 @@ export async function handleTierUpgrade(
         })
         campsUnfrozen++
       }
+    } else if (camp.access === 'invite' && privateSlotsLeft > 0) {
+      await ctx.db.patch(camp._id, {
+        status: 'active',
+        frozenAt: undefined,
+        reclaimDeadline: undefined,
+        updatedAt: Date.now(),
+      })
+      privateSlotsLeft--
+      campsUnfrozen++
     }
   }
 
@@ -512,6 +521,7 @@ export async function reclaimFrozenCamps(
   tier: SubscriptionTier,
 ): Promise<{ campsReclaimed: number }> {
   const now = Date.now()
+  const limits = TIER_CAMP_LIMITS[tier]
   const frozenUserCamps = await ctx.db
     .query('camps')
     .withIndex('by_owner', (q) => q.eq('ownerId', userId))
@@ -528,6 +538,10 @@ export async function reclaimFrozenCamps(
   }
 
   const isPro = TIER_RANK[tier] >= TIER_RANK.pro
+  const activePrivateCamps = frozenUserCamps.filter(
+    (c) => c.access === 'invite' && c.status === 'active',
+  )
+  let privateSlotsLeft = limits.privateCamps - activePrivateCamps.length
 
   let campsReclaimed = 0
 
@@ -547,6 +561,15 @@ export async function reclaimFrozenCamps(
         })
         campsReclaimed++
       }
+    } else if (camp.access === 'invite' && privateSlotsLeft > 0) {
+      await ctx.db.patch(camp._id, {
+        status: 'active',
+        frozenAt: undefined,
+        reclaimDeadline: undefined,
+        updatedAt: now,
+      })
+      privateSlotsLeft--
+      campsReclaimed++
     }
   }
 
