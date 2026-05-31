@@ -179,6 +179,7 @@ export default function CampsScreen() {
   const router = useRouter()
   const camps = useQuery(api.camps.list, {})
   const subscription = useQuery(api.subscriptions.current, {})
+  const slotBalance = useQuery(api.campSlots.getSlotBalance, {})
   const joinCamp = useMutation(api.camps.join)
   const createPrivateCamp = useMutation(api.camps.createPrivateCamp)
   const redeemInvite = useMutation(api.camps.redeemInvite)
@@ -476,6 +477,32 @@ export default function CampsScreen() {
               placeholder="Purpose, theme, or focus"
             />
           </YStack>
+          {subscription?.tier === 'pro' && slotBalance !== undefined ? (
+            <YStack
+              borderRadius={10}
+              backgroundColor={bondfireColors.gunmetal}
+              borderWidth={1}
+              borderColor={bondfireColors.iron}
+              padding={10}
+              gap={4}
+            >
+              <Text fontSize={11} color={bondfireColors.ash} fontWeight="900">
+                CAMP SLOTS
+              </Text>
+              <Text
+                fontSize={18}
+                fontWeight="900"
+                color={slotBalance.balance > 0 ? bondfireColors.success : bondfireColors.error}
+              >
+                {slotBalance.balance} slot{slotBalance.balance !== 1 ? 's' : ''} remaining
+              </Text>
+              {slotBalance.balance < 1 ? (
+                <Text fontSize={12} color={bondfireColors.ash}>
+                  Buy a slot pack to create more camps.
+                </Text>
+              ) : null}
+            </YStack>
+          ) : null}
           <Button
             variant="primary"
             size="$lg"

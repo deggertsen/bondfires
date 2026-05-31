@@ -373,23 +373,6 @@ async function getCampLimitsForTier(
   }
 }
 
-async function getOwnedCampCount(
-  ctx: QueryCtx | MutationCtx,
-  userId: Id<'users'>,
-  isPublic: boolean,
-) {
-  const ownedCamps = await ctx.db
-    .query('camps')
-    .withIndex('by_owner', (q) => q.eq('ownerId', userId))
-    .collect()
-
-  return ownedCamps.filter(
-    (camp) =>
-      (isPublic ? camp.access !== 'invite' : camp.access === 'invite') &&
-      (camp.status === 'active' || camp.status === 'frozen'),
-  ).length
-}
-
 export async function freezeExcessOwnedCamps(
   ctx: MutationCtx,
   userId: Id<'users'>,
@@ -475,30 +458,24 @@ export async function handleTierUpgrade(
     return { campsUnfrozen: 0 }
   }
 
-  const limits = TIER_CAMP_LIMITS[newTier]
   const userCamps = await ctx.db
     .query('camps')
     .withIndex('by_owner', (q) => q.eq('ownerId', userId))
     .collect()
-
-  // Count currently active camps
-  const activePrivateCamps = userCamps.filter((c) => c.access === 'invite' && c.status === 'active')
 
   const frozenCamps = userCamps
     .filter((c) => c.status === 'frozen')
     .sort((a, b) => a.createdAt - b.createdAt) // Oldest first
 
   let campsUnfrozen = 0
-  // Pro has no hard public camp limit (governed by slot balance).
-  // Private camp limit is per TIER_CAMP_LIMITS.
+  // Pro has no hard camp limit (governed by slot balance).
+  // All Pro-created camps (public and private) consume slots on reactivation.
 
-  // Pre-compute slot balance so we can check before unfreezing each public camp
   const isPro = TIER_RANK[newTier] >= TIER_RANK.pro
 
-  let privateSlotsLeft = limits.privateCamps - activePrivateCamps.length
-
   for (const camp of frozenCamps) {
-    if (camp.access !== 'invite' && isPro) {
+    if (isPro) {
+      // All Pro-created camps (public and private) consume slots on reactivation.
       const { alreadyConsumed, insufficientBalance } = await consumeCampSlotForCamp(ctx, {
         userId,
         campId: camp._id,
@@ -514,15 +491,6 @@ export async function handleTierUpgrade(
         })
         campsUnfrozen++
       }
-    } else if (camp.access === 'invite' && privateSlotsLeft > 0) {
-      await ctx.db.patch(camp._id, {
-        status: 'active',
-        frozenAt: undefined,
-        reclaimDeadline: undefined,
-        updatedAt: Date.now(),
-      })
-      privateSlotsLeft--
-      campsUnfrozen++
     }
   }
 
@@ -544,7 +512,6 @@ export async function reclaimFrozenCamps(
   tier: SubscriptionTier,
 ): Promise<{ campsReclaimed: number }> {
   const now = Date.now()
-  const limits = TIER_CAMP_LIMITS[tier]
   const frozenUserCamps = await ctx.db
     .query('camps')
     .withIndex('by_owner', (q) => q.eq('ownerId', userId))
@@ -560,18 +527,13 @@ export async function reclaimFrozenCamps(
     return { campsReclaimed: 0 }
   }
 
-  // Count currently active camps
-  const activePrivateCamps = frozenUserCamps.filter(
-    (c) => c.access === 'invite' && c.status === 'active',
-  )
-
   const isPro = TIER_RANK[tier] >= TIER_RANK.pro
-  let privateSlotsLeft = limits.privateCamps - activePrivateCamps.length
 
   let campsReclaimed = 0
 
   for (const camp of eligibleFrozenCamps) {
-    if (camp.access !== 'invite' && isPro) {
+    if (isPro) {
+      // All Pro-created camps (public and private) consume slots on reclaim.
       const { alreadyConsumed, insufficientBalance } = await consumeCampSlotForCamp(ctx, {
         userId,
         campId: camp._id,
@@ -585,15 +547,6 @@ export async function reclaimFrozenCamps(
         })
         campsReclaimed++
       }
-    } else if (camp.access === 'invite' && privateSlotsLeft > 0) {
-      await ctx.db.patch(camp._id, {
-        status: 'active',
-        frozenAt: undefined,
-        reclaimDeadline: undefined,
-        updatedAt: now,
-      })
-      privateSlotsLeft--
-      campsReclaimed++
     }
   }
 
@@ -654,18 +607,9 @@ export async function processExpiredReclaims(
         continue
       }
 
-      const limits = await getCampLimitsForTier(ctx, member.userId, memberTier)
-      const isPublicCamp = camp.access !== 'invite'
-      const ownedCampCount = await getOwnedCampCount(ctx, member.userId, isPublicCamp)
-      const privateLimit = limits.privateCamps
+      const slotBalance = await computeSlotBalance(ctx, member.userId)
 
-      if (isPublicCamp) {
-        // Public camp eligibility is governed by slot balance, not a hard cap.
-        const slotBalance = await computeSlotBalance(ctx, member.userId)
-        if (slotBalance >= 1) {
-          eligibleProMembers.push(member)
-        }
-      } else if (ownedCampCount < privateLimit) {
+      if (slotBalance >= 1) {
         eligibleProMembers.push(member)
       }
     }
@@ -686,10 +630,8 @@ export async function processExpiredReclaims(
     // A future enhancement could add a claim button in the UI.
     const newOwnerId = eligibleProMembers[0].userId
 
-    // Consume a slot for the transferred public camp.
-    if (camp.access !== 'invite') {
-      await consumeCampSlotForCamp(ctx, { userId: newOwnerId, campId: camp._id })
-    }
+    // Consume a slot for the transferred camp (all camps now slot-gated).
+    await consumeCampSlotForCamp(ctx, { userId: newOwnerId, campId: camp._id })
 
     await ctx.db.patch(camp._id, {
       ownerId: newOwnerId,
