@@ -1,11 +1,11 @@
 /**
- * Camp Slot Management — monthly slot consumption system for public camps.
+ * Camp Slot Management — monthly slot consumption system.
  *
- * Every active public camp costs 1 slot per month. Pro users get 3 free
- * slots per month on their billing date. Extra slot packs are purchasable
- * as consumable IAPs. All slot movements are recorded in an immutable
- * ledger (campSlotTransactions table) and balance is always computed,
- * never stored.
+ * Every active Pro-created camp (public or private) costs 1 slot per month.
+ * Pro users get 3 free slots per month on their billing date. Extra slot
+ * packs are purchasable as consumable IAPs. All slot movements are recorded
+ * in an immutable ledger (campSlotTransactions table) and balance is always
+ * computed, never stored.
  *
  * Balance formula: SUM(positive amounts) − SUM(negative amounts)
  * Balance can NEVER go negative — all consuming operations throw hard errors.

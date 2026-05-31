@@ -1709,6 +1709,20 @@ export const createPrivateCamp = mutation({
       updatedAt: now,
     })
 
+    if (TIER_RANK[tier] >= TIER_RANK.pro) {
+      // Pro private camps consume 1 slot for the first month in the same transaction.
+      const { insufficientBalance } = await consumeCampSlotForCamp(ctx, {
+        userId: user._id,
+        campId,
+      })
+
+      if (insufficientBalance) {
+        await ctx.db.delete(campId)
+        throwUserError('Insufficient camp slots. Buy a slot pack to create more private camps.')
+      }
+      // alreadyConsumed is fine — means the slot was already paid this period.
+    }
+
     await upsertMembership(ctx, {
       userId: user._id,
       campId,

@@ -179,6 +179,10 @@ export default function CampsScreen() {
   const router = useRouter()
   const camps = useQuery(api.camps.list, {})
   const subscription = useQuery(api.subscriptions.current, {})
+  const slotBalance = useQuery(
+    api.campSlots.getSlotBalance,
+    subscription?.tier === 'pro' ? {} : 'skip',
+  )
   const joinCamp = useMutation(api.camps.join)
   const createPrivateCamp = useMutation(api.camps.createPrivateCamp)
   const redeemInvite = useMutation(api.camps.redeemInvite)
@@ -272,6 +276,11 @@ export default function CampsScreen() {
       return
     }
 
+    if (subscription?.tier === 'pro' && slotBalance !== undefined && slotBalance.balance < 1) {
+      Alert.alert('Camp Slots Required', 'Buy a slot pack to create more private camps.')
+      return
+    }
+
     setIsSubmitting(true)
     try {
       const campId = await createPrivateCamp({
@@ -288,7 +297,15 @@ export default function CampsScreen() {
     } finally {
       setIsSubmitting(false)
     }
-  }, [canCreatePrivateCamp, createPrivateCamp, privateCampName, privateCampPurpose, router])
+  }, [
+    canCreatePrivateCamp,
+    createPrivateCamp,
+    privateCampName,
+    privateCampPurpose,
+    router,
+    slotBalance,
+    subscription?.tier,
+  ])
 
   const handleRedeemInvite = useCallback(async () => {
     const code = inviteCode.trim().toLowerCase()
@@ -476,10 +493,39 @@ export default function CampsScreen() {
               placeholder="Purpose, theme, or focus"
             />
           </YStack>
+          {subscription?.tier === 'pro' && slotBalance !== undefined ? (
+            <YStack
+              borderRadius={10}
+              backgroundColor={bondfireColors.gunmetal}
+              borderWidth={1}
+              borderColor={bondfireColors.iron}
+              padding={10}
+              gap={4}
+            >
+              <Text fontSize={11} color={bondfireColors.ash} fontWeight="900">
+                CAMP SLOTS
+              </Text>
+              <Text
+                fontSize={18}
+                fontWeight="900"
+                color={slotBalance.balance > 0 ? bondfireColors.success : bondfireColors.error}
+              >
+                {slotBalance.balance} slot{slotBalance.balance !== 1 ? 's' : ''} remaining
+              </Text>
+              {slotBalance.balance < 1 ? (
+                <Text fontSize={12} color={bondfireColors.ash}>
+                  Buy a slot pack to create more camps.
+                </Text>
+              ) : null}
+            </YStack>
+          ) : null}
           <Button
             variant="primary"
             size="$lg"
-            disabled={isSubmitting}
+            disabled={
+              isSubmitting ||
+              (subscription?.tier === 'pro' && slotBalance !== undefined && slotBalance.balance < 1)
+            }
             onPress={handleCreatePrivateCamp}
           >
             {isSubmitting ? (
