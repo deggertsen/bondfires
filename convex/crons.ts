@@ -50,4 +50,12 @@ crons.daily(
   internal.campSlots.expireGracePeriodCamps,
 )
 
+// Purge client telemetry logs older than 30 days.
+// Runs daily at 12:00 UTC.
+crons.daily(
+  'purge old client logs',
+  { hourUTC: 12, minuteUTC: 0 },
+  internal.clientLogs.purgeOld,
+)
+
 export default crons

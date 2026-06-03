@@ -1,7 +1,7 @@
 // Convex React Native polyfill - MUST be imported before any Convex imports
 import '../polyfills/convex-react-native'
 
-import { Button, Text } from '@bondfires/ui'
+import { Button, Text, ToastContainer } from '@bondfires/ui'
 import { ConvexAuthProvider } from '@convex-dev/auth/react'
 import { ConvexReactClient, useMutation } from 'convex/react'
 import { useFonts } from 'expo-font'
@@ -17,7 +17,7 @@ import { TamaguiProvider, Theme, YStack } from 'tamagui'
 import config from '../tamagui.config'
 import 'react-native-reanimated'
 
-import { appStore$, mmkvStorage, usePushNotifications } from '@bondfires/app'
+import { appStore$, mmkvStorage, telemetry, toastActions, usePushNotifications } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { useObserve } from '@legendapp/state/react'
 import type { RelativePathString } from 'expo-router/build/types'
@@ -60,6 +60,34 @@ const convex = new ConvexReactClient(convexUrl, {
   unsavedChangesWarning: false,
 })
 
+// ---------------------------------------------------------------------------
+// Telemetry initializer — runs inside Convex context
+// ---------------------------------------------------------------------------
+
+function TelemetryInitializer() {
+  const mutationCreate = useMutation(api.clientLogs.create)
+  const mutationCreateBatch = useMutation(api.clientLogs.createBatch)
+
+  useEffect(() => {
+    telemetry.init({
+      create: (args: unknown) => mutationCreate(args as Parameters<typeof mutationCreate>[0]),
+      createBatch: (args: unknown) =>
+        mutationCreateBatch(args as Parameters<typeof mutationCreateBatch>[0]),
+    })
+
+    // Wire error-level telemetry events to the toast system
+    telemetry.onErrorToast((message, referenceId) => {
+      toastActions.addToast('error', message, referenceId)
+    })
+  }, [mutationCreate, mutationCreateBatch])
+
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// Error fallback
+// ---------------------------------------------------------------------------
+
 // Props for the error fallback component
 interface ErrorFallbackProps {
   error: Error
@@ -91,7 +119,6 @@ function ErrorFallback({ error, retry }: ErrorFallbackProps) {
 
 // Custom ErrorBoundary that wraps AppContent.
 // Catches errors from routes and renders a fallback UI.
-// ErrorFallback doesn't use Convex hooks, so we only need TamaguiProvider here.
 class LayoutErrorBoundary extends Component<
   { children: ReactNode },
   { hasError: boolean; error: Error | null }
@@ -106,7 +133,10 @@ class LayoutErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('RootLayout error boundary caught:', error, errorInfo)
+    telemetry.error('error:boundary', error.message ?? 'Unknown error boundary error', {
+      stack: error.stack,
+      componentStack: errorInfo.componentStack,
+    })
   }
 
   handleRetry = () => {
@@ -128,8 +158,6 @@ class LayoutErrorBoundary extends Component<
 }
 
 // Override expo-router's default ErrorBoundary.
-// expo-router renders this in place of the route component when an error occurs.
-// ErrorFallback doesn't use Convex hooks, so no ConvexProvider needed here.
 export function ErrorBoundary(props: { error: Error; retry: () => void }) {
   return (
     <TamaguiProvider config={config} defaultTheme="dark">
@@ -139,6 +167,10 @@ export function ErrorBoundary(props: { error: Error; retry: () => void }) {
     </TamaguiProvider>
   )
 }
+
+// ---------------------------------------------------------------------------
+// App Content
+// ---------------------------------------------------------------------------
 
 function AppContent() {
   const colorScheme = useColorScheme()
@@ -187,8 +219,6 @@ function AppContent() {
   })
 
   // Observe notifications preference and register/unregister accordingly.
-  // We use refs to avoid stale closure captures — useObserve binds callbacks
-  // at mount time, so mutation functions from subsequent renders aren't seen.
   const registerDeviceRef = useRef(registerDevice)
   registerDeviceRef.current = registerDevice
   const unregisterDeviceRef = useRef(unregisterDevice)
@@ -210,11 +240,10 @@ function AppContent() {
 
   useEffect(() => {
     if (pushError) {
-      // Only log push notification errors in production - emulator errors are expected
       const isEmulatorError =
         typeof pushError === 'string' && pushError.includes('physical devices')
       if (!__DEV__ || !isEmulatorError) {
-        console.error('Push notification error:', pushError)
+        telemetry.warn('push:error', String(pushError), { isEmulatorError })
       }
     }
   }, [pushError])
@@ -222,6 +251,8 @@ function AppContent() {
   return (
     <TamaguiProvider config={config} defaultTheme={colorScheme ?? 'dark'}>
       <Theme name={colorScheme ?? 'dark'}>
+        <TelemetryInitializer />
+        <ToastContainer />
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="index" />
           <Stack.Screen name="(auth)" options={{ headerShown: false }} />
@@ -232,21 +263,40 @@ function AppContent() {
   )
 }
 
+// ---------------------------------------------------------------------------
+// Root Layout
+// ---------------------------------------------------------------------------
+
 export default function RootLayout() {
+  // Breadcrumb: app:init — fires once on mount
+  useEffect(() => {
+    telemetry.breadcrumb('app:init')
+  }, [])
+
   const [fontsLoaded, fontError] = useFonts({
     Inter: require('@tamagui/font-inter/otf/Inter-Medium.otf'),
     InterBold: require('@tamagui/font-inter/otf/Inter-Bold.otf'),
   })
 
+  // Breadcrumb: fonts:loaded — fires once on successful load
+  useEffect(() => {
+    if (fontsLoaded) {
+      telemetry.breadcrumb('fonts:loaded', { fontError: !!fontError })
+    }
+  }, [fontsLoaded, fontError])
+
+  // Breadcrumb: splash:hidden — fires once on splash hide
+  useEffect(() => {
+    if (fontsLoaded) {
+      SplashScreen.hideAsync().then(() => {
+        telemetry.breadcrumb('splash:hidden')
+      })
+    }
+  }, [fontsLoaded])
+
   useEffect(() => {
     if (fontError) throw fontError
   }, [fontError])
-
-  useEffect(() => {
-    if (fontsLoaded) {
-      SplashScreen.hideAsync()
-    }
-  }, [fontsLoaded])
 
   if (!fontsLoaded) {
     return null

@@ -3,6 +3,7 @@ import * as Device from 'expo-device'
 import * as Notifications from 'expo-notifications'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AppState, type AppStateStatus, Platform } from 'react-native'
+import { telemetry } from '../services/telemetry'
 
 // Configure how notifications are handled when app is in foreground
 Notifications.setNotificationHandler({
@@ -76,7 +77,7 @@ export function usePushNotifications(
           })
           setIsRegistered(true)
         } catch (e) {
-          console.error('Failed to register token with backend:', e)
+          telemetry.error('push:register', 'Failed to register token with backend', { error: String(e) })
           setError('Failed to register with server')
         }
       }
@@ -88,7 +89,7 @@ export function usePushNotifications(
   const getExpoPushToken = useCallback(async (): Promise<string | null> => {
     const projectId = Constants.expoConfig?.extra?.eas?.projectId
     if (!projectId) {
-      console.error('EAS project ID not found in app config')
+      telemetry.error('push:config', 'EAS project ID not found in app config')
       return null
     }
 
@@ -99,10 +100,7 @@ export function usePushNotifications(
       // Handle Firebase auth errors gracefully (common in dev builds)
       const errorMessage = e instanceof Error ? e.message : String(e)
       if (errorMessage.includes('FIS_AUTH_ERROR')) {
-        console.warn(
-          'Push notifications unavailable: Firebase auth error. ' +
-            'This is normal in development. For production, ensure SHA-1 fingerprint is registered in Firebase Console.',
-        )
+        telemetry.warn('push:firebase', 'Push notifications unavailable: Firebase auth error in dev build')
         return null
       }
       throw e
@@ -153,7 +151,7 @@ export function usePushNotifications(
       setError(null)
       return true
     } catch (e) {
-      console.error('Error requesting push notification permissions:', e)
+      telemetry.error('push:permissions', 'Error requesting push notification permissions', { error: String(e) })
       setError('Failed to set up push notifications')
       return false
     }
@@ -168,7 +166,7 @@ export function usePushNotifications(
       setExpoPushToken(null)
       setIsRegistered(false)
     } catch (e) {
-      console.error('Error unregistering push notifications:', e)
+      telemetry.error('push:unregister', 'Error unregistering push notifications', { error: String(e) })
     }
   }, [expoPushToken, unregisterTokenMutation])
 

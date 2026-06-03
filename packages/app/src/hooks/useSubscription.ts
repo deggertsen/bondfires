@@ -18,6 +18,7 @@ import {
 import { useCallback, useEffect } from 'react'
 import { Alert, Platform } from 'react-native'
 import { api } from '../../../../convex/_generated/api'
+import { telemetry } from '../services/telemetry'
 import {
   ALL_STORE_PRODUCT_IDS,
   CREATE_REQUIRED_TIER,
@@ -203,7 +204,7 @@ function subscribeToPurchaseUpdates(
           )
         }
       } catch (err) {
-        console.warn('Error processing purchase update:', err)
+        telemetry.warn('iap:update', 'Error processing purchase update', { error: String(err) })
         subscriptionActions.failPurchase(
           'Purchase completed, but could not be verified. Please restore purchases.',
         )
@@ -213,7 +214,7 @@ function subscribeToPurchaseUpdates(
 
   if (!purchaseErrorSub) {
     purchaseErrorSub = purchaseErrorListener((error) => {
-      console.warn('IAP purchase error:', error)
+      telemetry.warn('iap:error', 'IAP purchase error', { error: String(error) })
       const errMsg = error?.message ?? error?.debugMessage ?? 'Purchase failed. Please try again.'
       subscriptionActions.failPurchase(errMsg)
     })
@@ -288,7 +289,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
         })
         await loadSubscriptionProducts(showExtraCampAddon)
       } catch (err) {
-        console.warn('Failed to initialize IAP:', err)
+        telemetry.warn('iap:init', 'Failed to initialize IAP', { error: String(err) })
         if (mounted) {
           subscriptionActions.setProductsLoaded(true)
         }
@@ -302,7 +303,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
       iapConsumerCount = Math.max(0, iapConsumerCount - 1)
       if (iapConsumerCount === 0) {
         releaseIapConnection().catch((err) => {
-          console.warn('Failed to close IAP connection:', err)
+          telemetry.warn('iap:close', 'Failed to close IAP connection', { error: String(err) })
         })
       }
     }

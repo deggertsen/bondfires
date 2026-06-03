@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { livePublishActions, livePublishStore$ } from '../store/livePublish.store'
+import { telemetry } from '../services/telemetry'
 
 export interface LivePublisherStartOptions {
   rtmpsUrl: string
@@ -103,7 +104,7 @@ export function useLivePublisher(options: {
           })
         })
         .catch((error) => {
-          console.warn('Failed to sample live publisher stats:', error)
+          telemetry.warn('live:stats', 'Failed to sample live publisher stats', { error: String(error) })
         })
     }, 5000)
   }, [options.publisher])
@@ -159,7 +160,7 @@ export function useLivePublisher(options: {
               reason: 'publisher_start_failed',
             })
           } catch (cancelError) {
-            console.warn('Failed to cancel orphaned Mux live stream:', cancelError)
+            telemetry.warn('live:cancel', 'Failed to cancel orphaned Mux live stream', { error: String(cancelError) })
           }
         }
         throw error
@@ -193,7 +194,7 @@ export function useLivePublisher(options: {
 
     if (publisherError) {
       if (backendError) {
-        console.warn('Failed to mark live stream ending after publisher stop failed:', backendError)
+        telemetry.warn('live:end', 'Failed to mark live stream ending after publisher stop failed', { error: String(backendError) })
       }
       throw publisherError
     }
@@ -227,7 +228,7 @@ export function useLivePublisher(options: {
 
     if (publisherError) {
       if (backendError) {
-        console.warn('Failed to cancel live stream after publisher stop failed:', backendError)
+        telemetry.warn('live:cancel', 'Failed to cancel live stream after publisher stop failed', { error: String(backendError) })
       }
       throw publisherError
     }
