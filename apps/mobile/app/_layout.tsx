@@ -67,6 +67,15 @@ const convex = new ConvexReactClient(convexUrl, {
   unsavedChangesWarning: false,
 })
 
+// Monitor Convex WebSocket connection state for debugging
+convex.subscribeToConnectionState((state) => {
+  if (!state.isWebSocketConnected) {
+    telemetry.warn('convex:connection', 'WebSocket disconnected', {
+      hasInflightRequests: state.hasInflightRequests,
+    })
+  }
+})
+
 // ---------------------------------------------------------------------------
 // Telemetry initializer — runs inside Convex context
 // ---------------------------------------------------------------------------

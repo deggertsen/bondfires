@@ -1,3 +1,4 @@
+import { telemetry } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
@@ -60,11 +61,31 @@ export default function LoginScreen() {
     form$.isLoading.set(true)
     form$.error.set(null)
 
+    // Timeout wrapper — if signIn hangs beyond 30s, reject so the user isn't stuck forever
+    const SIGN_IN_TIMEOUT_MS = 30_000
+    const signInPromise = signIn('password', {
+      email: currentEmail,
+      password: currentPassword,
+      flow: 'signIn',
+    })
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`Sign in timed out after ${SIGN_IN_TIMEOUT_MS / 1000}s`)),
+        SIGN_IN_TIMEOUT_MS,
+      ),
+    )
+
     try {
-      const result = await signIn('password', {
-        email: currentEmail,
-        password: currentPassword,
-        flow: 'signIn',
+      telemetry.breadcrumb('auth:signInStart', { email: currentEmail })
+
+      const result = await Promise.race([signInPromise, timeoutPromise])
+
+      telemetry.breadcrumb('auth:signInResult', {
+        hasResult: !!result,
+        signingIn:
+          result && typeof result === 'object' && 'signingIn' in result
+            ? result.signingIn
+            : undefined,
       })
 
       // Check if verification is required (signingIn: false means email not verified)
@@ -83,14 +104,18 @@ export default function LoginScreen() {
       // Set pending navigation — the effect above will react when currentUser resolves
       pendingNavRef.current = true
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      telemetry.error('auth:signInError', 'Sign in failed', { error: errorMessage })
+
       // Check if error is about email verification.
       // Only redirect if we haven't already navigated above.
-      const errorMessage = err instanceof Error ? err.message : String(err)
       if (errorMessage.includes('verify') || errorMessage.includes('verification')) {
         // Don't double-navigate — if signIn already directed us to verification, skip
         if (!pendingNavRef.current) {
           router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail } })
         }
+      } else if (errorMessage.includes('timed out')) {
+        form$.error.set('Sign in timed out. Please check your connection and try again.')
       } else {
         form$.error.set('Invalid email or password')
       }
