@@ -1,19 +1,23 @@
 /**
  * Global toast notification component.
  *
- * Renders a stacked list of toast messages from `toastStore$` at the top of
- * the screen.  Error-level toasts show a reference ID so users can screenshot
+ * Renders a controlled stacked list of toast messages at the top of the
+ * screen. Error-level toasts show a reference ID so users can screenshot
  * and share with support.
- *
- * Usage:  Render `<ToastContainer />` once at the top of `AppContent` in
- * `_layout.tsx`.
  */
 
-import { type ToastEntry, type ToastType, toastActions, toastStore$ } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
-import { useValue } from '@legendapp/state/react'
 import { useCallback, useEffect, useRef } from 'react'
 import { Animated, Pressable, Text, View } from 'react-native'
+
+export type ToastType = 'error' | 'warn' | 'info' | 'success'
+
+export interface ToastEntry {
+  id: string
+  type: ToastType
+  message: string
+  referenceId?: string
+}
 
 // ---------------------------------------------------------------------------
 // Styling per toast type
@@ -46,7 +50,7 @@ const TYPE_STYLES: Record<ToastType, { bg: string; border: string; text: string 
 // Single toast item (animated enter/exit)
 // ---------------------------------------------------------------------------
 
-function ToastItem({ entry }: { entry: ToastEntry }) {
+function ToastItem({ entry, onDismiss }: { entry: ToastEntry; onDismiss: (id: string) => void }) {
   const opacity = useRef(new Animated.Value(0)).current
   const translateY = useRef(new Animated.Value(-20)).current
 
@@ -64,9 +68,9 @@ function ToastItem({ entry }: { entry: ToastEntry }) {
       Animated.timing(opacity, { toValue: 0, duration: 200, useNativeDriver: true }),
       Animated.timing(translateY, { toValue: -20, duration: 200, useNativeDriver: true }),
     ]).start(() => {
-      toastActions.dismiss(entry.id)
+      onDismiss(entry.id)
     })
-  }, [entry.id, opacity, translateY])
+  }, [entry.id, onDismiss, opacity, translateY])
 
   return (
     <Animated.View style={{ opacity, transform: [{ translateY }] }} pointerEvents="auto">
@@ -117,9 +121,13 @@ function ToastItem({ entry }: { entry: ToastEntry }) {
 // Container — renders all active toasts
 // ---------------------------------------------------------------------------
 
-export function ToastContainer() {
-  const toasts = useValue(toastStore$.toasts)
-
+export function ToastContainer({
+  toasts,
+  onDismiss,
+}: {
+  toasts: ToastEntry[]
+  onDismiss: (id: string) => void
+}) {
   if (toasts.length === 0) return null
 
   return (
@@ -135,7 +143,7 @@ export function ToastContainer() {
       }}
     >
       {toasts.map((entry) => (
-        <ToastItem key={entry.id} entry={entry} />
+        <ToastItem key={entry.id} entry={entry} onDismiss={onDismiss} />
       ))}
     </View>
   )

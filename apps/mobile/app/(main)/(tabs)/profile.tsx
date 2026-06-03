@@ -4,11 +4,11 @@ import {
   parseError,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
+  telemetry,
   uploadQueueActions,
   usePreferences,
   useSlotBalance,
   useSubscription,
-  telemetry,
 } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { AdminPanel, Button, Card, Input, SubscriptionStatus, Text } from '@bondfires/ui'

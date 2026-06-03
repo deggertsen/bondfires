@@ -11,10 +11,10 @@ import {
   resumePendingUploads,
   shouldShowReportIssue,
   startBackgroundUpload,
+  telemetry,
   useLivePublisher,
   useSlotBalance,
   useSubscription,
-  telemetry,
 } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
@@ -277,7 +277,9 @@ export default function CreateScreen() {
       })
       .catch((error) => {
         didRouteFirstSparkRef.current = false
-        telemetry.error('create:route', 'Failed to route first spark to Welcome Fires', { error: String(error) })
+        telemetry.error('create:route', 'Failed to route first spark to Welcome Fires', {
+          error: String(error),
+        })
       })
   }, [campId, camps, currentUser, joinCamp, persistedCampId, respondTo, selectedCampId, state$])
 
@@ -424,7 +426,9 @@ export default function CreateScreen() {
         }
       })
       .catch((error) => {
-        telemetry.warn('live:availability', 'Failed to check live publisher availability', { error: String(error) })
+        telemetry.warn('live:availability', 'Failed to check live publisher availability', {
+          error: String(error),
+        })
         if (!isCancelled) {
           state$.isLivePublisherAvailable.set(false)
         }
@@ -445,7 +449,9 @@ export default function CreateScreen() {
       (liveStatus === 'connecting' || liveStatus === 'live' || liveStatus === 'reconnecting')
     ) {
       livePublisher.stop().catch((error) => {
-        telemetry.error('live:stop', 'Failed to stop live stream while screen lost focus', { error: String(error) })
+        telemetry.error('live:stop', 'Failed to stop live stream while screen lost focus', {
+          error: String(error),
+        })
       })
     }
   }, [isAppActive, isFocused, livePublisher, liveStatus, shouldUseLivePublish])
@@ -539,7 +545,9 @@ export default function CreateScreen() {
         try {
           cameraRef.current?.stopRecording()
         } catch (error) {
-          telemetry.error('create:stop', 'Failed to stop recording while screen lost focus', { error: String(error) })
+          telemetry.error('create:stop', 'Failed to stop recording while screen lost focus', {
+            error: String(error),
+          })
         }
         recordingSessionRef.current += 1
         recordingActionRef.current = 'none'
@@ -1731,7 +1739,10 @@ export default function CreateScreen() {
             const message = event?.message ?? 'Unknown camera mount error'
             state$.cameraMountError.set(message)
             state$.isCameraReady.set(false)
-            telemetry.error('create:camera', 'Camera mount error', { platform: Platform.OS, message })
+            telemetry.error('create:camera', 'Camera mount error', {
+              platform: Platform.OS,
+              message,
+            })
             Alert.alert('Camera Error', message)
           }}
         >

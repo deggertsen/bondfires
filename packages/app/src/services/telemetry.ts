@@ -62,6 +62,83 @@ function generateSessionId(): string {
 
 const MAX_QUEUE_SIZE = 100
 const FLUSH_INTERVAL_MS = 10000
+const MAX_SERIALIZE_DEPTH = 5
+const MAX_SERIALIZE_KEYS = 50
+
+function serializeForConvex(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
+    return value
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : String(value)
+  }
+
+  if (typeof value === 'undefined') return undefined
+  if (typeof value === 'bigint' || typeof value === 'symbol' || typeof value === 'function') {
+    return String(value)
+  }
+
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack,
+    }
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString()
+  }
+
+  if (typeof value !== 'object') {
+    return String(value)
+  }
+
+  if (seen.has(value)) {
+    return '[Circular]'
+  }
+
+  if (depth >= MAX_SERIALIZE_DEPTH) {
+    return '[MaxDepth]'
+  }
+
+  seen.add(value)
+
+  if (Array.isArray(value)) {
+    return value.map((item) => serializeForConvex(item, depth + 1, seen))
+  }
+
+  const output: Record<string, unknown> = {}
+  for (const [index, [key, item]] of Object.entries(value as Record<string, unknown>).entries()) {
+    if (index >= MAX_SERIALIZE_KEYS) {
+      output.__truncated = true
+      break
+    }
+
+    const serialized = serializeForConvex(item, depth + 1, seen)
+    if (typeof serialized !== 'undefined') {
+      output[key] = serialized
+    }
+  }
+
+  return output
+}
+
+function formatConsoleArgs(args: unknown[]): string {
+  return args
+    .map((arg) => {
+      if (typeof arg === 'string') return arg
+      if (arg instanceof Error) return arg.message
+
+      try {
+        return JSON.stringify(serializeForConvex(arg))
+      } catch {
+        return String(arg)
+      }
+    })
+    .join(' ')
+}
 
 class LogQueue {
   private entries: LogEntry[] = []
@@ -195,16 +272,27 @@ export class TelemetryLogger {
   // Private
   // -----------------------------------------------------------------------
 
-  private enqueue(level: LogLevel, event: string, message: string, data?: unknown): void {
+  private enqueue(
+    level: LogLevel,
+    event: string,
+    message: string,
+    data?: unknown,
+    options: { echo?: boolean } = {},
+  ): void {
     // Also echo to the original console so we can still see logs during dev
-    const fn = level === 'error' ? this._origConsoleError : this._origConsoleWarn
-    fn(`[telemetry:${level}] ${event} — ${message}`, data ?? '')
+    if (options.echo ?? true) {
+      if (level === 'error') {
+        this._origConsoleError(`[telemetry:${level}] ${event} — ${message}`, data ?? '')
+      } else if (level === 'warn') {
+        this._origConsoleWarn(`[telemetry:${level}] ${event} — ${message}`, data ?? '')
+      }
+    }
 
     this.queue.push({
       level,
       event,
       message,
-      data,
+      data: serializeForConvex(data),
       platform: this.platform,
       appVersion: this.appVersion,
       sessionId: this.sessionId,
@@ -222,9 +310,10 @@ export class TelemetryLogger {
   }
 
   private async sendBatch(): Promise<void> {
+    if (!this._mutationCreateBatch) return
+
     const batch = this.queue.drain()
     if (batch.length === 0) return
-    if (!this._mutationCreateBatch) return
 
     try {
       await this._mutationCreateBatch({ entries: batch })
@@ -265,10 +354,16 @@ export class TelemetryLogger {
   private installConsoleOverrides(): void {
     console.error = (...args: unknown[]) => {
       this._origConsoleError(...args)
+      this.enqueue('error', 'console:error', formatConsoleArgs(args) || 'console.error', args, {
+        echo: false,
+      })
     }
 
     console.warn = (...args: unknown[]) => {
       this._origConsoleWarn(...args)
+      this.enqueue('warn', 'console:warn', formatConsoleArgs(args) || 'console.warn', args, {
+        echo: false,
+      })
     }
   }
 }

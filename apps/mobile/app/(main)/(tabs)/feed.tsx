@@ -452,7 +452,10 @@ export default function FeedScreen() {
         })
         state$.thumbnailUrls[bondfire._id].set(thumbnailUrl)
       } catch (error) {
-        telemetry.error('feed:thumbnail', 'Failed to load thumbnail URL', { bondfireId: bondfire._id, error: String(error) })
+        telemetry.error('feed:thumbnail', 'Failed to load thumbnail URL', {
+          bondfireId: bondfire._id,
+          error: String(error),
+        })
       } finally {
         loadingThumbsRef.current.delete(bondfire._id)
       }
