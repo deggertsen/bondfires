@@ -11,6 +11,7 @@ import {
   resumePendingUploads,
   shouldShowReportIssue,
   startBackgroundUpload,
+  telemetry,
   useLivePublisher,
   useSlotBalance,
   useSubscription,
@@ -276,7 +277,9 @@ export default function CreateScreen() {
       })
       .catch((error) => {
         didRouteFirstSparkRef.current = false
-        console.error('Failed to route first spark to Welcome Fires:', error)
+        telemetry.error('create:route', 'Failed to route first spark to Welcome Fires', {
+          error: String(error),
+        })
       })
   }, [campId, camps, currentUser, joinCamp, persistedCampId, respondTo, selectedCampId, state$])
 
@@ -423,7 +426,9 @@ export default function CreateScreen() {
         }
       })
       .catch((error) => {
-        console.warn('Failed to check live publisher availability:', error)
+        telemetry.warn('live:availability', 'Failed to check live publisher availability', {
+          error: String(error),
+        })
         if (!isCancelled) {
           state$.isLivePublisherAvailable.set(false)
         }
@@ -444,7 +449,9 @@ export default function CreateScreen() {
       (liveStatus === 'connecting' || liveStatus === 'live' || liveStatus === 'reconnecting')
     ) {
       livePublisher.stop().catch((error) => {
-        console.error('Failed to stop live stream while screen lost focus:', error)
+        telemetry.error('live:stop', 'Failed to stop live stream while screen lost focus', {
+          error: String(error),
+        })
       })
     }
   }, [isAppActive, isFocused, livePublisher, liveStatus, shouldUseLivePublish])
@@ -468,7 +475,7 @@ export default function CreateScreen() {
         }
       }
 
-      console.error('Recording error:', {
+      telemetry.error('create:recording', 'Recording error', {
         platform: Platform.OS,
         message,
         name,
@@ -523,7 +530,7 @@ export default function CreateScreen() {
       }
 
       startPendingUploads().catch((error) => {
-        console.error('Failed to start pending uploads:', error)
+        telemetry.error('upload:start', 'Failed to start pending uploads', { error: String(error) })
       })
     }, 1500)
   }, [clearUploadStartTimeout, startPendingUploads, state$])
@@ -538,7 +545,9 @@ export default function CreateScreen() {
         try {
           cameraRef.current?.stopRecording()
         } catch (error) {
-          console.error('Failed to stop recording while screen lost focus:', error)
+          telemetry.error('create:stop', 'Failed to stop recording while screen lost focus', {
+            error: String(error),
+          })
         }
         recordingSessionRef.current += 1
         recordingActionRef.current = 'none'
@@ -636,7 +645,7 @@ export default function CreateScreen() {
           false,
         )
       } catch (error) {
-        console.error('Failed to queue upload:', error)
+        telemetry.error('upload:queue', 'Failed to queue upload', { error: String(error) })
         const errorInfo = parseError(error)
         Alert.alert(
           errorInfo.isNetworkError ? 'No internet connection' : 'Upload Failed',
@@ -953,7 +962,7 @@ export default function CreateScreen() {
     clearStopTimeout()
     stopTimeoutRef.current = setTimeout(() => {
       if (recordingSessionRef.current === sessionId && state$.recordingState.get() === 'stopping') {
-        console.warn('Recording stop timed out; resetting create screen state')
+        telemetry.warn('create:timeout', 'Recording stop timed out; resetting create screen state')
         recordingSessionRef.current += 1
         isStartingRecordingRef.current = false
         resetRecordingState()
@@ -1730,7 +1739,10 @@ export default function CreateScreen() {
             const message = event?.message ?? 'Unknown camera mount error'
             state$.cameraMountError.set(message)
             state$.isCameraReady.set(false)
-            console.error('Camera mount error:', { platform: Platform.OS, message })
+            telemetry.error('create:camera', 'Camera mount error', {
+              platform: Platform.OS,
+              message,
+            })
             Alert.alert('Camera Error', message)
           }}
         >

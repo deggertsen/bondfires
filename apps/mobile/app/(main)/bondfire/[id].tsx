@@ -7,6 +7,7 @@ import {
   parseError,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
+  telemetry,
 } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
@@ -785,7 +786,7 @@ export default function BondfireDetailScreen() {
           markViewed(bondfireId)
         }
       } catch (error) {
-        console.error('Failed to record bondfire view:', error)
+        telemetry.error('bondfire:view', 'Failed to record bondfire view', { error: String(error) })
       }
     }
 
@@ -804,7 +805,9 @@ export default function BondfireDetailScreen() {
     if (!isParticipant) return
 
     markThreadRead({ bondfireId }).catch((error) => {
-      console.error('Failed to mark Bondfire thread read:', error)
+      telemetry.error('bondfire:thread', 'Failed to mark Bondfire thread read', {
+        error: String(error),
+      })
     })
   }, [bondfireData, bondfireId, currentUserId, markThreadRead])
 

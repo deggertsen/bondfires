@@ -1,5 +1,6 @@
 import { File } from 'expo-file-system'
 import { getVideoMetaData } from 'react-native-compressor'
+import { telemetry } from '../services/telemetry'
 
 export interface VideoMetadata {
   width: number
@@ -76,7 +77,7 @@ export async function cleanupTempVideos(uris: string[]): Promise<void> {
           file.delete()
         }
       } catch (e) {
-        console.error('Failed to delete temp file:', uri, e)
+        telemetry.error('video:cleanup', 'Failed to delete temp file', { uri, error: String(e) })
       }
     }),
   )

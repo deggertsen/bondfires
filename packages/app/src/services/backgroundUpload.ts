@@ -8,6 +8,7 @@ import {
 } from 'expo-file-system/legacy'
 import { type UploadTask, uploadQueueActions } from '../store/uploadQueue.store'
 import { cleanupTempVideos, type ProcessedVideo, processVideo } from '../utils/videoProcessing'
+import { telemetry } from './telemetry'
 
 const MAX_RETRIES = 5
 const BASE_RETRY_DELAY = 2000 // 2 seconds
@@ -292,7 +293,10 @@ export async function startBackgroundUpload(
   if (autoStart) {
     // Start processing (don't await - let it run in background)
     processUploadTask(taskId, options).catch((error) => {
-      console.error('[backgroundUpload] Task failed:', error)
+      telemetry.error('upload:task', 'Background upload task failed', {
+        taskId,
+        error: String(error),
+      })
       options.callbacks?.onError?.(error)
     })
   }
@@ -431,7 +435,11 @@ async function processUploadTask(taskId: string, options: BackgroundUploadOption
     }, COMPLETED_TASK_RETENTION_MS)
   } catch (error) {
     const normalizedError = error instanceof Error ? error : new Error('Upload failed')
-    console.error('[backgroundUpload] Upload error:', normalizedError)
+    telemetry.error('upload:error', 'Upload error', {
+      taskId,
+      attempt: attemptCount,
+      error: normalizedError.message,
+    })
     attemptCount++
 
     if (attemptCount < MAX_RETRIES) {
@@ -449,7 +457,11 @@ async function processUploadTask(taskId: string, options: BackgroundUploadOption
 
       setTimeout(() => {
         processUploadTask(taskId, options).catch((err) => {
-          console.error('[backgroundUpload] Retry failed:', err)
+          telemetry.error('upload:retry', 'Retry failed', {
+            taskId,
+            attempt: attemptCount,
+            error: String(err),
+          })
         })
       }, retryDelay)
     } else {
@@ -489,7 +501,10 @@ export async function resumePendingUploads(
 
     // Resume processing
     processUploadTask(task.id, taskOptions).catch((error) => {
-      console.error(`[backgroundUpload] Failed to resume task ${task.id}:`, error)
+      telemetry.error('upload:resume', 'Failed to resume task', {
+        taskId: task.id,
+        error: String(error),
+      })
     })
   }
 }

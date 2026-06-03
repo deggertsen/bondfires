@@ -7,6 +7,7 @@ import {
   hasViewedToday,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
+  telemetry,
 } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
@@ -451,7 +452,10 @@ export default function FeedScreen() {
         })
         state$.thumbnailUrls[bondfire._id].set(thumbnailUrl)
       } catch (error) {
-        console.error('Failed to load thumbnail URL for bondfire:', bondfire._id, error)
+        telemetry.error('feed:thumbnail', 'Failed to load thumbnail URL', {
+          bondfireId: bondfire._id,
+          error: String(error),
+        })
       } finally {
         loadingThumbsRef.current.delete(bondfire._id)
       }
