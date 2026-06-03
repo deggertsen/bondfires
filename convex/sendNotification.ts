@@ -458,3 +458,136 @@ export const sendTest = action({
     return result
   },
 })
+
+// ── Access Request Notifications ──
+
+/** Push notification to camp owner when someone requests access. */
+export const notifyAccessRequest = internalAction({
+  args: {
+    membershipId: v.id('campMembers'),
+    campId: v.id('camps'),
+    requesterId: v.id('users'),
+    requesterName: v.string(),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    success: boolean
+    skipped?: boolean
+    error?: string
+  }> => {
+    const camp = await ctx.runQuery(internal.sendNotification.getCampNotificationDetails, {
+      campId: args.campId,
+    })
+    if (!camp || !camp.ownerId) {
+      return { success: false, error: 'Camp or owner not found' }
+    }
+
+    const result = await ctx.runAction(internal.sendNotification.sendToUser, {
+      userId: camp.ownerId,
+      title: 'New access request',
+      body: `${args.requesterName} wants to join ${camp.name}`,
+      data: {
+        type: 'camp_access_request',
+        campId: args.campId,
+        membershipId: args.membershipId,
+      },
+    })
+
+    return result
+  },
+})
+
+/** Email notification to camp owner when someone requests access. */
+export const emailAccessRequest = internalAction({
+  args: {
+    membershipId: v.id('campMembers'),
+    campId: v.id('camps'),
+    requesterId: v.id('users'),
+    requesterName: v.string(),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    success: boolean
+    error?: string
+  }> => {
+    const apiKey = process.env.RESEND_API_KEY
+    if (!apiKey) {
+      return { success: true }
+    }
+
+    const camp = await ctx.runQuery(internal.sendNotification.getCampNotificationDetails, {
+      campId: args.campId,
+    })
+    if (!camp || !camp.ownerId) {
+      return { success: false, error: 'Camp or owner not found' }
+    }
+
+    // Get owner email from users table
+    const owner = await ctx.runQuery(internal.sendNotification.getUserEmail, {
+      userId: camp.ownerId,
+    })
+    if (!owner?.email) {
+      return { success: true, error: 'Owner email not found' }
+    }
+
+    const campName = camp.name
+
+    try {
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          from: process.env.EMAIL_FROM || 'Bondfires <support@bondfires.org>',
+          to: owner.email,
+          subject: `${args.requesterName} wants to join ${campName}`,
+          html: `
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+              <h1 style="color: #F59E0B; margin-bottom: 8px;">New Access Request</h1>
+              <p style="font-size: 16px; color: #333; line-height: 1.5;">
+                <strong>${args.requesterName}</strong> has requested to join <strong>${campName}</strong>.
+              </p>
+              <div style="margin-top: 24px;">
+                <a href="https://bondfires.org/camp/${args.campId}"
+                   style="display: inline-block; background: #D97736; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;">
+                  Review Request
+                </a>
+              </div>
+              <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;" />
+              <p style="font-size: 12px; color: #999;">This email was sent automatically by Bondfires because you are the camp owner.</p>
+            </div>
+          `,
+        }),
+      })
+
+      if (!response.ok) {
+        const error = await response.text()
+        console.error('Failed to send access request email:', error)
+        return { success: false, error }
+      }
+
+      return { success: true }
+    } catch (error) {
+      console.error('Error sending access request email:', error)
+      return { success: false, error: String(error) }
+    }
+  },
+})
+
+/** Internal query to get a user's email. */
+export const getUserEmail = internalQuery({
+  args: {
+    userId: v.id('users'),
+  },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId)
+    if (!user) return null
+    return { email: user.email }
+  },
+})

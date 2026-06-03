@@ -1,6 +1,6 @@
 import { parseError } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
-import { Button, Input, Text } from '@bondfires/ui'
+import { Button, CampCardStatusBanner, Input, Text } from '@bondfires/ui'
 import { Flame, Lock, Search, Users } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { type RelativePathString, useRouter } from 'expo-router'
@@ -40,12 +40,22 @@ function CampCard({
 }) {
   const isActiveMember = camp.membership?.status === 'active'
   const isPending = camp.membership?.status === 'pending'
-  const canJoinFromList = !isActiveMember && !isPending && camp.access !== 'invite'
+  const isRejected = camp.membership?.status === 'rejected'
+  const canJoinFromList = !isActiveMember && !isPending && !isRejected && camp.access !== 'invite'
   const isFrozen = camp.frozen === true || camp.status === 'frozen'
+
+  // Calculate cooldown for rejected requests
+  const rejectionCooldownMs = 30 * 24 * 60 * 60 * 1000
+  const rejectedAt = camp.membership?.rejectedAt
+  const isInCooldown =
+    isRejected && rejectedAt != null && Date.now() - rejectedAt < rejectionCooldownMs
+  const cooldownEndDate = rejectedAt != null ? new Date(rejectedAt + rejectionCooldownMs) : null
 
   return (
     <Pressable onPress={onOpen}>
-      <YStack paddingHorizontal={16} paddingVertical={14} gap={12}>
+      <YStack paddingHorizontal={16} paddingVertical={14} gap={12} overflow="hidden">
+        {isPending ? <CampCardStatusBanner variant="pending" /> : null}
+        {isInCooldown ? <CampCardStatusBanner variant="rejected" /> : null}
         <XStack alignItems="flex-start" gap={12}>
           <YStack
             width={54}
@@ -129,6 +139,13 @@ function CampCard({
               {isPending ? (
                 <Text fontSize={12} color={bondfireColors.warning} fontWeight="900">
                   Pending
+                </Text>
+              ) : null}
+              {isInCooldown ? (
+                <Text fontSize={12} color={bondfireColors.error} fontWeight="900">
+                  {cooldownEndDate
+                    ? `Denied — retry ${cooldownEndDate.toLocaleDateString()}`
+                    : 'Request denied'}
                 </Text>
               ) : null}
             </XStack>

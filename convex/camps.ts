@@ -1,4 +1,5 @@
 import { v } from 'convex/values'
+import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalMutation, mutation, query } from './_generated/server'
@@ -36,9 +37,14 @@ type CampJoinResult = {
     | 'approval_required'
     | 'banned'
     | 'already_member'
+    | 'already_pending'
+    | 'rejected_cooldown'
     | 'not_found'
     | 'private'
 }
+
+/** Cooldown duration for re-applying after rejection (30 days in ms). */
+const REJECTION_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000
 
 type CampSeed = {
   slug: string
@@ -67,6 +73,7 @@ const memberStatusValidator = v.union(
   v.literal('pending'),
   v.literal('active'),
   v.literal('banned'),
+  v.literal('rejected'),
 )
 const accessValidator = v.union(v.literal('open'), v.literal('approval'), v.literal('invite'))
 const accessVisibilityModeValidator = v.union(v.literal('hide'), v.literal('gate'))
@@ -490,6 +497,18 @@ function evaluateJoinRules(
   if (existingMembership?.status === 'active') {
     return { canJoin: false, reason: 'already_member' }
   }
+  if (existingMembership?.status === 'pending') {
+    return { canJoin: false, reason: 'already_pending' }
+  }
+  if (existingMembership?.status === 'rejected') {
+    const cooldownElapsed =
+      existingMembership.rejectedAt != null &&
+      Date.now() - existingMembership.rejectedAt >= REJECTION_COOLDOWN_MS
+    if (!cooldownElapsed) {
+      return { canJoin: false, reason: 'rejected_cooldown' }
+    }
+    // Rejected but cooldown elapsed — eligible to re-apply
+  }
 
   // Use computeVisibility for access rule checks
   const visibility = computeVisibility(
@@ -591,7 +610,7 @@ async function upsertMembership(
     userId: Id<'users'>
     campId: Id<'camps'>
     role?: 'owner' | 'moderator' | 'member'
-    status: 'pending' | 'active' | 'banned'
+    status: 'pending' | 'active' | 'banned' | 'rejected'
   },
 ) {
   const now = Date.now()
@@ -603,6 +622,7 @@ async function upsertMembership(
     joinedAt: args.status === 'active' ? (existing?.joinedAt ?? now) : existing?.joinedAt,
     requestedAt: args.status === 'pending' ? (existing?.requestedAt ?? now) : existing?.requestedAt,
     approvedAt: args.status === 'active' ? (existing?.approvedAt ?? now) : existing?.approvedAt,
+    rejectedAt: args.status === 'rejected' ? now : existing?.rejectedAt,
     updatedAt: now,
   }
 
@@ -922,6 +942,9 @@ export const join = mutation({
         invite_only: 'This camp requires an invite',
         banned: 'You cannot join this camp',
         already_member: 'You are already a member of this camp',
+        already_pending: 'You already have a pending request for this camp',
+        rejected_cooldown:
+          'Your previous request was denied. You can try again after the cooldown period.',
         private: 'This is a private camp',
       }
       throwUserError(messages[eligibility.reason] ?? 'You cannot join this camp')
@@ -974,6 +997,9 @@ export const requestJoin = mutation({
         invite_only: 'This camp requires an invite',
         banned: 'You cannot join this camp',
         already_member: 'You are already a member of this camp',
+        already_pending: 'You already have a pending request for this camp',
+        rejected_cooldown:
+          'Your previous request was denied. You can try again after the cooldown period.',
         private: 'This is a private camp',
       }
       throwUserError(messages[eligibility.reason] ?? 'You cannot join this camp')
@@ -989,6 +1015,22 @@ export const requestJoin = mutation({
 
     if (status === 'active') {
       await refreshActiveMemberCount(ctx, camp._id)
+    }
+
+    // Schedule notifications for camp owners when a pending request is created
+    if (status === 'pending' && camp.ownerId) {
+      await ctx.scheduler.runAfter(0, internal.sendNotification.notifyAccessRequest, {
+        membershipId,
+        campId: camp._id,
+        requesterId: user._id,
+        requesterName: user.displayName ?? user.name ?? 'Someone',
+      })
+      await ctx.scheduler.runAfter(0, internal.sendNotification.emailAccessRequest, {
+        membershipId,
+        campId: camp._id,
+        requesterId: user._id,
+        requesterName: user.displayName ?? user.name ?? 'Someone',
+      })
     }
 
     return {
@@ -1052,6 +1094,131 @@ export const updateMemberStatus = mutation({
     await refreshActiveMemberCount(ctx, args.campId)
 
     return membership._id
+  },
+})
+
+/** Approve a pending access request by membership ID. Camp owner only. */
+export const approveAccessRequest = mutation({
+  args: {
+    membershipId: v.id('campMembers'),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUser(ctx)
+    const membership = await ctx.db.get(args.membershipId)
+    if (!membership) {
+      throwUserError('Membership not found')
+    }
+    if (membership.status !== 'pending') {
+      throwUserError('This request is not pending')
+    }
+
+    const camp = await ctx.db.get(membership.campId)
+    if (!camp) {
+      throwUserError('Camp not found')
+    }
+
+    // Verify caller is the camp owner
+    if (!isAdmin(user) && camp.ownerId !== user._id) {
+      const callerMembership = await getMembership(ctx, user._id, camp._id)
+      if (!callerMembership || callerMembership.role !== 'owner') {
+        throwUserError('Only the camp owner can approve access requests')
+      }
+    }
+
+    const now = Date.now()
+    await ctx.db.patch(args.membershipId, {
+      status: 'active',
+      approvedAt: now,
+      joinedAt: membership.joinedAt ?? now,
+      updatedAt: now,
+    })
+    await refreshActiveMemberCount(ctx, camp._id)
+
+    return { success: true }
+  },
+})
+
+/** Reject a pending access request by membership ID. Camp owner only. */
+export const rejectAccessRequest = mutation({
+  args: {
+    membershipId: v.id('campMembers'),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUser(ctx)
+    const membership = await ctx.db.get(args.membershipId)
+    if (!membership) {
+      throwUserError('Membership not found')
+    }
+    if (membership.status !== 'pending') {
+      throwUserError('This request is not pending')
+    }
+
+    const camp = await ctx.db.get(membership.campId)
+    if (!camp) {
+      throwUserError('Camp not found')
+    }
+
+    // Verify caller is the camp owner
+    if (!isAdmin(user) && camp.ownerId !== user._id) {
+      const callerMembership = await getMembership(ctx, user._id, camp._id)
+      if (!callerMembership || callerMembership.role !== 'owner') {
+        throwUserError('Only the camp owner can reject access requests')
+      }
+    }
+
+    const now = Date.now()
+    await ctx.db.patch(args.membershipId, {
+      status: 'rejected',
+      rejectedAt: now,
+      updatedAt: now,
+    })
+
+    return { success: true }
+  },
+})
+
+/** Get pending access requests for a camp. Camp owner or moderator only. */
+export const getPendingRequests = query({
+  args: {
+    campId: v.id('camps'),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUser(ctx)
+
+    // Verify caller has management rights
+    const membership = await getMembership(ctx, user._id, args.campId)
+    if (
+      !isAdmin(user) &&
+      (!membership || (membership.role !== 'owner' && membership.role !== 'moderator'))
+    ) {
+      throwUserError('Only camp owners and moderators can view pending requests')
+    }
+
+    const pendingRequests = await ctx.db
+      .query('campMembers')
+      .withIndex('by_camp_status', (q) => q.eq('campId', args.campId).eq('status', 'pending'))
+      .collect()
+
+    // Join with users to get name, displayName info
+    const requestsWithUser = await Promise.all(
+      pendingRequests.map(async (req) => {
+        const userDoc = await ctx.db.get(req.userId)
+        return {
+          membershipId: req._id,
+          userId: req.userId,
+          requestedAt: req.requestedAt ?? req.createdAt,
+          role: req.role,
+          userName: userDoc?.name ?? 'Unknown',
+          displayName: userDoc?.displayName,
+          photoUrl: userDoc?.photoUrl,
+        }
+      }),
+    )
+
+    // Sort oldest first
+    requestsWithUser.sort((a, b) => a.requestedAt - b.requestedAt)
+
+    return requestsWithUser
   },
 })
 
@@ -1213,6 +1380,9 @@ export const redeemInvite = mutation({
         underage: 'You do not meet the age requirement for this camp',
         banned: 'You cannot join this camp',
         already_member: 'You are already a member of this camp',
+        already_pending: 'You already have a pending request for this camp',
+        rejected_cooldown:
+          'Your previous request was denied. You can try again after the cooldown period.',
       }
       throwUserError(messages[eligibility.reason] ?? 'You cannot join this camp')
     }
