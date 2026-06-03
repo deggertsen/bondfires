@@ -59,6 +59,7 @@ type CampMember = {
 type BannedMember = {
   membershipId: string
   userId: string
+  role: 'owner' | 'moderator' | 'member'
   moderationReason?: string
   updatedAt: number
   name?: string
@@ -132,17 +133,16 @@ function getRoleBadgeColor(role: string) {
 
 function MemberRow({
   member,
-  isCurrentUser,
+  canModerate,
   onRemove,
   onBan,
 }: {
   member: CampMember
-  isCurrentUser: boolean
+  canModerate: boolean
   onRemove: (member: CampMember) => void
   onBan: (member: CampMember) => void
 }) {
   const roleBadgeColor = getRoleBadgeColor(member.role)
-  const showActions = !isCurrentUser && member.role !== 'owner'
 
   return (
     <XStack
@@ -194,7 +194,7 @@ function MemberRow({
         </XStack>
       </YStack>
 
-      {showActions ? (
+      {canModerate ? (
         <XStack gap={8}>
           <Pressable onPress={() => onRemove(member)}>
             <YStack
@@ -269,6 +269,13 @@ function CampHeader({
   const isOwner = isActiveMember && camp.membership?.role === 'owner'
   const isManager =
     isActiveMember && (camp.membership?.role === 'owner' || camp.membership?.role === 'moderator')
+  const canModerateMember = useCallback(
+    (member: CampMember | BannedMember) =>
+      member.userId !== currentUserId &&
+      member.role !== 'owner' &&
+      (camp.membership?.role === 'owner' || member.role === 'member'),
+    [camp.membership?.role, currentUserId],
+  )
   const [bannedExpanded, setBannedExpanded] = useState(false)
   const muted = camp.membership?.muted === true
   const isFrozen = camp.frozen === true || camp.status === 'frozen'
@@ -546,7 +553,7 @@ function CampHeader({
               <MemberRow
                 key={member.membershipId}
                 member={member}
-                isCurrentUser={member.userId === currentUserId}
+                canModerate={canModerateMember(member)}
                 onRemove={onRemoveMember}
                 onBan={onBanMember}
               />
@@ -601,20 +608,26 @@ function CampHeader({
                         Banned {getTimeAgo(banned.updatedAt)}
                       </Text>
                     </YStack>
-                    <Pressable onPress={() => onUnbanMember(banned.membershipId)}>
-                      <YStack
-                        paddingHorizontal={12}
-                        paddingVertical={6}
-                        borderRadius={10}
-                        backgroundColor={bondfireColors.gunmetal}
-                        borderWidth={1}
-                        borderColor={bondfireColors.bondfireCopper}
-                      >
-                        <Text fontSize={12} color={bondfireColors.bondfireCopper} fontWeight="900">
-                          Unban
-                        </Text>
-                      </YStack>
-                    </Pressable>
+                    {canModerateMember(banned) ? (
+                      <Pressable onPress={() => onUnbanMember(banned.membershipId)}>
+                        <YStack
+                          paddingHorizontal={12}
+                          paddingVertical={6}
+                          borderRadius={10}
+                          backgroundColor={bondfireColors.gunmetal}
+                          borderWidth={1}
+                          borderColor={bondfireColors.bondfireCopper}
+                        >
+                          <Text
+                            fontSize={12}
+                            color={bondfireColors.bondfireCopper}
+                            fontWeight="900"
+                          >
+                            Unban
+                          </Text>
+                        </YStack>
+                      </Pressable>
+                    ) : null}
                   </XStack>
                 </YStack>
               ))}

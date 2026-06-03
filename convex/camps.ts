@@ -2327,15 +2327,40 @@ export const setOwner = mutation({
 
 // ── Member Management ──
 
-/**
- * Assert caller is camp owner or moderator and fetch the target membership.
- * Returns { callerMembership, targetMembership, caller }.
- */
+function normalizeModerationReason(reason: string | undefined) {
+  const trimmed = reason?.trim()
+  if (!trimmed) return undefined
+  if (trimmed.length > 500) {
+    throwUserError('Moderation reason must be 500 characters or less')
+  }
+  return trimmed
+}
+
+/** Assert caller can moderate the target membership and return it. */
 async function assertCanModerateMember(ctx: MutationCtx, membershipId: Id<'campMembers'>) {
   const caller = await getCurrentUser(ctx)
   const targetMembership = await ctx.db.get(membershipId)
   if (!targetMembership) {
     throwUserError('Membership not found')
+  }
+
+  const camp = await ctx.db.get(targetMembership.campId)
+  if (!camp) {
+    throwUserError('Camp not found')
+  }
+
+  // Cannot target the camp owner
+  if (targetMembership.role === 'owner') {
+    throwUserError('The camp owner cannot be moderated')
+  }
+
+  // Admins bypass camp membership and camp status checks.
+  if (isAdmin(caller)) {
+    return targetMembership
+  }
+
+  if (!isOwnerManageableCampStatus(camp.status)) {
+    throwUserError('This camp cannot be managed in its current state')
   }
 
   const callerMembership = await getMembership(ctx, caller._id, targetMembership.campId)
@@ -2347,27 +2372,12 @@ async function assertCanModerateMember(ctx: MutationCtx, membershipId: Id<'campM
     throwUserError('You do not have permission to manage members in this camp')
   }
 
-  // Cannot target the camp owner
-  if (targetMembership.role === 'owner') {
-    throwUserError('The camp owner cannot be moderated')
-  }
-
   // Only owners can moderate other moderators
   if (targetMembership.role === 'moderator' && callerMembership.role !== 'owner') {
     throwUserError('Only the camp owner can moderate other moderators')
   }
 
-  const camp = await ctx.db.get(targetMembership.campId)
-  if (!camp || !isOwnerManageableCampStatus(camp.status)) {
-    throwUserError('This camp cannot be managed in its current state')
-  }
-
-  // Admins bypass all checks
-  if (isAdmin(caller)) {
-    return { callerMembership, targetMembership, caller }
-  }
-
-  return { callerMembership, targetMembership, caller }
+  return targetMembership
 }
 
 /** Remove a member from the camp entirely. They can rejoin or re-request. */
@@ -2376,7 +2386,7 @@ export const removeMember = mutation({
     membershipId: v.id('campMembers'),
   },
   handler: async (ctx, args) => {
-    const { targetMembership } = await assertCanModerateMember(ctx, args.membershipId)
+    const targetMembership = await assertCanModerateMember(ctx, args.membershipId)
     await ctx.db.delete(args.membershipId)
     await refreshActiveMemberCount(ctx, targetMembership.campId)
     return { removed: true }
@@ -2390,7 +2400,7 @@ export const banMember = mutation({
     reason: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { targetMembership } = await assertCanModerateMember(ctx, args.membershipId)
+    const targetMembership = await assertCanModerateMember(ctx, args.membershipId)
     if (targetMembership.status === 'banned') {
       throwUserError('This member is already banned')
     }
@@ -2398,7 +2408,7 @@ export const banMember = mutation({
     const now = Date.now()
     await ctx.db.patch(args.membershipId, {
       status: 'banned',
-      moderationReason: args.reason,
+      moderationReason: normalizeModerationReason(args.reason),
       updatedAt: now,
     })
     await refreshActiveMemberCount(ctx, targetMembership.campId)
@@ -2412,7 +2422,7 @@ export const unbanMember = mutation({
     membershipId: v.id('campMembers'),
   },
   handler: async (ctx, args) => {
-    const { targetMembership } = await assertCanModerateMember(ctx, args.membershipId)
+    const targetMembership = await assertCanModerateMember(ctx, args.membershipId)
     if (targetMembership.status !== 'banned') {
       throwUserError('This member is not banned')
     }
@@ -2516,6 +2526,7 @@ export const getBannedMembers = query({
         return {
           membershipId: m._id,
           userId: m.userId,
+          role: m.role,
           moderationReason: m.moderationReason,
           updatedAt: m.updatedAt,
           name: userDoc?.name,
