@@ -335,7 +335,7 @@ export const creditSlotPurchase = internalMutation({
     }
 
     const now = Date.now()
-    const periodStart = startOfMonth(now)
+    const periodStart = startOfUtcMonth(now)
     for (let i = 0; i < args.slotCount; i++) {
       await ctx.db.insert('campSlotTransactions', {
         userId: args.userId,
