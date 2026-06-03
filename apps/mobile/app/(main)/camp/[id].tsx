@@ -21,10 +21,22 @@ type CampWithMembership = Doc<'camps'> & {
   frozen?: boolean
 }
 
+type PendingRequest = {
+  membershipId: string
+  userId: string
+  requestedAt: number
+  role: string
+  userName: string
+  displayName?: string
+  photoUrl?: string
+}
+
 type BondfireData = Doc<'bondfires'> & {
   isLive?: boolean
   livePlaybackId?: string
 }
+
+const REJECTION_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000
 
 function getAccessLabel(camp: Doc<'camps'>) {
   if (camp.access === 'invite') return 'Invite only'
@@ -84,6 +96,9 @@ function CampHeader({
   onMute,
   onCreateInvite,
   onSpark,
+  pendingRequests,
+  onApprove,
+  onReject,
 }: {
   camp: CampWithMembership
   onBack: () => void
@@ -91,15 +106,26 @@ function CampHeader({
   onMute: () => void
   onCreateInvite: () => void
   onSpark: () => void
+  pendingRequests: PendingRequest[]
+  onApprove: (membershipId: string) => void
+  onReject: (membershipId: string) => void
 }) {
   const isActiveMember = camp.membership?.status === 'active'
   const isPending = camp.membership?.status === 'pending'
-  const isOwner = camp.membership?.role === 'owner'
+  const isRejected = camp.membership?.status === 'rejected'
+  const isOwner = isActiveMember && camp.membership?.role === 'owner'
   const muted = camp.membership?.muted === true
-  const canJoin = !isActiveMember && !isPending && camp.access !== 'invite'
   const isFrozen = camp.frozen === true || camp.status === 'frozen'
   const rules = camp.rules
   const firstVisitBanner = getFirstVisitBanner(camp)
+
+  const rejectedAt = camp.membership?.rejectedAt
+  const cooldownExpired =
+    isRejected && rejectedAt != null && Date.now() - rejectedAt >= REJECTION_COOLDOWN_MS
+  const isInCooldown = isRejected && !cooldownExpired
+  const cooldownEndDate = rejectedAt != null ? new Date(rejectedAt + REJECTION_COOLDOWN_MS) : null
+
+  const canJoin = !isActiveMember && !isPending && !isInCooldown && camp.access !== 'invite'
 
   return (
     <YStack paddingTop={58} paddingHorizontal={16} paddingBottom={18} gap={18}>
@@ -262,16 +288,88 @@ function CampHeader({
       {canJoin ? (
         <Button variant="primary" size="$lg" onPress={onJoin}>
           <Text color={bondfireColors.whiteSmoke} fontWeight="900">
-            {camp.access === 'approval' ? 'Request to Join' : 'Join Camp'}
+            {cooldownExpired
+              ? 'Request to Join Again'
+              : camp.access === 'approval'
+                ? 'Request to Join'
+                : 'Join Camp'}
           </Text>
         </Button>
       ) : null}
 
       {isPending ? (
-        <YStack padding={12} borderRadius={14} backgroundColor={bondfireColors.gunmetal}>
+        <YStack
+          padding={12}
+          borderRadius={14}
+          backgroundColor={bondfireColors.gunmetal}
+          borderWidth={1}
+          borderColor={bondfireColors.warning}
+        >
           <Text color={bondfireColors.warning} fontWeight="900" textAlign="center">
-            Membership pending approval
+            Request pending — awaiting camp owner approval
           </Text>
+        </YStack>
+      ) : null}
+
+      {isInCooldown ? (
+        <YStack
+          padding={12}
+          borderRadius={14}
+          backgroundColor={bondfireColors.gunmetal}
+          borderWidth={1}
+          borderColor={bondfireColors.error}
+        >
+          <Text color={bondfireColors.error} fontWeight="900" textAlign="center">
+            Request denied — you can try again on{' '}
+            {cooldownEndDate?.toLocaleDateString('en-US', {
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric',
+            })}
+          </Text>
+        </YStack>
+      ) : null}
+
+      {/* Owner: Pending access request queue */}
+      {isOwner && pendingRequests.length > 0 ? (
+        <YStack gap={12}>
+          <Text fontSize={14} color={bondfireColors.moltenGold} fontWeight="900">
+            Pending Requests ({pendingRequests.length})
+          </Text>
+          {pendingRequests.map((req) => (
+            <YStack
+              key={req.membershipId}
+              padding={14}
+              borderRadius={14}
+              backgroundColor={bondfireColors.gunmetal}
+              borderWidth={1}
+              borderColor={bondfireColors.iron}
+              gap={10}
+            >
+              <XStack alignItems="center" justifyContent="space-between" gap={10}>
+                <YStack flex={1} gap={2}>
+                  <Text fontSize={15} fontWeight="900">
+                    {req.displayName || req.userName}
+                  </Text>
+                  <Text fontSize={12} color={bondfireColors.ash}>
+                    {getTimeAgo(req.requestedAt)}
+                  </Text>
+                </YStack>
+                <XStack gap={8}>
+                  <Button variant="outline" size="$sm" onPress={() => onReject(req.membershipId)}>
+                    <Text color={bondfireColors.error} fontWeight="900">
+                      Deny
+                    </Text>
+                  </Button>
+                  <Button variant="primary" size="$sm" onPress={() => onApprove(req.membershipId)}>
+                    <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+                      Approve
+                    </Text>
+                  </Button>
+                </XStack>
+              </XStack>
+            </YStack>
+          ))}
         </YStack>
       ) : null}
     </YStack>
@@ -323,14 +421,25 @@ export default function CampDetailScreen() {
   const campId = id as Id<'camps'> | undefined
   const camp = useQuery(api.camps.get, campId ? { campId } : 'skip')
   const bondfires = useQuery(api.bondfires.listByCamp, campId ? { campId, limit: 50 } : 'skip')
+  const canReviewAccessRequests =
+    camp?.membership?.status === 'active' && camp.membership.role === 'owner'
+  const pendingRequests: PendingRequest[] =
+    useQuery(
+      api.camps.getPendingRequests,
+      campId && canReviewAccessRequests ? { campId } : 'skip',
+    ) ?? []
   const joinCamp = useMutation(api.camps.join)
+  const requestJoinCamp = useMutation(api.camps.requestJoin)
   const muteCamp = useMutation(api.camps.muteCamp)
   const createInvite = useMutation(api.camps.createInvite)
+  const approveAccess = useMutation(api.camps.approveAccessRequest)
+  const rejectAccess = useMutation(api.camps.rejectAccessRequest)
 
   const handleJoin = useCallback(async () => {
     if (!campId) return
     try {
-      const result = await joinCamp({ campId })
+      const result =
+        camp?.access === 'approval' ? await requestJoinCamp({ campId }) : await joinCamp({ campId })
       if (result.status === 'pending') {
         Alert.alert('Request Sent', 'Your camp membership request is pending approval.')
         return
@@ -340,7 +449,7 @@ export default function CampDetailScreen() {
       const message = parseError(error).message
       Alert.alert('Camp Unavailable', message)
     }
-  }, [campId, joinCamp])
+  }, [camp, campId, joinCamp, requestJoinCamp])
 
   const handleMute = useCallback(async () => {
     if (!camp || !campId || !camp.membership) return
@@ -363,6 +472,30 @@ export default function CampDetailScreen() {
       Alert.alert('Invite Unavailable', message)
     }
   }, [campId, createInvite])
+
+  const handleApprove = useCallback(
+    async (membershipId: string) => {
+      try {
+        await approveAccess({ membershipId: membershipId as Id<'campMembers'> })
+      } catch (error) {
+        const message = parseError(error).message
+        Alert.alert('Approval Failed', message)
+      }
+    },
+    [approveAccess],
+  )
+
+  const handleReject = useCallback(
+    async (membershipId: string) => {
+      try {
+        await rejectAccess({ membershipId: membershipId as Id<'campMembers'> })
+      } catch (error) {
+        const message = parseError(error).message
+        Alert.alert('Rejection Failed', message)
+      }
+    },
+    [rejectAccess],
+  )
 
   const handleOpenBondfire = useCallback(
     (bondfireId: string) => {
@@ -432,6 +565,9 @@ export default function CampDetailScreen() {
             onMute={handleMute}
             onCreateInvite={handleCreateInvite}
             onSpark={handleSpark}
+            pendingRequests={pendingRequests}
+            onApprove={handleApprove}
+            onReject={handleReject}
           />
         }
         ListEmptyComponent={

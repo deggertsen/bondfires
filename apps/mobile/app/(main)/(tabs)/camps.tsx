@@ -1,6 +1,6 @@
 import { parseError } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
-import { Button, Input, Text } from '@bondfires/ui'
+import { Button, CampCardStatusBanner, Input, Text } from '@bondfires/ui'
 import { Flame, Lock, Search, Users } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { type RelativePathString, useRouter } from 'expo-router'
@@ -17,6 +17,8 @@ type CampWithMembership = Doc<'camps'> & {
 type CampListItem =
   | { type: 'section'; id: string; title: string; subtitle: string }
   | { type: 'camp'; camp: CampWithMembership }
+
+const REJECTION_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000
 
 function getAccessLabel(camp: Doc<'camps'>) {
   if (camp.access === 'invite') return 'Invite only'
@@ -40,12 +42,21 @@ function CampCard({
 }) {
   const isActiveMember = camp.membership?.status === 'active'
   const isPending = camp.membership?.status === 'pending'
-  const canJoinFromList = !isActiveMember && !isPending && camp.access !== 'invite'
+  const isRejected = camp.membership?.status === 'rejected'
   const isFrozen = camp.frozen === true || camp.status === 'frozen'
+
+  const rejectedAt = camp.membership?.rejectedAt
+  const cooldownExpired =
+    isRejected && rejectedAt != null && Date.now() - rejectedAt >= REJECTION_COOLDOWN_MS
+  const isInCooldown = isRejected && !cooldownExpired
+  const cooldownEndDate = rejectedAt != null ? new Date(rejectedAt + REJECTION_COOLDOWN_MS) : null
+  const canJoinFromList = !isActiveMember && !isPending && !isInCooldown && camp.access !== 'invite'
 
   return (
     <Pressable onPress={onOpen}>
-      <YStack paddingHorizontal={16} paddingVertical={14} gap={12}>
+      <YStack paddingHorizontal={16} paddingVertical={14} gap={12} overflow="hidden">
+        {isPending ? <CampCardStatusBanner variant="pending" /> : null}
+        {isInCooldown ? <CampCardStatusBanner variant="rejected" /> : null}
         <XStack alignItems="flex-start" gap={12}>
           <YStack
             width={54}
@@ -131,6 +142,13 @@ function CampCard({
                   Pending
                 </Text>
               ) : null}
+              {isInCooldown ? (
+                <Text fontSize={12} color={bondfireColors.error} fontWeight="900">
+                  {cooldownEndDate
+                    ? `Denied — retry ${cooldownEndDate.toLocaleDateString()}`
+                    : 'Request denied'}
+                </Text>
+              ) : null}
             </XStack>
           </YStack>
         </XStack>
@@ -184,6 +202,7 @@ export default function CampsScreen() {
     subscription?.tier === 'pro' ? {} : 'skip',
   )
   const joinCamp = useMutation(api.camps.join)
+  const requestJoinCamp = useMutation(api.camps.requestJoin)
   const createPrivateCamp = useMutation(api.camps.createPrivateCamp)
   const redeemInvite = useMutation(api.camps.redeemInvite)
   const [query, setQuery] = useState('')
@@ -252,7 +271,10 @@ export default function CampsScreen() {
   const handleJoin = useCallback(
     async (camp: CampWithMembership) => {
       try {
-        const result = await joinCamp({ campId: camp._id })
+        const result =
+          camp.access === 'approval'
+            ? await requestJoinCamp({ campId: camp._id })
+            : await joinCamp({ campId: camp._id })
         if (result.status === 'pending') {
           Alert.alert('Request Sent', 'Your camp membership request is pending approval.')
         }
@@ -261,7 +283,7 @@ export default function CampsScreen() {
         Alert.alert('Camp Unavailable', message)
       }
     },
-    [joinCamp],
+    [joinCamp, requestJoinCamp],
   )
 
   const handleCreatePrivateCamp = useCallback(async () => {

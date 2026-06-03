@@ -40,6 +40,7 @@ export {
 } from 'tamagui'
 export * from './AdminPanel'
 export * from './Button'
+export * from './CampCardStatusBanner'
 export * from './Card'
 export * from './Container'
 export * from './ErrorDisplay'

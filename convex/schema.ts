@@ -168,11 +168,17 @@ export default defineSchema({
     userId: v.id('users'),
     campId: v.id('camps'),
     role: v.union(v.literal('owner'), v.literal('moderator'), v.literal('member')),
-    status: v.union(v.literal('pending'), v.literal('active'), v.literal('banned')),
+    status: v.union(
+      v.literal('pending'),
+      v.literal('active'),
+      v.literal('banned'),
+      v.literal('rejected'),
+    ),
     muted: v.boolean(),
     joinedAt: v.optional(v.number()),
     requestedAt: v.optional(v.number()),
     approvedAt: v.optional(v.number()),
+    rejectedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
