@@ -22,10 +22,11 @@ import {
   mmkvStorage,
   telemetry,
   toastActions,
+  toastStore$,
   usePushNotifications,
 } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
-import { useObserve } from '@legendapp/state/react'
+import { useObserve, useValue } from '@legendapp/state/react'
 import type { RelativePathString } from 'expo-router/build/types'
 import { api } from '../../../convex/_generated/api'
 
@@ -181,6 +182,7 @@ export function ErrorBoundary(props: { error: Error; retry: () => void }) {
 function AppContent() {
   const colorScheme = useColorScheme()
   const router = useRouter()
+  const toasts = useValue(toastStore$.toasts)
   const registerDevice = useMutation(api.notifications.registerDevice)
   const unregisterDevice = useMutation(api.notifications.unregisterDevice)
 
@@ -258,7 +260,7 @@ function AppContent() {
     <TamaguiProvider config={config} defaultTheme={colorScheme ?? 'dark'}>
       <Theme name={colorScheme ?? 'dark'}>
         <TelemetryInitializer />
-        <ToastContainer />
+        <ToastContainer toasts={toasts} onDismiss={toastActions.dismiss} />
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="index" />
           <Stack.Screen name="(auth)" options={{ headerShown: false }} />

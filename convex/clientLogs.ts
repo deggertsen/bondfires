@@ -14,6 +14,7 @@ import { auth } from './auth'
 const LOG_LEVELS = ['error', 'warn', 'info', 'breadcrumb'] as const
 const MAX_BATCH_SIZE = 20
 const MAX_RETENTION_DAYS = 30
+const MAX_LIST_LIMIT = 100
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -170,34 +171,51 @@ export const list = query({
       throw new Error('Admin access required')
     }
 
-    const pageSize = Math.min(args.limit ?? 50, 100)
+    const pageSize = Math.min(args.limit ?? 50, MAX_LIST_LIMIT)
+    const { startTime, endTime } = args
 
     // Pick the most selective index
     if (args.userId) {
       const userId = args.userId
-      const results = await ctx.db
+      let query = ctx.db
         .query('clientLogs')
         .withIndex('by_log_user', (q) => q.eq('userId', userId))
         .order('desc')
-        .take(pageSize)
+
+      if (startTime !== undefined) {
+        query = query.filter((q) => q.gte(q.field('createdAt'), startTime))
+      }
+      if (endTime !== undefined) {
+        query = query.filter((q) => q.lte(q.field('createdAt'), endTime))
+      }
+
+      const results = await query.take(pageSize)
 
       return { entries: results.map(logEntry), cursor: null }
     }
 
     if (args.level) {
       const level = args.level
-      const results = await ctx.db
+      let query = ctx.db
         .query('clientLogs')
         .withIndex('by_log_level', (q) => q.eq('level', level))
         .order('desc')
-        .take(pageSize)
+
+      if (startTime !== undefined) {
+        query = query.filter((q) => q.gte(q.field('createdAt'), startTime))
+      }
+      if (endTime !== undefined) {
+        query = query.filter((q) => q.lte(q.field('createdAt'), endTime))
+      }
+
+      const results = await query.take(pageSize)
 
       return { entries: results.map(logEntry), cursor: null }
     }
 
     // Fallback: query by event index
     const prefix = args.eventPrefix ?? ''
-    const results = await ctx.db
+    let query = ctx.db
       .query('clientLogs')
       .withIndex('by_log_event', (q) => {
         if (prefix) {
@@ -206,7 +224,15 @@ export const list = query({
         return q
       })
       .order('desc')
-      .take(pageSize)
+
+    if (startTime !== undefined) {
+      query = query.filter((q) => q.gte(q.field('createdAt'), startTime))
+    }
+    if (endTime !== undefined) {
+      query = query.filter((q) => q.lte(q.field('createdAt'), endTime))
+    }
+
+    const results = await query.take(pageSize)
 
     return { entries: results.map(logEntry), cursor: null }
   },
@@ -234,6 +260,7 @@ export const summary = query({
       const entries = await ctx.db
         .query('clientLogs')
         .withIndex('by_log_level', (q) => q.eq('level', level))
+        .filter((q) => q.gte(q.field('createdAt'), cutoff))
         .take(1000)
 
       counts[level] = entries.length

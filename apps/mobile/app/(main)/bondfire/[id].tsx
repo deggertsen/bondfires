@@ -805,7 +805,9 @@ export default function BondfireDetailScreen() {
     if (!isParticipant) return
 
     markThreadRead({ bondfireId }).catch((error) => {
-      telemetry.error('bondfire:thread', 'Failed to mark Bondfire thread read', { error: String(error) })
+      telemetry.error('bondfire:thread', 'Failed to mark Bondfire thread read', {
+        error: String(error),
+      })
     })
   }, [bondfireData, bondfireId, currentUserId, markThreadRead])
 
