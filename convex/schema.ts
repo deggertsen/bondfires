@@ -175,6 +175,7 @@ export default defineSchema({
       v.literal('rejected'),
     ),
     muted: v.boolean(),
+    moderationReason: v.optional(v.string()),
     joinedAt: v.optional(v.number()),
     requestedAt: v.optional(v.number()),
     approvedAt: v.optional(v.number()),
