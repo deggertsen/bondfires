@@ -7,11 +7,23 @@ import {
 } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
-import { ArrowLeft, Bell, BellOff, Flame, Lock, MessageCircle } from '@tamagui/lucide-icons'
+import {
+  ArrowLeft,
+  Ban,
+  Bell,
+  BellOff,
+  ChevronDown,
+  ChevronUp,
+  Flame,
+  Lock,
+  MessageCircle,
+  Shield,
+  UserX,
+} from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { useCallback } from 'react'
-import { Alert, FlatList, Pressable, StatusBar } from 'react-native'
+import { useCallback, useState } from 'react'
+import { Alert, FlatList, Modal, Pressable, StatusBar, TextInput } from 'react-native'
 import { Separator, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
@@ -27,6 +39,30 @@ type PendingRequest = {
   requestedAt: number
   role: string
   userName: string
+  displayName?: string
+  photoUrl?: string
+}
+
+type CampMember = {
+  membershipId: string
+  userId: string
+  role: 'owner' | 'moderator' | 'member'
+  status: string
+  muted: boolean
+  moderationReason?: string
+  joinedAt: number
+  name?: string
+  displayName?: string
+  photoUrl?: string
+}
+
+type BannedMember = {
+  membershipId: string
+  userId: string
+  role: 'owner' | 'moderator' | 'member'
+  moderationReason?: string
+  updatedAt: number
+  name?: string
   displayName?: string
   photoUrl?: string
 }
@@ -89,6 +125,111 @@ function getFirstVisitBanner(camp: Doc<'camps'>) {
   return null
 }
 
+function getRoleBadgeColor(role: string) {
+  if (role === 'owner') return bondfireColors.moltenGold
+  if (role === 'moderator') return bondfireColors.warning
+  return bondfireColors.ash
+}
+
+function MemberRow({
+  member,
+  canModerate,
+  onRemove,
+  onBan,
+}: {
+  member: CampMember
+  canModerate: boolean
+  onRemove: (member: CampMember) => void
+  onBan: (member: CampMember) => void
+}) {
+  const roleBadgeColor = getRoleBadgeColor(member.role)
+
+  return (
+    <XStack
+      paddingHorizontal={14}
+      paddingVertical={12}
+      alignItems="center"
+      gap={12}
+      borderBottomWidth={1}
+      borderBottomColor={`${bondfireColors.iron}40`}
+    >
+      <YStack
+        width={40}
+        height={40}
+        borderRadius={20}
+        backgroundColor={bondfireColors.gunmetal}
+        borderWidth={1}
+        borderColor={bondfireColors.iron}
+        alignItems="center"
+        justifyContent="center"
+      >
+        {member.role === 'owner' ? (
+          <Shield size={18} color={bondfireColors.moltenGold} />
+        ) : member.role === 'moderator' ? (
+          <Shield size={18} color={bondfireColors.warning} />
+        ) : null}
+        {member.role === 'member' ? <Flame size={16} color={bondfireColors.ash} /> : null}
+      </YStack>
+
+      <YStack flex={1} gap={2}>
+        <Text fontSize={15} fontWeight="900">
+          {member.displayName || member.name || 'Unknown'}
+        </Text>
+        <XStack gap={6} alignItems="center">
+          <YStack
+            paddingHorizontal={8}
+            paddingVertical={2}
+            borderRadius={999}
+            backgroundColor={`${roleBadgeColor}22`}
+            borderWidth={1}
+            borderColor={roleBadgeColor}
+          >
+            <Text fontSize={11} color={roleBadgeColor} fontWeight="800">
+              {member.role}
+            </Text>
+          </YStack>
+          <Text fontSize={11} color={bondfireColors.ash}>
+            {getTimeAgo(member.joinedAt)}
+          </Text>
+        </XStack>
+      </YStack>
+
+      {canModerate ? (
+        <XStack gap={8}>
+          <Pressable onPress={() => onRemove(member)}>
+            <YStack
+              width={36}
+              height={36}
+              borderRadius={18}
+              backgroundColor={bondfireColors.gunmetal}
+              borderWidth={1}
+              borderColor={bondfireColors.error}
+              alignItems="center"
+              justifyContent="center"
+            >
+              <UserX size={16} color={bondfireColors.error} />
+            </YStack>
+          </Pressable>
+          <Pressable onPress={() => onBan(member)}>
+            <YStack
+              width={36}
+              height={36}
+              borderRadius={18}
+              backgroundColor={bondfireColors.gunmetal}
+              borderWidth={1}
+              borderColor={bondfireColors.warning}
+              alignItems="center"
+              justifyContent="center"
+            >
+              <Ban size={16} color={bondfireColors.warning} />
+            </YStack>
+          </Pressable>
+        </XStack>
+      ) : null}
+    </XStack>
+  )
+}
+
 function CampHeader({
   camp,
   onBack,
@@ -99,6 +240,12 @@ function CampHeader({
   pendingRequests,
   onApprove,
   onReject,
+  members,
+  bannedMembers,
+  onRemoveMember,
+  onBanMember,
+  onUnbanMember,
+  currentUserId,
 }: {
   camp: CampWithMembership
   onBack: () => void
@@ -109,11 +256,27 @@ function CampHeader({
   pendingRequests: PendingRequest[]
   onApprove: (membershipId: string) => void
   onReject: (membershipId: string) => void
+  members: CampMember[] | undefined
+  bannedMembers: BannedMember[] | undefined
+  onRemoveMember: (member: CampMember) => void
+  onBanMember: (member: CampMember) => void
+  onUnbanMember: (membershipId: string) => void
+  currentUserId?: string
 }) {
   const isActiveMember = camp.membership?.status === 'active'
   const isPending = camp.membership?.status === 'pending'
   const isRejected = camp.membership?.status === 'rejected'
   const isOwner = isActiveMember && camp.membership?.role === 'owner'
+  const isManager =
+    isActiveMember && (camp.membership?.role === 'owner' || camp.membership?.role === 'moderator')
+  const canModerateMember = useCallback(
+    (member: CampMember | BannedMember) =>
+      member.userId !== currentUserId &&
+      member.role !== 'owner' &&
+      (camp.membership?.role === 'owner' || member.role === 'member'),
+    [camp.membership?.role, currentUserId],
+  )
+  const [bannedExpanded, setBannedExpanded] = useState(false)
   const muted = camp.membership?.muted === true
   const isFrozen = camp.frozen === true || camp.status === 'frozen'
   const rules = camp.rules
@@ -372,6 +535,113 @@ function CampHeader({
           ))}
         </YStack>
       ) : null}
+
+      {/* Manager: Member management section */}
+      {isManager && members !== undefined ? (
+        <YStack gap={12}>
+          <Text fontSize={14} color={bondfireColors.moltenGold} fontWeight="900">
+            Members ({members.length})
+          </Text>
+          <YStack
+            borderRadius={14}
+            backgroundColor={bondfireColors.gunmetal}
+            borderWidth={1}
+            borderColor={bondfireColors.iron}
+            overflow="hidden"
+          >
+            {members.map((member) => (
+              <MemberRow
+                key={member.membershipId}
+                member={member}
+                canModerate={canModerateMember(member)}
+                onRemove={onRemoveMember}
+                onBan={onBanMember}
+              />
+            ))}
+          </YStack>
+        </YStack>
+      ) : null}
+
+      {/* Manager: Banned members section */}
+      {isManager && bannedMembers !== undefined ? (
+        <YStack gap={8}>
+          <Pressable onPress={() => setBannedExpanded(!bannedExpanded)}>
+            <XStack alignItems="center" gap={6}>
+              <Text fontSize={13} color={bondfireColors.error} fontWeight="900">
+                Banned Members ({bannedMembers.length})
+              </Text>
+              {bannedExpanded ? (
+                <ChevronUp size={14} color={bondfireColors.error} />
+              ) : (
+                <ChevronDown size={14} color={bondfireColors.error} />
+              )}
+            </XStack>
+          </Pressable>
+          {bannedExpanded ? (
+            <YStack
+              borderRadius={14}
+              backgroundColor={bondfireColors.gunmetal}
+              borderWidth={1}
+              borderColor={`${bondfireColors.error}40`}
+              overflow="hidden"
+            >
+              {bannedMembers.map((banned) => (
+                <YStack
+                  key={banned.membershipId}
+                  paddingHorizontal={14}
+                  paddingVertical={12}
+                  gap={6}
+                  borderBottomWidth={1}
+                  borderBottomColor={`${bondfireColors.iron}40`}
+                >
+                  <XStack alignItems="center" justifyContent="space-between">
+                    <YStack flex={1} gap={2}>
+                      <Text fontSize={15} fontWeight="900">
+                        {banned.displayName || banned.name || 'Unknown'}
+                      </Text>
+                      {banned.moderationReason ? (
+                        <Text fontSize={12} color={bondfireColors.ash} numberOfLines={2}>
+                          Reason: {banned.moderationReason}
+                        </Text>
+                      ) : null}
+                      <Text fontSize={11} color={bondfireColors.ash}>
+                        Banned {getTimeAgo(banned.updatedAt)}
+                      </Text>
+                    </YStack>
+                    {canModerateMember(banned) ? (
+                      <Pressable onPress={() => onUnbanMember(banned.membershipId)}>
+                        <YStack
+                          paddingHorizontal={12}
+                          paddingVertical={6}
+                          borderRadius={10}
+                          backgroundColor={bondfireColors.gunmetal}
+                          borderWidth={1}
+                          borderColor={bondfireColors.bondfireCopper}
+                        >
+                          <Text
+                            fontSize={12}
+                            color={bondfireColors.bondfireCopper}
+                            fontWeight="900"
+                          >
+                            Unban
+                          </Text>
+                        </YStack>
+                      </Pressable>
+                    ) : null}
+                  </XStack>
+                </YStack>
+              ))}
+              {bannedMembers.length === 0 ? (
+                <YStack padding={16} alignItems="center">
+                  <Text fontSize={13} color={bondfireColors.ash}>
+                    No banned members
+                  </Text>
+                </YStack>
+              ) : null}
+            </YStack>
+          ) : null}
+        </YStack>
+      ) : null}
     </YStack>
   )
 }
@@ -423,17 +693,33 @@ export default function CampDetailScreen() {
   const bondfires = useQuery(api.bondfires.listByCamp, campId ? { campId, limit: 50 } : 'skip')
   const canReviewAccessRequests =
     camp?.membership?.status === 'active' && camp.membership.role === 'owner'
+  const isManager =
+    camp?.membership?.status === 'active' &&
+    (camp.membership.role === 'owner' || camp.membership.role === 'moderator')
   const pendingRequests: PendingRequest[] =
     useQuery(
       api.camps.getPendingRequests,
       campId && canReviewAccessRequests ? { campId } : 'skip',
     ) ?? []
+  const members: CampMember[] | undefined = useQuery(
+    api.camps.listCampMembers,
+    campId && isManager ? { campId } : 'skip',
+  )
+  const bannedMembers: BannedMember[] | undefined = useQuery(
+    api.camps.getBannedMembers,
+    campId && isManager ? { campId } : 'skip',
+  )
   const joinCamp = useMutation(api.camps.join)
   const requestJoinCamp = useMutation(api.camps.requestJoin)
   const muteCamp = useMutation(api.camps.muteCamp)
   const createInvite = useMutation(api.camps.createInvite)
   const approveAccess = useMutation(api.camps.approveAccessRequest)
   const rejectAccess = useMutation(api.camps.rejectAccessRequest)
+  const removeMember = useMutation(api.camps.removeMember)
+  const banMember = useMutation(api.camps.banMember)
+  const unbanMember = useMutation(api.camps.unbanMember)
+  const [banReasonModalMember, setBanReasonModalMember] = useState<CampMember | null>(null)
+  const [banReason, setBanReason] = useState('')
 
   const handleJoin = useCallback(async () => {
     if (!campId) return
@@ -495,6 +781,75 @@ export default function CampDetailScreen() {
       }
     },
     [rejectAccess],
+  )
+
+  const handleRemoveMember = useCallback(
+    (member: CampMember) => {
+      Alert.alert(
+        'Remove Member',
+        [
+          'Are you sure you want to remove ',
+          member.displayName || member.name,
+          ' from this camp? They can rejoin or re-request.',
+        ].join(''),
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Remove',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await removeMember({ membershipId: member.membershipId as Id<'campMembers'> })
+              } catch (error) {
+                const message = parseError(error).message
+                Alert.alert('Remove Failed', message)
+              }
+            },
+          },
+        ],
+      )
+    },
+    [removeMember],
+  )
+
+  const handleBanMember = useCallback((member: CampMember) => {
+    setBanReasonModalMember(member)
+    setBanReason('')
+  }, [])
+
+  const handleConfirmBan = useCallback(async () => {
+    const member = banReasonModalMember
+    if (!member) return
+    try {
+      await banMember({
+        membershipId: member.membershipId as Id<'campMembers'>,
+        reason: banReason.trim() || undefined,
+      })
+      setBanReasonModalMember(null)
+    } catch (error) {
+      const message = parseError(error).message
+      Alert.alert('Ban Failed', message)
+    }
+  }, [banMember, banReasonModalMember, banReason])
+
+  const handleUnbanMember = useCallback(
+    (membershipId: string) => {
+      Alert.alert('Unban Member', 'This will remove the ban. The user can rejoin or re-request.', [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Unban',
+          onPress: async () => {
+            try {
+              await unbanMember({ membershipId: membershipId as Id<'campMembers'> })
+            } catch (error) {
+              const message = parseError(error).message
+              Alert.alert('Unban Failed', message)
+            }
+          },
+        },
+      ])
+    },
+    [unbanMember],
   )
 
   const handleOpenBondfire = useCallback(
@@ -568,6 +923,12 @@ export default function CampDetailScreen() {
             pendingRequests={pendingRequests}
             onApprove={handleApprove}
             onReject={handleReject}
+            members={members}
+            bannedMembers={bannedMembers}
+            onRemoveMember={handleRemoveMember}
+            onBanMember={handleBanMember}
+            onUnbanMember={handleUnbanMember}
+            currentUserId={camp.membership?.userId}
           />
         }
         ListEmptyComponent={
@@ -583,6 +944,79 @@ export default function CampDetailScreen() {
         }
         contentContainerStyle={{ paddingBottom: 42 }}
       />
+
+      {/* Ban reason modal */}
+      <Modal
+        visible={banReasonModalMember !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setBanReasonModalMember(null)}
+      >
+        <YStack
+          flex={1}
+          backgroundColor="rgba(0,0,0,0.7)"
+          alignItems="center"
+          justifyContent="center"
+          padding={24}
+        >
+          <YStack
+            backgroundColor={bondfireColors.charcoal}
+            borderRadius={16}
+            padding={20}
+            gap={16}
+            width="100%"
+            maxWidth={400}
+          >
+            <YStack gap={4}>
+              <Text fontSize={18} fontWeight="900">
+                Ban Member
+              </Text>
+              <Text fontSize={14} color={bondfireColors.ash}>
+                {banReasonModalMember
+                  ? `Ban ${banReasonModalMember.displayName || banReasonModalMember.name || 'this member'} from this camp?`
+                  : ''}
+              </Text>
+            </YStack>
+
+            <TextInput
+              style={{
+                backgroundColor: bondfireColors.gunmetal,
+                borderWidth: 1,
+                borderColor: bondfireColors.iron,
+                borderRadius: 10,
+                paddingHorizontal: 14,
+                paddingVertical: 12,
+                color: bondfireColors.whiteSmoke,
+                fontSize: 15,
+              }}
+              placeholder="Reason (optional)"
+              placeholderTextColor={bondfireColors.ash}
+              value={banReason}
+              onChangeText={setBanReason}
+              maxLength={500}
+              multiline
+            />
+
+            <XStack gap={10}>
+              <Button
+                variant="outline"
+                flex={1}
+                size="$lg"
+                onPress={() => setBanReasonModalMember(null)}
+              >
+                <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+                  Cancel
+                </Text>
+              </Button>
+              <Button variant="primary" flex={1} size="$lg" onPress={handleConfirmBan}>
+                <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+                  Ban
+                </Text>
+              </Button>
+            </XStack>
+          </YStack>
+        </YStack>
+      </Modal>
     </YStack>
   )
 }

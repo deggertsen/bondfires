@@ -2325,6 +2325,224 @@ export const setOwner = mutation({
   },
 })
 
+// ── Member Management ──
+
+function normalizeModerationReason(reason: string | undefined) {
+  const trimmed = reason?.trim()
+  if (!trimmed) return undefined
+  if (trimmed.length > 500) {
+    throwUserError('Moderation reason must be 500 characters or less')
+  }
+  return trimmed
+}
+
+/** Assert caller can moderate the target membership and return it. */
+async function assertCanModerateMember(ctx: MutationCtx, membershipId: Id<'campMembers'>) {
+  const caller = await getCurrentUser(ctx)
+  const targetMembership = await ctx.db.get(membershipId)
+  if (!targetMembership) {
+    throwUserError('Membership not found')
+  }
+
+  const camp = await ctx.db.get(targetMembership.campId)
+  if (!camp) {
+    throwUserError('Camp not found')
+  }
+
+  // Cannot target the camp owner
+  if (targetMembership.role === 'owner') {
+    throwUserError('The camp owner cannot be moderated')
+  }
+
+  // Admins bypass camp membership and camp status checks.
+  if (isAdmin(caller)) {
+    return targetMembership
+  }
+
+  if (!isOwnerManageableCampStatus(camp.status)) {
+    throwUserError('This camp cannot be managed in its current state')
+  }
+
+  const callerMembership = await getMembership(ctx, caller._id, targetMembership.campId)
+  if (
+    !callerMembership ||
+    callerMembership.status !== 'active' ||
+    (callerMembership.role !== 'owner' && callerMembership.role !== 'moderator')
+  ) {
+    throwUserError('You do not have permission to manage members in this camp')
+  }
+
+  // Only owners can moderate other moderators
+  if (targetMembership.role === 'moderator' && callerMembership.role !== 'owner') {
+    throwUserError('Only the camp owner can moderate other moderators')
+  }
+
+  return targetMembership
+}
+
+/** Remove a member from the camp entirely. They can rejoin or re-request. */
+export const removeMember = mutation({
+  args: {
+    membershipId: v.id('campMembers'),
+  },
+  handler: async (ctx, args) => {
+    const targetMembership = await assertCanModerateMember(ctx, args.membershipId)
+    await ctx.db.delete(args.membershipId)
+    await refreshActiveMemberCount(ctx, targetMembership.campId)
+    return { removed: true }
+  },
+})
+
+/** Ban a member from the camp. Sets status to 'banned'. */
+export const banMember = mutation({
+  args: {
+    membershipId: v.id('campMembers'),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const targetMembership = await assertCanModerateMember(ctx, args.membershipId)
+    if (targetMembership.status === 'banned') {
+      throwUserError('This member is already banned')
+    }
+
+    const now = Date.now()
+    await ctx.db.patch(args.membershipId, {
+      status: 'banned',
+      moderationReason: normalizeModerationReason(args.reason),
+      updatedAt: now,
+    })
+    await refreshActiveMemberCount(ctx, targetMembership.campId)
+    return { banned: true }
+  },
+})
+
+/** Unban a member — deletes the membership row entirely so they start fresh. */
+export const unbanMember = mutation({
+  args: {
+    membershipId: v.id('campMembers'),
+  },
+  handler: async (ctx, args) => {
+    const targetMembership = await assertCanModerateMember(ctx, args.membershipId)
+    if (targetMembership.status !== 'banned') {
+      throwUserError('This member is not banned')
+    }
+
+    await ctx.db.delete(args.membershipId)
+    return { unbanned: true }
+  },
+})
+
+/** List active (and optionally pending) members for a camp. Manager-only. */
+export const listCampMembers = query({
+  args: {
+    campId: v.id('camps'),
+  },
+  handler: async (ctx, args) => {
+    const camp = await ctx.db.get(args.campId)
+    if (!camp || !isCampVisibleStatus(camp.status)) {
+      throwUserError('Camp not found')
+    }
+
+    // Only owners and moderators can list members
+    const user = await getCurrentUser(ctx)
+    const callerMembership = await getMembership(ctx, user._id, args.campId)
+    if (
+      !isAdmin(user) &&
+      (!callerMembership ||
+        callerMembership.status !== 'active' ||
+        (callerMembership.role !== 'owner' && callerMembership.role !== 'moderator'))
+    ) {
+      throwUserError('You do not have permission to view members')
+    }
+
+    const memberships = await ctx.db
+      .query('campMembers')
+      .withIndex('by_camp_status', (q) => q.eq('campId', args.campId).eq('status', 'active'))
+      .collect()
+
+    // Join with users table
+    const members = await Promise.all(
+      memberships.map(async (m) => {
+        const userDoc = await ctx.db.get(m.userId)
+        return {
+          membershipId: m._id,
+          userId: m.userId,
+          role: m.role,
+          status: m.status,
+          muted: m.muted,
+          moderationReason: m.moderationReason,
+          joinedAt: m.joinedAt ?? m.createdAt,
+          name: userDoc?.name,
+          displayName: userDoc?.displayName,
+          photoUrl: userDoc?.photoUrl,
+        }
+      }),
+    )
+
+    // Sort: owner first, then moderators, then members, then by joined date
+    const roleOrder = { owner: 0, moderator: 1, member: 2 }
+    members.sort((a, b) => {
+      const roleDiff = (roleOrder[a.role] ?? 3) - (roleOrder[b.role] ?? 3)
+      if (roleDiff !== 0) return roleDiff
+      return (a.joinedAt ?? 0) - (b.joinedAt ?? 0)
+    })
+
+    return members
+  },
+})
+
+/** List banned members for a camp. Manager-only. */
+export const getBannedMembers = query({
+  args: {
+    campId: v.id('camps'),
+  },
+  handler: async (ctx, args) => {
+    const camp = await ctx.db.get(args.campId)
+    if (!camp || !isCampVisibleStatus(camp.status)) {
+      throwUserError('Camp not found')
+    }
+
+    // Only owners and moderators can view banned members
+    const user = await getCurrentUser(ctx)
+    const callerMembership = await getMembership(ctx, user._id, args.campId)
+    if (
+      !isAdmin(user) &&
+      (!callerMembership ||
+        callerMembership.status !== 'active' ||
+        (callerMembership.role !== 'owner' && callerMembership.role !== 'moderator'))
+    ) {
+      throwUserError('You do not have permission to view banned members')
+    }
+
+    const bannedMemberships = await ctx.db
+      .query('campMembers')
+      .withIndex('by_camp_status', (q) => q.eq('campId', args.campId).eq('status', 'banned'))
+      .collect()
+
+    // Join with users table
+    const bannedMembers = await Promise.all(
+      bannedMemberships.map(async (m) => {
+        const userDoc = await ctx.db.get(m.userId)
+        return {
+          membershipId: m._id,
+          userId: m.userId,
+          role: m.role,
+          moderationReason: m.moderationReason,
+          updatedAt: m.updatedAt,
+          name: userDoc?.name,
+          displayName: userDoc?.displayName,
+          photoUrl: userDoc?.photoUrl,
+        }
+      }),
+    )
+
+    // Sort by ban date (most recent first)
+    bannedMembers.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+
+    return bannedMembers
+  },
+})
+
 const campSettingsFields = {
   name: v.optional(v.string()),
   theme: v.optional(v.string()),
