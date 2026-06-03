@@ -8,6 +8,8 @@ export * from './features'
 export * from './hooks'
 // Services
 export * from './services/backgroundUpload'
+export { telemetry } from './services/telemetry'
+export type { LogLevel, LogEntry, TelemetryLogger } from './services/telemetry'
 export * from './store'
 // Utils
 export * from './utils'

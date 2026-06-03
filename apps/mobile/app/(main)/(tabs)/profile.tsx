@@ -8,6 +8,7 @@ import {
   usePreferences,
   useSlotBalance,
   useSubscription,
+  telemetry,
 } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { AdminPanel, Button, Card, Input, SubscriptionStatus, Text } from '@bondfires/ui'
@@ -175,7 +176,7 @@ export default function ProfileScreen() {
     }) => {
       // Guard against null — the session may have expired while the query was in flight
       if (nextCurrentUser === null) {
-        console.warn('Profile resolved with null user — session may have expired')
+        telemetry.warn('auth:session', 'Profile resolved with null user — session may have expired')
         stopRefreshing()
         return
       }
@@ -348,7 +349,7 @@ export default function ProfileScreen() {
       await updateProfilePhoto({ storageId })
       handleRefresh()
     } catch (error) {
-      console.error('Photo upload error:', error)
+      telemetry.error('profile:upload', 'Photo upload error', { error: String(error) })
       const message = parseError(error).message
       Alert.alert('Error', message)
     } finally {

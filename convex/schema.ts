@@ -540,4 +540,26 @@ export default defineSchema({
     .index('by_reporter', ['reporterUserId', 'createdAt'])
     .index('by_status', ['status', 'createdAt'])
     .index('by_video_owner', ['videoOwnerId', 'createdAt']),
+
+  // Client telemetry logs from React Native app
+  clientLogs: defineTable({
+    userId: v.optional(v.id('users')),
+    level: v.union(
+      v.literal('error'),
+      v.literal('warn'),
+      v.literal('info'),
+      v.literal('breadcrumb'),
+    ),
+    event: v.string(),
+    message: v.string(),
+    data: v.optional(v.any()),
+    platform: v.union(v.literal('ios'), v.literal('android')),
+    appVersion: v.optional(v.string()),
+    sessionId: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index('by_log_user', ['userId', 'createdAt'])
+    .index('by_log_level', ['level', 'createdAt'])
+    .index('by_log_event', ['event', 'createdAt'])
+    .index('by_log_session', ['sessionId', 'createdAt']),
 })

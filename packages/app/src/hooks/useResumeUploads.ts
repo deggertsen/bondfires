@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { type BackgroundUploadOptions, resumePendingUploads } from '../services/backgroundUpload'
+import { telemetry } from '../services/telemetry'
 
 /**
  * Hook to resume pending uploads on app startup
@@ -14,7 +15,7 @@ export function useResumeUploads(options: Omit<BackgroundUploadOptions, 'videoUr
 
     // Resume pending uploads when component mounts
     resumePendingUploads(options).catch((error) => {
-      console.error('[useResumeUploads] Failed to resume uploads:', error)
+      telemetry.error('upload:resume', 'Failed to resume uploads', { error: String(error) })
     })
   }, [options])
 }
