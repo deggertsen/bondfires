@@ -6,7 +6,7 @@ import {
   setFeedActiveBondfireId,
 } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
-import { Button, CampCardStatusBanner, Text } from '@bondfires/ui'
+import { Button, Text } from '@bondfires/ui'
 import { ArrowLeft, Bell, BellOff, Flame, Lock, MessageCircle } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { useLocalSearchParams, useRouter } from 'expo-router'
@@ -35,6 +35,8 @@ type BondfireData = Doc<'bondfires'> & {
   isLive?: boolean
   livePlaybackId?: string
 }
+
+const REJECTION_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000
 
 function getAccessLabel(camp: Doc<'camps'>) {
   if (camp.access === 'invite') return 'Invite only'
@@ -111,21 +113,18 @@ function CampHeader({
   const isActiveMember = camp.membership?.status === 'active'
   const isPending = camp.membership?.status === 'pending'
   const isRejected = camp.membership?.status === 'rejected'
-  const isOwner = camp.membership?.role === 'owner'
+  const isOwner = isActiveMember && camp.membership?.role === 'owner'
   const muted = camp.membership?.muted === true
   const isFrozen = camp.frozen === true || camp.status === 'frozen'
   const rules = camp.rules
   const firstVisitBanner = getFirstVisitBanner(camp)
 
-  // Rejection cooldown logic
-  const rejectionCooldownMs = 30 * 24 * 60 * 60 * 1000
   const rejectedAt = camp.membership?.rejectedAt
-  const isInCooldown =
-    isRejected && rejectedAt != null && Date.now() - rejectedAt < rejectionCooldownMs
-  const cooldownEndDate = rejectedAt != null ? new Date(rejectedAt + rejectionCooldownMs) : null
-  const cooldownExpired = isRejected && !isInCooldown
+  const cooldownExpired =
+    isRejected && rejectedAt != null && Date.now() - rejectedAt >= REJECTION_COOLDOWN_MS
+  const isInCooldown = isRejected && !cooldownExpired
+  const cooldownEndDate = rejectedAt != null ? new Date(rejectedAt + REJECTION_COOLDOWN_MS) : null
 
-  // Join eligibility
   const canJoin = !isActiveMember && !isPending && !isInCooldown && camp.access !== 'invite'
 
   return (
@@ -306,7 +305,6 @@ function CampHeader({
           borderWidth={1}
           borderColor={bondfireColors.warning}
         >
-          <CampCardStatusBanner variant="pending" />
           <Text color={bondfireColors.warning} fontWeight="900" textAlign="center">
             Request pending — awaiting camp owner approval
           </Text>
@@ -423,9 +421,15 @@ export default function CampDetailScreen() {
   const campId = id as Id<'camps'> | undefined
   const camp = useQuery(api.camps.get, campId ? { campId } : 'skip')
   const bondfires = useQuery(api.bondfires.listByCamp, campId ? { campId, limit: 50 } : 'skip')
+  const canReviewAccessRequests =
+    camp?.membership?.status === 'active' && camp.membership.role === 'owner'
   const pendingRequests: PendingRequest[] =
-    useQuery(api.camps.getPendingRequests, campId ? { campId } : 'skip') ?? []
+    useQuery(
+      api.camps.getPendingRequests,
+      campId && canReviewAccessRequests ? { campId } : 'skip',
+    ) ?? []
   const joinCamp = useMutation(api.camps.join)
+  const requestJoinCamp = useMutation(api.camps.requestJoin)
   const muteCamp = useMutation(api.camps.muteCamp)
   const createInvite = useMutation(api.camps.createInvite)
   const approveAccess = useMutation(api.camps.approveAccessRequest)
@@ -434,7 +438,8 @@ export default function CampDetailScreen() {
   const handleJoin = useCallback(async () => {
     if (!campId) return
     try {
-      const result = await joinCamp({ campId })
+      const result =
+        camp?.access === 'approval' ? await requestJoinCamp({ campId }) : await joinCamp({ campId })
       if (result.status === 'pending') {
         Alert.alert('Request Sent', 'Your camp membership request is pending approval.')
         return
@@ -444,7 +449,7 @@ export default function CampDetailScreen() {
       const message = parseError(error).message
       Alert.alert('Camp Unavailable', message)
     }
-  }, [campId, joinCamp])
+  }, [camp, campId, joinCamp, requestJoinCamp])
 
   const handleMute = useCallback(async () => {
     if (!camp || !campId || !camp.membership) return

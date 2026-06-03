@@ -18,6 +18,8 @@ type CampListItem =
   | { type: 'section'; id: string; title: string; subtitle: string }
   | { type: 'camp'; camp: CampWithMembership }
 
+const REJECTION_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000
+
 function getAccessLabel(camp: Doc<'camps'>) {
   if (camp.access === 'invite') return 'Invite only'
   if (camp.access === 'approval') return 'Approval'
@@ -41,15 +43,14 @@ function CampCard({
   const isActiveMember = camp.membership?.status === 'active'
   const isPending = camp.membership?.status === 'pending'
   const isRejected = camp.membership?.status === 'rejected'
-  const canJoinFromList = !isActiveMember && !isPending && !isRejected && camp.access !== 'invite'
   const isFrozen = camp.frozen === true || camp.status === 'frozen'
 
-  // Calculate cooldown for rejected requests
-  const rejectionCooldownMs = 30 * 24 * 60 * 60 * 1000
   const rejectedAt = camp.membership?.rejectedAt
-  const isInCooldown =
-    isRejected && rejectedAt != null && Date.now() - rejectedAt < rejectionCooldownMs
-  const cooldownEndDate = rejectedAt != null ? new Date(rejectedAt + rejectionCooldownMs) : null
+  const cooldownExpired =
+    isRejected && rejectedAt != null && Date.now() - rejectedAt >= REJECTION_COOLDOWN_MS
+  const isInCooldown = isRejected && !cooldownExpired
+  const cooldownEndDate = rejectedAt != null ? new Date(rejectedAt + REJECTION_COOLDOWN_MS) : null
+  const canJoinFromList = !isActiveMember && !isPending && !isInCooldown && camp.access !== 'invite'
 
   return (
     <Pressable onPress={onOpen}>
@@ -197,6 +198,7 @@ export default function CampsScreen() {
   const camps = useQuery(api.camps.list, {})
   const subscription = useQuery(api.subscriptions.current, {})
   const joinCamp = useMutation(api.camps.join)
+  const requestJoinCamp = useMutation(api.camps.requestJoin)
   const createPrivateCamp = useMutation(api.camps.createPrivateCamp)
   const redeemInvite = useMutation(api.camps.redeemInvite)
   const [query, setQuery] = useState('')
@@ -265,7 +267,10 @@ export default function CampsScreen() {
   const handleJoin = useCallback(
     async (camp: CampWithMembership) => {
       try {
-        const result = await joinCamp({ campId: camp._id })
+        const result =
+          camp.access === 'approval'
+            ? await requestJoinCamp({ campId: camp._id })
+            : await joinCamp({ campId: camp._id })
         if (result.status === 'pending') {
           Alert.alert('Request Sent', 'Your camp membership request is pending approval.')
         }
@@ -274,7 +279,7 @@ export default function CampsScreen() {
         Alert.alert('Camp Unavailable', message)
       }
     },
-    [joinCamp],
+    [joinCamp, requestJoinCamp],
   )
 
   const handleCreatePrivateCamp = useCallback(async () => {

@@ -61,6 +61,25 @@ function getCampNotificationCopy(camp: Doc<'camps'>, creatorName: string) {
   }
 }
 
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case '&':
+        return '&amp;'
+      case '<':
+        return '&lt;'
+      case '>':
+        return '&gt;'
+      case '"':
+        return '&quot;'
+      case "'":
+        return '&#39;'
+      default:
+        return char
+    }
+  })
+}
+
 // Send notification via Expo Push API
 async function sendExpoPushNotification(messages: ExpoPushMessage[]): Promise<ExpoPushTicket[]> {
   const response = await fetch(EXPO_PUSH_URL, {
@@ -535,6 +554,8 @@ export const emailAccessRequest = internalAction({
     }
 
     const campName = camp.name
+    const safeCampName = escapeHtml(campName)
+    const safeRequesterName = escapeHtml(args.requesterName)
 
     try {
       const response = await fetch('https://api.resend.com/emails', {
@@ -551,7 +572,7 @@ export const emailAccessRequest = internalAction({
             <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
               <h1 style="color: #F59E0B; margin-bottom: 8px;">New Access Request</h1>
               <p style="font-size: 16px; color: #333; line-height: 1.5;">
-                <strong>${args.requesterName}</strong> has requested to join <strong>${campName}</strong>.
+                <strong>${safeRequesterName}</strong> has requested to join <strong>${safeCampName}</strong>.
               </p>
               <div style="margin-top: 24px;">
                 <a href="https://bondfires.org/camp/${args.campId}"

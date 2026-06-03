@@ -355,6 +355,20 @@ async function assertCanManageCamp(ctx: QueryCtx | MutationCtx, camp: Doc<'camps
   throwUserError('You do not have permission to manage this camp')
 }
 
+async function assertCanReviewAccessRequests(ctx: QueryCtx | MutationCtx, camp: Doc<'camps'>) {
+  const user = await getCurrentUser(ctx)
+  if (isAdmin(user) || camp.ownerId === user._id) {
+    return user
+  }
+
+  const membership = await getMembership(ctx, user._id, camp._id)
+  if (membership?.status === 'active' && membership.role === 'owner') {
+    return user
+  }
+
+  throwUserError('Only the camp owner can review access requests')
+}
+
 async function findCampBySlug(ctx: QueryCtx | MutationCtx, slug: string) {
   return await ctx.db
     .query('camps')
@@ -620,7 +634,12 @@ async function upsertMembership(
     status: args.status,
     muted: existing?.muted ?? false,
     joinedAt: args.status === 'active' ? (existing?.joinedAt ?? now) : existing?.joinedAt,
-    requestedAt: args.status === 'pending' ? (existing?.requestedAt ?? now) : existing?.requestedAt,
+    requestedAt:
+      args.status === 'pending'
+        ? existing?.status === 'pending'
+          ? (existing.requestedAt ?? now)
+          : now
+        : existing?.requestedAt,
     approvedAt: args.status === 'active' ? (existing?.approvedAt ?? now) : existing?.approvedAt,
     rejectedAt: args.status === 'rejected' ? now : existing?.rejectedAt,
     updatedAt: now,
@@ -636,6 +655,34 @@ async function upsertMembership(
     campId: args.campId,
     ...patch,
     createdAt: now,
+  })
+}
+
+async function scheduleAccessRequestNotifications(
+  ctx: MutationCtx,
+  args: {
+    membershipId: Id<'campMembers'>
+    camp: Doc<'camps'>
+    requester: Doc<'users'>
+  },
+) {
+  if (!args.camp.ownerId) {
+    return
+  }
+
+  const requesterName = args.requester.displayName ?? args.requester.name ?? 'Someone'
+
+  await ctx.scheduler.runAfter(0, internal.sendNotification.notifyAccessRequest, {
+    membershipId: args.membershipId,
+    campId: args.camp._id,
+    requesterId: args.requester._id,
+    requesterName,
+  })
+  await ctx.scheduler.runAfter(0, internal.sendNotification.emailAccessRequest, {
+    membershipId: args.membershipId,
+    campId: args.camp._id,
+    requesterId: args.requester._id,
+    requesterName,
   })
 }
 
@@ -961,6 +1008,13 @@ export const join = mutation({
     if (status === 'active') {
       await refreshActiveMemberCount(ctx, camp._id)
     }
+    if (status === 'pending') {
+      await scheduleAccessRequestNotifications(ctx, {
+        membershipId,
+        camp,
+        requester: user,
+      })
+    }
 
     return {
       membershipId,
@@ -983,6 +1037,9 @@ export const requestJoin = mutation({
     // Frozen camps do not accept new join requests
     if (camp.status === 'frozen') {
       throwUserError('This camp is currently frozen. Upgrade your subscription to manage it.')
+    }
+    if (camp.access !== 'approval') {
+      throwUserError('This camp does not require approval to join')
     }
 
     const existing = await getMembership(ctx, user._id, camp._id)
@@ -1017,19 +1074,11 @@ export const requestJoin = mutation({
       await refreshActiveMemberCount(ctx, camp._id)
     }
 
-    // Schedule notifications for camp owners when a pending request is created
-    if (status === 'pending' && camp.ownerId) {
-      await ctx.scheduler.runAfter(0, internal.sendNotification.notifyAccessRequest, {
+    if (status === 'pending') {
+      await scheduleAccessRequestNotifications(ctx, {
         membershipId,
-        campId: camp._id,
-        requesterId: user._id,
-        requesterName: user.displayName ?? user.name ?? 'Someone',
-      })
-      await ctx.scheduler.runAfter(0, internal.sendNotification.emailAccessRequest, {
-        membershipId,
-        campId: camp._id,
-        requesterId: user._id,
-        requesterName: user.displayName ?? user.name ?? 'Someone',
+        camp,
+        requester: user,
       })
     }
 
@@ -1083,13 +1132,13 @@ export const updateMemberStatus = mutation({
       throwUserError('Membership not found')
     }
 
+    const now = Date.now()
     await ctx.db.patch(membership._id, {
       status: args.status,
-      joinedAt:
-        args.status === 'active' ? (membership.joinedAt ?? Date.now()) : membership.joinedAt,
-      approvedAt:
-        args.status === 'active' ? (membership.approvedAt ?? Date.now()) : membership.approvedAt,
-      updatedAt: Date.now(),
+      joinedAt: args.status === 'active' ? (membership.joinedAt ?? now) : membership.joinedAt,
+      approvedAt: args.status === 'active' ? (membership.approvedAt ?? now) : membership.approvedAt,
+      rejectedAt: args.status === 'rejected' ? now : membership.rejectedAt,
+      updatedAt: now,
     })
     await refreshActiveMemberCount(ctx, args.campId)
 
@@ -1103,7 +1152,6 @@ export const approveAccessRequest = mutation({
     membershipId: v.id('campMembers'),
   },
   handler: async (ctx, args) => {
-    const user = await getCurrentUser(ctx)
     const membership = await ctx.db.get(args.membershipId)
     if (!membership) {
       throwUserError('Membership not found')
@@ -1117,13 +1165,7 @@ export const approveAccessRequest = mutation({
       throwUserError('Camp not found')
     }
 
-    // Verify caller is the camp owner
-    if (!isAdmin(user) && camp.ownerId !== user._id) {
-      const callerMembership = await getMembership(ctx, user._id, camp._id)
-      if (!callerMembership || callerMembership.role !== 'owner') {
-        throwUserError('Only the camp owner can approve access requests')
-      }
-    }
+    await assertCanReviewAccessRequests(ctx, camp)
 
     const now = Date.now()
     await ctx.db.patch(args.membershipId, {
@@ -1144,7 +1186,6 @@ export const rejectAccessRequest = mutation({
     membershipId: v.id('campMembers'),
   },
   handler: async (ctx, args) => {
-    const user = await getCurrentUser(ctx)
     const membership = await ctx.db.get(args.membershipId)
     if (!membership) {
       throwUserError('Membership not found')
@@ -1158,13 +1199,7 @@ export const rejectAccessRequest = mutation({
       throwUserError('Camp not found')
     }
 
-    // Verify caller is the camp owner
-    if (!isAdmin(user) && camp.ownerId !== user._id) {
-      const callerMembership = await getMembership(ctx, user._id, camp._id)
-      if (!callerMembership || callerMembership.role !== 'owner') {
-        throwUserError('Only the camp owner can reject access requests')
-      }
-    }
+    await assertCanReviewAccessRequests(ctx, camp)
 
     const now = Date.now()
     await ctx.db.patch(args.membershipId, {
@@ -1177,22 +1212,17 @@ export const rejectAccessRequest = mutation({
   },
 })
 
-/** Get pending access requests for a camp. Camp owner or moderator only. */
+/** Get pending access requests for a camp. Camp owner only. */
 export const getPendingRequests = query({
   args: {
     campId: v.id('camps'),
   },
   handler: async (ctx, args) => {
-    const user = await getCurrentUser(ctx)
-
-    // Verify caller has management rights
-    const membership = await getMembership(ctx, user._id, args.campId)
-    if (
-      !isAdmin(user) &&
-      (!membership || (membership.role !== 'owner' && membership.role !== 'moderator'))
-    ) {
-      throwUserError('Only camp owners and moderators can view pending requests')
+    const camp = await ctx.db.get(args.campId)
+    if (!camp || camp.status !== 'active') {
+      throwUserError('Camp not found')
     }
+    await assertCanReviewAccessRequests(ctx, camp)
 
     const pendingRequests = await ctx.db
       .query('campMembers')
