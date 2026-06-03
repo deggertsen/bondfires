@@ -152,6 +152,7 @@ export default defineSchema({
     reclaimDeadline: v.optional(v.number()),
     gracePeriodStart: v.optional(v.number()),
     gracePeriodEnd: v.optional(v.number()),
+    archivedAt: v.optional(v.number()),
     // Optional until the production backfill has run; all new writes set this.
     ownerId: v.optional(v.id('users')),
     bondfireCount: v.optional(v.number()),

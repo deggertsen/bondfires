@@ -15,6 +15,7 @@ import type * as bondfires from "../bondfires.js";
 import type * as campLifecycle from "../campLifecycle.js";
 import type * as campSlots from "../campSlots.js";
 import type * as camps from "../camps.js";
+import type * as cleanup from "../cleanup.js";
 import type * as clientLogs from "../clientLogs.js";
 import type * as conversations from "../conversations.js";
 import type * as crons from "../crons.js";
@@ -45,6 +46,7 @@ declare const fullApi: ApiFromModules<{
   campLifecycle: typeof campLifecycle;
   campSlots: typeof campSlots;
   camps: typeof camps;
+  cleanup: typeof cleanup;
   clientLogs: typeof clientLogs;
   conversations: typeof conversations;
   crons: typeof crons;

@@ -245,6 +245,7 @@ function CampHeader({
   onRemoveMember,
   onBanMember,
   onUnbanMember,
+  onArchive,
   currentUserId,
 }: {
   camp: CampWithMembership
@@ -261,6 +262,7 @@ function CampHeader({
   onRemoveMember: (member: CampMember) => void
   onBanMember: (member: CampMember) => void
   onUnbanMember: (membershipId: string) => void
+  onArchive: () => void
   currentUserId?: string
 }) {
   const isActiveMember = camp.membership?.status === 'active'
@@ -279,6 +281,7 @@ function CampHeader({
   const [bannedExpanded, setBannedExpanded] = useState(false)
   const muted = camp.membership?.muted === true
   const isFrozen = camp.frozen === true || camp.status === 'frozen'
+  const isArchived = camp.status === 'archived'
   const rules = camp.rules
   const firstVisitBanner = getFirstVisitBanner(camp)
 
@@ -305,6 +308,22 @@ function CampHeader({
           </Text>
           <Text color={bondfireColors.ash} fontSize={12} marginTop={4}>
             No new videos can be created here. Upgrade to manage this camp.
+          </Text>
+        </YStack>
+      ) : null}
+      {isArchived ? (
+        <YStack
+          backgroundColor={`${bondfireColors.error}20`}
+          borderColor={bondfireColors.error}
+          borderWidth={1}
+          borderRadius={12}
+          padding={12}
+        >
+          <Text color={bondfireColors.error} fontSize={14} fontWeight="600">
+            📦 This camp has been archived
+          </Text>
+          <Text color={bondfireColors.ash} fontSize={12} marginTop={4}>
+            This camp is read-only. Content will be permanently deleted 30 days after archival.
           </Text>
         </YStack>
       ) : null}
@@ -428,7 +447,7 @@ function CampHeader({
         </YStack>
       ) : null}
 
-      {isActiveMember && !isFrozen ? (
+      {isActiveMember && !isFrozen && !isArchived ? (
         <YStack gap={10}>
           {camp.access !== 'invite' || isOwner ? (
             <Button variant="primary" size="$lg" onPress={onSpark}>
@@ -448,7 +467,7 @@ function CampHeader({
         </YStack>
       ) : null}
 
-      {canJoin ? (
+      {!isArchived && canJoin ? (
         <Button variant="primary" size="$lg" onPress={onJoin}>
           <Text color={bondfireColors.whiteSmoke} fontWeight="900">
             {cooldownExpired
@@ -642,6 +661,20 @@ function CampHeader({
           ) : null}
         </YStack>
       ) : null}
+
+      {/* Owner: Archive camp button */}
+      {isOwner && !isArchived ? (
+        <YStack paddingTop={8}>
+          <Button variant="outline" size="$lg" onPress={onArchive}>
+            <Text color={bondfireColors.error} fontWeight="900">
+              Archive Camp
+            </Text>
+          </Button>
+          <Text fontSize={11} color={bondfireColors.ash} marginTop={4} textAlign="center">
+            Archiving makes the camp read-only. Content will be permanently deleted after 30 days.
+          </Text>
+        </YStack>
+      ) : null}
     </YStack>
   )
 }
@@ -718,8 +751,11 @@ export default function CampDetailScreen() {
   const removeMember = useMutation(api.camps.removeMember)
   const banMember = useMutation(api.camps.banMember)
   const unbanMember = useMutation(api.camps.unbanMember)
+  const archiveCamp = useMutation(api.camps.archiveCamp)
   const [banReasonModalMember, setBanReasonModalMember] = useState<CampMember | null>(null)
   const [banReason, setBanReason] = useState('')
+  const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false)
+  const [archiveConfirmText, setArchiveConfirmText] = useState('')
 
   const handleJoin = useCallback(async () => {
     if (!campId) return
@@ -852,6 +888,24 @@ export default function CampDetailScreen() {
     [unbanMember],
   )
 
+  const handleArchive = useCallback(() => {
+    setArchiveConfirmText('')
+    setIsArchiveModalOpen(true)
+  }, [])
+
+  const handleConfirmArchive = useCallback(async () => {
+    if (archiveConfirmText.trim() !== 'Archive Camp') return
+    if (!campId) return
+    try {
+      await archiveCamp({ campId })
+      setIsArchiveModalOpen(false)
+      setArchiveConfirmText('')
+    } catch (error) {
+      const message = parseError(error).message
+      Alert.alert('Archive Failed', message)
+    }
+  }, [archiveCamp, archiveConfirmText, campId])
+
   const handleOpenBondfire = useCallback(
     (bondfireId: string) => {
       setFeedActiveBondfireId(bondfireId)
@@ -928,6 +982,7 @@ export default function CampDetailScreen() {
             onRemoveMember={handleRemoveMember}
             onBanMember={handleBanMember}
             onUnbanMember={handleUnbanMember}
+            onArchive={handleArchive}
             currentUserId={camp.membership?.userId}
           />
         }
@@ -1011,6 +1066,83 @@ export default function CampDetailScreen() {
               <Button variant="primary" flex={1} size="$lg" onPress={handleConfirmBan}>
                 <Text color={bondfireColors.whiteSmoke} fontWeight="900">
                   Ban
+                </Text>
+              </Button>
+            </XStack>
+          </YStack>
+        </YStack>
+      </Modal>
+
+      {/* Archive confirmation modal */}
+      <Modal
+        visible={isArchiveModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsArchiveModalOpen(false)}
+      >
+        <YStack
+          flex={1}
+          backgroundColor="rgba(0,0,0,0.7)"
+          alignItems="center"
+          justifyContent="center"
+          padding={24}
+        >
+          <YStack
+            backgroundColor={bondfireColors.charcoal}
+            borderRadius={16}
+            padding={20}
+            gap={16}
+            width="100%"
+            maxWidth={400}
+          >
+            <YStack gap={4}>
+              <Text fontSize={18} fontWeight="900">
+                Archive Camp
+              </Text>
+              <Text fontSize={14} color={bondfireColors.ash} lineHeight={20}>
+                Archiving this camp will make it read-only for all members. After 30 days, all
+                content will be permanently deleted. This cannot be undone.
+              </Text>
+            </YStack>
+
+            <TextInput
+              style={{
+                backgroundColor: bondfireColors.gunmetal,
+                borderWidth: 1,
+                borderColor: bondfireColors.iron,
+                borderRadius: 10,
+                paddingHorizontal: 14,
+                paddingVertical: 12,
+                color: bondfireColors.whiteSmoke,
+                fontSize: 15,
+              }}
+              placeholder='Type "Archive Camp" to confirm'
+              placeholderTextColor={bondfireColors.ash}
+              value={archiveConfirmText}
+              onChangeText={setArchiveConfirmText}
+              autoCapitalize="none"
+            />
+
+            <XStack gap={10}>
+              <Button
+                variant="outline"
+                flex={1}
+                size="$lg"
+                onPress={() => setIsArchiveModalOpen(false)}
+              >
+                <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+                  Cancel
+                </Text>
+              </Button>
+              <Button
+                variant="primary"
+                flex={1}
+                size="$lg"
+                disabled={archiveConfirmText.trim() !== 'Archive Camp'}
+                onPress={handleConfirmArchive}
+              >
+                <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+                  Archive
                 </Text>
               </Button>
             </XStack>
