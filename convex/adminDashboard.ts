@@ -8,6 +8,8 @@ import { type SubscriptionTier, TIER_RANK } from './entitlements'
 const DAY_MS = 24 * 60 * 60 * 1000
 const WEEK_MS = 7 * DAY_MS
 const MAX_LOOKBACK_DAYS = 90
+const DEFAULT_REPORT_DAYS = 30
+const MAX_RECENT_REPORTS = 100
 const DEFAULT_RECONCILIATION_DAYS = 14
 const MAX_RECONCILIATION_RESULTS = 200
 const DEFAULT_SIGNUP_DAYS = 7
@@ -25,6 +27,14 @@ function clampLookbackDays(days: number | undefined, defaultDays: number): numbe
   }
 
   return Math.min(Math.max(Math.trunc(days), 1), MAX_LOOKBACK_DAYS)
+}
+
+function clampLimit(limit: number | undefined, defaultLimit: number, maxLimit: number): number {
+  if (limit === undefined || !Number.isFinite(limit)) {
+    return defaultLimit
+  }
+
+  return Math.min(Math.max(Math.trunc(limit), 1), maxLimit)
 }
 
 async function requireAdmin(ctx: QueryCtx): Promise<void> {
@@ -175,6 +185,37 @@ export const getCampStats = query({
 })
 
 /**
+ * Recent pending reports on bondfires/comments, sorted by recency.
+ */
+export const getRecentReports = query({
+  args: { days: v.optional(v.number()), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx)
+
+    const days = clampLookbackDays(args.days, DEFAULT_REPORT_DAYS)
+    const cutoff = Date.now() - days * DAY_MS
+    const limit = clampLimit(args.limit, MAX_RECENT_REPORTS, MAX_RECENT_REPORTS)
+    const pending = await ctx.db
+      .query('reports')
+      .withIndex('by_status', (q) => q.eq('status', 'pending').gte('createdAt', cutoff))
+      .order('desc')
+      .take(limit)
+
+    return await Promise.all(
+      pending.map(async (report) => {
+        const reporter = await ctx.db.get(report.reporterUserId)
+        const videoOwner = await ctx.db.get(report.videoOwnerId)
+        return {
+          ...report,
+          reporterName: reporter?.displayName ?? reporter?.name ?? null,
+          videoOwnerName: videoOwner?.displayName ?? videoOwner?.name ?? null,
+        }
+      }),
+    )
+  },
+})
+
+/**
  * Bondfire stats: total bondfires, responses this week, avg responses per
  * bondfire.
  */
@@ -188,7 +229,6 @@ export const getBondfireStats = query({
     const weekAgo = Date.now() - WEEK_MS
 
     const responsesThisWeek = videos.filter((v) => v.createdAt >= weekAgo).length
-
     const avgResponses = bondfires.length > 0 ? videos.length / bondfires.length : 0
 
     return {
@@ -204,20 +244,19 @@ export const getBondfireStats = query({
  * Defaults to 14 days and caps results to the newest 200 entries.
  */
 export const getReconciliationHistory = query({
-  args: {
-    days: v.optional(v.number()),
-  },
+  args: { days: v.optional(v.number()), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
     await requireAdmin(ctx)
 
     const days = clampLookbackDays(args.days, DEFAULT_RECONCILIATION_DAYS)
     const cutoff = Date.now() - days * DAY_MS
+    const limit = clampLimit(args.limit, MAX_RECONCILIATION_RESULTS, MAX_RECONCILIATION_RESULTS)
 
-    return await ctx.db
+    return ctx.db
       .query('reconciliationLog')
       .withIndex('by_created', (q) => q.gte('createdAt', cutoff))
       .order('desc')
-      .take(MAX_RECONCILIATION_RESULTS)
+      .take(limit)
   },
 })
 
@@ -226,26 +265,24 @@ export const getReconciliationHistory = query({
  * Returns name, effective tier, and createdAt for each user.
  */
 export const getRecentSignups = query({
-  args: {
-    days: v.optional(v.number()),
-  },
+  args: { days: v.optional(v.number()), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
     await requireAdmin(ctx)
 
     const now = Date.now()
     const days = clampLookbackDays(args.days, DEFAULT_SIGNUP_DAYS)
     const cutoff = now - days * DAY_MS
+    const limit = clampLimit(args.limit, MAX_RECENT_SIGNUPS, MAX_RECENT_SIGNUPS)
+    const recentUsers = await ctx.db
+      .query('users')
+      .withIndex('by_created', (q) => q.gte('createdAt', cutoff))
+      .order('desc')
+      .take(limit)
 
-    const allUsers = await ctx.db.query('users').collect()
     const subscriptions = await ctx.db.query('subscriptions').collect()
     const subscriptionsLookup = subscriptionsByUser(subscriptions)
 
-    const filtered = allUsers
-      .filter((u) => u.createdAt && u.createdAt >= cutoff)
-      .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
-      .slice(0, MAX_RECENT_SIGNUPS)
-
-    return filtered.map((user) => ({
+    return recentUsers.map((user) => ({
       _id: user._id,
       name: user.name ?? user.displayName ?? null,
       tier: getEffectiveTier(user, subscriptionsLookup.get(user._id), now),

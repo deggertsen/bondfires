@@ -26,6 +26,13 @@ const storeVerificationStatus = v.union(
 )
 const userGender = v.union(v.literal('male'), v.literal('female'), v.literal('other'))
 const campAccessVisibilityMode = v.union(v.literal('hide'), v.literal('gate'))
+const adminAuditTargetType = v.union(
+  v.literal('camp'),
+  v.literal('user'),
+  v.literal('bondfire'),
+  v.literal('purchase'),
+  v.literal('report'),
+)
 
 const campRules = v.object({
   access: v.object({
@@ -110,6 +117,7 @@ export default defineSchema({
   })
     .index('email', ['email']) // Required by @convex-dev/auth (must be named exactly 'email')
     .index('by_role', ['role'])
+    .index('by_created', ['createdAt'])
     .searchIndex('search_email', { searchField: 'email' }),
 
   // Audit log for admin-forced subscription tier changes
@@ -333,6 +341,39 @@ export default defineSchema({
   })
     .index('by_category', ['category', 'createdAt'])
     .index('by_user', ['userId', 'createdAt'])
+    .index('by_created', ['createdAt']),
+
+  // Admin audit log — tracks all admin moderation & management actions.
+  adminAuditLog: defineTable({
+    adminId: v.id('users'),
+    action: v.union(
+      v.literal('manual_refund'),
+      v.literal('camp_archive'),
+      v.literal('camp_unarchive'),
+      v.literal('member_ban'),
+      v.literal('member_remove'),
+      v.literal('report_resolve'),
+      v.literal('report_dismiss'),
+    ),
+    targetType: adminAuditTargetType,
+    targetId: v.string(),
+    metadata: v.optional(
+      v.object({
+        reason: v.optional(v.string()),
+        amount: v.optional(v.number()),
+        previousStatus: v.optional(v.string()),
+        campName: v.optional(v.string()),
+        membershipId: v.optional(v.id('campMembers')),
+        purchaseId: v.optional(v.id('consumablePurchases')),
+        reportId: v.optional(v.id('reports')),
+      }),
+    ),
+    createdAt: v.number(),
+  })
+    .index('by_admin', ['adminId', 'createdAt'])
+    .index('by_target', ['targetType', 'targetId'])
+    .index('by_action', ['action', 'createdAt'])
+    .index('by_admin_action', ['adminId', 'action', 'createdAt'])
     .index('by_created', ['createdAt']),
 
   // Bondfires - main video posts
