@@ -10,6 +10,11 @@ import type { QueryCtx } from './_generated/server'
 import { query } from './_generated/server'
 import { auth } from './auth'
 
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000
+const DAY_MS = 24 * 60 * 60 * 1000
+const DEFAULT_RECENT_LIMIT = 50
+const MAX_RECENT_LIMIT = 100
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 async function requireAdmin(ctx: QueryCtx): Promise<void> {
@@ -22,6 +27,14 @@ async function requireAdmin(ctx: QueryCtx): Promise<void> {
   if (!currentUser?.isAdmin && currentUser?.role !== 'admin') {
     throw new Error('Admin access required')
   }
+}
+
+function normalizeLimit(requestedLimit: number | undefined) {
+  return Math.min(Math.max(Math.trunc(requestedLimit ?? DEFAULT_RECENT_LIMIT), 1), MAX_RECENT_LIMIT)
+}
+
+function normalizeDays(days: number | undefined, defaultDays: number) {
+  return Math.max(Math.trunc(days ?? defaultDays), 1)
 }
 
 // ── Queries ─────────────────────────────────────────────────────────────────
@@ -37,8 +50,7 @@ export const getSubscriptionStats = query({
 
     const users = await ctx.db.query('users').collect()
     const now = Date.now()
-    const weekMs = 7 * 24 * 60 * 60 * 1000
-    const weekAgo = now - weekMs
+    const weekAgo = now - WEEK_MS
 
     // Build active-subscription tier map (mirrors entitlements.getActiveSubscriptionTier)
     const subs = await ctx.db.query('subscriptions').collect()
@@ -108,6 +120,7 @@ export const getCampStats = query({
     const camps = await ctx.db.query('camps').collect()
 
     let active = 0,
+      frozen = 0,
       grace = 0,
       inactive = 0,
       archived = 0
@@ -129,7 +142,7 @@ export const getCampStats = query({
           archived++
           break
         case 'frozen':
-          inactive++
+          frozen++
           break
       }
       if (camp.access === 'open' || camp.access === 'approval') {
@@ -141,7 +154,7 @@ export const getCampStats = query({
 
     return {
       total: camps.length,
-      byStatus: { active, grace, inactive, archived },
+      byStatus: { active, frozen, grace, inactive, archived },
       publicCount,
       privateCount,
     }
@@ -153,25 +166,20 @@ export const getCampStats = query({
  * Optionally filtered by last N days (default 30).
  */
 export const getRecentReports = query({
-  args: { days: v.optional(v.number()) },
+  args: { days: v.optional(v.number()), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
     await requireAdmin(ctx)
 
+    const cutoff = Date.now() - normalizeDays(args.days, 30) * DAY_MS
+    const limit = normalizeLimit(args.limit)
     const pending = await ctx.db
       .query('reports')
-      .withIndex('by_status', (q) => q.eq('status', 'pending'))
-      .collect()
-
-    pending.sort((a, b) => b.createdAt - a.createdAt)
-
-    let filtered = pending
-    if (args.days) {
-      const cutoff = Date.now() - args.days * 24 * 60 * 60 * 1000
-      filtered = pending.filter((r) => r.createdAt >= cutoff)
-    }
+      .withIndex('by_status', (q) => q.eq('status', 'pending').gte('createdAt', cutoff))
+      .order('desc')
+      .take(limit)
 
     return await Promise.all(
-      filtered.map(async (report) => {
+      pending.map(async (report) => {
         const reporter = await ctx.db.get(report.reporterUserId)
         const videoOwner = await ctx.db.get(report.videoOwnerId)
         return {
@@ -195,7 +203,7 @@ export const getBondfireStats = query({
     const bondfires = await ctx.db.query('bondfires').collect()
     const videos = await ctx.db.query('bondfireVideos').collect()
     const now = Date.now()
-    const weekAgo = now - 7 * 24 * 60 * 60 * 1000
+    const weekAgo = now - WEEK_MS
 
     const responsesThisWeek = videos.filter((v) => v.createdAt >= weekAgo).length
     const avg = bondfires.length > 0 ? videos.length / bondfires.length : 0
@@ -212,20 +220,18 @@ export const getBondfireStats = query({
  * Recent reconciliation log entries, optionally filtered by last N days.
  */
 export const getReconciliationHistory = query({
-  args: { days: v.optional(v.number()) },
+  args: { days: v.optional(v.number()), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
     await requireAdmin(ctx)
 
-    const days = args.days ?? 14
-    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
+    const cutoff = Date.now() - normalizeDays(args.days, 14) * DAY_MS
+    const limit = normalizeLimit(args.limit)
 
-    const logs = await ctx.db
+    return ctx.db
       .query('reconciliationLog')
-      .withIndex('by_created')
+      .withIndex('by_created', (q) => q.gte('createdAt', cutoff))
       .order('desc')
-      .collect()
-
-    return logs.filter((l) => l.createdAt >= cutoff)
+      .take(limit)
   },
 })
 
@@ -233,20 +239,20 @@ export const getReconciliationHistory = query({
  * Recent user signups, limited to last N days (default 7), max 50 results.
  */
 export const getRecentSignups = query({
-  args: { days: v.optional(v.number()) },
+  args: { days: v.optional(v.number()), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
     await requireAdmin(ctx)
 
-    const days = args.days ?? 7
-    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
+    const cutoff = Date.now() - normalizeDays(args.days, 7) * DAY_MS
+    const limit = normalizeLimit(args.limit)
 
-    const all = await ctx.db.query('users').collect()
-    const filtered = all
-      .filter((u) => u.createdAt && u.createdAt >= cutoff)
-      .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
-      .slice(0, 50)
+    const recentUsers = await ctx.db
+      .query('users')
+      .withIndex('by_created', (q) => q.gte('createdAt', cutoff))
+      .order('desc')
+      .take(limit)
 
-    return filtered.map((u) => ({
+    return recentUsers.map((u) => ({
       _id: u._id,
       name: u.name ?? u.displayName ?? null,
       tier: u.forcedTier ?? 'free',

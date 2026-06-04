@@ -26,6 +26,13 @@ const storeVerificationStatus = v.union(
 )
 const userGender = v.union(v.literal('male'), v.literal('female'), v.literal('other'))
 const campAccessVisibilityMode = v.union(v.literal('hide'), v.literal('gate'))
+const adminAuditTargetType = v.union(
+  v.literal('camp'),
+  v.literal('user'),
+  v.literal('bondfire'),
+  v.literal('purchase'),
+  v.literal('report'),
+)
 
 const campRules = v.object({
   access: v.object({
@@ -110,6 +117,7 @@ export default defineSchema({
   })
     .index('email', ['email']) // Required by @convex-dev/auth (must be named exactly 'email')
     .index('by_role', ['role'])
+    .index('by_created', ['createdAt'])
     .searchIndex('search_email', { searchField: 'email' }),
 
   // Audit log for admin-forced subscription tier changes
@@ -347,7 +355,7 @@ export default defineSchema({
       v.literal('report_resolve'),
       v.literal('report_dismiss'),
     ),
-    targetType: v.string(), // 'camp', 'user', 'bondfire', 'purchase', 'report'
+    targetType: adminAuditTargetType,
     targetId: v.string(),
     metadata: v.optional(
       v.object({
@@ -364,7 +372,9 @@ export default defineSchema({
   })
     .index('by_admin', ['adminId', 'createdAt'])
     .index('by_target', ['targetType', 'targetId'])
-    .index('by_action', ['action', 'createdAt']),
+    .index('by_action', ['action', 'createdAt'])
+    .index('by_admin_action', ['adminId', 'action', 'createdAt'])
+    .index('by_created', ['createdAt']),
 
   // Bondfires - main video posts
   bondfires: defineTable({

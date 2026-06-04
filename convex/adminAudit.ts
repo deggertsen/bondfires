@@ -4,17 +4,21 @@
  * Designed for accountability: every admin action that modifies data is logged
  * with the admin's ID, action type, target, and optional metadata.
  *
- * Internal mutations (`internalLogAdminAction`) allow other internal mutations
- * (e.g., refundPurchase) to record audit entries without re-checking auth.
+ * Audit entries are written by trusted server-side mutations so the log reflects
+ * actions that actually committed.
  */
 
 import { v } from 'convex/values'
 import type { Doc } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
-import { internalMutation, mutation, query } from './_generated/server'
+import { internalMutation, query } from './_generated/server'
 import { auth } from './auth'
 
 type AuditEntry = Doc<'adminAuditLog'>
+type AuditAction = AuditEntry['action']
+
+const DEFAULT_AUDIT_LIMIT = 100
+const MAX_AUDIT_LIMIT = 500
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -42,7 +46,13 @@ const actionValidator = v.union(
   v.literal('report_dismiss'),
 )
 
-const targetTypeValidator = v.string()
+const targetTypeValidator = v.union(
+  v.literal('camp'),
+  v.literal('user'),
+  v.literal('bondfire'),
+  v.literal('purchase'),
+  v.literal('report'),
+)
 const metadataValidator = v.optional(
   v.object({
     reason: v.optional(v.string()),
@@ -55,48 +65,11 @@ const metadataValidator = v.optional(
   }),
 )
 
-// ── Public Mutation (admin-gated) ──────────────────────────────────────────
-
-/**
- * Record an admin action in the audit log.
- * Callable from the client/admin dashboard UI (requires admin auth).
- */
-export const logAdminAction = mutation({
-  args: {
-    action: actionValidator,
-    targetType: targetTypeValidator,
-    targetId: v.string(),
-    metadata: metadataValidator,
-  },
-  handler: async (ctx, args) => {
-    const currentUserId = await auth.getUserId(ctx)
-    if (!currentUserId) {
-      throw new Error('Not authenticated')
-    }
-
-    const currentUser = await ctx.db.get(currentUserId)
-    if (!currentUser?.isAdmin && currentUser?.role !== 'admin') {
-      throw new Error('Admin access required')
-    }
-
-    await ctx.db.insert('adminAuditLog', {
-      adminId: currentUserId,
-      action: args.action,
-      targetType: args.targetType,
-      targetId: args.targetId,
-      metadata: args.metadata,
-      createdAt: Date.now(),
-    })
-
-    return { success: true }
-  },
-})
-
 // ── Internal Mutation (no auth re-check) ───────────────────────────────────
 
 /**
- * Internal version of logAdminAction — used by other internal mutations
- * (e.g., refundPurchase, banMember) that have already verified admin access.
+ * Used by other mutations (e.g., refundPurchase, banMember) after they have
+ * already authorized the caller and committed the admin action.
  * Accepts the adminId directly rather than re-deriving it from auth.
  */
 export const internalLogAdminAction = internalMutation({
@@ -123,6 +96,76 @@ export const internalLogAdminAction = internalMutation({
 
 // ── Queries ────────────────────────────────────────────────────────────────
 
+function normalizeLimit(requestedLimit: number | undefined) {
+  return Math.min(Math.max(Math.trunc(requestedLimit ?? DEFAULT_AUDIT_LIMIT), 1), MAX_AUDIT_LIMIT)
+}
+
+function getDaysCutoff(days: number | undefined) {
+  if (days === undefined) return undefined
+  const normalizedDays = Math.max(Math.trunc(days), 1)
+  return Date.now() - normalizedDays * 24 * 60 * 60 * 1000
+}
+
+function filterByCutoff(entries: AuditEntry[], cutoff: number | undefined) {
+  return cutoff === undefined ? entries : entries.filter((entry) => entry.createdAt >= cutoff)
+}
+
+async function getAuditEntries(
+  ctx: QueryCtx,
+  args: { adminId?: AuditEntry['adminId']; action?: AuditAction; days?: number },
+  limit: number,
+) {
+  const cutoff = getDaysCutoff(args.days)
+  const indexLimit = cutoff === undefined ? limit : MAX_AUDIT_LIMIT
+
+  if (args.adminId && args.action) {
+    const adminId = args.adminId
+    const action = args.action
+    return filterByCutoff(
+      await ctx.db
+        .query('adminAuditLog')
+        .withIndex('by_admin_action', (q) => q.eq('adminId', adminId).eq('action', action))
+        .order('desc')
+        .take(indexLimit),
+      cutoff,
+    ).slice(0, limit)
+  }
+
+  if (args.adminId) {
+    const adminId = args.adminId
+    return filterByCutoff(
+      await ctx.db
+        .query('adminAuditLog')
+        .withIndex('by_admin', (q) => q.eq('adminId', adminId))
+        .order('desc')
+        .take(indexLimit),
+      cutoff,
+    ).slice(0, limit)
+  }
+
+  if (args.action) {
+    const action = args.action
+    return filterByCutoff(
+      await ctx.db
+        .query('adminAuditLog')
+        .withIndex('by_action', (q) => q.eq('action', action))
+        .order('desc')
+        .take(indexLimit),
+      cutoff,
+    ).slice(0, limit)
+  }
+
+  if (cutoff !== undefined) {
+    return ctx.db
+      .query('adminAuditLog')
+      .withIndex('by_created', (q) => q.gte('createdAt', cutoff))
+      .order('desc')
+      .take(limit)
+  }
+
+  return ctx.db.query('adminAuditLog').withIndex('by_created').order('desc').take(limit)
+}
+
 /**
  * Retrieve audit log entries, filterable by adminId, action, or time window.
  * Reverse chronological (newest first).
@@ -137,47 +180,7 @@ export const getAuditLog = query({
   handler: async (ctx, args) => {
     await requireAdmin(ctx)
 
-    const requestedLimit = args.limit ?? 100
-    const limit = Math.min(Math.max(Math.trunc(requestedLimit), 1), 500)
-
-    let entries: AuditEntry[] = []
-
-    // Use the most selective index based on filters
-    if (args.adminId) {
-      const adminId = args.adminId
-      const query = ctx.db
-        .query('adminAuditLog')
-        .withIndex('by_admin', (q) => q.eq('adminId', adminId))
-        .order('desc')
-      entries = await query.take(limit)
-    } else if (args.action) {
-      const action = args.action
-      const query = ctx.db
-        .query('adminAuditLog')
-        .withIndex('by_action', (q) => q.eq('action', action))
-        .order('desc')
-      entries = await query.take(limit)
-    } else {
-      // No selective index — scan all, sort manually
-      const all = await ctx.db.query('adminAuditLog').collect()
-      all.sort((a, b) => b.createdAt - a.createdAt)
-      entries = all.slice(0, limit)
-    }
-
-    // Apply post-filter for days window
-    if (args.days) {
-      const cutoff = Date.now() - args.days * 24 * 60 * 60 * 1000
-      entries = entries.filter((e) => e.createdAt >= cutoff)
-    }
-
-    // Apply post-filter for action when adminId filter was primary
-    if (args.adminId && args.action) {
-      entries = entries.filter((e) => e.action === args.action)
-    }
-
-    // Re-sort and re-limit after post-filters
-    entries.sort((a, b) => b.createdAt - a.createdAt)
-    entries = entries.slice(0, limit)
+    const entries = await getAuditEntries(ctx, args, normalizeLimit(args.limit))
 
     // Enrich with admin display names
     const enriched = await Promise.all(
