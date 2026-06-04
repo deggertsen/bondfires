@@ -34,6 +34,8 @@ import type { Doc } from '../../../../../convex/_generated/dataModel'
 type BondfireData = Doc<'bondfires'> & {
   isLive?: boolean
   livePlaybackId?: string
+  campName?: string
+  personalCampName?: string
 }
 type JoinedCamp = Doc<'camps'> & { membership: Doc<'campMembers'> }
 
@@ -130,6 +132,8 @@ function BondfireRow({
   const viewed = hasViewedToday(bondfire._id)
   const isLive = bondfire.videoStatus === 'live' || bondfire.isLive
 
+  const campLabel = bondfire.personalCampName ?? bondfire.campName
+
   return (
     <Pressable onPress={onOpen}>
       <XStack paddingHorizontal={16} paddingVertical={12} gap={12} alignItems="center">
@@ -174,9 +178,30 @@ function BondfireRow({
         <YStack flex={1} gap={6}>
           <XStack alignItems="center" justifyContent="space-between" gap={10}>
             <YStack flex={1} gap={2}>
-              <Text fontSize={16} fontWeight="900" numberOfLines={1}>
-                {bondfire.creatorName ?? 'Anonymous'}
-              </Text>
+              <XStack alignItems="center" gap={8}>
+                <Text fontSize={16} fontWeight="900" numberOfLines={1}>
+                  {bondfire.creatorName ?? 'Anonymous'}
+                </Text>
+                {campLabel ? (
+                  <YStack
+                    paddingHorizontal={8}
+                    paddingVertical={3}
+                    borderRadius={8}
+                    backgroundColor={bondfireColors.gunmetal}
+                    borderWidth={1}
+                    borderColor={bondfireColors.iron}
+                  >
+                    <Text
+                      fontSize={11}
+                      fontWeight="800"
+                      color={bondfireColors.bondfireCopper}
+                      numberOfLines={1}
+                    >
+                      {campLabel}
+                    </Text>
+                  </YStack>
+                ) : null}
+              </XStack>
               <Text fontSize={12} color={bondfireColors.ash} numberOfLines={1}>
                 {isLive ? 'Live now' : `${timeAgo} · ${viewed ? 'Viewed' : 'New'}`}
               </Text>
