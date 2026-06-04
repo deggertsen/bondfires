@@ -961,19 +961,6 @@ export const applyStorePurchaseVerification = internalMutation({
             await reclaimFrozenCamps(ctx, args.userId, newEffectiveTier)
           }
         }
-
-        // Personal camp lifecycle: freeze on downgrade to Free, ensure exists on paid upgrade.
-        if (newEffectiveTier === 'free' && previousEffectiveTier !== 'free') {
-          await ctx.runMutation(internal.personalCamps.freezePersonalCamp, {
-            ownerId: args.userId,
-          })
-        } else if (newEffectiveTier !== 'free') {
-          // Ensure personal camp exists on paid tier
-          await ctx.runMutation(internal.personalCamps.internalGetOrCreatePersonalCamp, {
-            userId: args.userId,
-            tier: newEffectiveTier,
-          })
-        }
       }
     } else {
       // Consumable purchase verification (slot pack)
