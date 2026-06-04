@@ -533,6 +533,10 @@ function isVerifiedActiveStoreRecord(existing?: { status?: string; verificationS
   return getVerifiedSyncStatus(existing) !== 'pending_verification'
 }
 
+function isRefundedStoreRecord(existing?: { verificationStatus?: string } | null) {
+  return existing?.verificationStatus === 'refunded'
+}
+
 function getVerificationStateForStatus(status: StoreSyncStatus): 'pending' | 'verified' {
   return status === 'pending_verification' ? 'pending' : 'verified'
 }
@@ -822,6 +826,9 @@ export const syncStorePurchase = mutation({
       if (existing && existing.userId !== userId) {
         throw new Error('This store purchase is already linked to another account')
       }
+      if (isRefundedStoreRecord(existing)) {
+        throw new Error('This store purchase has already been refunded')
+      }
 
       if (existing) {
         syncStatus = getVerifiedSyncStatus(existing)
@@ -980,6 +987,9 @@ export const applyStorePurchaseVerification = internalMutation({
       if (existing && existing.userId !== args.userId) {
         throw new Error('This store purchase is already linked to another account')
       }
+      if (isRefundedStoreRecord(existing)) {
+        throw new Error('This store purchase has already been refunded')
+      }
 
       const quantity = getSlotQuantityForProduct(args.storeProductId)
       const fields = {
@@ -1069,7 +1079,12 @@ export const markStorePurchaseVerificationFailed = internalMutation({
         ? await findExistingSubscription(ctx, lookup)
         : await findExistingConsumablePurchase(ctx, consumableLookup)
 
-    if (!existing || existing.userId !== args.userId || isVerifiedActiveStoreRecord(existing)) {
+    if (
+      !existing ||
+      existing.userId !== args.userId ||
+      isVerifiedActiveStoreRecord(existing) ||
+      isRefundedStoreRecord(existing)
+    ) {
       return
     }
 

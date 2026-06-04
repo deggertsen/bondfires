@@ -62,4 +62,12 @@ crons.daily(
   internal.cleanup.dailyCleanupArchivedCamps,
 )
 
+// Run daily camp slot reconciliation at 14:00 UTC.
+// Compares ledger against verified store purchases and logs discrepancies.
+crons.daily(
+  'daily slot reconciliation',
+  { hourUTC: 14, minuteUTC: 0 },
+  internal.reconciliation.dailyReconciliation,
+)
+
 export default crons

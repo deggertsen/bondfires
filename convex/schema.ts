@@ -22,6 +22,7 @@ const storeVerificationStatus = v.union(
   v.literal('pending'),
   v.literal('verified'),
   v.literal('failed'),
+  v.literal('refunded'),
 )
 const userGender = v.union(v.literal('male'), v.literal('female'), v.literal('other'))
 const campAccessVisibilityMode = v.union(v.literal('hide'), v.literal('gate'))
@@ -246,6 +247,7 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index('by_user', ['userId', 'createdAt'])
+    .index('by_type', ['type', 'createdAt'])
     .index('by_camp', ['campId', 'createdAt'])
     .index('by_user_camp', ['userId', 'campId']),
 
@@ -264,9 +266,25 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
+    .index('by_verification_status_created', ['verificationStatus', 'createdAt'])
     .index('by_transaction', ['storeTransactionId'])
     .index('by_store_transaction', ['storeOriginalTransactionId'])
     .index('by_store_purchase_token', ['storePurchaseToken']),
+
+  // Reconciliation audit log for daily slot balance checks and refunds.
+  reconciliationLog: defineTable({
+    severity: v.union(v.literal('info'), v.literal('warning'), v.literal('error')),
+    category: v.string(), // e.g. 'orphaned_credit', 'unverified_purchase', 'balance_drift', 'duplicate_transaction', 'refund'
+    message: v.string(),
+    userId: v.optional(v.id('users')),
+    purchaseId: v.optional(v.id('consumablePurchases')),
+    transactionId: v.optional(v.string()), // store transaction ID
+    metadata: v.optional(v.any()),
+    createdAt: v.number(),
+  })
+    .index('by_category', ['category', 'createdAt'])
+    .index('by_user', ['userId', 'createdAt'])
+    .index('by_created', ['createdAt']),
 
   // Bondfires - main video posts
   bondfires: defineTable({
