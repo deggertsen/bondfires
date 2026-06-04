@@ -1,6 +1,6 @@
 import { parseError } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
-import { Button, CampCardStatusBanner, Image, Input, Text } from '@bondfires/ui'
+import { Button, CampCardStatusBanner, Input, Text } from '@bondfires/ui'
 import { ChevronDown, ChevronUp, Flame, Lock, Search, Sparkles, Users } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { type RelativePathString, useRouter } from 'expo-router'
@@ -63,23 +63,7 @@ function CampCard({
 
   return (
     <Pressable onPress={onOpen}>
-      <YStack
-        paddingHorizontal={16}
-        paddingVertical={14}
-        gap={12}
-        overflow="hidden"
-        borderLeftWidth={camp.accentColor ? 3 : 0}
-        borderLeftColor={camp.accentColor ?? 'transparent'}
-      >
-        {camp.coverImageUrl ? (
-          <Image
-            source={{ uri: camp.coverImageUrl }}
-            width="$full"
-            height={80}
-            borderRadius={10}
-            resizeMode="cover"
-          />
-        ) : null}
+      <YStack paddingHorizontal={16} paddingVertical={14} gap={12} overflow="hidden">
         {isPending ? <CampCardStatusBanner variant="pending" /> : null}
         {isInCooldown ? <CampCardStatusBanner variant="rejected" /> : null}
         <XStack alignItems="flex-start" gap={12}>
@@ -88,8 +72,6 @@ function CampCard({
             height={54}
             borderRadius={16}
             backgroundColor={camp.color ?? bondfireColors.gunmetal}
-            borderWidth={camp.accentColor ? 2 : 0}
-            borderColor={camp.accentColor ?? 'transparent'}
             alignItems="center"
             justifyContent="center"
           >
@@ -220,12 +202,143 @@ function SectionHeader({ title, subtitle }: { title: string; subtitle: string })
   )
 }
 
+function PersonalCampCard({
+  personalCamp,
+  canCreatePrivateCamp,
+  onOpen,
+  onCreate,
+}: {
+  personalCamp: CampWithMembership | null
+  canCreatePrivateCamp: boolean
+  onOpen: (camp: CampWithMembership) => void
+  onCreate: () => void
+}) {
+  if (personalCamp) {
+    return (
+      <Pressable onPress={() => onOpen(personalCamp)}>
+        <YStack
+          padding={14}
+          borderRadius={14}
+          backgroundColor={bondfireColors.gunmetal}
+          borderWidth={1}
+          borderColor={bondfireColors.bondfireCopper}
+          gap={8}
+        >
+          <XStack alignItems="center" justifyContent="space-between" gap={10}>
+            <XStack alignItems="center" gap={10} flex={1}>
+              <YStack
+                width={36}
+                height={36}
+                borderRadius={18}
+                backgroundColor={`${bondfireColors.bondfireCopper}20`}
+                alignItems="center"
+                justifyContent="center"
+              >
+                <Flame size={18} color={bondfireColors.bondfireCopper} />
+              </YStack>
+              <YStack gap={2} flex={1}>
+                <Text fontSize={15} fontWeight="900" numberOfLines={1}>
+                  {personalCamp.name}
+                </Text>
+                <Text fontSize={12} color={bondfireColors.ash}>
+                  Your Personal Camp
+                </Text>
+              </YStack>
+            </XStack>
+            {personalCamp.status === 'frozen' ? (
+              <YStack
+                borderRadius={999}
+                paddingHorizontal={8}
+                paddingVertical={4}
+                backgroundColor={`${bondfireColors.warning}20`}
+                borderWidth={1}
+                borderColor={bondfireColors.warning}
+              >
+                <Text fontSize={10} color={bondfireColors.warning} fontWeight="900">
+                  Frozen
+                </Text>
+              </YStack>
+            ) : null}
+          </XStack>
+        </YStack>
+      </Pressable>
+    )
+  }
+
+  if (canCreatePrivateCamp) {
+    return (
+      <Pressable onPress={onCreate}>
+        <YStack
+          padding={14}
+          borderRadius={14}
+          backgroundColor={bondfireColors.gunmetal}
+          borderWidth={1}
+          borderColor={bondfireColors.bondfireCopper}
+          gap={8}
+        >
+          <XStack alignItems="center" gap={10}>
+            <YStack
+              width={36}
+              height={36}
+              borderRadius={18}
+              backgroundColor={`${bondfireColors.bondfireCopper}20`}
+              alignItems="center"
+              justifyContent="center"
+            >
+              <Flame size={18} color={bondfireColors.bondfireCopper} />
+            </YStack>
+            <YStack gap={2} flex={1}>
+              <Text fontSize={15} fontWeight="900">
+                Start Your Personal Camp
+              </Text>
+              <Text fontSize={12} color={bondfireColors.ash}>
+                Create an invite-only camp for your circle.
+              </Text>
+            </YStack>
+          </XStack>
+        </YStack>
+      </Pressable>
+    )
+  }
+
+  return (
+    <YStack
+      padding={14}
+      borderRadius={14}
+      backgroundColor={bondfireColors.gunmetal}
+      borderWidth={1}
+      borderColor={bondfireColors.iron}
+      gap={8}
+    >
+      <XStack alignItems="center" gap={10}>
+        <YStack
+          width={36}
+          height={36}
+          borderRadius={18}
+          backgroundColor={`${bondfireColors.ash}20`}
+          alignItems="center"
+          justifyContent="center"
+        >
+          <Lock size={18} color={bondfireColors.ash} />
+        </YStack>
+        <YStack gap={2} flex={1}>
+          <Text fontSize={15} fontWeight="900" color={bondfireColors.ash}>
+            Personal Camp
+          </Text>
+          <Text fontSize={12} color={bondfireColors.ash}>
+            Upgrade to Plus to start your own fire.
+          </Text>
+        </YStack>
+      </XStack>
+    </YStack>
+  )
+}
+
 export default function CampsScreen() {
   const router = useRouter()
   const camps = useQuery(api.camps.list, {})
   const myCamps = useQuery(api.camps.listMine, {})
   const subscription = useQuery(api.subscriptions.current, {})
-  const personalCamp = useQuery(api.personalCamps.getMyPersonalCamp, {})
   const slotBalance = useQuery(
     api.campSlots.getSlotBalance,
     subscription?.tier === 'pro' ? {} : 'skip',
@@ -248,6 +361,7 @@ export default function CampsScreen() {
     subscription?.tier === 'premium' ||
     subscription?.tier === 'pro'
   const isPro = subscription?.tier === 'pro'
+  const shouldShowPersonalCampCard = subscription !== undefined && myCamps !== undefined
 
   const filtered = useMemo(() => {
     if (!camps) return camps
@@ -267,6 +381,18 @@ export default function CampsScreen() {
   const archivedCamps = useMemo<CampWithMembership[]>(() => {
     if (!myCamps) return []
     return myCamps.filter((camp: CampWithMembership) => camp.status === 'archived')
+  }, [myCamps])
+
+  const personalCamp = useMemo<CampWithMembership | null>(() => {
+    if (!myCamps) return null
+    return (
+      myCamps.find(
+        (camp: CampWithMembership) =>
+          camp.access === 'invite' &&
+          camp.membership?.role === 'owner' &&
+          camp.status !== 'archived',
+      ) ?? null
+    )
   }, [myCamps])
 
   const listItems = useMemo<CampListItem[]>(() => {
@@ -323,8 +449,8 @@ export default function CampsScreen() {
   )
 
   const handleCreatePrivateCamp = useCallback(async () => {
-    if (!isPro) {
-      Alert.alert('Pro Required', 'Creating camps requires a Pro subscription.')
+    if (!canCreatePrivateCamp) {
+      Alert.alert('Membership Required', 'Private camps require Plus, Premium, or Pro.')
       return
     }
 
@@ -443,88 +569,13 @@ export default function CampsScreen() {
               </Text>
             </YStack>
 
-            {/* Personal Camp card */}
-            {personalCamp !== undefined ? (
-              personalCamp ? (
-                <Pressable onPress={() => router.push('/(main)/personal-camp' as RelativePathString)}>
-                  <YStack
-                    padding={14}
-                    borderRadius={14}
-                    backgroundColor={bondfireColors.gunmetal}
-                    borderWidth={1}
-                    borderColor={bondfireColors.bondfireCopper}
-                    gap={8}
-                  >
-                    <XStack alignItems="center" justifyContent="space-between">
-                      <XStack alignItems="center" gap={10}>
-                        <YStack
-                          width={36}
-                          height={36}
-                          borderRadius={18}
-                          backgroundColor={`${bondfireColors.bondfireCopper}20`}
-                          alignItems="center"
-                          justifyContent="center"
-                        >
-                          <Flame size={18} color={bondfireColors.bondfireCopper} />
-                        </YStack>
-                        <YStack gap={2}>
-                          <Text fontSize={15} fontWeight="900">
-                            {personalCamp.name}
-                          </Text>
-                          <Text fontSize={12} color={bondfireColors.ash}>
-                            Your Personal Camp
-                          </Text>
-                        </YStack>
-                      </XStack>
-                      {personalCamp.status === 'frozen' ? (
-                        <YStack
-                          borderRadius={999}
-                          paddingHorizontal={8}
-                          paddingVertical={4}
-                          backgroundColor={`${bondfireColors.warning}20`}
-                          borderWidth={1}
-                          borderColor={bondfireColors.warning}
-                        >
-                          <Text fontSize={10} color={bondfireColors.warning} fontWeight="900">
-                            Frozen
-                          </Text>
-                        </YStack>
-                      ) : null}
-                    </XStack>
-                  </YStack>
-                </Pressable>
-              ) : (
-                /* No personal camp yet — show locked upsell card */
-                <YStack
-                  padding={14}
-                  borderRadius={14}
-                  backgroundColor={bondfireColors.gunmetal}
-                  borderWidth={1}
-                  borderColor={bondfireColors.iron}
-                  gap={8}
-                >
-                  <XStack alignItems="center" gap={10}>
-                    <YStack
-                      width={36}
-                      height={36}
-                      borderRadius={18}
-                      backgroundColor={`${bondfireColors.ash}20`}
-                      alignItems="center"
-                      justifyContent="center"
-                    >
-                      <Lock size={18} color={bondfireColors.ash} />
-                    </YStack>
-                    <YStack gap={2}>
-                      <Text fontSize={15} fontWeight="900" color={bondfireColors.ash}>
-                        Personal Camp
-                      </Text>
-                      <Text fontSize={12} color={bondfireColors.ash}>
-                        Upgrade to Plus to start your own fire.
-                      </Text>
-                    </YStack>
-                  </XStack>
-                </YStack>
-              )
+            {shouldShowPersonalCampCard ? (
+              <PersonalCampCard
+                personalCamp={personalCamp}
+                canCreatePrivateCamp={canCreatePrivateCamp}
+                onOpen={(camp) => router.push(`/(main)/camp/${camp._id}` as RelativePathString)}
+                onCreate={() => setIsCreatePrivateOpen(true)}
+              />
             ) : null}
 
             <XStack gap={10}>
@@ -544,7 +595,7 @@ export default function CampsScreen() {
               <Button
                 variant="outline"
                 size="$sm"
-                flex={isPro ? 1 : undefined}
+                flex={1}
                 onPress={() => setIsRedeemInviteOpen(true)}
               >
                 <Text color={bondfireColors.whiteSmoke} fontWeight="900">
