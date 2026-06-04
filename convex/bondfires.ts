@@ -175,6 +175,24 @@ async function filterVisibleBondfires(ctx: QueryCtx, bondfires: Doc<'bondfires'>
   return bondfires.filter((_, index) => visibility[index])
 }
 
+async function resolveCampLabel(ctx: QueryCtx, bondfire: Doc<'bondfires'>) {
+  if (bondfire.personalCampId) {
+    const personalCamp = await ctx.db.get(bondfire.personalCampId)
+    if (personalCamp) {
+      return personalCamp.name
+    }
+  }
+
+  if (bondfire.campId) {
+    const camp = await ctx.db.get(bondfire.campId)
+    if (camp) {
+      return camp.name
+    }
+  }
+
+  return undefined
+}
+
 // List bondfires for the feed (ordered by videoCount ASC for discovery)
 export const listFeed = query({
   args: {
@@ -196,7 +214,14 @@ export const listFeed = query({
       bondfires.filter(isPlayableVideoRecord),
     )
 
-    return visibleBondfires.slice(0, limit).map(withLiveFlags)
+    const withCampLabels = await Promise.all(
+      visibleBondfires.slice(0, limit).map(async (bondfire) => {
+        const campLabel = await resolveCampLabel(ctx, bondfire)
+        return { ...withLiveFlags(bondfire), campLabel }
+      }),
+    )
+
+    return withCampLabels
   },
 })
 
@@ -234,7 +259,9 @@ export const listByCamp = query({
       .order('desc')
       .take(limit * 3)
 
-    return bondfires.filter(isPlayableVideoRecord).slice(0, limit).map(withLiveFlags)
+    const filtered = bondfires.filter(isPlayableVideoRecord).slice(0, limit)
+
+    return filtered.map((bondfire) => ({ ...withLiveFlags(bondfire), campLabel: camp.name }))
   },
 })
 
