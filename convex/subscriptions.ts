@@ -955,21 +955,24 @@ export const applyStorePurchaseVerification = internalMutation({
 
         if (TIER_RANK[newEffectiveTier] < TIER_RANK[previousEffectiveTier]) {
           await handleTierDowngrade(ctx, args.userId, previousEffectiveTier, newEffectiveTier)
-          // Freeze personal camp on downgrade to Free
-          await ctx.runMutation(internal.personalCamps.internalHandlePersonalCampDowngrade, {
-            userId: args.userId,
-            newTier: newEffectiveTier,
-          })
         } else if (TIER_RANK[newEffectiveTier] > TIER_RANK[previousEffectiveTier]) {
           await handleTierUpgrade(ctx, args.userId, previousEffectiveTier, newEffectiveTier)
-          // Ensure personal camp exists and is active on upgrade to paid tier
-          await ctx.runMutation(internal.personalCamps.internalHandlePersonalCampUpgrade, {
-            userId: args.userId,
-            newTier: newEffectiveTier,
-          })
           if (TIER_RANK[newEffectiveTier] >= TIER_RANK.pro) {
             await reclaimFrozenCamps(ctx, args.userId, newEffectiveTier)
           }
+        }
+
+        // Personal camp lifecycle: freeze on downgrade to Free, ensure exists on paid upgrade.
+        if (newEffectiveTier === 'free' && previousEffectiveTier !== 'free') {
+          await ctx.runMutation(internal.personalCamps.freezePersonalCamp, {
+            ownerId: args.userId,
+          })
+        } else if (newEffectiveTier !== 'free') {
+          // Ensure personal camp exists on paid tier
+          await ctx.runMutation(internal.personalCamps.internalGetOrCreatePersonalCamp, {
+            userId: args.userId,
+            tier: newEffectiveTier,
+          })
         }
       }
     } else {

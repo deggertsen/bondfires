@@ -11,8 +11,8 @@ import {
 } from './campLifecycle'
 import {
   assertCanRespondToPersonalBondfire,
-  isPersonalBondfireVisibleToViewer,
-} from './personalBondfires'
+  canViewPersonalBondfire,
+} from './personalBondfireAccess'
 
 async function getVisibleCampIds(ctx: QueryCtx, userId: Id<'users'> | null) {
   if (!userId) {
@@ -30,15 +30,17 @@ async function getVisibleCampIds(ctx: QueryCtx, userId: Id<'users'> | null) {
 async function isBondfireVisibleToViewer(
   ctx: QueryCtx,
   bondfire: Doc<'bondfires'>,
+  userId: Id<'users'> | null,
   memberCampIds: Set<Id<'camps'>>,
-  viewerId: Id<'users'> | null,
 ) {
   if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
     return false
   }
+
   if (bondfire.personalCampId) {
-    return await isPersonalBondfireVisibleToViewer(ctx, bondfire, viewerId)
+    return await canViewPersonalBondfire(ctx, { bondfire, userId })
   }
+
   if (!bondfire.campId) {
     return true
   }
@@ -72,7 +74,15 @@ async function assertCanRespondToBondfire(
   if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
     throw new Error('Bondfire not found')
   }
-  await assertCanRespondToPersonalBondfire(ctx, bondfire, args.userId)
+
+  if (bondfire.personalCampId) {
+    await assertCanRespondToPersonalBondfire(ctx, {
+      bondfire,
+      userId: args.userId,
+    })
+    return bondfire
+  }
+
   if (!bondfire.campId) {
     return bondfire
   }
@@ -128,7 +138,7 @@ export const listByBondfire = query({
 
     const userId = await auth.getUserId(ctx)
     const memberCampIds = await getVisibleCampIds(ctx, userId)
-    const canViewBondfire = await isBondfireVisibleToViewer(ctx, bondfire, memberCampIds, userId)
+    const canViewBondfire = await isBondfireVisibleToViewer(ctx, bondfire, userId, memberCampIds)
     if (!canViewBondfire) {
       return []
     }
@@ -172,7 +182,7 @@ export const listByUser = query({
       }
 
       const bondfire = await ctx.db.get(video.bondfireId)
-      if (bondfire && (await isBondfireVisibleToViewer(ctx, bondfire, memberCampIds, viewerId))) {
+      if (bondfire && (await isBondfireVisibleToViewer(ctx, bondfire, viewerId, memberCampIds))) {
         visibleVideos.push(video)
       }
     }
@@ -222,8 +232,10 @@ export const addResponse = mutation({
       throw new Error('Mux asset ID and playback ID are required for Mux videos')
     }
 
-    let requiresSignedPlayback =
-      bondfire.muxPlaybackPolicy === 'signed' || bondfire.personalCampId !== undefined
+    let requiresSignedPlayback = bondfire.muxPlaybackPolicy === 'signed'
+    if (!requiresSignedPlayback && bondfire.personalCampId) {
+      requiresSignedPlayback = true
+    }
     if (!requiresSignedPlayback && bondfire.campId) {
       const camp = await ctx.db.get(bondfire.campId)
       requiresSignedPlayback = camp?.access === 'invite'

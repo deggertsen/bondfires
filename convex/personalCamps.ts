@@ -1,80 +1,61 @@
-/**
- * Personal Camps — 1:1 spaces for paid subscribers.
- *
- * Every Plus/Premium/Pro user gets a single personal camp automatically
- * created on first subscription activation. The camp freezes on downgrade
- * to Free and unfreezes on re-subscribe.
- */
 import { v } from 'convex/values'
-import { internalMutation, mutation, query } from './_generated/server'
+import type { Doc, Id } from './_generated/dataModel'
+import { internalMutation, type MutationCtx, type QueryCtx, query } from './_generated/server'
 import { auth } from './auth'
-import { getEntitlementSubscriptionTier, PAID_TIERS } from './entitlements'
-import { throwUserError } from './errors'
+import { getEntitlementSubscriptionTier, type SubscriptionTier, TIER_RANK } from './entitlements'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-type PersonalCampTier = 'free' | 'plus' | 'premium' | 'pro'
+const subscriptionTierValidator = v.union(
+  v.literal('free'),
+  v.literal('plus'),
+  v.literal('premium'),
+  v.literal('pro'),
+)
 
-function isPaidTier(tier: PersonalCampTier) {
-  return PAID_TIERS.some((paidTier) => paidTier === tier)
+function isPaidTier(tier: SubscriptionTier) {
+  return TIER_RANK[tier] > TIER_RANK.free
 }
 
 function personalCampName(displayName?: string, name?: string) {
-  const base = displayName || name || 'Someone'
+  const base = displayName?.trim() || name?.trim() || 'Someone'
   return `${base}'s Fire`
 }
 
-// ── Queries ────────────────────────────────────────────────────────────────
+function personalCampPublicId() {
+  return `pc_${crypto.randomUUID().replaceAll('-', '')}`
+}
+
+async function getPersonalCampByOwner(
+  ctx: { db: QueryCtx['db'] | MutationCtx['db'] },
+  ownerId: Id<'users'>,
+): Promise<Doc<'personalCamps'> | null> {
+  return await ctx.db
+    .query('personalCamps')
+    .withIndex('by_owner', (q) => q.eq('ownerId', ownerId))
+    .first()
+}
+
+// ── Internal Mutations ─────────────────────────────────────────────────────
 
 /**
- * Get the current user's personal camp.
- * Returns null if none exists (user is Free tier or hasn't activated yet).
+ * Get, activate, or create a personal camp for a given user and tier.
+ * No auth check — callers are responsible for authorization.
+ *
+ * - Free tier: returns null (no personal camp for free users).
+ * - Paid tier: returns active existing camp, thaws frozen camp, or creates a new one.
  */
-export const getMyPersonalCamp = query({
-  args: {},
-  handler: async (ctx) => {
-    const userId = await auth.getUserId(ctx)
-    if (!userId) {
+export const internalGetOrCreatePersonalCamp = internalMutation({
+  args: {
+    userId: v.id('users'),
+    tier: subscriptionTierValidator,
+  },
+  handler: async (ctx, args) => {
+    if (!isPaidTier(args.tier)) {
       return null
     }
 
-    return await ctx.db
-      .query('personalCamps')
-      .withIndex('by_owner', (q) => q.eq('ownerId', userId))
-      .first()
-  },
-})
-
-// ── Mutations ──────────────────────────────────────────────────────────────
-
-/**
- * Get or create the current user's personal camp.
- *
- * - Plus/Premium/Pro: auto-creates if none exists, unfreezes if frozen.
- * - Free: throws an error.
- */
-export const getOrCreate = mutation({
-  args: {},
-  handler: async (ctx) => {
-    const userId = await auth.getUserId(ctx)
-    if (!userId) {
-      throwUserError('Not authenticated')
-    }
-
-    const user = await ctx.db.get(userId)
-    if (!user) {
-      throwUserError('User not found')
-    }
-
-    const tier = await getEntitlementSubscriptionTier(ctx, userId)
-    if (!isPaidTier(tier)) {
-      throwUserError('Personal Camps require a Plus, Premium, or Pro subscription.')
-    }
-
-    const existing = await ctx.db
-      .query('personalCamps')
-      .withIndex('by_owner', (q) => q.eq('ownerId', userId))
-      .first()
+    const existing = await getPersonalCampByOwner(ctx, args.userId)
 
     if (existing) {
       if (existing.status === 'frozen') {
@@ -84,6 +65,7 @@ export const getOrCreate = mutation({
           frozenAt: undefined,
           updatedAt: now,
         })
+
         return {
           ...existing,
           status: 'active' as const,
@@ -91,13 +73,21 @@ export const getOrCreate = mutation({
           updatedAt: now,
         }
       }
+
       return existing
+    }
+
+    const user = await ctx.db.get(args.userId)
+    if (!user) {
+      return null
     }
 
     const now = Date.now()
     const name = personalCampName(user.displayName, user.name)
+    const publicId = personalCampPublicId()
     const campId = await ctx.db.insert('personalCamps', {
-      ownerId: userId,
+      publicId,
+      ownerId: args.userId,
       name,
       status: 'active',
       createdAt: now,
@@ -106,7 +96,8 @@ export const getOrCreate = mutation({
 
     return {
       _id: campId,
-      ownerId: userId,
+      publicId,
+      ownerId: args.userId,
       name,
       status: 'active' as const,
       createdAt: now,
@@ -115,74 +106,16 @@ export const getOrCreate = mutation({
   },
 })
 
-// ── Internal Mutations — called from subscription flow ────────────────────
-
 /**
- * Called when a user upgrades to a paid tier.
- * Creates a personal camp if none exists, or unfreezes an existing frozen one.
+ * Freeze a personal camp — sets status to "frozen" and records frozenAt.
+ * No-op if the camp doesn't exist or is already frozen.
  */
-export const internalHandlePersonalCampUpgrade = internalMutation({
+export const freezePersonalCamp = internalMutation({
   args: {
-    userId: v.id('users'),
-    newTier: v.union(v.literal('free'), v.literal('plus'), v.literal('premium'), v.literal('pro')),
+    ownerId: v.id('users'),
   },
   handler: async (ctx, args) => {
-    if (!isPaidTier(args.newTier)) {
-      return null
-    }
-
-    const user = await ctx.db.get(args.userId)
-    if (!user) {
-      return null
-    }
-
-    const existing = await ctx.db
-      .query('personalCamps')
-      .withIndex('by_owner', (q) => q.eq('ownerId', args.userId))
-      .first()
-
-    if (existing) {
-      if (existing.status === 'frozen') {
-        const now = Date.now()
-        await ctx.db.patch(existing._id, {
-          status: 'active',
-          frozenAt: undefined,
-          updatedAt: now,
-        })
-      }
-      return existing._id
-    }
-
-    const now = Date.now()
-    const name = personalCampName(user.displayName, user.name)
-    return await ctx.db.insert('personalCamps', {
-      ownerId: args.userId,
-      name,
-      status: 'active',
-      createdAt: now,
-      updatedAt: now,
-    })
-  },
-})
-
-/**
- * Called when a user downgrades to Free.
- * Freezes the personal camp.
- */
-export const internalHandlePersonalCampDowngrade = internalMutation({
-  args: {
-    userId: v.id('users'),
-    newTier: v.union(v.literal('free'), v.literal('plus'), v.literal('premium'), v.literal('pro')),
-  },
-  handler: async (ctx, args) => {
-    if (args.newTier !== 'free') {
-      return null
-    }
-
-    const camp = await ctx.db
-      .query('personalCamps')
-      .withIndex('by_owner', (q) => q.eq('ownerId', args.userId))
-      .first()
+    const camp = await getPersonalCampByOwner(ctx, args.ownerId)
 
     if (!camp || camp.status !== 'active') {
       return null
@@ -196,5 +129,55 @@ export const internalHandlePersonalCampDowngrade = internalMutation({
     })
 
     return camp._id
+  },
+})
+
+/**
+ * Unfreeze a personal camp — sets status to "active" and clears frozenAt.
+ * No-op if the camp doesn't exist or is already active.
+ */
+export const unfreezePersonalCamp = internalMutation({
+  args: {
+    ownerId: v.id('users'),
+  },
+  handler: async (ctx, args) => {
+    const camp = await getPersonalCampByOwner(ctx, args.ownerId)
+
+    if (!camp || camp.status !== 'frozen') {
+      return null
+    }
+
+    const now = Date.now()
+    await ctx.db.patch(camp._id, {
+      status: 'active',
+      frozenAt: undefined,
+      updatedAt: now,
+    })
+
+    return camp._id
+  },
+})
+
+// ── Queries ────────────────────────────────────────────────────────────────
+
+/**
+ * Get the current user's personal camp.
+ * Authenticated users call this to retrieve their personal camp.
+ * Returns null if the user has no personal camp or is on Free tier.
+ */
+export const getMyPersonalCamp = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      return null
+    }
+
+    const tier = await getEntitlementSubscriptionTier(ctx, userId)
+    if (!isPaidTier(tier)) {
+      return null
+    }
+
+    return await getPersonalCampByOwner(ctx, userId)
   },
 })

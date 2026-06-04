@@ -13,9 +13,9 @@ const TIER_ICONS: Record<string, typeof Star> = {
 
 const TIER_SUMMARIES: Record<SubscriptionTier, string> = {
   free: 'Browse, watch, and respond',
-  plus: 'Public sparks and one private camp',
-  premium: 'Unlimited private camp video storage',
-  pro: 'Public camp management tools',
+  plus: '1-on-1 personal fires',
+  premium: 'Up to 8 people per personal fire',
+  pro: 'Unlimited personal fire participants',
 }
 
 interface SubscriptionStatusProps {

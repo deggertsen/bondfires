@@ -1,9 +1,3 @@
-/**
- * Personal Bondfires: bondfires inside a user's personal camp.
- *
- * Personal camps are 1:1 per paid user. Access is invite-based and every
- * shared bondfire path must be gated by active personal-bondfire membership.
- */
 import { v } from 'convex/values'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
@@ -13,9 +7,11 @@ import {
   assertVideoDurationWithinTierLimit,
   getEntitlementSubscriptionTier,
   PAID_TIERS,
-  type SubscriptionTier,
 } from './entitlements'
 import { throwUserError } from './errors'
+import { canViewPersonalBondfire, getPersonalBondfireParticipant } from './personalBondfireAccess'
+
+// ── Constants ──────────────────────────────────────────────────────────────
 
 const INVITE_WORDS = [
   'amber',
@@ -36,30 +32,74 @@ const INVITE_WORDS = [
   'trail',
   'valley',
   'watch',
+  'aurora',
+  'basin',
+  'beacon',
+  'birch',
+  'brook',
+  'cairn',
+  'cliff',
+  'cloud',
+  'copper',
+  'dawn',
+  'drift',
+  'field',
+  'flint',
+  'grove',
+  'hearth',
+  'hollow',
+  'kindle',
+  'lake',
+  'meadow',
+  'moon',
+  'pine',
+  'ridge',
+  'root',
+  'spark',
+  'spring',
+  'star',
+  'thicket',
+  'timber',
+  'willow',
+  'wind',
+  'blaze',
+  'bloom',
+  'branch',
+  'bright',
+  'coast',
+  'echo',
+  'fern',
+  'frost',
+  'glade',
+  'gold',
+  'hill',
+  'leaf',
+  'maple',
+  'mist',
+  'north',
+  'prairie',
+  'rain',
+  'shade',
+  'shore',
+  'silver',
+  'south',
+  'torch',
+  'west',
+  'wild',
+  'wood',
 ] as const
 
-const INVITE_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000
+const INVITE_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 
-const PARTICIPANT_CAP: Record<SubscriptionTier, number> = {
-  free: 0,
-  plus: 2,
-  premium: 8,
-  pro: 8,
+/** Plus users get 2 participants (sparker + 1), Premium/Pro get 8. */
+function getParticipantCap(tier: string): number {
+  if (tier === 'premium' || tier === 'pro') {
+    return 8
+  }
+  return 2
 }
 
-const videoStatusValidator = v.union(
-  v.literal('waiting_for_upload'),
-  v.literal('processing'),
-  v.literal('live'),
-  v.literal('ready'),
-  v.literal('errored'),
-)
-
-type PersonalCamp = Doc<'personalCamps'>
-
-function isPaidTier(tier: SubscriptionTier) {
-  return PAID_TIERS.some((paidTier) => paidTier === tier)
-}
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 function generateInviteCode(seed: string) {
   let hash = 0
@@ -78,16 +118,7 @@ function generateInviteCode(seed: string) {
 }
 
 function normalizeInviteCode(code: string) {
-  return code.trim().toLowerCase()
-}
-
-function personalCampName(user: Doc<'users'>) {
-  const base = user.displayName || user.name || 'Someone'
-  return `${base}'s Fire`
-}
-
-function isReadablePersonalCamp(camp: PersonalCamp) {
-  return camp.status === 'active' || camp.status === 'frozen'
+  return code.trim().toLowerCase().replace(/\s+/g, '-').replace(/-+/g, '-')
 }
 
 async function getCurrentUser(ctx: QueryCtx | MutationCtx) {
@@ -104,18 +135,10 @@ async function getCurrentUser(ctx: QueryCtx | MutationCtx) {
   return user
 }
 
-async function getParticipant(
+async function getActiveParticipantCount(
   ctx: QueryCtx | MutationCtx,
-  userId: Id<'users'>,
   bondfireId: Id<'bondfires'>,
-) {
-  return await ctx.db
-    .query('personalBondfireParticipants')
-    .withIndex('by_user_bondfire', (q) => q.eq('userId', userId).eq('bondfireId', bondfireId))
-    .first()
-}
-
-async function getActiveParticipantCount(ctx: QueryCtx | MutationCtx, bondfireId: Id<'bondfires'>) {
+): Promise<number> {
   const participants = await ctx.db
     .query('personalBondfireParticipants')
     .withIndex('by_bondfire_status', (q) => q.eq('bondfireId', bondfireId).eq('status', 'active'))
@@ -124,228 +147,58 @@ async function getActiveParticipantCount(ctx: QueryCtx | MutationCtx, bondfireId
   return participants.length
 }
 
-async function getParticipantCap(ctx: QueryCtx | MutationCtx, userId: Id<'users'>) {
-  const tier = await getEntitlementSubscriptionTier(ctx, userId)
-  return PARTICIPANT_CAP[tier]
-}
-
-async function getOrCreateActivePersonalCamp(ctx: MutationCtx, user: Doc<'users'>) {
-  const tier = await getEntitlementSubscriptionTier(ctx, user._id)
-  if (!isPaidTier(tier)) {
-    throwUserError('Personal Camps require a Plus, Premium, or Pro subscription.')
-  }
-
-  const existing = await ctx.db
-    .query('personalCamps')
-    .withIndex('by_owner', (q) => q.eq('ownerId', user._id))
-    .first()
-
-  if (existing) {
-    if (existing.status === 'frozen') {
-      const now = Date.now()
-      await ctx.db.patch(existing._id, {
-        status: 'active',
-        frozenAt: undefined,
-        updatedAt: now,
-      })
-      return { ...existing, status: 'active' as const, frozenAt: undefined, updatedAt: now }
-    }
-    return existing
-  }
-
-  const now = Date.now()
-  const name = personalCampName(user)
-  const campId = await ctx.db.insert('personalCamps', {
-    ownerId: user._id,
-    name,
-    status: 'active',
-    createdAt: now,
-    updatedAt: now,
-  })
-
-  return {
-    _id: campId,
-    _creationTime: now,
-    ownerId: user._id,
-    name,
-    status: 'active' as const,
-    createdAt: now,
-    updatedAt: now,
-  }
-}
-
-async function getOwnedPersonalBondfire(
-  ctx: MutationCtx,
-  args: { ownerId: Id<'users'>; bondfireId: Id<'bondfires'>; requireActiveCamp?: boolean },
-) {
-  const camp = await ctx.db
-    .query('personalCamps')
-    .withIndex('by_owner', (q) => q.eq('ownerId', args.ownerId))
-    .first()
-
-  if (!camp || (args.requireActiveCamp && camp.status !== 'active')) {
-    throwUserError('Personal Camp not found')
-  }
-
-  const bondfire = await ctx.db.get(args.bondfireId)
-  if (!bondfire || bondfire.personalCampId !== camp._id) {
-    throwUserError('Bondfire not found in your Personal Camp')
-  }
-
-  return { camp, bondfire }
-}
-
-export async function isPersonalBondfireVisibleToViewer(
-  ctx: QueryCtx,
-  bondfire: Doc<'bondfires'>,
-  viewerId: Id<'users'> | null,
-) {
-  if (!bondfire.personalCampId) {
-    return true
-  }
-  if (!viewerId) {
-    return false
-  }
-
-  const camp = await ctx.db.get(bondfire.personalCampId)
-  if (!camp || !isReadablePersonalCamp(camp)) {
-    return false
-  }
-
-  const participant = await getParticipant(ctx, viewerId, bondfire._id)
-  return participant?.status === 'active'
-}
-
-export async function assertCanRespondToPersonalBondfire(
+async function getPersonalBondfireOrThrow(
   ctx: QueryCtx | MutationCtx,
-  bondfire: Doc<'bondfires'>,
-  userId: Id<'users'>,
+  bondfireId: Id<'bondfires'>,
 ) {
-  if (!bondfire.personalCampId) {
-    return
+  const bondfire = await ctx.db.get(bondfireId)
+  if (!bondfire) {
+    throwUserError('Bondfire not found')
   }
 
-  const camp = await ctx.db.get(bondfire.personalCampId)
-  if (!camp || camp.status !== 'active') {
-    throwUserError('This Personal Camp is not accepting responses right now.')
+  const personalCampId = bondfire.personalCampId
+  if (!personalCampId) {
+    throwUserError('This bondfire is not part of a personal camp.')
   }
 
-  const participant = await getParticipant(ctx, userId, bondfire._id)
-  if (participant?.status !== 'active') {
-    throwUserError('Join this Personal Fire before responding here')
-  }
+  return { ...bondfire, personalCampId }
 }
 
-export const checkInvite = query({
-  args: {
-    code: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const invite = await ctx.db
-      .query('personalBondfireInvites')
-      .withIndex('by_code', (q) => q.eq('code', normalizeInviteCode(args.code)))
-      .first()
+async function assertPersonalCampActive(
+  ctx: QueryCtx | MutationCtx,
+  personalCampId: Id<'personalCamps'>,
+  message = 'This personal camp is currently unavailable.',
+) {
+  const personalCamp = await ctx.db.get(personalCampId)
+  if (!personalCamp || personalCamp.status !== 'active') {
+    throwUserError(message)
+  }
 
-    if (!invite) {
-      throwUserError('Invite not found')
-    }
-    if (invite.expiresAt <= Date.now()) {
-      throwUserError('Invite has expired')
-    }
+  return personalCamp
+}
 
-    const bondfire = await ctx.db.get(invite.bondfireId)
-    if (!bondfire?.personalCampId) {
-      throwUserError('Bondfire not found')
-    }
+// ── Mutations ──────────────────────────────────────────────────────────────
 
-    const camp = await ctx.db.get(bondfire.personalCampId)
-    if (!camp || camp.status !== 'active') {
-      throwUserError('This Personal Camp is not accepting new participants right now.')
-    }
-
-    return {
-      bondfireId: invite.bondfireId,
-      code: invite.code,
-      expiresAt: invite.expiresAt,
-    }
-  },
-})
-
-export const listMyPersonalBondfires = query({
-  args: {},
-  handler: async (ctx) => {
-    const userId = await auth.getUserId(ctx)
-    if (!userId) {
-      return []
-    }
-
-    const camp = await ctx.db
-      .query('personalCamps')
-      .withIndex('by_owner', (q) => q.eq('ownerId', userId))
-      .first()
-
-    if (!camp || !isReadablePersonalCamp(camp)) {
-      return []
-    }
-
-    return await ctx.db
-      .query('bondfires')
-      .withIndex('by_personal_camp', (q) => q.eq('personalCampId', camp._id))
-      .order('desc')
-      .collect()
-  },
-})
-
-export const listParticipants = query({
-  args: {
-    bondfireId: v.id('bondfires'),
-  },
-  handler: async (ctx, args) => {
-    const userId = await auth.getUserId(ctx)
-    if (!userId) {
-      return []
-    }
-
-    const bondfire = await ctx.db.get(args.bondfireId)
-    if (!bondfire || !(await isPersonalBondfireVisibleToViewer(ctx, bondfire, userId))) {
-      return []
-    }
-
-    const participants = await ctx.db
-      .query('personalBondfireParticipants')
-      .withIndex('by_bondfire_status', (q) =>
-        q.eq('bondfireId', args.bondfireId).eq('status', 'active'),
-      )
-      .collect()
-
-    const users = await Promise.all(
-      participants.map((participant) => ctx.db.get(participant.userId)),
-    )
-
-    return users.flatMap((user) => {
-      if (!user) {
-        return []
-      }
-
-      return [
-        {
-          _id: user._id,
-          displayName: user.displayName,
-          name: user.name,
-          photoUrl: user.photoUrl,
-        },
-      ]
-    })
-  },
-})
-
+/**
+ * Create a bondfire in the current user's personal camp.
+ * Sets personalCampId instead of campId.
+ * Checks the personal camp exists and is active.
+ */
 export const createBondfire = mutation({
   args: {
     muxUploadId: v.optional(v.string()),
     muxAssetId: v.optional(v.string()),
     muxPlaybackId: v.optional(v.string()),
     muxPlaybackPolicy: v.optional(v.union(v.literal('public'), v.literal('signed'))),
-    videoStatus: v.optional(videoStatusValidator),
+    videoStatus: v.optional(
+      v.union(
+        v.literal('waiting_for_upload'),
+        v.literal('processing'),
+        v.literal('live'),
+        v.literal('ready'),
+        v.literal('errored'),
+      ),
+    ),
     durationMs: v.optional(v.number()),
     width: v.optional(v.number()),
     height: v.optional(v.number()),
@@ -353,28 +206,47 @@ export const createBondfire = mutation({
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx)
+    const now = Date.now()
     await assertVideoDurationWithinTierLimit(ctx, user._id, args.durationMs)
 
-    const status = args.videoStatus ?? 'ready'
-    if (status === 'ready' && (!args.muxAssetId || !args.muxPlaybackId)) {
-      throwUserError('Mux asset ID and playback ID are required for Mux videos')
-    }
-    if (args.muxPlaybackPolicy && args.muxPlaybackPolicy !== 'signed') {
-      throwUserError('Personal Fire videos must use signed Mux playback')
+    if (args.muxPlaybackPolicy === 'public') {
+      throwUserError('Personal Fire videos must use signed playback.')
     }
 
-    const camp = await getOrCreateActivePersonalCamp(ctx, user)
-    const now = Date.now()
+    // The user must be on a paid tier.
+    const tier = await getEntitlementSubscriptionTier(ctx, user._id)
+    if (!PAID_TIERS.includes(tier)) {
+      throwUserError('Personal Camps require a Plus, Premium, or Pro subscription.')
+    }
+
+    // Find the user's personal camp — must exist and be active.
+    const personalCamp = await ctx.db
+      .query('personalCamps')
+      .withIndex('by_owner', (q) => q.eq('ownerId', user._id))
+      .first()
+
+    if (!personalCamp) {
+      throwUserError('Personal camp not found. Subscribe to Plus, Premium, or Pro to create one.')
+    }
+
+    if (personalCamp.status !== 'active') {
+      throwUserError(
+        'Your personal camp is currently frozen. Please re-subscribe to reactivate it.',
+      )
+    }
+
+    // Create the bondfire with personalCampId.
     const bondfireId = await ctx.db.insert('bondfires', {
       userId: user._id,
       creatorName: user.displayName ?? user.name,
-      personalCampId: camp._id,
+      personalCampId: personalCamp._id,
+      frozen: false,
+      videoStatus: args.videoStatus ?? 'ready',
       muxUploadId: args.muxUploadId,
       muxAssetId: args.muxAssetId,
       muxPlaybackId: args.muxPlaybackId,
-      muxPlaybackPolicy: 'signed',
-      muxAssetStatus: status,
-      videoStatus: status,
+      muxPlaybackPolicy: args.muxPlaybackPolicy ?? 'signed',
+      muxAssetStatus: args.videoStatus,
       durationMs: args.durationMs,
       width: args.width,
       height: args.height,
@@ -385,6 +257,7 @@ export const createBondfire = mutation({
       updatedAt: now,
     })
 
+    // Add the owner as a participant.
     await ctx.db.insert('personalBondfireParticipants', {
       bondfireId,
       userId: user._id,
@@ -394,6 +267,7 @@ export const createBondfire = mutation({
       updatedAt: now,
     })
 
+    // Update user's bondfire count.
     await ctx.db.patch(user._id, {
       bondfireCount: (user.bondfireCount ?? 0) + 1,
       updatedAt: now,
@@ -403,28 +277,50 @@ export const createBondfire = mutation({
   },
 })
 
+/**
+ * Generate an invite code for a personal bondfire.
+ * Only the bondfire owner can create invites.
+ * Checks participant cap: Plus=2, Premium/Pro=8.
+ */
 export const createInvite = mutation({
   args: {
     bondfireId: v.id('bondfires'),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx)
-    await getOwnedPersonalBondfire(ctx, {
-      ownerId: user._id,
-      bondfireId: args.bondfireId,
-      requireActiveCamp: true,
-    })
+    const now = Date.now()
 
-    const cap = await getParticipantCap(ctx, user._id)
-    const activeCount = await getActiveParticipantCount(ctx, args.bondfireId)
-    if (activeCount >= cap) {
-      if (cap <= PARTICIPANT_CAP.plus) {
-        throwUserError('Upgrade to Premium or Pro to invite more people to your Personal Fires.')
-      }
-      throwUserError('Participant limit reached for this Personal Fire.')
+    const bondfire = await getPersonalBondfireOrThrow(ctx, args.bondfireId)
+
+    // Only the owner can create invites.
+    if (bondfire.userId !== user._id) {
+      throwUserError('Only the bondfire owner can create invite codes.')
     }
 
-    let code = generateInviteCode([args.bondfireId, Date.now()].join('-'))
+    await assertPersonalCampActive(
+      ctx,
+      bondfire.personalCampId,
+      'Your personal camp is currently frozen. Please re-subscribe to reactivate it.',
+    )
+
+    // Check participant cap.
+    const activeCount = await getActiveParticipantCount(ctx, args.bondfireId)
+    const tier = await getEntitlementSubscriptionTier(ctx, user._id)
+    if (!PAID_TIERS.includes(tier)) {
+      throwUserError('Personal Camps require a Plus, Premium, or Pro subscription.')
+    }
+    const cap = getParticipantCap(tier)
+
+    if (activeCount >= cap) {
+      if (tier === 'plus') {
+        throwUserError('Upgrade to Premium or Pro to invite more people to your Personal Fires.')
+      }
+      throwUserError('This fire is full.')
+    }
+
+    // Generate a unique 3-word code.
+    const seed = [args.bondfireId, now].join('-')
+    let code = generateInviteCode(seed)
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const existing = await ctx.db
         .query('personalBondfireInvites')
@@ -433,188 +329,396 @@ export const createInvite = mutation({
       if (!existing) {
         break
       }
-      code = generateInviteCode([args.bondfireId, Date.now(), attempt].join('-'))
+      code = generateInviteCode([seed, String(attempt)].join('-'))
     }
 
-    const existing = await ctx.db
+    const finalExisting = await ctx.db
       .query('personalBondfireInvites')
       .withIndex('by_code', (q) => q.eq('code', code))
       .first()
-    if (existing) {
-      throwUserError('Could not generate a unique invite code. Try again.')
+    if (finalExisting) {
+      throwUserError('Could not generate a unique invite code. Please try again.')
     }
 
-    const now = Date.now()
-    const inviteId = await ctx.db.insert('personalBondfireInvites', {
+    const expiresAt = now + INVITE_EXPIRY_MS
+    await ctx.db.insert('personalBondfireInvites', {
       bondfireId: args.bondfireId,
       code,
+      uses: 0,
       createdBy: user._id,
-      expiresAt: now + INVITE_EXPIRY_MS,
+      expiresAt,
       createdAt: now,
     })
 
     return {
-      inviteId,
       code,
-      expiresAt: now + INVITE_EXPIRY_MS,
+      expiresAt,
+      bondfireId: args.bondfireId,
     }
   },
 })
 
+/**
+ * Redeem an invite code to join a personal bondfire.
+ * Validates: code not expired, bondfire exists, cap not reached.
+ * Re-joins users who previously left/were removed.
+ */
 export const redeemInvite = mutation({
   args: {
     code: v.string(),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx)
+    const now = Date.now()
+    const code = normalizeInviteCode(args.code)
+
     const invite = await ctx.db
       .query('personalBondfireInvites')
-      .withIndex('by_code', (q) => q.eq('code', normalizeInviteCode(args.code)))
+      .withIndex('by_code', (q) => q.eq('code', code))
       .first()
 
     if (!invite) {
-      throwUserError('Invite not found')
+      throwUserError('Invite not found.')
     }
-    if (invite.expiresAt <= Date.now()) {
-      throwUserError('Invite has expired')
+
+    if (invite.expiresAt !== undefined && invite.expiresAt <= now) {
+      throwUserError('This invite has expired.')
+    }
+
+    if (invite.maxUses !== undefined && invite.uses >= invite.maxUses) {
+      throwUserError('This invite has already been used.')
     }
 
     const bondfire = await ctx.db.get(invite.bondfireId)
-    if (!bondfire?.personalCampId) {
-      throwUserError('Bondfire not found')
+    if (!bondfire) {
+      throwUserError('This fire has ended.')
     }
 
-    const camp = await ctx.db.get(bondfire.personalCampId)
-    if (!camp || camp.status !== 'active') {
-      throwUserError('This Personal Camp is not accepting new participants right now.')
+    if (!bondfire.personalCampId) {
+      throwUserError('This bondfire is not part of a personal camp.')
     }
 
-    const existing = await getParticipant(ctx, user._id, invite.bondfireId)
-    if (existing?.status === 'active') {
-      return { bondfireId: invite.bondfireId, participantId: existing._id }
-    }
+    await assertPersonalCampActive(
+      ctx,
+      bondfire.personalCampId,
+      'The personal camp is currently unavailable. The owner may have cancelled their subscription.',
+    )
 
-    const cap = await getParticipantCap(ctx, camp.ownerId)
-    const activeCount = await getActiveParticipantCount(ctx, invite.bondfireId)
-    if (activeCount >= cap) {
-      throwUserError('This Personal Fire has reached its participant limit.')
-    }
-
-    const now = Date.now()
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        status: 'active',
-        joinedAt: now,
-        updatedAt: now,
-      })
-      return { bondfireId: invite.bondfireId, participantId: existing._id }
-    }
-
-    const participantId = await ctx.db.insert('personalBondfireParticipants', {
-      bondfireId: invite.bondfireId,
+    // Check if user is already an active participant.
+    const existingParticipant = await getPersonalBondfireParticipant(ctx, {
+      bondfireId: bondfire._id,
       userId: user._id,
-      status: 'active',
-      joinedAt: now,
-      createdAt: now,
-      updatedAt: now,
     })
 
-    return { bondfireId: invite.bondfireId, participantId }
+    if (existingParticipant?.status === 'active') {
+      return { bondfireId: bondfire._id, alreadyJoined: true }
+    }
+
+    // Check participant cap based on owner's tier.
+    const owner = await ctx.db.get(bondfire.userId)
+    const ownerTier = owner ? await getEntitlementSubscriptionTier(ctx, owner._id) : 'free'
+    const cap = getParticipantCap(ownerTier)
+    const activeCount = await getActiveParticipantCount(ctx, bondfire._id)
+
+    if (activeCount >= cap) {
+      throwUserError('This fire is full.')
+    }
+
+    if (existingParticipant) {
+      await ctx.db.patch(existingParticipant._id, {
+        status: 'active',
+        joinedAt: now,
+        leftAt: undefined,
+        removedAt: undefined,
+        removedBy: undefined,
+        updatedAt: now,
+      })
+    } else {
+      await ctx.db.insert('personalBondfireParticipants', {
+        bondfireId: bondfire._id,
+        userId: user._id,
+        status: 'active',
+        joinedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })
+    }
+
+    await ctx.db.patch(invite._id, {
+      uses: invite.uses + 1,
+    })
+
+    return { bondfireId: bondfire._id, alreadyJoined: false }
   },
 })
 
+/**
+ * Remove a participant from a personal bondfire.
+ * Only the bondfire owner can remove participants.
+ * Cannot remove themselves.
+ */
 export const removeParticipant = mutation({
   args: {
     bondfireId: v.id('bondfires'),
-    userId: v.id('users'),
+    participantId: v.id('users'),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx)
-    const { bondfire } = await getOwnedPersonalBondfire(ctx, {
-      ownerId: user._id,
-      bondfireId: args.bondfireId,
-      requireActiveCamp: true,
-    })
+    const now = Date.now()
 
-    if (args.userId === bondfire.userId) {
-      throwUserError('The Personal Fire owner cannot be removed')
+    const bondfire = await getPersonalBondfireOrThrow(ctx, args.bondfireId)
+
+    if (bondfire.userId !== user._id) {
+      throwUserError('Only the bondfire owner can remove participants.')
     }
 
-    const participant = await getParticipant(ctx, args.userId, args.bondfireId)
-    if (participant?.status !== 'active') {
-      throwUserError('Participant not found')
+    if (args.participantId === user._id) {
+      throwUserError('You cannot remove yourself. Use the leave option instead.')
+    }
+
+    const participant = await getPersonalBondfireParticipant(ctx, {
+      bondfireId: args.bondfireId,
+      userId: args.participantId,
+    })
+
+    if (!participant) {
+      throwUserError('Participant not found in this bondfire.')
+    }
+
+    if (participant.status !== 'active') {
+      throwUserError('This participant is no longer in this bondfire.')
     }
 
     await ctx.db.patch(participant._id, {
       status: 'removed',
-      updatedAt: Date.now(),
+      removedAt: now,
+      removedBy: user._id,
+      updatedAt: now,
     })
-
-    return participant._id
   },
 })
 
+/**
+ * Leave a personal bondfire as a participant.
+ * Cannot be used by the bondfire owner.
+ */
 export const leaveBondfire = mutation({
   args: {
     bondfireId: v.id('bondfires'),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx)
-    const bondfire = await ctx.db.get(args.bondfireId)
-    if (!bondfire?.personalCampId) {
-      throwUserError('Personal Fire not found')
-    }
+    const now = Date.now()
+
+    const bondfire = await getPersonalBondfireOrThrow(ctx, args.bondfireId)
+
     if (bondfire.userId === user._id) {
-      throwUserError('Delete your Personal Fire instead of leaving it')
+      throwUserError('The owner cannot leave their own bondfire. Delete it instead.')
     }
 
-    const participant = await getParticipant(ctx, user._id, args.bondfireId)
-    if (participant?.status !== 'active') {
-      throwUserError('You are not a participant in this Personal Fire')
+    const participant = await getPersonalBondfireParticipant(ctx, {
+      bondfireId: args.bondfireId,
+      userId: user._id,
+    })
+
+    if (!participant) {
+      throwUserError('You are not a participant in this bondfire.')
+    }
+
+    if (participant.status !== 'active') {
+      throwUserError('You are no longer in this bondfire.')
     }
 
     await ctx.db.patch(participant._id, {
       status: 'left',
-      updatedAt: Date.now(),
+      leftAt: now,
+      updatedAt: now,
     })
-
-    return participant._id
   },
 })
 
+/**
+ * Delete a personal bondfire and all associated rows.
+ * Only the bondfire owner can delete it.
+ */
 export const deleteBondfire = mutation({
   args: {
     bondfireId: v.id('bondfires'),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx)
-    await getOwnedPersonalBondfire(ctx, {
-      ownerId: user._id,
-      bondfireId: args.bondfireId,
-    })
 
+    const bondfire = await getPersonalBondfireOrThrow(ctx, args.bondfireId)
+
+    if (bondfire.userId !== user._id) {
+      throwUserError('Only the bondfire owner can delete it.')
+    }
+
+    // Delete all participants.
     const participants = await ctx.db
       .query('personalBondfireParticipants')
       .withIndex('by_bondfire_status', (q) => q.eq('bondfireId', args.bondfireId))
       .collect()
-    for (const participant of participants) {
-      await ctx.db.delete(participant._id)
+
+    for (const p of participants) {
+      await ctx.db.delete(p._id)
     }
 
+    // Delete all invites.
     const invites = await ctx.db
       .query('personalBondfireInvites')
       .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
       .collect()
-    for (const invite of invites) {
-      await ctx.db.delete(invite._id)
+
+    for (const inv of invites) {
+      await ctx.db.delete(inv._id)
     }
 
+    // Delete response videos and their live sessions.
+    const responses = await ctx.db
+      .query('bondfireVideos')
+      .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
+      .collect()
+
+    for (const response of responses) {
+      if (response.liveSessionId) {
+        await ctx.db.delete(response.liveSessionId)
+      }
+      await ctx.db.delete(response._id)
+    }
+
+    if (bondfire.liveSessionId) {
+      await ctx.db.delete(bondfire.liveSessionId)
+    }
+
+    // Delete the bondfire itself.
     await ctx.db.delete(args.bondfireId)
     await ctx.db.patch(user._id, {
       bondfireCount: Math.max(0, (user.bondfireCount ?? 1) - 1),
       updatedAt: Date.now(),
     })
+  },
+})
 
-    return { deleted: true }
+// ── Queries ────────────────────────────────────────────────────────────────
+
+/**
+ * Check if an invite code is valid and return bondfire info.
+ * Used by the client before showing the join screen.
+ */
+export const checkInvite = query({
+  args: {
+    code: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const code = normalizeInviteCode(args.code)
+    const now = Date.now()
+
+    const invite = await ctx.db
+      .query('personalBondfireInvites')
+      .withIndex('by_code', (q) => q.eq('code', code))
+      .first()
+
+    if (!invite) {
+      return { valid: false, reason: 'not_found' as const }
+    }
+
+    if (invite.expiresAt !== undefined && invite.expiresAt <= now) {
+      return { valid: false, reason: 'expired' as const }
+    }
+
+    if (invite.maxUses !== undefined && invite.uses >= invite.maxUses) {
+      return { valid: false, reason: 'used' as const }
+    }
+
+    const bondfire = await ctx.db.get(invite.bondfireId)
+    if (!bondfire) {
+      return { valid: false, reason: 'ended' as const }
+    }
+
+    if (!bondfire.personalCampId) {
+      return { valid: false, reason: 'invalid' as const }
+    }
+
+    const personalCamp = await ctx.db.get(bondfire.personalCampId)
+    if (!personalCamp || personalCamp.status !== 'active') {
+      return { valid: false, reason: 'frozen' as const }
+    }
+
+    const activeCount = await getActiveParticipantCount(ctx, bondfire._id)
+    const owner = await ctx.db.get(bondfire.userId)
+    const ownerTier = owner ? await getEntitlementSubscriptionTier(ctx, owner._id) : 'free'
+    const cap = getParticipantCap(ownerTier)
+
+    return {
+      valid: true,
+      bondfireId: bondfire._id,
+      creatorName: bondfire.creatorName,
+      participantCount: activeCount,
+      cap,
+    }
+  },
+})
+
+/**
+ * List bondfires in the current user's personal camp.
+ */
+export const listMyPersonalBondfires = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      return []
+    }
+
+    const personalCamp = await ctx.db
+      .query('personalCamps')
+      .withIndex('by_owner', (q) => q.eq('ownerId', userId))
+      .first()
+
+    if (!personalCamp) {
+      return []
+    }
+
+    const bondfires = await ctx.db
+      .query('bondfires')
+      .withIndex('by_personal_camp', (q) => q.eq('personalCampId', personalCamp._id))
+      .order('desc')
+      .collect()
+
+    return bondfires
+  },
+})
+
+/**
+ * List active participants for a personal bondfire.
+ */
+export const listParticipants = query({
+  args: {
+    bondfireId: v.id('bondfires'),
+  },
+  handler: async (ctx, args) => {
+    const participants = await ctx.db
+      .query('personalBondfireParticipants')
+      .withIndex('by_bondfire_status', (q) =>
+        q.eq('bondfireId', args.bondfireId).eq('status', 'active'),
+      )
+      .collect()
+
+    const userId = await auth.getUserId(ctx)
+    const bondfire = await getPersonalBondfireOrThrow(ctx, args.bondfireId)
+    if (!(await canViewPersonalBondfire(ctx, { bondfire, userId }))) {
+      return []
+    }
+
+    const raw = await Promise.all(participants.map((p) => ctx.db.get(p.userId)))
+    const users = raw.filter((u): u is Doc<'users'> => u !== null)
+
+    return users.map((u) => ({
+      _id: u._id,
+      displayName: u.displayName,
+      name: u.name,
+      photoUrl: u.photoUrl,
+    }))
   },
 })

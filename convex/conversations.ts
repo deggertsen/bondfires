@@ -5,7 +5,7 @@ import { mutation, query } from './_generated/server'
 import { auth } from './auth'
 import { isCampReadableStatus, requiresActiveMembershipForVisibility } from './campLifecycle'
 import { throwUserError } from './errors'
-import { isPersonalBondfireVisibleToViewer } from './personalBondfires'
+import { canViewPersonalBondfire } from './personalBondfireAccess'
 
 type ThreadParticipant = {
   user: PublicUser
@@ -77,11 +77,11 @@ async function getVisibleCampIds(ctx: QueryCtx, userId: Id<'users'>) {
 async function isBondfireVisibleToViewer(
   ctx: QueryCtx,
   bondfire: Doc<'bondfires'>,
+  userId: Id<'users'>,
   memberCampIds: Set<Id<'camps'>>,
-  viewerId: Id<'users'>,
 ) {
   if (bondfire.personalCampId) {
-    return await isPersonalBondfireVisibleToViewer(ctx, bondfire, viewerId)
+    return await canViewPersonalBondfire(ctx, { bondfire, userId })
   }
 
   if (!bondfire.campId) {
@@ -247,7 +247,7 @@ async function listSharedThreads(
     if (!bondfire || !isPlayableVideoRecord(bondfire)) {
       continue
     }
-    if (!(await isBondfireVisibleToViewer(ctx, bondfire, args.memberCampIds, args.viewerId))) {
+    if (!(await isBondfireVisibleToViewer(ctx, bondfire, args.viewerId, args.memberCampIds))) {
       continue
     }
 
@@ -329,7 +329,7 @@ export const listMyFires = query({
       if (!bondfire || !isPlayableVideoRecord(bondfire)) {
         continue
       }
-      if (!(await isBondfireVisibleToViewer(ctx, bondfire, memberCampIds, userId))) {
+      if (!(await isBondfireVisibleToViewer(ctx, bondfire, userId, memberCampIds))) {
         continue
       }
 
@@ -419,13 +419,8 @@ export const markThreadRead = mutation({
       throwUserError('Bondfire not found')
     }
 
-    const memberCampIds = await getVisibleCampIds(ctx, userId)
-    if (!(await isBondfireVisibleToViewer(ctx, bondfire, memberCampIds, userId))) {
-      throwUserError('Bondfire not found')
-    }
-
     const participantMap = await getParticipantMap(ctx, bondfire)
-    if (!bondfire.personalCampId && !participantMap.has(userId)) {
+    if (!participantMap.has(userId)) {
       throwUserError('Only thread participants can mark this Bondfire read')
     }
 
