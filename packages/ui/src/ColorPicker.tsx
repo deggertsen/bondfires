@@ -19,19 +19,22 @@ const ACCENT_PALETTE = [
 interface ColorPickerProps {
   value: string
   onChange: (color: string) => void
+  disabled?: boolean
 }
 
 function ColorCircle({
   color,
   selected,
   onSelect,
+  disabled,
 }: {
   color: string
   selected: boolean
   onSelect: () => void
+  disabled?: boolean
 }) {
   return (
-    <Pressable onPress={onSelect}>
+    <Pressable onPress={onSelect} disabled={disabled} accessibilityRole="button">
       <YStack
         width={40}
         height={40}
@@ -41,6 +44,7 @@ function ColorCircle({
         borderColor={selected ? bondfireColors.whiteSmoke : bondfireColors.iron}
         alignItems="center"
         justifyContent="center"
+        opacity={disabled ? 0.55 : 1}
       >
         {selected ? (
           <YStack
@@ -55,7 +59,7 @@ function ColorCircle({
   )
 }
 
-export function ColorPicker({ value, onChange }: ColorPickerProps) {
+export function ColorPicker({ value, onChange, disabled = false }: ColorPickerProps) {
   return (
     <XStack flexWrap="wrap" gap={10}>
       {ACCENT_PALETTE.map((color) => (
@@ -64,6 +68,7 @@ export function ColorPicker({ value, onChange }: ColorPickerProps) {
           color={color}
           selected={value === color}
           onSelect={() => onChange(color)}
+          disabled={disabled}
         />
       ))}
     </XStack>

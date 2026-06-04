@@ -1,6 +1,7 @@
-import { parseError } from '@bondfires/app'
+import { parseError, subscriptionActions } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, ColorPicker, StatCard, Text } from '@bondfires/ui'
+import { ImagePlus } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator'
 import * as ImagePicker from 'expo-image-picker'
@@ -8,14 +9,16 @@ import { useCallback, useState } from 'react'
 import { Alert, Pressable } from 'react-native'
 import { Image, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
-import type { Id } from '../../../../../convex/_generated/dataModel'
+import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
+
+const LOADING_SKELETON_IDS = ['slot-one', 'slot-two', 'slot-three'] as const
 
 function LoadingSkeleton() {
   return (
     <YStack gap={4}>
-      {Array.from({ length: 3 }).map((_, i) => (
+      {LOADING_SKELETON_IDS.map((id) => (
         <YStack
-          key={`skeleton-${i as unknown as string}`}
+          key={id}
           height={40}
           borderRadius={10}
           backgroundColor={`${bondfireColors.iron}40`}
@@ -40,6 +43,9 @@ function SlotBalanceSection() {
   }
 
   const balanceColor = summary.balance > 0 ? bondfireColors.success : bondfireColors.error
+  const handleGetMoreSlots = () => {
+    subscriptionActions.showPaywall()
+  }
 
   return (
     <YStack gap={12}>
@@ -108,7 +114,7 @@ function SlotBalanceSection() {
                     })}
                   </Text>
                   <Text fontSize={11} color={bondfireColors.ash} fontWeight="900">
-                    {activeCamp.slotCost} slot
+                    {activeCamp.slotCost} slot{activeCamp.slotCost !== 1 ? 's' : ''}
                   </Text>
                 </XStack>
               </XStack>
@@ -117,7 +123,7 @@ function SlotBalanceSection() {
         ) : null}
 
         {summary.balance < 3 ? (
-          <Button variant="outline" size="$sm" onPress={() => {}} marginTop={4}>
+          <Button variant="outline" size="$sm" onPress={handleGetMoreSlots} marginTop={4}>
             <Text color={bondfireColors.bondfireCopper} fontWeight="900">
               Get More Slots
             </Text>
@@ -156,11 +162,12 @@ function AnalyticsSection({ campId }: { campId: Id<'camps'> }) {
   )
 }
 
-function BrandingEditor({ campId }: { campId: Id<'camps'> }) {
-  const camp = useQuery(api.camps.get, { campId })
+function BrandingEditor({ camp }: { camp: Doc<'camps'> }) {
   const generateUploadUrl = useMutation(api.campBranding.generateCampCoverImageUploadUrl)
   const updateCampBranding = useMutation(api.campBranding.updateCampBranding)
   const [isUploading, setIsUploading] = useState(false)
+  const [isSavingAccentColor, setIsSavingAccentColor] = useState(false)
+  const campId = camp._id
 
   const handleCoverImageTap = useCallback(async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -206,26 +213,20 @@ function BrandingEditor({ campId }: { campId: Id<'camps'> }) {
 
   const handleAccentColorChange = useCallback(
     async (color: string) => {
+      if (color === camp.accentColor) return
+
+      setIsSavingAccentColor(true)
       try {
         await updateCampBranding({ campId, accentColor: color })
       } catch (error) {
         const message = parseError(error).message
         Alert.alert('Branding Update Failed', message)
+      } finally {
+        setIsSavingAccentColor(false)
       }
     },
-    [campId, updateCampBranding],
+    [camp.accentColor, campId, updateCampBranding],
   )
-
-  if (camp === undefined || camp === null) {
-    return (
-      <YStack gap={12}>
-        <Text fontSize={14} color={bondfireColors.bondfireCopper} fontWeight="900">
-          BRANDING
-        </Text>
-        <LoadingSkeleton />
-      </YStack>
-    )
-  }
 
   return (
     <YStack gap={12}>
@@ -266,7 +267,7 @@ function BrandingEditor({ campId }: { campId: Id<'camps'> }) {
               />
             ) : (
               <YStack gap={6} alignItems="center">
-                <Text fontSize={32}>🖼️</Text>
+                <ImagePlus size={32} color={bondfireColors.ash} />
                 <Text fontSize={13} color={bondfireColors.ash}>
                   Tap to add cover image
                 </Text>
@@ -289,7 +290,11 @@ function BrandingEditor({ campId }: { campId: Id<'camps'> }) {
           borderColor={bondfireColors.iron}
           gap={10}
         >
-          <ColorPicker value={camp.accentColor ?? ''} onChange={handleAccentColorChange} />
+          <ColorPicker
+            value={camp.accentColor ?? ''}
+            onChange={handleAccentColorChange}
+            disabled={isSavingAccentColor}
+          />
           {camp.accentColor ? (
             <XStack alignItems="center" gap={8}>
               <YStack
@@ -312,15 +317,18 @@ function BrandingEditor({ campId }: { campId: Id<'camps'> }) {
 }
 
 interface OwnerCampSectionsProps {
-  campId: Id<'camps'>
+  camp: Doc<'camps'>
 }
 
-export function OwnerCampSections({ campId }: OwnerCampSectionsProps) {
+export function OwnerCampSections({ camp }: OwnerCampSectionsProps) {
+  const subscription = useQuery(api.subscriptions.current, {})
+  const isPro = subscription?.tier === 'pro'
+
   return (
     <YStack gap={24} paddingHorizontal={16} paddingBottom={24}>
-      <SlotBalanceSection />
-      <AnalyticsSection campId={campId} />
-      <BrandingEditor campId={campId} />
+      {isPro ? <SlotBalanceSection /> : null}
+      <AnalyticsSection campId={camp._id} />
+      <BrandingEditor camp={camp} />
     </YStack>
   )
 }

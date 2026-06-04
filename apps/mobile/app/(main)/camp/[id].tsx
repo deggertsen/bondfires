@@ -1008,7 +1008,7 @@ export default function CampDetailScreen() {
               onArchive={handleArchive}
               currentUserId={camp.membership?.userId}
             />
-            {isOwner && campId ? <OwnerCampSections campId={campId} /> : null}
+            {isOwner ? <OwnerCampSections camp={camp} /> : null}
           </>
         }
         ListEmptyComponent={
