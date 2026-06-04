@@ -3,7 +3,11 @@ import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
-import { getEntitlementSubscriptionTier, PAID_TIERS } from './entitlements'
+import {
+  assertVideoDurationWithinTierLimit,
+  getEntitlementSubscriptionTier,
+  PAID_TIERS,
+} from './entitlements'
 import { throwUserError } from './errors'
 import { canViewPersonalBondfire, getPersonalBondfireParticipant } from './personalBondfireAccess'
 
@@ -203,6 +207,7 @@ export const createBondfire = mutation({
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx)
     const now = Date.now()
+    await assertVideoDurationWithinTierLimit(ctx, user._id, args.durationMs)
 
     if (args.muxPlaybackPolicy === 'public') {
       throwUserError('Personal Fire videos must use signed playback.')
@@ -588,6 +593,10 @@ export const deleteBondfire = mutation({
 
     // Delete the bondfire itself.
     await ctx.db.delete(args.bondfireId)
+    await ctx.db.patch(user._id, {
+      bondfireCount: Math.max(0, (user.bondfireCount ?? 1) - 1),
+      updatedAt: Date.now(),
+    })
   },
 })
 
