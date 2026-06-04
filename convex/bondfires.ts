@@ -175,27 +175,22 @@ async function filterVisibleBondfires(ctx: QueryCtx, bondfires: Doc<'bondfires'>
   return bondfires.filter((_, index) => visibility[index])
 }
 
-async function resolveCampNames(
-  ctx: QueryCtx,
-  bondfire: Doc<'bondfires'>,
-): Promise<{ campName?: string; personalCampName?: string }> {
-  const result: { campName?: string; personalCampName?: string } = {}
+async function resolveCampLabel(ctx: QueryCtx, bondfire: Doc<'bondfires'>) {
+  if (bondfire.personalCampId) {
+    const personalCamp = await ctx.db.get(bondfire.personalCampId)
+    if (personalCamp) {
+      return personalCamp.name
+    }
+  }
 
   if (bondfire.campId) {
     const camp = await ctx.db.get(bondfire.campId)
     if (camp) {
-      result.campName = camp.name
+      return camp.name
     }
   }
 
-  if (bondfire.personalCampId) {
-    const personalCamp = await ctx.db.get(bondfire.personalCampId)
-    if (personalCamp) {
-      result.personalCampName = personalCamp.name
-    }
-  }
-
-  return result
+  return undefined
 }
 
 // List bondfires for the feed (ordered by videoCount ASC for discovery)
@@ -219,14 +214,14 @@ export const listFeed = query({
       bondfires.filter(isPlayableVideoRecord),
     )
 
-    const withCampNames = await Promise.all(
+    const withCampLabels = await Promise.all(
       visibleBondfires.slice(0, limit).map(async (bondfire) => {
-        const campNames = await resolveCampNames(ctx, bondfire)
-        return { ...withLiveFlags(bondfire), ...campNames }
+        const campLabel = await resolveCampLabel(ctx, bondfire)
+        return { ...withLiveFlags(bondfire), campLabel }
       }),
     )
 
-    return withCampNames
+    return withCampLabels
   },
 })
 
@@ -266,14 +261,7 @@ export const listByCamp = query({
 
     const filtered = bondfires.filter(isPlayableVideoRecord).slice(0, limit)
 
-    const withCampNames = await Promise.all(
-      filtered.map(async (bondfire) => {
-        const campNames = await resolveCampNames(ctx, bondfire)
-        return { ...withLiveFlags(bondfire), ...campNames }
-      }),
-    )
-
-    return withCampNames
+    return filtered.map((bondfire) => ({ ...withLiveFlags(bondfire), campLabel: camp.name }))
   },
 })
 
