@@ -14,6 +14,7 @@ import { FlatList, Pressable, RefreshControl, StatusBar } from 'react-native'
 import { Avatar, Separator, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
+import { routes } from '../../../lib/routes'
 
 type PublicUser = {
   _id: Id<'users'>
@@ -175,7 +176,7 @@ export default function MyFiresScreen() {
       setFeedActiveBondfireId(bondfireId)
       setBondfireVideoIndex(bondfireId, getBondfireVideoIndex(bondfireId) ?? 0)
       appActions.setVideoMuted(false)
-      router.push(`/(main)/bondfire/${bondfireId}`)
+      router.push(routes.bondfire(bondfireId))
     },
     [router],
   )
@@ -240,7 +241,7 @@ export default function MyFiresScreen() {
               variant="primary"
               size="$lg"
               marginTop={24}
-              onPress={() => router.push('/(main)/(tabs)/feed')}
+              onPress={() => router.push(routes.feed)}
             >
               <Text color={bondfireColors.whiteSmoke} fontWeight="900">
                 Browse Feed

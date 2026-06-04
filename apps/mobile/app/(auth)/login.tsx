@@ -1,4 +1,4 @@
-import { getAuthRedirectPath, telemetry } from '@bondfires/app'
+import { telemetry } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
@@ -11,6 +11,7 @@ import { StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { Spinner, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
+import { resolveAuthRedirect, routes } from '../../lib/routes'
 
 export default function LoginScreen() {
   const router = useRouter()
@@ -30,7 +31,6 @@ export default function LoginScreen() {
   const password = useValue(form$.password)
   const isLoading = useValue(form$.isLoading)
   const error = useValue(form$.error)
-  const redirectPath = getAuthRedirectPath(redirectTo)
 
   // Use a ref to track pending navigation intent, avoiding useEffect dependency loops.
   // The effect reacts to currentUser resolving exactly once per auth outcome.
@@ -45,14 +45,11 @@ export default function LoginScreen() {
 
     const currentEmail = form$.email.peek()
     if (currentUser && currentUser.emailVerified === false) {
-      router.replace({
-        pathname: '/(auth)/verify-email',
-        params: redirectTo ? { email: currentEmail, redirectTo } : { email: currentEmail },
-      })
+      router.replace(routes.verifyEmail({ email: currentEmail, redirectTo }))
     } else if (currentUser) {
-      router.replace(redirectPath ?? '/(main)/(tabs)/feed')
+      router.replace(resolveAuthRedirect(redirectTo))
     }
-  }, [currentUser, redirectPath, redirectTo, router, form$])
+  }, [currentUser, redirectTo, router, form$])
 
   const handleLogin = async () => {
     const currentEmail = form$.email.get()
@@ -101,10 +98,7 @@ export default function LoginScreen() {
         result.signingIn === false
       ) {
         // User needs to verify email - a new verification code was sent
-        router.replace({
-          pathname: '/(auth)/verify-email',
-          params: redirectTo ? { email: currentEmail, redirectTo } : { email: currentEmail },
-        })
+        router.replace(routes.verifyEmail({ email: currentEmail, redirectTo }))
         form$.isLoading.set(false)
         return
       }
@@ -120,10 +114,7 @@ export default function LoginScreen() {
       if (errorMessage.includes('verify') || errorMessage.includes('verification')) {
         // Don't double-navigate — if signIn already directed us to verification, skip
         if (!pendingNavRef.current) {
-          router.replace({
-            pathname: '/(auth)/verify-email',
-            params: redirectTo ? { email: currentEmail, redirectTo } : { email: currentEmail },
-          })
+          router.replace(routes.verifyEmail({ email: currentEmail, redirectTo }))
         }
       } else if (errorMessage.includes('timed out')) {
         form$.error.set('Sign in timed out. Please check your connection and try again.')
@@ -208,7 +199,7 @@ export default function LoginScreen() {
               variant="ghost"
               size="$sm"
               alignSelf="flex-end"
-              onPress={() => router.push('/(auth)/forgot-password')}
+              onPress={() => router.push(routes.forgotPassword)}
             >
               Forgot password?
             </Button>
@@ -224,7 +215,7 @@ export default function LoginScreen() {
               )}
             </Button>
 
-            <Button variant="outline" size="$md" onPress={() => router.push('/(auth)/signup')}>
+            <Button variant="outline" size="$md" onPress={() => router.push(routes.signup)}>
               <Text>Create an account</Text>
             </Button>
           </YStack>

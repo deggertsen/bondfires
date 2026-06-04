@@ -49,6 +49,7 @@ import { NotepadOverlay } from '../../../components/NotepadOverlay'
 import { ReportButton } from '../../../components/ReportButton'
 import { ReportOverlay } from '../../../components/ReportOverlay'
 import { SettingsPopover } from '../../../components/SettingsPopover'
+import { routes } from '../../../lib/routes'
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window')
 
@@ -857,7 +858,7 @@ export default function BondfireDetailScreen() {
     if (navigation.canGoBack()) {
       router.back()
     } else {
-      router.replace('/(main)/(tabs)/feed')
+      router.replace(routes.feed)
     }
   }, [navigation, router])
 
@@ -910,7 +911,7 @@ export default function BondfireDetailScreen() {
 
   const handleRespond = useCallback(() => {
     if (bondfireData?.campStatus === 'archived') return
-    router.push(`/(main)/(tabs)/create?respondTo=${id}`)
+    router.push(routes.createRespondTo(id))
   }, [bondfireData?.campStatus, router, id])
 
   const handleLongPressParticipant = useCallback(

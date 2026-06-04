@@ -6,6 +6,7 @@ import { useRouter } from 'expo-router'
 import { useState } from 'react'
 import { StatusBar } from 'react-native'
 import { YStack } from 'tamagui'
+import { routes } from '../lib/routes'
 
 interface CompletionScreenProps {
   onContinue?: () => void
@@ -20,7 +21,7 @@ export function CompletionScreen({ detail, onContinue }: CompletionScreenProps) 
     if (onContinue) {
       onContinue()
     } else {
-      router.replace('/(main)/(tabs)/feed')
+      router.replace(routes.feed)
     }
   }
 

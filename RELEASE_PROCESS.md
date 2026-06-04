@@ -6,19 +6,36 @@
 
 ### 1. Navigation Integrity Check
 
-```bash
-# Check for hardcoded navigation paths that might be broken
-grep -r "/(main)/" apps/mobile/ --include="*.tsx" --include="*.ts" -n
+All navigation MUST go through the centralized, type-safe route registry at
+`apps/mobile/lib/routes.ts`. That module builds every target as a typed
+`Href`, so a moved/renamed screen becomes a **compile error in one file**
+(caught by `yarn typecheck`) instead of a runtime crash for users.
 
-# Verify all paths match current file structure
-find apps/mobile/app -name "*.tsx" | head -20
+```bash
+# 1. No unsafe route casts in source (these defeat typed routes). Expect ZERO hits.
+grep -rn "as RelativePathString\|as ExternalPathString" \
+  apps/mobile/app apps/mobile/components apps/mobile/lib
+
+# 2. No raw path strings passed to the router or <Redirect>. Expect ZERO hits
+#    outside apps/mobile/lib/routes.ts (the only place literals are allowed).
+grep -rn "router\.\(push\|replace\)( *['\"\`]/\|href=['\"\`]/\|href={\`/" apps/mobile/app apps/mobile/components
+
+# 3. Verify route files still match the registry's pathnames.
+find apps/mobile/app -name "*.tsx" | sort
 ```
 
 **What to verify:**
-- All navigation paths exist in current file structure
-- No references to moved/deleted screen files
-- Deep linking paths work (notifications, auth redirects)
-- Tab navigation and stack navigation properly configured
+- Checks 1 and 2 return no results (all navigation flows through `routes.*`).
+- All `routes.*` pathnames in `lib/routes.ts` resolve against the current file
+  tree (guaranteed by `yarn typecheck` once route types are regenerated — see §2).
+- Untrusted navigation (push notifications, deep links) goes through
+  `resolveExternalRoute` / `resolveAuthRedirect`, never a raw cast.
+- Deep linking paths work (notifications, auth redirects).
+- Tab navigation and stack navigation properly configured.
+
+> **Why this matters:** the navigation bug that created this document came from a
+> hardcoded path surviving a file move. Centralized typed routes turn that whole
+> class of bug into a failed `yarn typecheck`.
 
 ### 2. TypeScript Compilation
 

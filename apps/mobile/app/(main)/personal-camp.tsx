@@ -9,6 +9,7 @@ import { FlatList, Pressable, StatusBar } from 'react-native'
 import { Separator, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../convex/_generated/dataModel'
+import { routes } from '../../lib/routes'
 
 type BondfireData = Doc<'bondfires'> & {
   participantCount: number
@@ -84,10 +85,7 @@ export default function PersonalCampScreen() {
 
   const handleOpenBondfire = useCallback(
     (bondfireId: Id<'bondfires'>) => {
-      router.push({
-        pathname: '/(main)/bondfire/[id]',
-        params: { id: bondfireId },
-      })
+      router.push(routes.bondfire(bondfireId))
     },
     [router],
   )
