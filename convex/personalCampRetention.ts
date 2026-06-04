@@ -1,152 +1,230 @@
 /**
- * Personal Camp Video Retention Cron
+ * Daily retention enforcement for personal camp response videos.
  *
- * Scheduled function that enforces video retention policies for personal camps:
- * - Plus / Premium: Bondfire response videos older than 30 days are deleted
- * - Pro: Unlimited retention (skipped entirely)
+ * Plus owners get 30 days of response-video storage. Premium and Pro owners
+ * keep unlimited storage, matching the subscription entitlement copy.
  *
- * Only response videos and their Mux assets are deleted — bondfire shells
- * and participant data persist.
+ * Bondfire shells and participant rows are preserved; only expired response
+ * videos, their live-session rows, and their Mux assets are removed.
  */
 
 import { v } from 'convex/values'
-import { internalAction, internalMutation, internalQuery } from './_generated/server'
-import type { Id } from './_generated/dataModel'
-import { TIER_RANK } from './entitlements'
 import { internal } from './_generated/api'
+import type { Id } from './_generated/dataModel'
+import { internalAction, internalMutation, internalQuery } from './_generated/server'
+import {
+  getEntitlementSubscriptionTier,
+  PLUS_PRIVATE_RETENTION_MS,
+  type SubscriptionTier,
+  TIER_RANK,
+} from './entitlements'
 
-/** Retention window for Plus/Premium personal camps (30 days). */
-const PERSONAL_CAMP_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+const MUX_API_BASE_URL = 'https://api.mux.com/video/v1'
 
-/** Maximum number of personal camps to process per cron invocation. */
-const MAX_CAMPS_PER_RUN = 50
+/** Maximum response records to delete in one cron invocation. */
+const MAX_RESPONSE_VIDEOS_PER_RUN = 200
 
-/** Maximum number of videos to delete per personal camp per run. */
-const MAX_VIDEOS_PER_CAMP = 200
-
-// ── Types ──
-
-type PersonalCampRetentionResult = {
-  campsChecked: number
-  campsSkippedPro: number
-  campsSkippedNoVideos: number
-  videosDeleted: number
-  muxAssetsDeleted: number
-  muxAssetsMissing: number
-  remainingMayExist: boolean
-}
+/** Prevents one busy bondfire from monopolizing the whole daily run. */
+const MAX_RESPONSE_VIDEOS_PER_BONDFIRE = 50
 
 type RetentionDeletion = {
   bondfireId: Id<'bondfires'>
-  videoIds: Id<'bondfireVideos'>
-  muxAssetIds: string[]
+  videoIds: Array<Id<'bondfireVideos'>>
 }
 
-// ── Internal Query: Build the list of deletions for this run ──
+type RetentionCandidate = {
+  bondfireId: Id<'bondfires'>
+  videoId: Id<'bondfireVideos'>
+  muxAssetId?: string
+}
+
+type PersonalCampRetentionStats = {
+  campsChecked: number
+  campsSkippedUnlimitedRetention: number
+  campsSkippedNoExpiredVideos: number
+}
+
+type PersonalCampRetentionResult = PersonalCampRetentionStats & {
+  videosDeleted: number
+  muxAssetsDeleted: number
+  muxAssetsMissing: number
+  muxAssetsFailed: number
+  remainingMayExist: boolean
+}
+
+function tierHasUnlimitedPersonalCampRetention(tier: SubscriptionTier) {
+  return TIER_RANK[tier] >= TIER_RANK.premium
+}
+
+function isPlayableVideoRecord(record: {
+  videoStatus?: string
+  muxPlaybackId?: string
+  muxLivePlaybackId?: string
+  expiresAt?: number
+}) {
+  if (record.expiresAt !== undefined && record.expiresAt <= Date.now()) {
+    return false
+  }
+
+  const status = record.videoStatus ?? 'ready'
+  return (
+    (status === 'ready' && !!record.muxPlaybackId) ||
+    (status === 'live' && !!record.muxLivePlaybackId)
+  )
+}
+
+function getMuxAuthorizationHeader() {
+  const tokenId = process.env.MUX_TOKEN_ID
+  const tokenSecret = process.env.MUX_TOKEN_SECRET
+
+  if (!tokenId || !tokenSecret) {
+    throw new Error(
+      'Mux is not configured. Please set MUX_TOKEN_ID and MUX_TOKEN_SECRET in Convex environment variables.',
+    )
+  }
+
+  return `Basic ${btoa(`${tokenId}:${tokenSecret}`)}`
+}
+
+async function deleteMuxAsset(assetId: string): Promise<'deleted' | 'missing'> {
+  const response = await fetch(`${MUX_API_BASE_URL}/assets/${assetId}`, {
+    method: 'DELETE',
+    headers: {
+      Accept: 'application/json',
+      Authorization: getMuxAuthorizationHeader(),
+    },
+  })
+
+  if (response.status === 404) {
+    return 'missing'
+  }
+
+  if (!response.ok) {
+    const message = await response.text()
+    throw new Error(`Mux asset delete failed: ${response.status} ${message}`)
+  }
+
+  return 'deleted'
+}
+
+function groupCandidates(candidates: RetentionCandidate[]): RetentionDeletion[] {
+  const byBondfire = new Map<Id<'bondfires'>, RetentionDeletion>()
+
+  for (const candidate of candidates) {
+    const existing = byBondfire.get(candidate.bondfireId)
+    const deletion =
+      existing ??
+      ({
+        bondfireId: candidate.bondfireId,
+        videoIds: [],
+      } satisfies RetentionDeletion)
+
+    deletion.videoIds.push(candidate.videoId)
+
+    byBondfire.set(candidate.bondfireId, deletion)
+  }
+
+  return [...byBondfire.values()]
+}
 
 export const buildDeletionBatch = internalQuery({
-  handler: async (ctx): Promise<{
-    deletions: RetentionDeletion[]
-    stats: { campsChecked: number; campsSkippedPro: number; campsSkippedNoVideos: number }
+  handler: async (
+    ctx,
+  ): Promise<{
+    cutoff: number
+    candidates: RetentionCandidate[]
+    stats: PersonalCampRetentionStats
     remainingMayExist: boolean
   }> => {
-    const now = Date.now()
-    const cutoff = now - PERSONAL_CAMP_RETENTION_MS
-
+    const cutoff = Date.now() - PLUS_PRIVATE_RETENTION_MS
     const personalCamps = await ctx.db
       .query('personalCamps')
       .filter((q) => q.eq(q.field('status'), 'active'))
-      .take(MAX_CAMPS_PER_RUN)
+      .collect()
 
-    let campsChecked = 0
-    let campsSkippedPro = 0
-    let campsSkippedNoVideos = 0
-    const deletions: RetentionDeletion[] = []
+    const candidates: RetentionCandidate[] = []
+    const stats: PersonalCampRetentionStats = {
+      campsChecked: 0,
+      campsSkippedUnlimitedRetention: 0,
+      campsSkippedNoExpiredVideos: 0,
+    }
+    let remainingMayExist = false
 
     for (const camp of personalCamps) {
-      campsChecked++
-
-      // Determine owner tier
-      const owner = await ctx.db.get(camp.ownerId)
-      let ownerTier: string = 'free'
-
-      if (owner?.forcedTier) {
-        ownerTier = owner.forcedTier
-      } else {
-        const subscriptions = await ctx.db
-          .query('subscriptions')
-          .withIndex('by_user', (q) => q.eq('userId', camp.ownerId))
-          .collect()
-
-        const activeSubs = subscriptions.filter(
-          (sub) =>
-            sub.verificationStatus === 'verified' &&
-            (sub.status === 'active' || sub.status === 'trialing') &&
-            (!sub.currentPeriodEnd || sub.currentPeriodEnd > now),
-        )
-
-        ownerTier = activeSubs.reduce(
-          (highest, sub) =>
-            TIER_RANK[sub.tier as keyof typeof TIER_RANK] >
-            TIER_RANK[highest as keyof typeof TIER_RANK]
-              ? sub.tier
-              : highest,
-          'free',
-        )
+      if (candidates.length >= MAX_RESPONSE_VIDEOS_PER_RUN) {
+        remainingMayExist = true
+        break
       }
 
-      // Pro has unlimited retention — skip entirely
-      if (TIER_RANK[ownerTier as keyof typeof TIER_RANK] >= TIER_RANK.pro) {
-        campsSkippedPro++
+      stats.campsChecked += 1
+
+      const ownerTier = await getEntitlementSubscriptionTier(ctx, camp.ownerId)
+      if (tierHasUnlimitedPersonalCampRetention(ownerTier)) {
+        stats.campsSkippedUnlimitedRetention += 1
         continue
       }
 
-      // Find all bondfires in this personal camp
+      let campExpiredVideoCount = 0
       const bondfires = await ctx.db
         .query('bondfires')
         .withIndex('by_personal_camp', (q) => q.eq('personalCampId', camp._id))
         .collect()
 
-      if (bondfires.length === 0) {
-        campsSkippedNoVideos++
-        continue
-      }
-
-      // For each bondfire, find response videos older than cutoff
       for (const bondfire of bondfires) {
-        const allVideos = await ctx.db
-          .query('bondfireVideos')
-          .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
-          .collect()
+        if (candidates.length >= MAX_RESPONSE_VIDEOS_PER_RUN) {
+          remainingMayExist = true
+          break
+        }
 
-        const expiredVideos = allVideos
-          .filter((v) => v.createdAt < cutoff)
-          .slice(0, MAX_VIDEOS_PER_CAMP)
+        const expiredVideos = (
+          await ctx.db
+            .query('bondfireVideos')
+            .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
+            .collect()
+        ).filter((video) => video.createdAt < cutoff)
 
-        if (expiredVideos.length > 0) {
-          deletions.push({
+        if (expiredVideos.length === 0) {
+          continue
+        }
+
+        campExpiredVideoCount += expiredVideos.length
+
+        const remainingRunCapacity = MAX_RESPONSE_VIDEOS_PER_RUN - candidates.length
+        const videosForBondfire = expiredVideos.slice(
+          0,
+          Math.min(MAX_RESPONSE_VIDEOS_PER_BONDFIRE, remainingRunCapacity),
+        )
+
+        if (videosForBondfire.length < expiredVideos.length) {
+          remainingMayExist = true
+        }
+
+        for (const video of videosForBondfire) {
+          candidates.push({
             bondfireId: bondfire._id,
-            videoIds: expiredVideos.map((v) => v._id),
-            muxAssetIds: expiredVideos
-              .map((v) => v.muxAssetId)
-              .filter((id): id is string => id !== undefined),
+            videoId: video._id,
+            muxAssetId: video.muxAssetId,
           })
         }
+      }
+
+      if (campExpiredVideoCount === 0) {
+        stats.campsSkippedNoExpiredVideos += 1
       }
     }
 
     return {
-      deletions,
-      stats: { campsChecked, campsSkippedPro, campsSkippedNoVideos },
-      remainingMayExist: personalCamps.length >= MAX_CAMPS_PER_RUN,
+      cutoff,
+      candidates,
+      stats,
+      remainingMayExist,
     }
   },
 })
 
-// ── Internal Mutation: Delete expired video records ──
-
 export const deleteExpiredVideoRecords = internalMutation({
   args: {
+    cutoff: v.number(),
     deletions: v.array(
       v.object({
         bondfireId: v.id('bondfires'),
@@ -157,57 +235,60 @@ export const deleteExpiredVideoRecords = internalMutation({
   handler: async (ctx, args) => {
     const now = Date.now()
     let videosDeleted = 0
+    const affectedBondfires = new Set<Id<'bondfires'>>()
     const affectedUsers = new Set<Id<'users'>>()
 
     for (const { bondfireId, videoIds } of args.deletions) {
       for (const videoId of videoIds) {
         const video = await ctx.db.get(videoId)
-        if (!video) continue
-
-        affectedUsers.add(video.userId)
-        await ctx.db.delete(videoId)
-        videosDeleted++
-      }
-
-      // Update bondfire videoCount after deletions
-      const bondfire = await ctx.db.get(bondfireId)
-      if (bondfire) {
-        const remainingVideos = await ctx.db
-          .query('bondfireVideos')
-          .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfireId))
-          .collect()
-
-        // videoCount includes the main video (bondfire itself if it has a playbackId) + responses
-        const mainVideoCount = bondfire.muxPlaybackId ? 1 : 0
-        const newVideoCount = mainVideoCount + remainingVideos.length
-
-        if (newVideoCount !== bondfire.videoCount) {
-          await ctx.db.patch(bondfireId, {
-            videoCount: newVideoCount,
-            updatedAt: now,
-          })
+        if (!video || video.bondfireId !== bondfireId || video.createdAt >= args.cutoff) {
+          continue
         }
+
+        affectedBondfires.add(bondfireId)
+        affectedUsers.add(video.userId)
+
+        if (video.liveSessionId) {
+          await ctx.db.delete(video.liveSessionId)
+        }
+        await ctx.db.delete(videoId)
+        videosDeleted += 1
       }
     }
 
-    // Update affected users' response counts
+    for (const bondfireId of affectedBondfires) {
+      const bondfire = await ctx.db.get(bondfireId)
+      if (!bondfire) {
+        continue
+      }
+
+      const remainingVideos = await ctx.db
+        .query('bondfireVideos')
+        .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfireId))
+        .collect()
+
+      const newVideoCount = 1 + remainingVideos.length
+      if (newVideoCount !== bondfire.videoCount) {
+        await ctx.db.patch(bondfireId, {
+          videoCount: newVideoCount,
+          updatedAt: now,
+        })
+      }
+    }
+
     for (const userId of affectedUsers) {
+      const user = await ctx.db.get(userId)
+      if (!user) {
+        continue
+      }
+
       const userResponses = await ctx.db
         .query('bondfireVideos')
         .withIndex('by_user', (q) => q.eq('userId', userId))
         .collect()
 
-      const playableCount = userResponses.filter((v) => {
-        if (v.expiresAt !== undefined && v.expiresAt <= now) return false
-        const status = v.videoStatus ?? 'ready'
-        return (
-          (status === 'ready' && !!v.muxPlaybackId) ||
-          (status === 'live' && !!v.muxLivePlaybackId)
-        )
-      }).length
-
       await ctx.db.patch(userId, {
-        responseCount: playableCount,
+        responseCount: userResponses.filter(isPlayableVideoRecord).length,
         updatedAt: now,
       })
     }
@@ -216,93 +297,73 @@ export const deleteExpiredVideoRecords = internalMutation({
   },
 })
 
-// ── Internal Query: Get Mux configuration ──
-
-export const getMuxConfig = internalQuery({
-  handler: async () => {
-    const tokenId = process.env.MUX_TOKEN_ID
-    const tokenSecret = process.env.MUX_TOKEN_SECRET
-
-    if (!tokenId || !tokenSecret) {
-      throw new Error('MUX_TOKEN_ID and MUX_TOKEN_SECRET must be set')
-    }
-
-    return { tokenId, tokenSecret }
-  },
-})
-
-// ── Scheduled Action: Main entry point ──
-
 export const enforcePersonalCampRetention = internalAction({
   handler: async (ctx): Promise<PersonalCampRetentionResult> => {
-    const { deletions, stats, remainingMayExist } = await ctx.runQuery(
+    const { cutoff, candidates, stats, remainingMayExist } = await ctx.runQuery(
       internal.personalCampRetention.buildDeletionBatch,
     )
 
-    if (deletions.length === 0) {
+    if (candidates.length === 0) {
       return {
         ...stats,
         videosDeleted: 0,
         muxAssetsDeleted: 0,
         muxAssetsMissing: 0,
+        muxAssetsFailed: 0,
         remainingMayExist,
       }
     }
 
-    // Collect all unique Mux asset IDs to delete
-    const allMuxAssetIds = [...new Set(deletions.flatMap((d) => d.muxAssetIds))]
-
-    // Delete Mux assets via the Mux API
+    const uniqueMuxAssetIds = [
+      ...new Set(
+        candidates
+          .map((candidate) => candidate.muxAssetId)
+          .filter((assetId): assetId is string => assetId !== undefined),
+      ),
+    ]
+    const deletableMuxAssetIds = new Set<string>()
     let muxAssetsDeleted = 0
     let muxAssetsMissing = 0
+    let muxAssetsFailed = 0
 
-    if (allMuxAssetIds.length > 0) {
-      const muxConfig = await ctx.runQuery(internal.personalCampRetention.getMuxConfig)
-      const auth = Buffer.from(`${muxConfig.tokenId}:${muxConfig.tokenSecret}`).toString('base64')
-
-      for (const assetId of allMuxAssetIds) {
-        try {
-          const response = await fetch(`https://api.mux.com/video/v1/assets/${assetId}`, {
-            method: 'DELETE',
-            headers: {
-              Accept: 'application/json',
-              Authorization: `Basic ${auth}`,
-            },
-          })
-
-          if (response.status === 404) {
-            muxAssetsMissing++
-          } else if (response.ok) {
-            muxAssetsDeleted++
-          } else {
-            const message = await response.text()
-            console.error(
-              `[personalCampRetention] Mux delete failed for ${assetId}: ${response.status} ${message}`,
-            )
-          }
-        } catch (err) {
-          console.error(`[personalCampRetention] Error deleting Mux asset ${assetId}:`, err)
+    for (const assetId of uniqueMuxAssetIds) {
+      try {
+        const result = await deleteMuxAsset(assetId)
+        deletableMuxAssetIds.add(assetId)
+        if (result === 'missing') {
+          muxAssetsMissing += 1
+        } else {
+          muxAssetsDeleted += 1
         }
+      } catch (err) {
+        muxAssetsFailed += 1
+        console.error(`[personalCampRetention] Failed to delete Mux asset ${assetId}:`, err)
       }
     }
 
-    // Delete video records from the database
-    const { videosDeleted } = await ctx.runMutation(
-      internal.personalCampRetention.deleteExpiredVideoRecords,
-      {
-        deletions: deletions.map((d) => ({
-          bondfireId: d.bondfireId,
-          videoIds: d.videoIds,
-        })),
-      },
+    const recordsReadyToDelete = candidates.filter(
+      (candidate) => !candidate.muxAssetId || deletableMuxAssetIds.has(candidate.muxAssetId),
     )
+    const safeDeletions = groupCandidates(recordsReadyToDelete).map((deletion) => ({
+      bondfireId: deletion.bondfireId,
+      videoIds: deletion.videoIds,
+    }))
+
+    const { videosDeleted } =
+      safeDeletions.length > 0
+        ? await ctx.runMutation(internal.personalCampRetention.deleteExpiredVideoRecords, {
+            cutoff,
+            deletions: safeDeletions,
+          })
+        : { videosDeleted: 0 }
 
     return {
       ...stats,
       videosDeleted,
       muxAssetsDeleted,
       muxAssetsMissing,
-      remainingMayExist,
+      muxAssetsFailed,
+      remainingMayExist: remainingMayExist || recordsReadyToDelete.length < candidates.length,
     }
   },
 })

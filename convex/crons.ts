@@ -70,8 +70,8 @@ crons.daily(
   internal.reconciliation.dailyReconciliation,
 )
 
-// Enforce personal camp video retention: Plus/Premium = 30-day rolling deletion.
-// Pro owners have unlimited retention and are skipped.
+// Enforce personal camp video retention: Plus = 30-day rolling deletion.
+// Premium and Pro owners have unlimited retention and are skipped.
 // Only deletes videos (and their Mux assets) — bondfire shells and
 // participant data are preserved.
 // Runs daily at 15:00 UTC, after all other daily cleanup jobs.
