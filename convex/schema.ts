@@ -271,15 +271,19 @@ export default defineSchema({
     .index('by_store_transaction', ['storeOriginalTransactionId'])
     .index('by_store_purchase_token', ['storePurchaseToken']),
 
-  // Personal Camps — user-owned micro-camps for private friend groups
+  // Personal Camps - user-owned micro-camps for private friend groups
   personalCamps: defineTable({
+    publicId: v.string(),
     ownerId: v.id('users'),
     name: v.string(),
     status: v.union(v.literal('active'), v.literal('frozen')),
     frozenAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
-  }).index('by_owner', ['ownerId']),
+  })
+    .index('by_public_id', ['publicId'])
+    .index('by_owner', ['ownerId', 'createdAt'])
+    .index('by_owner_status', ['ownerId', 'status', 'createdAt']),
 
   // Membership in personal bondfires
   personalBondfireParticipants: defineTable({
@@ -287,24 +291,31 @@ export default defineSchema({
     userId: v.id('users'),
     status: v.union(v.literal('active'), v.literal('left'), v.literal('removed')),
     joinedAt: v.number(),
+    leftAt: v.optional(v.number()),
+    removedAt: v.optional(v.number()),
+    removedBy: v.optional(v.id('users')),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index('by_bondfire_status', ['bondfireId', 'status'])
+    .index('by_bondfire', ['bondfireId', 'joinedAt'])
+    .index('by_bondfire_status', ['bondfireId', 'status', 'joinedAt'])
     .index('by_bondfire_user', ['bondfireId', 'userId'])
-    .index('by_user', ['userId']),
+    .index('by_user', ['userId', 'joinedAt'])
+    .index('by_user_status', ['userId', 'status', 'joinedAt']),
 
   // Invite codes for personal bondfires
   personalBondfireInvites: defineTable({
     bondfireId: v.id('bondfires'),
     code: v.string(),
+    uses: v.number(),
+    maxUses: v.optional(v.number()),
     createdBy: v.id('users'),
-    expiresAt: v.number(),
+    expiresAt: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index('by_code', ['code'])
-    .index('by_bondfire', ['bondfireId'])
-    .index('by_created_by', ['createdBy']),
+    .index('by_bondfire', ['bondfireId', 'createdAt'])
+    .index('by_created_by', ['createdBy', 'createdAt']),
 
   // Reconciliation audit log for daily slot balance checks and refunds.
   reconciliationLog: defineTable({

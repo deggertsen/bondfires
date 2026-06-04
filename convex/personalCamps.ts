@@ -1,39 +1,79 @@
 import { v } from 'convex/values'
-import { internalMutation, query } from './_generated/server'
+import type { Doc, Id } from './_generated/dataModel'
+import { internalMutation, type MutationCtx, type QueryCtx, query } from './_generated/server'
 import { auth } from './auth'
+import { getEntitlementSubscriptionTier, type SubscriptionTier, TIER_RANK } from './entitlements'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+const subscriptionTierValidator = v.union(
+  v.literal('free'),
+  v.literal('plus'),
+  v.literal('premium'),
+  v.literal('pro'),
+)
+
+function isPaidTier(tier: SubscriptionTier) {
+  return TIER_RANK[tier] > TIER_RANK.free
+}
+
 function personalCampName(displayName?: string, name?: string) {
-  const base = displayName || name || 'Someone'
+  const base = displayName?.trim() || name?.trim() || 'Someone'
   return `${base}'s Fire`
+}
+
+function personalCampPublicId() {
+  return `pc_${crypto.randomUUID().replaceAll('-', '')}`
+}
+
+async function getPersonalCampByOwner(
+  ctx: { db: QueryCtx['db'] | MutationCtx['db'] },
+  ownerId: Id<'users'>,
+): Promise<Doc<'personalCamps'> | null> {
+  return await ctx.db
+    .query('personalCamps')
+    .withIndex('by_owner', (q) => q.eq('ownerId', ownerId))
+    .first()
 }
 
 // ── Internal Mutations ─────────────────────────────────────────────────────
 
 /**
- * Get or create a personal camp for a given user and tier.
+ * Get, activate, or create a personal camp for a given user and tier.
  * No auth check — callers are responsible for authorization.
  *
  * - Free tier: returns null (no personal camp for free users).
- * - Paid tier: returns existing camp or creates a new one.
+ * - Paid tier: returns active existing camp, thaws frozen camp, or creates a new one.
  */
 export const internalGetOrCreatePersonalCamp = internalMutation({
   args: {
     userId: v.id('users'),
-    tier: v.union(v.literal('free'), v.literal('plus'), v.literal('premium'), v.literal('pro')),
+    tier: subscriptionTierValidator,
   },
   handler: async (ctx, args) => {
-    if (args.tier === 'free') {
+    if (!isPaidTier(args.tier)) {
       return null
     }
 
-    const existing = await ctx.db
-      .query('personalCamps')
-      .withIndex('by_owner', (q) => q.eq('ownerId', args.userId))
-      .first()
+    const existing = await getPersonalCampByOwner(ctx, args.userId)
 
     if (existing) {
+      if (existing.status === 'frozen') {
+        const now = Date.now()
+        await ctx.db.patch(existing._id, {
+          status: 'active',
+          frozenAt: undefined,
+          updatedAt: now,
+        })
+
+        return {
+          ...existing,
+          status: 'active' as const,
+          frozenAt: undefined,
+          updatedAt: now,
+        }
+      }
+
       return existing
     }
 
@@ -44,7 +84,9 @@ export const internalGetOrCreatePersonalCamp = internalMutation({
 
     const now = Date.now()
     const name = personalCampName(user.displayName, user.name)
+    const publicId = personalCampPublicId()
     const campId = await ctx.db.insert('personalCamps', {
+      publicId,
       ownerId: args.userId,
       name,
       status: 'active',
@@ -54,6 +96,7 @@ export const internalGetOrCreatePersonalCamp = internalMutation({
 
     return {
       _id: campId,
+      publicId,
       ownerId: args.userId,
       name,
       status: 'active' as const,
@@ -72,10 +115,7 @@ export const freezePersonalCamp = internalMutation({
     ownerId: v.id('users'),
   },
   handler: async (ctx, args) => {
-    const camp = await ctx.db
-      .query('personalCamps')
-      .withIndex('by_owner', (q) => q.eq('ownerId', args.ownerId))
-      .first()
+    const camp = await getPersonalCampByOwner(ctx, args.ownerId)
 
     if (!camp || camp.status !== 'active') {
       return null
@@ -101,10 +141,7 @@ export const unfreezePersonalCamp = internalMutation({
     ownerId: v.id('users'),
   },
   handler: async (ctx, args) => {
-    const camp = await ctx.db
-      .query('personalCamps')
-      .withIndex('by_owner', (q) => q.eq('ownerId', args.ownerId))
-      .first()
+    const camp = await getPersonalCampByOwner(ctx, args.ownerId)
 
     if (!camp || camp.status !== 'frozen') {
       return null
@@ -136,11 +173,11 @@ export const getMyPersonalCamp = query({
       return null
     }
 
-    const existing = await ctx.db
-      .query('personalCamps')
-      .withIndex('by_owner', (q) => q.eq('ownerId', userId))
-      .first()
+    const tier = await getEntitlementSubscriptionTier(ctx, userId)
+    if (!isPaidTier(tier)) {
+      return null
+    }
 
-    return existing ?? null
+    return await getPersonalCampByOwner(ctx, userId)
   },
 })

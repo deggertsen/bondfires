@@ -339,6 +339,7 @@ export const createInvite = mutation({
     await ctx.db.insert('personalBondfireInvites', {
       bondfireId: args.bondfireId,
       code,
+      uses: 0,
       createdBy: user._id,
       expiresAt,
       createdAt: now,
@@ -375,8 +376,12 @@ export const redeemInvite = mutation({
       throwUserError('Invite not found.')
     }
 
-    if (invite.expiresAt <= now) {
+    if (invite.expiresAt !== undefined && invite.expiresAt <= now) {
       throwUserError('This invite has expired.')
+    }
+
+    if (invite.maxUses !== undefined && invite.uses >= invite.maxUses) {
+      throwUserError('This invite has already been used.')
     }
 
     const bondfire = await ctx.db.get(invite.bondfireId)
@@ -418,6 +423,9 @@ export const redeemInvite = mutation({
       await ctx.db.patch(existingParticipant._id, {
         status: 'active',
         joinedAt: now,
+        leftAt: undefined,
+        removedAt: undefined,
+        removedBy: undefined,
         updatedAt: now,
       })
     } else {
@@ -430,6 +438,10 @@ export const redeemInvite = mutation({
         updatedAt: now,
       })
     }
+
+    await ctx.db.patch(invite._id, {
+      uses: invite.uses + 1,
+    })
 
     return { bondfireId: bondfire._id, alreadyJoined: false }
   },
@@ -474,6 +486,8 @@ export const removeParticipant = mutation({
 
     await ctx.db.patch(participant._id, {
       status: 'removed',
+      removedAt: now,
+      removedBy: user._id,
       updatedAt: now,
     })
   },
@@ -512,6 +526,7 @@ export const leaveBondfire = mutation({
 
     await ctx.db.patch(participant._id, {
       status: 'left',
+      leftAt: now,
       updatedAt: now,
     })
   },
@@ -599,8 +614,12 @@ export const checkInvite = query({
       return { valid: false, reason: 'not_found' as const }
     }
 
-    if (invite.expiresAt <= now) {
+    if (invite.expiresAt !== undefined && invite.expiresAt <= now) {
       return { valid: false, reason: 'expired' as const }
+    }
+
+    if (invite.maxUses !== undefined && invite.uses >= invite.maxUses) {
+      return { valid: false, reason: 'used' as const }
     }
 
     const bondfire = await ctx.db.get(invite.bondfireId)
