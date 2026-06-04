@@ -25,6 +25,7 @@ import type * as errors from "../errors.js";
 import type * as http from "../http.js";
 import type * as liveSessions from "../liveSessions.js";
 import type * as notifications from "../notifications.js";
+import type * as reconciliation from "../reconciliation.js";
 import type * as reports from "../reports.js";
 import type * as sendNotification from "../sendNotification.js";
 import type * as subscriptions from "../subscriptions.js";
@@ -56,6 +57,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   liveSessions: typeof liveSessions;
   notifications: typeof notifications;
+  reconciliation: typeof reconciliation;
   reports: typeof reports;
   sendNotification: typeof sendNotification;
   subscriptions: typeof subscriptions;
