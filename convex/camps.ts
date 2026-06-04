@@ -2402,8 +2402,27 @@ export const removeMember = mutation({
   },
   handler: async (ctx, args) => {
     const targetMembership = await assertCanModerateMember(ctx, args.membershipId)
+    const targetUserId = targetMembership.userId
+    const targetCampId = targetMembership.campId
     await ctx.db.delete(args.membershipId)
-    await refreshActiveMemberCount(ctx, targetMembership.campId)
+    await refreshActiveMemberCount(ctx, targetCampId)
+
+    // Log admin audit
+    const caller = await getCurrentUser(ctx)
+    if (isAdmin(caller)) {
+      const camp = await ctx.db.get(targetCampId)
+      await ctx.runMutation(internal.adminAudit.internalLogAdminAction, {
+        adminId: caller._id,
+        action: 'member_remove',
+        targetType: 'user',
+        targetId: targetUserId,
+        metadata: {
+          campName: camp?.name,
+          membershipId: args.membershipId,
+        },
+      })
+    }
+
     return { removed: true }
   },
 })
@@ -2427,6 +2446,24 @@ export const banMember = mutation({
       updatedAt: now,
     })
     await refreshActiveMemberCount(ctx, targetMembership.campId)
+
+    // Log admin audit
+    const caller = await getCurrentUser(ctx)
+    if (isAdmin(caller)) {
+      const camp = await ctx.db.get(targetMembership.campId)
+      await ctx.runMutation(internal.adminAudit.internalLogAdminAction, {
+        adminId: caller._id,
+        action: 'member_ban',
+        targetType: 'user',
+        targetId: targetMembership.userId,
+        metadata: {
+          reason: normalizeModerationReason(args.reason),
+          campName: camp?.name,
+          membershipId: args.membershipId,
+        },
+      })
+    }
+
     return { banned: true }
   },
 })
@@ -2724,6 +2761,71 @@ export const archiveCamp = mutation({
       access: 'invite',
       updatedAt: now,
     })
+
+    // Log admin audit if performed by an admin
+    if (isAdmin(user)) {
+      await ctx.runMutation(internal.adminAudit.internalLogAdminAction, {
+        adminId: user._id,
+        action: 'camp_archive',
+        targetType: 'camp',
+        targetId: args.campId,
+        metadata: {
+          campName: camp.name,
+          previousStatus: camp.status,
+        },
+      })
+    }
+
+    return args.campId
+  },
+})
+
+/**
+ * Unarchive a camp. Owner-only (or admin).
+ * Restores status to 'active' and clears archivedAt.
+ * Launch camps cannot be unarchived directly (always active).
+ */
+export const unarchiveCamp = mutation({
+  args: {
+    campId: v.id('camps'),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUser(ctx)
+
+    const camp = await ctx.db.get(args.campId)
+    if (!camp) {
+      throwUserError('Camp not found')
+    }
+
+    if (camp.status !== 'archived') {
+      throwUserError('Camp is not archived')
+    }
+
+    if (!isAdmin(user) && camp.ownerId !== user._id) {
+      throwUserError('Only the camp owner or an admin can unarchive this camp')
+    }
+
+    const now = Date.now()
+
+    await ctx.db.patch(args.campId, {
+      status: 'active',
+      archivedAt: undefined,
+      updatedAt: now,
+    })
+
+    // Log admin audit if performed by an admin
+    if (isAdmin(user)) {
+      await ctx.runMutation(internal.adminAudit.internalLogAdminAction, {
+        adminId: user._id,
+        action: 'camp_unarchive',
+        targetType: 'camp',
+        targetId: args.campId,
+        metadata: {
+          campName: camp.name,
+          previousStatus: camp.status,
+        },
+      })
+    }
 
     return args.campId
   },

@@ -9,6 +9,8 @@
  */
 
 import type * as admin from "../admin.js";
+import type * as adminAudit from "../adminAudit.js";
+import type * as adminDashboard from "../adminDashboard.js";
 import type * as auth from "../auth.js";
 import type * as bondfireVideos from "../bondfireVideos.js";
 import type * as bondfires from "../bondfires.js";
@@ -27,9 +29,10 @@ import type * as errors from "../errors.js";
 import type * as http from "../http.js";
 import type * as liveSessions from "../liveSessions.js";
 import type * as notifications from "../notifications.js";
+import type * as personalBondfireAccess from "../personalBondfireAccess.js";
 import type * as personalBondfires from "../personalBondfires.js";
-import type * as personalCamps from "../personalCamps.js";
 import type * as personalCampRetention from "../personalCampRetention.js";
+import type * as personalCamps from "../personalCamps.js";
 import type * as reconciliation from "../reconciliation.js";
 import type * as reports from "../reports.js";
 import type * as sendNotification from "../sendNotification.js";
@@ -46,6 +49,8 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   admin: typeof admin;
+  adminAudit: typeof adminAudit;
+  adminDashboard: typeof adminDashboard;
   auth: typeof auth;
   bondfireVideos: typeof bondfireVideos;
   bondfires: typeof bondfires;
@@ -64,9 +69,10 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   liveSessions: typeof liveSessions;
   notifications: typeof notifications;
+  personalBondfireAccess: typeof personalBondfireAccess;
   personalBondfires: typeof personalBondfires;
-  personalCamps: typeof personalCamps;
   personalCampRetention: typeof personalCampRetention;
+  personalCamps: typeof personalCamps;
   reconciliation: typeof reconciliation;
   reports: typeof reports;
   sendNotification: typeof sendNotification;

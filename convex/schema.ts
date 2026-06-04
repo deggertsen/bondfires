@@ -335,6 +335,37 @@ export default defineSchema({
     .index('by_user', ['userId', 'createdAt'])
     .index('by_created', ['createdAt']),
 
+  // Admin audit log — tracks all admin moderation & management actions.
+  adminAuditLog: defineTable({
+    adminId: v.id('users'),
+    action: v.union(
+      v.literal('manual_refund'),
+      v.literal('camp_archive'),
+      v.literal('camp_unarchive'),
+      v.literal('member_ban'),
+      v.literal('member_remove'),
+      v.literal('report_resolve'),
+      v.literal('report_dismiss'),
+    ),
+    targetType: v.string(), // 'camp', 'user', 'bondfire', 'purchase', 'report'
+    targetId: v.string(),
+    metadata: v.optional(
+      v.object({
+        reason: v.optional(v.string()),
+        amount: v.optional(v.number()),
+        previousStatus: v.optional(v.string()),
+        campName: v.optional(v.string()),
+        membershipId: v.optional(v.id('campMembers')),
+        purchaseId: v.optional(v.id('consumablePurchases')),
+        reportId: v.optional(v.id('reports')),
+      }),
+    ),
+    createdAt: v.number(),
+  })
+    .index('by_admin', ['adminId', 'createdAt'])
+    .index('by_target', ['targetType', 'targetId'])
+    .index('by_action', ['action', 'createdAt']),
+
   // Bondfires - main video posts
   bondfires: defineTable({
     // Creator reference

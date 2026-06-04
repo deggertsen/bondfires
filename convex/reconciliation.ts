@@ -120,6 +120,7 @@ export const listRecentDiscrepancies = query({
 export const refundPurchase = internalMutation({
   args: {
     purchaseId: v.id('consumablePurchases'),
+    adminId: v.optional(v.id('users')),
     reason: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -191,6 +192,21 @@ export const refundPurchase = internalMutation({
       },
       createdAt: now,
     })
+
+    // Log admin audit entry if adminId is provided
+    if (args.adminId) {
+      await ctx.runMutation(internal.adminAudit.internalLogAdminAction, {
+        adminId: args.adminId,
+        action: 'manual_refund',
+        targetType: 'purchase',
+        targetId: args.purchaseId,
+        metadata: {
+          reason: args.reason,
+          amount: purchase.quantity,
+          purchaseId: args.purchaseId,
+        },
+      })
+    }
 
     return {
       refunded: purchase.quantity,
