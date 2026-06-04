@@ -279,6 +279,109 @@ export const getSlotBalance = query({
   },
 })
 
+/**
+ * Returns a comprehensive slot usage summary for the authenticated Pro user.
+ * Includes current balance, grants this UTC month, slots consumed this UTC
+ * month, active camp list with renewal dates and slot costs, and full
+ * transaction history.
+ */
+export const getSlotUsageSummary = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      throwUserError('Not authenticated')
+    }
+
+    // Verify the user is Pro-tier
+    const tier = await getEntitlementSubscriptionTier(ctx, userId)
+    if (TIER_RANK[tier] < TIER_RANK.pro) {
+      throwUserError('Slot usage summary is only available for Pro subscribers')
+    }
+
+    const now = Date.now()
+
+    // Current balance (using existing computeSlotBalance)
+    const balance = await computeSlotBalance(ctx, userId)
+
+    // Full transaction history
+    const transactions = await ctx.db
+      .query('campSlotTransactions')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .order('desc')
+      .collect()
+
+    // Slots granted this UTC month
+    const monthStart = startOfUtcMonth(now)
+    const nextMonthStart = addUtcMonths(monthStart, 1)
+    const slotsGrantedThisMonth = transactions
+      .filter(
+        (tx) =>
+          (tx.type === 'monthly_grant' || tx.type === 'slot_credit') &&
+          tx.createdAt >= monthStart &&
+          tx.createdAt < nextMonthStart,
+      )
+      .reduce((sum, tx) => sum + tx.amount, 0)
+
+    // Slots consumed this UTC month
+    const slotsConsumedThisMonth = transactions
+      .filter(
+        (tx) =>
+          tx.type === 'monthly_consumption' &&
+          tx.createdAt >= monthStart &&
+          tx.createdAt < nextMonthStart,
+      )
+      .reduce((sum, tx) => sum + Math.abs(tx.amount), 0)
+
+    // Active camp list with renewal dates + slot cost per camp
+    const activeCamps = await ctx.db
+      .query('campMembers')
+      .withIndex('by_user', (q) => q.eq('userId', userId).eq('status', 'active'))
+      .collect()
+
+    const camps = await Promise.all(
+      activeCamps.map(async (membership) => {
+        const camp = await ctx.db.get(membership.campId)
+        if (!camp) return null
+
+        // Only include camps with active/good standing statuses
+        if (
+          camp.status === 'inactive' ||
+          camp.status === 'archived' ||
+          (camp.status === 'grace' && camp.gracePeriodEnd && camp.gracePeriodEnd < now)
+        ) {
+          return null
+        }
+
+        const { periodEnd: renewalDate } = getAnchoredMonthlyPeriod(camp.createdAt, now)
+
+        // Slot cost is 1 per month for active camps (grace camps cost 0)
+        const slotCost = camp.status === 'grace' ? 0 : 1
+
+        return {
+          campId: camp._id,
+          slug: camp.slug,
+          name: camp.name,
+          status: camp.status,
+          renewalDate,
+          slotCost,
+          createdAt: camp.createdAt,
+        }
+      }),
+    )
+
+    const activeCampList = camps.filter((c): c is NonNullable<typeof c> => c !== null)
+
+    return {
+      balance,
+      slotsGrantedThisMonth,
+      slotsConsumedThisMonth,
+      activeCamps: activeCampList,
+      transactions,
+    }
+  },
+})
+
 // ── Internal Query (server-only, no auth needed) ────────────────────────────
 
 export const internalGetSlotBalance = internalQuery({
