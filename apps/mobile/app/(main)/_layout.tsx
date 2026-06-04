@@ -125,6 +125,7 @@ export default function MainLayout() {
           name="personal-bondfire/[bondfireId]/[code]"
           options={{ headerShown: false }}
         />
+        <Stack.Screen name="personal-camp" options={{ headerShown: false }} />
       </Stack>
       <GlobalPaywall />
     </>

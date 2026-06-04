@@ -1,4 +1,4 @@
-import { parseError } from '@bondfires/app'
+import { parseError, subscriptionActions } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, CampCardStatusBanner, Input, Text } from '@bondfires/ui'
 import { ChevronDown, ChevronUp, Flame, Lock, Search, Sparkles, Users } from '@tamagui/lucide-icons'
@@ -6,7 +6,7 @@ import { useMutation, useQuery } from 'convex/react'
 import { type RelativePathString, useRouter } from 'expo-router'
 import { useCallback, useMemo, useState } from 'react'
 import { Alert, FlatList, Pressable, RefreshControl, StatusBar } from 'react-native'
-import { Separator, Sheet, Spinner, XStack, YStack } from 'tamagui'
+import { Image, Separator, Sheet, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc } from '../../../../../convex/_generated/dataModel'
 
@@ -60,10 +60,19 @@ function CampCard({
   const isInCooldown = isRejected && !cooldownExpired
   const cooldownEndDate = rejectedAt != null ? new Date(rejectedAt + REJECTION_COOLDOWN_MS) : null
   const canJoinFromList = !isActiveMember && !isPending && !isInCooldown && camp.access !== 'invite'
+  const accentColor = camp.accentColor
+  const coverImageUrl = camp.coverImageUrl
 
   return (
     <Pressable onPress={onOpen}>
-      <YStack paddingHorizontal={16} paddingVertical={14} gap={12} overflow="hidden">
+      <YStack
+        paddingHorizontal={16}
+        paddingVertical={14}
+        gap={12}
+        overflow="hidden"
+        borderLeftWidth={accentColor ? 3 : 0}
+        borderLeftColor={accentColor ?? 'transparent'}
+      >
         {isPending ? <CampCardStatusBanner variant="pending" /> : null}
         {isInCooldown ? <CampCardStatusBanner variant="rejected" /> : null}
         <XStack alignItems="flex-start" gap={12}>
@@ -74,8 +83,11 @@ function CampCard({
             backgroundColor={camp.color ?? bondfireColors.gunmetal}
             alignItems="center"
             justifyContent="center"
+            overflow="hidden"
           >
-            {camp.access === 'invite' ? (
+            {coverImageUrl ? (
+              <Image source={{ uri: coverImageUrl }} width={54} height={54} resizeMode="cover" />
+            ) : camp.access === 'invite' ? (
               <Lock size={25} color={bondfireColors.whiteSmoke} />
             ) : (
               <Flame size={28} color={bondfireColors.whiteSmoke} />
@@ -206,16 +218,16 @@ function PersonalCampCard({
   personalCamp,
   canCreatePrivateCamp,
   onOpen,
-  onCreate,
+  onUpgrade,
 }: {
-  personalCamp: CampWithMembership | null
+  personalCamp: Doc<'personalCamps'> | null
   canCreatePrivateCamp: boolean
-  onOpen: (camp: CampWithMembership) => void
-  onCreate: () => void
+  onOpen: () => void
+  onUpgrade: () => void
 }) {
   if (personalCamp) {
     return (
-      <Pressable onPress={() => onOpen(personalCamp)}>
+      <Pressable onPress={onOpen}>
         <YStack
           padding={14}
           borderRadius={14}
@@ -267,7 +279,7 @@ function PersonalCampCard({
 
   if (canCreatePrivateCamp) {
     return (
-      <Pressable onPress={onCreate}>
+      <Pressable onPress={onOpen}>
         <YStack
           padding={14}
           borderRadius={14}
@@ -289,10 +301,10 @@ function PersonalCampCard({
             </YStack>
             <YStack gap={2} flex={1}>
               <Text fontSize={15} fontWeight="900">
-                Start Your Personal Camp
+                Personal Camp
               </Text>
               <Text fontSize={12} color={bondfireColors.ash}>
-                Create an invite-only camp for your circle.
+                Your private fires will appear here once your camp is ready.
               </Text>
             </YStack>
           </XStack>
@@ -302,35 +314,37 @@ function PersonalCampCard({
   }
 
   return (
-    <YStack
-      padding={14}
-      borderRadius={14}
-      backgroundColor={bondfireColors.gunmetal}
-      borderWidth={1}
-      borderColor={bondfireColors.iron}
-      gap={8}
-    >
-      <XStack alignItems="center" gap={10}>
-        <YStack
-          width={36}
-          height={36}
-          borderRadius={18}
-          backgroundColor={`${bondfireColors.ash}20`}
-          alignItems="center"
-          justifyContent="center"
-        >
-          <Lock size={18} color={bondfireColors.ash} />
-        </YStack>
-        <YStack gap={2} flex={1}>
-          <Text fontSize={15} fontWeight="900" color={bondfireColors.ash}>
-            Personal Camp
-          </Text>
-          <Text fontSize={12} color={bondfireColors.ash}>
-            Upgrade to Plus to start your own fire.
-          </Text>
-        </YStack>
-      </XStack>
-    </YStack>
+    <Pressable onPress={onUpgrade}>
+      <YStack
+        padding={14}
+        borderRadius={14}
+        backgroundColor={bondfireColors.gunmetal}
+        borderWidth={1}
+        borderColor={bondfireColors.iron}
+        gap={8}
+      >
+        <XStack alignItems="center" gap={10}>
+          <YStack
+            width={36}
+            height={36}
+            borderRadius={18}
+            backgroundColor={`${bondfireColors.ash}20`}
+            alignItems="center"
+            justifyContent="center"
+          >
+            <Lock size={18} color={bondfireColors.ash} />
+          </YStack>
+          <YStack gap={2} flex={1}>
+            <Text fontSize={15} fontWeight="900" color={bondfireColors.ash}>
+              Personal Camp
+            </Text>
+            <Text fontSize={12} color={bondfireColors.ash}>
+              Upgrade to Plus to start your own fire.
+            </Text>
+          </YStack>
+        </XStack>
+      </YStack>
+    </Pressable>
   )
 }
 
@@ -338,6 +352,7 @@ export default function CampsScreen() {
   const router = useRouter()
   const camps = useQuery(api.camps.list, {})
   const myCamps = useQuery(api.camps.listMine, {})
+  const personalCamp = useQuery(api.personalCamps.getMyPersonalCamp, {})
   const subscription = useQuery(api.subscriptions.current, {})
   const slotBalance = useQuery(
     api.campSlots.getSlotBalance,
@@ -361,7 +376,7 @@ export default function CampsScreen() {
     subscription?.tier === 'premium' ||
     subscription?.tier === 'pro'
   const isPro = subscription?.tier === 'pro'
-  const shouldShowPersonalCampCard = subscription !== undefined && myCamps !== undefined
+  const shouldShowPersonalCampCard = subscription !== undefined && personalCamp !== undefined
 
   const filtered = useMemo(() => {
     if (!camps) return camps
@@ -381,18 +396,6 @@ export default function CampsScreen() {
   const archivedCamps = useMemo<CampWithMembership[]>(() => {
     if (!myCamps) return []
     return myCamps.filter((camp: CampWithMembership) => camp.status === 'archived')
-  }, [myCamps])
-
-  const personalCamp = useMemo<CampWithMembership | null>(() => {
-    if (!myCamps) return null
-    return (
-      myCamps.find(
-        (camp: CampWithMembership) =>
-          camp.access === 'invite' &&
-          camp.membership?.role === 'owner' &&
-          camp.status !== 'archived',
-      ) ?? null
-    )
   }, [myCamps])
 
   const listItems = useMemo<CampListItem[]>(() => {
@@ -428,6 +431,14 @@ export default function CampsScreen() {
   const handleRefresh = useCallback(() => {
     setIsRefreshing(true)
     setTimeout(() => setIsRefreshing(false), 600)
+  }, [])
+
+  const handleOpenPersonalCamp = useCallback(() => {
+    router.push('/(main)/personal-camp' as RelativePathString)
+  }, [router])
+
+  const handleUpgrade = useCallback(() => {
+    subscriptionActions.showPaywall()
   }, [])
 
   const handleJoin = useCallback(
@@ -573,8 +584,8 @@ export default function CampsScreen() {
               <PersonalCampCard
                 personalCamp={personalCamp}
                 canCreatePrivateCamp={canCreatePrivateCamp}
-                onOpen={(camp) => router.push(`/(main)/camp/${camp._id}` as RelativePathString)}
-                onCreate={() => setIsCreatePrivateOpen(true)}
+                onOpen={handleOpenPersonalCamp}
+                onUpgrade={handleUpgrade}
               />
             ) : null}
 

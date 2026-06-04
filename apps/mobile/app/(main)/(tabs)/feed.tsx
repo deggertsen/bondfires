@@ -34,6 +34,7 @@ import type { Doc } from '../../../../../convex/_generated/dataModel'
 type BondfireData = Doc<'bondfires'> & {
   isLive?: boolean
   livePlaybackId?: string
+  campLabel?: string
 }
 type JoinedCamp = Doc<'camps'> & { membership: Doc<'campMembers'> }
 
@@ -174,9 +175,32 @@ function BondfireRow({
         <YStack flex={1} gap={6}>
           <XStack alignItems="center" justifyContent="space-between" gap={10}>
             <YStack flex={1} gap={2}>
-              <Text fontSize={16} fontWeight="900" numberOfLines={1}>
-                {bondfire.creatorName ?? 'Anonymous'}
-              </Text>
+              <XStack alignItems="center" gap={8} maxWidth="100%">
+                <Text fontSize={16} fontWeight="900" numberOfLines={1} flexShrink={1}>
+                  {bondfire.creatorName ?? 'Anonymous'}
+                </Text>
+                {bondfire.campLabel ? (
+                  <YStack
+                    flexShrink={1}
+                    maxWidth="55%"
+                    paddingHorizontal={8}
+                    paddingVertical={3}
+                    borderRadius={8}
+                    backgroundColor={bondfireColors.gunmetal}
+                    borderWidth={1}
+                    borderColor={bondfireColors.iron}
+                  >
+                    <Text
+                      fontSize={11}
+                      fontWeight="800"
+                      color={bondfireColors.bondfireCopper}
+                      numberOfLines={1}
+                    >
+                      {bondfire.campLabel}
+                    </Text>
+                  </YStack>
+                ) : null}
+              </XStack>
               <Text fontSize={12} color={bondfireColors.ash} numberOfLines={1}>
                 {isLive ? 'Live now' : `${timeAgo} · ${viewed ? 'Viewed' : 'New'}`}
               </Text>
@@ -378,8 +402,9 @@ export default function FeedScreen() {
     if (q.length > 0) {
       items = items.filter((b) => {
         const name = (b.creatorName ?? '').toLowerCase()
+        const camp = (b.campLabel ?? '').toLowerCase()
         const tags = (b.tags ?? []).join(' ').toLowerCase()
-        return name.includes(q) || tags.includes(q)
+        return name.includes(q) || camp.includes(q) || tags.includes(q)
       })
     }
 
@@ -648,7 +673,7 @@ export default function FeedScreen() {
               <Input
                 value={query}
                 onChangeText={setQuery}
-                placeholder="Search creator or tags"
+                placeholder="Search creator, camp, or tags"
                 backgroundColor="transparent"
                 borderWidth={0}
                 height={22}
