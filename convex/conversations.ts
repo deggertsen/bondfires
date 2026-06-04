@@ -5,6 +5,7 @@ import { mutation, query } from './_generated/server'
 import { auth } from './auth'
 import { isCampReadableStatus, requiresActiveMembershipForVisibility } from './campLifecycle'
 import { throwUserError } from './errors'
+import { canViewPersonalBondfire } from './personalBondfireAccess'
 
 type ThreadParticipant = {
   user: PublicUser
@@ -76,8 +77,13 @@ async function getVisibleCampIds(ctx: QueryCtx, userId: Id<'users'>) {
 async function isBondfireVisibleToViewer(
   ctx: QueryCtx,
   bondfire: Doc<'bondfires'>,
+  userId: Id<'users'>,
   memberCampIds: Set<Id<'camps'>>,
 ) {
+  if (bondfire.personalCampId) {
+    return await canViewPersonalBondfire(ctx, { bondfire, userId })
+  }
+
   if (!bondfire.campId) {
     return true
   }
@@ -241,7 +247,7 @@ async function listSharedThreads(
     if (!bondfire || !isPlayableVideoRecord(bondfire)) {
       continue
     }
-    if (!(await isBondfireVisibleToViewer(ctx, bondfire, args.memberCampIds))) {
+    if (!(await isBondfireVisibleToViewer(ctx, bondfire, args.viewerId, args.memberCampIds))) {
       continue
     }
 
@@ -323,7 +329,7 @@ export const listMyFires = query({
       if (!bondfire || !isPlayableVideoRecord(bondfire)) {
         continue
       }
-      if (!(await isBondfireVisibleToViewer(ctx, bondfire, memberCampIds))) {
+      if (!(await isBondfireVisibleToViewer(ctx, bondfire, userId, memberCampIds))) {
         continue
       }
 

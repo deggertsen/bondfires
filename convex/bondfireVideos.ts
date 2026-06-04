@@ -9,6 +9,10 @@ import {
   isCampReadableStatus,
   requiresActiveMembershipForVisibility,
 } from './campLifecycle'
+import {
+  assertCanRespondToPersonalBondfire,
+  canViewPersonalBondfire,
+} from './personalBondfireAccess'
 
 async function getVisibleCampIds(ctx: QueryCtx, userId: Id<'users'> | null) {
   if (!userId) {
@@ -26,11 +30,17 @@ async function getVisibleCampIds(ctx: QueryCtx, userId: Id<'users'> | null) {
 async function isBondfireVisibleToViewer(
   ctx: QueryCtx,
   bondfire: Doc<'bondfires'>,
+  userId: Id<'users'> | null,
   memberCampIds: Set<Id<'camps'>>,
 ) {
   if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
     return false
   }
+
+  if (bondfire.personalCampId) {
+    return await canViewPersonalBondfire(ctx, { bondfire, userId })
+  }
+
   if (!bondfire.campId) {
     return true
   }
@@ -64,6 +74,15 @@ async function assertCanRespondToBondfire(
   if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
     throw new Error('Bondfire not found')
   }
+
+  if (bondfire.personalCampId) {
+    await assertCanRespondToPersonalBondfire(ctx, {
+      bondfire,
+      userId: args.userId,
+    })
+    return bondfire
+  }
+
   if (!bondfire.campId) {
     return bondfire
   }
@@ -119,7 +138,7 @@ export const listByBondfire = query({
 
     const userId = await auth.getUserId(ctx)
     const memberCampIds = await getVisibleCampIds(ctx, userId)
-    const canViewBondfire = await isBondfireVisibleToViewer(ctx, bondfire, memberCampIds)
+    const canViewBondfire = await isBondfireVisibleToViewer(ctx, bondfire, userId, memberCampIds)
     if (!canViewBondfire) {
       return []
     }
@@ -163,7 +182,7 @@ export const listByUser = query({
       }
 
       const bondfire = await ctx.db.get(video.bondfireId)
-      if (bondfire && (await isBondfireVisibleToViewer(ctx, bondfire, memberCampIds))) {
+      if (bondfire && (await isBondfireVisibleToViewer(ctx, bondfire, viewerId, memberCampIds))) {
         visibleVideos.push(video)
       }
     }
@@ -214,6 +233,9 @@ export const addResponse = mutation({
     }
 
     let requiresSignedPlayback = bondfire.muxPlaybackPolicy === 'signed'
+    if (!requiresSignedPlayback && bondfire.personalCampId) {
+      requiresSignedPlayback = true
+    }
     if (!requiresSignedPlayback && bondfire.campId) {
       const camp = await ctx.db.get(bondfire.campId)
       requiresSignedPlayback = camp?.access === 'invite'
