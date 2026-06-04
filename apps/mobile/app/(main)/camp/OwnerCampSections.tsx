@@ -9,7 +9,7 @@ import { Alert } from 'react-native'
 import { Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Id } from '../../../../../convex/_generated/dataModel'
-import { ACCENT_PALETTE } from '../../../../../convex/campBranding'
+import { ACCENT_PALETTE, COVER_IMAGE_MAX_BYTES } from '../../../../../convex/campBrandingConstants'
 
 type OwnerCampSectionsProps = {
   campId: Id<'camps'>
@@ -21,7 +21,9 @@ type OwnerCampSectionsProps = {
  */
 export function OwnerCampSections({ campId }: OwnerCampSectionsProps) {
   const analytics = useQuery(api.campAnalytics.getCampAnalytics, { campId })
-  const slotSummary = useQuery(api.campSlots.getSlotUsageSummary, {})
+  const subscription = useQuery(api.subscriptions.current, {})
+  const isProOwner = subscription?.tier === 'pro'
+  const slotSummary = useQuery(api.campSlots.getSlotUsageSummary, isProOwner ? {} : 'skip')
   const camp = useQuery(api.camps.get, { campId })
 
   const updateBranding = useMutation(api.campBranding.updateCampBranding)
@@ -64,6 +66,10 @@ export function OwnerCampSections({ campId }: OwnerCampSectionsProps) {
 
       const uploadResponse = await fetch(manipulated.uri)
       const blob = await uploadResponse.blob()
+      if (blob.size > COVER_IMAGE_MAX_BYTES) {
+        throw new Error('Cover image must be 5MB or smaller.')
+      }
+
       const postResponse = await fetch(uploadUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'image/jpeg' },
@@ -173,70 +179,72 @@ export function OwnerCampSections({ campId }: OwnerCampSectionsProps) {
       ) : null}
 
       {/* ── Branding ────────────────────────────────────── */}
-      <YStack gap={12}>
-        <Text fontSize={15} fontWeight="900" color={bondfireColors.whiteSmoke}>
-          Camp Branding
-        </Text>
-
-        {/* Cover Image */}
-        {camp?.coverImageUrl ? (
-          <YStack gap={6}>
-            <Text fontSize={12} fontWeight="700" color={bondfireColors.ash}>
-              Cover Image
-            </Text>
-            <Image
-              source={{ uri: camp.coverImageUrl }}
-              width="$full"
-              height={120}
-              borderRadius={10}
-              borderWidth={1}
-              borderColor={bondfireColors.iron}
-              resizeMode="cover"
-            />
-            <Button
-              variant="outline"
-              size="$sm"
-              disabled={isUploadingCover}
-              onPress={handleCoverImagePick}
-            >
-              <Text color={bondfireColors.whiteSmoke} fontWeight="700" fontSize={13}>
-                {isUploadingCover ? 'Uploading...' : 'Change Cover'}
-              </Text>
-            </Button>
-          </YStack>
-        ) : (
-          <YStack gap={6}>
-            <Text fontSize={12} fontWeight="700" color={bondfireColors.ash}>
-              Cover Image
-            </Text>
-            <Button
-              variant="outline"
-              size="$sm"
-              disabled={isUploadingCover}
-              onPress={handleCoverImagePick}
-            >
-              <Text color={bondfireColors.whiteSmoke} fontWeight="700" fontSize={13}>
-                {isUploadingCover ? 'Uploading...' : 'Upload Cover Image'}
-              </Text>
-            </Button>
-            <Text fontSize={11} color={bondfireColors.ash}>
-              16:9 ratio recommended · Max 5MB
-            </Text>
-          </YStack>
-        )}
-
-        {/* Accent Color */}
-        <YStack gap={8}>
-          <Text fontSize={12} fontWeight="700" color={bondfireColors.ash}>
-            Accent Color
+      {isProOwner ? (
+        <YStack gap={12}>
+          <Text fontSize={15} fontWeight="900" color={bondfireColors.whiteSmoke}>
+            Camp Branding
           </Text>
-          <ColorPicker
-            palette={ACCENT_PALETTE}
-            selected={camp?.accentColor}
-            onSelect={handleAccentColorSelect}
-          />
+
+          {/* Cover Image */}
+          {camp?.coverImageUrl ? (
+            <YStack gap={6}>
+              <Text fontSize={12} fontWeight="700" color={bondfireColors.ash}>
+                Cover Image
+              </Text>
+              <Image
+                source={{ uri: camp.coverImageUrl }}
+                width="$full"
+                height={120}
+                borderRadius={10}
+                borderWidth={1}
+                borderColor={bondfireColors.iron}
+                resizeMode="cover"
+              />
+              <Button
+                variant="outline"
+                size="$sm"
+                disabled={isUploadingCover}
+                onPress={handleCoverImagePick}
+              >
+                <Text color={bondfireColors.whiteSmoke} fontWeight="700" fontSize={13}>
+                  {isUploadingCover ? 'Uploading...' : 'Change Cover'}
+                </Text>
+              </Button>
+            </YStack>
+          ) : (
+            <YStack gap={6}>
+              <Text fontSize={12} fontWeight="700" color={bondfireColors.ash}>
+                Cover Image
+              </Text>
+              <Button
+                variant="outline"
+                size="$sm"
+                disabled={isUploadingCover}
+                onPress={handleCoverImagePick}
+              >
+                <Text color={bondfireColors.whiteSmoke} fontWeight="700" fontSize={13}>
+                  {isUploadingCover ? 'Uploading...' : 'Upload Cover Image'}
+                </Text>
+              </Button>
+              <Text fontSize={11} color={bondfireColors.ash}>
+                16:9 ratio recommended · Max 5MB
+              </Text>
+            </YStack>
+          )}
+
+          {/* Accent Color */}
+          <YStack gap={8}>
+            <Text fontSize={12} fontWeight="700" color={bondfireColors.ash}>
+              Accent Color
+            </Text>
+            <ColorPicker
+              palette={ACCENT_PALETTE}
+              selected={camp?.accentColor}
+              onSelect={handleAccentColorSelect}
+            />
+          </YStack>
         </YStack>
-      </YStack>
+      ) : null}
     </YStack>
   )
 }

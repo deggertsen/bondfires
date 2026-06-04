@@ -3,22 +3,9 @@ import type { Id } from './_generated/dataModel'
 import type { MutationCtx } from './_generated/server'
 import { mutation } from './_generated/server'
 import { auth } from './auth'
+import { ACCENT_PALETTE, type AccentColor, COVER_IMAGE_MAX_BYTES } from './campBrandingConstants'
+import { getEntitlementSubscriptionTier, TIER_RANK } from './entitlements'
 import { throwUserError } from './errors'
-
-export const ACCENT_PALETTE = [
-  '#FF6B35', // Flame orange
-  '#E63946', // Ember red
-  '#F4A261', // Warm sand
-  '#2A9D8F', // Deep teal
-  '#264653', // Dark slate
-  '#6C63FF', // Indigo spark
-  '#E9C46A', // Golden hour
-  '#457B9D', // Cool blue
-  '#1D3557', // Midnight
-  '#A8DADC', // Soft sky
-] as const
-
-type AccentColor = (typeof ACCENT_PALETTE)[number]
 
 function isValidAccentColor(color: string): color is AccentColor {
   return (ACCENT_PALETTE as readonly string[]).includes(color)
@@ -39,7 +26,36 @@ async function requireCampOwner(ctx: MutationCtx, campId: Id<'camps'>) {
     throwUserError('Only the camp owner can update branding')
   }
 
+  const tier = await getEntitlementSubscriptionTier(ctx, userId)
+  if (TIER_RANK[tier] < TIER_RANK.pro) {
+    throwUserError('Camp branding is only available for Pro subscribers')
+  }
+
   return { userId, camp }
+}
+
+async function validateCoverImage(ctx: MutationCtx, storageId: Id<'_storage'>) {
+  const metadata = await ctx.storage.getMetadata(storageId)
+  if (!metadata) {
+    throwUserError('Uploaded cover image not found')
+  }
+
+  if (!metadata.contentType?.startsWith('image/')) {
+    await ctx.storage.delete(storageId)
+    throwUserError('Cover image must be an image file')
+  }
+
+  if (metadata.size > COVER_IMAGE_MAX_BYTES) {
+    await ctx.storage.delete(storageId)
+    throwUserError('Cover image must be 5MB or smaller')
+  }
+
+  const coverImageUrl = await ctx.storage.getUrl(storageId)
+  if (!coverImageUrl) {
+    throwUserError('Uploaded cover image not found')
+  }
+
+  return coverImageUrl
 }
 
 /** Generate a presigned upload URL for a camp cover image. */
@@ -62,21 +78,17 @@ export const updateCampCoverImage = mutation({
   handler: async (ctx, args) => {
     const { camp } = await requireCampOwner(ctx, args.campId)
 
-    const coverImageUrl = await ctx.storage.getUrl(args.storageId)
-    if (!coverImageUrl) {
-      throwUserError('Uploaded cover image not found')
-    }
-
-    // Delete old cover image if present
-    if (camp.coverImageStorageId) {
-      await ctx.storage.delete(camp.coverImageStorageId)
-    }
+    const coverImageUrl = await validateCoverImage(ctx, args.storageId)
 
     await ctx.db.patch(args.campId, {
       coverImageUrl,
       coverImageStorageId: args.storageId,
       updatedAt: Date.now(),
     })
+
+    if (camp.coverImageStorageId && camp.coverImageStorageId !== args.storageId) {
+      await ctx.storage.delete(camp.coverImageStorageId)
+    }
 
     return { coverImageUrl }
   },
