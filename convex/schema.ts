@@ -375,6 +375,7 @@ export default defineSchema({
     // Recent bondfires
     .index('by_created', ['createdAt'])
     .index('by_camp', ['campId', 'createdAt'])
+    .index('by_personal_camp', ['personalCampId', 'createdAt'])
     .index('by_expires_at', ['expiresAt'])
     .index('by_mux_upload', ['muxUploadId'])
     .index('by_mux_asset', ['muxAssetId'])
@@ -618,3 +619,4 @@ export default defineSchema({
     .index('by_log_event', ['event', 'createdAt'])
     .index('by_log_session', ['sessionId', 'createdAt']),
 })
+// force push
