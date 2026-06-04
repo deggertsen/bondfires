@@ -271,6 +271,40 @@ export default defineSchema({
     .index('by_store_transaction', ['storeOriginalTransactionId'])
     .index('by_store_purchase_token', ['storePurchaseToken']),
 
+  // Personal Camps — user-owned micro-camps for private friend groups
+  personalCamps: defineTable({
+    ownerId: v.id('users'),
+    name: v.string(),
+    status: v.union(v.literal('active'), v.literal('frozen')),
+    frozenAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_owner', ['ownerId']),
+
+  // Membership in personal bondfires
+  personalBondfireParticipants: defineTable({
+    bondfireId: v.id('bondfires'),
+    userId: v.id('users'),
+    status: v.union(v.literal('active'), v.literal('left'), v.literal('removed')),
+    joinedAt: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_bondfire_status', ['bondfireId', 'status'])
+    .index('by_user', ['userId']),
+
+  // Invite codes for personal bondfires
+  personalBondfireInvites: defineTable({
+    bondfireId: v.id('bondfires'),
+    code: v.string(),
+    createdBy: v.id('users'),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_code', ['code'])
+    .index('by_bondfire', ['bondfireId']),
+
   // Reconciliation audit log for daily slot balance checks and refunds.
   reconciliationLog: defineTable({
     severity: v.union(v.literal('info'), v.literal('warning'), v.literal('error')),
@@ -292,6 +326,7 @@ export default defineSchema({
     userId: v.id('users'),
     creatorName: v.optional(v.string()), // Denormalized for display
     campId: v.optional(v.id('camps')),
+    personalCampId: v.optional(v.id('personalCamps')),
     frozen: v.optional(v.boolean()),
 
     // Video storage
