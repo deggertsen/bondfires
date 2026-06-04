@@ -1,6 +1,6 @@
 import { parseError } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
-import { Button, CampCardStatusBanner, Input, Text } from '@bondfires/ui'
+import { Button, CampCardStatusBanner, Image, Input, Text } from '@bondfires/ui'
 import { ChevronDown, ChevronUp, Flame, Lock, Search, Users } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { type RelativePathString, useRouter } from 'expo-router'
@@ -63,7 +63,23 @@ function CampCard({
 
   return (
     <Pressable onPress={onOpen}>
-      <YStack paddingHorizontal={16} paddingVertical={14} gap={12} overflow="hidden">
+      <YStack
+        paddingHorizontal={16}
+        paddingVertical={14}
+        gap={12}
+        overflow="hidden"
+        borderLeftWidth={camp.accentColor ? 3 : 0}
+        borderLeftColor={camp.accentColor ?? 'transparent'}
+      >
+        {camp.coverImageUrl ? (
+          <Image
+            source={{ uri: camp.coverImageUrl }}
+            width="$full"
+            height={80}
+            borderRadius={10}
+            resizeMode="cover"
+          />
+        ) : null}
         {isPending ? <CampCardStatusBanner variant="pending" /> : null}
         {isInCooldown ? <CampCardStatusBanner variant="rejected" /> : null}
         <XStack alignItems="flex-start" gap={12}>
@@ -72,6 +88,8 @@ function CampCard({
             height={54}
             borderRadius={16}
             backgroundColor={camp.color ?? bondfireColors.gunmetal}
+            borderWidth={camp.accentColor ? 2 : 0}
+            borderColor={camp.accentColor ?? 'transparent'}
             alignItems="center"
             justifyContent="center"
           >

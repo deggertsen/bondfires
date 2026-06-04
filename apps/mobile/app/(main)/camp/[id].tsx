@@ -6,7 +6,7 @@ import {
   setFeedActiveBondfireId,
 } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
-import { Button, Text } from '@bondfires/ui'
+import { Button, Image, Text } from '@bondfires/ui'
 import {
   ArrowLeft,
   Ban,
@@ -27,6 +27,7 @@ import { Alert, FlatList, Modal, Pressable, StatusBar, TextInput } from 'react-n
 import { Separator, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
+import { OwnerCampSections } from './OwnerCampSections'
 
 type CampWithMembership = Doc<'camps'> & {
   membership: Doc<'campMembers'> | null
@@ -327,6 +328,15 @@ function CampHeader({
           </Text>
         </YStack>
       ) : null}
+      {camp.coverImageUrl ? (
+        <Image
+          source={{ uri: camp.coverImageUrl }}
+          width="$full"
+          height={140}
+          borderRadius={12}
+          resizeMode="cover"
+        />
+      ) : null}
       <XStack alignItems="center" justifyContent="space-between">
         <Pressable onPress={onBack}>
           <YStack
@@ -371,6 +381,8 @@ function CampHeader({
           height={72}
           borderRadius={20}
           backgroundColor={camp.color ?? bondfireColors.gunmetal}
+          borderWidth={camp.accentColor ? 2 : 0}
+          borderColor={camp.accentColor ?? 'transparent'}
           alignItems="center"
           justifyContent="center"
         >
@@ -659,6 +671,14 @@ function CampHeader({
               ) : null}
             </YStack>
           ) : null}
+        </YStack>
+      ) : null}
+
+      {/* Owner: Analytics, Slot Balance, Branding */}
+      {isOwner && !isArchived ? (
+        <YStack gap={16} marginTop={8}>
+          <Separator borderColor={bondfireColors.iron} opacity={0.5} />
+          <OwnerCampSections campId={camp._id} />
         </YStack>
       ) : null}
 
