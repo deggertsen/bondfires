@@ -159,6 +159,9 @@ export default defineSchema({
     bondfireCount: v.optional(v.number()),
     activeMemberCount: v.optional(v.number()),
     isLaunchCamp: v.optional(v.boolean()),
+    coverImageUrl: v.optional(v.string()),
+    coverImageStorageId: v.optional(v.id('_storage')),
+    accentColor: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
