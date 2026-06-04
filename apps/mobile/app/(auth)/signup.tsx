@@ -10,6 +10,7 @@ import { useState } from 'react'
 import { Platform, Pressable, StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { Spinner, XStack, YStack } from 'tamagui'
+import { routes } from '../../lib/routes'
 
 type Gender = 'male' | 'female' | 'other'
 
@@ -159,10 +160,7 @@ export default function SignupScreen() {
         birthDate: currentBirthDate,
       })
       // Pass email to verify-email screen for OTP verification
-      router.replace({
-        pathname: '/(auth)/verify-email',
-        params: redirectTo ? { email: currentEmail, redirectTo } : { email: currentEmail },
-      })
+      router.replace(routes.verifyEmail({ email: currentEmail, redirectTo }))
     } catch (error) {
       form$.error.set(getAuthErrorMessage(error))
     } finally {
@@ -365,12 +363,7 @@ export default function SignupScreen() {
             <Button
               variant="ghost"
               size="$md"
-              onPress={() =>
-                router.push({
-                  pathname: '/(auth)/login',
-                  params: redirectTo ? { redirectTo } : {},
-                })
-              }
+              onPress={() => router.push(routes.login(redirectTo))}
             >
               <Text>Already have an account? Sign in</Text>
             </Button>
