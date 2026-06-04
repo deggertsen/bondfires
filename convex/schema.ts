@@ -279,8 +279,7 @@ export default defineSchema({
     frozenAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
-  })
-    .index('by_owner', ['ownerId']),
+  }).index('by_owner', ['ownerId']),
 
   // Membership in personal bondfires
   personalBondfireParticipants: defineTable({
