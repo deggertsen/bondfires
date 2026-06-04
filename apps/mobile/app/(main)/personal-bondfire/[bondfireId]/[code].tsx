@@ -1,23 +1,25 @@
-import { appStore$, telemetry } from '@bondfires/app'
+import { telemetry } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Text } from '@bondfires/ui'
-import { useValue } from '@legendapp/state/react'
-import { useQuery, useMutation } from 'convex/react'
+import { useMutation, useQuery } from 'convex/react'
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { useCallback, useEffect, useRef } from 'react'
 import { Alert } from 'react-native'
 import { Spinner, YStack } from 'tamagui'
-import { api } from '../../../../convex/_generated/api'
+import { api } from '../../../../../../convex/_generated/api'
 
 export default function PersonalBondfireInviteScreen() {
   const { bondfireId, code } = useLocalSearchParams<{ bondfireId: string; code: string }>()
   const router = useRouter()
   const currentUser = useQuery(api.users.current)
-  const userId = useValue(appStore$.userId)
 
-  const processedRef = useRef(false)
+  const authRedirectedRef = useRef(false)
+  const inviteHandledRef = useRef(false)
 
-  const checkInvite = useQuery(api.personalBondfires.checkInvite, code ? { code } : 'skip')
+  const checkInvite = useQuery(
+    api.personalBondfires.checkInvite,
+    currentUser && code ? { code } : 'skip',
+  )
   const redeemInvite = useMutation(api.personalBondfires.redeemInvite)
 
   const navigateToBondfire = useCallback(
@@ -38,7 +40,7 @@ export default function PersonalBondfireInviteScreen() {
   )
 
   useEffect(() => {
-    if (processedRef.current) return
+    if (authRedirectedRef.current) return
     if (!bondfireId || !code) return
 
     // Auth is still loading
@@ -46,23 +48,24 @@ export default function PersonalBondfireInviteScreen() {
 
     // User is not authenticated — redirect to login with return link
     if (!currentUser) {
-      processedRef.current = true
-      const returnUrl = encodeURIComponent(`/(main)/personal-bondfire/${bondfireId}/${code}`)
+      authRedirectedRef.current = true
+      const returnUrl = `/(main)/personal-bondfire/${bondfireId}/${code}`
       telemetry.breadcrumb('deeplink:personal-bondfire:auth-required', { bondfireId, code })
       navigateToAuth(returnUrl)
       return
     }
-
-    processedRef.current = true
   }, [currentUser, bondfireId, code, navigateToAuth])
 
   // Once auth is confirmed and checkInvite has resolved, validate the invite
   useEffect(() => {
-    if (!userId) return
+    if (!currentUser) return
+    if (inviteHandledRef.current) return
     if (checkInvite === undefined) return // still loading
     if (!code) return
 
-    if (!checkInvite.valid) {
+    if (!checkInvite.valid || checkInvite.bondfireId !== bondfireId) {
+      inviteHandledRef.current = true
+      const reason = checkInvite.valid ? 'invalid' : (checkInvite.reason ?? 'invalid')
       const reasonMessages: Record<string, { title: string; message: string }> = {
         not_found: {
           title: 'Invite Not Found',
@@ -90,13 +93,13 @@ export default function PersonalBondfireInviteScreen() {
             'The personal camp is currently unavailable. The owner may have cancelled their subscription.',
         },
       }
-      const err = reasonMessages[checkInvite.reason] ?? {
+      const err = reasonMessages[reason] ?? {
         title: 'Something Went Wrong',
         message: 'This invite could not be processed. Please try again.',
       }
 
-      telemetry.warn('deeplink:personal-bondfire:invalid', {
-        reason: checkInvite.reason,
+      telemetry.warn('deeplink:personal-bondfire:invalid', 'Invalid personal bondfire invite', {
+        reason: checkInvite.valid ? 'bondfire_mismatch' : reason,
         bondfireId,
         code,
       })
@@ -111,6 +114,7 @@ export default function PersonalBondfireInviteScreen() {
     }
 
     // Invite is valid — redeem it
+    inviteHandledRef.current = true
     telemetry.breadcrumb('deeplink:personal-bondfire:redeeming', {
       bondfireId,
       code,
@@ -151,7 +155,7 @@ export default function PersonalBondfireInviteScreen() {
           ])
         }
       })
-  }, [userId, checkInvite, code, bondfireId, redeemInvite, navigateToBondfire, router])
+  }, [currentUser, checkInvite, code, bondfireId, redeemInvite, navigateToBondfire, router])
 
   if (!bondfireId || !code) {
     return (

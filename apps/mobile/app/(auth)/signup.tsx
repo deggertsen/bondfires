@@ -159,7 +159,10 @@ export default function SignupScreen() {
         birthDate: currentBirthDate,
       })
       // Pass email to verify-email screen for OTP verification
-      router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail, redirectTo } })
+      router.replace({
+        pathname: '/(auth)/verify-email',
+        params: redirectTo ? { email: currentEmail, redirectTo } : { email: currentEmail },
+      })
     } catch (error) {
       form$.error.set(getAuthErrorMessage(error))
     } finally {
@@ -359,7 +362,16 @@ export default function SignupScreen() {
               )}
             </Button>
 
-            <Button variant="ghost" size="$md" onPress={() => router.push({ pathname: '/(auth)/login', params: redirectTo ? { redirectTo } : {} })}>
+            <Button
+              variant="ghost"
+              size="$md"
+              onPress={() =>
+                router.push({
+                  pathname: '/(auth)/login',
+                  params: redirectTo ? { redirectTo } : {},
+                })
+              }
+            >
               <Text>Already have an account? Sign in</Text>
             </Button>
           </YStack>
