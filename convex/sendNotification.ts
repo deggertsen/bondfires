@@ -246,6 +246,21 @@ export const getResponseNotificationRecipientIds = internalQuery({
       return []
     }
 
+    if (bondfire.personalCampId) {
+      const participants = await ctx.db
+        .query('personalBondfireParticipants')
+        .withIndex('by_bondfire_status', (q) =>
+          q.eq('bondfireId', args.bondfireId).eq('status', 'active'),
+        )
+        .collect()
+
+      return uniqueUserIds(
+        participants
+          .map((participant) => participant.userId)
+          .filter((userId) => userId !== args.responderId),
+      )
+    }
+
     const participantIds = new Set<Id<'users'>>([bondfire.userId])
     const responseVideos = await ctx.db
       .query('bondfireVideos')

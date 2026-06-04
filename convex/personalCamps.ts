@@ -6,13 +6,18 @@
  * to Free and unfreezes on re-subscribe.
  */
 import { v } from 'convex/values'
-import type { Id } from './_generated/dataModel'
 import { internalMutation, mutation, query } from './_generated/server'
 import { auth } from './auth'
 import { getEntitlementSubscriptionTier, PAID_TIERS } from './entitlements'
 import { throwUserError } from './errors'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+type PersonalCampTier = 'free' | 'plus' | 'premium' | 'pro'
+
+function isPaidTier(tier: PersonalCampTier) {
+  return PAID_TIERS.some((paidTier) => paidTier === tier)
+}
 
 function personalCampName(displayName?: string, name?: string) {
   const base = displayName || name || 'Someone'
@@ -62,10 +67,8 @@ export const getOrCreate = mutation({
     }
 
     const tier = await getEntitlementSubscriptionTier(ctx, userId)
-    if (!PAID_TIERS.includes(tier)) {
-      throwUserError(
-        'Personal Camps require a Plus, Premium, or Pro subscription.',
-      )
+    if (!isPaidTier(tier)) {
+      throwUserError('Personal Camps require a Plus, Premium, or Pro subscription.')
     }
 
     const existing = await ctx.db
@@ -121,15 +124,10 @@ export const getOrCreate = mutation({
 export const internalHandlePersonalCampUpgrade = internalMutation({
   args: {
     userId: v.id('users'),
-    newTier: v.union(
-      v.literal('free'),
-      v.literal('plus'),
-      v.literal('premium'),
-      v.literal('pro'),
-    ),
+    newTier: v.union(v.literal('free'), v.literal('plus'), v.literal('premium'), v.literal('pro')),
   },
   handler: async (ctx, args) => {
-    if (!PAID_TIERS.includes(args.newTier)) {
+    if (!isPaidTier(args.newTier)) {
       return null
     }
 
@@ -174,12 +172,7 @@ export const internalHandlePersonalCampUpgrade = internalMutation({
 export const internalHandlePersonalCampDowngrade = internalMutation({
   args: {
     userId: v.id('users'),
-    newTier: v.union(
-      v.literal('free'),
-      v.literal('plus'),
-      v.literal('premium'),
-      v.literal('pro'),
-    ),
+    newTier: v.union(v.literal('free'), v.literal('plus'), v.literal('premium'), v.literal('pro')),
   },
   handler: async (ctx, args) => {
     if (args.newTier !== 'free') {

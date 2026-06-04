@@ -306,7 +306,8 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_bondfire_status', ['bondfireId', 'status'])
-    .index('by_user', ['userId']),
+    .index('by_user', ['userId'])
+    .index('by_user_bondfire', ['userId', 'bondfireId']),
 
   // Personal Bondfire Invites — bondfire-level invite codes scoped to personal camps
   personalBondfireInvites: defineTable({

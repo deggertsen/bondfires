@@ -5,6 +5,7 @@ import { mutation, query } from './_generated/server'
 import { auth } from './auth'
 import { isCampReadableStatus, requiresActiveMembershipForVisibility } from './campLifecycle'
 import { throwUserError } from './errors'
+import { isPersonalBondfireVisibleToViewer } from './personalBondfires'
 
 type ThreadParticipant = {
   user: PublicUser
@@ -77,7 +78,12 @@ async function isBondfireVisibleToViewer(
   ctx: QueryCtx,
   bondfire: Doc<'bondfires'>,
   memberCampIds: Set<Id<'camps'>>,
+  viewerId: Id<'users'>,
 ) {
+  if (bondfire.personalCampId) {
+    return await isPersonalBondfireVisibleToViewer(ctx, bondfire, viewerId)
+  }
+
   if (!bondfire.campId) {
     return true
   }
@@ -241,7 +247,7 @@ async function listSharedThreads(
     if (!bondfire || !isPlayableVideoRecord(bondfire)) {
       continue
     }
-    if (!(await isBondfireVisibleToViewer(ctx, bondfire, args.memberCampIds))) {
+    if (!(await isBondfireVisibleToViewer(ctx, bondfire, args.memberCampIds, args.viewerId))) {
       continue
     }
 
@@ -323,7 +329,7 @@ export const listMyFires = query({
       if (!bondfire || !isPlayableVideoRecord(bondfire)) {
         continue
       }
-      if (!(await isBondfireVisibleToViewer(ctx, bondfire, memberCampIds))) {
+      if (!(await isBondfireVisibleToViewer(ctx, bondfire, memberCampIds, userId))) {
         continue
       }
 
@@ -413,8 +419,13 @@ export const markThreadRead = mutation({
       throwUserError('Bondfire not found')
     }
 
+    const memberCampIds = await getVisibleCampIds(ctx, userId)
+    if (!(await isBondfireVisibleToViewer(ctx, bondfire, memberCampIds, userId))) {
+      throwUserError('Bondfire not found')
+    }
+
     const participantMap = await getParticipantMap(ctx, bondfire)
-    if (!participantMap.has(userId)) {
+    if (!bondfire.personalCampId && !participantMap.has(userId)) {
       throwUserError('Only thread participants can mark this Bondfire read')
     }
 

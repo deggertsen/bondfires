@@ -4,6 +4,7 @@ import type { QueryCtx } from './_generated/server'
 import { query } from './_generated/server'
 import { auth } from './auth'
 import { isCampReadableStatus, requiresActiveMembershipForVisibility } from './campLifecycle'
+import { isPersonalBondfireVisibleToViewer } from './personalBondfires'
 
 async function getVisibleCampIds(ctx: QueryCtx, userId: Id<'users'> | null) {
   if (!userId) {
@@ -22,6 +23,10 @@ async function canViewBondfire(ctx: QueryCtx, bondfire: Doc<'bondfires'>) {
   if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
     return false
   }
+  const userId = await auth.getUserId(ctx)
+  if (bondfire.personalCampId) {
+    return await isPersonalBondfireVisibleToViewer(ctx, bondfire, userId)
+  }
   if (!bondfire.campId) {
     return true
   }
@@ -34,7 +39,6 @@ async function canViewBondfire(ctx: QueryCtx, bondfire: Doc<'bondfires'>) {
     return true
   }
 
-  const userId = await auth.getUserId(ctx)
   const memberCampIds = await getVisibleCampIds(ctx, userId)
   return memberCampIds.has(camp._id)
 }

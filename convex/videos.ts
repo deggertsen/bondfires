@@ -16,6 +16,10 @@ import {
   getPrivateCampExpiresAt,
 } from './entitlements'
 import { throwUserError } from './errors'
+import {
+  assertCanRespondToPersonalBondfire,
+  isPersonalBondfireVisibleToViewer,
+} from './personalBondfires'
 
 type PlaybackPolicy = 'public' | 'signed'
 type LiveLatencyMode = 'standard' | 'reduced' | 'low'
@@ -298,6 +302,13 @@ async function assertCanViewBondfire(
     throwUserError('Bondfire not found')
   }
 
+  if (bondfire.personalCampId) {
+    if (!(await isPersonalBondfireVisibleToViewer(ctx, bondfire, args.userId))) {
+      throwUserError('Bondfire not found')
+    }
+    return
+  }
+
   if (!bondfire.campId) {
     return
   }
@@ -402,6 +413,11 @@ async function assertCanRespondToBondfire(
   }
 
   await assertVideoDurationWithinTierLimit(ctx, args.userId, args.durationMs)
+
+  if (bondfire.personalCampId) {
+    await assertCanRespondToPersonalBondfire(ctx, bondfire, args.userId)
+    return bondfire
+  }
 
   if (!bondfire.campId) {
     return bondfire
@@ -1573,6 +1589,10 @@ export const getMuxPlaybackPolicyForNewRecord = internalQuery({
         return { playbackPolicy: 'signed' }
       }
 
+      if (bondfire.personalCampId) {
+        return { playbackPolicy: 'signed' }
+      }
+
       if (bondfire.campId) {
         const camp = await ctx.db.get(bondfire.campId)
         if (camp?.access === 'invite') {
@@ -1624,8 +1644,11 @@ export const validatePlaybackAccess = internalQuery({
           throw new Error('Private camp video is missing signed Mux playback')
         }
       }
+      if (bondfire.personalCampId && bondfire.muxPlaybackPolicy !== 'signed') {
+        throw new Error('Personal Fire video is missing signed Mux playback')
+      }
 
-      if (bondfire.muxPlaybackPolicy === 'signed') {
+      if (bondfire.muxPlaybackPolicy === 'signed' || bondfire.personalCampId) {
         if (!args.userId) {
           throwUserError('Not authenticated')
         }
@@ -1657,8 +1680,11 @@ export const validatePlaybackAccess = internalQuery({
           throw new Error('Private camp response video is missing signed Mux playback')
         }
       }
+      if (bondfire.personalCampId && video.muxPlaybackPolicy !== 'signed') {
+        throw new Error('Personal Fire response video is missing signed Mux playback')
+      }
 
-      if (video.muxPlaybackPolicy === 'signed') {
+      if (video.muxPlaybackPolicy === 'signed' || bondfire.personalCampId) {
         if (!args.userId) {
           throwUserError('Not authenticated')
         }
@@ -1699,6 +1725,9 @@ export const createPendingMuxVideo = internalMutation({
         bondfireId: args.bondfireId,
         durationMs: args.durationMs,
       })
+      if (bondfire.personalCampId && args.playbackPolicy !== 'signed') {
+        throwUserError('Personal Fire responses must use signed Mux playback')
+      }
 
       const existingVideos = await ctx.db
         .query('bondfireVideos')
@@ -1949,6 +1978,9 @@ export const createLinkedMuxLiveSession = internalMutation({
         userId: args.userId,
         bondfireId: args.bondfireId,
       })
+      if (bondfire.personalCampId && args.playbackPolicy !== 'signed') {
+        throwUserError('Personal Fire responses must use signed Mux playback')
+      }
       expiresAt = bondfire.expiresAt
     } else {
       if (!args.campId) {
