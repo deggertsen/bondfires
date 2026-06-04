@@ -14,6 +14,7 @@ import {
   assertVideoDurationWithinTierLimit,
   getPrivateCampExpiresAt,
 } from './entitlements'
+import { canViewPersonalBondfire } from './personalBondfireAccess'
 
 type ExpiredPrivateCampVideoCleanupResult = {
   expiredBondfires?: number
@@ -141,8 +142,13 @@ async function getVisibleCampIds(ctx: QueryCtx, userId: Id<'users'> | null) {
 async function isBondfireVisibleToViewer(
   ctx: QueryCtx,
   bondfire: Doc<'bondfires'>,
+  userId: Id<'users'> | null,
   memberCampIds: Set<Id<'camps'>>,
 ) {
+  if (bondfire.personalCampId) {
+    return await canViewPersonalBondfire(ctx, { bondfire, userId })
+  }
+
   if (!bondfire.campId) {
     return true
   }
@@ -163,7 +169,7 @@ async function filterVisibleBondfires(ctx: QueryCtx, bondfires: Doc<'bondfires'>
   const userId = await auth.getUserId(ctx)
   const memberCampIds = await getVisibleCampIds(ctx, userId)
   const visibility = await Promise.all(
-    bondfires.map((bondfire) => isBondfireVisibleToViewer(ctx, bondfire, memberCampIds)),
+    bondfires.map((bondfire) => isBondfireVisibleToViewer(ctx, bondfire, userId, memberCampIds)),
   )
 
   return bondfires.filter((_, index) => visibility[index])
@@ -494,7 +500,15 @@ export const incrementViews = mutation({
       throw new Error('Bondfire not found')
     }
 
-    if (bondfire.campId) {
+    if (bondfire.personalCampId) {
+      const canViewBondfire = await canViewPersonalBondfire(ctx, {
+        bondfire,
+        userId: viewerId,
+      })
+      if (!canViewBondfire) {
+        throw new Error('Bondfire not found')
+      }
+    } else if (bondfire.campId) {
       const camp = await ctx.db.get(bondfire.campId)
       if (!camp || !isCampReadableStatus(camp.status)) {
         throw new Error('Camp not found')

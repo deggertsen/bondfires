@@ -245,6 +245,9 @@ export const deleteAccount = mutation({
           updatedAt: Date.now(),
         })
       }
+      if (video.liveSessionId) {
+        await ctx.db.delete(video.liveSessionId)
+      }
       await ctx.db.delete(video._id)
     }
 
@@ -262,7 +265,32 @@ export const deleteAccount = mutation({
         .collect()
 
       for (const response of bondfireResponses) {
+        if (response.liveSessionId) {
+          await ctx.db.delete(response.liveSessionId)
+        }
         await ctx.db.delete(response._id)
+      }
+
+      const personalParticipants = await ctx.db
+        .query('personalBondfireParticipants')
+        .withIndex('by_bondfire_status', (q) => q.eq('bondfireId', bondfire._id))
+        .collect()
+
+      for (const participant of personalParticipants) {
+        await ctx.db.delete(participant._id)
+      }
+
+      const personalInvites = await ctx.db
+        .query('personalBondfireInvites')
+        .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
+        .collect()
+
+      for (const invite of personalInvites) {
+        await ctx.db.delete(invite._id)
+      }
+
+      if (bondfire.liveSessionId) {
+        await ctx.db.delete(bondfire.liveSessionId)
       }
 
       await ctx.db.delete(bondfire._id)
@@ -303,6 +331,33 @@ export const deleteAccount = mutation({
 
     for (const pin of incomingPins) {
       await ctx.db.delete(pin._id)
+    }
+
+    const personalParticipants = await ctx.db
+      .query('personalBondfireParticipants')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect()
+
+    for (const participant of personalParticipants) {
+      await ctx.db.delete(participant._id)
+    }
+
+    const personalInvites = await ctx.db
+      .query('personalBondfireInvites')
+      .withIndex('by_created_by', (q) => q.eq('createdBy', userId))
+      .collect()
+
+    for (const invite of personalInvites) {
+      await ctx.db.delete(invite._id)
+    }
+
+    const personalCamps = await ctx.db
+      .query('personalCamps')
+      .withIndex('by_owner', (q) => q.eq('ownerId', userId))
+      .collect()
+
+    for (const personalCamp of personalCamps) {
+      await ctx.db.delete(personalCamp._id)
     }
 
     // 4. Delete all user's device tokens

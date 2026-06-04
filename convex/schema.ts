@@ -279,8 +279,7 @@ export default defineSchema({
     frozenAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
-  })
-    .index('by_owner', ['ownerId']),
+  }).index('by_owner', ['ownerId']),
 
   // Membership in personal bondfires
   personalBondfireParticipants: defineTable({
@@ -292,6 +291,7 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_bondfire_status', ['bondfireId', 'status'])
+    .index('by_bondfire_user', ['bondfireId', 'userId'])
     .index('by_user', ['userId']),
 
   // Invite codes for personal bondfires
@@ -303,7 +303,8 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index('by_code', ['code'])
-    .index('by_bondfire', ['bondfireId']),
+    .index('by_bondfire', ['bondfireId'])
+    .index('by_created_by', ['createdBy']),
 
   // Reconciliation audit log for daily slot balance checks and refunds.
   reconciliationLog: defineTable({
@@ -619,4 +620,3 @@ export default defineSchema({
     .index('by_log_event', ['event', 'createdAt'])
     .index('by_log_session', ['sessionId', 'createdAt']),
 })
-// force push

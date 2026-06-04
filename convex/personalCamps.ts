@@ -1,5 +1,4 @@
 import { v } from 'convex/values'
-import type { Id } from './_generated/dataModel'
 import { internalMutation, query } from './_generated/server'
 import { auth } from './auth'
 
@@ -22,12 +21,7 @@ function personalCampName(displayName?: string, name?: string) {
 export const internalGetOrCreatePersonalCamp = internalMutation({
   args: {
     userId: v.id('users'),
-    tier: v.union(
-      v.literal('free'),
-      v.literal('plus'),
-      v.literal('premium'),
-      v.literal('pro'),
-    ),
+    tier: v.union(v.literal('free'), v.literal('plus'), v.literal('premium'), v.literal('pro')),
   },
   handler: async (ctx, args) => {
     if (args.tier === 'free') {
