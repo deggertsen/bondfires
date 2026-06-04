@@ -6,12 +6,21 @@ export function isCampVisibleStatus(status: Camp['status']) {
   return status === 'active' || status === 'frozen' || status === 'grace'
 }
 
+export function isCampReadableStatus(status: Camp['status']) {
+  return isCampVisibleStatus(status) || status === 'archived'
+}
+
 export function isCampParticipableStatus(status: Camp['status']) {
   return status === 'active' || status === 'grace'
 }
 
 export function requiresActiveMembershipForVisibility(camp: Camp) {
-  return camp.access === 'invite' || camp.status === 'frozen' || camp.status === 'grace'
+  return (
+    camp.access === 'invite' ||
+    camp.status === 'frozen' ||
+    camp.status === 'grace' ||
+    camp.status === 'archived'
+  )
 }
 
 export function isOwnerManageableCampStatus(status: Camp['status']) {

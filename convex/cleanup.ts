@@ -152,6 +152,7 @@ export const deleteArchivedCampMuxAssets = internalAction({
     const config = getCleanupMuxConfig()
     let deleted = 0
     let missing = 0
+    let failed = 0
 
     for (const assetId of uniqueAssetIds) {
       try {
@@ -159,7 +160,7 @@ export const deleteArchivedCampMuxAssets = internalAction({
           method: 'DELETE',
           headers: {
             Accept: 'application/json',
-            Authorization: `Basic ${Buffer.from(`${config.tokenId}:${config.tokenSecret}`).toString('base64')}`,
+            Authorization: `Basic ${btoa(`${config.tokenId}:${config.tokenSecret}`)}`,
           },
         })
 
@@ -168,16 +169,22 @@ export const deleteArchivedCampMuxAssets = internalAction({
         } else if (response.ok) {
           deleted += 1
         } else {
+          failed += 1
           console.warn(`[cleanup] Mux delete failed for asset ${assetId}: ${response.status}`)
         }
       } catch (err) {
+        failed += 1
         console.warn(`[cleanup] Mux delete error for asset ${assetId}:`, err)
       }
     }
 
     console.warn(
-      `[cleanup] Mux assets: ${deleted} deleted, ${missing} missing, ${uniqueAssetIds.length} total`,
+      `[cleanup] Mux assets: ${deleted} deleted, ${missing} missing, ${failed} failed, ${uniqueAssetIds.length} total`,
     )
+    if (failed > 0) {
+      throw new Error(`Failed to delete ${failed} Mux asset${failed === 1 ? '' : 's'}`)
+    }
+
     return { deletedMuxAssets: deleted, missingMuxAssets: missing }
   },
 })

@@ -6,7 +6,7 @@ import { action, internalAction, internalMutation, internalQuery, query } from '
 import { auth } from './auth'
 import {
   isCampParticipableStatus,
-  isCampVisibleStatus,
+  isCampReadableStatus,
   requiresActiveMembershipForVisibility,
 } from './campLifecycle'
 import {
@@ -303,7 +303,7 @@ async function assertCanViewBondfire(
   }
 
   const camp = await ctx.db.get(bondfire.campId)
-  if (!camp || !isCampVisibleStatus(camp.status)) {
+  if (!camp || !isCampReadableStatus(camp.status)) {
     throwUserError('Camp not found')
   }
 

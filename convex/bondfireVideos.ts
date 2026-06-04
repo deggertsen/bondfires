@@ -6,7 +6,7 @@ import { mutation, query } from './_generated/server'
 import { auth } from './auth'
 import {
   isCampParticipableStatus,
-  isCampVisibleStatus,
+  isCampReadableStatus,
   requiresActiveMembershipForVisibility,
 } from './campLifecycle'
 
@@ -36,7 +36,7 @@ async function isBondfireVisibleToViewer(
   }
 
   const camp = await ctx.db.get(bondfire.campId)
-  if (!camp || !isCampVisibleStatus(camp.status)) {
+  if (!camp || !isCampReadableStatus(camp.status)) {
     return false
   }
 

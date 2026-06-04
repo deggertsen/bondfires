@@ -276,19 +276,8 @@ export default function CampsScreen() {
       items.push(...publicCamps.map((camp) => ({ type: 'camp' as const, camp })))
     }
 
-    // Add archived camps section when not searching and there are archived camps
-    if (query.trim().length === 0 && archivedCamps.length > 0) {
-      items.push({
-        type: 'section',
-        id: 'archived',
-        title: `Archived (${archivedCamps.length})`,
-        subtitle: 'Read-only. Content will be deleted after 30 days.',
-      })
-      items.push(...archivedCamps.map((camp) => ({ type: 'camp' as const, camp })))
-    }
-
     return items
-  }, [filtered, archivedCamps, query])
+  }, [filtered])
 
   const handleRefresh = useCallback(() => {
     setIsRefreshing(true)

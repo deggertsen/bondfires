@@ -67,6 +67,7 @@ type ThreadParticipant = {
 }
 
 type BondfireDetailData = Doc<'bondfires'> & {
+  campStatus?: Doc<'camps'>['status']
   videos: Doc<'bondfireVideos'>[]
   participants?: ThreadParticipant[]
 }
@@ -908,8 +909,9 @@ export default function BondfireDetailScreen() {
   )
 
   const handleRespond = useCallback(() => {
+    if (bondfireData?.campStatus === 'archived') return
     router.push(`/(main)/(tabs)/create?respondTo=${id}`)
-  }, [router, id])
+  }, [bondfireData?.campStatus, router, id])
 
   const handleLongPressParticipant = useCallback(
     (participant: ThreadParticipant) => {
@@ -1147,31 +1149,32 @@ export default function BondfireDetailScreen() {
           </YStack>
         )}
 
-        {/* Bottom action bar */}
-        <YStack
-          position="absolute"
-          bottom={0}
-          left={0}
-          right={0}
-          paddingHorizontal={20}
-          paddingBottom={20}
-          paddingTop={16}
-        >
-          <LinearGradient
-            colors={['transparent', 'rgba(20, 20, 22, 0.9)']}
-            style={{
-              position: 'absolute',
-              bottom: 0,
-              left: 0,
-              right: 0,
-              height: 120,
-            }}
-          />
-          <Button variant="primary" size="$lg" onPress={handleRespond}>
-            <Flame size={20} color={bondfireColors.whiteSmoke} />
-            <Text color={bondfireColors.whiteSmoke}>Add Your Response</Text>
-          </Button>
-        </YStack>
+        {bondfireData.campStatus !== 'archived' ? (
+          <YStack
+            position="absolute"
+            bottom={0}
+            left={0}
+            right={0}
+            paddingHorizontal={20}
+            paddingBottom={20}
+            paddingTop={16}
+          >
+            <LinearGradient
+              colors={['transparent', 'rgba(20, 20, 22, 0.9)']}
+              style={{
+                position: 'absolute',
+                bottom: 0,
+                left: 0,
+                right: 0,
+                height: 120,
+              }}
+            />
+            <Button variant="primary" size="$lg" onPress={handleRespond}>
+              <Flame size={20} color={bondfireColors.whiteSmoke} />
+              <Text color={bondfireColors.whiteSmoke}>Add Your Response</Text>
+            </Button>
+          </YStack>
+        ) : null}
 
         {/* Video position dots */}
         <XStack position="absolute" bottom={100} left={0} right={0} justifyContent="center" gap={8}>

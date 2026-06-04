@@ -2651,6 +2651,9 @@ export const updateSettings = mutation({
     }
 
     if (fields.status !== undefined) {
+      if (fields.status === 'archived' && camp.isLaunchCamp === true) {
+        throw new Error('Launch camps cannot be archived')
+      }
       if (!isAdmin(user)) {
         const ownerStatusChange =
           camp.ownerId === user._id && (fields.status === 'frozen' || fields.status === 'archived')
@@ -2660,7 +2663,8 @@ export const updateSettings = mutation({
       }
     }
 
-    const updates: Record<string, unknown> = { updatedAt: Date.now() }
+    const now = Date.now()
+    const updates: Record<string, unknown> = { updatedAt: now }
 
     if (fields.name !== undefined) updates.name = fields.name
     if (fields.theme !== undefined) updates.theme = fields.theme
@@ -2671,7 +2675,15 @@ export const updateSettings = mutation({
     if (fields.rules !== undefined) updates.rules = fields.rules
     if (fields.nameOverride !== undefined) updates.nameOverride = fields.nameOverride
     if (fields.access !== undefined) updates.access = fields.access
-    if (fields.status !== undefined) updates.status = fields.status
+    if (fields.status !== undefined) {
+      updates.status = fields.status
+      if (fields.status === 'archived' && camp.status !== 'archived') {
+        updates.archivedAt = now
+      }
+      if (fields.status === 'archived') {
+        updates.access = 'invite'
+      }
+    }
 
     await ctx.db.patch(campId, updates)
 
@@ -2704,11 +2716,13 @@ export const archiveCamp = mutation({
       throwUserError('Only the camp owner or an admin can archive this camp')
     }
 
+    const now = Date.now()
+
     await ctx.db.patch(args.campId, {
       status: 'archived',
-      archivedAt: Date.now(),
+      archivedAt: camp.archivedAt ?? now,
       access: 'invite',
-      updatedAt: Date.now(),
+      updatedAt: now,
     })
 
     return args.campId
