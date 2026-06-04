@@ -1,7 +1,7 @@
 import { parseError } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, CampCardStatusBanner, Input, Text } from '@bondfires/ui'
-import { ChevronDown, ChevronUp, Flame, Lock, Search, Users } from '@tamagui/lucide-icons'
+import { ChevronDown, ChevronUp, Flame, Lock, Search, Sparkles, Users } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { type RelativePathString, useRouter } from 'expo-router'
 import { useCallback, useMemo, useState } from 'react'
@@ -202,6 +202,138 @@ function SectionHeader({ title, subtitle }: { title: string; subtitle: string })
   )
 }
 
+function PersonalCampCard({
+  personalCamp,
+  canCreatePrivateCamp,
+  onOpen,
+  onCreate,
+}: {
+  personalCamp: CampWithMembership | null
+  canCreatePrivateCamp: boolean
+  onOpen: (camp: CampWithMembership) => void
+  onCreate: () => void
+}) {
+  if (personalCamp) {
+    return (
+      <Pressable onPress={() => onOpen(personalCamp)}>
+        <YStack
+          padding={14}
+          borderRadius={14}
+          backgroundColor={bondfireColors.gunmetal}
+          borderWidth={1}
+          borderColor={bondfireColors.bondfireCopper}
+          gap={8}
+        >
+          <XStack alignItems="center" justifyContent="space-between" gap={10}>
+            <XStack alignItems="center" gap={10} flex={1}>
+              <YStack
+                width={36}
+                height={36}
+                borderRadius={18}
+                backgroundColor={`${bondfireColors.bondfireCopper}20`}
+                alignItems="center"
+                justifyContent="center"
+              >
+                <Flame size={18} color={bondfireColors.bondfireCopper} />
+              </YStack>
+              <YStack gap={2} flex={1}>
+                <Text fontSize={15} fontWeight="900" numberOfLines={1}>
+                  {personalCamp.name}
+                </Text>
+                <Text fontSize={12} color={bondfireColors.ash}>
+                  Your Personal Camp
+                </Text>
+              </YStack>
+            </XStack>
+            {personalCamp.status === 'frozen' ? (
+              <YStack
+                borderRadius={999}
+                paddingHorizontal={8}
+                paddingVertical={4}
+                backgroundColor={`${bondfireColors.warning}20`}
+                borderWidth={1}
+                borderColor={bondfireColors.warning}
+              >
+                <Text fontSize={10} color={bondfireColors.warning} fontWeight="900">
+                  Frozen
+                </Text>
+              </YStack>
+            ) : null}
+          </XStack>
+        </YStack>
+      </Pressable>
+    )
+  }
+
+  if (canCreatePrivateCamp) {
+    return (
+      <Pressable onPress={onCreate}>
+        <YStack
+          padding={14}
+          borderRadius={14}
+          backgroundColor={bondfireColors.gunmetal}
+          borderWidth={1}
+          borderColor={bondfireColors.bondfireCopper}
+          gap={8}
+        >
+          <XStack alignItems="center" gap={10}>
+            <YStack
+              width={36}
+              height={36}
+              borderRadius={18}
+              backgroundColor={`${bondfireColors.bondfireCopper}20`}
+              alignItems="center"
+              justifyContent="center"
+            >
+              <Flame size={18} color={bondfireColors.bondfireCopper} />
+            </YStack>
+            <YStack gap={2} flex={1}>
+              <Text fontSize={15} fontWeight="900">
+                Start Your Personal Camp
+              </Text>
+              <Text fontSize={12} color={bondfireColors.ash}>
+                Create an invite-only camp for your circle.
+              </Text>
+            </YStack>
+          </XStack>
+        </YStack>
+      </Pressable>
+    )
+  }
+
+  return (
+    <YStack
+      padding={14}
+      borderRadius={14}
+      backgroundColor={bondfireColors.gunmetal}
+      borderWidth={1}
+      borderColor={bondfireColors.iron}
+      gap={8}
+    >
+      <XStack alignItems="center" gap={10}>
+        <YStack
+          width={36}
+          height={36}
+          borderRadius={18}
+          backgroundColor={`${bondfireColors.ash}20`}
+          alignItems="center"
+          justifyContent="center"
+        >
+          <Lock size={18} color={bondfireColors.ash} />
+        </YStack>
+        <YStack gap={2} flex={1}>
+          <Text fontSize={15} fontWeight="900" color={bondfireColors.ash}>
+            Personal Camp
+          </Text>
+          <Text fontSize={12} color={bondfireColors.ash}>
+            Upgrade to Plus to start your own fire.
+          </Text>
+        </YStack>
+      </XStack>
+    </YStack>
+  )
+}
+
 export default function CampsScreen() {
   const router = useRouter()
   const camps = useQuery(api.camps.list, {})
@@ -228,6 +360,8 @@ export default function CampsScreen() {
     subscription?.tier === 'plus' ||
     subscription?.tier === 'premium' ||
     subscription?.tier === 'pro'
+  const isPro = subscription?.tier === 'pro'
+  const shouldShowPersonalCampCard = subscription !== undefined && myCamps !== undefined
 
   const filtered = useMemo(() => {
     if (!camps) return camps
@@ -249,6 +383,18 @@ export default function CampsScreen() {
     return myCamps.filter((camp: CampWithMembership) => camp.status === 'archived')
   }, [myCamps])
 
+  const personalCamp = useMemo<CampWithMembership | null>(() => {
+    if (!myCamps) return null
+    return (
+      myCamps.find(
+        (camp: CampWithMembership) =>
+          camp.access === 'invite' &&
+          camp.membership?.role === 'owner' &&
+          camp.status !== 'archived',
+      ) ?? null
+    )
+  }, [myCamps])
+
   const listItems = useMemo<CampListItem[]>(() => {
     if (!filtered) return []
 
@@ -260,7 +406,7 @@ export default function CampsScreen() {
       items.push({
         type: 'section',
         id: 'private',
-        title: 'Private',
+        title: 'Invite-Only Camps',
         subtitle: 'Invite-only camps you belong to.',
       })
       items.push(...privateCamps.map((camp) => ({ type: 'camp' as const, camp })))
@@ -423,18 +569,29 @@ export default function CampsScreen() {
               </Text>
             </YStack>
 
+            {shouldShowPersonalCampCard ? (
+              <PersonalCampCard
+                personalCamp={personalCamp}
+                canCreatePrivateCamp={canCreatePrivateCamp}
+                onOpen={(camp) => router.push(`/(main)/camp/${camp._id}` as RelativePathString)}
+                onCreate={() => setIsCreatePrivateOpen(true)}
+              />
+            ) : null}
+
             <XStack gap={10}>
-              <Button
-                variant="secondary"
-                size="$sm"
-                flex={1}
-                onPress={() => setIsCreatePrivateOpen(true)}
-              >
-                <Lock size={15} color={bondfireColors.whiteSmoke} />
-                <Text color={bondfireColors.whiteSmoke} fontWeight="900">
-                  Private Camp
-                </Text>
-              </Button>
+              {isPro ? (
+                <Button
+                  variant="secondary"
+                  size="$sm"
+                  flex={1}
+                  onPress={() => setIsCreatePrivateOpen(true)}
+                >
+                  <Sparkles size={15} color={bondfireColors.whiteSmoke} />
+                  <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+                    Create Camp
+                  </Text>
+                </Button>
+              ) : null}
               <Button
                 variant="outline"
                 size="$sm"
@@ -446,27 +603,6 @@ export default function CampsScreen() {
                 </Text>
               </Button>
             </XStack>
-
-            <YStack
-              padding={12}
-              borderRadius={14}
-              backgroundColor={bondfireColors.gunmetal}
-              borderWidth={1}
-              borderColor={bondfireColors.iron}
-              gap={3}
-            >
-              <Text fontSize={12} color={bondfireColors.ash} fontWeight="900">
-                MEMBERSHIP
-              </Text>
-              <Text fontSize={14} color={bondfireColors.whiteSmoke} textTransform="capitalize">
-                {subscription?.tier ?? 'free'} tier
-              </Text>
-              {!canCreatePrivateCamp ? (
-                <Text fontSize={12} color={bondfireColors.ash}>
-                  Private camps unlock with Plus, Premium, or Pro.
-                </Text>
-              ) : null}
-            </YStack>
 
             <XStack
               alignItems="center"
@@ -594,7 +730,7 @@ export default function CampsScreen() {
           <Sheet.Handle backgroundColor={bondfireColors.iron} />
           <YStack gap={6}>
             <Text fontSize={22} fontWeight="900">
-              Create Private Camp
+              Create Camp
             </Text>
             <Text fontSize={14} color={bondfireColors.ash} lineHeight={20}>
               Owner-led and invite-only. You spark; members respond.
