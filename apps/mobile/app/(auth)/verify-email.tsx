@@ -12,7 +12,7 @@ import { Spinner, YStack } from 'tamagui'
 export default function VerifyEmailScreen() {
   const router = useRouter()
   const { signIn } = useAuthActions()
-  const params = useLocalSearchParams<{ email?: string }>()
+  const params = useLocalSearchParams<{ email?: string; redirectTo?: string }>()
 
   const [code, setCode] = useState('')
   const [isVerifying, setIsVerifying] = useState(false)
@@ -37,8 +37,12 @@ export default function VerifyEmailScreen() {
         flow: 'email-verification',
       })
       setSuccess(true)
-      // Navigate to feed after successful verification
-      router.replace('/(main)/(tabs)/feed')
+      // Navigate to redirectTo if provided, otherwise feed
+      if (params.redirectTo) {
+        router.replace(decodeURIComponent(params.redirectTo))
+      } else {
+        router.replace('/(main)/(tabs)/feed')
+      })
     } catch (error) {
       setError(getAuthErrorMessage(error))
     } finally {

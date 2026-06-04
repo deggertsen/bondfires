@@ -18,6 +18,9 @@
       "bundleIdentifier": "org.bondfires",
       "buildNumber": "1",
       "googleServicesFile": "./GoogleService-Info.plist",
+      "associatedDomains": [
+        "applinks:bondfires.org"
+      ],
       "infoPlist": {
         "NSCameraUsageDescription": "Bondfires needs access to your camera to record videos for your bondfire sessions.",
         "NSMicrophoneUsageDescription": "Bondfires needs access to your microphone to record audio with your videos.",
@@ -38,6 +41,20 @@
         "backgroundColor": "#141416"
       },
       "edgeToEdgeEnabled": true,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "bondfires.org",
+              "pathPrefix": "/personal-bondfire"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ],
       "permissions": [
         "CAMERA",
         "RECORD_AUDIO",

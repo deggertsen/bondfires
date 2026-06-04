@@ -5,7 +5,7 @@ import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { Flame } from '@tamagui/lucide-icons'
 import { useQuery } from 'convex/react'
-import { useRouter } from 'expo-router'
+import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useRef } from 'react'
 import { StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
@@ -14,6 +14,7 @@ import { api } from '../../../../convex/_generated/api'
 
 export default function LoginScreen() {
   const router = useRouter()
+  const { redirectTo } = useLocalSearchParams<{ redirectTo?: string }>()
   const { signIn } = useAuthActions()
   const currentUser = useQuery(api.users.current)
 
@@ -43,9 +44,13 @@ export default function LoginScreen() {
 
     const currentEmail = form$.email.peek()
     if (currentUser && currentUser.emailVerified === false) {
-      router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail } })
+      router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail, redirectTo } })
     } else if (currentUser) {
-      router.replace('/(main)/(tabs)/feed')
+      if (redirectTo) {
+        router.replace(decodeURIComponent(redirectTo))
+      } else {
+        router.replace('/(main)/(tabs)/feed')
+      }
     }
   }, [currentUser, router, form$])
 
