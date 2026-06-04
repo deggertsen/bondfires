@@ -22,6 +22,10 @@ function personalCampName(displayName?: string, name?: string) {
   return `${base}'s Fire`
 }
 
+function personalCampPublicId() {
+  return `pc_${crypto.randomUUID().replaceAll('-', '')}`
+}
+
 async function getPersonalCampByOwner(
   ctx: { db: QueryCtx['db'] | MutationCtx['db'] },
   ownerId: Id<'users'>,
@@ -80,7 +84,9 @@ export const internalGetOrCreatePersonalCamp = internalMutation({
 
     const now = Date.now()
     const name = personalCampName(user.displayName, user.name)
+    const publicId = personalCampPublicId()
     const campId = await ctx.db.insert('personalCamps', {
+      publicId,
       ownerId: args.userId,
       name,
       status: 'active',
@@ -90,6 +96,7 @@ export const internalGetOrCreatePersonalCamp = internalMutation({
 
     return {
       _id: campId,
+      publicId,
       ownerId: args.userId,
       name,
       status: 'active' as const,
