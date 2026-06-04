@@ -1,16 +1,31 @@
-/**
- * Admin Dashboard — read-only stats queries.
- *
- * All queries require admin access (user.role === 'admin').
- * Returns typed, documented results for the admin dashboard UI.
- */
-
 import { v } from 'convex/values'
+import type { Doc } from './_generated/dataModel'
 import type { QueryCtx } from './_generated/server'
 import { query } from './_generated/server'
 import { auth } from './auth'
+import { type SubscriptionTier, TIER_RANK } from './entitlements'
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+const DAY_MS = 24 * 60 * 60 * 1000
+const WEEK_MS = 7 * DAY_MS
+const MAX_LOOKBACK_DAYS = 90
+const DEFAULT_RECONCILIATION_DAYS = 14
+const MAX_RECONCILIATION_RESULTS = 200
+const DEFAULT_SIGNUP_DAYS = 7
+const MAX_RECENT_SIGNUPS = 50
+
+type TierCounts = Record<SubscriptionTier, number>
+
+function emptyTierCounts(): TierCounts {
+  return { free: 0, plus: 0, premium: 0, pro: 0 }
+}
+
+function clampLookbackDays(days: number | undefined, defaultDays: number): number {
+  if (days === undefined || !Number.isFinite(days)) {
+    return defaultDays
+  }
+
+  return Math.min(Math.max(Math.trunc(days), 1), MAX_LOOKBACK_DAYS)
+}
 
 async function requireAdmin(ctx: QueryCtx): Promise<void> {
   const currentUserId = await auth.getUserId(ctx)
@@ -24,54 +39,74 @@ async function requireAdmin(ctx: QueryCtx): Promise<void> {
   }
 }
 
-// ── Queries ─────────────────────────────────────────────────────────────────
+function subscriptionsByUser(
+  subscriptions: Doc<'subscriptions'>[],
+): Map<Doc<'users'>['_id'], Doc<'subscriptions'>[]> {
+  const byUser = new Map<Doc<'users'>['_id'], Doc<'subscriptions'>[]>()
+
+  for (const subscription of subscriptions) {
+    const existing = byUser.get(subscription.userId)
+    if (existing) {
+      existing.push(subscription)
+    } else {
+      byUser.set(subscription.userId, [subscription])
+    }
+  }
+
+  return byUser
+}
+
+function getEffectiveTier(
+  user: Doc<'users'>,
+  userSubscriptions: Doc<'subscriptions'>[] | undefined,
+  now: number,
+): SubscriptionTier {
+  if (user.forcedTier) {
+    return user.forcedTier
+  }
+
+  return (userSubscriptions ?? []).reduce<SubscriptionTier>((highest, subscription) => {
+    const isActive =
+      subscription.verificationStatus === 'verified' &&
+      (subscription.status === 'active' || subscription.status === 'trialing') &&
+      (!subscription.currentPeriodEnd || subscription.currentPeriodEnd > now)
+
+    if (!isActive) {
+      return highest
+    }
+
+    return TIER_RANK[subscription.tier] > TIER_RANK[highest] ? subscription.tier : highest
+  }, 'free')
+}
 
 /**
  * Subscription stats: total users, breakdown by tier, active this week, new
- * this week.
+ * this week. Tier counts use effective entitlement tier, including active
+ * verified store subscriptions and admin-forced overrides.
  */
 export const getSubscriptionStats = query({
   args: {},
   handler: async (ctx) => {
     await requireAdmin(ctx)
 
-    const users = await ctx.db.query('users').collect()
     const now = Date.now()
-    const weekMs = 7 * 24 * 60 * 60 * 1000
-    const weekAgo = now - weekMs
+    const weekAgo = now - WEEK_MS
+    const users = await ctx.db.query('users').collect()
+    const subscriptions = await ctx.db.query('subscriptions').collect()
+    const subscriptionsLookup = subscriptionsByUser(subscriptions)
 
-    let free = 0
-    let plus = 0
-    let premium = 0
-    let pro = 0
+    const byTier = emptyTierCounts()
     let activeThisWeek = 0
     let newThisWeek = 0
 
     for (const user of users) {
-      switch (user.forcedTier) {
-        case 'free':
-          free++
-          break
-        case 'plus':
-          plus++
-          break
-        case 'premium':
-          premium++
-          break
-        case 'pro':
-          pro++
-          break
-        default:
-          free++
-          break
-      }
+      const tier = getEffectiveTier(user, subscriptionsLookup.get(user._id), now)
+      byTier[tier]++
 
-      // Active = user has updatedAt within the last week
       if (user.updatedAt && user.updatedAt >= weekAgo) {
         activeThisWeek++
       }
 
-      // New this week = user created within last 7 days
       if (user.createdAt && user.createdAt >= weekAgo) {
         newThisWeek++
       }
@@ -79,7 +114,7 @@ export const getSubscriptionStats = query({
 
     return {
       totalUsers: users.length,
-      byTier: { free, plus, premium, pro },
+      byTier,
       activeThisWeek,
       newThisWeek,
     }
@@ -97,6 +132,7 @@ export const getCampStats = query({
     const camps = await ctx.db.query('camps').collect()
 
     let active = 0
+    let frozen = 0
     let grace = 0
     let inactive = 0
     let archived = 0
@@ -108,6 +144,9 @@ export const getCampStats = query({
         case 'active':
           active++
           break
+        case 'frozen':
+          frozen++
+          break
         case 'grace':
           grace++
           break
@@ -116,10 +155,6 @@ export const getCampStats = query({
           break
         case 'archived':
           archived++
-          break
-        // 'frozen' is a valid status not in the requested stats - count under inactive
-        case 'frozen':
-          inactive++
           break
       }
 
@@ -132,7 +167,7 @@ export const getCampStats = query({
 
     return {
       total: camps.length,
-      byStatus: { active, grace, inactive, archived },
+      byStatus: { active, frozen, grace, inactive, archived },
       publicCount,
       privateCount,
     }
@@ -150,9 +185,7 @@ export const getBondfireStats = query({
 
     const bondfires = await ctx.db.query('bondfires').collect()
     const videos = await ctx.db.query('bondfireVideos').collect()
-    const now = Date.now()
-    const weekMs = 7 * 24 * 60 * 60 * 1000
-    const weekAgo = now - weekMs
+    const weekAgo = Date.now() - WEEK_MS
 
     const responsesThisWeek = videos.filter((v) => v.createdAt >= weekAgo).length
 
@@ -168,7 +201,7 @@ export const getBondfireStats = query({
 
 /**
  * Recent reconciliation log entries, optionally filtered by last N days.
- * Defaults to 14 days.
+ * Defaults to 14 days and caps results to the newest 200 entries.
  */
 export const getReconciliationHistory = query({
   args: {
@@ -177,22 +210,20 @@ export const getReconciliationHistory = query({
   handler: async (ctx, args) => {
     await requireAdmin(ctx)
 
-    const days = args.days ?? 14
-    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
+    const days = clampLookbackDays(args.days, DEFAULT_RECONCILIATION_DAYS)
+    const cutoff = Date.now() - days * DAY_MS
 
-    const logs = await ctx.db
+    return await ctx.db
       .query('reconciliationLog')
-      .withIndex('by_created')
+      .withIndex('by_created', (q) => q.gte('createdAt', cutoff))
       .order('desc')
-      .collect()
-
-    return logs.filter((l) => l.createdAt >= cutoff)
+      .take(MAX_RECONCILIATION_RESULTS)
   },
 })
 
 /**
  * Recent user signups, limited to the last N days (default 7), max 50 results.
- * Returns name, tier, and createdAt for each user.
+ * Returns name, effective tier, and createdAt for each user.
  */
 export const getRecentSignups = query({
   args: {
@@ -201,21 +232,23 @@ export const getRecentSignups = query({
   handler: async (ctx, args) => {
     await requireAdmin(ctx)
 
-    const days = args.days ?? 7
-    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
+    const now = Date.now()
+    const days = clampLookbackDays(args.days, DEFAULT_SIGNUP_DAYS)
+    const cutoff = now - days * DAY_MS
 
-    // No by_created index on users, so collect and filter/sort in memory.
     const allUsers = await ctx.db.query('users').collect()
+    const subscriptions = await ctx.db.query('subscriptions').collect()
+    const subscriptionsLookup = subscriptionsByUser(subscriptions)
 
     const filtered = allUsers
       .filter((u) => u.createdAt && u.createdAt >= cutoff)
       .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
-      .slice(0, 50)
+      .slice(0, MAX_RECENT_SIGNUPS)
 
     return filtered.map((user) => ({
       _id: user._id,
       name: user.name ?? user.displayName ?? null,
-      tier: user.forcedTier ?? 'free',
+      tier: getEffectiveTier(user, subscriptionsLookup.get(user._id), now),
       createdAt: user.createdAt ?? null,
     }))
   },
