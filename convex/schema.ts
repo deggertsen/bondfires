@@ -247,6 +247,7 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index('by_user', ['userId', 'createdAt'])
+    .index('by_type', ['type', 'createdAt'])
     .index('by_camp', ['campId', 'createdAt'])
     .index('by_user_camp', ['userId', 'campId']),
 
@@ -265,6 +266,7 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
+    .index('by_verification_status_created', ['verificationStatus', 'createdAt'])
     .index('by_transaction', ['storeTransactionId'])
     .index('by_store_transaction', ['storeOriginalTransactionId'])
     .index('by_store_purchase_token', ['storePurchaseToken']),

@@ -13,17 +13,33 @@
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
-import type { MutationCtx } from './_generated/server'
+import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalAction, internalMutation, internalQuery, query } from './_generated/server'
+import { auth } from './auth'
 import { computeSlotBalance } from './campSlots'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 const UNVERIFIED_THRESHOLD_MS = 24 * 60 * 60 * 1000
+const CAMP_RECLAIM_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
+const DEFAULT_DISCREPANCY_LIMIT = 50
+const MAX_DISCREPANCY_LIMIT = 200
 
-async function countConsumedSlotsFromPurchase(
+async function requireAdmin(ctx: QueryCtx | MutationCtx) {
+  const currentUserId = await auth.getUserId(ctx)
+  if (!currentUserId) {
+    throw new Error('Not authenticated')
+  }
+
+  const currentUser = await ctx.db.get(currentUserId)
+  if (!currentUser?.isAdmin && currentUser?.role !== 'admin') {
+    throw new Error('Admin access required')
+  }
+}
+
+async function estimateConsumedSlotsFromPurchase(
   ctx: MutationCtx,
-  purchase: { userId: Id<'users'>; createdAt: number },
+  purchase: { userId: Id<'users'>; quantity: number; createdAt: number },
 ): Promise<number> {
   const transactions = await ctx.db
     .query('campSlotTransactions')
@@ -36,12 +52,13 @@ async function countConsumedSlotsFromPurchase(
     )
     .collect()
 
-  return transactions.reduce((sum, tx) => sum + Math.abs(tx.amount), 0)
+  const consumedSincePurchase = transactions.reduce((sum, tx) => sum + Math.abs(tx.amount), 0)
+  return Math.min(purchase.quantity, consumedSincePurchase)
 }
 
 /**
- * Freeze active public camps owned by the user to cover a slot deficit.
- * Freezes newest camps first, oldest preserved. Private camps are not frozen.
+ * Freeze active camps owned by the user to cover a slot deficit.
+ * Freezes newest camps first, oldest preserved.
  * Returns the number of camps frozen.
  */
 async function freezeCampsToCoverDeficit(
@@ -53,7 +70,7 @@ async function freezeCampsToCoverDeficit(
   const camps = await ctx.db
     .query('camps')
     .withIndex('by_owner', (q) => q.eq('ownerId', userId))
-    .filter((q) => q.and(q.neq(q.field('access'), 'invite'), q.eq(q.field('status'), 'active')))
+    .filter((q) => q.eq(q.field('status'), 'active'))
     .order('desc')
     .collect()
 
@@ -63,7 +80,7 @@ async function freezeCampsToCoverDeficit(
     await ctx.db.patch(camp._id, {
       status: 'frozen',
       frozenAt: now,
-      reclaimDeadline: now + 30 * 24 * 60 * 60 * 1000, // 30-day reclaim window
+      reclaimDeadline: now + CAMP_RECLAIM_WINDOW_MS,
       updatedAt: now,
     })
     frozen++
@@ -80,11 +97,12 @@ async function freezeCampsToCoverDeficit(
 export const listRecentDiscrepancies = query({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
-    return ctx.db
-      .query('reconciliationLog')
-      .withIndex('by_created')
-      .order('desc')
-      .take(args.limit ?? 50)
+    await requireAdmin(ctx)
+
+    const requestedLimit = args.limit ?? DEFAULT_DISCREPANCY_LIMIT
+    const limit = Math.min(Math.max(Math.trunc(requestedLimit), 1), MAX_DISCREPANCY_LIMIT)
+
+    return ctx.db.query('reconciliationLog').withIndex('by_created').order('desc').take(limit)
   },
 })
 
@@ -107,6 +125,9 @@ export const refundPurchase = internalMutation({
   handler: async (ctx, args) => {
     const purchase = await ctx.db.get(args.purchaseId)
     if (!purchase) throw new Error('Purchase not found')
+    if (purchase.verificationStatus === 'refunded') {
+      throw new Error('Purchase already refunded')
+    }
     if (purchase.verificationStatus !== 'verified') {
       throw new Error('Cannot refund unverified purchase')
     }
@@ -121,8 +142,9 @@ export const refundPurchase = internalMutation({
       .first()
     if (existingRefund) throw new Error('Purchase already refunded')
 
-    // Count how many slots from this purchase were consumed
-    const consumedCount = await countConsumedSlotsFromPurchase(ctx, purchase)
+    // Estimate how many slots from this purchase were consumed. Slots are
+    // fungible, so this is capped to the purchase quantity for audit context.
+    const consumedCount = await estimateConsumedSlotsFromPurchase(ctx, purchase)
 
     // Insert refund ledger entry (reverse full purchase amount)
     const now = Date.now()
@@ -157,7 +179,7 @@ export const refundPurchase = internalMutation({
     await ctx.db.insert('reconciliationLog', {
       severity: 'info',
       category: 'refund',
-      message: `Refunded ${purchase.quantity} slots (${consumedCount} consumed, balance now ${balance}, ${campsFrozen} camps frozen)`,
+      message: `Refunded ${purchase.quantity} slots (${consumedCount} estimated consumed, balance now ${balance}, ${campsFrozen} camps frozen)`,
       userId: purchase.userId,
       purchaseId: purchase._id,
       transactionId: purchase.storeTransactionId,
@@ -312,7 +334,7 @@ export const findOrphanedCredits = internalQuery({
   handler: async (ctx) => {
     const creditTransactions = await ctx.db
       .query('campSlotTransactions')
-      .filter((q) => q.eq(q.field('type'), 'slot_credit'))
+      .withIndex('by_type', (q) => q.eq('type', 'slot_credit'))
       .collect()
 
     const orphaned = []
@@ -338,63 +360,55 @@ export const findUnverifiedPurchases = internalQuery({
   handler: async (ctx, args) => {
     return ctx.db
       .query('consumablePurchases')
-      .filter((q) =>
-        q.and(
-          q.eq(q.field('verificationStatus'), 'pending'),
-          q.lt(q.field('createdAt'), args.threshold),
-        ),
+      .withIndex('by_verification_status_created', (q) =>
+        q.eq('verificationStatus', 'pending').lt('createdAt', args.threshold),
       )
       .collect()
   },
 })
 
 /**
- * Find users whose computed ledger balance differs from the expected balance
- * derived from verified purchases, grants, consumptions, and refunds.
+ * Find users whose ledger balance differs from the expected balance derived
+ * from authoritative store purchase state plus non-purchase slot movements.
+ *
+ * `slot_credit` and `refund` transactions are implementation details for
+ * applying consumable purchase state to the ledger. A refunded purchase should
+ * net to 0 expected slots, so including both refunded purchase state and refund
+ * transactions would double-count refunds and create false drift.
  */
 export const findBalanceDrift = internalQuery({
   args: {},
   handler: async (ctx) => {
-    // Get all users who have any camp slot transactions
-    const allUsers = await ctx.db.query('users').collect()
     const drifts: Array<{ userId: string; expected: number; actual: number; drift: number }> = []
+    const actualByUser = new Map<Id<'users'>, number>()
+    const expectedByUser = new Map<Id<'users'>, number>()
 
-    // We only check users with transactions to avoid noise
-    for (const user of allUsers) {
-      const transactions = await ctx.db
-        .query('campSlotTransactions')
-        .withIndex('by_user', (q) => q.eq('userId', user._id))
-        .collect()
+    const transactions = await ctx.db.query('campSlotTransactions').collect()
+    for (const tx of transactions) {
+      actualByUser.set(tx.userId, (actualByUser.get(tx.userId) ?? 0) + tx.amount)
 
-      if (transactions.length === 0) continue
+      if (tx.type !== 'slot_credit' && tx.type !== 'refund') {
+        expectedByUser.set(tx.userId, (expectedByUser.get(tx.userId) ?? 0) + tx.amount)
+      }
+    }
 
-      const actual = transactions.reduce((sum, tx) => sum + tx.amount, 0)
+    const purchases = await ctx.db.query('consumablePurchases').collect()
+    for (const purchase of purchases) {
+      if (purchase.verificationStatus === 'verified') {
+        expectedByUser.set(
+          purchase.userId,
+          (expectedByUser.get(purchase.userId) ?? 0) + purchase.quantity,
+        )
+      }
+    }
 
-      // Compute expected: verified purchases credit + grants + refunds - consumptions
-      const purchases = await ctx.db
-        .query('consumablePurchases')
-        .withIndex('by_user', (q) => q.eq('userId', user._id))
-        .filter((q) => q.eq(q.field('verificationStatus'), 'verified'))
-        .collect()
-
-      const expectedFromPurchases = purchases.reduce((sum, p) => sum + p.quantity, 0)
-      const expectedFromRefunds = transactions
-        .filter((t) => t.type === 'refund')
-        .reduce((sum, t) => sum + t.amount, 0)
-
-      const expected =
-        expectedFromPurchases +
-        transactions
-          .filter((t) => t.type === 'monthly_grant')
-          .reduce((sum, t) => sum + t.amount, 0) +
-        expectedFromRefunds +
-        transactions
-          .filter((t) => t.type === 'monthly_consumption')
-          .reduce((sum, t) => sum + t.amount, 0)
-
+    const userIds = new Set([...actualByUser.keys(), ...expectedByUser.keys()])
+    for (const userId of userIds) {
+      const actual = actualByUser.get(userId) ?? 0
+      const expected = expectedByUser.get(userId) ?? 0
       if (actual !== expected) {
         drifts.push({
-          userId: user._id,
+          userId,
           expected,
           actual,
           drift: actual - expected,
