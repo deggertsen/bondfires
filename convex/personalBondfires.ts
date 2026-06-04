@@ -686,7 +686,12 @@ export const listMyPersonalBondfires = query({
       .order('desc')
       .collect()
 
-    return bondfires
+    return await Promise.all(
+      bondfires.map(async (bondfire) => ({
+        ...bondfire,
+        participantCount: await getActiveParticipantCount(ctx, bondfire._id),
+      })),
+    )
   },
 })
 

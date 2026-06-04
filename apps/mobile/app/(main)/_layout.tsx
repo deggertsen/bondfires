@@ -121,6 +121,7 @@ export default function MainLayout() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="bondfire/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="camp/[id]" options={{ headerShown: false }} />
+        <Stack.Screen name="personal-camp" options={{ headerShown: false }} />
       </Stack>
       <GlobalPaywall />
     </>
