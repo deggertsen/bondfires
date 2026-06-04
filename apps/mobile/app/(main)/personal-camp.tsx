@@ -1,7 +1,7 @@
-import { parseError } from '@bondfires/app'
+import { subscriptionActions } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
-import { ArrowLeft, Flame, MessageCircle, Users } from '@tamagui/lucide-icons'
+import { ArrowLeft, Flame, Lock, MessageCircle, Users } from '@tamagui/lucide-icons'
 import { useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback } from 'react'
@@ -11,7 +11,7 @@ import { api } from '../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../convex/_generated/dataModel'
 
 type BondfireData = Doc<'bondfires'> & {
-  participantCount?: number
+  participantCount: number
 }
 
 function getTimeAgo(timestamp: number): string {
@@ -23,15 +23,7 @@ function getTimeAgo(timestamp: number): string {
   return [Math.floor(seconds / 604800), 'w ago'].join('')
 }
 
-function BondfireRow({
-  bondfire,
-  participantCount,
-  onOpen,
-}: {
-  bondfire: Doc<'bondfires'>
-  participantCount: number
-  onOpen: () => void
-}) {
+function BondfireRow({ bondfire, onOpen }: { bondfire: BondfireData; onOpen: () => void }) {
   const responses = Math.max(0, bondfire.videoCount - 1)
 
   return (
@@ -63,7 +55,7 @@ function BondfireRow({
           <XStack alignItems="center" gap={4}>
             <Users size={15} color={bondfireColors.ash} />
             <Text fontSize={13} color={bondfireColors.ash}>
-              {participantCount}
+              {bondfire.participantCount}
             </Text>
           </XStack>
           <XStack alignItems="center" gap={4}>
@@ -78,38 +70,20 @@ function BondfireRow({
   )
 }
 
-function BondfireWithParticipants({
-  bondfire,
-  onOpen,
-}: {
-  bondfire: Doc<'bondfires'>
-  onOpen: () => void
-}) {
-  const participants = useQuery(
-    api.personalBondfires.listParticipants,
-    bondfire._id ? { bondfireId: bondfire._id } : 'skip',
-  )
-
-  return (
-    <BondfireRow
-      bondfire={bondfire}
-      participantCount={participants?.length ?? 1}
-      onOpen={onOpen}
-    />
-  )
-}
-
 export default function PersonalCampScreen() {
   const router = useRouter()
   const personalCamp = useQuery(api.personalCamps.getMyPersonalCamp, {})
-  const bondfires = useQuery(api.personalBondfires.listMyPersonalBondfires, {})
+  const bondfires = useQuery(
+    api.personalBondfires.listMyPersonalBondfires,
+    personalCamp ? {} : 'skip',
+  )
 
   const handleBack = useCallback(() => {
     router.back()
   }, [router])
 
   const handleOpenBondfire = useCallback(
-    (bondfireId: string) => {
+    (bondfireId: Id<'bondfires'>) => {
       router.push({
         pathname: '/(main)/bondfire/[id]',
         params: { id: bondfireId },
@@ -117,6 +91,10 @@ export default function PersonalCampScreen() {
     },
     [router],
   )
+
+  const handleUpgrade = useCallback(() => {
+    subscriptionActions.showPaywall()
+  }, [])
 
   // Loading state
   if (personalCamp === undefined) {
@@ -166,6 +144,9 @@ export default function PersonalCampScreen() {
           <Text fontSize={14} color={bondfireColors.ash} textAlign="center" lineHeight={20}>
             Subscribe to Plus, Premium, or Pro to unlock your Personal Camp.
           </Text>
+          <Button marginTop={8} onPress={handleUpgrade}>
+            View Plans
+          </Button>
         </YStack>
       </YStack>
     )
@@ -225,9 +206,12 @@ export default function PersonalCampScreen() {
             borderRadius={12}
             padding={12}
           >
-            <Text color={bondfireColors.warning} fontSize={14} fontWeight="600">
-              🔒 Your Personal Camp is frozen
-            </Text>
+            <XStack alignItems="center" gap={8}>
+              <Lock size={16} color={bondfireColors.warning} />
+              <Text color={bondfireColors.warning} fontSize={14} fontWeight="700">
+                Your Personal Camp is frozen
+              </Text>
+            </XStack>
             <Text color={bondfireColors.ash} fontSize={12} marginTop={4}>
               Re-subscribe to Plus, Premium, or Pro to reactivate your Personal Camp.
             </Text>
@@ -265,10 +249,7 @@ export default function PersonalCampScreen() {
           ItemSeparatorComponent={() => <Separator borderColor={`${bondfireColors.iron}40`} />}
           contentContainerStyle={{ paddingBottom: 40 }}
           renderItem={({ item }) => (
-            <BondfireWithParticipants
-              bondfire={item}
-              onOpen={() => handleOpenBondfire(item._id)}
-            />
+            <BondfireRow bondfire={item} onOpen={() => handleOpenBondfire(item._id)} />
           )}
         />
       )}
