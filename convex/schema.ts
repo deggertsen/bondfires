@@ -286,12 +286,46 @@ export default defineSchema({
     .index('by_user', ['userId', 'createdAt'])
     .index('by_created', ['createdAt']),
 
+  // Personal Camps — 1:1 per-subscriber space. Auto-created on Plus+ activation.
+  personalCamps: defineTable({
+    ownerId: v.id('users'),
+    name: v.string(),
+    status: v.union(v.literal('active'), v.literal('frozen')),
+    frozenAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('by_owner', ['ownerId']),
+
+  // Personal Bondfire Participants — tracks per-bondfire membership in personal camps
+  personalBondfireParticipants: defineTable({
+    bondfireId: v.id('bondfires'),
+    userId: v.id('users'),
+    status: v.union(v.literal('active'), v.literal('left'), v.literal('removed')),
+    joinedAt: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_bondfire_status', ['bondfireId', 'status'])
+    .index('by_user', ['userId']),
+
+  // Personal Bondfire Invites — bondfire-level invite codes scoped to personal camps
+  personalBondfireInvites: defineTable({
+    bondfireId: v.id('bondfires'),
+    code: v.string(),
+    createdBy: v.id('users'),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_code', ['code'])
+    .index('by_bondfire', ['bondfireId']),
+
   // Bondfires - main video posts
   bondfires: defineTable({
     // Creator reference
     userId: v.id('users'),
     creatorName: v.optional(v.string()), // Denormalized for display
     campId: v.optional(v.id('camps')),
+    personalCampId: v.optional(v.id('personalCamps')),
     frozen: v.optional(v.boolean()),
 
     // Video storage
@@ -340,6 +374,7 @@ export default defineSchema({
     // Recent bondfires
     .index('by_created', ['createdAt'])
     .index('by_camp', ['campId', 'createdAt'])
+    .index('by_personal_camp', ['personalCampId', 'createdAt'])
     .index('by_expires_at', ['expiresAt'])
     .index('by_mux_upload', ['muxUploadId'])
     .index('by_mux_asset', ['muxAssetId'])

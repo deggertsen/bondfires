@@ -955,8 +955,18 @@ export const applyStorePurchaseVerification = internalMutation({
 
         if (TIER_RANK[newEffectiveTier] < TIER_RANK[previousEffectiveTier]) {
           await handleTierDowngrade(ctx, args.userId, previousEffectiveTier, newEffectiveTier)
+          // Freeze personal camp on downgrade to Free
+          await ctx.runMutation(
+            internal.personalCamps.internalHandlePersonalCampDowngrade,
+            { userId: args.userId, newTier: newEffectiveTier },
+          )
         } else if (TIER_RANK[newEffectiveTier] > TIER_RANK[previousEffectiveTier]) {
           await handleTierUpgrade(ctx, args.userId, previousEffectiveTier, newEffectiveTier)
+          // Ensure personal camp exists and is active on upgrade to paid tier
+          await ctx.runMutation(
+            internal.personalCamps.internalHandlePersonalCampUpgrade,
+            { userId: args.userId, newTier: newEffectiveTier },
+          )
           if (TIER_RANK[newEffectiveTier] >= TIER_RANK.pro) {
             await reclaimFrozenCamps(ctx, args.userId, newEffectiveTier)
           }
