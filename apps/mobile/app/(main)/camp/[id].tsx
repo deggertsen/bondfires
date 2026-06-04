@@ -328,17 +328,13 @@ function CampHeader({
           </Text>
         </YStack>
       ) : null}
-      {camp.coverImageUrl ? (
-        <Image
-          source={{ uri: camp.coverImageUrl }}
-          width="$full"
-          height={140}
-          borderRadius={12}
-          resizeMode="cover"
-        />
-      ) : null}
       <XStack alignItems="center" justifyContent="space-between">
-        <Pressable onPress={onBack}>
+        <Pressable
+          accessibilityLabel="Back to camps"
+          accessibilityRole="button"
+          hitSlop={6}
+          onPress={onBack}
+        >
           <YStack
             width={42}
             height={42}
@@ -354,7 +350,12 @@ function CampHeader({
         </Pressable>
 
         {isActiveMember ? (
-          <Pressable onPress={onMute}>
+          <Pressable
+            accessibilityLabel={muted ? 'Unmute camp notifications' : 'Mute camp notifications'}
+            accessibilityRole="button"
+            hitSlop={6}
+            onPress={onMute}
+          >
             <YStack
               width={42}
               height={42}
@@ -374,6 +375,16 @@ function CampHeader({
           </Pressable>
         ) : null}
       </XStack>
+
+      {camp.coverImageUrl ? (
+        <Image
+          source={{ uri: camp.coverImageUrl }}
+          width="$full"
+          height={140}
+          borderRadius={12}
+          resizeMode="cover"
+        />
+      ) : null}
 
       <XStack alignItems="center" gap={14}>
         <YStack

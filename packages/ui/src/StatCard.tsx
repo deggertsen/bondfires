@@ -16,13 +16,31 @@ export function StatCard({ label, value, accentColor }: StatCardProps) {
       borderWidth={1}
       borderColor={bondfireColors.iron}
       padding={16}
+      minHeight={112}
       alignItems="center"
+      justifyContent="center"
       gap={6}
     >
-      <Text fontSize={32} fontWeight="900" color={accentColor ?? bondfireColors.whiteSmoke}>
+      <Text
+        width="100%"
+        fontSize={32}
+        fontWeight="900"
+        color={accentColor ?? bondfireColors.whiteSmoke}
+        textAlign="center"
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.7}
+      >
         {value}
       </Text>
-      <Text fontSize={12} color={bondfireColors.ash} fontWeight="700" textAlign="center">
+      <Text
+        width="100%"
+        fontSize={12}
+        color={bondfireColors.ash}
+        fontWeight="700"
+        textAlign="center"
+        numberOfLines={2}
+      >
         {label}
       </Text>
     </YStack>

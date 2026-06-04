@@ -1,6 +1,7 @@
 import { bondfireColors } from '@bondfires/config'
+import { Check } from '@tamagui/lucide-icons'
 import { Pressable } from 'react-native'
-import { Text, XStack, YStack } from 'tamagui'
+import { XStack, YStack } from 'tamagui'
 
 type ColorPickerProps = {
   palette: readonly string[]
@@ -8,13 +9,29 @@ type ColorPickerProps = {
   onSelect: (color: string) => void
 }
 
+const DARK_CHECK_SWATCHES = new Set(['#A8DADC', '#E9C46A', '#F4A261'])
+
 export function ColorPicker({ palette, selected, onSelect }: ColorPickerProps) {
+  const selectedColor = selected?.toUpperCase()
+
   return (
     <XStack flexWrap="wrap" gap={10}>
       {palette.map((color) => {
-        const isSelected = selected?.toUpperCase() === color.toUpperCase()
+        const normalizedColor = color.toUpperCase()
+        const isSelected = selectedColor === normalizedColor
+        const checkColor = DARK_CHECK_SWATCHES.has(normalizedColor)
+          ? bondfireColors.charcoal
+          : bondfireColors.whiteSmoke
+
         return (
-          <Pressable key={color} onPress={() => onSelect(color)}>
+          <Pressable
+            key={color}
+            accessibilityLabel={`Accent color ${color}`}
+            accessibilityRole="button"
+            accessibilityState={{ selected: isSelected }}
+            hitSlop={6}
+            onPress={() => onSelect(color)}
+          >
             <YStack
               width={40}
               height={40}
@@ -25,22 +42,7 @@ export function ColorPicker({ palette, selected, onSelect }: ColorPickerProps) {
               alignItems="center"
               justifyContent="center"
             >
-              {isSelected ? (
-                <Text
-                  fontSize={16}
-                  fontWeight="900"
-                  color={
-                    color.toUpperCase() === '#A8DADC' ||
-                    color.toUpperCase() === '#E9C46A' ||
-                    color.toUpperCase() === '#F4A261'
-                      ? bondfireColors.charcoal
-                      : bondfireColors.whiteSmoke
-                  }
-                  lineHeight={18}
-                >
-                  ✓
-                </Text>
-              ) : null}
+              {isSelected ? <Check size={18} color={checkColor} strokeWidth={3} /> : null}
             </YStack>
           </Pressable>
         )

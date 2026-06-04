@@ -1,6 +1,7 @@
 import { parseError } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, ColorPicker, Image, StatCard, Text } from '@bondfires/ui'
+import { ImagePlus } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import * as ImageManipulator from 'expo-image-manipulator'
 import * as ImagePicker from 'expo-image-picker'
@@ -137,7 +138,7 @@ export function OwnerCampSections({ campId }: OwnerCampSectionsProps) {
               <Text fontSize={28} fontWeight="900" color={bondfireColors.moltenGold}>
                 {slotSummary.balance}
               </Text>
-              <Text fontSize={11} color={bondfireColors.ash} fontWeight="700">
+              <Text fontSize={11} color={bondfireColors.ash} fontWeight="700" textAlign="center">
                 Available
               </Text>
             </YStack>
@@ -145,30 +146,37 @@ export function OwnerCampSections({ campId }: OwnerCampSectionsProps) {
               <Text fontSize={20} fontWeight="900" color={bondfireColors.whiteSmoke}>
                 +{slotSummary.slotsGrantedThisMonth}
               </Text>
-              <Text fontSize={11} color={bondfireColors.ash} fontWeight="700">
-                Granted This Month
+              <Text fontSize={11} color={bondfireColors.ash} fontWeight="700" textAlign="center">
+                Granted This Period
               </Text>
             </YStack>
             <YStack flex={1} alignItems="center" gap={2}>
               <Text fontSize={20} fontWeight="900" color={bondfireColors.whiteSmoke}>
                 -{slotSummary.slotsConsumedThisMonth}
               </Text>
-              <Text fontSize={11} color={bondfireColors.ash} fontWeight="700">
-                Consumed This Month
+              <Text fontSize={11} color={bondfireColors.ash} fontWeight="700" textAlign="center">
+                Consumed This Period
               </Text>
             </YStack>
           </XStack>
           {slotSummary.activeCamps.length > 0 ? (
             <YStack gap={6} marginTop={4}>
               <Text fontSize={12} fontWeight="700" color={bondfireColors.ash}>
-                Active Camps
+                Owned Camps
               </Text>
               {slotSummary.activeCamps.map((c) => (
-                <XStack key={c.campId} justifyContent="space-between" paddingVertical={4}>
-                  <Text fontSize={14} fontWeight="700" color={bondfireColors.whiteSmoke}>
+                <XStack key={c.campId} justifyContent="space-between" paddingVertical={4} gap={10}>
+                  <Text
+                    flex={1}
+                    minWidth={0}
+                    fontSize={14}
+                    fontWeight="700"
+                    color={bondfireColors.whiteSmoke}
+                    numberOfLines={1}
+                  >
                     {c.name}
                   </Text>
-                  <Text fontSize={12} color={bondfireColors.ash}>
+                  <Text fontSize={12} color={bondfireColors.ash} numberOfLines={1}>
                     Renews {new Date(c.renewalDate).toLocaleDateString()}
                   </Text>
                 </XStack>
@@ -206,6 +214,7 @@ export function OwnerCampSections({ campId }: OwnerCampSectionsProps) {
                 disabled={isUploadingCover}
                 onPress={handleCoverImagePick}
               >
+                <ImagePlus size={15} color={bondfireColors.whiteSmoke} />
                 <Text color={bondfireColors.whiteSmoke} fontWeight="700" fontSize={13}>
                   {isUploadingCover ? 'Uploading...' : 'Change Cover'}
                 </Text>
@@ -222,6 +231,7 @@ export function OwnerCampSections({ campId }: OwnerCampSectionsProps) {
                 disabled={isUploadingCover}
                 onPress={handleCoverImagePick}
               >
+                <ImagePlus size={15} color={bondfireColors.whiteSmoke} />
                 <Text color={bondfireColors.whiteSmoke} fontWeight="700" fontSize={13}>
                   {isUploadingCover ? 'Uploading...' : 'Upload Cover Image'}
                 </Text>
