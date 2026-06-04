@@ -24,9 +24,10 @@ import { useMutation, useQuery } from 'convex/react'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useCallback, useState } from 'react'
 import { Alert, FlatList, Modal, Pressable, StatusBar, TextInput } from 'react-native'
-import { Separator, Spinner, XStack, YStack } from 'tamagui'
+import { Separator, Spinner, Image as TamaguiImage, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
+import { OwnerCampSections } from './OwnerCampSections'
 
 type CampWithMembership = Doc<'camps'> & {
   membership: Doc<'campMembers'> | null
@@ -292,9 +293,29 @@ function CampHeader({
   const cooldownEndDate = rejectedAt != null ? new Date(rejectedAt + REJECTION_COOLDOWN_MS) : null
 
   const canJoin = !isActiveMember && !isPending && !isInCooldown && camp.access !== 'invite'
+  const accentColor = camp.accentColor ?? bondfireColors.bondfireCopper
+  const coverImageUrl = camp.coverImageUrl
 
   return (
     <YStack paddingTop={58} paddingHorizontal={16} paddingBottom={18} gap={18}>
+      {coverImageUrl ? (
+        <YStack height={180} marginHorizontal={-16} marginTop={-58} overflow="hidden">
+          <TamaguiImage
+            source={{ uri: coverImageUrl }}
+            width="100%"
+            height="100%"
+            resizeMode="cover"
+          />
+          <YStack
+            position="absolute"
+            bottom={0}
+            left={0}
+            right={0}
+            height={60}
+            backgroundColor={`${bondfireColors.obsidian}CC`}
+          />
+        </YStack>
+      ) : null}
       {isFrozen ? (
         <YStack
           backgroundColor={`${bondfireColors.warning}20`}
@@ -450,7 +471,7 @@ function CampHeader({
       {isActiveMember && !isFrozen && !isArchived ? (
         <YStack gap={10}>
           {camp.access !== 'invite' || isOwner ? (
-            <Button variant="primary" size="$lg" onPress={onSpark}>
+            <Button variant="primary" size="$lg" onPress={onSpark} backgroundColor={accentColor}>
               <Flame size={20} color={bondfireColors.whiteSmoke} />
               <Text color={bondfireColors.whiteSmoke} fontWeight="900">
                 Spark Here
@@ -729,6 +750,7 @@ export default function CampDetailScreen() {
   const isManager =
     camp?.membership?.status === 'active' &&
     (camp.membership.role === 'owner' || camp.membership.role === 'moderator')
+  const isOwner = camp?.membership?.status === 'active' && camp.membership.role === 'owner'
   const pendingRequests: PendingRequest[] =
     useQuery(
       api.camps.getPendingRequests,
@@ -967,24 +989,27 @@ export default function CampDetailScreen() {
           <Separator borderColor={bondfireColors.iron} opacity={0.6} marginHorizontal={16} />
         )}
         ListHeaderComponent={
-          <CampHeader
-            camp={camp}
-            onBack={() => router.back()}
-            onJoin={handleJoin}
-            onMute={handleMute}
-            onCreateInvite={handleCreateInvite}
-            onSpark={handleSpark}
-            pendingRequests={pendingRequests}
-            onApprove={handleApprove}
-            onReject={handleReject}
-            members={members}
-            bannedMembers={bannedMembers}
-            onRemoveMember={handleRemoveMember}
-            onBanMember={handleBanMember}
-            onUnbanMember={handleUnbanMember}
-            onArchive={handleArchive}
-            currentUserId={camp.membership?.userId}
-          />
+          <>
+            <CampHeader
+              camp={camp}
+              onBack={() => router.back()}
+              onJoin={handleJoin}
+              onMute={handleMute}
+              onCreateInvite={handleCreateInvite}
+              onSpark={handleSpark}
+              pendingRequests={pendingRequests}
+              onApprove={handleApprove}
+              onReject={handleReject}
+              members={members}
+              bannedMembers={bannedMembers}
+              onRemoveMember={handleRemoveMember}
+              onBanMember={handleBanMember}
+              onUnbanMember={handleUnbanMember}
+              onArchive={handleArchive}
+              currentUserId={camp.membership?.userId}
+            />
+            {isOwner && campId ? <OwnerCampSections campId={campId} /> : null}
+          </>
         }
         ListEmptyComponent={
           <YStack paddingVertical={64} paddingHorizontal={32} alignItems="center" gap={12}>
