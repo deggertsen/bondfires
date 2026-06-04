@@ -628,6 +628,8 @@ export const expireGracePeriodCamps = internalMutation({
     for (const camp of inactiveCamps) {
       await ctx.db.patch(camp._id, {
         status: 'archived',
+        archivedAt: now,
+        access: 'invite',
         reclaimDeadline: undefined,
         updatedAt: now,
       })

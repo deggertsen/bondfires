@@ -603,6 +603,8 @@ export async function processExpiredReclaims(
     if (!camp.ownerId) {
       await ctx.db.patch(camp._id, {
         status: 'archived',
+        archivedAt: now,
+        access: 'invite',
         frozenAt: undefined,
         reclaimDeadline: undefined,
         updatedAt: now,
@@ -641,6 +643,8 @@ export async function processExpiredReclaims(
       // No eligible member to transfer to — archive
       await ctx.db.patch(camp._id, {
         status: 'archived',
+        archivedAt: now,
+        access: 'invite',
         frozenAt: undefined,
         reclaimDeadline: undefined,
         updatedAt: now,

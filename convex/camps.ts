@@ -887,12 +887,26 @@ export const get = query({
     if (!camp) {
       return null
     }
-    if (!isCampVisibleStatus(camp.status)) {
-      return null
-    }
 
     const userId = await auth.getUserId(ctx)
     const membership = userId ? await getMembership(ctx, userId, camp._id) : null
+
+    // Archived camps are visible to active members only.
+    if (camp.status === 'archived') {
+      if (!membership || membership.status !== 'active') {
+        return null
+      }
+      return {
+        ...camp,
+        name: resolveCampDisplayName(camp),
+        membership,
+        archived: true,
+      }
+    }
+
+    if (!isCampVisibleStatus(camp.status)) {
+      return null
+    }
 
     // Frozen and grace camps are visible only to existing active members.
     if (camp.status === 'frozen' || camp.status === 'grace') {
@@ -959,7 +973,8 @@ export const listMine = query({
     return camps
       .map((camp, index) => (camp ? { ...camp, membership: memberships[index] } : null))
       .filter(
-        (camp): camp is NonNullable<typeof camp> => !!camp && isCampVisibleStatus(camp.status),
+        (camp): camp is NonNullable<typeof camp> =>
+          !!camp && (isCampVisibleStatus(camp.status) || camp.status === 'archived'),
       )
       .sort((left, right) => left.name.localeCompare(right.name))
   },
@@ -2636,6 +2651,9 @@ export const updateSettings = mutation({
     }
 
     if (fields.status !== undefined) {
+      if (fields.status === 'archived' && camp.isLaunchCamp === true) {
+        throw new Error('Launch camps cannot be archived')
+      }
       if (!isAdmin(user)) {
         const ownerStatusChange =
           camp.ownerId === user._id && (fields.status === 'frozen' || fields.status === 'archived')
@@ -2645,7 +2663,8 @@ export const updateSettings = mutation({
       }
     }
 
-    const updates: Record<string, unknown> = { updatedAt: Date.now() }
+    const now = Date.now()
+    const updates: Record<string, unknown> = { updatedAt: now }
 
     if (fields.name !== undefined) updates.name = fields.name
     if (fields.theme !== undefined) updates.theme = fields.theme
@@ -2656,10 +2675,56 @@ export const updateSettings = mutation({
     if (fields.rules !== undefined) updates.rules = fields.rules
     if (fields.nameOverride !== undefined) updates.nameOverride = fields.nameOverride
     if (fields.access !== undefined) updates.access = fields.access
-    if (fields.status !== undefined) updates.status = fields.status
+    if (fields.status !== undefined) {
+      updates.status = fields.status
+      if (fields.status === 'archived' && camp.status !== 'archived') {
+        updates.archivedAt = now
+      }
+      if (fields.status === 'archived') {
+        updates.access = 'invite'
+      }
+    }
 
     await ctx.db.patch(campId, updates)
 
     return campId
+  },
+})
+
+/**
+ * Archive a camp. Owner-only (or admin).
+ * Sets status to 'archived', records archivedAt, and switches access to 'invite'
+ * to prevent new members from joining. Launch camps cannot be archived.
+ */
+export const archiveCamp = mutation({
+  args: {
+    campId: v.id('camps'),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUser(ctx)
+
+    const camp = await ctx.db.get(args.campId)
+    if (!camp) {
+      throwUserError('Camp not found')
+    }
+
+    if (camp.isLaunchCamp === true) {
+      throwUserError('Launch camps cannot be archived')
+    }
+
+    if (!isAdmin(user) && camp.ownerId !== user._id) {
+      throwUserError('Only the camp owner or an admin can archive this camp')
+    }
+
+    const now = Date.now()
+
+    await ctx.db.patch(args.campId, {
+      status: 'archived',
+      archivedAt: camp.archivedAt ?? now,
+      access: 'invite',
+      updatedAt: now,
+    })
+
+    return args.campId
   },
 })

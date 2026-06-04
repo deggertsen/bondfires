@@ -1,7 +1,7 @@
 import { parseError } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, CampCardStatusBanner, Input, Text } from '@bondfires/ui'
-import { Flame, Lock, Search, Users } from '@tamagui/lucide-icons'
+import { ChevronDown, ChevronUp, Flame, Lock, Search, Users } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { type RelativePathString, useRouter } from 'expo-router'
 import { useCallback, useMemo, useState } from 'react'
@@ -19,6 +19,15 @@ type CampListItem =
   | { type: 'camp'; camp: CampWithMembership }
 
 const REJECTION_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000
+
+function getTimeAgo(timestamp: number): string {
+  const seconds = Math.floor((Date.now() - timestamp) / 1000)
+  if (seconds < 60) return 'just now'
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`
+  if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`
+  return `${Math.floor(seconds / 604800)}w ago`
+}
 
 function getAccessLabel(camp: Doc<'camps'>) {
   if (camp.access === 'invite') return 'Invite only'
@@ -196,6 +205,7 @@ function SectionHeader({ title, subtitle }: { title: string; subtitle: string })
 export default function CampsScreen() {
   const router = useRouter()
   const camps = useQuery(api.camps.list, {})
+  const myCamps = useQuery(api.camps.listMine, {})
   const subscription = useQuery(api.subscriptions.current, {})
   const slotBalance = useQuery(
     api.campSlots.getSlotBalance,
@@ -213,6 +223,7 @@ export default function CampsScreen() {
   const [privateCampPurpose, setPrivateCampPurpose] = useState('')
   const [inviteCode, setInviteCode] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [archivedExpanded, setArchivedExpanded] = useState(false)
   const canCreatePrivateCamp =
     subscription?.tier === 'plus' ||
     subscription?.tier === 'premium' ||
@@ -232,6 +243,11 @@ export default function CampsScreen() {
       return searchable.includes(q)
     })
   }, [camps, query])
+
+  const archivedCamps = useMemo<CampWithMembership[]>(() => {
+    if (!myCamps) return []
+    return myCamps.filter((camp: CampWithMembership) => camp.status === 'archived')
+  }, [myCamps])
 
   const listItems = useMemo<CampListItem[]>(() => {
     if (!filtered) return []
@@ -481,6 +497,87 @@ export default function CampsScreen() {
         }
         ListEmptyComponent={
           <EmptyCamps hasQuery={query.trim().length > 0} onReset={() => setQuery('')} />
+        }
+        ListFooterComponent={
+          query.trim().length > 0 || archivedCamps.length === 0 ? null : (
+            <YStack paddingBottom={32}>
+              {/* Header row — always visible */}
+              <Pressable onPress={() => setArchivedExpanded(!archivedExpanded)}>
+                <XStack
+                  paddingHorizontal={16}
+                  paddingVertical={14}
+                  alignItems="center"
+                  gap={8}
+                  borderTopWidth={1}
+                  borderTopColor={bondfireColors.iron}
+                  marginTop={8}
+                >
+                  <YStack flex={1} gap={2}>
+                    <Text fontSize={13} color={bondfireColors.error} fontWeight="900">
+                      Archived ({archivedCamps.length})
+                    </Text>
+                    <Text fontSize={12} color={bondfireColors.ash}>
+                      Read-only. Content will be deleted after 30 days.
+                    </Text>
+                  </YStack>
+                  {archivedExpanded ? (
+                    <ChevronUp size={18} color={bondfireColors.ash} />
+                  ) : (
+                    <ChevronDown size={18} color={bondfireColors.ash} />
+                  )}
+                </XStack>
+              </Pressable>
+
+              {/* Collapsed camp list */}
+              {archivedExpanded
+                ? archivedCamps.map((camp, index) => (
+                    <YStack key={camp._id}>
+                      <Pressable
+                        onPress={() =>
+                          router.push(`/(main)/camp/${camp._id}` as RelativePathString)
+                        }
+                      >
+                        <XStack
+                          paddingHorizontal={16}
+                          paddingVertical={12}
+                          alignItems="center"
+                          gap={12}
+                          opacity={0.7}
+                        >
+                          <YStack
+                            width={40}
+                            height={40}
+                            borderRadius={12}
+                            backgroundColor={camp.color ?? bondfireColors.gunmetal}
+                            alignItems="center"
+                            justifyContent="center"
+                          >
+                            <Lock size={18} color={bondfireColors.whiteSmoke} />
+                          </YStack>
+                          <YStack flex={1} gap={2}>
+                            <Text fontSize={14} fontWeight="900" numberOfLines={1}>
+                              {camp.name}
+                            </Text>
+                            <Text fontSize={12} color={bondfireColors.ash}>
+                              Archived {camp.archivedAt ? getTimeAgo(camp.archivedAt) : 'recently'}{' '}
+                              · {camp.activeMemberCount ?? 0}{' '}
+                              {camp.activeMemberCount === 1 ? 'member' : 'members'}
+                            </Text>
+                          </YStack>
+                        </XStack>
+                      </Pressable>
+                      {index < archivedCamps.length - 1 ? (
+                        <Separator
+                          borderColor={bondfireColors.iron}
+                          opacity={0.4}
+                          marginHorizontal={16}
+                        />
+                      ) : null}
+                    </YStack>
+                  ))
+                : null}
+            </YStack>
+          )
         }
         contentContainerStyle={{ paddingBottom: 110 }}
       />

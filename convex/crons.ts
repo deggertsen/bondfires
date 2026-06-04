@@ -54,4 +54,12 @@ crons.daily(
 // Runs daily at 12:00 UTC.
 crons.daily('purge old client logs', { hourUTC: 12, minuteUTC: 0 }, internal.clientLogs.purgeOld)
 
+// Cleanup archived camps past the 30-day retention window.
+// Runs daily at 13:00 UTC — deletes Mux assets then camp data.
+crons.daily(
+  'cleanup archived camps',
+  { hourUTC: 13, minuteUTC: 0 },
+  internal.cleanup.dailyCleanupArchivedCamps,
+)
+
 export default crons

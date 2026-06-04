@@ -6,7 +6,7 @@ import { action, internalQuery, mutation, query } from './_generated/server'
 import { auth } from './auth'
 import {
   isCampParticipableStatus,
-  isCampVisibleStatus,
+  isCampReadableStatus,
   requiresActiveMembershipForVisibility,
 } from './campLifecycle'
 import {
@@ -148,7 +148,7 @@ async function isBondfireVisibleToViewer(
   }
 
   const camp = await ctx.db.get(bondfire.campId)
-  if (!camp || !isCampVisibleStatus(camp.status)) {
+  if (!camp || !isCampReadableStatus(camp.status)) {
     return false
   }
 
@@ -202,7 +202,7 @@ export const listByCamp = query({
   handler: async (ctx, args) => {
     const limit = args.limit ?? 20
     const camp = await ctx.db.get(args.campId)
-    if (!camp || !isCampVisibleStatus(camp.status)) {
+    if (!camp || !isCampReadableStatus(camp.status)) {
       return []
     }
 
@@ -275,6 +275,7 @@ export const getWithVideos = query({
     if (!visible) {
       return null
     }
+    const camp = bondfire.campId ? await ctx.db.get(bondfire.campId) : null
 
     const videos = await ctx.db
       .query('bondfireVideos')
@@ -286,6 +287,7 @@ export const getWithVideos = query({
 
     return {
       ...withLiveFlags(bondfire),
+      campStatus: camp?.status,
       videos: readyVideos,
       participants: await getThreadParticipants(ctx, bondfire),
     }
@@ -494,7 +496,7 @@ export const incrementViews = mutation({
 
     if (bondfire.campId) {
       const camp = await ctx.db.get(bondfire.campId)
-      if (!camp || !isCampVisibleStatus(camp.status)) {
+      if (!camp || !isCampReadableStatus(camp.status)) {
         throw new Error('Camp not found')
       }
 
