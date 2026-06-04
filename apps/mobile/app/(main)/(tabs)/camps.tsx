@@ -6,7 +6,7 @@ import { useMutation, useQuery } from 'convex/react'
 import { type RelativePathString, useRouter } from 'expo-router'
 import { useCallback, useMemo, useState } from 'react'
 import { Alert, FlatList, Pressable, RefreshControl, StatusBar } from 'react-native'
-import { Separator, Sheet, Spinner, XStack, YStack } from 'tamagui'
+import { Image, Separator, Sheet, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc } from '../../../../../convex/_generated/dataModel'
 
@@ -60,10 +60,19 @@ function CampCard({
   const isInCooldown = isRejected && !cooldownExpired
   const cooldownEndDate = rejectedAt != null ? new Date(rejectedAt + REJECTION_COOLDOWN_MS) : null
   const canJoinFromList = !isActiveMember && !isPending && !isInCooldown && camp.access !== 'invite'
+  const accentColor = camp.accentColor
+  const coverImageUrl = camp.coverImageUrl
 
   return (
     <Pressable onPress={onOpen}>
-      <YStack paddingHorizontal={16} paddingVertical={14} gap={12} overflow="hidden">
+      <YStack
+        paddingHorizontal={16}
+        paddingVertical={14}
+        gap={12}
+        overflow="hidden"
+        borderLeftWidth={accentColor ? 3 : 0}
+        borderLeftColor={accentColor ?? 'transparent'}
+      >
         {isPending ? <CampCardStatusBanner variant="pending" /> : null}
         {isInCooldown ? <CampCardStatusBanner variant="rejected" /> : null}
         <XStack alignItems="flex-start" gap={12}>
@@ -74,8 +83,11 @@ function CampCard({
             backgroundColor={camp.color ?? bondfireColors.gunmetal}
             alignItems="center"
             justifyContent="center"
+            overflow="hidden"
           >
-            {camp.access === 'invite' ? (
+            {coverImageUrl ? (
+              <Image source={{ uri: coverImageUrl }} width={54} height={54} resizeMode="cover" />
+            ) : camp.access === 'invite' ? (
               <Lock size={25} color={bondfireColors.whiteSmoke} />
             ) : (
               <Flame size={28} color={bondfireColors.whiteSmoke} />
