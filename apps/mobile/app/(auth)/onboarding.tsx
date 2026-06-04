@@ -5,18 +5,19 @@ import { Flame } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
 import { StatusBar } from 'react-native'
 import { XStack, YStack } from 'tamagui'
+import { routes } from '../../lib/routes'
 
 export default function OnboardingScreen() {
   const router = useRouter()
 
   const handleContinue = () => {
     appActions.completeOnboarding()
-    router.replace('/(auth)/signup')
+    router.replace(routes.signup)
   }
 
   const handleLogin = () => {
     appActions.completeOnboarding()
-    router.replace('/(auth)/login')
+    router.replace(routes.login())
   }
 
   return (

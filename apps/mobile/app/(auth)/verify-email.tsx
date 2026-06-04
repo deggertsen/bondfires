@@ -1,4 +1,4 @@
-import { getAuthErrorMessage, getAuthRedirectPath } from '@bondfires/app'
+import { getAuthErrorMessage } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
@@ -8,6 +8,7 @@ import { useState } from 'react'
 import { StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { Spinner, YStack } from 'tamagui'
+import { resolveAuthRedirect } from '../../lib/routes'
 
 export default function VerifyEmailScreen() {
   const router = useRouter()
@@ -19,7 +20,6 @@ export default function VerifyEmailScreen() {
   const [isResending, setIsResending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
-  const redirectPath = getAuthRedirectPath(params.redirectTo)
 
   const handleVerify = async () => {
     if (!code || code.length < 6) {
@@ -38,7 +38,7 @@ export default function VerifyEmailScreen() {
         flow: 'email-verification',
       })
       setSuccess(true)
-      router.replace(redirectPath ?? '/(main)/(tabs)/feed')
+      router.replace(resolveAuthRedirect(params.redirectTo))
     } catch (error) {
       setError(getAuthErrorMessage(error))
     } finally {

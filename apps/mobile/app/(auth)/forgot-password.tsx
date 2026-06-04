@@ -3,12 +3,12 @@ import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { ChevronLeft, Mail } from '@tamagui/lucide-icons'
-import type { RelativePathString } from 'expo-router'
 import { useRouter } from 'expo-router'
 import { useState } from 'react'
 import { Pressable, StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { Spinner, YStack } from 'tamagui'
+import { routes } from '../../lib/routes'
 
 export default function ForgotPasswordScreen() {
   const router = useRouter()
@@ -34,10 +34,7 @@ export default function ForgotPasswordScreen() {
         flow: 'reset',
       })
       // Navigate to reset password screen to enter code and new password
-      router.replace({
-        pathname: '/(auth)/reset-password' as RelativePathString,
-        params: { email },
-      })
+      router.replace(routes.resetPassword(email))
     } catch (error) {
       setError(getAuthErrorMessage(error))
     } finally {

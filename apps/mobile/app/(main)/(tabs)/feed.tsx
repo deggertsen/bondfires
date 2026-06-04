@@ -30,6 +30,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Separator, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc } from '../../../../../convex/_generated/dataModel'
+import { routes } from '../../../lib/routes'
 
 type BondfireData = Doc<'bondfires'> & {
   isLive?: boolean
@@ -266,7 +267,7 @@ function EmptyFeed() {
       <Text fontSize={16} color={bondfireColors.ash} textAlign="center" marginBottom={32}>
         Be the first to share a video!
       </Text>
-      <Button variant="primary" size="$lg" onPress={() => router.push('/(main)/(tabs)/create')}>
+      <Button variant="primary" size="$lg" onPress={() => router.push(routes.create)}>
         <Flame size={20} color={bondfireColors.whiteSmoke} />
         <Text color={bondfireColors.whiteSmoke} fontWeight="900">
           Spark Bondfire
@@ -500,14 +501,14 @@ export default function FeedScreen() {
       setFeedActiveBondfireId(bondfireId)
       setBondfireVideoIndex(bondfireId, getBondfireVideoIndex(bondfireId) ?? 0)
       appActions.setVideoMuted(false)
-      router.push(`/(main)/bondfire/${bondfireId}`)
+      router.push(routes.bondfire(bondfireId))
     },
     [router],
   )
 
   const handleRespond = useCallback(
     (bondfireId: string) => {
-      router.push(`/(main)/(tabs)/create?respondTo=${bondfireId}`)
+      router.push(routes.createRespondTo(bondfireId))
     },
     [router],
   )
@@ -522,11 +523,11 @@ export default function FeedScreen() {
     }
 
     if (selectedCampId) {
-      router.push({ pathname: '/(main)/(tabs)/create', params: { campId: selectedCampId } })
+      router.push(routes.createForCamp(selectedCampId))
       return
     }
 
-    router.push('/(main)/(tabs)/create')
+    router.push(routes.create)
   }, [router, selectedCamp, selectedCampId])
 
   const handleSelectCamp = useCallback(

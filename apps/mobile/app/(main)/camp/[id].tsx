@@ -27,6 +27,7 @@ import { Alert, FlatList, Modal, Pressable, StatusBar, TextInput } from 'react-n
 import { Separator, Spinner, Image as TamaguiImage, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
+import { routes } from '../../../lib/routes'
 import { OwnerCampSections } from './OwnerCampSections'
 
 type CampWithMembership = Doc<'camps'> & {
@@ -803,7 +804,7 @@ export default function CampDetailScreen() {
   const handleSpark = useCallback(() => {
     if (!campId) return
     appActions.setCurrentCampId(campId)
-    router.push({ pathname: '/(main)/(tabs)/create', params: { campId } })
+    router.push(routes.createForCamp(campId))
   }, [campId, router])
 
   const handleCreateInvite = useCallback(async () => {
@@ -933,7 +934,7 @@ export default function CampDetailScreen() {
       setFeedActiveBondfireId(bondfireId)
       setBondfireVideoIndex(bondfireId, getBondfireVideoIndex(bondfireId) ?? 0)
       appActions.setVideoMuted(false)
-      router.push({ pathname: '/(main)/bondfire/[id]', params: { id: bondfireId } })
+      router.push(routes.bondfire(bondfireId))
     },
     [router],
   )

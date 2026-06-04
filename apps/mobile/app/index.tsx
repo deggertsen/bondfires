@@ -6,6 +6,7 @@ import { Redirect } from 'expo-router'
 import { useEffect, useRef } from 'react'
 import { Spinner, Text, YStack } from 'tamagui'
 import { api } from '../../../convex/_generated/api'
+import { routes } from '../lib/routes'
 
 /** Threshold (ms) after which an unresolved query is considered "slow". */
 const SLOW_QUERY_THRESHOLD_MS = 3000
@@ -70,17 +71,17 @@ export default function SplashScreen() {
     // Check if they've seen onboarding
     if (!hasSeenOnboarding) {
       telemetry.breadcrumb('route:auth', { screen: 'onboarding' })
-      return <Redirect href="/(auth)/onboarding" />
+      return <Redirect href={routes.onboarding} />
     }
     telemetry.breadcrumb('route:auth', { screen: 'login' })
-    return <Redirect href="/(auth)/login" />
+    return <Redirect href={routes.login()} />
   }
 
   // User is authenticated, go to main app
   telemetry.breadcrumb('route:main')
   const lastLocation = getLastLocation()
   if (lastLocation?.type === 'bondfire' && lastLocation.bondfireId) {
-    return <Redirect href={`/(main)/bondfire/${lastLocation.bondfireId}`} />
+    return <Redirect href={routes.bondfire(lastLocation.bondfireId)} />
   }
-  return <Redirect href="/(main)/(tabs)/feed" />
+  return <Redirect href={routes.feed} />
 }

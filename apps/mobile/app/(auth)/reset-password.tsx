@@ -8,6 +8,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router'
 import { Pressable, StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { Spinner, YStack } from 'tamagui'
+import { routes } from '../../lib/routes'
 
 export default function ResetPasswordScreen() {
   const router = useRouter()
@@ -71,7 +72,7 @@ export default function ResetPasswordScreen() {
       form$.success.set(true)
       // Navigate to login after a short delay
       setTimeout(() => {
-        router.replace('/(auth)/login')
+        router.replace(routes.login())
       }, 2000)
     } catch (error) {
       form$.error.set(getAuthErrorMessage(error))

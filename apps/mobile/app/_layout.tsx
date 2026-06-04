@@ -27,8 +27,8 @@ import {
 } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { useObserve, useValue } from '@legendapp/state/react'
-import type { RelativePathString } from 'expo-router/build/types'
 import { api } from '../../../convex/_generated/api'
+import { resolveExternalRoute, routes } from '../lib/routes'
 
 export const unstable_settings = {
   // Ensure that reloading keeps proper navigation state
@@ -200,11 +200,13 @@ function AppContent() {
     (response: Notifications.NotificationResponse) => {
       const data = response.notification.request.content.data
 
-      // Navigate based on notification type
+      // Navigate based on notification type. Notification payloads are untrusted,
+      // so resolve `screen` against an allowlist instead of casting it to a route.
       if (data?.bondfireId) {
-        router.push(`/(main)/bondfire/${data.bondfireId}`)
-      } else if (data?.screen) {
-        router.push(data.screen as RelativePathString)
+        router.push(routes.bondfire(String(data.bondfireId)))
+      } else if (typeof data?.screen === 'string') {
+        const target = resolveExternalRoute(data.screen)
+        if (target) router.push(target)
       }
     },
     [router],

@@ -36,6 +36,7 @@ import { Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { CompletionScreen } from '../../../components/CompletionScreen'
+import { routes } from '../../../lib/routes'
 import { mergeVideoSegments } from '../../../lib/videoSegmentMerger'
 import { BondfireLivePublisher, LivePublisherView } from '../../../modules/bondfire-live-publisher'
 
@@ -373,7 +374,7 @@ export default function CreateScreen() {
       state$.progressStage.set('')
       // Clear respondTo param so user can create a new spark instead of responding.
       if (respondTo) {
-        router.replace('/(main)/(tabs)/create')
+        router.replace(routes.create)
       }
     }
   }, [isFocused, respondTo, router, state$])
@@ -1276,7 +1277,7 @@ export default function CreateScreen() {
             state$.selectedCampId.set(null)
             state$.tradeTag.set(null)
             appActions.setCurrentCampId(null)
-            router.replace('/(main)/(tabs)/create')
+            router.replace(routes.create)
           }}
         >
           <Text color={bondfireColors.whiteSmoke} fontWeight="900">
@@ -1445,10 +1446,10 @@ export default function CreateScreen() {
           const targetBondfireId = respondTo ?? liveRecordId
           livePublishActions.reset()
           if (shouldUseLivePublish && targetBondfireId) {
-            router.replace(`/(main)/bondfire/${targetBondfireId}`)
+            router.replace(routes.bondfire(targetBondfireId))
             return
           }
-          router.replace('/(main)/(tabs)/feed')
+          router.replace(routes.feed)
         }}
       />
     )

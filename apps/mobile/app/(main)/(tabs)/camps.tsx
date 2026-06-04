@@ -3,12 +3,13 @@ import { bondfireColors } from '@bondfires/config'
 import { Button, CampCardStatusBanner, Input, Text } from '@bondfires/ui'
 import { ChevronDown, ChevronUp, Flame, Lock, Search, Sparkles, Users } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
-import { type RelativePathString, useRouter } from 'expo-router'
+import { useRouter } from 'expo-router'
 import { useCallback, useMemo, useState } from 'react'
 import { Alert, FlatList, Pressable, RefreshControl, StatusBar } from 'react-native'
 import { Image, Separator, Sheet, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc } from '../../../../../convex/_generated/dataModel'
+import { routes } from '../../../lib/routes'
 
 type CampWithMembership = Doc<'camps'> & {
   membership: Doc<'campMembers'> | null
@@ -434,7 +435,7 @@ export default function CampsScreen() {
   }, [])
 
   const handleOpenPersonalCamp = useCallback(() => {
-    router.push('/(main)/personal-camp' as RelativePathString)
+    router.push(routes.personalCamp)
   }, [router])
 
   const handleUpgrade = useCallback(() => {
@@ -485,7 +486,7 @@ export default function CampsScreen() {
       setPrivateCampName('')
       setPrivateCampPurpose('')
       setIsCreatePrivateOpen(false)
-      router.push(`/(main)/camp/${campId}` as RelativePathString)
+      router.push(routes.camp(campId))
     } catch (error) {
       const message = parseError(error).message
       Alert.alert('Private Camp Unavailable', message)
@@ -514,7 +515,7 @@ export default function CampsScreen() {
       const result = await redeemInvite({ code })
       setInviteCode('')
       setIsRedeemInviteOpen(false)
-      router.push(`/(main)/camp/${result.campId}` as RelativePathString)
+      router.push(routes.camp(result.campId))
     } catch (error) {
       const message = parseError(error).message
       Alert.alert('Invite Unavailable', message)
@@ -561,7 +562,7 @@ export default function CampsScreen() {
           ) : (
             <CampCard
               camp={item.camp}
-              onOpen={() => router.push(`/(main)/camp/${item.camp._id}` as RelativePathString)}
+              onOpen={() => router.push(routes.camp(item.camp._id))}
               onJoin={() => handleJoin(item.camp)}
             />
           )
@@ -679,11 +680,7 @@ export default function CampsScreen() {
               {archivedExpanded
                 ? archivedCamps.map((camp, index) => (
                     <YStack key={camp._id}>
-                      <Pressable
-                        onPress={() =>
-                          router.push(`/(main)/camp/${camp._id}` as RelativePathString)
-                        }
-                      >
+                      <Pressable onPress={() => router.push(routes.camp(camp._id))}>
                         <XStack
                           paddingHorizontal={16}
                           paddingVertical={12}

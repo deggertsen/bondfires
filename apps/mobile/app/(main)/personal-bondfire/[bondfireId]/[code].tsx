@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import { Alert } from 'react-native'
 import { Spinner, YStack } from 'tamagui'
 import { api } from '../../../../../../convex/_generated/api'
+import { personalBondfirePath, routes } from '../../../../lib/routes'
 
 export default function PersonalBondfireInviteScreen() {
   const { bondfireId, code } = useLocalSearchParams<{ bondfireId: string; code: string }>()
@@ -24,17 +25,14 @@ export default function PersonalBondfireInviteScreen() {
 
   const navigateToBondfire = useCallback(
     (id: string) => {
-      router.replace(`/(main)/bondfire/${id}`)
+      router.replace(routes.bondfire(id))
     },
     [router],
   )
 
   const navigateToAuth = useCallback(
     (returnUrl: string) => {
-      router.replace({
-        pathname: '/(auth)/login',
-        params: { redirectTo: returnUrl },
-      })
+      router.replace(routes.login(returnUrl))
     },
     [router],
   )
@@ -49,7 +47,7 @@ export default function PersonalBondfireInviteScreen() {
     // User is not authenticated — redirect to login with return link
     if (!currentUser) {
       authRedirectedRef.current = true
-      const returnUrl = `/(main)/personal-bondfire/${bondfireId}/${code}`
+      const returnUrl = personalBondfirePath(bondfireId, code)
       telemetry.breadcrumb('deeplink:personal-bondfire:auth-required', { bondfireId, code })
       navigateToAuth(returnUrl)
       return
@@ -107,7 +105,7 @@ export default function PersonalBondfireInviteScreen() {
       Alert.alert(err.title, err.message, [
         {
           text: 'Go Home',
-          onPress: () => router.replace('/(main)/(tabs)/feed'),
+          onPress: () => router.replace(routes.feed),
         },
       ])
       return
@@ -136,21 +134,21 @@ export default function PersonalBondfireInviteScreen() {
           Alert.alert('Fire Full', 'This fire is full.', [
             {
               text: 'Go Home',
-              onPress: () => router.replace('/(main)/(tabs)/feed'),
+              onPress: () => router.replace(routes.feed),
             },
           ])
         } else if (message.includes('frozen')) {
           Alert.alert('Camp Unavailable', 'The personal camp is currently unavailable.', [
             {
               text: 'Go Home',
-              onPress: () => router.replace('/(main)/(tabs)/feed'),
+              onPress: () => router.replace(routes.feed),
             },
           ])
         } else {
           Alert.alert('Something Went Wrong', 'Could not join this fire. Please try again.', [
             {
               text: 'Go Home',
-              onPress: () => router.replace('/(main)/(tabs)/feed'),
+              onPress: () => router.replace(routes.feed),
             },
           ])
         }

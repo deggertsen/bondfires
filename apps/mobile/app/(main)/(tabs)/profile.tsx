@@ -39,6 +39,7 @@ import { Avatar, Separator, Sheet, Spinner, Switch, XStack, YStack } from 'tamag
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { UploadProgressCard } from '../../../components/UploadProgressCard'
+import { routes } from '../../../lib/routes'
 
 type UserBondfireData = Doc<'bondfires'>
 type PublicUser = {
@@ -196,7 +197,7 @@ export default function ProfileScreen() {
         onPress: async () => {
           await signOut()
           appActions.logout()
-          router.replace('/(auth)/login')
+          router.replace(routes.login())
         },
       },
     ])
@@ -256,7 +257,7 @@ export default function ProfileScreen() {
       setFeedActiveBondfireId(bondfireId)
       setBondfireVideoIndex(bondfireId, getBondfireVideoIndex(bondfireId) ?? 0)
       appActions.setVideoMuted(false)
-      router.push(`/(main)/bondfire/${bondfireId}`)
+      router.push(routes.bondfire(bondfireId))
     },
     [router],
   )
@@ -297,7 +298,7 @@ export default function ProfileScreen() {
                       await deleteAccountMutation()
                       await signOut()
                       appActions.logout()
-                      router.replace('/(auth)/login')
+                      router.replace(routes.login())
                     } catch (error) {
                       const message = parseError(error).message
                       Alert.alert('Error', message)
