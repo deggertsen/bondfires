@@ -1,4 +1,4 @@
-import { getAuthErrorMessage } from '@bondfires/app'
+import { getAuthErrorMessage, getAuthRedirectPath } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
@@ -12,13 +12,14 @@ import { Spinner, YStack } from 'tamagui'
 export default function VerifyEmailScreen() {
   const router = useRouter()
   const { signIn } = useAuthActions()
-  const params = useLocalSearchParams<{ email?: string }>()
+  const params = useLocalSearchParams<{ email?: string; redirectTo?: string }>()
 
   const [code, setCode] = useState('')
   const [isVerifying, setIsVerifying] = useState(false)
   const [isResending, setIsResending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+  const redirectPath = getAuthRedirectPath(params.redirectTo)
 
   const handleVerify = async () => {
     if (!code || code.length < 6) {
@@ -37,8 +38,7 @@ export default function VerifyEmailScreen() {
         flow: 'email-verification',
       })
       setSuccess(true)
-      // Navigate to feed after successful verification
-      router.replace('/(main)/(tabs)/feed')
+      router.replace(redirectPath ?? '/(main)/(tabs)/feed')
     } catch (error) {
       setError(getAuthErrorMessage(error))
     } finally {

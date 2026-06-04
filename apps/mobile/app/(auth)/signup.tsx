@@ -5,7 +5,7 @@ import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker'
 import { Flame, UserPlus } from '@tamagui/lucide-icons'
-import { useRouter } from 'expo-router'
+import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useState } from 'react'
 import { Platform, Pressable, StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
@@ -46,6 +46,7 @@ function getMinBirthDate(): Date {
 
 export default function SignupScreen() {
   const router = useRouter()
+  const { redirectTo } = useLocalSearchParams<{ redirectTo?: string }>()
   const { signIn } = useAuthActions()
 
   const form$ = useObservable({
@@ -158,7 +159,10 @@ export default function SignupScreen() {
         birthDate: currentBirthDate,
       })
       // Pass email to verify-email screen for OTP verification
-      router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail } })
+      router.replace({
+        pathname: '/(auth)/verify-email',
+        params: redirectTo ? { email: currentEmail, redirectTo } : { email: currentEmail },
+      })
     } catch (error) {
       form$.error.set(getAuthErrorMessage(error))
     } finally {
@@ -358,7 +362,16 @@ export default function SignupScreen() {
               )}
             </Button>
 
-            <Button variant="ghost" size="$md" onPress={() => router.push('/(auth)/login')}>
+            <Button
+              variant="ghost"
+              size="$md"
+              onPress={() =>
+                router.push({
+                  pathname: '/(auth)/login',
+                  params: redirectTo ? { redirectTo } : {},
+                })
+              }
+            >
               <Text>Already have an account? Sign in</Text>
             </Button>
           </YStack>

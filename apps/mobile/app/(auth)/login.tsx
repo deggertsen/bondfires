@@ -1,11 +1,11 @@
-import { telemetry } from '@bondfires/app'
+import { getAuthRedirectPath, telemetry } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { Flame } from '@tamagui/lucide-icons'
 import { useQuery } from 'convex/react'
-import { useRouter } from 'expo-router'
+import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useRef } from 'react'
 import { StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
@@ -14,6 +14,7 @@ import { api } from '../../../../convex/_generated/api'
 
 export default function LoginScreen() {
   const router = useRouter()
+  const { redirectTo } = useLocalSearchParams<{ redirectTo?: string }>()
   const { signIn } = useAuthActions()
   const currentUser = useQuery(api.users.current)
 
@@ -29,6 +30,7 @@ export default function LoginScreen() {
   const password = useValue(form$.password)
   const isLoading = useValue(form$.isLoading)
   const error = useValue(form$.error)
+  const redirectPath = getAuthRedirectPath(redirectTo)
 
   // Use a ref to track pending navigation intent, avoiding useEffect dependency loops.
   // The effect reacts to currentUser resolving exactly once per auth outcome.
@@ -43,11 +45,14 @@ export default function LoginScreen() {
 
     const currentEmail = form$.email.peek()
     if (currentUser && currentUser.emailVerified === false) {
-      router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail } })
+      router.replace({
+        pathname: '/(auth)/verify-email',
+        params: redirectTo ? { email: currentEmail, redirectTo } : { email: currentEmail },
+      })
     } else if (currentUser) {
-      router.replace('/(main)/(tabs)/feed')
+      router.replace(redirectPath ?? '/(main)/(tabs)/feed')
     }
-  }, [currentUser, router, form$])
+  }, [currentUser, redirectPath, redirectTo, router, form$])
 
   const handleLogin = async () => {
     const currentEmail = form$.email.get()
@@ -96,7 +101,10 @@ export default function LoginScreen() {
         result.signingIn === false
       ) {
         // User needs to verify email - a new verification code was sent
-        router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail } })
+        router.replace({
+          pathname: '/(auth)/verify-email',
+          params: redirectTo ? { email: currentEmail, redirectTo } : { email: currentEmail },
+        })
         form$.isLoading.set(false)
         return
       }
@@ -112,7 +120,10 @@ export default function LoginScreen() {
       if (errorMessage.includes('verify') || errorMessage.includes('verification')) {
         // Don't double-navigate — if signIn already directed us to verification, skip
         if (!pendingNavRef.current) {
-          router.replace({ pathname: '/(auth)/verify-email', params: { email: currentEmail } })
+          router.replace({
+            pathname: '/(auth)/verify-email',
+            params: redirectTo ? { email: currentEmail, redirectTo } : { email: currentEmail },
+          })
         }
       } else if (errorMessage.includes('timed out')) {
         form$.error.set('Sign in timed out. Please check your connection and try again.')
