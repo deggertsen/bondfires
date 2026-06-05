@@ -28,6 +28,8 @@ interface TokenUnregistrationParams {
 }
 
 export interface UsePushNotificationsOptions {
+  // Whether backend token registration is allowed. This should be false before auth resolves.
+  isAuthenticated?: boolean
   // Convex mutation to register device token
   registerTokenMutation?: (params: TokenRegistrationParams) => Promise<void>
   // Convex mutation to unregister device token
@@ -50,6 +52,7 @@ export function usePushNotifications(
   options: UsePushNotificationsOptions = {},
 ): UsePushNotificationsResult {
   const {
+    isAuthenticated = true,
     registerTokenMutation,
     unregisterTokenMutation,
     onNotificationReceived,
@@ -63,25 +66,40 @@ export function usePushNotifications(
   const notificationListener = useRef<Notifications.EventSubscription | null>(null)
   const responseListener = useRef<Notifications.EventSubscription | null>(null)
   const appStateRef = useRef(AppState.currentState)
+  const isAuthenticatedRef = useRef(isAuthenticated)
+  isAuthenticatedRef.current = isAuthenticated
 
   // Register token with backend
   const registerWithBackend = useCallback(
     async (token: string) => {
-      if (registerTokenMutation) {
-        try {
-          await registerTokenMutation({
-            token,
-            tokenType: 'expo',
-            platform: Platform.OS,
-            deviceId: Constants.deviceId ?? 'unknown',
-          })
-          setIsRegistered(true)
-        } catch (e) {
-          telemetry.error('push:register', 'Failed to register token with backend', {
-            error: String(e),
-          })
-          setError('Failed to register with server')
+      if (!registerTokenMutation) return
+
+      // Backend registration requires an authenticated Convex session. If the
+      // app is pre-login, the _layout auth observer will retry after sign-in.
+      if (!isAuthenticatedRef.current) {
+        return
+      }
+
+      try {
+        await registerTokenMutation({
+          token,
+          tokenType: 'expo',
+          platform: Platform.OS,
+          deviceId: Constants.deviceId ?? 'unknown',
+        })
+        setIsRegistered(true)
+        setError(null)
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        // Auth can still race with session establishment. Treat those failures
+        // as retryable instead of surfacing them as user-facing toasts.
+        if (message.includes('Not authenticated') || message.includes('Unauthorized')) {
+          return
         }
+        telemetry.error('push:register', 'Failed to register token with backend', {
+          error: message,
+        })
+        setError('Failed to register with server')
       }
     },
     [registerTokenMutation],
@@ -114,6 +132,10 @@ export function usePushNotifications(
 
   // Request notification permissions
   const requestPermissions = useCallback(async (): Promise<boolean> => {
+    if (!isAuthenticatedRef.current) {
+      return false
+    }
+
     if (!Device.isDevice) {
       setError('Push notifications only work on physical devices')
       return false
@@ -194,6 +216,8 @@ export function usePushNotifications(
     // Handle app state changes (refresh token on foreground)
     const handleAppStateChange = async (nextAppState: AppStateStatus) => {
       if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
+        if (!isAuthenticatedRef.current) return
+
         // App came to foreground - verify token is still valid
         try {
           const token = await getExpoPushToken()
@@ -223,10 +247,11 @@ export function usePushNotifications(
     registerWithBackend,
   ])
 
-  // Check initial permission status on mount
+  // Check initial permission status on mount, but never prompt pre-login.
   useEffect(() => {
     const checkInitialStatus = async () => {
       if (!Device.isDevice) return
+      if (!isAuthenticatedRef.current) return
 
       const { status } = await Notifications.getPermissionsAsync()
       if (status === 'granted') {

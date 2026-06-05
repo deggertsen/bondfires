@@ -192,6 +192,7 @@ function AppContent() {
   const colorScheme = useColorScheme()
   const router = useRouter()
   const toasts = useValue(toastStore$.toasts)
+  const isAuthenticated = useValue(appStore$.isAuthenticated)
   const registerDevice = useMutation(api.notifications.registerDevice)
   const unregisterDevice = useMutation(api.notifications.unregisterDevice)
 
@@ -218,6 +219,7 @@ function AppContent() {
     requestPermissions,
     unregister,
   } = usePushNotifications({
+    isAuthenticated,
     registerTokenMutation: async (params: {
       token: string
       tokenType: string
@@ -250,10 +252,19 @@ function AppContent() {
   handleNotificationResponseRef.current = handleNotificationResponse
 
   useObserve(appStore$.preferences.notificationsEnabled, ({ value: notificationsEnabled }) => {
+    // Avoid prompting for notification permissions before the user signs in.
+    if (!appStore$.isAuthenticated.peek()) return
     if (notificationsEnabled) {
       requestPermissionsRef.current()
     } else {
       unregisterRef.current()
+    }
+  })
+
+  // When the user signs in, trigger push registration if notifications are enabled
+  useObserve(appStore$.isAuthenticated, ({ value: isAuthenticated }) => {
+    if (isAuthenticated && appStore$.preferences.notificationsEnabled.peek()) {
+      requestPermissionsRef.current()
     }
   })
 
