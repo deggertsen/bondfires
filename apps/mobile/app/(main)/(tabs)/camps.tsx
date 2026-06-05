@@ -4,7 +4,7 @@ import { Button, CampCardStatusBanner, Input, Text } from '@bondfires/ui'
 import { ChevronDown, ChevronUp, Flame, Lock, Search, Sparkles, Users } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, FlatList, Pressable, RefreshControl, StatusBar } from 'react-native'
 import { Image, Separator, Sheet, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
@@ -354,6 +354,24 @@ export default function CampsScreen() {
   const camps = useQuery(api.camps.list, {})
   const myCamps = useQuery(api.camps.listMine, {})
   const personalCamp = useQuery(api.personalCamps.getMyPersonalCamp, {})
+  const ensurePersonalCamp = useMutation(api.personalCamps.ensureMyPersonalCamp)
+  const personalCampEnsured = useRef(false)
+
+  // Eagerly create personal camp for paid-tier users who don't have one yet
+  // (e.g. admins, forced-tier users, manual tier assignments)
+  useEffect(() => {
+    if (
+      !personalCampEnsured.current &&
+      canCreatePrivateCamp &&
+      personalCamp === null &&
+      ensurePersonalCamp
+    ) {
+      personalCampEnsured.current = true
+      ensurePersonalCamp({}).catch(() => {
+        personalCampEnsured.current = false
+      })
+    }
+  }, [canCreatePrivateCamp, personalCamp, ensurePersonalCamp])
   const subscription = useQuery(api.subscriptions.current, {})
   const slotBalance = useQuery(
     api.campSlots.getSlotBalance,
