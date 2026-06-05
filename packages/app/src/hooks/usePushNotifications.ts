@@ -4,7 +4,6 @@ import * as Notifications from 'expo-notifications'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AppState, type AppStateStatus, Platform } from 'react-native'
 import { telemetry } from '../services/telemetry'
-import { appStore$ } from '../store/app.store'
 
 // Configure how notifications are handled when app is in foreground
 Notifications.setNotificationHandler({
@@ -29,6 +28,8 @@ interface TokenUnregistrationParams {
 }
 
 export interface UsePushNotificationsOptions {
+  // Whether backend token registration is allowed. This should be false before auth resolves.
+  isAuthenticated?: boolean
   // Convex mutation to register device token
   registerTokenMutation?: (params: TokenRegistrationParams) => Promise<void>
   // Convex mutation to unregister device token
@@ -51,6 +52,7 @@ export function usePushNotifications(
   options: UsePushNotificationsOptions = {},
 ): UsePushNotificationsResult {
   const {
+    isAuthenticated = true,
     registerTokenMutation,
     unregisterTokenMutation,
     onNotificationReceived,
@@ -64,16 +66,17 @@ export function usePushNotifications(
   const notificationListener = useRef<Notifications.EventSubscription | null>(null)
   const responseListener = useRef<Notifications.EventSubscription | null>(null)
   const appStateRef = useRef(AppState.currentState)
+  const isAuthenticatedRef = useRef(isAuthenticated)
+  isAuthenticatedRef.current = isAuthenticated
 
   // Register token with backend
   const registerWithBackend = useCallback(
     async (token: string) => {
       if (!registerTokenMutation) return
 
-      // Don't attempt registration if not authenticated — the backend
-      // requires a valid user session. The token will be registered when
-      // the user signs in and the observer in _layout fires.
-      if (!appStore$.isAuthenticated.peek()) {
+      // Backend registration requires an authenticated Convex session. If the
+      // app is pre-login, the _layout auth observer will retry after sign-in.
+      if (!isAuthenticatedRef.current) {
         return
       }
 
@@ -88,8 +91,8 @@ export function usePushNotifications(
         setError(null)
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e)
-        // "Not authenticated" is expected when the user hasn't signed in yet —
-        // don't toast or set error state for it
+        // Auth can still race with session establishment. Treat those failures
+        // as retryable instead of surfacing them as user-facing toasts.
         if (message.includes('Not authenticated') || message.includes('Unauthorized')) {
           return
         }
@@ -129,6 +132,10 @@ export function usePushNotifications(
 
   // Request notification permissions
   const requestPermissions = useCallback(async (): Promise<boolean> => {
+    if (!isAuthenticatedRef.current) {
+      return false
+    }
+
     if (!Device.isDevice) {
       setError('Push notifications only work on physical devices')
       return false
@@ -209,8 +216,7 @@ export function usePushNotifications(
     // Handle app state changes (refresh token on foreground)
     const handleAppStateChange = async (nextAppState: AppStateStatus) => {
       if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
-        // Only refresh token if we're authenticated — the backend requires a session
-        if (!appStore$.isAuthenticated.peek()) return
+        if (!isAuthenticatedRef.current) return
 
         // App came to foreground - verify token is still valid
         try {
@@ -241,11 +247,11 @@ export function usePushNotifications(
     registerWithBackend,
   ])
 
-  // Check initial permission status on mount — only if already authenticated
+  // Check initial permission status on mount, but never prompt pre-login.
   useEffect(() => {
     const checkInitialStatus = async () => {
       if (!Device.isDevice) return
-      if (!appStore$.isAuthenticated.peek()) return
+      if (!isAuthenticatedRef.current) return
 
       const { status } = await Notifications.getPermissionsAsync()
       if (status === 'granted') {

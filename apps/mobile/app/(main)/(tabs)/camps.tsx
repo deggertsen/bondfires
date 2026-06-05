@@ -356,22 +356,6 @@ export default function CampsScreen() {
   const personalCamp = useQuery(api.personalCamps.getMyPersonalCamp, {})
   const ensurePersonalCamp = useMutation(api.personalCamps.ensureMyPersonalCamp)
   const personalCampEnsured = useRef(false)
-
-  // Eagerly create personal camp for paid-tier users who don't have one yet
-  // (e.g. admins, forced-tier users, manual tier assignments)
-  useEffect(() => {
-    if (
-      !personalCampEnsured.current &&
-      canCreatePrivateCamp &&
-      personalCamp === null &&
-      ensurePersonalCamp
-    ) {
-      personalCampEnsured.current = true
-      ensurePersonalCamp({}).catch(() => {
-        personalCampEnsured.current = false
-      })
-    }
-  }, [canCreatePrivateCamp, personalCamp, ensurePersonalCamp])
   const subscription = useQuery(api.subscriptions.current, {})
   const slotBalance = useQuery(
     api.campSlots.getSlotBalance,
@@ -396,6 +380,22 @@ export default function CampsScreen() {
     subscription?.tier === 'pro'
   const isPro = subscription?.tier === 'pro'
   const shouldShowPersonalCampCard = subscription !== undefined && personalCamp !== undefined
+
+  // Eagerly create personal camp for paid-tier users who don't have one yet
+  // (e.g. admins, forced-tier users, manual tier assignments)
+  useEffect(() => {
+    if (
+      !personalCampEnsured.current &&
+      canCreatePrivateCamp &&
+      personalCamp === null &&
+      ensurePersonalCamp
+    ) {
+      personalCampEnsured.current = true
+      ensurePersonalCamp({}).catch(() => {
+        personalCampEnsured.current = false
+      })
+    }
+  }, [canCreatePrivateCamp, personalCamp, ensurePersonalCamp])
 
   const filtered = useMemo(() => {
     if (!camps) return camps

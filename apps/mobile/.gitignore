@@ -36,6 +36,9 @@ yarn-error.*
 # Google Play service account key
 google-services-key.json
 
+# EAS local credentials
+credentials.json
+
 # typescript
 *.tsbuildinfo
 

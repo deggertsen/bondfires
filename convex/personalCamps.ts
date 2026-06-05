@@ -1,6 +1,12 @@
 import { v } from 'convex/values'
 import type { Doc, Id } from './_generated/dataModel'
-import { internalMutation, mutation, type MutationCtx, type QueryCtx, query } from './_generated/server'
+import {
+  internalMutation,
+  type MutationCtx,
+  mutation,
+  type QueryCtx,
+  query,
+} from './_generated/server'
 import { auth } from './auth'
 import { getEntitlementSubscriptionTier, type SubscriptionTier, TIER_RANK } from './entitlements'
 
