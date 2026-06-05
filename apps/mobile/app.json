@@ -21,6 +21,11 @@
       "associatedDomains": [
         "applinks:bondfires.org"
       ],
+      "entitlements": {
+        "com.apple.developer.associated-domains": [
+          "applinks:bondfires.org"
+        ]
+      },
       "infoPlist": {
         "NSCameraUsageDescription": "Bondfires needs access to your camera to record videos for your bondfire sessions.",
         "NSMicrophoneUsageDescription": "Bondfires needs access to your microphone to record audio with your videos.",

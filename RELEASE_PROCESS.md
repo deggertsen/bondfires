@@ -97,6 +97,7 @@ yarn release:major  # major bump
 
 ## Common Issues Caught by Audit
 
+- **iOS provisioning profile missing new capabilities** (e.g. after adding `associatedDomains` / universal links): Xcode error mentions Associated Domains or `com.apple.developer.associated-domains`. EAS may enable the capability on your App ID but still reuse an old App Store profile. Fix: run `./scripts/refresh-ios-provisioning-profile.sh` (or delete the production provisioning profile in `eas credentials -p ios` → production → Build Credentials), then rebuild. Ensure `apps/mobile/app.json` includes matching `ios.entitlements` (not only `associatedDomains`).
 - **Navigation routing failures** after file restructuring
 - **TypeScript compilation errors** from stale typed routes
 - **Import path breaks** when components move
