@@ -250,10 +250,21 @@ function AppContent() {
   handleNotificationResponseRef.current = handleNotificationResponse
 
   useObserve(appStore$.preferences.notificationsEnabled, ({ value: notificationsEnabled }) => {
+    // Only request/register push when the user is authenticated — the backend
+    // requires a valid session, and we don't want to prompt for permissions
+    // before the user has signed in.
+    if (!appStore$.isAuthenticated.peek()) return
     if (notificationsEnabled) {
       requestPermissionsRef.current()
     } else {
       unregisterRef.current()
+    }
+  })
+
+  // When the user signs in, trigger push registration if notifications are enabled
+  useObserve(appStore$.isAuthenticated, ({ value: isAuthenticated }) => {
+    if (isAuthenticated && appStore$.preferences.notificationsEnabled.peek()) {
+      requestPermissionsRef.current()
     }
   })
 

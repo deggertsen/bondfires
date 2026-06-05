@@ -4,6 +4,7 @@ import * as Notifications from 'expo-notifications'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AppState, type AppStateStatus, Platform } from 'react-native'
 import { telemetry } from '../services/telemetry'
+import { appStore$ } from '../store/app.store'
 
 // Configure how notifications are handled when app is in foreground
 Notifications.setNotificationHandler({
@@ -67,21 +68,35 @@ export function usePushNotifications(
   // Register token with backend
   const registerWithBackend = useCallback(
     async (token: string) => {
-      if (registerTokenMutation) {
-        try {
-          await registerTokenMutation({
-            token,
-            tokenType: 'expo',
-            platform: Platform.OS,
-            deviceId: Constants.deviceId ?? 'unknown',
-          })
-          setIsRegistered(true)
-        } catch (e) {
-          telemetry.error('push:register', 'Failed to register token with backend', {
-            error: String(e),
-          })
-          setError('Failed to register with server')
+      if (!registerTokenMutation) return
+
+      // Don't attempt registration if not authenticated — the backend
+      // requires a valid user session. The token will be registered when
+      // the user signs in and the observer in _layout fires.
+      if (!appStore$.isAuthenticated.peek()) {
+        return
+      }
+
+      try {
+        await registerTokenMutation({
+          token,
+          tokenType: 'expo',
+          platform: Platform.OS,
+          deviceId: Constants.deviceId ?? 'unknown',
+        })
+        setIsRegistered(true)
+        setError(null)
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        // "Not authenticated" is expected when the user hasn't signed in yet —
+        // don't toast or set error state for it
+        if (message.includes('Not authenticated') || message.includes('Unauthorized')) {
+          return
         }
+        telemetry.error('push:register', 'Failed to register token with backend', {
+          error: message,
+        })
+        setError('Failed to register with server')
       }
     },
     [registerTokenMutation],
@@ -194,6 +209,9 @@ export function usePushNotifications(
     // Handle app state changes (refresh token on foreground)
     const handleAppStateChange = async (nextAppState: AppStateStatus) => {
       if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
+        // Only refresh token if we're authenticated — the backend requires a session
+        if (!appStore$.isAuthenticated.peek()) return
+
         // App came to foreground - verify token is still valid
         try {
           const token = await getExpoPushToken()
@@ -223,10 +241,11 @@ export function usePushNotifications(
     registerWithBackend,
   ])
 
-  // Check initial permission status on mount
+  // Check initial permission status on mount — only if already authenticated
   useEffect(() => {
     const checkInitialStatus = async () => {
       if (!Device.isDevice) return
+      if (!appStore$.isAuthenticated.peek()) return
 
       const { status } = await Notifications.getPermissionsAsync()
       if (status === 'granted') {
