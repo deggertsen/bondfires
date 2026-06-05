@@ -282,12 +282,12 @@ function AppContent() {
     <TamaguiProvider config={config} defaultTheme={colorScheme ?? 'dark'}>
       <Theme name={colorScheme ?? 'dark'}>
         <TelemetryInitializer />
-        <ToastContainer toasts={toasts} onDismiss={toastActions.dismiss} />
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="index" />
           <Stack.Screen name="(auth)" options={{ headerShown: false }} />
           <Stack.Screen name="(main)" options={{ headerShown: false }} />
         </Stack>
+        <ToastContainer toasts={toasts} onDismiss={toastActions.dismiss} />
       </Theme>
     </TamaguiProvider>
   )
