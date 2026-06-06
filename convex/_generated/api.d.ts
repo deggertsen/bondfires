@@ -12,6 +12,7 @@ import type * as admin from "../admin.js";
 import type * as adminAudit from "../adminAudit.js";
 import type * as adminDashboard from "../adminDashboard.js";
 import type * as auth from "../auth.js";
+import type * as bondfireInvites from "../bondfireInvites.js";
 import type * as bondfireVideos from "../bondfireVideos.js";
 import type * as bondfires from "../bondfires.js";
 import type * as campAnalytics from "../campAnalytics.js";
@@ -52,6 +53,7 @@ declare const fullApi: ApiFromModules<{
   adminAudit: typeof adminAudit;
   adminDashboard: typeof adminDashboard;
   auth: typeof auth;
+  bondfireInvites: typeof bondfireInvites;
   bondfireVideos: typeof bondfireVideos;
   bondfires: typeof bondfires;
   campAnalytics: typeof campAnalytics;

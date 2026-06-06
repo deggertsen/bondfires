@@ -30,7 +30,7 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { LinearGradient } from 'expo-linear-gradient'
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { useVideoPlayer, VideoView } from 'expo-video'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Alert,
   AppState,
@@ -46,6 +46,7 @@ import { Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { NotepadOverlay } from '../../../components/NotepadOverlay'
+import { InviteSheet } from '../../../components/InviteSheet'
 import { ReportButton } from '../../../components/ReportButton'
 import { ReportOverlay } from '../../../components/ReportOverlay'
 import { SettingsPopover } from '../../../components/SettingsPopover'
@@ -712,11 +713,13 @@ export default function BondfireDetailScreen() {
     | null
     | undefined
   const getVideoUrls = useAction(api.videos.getVideoUrls)
+  const campContext = useQuery(api.bondfires.getWithCampContext, { id: bondfireId })
   const recordWatchEvent = useMutation(api.watchEvents.record)
   const incrementViews = useMutation(api.bondfires.incrementViews)
   const markThreadRead = useMutation(api.conversations.markThreadRead)
   const pinPerson = useMutation(api.conversations.pinPerson)
   const unpinPerson = useMutation(api.conversations.unpinPerson)
+  const [isInviteSheetOpen, setIsInviteSheetOpen] = useState(false)
 
   const didRestorePositionRef = useRef(false)
   const persistPositionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -1171,10 +1174,31 @@ export default function BondfireDetailScreen() {
                 height: 120,
               }}
             />
-            <Button variant="primary" size="$lg" onPress={handleRespond}>
-              <Flame size={20} color={bondfireColors.whiteSmoke} />
-              <Text color={bondfireColors.whiteSmoke}>Add Your Response</Text>
-            </Button>
+            {campContext?.canInvite ? (
+              <XStack gap={12}>
+                <Button
+                  variant="outline"
+                  size="$lg"
+                  flex={1}
+                  onPress={() => setIsInviteSheetOpen(true)}
+                >
+                  <Text color={bondfireColors.whiteSmoke} fontWeight="700">
+                    Share Bondfire
+                  </Text>
+                </Button>
+                <Button variant="primary" size="$lg" flex={1} onPress={handleRespond}>
+                  <Flame size={18} color={bondfireColors.whiteSmoke} />
+                  <Text color={bondfireColors.whiteSmoke} fontWeight="700">
+                    Respond
+                  </Text>
+                </Button>
+              </XStack>
+            ) : (
+              <Button variant="primary" size="$lg" onPress={handleRespond}>
+                <Flame size={20} color={bondfireColors.whiteSmoke} />
+                <Text color={bondfireColors.whiteSmoke}>Add Your Response</Text>
+              </Button>
+            )}
           </YStack>
         ) : null}
 
@@ -1204,6 +1228,11 @@ export default function BondfireDetailScreen() {
 
         {/* Notepad Overlay */}
         {showNotepad && <NotepadOverlay onClose={() => screenState$.showNotepad.set(false)} />}
+      <InviteSheet
+        bondfireId={bondfireId}
+        open={isInviteSheetOpen}
+        onClose={() => setIsInviteSheetOpen(false)}
+      />
       </YStack>
     </>
   )

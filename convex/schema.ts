@@ -674,4 +674,16 @@ export default defineSchema({
     .index('by_log_level', ['level', 'createdAt'])
     .index('by_log_event', ['event', 'createdAt'])
     .index('by_log_session', ['sessionId', 'createdAt']),
+
+  // Bondfire Invites - in-app invites sent between users
+  bondfireInvites: defineTable({
+    bondfireId: v.id('bondfires'),
+    senderId: v.id('users'),
+    recipientId: v.id('users'),
+    seen: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index('by_recipient', ['recipientId', 'createdAt'])
+    .index('by_bondfire_recipient', ['bondfireId', 'recipientId'])
+    .index('by_sender', ['senderId', 'createdAt']),
 })

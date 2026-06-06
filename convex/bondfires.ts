@@ -283,6 +283,54 @@ export const get = query({
   },
 })
 
+/** Get a bondfire with its camp context for permission checks. */
+export const getWithCampContext = query({
+  args: { id: v.id('bondfires') },
+  handler: async (ctx, args) => {
+    const bondfire = await ctx.db.get(args.id)
+    if (!bondfire || !isPlayableVideoRecord(bondfire)) {
+      return null
+    }
+
+    const [visible] = await filterVisibleBondfires(ctx, [bondfire])
+    if (!visible) {
+      return null
+    }
+
+    if (!bondfire.campId) {
+      return {
+        bondfire,
+        camp: null,
+        membership: null,
+        canInvite: bondfire.userId === (await auth.getUserId(ctx)),
+      }
+    }
+
+    const camp = await ctx.db.get(bondfire.campId)
+    const userId = (await auth.getUserId(ctx)) ?? undefined
+
+    let membership = null
+    if (userId) {
+      const m = await ctx.db
+        .query('campMembers')
+        .withIndex('by_user_camp', (q) =>
+          q.eq('userId', userId).eq('campId', bondfire.campId!),
+        )
+        .unique()
+      membership = m
+    }
+
+    const isCreator = bondfire.userId === userId
+    const isOwnerOrMod = membership?.role === 'owner' || membership?.role === 'moderator'
+    const isPublicCamp = camp?.access === 'open'
+    const isActiveMember = membership?.status === 'active'
+
+    const canInvite = isCreator || isOwnerOrMod || (isPublicCamp && isActiveMember)
+
+    return { bondfire, camp, membership, canInvite }
+  },
+})
+
 export const getForNotification = internalQuery({
   args: { id: v.id('bondfires') },
   handler: async (ctx, args) => {
