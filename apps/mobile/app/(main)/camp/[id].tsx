@@ -27,6 +27,7 @@ import { Alert, FlatList, Modal, Pressable, StatusBar, TextInput } from 'react-n
 import { Separator, Spinner, Image as TamaguiImage, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
+import { CampInviteSheet } from '../../../components/CampInviteSheet'
 import { routes } from '../../../lib/routes'
 import { OwnerCampSections } from './OwnerCampSections'
 
@@ -768,7 +769,6 @@ export default function CampDetailScreen() {
   const joinCamp = useMutation(api.camps.join)
   const requestJoinCamp = useMutation(api.camps.requestJoin)
   const muteCamp = useMutation(api.camps.muteCamp)
-  const createInvite = useMutation(api.camps.createInvite)
   const approveAccess = useMutation(api.camps.approveAccessRequest)
   const rejectAccess = useMutation(api.camps.rejectAccessRequest)
   const removeMember = useMutation(api.camps.removeMember)
@@ -779,6 +779,7 @@ export default function CampDetailScreen() {
   const [banReason, setBanReason] = useState('')
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false)
   const [archiveConfirmText, setArchiveConfirmText] = useState('')
+  const [isInviteSheetOpen, setIsInviteSheetOpen] = useState(false)
 
   const handleJoin = useCallback(async () => {
     if (!campId) return
@@ -807,16 +808,9 @@ export default function CampDetailScreen() {
     router.push(routes.createForCamp(campId))
   }, [campId, router])
 
-  const handleCreateInvite = useCallback(async () => {
-    if (!campId) return
-    try {
-      const invite = await createInvite({ campId })
-      Alert.alert('Invite Created', ['Share this code:', invite.code].join('\n\n'))
-    } catch (error) {
-      const message = parseError(error).message
-      Alert.alert('Invite Unavailable', message)
-    }
-  }, [campId, createInvite])
+  const handleCreateInvite = useCallback(() => {
+    setIsInviteSheetOpen(true)
+  }, [])
 
   const handleApprove = useCallback(
     async (membershipId: string) => {
@@ -1175,6 +1169,13 @@ export default function CampDetailScreen() {
           </YStack>
         </YStack>
       </Modal>
+      {campId ? (
+        <CampInviteSheet
+          campId={campId as Id<'camps'>}
+          open={isInviteSheetOpen}
+          onClose={() => setIsInviteSheetOpen(false)}
+        />
+      ) : null}
     </YStack>
   )
 }

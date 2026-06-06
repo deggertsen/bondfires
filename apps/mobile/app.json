@@ -55,6 +55,11 @@
               "scheme": "https",
               "host": "bondfires.org",
               "pathPrefix": "/personal-bondfire"
+            },
+            {
+              "scheme": "https",
+              "host": "bondfires.org",
+              "pathPrefix": "/invite"
             }
           ],
           "category": [

@@ -92,6 +92,27 @@ export const routes = {
     pathname: '/(main)/personal-bondfire/[bondfireId]/[code]',
     params: { bondfireId, code },
   }),
+
+  // --- Invite deep links ---
+  externalInvite: (code: string): Href => ({
+    pathname: '/invite/[code]',
+    params: { code },
+  }),
+
+  loginWithInvite: (code: string): Href => ({
+    pathname: '/(auth)/login',
+    params: { redirectTo: `/invite/${code}` },
+  }),
+
+  externalCampInvite: (code: string): Href => ({
+    pathname: '/invite/camp/[code]',
+    params: { code },
+  }),
+
+  loginWithCampInvite: (code: string): Href => ({
+    pathname: '/(auth)/login',
+    params: { redirectTo: `/invite/camp/${code}` },
+  }),
 } satisfies Record<string, Href | ((...args: never[]) => Href)>
 
 /**
@@ -115,6 +136,12 @@ export function personalBondfirePath(bondfireId: string, code: string): string {
 export function resolveAuthRedirect(redirectTo: string | string[] | undefined): Href {
   const invite = parsePersonalBondfireInvite(redirectTo)
   if (invite) return routes.personalBondfire(invite.bondfireId, invite.code)
+  if (typeof redirectTo === 'string') {
+    const personalMatch = /^\/invite\/([^/?#]+)$/.exec(redirectTo)
+    if (personalMatch) return routes.externalInvite(personalMatch[1])
+    const campMatch = /^\/invite\/camp\/([^/?#]+)$/.exec(redirectTo)
+    if (campMatch) return routes.externalCampInvite(campMatch[1])
+  }
   return routes.feed
 }
 
@@ -129,6 +156,9 @@ const EXTERNAL_STATIC_ROUTES: Record<string, Href> = {
 
 const EXTERNAL_BONDFIRE_ROUTE = /^\/\(main\)\/bondfire\/([^/?#]+)$/
 const EXTERNAL_CAMP_ROUTE = /^\/\(main\)\/camp\/([^/?#]+)$/
+
+const EXTERNAL_INVITE_ROUTE = /^\/invite\/([^/?#]+)$/
+const EXTERNAL_CAMP_INVITE_ROUTE = /^\/invite\/camp\/([^/?#]+)$/
 
 /**
  * Validate and resolve a route path from an UNTRUSTED source (push notification
@@ -146,6 +176,12 @@ export function resolveExternalRoute(path: string | null | undefined): Href | nu
 
   const campMatch = EXTERNAL_CAMP_ROUTE.exec(path)
   if (campMatch) return routes.camp(campMatch[1])
+
+  const inviteMatch = EXTERNAL_INVITE_ROUTE.exec(path)
+  if (inviteMatch) return routes.externalInvite(inviteMatch[1])
+
+  const campInviteMatch = EXTERNAL_CAMP_INVITE_ROUTE.exec(path)
+  if (campInviteMatch) return routes.externalCampInvite(campInviteMatch[1])
 
   return EXTERNAL_STATIC_ROUTES[path] ?? null
 }
