@@ -15,7 +15,7 @@ interface Props {
   onClose: () => void
 }
 
-const INVITE_BASE_URL = 'https://bondfires.org/invite/camp'
+const INVITE_BASE_URL = 'https://bondfires.app/invite/camp'
 
 export function CampInviteSheet({ campId, open, onClose }: Props) {
   const [inviteCode, setInviteCode] = useState<string | null>(null)

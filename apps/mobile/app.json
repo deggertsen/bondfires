@@ -19,11 +19,13 @@
       "buildNumber": "1",
       "googleServicesFile": "./GoogleService-Info.plist",
       "associatedDomains": [
-        "applinks:bondfires.org"
+        "applinks:bondfires.org",
+        "applinks:bondfires.app"
       ],
       "entitlements": {
         "com.apple.developer.associated-domains": [
-          "applinks:bondfires.org"
+          "applinks:bondfires.org",
+          "applinks:bondfires.app"
         ]
       },
       "infoPlist": {
@@ -58,7 +60,17 @@
             },
             {
               "scheme": "https",
+              "host": "bondfires.app",
+              "pathPrefix": "/personal-bondfire"
+            },
+            {
+              "scheme": "https",
               "host": "bondfires.org",
+              "pathPrefix": "/invite"
+            },
+            {
+              "scheme": "https",
+              "host": "bondfires.app",
               "pathPrefix": "/invite"
             }
           ],
