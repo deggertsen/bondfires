@@ -55,6 +55,7 @@ export interface BackgroundUploadOptions {
   videoUri: string // Original video URI from camera
   bondfireId?: string // If responding to existing bondfire
   campId?: string
+  personalCamp?: boolean
   tags?: string[]
   isResponse: boolean
   createMuxDirectUpload: (args: {
@@ -63,6 +64,7 @@ export interface BackgroundUploadOptions {
     isResponse: boolean
     bondfireId?: string
     campId?: string
+    personalCamp?: boolean
     tags?: string[]
     durationMs?: number
     width?: number
@@ -276,6 +278,7 @@ export async function startBackgroundUpload(
     videoFilePath: persistentPath,
     bondfireId: options.bondfireId,
     campId: options.campId,
+    personalCamp: options.personalCamp,
     tags: options.tags,
     isResponse: options.isResponse,
     status: 'pending',
@@ -364,10 +367,11 @@ async function processUploadTask(taskId: string, options: BackgroundUploadOption
       muxUpload = await options.createMuxDirectUpload({
         filename: uploadFileInfo.filename,
         contentType: uploadFileInfo.contentType,
-        isResponse: options.isResponse,
-        bondfireId: options.bondfireId,
-        campId: options.campId,
-        tags: options.tags,
+        isResponse: task.isResponse,
+        bondfireId: task.bondfireId,
+        campId: task.campId,
+        personalCamp: task.personalCamp,
+        tags: task.tags,
         durationMs: processed.metadata.durationMs,
         width: processed.metadata.width,
         height: processed.metadata.height,
@@ -495,6 +499,7 @@ export async function resumePendingUploads(
       videoUri: task.videoFilePath,
       bondfireId: task.bondfireId,
       campId: task.campId,
+      personalCamp: task.personalCamp,
       tags: task.tags,
       isResponse: task.isResponse,
     }

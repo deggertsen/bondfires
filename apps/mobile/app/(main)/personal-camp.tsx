@@ -1,14 +1,15 @@
 import { subscriptionActions } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
-import { ArrowLeft, Flame, Lock, MessageCircle, Users } from '@tamagui/lucide-icons'
+import { ArrowLeft, Flame, Lock, MessageCircle, Plus, Users } from '@tamagui/lucide-icons'
 import { useQuery } from 'convex/react'
-import { useRouter } from 'expo-router'
-import { useCallback } from 'react'
+import { useLocalSearchParams, useRouter } from 'expo-router'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FlatList, Pressable, StatusBar } from 'react-native'
 import { Separator, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../convex/_generated/dataModel'
+import { PersonalInviteSheet } from '../../components/PersonalInviteSheet'
 import { routes } from '../../lib/routes'
 
 type BondfireData = Doc<'bondfires'> & {
@@ -73,11 +74,47 @@ function BondfireRow({ bondfire, onOpen }: { bondfire: BondfireData; onOpen: () 
 
 export default function PersonalCampScreen() {
   const router = useRouter()
+  const { newFire, createdAfter } = useLocalSearchParams<{
+    newFire?: string
+    createdAfter?: string
+  }>()
+  const [inviteFireId, setInviteFireId] = useState<Id<'bondfires'> | null>(null)
+  const handledInviteRouteRef = useRef<string | null>(null)
   const personalCamp = useQuery(api.personalCamps.getMyPersonalCamp, {})
   const bondfires = useQuery(
     api.personalBondfires.listMyPersonalBondfires,
     personalCamp ? {} : 'skip',
   )
+
+  const sortedBondfires = useMemo(() => {
+    if (!bondfires) return bondfires
+    return [...bondfires].sort((a, b) => b.createdAt - a.createdAt)
+  }, [bondfires])
+
+  useEffect(() => {
+    if (!newFire) return
+    const inviteRouteKey = [newFire, createdAfter ?? ''].join(':')
+    if (handledInviteRouteRef.current === inviteRouteKey) return
+    if (!sortedBondfires || sortedBondfires.length === 0) return
+
+    if (newFire !== 'new') {
+      setInviteFireId(newFire as Id<'bondfires'>)
+      handledInviteRouteRef.current = inviteRouteKey
+      return
+    }
+
+    const parsedCreatedAfter = Number(createdAfter)
+    const createdAfterCutoff = Number.isFinite(parsedCreatedAfter)
+      ? parsedCreatedAfter - 5000
+      : undefined
+    const newest = sortedBondfires.find(
+      (bondfire) => createdAfterCutoff === undefined || bondfire.createdAt >= createdAfterCutoff,
+    )
+    if (newest) {
+      setInviteFireId(newest._id)
+      handledInviteRouteRef.current = inviteRouteKey
+    }
+  }, [createdAfter, newFire, sortedBondfires])
 
   const handleBack = useCallback(() => {
     router.back()
@@ -92,6 +129,14 @@ export default function PersonalCampScreen() {
 
   const handleUpgrade = useCallback(() => {
     subscriptionActions.showPaywall()
+  }, [])
+
+  const handleCreateBondfire = useCallback(() => {
+    router.push(routes.createForPersonalCamp())
+  }, [router])
+
+  const handleCloseInvite = useCallback(() => {
+    setInviteFireId(null)
   }, [])
 
   // Loading state
@@ -158,20 +203,36 @@ export default function PersonalCampScreen() {
 
       {/* Header */}
       <YStack paddingTop={58} paddingHorizontal={16} paddingBottom={18} gap={14}>
-        <Pressable onPress={handleBack}>
-          <YStack
-            width={42}
-            height={42}
-            borderRadius={21}
-            alignItems="center"
-            justifyContent="center"
-            backgroundColor={bondfireColors.gunmetal}
-            borderWidth={1}
-            borderColor={bondfireColors.iron}
-          >
-            <ArrowLeft size={22} color={bondfireColors.whiteSmoke} />
-          </YStack>
-        </Pressable>
+        <XStack alignItems="center" justifyContent="space-between">
+          <Pressable onPress={handleBack}>
+            <YStack
+              width={42}
+              height={42}
+              borderRadius={21}
+              alignItems="center"
+              justifyContent="center"
+              backgroundColor={bondfireColors.gunmetal}
+              borderWidth={1}
+              borderColor={bondfireColors.iron}
+            >
+              <ArrowLeft size={22} color={bondfireColors.whiteSmoke} />
+            </YStack>
+          </Pressable>
+          {bondfires && bondfires.length > 0 && !isFrozen && (
+            <Pressable onPress={handleCreateBondfire}>
+              <YStack
+                width={42}
+                height={42}
+                borderRadius={21}
+                alignItems="center"
+                justifyContent="center"
+                backgroundColor={bondfireColors.bondfireCopper}
+              >
+                <Plus size={22} color={bondfireColors.whiteSmoke} />
+              </YStack>
+            </Pressable>
+          )}
+        </XStack>
 
         <XStack alignItems="center" gap={14}>
           <YStack
@@ -237,8 +298,20 @@ export default function PersonalCampScreen() {
             No fires yet
           </Text>
           <Text fontSize={14} color={bondfireColors.ash} textAlign="center" lineHeight={20}>
-            Your personal bondfires will appear here. Create one from the create tab.
+            Your personal bondfires will appear here.
           </Text>
+          {!isFrozen && (
+            <Button
+              variant="primary"
+              marginTop={8}
+              onPress={handleCreateBondfire}
+              icon={<Plus size={18} color={bondfireColors.whiteSmoke} />}
+            >
+              <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+                Create Bondfire
+              </Text>
+            </Button>
+          )}
         </YStack>
       ) : (
         <FlatList
@@ -250,6 +323,11 @@ export default function PersonalCampScreen() {
             <BondfireRow bondfire={item} onOpen={() => handleOpenBondfire(item._id)} />
           )}
         />
+      )}
+
+      {/* Invite Sheet */}
+      {inviteFireId && (
+        <PersonalInviteSheet bondfireId={inviteFireId} open={true} onClose={handleCloseInvite} />
       )}
     </YStack>
   )

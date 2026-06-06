@@ -61,7 +61,12 @@ function formatMaxDuration(seconds: number) {
 
 export default function CreateScreen() {
   const router = useRouter()
-  const { campId, respondTo } = useLocalSearchParams<{ campId?: string; respondTo?: string }>()
+  const { campId, respondTo, personalCamp } = useLocalSearchParams<{
+    campId?: string
+    respondTo?: string
+    personalCamp?: string
+  }>()
+  const isPersonalCamp = personalCamp === '1'
   const isFocused = useIsFocused()
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions()
@@ -81,6 +86,7 @@ export default function CreateScreen() {
   const uploadStartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const wasFocusedRef = useRef(isFocused)
   const didRouteFirstSparkRef = useRef(false)
+  const personalCreateStartedAtRef = useRef<number | null>(null)
 
   const state$ = useObservable({
     facing: 'front' as CameraType,
@@ -137,7 +143,9 @@ export default function CreateScreen() {
   const persistedCampId = currentCampId as Id<'camps'> | null
   const effectiveCampId = respondTo
     ? undefined
-    : ((campId as Id<'camps'> | undefined) ?? selectedCampId ?? persistedCampId ?? undefined)
+    : isPersonalCamp
+      ? undefined
+      : ((campId as Id<'camps'> | undefined) ?? selectedCampId ?? persistedCampId ?? undefined)
   const selectedCamp = useMemo(() => {
     if (!effectiveCampId || !camps) return null
     return camps.find((camp) => camp._id === effectiveCampId) ?? null
@@ -514,6 +522,7 @@ export default function CreateScreen() {
           ...args,
           bondfireId: args.bondfireId as Id<'bondfires'> | undefined,
           campId: args.campId as Id<'camps'> | undefined,
+          personalCamp: args.personalCamp,
           tags: args.tags,
         })
       },
@@ -613,6 +622,12 @@ export default function CreateScreen() {
             Alert.alert('Cannot Respond', result.error ?? 'You cannot respond to this Bondfire')
             return null
           }
+        } else if (isPersonalCamp) {
+          const result = await convex.query(api.videos.validatePersonalCreate, {})
+          if (!result.valid) {
+            Alert.alert('Cannot Spark', result.error ?? 'You cannot create a Personal Bondfire')
+            return null
+          }
         } else if (effectiveCampId) {
           const result = await convex.query(api.videos.validateCreateCamp, {
             campId: effectiveCampId,
@@ -624,11 +639,16 @@ export default function CreateScreen() {
           }
         }
 
+        if (isPersonalCamp) {
+          personalCreateStartedAtRef.current = Date.now()
+        }
+
         return await startBackgroundUpload(
           {
             videoUri: uri,
             bondfireId: respondTo,
             campId: effectiveCampId,
+            personalCamp: isPersonalCamp || undefined,
             tags: selectedCampTags,
             isResponse: !!respondTo,
             createMuxDirectUpload: async (args) => {
@@ -636,6 +656,7 @@ export default function CreateScreen() {
                 ...args,
                 bondfireId: args.bondfireId as Id<'bondfires'> | undefined,
                 campId: args.campId as Id<'camps'> | undefined,
+                personalCamp: args.personalCamp,
                 tags: args.tags,
               })
             },
@@ -679,6 +700,7 @@ export default function CreateScreen() {
       getMuxUploadStatus,
       currentUser?._id,
       convex,
+      isPersonalCamp,
     ],
   )
 
@@ -845,7 +867,7 @@ export default function CreateScreen() {
       return
     }
 
-    if (!respondTo && (!effectiveCampId || !selectedCamp)) {
+    if (!respondTo && !isPersonalCamp && (!effectiveCampId || !selectedCamp)) {
       Alert.alert('Choose a Camp', 'Pick where this Bondfire belongs before recording.')
       return
     }
@@ -919,6 +941,7 @@ export default function CreateScreen() {
     clearStopTimeout,
     clearUploadStartTimeout,
     effectiveCampId,
+    isPersonalCamp,
     logRecordingError,
     needsTradeTag,
     respondTo,
@@ -1037,7 +1060,7 @@ export default function CreateScreen() {
       return
     }
 
-    if (!respondTo && (!effectiveCampId || !selectedCamp)) {
+    if (!respondTo && !isPersonalCamp && (!effectiveCampId || !selectedCamp)) {
       Alert.alert('Choose a Camp', 'Pick where this Bondfire belongs before going live.')
       return
     }
@@ -1055,9 +1078,13 @@ export default function CreateScreen() {
     try {
       state$.recordingDuration.set(0)
       state$.videoUri.set(null)
+      if (isPersonalCamp) {
+        personalCreateStartedAtRef.current = Date.now()
+      }
       await livePublisher.start({
         respondToBondfireId: respondTo,
         campId: effectiveCampId,
+        personalCamp: isPersonalCamp || undefined,
         tags: selectedCampTags,
         initialCamera: state$.facing.get() === 'back' ? 'back' : 'front',
       })
@@ -1092,6 +1119,7 @@ export default function CreateScreen() {
     logRecordingError,
     needsTradeTag,
     respondTo,
+    isPersonalCamp,
     selectedCamp,
     selectedCampTags,
     state$,
@@ -1288,7 +1316,7 @@ export default function CreateScreen() {
     )
   }
 
-  if (!respondTo && !effectiveCampId) {
+  if (!respondTo && !isPersonalCamp && !effectiveCampId) {
     return (
       <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
         <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
@@ -1362,7 +1390,7 @@ export default function CreateScreen() {
     )
   }
 
-  if (!respondTo && selectedCamp && !promptDismissed) {
+  if (!respondTo && !isPersonalCamp && selectedCamp && !promptDismissed) {
     return (
       <YStack
         flex={1}
@@ -1437,7 +1465,9 @@ export default function CreateScreen() {
   if (recordingState === 'completion' && videoUri) {
     const completionDetail = respondTo
       ? 'Awesome, great video! We are getting your response ready now. It may take up to two minutes to show in activity lists.'
-      : 'Awesome, great video! We are getting it ready now. It may take up to two minutes for your video to show in Discover, Recent, and Active.'
+      : isPersonalCamp
+        ? 'Your Personal Bondfire is being processed. Invite someone to join the conversation!'
+        : 'Awesome, great video! We are getting it ready now. It may take up to two minutes for your video to show in Discover, Recent, and Active.'
 
     return (
       <CompletionScreen
@@ -1445,6 +1475,15 @@ export default function CreateScreen() {
         onContinue={() => {
           const targetBondfireId = respondTo ?? liveRecordId
           livePublishActions.reset()
+          if (isPersonalCamp) {
+            router.replace(
+              routes.personalCampWithInvite(
+                liveRecordId || 'new',
+                personalCreateStartedAtRef.current ?? Date.now(),
+              ),
+            )
+            return
+          }
           if (shouldUseLivePublish && targetBondfireId) {
             router.replace(routes.bondfire(targetBondfireId))
             return
