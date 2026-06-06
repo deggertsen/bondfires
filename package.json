@@ -31,6 +31,7 @@
   "dependencies": {
     "@auth/core": "~0.37.0",
     "@convex-dev/auth": "^0.0.90",
-    "convex": "^1.31.3"
+    "convex": "^1.31.3",
+    "expo-clipboard": "^56.0.4"
   }
 }

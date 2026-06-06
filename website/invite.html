@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bondfires Invite</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #141416;
+      color: #E4E2DD;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      text-align: center;
+      padding: 24px;
+    }
+    .card {
+      background: #1E1E22;
+      border: 1px solid #2E2E34;
+      border-radius: 20px;
+      padding: 40px 32px;
+      max-width: 400px;
+      width: 100%;
+    }
+    .icon {
+      width: 64px;
+      height: 64px;
+      background: #FF6B35;
+      border-radius: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 24px;
+      font-size: 32px;
+    }
+    h1 { font-size: 24px; font-weight: 900; margin-bottom: 8px; }
+    p { font-size: 15px; color: #9E9E9E; line-height: 1.5; margin-bottom: 24px; }
+    .code {
+      background: #2E2E34;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 24px;
+    }
+    .code-label { font-size: 11px; color: #9E9E9E; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+    .code-value { font-size: 28px; font-weight: 900; letter-spacing: 2px; }
+    .app-store-buttons { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .app-store-button {
+      display: inline-block;
+      background: #FF6B35;
+      color: #fff;
+      font-weight: 700;
+      padding: 14px 28px;
+      border-radius: 14px;
+      text-decoration: none;
+      font-size: 15px;
+    }
+    .app-store-button:hover { background: #E55D2B; }
+  </style>
+  <script>
+    // Extract invite code from URL path
+    const pathParts = window.location.pathname.split('/');
+    const code = pathParts[pathParts.length - 1];
+
+    // Attempt to open the app via universal link
+    // The full URL itself IS the universal link target
+    // iOS will intercept this if the app is installed
+
+    if (code && code.length > 0) {
+      document.addEventListener('DOMContentLoaded', function() {
+        document.getElementById('invite-code').textContent = code;
+
+        // Try opening the app via intent on Android
+        const intentUrl = 'intent://invite/' + code + '#Intent;scheme=https;package=org.bondfires;S.browser_fallback_url=' + encodeURIComponent('https://play.google.com/store/apps/details?id=org.bondfires');end;';
+        const anchor = document.getElementById('android-link');
+        if (anchor) anchor.href = intentUrl;
+
+        // For iOS, the universal link itself IS the trigger
+        // The page loads, iOS intercepts and opens the app
+        // If we're still here after 2s, show the fallback
+        setTimeout(function() {
+          document.body.classList.add('show-fallback');
+        }, 2000);
+      });
+    }
+  </script>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">🔥</div>
+    <h1>You're Invited</h1>
+    <p>Someone invited you to join their Personal Bondfire. Open the app to accept.</p>
+    <div class="code">
+      <div class="code-label">Invite Code</div>
+      <div class="code-value" id="invite-code">•••</div>
+    </div>
+    <div class="app-store-buttons">
+      <a class="app-store-button" href="https://apps.apple.com/us/app/bondfires/id6755933598">Get on App Store</a>
+      <a id="android-link" class="app-store-button" href="https://play.google.com/store/apps/details?id=org.bondfires">Get on Play Store</a>
+    </div>
+  </div>
+</body>
+</html>

@@ -5470,6 +5470,7 @@ __metadata:
     "@convex-dev/auth": "npm:^0.0.90"
     "@types/node": "npm:^25.0.3"
     convex: "npm:^1.31.3"
+    expo-clipboard: "npm:^56.0.4"
     turbo: "npm:^2.3.0"
     typescript: "npm:^6.0.0"
   languageName: unknown
@@ -6702,6 +6703,17 @@ __metadata:
     react-native-web:
       optional: true
   checksum: 10c0/7b43443f5a158845e7a5333f0bd5ddbf05315df9e5fc1ded1bed620d0b82a373147cf0f1b9a73d53a517b9ecf7e5588c15032c503c0eb57484aab8aa70e96127
+  languageName: node
+  linkType: hard
+
+"expo-clipboard@npm:^56.0.4":
+  version: 56.0.4
+  resolution: "expo-clipboard@npm:56.0.4"
+  peerDependencies:
+    expo: "*"
+    react: "*"
+    react-native: "*"
+  checksum: 10c0/42d03c8696a92c1fb3e7df6a5ac6fb178c6e50aa6996fafa3b35e37ea1c387d77b18026600916dc997d1cabf480108088a191c40367740bb8022e6b7f7866d13
   languageName: node
   linkType: hard
 
