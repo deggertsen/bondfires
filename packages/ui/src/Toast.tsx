@@ -25,22 +25,22 @@ export interface ToastEntry {
 
 const TYPE_STYLES: Record<ToastType, { bg: string; border: string; text: string }> = {
   error: {
-    bg: 'rgba(239, 68, 68, 0.15)',
+    bg: 'rgba(239, 68, 68, 0.95)',
     border: bondfireColors.error,
     text: bondfireColors.whiteSmoke,
   },
   warn: {
-    bg: 'rgba(245, 158, 11, 0.15)',
+    bg: 'rgba(245, 158, 11, 0.95)',
     border: bondfireColors.warning,
     text: bondfireColors.whiteSmoke,
   },
   info: {
-    bg: 'rgba(156, 163, 175, 0.10)',
+    bg: 'rgba(156, 163, 175, 0.95)',
     border: bondfireColors.ash,
     text: bondfireColors.whiteSmoke,
   },
   success: {
-    bg: 'rgba(34, 197, 94, 0.15)',
+    bg: 'rgba(34, 197, 94, 0.95)',
     border: bondfireColors.success,
     text: bondfireColors.whiteSmoke,
   },
