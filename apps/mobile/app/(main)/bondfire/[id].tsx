@@ -42,7 +42,7 @@ import {
   StatusBar,
   type ViewToken,
 } from 'react-native'
-import { Spinner, XStack, YStack } from 'tamagui'
+import { Separator, Sheet, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { NotepadOverlay } from '../../../components/NotepadOverlay'
@@ -712,6 +712,7 @@ export default function BondfireDetailScreen() {
     | BondfireDetailData
     | null
     | undefined
+  const accessCheck = useQuery(api.bondfireInvites.canAccessBondfire, { bondfireId })
   const getVideoUrls = useAction(api.videos.getVideoUrls)
   const campContext = useQuery(api.bondfires.getWithCampContext, { id: bondfireId })
   const recordWatchEvent = useMutation(api.watchEvents.record)
@@ -719,7 +720,17 @@ export default function BondfireDetailScreen() {
   const markThreadRead = useMutation(api.conversations.markThreadRead)
   const pinPerson = useMutation(api.conversations.pinPerson)
   const unpinPerson = useMutation(api.conversations.unpinPerson)
+  const joinCamp = useMutation(api.camps.join)
+  const [showJoinPrompt, setShowJoinPrompt] = useState(false)
+  const [joinLoading, setJoinLoading] = useState(false)
   const [isInviteSheetOpen, setIsInviteSheetOpen] = useState(false)
+
+  // Auto-show camp join prompt for invited users who aren't members
+  useEffect(() => {
+    if (accessCheck?.needsCampJoin) {
+      setShowJoinPrompt(true)
+    }
+  }, [accessCheck])
 
   const didRestorePositionRef = useRef(false)
   const persistPositionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -1228,8 +1239,70 @@ export default function BondfireDetailScreen() {
 
         {/* Notepad Overlay */}
         {showNotepad && <NotepadOverlay onClose={() => screenState$.showNotepad.set(false)} />}
-      <InviteSheet
-        bondfireId={bondfireId}
+
+        {/* Camp Join Prompt — shown for invited users who aren't members */}
+        {showJoinPrompt && accessCheck?.campId && (
+          <Sheet
+            open={showJoinPrompt}
+            onOpenChange={(isOpen: boolean) => {
+              if (!isOpen) setShowJoinPrompt(false)
+            }}
+            snapPoints={[50]}
+            dismissOnSnapToBottom
+          >
+            <Sheet.Overlay backgroundColor="rgba(0,0,0,0.45)" />
+            <Sheet.Frame
+              backgroundColor={bondfireColors.charcoal}
+              borderTopLeftRadius={20}
+              borderTopRightRadius={20}
+              padding={24}
+            >
+              <YStack gap={20} alignItems="center">
+                <Sheet.Handle backgroundColor={bondfireColors.iron} />
+                <Text fontSize={22} fontWeight="900" textAlign="center">
+                  Join Camp to View
+                </Text>
+                <Text
+                  fontSize={14}
+                  color={bondfireColors.ash}
+                  textAlign="center"
+                  lineHeight={20}
+                >
+                  This bondfire is in a camp you haven't joined yet. Join to watch and respond.
+                </Text>
+                <Button
+                  variant="primary"
+                  size="$lg"
+                  width="100%"
+                  onPress={async () => {
+                    if (!accessCheck.campId) return
+                    setJoinLoading(true)
+                    try {
+                      await joinCamp({ campId: accessCheck.campId })
+                      setShowJoinPrompt(false)
+                    } catch (error) {
+                      Alert.alert(
+                        'Could not join',
+                        error instanceof Error ? error.message : String(error),
+                      )
+                    } finally {
+                      setJoinLoading(false)
+                    }
+                  }}
+                  disabled={joinLoading}
+                >
+                  <Text color={bondfireColors.whiteSmoke} fontWeight="700">
+                    {joinLoading ? 'Joining...' : 'Join Camp'}
+                  </Text>
+                </Button>
+              </YStack>
+            </Sheet.Frame>
+          </Sheet>
+        )}
+
+        {/* Invite Sheet */}
+        <InviteSheet
+          bondfireId={bondfireId}
         open={isInviteSheetOpen}
         onClose={() => setIsInviteSheetOpen(false)}
       />

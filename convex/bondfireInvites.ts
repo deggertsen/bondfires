@@ -231,3 +231,49 @@ export const sendBondfireInviteNotification = internalAction({
     })
   },
 })
+
+// ── Can Access Bondfire ────────────────────────────────────────────────────
+
+/**
+ * Check if a user can access a bondfire. Returns null if access is denied,
+ * or { needsCampJoin: true } if the user can access but needs to join the camp.
+ */
+export const canAccessBondfire = query({
+  args: { bondfireId: v.id('bondfires') },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx)
+    const bondfire = await ctx.db.get(args.bondfireId)
+    if (!bondfire) return null
+
+    if (!bondfire.campId) {
+      return { needsCampJoin: false, campId: null }
+    }
+
+    const camp = await ctx.db.get(bondfire.campId)
+    if (!camp) return null
+
+    if (!userId) {
+      if (camp.access === 'open') {
+        return { needsCampJoin: false, campId: camp._id }
+      }
+      return null
+    }
+
+    const membership = await ctx.db
+      .query('campMembers')
+      .withIndex('by_user_camp', (q) =>
+        q.eq('userId', userId).eq('campId', bondfire.campId!),
+      )
+      .unique()
+
+    if (membership && membership.status === 'active') {
+      return { needsCampJoin: false, campId: camp._id }
+    }
+
+    if (camp.access === 'open') {
+      return { needsCampJoin: true, campId: camp._id }
+    }
+
+    return null
+  },
+})
