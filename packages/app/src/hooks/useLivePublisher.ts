@@ -58,6 +58,7 @@ export function useLivePublisher(options: {
     isResponse: boolean
     bondfireId?: string
     campId?: string
+    personalCamp?: boolean
     tags?: string[]
     width?: number
     height?: number
@@ -116,6 +117,7 @@ export function useLivePublisher(options: {
       args: {
         respondToBondfireId?: string
         campId?: string
+        personalCamp?: boolean
         tags?: string[]
         initialCamera?: 'front' | 'back'
       } = {},
@@ -127,6 +129,7 @@ export function useLivePublisher(options: {
           isResponse: !!args.respondToBondfireId,
           bondfireId: args.respondToBondfireId,
           campId: args.campId,
+          personalCamp: args.personalCamp,
           tags: args.tags,
           width: 720,
           height: 1280,

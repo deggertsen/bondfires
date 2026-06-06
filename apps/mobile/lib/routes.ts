@@ -67,9 +67,12 @@ export const routes = {
     params: newFire ? { personalCamp: '1', newFire } : { personalCamp: '1' },
   }),
 
-  personalCampWithInvite: (bondfireId: string): Href => ({
+  personalCampWithInvite: (bondfireId: string, createdAfter?: number): Href => ({
     pathname: '/(main)/personal-camp',
-    params: { newFire: bondfireId },
+    params:
+      createdAfter === undefined
+        ? { newFire: bondfireId }
+        : { newFire: bondfireId, createdAfter: String(createdAfter) },
   }),
 
   // --- Main stack ---

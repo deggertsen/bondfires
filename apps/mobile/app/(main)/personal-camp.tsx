@@ -9,8 +9,8 @@ import { FlatList, Pressable, StatusBar } from 'react-native'
 import { Separator, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../convex/_generated/dataModel'
-import { routes } from '../../lib/routes'
 import { PersonalInviteSheet } from '../../components/PersonalInviteSheet'
+import { routes } from '../../lib/routes'
 
 type BondfireData = Doc<'bondfires'> & {
   participantCount: number
@@ -74,9 +74,12 @@ function BondfireRow({ bondfire, onOpen }: { bondfire: BondfireData; onOpen: () 
 
 export default function PersonalCampScreen() {
   const router = useRouter()
-  const { newFire } = useLocalSearchParams<{ newFire?: string }>()
+  const { newFire, createdAfter } = useLocalSearchParams<{
+    newFire?: string
+    createdAfter?: string
+  }>()
   const [inviteFireId, setInviteFireId] = useState<Id<'bondfires'> | null>(null)
-  const wasHandlingNewFireRef = useRef(false)
+  const handledInviteRouteRef = useRef<string | null>(null)
   const personalCamp = useQuery(api.personalCamps.getMyPersonalCamp, {})
   const bondfires = useQuery(
     api.personalBondfires.listMyPersonalBondfires,
@@ -88,24 +91,30 @@ export default function PersonalCampScreen() {
     return [...bondfires].sort((a, b) => b.createdAt - a.createdAt)
   }, [bondfires])
 
-  // Handle new fire invite flow
   useEffect(() => {
-    if (!newFire || wasHandlingNewFireRef.current) return
+    if (!newFire) return
+    const inviteRouteKey = [newFire, createdAfter ?? ''].join(':')
+    if (handledInviteRouteRef.current === inviteRouteKey) return
     if (!sortedBondfires || sortedBondfires.length === 0) return
 
-    // If we have a specific bondfireId, use it; otherwise use the newest
     if (newFire !== 'new') {
       setInviteFireId(newFire as Id<'bondfires'>)
-      wasHandlingNewFireRef.current = true
-    } else {
-      // Wait for the newest bondfire to have a video status that's not waiting
-      const newest = sortedBondfires[0]
-      if (newest.videoStatus !== 'waiting_for_upload' && newest.videoStatus !== 'processing') {
-        setInviteFireId(newest._id)
-        wasHandlingNewFireRef.current = true
-      }
+      handledInviteRouteRef.current = inviteRouteKey
+      return
     }
-  }, [newFire, sortedBondfires])
+
+    const parsedCreatedAfter = Number(createdAfter)
+    const createdAfterCutoff = Number.isFinite(parsedCreatedAfter)
+      ? parsedCreatedAfter - 5000
+      : undefined
+    const newest = sortedBondfires.find(
+      (bondfire) => createdAfterCutoff === undefined || bondfire.createdAt >= createdAfterCutoff,
+    )
+    if (newest) {
+      setInviteFireId(newest._id)
+      handledInviteRouteRef.current = inviteRouteKey
+    }
+  }, [createdAfter, newFire, sortedBondfires])
 
   const handleBack = useCallback(() => {
     router.back()
@@ -318,11 +327,7 @@ export default function PersonalCampScreen() {
 
       {/* Invite Sheet */}
       {inviteFireId && (
-        <PersonalInviteSheet
-          bondfireId={inviteFireId}
-          open={true}
-          onClose={handleCloseInvite}
-        />
+        <PersonalInviteSheet bondfireId={inviteFireId} open={true} onClose={handleCloseInvite} />
       )}
     </YStack>
   )

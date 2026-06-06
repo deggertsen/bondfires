@@ -86,6 +86,7 @@ export default function CreateScreen() {
   const uploadStartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const wasFocusedRef = useRef(isFocused)
   const didRouteFirstSparkRef = useRef(false)
+  const personalCreateStartedAtRef = useRef<number | null>(null)
 
   const state$ = useObservable({
     facing: 'front' as CameraType,
@@ -521,6 +522,7 @@ export default function CreateScreen() {
           ...args,
           bondfireId: args.bondfireId as Id<'bondfires'> | undefined,
           campId: args.campId as Id<'camps'> | undefined,
+          personalCamp: args.personalCamp,
           tags: args.tags,
         })
       },
@@ -637,6 +639,10 @@ export default function CreateScreen() {
           }
         }
 
+        if (isPersonalCamp) {
+          personalCreateStartedAtRef.current = Date.now()
+        }
+
         return await startBackgroundUpload(
           {
             videoUri: uri,
@@ -694,6 +700,7 @@ export default function CreateScreen() {
       getMuxUploadStatus,
       currentUser?._id,
       convex,
+      isPersonalCamp,
     ],
   )
 
@@ -934,6 +941,7 @@ export default function CreateScreen() {
     clearStopTimeout,
     clearUploadStartTimeout,
     effectiveCampId,
+    isPersonalCamp,
     logRecordingError,
     needsTradeTag,
     respondTo,
@@ -1070,9 +1078,13 @@ export default function CreateScreen() {
     try {
       state$.recordingDuration.set(0)
       state$.videoUri.set(null)
+      if (isPersonalCamp) {
+        personalCreateStartedAtRef.current = Date.now()
+      }
       await livePublisher.start({
         respondToBondfireId: respondTo,
         campId: effectiveCampId,
+        personalCamp: isPersonalCamp || undefined,
         tags: selectedCampTags,
         initialCamera: state$.facing.get() === 'back' ? 'back' : 'front',
       })
@@ -1107,6 +1119,7 @@ export default function CreateScreen() {
     logRecordingError,
     needsTradeTag,
     respondTo,
+    isPersonalCamp,
     selectedCamp,
     selectedCampTags,
     state$,
@@ -1462,12 +1475,17 @@ export default function CreateScreen() {
         onContinue={() => {
           const targetBondfireId = respondTo ?? liveRecordId
           livePublishActions.reset()
-          if (shouldUseLivePublish && targetBondfireId) {
-            router.replace(routes.bondfire(targetBondfireId))
+          if (isPersonalCamp) {
+            router.replace(
+              routes.personalCampWithInvite(
+                liveRecordId || 'new',
+                personalCreateStartedAtRef.current ?? Date.now(),
+              ),
+            )
             return
           }
-          if (isPersonalCamp) {
-            router.replace(routes.personalCampWithInvite(liveRecordId || 'new'))
+          if (shouldUseLivePublish && targetBondfireId) {
+            router.replace(routes.bondfire(targetBondfireId))
             return
           }
           router.replace(routes.feed)
