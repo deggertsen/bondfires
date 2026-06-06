@@ -1478,7 +1478,7 @@ export default function CreateScreen() {
           if (isPersonalCamp) {
             router.replace(
               routes.personalCampWithInvite(
-                liveRecordId || 'new',
+                'new',
                 personalCreateStartedAtRef.current ?? Date.now(),
               ),
             )
