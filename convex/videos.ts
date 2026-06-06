@@ -14,6 +14,7 @@ import {
   assertVideoDurationWithinTierLimit,
   getEntitlementSubscriptionTier,
   getPrivateCampExpiresAt,
+  PAID_TIERS,
 } from './entitlements'
 import { throwUserError } from './errors'
 import {
@@ -846,6 +847,7 @@ export const createMuxDirectUpload = action({
     isResponse: v.boolean(),
     bondfireId: v.optional(v.id('bondfires')),
     campId: v.optional(v.id('camps')),
+    personalCamp: v.optional(v.boolean()),
     tags: v.optional(v.array(v.string())),
     durationMs: v.optional(v.number()),
     width: v.optional(v.number()),
@@ -870,6 +872,9 @@ export const createMuxDirectUpload = action({
         durationMs: args.durationMs,
       })
       playbackPolicy = policy.playbackPolicy
+    } else if (args.personalCamp) {
+      // Personal camp bondfires always use signed playback
+      playbackPolicy = 'signed'
     } else {
       if (!args.campId) {
         throwUserError('Choose a camp before sparking a Bondfire')
@@ -929,6 +934,7 @@ export const createMuxDirectUpload = action({
       isResponse: args.isResponse,
       bondfireId: args.bondfireId,
       campId: args.campId,
+      personalCamp: args.personalCamp,
       tags: args.tags,
       playbackPolicy,
       durationMs: args.durationMs,
@@ -1567,6 +1573,39 @@ export const validateRespondCamp = query({
   },
 })
 
+export const validatePersonalCreate = query({
+  args: {},
+  handler: async (ctx, _args) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      return { valid: false, error: 'You must have an account to spark a Personal Bondfire' }
+    }
+
+    const tier = await getEntitlementSubscriptionTier(ctx, userId)
+    if (!PAID_TIERS.includes(tier)) {
+      return { valid: false, error: 'Personal Camps require a Plus, Premium, or Pro subscription.' }
+    }
+
+    const personalCamp = await ctx.db
+      .query('personalCamps')
+      .withIndex('by_owner', (q) => q.eq('ownerId', userId))
+      .first()
+
+    if (!personalCamp) {
+      return { valid: false, error: 'Personal camp not found. Subscribe to Plus, Premium, or Pro to create one.' }
+    }
+
+    if (personalCamp.status !== 'active') {
+      return {
+        valid: false,
+        error: 'Your personal camp is currently frozen. Please re-subscribe to reactivate it.',
+      }
+    }
+
+    return { valid: true }
+  },
+})
+
 export const getMuxPlaybackPolicyForNewRecord = internalQuery({
   args: {
     userId: v.id('users'),
@@ -1710,6 +1749,7 @@ export const createPendingMuxVideo = internalMutation({
     isResponse: v.boolean(),
     bondfireId: v.optional(v.id('bondfires')),
     campId: v.optional(v.id('camps')),
+    personalCamp: v.optional(v.boolean()),
     tags: v.optional(v.array(v.string())),
     playbackPolicy: v.union(v.literal('public'), v.literal('signed')),
     durationMs: v.optional(v.number()),
@@ -1757,6 +1797,68 @@ export const createPendingMuxVideo = internalMutation({
       })
 
       return { recordId, recordType: 'response' as const }
+    }
+
+    // Personal camp bondfire creation
+    if (args.personalCamp) {
+      if (args.playbackPolicy === 'public') {
+        throw new Error('Personal fire videos must use signed playback.')
+      }
+
+      const tier = await getEntitlementSubscriptionTier(ctx, args.userId)
+      if (!PAID_TIERS.includes(tier)) {
+        throwUserError('Personal Camps require a Plus, Premium, or Pro subscription.')
+      }
+
+      const personalCamp = await ctx.db
+        .query('personalCamps')
+        .withIndex('by_owner', (q) => q.eq('ownerId', args.userId))
+        .first()
+
+      if (!personalCamp) {
+        throwUserError('Personal camp not found. Subscribe to Plus, Premium, or Pro to create one.')
+      }
+
+      if (personalCamp.status !== 'active') {
+        throwUserError('Your personal camp is currently frozen. Please re-subscribe to reactivate it.')
+      }
+
+      const recordId = await ctx.db.insert('bondfires', {
+        userId: args.userId,
+        creatorName: user?.displayName ?? user?.name,
+        personalCampId: personalCamp._id,
+        frozen: false,
+        videoStatus: 'waiting_for_upload',
+        muxUploadId: args.uploadId,
+        muxPlaybackPolicy: args.playbackPolicy ?? 'signed',
+        muxAssetStatus: 'waiting_for_upload',
+        durationMs: args.durationMs,
+        width: args.width,
+        height: args.height,
+        tags: args.tags,
+        videoCount: 1,
+        viewCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      })
+
+      // Add the owner as a participant.
+      await ctx.db.insert('personalBondfireParticipants', {
+        bondfireId: recordId,
+        userId: args.userId,
+        status: 'active',
+        joinedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })
+
+      // Update user's bondfire count.
+      await ctx.db.patch(args.userId, {
+        bondfireCount: (user?.bondfireCount ?? 0) + 1,
+        updatedAt: now,
+      })
+
+      return { recordId, recordType: 'bondfire' as const }
     }
 
     if (!args.campId) {
