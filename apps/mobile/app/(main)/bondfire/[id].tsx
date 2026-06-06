@@ -645,39 +645,39 @@ function ParticipantRail({
         .filter((p) => p.user._id !== currentUserId)
         .slice(0, 8)
         .map((participant) => {
-        return (
-          <Pressable
-            key={participant.user._id}
-            onLongPress={() => onLongPressParticipant(participant)}
-            delayLongPress={350}
-          >
-            <XStack
-              alignItems="center"
-              gap={6}
-              paddingHorizontal={10}
-              height={32}
-              borderRadius={16}
-              backgroundColor="rgba(31, 32, 35, 0.84)"
-              borderWidth={1}
-              borderColor={
-                participant.isPinned ? bondfireColors.bondfireCopper : bondfireColors.iron
-              }
+          return (
+            <Pressable
+              key={participant.user._id}
+              onLongPress={() => onLongPressParticipant(participant)}
+              delayLongPress={350}
             >
-              {participant.isPinned ? (
-                <Pin size={12} color={bondfireColors.bondfireCopper} />
-              ) : null}
-              <Text
-                fontSize={12}
-                color={bondfireColors.whiteSmoke}
-                fontWeight="800"
-                numberOfLines={1}
+              <XStack
+                alignItems="center"
+                gap={6}
+                paddingHorizontal={10}
+                height={32}
+                borderRadius={16}
+                backgroundColor="rgba(31, 32, 35, 0.84)"
+                borderWidth={1}
+                borderColor={
+                  participant.isPinned ? bondfireColors.bondfireCopper : bondfireColors.iron
+                }
               >
-                {participant.user.displayName ?? participant.user.name ?? 'Someone'}
-              </Text>
-            </XStack>
-          </Pressable>
-        )
-      })}
+                {participant.isPinned ? (
+                  <Pin size={12} color={bondfireColors.bondfireCopper} />
+                ) : null}
+                <Text
+                  fontSize={12}
+                  color={bondfireColors.whiteSmoke}
+                  fontWeight="800"
+                  numberOfLines={1}
+                >
+                  {participant.user.displayName ?? participant.user.name ?? 'Someone'}
+                </Text>
+              </XStack>
+            </Pressable>
+          )
+        })}
     </XStack>
   )
 }
