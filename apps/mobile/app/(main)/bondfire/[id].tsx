@@ -641,12 +641,13 @@ function ParticipantRail({
       flexWrap="wrap"
       pointerEvents="box-none"
     >
-      {participants.slice(0, 8).map((participant) => {
-        const isCurrentUser = participant.user._id === currentUserId
+      {participants
+        .filter((p) => p.user._id !== currentUserId)
+        .slice(0, 8)
+        .map((participant) => {
         return (
           <Pressable
             key={participant.user._id}
-            disabled={isCurrentUser}
             onLongPress={() => onLongPressParticipant(participant)}
             delayLongPress={350}
           >
@@ -1157,7 +1158,7 @@ export default function BondfireDetailScreen() {
             left={0}
             right={0}
             paddingHorizontal={20}
-            paddingBottom={20}
+            paddingBottom={28}
             paddingTop={16}
           >
             <LinearGradient
