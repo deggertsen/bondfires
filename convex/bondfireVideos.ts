@@ -9,6 +9,7 @@ import {
   isCampReadableStatus,
   requiresActiveMembershipForVisibility,
 } from './campLifecycle'
+import { assertVideoDurationWithinTierLimit } from './entitlements'
 import {
   assertCanRespondToPersonalBondfire,
   canViewPersonalBondfire,
@@ -74,6 +75,8 @@ async function assertCanRespondToBondfire(
   if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
     throw new Error('Bondfire not found')
   }
+
+  await assertVideoDurationWithinTierLimit(ctx, args.userId, args.durationMs)
 
   if (bondfire.personalCampId) {
     await assertCanRespondToPersonalBondfire(ctx, {
