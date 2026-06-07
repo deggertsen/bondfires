@@ -20,7 +20,7 @@ import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
-import { Flame, SwitchCamera, X } from '@tamagui/lucide-icons'
+import { Flame, Sparkles, SwitchCamera, X } from '@tamagui/lucide-icons'
 import { useAction, useConvex, useMutation, useQuery } from 'convex/react'
 import {
   type CameraType,
@@ -139,6 +139,7 @@ export default function CreateScreen() {
   const camps = useQuery(api.camps.list, respondTo ? 'skip' : {})
   const subscription = useQuery(api.subscriptions.current, {})
   const currentUser = useQuery(api.users.current)
+  const personalCampDoc = useQuery(api.personalCamps.getMyPersonalCamp, {})
   const joinCamp = useMutation(api.camps.join)
   const persistedCampId = currentCampId as Id<'camps'> | null
   const effectiveCampId = respondTo
@@ -1148,6 +1149,10 @@ export default function CreateScreen() {
     [joinCamp, state$],
   )
 
+  const handleOpenPersonalHearth = useCallback(() => {
+    router.replace(routes.createForPersonalCamp())
+  }, [router])
+
   const stopLiveRecording = useCallback(async () => {
     if (liveStatus !== 'connecting' && liveStatus !== 'live' && liveStatus !== 'reconnecting') {
       return
@@ -1383,6 +1388,50 @@ export default function CreateScreen() {
                   </Pressable>
                 )
               })}
+              {/* Personal Hearth — visually distinct from camp cards */}
+              <Pressable onPress={handleOpenPersonalHearth}>
+                <YStack
+                  padding={14}
+                  borderRadius={16}
+                  backgroundColor={`${bondfireColors.bondfireCopper}12`}
+                  borderWidth={1}
+                  borderColor={bondfireColors.bondfireCopper}
+                  borderStyle="dashed"
+                  gap={8}
+                >
+                  <XStack justifyContent="space-between" alignItems="center" gap={12}>
+                    <XStack alignItems="center" gap={10} flex={1}>
+                      <YStack
+                        width={36}
+                        height={36}
+                        borderRadius={18}
+                        backgroundColor={`${bondfireColors.bondfireCopper}25`}
+                        alignItems="center"
+                        justifyContent="center"
+                      >
+                        <Flame size={18} color={bondfireColors.bondfireCopper} />
+                      </YStack>
+                      <YStack flex={1} gap={2}>
+                        <Text
+                          fontSize={16}
+                          fontWeight="900"
+                          color={bondfireColors.bondfireCopper}
+                          numberOfLines={1}
+                        >
+                          {personalCampDoc?.name ?? 'My Hearth'}
+                        </Text>
+                        <Text fontSize={12} color={bondfireColors.ash} numberOfLines={1}>
+                          Your personal space
+                        </Text>
+                      </YStack>
+                    </XStack>
+                    <Sparkles size={16} color={bondfireColors.bondfireCopper} />
+                  </XStack>
+                  <Text fontSize={14} color={bondfireColors.whiteSmoke} lineHeight={20}>
+                    Private sparks just for you. No camp rules, no audience — just your own fire.
+                  </Text>
+                </YStack>
+              </Pressable>
             </YStack>
           </ScrollView>
         )}
@@ -1476,9 +1525,11 @@ export default function CreateScreen() {
           const targetBondfireId = respondTo ?? liveRecordId
           livePublishActions.reset()
           if (isPersonalCamp) {
+            // Live publish already has the Convex bondfire ID; background upload doesn't yet
+            const personalBondfireId = shouldUseLivePublish && liveRecordId ? liveRecordId : 'new'
             router.replace(
               routes.personalCampWithInvite(
-                'new',
+                personalBondfireId,
                 personalCreateStartedAtRef.current ?? Date.now(),
               ),
             )
