@@ -18,7 +18,6 @@ import {
   ChevronRight,
   FileText,
   Flame,
-  Pin,
   Play,
   RotateCcw,
   Settings,
@@ -618,71 +617,6 @@ function formatTime(ms: number): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
-function ParticipantRail({
-  participants,
-  currentUserId,
-  onLongPressParticipant,
-}: {
-  participants: ThreadParticipant[]
-  currentUserId?: string
-  onLongPressParticipant: (participant: ThreadParticipant) => void
-}) {
-  if (participants.length === 0) {
-    return null
-  }
-
-  return (
-    <XStack
-      position="absolute"
-      left={16}
-      right={16}
-      top={108}
-      zIndex={90}
-      gap={8}
-      flexWrap="wrap"
-      pointerEvents="box-none"
-    >
-      {participants
-        .filter((p) => p.user._id !== currentUserId)
-        .slice(0, 8)
-        .map((participant) => {
-          return (
-            <Pressable
-              key={participant.user._id}
-              onLongPress={() => onLongPressParticipant(participant)}
-              delayLongPress={350}
-            >
-              <XStack
-                alignItems="center"
-                gap={6}
-                paddingHorizontal={10}
-                height={32}
-                borderRadius={16}
-                backgroundColor="rgba(31, 32, 35, 0.84)"
-                borderWidth={1}
-                borderColor={
-                  participant.isPinned ? bondfireColors.bondfireCopper : bondfireColors.iron
-                }
-              >
-                {participant.isPinned ? (
-                  <Pin size={12} color={bondfireColors.bondfireCopper} />
-                ) : null}
-                <Text
-                  fontSize={12}
-                  color={bondfireColors.whiteSmoke}
-                  fontWeight="800"
-                  numberOfLines={1}
-                >
-                  {participant.user.displayName ?? participant.user.name ?? 'Someone'}
-                </Text>
-              </XStack>
-            </Pressable>
-          )
-        })}
-    </XStack>
-  )
-}
-
 export default function BondfireDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const router = useRouter()
@@ -718,8 +652,6 @@ export default function BondfireDetailScreen() {
   const recordWatchEvent = useMutation(api.watchEvents.record)
   const incrementViews = useMutation(api.bondfires.incrementViews)
   const markThreadRead = useMutation(api.conversations.markThreadRead)
-  const pinPerson = useMutation(api.conversations.pinPerson)
-  const unpinPerson = useMutation(api.conversations.unpinPerson)
   const joinCamp = useMutation(api.camps.join)
   const [showJoinPrompt, setShowJoinPrompt] = useState(false)
   const [joinLoading, setJoinLoading] = useState(false)
@@ -951,38 +883,6 @@ export default function BondfireDetailScreen() {
     router.push(routes.createRespondTo(id))
   }, [bondfireData?.campStatus, router, id])
 
-  const handleLongPressParticipant = useCallback(
-    (participant: ThreadParticipant) => {
-      const name = participant.user.displayName ?? participant.user.name ?? 'this person'
-      Alert.alert(
-        participant.isPinned ? 'Remove from Close Circle?' : 'Add to Close Circle?',
-        participant.isPinned
-          ? `${name} will no longer appear on your Profile.`
-          : `${name} will appear on your Profile for quick access.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: participant.isPinned ? 'Remove' : 'Add',
-            style: participant.isPinned ? 'destructive' : 'default',
-            onPress: async () => {
-              try {
-                if (participant.isPinned) {
-                  await unpinPerson({ userId: participant.user._id })
-                } else {
-                  await pinPerson({ userId: participant.user._id })
-                }
-              } catch (error) {
-                const message = parseError(error).message
-                Alert.alert('Close Circle Unavailable', message)
-              }
-            },
-          },
-        ],
-      )
-    },
-    [pinPerson, unpinPerson],
-  )
-
   const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
       if (viewableItems.length > 0 && viewableItems[0].index !== null) {
@@ -1165,12 +1065,6 @@ export default function BondfireDetailScreen() {
             offset: SCREEN_WIDTH * index,
             index,
           })}
-        />
-
-        <ParticipantRail
-          participants={bondfireData.participants ?? []}
-          currentUserId={currentUserId ?? undefined}
-          onLongPressParticipant={handleLongPressParticipant}
         />
 
         {/* Navigation hints */}
