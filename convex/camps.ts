@@ -11,6 +11,7 @@ import {
   assertCanCreatePrivateCamp,
   assertCanCreatePublicCamp,
   getEntitlementSubscriptionTier,
+  getTierMaxVideoDurationMs,
   PAID_TIERS,
   TIER_RANK,
 } from './entitlements'
@@ -1906,7 +1907,7 @@ export const createPrivateCamp = mutation({
           allowedTiers: { value: [...PAID_TIERS], visibilityMode: 'hide' },
         },
         participation: {
-          maxDurationMs: tier === 'pro' ? undefined : 30 * 60 * 1000,
+          maxDurationMs: getTierMaxVideoDurationMs(tier),
         },
         advisory: {
           guidelines: [

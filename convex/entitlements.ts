@@ -41,8 +41,11 @@ export const TIER_RANK: Record<SubscriptionTier, number> = {
 /** Tiers that have paid for at least Plus-level access. */
 export const PAID_TIERS: readonly SubscriptionTier[] = ['plus', 'premium', 'pro']
 
-/** Maximum video duration (ms) for non-Pro tiers. Pro has no limit. */
-export const TIER_MAX_VIDEO_DURATION_MS = 30 * 60 * 1000 // 30 minutes
+/** Maximum video duration (ms) for Plus tier members. */
+export const PLUS_MAX_VIDEO_DURATION_MS = 15 * 60 * 1000 // 15 minutes
+
+/** Maximum video duration (ms) for Premium tier members. */
+export const PREMIUM_MAX_VIDEO_DURATION_MS = 30 * 60 * 1000 // 30 minutes
 
 /** Private-camp video retention window for Plus users (30 days). */
 export const PLUS_PRIVATE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
@@ -152,15 +155,22 @@ export function tierCanCreateBondfires(tier: SubscriptionTier): boolean {
 
 /**
  * Maximum video duration in milliseconds allowed for the given tier.
- * Pro has no limit (returns undefined); all other tiers are capped at
- * 30 minutes.
+ * - Plus: 15 minutes
+ * - Premium: 30 minutes
+ * - Pro: no limit (returns undefined)
+ * - Free: no limit (returns undefined — free users cannot create Bondfires
+ *   anyway, so this is handled by the bondfire creation guard)
  */
 export function getTierMaxVideoDurationMs(tier: SubscriptionTier): number | undefined {
-  if (TIER_RANK[tier] >= TIER_RANK.pro) {
-    return undefined
+  switch (tier) {
+    case 'plus':
+      return PLUS_MAX_VIDEO_DURATION_MS
+    case 'premium':
+      return PREMIUM_MAX_VIDEO_DURATION_MS
+    case 'pro':
+    case 'free':
+      return undefined
   }
-
-  return TIER_MAX_VIDEO_DURATION_MS
 }
 
 /**

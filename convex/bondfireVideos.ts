@@ -9,6 +9,7 @@ import {
   isCampReadableStatus,
   requiresActiveMembershipForVisibility,
 } from './campLifecycle'
+import { assertVideoDurationWithinTierLimit } from './entitlements'
 import {
   assertCanRespondToPersonalBondfire,
   canViewPersonalBondfire,
@@ -227,6 +228,9 @@ export const addResponse = mutation({
     })
 
     const now = Date.now()
+
+    // Enforce tier-based video duration limit on responses.
+    await assertVideoDurationWithinTierLimit(ctx, userId, args.durationMs)
 
     if (!args.muxAssetId || !args.muxPlaybackId) {
       throw new Error('Mux asset ID and playback ID are required for Mux videos')
