@@ -171,7 +171,7 @@ function VideoPlayer({
   // Extract MUX playback ID from the video URL for Data tracking
   const muxPlaybackId = useMemo(() => {
     if (!videoUrl) return null
-    const match = videoUrl.match(/stream\.mux\.com\/([^.]+)\.m3u8/)
+    const match = videoUrl.match(/stream\.mux\.com\/([^/?#]+)\.m3u8(?:[?#]|$)/)
     return match ? match[1] : null
   }, [videoUrl])
 
@@ -195,6 +195,7 @@ function VideoPlayer({
 
   useMuxData({
     player,
+    sourceUrl: currentUrl,
     videoMetadata: muxDataVideoMetadata,
     viewerMetadata: useMemo(
       () => ({ viewer_user_id: currentUserId ?? undefined }),

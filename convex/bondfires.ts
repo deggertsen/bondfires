@@ -313,7 +313,9 @@ export const getWithCampContext = query({
     if (userId) {
       const m = await ctx.db
         .query('campMembers')
-        .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', bondfire.campId!))
+        .withIndex('by_user_camp', (q) =>
+          q.eq('userId', userId).eq('campId', bondfire.campId!),
+        )
         .unique()
       membership = m
     }

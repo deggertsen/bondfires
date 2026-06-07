@@ -1,12 +1,12 @@
 // Convex React Native polyfill - MUST be imported before any Convex imports
 import '../polyfills/convex-react-native'
 
-import { openAppStore, useForceUpdate } from '@bondfires/app'
 import { Button, ForceUpdateModal, Text, ToastContainer } from '@bondfires/ui'
+import { useForceUpdate, openAppStore } from '@bondfires/app'
 import { ConvexAuthProvider } from '@convex-dev/auth/react'
 import { ConvexReactClient, useMutation } from 'convex/react'
-import Constants from 'expo-constants'
 import { useFonts } from 'expo-font'
+import Constants from 'expo-constants'
 import type * as Notifications from 'expo-notifications'
 import { Stack, useRouter } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
@@ -199,12 +199,7 @@ function AppContent() {
   const unregisterDevice = useMutation(api.notifications.unregisterDevice)
 
   // Force-update check: compares current version against remote minAppVersion.
-  const {
-    loading: updateCheckLoading,
-    updateRequired,
-    minRequiredVersion,
-    storeUrl,
-  } = useForceUpdate()
+  const { loading: updateCheckLoading, updateRequired, minRequiredVersion, storeUrl } = useForceUpdate()
 
   // Handle notification taps
   const handleNotificationResponse = useCallback(

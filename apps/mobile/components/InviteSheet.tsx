@@ -1,6 +1,6 @@
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
-import { Check, Copy, Send, Share, X } from '@tamagui/lucide-icons'
+import { Check, Copy, Share, Send, X } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import * as Clipboard from 'expo-clipboard'
 import { useCallback, useState } from 'react'
@@ -88,8 +88,16 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
           </Text>
 
           {/* Tab Bar */}
-          <XStack backgroundColor={bondfireColors.gunmetal} borderRadius={12} padding={4} gap={4}>
-            <Pressable onPress={() => setTab('contacts')} style={{ flex: 1 }}>
+          <XStack
+            backgroundColor={bondfireColors.gunmetal}
+            borderRadius={12}
+            padding={4}
+            gap={4}
+          >
+            <Pressable
+              onPress={() => setTab('contacts')}
+              style={{ flex: 1 }}
+            >
               <YStack
                 paddingVertical={10}
                 alignItems="center"
@@ -105,7 +113,10 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
                 </Text>
               </YStack>
             </Pressable>
-            <Pressable onPress={() => setTab('link')} style={{ flex: 1 }}>
+            <Pressable
+              onPress={() => setTab('link')}
+              style={{ flex: 1 }}
+            >
               <YStack
                 paddingVertical={10}
                 alignItems="center"
@@ -148,10 +159,12 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
                   renderItem={({ item }) => {
                     const sent = sentIds.has(item._id)
                     return (
-                      <Pressable
-                        onPress={() => !sent && handleSendToContact(item._id as Id<'users'>)}
-                      >
-                        <XStack paddingVertical={10} gap={12} alignItems="center">
+                      <Pressable onPress={() => !sent && handleSendToContact(item._id as Id<'users'>)}>
+                        <XStack
+                          paddingVertical={10}
+                          gap={12}
+                          alignItems="center"
+                        >
                           <YStack
                             width={40}
                             height={40}
@@ -207,7 +220,12 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
                 >
                   Share Link
                 </Text>
-                <Text fontSize={13} color={bondfireColors.ash} numberOfLines={2} textAlign="center">
+                <Text
+                  fontSize={13}
+                  color={bondfireColors.ash}
+                  numberOfLines={2}
+                  textAlign="center"
+                >
                   {shareUrl}
                 </Text>
               </YStack>
