@@ -653,6 +653,15 @@ export default defineSchema({
     .index('by_status', ['status', 'createdAt'])
     .index('by_video_owner', ['videoOwnerId', 'createdAt']),
 
+  // Public configuration values exposed via query (no auth required).
+  // Use for min-app-version gating, feature flags, etc.
+  publicConfig: defineTable({
+    key: v.string(),
+    value: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('by_key', ['key']),
+
   // Client telemetry logs from React Native app
   clientLogs: defineTable({
     userId: v.optional(v.id('users')),

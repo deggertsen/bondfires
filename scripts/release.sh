@@ -51,6 +51,11 @@ echo "⚡ Deploying Convex backend to production..."
 npx convex deploy
 echo "✅ Convex backend deployed"
 
+# --- Update minAppVersion in Convex publicConfig ---
+echo "🔒 Setting minAppVersion to $NEW_VERSION..."
+npx convex run publicConfig:setMinVersion "{\"version\":\"$NEW_VERSION\"}"
+echo "✅ minAppVersion set to $NEW_VERSION"
+
 # --- Build + auto-submit both platforms ---
 echo "🚀 Starting EAS builds with auto-submit..."
 cd apps/mobile

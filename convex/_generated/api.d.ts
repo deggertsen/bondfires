@@ -34,6 +34,7 @@ import type * as personalBondfireAccess from "../personalBondfireAccess.js";
 import type * as personalBondfires from "../personalBondfires.js";
 import type * as personalCampRetention from "../personalCampRetention.js";
 import type * as personalCamps from "../personalCamps.js";
+import type * as publicConfig from "../publicConfig.js";
 import type * as reconciliation from "../reconciliation.js";
 import type * as reports from "../reports.js";
 import type * as sendNotification from "../sendNotification.js";
@@ -75,6 +76,7 @@ declare const fullApi: ApiFromModules<{
   personalBondfires: typeof personalBondfires;
   personalCampRetention: typeof personalCampRetention;
   personalCamps: typeof personalCamps;
+  publicConfig: typeof publicConfig;
   reconciliation: typeof reconciliation;
   reports: typeof reports;
   sendNotification: typeof sendNotification;

@@ -1,10 +1,12 @@
 // Convex React Native polyfill - MUST be imported before any Convex imports
 import '../polyfills/convex-react-native'
 
-import { Button, Text, ToastContainer } from '@bondfires/ui'
+import { Button, ForceUpdateModal, Text, ToastContainer } from '@bondfires/ui'
+import { useForceUpdate, openAppStore } from '@bondfires/app'
 import { ConvexAuthProvider } from '@convex-dev/auth/react'
 import { ConvexReactClient, useMutation } from 'convex/react'
 import { useFonts } from 'expo-font'
+import Constants from 'expo-constants'
 import type * as Notifications from 'expo-notifications'
 import { Stack, useRouter } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
@@ -196,6 +198,9 @@ function AppContent() {
   const registerDevice = useMutation(api.notifications.registerDevice)
   const unregisterDevice = useMutation(api.notifications.unregisterDevice)
 
+  // Force-update check: compares current version against remote minAppVersion.
+  const { loading: updateCheckLoading, updateRequired, minRequiredVersion, storeUrl } = useForceUpdate()
+
   // Handle notification taps
   const handleNotificationResponse = useCallback(
     (response: Notifications.NotificationResponse) => {
@@ -282,6 +287,17 @@ function AppContent() {
     <TamaguiProvider config={config} defaultTheme={colorScheme ?? 'dark'}>
       <Theme name={colorScheme ?? 'dark'}>
         <TelemetryInitializer />
+
+        {/* Force-update modal — shown when app version is below minimum required */}
+        {updateRequired && minRequiredVersion ? (
+          <ForceUpdateModal
+            visible
+            minRequiredVersion={minRequiredVersion}
+            currentVersion={Constants.expoConfig?.version ?? '0.0.0'}
+            onUpdate={openAppStore}
+          />
+        ) : updateCheckLoading ? null : null}
+
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="index" />
           <Stack.Screen name="(auth)" options={{ headerShown: false }} />
