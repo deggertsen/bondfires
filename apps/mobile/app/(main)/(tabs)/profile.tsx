@@ -6,8 +6,8 @@ import {
   setFeedActiveBondfireId,
   telemetry,
   uploadQueueActions,
+  useKindlingBalance,
   usePreferences,
-  useSlotBalance,
   useSubscription,
 } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
@@ -119,7 +119,7 @@ export default function ProfileScreen() {
     usePreferences()
 
   const { currentTier, isRestoring, managePlan, restore, showPaywall } = useSubscription()
-  const { balance: slotBalance, isLoading: slotBalanceLoading } = useSlotBalance()
+  const { balance: kindlingBalance, isLoading: kindlingBalanceLoading } = useKindlingBalance()
 
   const [refreshKey, setRefreshKey] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -545,21 +545,21 @@ export default function ProfileScreen() {
 
           <UploadProgressCard />
 
-          {/* Camp Slot Balance */}
-          {!slotBalanceLoading && currentTier === 'pro' ? (
+          {/* Camp Kindling Balance */}
+          {!kindlingBalanceLoading && currentTier === 'pro' ? (
             <Card marginBottom={24}>
               <XStack alignItems="center" justifyContent="space-between" padding={16}>
                 <YStack gap={4}>
                   <Text fontSize={15} fontWeight="600">
-                    Camp Slots
+                    Camp Kindling
                   </Text>
                   <Text fontSize={13} color={bondfireColors.ash}>
-                    {slotBalance > 0
-                      ? `${slotBalance} slot${slotBalance === 1 ? '' : 's'} available`
-                      : 'No slots available'}
+                    {kindlingBalance > 0
+                      ? `${kindlingBalance} kindling{kindlingBalance === 1 ? '' : 's'} available`
+                      : 'No kindling available'}
                   </Text>
                 </YStack>
-                {slotBalance < 3 && (
+                {kindlingBalance < 3 && (
                   <Button variant="primary" size="$sm" onPress={showPaywall}>
                     <Text color={bondfireColors.whiteSmoke} fontWeight="600" fontSize={13}>
                       Get More

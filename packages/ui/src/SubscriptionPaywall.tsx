@@ -1,7 +1,7 @@
 import type {
   BillingPeriod,
   ExtraCampAddOnInfo,
-  SlotPackSize,
+  KindlingPackSize,
   SubscriptionTier,
   TierInfo,
 } from '@bondfires/app'
@@ -52,7 +52,8 @@ export function SubscriptionPaywall({
   const [selectedPeriods, setSelectedPeriods] = useState<
     Partial<Record<SubscriptionTier, BillingPeriod>>
   >({})
-  const [selectedSlotPackSize, setSelectedSlotPackSize] = useState<SlotPackSize>('threePack')
+  const [selectedKindlingPackSize, setSelectedKindlingPackSize] =
+    useState<KindlingPackSize>('threePack')
 
   if (!open) return null
 
@@ -182,8 +183,8 @@ export function SubscriptionPaywall({
             {extraCampAddOn && onPurchaseExtraCamp ? (
               <AddOnCard
                 addOn={extraCampAddOn}
-                selectedSize={selectedSlotPackSize}
-                onSizeChange={setSelectedSlotPackSize}
+                selectedSize={selectedKindlingPackSize}
+                onSizeChange={setSelectedKindlingPackSize}
                 onPurchase={onPurchaseExtraCamp}
                 isPurchasing={
                   isPurchasing &&
@@ -410,8 +411,8 @@ function TierCard({
 
 interface AddOnCardProps {
   addOn: ExtraCampAddOnInfo
-  selectedSize: SlotPackSize
-  onSizeChange: (size: SlotPackSize) => void
+  selectedSize: KindlingPackSize
+  onSizeChange: (size: KindlingPackSize) => void
   onPurchase: (productId?: string) => void
   isPurchasing: boolean
 }
@@ -458,7 +459,7 @@ function AddOnCard({
               <PlanBadge label="Pro add-on" />
             </XStack>
             <Text color={bondfireColors.ash} fontSize={11}>
-              Permanent public camp slot packs
+              Permanent public camp kindling packs
             </Text>
           </YStack>
         </XStack>
@@ -472,7 +473,7 @@ function AddOnCard({
           </Text>
           {!isComingSoon ? (
             <Text color={bondfireColors.ash} fontSize={11}>
-              {activeSize === 'tenPack' ? '10 slots' : '3 slots'}
+              {activeSize === 'tenPack' ? '10 kindlings' : '3 kindlings'}
             </Text>
           ) : null}
         </YStack>
@@ -513,7 +514,7 @@ function AddOnCard({
             color={isComingSoon ? bondfireColors.ash : bondfireColors.bondfireCopper}
             fontWeight="600"
           >
-            {isComingSoon ? 'Coming soon' : isPurchasing ? 'Processing...' : 'Buy slot pack'}
+            {isComingSoon ? 'Coming soon' : isPurchasing ? 'Processing...' : 'Buy kindling pack'}
           </Text>
         </XStack>
       </Button>

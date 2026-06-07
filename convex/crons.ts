@@ -24,30 +24,30 @@ crons.daily(
   internal.subscriptions.processExpiredReclaims,
 )
 
-// Grant 3 free monthly slots to Pro subscribers.
+// Grant 3 free monthly kindling to Pro subscribers.
 // Idempotent: uses billing-period checks so it's safe to run multiple times.
-// Runs daily at 10:00 UTC, before camp slot consumption.
+// Runs daily at 10:00 UTC, before camp kindling consumption.
 crons.daily(
-  'grant daily pro slots',
+  'grant daily pro kindling',
   { hourUTC: 10, minuteUTC: 0 },
-  internal.campSlots.grantDailyProSlots,
+  internal.campKindling.grantDailyProKindling,
 )
 
-// Burn 1 slot per active public camp on its monthly consumption anniversary.
+// Burn 1 kindling per active public camp on its monthly consumption anniversary.
 // Idempotent: uses camp-period checks so it's safe to run multiple times.
 // Runs daily at 10:30 UTC after monthly grants have landed.
 crons.daily(
-  'burn daily camp slots',
+  'burn daily camp kindling',
   { hourUTC: 10, minuteUTC: 30 },
-  internal.campSlots.burnDailyCampSlots,
+  internal.campKindling.burnDailyCampKindling,
 )
 
 // Move expired grace-period public camps to inactive.
-// Runs daily at 11:00 UTC after monthly camp slot consumption.
+// Runs daily at 11:00 UTC after monthly camp kindling consumption.
 crons.daily(
   'expire grace period camps',
   { hourUTC: 11, minuteUTC: 0 },
-  internal.campSlots.expireGracePeriodCamps,
+  internal.campKindling.expireGracePeriodCamps,
 )
 
 // Purge client telemetry logs older than 30 days.
@@ -62,10 +62,10 @@ crons.daily(
   internal.cleanup.dailyCleanupArchivedCamps,
 )
 
-// Run daily camp slot reconciliation at 14:00 UTC.
+// Run daily camp kindling reconciliation at 14:00 UTC.
 // Compares ledger against verified store purchases and logs discrepancies.
 crons.daily(
-  'daily slot reconciliation',
+  'daily kindling reconciliation',
   { hourUTC: 14, minuteUTC: 0 },
   internal.reconciliation.dailyReconciliation,
 )

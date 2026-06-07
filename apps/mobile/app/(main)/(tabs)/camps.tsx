@@ -357,8 +357,8 @@ export default function CampsScreen() {
   const ensurePersonalCamp = useMutation(api.personalCamps.ensureMyPersonalCamp)
   const personalCampEnsured = useRef(false)
   const subscription = useQuery(api.subscriptions.current, {})
-  const slotBalance = useQuery(
-    api.campSlots.getSlotBalance,
+  const kindlingBalance = useQuery(
+    api.campKindling.getKindlingBalance,
     subscription?.tier === 'pro' ? {} : 'skip',
   )
   const joinCamp = useMutation(api.camps.join)
@@ -490,8 +490,12 @@ export default function CampsScreen() {
       return
     }
 
-    if (subscription?.tier === 'pro' && slotBalance !== undefined && slotBalance.balance < 1) {
-      Alert.alert('Camp Slots Required', 'Buy a slot pack to create more private camps.')
+    if (
+      subscription?.tier === 'pro' &&
+      kindlingBalance !== undefined &&
+      kindlingBalance.balance < 1
+    ) {
+      Alert.alert('Camp Kindling Required', 'Buy a kindling pack to create more private camps.')
       return
     }
 
@@ -517,7 +521,7 @@ export default function CampsScreen() {
     privateCampName,
     privateCampPurpose,
     router,
-    slotBalance,
+    kindlingBalance,
     subscription?.tier,
   ])
 
@@ -774,7 +778,7 @@ export default function CampsScreen() {
               placeholder="Purpose, theme, or focus"
             />
           </YStack>
-          {subscription?.tier === 'pro' && slotBalance !== undefined ? (
+          {subscription?.tier === 'pro' && kindlingBalance !== undefined ? (
             <YStack
               borderRadius={10}
               backgroundColor={bondfireColors.gunmetal}
@@ -784,18 +788,19 @@ export default function CampsScreen() {
               gap={4}
             >
               <Text fontSize={11} color={bondfireColors.ash} fontWeight="900">
-                CAMP SLOTS
+                CAMP KINDLING
               </Text>
               <Text
                 fontSize={18}
                 fontWeight="900"
-                color={slotBalance.balance > 0 ? bondfireColors.success : bondfireColors.error}
+                color={kindlingBalance.balance > 0 ? bondfireColors.success : bondfireColors.error}
               >
-                {slotBalance.balance} slot{slotBalance.balance !== 1 ? 's' : ''} remaining
+                {kindlingBalance.balance} kindling{kindlingBalance.balance !== 1 ? 's' : ''}{' '}
+                remaining
               </Text>
-              {slotBalance.balance < 1 ? (
+              {kindlingBalance.balance < 1 ? (
                 <Text fontSize={12} color={bondfireColors.ash}>
-                  Buy a slot pack to create more camps.
+                  Buy a kindling pack to create more camps.
                 </Text>
               ) : null}
             </YStack>
@@ -805,7 +810,9 @@ export default function CampsScreen() {
             size="$lg"
             disabled={
               isSubmitting ||
-              (subscription?.tier === 'pro' && slotBalance !== undefined && slotBalance.balance < 1)
+              (subscription?.tier === 'pro' &&
+                kindlingBalance !== undefined &&
+                kindlingBalance.balance < 1)
             }
             onPress={handleCreatePrivateCamp}
           >

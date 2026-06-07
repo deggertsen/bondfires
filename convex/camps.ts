@@ -4,8 +4,8 @@ import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalMutation, mutation, query } from './_generated/server'
 import { auth } from './auth'
+import { burnKindlingForCamp } from './campKindling'
 import { isCampVisibleStatus, isOwnerManageableCampStatus } from './campLifecycle'
-import { consumeCampSlotForCamp } from './campSlots'
 import type { SubscriptionTier } from './entitlements'
 import {
   assertCanCreatePrivateCamp,
@@ -1707,8 +1707,8 @@ export const assignArenaToUnassignedBondfires = mutation({
 })
 
 /**
- * Create a public camp. Requires Pro subscription and at least 1 available slot.
- * Immediately consumes 1 slot for the first month.
+ * Create a public camp. Requires Pro subscription and at least 1 kindling.
+ * Immediately consumes 1 kindling for the first month.
  */
 export const createPublicCamp = mutation({
   args: {
@@ -1762,7 +1762,7 @@ export const createPublicCamp = mutation({
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx)
 
-    // Validate Pro subscription and slot balance
+    // Validate Pro subscription and kindling balance
     await assertCanCreatePublicCamp(ctx, user._id)
 
     const name = args.name.trim()
@@ -1856,8 +1856,8 @@ export const createPublicCamp = mutation({
       await refreshActiveMemberCount(ctx, campId)
     }
 
-    // Consume 1 slot for the first month in the same transaction.
-    await consumeCampSlotForCamp(ctx, {
+    // Consume 1 kindling for the first month in the same transaction.
+    await burnKindlingForCamp(ctx, {
       userId: user._id,
       campId,
     })
@@ -1931,17 +1931,19 @@ export const createPrivateCamp = mutation({
     })
 
     if (TIER_RANK[tier] >= TIER_RANK.pro) {
-      // Pro private camps consume 1 slot for the first month in the same transaction.
-      const { insufficientBalance } = await consumeCampSlotForCamp(ctx, {
+      // Pro private camps consume 1 kindling for the first month in the same transaction.
+      const { insufficientKindling } = await burnKindlingForCamp(ctx, {
         userId: user._id,
         campId,
       })
 
-      if (insufficientBalance) {
+      if (insufficientKindling) {
         await ctx.db.delete(campId)
-        throwUserError('Insufficient camp slots. Buy a slot pack to create more private camps.')
+        throwUserError(
+          'Insufficient camp kindling. Buy a kindling pack to create more private camps.',
+        )
       }
-      // alreadyConsumed is fine — means the slot was already paid this period.
+      // alreadyConsumed is fine — means the kindling was already paid this period.
     }
 
     await upsertMembership(ctx, {
@@ -1988,13 +1990,13 @@ export const claimInactivePublicCamp = mutation({
       return { success: false as const, reason: 'not_pro' as const }
     }
 
-    const slotResult = await consumeCampSlotForCamp(ctx, {
+    const kindlingResult = await burnKindlingForCamp(ctx, {
       userId: user._id,
       campId: camp._id,
     })
 
-    if (slotResult.insufficientBalance) {
-      return { success: false as const, reason: 'insufficient_slots' as const }
+    if (kindlingResult.insufficientKindling) {
+      return { success: false as const, reason: 'insufficient_kindling' as const }
     }
 
     const previousOwnerId = camp.ownerId
@@ -2028,7 +2030,7 @@ export const claimInactivePublicCamp = mutation({
       }
     }
 
-    await ctx.db.insert('campSlotTransactions', {
+    await ctx.db.insert('campKindlingTransactions', {
       userId: user._id,
       type: 'member_claim',
       amount: 0,

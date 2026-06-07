@@ -1,5 +1,5 @@
 /**
- * Camp Slot Reconciliation & Refund Handling.
+ * Camp Kindling Reconciliation & Refund Handling.
  *
  * - Daily reconciliation cron (runs at 14:00 UTC) performs 4 integrity checks.
  * - Internal refund mutation for admin-triggered purchase reversals.
@@ -16,7 +16,7 @@ import type { Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalAction, internalMutation, internalQuery, query } from './_generated/server'
 import { auth } from './auth'
-import { computeSlotBalance } from './campSlots'
+import { computeKindlingBalance } from './campKindling'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -42,7 +42,7 @@ async function estimateConsumedSlotsFromPurchase(
   purchase: { userId: Id<'users'>; quantity: number; createdAt: number },
 ): Promise<number> {
   const transactions = await ctx.db
-    .query('campSlotTransactions')
+    .query('campKindlingTransactions')
     .withIndex('by_user', (q) => q.eq('userId', purchase.userId))
     .filter((q) =>
       q.and(
@@ -57,7 +57,7 @@ async function estimateConsumedSlotsFromPurchase(
 }
 
 /**
- * Freeze active camps owned by the user to cover a slot deficit.
+ * Freeze active camps owned by the user to cover a kindling deficit.
  * Freezes newest camps first, oldest preserved.
  * Returns the number of camps frozen.
  */
@@ -135,7 +135,7 @@ export const refundPurchase = internalMutation({
 
     // Check for existing refund for this purchase
     const existingRefund = await ctx.db
-      .query('campSlotTransactions')
+      .query('campKindlingTransactions')
       .withIndex('by_user', (q) => q.eq('userId', purchase.userId))
       .filter((q) =>
         q.and(q.eq(q.field('type'), 'refund'), q.eq(q.field('metadata.purchaseId'), purchase._id)),
@@ -149,7 +149,7 @@ export const refundPurchase = internalMutation({
 
     // Insert refund ledger entry (reverse full purchase amount)
     const now = Date.now()
-    await ctx.db.insert('campSlotTransactions', {
+    await ctx.db.insert('campKindlingTransactions', {
       userId: purchase.userId,
       type: 'refund',
       amount: -purchase.quantity,
@@ -164,7 +164,7 @@ export const refundPurchase = internalMutation({
     })
 
     // If resulting balance < 0, freeze camps (newest first, oldest preserved)
-    const balance = await computeSlotBalance(ctx, purchase.userId)
+    const balance = await computeKindlingBalance(ctx, purchase.userId)
     let campsFrozen = 0
     if (balance < 0) {
       campsFrozen = await freezeCampsToCoverDeficit(ctx, purchase.userId, Math.abs(balance), now)
@@ -236,7 +236,7 @@ export const dailyReconciliation = internalAction({
     const now = Date.now()
 
     // ── A. Orphaned ledger credits ────────────────────────────────────────
-    // slot_credit entries with no matching consumablePurchases record.
+    // kindling_credit entries with no matching consumablePurchases record.
     const orphaned: Array<{ userId: string; _id: string }> = await ctx.runQuery(
       internal.reconciliation.findOrphanedCredits,
       {},
@@ -246,9 +246,9 @@ export const dailyReconciliation = internalAction({
       await ctx.runMutation(internal.reconciliation.logDiscrepancy, {
         severity: 'warning' as const,
         category: 'orphaned_credit',
-        message: `Orphaned slot_credit with no matching consumablePurchase (userId: ${credit.userId})`,
+        message: `Orphaned kindling_credit with no matching consumablePurchase (userId: ${credit.userId})`,
         userId: credit.userId as Id<'users'>,
-        metadata: { slotTransactionId: credit._id },
+        metadata: { kindlingTransactionId: credit._id },
         createdAt: now,
       })
     }
@@ -342,15 +342,15 @@ export const dailyReconciliation = internalAction({
 // ── Internal Queries & Mutations (used by the action) ──────────────────────
 
 /**
- * Find slot_credit transactions that reference consumablePurchases
+ * Find kindling_credit transactions that reference consumablePurchases
  * which no longer exist.
  */
 export const findOrphanedCredits = internalQuery({
   args: {},
   handler: async (ctx) => {
     const creditTransactions = await ctx.db
-      .query('campSlotTransactions')
-      .withIndex('by_type', (q) => q.eq('type', 'slot_credit'))
+      .query('campKindlingTransactions')
+      .withIndex('by_type', (q) => q.eq('type', 'kindling_credit'))
       .collect()
 
     const orphaned = []
@@ -387,7 +387,7 @@ export const findUnverifiedPurchases = internalQuery({
  * Find users whose ledger balance differs from the expected balance derived
  * from authoritative store purchase state plus non-purchase slot movements.
  *
- * `slot_credit` and `refund` transactions are implementation details for
+ * `kindling_credit` and `refund` transactions are implementation details for
  * applying consumable purchase state to the ledger. A refunded purchase should
  * net to 0 expected slots, so including both refunded purchase state and refund
  * transactions would double-count refunds and create false drift.
@@ -399,11 +399,11 @@ export const findBalanceDrift = internalQuery({
     const actualByUser = new Map<Id<'users'>, number>()
     const expectedByUser = new Map<Id<'users'>, number>()
 
-    const transactions = await ctx.db.query('campSlotTransactions').collect()
+    const transactions = await ctx.db.query('campKindlingTransactions').collect()
     for (const tx of transactions) {
       actualByUser.set(tx.userId, (actualByUser.get(tx.userId) ?? 0) + tx.amount)
 
-      if (tx.type !== 'slot_credit' && tx.type !== 'refund') {
+      if (tx.type !== 'kindling_credit' && tx.type !== 'refund') {
         expectedByUser.set(tx.userId, (expectedByUser.get(tx.userId) ?? 0) + tx.amount)
       }
     }

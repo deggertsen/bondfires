@@ -11,7 +11,7 @@ import { Image, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 
-const LOADING_SKELETON_IDS = ['slot-one', 'slot-two', 'slot-three'] as const
+const LOADING_SKELETON_IDS = ['kindling-one', 'kindling-two', 'kindling-three'] as const
 
 function LoadingSkeleton() {
   return (
@@ -28,14 +28,14 @@ function LoadingSkeleton() {
   )
 }
 
-function SlotBalanceSection() {
-  const summary = useQuery(api.campSlots.getSlotUsageSummary)
+function KindlingBalanceSection() {
+  const summary = useQuery(api.campKindling.getKindlingUsageSummary)
 
   if (summary === undefined) {
     return (
       <YStack gap={12}>
         <Text fontSize={14} color={bondfireColors.bondfireCopper} fontWeight="900">
-          CAMP SLOTS
+          CAMP KINDLING
         </Text>
         <LoadingSkeleton />
       </YStack>
@@ -50,7 +50,7 @@ function SlotBalanceSection() {
   return (
     <YStack gap={12}>
       <Text fontSize={14} color={bondfireColors.bondfireCopper} fontWeight="900">
-        CAMP SLOTS
+        CAMP KINDLING
       </Text>
 
       <YStack
@@ -66,14 +66,14 @@ function SlotBalanceSection() {
             {summary.balance}
           </Text>
           <Text fontSize={14} color={bondfireColors.ash}>
-            slot{summary.balance !== 1 ? 's' : ''} remaining
+            kindling{summary.balance !== 1 ? 's' : ''} remaining
           </Text>
         </XStack>
 
         <XStack gap={16}>
           <XStack alignItems="center" gap={4}>
             <Text fontSize={12} color={bondfireColors.success} fontWeight="900">
-              +{summary.slotsGrantedThisPeriod}
+              +{summary.kindlingGrantedThisPeriod}
             </Text>
             <Text fontSize={12} color={bondfireColors.ash}>
               granted this month
@@ -81,7 +81,7 @@ function SlotBalanceSection() {
           </XStack>
           <XStack alignItems="center" gap={4}>
             <Text fontSize={12} color={bondfireColors.error} fontWeight="900">
-              -{summary.slotsConsumedThisPeriod}
+              -{summary.kindlingBurnedThisPeriod}
             </Text>
             <Text fontSize={12} color={bondfireColors.ash}>
               consumed this month
@@ -114,7 +114,7 @@ function SlotBalanceSection() {
                     })}
                   </Text>
                   <Text fontSize={11} color={bondfireColors.ash} fontWeight="900">
-                    {activeCamp.slotCost} slot{activeCamp.slotCost !== 1 ? 's' : ''}
+                    {activeCamp.kindlingCost} kindling{activeCamp.kindlingCost !== 1 ? 's' : ''}
                   </Text>
                 </XStack>
               </XStack>
@@ -125,7 +125,7 @@ function SlotBalanceSection() {
         {summary.balance < 3 ? (
           <Button variant="outline" size="$sm" onPress={handleGetMoreSlots} marginTop={4}>
             <Text color={bondfireColors.bondfireCopper} fontWeight="900">
-              Get More Slots
+              Get More Kindling
             </Text>
           </Button>
         ) : null}
@@ -326,7 +326,7 @@ export function OwnerCampSections({ camp }: OwnerCampSectionsProps) {
 
   return (
     <YStack gap={24} paddingHorizontal={16} paddingBottom={24}>
-      {isPro ? <SlotBalanceSection /> : null}
+      {isPro ? <KindlingBalanceSection /> : null}
       <AnalyticsSection campId={camp._id} />
       <BrandingEditor camp={camp} />
     </YStack>

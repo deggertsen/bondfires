@@ -1,10 +1,10 @@
 /**
- * Camp Slot Management — monthly slot consumption system.
+ * Camp Kindling Management — monthly kindling consumption system.
  *
- * Every active Pro-created camp (public or private) costs 1 slot per month.
- * Pro users get 3 free slots per month on their billing date. Extra slot
- * packs are purchasable as consumable IAPs. All slot movements are recorded
- * in an immutable ledger (campSlotTransactions table) and balance is always
+ * Every active Pro-created camp (public or private) consumes 1 kindling per month.
+ * Pro users get 3 free kindling per month on their billing date. Extra kindling
+ * packs are purchasable as consumable IAPs. All kindling movements are recorded
+ * in an immutable ledger (campKindlingTransactions table) and balance is always
  * computed, never stored.
  *
  * Balance formula: SUM(positive amounts) − SUM(negative amounts)
@@ -19,7 +19,7 @@ import { auth } from './auth'
 import { getEntitlementSubscriptionTier, TIER_RANK } from './entitlements'
 import { throwUserError } from './errors'
 
-const slotCreditMetadataValidator = v.object({
+const kindlingCreditMetadataValidator = v.object({
   consumablePurchaseId: v.id('consumablePurchases'),
   storeProductId: v.string(),
   storeTransactionId: v.optional(v.string()),
@@ -30,21 +30,21 @@ const slotCreditMetadataValidator = v.object({
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-const MONTHLY_PRO_SLOT_GRANT = 3
+const MONTHLY_PRO_KINDLING_GRANT = 3
 const GRACE_PERIOD_MS = 30 * 24 * 60 * 60 * 1000
 const INACTIVE_CLAIM_WINDOW_MS = 90 * 24 * 60 * 60 * 1000
 
 /**
- * Computes the current slot balance for a user from the immutable ledger.
+ * Computes the current kindling balance for a user from the immutable ledger.
  * Balance = SUM(positive amounts) − SUM(absolute value of negative amounts).
  * Always computed, never stored.
  */
-export async function computeSlotBalance(
+export async function computeKindlingBalance(
   ctx: QueryCtx | MutationCtx,
   userId: Id<'users'>,
 ): Promise<number> {
   const transactions = await ctx.db
-    .query('campSlotTransactions')
+    .query('campKindlingTransactions')
     .withIndex('by_user', (q) => q.eq('userId', userId))
     .collect()
 
@@ -112,7 +112,7 @@ function getSubscriptionGrantPeriod(
     return getCalendarMonthPeriod(ts)
   }
 
-  // Annual Pro plans still receive monthly slots, anchored to the purchase date.
+  // Annual Pro plans still receive monthly kindling, anchored to the purchase date.
   if (subscription.storeProductId.endsWith('.annual')) {
     return getAnchoredMonthlyPeriod(subscription.createdAt, ts)
   }
@@ -173,7 +173,7 @@ async function consumptionExistsForPeriod(
   periodEnd: number,
 ): Promise<boolean> {
   const transactions = await ctx.db
-    .query('campSlotTransactions')
+    .query('campKindlingTransactions')
     .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', campId))
     .filter((q) => q.eq(q.field('type'), 'monthly_consumption'))
     .collect()
@@ -197,7 +197,7 @@ async function grantExistsForPeriod(
   periodEnd: number,
 ): Promise<boolean> {
   const transactions = await ctx.db
-    .query('campSlotTransactions')
+    .query('campKindlingTransactions')
     .withIndex('by_user', (q) => q.eq('userId', userId))
     .filter((q) => q.eq(q.field('type'), 'monthly_grant'))
     .collect()
@@ -209,7 +209,7 @@ async function grantExistsForPeriod(
   })
 }
 
-async function getMonthlySlotGrantPeriod(
+async function getMonthlyKindlingGrantPeriod(
   ctx: QueryCtx | MutationCtx,
   userId: Id<'users'>,
   now: number,
@@ -218,10 +218,10 @@ async function getMonthlySlotGrantPeriod(
   return getSubscriptionGrantPeriod(subscription, now)
 }
 
-export async function consumeCampSlotForCamp(
+export async function burnKindlingForCamp(
   ctx: MutationCtx,
   args: { userId: Id<'users'>; campId: Id<'camps'> },
-): Promise<{ newBalance: number; alreadyConsumed: boolean; insufficientBalance?: true }> {
+): Promise<{ newBalance: number; alreadyConsumed: boolean; insufficientKindling?: true }> {
   const now = Date.now()
   const camp = await ctx.db.get(args.campId)
   if (!camp) {
@@ -231,17 +231,17 @@ export async function consumeCampSlotForCamp(
 
   // Idempotency: if this camp already has coverage for this period, skip.
   if (await consumptionExistsForPeriod(ctx, args.userId, args.campId, periodStart, periodEnd)) {
-    const balance = await computeSlotBalance(ctx, args.userId)
+    const balance = await computeKindlingBalance(ctx, args.userId)
     return { newBalance: balance, alreadyConsumed: true }
   }
 
-  const balance = await computeSlotBalance(ctx, args.userId)
+  const balance = await computeKindlingBalance(ctx, args.userId)
 
   if (balance < 1) {
-    return { newBalance: balance, alreadyConsumed: false, insufficientBalance: true as const }
+    return { newBalance: balance, alreadyConsumed: false, insufficientKindling: true as const }
   }
 
-  await ctx.db.insert('campSlotTransactions', {
+  await ctx.db.insert('campKindlingTransactions', {
     userId: args.userId,
     type: 'monthly_consumption',
     amount: -1,
@@ -257,9 +257,9 @@ export async function consumeCampSlotForCamp(
 // ── Queries ─────────────────────────────────────────────────────────────────
 
 /**
- * Returns the user's computed slot balance and recent transaction history.
+ * Returns the user's computed kindling balance and recent transaction history.
  */
-export const getSlotBalance = query({
+export const getKindlingBalance = query({
   args: {},
   handler: async (ctx) => {
     const userId = await auth.getUserId(ctx)
@@ -268,7 +268,7 @@ export const getSlotBalance = query({
     }
 
     const transactions = await ctx.db
-      .query('campSlotTransactions')
+      .query('campKindlingTransactions')
       .withIndex('by_user', (q) => q.eq('userId', userId))
       .order('desc')
       .collect()
@@ -280,11 +280,11 @@ export const getSlotBalance = query({
 })
 
 /**
- * Returns a comprehensive slot usage summary for the authenticated Pro user.
- * Includes current balance, billing-period slot movement, owned camp list with
- * renewal dates and slot costs, and full transaction history.
+ * Returns a comprehensive kindling usage summary for the authenticated Pro user.
+ * Includes current balance, billing-period kindling movement, owned camp list with
+ * renewal dates and kindling costs, and full transaction history.
  */
-export const getSlotUsageSummary = query({
+export const getKindlingUsageSummary = query({
   args: {},
   handler: async (ctx) => {
     const userId = await auth.getUserId(ctx)
@@ -295,32 +295,32 @@ export const getSlotUsageSummary = query({
     // Verify the user is Pro-tier
     const tier = await getEntitlementSubscriptionTier(ctx, userId)
     if (TIER_RANK[tier] < TIER_RANK.pro) {
-      throwUserError('Slot usage summary is only available for Pro subscribers')
+      throwUserError('Kindling usage summary is only available for Pro subscribers')
     }
 
     const now = Date.now()
 
-    // Current balance (using existing computeSlotBalance)
-    const balance = await computeSlotBalance(ctx, userId)
+    // Current balance (using existing computeKindlingBalance)
+    const balance = await computeKindlingBalance(ctx, userId)
 
     // Full transaction history
     const transactions = await ctx.db
-      .query('campSlotTransactions')
+      .query('campKindlingTransactions')
       .withIndex('by_user', (q) => q.eq('userId', userId))
       .order('desc')
       .collect()
 
-    const { periodStart, periodEnd } = await getMonthlySlotGrantPeriod(ctx, userId, now)
-    const slotsGrantedThisPeriod = transactions
+    const { periodStart, periodEnd } = await getMonthlyKindlingGrantPeriod(ctx, userId, now)
+    const kindlingGrantedThisPeriod = transactions
       .filter(
         (tx) =>
-          (tx.type === 'monthly_grant' || tx.type === 'slot_credit') &&
+          (tx.type === 'monthly_grant' || tx.type === 'kindling_credit') &&
           tx.createdAt >= periodStart &&
           tx.createdAt < periodEnd,
       )
       .reduce((sum, tx) => sum + tx.amount, 0)
 
-    const slotsConsumedThisPeriod = transactions
+    const kindlingBurnedThisPeriod = transactions
       .filter(
         (tx) =>
           tx.type === 'monthly_consumption' &&
@@ -350,7 +350,7 @@ export const getSlotUsageSummary = query({
           access: camp.access,
           status: camp.status,
           renewalDate,
-          slotCost: camp.status === 'active' ? 1 : 0,
+          kindlingCost: camp.status === 'active' ? 1 : 0,
           createdAt: camp.createdAt,
         }
       })
@@ -360,8 +360,8 @@ export const getSlotUsageSummary = query({
       balance,
       periodStart,
       periodEnd,
-      slotsGrantedThisPeriod,
-      slotsConsumedThisPeriod,
+      kindlingGrantedThisPeriod,
+      kindlingBurnedThisPeriod,
       activeCamps,
       transactions,
     }
@@ -370,11 +370,11 @@ export const getSlotUsageSummary = query({
 
 // ── Internal Query (server-only, no auth needed) ────────────────────────────
 
-export const internalGetSlotBalance = internalQuery({
+export const internalGetKindlingBalance = internalQuery({
   args: { userId: v.id('users') },
   handler: async (ctx, args) => {
     const transactions = await ctx.db
-      .query('campSlotTransactions')
+      .query('campKindlingTransactions')
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
       .collect()
 
@@ -386,14 +386,14 @@ export const internalGetSlotBalance = internalQuery({
 // ── Internal Mutations ──────────────────────────────────────────────────────
 
 /**
- * Consumes 1 slot for a specific camp for the current monthly period.
+ * Burns 1 kindling for a specific camp for the current monthly period.
  *
  * - Computes current balance from ledger
- * - Balance can NEVER go negative — reports insufficient balance without inserting
+ * - Balance can NEVER go negative — reports insufficient kindling without inserting
  * - Inserts a monthly_consumption ledger entry with campId, periodStart, periodEnd
  * - Returns the new balance after consumption
  */
-export const consumeCampSlot = internalMutation({
+export const burnCampKindling = internalMutation({
   args: {
     userId: v.id('users'),
     campId: v.id('camps'),
@@ -401,35 +401,35 @@ export const consumeCampSlot = internalMutation({
   handler: async (
     ctx,
     args,
-  ): Promise<{ newBalance: number; alreadyConsumed: boolean; insufficientBalance?: true }> => {
-    return await consumeCampSlotForCamp(ctx, args)
+  ): Promise<{ newBalance: number; alreadyConsumed: boolean; insufficientKindling?: true }> => {
+    return await burnKindlingForCamp(ctx, args)
   },
 })
 
 /**
- * Internal mutation: credits slot balance from a consumable purchase.
- * Inserts N slot_credit entries (one per slot) with the current period.
- * Slot credits never expire (periodEnd = Infinity) — they are permanent
+ * Internal mutation: credits kindling balance from a consumable purchase.
+ * Inserts N kindling_credit entries (one per kindling) with the current period.
+ * Kindling credits never expire (periodEnd = Infinity) — they are permanent
  * balance additions, not monthly grants.
  */
-export const creditSlotPurchase = internalMutation({
+export const creditKindlingPurchase = internalMutation({
   args: {
     userId: v.id('users'),
-    slotCount: v.number(),
-    metadata: v.optional(slotCreditMetadataValidator),
+    kindlingCount: v.number(),
+    metadata: v.optional(kindlingCreditMetadataValidator),
   },
   handler: async (ctx, args) => {
-    if (!Number.isInteger(args.slotCount) || args.slotCount <= 0) {
-      throw new Error('slotCount must be a positive integer')
+    if (!Number.isInteger(args.kindlingCount) || args.kindlingCount <= 0) {
+      throw new Error('kindlingCount must be a positive integer')
     }
 
     const now = Date.now()
     const periodStart = startOfUtcMonth(now)
-    for (let i = 0; i < args.slotCount; i++) {
-      await ctx.db.insert('campSlotTransactions', {
+    for (let i = 0; i < args.kindlingCount; i++) {
+      await ctx.db.insert('campKindlingTransactions', {
         userId: args.userId,
         campId: undefined,
-        type: 'slot_credit',
+        type: 'kindling_credit',
         amount: 1,
         periodStart,
         periodEnd: Number.POSITIVE_INFINITY,
@@ -437,19 +437,19 @@ export const creditSlotPurchase = internalMutation({
         createdAt: now,
       })
     }
-    return { credited: args.slotCount }
+    return { credited: args.kindlingCount }
   },
 })
 
 /**
- * Grants 3 free monthly slots to a Pro user on their billing date.
+ * Grants 3 free monthly kindling to a Pro user on their billing date.
  *
  * - Only runs for users with an active Pro subscription
  * - Period-bounded idempotent: checks for existing grant in the same month before inserting
  * - Inserts a monthly_grant ledger entry with amount +3
  * - Returns the new balance after grant
  */
-export const grantMonthlySlots = internalMutation({
+export const grantMonthlyKindling = internalMutation({
   args: {
     userId: v.id('users'),
   },
@@ -457,43 +457,43 @@ export const grantMonthlySlots = internalMutation({
     const tier = await getEntitlementSubscriptionTier(ctx, args.userId)
 
     if (TIER_RANK[tier] < TIER_RANK.pro) {
-      throw new Error('Monthly slot grants are only available for Pro subscribers')
+      throw new Error('Monthly kindling grants are only available for Pro subscribers')
     }
 
     const now = Date.now()
-    const { periodStart, periodEnd } = await getMonthlySlotGrantPeriod(ctx, args.userId, now)
+    const { periodStart, periodEnd } = await getMonthlyKindlingGrantPeriod(ctx, args.userId, now)
 
     // Idempotency: if grant already covers this billing period, skip.
     if (await grantExistsForPeriod(ctx, args.userId, periodStart, periodEnd)) {
-      const balance = await computeSlotBalance(ctx, args.userId)
+      const balance = await computeKindlingBalance(ctx, args.userId)
       return { newBalance: balance, alreadyGranted: true }
     }
 
-    const balance = await computeSlotBalance(ctx, args.userId)
+    const balance = await computeKindlingBalance(ctx, args.userId)
 
-    await ctx.db.insert('campSlotTransactions', {
+    await ctx.db.insert('campKindlingTransactions', {
       userId: args.userId,
       type: 'monthly_grant',
-      amount: MONTHLY_PRO_SLOT_GRANT,
+      amount: MONTHLY_PRO_KINDLING_GRANT,
       periodStart,
       periodEnd,
       createdAt: now,
     })
 
-    return { newBalance: balance + MONTHLY_PRO_SLOT_GRANT, alreadyGranted: false }
+    return { newBalance: balance + MONTHLY_PRO_KINDLING_GRANT, alreadyGranted: false }
   },
 })
 
 // ── Cron Job Handlers ───────────────────────────────────────────────────────
 
 /**
- * Daily cron: consumes 1 slot for each active public camp that lacks coverage
+ * Daily cron: burns 1 kindling for each active public camp that lacks coverage
  * for its current creation-anniversary period.
  *
  * Idempotent — safe to run multiple times a day. Per owner, oldest due camps
- * consume first so newer camps enter grace when balance is insufficient.
+ * consume first so newer camps enter grace when kindling is insufficient.
  */
-export const burnDailyCampSlots = internalMutation({
+export const burnDailyCampKindling = internalMutation({
   args: {},
   handler: async (ctx) => {
     const now = Date.now()
@@ -504,7 +504,7 @@ export const burnDailyCampSlots = internalMutation({
       .collect()
 
     const dueCampsByOwner = new Map<Id<'users'>, Doc<'camps'>[]>()
-    let consumed = 0
+    let burned = 0
     let graceEntered = 0
     let skipped = 0
 
@@ -536,7 +536,7 @@ export const burnDailyCampSlots = internalMutation({
       dueCamps.sort((left, right) => left.createdAt - right.createdAt)
 
       for (const camp of dueCamps) {
-        const result = await consumeCampSlotForCamp(ctx, {
+        const result = await burnKindlingForCamp(ctx, {
           userId: ownerId,
           campId: camp._id,
         })
@@ -546,15 +546,15 @@ export const burnDailyCampSlots = internalMutation({
           continue
         }
 
-        if (result.insufficientBalance) {
+        if (result.insufficientKindling) {
           const gracePeriodEnd = now + GRACE_PERIOD_MS
-          await ctx.db.insert('campSlotTransactions', {
+          await ctx.db.insert('campKindlingTransactions', {
             userId: ownerId,
             type: 'grace_period_entry',
             amount: 0,
             campId: camp._id,
             metadata: {
-              reason: 'insufficient_slot_balance',
+              reason: 'insufficient_kindling',
             },
             createdAt: now,
           })
@@ -566,22 +566,22 @@ export const burnDailyCampSlots = internalMutation({
           })
           graceEntered++
         } else {
-          consumed++
+          burned++
         }
       }
     }
 
     // biome-ignore lint/suspicious/noConsole: cron job diagnostic logging
     console.log(
-      `Daily camp slot burn: ${consumed} consumed, ${graceEntered} entered grace, ${skipped} skipped`,
+      `Daily camp kindling burn: ${burned} burned, ${graceEntered} entered grace, ${skipped} skipped`,
     )
 
-    return { consumed, graceEntered, skipped }
+    return { burned, graceEntered, skipped }
   },
 })
 
 /**
- * Daily cron: grants free monthly slots to Pro users once per active billing
+ * Daily cron: grants free monthly kindling to Pro users once per active billing
  * period.
  *
  * A user is eligible if they have an active Pro subscription and have not
@@ -591,7 +591,7 @@ export const burnDailyCampSlots = internalMutation({
  * Handles both store-subscription Pro users AND admin-forced Pro tier
  * users (via getEntitlementSubscriptionTier).
  */
-export const grantDailyProSlots = internalMutation({
+export const grantDailyProKindling = internalMutation({
   args: {},
   handler: async (ctx) => {
     const now = Date.now()
@@ -632,7 +632,7 @@ export const grantDailyProSlots = internalMutation({
         continue
       }
 
-      const { periodStart, periodEnd } = await getMonthlySlotGrantPeriod(ctx, userId, now)
+      const { periodStart, periodEnd } = await getMonthlyKindlingGrantPeriod(ctx, userId, now)
 
       // Idempotency: check if grant already issued for this billing period.
       if (await grantExistsForPeriod(ctx, userId, periodStart, periodEnd)) {
@@ -640,10 +640,10 @@ export const grantDailyProSlots = internalMutation({
         continue
       }
 
-      await ctx.db.insert('campSlotTransactions', {
+      await ctx.db.insert('campKindlingTransactions', {
         userId,
         type: 'monthly_grant',
-        amount: MONTHLY_PRO_SLOT_GRANT,
+        amount: MONTHLY_PRO_KINDLING_GRANT,
         periodStart,
         periodEnd,
         createdAt: now,
@@ -653,7 +653,7 @@ export const grantDailyProSlots = internalMutation({
 
     // biome-ignore lint/suspicious/noConsole: cron job diagnostic logging
     console.log(
-      `Daily Pro slot grant: ${granted} granted, ${alreadyGranted} already granted, ${ineligible} ineligible`,
+      `Daily Pro kindling grant: ${granted} granted, ${alreadyGranted} already granted, ${ineligible} ineligible`,
     )
 
     return { granted, alreadyGranted, ineligible }
