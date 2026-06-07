@@ -42,6 +42,7 @@ function GlobalPaywall() {
       features: [
         { label: 'Browse and join camps open to your tier', included: true },
         { label: 'Watch and respond to bondfires', included: true },
+        { label: '5-minute response recordings', included: true },
         { label: 'Join private camps by invite', included: true },
       ],
       isCurrent: currentTier === 'free',
