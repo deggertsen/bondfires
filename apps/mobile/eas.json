@@ -49,7 +49,8 @@
       },
       "env": {
         "APP_VARIANT": "production",
-        "EXPO_PUBLIC_CONVEX_URL": "https://ideal-akita-27.convex.cloud"
+        "EXPO_PUBLIC_CONVEX_URL": "https://ideal-akita-27.convex.cloud",
+        "EXPO_PUBLIC_MUX_DATA_ENV_KEY": "ffl7ni4n12b1dkfs4dt6b0i6q"
       }
     }
   },

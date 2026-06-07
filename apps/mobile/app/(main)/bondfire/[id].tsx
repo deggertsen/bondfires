@@ -3,11 +3,13 @@ import {
   appStore$,
   getBondfireVideoIndex,
   hasViewedToday,
+  type MuxDataVideoMetadata,
   markViewed,
   parseError,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
   telemetry,
+  useMuxData,
 } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
@@ -29,7 +31,7 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { LinearGradient } from 'expo-linear-gradient'
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { useVideoPlayer, VideoView } from 'expo-video'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   AppState,
@@ -41,11 +43,11 @@ import {
   StatusBar,
   type ViewToken,
 } from 'react-native'
-import { Separator, Sheet, Spinner, XStack, YStack } from 'tamagui'
+import { Sheet, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
-import { NotepadOverlay } from '../../../components/NotepadOverlay'
 import { InviteSheet } from '../../../components/InviteSheet'
+import { NotepadOverlay } from '../../../components/NotepadOverlay'
 import { ReportButton } from '../../../components/ReportButton'
 import { ReportOverlay } from '../../../components/ReportOverlay'
 import { SettingsPopover } from '../../../components/SettingsPopover'
@@ -163,6 +165,42 @@ function VideoPlayer({
     player.muted = isMuted
     player.playbackRate = appStore$.preferences.playbackSpeed.get()
     player.preservesPitch = true
+  })
+
+  // Extract MUX playback ID from the video URL for Data tracking
+  const muxPlaybackId = useMemo(() => {
+    if (!videoUrl) return null
+    const match = videoUrl.match(/stream\.mux\.com\/([^/?#]+)\.m3u8(?:[?#]|$)/)
+    return match ? match[1] : null
+  }, [videoUrl])
+
+  // MUX Data tracking (included free for MUX-hosted video)
+  const muxDataVideoMetadata: MuxDataVideoMetadata | null = useMemo(() => {
+    if (!muxPlaybackId) return null
+    return {
+      video_id: muxPlaybackId,
+      video_title: creatorName
+        ? isMainVideo
+          ? `${creatorName}'s Spark`
+          : `${creatorName}'s Response #${(responseIndex ?? 0) + 1}`
+        : undefined,
+      video_stream_type: isLive ? 'live' : 'on-demand',
+      video_series: bondfireId,
+      custom_1: creatorName,
+      custom_2: isMainVideo ? 'spark' : 'response',
+      custom_3: isMainVideo ? 'true' : 'false',
+    }
+  }, [muxPlaybackId, creatorName, isMainVideo, responseIndex, isLive, bondfireId])
+
+  useMuxData({
+    player,
+    sourceUrl: currentUrl,
+    videoMetadata: muxDataVideoMetadata,
+    viewerMetadata: useMemo(
+      () => ({ viewer_user_id: currentUserId ?? undefined }),
+      [currentUserId],
+    ),
+    isActive: isActive && isScreenFocused && isAppActive,
   })
 
   // Update playback speed only for the active, foreground player.
@@ -1178,12 +1216,7 @@ export default function BondfireDetailScreen() {
                 <Text fontSize={22} fontWeight="900" textAlign="center">
                   Join Camp to View
                 </Text>
-                <Text
-                  fontSize={14}
-                  color={bondfireColors.ash}
-                  textAlign="center"
-                  lineHeight={20}
-                >
+                <Text fontSize={14} color={bondfireColors.ash} textAlign="center" lineHeight={20}>
                   This bondfire is in a camp you haven't joined yet. Join to watch and respond.
                 </Text>
                 <Button
@@ -1219,9 +1252,9 @@ export default function BondfireDetailScreen() {
         {/* Invite Sheet */}
         <InviteSheet
           bondfireId={bondfireId}
-        open={isInviteSheetOpen}
-        onClose={() => setIsInviteSheetOpen(false)}
-      />
+          open={isInviteSheetOpen}
+          onClose={() => setIsInviteSheetOpen(false)}
+        />
       </YStack>
     </>
   )
