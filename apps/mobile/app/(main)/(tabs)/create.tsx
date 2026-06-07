@@ -13,7 +13,6 @@ import {
   startBackgroundUpload,
   telemetry,
   useLivePublisher,
-  useSlotBalance,
   useSubscription,
 } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
@@ -74,7 +73,6 @@ export default function CreateScreen() {
 
   // Subscription gating for Spark/create actions
   const { canCreate, showPaywall } = useSubscription()
-  const { balance: slotBalance, isLoading: slotBalanceLoading } = useSlotBalance()
 
   const cameraRef = useRef<CameraView>(null)
   const isStartingRecordingRef = useRef(false)
@@ -1332,11 +1330,7 @@ export default function CreateScreen() {
           <Text fontSize={14} color={bondfireColors.ash} lineHeight={20}>
             Every Bondfire starts in a camp.
           </Text>
-          {!slotBalanceLoading && slotBalance > 0 ? (
-            <Text fontSize={12} color={bondfireColors.success} fontWeight="600">
-              {slotBalance} camp {slotBalance === 1 ? 'slot' : 'slots'} available
-            </Text>
-          ) : null}
+
         </YStack>
         {camps === undefined ? (
           <YStack flex={1} alignItems="center" justifyContent="center" gap={14}>
