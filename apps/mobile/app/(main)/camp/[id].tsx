@@ -756,7 +756,7 @@ export default function CampDetailScreen() {
   const pendingRequests: PendingRequest[] =
     useQuery(
       api.camps.getPendingRequests,
-      campId && canReviewAccessRequests ? { campId } : 'skip',
+      campId && canReviewAccessRequests && camp?.status === 'active' ? { campId } : 'skip',
     ) ?? []
   const members: CampMember[] | undefined = useQuery(
     api.camps.listCampMembers,

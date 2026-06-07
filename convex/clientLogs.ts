@@ -275,6 +275,39 @@ export const summary = query({
 // ---------------------------------------------------------------------------
 
 /**
+ * Server-side log entry (callable from internal actions/mutations).
+ */
+export const createInternal = internalMutation({
+  args: {
+    level: v.union(
+      v.literal('error'),
+      v.literal('warn'),
+      v.literal('info'),
+      v.literal('breadcrumb'),
+    ),
+    event: v.string(),
+    message: v.string(),
+    data: v.optional(v.any()),
+    platform: v.union(v.literal('ios'), v.literal('android')),
+    createdAt: v.number(),
+    userId: v.optional(v.id('users')),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db.insert('clientLogs', {
+      userId: args.userId,
+      level: args.level,
+      event: args.event,
+      message: args.message,
+      data: args.data,
+      platform: args.platform,
+      appVersion: undefined,
+      sessionId: undefined,
+      createdAt: args.createdAt,
+    })
+  },
+})
+
+/**
  * Purge log entries older than MAX_RETENTION_DAYS.
  * Invoked daily by a scheduled cron job.
  */

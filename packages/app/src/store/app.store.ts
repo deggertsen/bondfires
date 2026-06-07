@@ -40,7 +40,7 @@ const defaultState: AppState = {
     videoMuted: true,
     notificationsEnabled: true,
     playbackSpeed: 1.0,
-    livePublishEnabled: false,
+    livePublishEnabled: true,
   },
   isAuthenticated: false,
   userId: null,

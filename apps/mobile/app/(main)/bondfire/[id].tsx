@@ -755,32 +755,54 @@ export default function BondfireDetailScreen() {
         bondfireData.videoStatus === 'live'
           ? bondfireData.muxLivePlaybackId
           : bondfireData.muxPlaybackId
-      if (!mainPlaybackId) return
+      if (!mainPlaybackId) {
+        telemetry.warn('video:urls:missing_playback_id', 'No playback ID for bondfire', {
+          bondfireId: bondfireData._id,
+          videoStatus: bondfireData.videoStatus,
+        })
+        return
+      }
 
-      const mainUrl = await getVideoUrls({
-        muxPlaybackId: mainPlaybackId,
-        muxPlaybackPolicy: bondfireData.muxPlaybackPolicy,
-        bondfireId: bondfireData._id,
-      })
+      try {
+        const mainUrl = await getVideoUrls({
+          muxPlaybackId: mainPlaybackId,
+          muxPlaybackPolicy: bondfireData.muxPlaybackPolicy,
+          bondfireId: bondfireData._id,
+        })
 
-      const playableResponses = bondfireData.videos.filter((v: Doc<'bondfireVideos'>) =>
-        v.videoStatus === 'live' ? !!v.muxLivePlaybackId : !!v.muxPlaybackId,
-      )
-      const responseUrls: Array<{ hdUrl: string; sdUrl: string | null }> = await Promise.all(
-        playableResponses.map((v) =>
-          getVideoUrls({
-            muxPlaybackId:
-              v.videoStatus === 'live'
-                ? (v.muxLivePlaybackId as string)
-                : (v.muxPlaybackId as string),
-            muxPlaybackPolicy: v.muxPlaybackPolicy,
-            bondfireVideoId: v._id,
-          }),
-        ),
-      )
+        const playableResponses = bondfireData.videos.filter((v: Doc<'bondfireVideos'>) =>
+          v.videoStatus === 'live' ? !!v.muxLivePlaybackId : !!v.muxPlaybackId,
+        )
+        const responseUrls: Array<{ hdUrl: string; sdUrl: string | null }> = await Promise.all(
+          playableResponses.map((v) =>
+            getVideoUrls({
+              muxPlaybackId:
+                v.videoStatus === 'live'
+                  ? (v.muxLivePlaybackId as string)
+                  : (v.muxPlaybackId as string),
+              muxPlaybackPolicy: v.muxPlaybackPolicy,
+              bondfireVideoId: v._id,
+            }),
+          ),
+        )
 
-      screenState$.videoUrls.set([mainUrl.hdUrl, ...responseUrls.map((r) => r.hdUrl)])
-      screenState$.videoUrlsSd.set([mainUrl.sdUrl, ...responseUrls.map((r) => r.sdUrl)])
+        screenState$.videoUrls.set([mainUrl.hdUrl, ...responseUrls.map((r) => r.hdUrl)])
+        screenState$.videoUrlsSd.set([mainUrl.sdUrl, ...responseUrls.map((r) => r.sdUrl)])
+
+        telemetry.info('video:urls:resolved', 'Video URLs resolved', {
+          bondfireId: bondfireData._id,
+          mainHasToken: mainUrl.hdUrl.includes('token='),
+          responseCount: responseUrls.length,
+          totalVideos: 1 + responseUrls.length,
+        })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        telemetry.error('video:urls:failed', message, {
+          bondfireId: bondfireData._id,
+          muxPlaybackId: mainPlaybackId,
+          muxPlaybackPolicy: bondfireData.muxPlaybackPolicy,
+        })
+      }
     }
 
     loadUrls()

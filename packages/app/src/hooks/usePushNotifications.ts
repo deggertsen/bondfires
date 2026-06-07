@@ -126,6 +126,10 @@ export function usePushNotifications(
         )
         return null
       }
+      // Emulators and devices without Google Play Services can't get push tokens
+      if (errorMessage.includes('MISSING_INSTANCEID_SERVICE')) {
+        return null
+      }
       throw e
     }
   }, [])
@@ -178,6 +182,11 @@ export function usePushNotifications(
       setError(null)
       return true
     } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : String(e)
+      // Emulators and non-Google Play Services devices — not actionable
+      if (errorMessage.includes('MISSING_INSTANCEID_SERVICE')) {
+        return false
+      }
       telemetry.error('push:permissions', 'Error requesting push notification permissions', {
         error: String(e),
       })

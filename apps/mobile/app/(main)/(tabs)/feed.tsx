@@ -466,7 +466,8 @@ export default function FeedScreen() {
   const ensureThumbnailUrl = useCallback(
     async (bondfire: BondfireData) => {
       if (!bondfire.muxPlaybackId) return
-      if (state$.thumbnailUrls[bondfire._id].get()) return
+      // Already resolved (including null = previously failed)
+      if (state$.thumbnailUrls[bondfire._id].get() !== undefined) return
       if (loadingThumbsRef.current.has(bondfire._id)) return
 
       loadingThumbsRef.current.add(bondfire._id)
@@ -477,9 +478,21 @@ export default function FeedScreen() {
           bondfireId: bondfire._id,
         })
         state$.thumbnailUrls[bondfire._id].set(thumbnailUrl)
-      } catch (error) {
-        telemetry.error('feed:thumbnail', 'Failed to load thumbnail URL', {
+        telemetry.breadcrumb('feed:thumbnail:loaded', {
           bondfireId: bondfire._id,
+          hasToken: thumbnailUrl.includes('token='),
+        })
+      } catch (error) {
+        // Mark as null so we don't retry this bondfire repeatedly
+        state$.thumbnailUrls[bondfire._id].set(null)
+        // Use warn instead of error — thumbnails are cosmetic, and error
+        // toasts to users for non-breaking failures.
+        telemetry.warn('feed:thumbnail', 'Failed to load thumbnail URL', {
+          bondfireId: bondfire._id,
+          playbackPolicy: bondfire.muxPlaybackPolicy,
+          hasCampId: !!bondfire.campId,
+          hasPersonalCampId: !!bondfire.personalCampId,
+          videoStatus: bondfire.videoStatus,
           error: String(error),
         })
       } finally {

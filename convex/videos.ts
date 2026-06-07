@@ -188,7 +188,8 @@ function base64UrlEncode(input: string | Uint8Array | ArrayBuffer): string {
 }
 
 function base64ToBytes(value: string): Uint8Array {
-  const binary = atob(value.replace(/\s+/g, ''))
+  const standard = value.replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/')
+  const binary = atob(standard)
   const bytes = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; i += 1) {
     bytes[i] = binary.charCodeAt(i)
@@ -212,7 +213,7 @@ function getMuxSigningConfig() {
 
 function readMuxSigningPrivateKey(privateKey: string) {
   const normalizedPrivateKey = privateKey.replace(/\\n/g, '\n').trim()
-  if (normalizedPrivateKey.includes('-----BEGIN PRIVATE KEY-----')) {
+  if (normalizedPrivateKey.includes('-----BEGIN RSA PRIVATE KEY-----') || normalizedPrivateKey.includes('-----BEGIN PRIVATE KEY-----')) {
     return normalizedPrivateKey
   }
 
@@ -221,13 +222,15 @@ function readMuxSigningPrivateKey(privateKey: string) {
 
 async function importMuxSigningKey(encodedPrivateKey: string) {
   const pem = readMuxSigningPrivateKey(encodedPrivateKey)
+  const isRsaKey = pem.includes('-----BEGIN RSA PRIVATE KEY-----')
   const derBase64 = pem
-    .replace(/-----BEGIN PRIVATE KEY-----/g, '')
-    .replace(/-----END PRIVATE KEY-----/g, '')
+    .replace(/-----BEGIN (?:RSA )?PRIVATE KEY-----/g, '')
+    .replace(/-----END (?:RSA )?PRIVATE KEY-----/g, '')
     .replace(/\s+/g, '')
   const der = base64ToBytes(derBase64)
-  const keyData = new ArrayBuffer(der.byteLength)
-  new Uint8Array(keyData).set(der)
+
+  // PKCS1 RSA key format: need to wrap in PKCS8 envelope for Web Crypto
+  const keyData: ArrayBuffer = isRsaKey ? wrapPkcs1ToPkcs8(der) : (der.buffer.slice(der.byteOffset, der.byteOffset + der.byteLength) as ArrayBuffer)
 
   return await crypto.subtle.importKey(
     'pkcs8',
@@ -236,6 +239,61 @@ async function importMuxSigningKey(encodedPrivateKey: string) {
     false,
     ['sign'],
   )
+}
+
+/**
+ * Wrap a PKCS1 RSAPrivateKey DER in a PKCS8 PrivateKeyInfo envelope.
+ * PKCS8 = SEQUENCE { version(0), algorithm SEQUENCE { OID 1.2.840.113549.1.1.1, NULL }, privateKey OCTET STRING wrapping PKCS1 DER }
+ */
+function wrapPkcs1ToPkcs8(pkcs1Der: Uint8Array): ArrayBuffer {
+  // PKCS8 PrivateKeyInfo header for RSA:
+  // SEQUENCE (variable length)
+  //   INTEGER 0  (version)
+  //   SEQUENCE (13 bytes)
+  //     OBJECT IDENTIFIER 1.2.840.113549.1.1.1 (rsaEncryption) = 06 09 2A 86 48 86 F7 0D 01 01 01
+  //     NULL = 05 00
+  //   OCTET STRING (wrapping PKCS1 key)
+
+  const rsaOid = new Uint8Array([0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01])
+  const algorithmSeq = encodeSequence(new Uint8Array([...rsaOid, 0x05, 0x00])) // SEQUENCE { OID, NULL }
+  const version = new Uint8Array([0x02, 0x01, 0x00]) // INTEGER 0
+  const octetStr = encodeOctetString(pkcs1Der)
+
+  const inner = new Uint8Array(version.length + algorithmSeq.length + octetStr.length)
+  inner.set(version, 0)
+  inner.set(algorithmSeq, version.length)
+  inner.set(octetStr, version.length + algorithmSeq.length)
+
+  return encodeSequence(inner).buffer as ArrayBuffer
+}
+
+function encodeSequence(content: Uint8Array): Uint8Array {
+  const lenBytes = encodeLength(content.length)
+  const result = new Uint8Array(1 + lenBytes.length + content.length)
+  result[0] = 0x30 // SEQUENCE tag
+  result.set(lenBytes, 1)
+  result.set(content, 1 + lenBytes.length)
+  return result
+}
+
+function encodeOctetString(content: Uint8Array): Uint8Array {
+  const lenBytes = encodeLength(content.length)
+  const result = new Uint8Array(1 + lenBytes.length + content.length)
+  result[0] = 0x04 // OCTET STRING tag
+  result.set(lenBytes, 1)
+  result.set(content, 1 + lenBytes.length)
+  return result
+}
+
+function encodeLength(len: number): Uint8Array {
+  if (len < 128) return new Uint8Array([len])
+  const bytes: number[] = []
+  let remaining = len
+  while (remaining > 0) {
+    bytes.unshift(remaining & 0xff)
+    remaining >>>= 8
+  }
+  return new Uint8Array([0x80 | bytes.length, ...bytes])
 }
 
 async function signMuxPlaybackToken(playbackId: string, aud: MuxSignedAudience) {
@@ -1459,27 +1517,89 @@ export const getVideoUrls = action({
   },
   handler: async (ctx, args) => {
     let playbackPolicy = args.muxPlaybackPolicy ?? 'public'
-    if (args.bondfireId || args.bondfireVideoId || playbackPolicy === 'signed') {
-      const userId = (await auth.getUserId(ctx)) ?? undefined
+    try {
+      if (args.bondfireId || args.bondfireVideoId || playbackPolicy === 'signed') {
+        const userId = (await auth.getUserId(ctx)) ?? undefined
 
-      const access = await ctx.runQuery(internal.videos.validatePlaybackAccess, {
-        userId,
-        muxPlaybackId: args.muxPlaybackId,
-        bondfireId: args.bondfireId,
-        bondfireVideoId: args.bondfireVideoId,
-      })
-      playbackPolicy = access.playbackPolicy
+        const access = await ctx.runQuery(internal.videos.validatePlaybackAccess, {
+          userId,
+          muxPlaybackId: args.muxPlaybackId,
+          bondfireId: args.bondfireId,
+          bondfireVideoId: args.bondfireVideoId,
+        })
+        playbackPolicy = access.playbackPolicy
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      const stack = e instanceof Error ? e.stack : undefined
+      // If access validation fails (camp deleted, user booted, expired),
+      // fall back to a public URL. Mux will serve it or 403, but the
+      // app won't crash with a Server Error.
+      try {
+        await ctx.runMutation(internal.clientLogs.createInternal, {
+          level: 'warn',
+          event: 'video:get_urls:access_validation_failed',
+          message,
+          data: {
+            muxPlaybackId: args.muxPlaybackId,
+            bondfireId: args.bondfireId,
+            bondfireVideoId: args.bondfireVideoId,
+            stack,
+          },
+          platform: 'ios',
+          createdAt: Date.now(),
+        })
+      } catch {
+        // Best effort — don't fail the video URL request over logging
+      }
+      return {
+        hdUrl: getMuxPlaybackUrl(args.muxPlaybackId),
+        sdUrl: null,
+        thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
+        expiresIn: 0,
+      }
     }
 
     if (playbackPolicy === 'signed') {
-      const token = await signMuxPlaybackToken(args.muxPlaybackId, 'v')
-      const thumbnailToken = await signMuxPlaybackToken(args.muxPlaybackId, 't')
+      try {
+        const token = await signMuxPlaybackToken(args.muxPlaybackId, 'v')
+        const thumbnailToken = await signMuxPlaybackToken(args.muxPlaybackId, 't')
 
-      return {
-        hdUrl: withMuxToken(getMuxPlaybackUrl(args.muxPlaybackId), token),
-        sdUrl: null,
-        thumbnailUrl: withMuxToken(getMuxThumbnailUrl(args.muxPlaybackId), thumbnailToken),
-        expiresIn: SIGNED_PLAYBACK_URL_TTL_SECONDS,
+        return {
+          hdUrl: withMuxToken(getMuxPlaybackUrl(args.muxPlaybackId), token),
+          sdUrl: null,
+          thumbnailUrl: withMuxToken(getMuxThumbnailUrl(args.muxPlaybackId), thumbnailToken),
+          expiresIn: SIGNED_PLAYBACK_URL_TTL_SECONDS,
+        }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        const stack = e instanceof Error ? e.stack : undefined
+        // Signed URL generation failed (missing signing key, bad key format,
+        // etc.). Fall back to public URL so the video player isn't broken.
+        try {
+          await ctx.runMutation(internal.clientLogs.createInternal, {
+            level: 'error',
+            event: 'video:get_urls:signing_failed',
+            message,
+            data: {
+              muxPlaybackId: args.muxPlaybackId,
+              bondfireId: args.bondfireId,
+              bondfireVideoId: args.bondfireVideoId,
+              playbackPolicy,
+              stack,
+            },
+            platform: 'ios',
+            createdAt: Date.now(),
+          })
+        } catch {
+          // Best effort
+        }
+        return {
+          hdUrl: getMuxPlaybackUrl(args.muxPlaybackId),
+          sdUrl: null,
+          thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
+          expiresIn: 0,
+        }
       }
     }
 
@@ -1501,26 +1621,84 @@ export const getThumbnailUrl = action({
   },
   handler: async (ctx, args) => {
     let playbackPolicy = args.muxPlaybackPolicy ?? 'public'
-    if (args.bondfireId || args.bondfireVideoId || playbackPolicy === 'signed') {
-      const userId = (await auth.getUserId(ctx)) ?? undefined
+    // Thumbnail URLs are cosmetic — don't throw on access validation failures.
+    // If the bondfire/camp is gone or the user lost access, fall back to a
+    // public Mux thumbnail URL (Mux may serve it or 403 — either is fine).
+    try {
+      if (args.bondfireId || args.bondfireVideoId || playbackPolicy === 'signed') {
+        const userId = (await auth.getUserId(ctx)) ?? undefined
 
-      const access = await ctx.runQuery(internal.videos.validatePlaybackAccess, {
-        userId,
-        muxPlaybackId: args.muxPlaybackId,
-        bondfireId: args.bondfireId,
-        bondfireVideoId: args.bondfireVideoId,
-      })
-      playbackPolicy = access.playbackPolicy
+        const access = await ctx.runQuery(internal.videos.validatePlaybackAccess, {
+          userId,
+          muxPlaybackId: args.muxPlaybackId,
+          bondfireId: args.bondfireId,
+          bondfireVideoId: args.bondfireVideoId,
+        })
+        playbackPolicy = access.playbackPolicy
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      // Access validation failed — return a public thumbnail URL as a fallback.
+      // The Mux CDN may serve it or return 403, but the feed won't crash.
+      try {
+        await ctx.runMutation(internal.clientLogs.createInternal, {
+          level: 'warn',
+          event: 'video:thumbnail:access_validation_failed',
+          message,
+          data: {
+            muxPlaybackId: args.muxPlaybackId,
+            bondfireId: args.bondfireId,
+            bondfireVideoId: args.bondfireVideoId,
+          },
+          platform: 'ios',
+          createdAt: Date.now(),
+        })
+      } catch {
+        // Best effort
+      }
+      return {
+        thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
+        previewUrl: getMuxPreviewUrl(args.muxPlaybackId),
+        expiresIn: 0,
+      }
     }
 
     if (playbackPolicy === 'signed') {
-      const thumbnailToken = await signMuxPlaybackToken(args.muxPlaybackId, 't')
-      const previewToken = await signMuxPlaybackToken(args.muxPlaybackId, 'g')
+      try {
+        const thumbnailToken = await signMuxPlaybackToken(args.muxPlaybackId, 't')
+        const previewToken = await signMuxPlaybackToken(args.muxPlaybackId, 'g')
 
-      return {
-        thumbnailUrl: withMuxToken(getMuxThumbnailUrl(args.muxPlaybackId), thumbnailToken),
-        previewUrl: withMuxToken(getMuxPreviewUrl(args.muxPlaybackId), previewToken),
-        expiresIn: SIGNED_PLAYBACK_URL_TTL_SECONDS,
+        return {
+          thumbnailUrl: withMuxToken(getMuxThumbnailUrl(args.muxPlaybackId), thumbnailToken),
+          previewUrl: withMuxToken(getMuxPreviewUrl(args.muxPlaybackId), previewToken),
+          expiresIn: SIGNED_PLAYBACK_URL_TTL_SECONDS,
+        }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        const stack = e instanceof Error ? e.stack : undefined
+        try {
+          await ctx.runMutation(internal.clientLogs.createInternal, {
+            level: 'error',
+            event: 'video:thumbnail:signing_failed',
+            message,
+            data: {
+              muxPlaybackId: args.muxPlaybackId,
+              bondfireId: args.bondfireId,
+              bondfireVideoId: args.bondfireVideoId,
+              playbackPolicy,
+              stack,
+            },
+            platform: 'ios',
+            createdAt: Date.now(),
+          })
+        } catch {
+          // Best effort
+        }
+        return {
+          thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
+          previewUrl: getMuxPreviewUrl(args.muxPlaybackId),
+          expiresIn: 0,
+        }
       }
     }
 

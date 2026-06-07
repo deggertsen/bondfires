@@ -1,7 +1,7 @@
 import { bondfireColors } from '@bondfires/config'
 import { ChevronDown, ChevronUp, Search, Shield } from '@tamagui/lucide-icons'
 import { useCallback, useState } from 'react'
-import { Alert, Pressable } from 'react-native'
+import { Alert } from 'react-native'
 import { ScrollView, Spinner, XStack, YStack } from 'tamagui'
 import { Button } from './Button'
 import { Card } from './Card'
@@ -91,27 +91,26 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier }: AdminPanelProps) {
 
   return (
     <YStack gap={12} marginBottom={24}>
-      <Pressable
+      <Card
+        interactive
         onPress={() => setExpanded((prev) => !prev)}
         accessibilityRole="button"
         accessibilityLabel="Toggle Admin Panel"
       >
-        <Card interactive>
-          <XStack justifyContent="space-between" alignItems="center">
-            <XStack alignItems="center" gap={8}>
-              <Shield size={18} color={bondfireColors.moltenGold} />
-              <Text fontSize={16} fontWeight="700">
-                Admin Panel
-              </Text>
-            </XStack>
-            {expanded ? (
-              <ChevronUp size={18} color={bondfireColors.ash} />
-            ) : (
-              <ChevronDown size={18} color={bondfireColors.ash} />
-            )}
+        <XStack justifyContent="space-between" alignItems="center">
+          <XStack alignItems="center" gap={8}>
+            <Shield size={18} color={bondfireColors.moltenGold} />
+            <Text fontSize={16} fontWeight="700">
+              Admin Panel
+            </Text>
           </XStack>
-        </Card>
-      </Pressable>
+          {expanded ? (
+            <ChevronUp size={18} color={bondfireColors.ash} />
+          ) : (
+            <ChevronDown size={18} color={bondfireColors.ash} />
+          )}
+        </XStack>
+      </Card>
 
       {expanded && (
         <Card>

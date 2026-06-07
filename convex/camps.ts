@@ -1238,10 +1238,15 @@ export const getPendingRequests = query({
   },
   handler: async (ctx, args) => {
     const camp = await ctx.db.get(args.campId)
-    if (!camp || camp.status !== 'active') {
+    if (!camp) {
       throwUserError('Camp not found')
     }
     await assertCanReviewAccessRequests(ctx, camp)
+
+    // Only active camps can have pending requests; return empty for archived/frozen/etc.
+    if (!isCampVisibleStatus(camp.status)) {
+      return []
+    }
 
     const pendingRequests = await ctx.db
       .query('campMembers')
