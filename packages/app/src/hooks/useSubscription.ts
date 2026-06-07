@@ -20,9 +20,10 @@ import { Alert, Platform } from 'react-native'
 import { api } from '../../../../convex/_generated/api'
 import { telemetry } from '../services/telemetry'
 import {
-  ALL_STORE_PRODUCT_IDS,
+  ALL_SUBSCRIPTION_PRODUCT_IDS,
   CREATE_REQUIRED_TIER,
   EXTRA_CAMP_PRODUCT_IDS,
+  SLOT_PACK_PRODUCT_IDS,
   isExtraCampProductId,
   PRODUCT_ID_TO_PURCHASE_KIND,
   type StorePurchaseKind,
@@ -100,11 +101,32 @@ async function ensureIapConnection() {
 }
 
 async function loadSubscriptionProducts(showExtraCampAddon: boolean) {
-  const products = await fetchProducts({ skus: ALL_STORE_PRODUCT_IDS, type: 'all' })
-  const productList = Array.isArray(products) ? products : [products]
+  // Fetch subscriptions and in-app products separately.
+  // Billing 8.x + openiap-google 2.2.1 throws on ProductQueryType.All if
+  // either product type query fails (e.g., no INAPP products configured in
+  // Play Console), so we avoid 'all' and query each type independently.
+  const [subsProducts, inappProducts] = await Promise.allSettled([
+    fetchProducts({ skus: ALL_SUBSCRIPTION_PRODUCT_IDS, type: 'subs' }),
+    fetchProducts({ skus: [SLOT_PACK_PRODUCT_IDS.campSlot3Pack, SLOT_PACK_PRODUCT_IDS.campSlot10Pack], type: 'in-app' }),
+  ])
+
+  const subsList = subsProducts.status === 'fulfilled' ? subsProducts.value : []
+  const inappList = inappProducts.status === 'fulfilled' ? inappProducts.value : []
+
+  if (inappProducts.status === 'rejected') {
+    telemetry.warn('iap:fetch', 'Failed to fetch in-app (slot pack) products', {
+      error: String(inappProducts.reason),
+    })
+  }
+
+  const allProducts = [
+    ...(Array.isArray(subsList) ? subsList : [subsList]),
+    ...(Array.isArray(inappList) ? inappList : [inappList]),
+  ]
+
   const visibleProducts = showExtraCampAddon
-    ? productList
-    : productList.filter((product) => !product?.id || !isExtraCampProductId(product.id))
+    ? allProducts
+    : allProducts.filter((product) => !product?.id || !isExtraCampProductId(product.id))
 
   subscriptionActions.setProducts(
     visibleProducts
