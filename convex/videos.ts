@@ -1365,16 +1365,16 @@ export const createLiveStream = action({
             Number.isFinite(reconnectWindow) && reconnectWindow >= 0
               ? reconnectWindow
               : DEFAULT_MUX_LIVE_RECONNECT_WINDOW_SECONDS,
+          passthrough: JSON.stringify({
+            userId,
+            isResponse: args.isResponse,
+            bondfireId: args.bondfireId,
+            personalCamp: args.personalCamp,
+            source: 'bondfires-live',
+          }),
           new_asset_settings: {
             playback_policies: [playbackPolicy],
             video_quality: config.videoQuality,
-            passthrough: JSON.stringify({
-              userId,
-              isResponse: args.isResponse,
-              bondfireId: args.bondfireId,
-              personalCamp: args.personalCamp,
-              source: 'bondfires-live',
-            }),
           },
         }),
       }),
