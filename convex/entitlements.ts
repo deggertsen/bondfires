@@ -7,7 +7,7 @@
  * or inline ad-hoc subscription queries.
  *
  * Tier model (Phase 2 launch):
- *   free     — browse, join, respond up to 15 min, bookmark; cannot create Bondfires
+ *   free     — browse, join, respond up to 5 min, bookmark; cannot create Bondfires
  *              or own a private camp
  *   plus     — create Bondfires in public camps, own ONE private camp, 15-min video limit,
  *              private camp videos retained for 1 month
@@ -43,7 +43,7 @@ export const TIER_RANK: Record<SubscriptionTier, number> = {
 export const PAID_TIERS: readonly SubscriptionTier[] = ['plus', 'premium', 'pro']
 
 /** Maximum video duration (ms) for Free tier members responding to Bondfires. */
-export const FREE_MAX_VIDEO_DURATION_MS = 15 * 60 * 1000 // 15 minutes
+export const FREE_MAX_VIDEO_DURATION_MS = 5 * 60 * 1000 // 5 minutes
 
 /** Maximum video duration (ms) for Plus tier members. */
 export const PLUS_MAX_VIDEO_DURATION_MS = 15 * 60 * 1000 // 15 minutes
@@ -159,7 +159,7 @@ export function tierCanCreateBondfires(tier: SubscriptionTier): boolean {
 
 /**
  * Maximum video duration in milliseconds allowed for the given tier.
- * - Free: 15 minutes for responses; Bondfire creation is blocked separately
+ * - Free: 5 minutes for responses; Bondfire creation is blocked separately
  * - Plus: 15 minutes
  * - Premium: 30 minutes
  * - Pro: no limit (returns undefined)
