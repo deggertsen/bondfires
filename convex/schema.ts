@@ -282,7 +282,7 @@ export default defineSchema({
     .index('by_store_transaction', ['storeOriginalTransactionId'])
     .index('by_store_purchase_token', ['storePurchaseToken']),
 
-  // Personal Camps - user-owned micro-camps for private friend groups
+  // Hearths — user-owned micro-camps for private friend groups
   personalCamps: defineTable({
     publicId: v.string(),
     ownerId: v.id('users'),

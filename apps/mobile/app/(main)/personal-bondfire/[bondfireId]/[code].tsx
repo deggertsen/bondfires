@@ -83,12 +83,12 @@ export default function PersonalBondfireInviteScreen() {
         },
         invalid: {
           title: 'Invalid Invite',
-          message: 'This invite is not valid for a personal camp bondfire.',
+          message: 'This invite is not valid for a hearth bondfire.',
         },
         frozen: {
           title: 'Camp Unavailable',
           message:
-            'The personal camp is currently unavailable. The owner may have cancelled their subscription.',
+            'The hearth is currently unavailable. The owner may have cancelled their subscription.',
         },
       }
       const err = reasonMessages[reason] ?? {
@@ -138,7 +138,7 @@ export default function PersonalBondfireInviteScreen() {
             },
           ])
         } else if (message.includes('frozen')) {
-          Alert.alert('Camp Unavailable', 'The personal camp is currently unavailable.', [
+          Alert.alert('Camp Unavailable', 'The hearth is currently unavailable.', [
             {
               text: 'Go Home',
               onPress: () => router.replace(routes.feed),

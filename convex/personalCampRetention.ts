@@ -1,5 +1,5 @@
 /**
- * Daily retention enforcement for personal camp response videos.
+ * Daily retention enforcement for hearth response videos.
  *
  * Plus owners get 30 days of response-video storage. Premium and Pro owners
  * keep unlimited storage, matching the subscription entitlement copy.

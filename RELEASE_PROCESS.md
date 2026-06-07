@@ -78,6 +78,18 @@ grep -r "screen\|route" apps/mobile/app.json apps/mobile/eas.json
 grep -r "scheme\|link" apps/mobile/app.json
 ```
 
+### 5. What the Release Script Does
+
+The `scripts/release.sh` script performs these steps automatically:
+
+1. Validates clean git working tree
+2. Bumps the version in `apps/mobile/app.json`
+3. Commits the version bump
+4. **Deploys Convex backend to production** (`npx convex deploy`)
+5. **Sets minAppVersion in Convex publicConfig** (forces outdated clients to update)
+6. Kicks off EAS production builds for iOS + Android
+7. Auto-submits to App Store Connect and Google Play
+
 ## Release Command
 
 Only after all audit steps pass:
@@ -117,4 +129,4 @@ If critical issues found after release:
 ---
 
 **Established:** 2026-02-19 after critical navigation routing bug reached users
-**Last Updated:** 2026-02-19
+**Last Updated:** 2026-06-07 — added Convex deploy + minAppVersion steps now in release.sh

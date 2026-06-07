@@ -254,7 +254,7 @@ function PersonalCampCard({
                   {personalCamp.name}
                 </Text>
                 <Text fontSize={12} color={bondfireColors.ash}>
-                  Your Personal Camp
+                  Your Hearth
                 </Text>
               </YStack>
             </XStack>
@@ -302,10 +302,10 @@ function PersonalCampCard({
             </YStack>
             <YStack gap={2} flex={1}>
               <Text fontSize={15} fontWeight="900">
-                Personal Camp
+                Hearth
               </Text>
               <Text fontSize={12} color={bondfireColors.ash}>
-                Your private fires will appear here once your camp is ready.
+                Your private fires will appear here once your hearth is ready.
               </Text>
             </YStack>
           </XStack>
@@ -337,10 +337,10 @@ function PersonalCampCard({
           </YStack>
           <YStack gap={2} flex={1}>
             <Text fontSize={15} fontWeight="900" color={bondfireColors.ash}>
-              Personal Camp
+              Hearth
             </Text>
             <Text fontSize={12} color={bondfireColors.ash}>
-              Upgrade to Plus to start your own fire.
+              Upgrade to Plus to start your own hearth.
             </Text>
           </YStack>
         </XStack>
@@ -381,7 +381,7 @@ export default function CampsScreen() {
   const isPro = subscription?.tier === 'pro'
   const shouldShowPersonalCampCard = subscription !== undefined && personalCamp !== undefined
 
-  // Eagerly create personal camp for paid-tier users who don't have one yet
+  // Eagerly create hearth for paid-tier users who don't have one yet
   // (e.g. admins, forced-tier users, manual tier assignments)
   useEffect(() => {
     if (

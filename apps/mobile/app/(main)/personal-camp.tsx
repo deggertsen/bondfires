@@ -154,7 +154,7 @@ export default function PersonalCampScreen() {
     )
   }
 
-  // No personal camp — empty state
+  // No hearth — empty state
   if (personalCamp === null) {
     return (
       <YStack
@@ -182,10 +182,10 @@ export default function PersonalCampScreen() {
         <YStack flex={1} alignItems="center" justifyContent="center" gap={12}>
           <Flame size={48} color={bondfireColors.ash} />
           <Text fontSize={18} fontWeight="900" color={bondfireColors.ash} textAlign="center">
-            No Personal Camp
+            No Hearth
           </Text>
           <Text fontSize={14} color={bondfireColors.ash} textAlign="center" lineHeight={20}>
-            Subscribe to Plus, Premium, or Pro to unlock your Personal Camp.
+            Subscribe to Plus, Premium, or Pro to unlock your Hearth.
           </Text>
           <Button marginTop={8} onPress={handleUpgrade}>
             View Plans
@@ -251,7 +251,7 @@ export default function PersonalCampScreen() {
               {personalCamp.name}
             </Text>
             <Text fontSize={14} color={bondfireColors.ash}>
-              Your personal camp
+              Your hearth
             </Text>
           </YStack>
         </XStack>
@@ -268,11 +268,11 @@ export default function PersonalCampScreen() {
             <XStack alignItems="center" gap={8}>
               <Lock size={16} color={bondfireColors.warning} />
               <Text color={bondfireColors.warning} fontSize={14} fontWeight="700">
-                Your Personal Camp is frozen
+                Your Hearth is frozen
               </Text>
             </XStack>
             <Text color={bondfireColors.ash} fontSize={12} marginTop={4}>
-              Re-subscribe to Plus, Premium, or Pro to reactivate your Personal Camp.
+              Re-subscribe to Plus, Premium, or Pro to reactivate your Hearth.
             </Text>
           </YStack>
         ) : null}

@@ -363,7 +363,7 @@ async function assertCanCreatePersonalBondfire(
 
   const tier = await getEntitlementSubscriptionTier(ctx, args.userId)
   if (!PAID_TIERS.includes(tier)) {
-    throwUserError('Personal Camps require a Plus, Premium, or Pro subscription.')
+    throwUserError('A Hearth requires a Plus, Premium, or Pro subscription.')
   }
 
   const personalCamp = await ctx.db
@@ -372,11 +372,13 @@ async function assertCanCreatePersonalBondfire(
     .first()
 
   if (!personalCamp) {
-    throwUserError('Personal camp not found. Subscribe to Plus, Premium, or Pro to create one.')
+    throwUserError(
+      'Hearth not found. Subscribe to Plus, Premium, or Pro to create one.',
+    )
   }
 
   if (personalCamp.status !== 'active') {
-    throwUserError('Your personal camp is currently frozen. Please re-subscribe to reactivate it.')
+    throwUserError('Your hearth is currently frozen. Please re-subscribe to reactivate it.')
   }
 
   return personalCamp

@@ -968,7 +968,7 @@ export const applyStorePurchaseVerification = internalMutation({
             ownerId: args.userId,
           })
         } else if (newEffectiveTier !== 'free') {
-          // Ensure personal camp exists on paid tier
+          // Ensure hearth exists on paid tier
           await ctx.runMutation(internal.personalCamps.internalGetOrCreatePersonalCamp, {
             userId: args.userId,
             tier: newEffectiveTier,

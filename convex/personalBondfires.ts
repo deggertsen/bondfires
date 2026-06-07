@@ -158,7 +158,7 @@ async function getPersonalBondfireOrThrow(
 
   const personalCampId = bondfire.personalCampId
   if (!personalCampId) {
-    throwUserError('This bondfire is not part of a personal camp.')
+    throwUserError('This bondfire is not part of a hearth.')
   }
 
   return { ...bondfire, personalCampId }
@@ -167,7 +167,7 @@ async function getPersonalBondfireOrThrow(
 async function assertPersonalCampActive(
   ctx: QueryCtx | MutationCtx,
   personalCampId: Id<'personalCamps'>,
-  message = 'This personal camp is currently unavailable.',
+  message = 'This hearth is currently unavailable.',
 ) {
   const personalCamp = await ctx.db.get(personalCampId)
   if (!personalCamp || personalCamp.status !== 'active') {
@@ -180,9 +180,9 @@ async function assertPersonalCampActive(
 // ── Mutations ──────────────────────────────────────────────────────────────
 
 /**
- * Create a bondfire in the current user's personal camp.
+ * Create a bondfire in the current user's hearth.
  * Sets personalCampId instead of campId.
- * Checks the personal camp exists and is active.
+ * Checks the hearth exists and is active.
  */
 export const createBondfire = mutation({
   args: {
@@ -216,22 +216,24 @@ export const createBondfire = mutation({
     // The user must be on a paid tier.
     const tier = await getEntitlementSubscriptionTier(ctx, user._id)
     if (!PAID_TIERS.includes(tier)) {
-      throwUserError('Personal Camps require a Plus, Premium, or Pro subscription.')
+      throwUserError('A Hearth requires a Plus, Premium, or Pro subscription.')
     }
 
-    // Find the user's personal camp — must exist and be active.
+    // Find the user's hearth — must exist and be active.
     const personalCamp = await ctx.db
       .query('personalCamps')
       .withIndex('by_owner', (q) => q.eq('ownerId', user._id))
       .first()
 
     if (!personalCamp) {
-      throwUserError('Personal camp not found. Subscribe to Plus, Premium, or Pro to create one.')
+      throwUserError(
+        'Hearth not found. Subscribe to Plus, Premium, or Pro to create one.',
+      )
     }
 
     if (personalCamp.status !== 'active') {
       throwUserError(
-        'Your personal camp is currently frozen. Please re-subscribe to reactivate it.',
+        'Your hearth is currently frozen. Please re-subscribe to reactivate it.',
       )
     }
 
@@ -300,20 +302,20 @@ export const createInvite = mutation({
     await assertPersonalCampActive(
       ctx,
       bondfire.personalCampId,
-      'Your personal camp is currently frozen. Please re-subscribe to reactivate it.',
+      'Your hearth is currently frozen. Please re-subscribe to reactivate it.',
     )
 
     // Check participant cap.
     const activeCount = await getActiveParticipantCount(ctx, args.bondfireId)
     const tier = await getEntitlementSubscriptionTier(ctx, user._id)
     if (!PAID_TIERS.includes(tier)) {
-      throwUserError('Personal Camps require a Plus, Premium, or Pro subscription.')
+      throwUserError('A Hearth requires a Plus, Premium, or Pro subscription.')
     }
     const cap = getParticipantCap(tier)
 
     if (activeCount >= cap) {
       if (tier === 'plus') {
-        throwUserError('Upgrade to Premium or Pro to invite more people to your Personal Fires.')
+        throwUserError('Upgrade to Premium or Pro to invite more people to your Hearth.')
       }
       throwUserError('This fire is full.')
     }
@@ -395,13 +397,13 @@ export const redeemInvite = mutation({
     }
 
     if (!bondfire.personalCampId) {
-      throwUserError('This bondfire is not part of a personal camp.')
+      throwUserError('This bondfire is not part of a hearth.')
     }
 
     await assertPersonalCampActive(
       ctx,
       bondfire.personalCampId,
-      'The personal camp is currently unavailable. The owner may have cancelled their subscription.',
+      'The hearth is currently unavailable. The owner may have cancelled their subscription.',
     )
 
     // Check if user is already an active participant.
@@ -661,7 +663,7 @@ export const checkInvite = query({
 })
 
 /**
- * List bondfires in the current user's personal camp.
+ * List bondfires in the current user's hearth.
  */
 export const listMyPersonalBondfires = query({
   args: {},
