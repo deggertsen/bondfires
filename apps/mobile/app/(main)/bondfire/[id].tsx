@@ -41,6 +41,7 @@ import {
   Platform,
   Pressable,
   StatusBar,
+  View,
   type ViewToken,
 } from 'react-native'
 import { Sheet, Spinner, XStack, YStack } from 'tamagui'
@@ -158,7 +159,7 @@ function VideoPlayer({
   const hasEnded = useValue(state$.hasEnded)
 
   const bufferingCheckInterval = useRef<ReturnType<typeof setInterval> | null>(null)
-  const progressBarRef = useRef<{ width: number; x: number }>({ width: 0, x: 0 })
+  const progressBarRef = useRef<{ width: number }>({ width: 0 })
 
   const player = useVideoPlayer(currentUrl || '', (player) => {
     player.loop = false
@@ -368,15 +369,14 @@ function VideoPlayer({
   }, [player])
 
   const handleProgressBarLayout = useCallback((event: LayoutChangeEvent) => {
-    const { width, x } = event.nativeEvent.layout
-    progressBarRef.current = { width, x }
+    const { width } = event.nativeEvent.layout
+    progressBarRef.current = { width }
   }, [])
 
-  const handleProgressBarPress = useCallback(
-    (event: GestureResponderEvent) => {
+  const seekToProgressLocation = useCallback(
+    (locationX: number) => {
       if (!player || !player.duration || isLive) return
 
-      const { locationX } = event.nativeEvent
       const { width } = progressBarRef.current
 
       if (width > 0) {
@@ -389,6 +389,13 @@ function VideoPlayer({
       }
     },
     [player, state$, isLive],
+  )
+
+  const handleProgressBarTouch = useCallback(
+    (event: GestureResponderEvent) => {
+      seekToProgressLocation(event.nativeEvent.locationX)
+    },
+    [seekToProgressLocation],
   )
 
   if (shouldSuppressPlayback) {
@@ -527,7 +534,13 @@ function VideoPlayer({
         </YStack>
       ) : (
         <YStack position="absolute" bottom={100} left={20} right={20} zIndex={3}>
-          <Pressable onPress={handleProgressBarPress} onLayout={handleProgressBarLayout}>
+          <View
+            onLayout={handleProgressBarLayout}
+            onStartShouldSetResponder={() => !isLive && Boolean(player?.duration)}
+            onMoveShouldSetResponder={() => !isLive && Boolean(player?.duration)}
+            onResponderGrant={handleProgressBarTouch}
+            onResponderMove={handleProgressBarTouch}
+          >
             <YStack paddingVertical={10}>
               <YStack height={4} backgroundColor="rgba(255,255,255,0.3)" borderRadius={2}>
                 <YStack
@@ -548,7 +561,7 @@ function VideoPlayer({
                 />
               </YStack>
             </YStack>
-          </Pressable>
+          </View>
           <XStack justifyContent="space-between" marginTop={4}>
             <Text fontSize={12} color={bondfireColors.ash}>
               {formatTime(progress * duration)}
