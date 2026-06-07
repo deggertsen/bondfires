@@ -39,8 +39,10 @@ import {
   FlatList,
   type GestureResponderEvent,
   type LayoutChangeEvent,
+  Platform,
   Pressable,
   StatusBar,
+  View,
   type ViewToken,
 } from 'react-native'
 import { Sheet, Spinner, XStack, YStack } from 'tamagui'
@@ -158,7 +160,7 @@ function VideoPlayer({
   const hasEnded = useValue(state$.hasEnded)
 
   const bufferingCheckInterval = useRef<ReturnType<typeof setInterval> | null>(null)
-  const progressBarRef = useRef<{ width: number; x: number }>({ width: 0, x: 0 })
+  const progressBarRef = useRef<{ width: number }>({ width: 0 })
 
   const player = useVideoPlayer(currentUrl || '', (player) => {
     player.loop = false
@@ -404,15 +406,14 @@ function VideoPlayer({
   }, [player])
 
   const handleProgressBarLayout = useCallback((event: LayoutChangeEvent) => {
-    const { width, x } = event.nativeEvent.layout
-    progressBarRef.current = { width, x }
+    const { width } = event.nativeEvent.layout
+    progressBarRef.current = { width }
   }, [])
 
-  const handleProgressBarPress = useCallback(
-    (event: GestureResponderEvent) => {
+  const seekToProgressLocation = useCallback(
+    (locationX: number) => {
       if (!player || !player.duration || isLive) return
 
-      const { locationX } = event.nativeEvent
       const { width } = progressBarRef.current
 
       if (width > 0) {
@@ -425,6 +426,13 @@ function VideoPlayer({
       }
     },
     [player, state$, isLive],
+  )
+
+  const handleProgressBarTouch = useCallback(
+    (event: GestureResponderEvent) => {
+      seekToProgressLocation(event.nativeEvent.locationX)
+    },
+    [seekToProgressLocation],
   )
 
   if (shouldSuppressPlayback) {
@@ -458,193 +466,211 @@ function VideoPlayer({
   }
 
   return (
-    <Pressable style={{ flex: 1, width: SCREEN_WIDTH }} onPress={togglePlayPause}>
-      <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
-        {currentUrl && player ? (
-          <VideoView
-            player={player}
-            style={{ flex: 1 }}
-            contentFit="cover"
-            nativeControls={false}
-          />
-        ) : (
-          <YStack flex={1} alignItems="center" justifyContent="center">
-            <Spinner size="large" color={bondfireColors.bondfireCopper} />
-          </YStack>
-        )}
-
-        {/* Loading overlay */}
-        {isLoading && currentUrl && (
-          <YStack
-            position="absolute"
-            top={0}
-            left={0}
-            right={0}
-            bottom={0}
-            alignItems="center"
-            justifyContent="center"
-            backgroundColor="rgba(20, 20, 22, 0.7)"
-          >
-            <Spinner size="large" color={bondfireColors.bondfireCopper} />
-          </YStack>
-        )}
-
-        {/* Play/Pause/Replay indicator */}
-        {!isPlaying && !isLoading && (
-          <YStack
-            position="absolute"
-            top={0}
-            left={0}
-            right={0}
-            bottom={0}
-            alignItems="center"
-            justifyContent="center"
-            pointerEvents="none"
-          >
-            <YStack
-              width={80}
-              height={80}
-              borderRadius={40}
-              backgroundColor="rgba(20, 20, 22, 0.6)"
-              alignItems="center"
-              justifyContent="center"
-            >
-              {hasEnded ? (
-                <RotateCcw size={40} color={bondfireColors.whiteSmoke} />
-              ) : (
-                <Play
-                  size={40}
-                  color={bondfireColors.whiteSmoke}
-                  fill={bondfireColors.whiteSmoke}
-                />
-              )}
-            </YStack>
-          </YStack>
-        )}
-
-        {/* Bottom gradient */}
-        <LinearGradient
-          colors={['transparent', 'rgba(20, 20, 22, 0.6)', 'rgba(20, 20, 22, 0.9)']}
-          style={{
-            position: 'absolute',
-            bottom: 0,
-            left: 0,
-            right: 0,
-            height: 180,
-          }}
-          pointerEvents="none"
+    <YStack flex={1} width={SCREEN_WIDTH} backgroundColor={bondfireColors.obsidian}>
+      {currentUrl && player ? (
+        <VideoView
+          player={player}
+          style={{ flex: 1 }}
+          contentFit="cover"
+          nativeControls={false}
+          surfaceType={Platform.OS === 'android' ? 'textureView' : undefined}
         />
+      ) : (
+        <YStack flex={1} alignItems="center" justifyContent="center">
+          <Spinner size="large" color={bondfireColors.bondfireCopper} />
+        </YStack>
+      )}
 
-        {isLive ? (
-          <YStack position="absolute" bottom={104} left={20}>
-            <YStack
-              backgroundColor={bondfireColors.error}
-              paddingHorizontal={14}
-              paddingVertical={7}
-              borderRadius={16}
-            >
-              <Text color={bondfireColors.whiteSmoke} fontSize={12} fontWeight="900">
-                LIVE
-              </Text>
-            </YStack>
+      {/* Touch overlay for play/pause/replay — positioned ABOVE VideoView so it receives taps first */}
+      <Pressable
+        onPress={togglePlayPause}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 1,
+        }}
+      />
+
+      {/* Loading overlay */}
+      {isLoading && currentUrl && (
+        <YStack
+          position="absolute"
+          top={0}
+          left={0}
+          right={0}
+          bottom={0}
+          alignItems="center"
+          justifyContent="center"
+          backgroundColor="rgba(20, 20, 22, 0.7)"
+          zIndex={2}
+          pointerEvents="none"
+        >
+          <Spinner size="large" color={bondfireColors.bondfireCopper} />
+        </YStack>
+      )}
+
+      {/* Play/Pause/Replay indicator */}
+      {!isPlaying && !isLoading && (
+        <YStack
+          position="absolute"
+          top={0}
+          left={0}
+          right={0}
+          bottom={0}
+          alignItems="center"
+          justifyContent="center"
+          zIndex={2}
+          pointerEvents="none"
+        >
+          <YStack
+            width={80}
+            height={80}
+            borderRadius={40}
+            backgroundColor="rgba(20, 20, 22, 0.6)"
+            alignItems="center"
+            justifyContent="center"
+          >
+            {hasEnded ? (
+              <RotateCcw size={40} color={bondfireColors.whiteSmoke} />
+            ) : (
+              <Play size={40} color={bondfireColors.whiteSmoke} fill={bondfireColors.whiteSmoke} />
+            )}
           </YStack>
-        ) : (
-          <YStack position="absolute" bottom={100} left={20} right={20}>
-            <Pressable onPress={handleProgressBarPress} onLayout={handleProgressBarLayout}>
-              <YStack paddingVertical={10}>
-                <YStack height={4} backgroundColor="rgba(255,255,255,0.3)" borderRadius={2}>
-                  <YStack
-                    height={4}
-                    backgroundColor={bondfireColors.bondfireCopper}
-                    borderRadius={2}
-                    width={`${progress * 100}%`}
-                  />
-                  <YStack
-                    position="absolute"
-                    top={-4}
-                    left={`${progress * 100}%`}
-                    marginLeft={-6}
-                    width={12}
-                    height={12}
-                    borderRadius={6}
-                    backgroundColor={bondfireColors.bondfireCopper}
-                  />
-                </YStack>
+        </YStack>
+      )}
+
+      {/* Bottom gradient */}
+      <LinearGradient
+        colors={['transparent', 'rgba(20, 20, 22, 0.6)', 'rgba(20, 20, 22, 0.9)']}
+        style={{
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: 180,
+          zIndex: 2,
+        }}
+        pointerEvents="none"
+      />
+
+      {isLive ? (
+        <YStack position="absolute" bottom={104} left={20} zIndex={3}>
+          <YStack
+            backgroundColor={bondfireColors.error}
+            paddingHorizontal={14}
+            paddingVertical={7}
+            borderRadius={16}
+          >
+            <Text color={bondfireColors.whiteSmoke} fontSize={12} fontWeight="900">
+              LIVE
+            </Text>
+          </YStack>
+        </YStack>
+      ) : (
+        <YStack position="absolute" bottom={100} left={20} right={20} zIndex={3}>
+          <View
+            onLayout={handleProgressBarLayout}
+            onStartShouldSetResponder={() => !isLive && Boolean(player?.duration)}
+            onMoveShouldSetResponder={() => !isLive && Boolean(player?.duration)}
+            onResponderGrant={handleProgressBarTouch}
+            onResponderMove={handleProgressBarTouch}
+          >
+            <YStack paddingVertical={10}>
+              <YStack height={4} backgroundColor="rgba(255,255,255,0.3)" borderRadius={2}>
+                <YStack
+                  height={4}
+                  backgroundColor={bondfireColors.bondfireCopper}
+                  borderRadius={2}
+                  width={`${progress * 100}%`}
+                />
+                <YStack
+                  position="absolute"
+                  top={-4}
+                  left={`${progress * 100}%`}
+                  marginLeft={-6}
+                  width={12}
+                  height={12}
+                  borderRadius={6}
+                  backgroundColor={bondfireColors.bondfireCopper}
+                />
               </YStack>
-            </Pressable>
-            <XStack justifyContent="space-between" marginTop={4}>
-              <Text fontSize={12} color={bondfireColors.ash}>
-                {formatTime(progress * duration)}
-              </Text>
-              <Text fontSize={12} color={bondfireColors.ash}>
-                {formatTime(duration)}
-              </Text>
-            </XStack>
-          </YStack>
-        )}
-
-        {/* Creator info */}
-        <YStack position="absolute" bottom={140} left={20}>
-          <XStack alignItems="center" gap={12}>
-            <YStack
-              width={40}
-              height={40}
-              borderRadius={20}
-              backgroundColor={bondfireColors.gunmetal}
-              alignItems="center"
-              justifyContent="center"
-              borderWidth={2}
-              borderColor={isMainVideo ? bondfireColors.bondfireCopper : bondfireColors.moltenGold}
-            >
-              <Flame
-                size={20}
-                color={isMainVideo ? bondfireColors.bondfireCopper : bondfireColors.moltenGold}
-              />
             </YStack>
-            <YStack>
-              <Text fontWeight="600" fontSize={15}>
-                {creatorName}
-              </Text>
-              <Text fontSize={12} color={bondfireColors.ash}>
-                {isMainVideo ? 'Original' : `Response ${responseIndex}`}
-              </Text>
-            </YStack>
+          </View>
+          <XStack justifyContent="space-between" marginTop={4}>
+            <Text fontSize={12} color={bondfireColors.ash}>
+              {formatTime(progress * duration)}
+            </Text>
+            <Text fontSize={12} color={bondfireColors.ash}>
+              {formatTime(duration)}
+            </Text>
           </XStack>
         </YStack>
+      )}
 
-        {/* Right side controls */}
-        <YStack position="absolute" right={16} bottom={160} gap={16} alignItems="center">
-          {/* Report button - only show when paused */}
-          {!isPlaying && !isLoading && <ReportButton onPress={() => state$.showReport.set(true)} />}
-          <Pressable onPress={toggleMute}>
-            <YStack
-              width={44}
-              height={44}
-              borderRadius={22}
-              backgroundColor="rgba(31, 32, 35, 0.8)"
-              alignItems="center"
-              justifyContent="center"
-            >
-              {isMuted ? (
-                <VolumeX size={22} color={bondfireColors.whiteSmoke} />
-              ) : (
-                <Volume2 size={22} color={bondfireColors.whiteSmoke} />
-              )}
-            </YStack>
-          </Pressable>
-        </YStack>
-
-        {/* Report Overlay */}
-        {showReport && (
-          <ReportOverlay
-            bondfireId={bondfireId}
-            bondfireVideoId={bondfireVideoId}
-            videoOwnerId={videoOwnerId}
-            onClose={() => state$.showReport.set(false)}
-          />
-        )}
+      {/* Creator info */}
+      <YStack position="absolute" bottom={140} left={20} zIndex={3} pointerEvents="box-none">
+        <XStack alignItems="center" gap={12}>
+          <YStack
+            width={40}
+            height={40}
+            borderRadius={20}
+            backgroundColor={bondfireColors.gunmetal}
+            alignItems="center"
+            justifyContent="center"
+            borderWidth={2}
+            borderColor={isMainVideo ? bondfireColors.bondfireCopper : bondfireColors.moltenGold}
+          >
+            <Flame
+              size={20}
+              color={isMainVideo ? bondfireColors.bondfireCopper : bondfireColors.moltenGold}
+            />
+          </YStack>
+          <YStack>
+            <Text fontWeight="600" fontSize={15}>
+              {creatorName}
+            </Text>
+            <Text fontSize={12} color={bondfireColors.ash}>
+              {isMainVideo ? 'Original' : `Response ${responseIndex}`}
+            </Text>
+          </YStack>
+        </XStack>
       </YStack>
-    </Pressable>
+
+      {/* Right side controls */}
+      <YStack position="absolute" right={16} bottom={160} gap={16} alignItems="center" zIndex={3}>
+        {/* Report button - only show when paused */}
+        {!isPlaying && !isLoading && <ReportButton onPress={() => state$.showReport.set(true)} />}
+        <Pressable onPress={toggleMute}>
+          <YStack
+            width={44}
+            height={44}
+            borderRadius={22}
+            backgroundColor="rgba(31, 32, 35, 0.8)"
+            alignItems="center"
+            justifyContent="center"
+          >
+            {isMuted ? (
+              <VolumeX size={22} color={bondfireColors.whiteSmoke} />
+            ) : (
+              <Volume2 size={22} color={bondfireColors.whiteSmoke} />
+            )}
+          </YStack>
+        </Pressable>
+      </YStack>
+
+      {/* Report Overlay */}
+      {showReport && (
+        <ReportOverlay
+          bondfireId={bondfireId}
+          bondfireVideoId={bondfireVideoId}
+          videoOwnerId={videoOwnerId}
+          onClose={() => state$.showReport.set(false)}
+        />
+      )}
+    </YStack>
   )
 }
 
