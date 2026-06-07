@@ -611,7 +611,7 @@ function VideoPlayer({
       )}
 
       {/* Creator info */}
-      <YStack position="absolute" bottom={140} left={20} zIndex={3} pointerEvents="box-none">
+      <YStack position="absolute" bottom={148} left={20} zIndex={3} pointerEvents="box-none">
         <XStack alignItems="center" gap={12}>
           <YStack
             width={40}
@@ -633,7 +633,7 @@ function VideoPlayer({
               {creatorName}
             </Text>
             <Text fontSize={12} color={bondfireColors.ash}>
-              {isMainVideo ? 'Original' : `Response ${responseIndex}`}
+              {isMainVideo ? 'Spark' : `Response ${responseIndex}`}
             </Text>
           </YStack>
         </XStack>
