@@ -1,8 +1,8 @@
+import { useQuery } from 'convex/react'
+import Constants from 'expo-constants'
 import * as Linking from 'expo-linking'
 import { useEffect, useState } from 'react'
 import { Platform } from 'react-native'
-import Constants from 'expo-constants'
-import { useQuery } from 'convex/react'
 import { api } from '../../../../convex/_generated/api'
 
 // ---------------------------------------------------------------------------
@@ -99,11 +99,12 @@ export function useForceUpdate(): ForceUpdateState {
  * Opens the app store listing for the current platform.
  */
 export function openAppStore(): void {
-  const url = Platform.OS === 'ios'
-    ? APP_STORE_URL
-    : Platform.OS === 'android'
-    ? PLAY_STORE_URL
-    : APP_STORE_URL
+  const url =
+    Platform.OS === 'ios'
+      ? APP_STORE_URL
+      : Platform.OS === 'android'
+        ? PLAY_STORE_URL
+        : APP_STORE_URL
 
   Linking.openURL(url).catch(() => {
     // Fallback: couldn't open store link — nothing more we can do

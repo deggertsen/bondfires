@@ -213,7 +213,10 @@ function getMuxSigningConfig() {
 
 function readMuxSigningPrivateKey(privateKey: string) {
   const normalizedPrivateKey = privateKey.replace(/\\n/g, '\n').trim()
-  if (normalizedPrivateKey.includes('-----BEGIN RSA PRIVATE KEY-----') || normalizedPrivateKey.includes('-----BEGIN PRIVATE KEY-----')) {
+  if (
+    normalizedPrivateKey.includes('-----BEGIN RSA PRIVATE KEY-----') ||
+    normalizedPrivateKey.includes('-----BEGIN PRIVATE KEY-----')
+  ) {
     return normalizedPrivateKey
   }
 
@@ -230,7 +233,9 @@ async function importMuxSigningKey(encodedPrivateKey: string) {
   const der = base64ToBytes(derBase64)
 
   // PKCS1 RSA key format: need to wrap in PKCS8 envelope for Web Crypto
-  const keyData: ArrayBuffer = isRsaKey ? wrapPkcs1ToPkcs8(der) : (der.buffer.slice(der.byteOffset, der.byteOffset + der.byteLength) as ArrayBuffer)
+  const keyData: ArrayBuffer = isRsaKey
+    ? wrapPkcs1ToPkcs8(der)
+    : (der.buffer.slice(der.byteOffset, der.byteOffset + der.byteLength) as ArrayBuffer)
 
   return await crypto.subtle.importKey(
     'pkcs8',
