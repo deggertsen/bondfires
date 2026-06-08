@@ -30,14 +30,14 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { LinearGradient } from 'expo-linear-gradient'
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { useVideoPlayer, VideoView } from 'expo-video'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   AppState,
   Dimensions,
   FlatList,
-  type GestureResponderEvent,
   type LayoutChangeEvent,
+  PanResponder,
   Platform,
   Pressable,
   StatusBar,
@@ -55,6 +55,7 @@ import { SettingsPopover } from '../../../components/SettingsPopover'
 import { routes } from '../../../lib/routes'
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window')
+const SCRUB_SEEK_THROTTLE_MS = 100
 
 type PublicUser = {
   _id: Id<'users'>
@@ -74,6 +75,17 @@ type BondfireDetailData = Doc<'bondfires'> & {
   campStatus?: Doc<'camps'>['status']
   videos: Doc<'bondfireVideos'>[]
   participants?: ThreadParticipant[]
+}
+
+type ProgressBarMetrics = {
+  width: number
+  pageX: number | null
+}
+
+type PendingScrubSeek = {
+  locationX: number | null
+  timeout: ReturnType<typeof setTimeout> | null
+  lastSeekAt: number
 }
 
 interface VideoPlayerProps {
@@ -159,7 +171,14 @@ function VideoPlayer({
   const hasEnded = useValue(state$.hasEnded)
 
   const bufferingCheckInterval = useRef<ReturnType<typeof setInterval> | null>(null)
-  const progressBarRef = useRef<{ width: number }>({ width: 0 })
+  const progressBarViewRef = useRef<View>(null)
+  const progressBarRef = useRef<ProgressBarMetrics>({ width: 0, pageX: null })
+  const isScrubbingRef = useRef(false)
+  const pendingScrubSeekRef = useRef<PendingScrubSeek>({
+    locationX: null,
+    timeout: null,
+    lastSeekAt: 0,
+  })
 
   const player = useVideoPlayer(currentUrl || '', (player) => {
     player.loop = false
@@ -266,7 +285,12 @@ function VideoPlayer({
 
       // Update progress when status changes to readyToPlay
       if (status.status === 'readyToPlay') {
-        if (!isLive && player.currentTime !== undefined && player.duration) {
+        if (
+          !isScrubbingRef.current &&
+          !isLive &&
+          player.currentTime !== undefined &&
+          player.duration
+        ) {
           const currentProgress = player.currentTime / player.duration
           state$.progress.set(currentProgress)
           onProgress(currentProgress)
@@ -288,6 +312,7 @@ function VideoPlayer({
     // Update progress periodically (interval-based)
     const progressInterval = setInterval(() => {
       if (
+        !isScrubbingRef.current &&
         !isLive &&
         player.status === 'readyToPlay' &&
         player.currentTime !== undefined &&
@@ -406,19 +431,27 @@ function VideoPlayer({
 
   const handleProgressBarLayout = useCallback((event: LayoutChangeEvent) => {
     const { width } = event.nativeEvent.layout
-    progressBarRef.current = { width }
+    progressBarRef.current.width = width
+    progressBarViewRef.current?.measure((_x, _y, measuredWidth, _height, pageX) => {
+      progressBarRef.current = { width: measuredWidth || width, pageX }
+    })
   }, [])
 
   const seekToProgressLocation = useCallback(
-    (locationX: number) => {
-      if (!player || !player.duration || isLive) return
+    (locationX: number, shouldSeek = true) => {
+      if (!player || isLive) return
+
+      const videoDuration = player.duration
+      if (!Number.isFinite(videoDuration) || videoDuration <= 0) return
 
       const { width } = progressBarRef.current
 
       if (width > 0) {
         const seekProgress = Math.max(0, Math.min(1, locationX / width))
-        const seekTime = seekProgress * player.duration
-        player.currentTime = seekTime
+        const seekTime = seekProgress * videoDuration
+        if (shouldSeek) {
+          player.currentTime = seekTime
+        }
         state$.progress.set(seekProgress)
         state$.hasEnded.set(false)
         state$.userInitiatedPlay.set(true)
@@ -427,12 +460,143 @@ function VideoPlayer({
     [player, state$, isLive],
   )
 
-  const handleProgressBarTouch = useCallback(
-    (event: GestureResponderEvent) => {
-      seekToProgressLocation(event.nativeEvent.locationX)
+  const canSeekProgress =
+    !isLive && Number.isFinite(player?.duration) && (player?.duration ?? 0) > 0
+  const canSeekProgressRef = useRef(canSeekProgress)
+  const seekToProgressLocationRef = useRef(seekToProgressLocation)
+
+  canSeekProgressRef.current = canSeekProgress
+  seekToProgressLocationRef.current = seekToProgressLocation
+
+  const clearPendingScrubSeek = useCallback(() => {
+    const pending = pendingScrubSeekRef.current
+    if (pending.timeout) {
+      clearTimeout(pending.timeout)
+      pending.timeout = null
+    }
+    pending.locationX = null
+  }, [])
+
+  const applyScrubSeekLocation = useCallback((locationX: number) => {
+    pendingScrubSeekRef.current.lastSeekAt = Date.now()
+    pendingScrubSeekRef.current.locationX = null
+    seekToProgressLocationRef.current(locationX, true)
+  }, [])
+
+  const getProgressLocationFromPageX = useCallback((pageX: number) => {
+    const barPageX = progressBarRef.current.pageX
+    if (barPageX === null) return null
+
+    return pageX - barPageX
+  }, [])
+
+  const seekToProgressPageX = useCallback(
+    (pageX: number, shouldSeek = true) => {
+      const locationX = getProgressLocationFromPageX(pageX)
+      if (locationX === null) return
+
+      seekToProgressLocationRef.current(locationX, shouldSeek)
     },
-    [seekToProgressLocation],
+    [getProgressLocationFromPageX],
   )
+
+  const scheduleScrubSeekPageX = useCallback(
+    (pageX: number) => {
+      const locationX = getProgressLocationFromPageX(pageX)
+      if (locationX === null) return
+
+      seekToProgressLocationRef.current(locationX, false)
+
+      const pending = pendingScrubSeekRef.current
+      pending.locationX = locationX
+
+      const elapsed = Date.now() - pending.lastSeekAt
+      const delay = SCRUB_SEEK_THROTTLE_MS - elapsed
+
+      if (delay <= 0) {
+        if (pending.timeout) {
+          clearTimeout(pending.timeout)
+          pending.timeout = null
+        }
+        applyScrubSeekLocation(locationX)
+        return
+      }
+
+      if (!pending.timeout) {
+        pending.timeout = setTimeout(() => {
+          pending.timeout = null
+          const pendingLocationX = pending.locationX
+          if (pendingLocationX !== null) {
+            applyScrubSeekLocation(pendingLocationX)
+          }
+        }, delay)
+      }
+    },
+    [applyScrubSeekLocation, getProgressLocationFromPageX],
+  )
+
+  const finishScrubSeekPageX = useCallback(
+    (pageX: number) => {
+      const locationX = getProgressLocationFromPageX(pageX)
+      clearPendingScrubSeek()
+      isScrubbingRef.current = false
+
+      if (locationX !== null) {
+        applyScrubSeekLocation(locationX)
+      }
+    },
+    [applyScrubSeekLocation, clearPendingScrubSeek, getProgressLocationFromPageX],
+  )
+
+  const measureProgressBar = useCallback((onMeasured?: () => void) => {
+    progressBarViewRef.current?.measure((_x, _y, width, _height, pageX) => {
+      progressBarRef.current = { width: width || progressBarRef.current.width, pageX }
+      onMeasured?.()
+    })
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!isLive) {
+      measureProgressBar()
+    }
+  }, [isLive, measureProgressBar])
+
+  useEffect(() => {
+    return () => {
+      clearPendingScrubSeek()
+    }
+  }, [clearPendingScrubSeek])
+
+  const progressBarPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => canSeekProgressRef.current,
+      onMoveShouldSetPanResponder: () => canSeekProgressRef.current,
+
+      onPanResponderGrant: (evt) => {
+        isScrubbingRef.current = true
+        clearPendingScrubSeek()
+
+        const touchPageX = evt.nativeEvent.pageX
+        measureProgressBar(() => {
+          seekToProgressPageX(touchPageX, true)
+        })
+      },
+
+      onPanResponderMove: (_evt, gestureState) => {
+        scheduleScrubSeekPageX(gestureState.moveX)
+      },
+
+      onPanResponderRelease: (evt, gestureState) => {
+        const releasePageX = gestureState.moveX > 0 ? gestureState.moveX : evt.nativeEvent.pageX
+        finishScrubSeekPageX(releasePageX)
+      },
+
+      onPanResponderTerminate: (evt, gestureState) => {
+        const releasePageX = gestureState.moveX > 0 ? gestureState.moveX : evt.nativeEvent.pageX
+        finishScrubSeekPageX(releasePageX)
+      },
+    }),
+  ).current
 
   if (shouldSuppressPlayback) {
     return (
@@ -571,11 +735,9 @@ function VideoPlayer({
       ) : (
         <YStack position="absolute" bottom={100} left={20} right={20} zIndex={3}>
           <View
+            ref={progressBarViewRef}
             onLayout={handleProgressBarLayout}
-            onStartShouldSetResponder={() => !isLive && Boolean(player?.duration)}
-            onMoveShouldSetResponder={() => !isLive && Boolean(player?.duration)}
-            onResponderGrant={handleProgressBarTouch}
-            onResponderMove={handleProgressBarTouch}
+            {...progressBarPanResponder.panHandlers}
           >
             <YStack paddingVertical={10}>
               <YStack height={4} backgroundColor="rgba(255,255,255,0.3)" borderRadius={2}>
