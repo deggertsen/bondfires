@@ -10,9 +10,11 @@ interface NotepadOverlayProps {
 }
 
 export function NotepadOverlay({ onClose }: NotepadOverlayProps) {
-  const { colors } = useAppThemeColors()
+  const { colors, themeName } = useAppThemeColors()
   const content = useValue(notepadStore$.content)
   const textInputRef = useRef<TextInput>(null)
+
+  const overlayBg = themeName === 'dark' ? 'rgba(20, 20, 22, 0.6)' : 'rgba(250, 250, 250, 0.85)'
 
   // Auto-focus on mount
   useEffect(() => {
@@ -42,7 +44,7 @@ export function NotepadOverlay({ onClose }: NotepadOverlayProps) {
       >
         <YStack
           flex={1}
-          backgroundColor="rgba(20, 20, 22, 0.6)"
+          backgroundColor={overlayBg}
           paddingHorizontal={12}
           marginTop={100}
           paddingBottom={12}

@@ -3,6 +3,11 @@ import { useValue } from '@legendapp/state/react'
 import { Pressable, StyleSheet } from 'react-native'
 import { Slider, Text, XStack, YStack } from 'tamagui'
 
+// Settings popover always uses a dark overlay background regardless of theme.
+// This keeps it visually anchored as a floating control panel.
+const POPOVER_BG = 'rgba(0, 0, 0, 0.9)'
+const POPOVER_TEXT = '#F3F4F6'
+
 interface SettingsPopoverProps {
   onClose: () => void
 }
@@ -28,11 +33,11 @@ export function SettingsPopover({ onClose }: SettingsPopoverProps) {
         right={16}
         width={200}
         padding={16}
-        backgroundColor="rgba(0, 0, 0, 0.9)"
+        backgroundColor={POPOVER_BG}
         borderRadius={8}
         zIndex={1000}
       >
-        <Text fontSize={14} fontWeight="600" color={'$color'} marginBottom={12}>
+        <Text fontSize={14} fontWeight="600" color={POPOVER_TEXT} marginBottom={12}>
           Playback Speed
         </Text>
         <XStack alignItems="center" gap={8}>
@@ -52,7 +57,7 @@ export function SettingsPopover({ onClose }: SettingsPopoverProps) {
               <Slider.Thumb index={0} circular backgroundColor={'$primary'} />
             </Slider>
           </YStack>
-          <Text fontSize={14} color={'$color'} minWidth={40}>
+          <Text fontSize={14} color={POPOVER_TEXT} minWidth={40}>
             {playbackSpeed.toFixed(2)}x
           </Text>
         </XStack>
