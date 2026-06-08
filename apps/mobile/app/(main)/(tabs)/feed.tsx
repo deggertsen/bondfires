@@ -2,6 +2,7 @@ import {
   appActions,
   appStore$,
   getBondfireVideoIndex,
+  getErrorMessage,
   getFeedActiveBondfireId,
   getLastLocation,
   hasViewedToday,
@@ -30,6 +31,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Separator, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
+import {
+  BONDFIRE_REPORT_OPTIONS,
+  getBondfireSwipeActions,
+  getSwipeReportComment,
+} from '../../../lib/bondfireSwipeActions'
 import { routes } from '../../../lib/routes'
 
 type BondfireData = Doc<'bondfires'> & {
@@ -40,25 +46,6 @@ type BondfireData = Doc<'bondfires'> & {
 type JoinedCamp = Doc<'camps'> & { membership: Doc<'campMembers'> }
 
 type ViewMode = 'discover' | 'recent' | 'active' | 'unseen'
-
-const REPORT_OPTIONS = [
-  {
-    label: 'Harassment',
-    subCategory: 'harassment_or_abuse',
-  },
-  {
-    label: 'Inappropriate',
-    subCategory: 'pornographic_content',
-  },
-  {
-    label: 'Spam',
-    subCategory: 'spam_or_solicitation',
-  },
-] as const
-
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error)
-}
 
 function getTimeAgo(timestamp: number): string {
   const seconds = Math.floor((Date.now() - timestamp) / 1000)
@@ -161,38 +148,13 @@ function BondfireRow({
   const isOwner = currentUserId === bondfire.userId
   const isPinned = pinnedIds.includes(bondfire._id)
 
-  const actions: Array<{
-    key: string
-    label: string
-    color?: string
-    backgroundColor?: string
-    onPress: () => void
-  }> = []
-
-  if (isOwner) {
-    actions.push({
-      key: 'delete',
-      label: 'Delete',
-      color: '$error',
-      backgroundColor: '$backgroundHover',
-      onPress: onDelete,
-    })
-  } else {
-    actions.push({
-      key: 'report',
-      label: 'Report',
-      color: '$warning',
-      backgroundColor: '$backgroundHover',
-      onPress: onReport,
-    })
-  }
-
-  actions.push({
-    key: 'pin',
-    label: isPinned ? 'Unpin' : 'Pin',
-    color: '$primary',
-    backgroundColor: '$backgroundHover',
-    onPress: isPinned ? onUnpin : onPin,
+  const actions = getBondfireSwipeActions({
+    isOwner,
+    isPinned,
+    onDelete,
+    onPin,
+    onUnpin,
+    onReport,
   })
 
   const row = (
@@ -395,6 +357,7 @@ export default function FeedScreen() {
     () => (currentUser?.pinnedBondfireIds ?? []) as string[],
     [currentUser?.pinnedBondfireIds],
   )
+  const listExtraData = useMemo(() => ({ currentUserId, pinnedIds }), [currentUserId, pinnedIds])
   const pinnedOrder = useMemo(() => new Map(pinnedIds.map((id, index) => [id, index])), [pinnedIds])
 
   // Mutations for swipe actions
@@ -694,7 +657,7 @@ export default function FeedScreen() {
     (bondfireId: string, videoOwnerId: string) => {
       Alert.alert('Report Content', 'What category best describes the issue?', [
         { text: 'Cancel', style: 'cancel' },
-        ...REPORT_OPTIONS.map((option) => ({
+        ...BONDFIRE_REPORT_OPTIONS.map((option) => ({
           text: option.label,
           onPress: async () => {
             try {
@@ -703,7 +666,7 @@ export default function FeedScreen() {
                 videoOwnerId: videoOwnerId as Id<'users'>,
                 category: 'community_guidelines',
                 subCategory: option.subCategory,
-                comments: 'Reported from feed swipe action',
+                comments: getSwipeReportComment('feed'),
               })
               Alert.alert('Reported', 'Thank you. We will review this content.')
             } catch (error) {
@@ -789,6 +752,7 @@ export default function FeedScreen() {
           listRef.current = r
         }}
         data={filtered ?? []}
+        extraData={listExtraData}
         keyExtractor={(item) => item._id}
         refreshControl={
           <RefreshControl
