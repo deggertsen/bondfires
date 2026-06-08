@@ -103,6 +103,9 @@ export default defineSchema({
     responseCount: v.optional(v.number()),
     totalViews: v.optional(v.number()),
 
+    // Pinned bondfires (max 8)
+    pinnedBondfireIds: v.optional(v.array(v.id('bondfires'))),
+
     // Metadata
     createdAt: v.optional(v.number()),
     updatedAt: v.optional(v.number()),

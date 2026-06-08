@@ -69,6 +69,7 @@ function currentUser(user: Doc<'users'>) {
     bondfireCount: user.bondfireCount ?? 0,
     responseCount: user.responseCount ?? 0,
     totalViews: user.totalViews ?? 0,
+    pinnedBondfireIds: user.pinnedBondfireIds ?? [],
     isAdmin: user.isAdmin,
     role: user.role,
     themePreference: user.themePreference ?? 'system',
