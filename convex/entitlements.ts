@@ -18,7 +18,7 @@
 
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
-import { computeSlotBalance, consumeCampSlotForCamp } from './campSlots'
+import { burnKindlingForCamp, computeKindlingBalance } from './campKindling'
 import { throwUserError } from './errors'
 
 // ---------------------------------------------------------------------------
@@ -96,7 +96,7 @@ export async function getActiveSubscriptionTier(
   )
 }
 
-/** Base camp limits by tier. Pro public camp limit is governed by slot balance, not a hard cap. */
+/** Base camp limits by tier. Pro public camp limit is governed by kindling balance, not a hard cap. */
 export const TIER_CAMP_LIMITS: Record<
   SubscriptionTier,
   { publicCamps?: number; privateCamps: number }
@@ -105,7 +105,7 @@ export const TIER_CAMP_LIMITS: Record<
   plus: { privateCamps: 1 },
   premium: { privateCamps: 1 },
   pro: { privateCamps: 1 },
-  // Pro public camps are limited by slot balance only — no hard cap.
+  // Pro public camps are limited by kindling balance only — no hard cap.
 }
 
 /**
@@ -298,8 +298,8 @@ export async function assertCanCreatePublicCamp(
     throwUserError('Creating public camps requires a Pro subscription')
   }
 
-  // Public camp creation is limited by slot balance, not a hard count cap.
-  // The calling mutation (createPublicCamp) will also call consumeCampSlot
+  // Public camp creation is limited by kindling balance, not a hard count cap.
+  // The calling mutation (createPublicCamp) will also call burnKindling
   // which enforces balance ≥ 1. We do a lightweight balance check here to
   // give an earlier, clearer error message.
   const transactions = await ctx.db
@@ -309,7 +309,7 @@ export async function assertCanCreatePublicCamp(
   const balance = transactions.reduce((sum, tx) => sum + tx.amount, 0)
 
   if (balance < 1) {
-    throwUserError('You need at least 1 available slot to create a public camp')
+    throwUserError('You need at least 1 kindling to create a public camp')
   }
 
   return tier
@@ -389,7 +389,7 @@ async function getCampLimitsForTier(
   _userId: Id<'users'>,
   tier: SubscriptionTier,
 ) {
-  // For public camps: Pro has no hard cap — limited by slot balance.
+  // For public camps: Pro has no hard cap — limited by kindling balance.
   // For private camps: limits are per TIER_CAMP_LIMITS.
   return {
     publicCamps: TIER_RANK[tier] >= TIER_RANK.pro ? Number.POSITIVE_INFINITY : 0,
@@ -459,7 +459,7 @@ export async function handleTierDowngrade(
     return { campsFrozen: 0 }
   }
 
-  // No more add-ons to revoke — slots are consumable.
+  // No more add-ons to revoke — kindling is consumable.
   // Just freeze excess owned camps based on the new tier's limits.
   const { campsFrozen } = await freezeExcessOwnedCamps(ctx, userId, newTier)
   return { campsFrozen }
@@ -499,14 +499,14 @@ export async function handleTierUpgrade(
 
   for (const camp of frozenCamps) {
     if (isPro) {
-      // All Pro-created camps (public and private) consume slots on reactivation.
-      const { alreadyConsumed, insufficientBalance } = await consumeCampSlotForCamp(ctx, {
+      // All Pro-created camps (public and private) consume kindling on reactivation.
+      const { alreadyConsumed, insufficientKindling } = await burnKindlingForCamp(ctx, {
         userId,
         campId: camp._id,
       })
-      // alreadyConsumed: same-month reactivation, slot already paid this period.
-      // insufficientBalance: no slots available, skip this camp gracefully.
-      if (alreadyConsumed || !insufficientBalance) {
+      // alreadyConsumed: same-month reactivation, kindling already paid this period.
+      // insufficientKindling: no kindling available, skip this camp gracefully.
+      if (alreadyConsumed || !insufficientKindling) {
         await ctx.db.patch(camp._id, {
           status: 'active',
           frozenAt: undefined,
@@ -571,12 +571,12 @@ export async function reclaimFrozenCamps(
 
   for (const camp of eligibleFrozenCamps) {
     if (isPro) {
-      // All Pro-created camps (public and private) consume slots on reclaim.
-      const { alreadyConsumed, insufficientBalance } = await consumeCampSlotForCamp(ctx, {
+      // All Pro-created camps (public and private) consume kindling on reclaim.
+      const { alreadyConsumed, insufficientKindling } = await burnKindlingForCamp(ctx, {
         userId,
         campId: camp._id,
       })
-      if (alreadyConsumed || !insufficientBalance) {
+      if (alreadyConsumed || !insufficientKindling) {
         await ctx.db.patch(camp._id, {
           status: 'active',
           frozenAt: undefined,
@@ -656,9 +656,9 @@ export async function processExpiredReclaims(
         continue
       }
 
-      const slotBalance = await computeSlotBalance(ctx, member.userId)
+      const kindlingBalance = await computeKindlingBalance(ctx, member.userId)
 
-      if (slotBalance >= 1) {
+      if (kindlingBalance >= 1) {
         eligibleProMembers.push(member)
       }
     }
@@ -681,8 +681,8 @@ export async function processExpiredReclaims(
     // A future enhancement could add a claim button in the UI.
     const newOwnerId = eligibleProMembers[0].userId
 
-    // Consume a slot for the transferred camp (all camps now slot-gated).
-    await consumeCampSlotForCamp(ctx, { userId: newOwnerId, campId: camp._id })
+    // Consume kindling for the transferred camp (all camps now kindling-gated).
+    await burnKindlingForCamp(ctx, { userId: newOwnerId, campId: camp._id })
 
     await ctx.db.patch(camp._id, {
       ownerId: newOwnerId,

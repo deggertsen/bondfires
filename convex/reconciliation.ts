@@ -1,5 +1,5 @@
 /**
- * Camp Slot Reconciliation & Refund Handling.
+ * Camp Kindling Reconciliation & Refund Handling.
  *
  * - Daily reconciliation cron (runs at 14:00 UTC) performs 4 integrity checks.
  * - Internal refund mutation for admin-triggered purchase reversals.
@@ -16,7 +16,7 @@ import type { Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalAction, internalMutation, internalQuery, query } from './_generated/server'
 import { auth } from './auth'
-import { computeSlotBalance } from './campSlots'
+import { computeKindlingBalance } from './campKindling'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -37,7 +37,7 @@ async function requireAdmin(ctx: QueryCtx | MutationCtx) {
   }
 }
 
-async function estimateConsumedSlotsFromPurchase(
+async function estimateConsumedKindlingFromPurchase(
   ctx: MutationCtx,
   purchase: { userId: Id<'users'>; quantity: number; createdAt: number },
 ): Promise<number> {
@@ -57,7 +57,7 @@ async function estimateConsumedSlotsFromPurchase(
 }
 
 /**
- * Freeze active camps owned by the user to cover a slot deficit.
+ * Freeze active camps owned by the user to cover a kindling deficit.
  * Freezes newest camps first, oldest preserved.
  * Returns the number of camps frozen.
  */
@@ -143,9 +143,9 @@ export const refundPurchase = internalMutation({
       .first()
     if (existingRefund) throw new Error('Purchase already refunded')
 
-    // Estimate how many slots from this purchase were consumed. Slots are
+    // Estimate how much kindling from this purchase was consumed. Kindling is
     // fungible, so this is capped to the purchase quantity for audit context.
-    const consumedCount = await estimateConsumedSlotsFromPurchase(ctx, purchase)
+    const consumedCount = await estimateConsumedKindlingFromPurchase(ctx, purchase)
 
     // Insert refund ledger entry (reverse full purchase amount)
     const now = Date.now()
@@ -164,7 +164,7 @@ export const refundPurchase = internalMutation({
     })
 
     // If resulting balance < 0, freeze camps (newest first, oldest preserved)
-    const balance = await computeSlotBalance(ctx, purchase.userId)
+    const balance = await computeKindlingBalance(ctx, purchase.userId)
     let campsFrozen = 0
     if (balance < 0) {
       campsFrozen = await freezeCampsToCoverDeficit(ctx, purchase.userId, Math.abs(balance), now)
@@ -180,7 +180,7 @@ export const refundPurchase = internalMutation({
     await ctx.db.insert('reconciliationLog', {
       severity: 'info',
       category: 'refund',
-      message: `Refunded ${purchase.quantity} slots (${consumedCount} estimated consumed, balance now ${balance}, ${campsFrozen} camps frozen)`,
+      message: `Refunded ${purchase.quantity} kindling (${consumedCount} estimated consumed, balance now ${balance}, ${campsFrozen} camps frozen)`,
       userId: purchase.userId,
       purchaseId: purchase._id,
       transactionId: purchase.storeTransactionId,
@@ -237,6 +237,7 @@ export const dailyReconciliation = internalAction({
 
     // ── A. Orphaned ledger credits ────────────────────────────────────────
     // slot_credit entries with no matching consumablePurchases record.
+    // The transaction type name is retained for existing production data.
     const orphaned: Array<{ userId: string; _id: string }> = await ctx.runQuery(
       internal.reconciliation.findOrphanedCredits,
       {},
@@ -248,7 +249,7 @@ export const dailyReconciliation = internalAction({
         category: 'orphaned_credit',
         message: `Orphaned slot_credit with no matching consumablePurchase (userId: ${credit.userId})`,
         userId: credit.userId as Id<'users'>,
-        metadata: { slotTransactionId: credit._id },
+        metadata: { kindlingTransactionId: credit._id },
         createdAt: now,
       })
     }
@@ -389,7 +390,7 @@ export const findUnverifiedPurchases = internalQuery({
  *
  * `slot_credit` and `refund` transactions are implementation details for
  * applying consumable purchase state to the ledger. A refunded purchase should
- * net to 0 expected slots, so including both refunded purchase state and refund
+ * net to 0 expected kindling, so including both refunded purchase state and refund
  * transactions would double-count refunds and create false drift.
  */
 export const findBalanceDrift = internalQuery({

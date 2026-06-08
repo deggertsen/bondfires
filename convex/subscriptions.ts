@@ -83,7 +83,7 @@ const PRODUCT_ID_TO_TIER: Record<string, SubscriptionTier | undefined> = {
   'bondfires.pro.annual': 'pro',
 }
 
-/** Product IDs matching consumable slot pack purchases. */
+/** Product IDs matching consumable kindling pack purchases. */
 const CONSUMABLE_PRODUCT_PATTERN = /^bondfires\.camp_slots\./
 
 function getStorePurchaseKind(storeProductId: string): StorePurchaseKind | null {
@@ -586,7 +586,7 @@ async function findExistingSubscription(
   )
 }
 
-function getSlotQuantityForProduct(storeProductId: string): number {
+function getKindlingQuantityForProduct(storeProductId: string): number {
   // Product IDs: bondfires.camp_slots.3pack, bondfires.camp_slots.10pack
   const packMap: Record<string, number> = {
     'bondfires.camp_slots.3pack': 3,
@@ -694,19 +694,19 @@ export const current = query({
           .collect()
       ).filter((purchase) => purchase.verificationStatus === 'pending').length
 
-    // Compute slot balance from ledger
-    const slotTransactions = await ctx.db
+    // Compute kindling balance from ledger
+    const kindlingTransactions = await ctx.db
       .query('campSlotTransactions')
       .withIndex('by_user', (q) => q.eq('userId', userId))
       .collect()
-    const slotBalance = slotTransactions.reduce((sum, tx) => sum + tx.amount, 0)
+    const kindlingBalance = kindlingTransactions.reduce((sum, tx) => sum + tx.amount, 0)
 
     return {
       tier,
       subscription,
       canCreateBondfires: tierCanCreateBondfires(tier),
       maxVideoDurationMs: getTierMaxVideoDurationMs(tier),
-      slotBalance,
+      kindlingBalance,
       pendingStorePurchaseCount,
     }
   },
@@ -815,7 +815,7 @@ export const syncStorePurchase = mutation({
         })
       }
     } else {
-      // Consumable purchase (slot pack)
+      // Consumable purchase (kindling pack)
       const existing = await findExistingConsumablePurchase(ctx, {
         userId,
         storeProductId: args.storeProductId,
@@ -844,7 +844,7 @@ export const syncStorePurchase = mutation({
             platform: args.platform,
             storeProductId: args.storeProductId,
             ...consumableReceiptFields,
-            quantity: getSlotQuantityForProduct(args.storeProductId),
+            quantity: getKindlingQuantityForProduct(args.storeProductId),
           })
         }
       } else {
@@ -854,7 +854,7 @@ export const syncStorePurchase = mutation({
           platform: args.platform,
           storeProductId: args.storeProductId,
           ...consumableReceiptFields,
-          quantity: getSlotQuantityForProduct(args.storeProductId),
+          quantity: getKindlingQuantityForProduct(args.storeProductId),
           createdAt: args.purchasedAt ?? now,
         })
       }
@@ -947,10 +947,10 @@ export const applyStorePurchaseVerification = internalMutation({
       if (verificationStatus === 'verified') {
         const newEffectiveTier = await getActiveSubscriptionTier(ctx, args.userId)
 
-        // Grant the 3 free monthly slots first so that reclaim/upgrade
-        // logic has slots available to consume for public camps.
+        // Grant the 3 free monthly kindling first so that reclaim/upgrade
+        // logic has kindling available to consume for public camps.
         if (TIER_RANK[newEffectiveTier] >= TIER_RANK.pro) {
-          await ctx.runMutation(internal.campSlots.grantMonthlySlots, { userId: args.userId })
+          await ctx.runMutation(internal.campKindling.grantMonthlyKindling, { userId: args.userId })
         }
 
         if (TIER_RANK[newEffectiveTier] < TIER_RANK[previousEffectiveTier]) {
@@ -976,7 +976,7 @@ export const applyStorePurchaseVerification = internalMutation({
         }
       }
     } else {
-      // Consumable purchase verification (slot pack)
+      // Consumable purchase verification (kindling pack)
       const consumableLookup = {
         userId: args.userId,
         storeProductId: args.storeProductId,
@@ -1004,7 +1004,7 @@ export const applyStorePurchaseVerification = internalMutation({
         throw new Error('This store purchase has already been refunded')
       }
 
-      const quantity = getSlotQuantityForProduct(args.storeProductId)
+      const quantity = getKindlingQuantityForProduct(args.storeProductId)
       const fields = {
         userId: args.userId,
         platform: args.platform as 'ios' | 'android',
@@ -1034,15 +1034,15 @@ export const applyStorePurchaseVerification = internalMutation({
 
       appliedStatus = args.status
 
-      // On verified consumable purchase, credit slot balance via internal mutation.
+      // On verified consumable purchase, credit kindling balance via internal mutation.
       if (
         !alreadyVerified &&
         verificationStatus === 'verified' &&
         statusUnlocksEntitlements(args.status)
       ) {
-        await ctx.runMutation(internal.campSlots.creditSlotPurchase, {
+        await ctx.runMutation(internal.campKindling.creditKindlingPurchase, {
           userId: args.userId,
-          slotCount: quantity,
+          kindlingCount: quantity,
           metadata: {
             consumablePurchaseId,
             storeProductId: args.storeProductId,

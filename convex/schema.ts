@@ -236,7 +236,8 @@ export default defineSchema({
     .index('by_store_transaction', ['storeOriginalTransactionId'])
     .index('by_store_purchase_token', ['storePurchaseToken']),
 
-  // Immutable ledger of all camp slot movements.
+  // Immutable ledger of all camp kindling movements. The table and slot_credit
+  // type names are retained for existing production data.
   // Balance is always computed from this table, never stored.
   campSlotTransactions: defineTable({
     userId: v.id('users'),
@@ -262,7 +263,7 @@ export default defineSchema({
     .index('by_camp', ['campId', 'createdAt'])
     .index('by_user_camp', ['userId', 'campId']),
 
-  // Tracks IAP consumable purchases from stores (slot packs).
+  // Tracks IAP consumable purchases from stores (kindling packs).
   consumablePurchases: defineTable({
     userId: v.id('users'),
     platform: storePlatform,
@@ -270,7 +271,7 @@ export default defineSchema({
     storeTransactionId: v.optional(v.string()),
     storeOriginalTransactionId: v.optional(v.string()),
     storePurchaseToken: v.optional(v.string()),
-    quantity: v.number(), // how many slots purchased
+    quantity: v.number(), // how many kindling purchased
     verificationStatus: storeVerificationStatus,
     verifiedAt: v.optional(v.number()),
     createdAt: v.number(),
@@ -328,7 +329,7 @@ export default defineSchema({
     .index('by_bondfire', ['bondfireId', 'createdAt'])
     .index('by_created_by', ['createdBy', 'createdAt']),
 
-  // Reconciliation audit log for daily slot balance checks and refunds.
+  // Reconciliation audit log for daily kindling balance checks and refunds.
   reconciliationLog: defineTable({
     severity: v.union(v.literal('info'), v.literal('warning'), v.literal('error')),
     category: v.string(), // e.g. 'orphaned_credit', 'unverified_purchase', 'balance_drift', 'duplicate_transaction', 'refund'

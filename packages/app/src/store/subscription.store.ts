@@ -14,15 +14,15 @@ export const SUBSCRIPTION_PRODUCT_IDS = {
   proAnnual: 'bondfires.pro.annual',
 } as const
 
-/** Slot pack product IDs — consumable IAPs for extra camp slots. */
-export const SLOT_PACK_PRODUCT_IDS = {
-  campSlot3Pack: 'bondfires.camp_slots.3pack',
-  campSlot10Pack: 'bondfires.camp_slots.10pack',
+/** Kindling pack product IDs — consumable IAPs for extra camp kindling. */
+export const KINDLING_PACK_PRODUCT_IDS = {
+  campKindling3Pack: 'bondfires.camp_slots.3pack',
+  campKindling10Pack: 'bondfires.camp_slots.10pack',
 } as const
 
 export type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'
 export type BillingPeriod = 'monthly' | 'annual'
-export type SlotPackSize = 'threePack' | 'tenPack'
+export type KindlingPackSize = 'threePack' | 'tenPack'
 export type StorePurchaseKind = 'subscription' | 'consumable'
 
 export const TIER_PRODUCT_IDS: Record<
@@ -44,14 +44,14 @@ export const TIER_PRODUCT_IDS: Record<
 }
 
 export const EXTRA_CAMP_PRODUCT_IDS = {
-  campSlot3Pack: SLOT_PACK_PRODUCT_IDS.campSlot3Pack,
-  campSlot10Pack: SLOT_PACK_PRODUCT_IDS.campSlot10Pack,
+  campKindling3Pack: KINDLING_PACK_PRODUCT_IDS.campKindling3Pack,
+  campKindling10Pack: KINDLING_PACK_PRODUCT_IDS.campKindling10Pack,
 }
 
 export function isExtraCampProductId(productId: string) {
   return (
-    productId === SLOT_PACK_PRODUCT_IDS.campSlot3Pack ||
-    productId === SLOT_PACK_PRODUCT_IDS.campSlot10Pack
+    productId === KINDLING_PACK_PRODUCT_IDS.campKindling3Pack ||
+    productId === KINDLING_PACK_PRODUCT_IDS.campKindling10Pack
   )
 }
 
@@ -71,14 +71,14 @@ export const PRODUCT_ID_TO_PURCHASE_KIND: Record<string, StorePurchaseKind | und
   [SUBSCRIPTION_PRODUCT_IDS.premiumAnnual]: 'subscription',
   [SUBSCRIPTION_PRODUCT_IDS.proMonthly]: 'subscription',
   [SUBSCRIPTION_PRODUCT_IDS.proAnnual]: 'subscription',
-  [SLOT_PACK_PRODUCT_IDS.campSlot3Pack]: 'consumable',
-  [SLOT_PACK_PRODUCT_IDS.campSlot10Pack]: 'consumable',
+  [KINDLING_PACK_PRODUCT_IDS.campKindling3Pack]: 'consumable',
+  [KINDLING_PACK_PRODUCT_IDS.campKindling10Pack]: 'consumable',
 }
 
 export const ALL_SUBSCRIPTION_PRODUCT_IDS = Object.values(SUBSCRIPTION_PRODUCT_IDS)
 export const ALL_STORE_PRODUCT_IDS = [
   ...Object.values(SUBSCRIPTION_PRODUCT_IDS),
-  ...Object.values(SLOT_PACK_PRODUCT_IDS),
+  ...Object.values(KINDLING_PACK_PRODUCT_IDS),
 ]
 
 export const TIER_RANK: Record<SubscriptionTier, number> = {
@@ -170,21 +170,21 @@ export const TIER_DEFINITIONS: Record<
       { label: 'Everything in Premium' },
       { label: 'Create and manage public camps' },
       { label: 'Create private (invite-only) camps' },
-      { label: '3 camp slots per month' },
-      { label: 'Extra camp slot packs available' },
+      { label: '3 kindling per month' },
+      { label: 'Extra kindling packs available' },
       { label: 'Unlimited video length' },
     ],
   },
 }
 
 export const EXTRA_CAMP_ADD_ON_DEFINITION = {
-  threePackProductId: EXTRA_CAMP_PRODUCT_IDS.campSlot3Pack,
-  tenPackProductId: EXTRA_CAMP_PRODUCT_IDS.campSlot10Pack,
-  displayName: 'Camp slots',
-  description: 'Add permanent public camp slots to your balance.',
+  threePackProductId: EXTRA_CAMP_PRODUCT_IDS.campKindling3Pack,
+  tenPackProductId: EXTRA_CAMP_PRODUCT_IDS.campKindling10Pack,
+  displayName: 'Camp Kindling',
+  description: 'Add permanent camp kindling to your balance.',
 }
 
-/** Base private-camp limits by tier. Pro public camps are governed by slot balance. */
+/** Base private-camp limits by tier. Pro public camps are governed by kindling balance. */
 export const TIER_CAMP_LIMITS: Record<
   SubscriptionTier,
   { publicCamps?: number; privateCamps: number }

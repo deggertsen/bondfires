@@ -17,6 +17,7 @@ import type * as bondfireVideos from "../bondfireVideos.js";
 import type * as bondfires from "../bondfires.js";
 import type * as campAnalytics from "../campAnalytics.js";
 import type * as campBranding from "../campBranding.js";
+import type * as campKindling from "../campKindling.js";
 import type * as campLifecycle from "../campLifecycle.js";
 import type * as campSlots from "../campSlots.js";
 import type * as camps from "../camps.js";
@@ -59,6 +60,7 @@ declare const fullApi: ApiFromModules<{
   bondfires: typeof bondfires;
   campAnalytics: typeof campAnalytics;
   campBranding: typeof campBranding;
+  campKindling: typeof campKindling;
   campLifecycle: typeof campLifecycle;
   campSlots: typeof campSlots;
   camps: typeof camps;

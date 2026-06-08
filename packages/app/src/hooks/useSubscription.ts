@@ -23,8 +23,8 @@ import {
   ALL_SUBSCRIPTION_PRODUCT_IDS,
   CREATE_REQUIRED_TIER,
   EXTRA_CAMP_PRODUCT_IDS,
-  SLOT_PACK_PRODUCT_IDS,
   isExtraCampProductId,
+  KINDLING_PACK_PRODUCT_IDS,
   PRODUCT_ID_TO_PURCHASE_KIND,
   type StorePurchaseKind,
   type SubscriptionTier,
@@ -107,14 +107,20 @@ async function loadSubscriptionProducts(showExtraCampAddon: boolean) {
   // Play Console), so we avoid 'all' and query each type independently.
   const [subsProducts, inappProducts] = await Promise.allSettled([
     fetchProducts({ skus: ALL_SUBSCRIPTION_PRODUCT_IDS, type: 'subs' }),
-    fetchProducts({ skus: [SLOT_PACK_PRODUCT_IDS.campSlot3Pack, SLOT_PACK_PRODUCT_IDS.campSlot10Pack], type: 'in-app' }),
+    fetchProducts({
+      skus: [
+        KINDLING_PACK_PRODUCT_IDS.campKindling3Pack,
+        KINDLING_PACK_PRODUCT_IDS.campKindling10Pack,
+      ],
+      type: 'in-app',
+    }),
   ])
 
   const subsList = subsProducts.status === 'fulfilled' ? subsProducts.value : []
   const inappList = inappProducts.status === 'fulfilled' ? inappProducts.value : []
 
   if (inappProducts.status === 'rejected') {
-    telemetry.warn('iap:fetch', 'Failed to fetch in-app (slot pack) products', {
+    telemetry.warn('iap:fetch', 'Failed to fetch in-app (kindling pack) products', {
       error: String(inappProducts.reason),
     })
   }
@@ -396,7 +402,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
   )
 
   const purchaseExtraCamp = useCallback(
-    async (productId: string = EXTRA_CAMP_PRODUCT_IDS.campSlot3Pack) => {
+    async (productId: string = EXTRA_CAMP_PRODUCT_IDS.campKindling3Pack) => {
       subscriptionActions.startAddOnPurchase(productId)
       await requestStorePurchase(productId)
     },
