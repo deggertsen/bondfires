@@ -30,7 +30,7 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { LinearGradient } from 'expo-linear-gradient'
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { useVideoPlayer, VideoView } from 'expo-video'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   AppState,
@@ -74,6 +74,11 @@ type BondfireDetailData = Doc<'bondfires'> & {
   campStatus?: Doc<'camps'>['status']
   videos: Doc<'bondfireVideos'>[]
   participants?: ThreadParticipant[]
+}
+
+type ProgressBarMetrics = {
+  width: number
+  pageX: number | null
 }
 
 interface VideoPlayerProps {
@@ -159,7 +164,8 @@ function VideoPlayer({
   const hasEnded = useValue(state$.hasEnded)
 
   const bufferingCheckInterval = useRef<ReturnType<typeof setInterval> | null>(null)
-  const progressBarRef = useRef<{ width: number; pageX: number }>({ width: 0, pageX: 0 })
+  const progressBarViewRef = useRef<View>(null)
+  const progressBarRef = useRef<ProgressBarMetrics>({ width: 0, pageX: null })
 
   const player = useVideoPlayer(currentUrl || '', (player) => {
     player.loop = false
@@ -406,18 +412,24 @@ function VideoPlayer({
 
   const handleProgressBarLayout = useCallback((event: LayoutChangeEvent) => {
     const { width } = event.nativeEvent.layout
-    progressBarRef.current = { ...progressBarRef.current, width }
+    progressBarRef.current.width = width
+    progressBarViewRef.current?.measure((_x, _y, measuredWidth, _height, pageX) => {
+      progressBarRef.current = { width: measuredWidth || width, pageX }
+    })
   }, [])
 
   const seekToProgressLocation = useCallback(
     (locationX: number) => {
-      if (!player || !player.duration || isLive) return
+      if (!player || isLive) return
+
+      const videoDuration = player.duration
+      if (!Number.isFinite(videoDuration) || videoDuration <= 0) return
 
       const { width } = progressBarRef.current
 
       if (width > 0) {
         const seekProgress = Math.max(0, Math.min(1, locationX / width))
-        const seekTime = seekProgress * player.duration
+        const seekTime = seekProgress * videoDuration
         player.currentTime = seekTime
         state$.progress.set(seekProgress)
         state$.hasEnded.set(false)
@@ -427,48 +439,51 @@ function VideoPlayer({
     [player, state$, isLive],
   )
 
-  // Create a PanResponder for drag-to-scrub on the progress bar.
-  // PanResponder is needed over raw responder props because it provides
-  // gestureState.moveX (screen-space X) which stays consistent during drag,
-  // unlike nativeEvent.locationX which can be relative to changing child targets.
+  const canSeekProgress =
+    !isLive && Number.isFinite(player?.duration) && (player?.duration ?? 0) > 0
+  const canSeekProgressRef = useRef(canSeekProgress)
+  const seekToProgressLocationRef = useRef(seekToProgressLocation)
+
+  canSeekProgressRef.current = canSeekProgress
+  seekToProgressLocationRef.current = seekToProgressLocation
+
+  const seekToProgressPageX = useCallback((pageX: number) => {
+    const barPageX = progressBarRef.current.pageX
+    if (barPageX === null) return
+
+    seekToProgressLocationRef.current(pageX - barPageX)
+  }, [])
+
+  const measureProgressBar = useCallback((onMeasured?: () => void) => {
+    progressBarViewRef.current?.measure((_x, _y, width, _height, pageX) => {
+      progressBarRef.current = { width: width || progressBarRef.current.width, pageX }
+      onMeasured?.()
+    })
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!isLive) {
+      measureProgressBar()
+    }
+  }, [isLive, measureProgressBar])
+
   const progressBarPanResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => !isLive && Boolean(player?.duration),
-      onMoveShouldSetPanResponder: () => !isLive && Boolean(player?.duration),
+      onStartShouldSetPanResponder: () => canSeekProgressRef.current,
+      onMoveShouldSetPanResponder: () => canSeekProgressRef.current,
 
       onPanResponderGrant: (evt) => {
-        // Calculate the bar's screen-space left edge from the grant event.
-        // pageX = screen-X of touch, locationX = X relative to this View.
-        // So barPageX = pageX - locationX.
-        const { pageX, locationX } = evt.nativeEvent
-        progressBarRef.current.pageX = pageX - locationX
-
-        // Immediately seek to touch position
-        seekToProgressLocation(locationX)
+        const touchPageX = evt.nativeEvent.pageX
+        measureProgressBar(() => {
+          seekToProgressPageX(touchPageX)
+        })
       },
 
       onPanResponderMove: (_evt, gestureState) => {
-        // gestureState.moveX is the current screen-X of the moving touch.
-        // Subtract the bar's screen-X to get position relative to the bar.
-        const localX = gestureState.moveX - progressBarRef.current.pageX
-        seekToProgressLocation(localX)
-      },
-
-      onPanResponderRelease: () => {
-        // No cleanup needed — video continues from seeked position
-      },
-
-      onPanResponderTerminate: () => {
-        // Gesture was cancelled (e.g., notification center on iOS)
+        seekToProgressPageX(gestureState.moveX)
       },
     }),
   ).current
-
-  // Keep the shouldSet callbacks in sync with live state
-  progressBarPanResponder.panHandlers.onStartShouldSetResponder = () =>
-    !isLive && Boolean(player?.duration)
-  progressBarPanResponder.panHandlers.onMoveShouldSetResponder = () =>
-    !isLive && Boolean(player?.duration)
 
   if (shouldSuppressPlayback) {
     return (
@@ -606,7 +621,11 @@ function VideoPlayer({
         </YStack>
       ) : (
         <YStack position="absolute" bottom={100} left={20} right={20} zIndex={3}>
-          <View onLayout={handleProgressBarLayout} {...progressBarPanResponder.panHandlers}>
+          <View
+            ref={progressBarViewRef}
+            onLayout={handleProgressBarLayout}
+            {...progressBarPanResponder.panHandlers}
+          >
             <YStack paddingVertical={10}>
               <YStack height={4} backgroundColor="rgba(255,255,255,0.3)" borderRadius={2}>
                 <YStack
