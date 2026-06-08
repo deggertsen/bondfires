@@ -32,6 +32,7 @@
         ]
       },
       "infoPlist": {
+        "AppStoreID": "6755933598",
         "NSCameraUsageDescription": "Bondfires needs access to your camera to record videos for your bondfire sessions.",
         "NSMicrophoneUsageDescription": "Bondfires needs access to your microphone to record audio with your videos.",
         "NSPhotoLibraryUsageDescription": "Bondfires needs access to your photo library to save and share videos from your bondfire sessions.",

@@ -6868,6 +6868,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"expo-in-app-updates@npm:^0.12.0":
+  version: 0.12.0
+  resolution: "expo-in-app-updates@npm:0.12.0"
+  peerDependencies:
+    expo: "*"
+  checksum: 10c0/2632b09b239ec13fb2d37534500ca96c4cfd44d5fcf77483d0acb4cadaeb1b0d419e10315d21cd4318c7e2104e2f10e30cbb78823ee55dca71e97c0c553c46a8
+  languageName: node
+  linkType: hard
+
 "expo-json-utils@npm:~0.15.0":
   version: 0.15.0
   resolution: "expo-json-utils@npm:0.15.0"
@@ -8992,6 +9001,7 @@ __metadata:
     expo-image: "npm:^3.0.11"
     expo-image-manipulator: "npm:~14.0.8"
     expo-image-picker: "npm:~17.0.10"
+    expo-in-app-updates: "npm:^0.12.0"
     expo-keep-awake: "npm:~15.0.8"
     expo-linear-gradient: "npm:~15.0.8"
     expo-linking: "npm:~8.0.11"
