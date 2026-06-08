@@ -11,11 +11,10 @@ import {
   telemetry,
   useAppThemeColors,
 } from '@bondfires/app'
-import { Button, Input, SwipeableRow, Text } from '@bondfires/ui'
+import { BondfireRow, type BondfireRowProps, Button, Input, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { Eye, Flame, MessageCircle, Search } from '@tamagui/lucide-icons'
+import { Flame, Search } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
-import { Image } from 'expo-image'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -31,11 +30,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Separator, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
-import {
-  BONDFIRE_REPORT_OPTIONS,
-  getBondfireSwipeActions,
-  getSwipeReportComment,
-} from '../../../lib/bondfireSwipeActions'
+import { BONDFIRE_REPORT_OPTIONS, getSwipeReportComment } from '../../../lib/bondfireSwipeActions'
 import { routes } from '../../../lib/routes'
 
 type BondfireData = Doc<'bondfires'> & {
@@ -46,16 +41,6 @@ type BondfireData = Doc<'bondfires'> & {
 type JoinedCamp = Doc<'camps'> & { membership: Doc<'campMembers'> }
 
 type ViewMode = 'discover' | 'recent' | 'active' | 'unseen'
-
-function getTimeAgo(timestamp: number): string {
-  const seconds = Math.floor((Date.now() - timestamp) / 1000)
-
-  if (seconds < 60) return 'just now'
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`
-  if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`
-  return `${Math.floor(seconds / 604800)}w ago`
-}
 
 function ModePill({
   label,
@@ -118,146 +103,38 @@ function CampPill({
   )
 }
 
-function BondfireRow({
-  bondfire,
-  thumbnailUrl,
-  currentUserId,
-  pinnedIds,
-  onOpen,
-  onRespond,
-  onDelete,
-  onPin,
-  onUnpin,
-  onReport,
-}: {
-  bondfire: BondfireData
-  thumbnailUrl: string | null
-  currentUserId: string | null
-  pinnedIds: string[]
-  onOpen: () => void
-  onRespond: () => void
-  onDelete: () => void
-  onPin: () => void
-  onUnpin: () => void
-  onReport: () => void
-}) {
-  const timeAgo = getTimeAgo(bondfire.createdAt)
-  const responses = Math.max(0, bondfire.videoCount - 1)
-  const viewed = hasViewedToday(bondfire._id)
-  const isLive = bondfire.videoStatus === 'live' || bondfire.isLive
-  const isOwner = currentUserId === bondfire.userId
-  const isPinned = pinnedIds.includes(bondfire._id)
-
-  const actions = getBondfireSwipeActions({
-    isOwner,
-    isPinned,
+/** Map a BondfireData item to the shared BondfireRow props */
+function toBondfireRowProps(
+  bondfire: BondfireData,
+  thumbnailUrl: string | null,
+  currentUserId: string | null,
+  pinnedIds: string[],
+  onOpen: () => void,
+  onRespond: () => void,
+  onDelete: () => void,
+  onPin: () => void,
+  onUnpin: () => void,
+  onReport: () => void,
+): BondfireRowProps {
+  return {
+    id: bondfire._id,
+    creatorName: bondfire.creatorName ?? 'Anonymous',
+    timestamp: bondfire.createdAt,
+    videoCount: bondfire.videoCount,
+    campLabel: bondfire.campLabel,
+    thumbnailUrl,
+    isLive: bondfire.videoStatus === 'live' || !!bondfire.isLive,
+    ownerId: bondfire.userId,
+    currentUserId,
+    pinnedIds,
+    participants: [], // Feed doesn't load participants yet — empty for now
+    onOpen,
+    onRespond,
     onDelete,
     onPin,
     onUnpin,
     onReport,
-  })
-
-  const row = (
-    <Pressable onPress={onOpen}>
-      <XStack
-        paddingHorizontal={16}
-        paddingVertical={12}
-        gap={12}
-        alignItems="center"
-        backgroundColor={'$background'}
-      >
-        <YStack
-          width={74}
-          height={74}
-          borderRadius={16}
-          overflow="hidden"
-          backgroundColor={'$backgroundHover'}
-          borderWidth={1}
-          borderColor={'$borderColor'}
-          alignItems="center"
-          justifyContent="center"
-        >
-          {thumbnailUrl ? (
-            <Image
-              source={{ uri: thumbnailUrl }}
-              style={{ width: '100%', height: '100%' }}
-              contentFit="cover"
-              cachePolicy="memory-disk"
-            />
-          ) : (
-            <Flame size={30} color={'$primary'} />
-          )}
-          {isLive && (
-            <YStack
-              position="absolute"
-              top={6}
-              left={6}
-              backgroundColor={'$error'}
-              paddingHorizontal={7}
-              paddingVertical={3}
-              borderRadius={10}
-            >
-              <Text color={'$color'} fontSize={9} fontWeight="900">
-                LIVE
-              </Text>
-            </YStack>
-          )}
-        </YStack>
-
-        <YStack flex={1} gap={6}>
-          <XStack alignItems="center" justifyContent="space-between" gap={10}>
-            <YStack flex={1} gap={2}>
-              <Text fontSize={16} fontWeight="900" numberOfLines={1}>
-                {bondfire.creatorName ?? 'Anonymous'}
-              </Text>
-              <Text fontSize={12} color={'$placeholderColor'} numberOfLines={1}>
-                {isLive ? 'Live now' : `${timeAgo} · ${viewed ? 'Viewed' : 'New'}`}
-              </Text>
-            </YStack>
-
-            <Button variant="outline" size="$sm" onPress={onRespond} borderColor={'$primary'}>
-              <Text color={'$color'} fontWeight="800">
-                Respond
-              </Text>
-            </Button>
-          </XStack>
-
-          <XStack alignItems="center" gap={14}>
-            <XStack alignItems="center" gap={6}>
-              <Eye size={16} color={'$placeholderColor'} />
-              <Text fontSize={13} color={'$placeholderColor'}>
-                {bondfire.viewCount ?? 0}
-              </Text>
-            </XStack>
-            <XStack alignItems="center" gap={6}>
-              <MessageCircle size={16} color={'$placeholderColor'} />
-              <Text fontSize={13} color={'$placeholderColor'}>
-                {responses} {responses === 1 ? 'response' : 'responses'}
-              </Text>
-            </XStack>
-            {bondfire.campLabel ? (
-              <YStack
-                flexShrink={1}
-                maxWidth="55%"
-                paddingHorizontal={8}
-                paddingVertical={3}
-                borderRadius={8}
-                backgroundColor={'$backgroundHover'}
-                borderWidth={1}
-                borderColor={'$borderColor'}
-              >
-                <Text fontSize={11} fontWeight="800" color={'$primary'} numberOfLines={1}>
-                  {bondfire.campLabel}
-                </Text>
-              </YStack>
-            ) : null}
-          </XStack>
-        </YStack>
-      </XStack>
-    </Pressable>
-  )
-
-  return <SwipeableRow actions={actions}>{row}</SwipeableRow>
+  }
 }
 
 function EmptyFeed() {
@@ -769,20 +646,21 @@ export default function FeedScreen() {
             animated: false,
           })
         }}
-        renderItem={({ item }) => (
-          <BondfireRow
-            bondfire={item}
-            thumbnailUrl={thumbnailUrls[item._id] ?? null}
-            currentUserId={currentUserId}
-            pinnedIds={pinnedIds}
-            onOpen={() => handleBondfirePress(item._id)}
-            onRespond={() => handleRespond(item._id)}
-            onDelete={() => handleDelete(item._id)}
-            onPin={() => handlePin(item._id)}
-            onUnpin={() => handleUnpin(item._id)}
-            onReport={() => handleReport(item._id, item.userId)}
-          />
-        )}
+        renderItem={({ item }) => {
+          const props = toBondfireRowProps(
+            item,
+            thumbnailUrls[item._id] ?? null,
+            currentUserId,
+            pinnedIds,
+            () => handleBondfirePress(item._id),
+            () => handleRespond(item._id),
+            () => handleDelete(item._id),
+            () => handlePin(item._id),
+            () => handleUnpin(item._id),
+            () => handleReport(item._id, item.userId),
+          )
+          return <BondfireRow {...props} />
+        }}
         ItemSeparatorComponent={() => (
           <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
         )}
