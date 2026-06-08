@@ -2,11 +2,13 @@ import {
   appActions,
   appStore$,
   getBondfireVideoIndex,
+  getErrorMessage,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
   useAppThemeColors,
 } from '@bondfires/app'
 import { Button, SwipeableRow, Text } from '@bondfires/ui'
+import { useValue } from '@legendapp/state/react'
 import { Flame, MessageCircle, Pin, User } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
@@ -15,7 +17,11 @@ import { Alert, FlatList, Pressable, RefreshControl, StatusBar } from 'react-nat
 import { Avatar, Separator, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
-import { useValue } from '@legendapp/state/react'
+import {
+  BONDFIRE_REPORT_OPTIONS,
+  getBondfireSwipeActions,
+  getSwipeReportComment,
+} from '../../../lib/bondfireSwipeActions'
 import { routes } from '../../../lib/routes'
 
 type PublicUser = {
@@ -100,38 +106,13 @@ function MyFireRow({
   const isOwner = currentUserId === thread.userId
   const isPinned = pinnedIds.includes(thread._id)
 
-  const actions: Array<{
-    key: string
-    label: string
-    color?: string
-    backgroundColor?: string
-    onPress: () => void
-  }> = []
-
-  if (isOwner) {
-    actions.push({
-      key: 'delete',
-      label: 'Delete',
-      color: '$color',
-      backgroundColor: '$errorDark',
-      onPress: onDelete,
-    })
-  } else {
-    actions.push({
-      key: 'report',
-      label: 'Report',
-      color: '$warning',
-      backgroundColor: '$backgroundHover',
-      onPress: onReport,
-    })
-  }
-
-  actions.push({
-    key: 'pin',
-    label: isPinned ? 'Unpin' : 'Pin',
-    color: '$primary',
-    backgroundColor: '$backgroundHover',
-    onPress: isPinned ? onUnpin : onPin,
+  const actions = getBondfireSwipeActions({
+    isOwner,
+    isPinned,
+    onDelete,
+    onPin,
+    onUnpin,
+    onReport,
   })
 
   const row = (
@@ -229,6 +210,7 @@ export default function MyFiresScreen() {
     () => (currentUser?.pinnedBondfireIds ?? []) as string[],
     [currentUser?.pinnedBondfireIds],
   )
+  const listExtraData = useMemo(() => ({ currentUserId, pinnedIds }), [currentUserId, pinnedIds])
 
   const unreadCount = useMemo(
     () => threads?.filter((thread) => thread.unread).length ?? 0,
@@ -264,8 +246,7 @@ export default function MyFiresScreen() {
             onPress: async () => {
               try {
                 await deleteBondfire({ bondfireId: bondfireId as Id<'bondfires'> })
-                setRefreshKey((current) => current + 1)
-              } catch (error) {
+              } catch {
                 Alert.alert('Error', 'Failed to delete bondfire. Please try again.')
               }
             },
@@ -280,9 +261,8 @@ export default function MyFiresScreen() {
     async (bondfireId: string) => {
       try {
         await pinBondfire({ bondfireId: bondfireId as Id<'bondfires'> })
-        setRefreshKey((current) => current + 1)
       } catch (error) {
-        Alert.alert('Error', String(error))
+        Alert.alert('Error', getErrorMessage(error))
       }
     },
     [pinBondfire],
@@ -292,9 +272,8 @@ export default function MyFiresScreen() {
     async (bondfireId: string) => {
       try {
         await unpinBondfire({ bondfireId: bondfireId as Id<'bondfires'> })
-        setRefreshKey((current) => current + 1)
       } catch (error) {
-        Alert.alert('Error', String(error))
+        Alert.alert('Error', getErrorMessage(error))
       }
     },
     [unpinBondfire],
@@ -302,64 +281,26 @@ export default function MyFiresScreen() {
 
   const handleReport = useCallback(
     (bondfireId: string, videoOwnerId: string) => {
-      Alert.alert(
-        'Report Content',
-        'What category best describes the issue?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Harassment',
-            onPress: async () => {
-              try {
-                await reportBondfire({
-                  bondfireId: bondfireId as Id<'bondfires'>,
-                  videoOwnerId: videoOwnerId as Id<'users'>,
-                  category: 'community_guidelines',
-                  subCategory: 'harassment_or_abuse',
-                  comments: 'Reported from My Fires swipe action',
-                })
-                Alert.alert('Reported', 'Thank you. We will review this content.')
-              } catch (error) {
-                Alert.alert('Error', String(error))
-              }
-            },
+      Alert.alert('Report Content', 'What category best describes the issue?', [
+        { text: 'Cancel', style: 'cancel' },
+        ...BONDFIRE_REPORT_OPTIONS.map((option) => ({
+          text: option.label,
+          onPress: async () => {
+            try {
+              await reportBondfire({
+                bondfireId: bondfireId as Id<'bondfires'>,
+                videoOwnerId: videoOwnerId as Id<'users'>,
+                category: 'community_guidelines',
+                subCategory: option.subCategory,
+                comments: getSwipeReportComment('My Fires'),
+              })
+              Alert.alert('Reported', 'Thank you. We will review this content.')
+            } catch (error) {
+              Alert.alert('Error', getErrorMessage(error))
+            }
           },
-          {
-            text: 'Inappropriate',
-            onPress: async () => {
-              try {
-                await reportBondfire({
-                  bondfireId: bondfireId as Id<'bondfires'>,
-                  videoOwnerId: videoOwnerId as Id<'users'>,
-                  category: 'community_guidelines',
-                  subCategory: 'pornographic_content',
-                  comments: 'Reported from My Fires swipe action',
-                })
-                Alert.alert('Reported', 'Thank you. We will review this content.')
-              } catch (error) {
-                Alert.alert('Error', String(error))
-              }
-            },
-          },
-          {
-            text: 'Spam',
-            onPress: async () => {
-              try {
-                await reportBondfire({
-                  bondfireId: bondfireId as Id<'bondfires'>,
-                  videoOwnerId: videoOwnerId as Id<'users'>,
-                  category: 'community_guidelines',
-                  subCategory: 'spam_or_solicitation',
-                  comments: 'Reported from My Fires swipe action',
-                })
-                Alert.alert('Reported', 'Thank you. We will review this content.')
-              } catch (error) {
-                Alert.alert('Error', String(error))
-              }
-            },
-          },
-        ],
-      )
+        })),
+      ])
     },
     [reportBondfire],
   )
@@ -381,7 +322,7 @@ export default function MyFiresScreen() {
       <FlatList
         key={refreshKey}
         data={threads}
-        extraData={currentUserId}
+        extraData={listExtraData}
         keyExtractor={(item) => item._id}
         refreshControl={
           <RefreshControl
