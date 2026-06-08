@@ -13,7 +13,7 @@ import * as SplashScreen from 'expo-splash-screen'
 import { Component, type ErrorInfo, type ReactNode, useCallback, useEffect, useRef } from 'react'
 import { KeyboardProvider } from 'react-native-keyboard-controller'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
-import { AnimatePresence, TamaguiProvider, Theme, YStack } from 'tamagui'
+import { TamaguiProvider, Theme, YStack } from 'tamagui'
 // Import config for TamaguiProvider
 import config from '../tamagui.config'
 import 'react-native-reanimated'
@@ -285,35 +285,26 @@ function AppContent() {
   return (
     <TamaguiProvider config={config} defaultTheme={themeName}>
       <Theme name={themeName}>
-        <AnimatePresence>
-          <YStack
-            key={themeName}
-            flex={1}
-            animation="quick"
-            enterStyle={{ opacity: 0 }}
-            exitStyle={{ opacity: 0 }}
-            opacity={1}
-          >
-            <TelemetryInitializer />
+        <YStack flex={1}>
+          <TelemetryInitializer />
 
-            {/* Force-update modal — shown when app version is below minimum required */}
-            {updateRequired && minRequiredVersion ? (
-              <ForceUpdateModal
-                visible
-                minRequiredVersion={minRequiredVersion}
-                currentVersion={Constants.expoConfig?.version ?? '0.0.0'}
-                onUpdate={openAppStore}
-              />
-            ) : updateCheckLoading ? null : null}
+          {/* Force-update modal — shown when app version is below minimum required */}
+          {updateRequired && minRequiredVersion ? (
+            <ForceUpdateModal
+              visible
+              minRequiredVersion={minRequiredVersion}
+              currentVersion={Constants.expoConfig?.version ?? '0.0.0'}
+              onUpdate={openAppStore}
+            />
+          ) : updateCheckLoading ? null : null}
 
-            <Stack screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="index" />
-              <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-              <Stack.Screen name="(main)" options={{ headerShown: false }} />
-            </Stack>
-            <ToastContainer toasts={toasts} onDismiss={toastActions.dismiss} />
-          </YStack>
-        </AnimatePresence>
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="index" />
+            <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+            <Stack.Screen name="(main)" options={{ headerShown: false }} />
+          </Stack>
+          <ToastContainer toasts={toasts} onDismiss={toastActions.dismiss} />
+        </YStack>
       </Theme>
     </TamaguiProvider>
   )
