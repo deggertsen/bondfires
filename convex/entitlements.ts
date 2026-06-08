@@ -303,7 +303,7 @@ export async function assertCanCreatePublicCamp(
   // which enforces balance ≥ 1. We do a lightweight balance check here to
   // give an earlier, clearer error message.
   const transactions = await ctx.db
-    .query('campKindlingTransactions')
+    .query('campSlotTransactions')
     .withIndex('by_user', (q) => q.eq('userId', userId))
     .collect()
   const balance = transactions.reduce((sum, tx) => sum + tx.amount, 0)

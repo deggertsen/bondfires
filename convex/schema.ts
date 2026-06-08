@@ -236,15 +236,16 @@ export default defineSchema({
     .index('by_store_transaction', ['storeOriginalTransactionId'])
     .index('by_store_purchase_token', ['storePurchaseToken']),
 
-  // Immutable ledger of all camp kindling movements.
+  // Immutable ledger of all camp kindling movements. The table and slot_credit
+  // type names are retained for existing production data.
   // Balance is always computed from this table, never stored.
-  campKindlingTransactions: defineTable({
+  campSlotTransactions: defineTable({
     userId: v.id('users'),
     type: v.union(
       v.literal('monthly_grant'),
       v.literal('iap_purchase'),
       v.literal('monthly_consumption'),
-      v.literal('kindling_credit'),
+      v.literal('slot_credit'),
       v.literal('refund'),
       v.literal('grace_period_entry'),
       v.literal('reactivation'),

@@ -696,7 +696,7 @@ export const current = query({
 
     // Compute kindling balance from ledger
     const kindlingTransactions = await ctx.db
-      .query('campKindlingTransactions')
+      .query('campSlotTransactions')
       .withIndex('by_user', (q) => q.eq('userId', userId))
       .collect()
     const kindlingBalance = kindlingTransactions.reduce((sum, tx) => sum + tx.amount, 0)

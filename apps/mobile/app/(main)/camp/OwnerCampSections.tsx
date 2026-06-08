@@ -43,7 +43,7 @@ function KindlingBalanceSection() {
   }
 
   const balanceColor = summary.balance > 0 ? bondfireColors.success : bondfireColors.error
-  const handleGetMoreSlots = () => {
+  const handleGetMoreKindling = () => {
     subscriptionActions.showPaywall()
   }
 
@@ -66,7 +66,7 @@ function KindlingBalanceSection() {
             {summary.balance}
           </Text>
           <Text fontSize={14} color={bondfireColors.ash}>
-            kindling{summary.balance !== 1 ? 's' : ''} remaining
+            kindling remaining
           </Text>
         </XStack>
 
@@ -114,7 +114,7 @@ function KindlingBalanceSection() {
                     })}
                   </Text>
                   <Text fontSize={11} color={bondfireColors.ash} fontWeight="900">
-                    {activeCamp.kindlingCost} kindling{activeCamp.kindlingCost !== 1 ? 's' : ''}
+                    {activeCamp.kindlingCost} kindling
                   </Text>
                 </XStack>
               </XStack>
@@ -123,7 +123,7 @@ function KindlingBalanceSection() {
         ) : null}
 
         {summary.balance < 3 ? (
-          <Button variant="outline" size="$sm" onPress={handleGetMoreSlots} marginTop={4}>
+          <Button variant="outline" size="$sm" onPress={handleGetMoreKindling} marginTop={4}>
             <Text color={bondfireColors.bondfireCopper} fontWeight="900">
               Get More Kindling
             </Text>

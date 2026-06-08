@@ -4,8 +4,8 @@
  * Every active Pro-created camp (public or private) consumes 1 kindling per month.
  * Pro users get 3 free kindling per month on their billing date. Extra kindling
  * packs are purchasable as consumable IAPs. All kindling movements are recorded
- * in an immutable ledger (campKindlingTransactions table) and balance is always
- * computed, never stored.
+ * in the existing immutable ledger (campSlotTransactions table) and balance is
+ * always computed, never stored.
  *
  * Balance formula: SUM(positive amounts) − SUM(negative amounts)
  * Balance can NEVER go negative — all consuming operations throw hard errors.
@@ -44,7 +44,7 @@ export async function computeKindlingBalance(
   userId: Id<'users'>,
 ): Promise<number> {
   const transactions = await ctx.db
-    .query('campKindlingTransactions')
+    .query('campSlotTransactions')
     .withIndex('by_user', (q) => q.eq('userId', userId))
     .collect()
 
@@ -173,7 +173,7 @@ async function consumptionExistsForPeriod(
   periodEnd: number,
 ): Promise<boolean> {
   const transactions = await ctx.db
-    .query('campKindlingTransactions')
+    .query('campSlotTransactions')
     .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', campId))
     .filter((q) => q.eq(q.field('type'), 'monthly_consumption'))
     .collect()
@@ -197,7 +197,7 @@ async function grantExistsForPeriod(
   periodEnd: number,
 ): Promise<boolean> {
   const transactions = await ctx.db
-    .query('campKindlingTransactions')
+    .query('campSlotTransactions')
     .withIndex('by_user', (q) => q.eq('userId', userId))
     .filter((q) => q.eq(q.field('type'), 'monthly_grant'))
     .collect()
@@ -241,7 +241,7 @@ export async function burnKindlingForCamp(
     return { newBalance: balance, alreadyConsumed: false, insufficientKindling: true as const }
   }
 
-  await ctx.db.insert('campKindlingTransactions', {
+  await ctx.db.insert('campSlotTransactions', {
     userId: args.userId,
     type: 'monthly_consumption',
     amount: -1,
@@ -268,7 +268,7 @@ export const getKindlingBalance = query({
     }
 
     const transactions = await ctx.db
-      .query('campKindlingTransactions')
+      .query('campSlotTransactions')
       .withIndex('by_user', (q) => q.eq('userId', userId))
       .order('desc')
       .collect()
@@ -278,6 +278,82 @@ export const getKindlingBalance = query({
     return { balance, transactions }
   },
 })
+
+export async function getKindlingUsageSummaryForUser(ctx: QueryCtx, userId: Id<'users'>) {
+  // Verify the user is Pro-tier
+  const tier = await getEntitlementSubscriptionTier(ctx, userId)
+  if (TIER_RANK[tier] < TIER_RANK.pro) {
+    throwUserError('Kindling usage summary is only available for Pro subscribers')
+  }
+
+  const now = Date.now()
+
+  // Current balance (using existing computeKindlingBalance)
+  const balance = await computeKindlingBalance(ctx, userId)
+
+  // Full transaction history
+  const transactions = await ctx.db
+    .query('campSlotTransactions')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .order('desc')
+    .collect()
+
+  const { periodStart, periodEnd } = await getMonthlyKindlingGrantPeriod(ctx, userId, now)
+  const kindlingGrantedThisPeriod = transactions
+    .filter(
+      (tx) =>
+        (tx.type === 'monthly_grant' || tx.type === 'slot_credit') &&
+        tx.createdAt >= periodStart &&
+        tx.createdAt < periodEnd,
+    )
+    .reduce((sum, tx) => sum + tx.amount, 0)
+
+  const kindlingBurnedThisPeriod = transactions
+    .filter(
+      (tx) =>
+        tx.type === 'monthly_consumption' &&
+        tx.createdAt >= periodStart &&
+        tx.createdAt < periodEnd,
+    )
+    .reduce((sum, tx) => sum + Math.abs(tx.amount), 0)
+
+  const ownedCamps = await ctx.db
+    .query('camps')
+    .withIndex('by_owner', (q) => q.eq('ownerId', userId))
+    .collect()
+
+  const activeCamps = ownedCamps
+    .filter(
+      (camp) =>
+        camp.status === 'active' ||
+        (camp.status === 'grace' && (!camp.gracePeriodEnd || camp.gracePeriodEnd >= now)),
+    )
+    .map((camp) => {
+      const { periodEnd: renewalDate } = getAnchoredMonthlyPeriod(camp.createdAt, now)
+
+      return {
+        campId: camp._id,
+        slug: camp.slug,
+        name: camp.name,
+        access: camp.access,
+        status: camp.status,
+        renewalDate,
+        kindlingCost: camp.status === 'active' ? 1 : 0,
+        createdAt: camp.createdAt,
+      }
+    })
+    .sort((left, right) => left.renewalDate - right.renewalDate)
+
+  return {
+    balance,
+    periodStart,
+    periodEnd,
+    kindlingGrantedThisPeriod,
+    kindlingBurnedThisPeriod,
+    activeCamps,
+    transactions,
+  }
+}
 
 /**
  * Returns a comprehensive kindling usage summary for the authenticated Pro user.
@@ -292,79 +368,7 @@ export const getKindlingUsageSummary = query({
       throwUserError('Not authenticated')
     }
 
-    // Verify the user is Pro-tier
-    const tier = await getEntitlementSubscriptionTier(ctx, userId)
-    if (TIER_RANK[tier] < TIER_RANK.pro) {
-      throwUserError('Kindling usage summary is only available for Pro subscribers')
-    }
-
-    const now = Date.now()
-
-    // Current balance (using existing computeKindlingBalance)
-    const balance = await computeKindlingBalance(ctx, userId)
-
-    // Full transaction history
-    const transactions = await ctx.db
-      .query('campKindlingTransactions')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .order('desc')
-      .collect()
-
-    const { periodStart, periodEnd } = await getMonthlyKindlingGrantPeriod(ctx, userId, now)
-    const kindlingGrantedThisPeriod = transactions
-      .filter(
-        (tx) =>
-          (tx.type === 'monthly_grant' || tx.type === 'kindling_credit') &&
-          tx.createdAt >= periodStart &&
-          tx.createdAt < periodEnd,
-      )
-      .reduce((sum, tx) => sum + tx.amount, 0)
-
-    const kindlingBurnedThisPeriod = transactions
-      .filter(
-        (tx) =>
-          tx.type === 'monthly_consumption' &&
-          tx.createdAt >= periodStart &&
-          tx.createdAt < periodEnd,
-      )
-      .reduce((sum, tx) => sum + Math.abs(tx.amount), 0)
-
-    const ownedCamps = await ctx.db
-      .query('camps')
-      .withIndex('by_owner', (q) => q.eq('ownerId', userId))
-      .collect()
-
-    const activeCamps = ownedCamps
-      .filter(
-        (camp) =>
-          camp.status === 'active' ||
-          (camp.status === 'grace' && (!camp.gracePeriodEnd || camp.gracePeriodEnd >= now)),
-      )
-      .map((camp) => {
-        const { periodEnd: renewalDate } = getAnchoredMonthlyPeriod(camp.createdAt, now)
-
-        return {
-          campId: camp._id,
-          slug: camp.slug,
-          name: camp.name,
-          access: camp.access,
-          status: camp.status,
-          renewalDate,
-          kindlingCost: camp.status === 'active' ? 1 : 0,
-          createdAt: camp.createdAt,
-        }
-      })
-      .sort((left, right) => left.renewalDate - right.renewalDate)
-
-    return {
-      balance,
-      periodStart,
-      periodEnd,
-      kindlingGrantedThisPeriod,
-      kindlingBurnedThisPeriod,
-      activeCamps,
-      transactions,
-    }
+    return getKindlingUsageSummaryForUser(ctx, userId)
   },
 })
 
@@ -374,7 +378,7 @@ export const internalGetKindlingBalance = internalQuery({
   args: { userId: v.id('users') },
   handler: async (ctx, args) => {
     const transactions = await ctx.db
-      .query('campKindlingTransactions')
+      .query('campSlotTransactions')
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
       .collect()
 
@@ -408,7 +412,8 @@ export const burnCampKindling = internalMutation({
 
 /**
  * Internal mutation: credits kindling balance from a consumable purchase.
- * Inserts N kindling_credit entries (one per kindling) with the current period.
+ * Inserts N slot_credit entries (one per kindling) with the current period.
+ * The transaction type name is retained for existing production data.
  * Kindling credits never expire (periodEnd = Infinity) — they are permanent
  * balance additions, not monthly grants.
  */
@@ -426,10 +431,10 @@ export const creditKindlingPurchase = internalMutation({
     const now = Date.now()
     const periodStart = startOfUtcMonth(now)
     for (let i = 0; i < args.kindlingCount; i++) {
-      await ctx.db.insert('campKindlingTransactions', {
+      await ctx.db.insert('campSlotTransactions', {
         userId: args.userId,
         campId: undefined,
-        type: 'kindling_credit',
+        type: 'slot_credit',
         amount: 1,
         periodStart,
         periodEnd: Number.POSITIVE_INFINITY,
@@ -471,7 +476,7 @@ export const grantMonthlyKindling = internalMutation({
 
     const balance = await computeKindlingBalance(ctx, args.userId)
 
-    await ctx.db.insert('campKindlingTransactions', {
+    await ctx.db.insert('campSlotTransactions', {
       userId: args.userId,
       type: 'monthly_grant',
       amount: MONTHLY_PRO_KINDLING_GRANT,
@@ -548,7 +553,7 @@ export const burnDailyCampKindling = internalMutation({
 
         if (result.insufficientKindling) {
           const gracePeriodEnd = now + GRACE_PERIOD_MS
-          await ctx.db.insert('campKindlingTransactions', {
+          await ctx.db.insert('campSlotTransactions', {
             userId: ownerId,
             type: 'grace_period_entry',
             amount: 0,
@@ -640,7 +645,7 @@ export const grantDailyProKindling = internalMutation({
         continue
       }
 
-      await ctx.db.insert('campKindlingTransactions', {
+      await ctx.db.insert('campSlotTransactions', {
         userId,
         type: 'monthly_grant',
         amount: MONTHLY_PRO_KINDLING_GRANT,

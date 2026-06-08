@@ -795,8 +795,7 @@ export default function CampsScreen() {
                 fontWeight="900"
                 color={kindlingBalance.balance > 0 ? bondfireColors.success : bondfireColors.error}
               >
-                {kindlingBalance.balance} kindling{kindlingBalance.balance !== 1 ? 's' : ''}{' '}
-                remaining
+                {kindlingBalance.balance} kindling remaining
               </Text>
               {kindlingBalance.balance < 1 ? (
                 <Text fontSize={12} color={bondfireColors.ash}>

@@ -16,8 +16,8 @@ export const SUBSCRIPTION_PRODUCT_IDS = {
 
 /** Kindling pack product IDs — consumable IAPs for extra camp kindling. */
 export const KINDLING_PACK_PRODUCT_IDS = {
-  campKindling3Pack: 'bondfires.camp_kindling.3pack',
-  campKindling10Pack: 'bondfires.camp_kindling.10pack',
+  campKindling3Pack: 'bondfires.camp_slots.3pack',
+  campKindling10Pack: 'bondfires.camp_slots.10pack',
 } as const
 
 export type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'

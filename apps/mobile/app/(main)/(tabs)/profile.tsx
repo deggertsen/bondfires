@@ -555,7 +555,7 @@ export default function ProfileScreen() {
                   </Text>
                   <Text fontSize={13} color={bondfireColors.ash}>
                     {kindlingBalance > 0
-                      ? `${kindlingBalance} kindling{kindlingBalance === 1 ? '' : 's'} available`
+                      ? `${kindlingBalance} kindling available`
                       : 'No kindling available'}
                   </Text>
                 </YStack>

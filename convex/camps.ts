@@ -2030,7 +2030,7 @@ export const claimInactivePublicCamp = mutation({
       }
     }
 
-    await ctx.db.insert('campKindlingTransactions', {
+    await ctx.db.insert('campSlotTransactions', {
       userId: user._id,
       type: 'member_claim',
       amount: 0,

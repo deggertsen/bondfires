@@ -473,7 +473,7 @@ function AddOnCard({
           </Text>
           {!isComingSoon ? (
             <Text color={bondfireColors.ash} fontSize={11}>
-              {activeSize === 'tenPack' ? '10 kindlings' : '3 kindlings'}
+              {activeSize === 'tenPack' ? '10 kindling' : '3 kindling'}
             </Text>
           ) : null}
         </YStack>
