@@ -1,7 +1,7 @@
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
-import type { QueryCtx } from './_generated/server'
+import type { MutationCtx, QueryCtx } from './_generated/server'
 import { action, internalQuery, mutation, query } from './_generated/server'
 import { auth } from './auth'
 import {
@@ -184,13 +184,41 @@ async function resolveCampLabel(ctx: QueryCtx, bondfire: Doc<'bondfires'>) {
   }
 
   if (bondfire.campId) {
-    const camp = await ctx.db.get(bondfire.campId)
+    const campId = bondfire.campId
+    const camp = await ctx.db.get(campId)
     if (camp) {
       return camp.name
     }
   }
 
   return undefined
+}
+
+async function deleteWatchEventsForVideo(ctx: MutationCtx, videoId: string) {
+  const watchEvents = await ctx.db
+    .query('watchEvents')
+    .withIndex('by_video', (q) => q.eq('videoId', videoId))
+    .collect()
+
+  for (const watchEvent of watchEvents) {
+    await ctx.db.delete(watchEvent._id)
+  }
+}
+
+async function removeBondfireFromPinnedLists(ctx: MutationCtx, bondfireId: Id<'bondfires'>) {
+  const users = await ctx.db.query('users').collect()
+  const now = Date.now()
+
+  for (const user of users) {
+    if (!user.pinnedBondfireIds?.includes(bondfireId)) {
+      continue
+    }
+
+    await ctx.db.patch(user._id, {
+      pinnedBondfireIds: user.pinnedBondfireIds.filter((id) => id !== bondfireId),
+      updatedAt: now,
+    })
+  }
 }
 
 // List bondfires for the feed (ordered by videoCount ASC for discovery)
@@ -306,16 +334,15 @@ export const getWithCampContext = query({
       }
     }
 
-    const camp = await ctx.db.get(bondfire.campId)
+    const campId = bondfire.campId
+    const camp = await ctx.db.get(campId)
     const userId = (await auth.getUserId(ctx)) ?? undefined
 
     let membership = null
     if (userId) {
       const m = await ctx.db
         .query('campMembers')
-        .withIndex('by_user_camp', (q) =>
-          q.eq('userId', userId).eq('campId', bondfire.campId!),
-        )
+        .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', campId))
         .unique()
       membership = m
     }
@@ -641,5 +668,189 @@ export const incrementViews = mutation({
     }
 
     return { recorded: true }
+  },
+})
+
+// Pin a bondfire to the user's pinned list (max 8).
+export const pinBondfire = mutation({
+  args: { bondfireId: v.id('bondfires') },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) throw new Error('Not authenticated')
+
+    const bondfire = await ctx.db.get(args.bondfireId)
+    if (!bondfire) throw new Error('Bondfire not found')
+    if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
+      throw new Error('Bondfire not found')
+    }
+    const memberCampIds = await getVisibleCampIds(ctx, userId)
+    const canViewBondfire = await isBondfireVisibleToViewer(ctx, bondfire, userId, memberCampIds)
+    if (!canViewBondfire) {
+      throw new Error('Bondfire not found')
+    }
+
+    const user = await ctx.db.get(userId)
+    if (!user) throw new Error('User not found')
+
+    const pinned = user.pinnedBondfireIds ?? []
+    if (pinned.includes(args.bondfireId)) {
+      return { pinned: true, already: true }
+    }
+    if (pinned.length >= 8) {
+      throw new Error('You can pin up to 8 bondfires')
+    }
+
+    await ctx.db.patch(userId, {
+      pinnedBondfireIds: [args.bondfireId, ...pinned],
+      updatedAt: Date.now(),
+    })
+
+    return { pinned: true }
+  },
+})
+
+// Unpin a bondfire from the user's pinned list.
+export const unpinBondfire = mutation({
+  args: { bondfireId: v.id('bondfires') },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) throw new Error('Not authenticated')
+
+    const user = await ctx.db.get(userId)
+    if (!user) throw new Error('User not found')
+
+    const pinned = user.pinnedBondfireIds ?? []
+    if (!pinned.includes(args.bondfireId)) {
+      return { unpinned: true, already: true }
+    }
+
+    await ctx.db.patch(userId, {
+      pinnedBondfireIds: pinned.filter((id) => id !== args.bondfireId),
+      updatedAt: Date.now(),
+    })
+
+    return { unpinned: true }
+  },
+})
+
+// Delete a bondfire (camp or public). Only the creator can delete.
+// Cleans up all response videos, live sessions, personal-bondfire
+// associations, watch events, and reports.
+export const deleteBondfire = mutation({
+  args: { bondfireId: v.id('bondfires') },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) throw new Error('Not authenticated')
+
+    const bondfire = await ctx.db.get(args.bondfireId)
+    if (!bondfire) throw new Error('Bondfire not found')
+    if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
+      throw new Error('Bondfire not found')
+    }
+
+    if (bondfire.userId !== userId) {
+      throw new Error('Only the bondfire creator can delete it')
+    }
+
+    // Delete response videos and their live sessions.
+    const responses = await ctx.db
+      .query('bondfireVideos')
+      .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
+      .collect()
+    const responseCountsByUser = new Map<Id<'users'>, number>()
+
+    for (const response of responses) {
+      responseCountsByUser.set(
+        response.userId,
+        (responseCountsByUser.get(response.userId) ?? 0) + 1,
+      )
+      await deleteWatchEventsForVideo(ctx, response._id)
+
+      const responseReports = await ctx.db
+        .query('reports')
+        .withIndex('by_bondfire_video', (q) => q.eq('bondfireVideoId', response._id))
+        .collect()
+      for (const report of responseReports) {
+        await ctx.db.delete(report._id)
+      }
+
+      if (response.liveSessionId) {
+        await ctx.db.delete(response.liveSessionId)
+      }
+      await ctx.db.delete(response._id)
+    }
+
+    // Clean up personal-bondfire participants (if this is a personal bondfire).
+    if (bondfire.personalCampId) {
+      const participants = await ctx.db
+        .query('personalBondfireParticipants')
+        .withIndex('by_bondfire_status', (q) => q.eq('bondfireId', args.bondfireId))
+        .collect()
+      for (const p of participants) {
+        await ctx.db.delete(p._id)
+      }
+
+      const invites = await ctx.db
+        .query('personalBondfireInvites')
+        .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
+        .collect()
+      for (const inv of invites) {
+        await ctx.db.delete(inv._id)
+      }
+    }
+
+    // Clean up watch events.
+    await deleteWatchEventsForVideo(ctx, args.bondfireId)
+
+    // Delete any reports tied to this bondfire.
+    const reports = await ctx.db
+      .query('reports')
+      .filter((q) => q.eq(q.field('bondfireId'), args.bondfireId))
+      .collect()
+    for (const r of reports) {
+      await ctx.db.delete(r._id)
+    }
+
+    // Remove from every user's pinned list.
+    const creator = await ctx.db.get(bondfire.userId)
+    await removeBondfireFromPinnedLists(ctx, args.bondfireId)
+
+    if (bondfire.liveSessionId) {
+      await ctx.db.delete(bondfire.liveSessionId)
+    }
+
+    await ctx.db.delete(args.bondfireId)
+
+    // Decrement the creator's bondfire count.
+    if (creator) {
+      await ctx.db.patch(bondfire.userId, {
+        bondfireCount: Math.max(0, (creator.bondfireCount ?? 1) - 1),
+        updatedAt: Date.now(),
+      })
+    }
+
+    for (const [responderId, deletedResponseCount] of responseCountsByUser) {
+      const responder = await ctx.db.get(responderId)
+      if (!responder) {
+        continue
+      }
+
+      await ctx.db.patch(responderId, {
+        responseCount: Math.max(0, (responder.responseCount ?? 0) - deletedResponseCount),
+        updatedAt: Date.now(),
+      })
+    }
+
+    if (bondfire.campId) {
+      const camp = await ctx.db.get(bondfire.campId)
+      if (camp) {
+        await ctx.db.patch(bondfire.campId, {
+          bondfireCount: Math.max(0, (camp.bondfireCount ?? 0) - 1),
+          updatedAt: Date.now(),
+        })
+      }
+    }
+
+    return { deleted: true }
   },
 })
