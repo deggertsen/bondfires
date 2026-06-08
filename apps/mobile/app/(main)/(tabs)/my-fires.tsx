@@ -12,37 +12,41 @@ import { useValue } from '@legendapp/state/react'
 import { Flame, Pin } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, FlatList, RefreshControl, StatusBar } from 'react-native'
 import { Separator, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
-import type { Id } from '../../../../../convex/_generated/dataModel'
-import { BONDFIRE_REPORT_OPTIONS, getSwipeReportComment } from '../../../lib/bondfireSwipeActions'
+import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
+import {
+  BONDFIRE_REPORT_OPTIONS,
+  getBondfireSwipeActions,
+  getSwipeReportComment,
+} from '../../../lib/bondfireSwipeActions'
 import { routes } from '../../../lib/routes'
 
 type ThreadParticipant = {
-  userId: string
+  user: PublicUser
+  latestAt: number
+  videoCount: number
+  isPinned: boolean
+}
+
+type PublicUser = {
+  _id: Id<'users'>
   displayName?: string
+  name?: string
   photoUrl?: string
 }
 
-type MyFire = {
-  _id: string
-  creatorName?: string
+type MyFire = Doc<'bondfires'> & {
+  camp: Doc<'camps'> | null
   lastActivityAt: number
-  videoCount: number
-  campLabel?: string
-  muxPlaybackId?: string
-  muxPlaybackPolicy?: string
-  videoStatus: string
-  userId: string
+  unread: boolean
+  participants: ThreadParticipant[]
 }
-
-// ── Shared adapter ──────────────────────────────────────────────
 
 function toBondfireRowProps(
   thread: MyFire,
-  participantUsers: ThreadParticipant[],
   thumbnailUrl: string | null,
   currentUserId: string | null,
   pinnedIds: string[],
@@ -53,39 +57,41 @@ function toBondfireRowProps(
   onUnpin: () => void,
   onReport: () => void,
 ): BondfireRowProps {
+  const isOwner = currentUserId === thread.userId
+  const isPinned = pinnedIds.includes(thread._id)
+
   return {
-    id: thread._id,
     creatorName: thread.creatorName ?? 'Anonymous',
     timestamp: thread.lastActivityAt,
     videoCount: thread.videoCount,
-    campLabel: thread.campLabel,
+    campLabel: thread.camp?.name,
     thumbnailUrl,
     isLive: thread.videoStatus === 'live',
-    ownerId: thread.userId,
-    currentUserId,
-    pinnedIds,
-    participants: participantUsers,
+    statusLabel: thread.unread ? 'New' : 'Viewed',
+    participants: thread.participants.map((participant) => ({
+      userId: participant.user._id,
+      displayName: participant.user.displayName ?? participant.user.name,
+      photoUrl: participant.user.photoUrl,
+    })),
+    actions: getBondfireSwipeActions({
+      isOwner,
+      isPinned,
+      onDelete,
+      onPin,
+      onUnpin,
+      onReport,
+    }),
     onOpen,
     onRespond,
-    onDelete,
-    onPin,
-    onUnpin,
-    onReport,
   }
 }
-
-// ── Screen component ────────────────────────────────────────────
 
 export default function MyFiresScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const [refreshKey, setRefreshKey] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const threads = useQuery(api.conversations.listMyFires, { limit: 80 }) as
-    | (MyFire & {
-        participants?: Array<{ user: ThreadParticipant }>
-      })[]
-    | undefined
+  const threads = useQuery(api.conversations.listMyFires, { limit: 80 }) as MyFire[] | undefined
   const getThumbnailUrl = useAction(api.videos.getThumbnailUrl)
 
   // Swipe action mutations
@@ -103,51 +109,54 @@ export default function MyFiresScreen() {
   )
 
   const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string | null>>({})
+  const loadingThumbsRef = useRef<Set<string>>(new Set())
+  const listExtraData = useMemo(
+    () => ({ currentUserId, pinnedIds, thumbnailUrls }),
+    [currentUserId, pinnedIds, thumbnailUrls],
+  )
 
-  // Load thumbnails when threads arrive
-  const loadThumbnails = useCallback(
-    async (items: typeof threads) => {
-      if (!items) return
-      const toLoad = items.filter((t) => t.muxPlaybackId && thumbnailUrls[t._id] === undefined)
-      if (toLoad.length === 0) return
+  const ensureThumbnailUrl = useCallback(
+    async (thread: MyFire) => {
+      if (!thread.muxPlaybackId) return
+      if (thumbnailUrls[thread._id] !== undefined) return
+      if (loadingThumbsRef.current.has(thread._id)) return
 
-      const updates: Record<string, string | null> = {}
-      await Promise.all(
-        toLoad.map(async (t) => {
-          try {
-            const { thumbnailUrl } = await getThumbnailUrl({
-              muxPlaybackId: t.muxPlaybackId ?? '',
-              muxPlaybackPolicy: t.muxPlaybackPolicy as 'public' | 'signed' | undefined,
-              bondfireId: t._id as Id<'bondfires'>,
-            })
-            updates[t._id] = thumbnailUrl
-          } catch {
-            updates[t._id] = null
-          }
-        }),
-      )
-      setThumbnailUrls((prev) => ({ ...prev, ...updates }))
+      loadingThumbsRef.current.add(thread._id)
+      try {
+        const { thumbnailUrl } = await getThumbnailUrl({
+          muxPlaybackId: thread.muxPlaybackId,
+          muxPlaybackPolicy: thread.muxPlaybackPolicy,
+          bondfireId: thread._id,
+        })
+        setThumbnailUrls((prev) =>
+          prev[thread._id] === undefined ? { ...prev, [thread._id]: thumbnailUrl } : prev,
+        )
+      } catch {
+        setThumbnailUrls((prev) =>
+          prev[thread._id] === undefined ? { ...prev, [thread._id]: null } : prev,
+        )
+      } finally {
+        loadingThumbsRef.current.delete(thread._id)
+      }
     },
     [getThumbnailUrl, thumbnailUrls],
   )
 
-  // Trigger thumbnail load when threads change
-  if (threads) {
-    // Non-reactive trigger — loadThumbnails is idempotent
-    setTimeout(() => loadThumbnails(threads), 0)
-  }
+  useEffect(() => {
+    if (!threads) return
+    for (const thread of threads.slice(0, 10)) {
+      ensureThumbnailUrl(thread)
+    }
+  }, [ensureThumbnailUrl, threads])
 
   const unreadCount = useMemo(
-    () =>
-      threads?.filter((_thread) => {
-        // MyFire doesn't have explicit unread field anymore; use a heuristic
-        // or rely on the query to return only relevant threads
-        return false
-      }).length ?? 0,
+    () => threads?.filter((thread) => thread.unread).length ?? 0,
     [threads],
   )
 
   const handleRefresh = useCallback(() => {
+    setThumbnailUrls({})
+    loadingThumbsRef.current = new Set()
     setIsRefreshing(true)
     setRefreshKey((current) => current + 1)
     setTimeout(() => setIsRefreshing(false), 800)
@@ -183,7 +192,6 @@ export default function MyFiresScreen() {
             onPress: async () => {
               try {
                 await deleteBondfire({ bondfireId: bondfireId as Id<'bondfires'> })
-                setRefreshKey((current) => current + 1)
               } catch (_error) {
                 Alert.alert('Error', 'Failed to delete bondfire. Please try again.')
               }
@@ -199,7 +207,6 @@ export default function MyFiresScreen() {
     async (bondfireId: string) => {
       try {
         await pinBondfire({ bondfireId: bondfireId as Id<'bondfires'> })
-        setRefreshKey((current) => current + 1)
       } catch (error) {
         Alert.alert('Error', getErrorMessage(error))
       }
@@ -211,7 +218,6 @@ export default function MyFiresScreen() {
     async (bondfireId: string) => {
       try {
         await unpinBondfire({ bondfireId: bondfireId as Id<'bondfires'> })
-        setRefreshKey((current) => current + 1)
       } catch (error) {
         Alert.alert('Error', getErrorMessage(error))
       }
@@ -232,7 +238,7 @@ export default function MyFiresScreen() {
                 videoOwnerId: videoOwnerId as Id<'users'>,
                 category: 'community_guidelines',
                 subCategory: option.subCategory,
-                comments: getSwipeReportComment('my-fires'),
+                comments: getSwipeReportComment('My Fires'),
               })
               Alert.alert('Reported', 'Thank you. We will review this content.')
             } catch (error) {
@@ -262,7 +268,7 @@ export default function MyFiresScreen() {
       <FlatList
         key={refreshKey}
         data={threads}
-        extraData={{ currentUserId, pinnedIds, thumbnailUrls }}
+        extraData={listExtraData}
         keyExtractor={(item) => item._id}
         refreshControl={
           <RefreshControl
@@ -273,10 +279,8 @@ export default function MyFiresScreen() {
           />
         }
         renderItem={({ item }) => {
-          const participants = item.participants?.map((p) => p.user).filter(Boolean) ?? []
           const props = toBondfireRowProps(
             item,
-            participants,
             thumbnailUrls[item._id] ?? null,
             currentUserId,
             pinnedIds,

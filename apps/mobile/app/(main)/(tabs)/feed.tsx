@@ -30,7 +30,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Separator, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
-import { BONDFIRE_REPORT_OPTIONS, getSwipeReportComment } from '../../../lib/bondfireSwipeActions'
+import {
+  BONDFIRE_REPORT_OPTIONS,
+  getBondfireSwipeActions,
+  getSwipeReportComment,
+} from '../../../lib/bondfireSwipeActions'
 import { routes } from '../../../lib/routes'
 
 type BondfireData = Doc<'bondfires'> & {
@@ -116,24 +120,28 @@ function toBondfireRowProps(
   onUnpin: () => void,
   onReport: () => void,
 ): BondfireRowProps {
+  const isOwner = currentUserId === bondfire.userId
+  const isPinned = pinnedIds.includes(bondfire._id)
+
   return {
-    id: bondfire._id,
     creatorName: bondfire.creatorName ?? 'Anonymous',
     timestamp: bondfire.createdAt,
     videoCount: bondfire.videoCount,
     campLabel: bondfire.campLabel,
     thumbnailUrl,
     isLive: bondfire.videoStatus === 'live' || !!bondfire.isLive,
-    ownerId: bondfire.userId,
-    currentUserId,
-    pinnedIds,
+    statusLabel: hasViewedToday(bondfire._id) ? 'Viewed' : 'New',
     participants: [], // Feed doesn't load participants yet — empty for now
+    actions: getBondfireSwipeActions({
+      isOwner,
+      isPinned,
+      onDelete,
+      onPin,
+      onUnpin,
+      onReport,
+    }),
     onOpen,
     onRespond,
-    onDelete,
-    onPin,
-    onUnpin,
-    onReport,
   }
 }
 

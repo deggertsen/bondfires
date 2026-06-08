@@ -1,13 +1,10 @@
-import { hasViewedToday } from '@bondfires/app'
-import { Flame, MessageCircle } from '@tamagui/lucide-icons'
+import { Flame, MessageCircle, User } from '@tamagui/lucide-icons'
 import { Image } from 'expo-image'
 import { Pressable } from 'react-native'
 import { Avatar, XStack, YStack } from 'tamagui'
 import { Button } from './Button'
-import { SwipeableRow } from './SwipeableRow'
+import { type SwipeAction, SwipeableRow } from './SwipeableRow'
 import { Text } from './Text'
-
-// ── Types ──────────────────────────────────────────────────────
 
 export type BondfireParticipant = {
   userId: string
@@ -16,8 +13,6 @@ export type BondfireParticipant = {
 }
 
 export type BondfireRowProps = {
-  /** Bondfire document id */
-  id: string
   /** Bondfire creator display name */
   creatorName: string
   /** Timestamp for the time ago display */
@@ -30,24 +25,16 @@ export type BondfireRowProps = {
   thumbnailUrl: string | null
   /** Whether this bondfire is currently live */
   isLive: boolean
-  /** The bondfire owner user id */
-  ownerId: string
-  /** Current authenticated user id */
-  currentUserId: string | null
-  /** Set of pinned bondfire ids for the current user */
-  pinnedIds: string[]
+  /** Status label displayed after the timestamp, e.g. "Viewed" or "New" */
+  statusLabel: string
   /** Participant avatars to show */
   participants: BondfireParticipant[]
+  /** Swipe actions supplied by the owning screen */
+  actions: SwipeAction[]
   /** Callbacks */
   onOpen: () => void
   onRespond: () => void
-  onDelete: () => void
-  onPin: () => void
-  onUnpin: () => void
-  onReport: () => void
 }
-
-// ── Helpers ────────────────────────────────────────────────────
 
 function getTimeAgo(timestamp: number): string {
   const seconds = Math.floor((Date.now() - timestamp) / 1000)
@@ -57,8 +44,6 @@ function getTimeAgo(timestamp: number): string {
   if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`
   return `${Math.floor(seconds / 604800)}w ago`
 }
-
-// ── Sub-components ─────────────────────────────────────────────
 
 function ParticipantStack({ participants }: { participants: BondfireParticipant[] }) {
   return (
@@ -75,7 +60,9 @@ function ParticipantStack({ participants }: { participants: BondfireParticipant[
           {participant.photoUrl ? (
             <Avatar.Image source={{ uri: participant.photoUrl }} />
           ) : (
-            <Avatar.Fallback backgroundColor="$backgroundHover" />
+            <Avatar.Fallback backgroundColor="$backgroundHover">
+              <User size={14} color="$placeholderColor" />
+            </Avatar.Fallback>
           )}
         </Avatar>
       ))}
@@ -83,66 +70,22 @@ function ParticipantStack({ participants }: { participants: BondfireParticipant[
   )
 }
 
-// ── Main Component ─────────────────────────────────────────────
-
 export function BondfireRow({
-  id,
   creatorName,
   timestamp,
   videoCount,
   campLabel,
   thumbnailUrl,
   isLive,
-  ownerId,
-  currentUserId,
-  pinnedIds,
+  statusLabel,
   participants,
+  actions,
   onOpen,
   onRespond,
-  onDelete,
-  onPin,
-  onUnpin,
-  onReport,
 }: BondfireRowProps) {
   const timeAgo = getTimeAgo(timestamp)
   const responses = Math.max(0, videoCount - 1)
-  const viewed = hasViewedToday(id)
-  const isOwner = currentUserId === ownerId
-  const isPinned = pinnedIds.includes(id)
-
-  const actions: Array<{
-    key: string
-    label: string
-    color?: string
-    backgroundColor?: string
-    onPress: () => void
-  }> = []
-
-  if (isOwner) {
-    actions.push({
-      key: 'delete',
-      label: 'Delete',
-      color: '$color',
-      backgroundColor: '$errorDark',
-      onPress: onDelete,
-    })
-  } else {
-    actions.push({
-      key: 'report',
-      label: 'Report',
-      color: '$warning',
-      backgroundColor: '$backgroundHover',
-      onPress: onReport,
-    })
-  }
-
-  actions.push({
-    key: 'pin',
-    label: isPinned ? 'Unpin' : 'Pin',
-    color: '$primary',
-    backgroundColor: '$backgroundHover',
-    onPress: isPinned ? onUnpin : onPin,
-  })
+  const subtitle = isLive ? 'Live now' : `${timeAgo} · ${statusLabel}`
 
   const row = (
     <Pressable onPress={onOpen}>
@@ -200,7 +143,7 @@ export function BondfireRow({
                 {creatorName ?? 'Anonymous'}
               </Text>
               <Text fontSize={12} color="$placeholderColor" numberOfLines={1}>
-                {isLive ? 'Live now' : `${timeAgo} · ${viewed ? 'Viewed' : 'New'}`}
+                {subtitle}
               </Text>
             </YStack>
 
