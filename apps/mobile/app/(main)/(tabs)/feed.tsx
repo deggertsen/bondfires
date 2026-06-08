@@ -10,10 +10,10 @@ import {
   telemetry,
 } from '@bondfires/app'
 import { bondfireColors } from '@bondfires/config'
-import { Button, Input, Text } from '@bondfires/ui'
+import { Button, Input, SwipeableRow, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { Eye, Flame, MessageCircle, Search } from '@tamagui/lucide-icons'
-import { useAction, useQuery } from 'convex/react'
+import { useAction, useMutation, useQuery } from 'convex/react'
 import { Image } from 'expo-image'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -29,7 +29,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Separator, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
-import type { Doc } from '../../../../../convex/_generated/dataModel'
+import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { routes } from '../../../lib/routes'
 
 type BondfireData = Doc<'bondfires'> & {
@@ -119,22 +119,76 @@ function CampPill({
 function BondfireRow({
   bondfire,
   thumbnailUrl,
+  currentUserId,
+  pinnedIds,
   onOpen,
   onRespond,
+  onDelete,
+  onPin,
+  onUnpin,
+  onReport,
 }: {
   bondfire: BondfireData
   thumbnailUrl: string | null
+  currentUserId: string | null
+  pinnedIds: string[]
   onOpen: () => void
   onRespond: () => void
+  onDelete: () => void
+  onPin: () => void
+  onUnpin: () => void
+  onReport: () => void
 }) {
   const timeAgo = getTimeAgo(bondfire.createdAt)
   const responses = Math.max(0, bondfire.videoCount - 1)
   const viewed = hasViewedToday(bondfire._id)
   const isLive = bondfire.videoStatus === 'live' || bondfire.isLive
+  const isOwner = currentUserId === bondfire.userId
+  const isPinned = pinnedIds.includes(bondfire._id)
 
-  return (
+  const actions: Array<{
+    key: string
+    label: string
+    color?: string
+    backgroundColor?: string
+    onPress: () => void
+  }> = []
+
+  if (isOwner) {
+    actions.push({
+      key: 'delete',
+      label: 'Delete',
+      color: bondfireColors.error,
+      backgroundColor: bondfireColors.gunmetal,
+      onPress: onDelete,
+    })
+  } else {
+    actions.push({
+      key: 'report',
+      label: 'Report',
+      color: bondfireColors.warning,
+      backgroundColor: bondfireColors.gunmetal,
+      onPress: onReport,
+    })
+  }
+
+  actions.push({
+    key: 'pin',
+    label: isPinned ? 'Unpin' : 'Pin',
+    color: bondfireColors.bondfireCopper,
+    backgroundColor: bondfireColors.gunmetal,
+    onPress: isPinned ? onUnpin : onPin,
+  })
+
+  const row = (
     <Pressable onPress={onOpen}>
-      <XStack paddingHorizontal={16} paddingVertical={12} gap={12} alignItems="center">
+      <XStack
+        paddingHorizontal={16}
+        paddingVertical={12}
+        gap={12}
+        alignItems="center"
+        backgroundColor={bondfireColors.obsidian}
+      >
         <YStack
           width={74}
           height={74}
@@ -235,6 +289,8 @@ function BondfireRow({
       </XStack>
     </Pressable>
   )
+
+  return <SwipeableRow actions={actions}>{row}</SwipeableRow>
 }
 
 function EmptyFeed() {
@@ -331,6 +387,19 @@ export default function FeedScreen() {
     | undefined
   const selectedCampId = currentCampId as Doc<'camps'>['_id'] | null
   const selectedCamp = joinedCamps?.find((camp) => camp._id === selectedCampId)
+
+  // User data for pins
+  const currentUser = useQuery(
+    api.users.get,
+    currentUserId ? { userId: currentUserId as Id<'users'> } : 'skip',
+  )
+  const pinnedIds = (currentUser?.pinnedBondfireIds ?? []) as string[]
+
+  // Mutations for swipe actions
+  const deleteBondfire = useMutation(api.bondfires.deleteBondfire)
+  const pinBondfire = useMutation(api.bondfires.pinBondfire)
+  const unpinBondfire = useMutation(api.bondfires.unpinBondfire)
+  const reportBondfire = useMutation(api.reports.submit)
 
   const state$ = useObservable({
     thumbnailUrls: {} as Record<string, string | null>,
@@ -552,6 +621,122 @@ export default function FeedScreen() {
     [state$],
   )
 
+  // ── Swipe action handlers ───────────────────────────────────────
+
+  const handleDelete = useCallback(
+    (bondfireId: string) => {
+      Alert.alert(
+        'Delete Bondfire',
+        'This will permanently remove your bondfire and all responses. This cannot be undone.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await deleteBondfire({ bondfireId: bondfireId as Id<'bondfires'> })
+                // Remove from local state immediately for responsive UI
+                setBondfires((prev) => prev?.filter((b) => b._id !== bondfireId))
+                state$.thumbnailUrls[bondfireId]?.set(null)
+              } catch (error) {
+                Alert.alert('Error', 'Failed to delete bondfire. Please try again.')
+                telemetry.error('feed:deleteBondfire', String(error))
+              }
+            },
+          },
+        ],
+      )
+    },
+    [deleteBondfire, state$],
+  )
+
+  const handlePin = useCallback(
+    async (bondfireId: string) => {
+      try {
+        await pinBondfire({ bondfireId: bondfireId as Id<'bondfires'> })
+      } catch (error) {
+        Alert.alert('Error', String(error))
+      }
+    },
+    [pinBondfire],
+  )
+
+  const handleUnpin = useCallback(
+    async (bondfireId: string) => {
+      try {
+        await unpinBondfire({ bondfireId: bondfireId as Id<'bondfires'> })
+      } catch (error) {
+        Alert.alert('Error', String(error))
+      }
+    },
+    [unpinBondfire],
+  )
+
+  const handleReport = useCallback(
+    (bondfireId: string, videoOwnerId: string) => {
+      Alert.alert(
+        'Report Content',
+        'What category best describes the issue?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Harassment',
+            onPress: async () => {
+              try {
+                await reportBondfire({
+                  bondfireId: bondfireId as Id<'bondfires'>,
+                  videoOwnerId: videoOwnerId as Id<'users'>,
+                  category: 'community_guidelines',
+                  subCategory: 'harassment_or_abuse',
+                  comments: 'Reported from feed swipe action',
+                })
+                Alert.alert('Reported', 'Thank you. We will review this content.')
+              } catch (error) {
+                Alert.alert('Error', String(error))
+              }
+            },
+          },
+          {
+            text: 'Inappropriate',
+            onPress: async () => {
+              try {
+                await reportBondfire({
+                  bondfireId: bondfireId as Id<'bondfires'>,
+                  videoOwnerId: videoOwnerId as Id<'users'>,
+                  category: 'community_guidelines',
+                  subCategory: 'pornographic_content',
+                  comments: 'Reported from feed swipe action',
+                })
+                Alert.alert('Reported', 'Thank you. We will review this content.')
+              } catch (error) {
+                Alert.alert('Error', String(error))
+              }
+            },
+          },
+          {
+            text: 'Spam',
+            onPress: async () => {
+              try {
+                await reportBondfire({
+                  bondfireId: bondfireId as Id<'bondfires'>,
+                  videoOwnerId: videoOwnerId as Id<'users'>,
+                  category: 'community_guidelines',
+                  subCategory: 'spam_or_solicitation',
+                  comments: 'Reported from feed swipe action',
+                })
+                Alert.alert('Reported', 'Thank you. We will review this content.')
+              } catch (error) {
+                Alert.alert('Error', String(error))
+              }
+            },
+          },
+        ],
+      )
+    },
+    [reportBondfire],
+  )
+
   const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
       const items = filteredRef.current
@@ -645,8 +830,14 @@ export default function FeedScreen() {
           <BondfireRow
             bondfire={item}
             thumbnailUrl={thumbnailUrls[item._id] ?? null}
+            currentUserId={currentUserId}
+            pinnedIds={pinnedIds}
             onOpen={() => handleBondfirePress(item._id)}
             onRespond={() => handleRespond(item._id)}
+            onDelete={() => handleDelete(item._id)}
+            onPin={() => handlePin(item._id)}
+            onUnpin={() => handleUnpin(item._id)}
+            onReport={() => handleReport(item._id, item.userId)}
           />
         )}
         ItemSeparatorComponent={() => (

@@ -643,3 +643,157 @@ export const incrementViews = mutation({
     return { recorded: true }
   },
 })
+
+// Pin a bondfire to the user's pinned list (max 8).
+export const pinBondfire = mutation({
+  args: { bondfireId: v.id('bondfires') },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) throw new Error('Not authenticated')
+
+    const bondfire = await ctx.db.get(args.bondfireId)
+    if (!bondfire) throw new Error('Bondfire not found')
+    if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
+      throw new Error('Bondfire not found')
+    }
+
+    const user = await ctx.db.get(userId)
+    if (!user) throw new Error('User not found')
+
+    const pinned = user.pinnedBondfireIds ?? []
+    if (pinned.includes(args.bondfireId)) {
+      return { pinned: true, already: true }
+    }
+    if (pinned.length >= 8) {
+      throw new Error('You can pin up to 8 bondfires')
+    }
+
+    await ctx.db.patch(userId, {
+      pinnedBondfireIds: [...pinned, args.bondfireId],
+      updatedAt: Date.now(),
+    })
+
+    return { pinned: true }
+  },
+})
+
+// Unpin a bondfire from the user's pinned list.
+export const unpinBondfire = mutation({
+  args: { bondfireId: v.id('bondfires') },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) throw new Error('Not authenticated')
+
+    const user = await ctx.db.get(userId)
+    if (!user) throw new Error('User not found')
+
+    const pinned = user.pinnedBondfireIds ?? []
+    if (!pinned.includes(args.bondfireId)) {
+      return { unpinned: true, already: true }
+    }
+
+    await ctx.db.patch(userId, {
+      pinnedBondfireIds: pinned.filter((id) => id !== args.bondfireId),
+      updatedAt: Date.now(),
+    })
+
+    return { unpinned: true }
+  },
+})
+
+// Delete a bondfire (camp or public). Only the creator can delete.
+// Cleans up all response videos, live sessions, personal-bondfire
+// associations, watch events, and reports.
+export const deleteBondfire = mutation({
+  args: { bondfireId: v.id('bondfires') },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) throw new Error('Not authenticated')
+
+    const bondfire = await ctx.db.get(args.bondfireId)
+    if (!bondfire) throw new Error('Bondfire not found')
+    if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
+      throw new Error('Bondfire not found')
+    }
+
+    if (bondfire.userId !== userId) {
+      throw new Error('Only the bondfire creator can delete it')
+    }
+
+    // Delete response videos and their live sessions.
+    const responses = await ctx.db
+      .query('bondfireVideos')
+      .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
+      .collect()
+
+    for (const response of responses) {
+      if (response.liveSessionId) {
+        await ctx.db.delete(response.liveSessionId)
+      }
+      await ctx.db.delete(response._id)
+    }
+
+    // Clean up personal-bondfire participants (if this is a personal bondfire).
+    if (bondfire.personalCampId) {
+      const participants = await ctx.db
+        .query('personalBondfireParticipants')
+        .withIndex('by_bondfire_status', (q) => q.eq('bondfireId', args.bondfireId))
+        .collect()
+      for (const p of participants) {
+        await ctx.db.delete(p._id)
+      }
+
+      const invites = await ctx.db
+        .query('personalBondfireInvites')
+        .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
+        .collect()
+      for (const inv of invites) {
+        await ctx.db.delete(inv._id)
+      }
+    }
+
+    // Clean up watch events.
+    const watchEvents = await ctx.db
+      .query('watchEvents')
+      .withIndex('by_video', (q) => q.eq('videoId', args.bondfireId))
+      .collect()
+    for (const we of watchEvents) {
+      await ctx.db.delete(we._id)
+    }
+
+    // Delete any reports tied to this bondfire.
+    const reports = await ctx.db
+      .query('reports')
+      .filter((q) => q.eq(q.field('bondfireId'), args.bondfireId))
+      .collect()
+    for (const r of reports) {
+      await ctx.db.delete(r._id)
+    }
+
+    // Remove from the creator's pinned list if present.
+    const creator = await ctx.db.get(bondfire.userId)
+    if (creator?.pinnedBondfireIds) {
+      await ctx.db.patch(bondfire.userId, {
+        pinnedBondfireIds: creator.pinnedBondfireIds.filter(
+          (id) => id !== args.bondfireId,
+        ),
+      })
+    }
+
+    if (bondfire.liveSessionId) {
+      await ctx.db.delete(bondfire.liveSessionId)
+    }
+
+    await ctx.db.delete(args.bondfireId)
+
+    // Decrement the creator's bondfire count.
+    if (creator) {
+      await ctx.db.patch(bondfire.userId, {
+        bondfireCount: Math.max(0, (creator.bondfireCount ?? 1) - 1),
+        updatedAt: Date.now(),
+      })
+    }
+
+    return { deleted: true }
+  },
+})
