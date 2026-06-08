@@ -1,4 +1,4 @@
-import { telemetry } from '@bondfires/app'
+import { telemetry, useSystemThemeColors } from '@bondfires/app'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
@@ -6,14 +6,14 @@ import { Flame } from '@tamagui/lucide-icons'
 import { useQuery } from 'convex/react'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useRef } from 'react'
-import { StatusBar, useColorScheme } from 'react-native'
+import { StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { Spinner, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import { resolveAuthRedirect, routes } from '../../lib/routes'
 
 export default function LoginScreen() {
-  const colorScheme = useColorScheme()
+  const { colors, statusBarStyle } = useSystemThemeColors()
   const router = useRouter()
   const { redirectTo } = useLocalSearchParams<{ redirectTo?: string }>()
   const { signIn } = useAuthActions()
@@ -126,11 +126,8 @@ export default function LoginScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}>
-      <StatusBar
-        barStyle={colorScheme === 'light' ? 'dark-content' : 'light-content'}
-        backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}
-      />
+    <YStack flex={1} backgroundColor={colors.background}>
+      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
       <KeyboardAwareScrollView
         contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
         keyboardShouldPersistTaps="handled"

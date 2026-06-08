@@ -1,16 +1,16 @@
-import { getAuthErrorMessage } from '@bondfires/app'
+import { getAuthErrorMessage, useSystemThemeColors } from '@bondfires/app'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { ChevronLeft, Mail } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
 import { useState } from 'react'
-import { Pressable, StatusBar, useColorScheme } from 'react-native'
+import { Pressable, StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { Spinner, YStack } from 'tamagui'
 import { routes } from '../../lib/routes'
 
 export default function ForgotPasswordScreen() {
-  const colorScheme = useColorScheme()
+  const { colors, statusBarStyle } = useSystemThemeColors()
   const router = useRouter()
   const { signIn } = useAuthActions()
 
@@ -43,11 +43,8 @@ export default function ForgotPasswordScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}>
-      <StatusBar
-        barStyle={colorScheme === 'light' ? 'dark-content' : 'light-content'}
-        backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}
-      />
+    <YStack flex={1} backgroundColor={colors.background}>
+      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
 
       {/* Back button */}
       <YStack paddingTop={60} paddingHorizontal={16}>

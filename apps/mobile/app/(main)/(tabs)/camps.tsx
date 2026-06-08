@@ -1,4 +1,4 @@
-import { parseError, subscriptionActions, useAppTheme } from '@bondfires/app'
+import { parseError, subscriptionActions, useAppThemeColors } from '@bondfires/app'
 import { Button, CampCardStatusBanner, Input, Text } from '@bondfires/ui'
 import { ChevronDown, ChevronUp, Flame, Lock, Search, Sparkles, Users } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
@@ -349,7 +349,7 @@ function PersonalCampCard({
 }
 
 export default function CampsScreen() {
-  const { themeName } = useAppTheme()
+  const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const camps = useQuery(api.camps.list, {})
   const myCamps = useQuery(api.camps.listMine, {})
@@ -549,11 +549,7 @@ export default function CampsScreen() {
   if (camps === undefined) {
     return (
       <YStack flex={1} backgroundColor={'$background'} alignItems="center" justifyContent="center">
-        <StatusBar
-          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
-          backgroundColor="transparent"
-          translucent
-        />
+        <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
         <Spinner size="large" color={'$primary'} />
         <Text marginTop={18} color={'$placeholderColor'}>
           Loading camps...
@@ -564,11 +560,7 @@ export default function CampsScreen() {
 
   return (
     <YStack flex={1} backgroundColor={'$background'}>
-      <StatusBar
-        barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
-        backgroundColor="transparent"
-        translucent
-      />
+      <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
 
       <FlatList
         data={listItems}
@@ -577,8 +569,8 @@ export default function CampsScreen() {
           <RefreshControl
             refreshing={isRefreshing}
             onRefresh={handleRefresh}
-            tintColor={'$primary'}
-            colors={['$primary']}
+            tintColor={colors.primary}
+            colors={[colors.primary]}
           />
         }
         renderItem={({ item }) =>

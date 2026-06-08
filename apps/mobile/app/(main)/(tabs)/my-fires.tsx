@@ -3,7 +3,7 @@ import {
   getBondfireVideoIndex,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
-  useAppTheme,
+  useAppThemeColors,
 } from '@bondfires/app'
 import { Button, Text } from '@bondfires/ui'
 import { Flame, MessageCircle, Pin, User } from '@tamagui/lucide-icons'
@@ -152,7 +152,7 @@ function MyFireRow({ thread, onOpen }: { thread: MyFire; onOpen: () => void }) {
 }
 
 export default function MyFiresScreen() {
-  const { themeName } = useAppTheme()
+  const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const [refreshKey, setRefreshKey] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -182,10 +182,7 @@ export default function MyFiresScreen() {
   if (threads === undefined) {
     return (
       <YStack flex={1} backgroundColor={'$background'}>
-        <StatusBar
-          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
-          backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
-        />
+        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
         <YStack flex={1} alignItems="center" justifyContent="center">
           <Spinner size="large" color={'$primary'} />
         </YStack>
@@ -195,10 +192,7 @@ export default function MyFiresScreen() {
 
   return (
     <YStack flex={1} backgroundColor={'$background'}>
-      <StatusBar
-        barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
-        backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
-      />
+      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
       <FlatList
         key={refreshKey}
         data={threads}
@@ -207,8 +201,8 @@ export default function MyFiresScreen() {
           <RefreshControl
             refreshing={isRefreshing}
             onRefresh={handleRefresh}
-            tintColor={'$primary'}
-            colors={['$primary']}
+            tintColor={colors.primary}
+            colors={[colors.primary]}
           />
         }
         renderItem={({ item }) => <MyFireRow thread={item} onOpen={() => handleOpen(item._id)} />}

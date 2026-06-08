@@ -1,4 +1,4 @@
-import { subscriptionActions, useAppTheme } from '@bondfires/app'
+import { subscriptionActions, useAppThemeColors } from '@bondfires/app'
 import { Button, Text } from '@bondfires/ui'
 import { ArrowLeft, Flame, Lock, MessageCircle, Plus, Users } from '@tamagui/lucide-icons'
 import { useQuery } from 'convex/react'
@@ -72,7 +72,7 @@ function BondfireRow({ bondfire, onOpen }: { bondfire: BondfireData; onOpen: () 
 }
 
 export default function PersonalCampScreen() {
-  const { themeName } = useAppTheme()
+  const { statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const { newFire, createdAfter } = useLocalSearchParams<{
     newFire?: string
@@ -148,7 +148,7 @@ export default function PersonalCampScreen() {
         alignItems="center"
         justifyContent="center"
       >
-        <StatusBar barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'} />
+        <StatusBar barStyle={statusBarStyle} />
         <Spinner size="large" color={'$primary'} />
       </YStack>
     )
@@ -164,7 +164,7 @@ export default function PersonalCampScreen() {
         paddingHorizontal={16}
         gap={16}
       >
-        <StatusBar barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'} />
+        <StatusBar barStyle={statusBarStyle} />
         <Pressable onPress={handleBack}>
           <YStack
             width={42}
@@ -199,7 +199,7 @@ export default function PersonalCampScreen() {
 
   return (
     <YStack flex={1} backgroundColor={'$backgroundPress'}>
-      <StatusBar barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'} />
+      <StatusBar barStyle={statusBarStyle} />
 
       {/* Header */}
       <YStack paddingTop={58} paddingHorizontal={16} paddingBottom={18} gap={14}>

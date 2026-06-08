@@ -7,6 +7,7 @@ import {
   telemetry,
   uploadQueueActions,
   useAppTheme,
+  useAppThemeColors,
   useKindlingBalance,
   usePreferences,
   useSubscription,
@@ -171,7 +172,7 @@ function ThemeSelector() {
 }
 
 export default function ProfileScreen() {
-  const { themeName, themePreference, setThemePreference } = useAppTheme()
+  const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const { signOut } = useAuthActions()
   const convex = useConvex()
@@ -460,10 +461,7 @@ export default function ProfileScreen() {
   return (
     <YStack flex={1} backgroundColor={'$background'}>
       <ProfileSubscription key={refreshKey} onResolved={handleProfileResolved} />
-      <StatusBar
-        barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
-        backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
-      />
+      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
 
       <XStack
         justifyContent="space-between"
@@ -496,8 +494,8 @@ export default function ProfileScreen() {
           <RefreshControl
             refreshing={isRefreshing}
             onRefresh={handleRefresh}
-            tintColor={'$primary'}
-            colors={['$primary']}
+            tintColor={colors.primary}
+            colors={[colors.primary]}
           />
         }
         showsVerticalScrollIndicator={false}

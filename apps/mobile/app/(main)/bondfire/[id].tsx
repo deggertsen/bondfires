@@ -8,7 +8,7 @@ import {
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
   telemetry,
-  useAppTheme,
+  useAppThemeColors,
   useMuxData,
 } from '@bondfires/app'
 import { Button, Text } from '@bondfires/ui'
@@ -678,7 +678,7 @@ function formatTime(ms: number): string {
 }
 
 export default function BondfireDetailScreen() {
-  const { themeName } = useAppTheme()
+  const { colors, statusBarStyle } = useAppThemeColors()
   const { id } = useLocalSearchParams<{ id: string }>()
   const router = useRouter()
   const navigation = useNavigation()
@@ -998,10 +998,7 @@ export default function BondfireDetailScreen() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <StatusBar
-        barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
-        backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
-      />
+      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
 
       <YStack flex={1} backgroundColor={'$background'}>
         {/* Header */}

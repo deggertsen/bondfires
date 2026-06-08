@@ -1,9 +1,9 @@
-import { getRandomCompletionMessage } from '@bondfires/app'
+import { getRandomCompletionMessage, useSystemThemeColors } from '@bondfires/app'
 import { Button, Text } from '@bondfires/ui'
 import { Check, Share } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
 import { useState } from 'react'
-import { StatusBar, useColorScheme } from 'react-native'
+import { StatusBar } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 import type { Id } from '../../../convex/_generated/dataModel'
 import { routes } from '../lib/routes'
@@ -17,7 +17,7 @@ interface CompletionScreenProps {
 }
 
 export function CompletionScreen({ detail, onContinue, shareBondfireId }: CompletionScreenProps) {
-  const colorScheme = useColorScheme()
+  const { colors, statusBarStyle } = useSystemThemeColors()
   const router = useRouter()
   const [message] = useState(() => getRandomCompletionMessage())
   const [isInviteSheetOpen, setIsInviteSheetOpen] = useState(!!shareBondfireId)
@@ -34,15 +34,12 @@ export function CompletionScreen({ detail, onContinue, shareBondfireId }: Comple
     <>
       <YStack
         flex={1}
-        backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}
+        backgroundColor={colors.background}
         alignItems="center"
         justifyContent="center"
         padding={32}
       >
-        <StatusBar
-          barStyle={colorScheme === 'light' ? 'dark-content' : 'light-content'}
-          backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}
-        />
+        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
 
         {/* Large emoji */}
         <Text fontSize={120} marginBottom={32}>

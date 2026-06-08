@@ -45,7 +45,7 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
         message: `Watch this Bondfire!\n\n${shareUrl}`,
         url: shareUrl,
       })
-    } catch (error) {
+    } catch {
       // User cancelled share — that's fine, not an error
     }
   }, [shareUrl])

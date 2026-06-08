@@ -1,4 +1,4 @@
-import { getAuthErrorMessage } from '@bondfires/app'
+import { getAuthErrorMessage, useSystemThemeColors } from '@bondfires/app'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
@@ -6,7 +6,7 @@ import DateTimePicker, { type DateTimePickerEvent } from '@react-native-communit
 import { Flame, UserPlus } from '@tamagui/lucide-icons'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useState } from 'react'
-import { Platform, Pressable, StatusBar, useColorScheme } from 'react-native'
+import { Platform, Pressable, StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { Spinner, XStack, YStack } from 'tamagui'
 import { routes } from '../../lib/routes'
@@ -45,7 +45,7 @@ function getMinBirthDate(): Date {
 }
 
 export default function SignupScreen() {
-  const colorScheme = useColorScheme()
+  const { colors, statusBarStyle } = useSystemThemeColors()
   const router = useRouter()
   const { redirectTo } = useLocalSearchParams<{ redirectTo?: string }>()
   const { signIn } = useAuthActions()
@@ -177,11 +177,8 @@ export default function SignupScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}>
-      <StatusBar
-        barStyle={colorScheme === 'light' ? 'dark-content' : 'light-content'}
-        backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}
-      />
+    <YStack flex={1} backgroundColor={colors.background}>
+      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
       <KeyboardAwareScrollView
         contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
         keyboardShouldPersistTaps="handled"

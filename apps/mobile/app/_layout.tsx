@@ -13,7 +13,7 @@ import * as SplashScreen from 'expo-splash-screen'
 import { Component, type ErrorInfo, type ReactNode, useCallback, useEffect, useRef } from 'react'
 import { KeyboardProvider } from 'react-native-keyboard-controller'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
-import { TamaguiProvider, Theme, YStack, AnimatePresence } from 'tamagui'
+import { AnimatePresence, TamaguiProvider, Theme, YStack } from 'tamagui'
 // Import config for TamaguiProvider
 import config from '../tamagui.config'
 import 'react-native-reanimated'
@@ -198,12 +198,7 @@ function AppContent() {
   const unregisterDevice = useMutation(api.notifications.unregisterDevice)
 
   // Force-update check: compares current version against remote minAppVersion.
-  const {
-    loading: updateCheckLoading,
-    updateRequired,
-    minRequiredVersion,
-    storeUrl,
-  } = useForceUpdate()
+  const { loading: updateCheckLoading, updateRequired, minRequiredVersion } = useForceUpdate()
 
   // Handle notification taps
   const handleNotificationResponse = useCallback(

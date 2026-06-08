@@ -1,3 +1,4 @@
+import { useAppThemeColors } from '@bondfires/app'
 import { Button, Text } from '@bondfires/ui'
 import { ArrowLeft } from '@tamagui/lucide-icons'
 import { useEffect, useRef } from 'react'
@@ -6,6 +7,7 @@ import { XStack, YStack } from 'tamagui'
 import { type CommentsStepProps, MIN_COMMENT_LENGTH } from './types'
 
 export function CommentsStep({ value, onChange, onNext, onBack }: CommentsStepProps) {
+  const { colors } = useAppThemeColors()
   const textInputRef = useRef<TextInput>(null)
   const charCount = value.trim().length
   const isValid = charCount >= MIN_COMMENT_LENGTH
@@ -33,9 +35,15 @@ export function CommentsStep({ value, onChange, onNext, onBack }: CommentsStepPr
       <YStack>
         <TextInput
           ref={textInputRef}
-          style={styles.textInput}
+          style={[
+            styles.textInput,
+            {
+              backgroundColor: colors.backgroundHover,
+              color: colors.color,
+            },
+          ]}
           placeholder="Describe the issue in detail..."
-          placeholderTextColor={'$placeholderColor'}
+          placeholderTextColor={colors.placeholderColor}
           multiline
           value={value}
           onChangeText={onChange}
@@ -69,11 +77,9 @@ export function CommentsStep({ value, onChange, onNext, onBack }: CommentsStepPr
 
 const styles = StyleSheet.create({
   textInput: {
-    backgroundColor: '$backgroundHover',
     borderRadius: 12,
     padding: 16,
     minHeight: 120,
-    color: '$color',
     fontSize: 16,
   },
 })

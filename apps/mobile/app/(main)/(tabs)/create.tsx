@@ -12,7 +12,7 @@ import {
   shouldShowReportIssue,
   startBackgroundUpload,
   telemetry,
-  useAppTheme,
+  useAppThemeColors,
   useLivePublisher,
   useSubscription,
 } from '@bondfires/app'
@@ -59,7 +59,7 @@ function formatMaxDuration(seconds: number) {
 }
 
 export default function CreateScreen() {
-  const { themeName } = useAppTheme()
+  const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const { campId, respondTo, personalCamp } = useLocalSearchParams<{
     campId?: string
@@ -1241,10 +1241,7 @@ export default function CreateScreen() {
         justifyContent="center"
         paddingHorizontal={24}
       >
-        <StatusBar
-          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
-          backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
-        />
+        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
         <YStack alignItems="center" gap={24}>
           <YStack
             width={100}
@@ -1281,10 +1278,7 @@ export default function CreateScreen() {
         justifyContent="center"
         gap={14}
       >
-        <StatusBar
-          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
-          backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
-        />
+        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
         <Spinner size="large" color={'$primary'} />
         <Text color={'$placeholderColor'}>Loading camp...</Text>
       </YStack>
@@ -1301,10 +1295,7 @@ export default function CreateScreen() {
         padding={24}
         gap={16}
       >
-        <StatusBar
-          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
-          backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
-        />
+        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
         <Text fontSize={24} fontWeight="900" textAlign="center">
           Camp unavailable
         </Text>
@@ -1332,10 +1323,7 @@ export default function CreateScreen() {
   if (!respondTo && !isPersonalCamp && !effectiveCampId) {
     return (
       <YStack flex={1} backgroundColor={'$background'}>
-        <StatusBar
-          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
-          backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
-        />
+        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
         <YStack paddingTop={64} paddingHorizontal={20} paddingBottom={16} gap={8}>
           <Text fontSize={28} fontWeight="900">
             Choose a Camp
@@ -1450,10 +1438,7 @@ export default function CreateScreen() {
         padding={24}
         gap={18}
       >
-        <StatusBar
-          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
-          backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
-        />
+        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
         <YStack
           width={78}
           height={78}
@@ -1488,10 +1473,7 @@ export default function CreateScreen() {
         justifyContent="center"
         gap={18}
       >
-        <StatusBar
-          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
-          backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
-        />
+        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
         <Text fontSize={24} fontWeight="900" textAlign="center">
           Need or Offer?
         </Text>
@@ -1559,10 +1541,7 @@ export default function CreateScreen() {
 
     return (
       <YStack flex={1} backgroundColor={'$background'} alignItems="center" justifyContent="center">
-        <StatusBar
-          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
-          backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
-        />
+        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
         <YStack alignItems="center" gap={20}>
           <Spinner size="large" color={'$primary'} />
           <Text fontSize={20} fontWeight="600">
@@ -1603,10 +1582,7 @@ export default function CreateScreen() {
   if (recordingState === 'uploading') {
     return (
       <YStack flex={1} backgroundColor={'$background'} alignItems="center" justifyContent="center">
-        <StatusBar
-          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
-          backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
-        />
+        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
         <YStack alignItems="center" gap={20}>
           <Spinner size="large" color={'$success'} />
           <Text fontSize={20} fontWeight="600">
@@ -1648,11 +1624,7 @@ export default function CreateScreen() {
 
     return (
       <YStack flex={1} backgroundColor={'$background'}>
-        <StatusBar
-          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
-          backgroundColor="transparent"
-          translucent
-        />
+        <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
         {shouldRenderCamera ? (
           <>
             <LivePublisherView style={{ flex: 1 }} />
@@ -1795,11 +1767,7 @@ export default function CreateScreen() {
   // Camera view
   return (
     <YStack flex={1} backgroundColor={'$background'}>
-      <StatusBar
-        barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
-        backgroundColor="transparent"
-        translucent
-      />
+      <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
       {shouldRenderCamera ? (
         <CameraView
           key={`${cameraResetCounter}-${facing}`}

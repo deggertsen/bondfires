@@ -1,13 +1,13 @@
-import { appActions } from '@bondfires/app'
+import { appActions, useSystemThemeColors } from '@bondfires/app'
 import { Button, Text } from '@bondfires/ui'
 import { Flame } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
-import { StatusBar, useColorScheme } from 'react-native'
+import { StatusBar } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 import { routes } from '../../lib/routes'
 
 export default function OnboardingScreen() {
-  const colorScheme = useColorScheme()
+  const { colors, statusBarStyle } = useSystemThemeColors()
   const router = useRouter()
 
   const handleContinue = () => {
@@ -23,14 +23,11 @@ export default function OnboardingScreen() {
   return (
     <YStack
       flex={1}
-      backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}
+      backgroundColor={colors.background}
       paddingHorizontal={24}
       paddingVertical={60}
     >
-      <StatusBar
-        barStyle={colorScheme === 'light' ? 'dark-content' : 'light-content'}
-        backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}
-      />
+      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
 
       <YStack flex={1} justifyContent="center" alignItems="center" gap={40}>
         {/* Logo */}

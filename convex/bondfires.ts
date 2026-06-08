@@ -184,7 +184,8 @@ async function resolveCampLabel(ctx: QueryCtx, bondfire: Doc<'bondfires'>) {
   }
 
   if (bondfire.campId) {
-    const camp = await ctx.db.get(bondfire.campId)
+    const campId = bondfire.campId
+    const camp = await ctx.db.get(campId)
     if (camp) {
       return camp.name
     }
@@ -306,14 +307,15 @@ export const getWithCampContext = query({
       }
     }
 
-    const camp = await ctx.db.get(bondfire.campId)
+    const campId = bondfire.campId
+    const camp = await ctx.db.get(campId)
     const userId = (await auth.getUserId(ctx)) ?? undefined
 
     let membership = null
     if (userId) {
       const m = await ctx.db
         .query('campMembers')
-        .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', bondfire.campId!))
+        .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', campId))
         .unique()
       membership = m
     }

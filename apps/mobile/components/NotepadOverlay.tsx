@@ -1,4 +1,4 @@
-import { notepadActions, notepadStore$ } from '@bondfires/app'
+import { notepadActions, notepadStore$, useAppThemeColors } from '@bondfires/app'
 import { Button, Text, XStack, YStack } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
 import { Trash2 } from '@tamagui/lucide-icons'
@@ -10,6 +10,7 @@ interface NotepadOverlayProps {
 }
 
 export function NotepadOverlay({ onClose }: NotepadOverlayProps) {
+  const { colors } = useAppThemeColors()
   const content = useValue(notepadStore$.content)
   const textInputRef = useRef<TextInput>(null)
 
@@ -49,9 +50,9 @@ export function NotepadOverlay({ onClose }: NotepadOverlayProps) {
         >
           <TextInput
             ref={textInputRef}
-            style={styles.textInput}
+            style={[styles.textInput, { color: colors.color }]}
             placeholder="Type your notes here..."
-            placeholderTextColor={'$placeholderColor'}
+            placeholderTextColor={colors.placeholderColor}
             multiline
             value={content}
             onChangeText={handleTextChange}
@@ -76,7 +77,6 @@ const styles = StyleSheet.create({
   },
   textInput: {
     flex: 1,
-    color: '$color',
     fontSize: 16,
     textAlignVertical: 'top',
   },

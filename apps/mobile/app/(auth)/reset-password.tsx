@@ -1,16 +1,16 @@
-import { getAuthErrorMessage } from '@bondfires/app'
+import { getAuthErrorMessage, useSystemThemeColors } from '@bondfires/app'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { CheckCircle, ChevronLeft, KeyRound } from '@tamagui/lucide-icons'
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { Pressable, StatusBar, useColorScheme } from 'react-native'
+import { Pressable, StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { Spinner, YStack } from 'tamagui'
 import { routes } from '../../lib/routes'
 
 export default function ResetPasswordScreen() {
-  const colorScheme = useColorScheme()
+  const { colors, statusBarStyle } = useSystemThemeColors()
   const router = useRouter()
   const { signIn } = useAuthActions()
   const params = useLocalSearchParams<{ email?: string }>()
@@ -107,15 +107,12 @@ export default function ResetPasswordScreen() {
     return (
       <YStack
         flex={1}
-        backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}
+        backgroundColor={colors.background}
         paddingHorizontal={24}
         alignItems="center"
         justifyContent="center"
       >
-        <StatusBar
-          barStyle={colorScheme === 'light' ? 'dark-content' : 'light-content'}
-          backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}
-        />
+        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
 
         <YStack alignItems="center" gap={24} maxWidth={320}>
           <YStack
@@ -145,11 +142,8 @@ export default function ResetPasswordScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}>
-      <StatusBar
-        barStyle={colorScheme === 'light' ? 'dark-content' : 'light-content'}
-        backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}
-      />
+    <YStack flex={1} backgroundColor={colors.background}>
+      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
 
       {/* Back button */}
       <YStack paddingTop={60} paddingHorizontal={16}>

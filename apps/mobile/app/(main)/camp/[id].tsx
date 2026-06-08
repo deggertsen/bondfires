@@ -4,7 +4,7 @@ import {
   parseError,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
-  useAppTheme,
+  useAppThemeColors,
 } from '@bondfires/app'
 import { Button, Text } from '@bondfires/ui'
 import {
@@ -738,7 +738,7 @@ function BondfireRow({ bondfire, onOpen }: { bondfire: BondfireData; onOpen: () 
 }
 
 export default function CampDetailScreen() {
-  const { themeName } = useAppTheme()
+  const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const { id } = useLocalSearchParams<{ id?: string }>()
   const campId = id as Id<'camps'> | undefined
@@ -933,11 +933,7 @@ export default function CampDetailScreen() {
   if (camp === undefined || bondfires === undefined) {
     return (
       <YStack flex={1} backgroundColor={'$background'} alignItems="center" justifyContent="center">
-        <StatusBar
-          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
-          backgroundColor="transparent"
-          translucent
-        />
+        <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
         <Spinner size="large" color={'$primary'} />
         <Text marginTop={18} color={'$placeholderColor'}>
           Loading camp...
@@ -969,11 +965,7 @@ export default function CampDetailScreen() {
 
   return (
     <YStack flex={1} backgroundColor={'$background'}>
-      <StatusBar
-        barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
-        backgroundColor="transparent"
-        translucent
-      />
+      <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
       <FlatList
         data={bondfires ?? []}
         keyExtractor={(item) => item._id}
@@ -1055,17 +1047,17 @@ export default function CampDetailScreen() {
 
             <TextInput
               style={{
-                backgroundColor: '$backgroundHover',
+                backgroundColor: colors.backgroundHover,
                 borderWidth: 1,
-                borderColor: '$borderColor',
+                borderColor: colors.borderColor,
                 borderRadius: 10,
                 paddingHorizontal: 14,
                 paddingVertical: 12,
-                color: '$color',
+                color: colors.color,
                 fontSize: 15,
               }}
               placeholder="Reason (optional)"
-              placeholderTextColor={'$placeholderColor'}
+              placeholderTextColor={colors.placeholderColor}
               value={banReason}
               onChangeText={setBanReason}
               maxLength={500}
@@ -1127,17 +1119,17 @@ export default function CampDetailScreen() {
 
             <TextInput
               style={{
-                backgroundColor: '$backgroundHover',
+                backgroundColor: colors.backgroundHover,
                 borderWidth: 1,
-                borderColor: '$borderColor',
+                borderColor: colors.borderColor,
                 borderRadius: 10,
                 paddingHorizontal: 14,
                 paddingVertical: 12,
-                color: '$color',
+                color: colors.color,
                 fontSize: 15,
               }}
               placeholder='Type "Archive Camp" to confirm'
-              placeholderTextColor={'$placeholderColor'}
+              placeholderTextColor={colors.placeholderColor}
               value={archiveConfirmText}
               onChangeText={setArchiveConfirmText}
               autoCapitalize="none"

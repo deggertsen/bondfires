@@ -13,7 +13,7 @@ export type ThemePreference = 'system' | 'light' | 'dark'
  * - "light"  → light
  * - "dark"   → dark
  * - "system" → system color scheme (defaults to "dark" when indeterminate)
- * - null     → "dark" (fallback, matches current production)
+ * - null     → "system" (fallback for signed-out users and unset preferences)
  */
 export function useAppTheme() {
   const systemColorScheme = useColorScheme()

@@ -8,7 +8,7 @@ import {
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
   telemetry,
-  useAppTheme,
+  useAppThemeColors,
 } from '@bondfires/app'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
@@ -296,7 +296,7 @@ function FeedSubscription({
 }
 
 export default function FeedScreen() {
-  const { themeName } = useAppTheme()
+  const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const insets = useSafeAreaInsets()
   const getThumbnailUrl = useAction(api.videos.getThumbnailUrl)
@@ -600,11 +600,7 @@ export default function FeedScreen() {
         selectedCampId={selectedCampId}
         onResolved={handleBondfiresResolved}
       />
-      <StatusBar
-        barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
-        backgroundColor="transparent"
-        translucent
-      />
+      <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
 
       <FlatList
         ref={(r) => {
@@ -616,8 +612,8 @@ export default function FeedScreen() {
           <RefreshControl
             refreshing={isRefreshing}
             onRefresh={handleRefresh}
-            tintColor={'$primary'}
-            colors={['$primary']}
+            tintColor={colors.primary}
+            colors={[colors.primary]}
             progressViewOffset={insets.top + 100}
           />
         }
