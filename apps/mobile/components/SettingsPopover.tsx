@@ -2,6 +2,7 @@ import { appActions, appStore$ } from '@bondfires/app'
 import { useValue } from '@legendapp/state/react'
 import { Pressable, StyleSheet } from 'react-native'
 import { Slider, Text, XStack, YStack } from 'tamagui'
+import { VIDEO_OVERLAY_COLORS } from './videoOverlayColors'
 
 interface SettingsPopoverProps {
   onClose: () => void
@@ -28,11 +29,16 @@ export function SettingsPopover({ onClose }: SettingsPopoverProps) {
         right={16}
         width={200}
         padding={16}
-        backgroundColor="rgba(0, 0, 0, 0.9)"
+        backgroundColor={VIDEO_OVERLAY_COLORS.popoverBackground}
         borderRadius={8}
         zIndex={1000}
       >
-        <Text fontSize={14} fontWeight="600" color={'$color'} marginBottom={12}>
+        <Text
+          fontSize={14}
+          fontWeight="600"
+          color={VIDEO_OVERLAY_COLORS.textPrimary}
+          marginBottom={12}
+        >
           Playback Speed
         </Text>
         <XStack alignItems="center" gap={8}>
@@ -52,7 +58,7 @@ export function SettingsPopover({ onClose }: SettingsPopoverProps) {
               <Slider.Thumb index={0} circular backgroundColor={'$primary'} />
             </Slider>
           </YStack>
-          <Text fontSize={14} color={'$color'} minWidth={40}>
+          <Text fontSize={14} color={VIDEO_OVERLAY_COLORS.textPrimary} minWidth={40}>
             {playbackSpeed.toFixed(2)}x
           </Text>
         </XStack>

@@ -52,6 +52,7 @@ import { NotepadOverlay } from '../../../components/NotepadOverlay'
 import { ReportButton } from '../../../components/ReportButton'
 import { ReportOverlay } from '../../../components/ReportOverlay'
 import { SettingsPopover } from '../../../components/SettingsPopover'
+import { VIDEO_OVERLAY_COLORS as OVERLAY_COLORS } from '../../../components/videoOverlayColors'
 import { routes } from '../../../lib/routes'
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window')
@@ -667,7 +668,7 @@ function VideoPlayer({
           bottom={0}
           alignItems="center"
           justifyContent="center"
-          backgroundColor="rgba(20, 20, 22, 0.7)"
+          backgroundColor={OVERLAY_COLORS.loadingBackground}
           zIndex={2}
           pointerEvents="none"
         >
@@ -692,14 +693,18 @@ function VideoPlayer({
             width={80}
             height={80}
             borderRadius={40}
-            backgroundColor="rgba(20, 20, 22, 0.6)"
+            backgroundColor={OVERLAY_COLORS.playPauseBackground}
             alignItems="center"
             justifyContent="center"
           >
             {hasEnded ? (
-              <RotateCcw size={40} color={'$color'} />
+              <RotateCcw size={40} color={OVERLAY_COLORS.textPrimary} />
             ) : (
-              <Play size={40} color={'$color'} fill={'$color'} />
+              <Play
+                size={40}
+                color={OVERLAY_COLORS.textPrimary}
+                fill={OVERLAY_COLORS.textPrimary}
+              />
             )}
           </YStack>
         </YStack>
@@ -707,7 +712,7 @@ function VideoPlayer({
 
       {/* Bottom gradient */}
       <LinearGradient
-        colors={['transparent', 'rgba(20, 20, 22, 0.6)', 'rgba(20, 20, 22, 0.9)']}
+        colors={OVERLAY_COLORS.gradientBottom}
         style={{
           position: 'absolute',
           bottom: 0,
@@ -740,7 +745,7 @@ function VideoPlayer({
             {...progressBarPanResponder.panHandlers}
           >
             <YStack paddingVertical={10}>
-              <YStack height={4} backgroundColor="rgba(255,255,255,0.3)" borderRadius={2}>
+              <YStack height={4} backgroundColor={OVERLAY_COLORS.progressTrack} borderRadius={2}>
                 <YStack
                   height={4}
                   backgroundColor={'$primary'}
@@ -761,10 +766,10 @@ function VideoPlayer({
             </YStack>
           </View>
           <XStack justifyContent="space-between" marginTop={4}>
-            <Text fontSize={12} color={'$placeholderColor'}>
+            <Text fontSize={12} color={OVERLAY_COLORS.textSecondary}>
               {formatTime(progress * duration)}
             </Text>
-            <Text fontSize={12} color={'$placeholderColor'}>
+            <Text fontSize={12} color={OVERLAY_COLORS.textSecondary}>
               {formatTime(duration)}
             </Text>
           </XStack>
@@ -787,10 +792,10 @@ function VideoPlayer({
             <Flame size={20} color={isMainVideo ? '$primary' : '$secondary'} />
           </YStack>
           <YStack>
-            <Text fontWeight="600" fontSize={15}>
+            <Text fontWeight="600" fontSize={15} color={OVERLAY_COLORS.textPrimary}>
               {creatorName}
             </Text>
-            <Text fontSize={12} color={'$placeholderColor'}>
+            <Text fontSize={12} color={OVERLAY_COLORS.textSecondary}>
               {isMainVideo ? 'Spark' : `Response ${responseIndex}`}
             </Text>
           </YStack>
@@ -806,14 +811,14 @@ function VideoPlayer({
             width={44}
             height={44}
             borderRadius={22}
-            backgroundColor="rgba(31, 32, 35, 0.8)"
+            backgroundColor={OVERLAY_COLORS.pillBackground}
             alignItems="center"
             justifyContent="center"
           >
             {isMuted ? (
-              <VolumeX size={22} color={'$color'} />
+              <VolumeX size={22} color={OVERLAY_COLORS.textPrimary} />
             ) : (
-              <Volume2 size={22} color={'$color'} />
+              <Volume2 size={22} color={OVERLAY_COLORS.textPrimary} />
             )}
           </YStack>
         </Pressable>
@@ -1175,7 +1180,7 @@ export default function BondfireDetailScreen() {
           paddingBottom={12}
         >
           <LinearGradient
-            colors={['rgba(20, 20, 22, 0.9)', 'rgba(20, 20, 22, 0.5)', 'transparent']}
+            colors={OVERLAY_COLORS.gradientTop}
             style={{
               position: 'absolute',
               top: 0,
@@ -1190,22 +1195,22 @@ export default function BondfireDetailScreen() {
                 paddingHorizontal={12}
                 height={40}
                 borderRadius={20}
-                backgroundColor="rgba(31, 32, 35, 0.8)"
+                backgroundColor={OVERLAY_COLORS.pillBackground}
                 alignItems="center"
                 gap={6}
               >
-                <ChevronLeft size={22} color={'$color'} />
-                <Text fontSize={13} fontWeight="700" color={'$color'}>
+                <ChevronLeft size={22} color={OVERLAY_COLORS.textPrimary} />
+                <Text fontSize={13} fontWeight="700" color={OVERLAY_COLORS.textPrimary}>
                   Campground
                 </Text>
               </XStack>
             </Pressable>
 
             <YStack alignItems="center">
-              <Text fontWeight="600" fontSize={16}>
+              <Text fontWeight="600" fontSize={16} color={OVERLAY_COLORS.textPrimary}>
                 {currentVideoIndex + 1} / {totalVideos}
               </Text>
-              <Text fontSize={12} color={'$placeholderColor'}>
+              <Text fontSize={12} color={OVERLAY_COLORS.textSecondary}>
                 Swipe for responses
               </Text>
             </YStack>
@@ -1218,11 +1223,11 @@ export default function BondfireDetailScreen() {
                   width={40}
                   height={40}
                   borderRadius={20}
-                  backgroundColor={showSettings ? '$primary' : 'rgba(31, 32, 35, 0.8)'}
+                  backgroundColor={showSettings ? '$primary' : OVERLAY_COLORS.pillBackground}
                   alignItems="center"
                   justifyContent="center"
                 >
-                  <Settings size={22} color={'$color'} />
+                  <Settings size={22} color={OVERLAY_COLORS.textPrimary} />
                 </YStack>
               </Pressable>
               <Pressable
@@ -1232,11 +1237,11 @@ export default function BondfireDetailScreen() {
                   width={40}
                   height={40}
                   borderRadius={20}
-                  backgroundColor={showNotepad ? '$primary' : 'rgba(31, 32, 35, 0.8)'}
+                  backgroundColor={showNotepad ? '$primary' : OVERLAY_COLORS.pillBackground}
                   alignItems="center"
                   justifyContent="center"
                 >
-                  <FileText size={22} color={'$color'} />
+                  <FileText size={22} color={OVERLAY_COLORS.textPrimary} />
                 </YStack>
               </Pressable>
             </XStack>
@@ -1291,7 +1296,7 @@ export default function BondfireDetailScreen() {
             opacity={0.6}
             pointerEvents="none"
           >
-            <ChevronRight size={32} color={'$color'} />
+            <ChevronRight size={32} color={OVERLAY_COLORS.textPrimary} />
           </YStack>
         )}
 
@@ -1306,7 +1311,7 @@ export default function BondfireDetailScreen() {
             paddingTop={16}
           >
             <LinearGradient
-              colors={['transparent', 'rgba(20, 20, 22, 0.9)']}
+              colors={OVERLAY_COLORS.gradientBottomThin}
               style={{
                 position: 'absolute',
                 bottom: 0,
@@ -1356,7 +1361,7 @@ export default function BondfireDetailScreen() {
                 width={i === currentVideoIndex ? 24 : 8}
                 height={8}
                 borderRadius={4}
-                backgroundColor={i === currentVideoIndex ? '$primary' : 'rgba(255,255,255,0.4)'}
+                backgroundColor={i === currentVideoIndex ? '$primary' : OVERLAY_COLORS.dotInactive}
               />
             </Pressable>
           ))}
