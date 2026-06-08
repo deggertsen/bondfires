@@ -125,6 +125,19 @@ export function useForceUpdate(): ForceUpdateState & InAppUpdateActions {
   useEffect(() => {
     if (updateConfig === undefined) return
 
+    // Dev builds should not be blocked by production minimum-version gating.
+    if (__DEV__) {
+      setState({
+        loading: false,
+        updateRequired: false,
+        downloading: false,
+        updateReady: false,
+        minRequiredVersion: updateConfig.minAppVersion ?? null,
+        updatePriority: getUpdatePriority(updateConfig.updatePriority),
+      })
+      return
+    }
+
     let cancelled = false
     const currentVersion = Constants.expoConfig?.version ?? '0.0.0'
     const { minAppVersion } = updateConfig

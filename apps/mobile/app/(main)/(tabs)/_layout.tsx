@@ -1,19 +1,21 @@
+import { useAppThemeColors } from '@bondfires/app'
 import { Flame, Home, Map, MessageCircle, User } from '@tamagui/lucide-icons'
 import { Tabs } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 export default function TabsLayout() {
   const insets = useSafeAreaInsets()
+  const { colors } = useAppThemeColors()
 
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: '$primary',
-        tabBarInactiveTintColor: '$placeholderColor',
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: colors.placeholderColor,
         tabBarStyle: {
-          backgroundColor: '$backgroundHover',
-          borderTopColor: '$borderColor',
+          backgroundColor: colors.backgroundHover,
+          borderTopColor: colors.borderColor,
           borderTopWidth: 1,
           paddingTop: 8,
           paddingBottom: 8 + insets.bottom,
