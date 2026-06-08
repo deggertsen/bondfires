@@ -5,7 +5,6 @@ import {
   hasViewedToday,
   type MuxDataVideoMetadata,
   markViewed,
-  parseError,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
   telemetry,
@@ -37,8 +36,8 @@ import {
   AppState,
   Dimensions,
   FlatList,
-  type GestureResponderEvent,
   type LayoutChangeEvent,
+  PanResponder,
   Platform,
   Pressable,
   StatusBar,
@@ -160,7 +159,7 @@ function VideoPlayer({
   const hasEnded = useValue(state$.hasEnded)
 
   const bufferingCheckInterval = useRef<ReturnType<typeof setInterval> | null>(null)
-  const progressBarRef = useRef<{ width: number }>({ width: 0 })
+  const progressBarRef = useRef<{ width: number; pageX: number }>({ width: 0, pageX: 0 })
 
   const player = useVideoPlayer(currentUrl || '', (player) => {
     player.loop = false
@@ -407,7 +406,7 @@ function VideoPlayer({
 
   const handleProgressBarLayout = useCallback((event: LayoutChangeEvent) => {
     const { width } = event.nativeEvent.layout
-    progressBarRef.current = { width }
+    progressBarRef.current = { ...progressBarRef.current, width }
   }, [])
 
   const seekToProgressLocation = useCallback(
@@ -428,12 +427,48 @@ function VideoPlayer({
     [player, state$, isLive],
   )
 
-  const handleProgressBarTouch = useCallback(
-    (event: GestureResponderEvent) => {
-      seekToProgressLocation(event.nativeEvent.locationX)
-    },
-    [seekToProgressLocation],
-  )
+  // Create a PanResponder for drag-to-scrub on the progress bar.
+  // PanResponder is needed over raw responder props because it provides
+  // gestureState.moveX (screen-space X) which stays consistent during drag,
+  // unlike nativeEvent.locationX which can be relative to changing child targets.
+  const progressBarPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => !isLive && Boolean(player?.duration),
+      onMoveShouldSetPanResponder: () => !isLive && Boolean(player?.duration),
+
+      onPanResponderGrant: (evt) => {
+        // Calculate the bar's screen-space left edge from the grant event.
+        // pageX = screen-X of touch, locationX = X relative to this View.
+        // So barPageX = pageX - locationX.
+        const { pageX, locationX } = evt.nativeEvent
+        progressBarRef.current.pageX = pageX - locationX
+
+        // Immediately seek to touch position
+        seekToProgressLocation(locationX)
+      },
+
+      onPanResponderMove: (_evt, gestureState) => {
+        // gestureState.moveX is the current screen-X of the moving touch.
+        // Subtract the bar's screen-X to get position relative to the bar.
+        const localX = gestureState.moveX - progressBarRef.current.pageX
+        seekToProgressLocation(localX)
+      },
+
+      onPanResponderRelease: () => {
+        // No cleanup needed — video continues from seeked position
+      },
+
+      onPanResponderTerminate: () => {
+        // Gesture was cancelled (e.g., notification center on iOS)
+      },
+    }),
+  ).current
+
+  // Keep the shouldSet callbacks in sync with live state
+  progressBarPanResponder.panHandlers.onStartShouldSetResponder = () =>
+    !isLive && Boolean(player?.duration)
+  progressBarPanResponder.panHandlers.onMoveShouldSetResponder = () =>
+    !isLive && Boolean(player?.duration)
 
   if (shouldSuppressPlayback) {
     return (
@@ -571,13 +606,7 @@ function VideoPlayer({
         </YStack>
       ) : (
         <YStack position="absolute" bottom={100} left={20} right={20} zIndex={3}>
-          <View
-            onLayout={handleProgressBarLayout}
-            onStartShouldSetResponder={() => !isLive && Boolean(player?.duration)}
-            onMoveShouldSetResponder={() => !isLive && Boolean(player?.duration)}
-            onResponderGrant={handleProgressBarTouch}
-            onResponderMove={handleProgressBarTouch}
-          >
+          <View onLayout={handleProgressBarLayout} {...progressBarPanResponder.panHandlers}>
             <YStack paddingVertical={10}>
               <YStack height={4} backgroundColor="rgba(255,255,255,0.3)" borderRadius={2}>
                 <YStack
