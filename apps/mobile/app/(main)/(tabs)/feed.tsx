@@ -41,6 +41,25 @@ type JoinedCamp = Doc<'camps'> & { membership: Doc<'campMembers'> }
 
 type ViewMode = 'discover' | 'recent' | 'active' | 'unseen'
 
+const REPORT_OPTIONS = [
+  {
+    label: 'Harassment',
+    subCategory: 'harassment_or_abuse',
+  },
+  {
+    label: 'Inappropriate',
+    subCategory: 'pornographic_content',
+  },
+  {
+    label: 'Spam',
+    subCategory: 'spam_or_solicitation',
+  },
+] as const
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
+}
+
 function getTimeAgo(timestamp: number): string {
   const seconds = Math.floor((Date.now() - timestamp) / 1000)
 
@@ -388,12 +407,13 @@ export default function FeedScreen() {
   const selectedCampId = currentCampId as Doc<'camps'>['_id'] | null
   const selectedCamp = joinedCamps?.find((camp) => camp._id === selectedCampId)
 
-  // User data for pins
-  const currentUser = useQuery(
-    api.users.get,
-    currentUserId ? { userId: currentUserId as Id<'users'> } : 'skip',
+  // Authenticated user data for private pin state.
+  const currentUser = useQuery(api.users.current, currentUserId ? {} : 'skip')
+  const pinnedIds = useMemo(
+    () => (currentUser?.pinnedBondfireIds ?? []) as string[],
+    [currentUser?.pinnedBondfireIds],
   )
-  const pinnedIds = (currentUser?.pinnedBondfireIds ?? []) as string[]
+  const pinnedOrder = useMemo(() => new Map(pinnedIds.map((id, index) => [id, index])), [pinnedIds])
 
   // Mutations for swipe actions
   const deleteBondfire = useMutation(api.bondfires.deleteBondfire)
@@ -477,9 +497,20 @@ export default function FeedScreen() {
     }
 
     const sorted = items.slice()
+    const comparePinned = (a: BondfireData, b: BondfireData) => {
+      const aIndex = pinnedOrder.get(a._id)
+      const bIndex = pinnedOrder.get(b._id)
+
+      if (aIndex === undefined && bIndex === undefined) return 0
+      if (aIndex === undefined) return 1
+      if (bIndex === undefined) return -1
+      return aIndex - bIndex
+    }
 
     if (viewMode === 'recent') {
       sorted.sort((a, b) => {
+        const pinned = comparePinned(a, b)
+        if (pinned !== 0) return pinned
         if (!!a.isLive !== !!b.isLive) return a.isLive ? -1 : 1
         return b.createdAt - a.createdAt
       })
@@ -488,6 +519,8 @@ export default function FeedScreen() {
 
     if (viewMode === 'active') {
       sorted.sort((a, b) => {
+        const pinned = comparePinned(a, b)
+        if (pinned !== 0) return pinned
         if (!!a.isLive !== !!b.isLive) return a.isLive ? -1 : 1
         if (b.videoCount !== a.videoCount) return b.videoCount - a.videoCount
         return (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt)
@@ -497,13 +530,15 @@ export default function FeedScreen() {
 
     // "discover" and "unseen": smallest convos first, but newest within each size.
     sorted.sort((a, b) => {
+      const pinned = comparePinned(a, b)
+      if (pinned !== 0) return pinned
       if (!!a.isLive !== !!b.isLive) return a.isLive ? -1 : 1
       if (a.videoCount !== b.videoCount) return a.videoCount - b.videoCount
       return b.createdAt - a.createdAt
     })
 
     return sorted
-  }, [bondfires, currentUserId, query, viewMode])
+  }, [bondfires, currentUserId, pinnedOrder, query, viewMode])
 
   filteredRef.current = filtered ?? []
 
@@ -656,7 +691,7 @@ export default function FeedScreen() {
       try {
         await pinBondfire({ bondfireId: bondfireId as Id<'bondfires'> })
       } catch (error) {
-        Alert.alert('Error', String(error))
+        Alert.alert('Error', getErrorMessage(error))
       }
     },
     [pinBondfire],
@@ -667,7 +702,7 @@ export default function FeedScreen() {
       try {
         await unpinBondfire({ bondfireId: bondfireId as Id<'bondfires'> })
       } catch (error) {
-        Alert.alert('Error', String(error))
+        Alert.alert('Error', getErrorMessage(error))
       }
     },
     [unpinBondfire],
@@ -675,64 +710,26 @@ export default function FeedScreen() {
 
   const handleReport = useCallback(
     (bondfireId: string, videoOwnerId: string) => {
-      Alert.alert(
-        'Report Content',
-        'What category best describes the issue?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Harassment',
-            onPress: async () => {
-              try {
-                await reportBondfire({
-                  bondfireId: bondfireId as Id<'bondfires'>,
-                  videoOwnerId: videoOwnerId as Id<'users'>,
-                  category: 'community_guidelines',
-                  subCategory: 'harassment_or_abuse',
-                  comments: 'Reported from feed swipe action',
-                })
-                Alert.alert('Reported', 'Thank you. We will review this content.')
-              } catch (error) {
-                Alert.alert('Error', String(error))
-              }
-            },
+      Alert.alert('Report Content', 'What category best describes the issue?', [
+        { text: 'Cancel', style: 'cancel' },
+        ...REPORT_OPTIONS.map((option) => ({
+          text: option.label,
+          onPress: async () => {
+            try {
+              await reportBondfire({
+                bondfireId: bondfireId as Id<'bondfires'>,
+                videoOwnerId: videoOwnerId as Id<'users'>,
+                category: 'community_guidelines',
+                subCategory: option.subCategory,
+                comments: 'Reported from feed swipe action',
+              })
+              Alert.alert('Reported', 'Thank you. We will review this content.')
+            } catch (error) {
+              Alert.alert('Error', getErrorMessage(error))
+            }
           },
-          {
-            text: 'Inappropriate',
-            onPress: async () => {
-              try {
-                await reportBondfire({
-                  bondfireId: bondfireId as Id<'bondfires'>,
-                  videoOwnerId: videoOwnerId as Id<'users'>,
-                  category: 'community_guidelines',
-                  subCategory: 'pornographic_content',
-                  comments: 'Reported from feed swipe action',
-                })
-                Alert.alert('Reported', 'Thank you. We will review this content.')
-              } catch (error) {
-                Alert.alert('Error', String(error))
-              }
-            },
-          },
-          {
-            text: 'Spam',
-            onPress: async () => {
-              try {
-                await reportBondfire({
-                  bondfireId: bondfireId as Id<'bondfires'>,
-                  videoOwnerId: videoOwnerId as Id<'users'>,
-                  category: 'community_guidelines',
-                  subCategory: 'spam_or_solicitation',
-                  comments: 'Reported from feed swipe action',
-                })
-                Alert.alert('Reported', 'Thank you. We will review this content.')
-              } catch (error) {
-                Alert.alert('Error', String(error))
-              }
-            },
-          },
-        ],
-      )
+        })),
+      ])
     },
     [reportBondfire],
   )

@@ -1,7 +1,7 @@
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
-import type { QueryCtx } from './_generated/server'
+import type { MutationCtx, QueryCtx } from './_generated/server'
 import { action, internalQuery, mutation, query } from './_generated/server'
 import { auth } from './auth'
 import {
@@ -184,13 +184,41 @@ async function resolveCampLabel(ctx: QueryCtx, bondfire: Doc<'bondfires'>) {
   }
 
   if (bondfire.campId) {
-    const camp = await ctx.db.get(bondfire.campId)
+    const campId = bondfire.campId
+    const camp = await ctx.db.get(campId)
     if (camp) {
       return camp.name
     }
   }
 
   return undefined
+}
+
+async function deleteWatchEventsForVideo(ctx: MutationCtx, videoId: string) {
+  const watchEvents = await ctx.db
+    .query('watchEvents')
+    .withIndex('by_video', (q) => q.eq('videoId', videoId))
+    .collect()
+
+  for (const watchEvent of watchEvents) {
+    await ctx.db.delete(watchEvent._id)
+  }
+}
+
+async function removeBondfireFromPinnedLists(ctx: MutationCtx, bondfireId: Id<'bondfires'>) {
+  const users = await ctx.db.query('users').collect()
+  const now = Date.now()
+
+  for (const user of users) {
+    if (!user.pinnedBondfireIds?.includes(bondfireId)) {
+      continue
+    }
+
+    await ctx.db.patch(user._id, {
+      pinnedBondfireIds: user.pinnedBondfireIds.filter((id) => id !== bondfireId),
+      updatedAt: now,
+    })
+  }
 }
 
 // List bondfires for the feed (ordered by videoCount ASC for discovery)
@@ -306,16 +334,15 @@ export const getWithCampContext = query({
       }
     }
 
-    const camp = await ctx.db.get(bondfire.campId)
+    const campId = bondfire.campId
+    const camp = await ctx.db.get(campId)
     const userId = (await auth.getUserId(ctx)) ?? undefined
 
     let membership = null
     if (userId) {
       const m = await ctx.db
         .query('campMembers')
-        .withIndex('by_user_camp', (q) =>
-          q.eq('userId', userId).eq('campId', bondfire.campId!),
-        )
+        .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', campId))
         .unique()
       membership = m
     }
@@ -656,6 +683,11 @@ export const pinBondfire = mutation({
     if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
       throw new Error('Bondfire not found')
     }
+    const memberCampIds = await getVisibleCampIds(ctx, userId)
+    const canViewBondfire = await isBondfireVisibleToViewer(ctx, bondfire, userId, memberCampIds)
+    if (!canViewBondfire) {
+      throw new Error('Bondfire not found')
+    }
 
     const user = await ctx.db.get(userId)
     if (!user) throw new Error('User not found')
@@ -669,7 +701,7 @@ export const pinBondfire = mutation({
     }
 
     await ctx.db.patch(userId, {
-      pinnedBondfireIds: [...pinned, args.bondfireId],
+      pinnedBondfireIds: [args.bondfireId, ...pinned],
       updatedAt: Date.now(),
     })
 
@@ -725,8 +757,23 @@ export const deleteBondfire = mutation({
       .query('bondfireVideos')
       .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
       .collect()
+    const responseCountsByUser = new Map<Id<'users'>, number>()
 
     for (const response of responses) {
+      responseCountsByUser.set(
+        response.userId,
+        (responseCountsByUser.get(response.userId) ?? 0) + 1,
+      )
+      await deleteWatchEventsForVideo(ctx, response._id)
+
+      const responseReports = await ctx.db
+        .query('reports')
+        .withIndex('by_bondfire_video', (q) => q.eq('bondfireVideoId', response._id))
+        .collect()
+      for (const report of responseReports) {
+        await ctx.db.delete(report._id)
+      }
+
       if (response.liveSessionId) {
         await ctx.db.delete(response.liveSessionId)
       }
@@ -753,13 +800,7 @@ export const deleteBondfire = mutation({
     }
 
     // Clean up watch events.
-    const watchEvents = await ctx.db
-      .query('watchEvents')
-      .withIndex('by_video', (q) => q.eq('videoId', args.bondfireId))
-      .collect()
-    for (const we of watchEvents) {
-      await ctx.db.delete(we._id)
-    }
+    await deleteWatchEventsForVideo(ctx, args.bondfireId)
 
     // Delete any reports tied to this bondfire.
     const reports = await ctx.db
@@ -770,15 +811,9 @@ export const deleteBondfire = mutation({
       await ctx.db.delete(r._id)
     }
 
-    // Remove from the creator's pinned list if present.
+    // Remove from every user's pinned list.
     const creator = await ctx.db.get(bondfire.userId)
-    if (creator?.pinnedBondfireIds) {
-      await ctx.db.patch(bondfire.userId, {
-        pinnedBondfireIds: creator.pinnedBondfireIds.filter(
-          (id) => id !== args.bondfireId,
-        ),
-      })
-    }
+    await removeBondfireFromPinnedLists(ctx, args.bondfireId)
 
     if (bondfire.liveSessionId) {
       await ctx.db.delete(bondfire.liveSessionId)
@@ -792,6 +827,28 @@ export const deleteBondfire = mutation({
         bondfireCount: Math.max(0, (creator.bondfireCount ?? 1) - 1),
         updatedAt: Date.now(),
       })
+    }
+
+    for (const [responderId, deletedResponseCount] of responseCountsByUser) {
+      const responder = await ctx.db.get(responderId)
+      if (!responder) {
+        continue
+      }
+
+      await ctx.db.patch(responderId, {
+        responseCount: Math.max(0, (responder.responseCount ?? 0) - deletedResponseCount),
+        updatedAt: Date.now(),
+      })
+    }
+
+    if (bondfire.campId) {
+      const camp = await ctx.db.get(bondfire.campId)
+      if (camp) {
+        await ctx.db.patch(bondfire.campId, {
+          bondfireCount: Math.max(0, (camp.bondfireCount ?? 0) - 1),
+          updatedAt: Date.now(),
+        })
+      }
     }
 
     return { deleted: true }

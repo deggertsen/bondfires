@@ -1,11 +1,11 @@
 import { bondfireColors } from '@bondfires/config'
-import { useRef, useCallback } from 'react'
+import { useCallback, useMemo, useRef } from 'react'
 import {
   Animated,
-  PanResponder,
-  Pressable,
   type GestureResponderEvent,
+  PanResponder,
   type PanResponderGestureState,
+  Pressable,
   type StyleProp,
   type ViewStyle,
 } from 'react-native'
@@ -46,7 +46,6 @@ export function SwipeableRow({
 }: Props) {
   const actionPanelWidth = actionWidth ?? actions.length * 72
   const translateX = useRef(new Animated.Value(0)).current
-  const isOpen = useRef(false)
   const currentOffset = useRef(0)
 
   const snapTo = useCallback(
@@ -58,7 +57,6 @@ export function SwipeableRow({
         tension: 60,
         friction: 10,
       }).start()
-      isOpen.current = toValue !== 0
     },
     [translateX],
   )
@@ -67,45 +65,42 @@ export function SwipeableRow({
     snapTo(0)
   }, [snapTo])
 
-  const panResponder = useRef(
-    PanResponder.create({
-      onMoveShouldSetPanResponder: (
-        _: GestureResponderEvent,
-        gs: PanResponderGestureState,
-      ) => {
-        // Only capture horizontal swipes (not vertical scrolls)
-        return Math.abs(gs.dx) > 10 && Math.abs(gs.dx) > Math.abs(gs.dy) * 1.5
-      },
-      onPanResponderMove: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
-        const offset = currentOffset.current
-        // Only allow left swipe (negative dx), clamp to range
-        const next = Math.min(0, Math.max(-actionPanelWidth, offset + gs.dx))
-        translateX.setValue(next)
-      },
-      onPanResponderRelease: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
-        const offset = currentOffset.current
-        const dragged = offset + gs.dx
-        const threshold = -actionPanelWidth * openThreshold
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
+          // Only capture horizontal swipes (not vertical scrolls)
+          return (
+            actionPanelWidth > 0 && Math.abs(gs.dx) > 10 && Math.abs(gs.dx) > Math.abs(gs.dy) * 1.5
+          )
+        },
+        onPanResponderMove: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
+          const offset = currentOffset.current
+          // Only allow left swipe (negative dx), clamp to range
+          const next = Math.min(0, Math.max(-actionPanelWidth, offset + gs.dx))
+          translateX.setValue(next)
+        },
+        onPanResponderRelease: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
+          const offset = currentOffset.current
+          const dragged = offset + gs.dx
+          const threshold = -actionPanelWidth * openThreshold
 
-        if (dragged < threshold) {
-          snapTo(-actionPanelWidth)
-        } else {
-          snapTo(0)
-        }
-      },
-    }),
-  ).current
+          if (dragged < threshold) {
+            snapTo(-actionPanelWidth)
+          } else {
+            snapTo(0)
+          }
+        },
+        onPanResponderTerminate: close,
+        onPanResponderTerminationRequest: () => true,
+      }),
+    [actionPanelWidth, close, openThreshold, snapTo, translateX],
+  )
 
   return (
     <YStack style={style}>
       {/* Action buttons — positioned absolutely behind the row */}
-      <XStack
-        position="absolute"
-        right={0}
-        top={0}
-        bottom={0}
-        width={actionPanelWidth}
-      >
+      <XStack position="absolute" right={0} top={0} bottom={0} width={actionPanelWidth}>
         {actions.map((action) => (
           <Pressable
             key={action.key}
@@ -122,9 +117,7 @@ export function SwipeableRow({
               flex={1}
               alignItems="center"
               justifyContent="center"
-              backgroundColor={
-                action.backgroundColor ?? bondfireColors.gunmetal
-              }
+              backgroundColor={action.backgroundColor ?? bondfireColors.gunmetal}
               paddingHorizontal={8}
             >
               <Text
