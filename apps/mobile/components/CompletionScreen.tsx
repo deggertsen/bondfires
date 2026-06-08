@@ -1,10 +1,9 @@
 import { getRandomCompletionMessage } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
 import { Check, Share } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
 import { useState } from 'react'
-import { StatusBar } from 'react-native'
+import { StatusBar, useColorScheme } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 import type { Id } from '../../../convex/_generated/dataModel'
 import { routes } from '../lib/routes'
@@ -18,6 +17,7 @@ interface CompletionScreenProps {
 }
 
 export function CompletionScreen({ detail, onContinue, shareBondfireId }: CompletionScreenProps) {
+  const colorScheme = useColorScheme()
   const router = useRouter()
   const [message] = useState(() => getRandomCompletionMessage())
   const [isInviteSheetOpen, setIsInviteSheetOpen] = useState(!!shareBondfireId)
@@ -34,12 +34,15 @@ export function CompletionScreen({ detail, onContinue, shareBondfireId }: Comple
     <>
       <YStack
         flex={1}
-        backgroundColor={bondfireColors.obsidian}
+        backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}
         alignItems="center"
         justifyContent="center"
         padding={32}
       >
-        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+        <StatusBar
+          barStyle={colorScheme === 'light' ? 'dark-content' : 'light-content'}
+          backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}
+        />
 
         {/* Large emoji */}
         <Text fontSize={120} marginBottom={32}>
@@ -50,7 +53,7 @@ export function CompletionScreen({ detail, onContinue, shareBondfireId }: Comple
         <Text
           fontSize={24}
           fontWeight="700"
-          color={bondfireColors.whiteSmoke}
+          color={'$color'}
           textAlign="center"
           marginBottom={detail ? 16 : 48}
         >
@@ -59,7 +62,7 @@ export function CompletionScreen({ detail, onContinue, shareBondfireId }: Comple
 
         {detail && (
           <Text
-            color={bondfireColors.ash}
+            color={'$placeholderColor'}
             fontSize={15}
             lineHeight={22}
             textAlign="center"
@@ -76,19 +79,19 @@ export function CompletionScreen({ detail, onContinue, shareBondfireId }: Comple
               variant="outline"
               size="$lg"
               onPress={() => setIsInviteSheetOpen(true)}
-              icon={<Share size={18} color={bondfireColors.whiteSmoke} />}
+              icon={<Share size={18} color={'$color'} />}
             >
-              <Text color={bondfireColors.whiteSmoke} fontWeight="700">
+              <Text color={'$color'} fontWeight="700">
                 Share
               </Text>
             </Button>
             <Button variant="primary" size="$lg" onPress={handleContinue} icon={Check}>
-              <Text color={bondfireColors.whiteSmoke}>Continue</Text>
+              <Text color={'$color'}>Continue</Text>
             </Button>
           </XStack>
         ) : (
           <Button variant="primary" size="$lg" onPress={handleContinue} icon={Check}>
-            <Text color={bondfireColors.whiteSmoke}>Continue</Text>
+            <Text color={'$color'}>Continue</Text>
           </Button>
         )}
       </YStack>

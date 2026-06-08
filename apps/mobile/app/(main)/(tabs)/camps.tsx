@@ -1,5 +1,4 @@
-import { parseError, subscriptionActions } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
+import { parseError, subscriptionActions, useAppTheme } from '@bondfires/app'
 import { Button, CampCardStatusBanner, Input, Text } from '@bondfires/ui'
 import { ChevronDown, ChevronUp, Flame, Lock, Search, Sparkles, Users } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
@@ -81,7 +80,7 @@ function CampCard({
             width={54}
             height={54}
             borderRadius={16}
-            backgroundColor={camp.color ?? bondfireColors.gunmetal}
+            backgroundColor={camp.color ?? '$backgroundHover'}
             alignItems="center"
             justifyContent="center"
             overflow="hidden"
@@ -89,9 +88,9 @@ function CampCard({
             {coverImageUrl ? (
               <Image source={{ uri: coverImageUrl }} width={54} height={54} resizeMode="cover" />
             ) : camp.access === 'invite' ? (
-              <Lock size={25} color={bondfireColors.whiteSmoke} />
+              <Lock size={25} color={'$color'} />
             ) : (
-              <Flame size={28} color={bondfireColors.whiteSmoke} />
+              <Flame size={28} color={'$color'} />
             )}
           </YStack>
 
@@ -101,7 +100,7 @@ function CampCard({
                 <Text fontSize={17} fontWeight="900" numberOfLines={1}>
                   {camp.name}
                 </Text>
-                <Text fontSize={12} color={bondfireColors.ash} numberOfLines={1}>
+                <Text fontSize={12} color={'$placeholderColor'} numberOfLines={1}>
                   {camp.theme ?? getAccessLabel(camp)}
                 </Text>
               </YStack>
@@ -111,11 +110,11 @@ function CampCard({
                   borderRadius={999}
                   paddingHorizontal={10}
                   paddingVertical={5}
-                  backgroundColor={`${bondfireColors.warning}20`}
+                  backgroundColor={'rgba(245, 158, 11, 0.13)'}
                   borderWidth={1}
-                  borderColor={bondfireColors.warning}
+                  borderColor={'$warning'}
                 >
-                  <Text fontSize={11} color={bondfireColors.warning} fontWeight="900">
+                  <Text fontSize={11} color={'$warning'} fontWeight="900">
                     🔒 Frozen
                   </Text>
                 </YStack>
@@ -124,48 +123,48 @@ function CampCard({
                   borderRadius={999}
                   paddingHorizontal={10}
                   paddingVertical={5}
-                  backgroundColor={bondfireColors.charcoal}
+                  backgroundColor={'$backgroundPress'}
                   borderWidth={1}
-                  borderColor={bondfireColors.iron}
+                  borderColor={'$borderColor'}
                 >
-                  <Text fontSize={11} color={bondfireColors.whiteSmoke} fontWeight="900">
+                  <Text fontSize={11} color={'$color'} fontWeight="900">
                     Joined
                   </Text>
                 </YStack>
               ) : null}
             </XStack>
 
-            <Text fontSize={14} color={bondfireColors.whiteSmoke} lineHeight={20} numberOfLines={2}>
+            <Text fontSize={14} color={'$color'} lineHeight={20} numberOfLines={2}>
               {camp.purpose}
             </Text>
 
             <XStack alignItems="center" justifyContent="space-between" gap={10}>
               <XStack alignItems="center" gap={12} flex={1}>
                 <XStack alignItems="center" gap={5}>
-                  <Users size={14} color={bondfireColors.ash} />
-                  <Text fontSize={12} color={bondfireColors.ash}>
+                  <Users size={14} color={'$placeholderColor'} />
+                  <Text fontSize={12} color={'$placeholderColor'}>
                     {getMemberLabel(camp)}
                   </Text>
                 </XStack>
-                <Text fontSize={12} color={bondfireColors.ash}>
+                <Text fontSize={12} color={'$placeholderColor'}>
                   {getAccessLabel(camp)}
                 </Text>
               </XStack>
 
               {canJoinFromList ? (
                 <Button variant="outline" size="$sm" onPress={onJoin}>
-                  <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+                  <Text color={'$color'} fontWeight="900">
                     {camp.access === 'approval' ? 'Request' : 'Join'}
                   </Text>
                 </Button>
               ) : null}
               {isPending ? (
-                <Text fontSize={12} color={bondfireColors.warning} fontWeight="900">
+                <Text fontSize={12} color={'$warning'} fontWeight="900">
                   Pending
                 </Text>
               ) : null}
               {isInCooldown ? (
-                <Text fontSize={12} color={bondfireColors.error} fontWeight="900">
+                <Text fontSize={12} color={'$error'} fontWeight="900">
                   {cooldownEndDate
                     ? `Denied — retry ${cooldownEndDate.toLocaleDateString()}`
                     : 'Request denied'}
@@ -182,18 +181,18 @@ function CampCard({
 function EmptyCamps({ hasQuery, onReset }: { hasQuery: boolean; onReset: () => void }) {
   return (
     <YStack paddingVertical={96} paddingHorizontal={32} alignItems="center" gap={14}>
-      <Flame size={58} color={bondfireColors.bondfireCopper} />
+      <Flame size={58} color={'$primary'} />
       <Text fontSize={20} fontWeight="900" textAlign="center">
         {hasQuery ? 'No matching camps' : 'No camps yet'}
       </Text>
-      <Text fontSize={14} color={bondfireColors.ash} textAlign="center" lineHeight={21}>
+      <Text fontSize={14} color={'$placeholderColor'} textAlign="center" lineHeight={21}>
         {hasQuery
           ? 'Try a different search.'
           : 'Seed the launch camps from Convex before opening this surface.'}
       </Text>
       {hasQuery ? (
         <Button variant="outline" size="$md" onPress={onReset}>
-          <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+          <Text color={'$color'} fontWeight="900">
             Clear Search
           </Text>
         </Button>
@@ -205,10 +204,10 @@ function EmptyCamps({ hasQuery, onReset }: { hasQuery: boolean; onReset: () => v
 function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <YStack paddingHorizontal={16} paddingTop={18} paddingBottom={8} gap={3}>
-      <Text fontSize={13} color={bondfireColors.bondfireCopper} fontWeight="900">
+      <Text fontSize={13} color={'$primary'} fontWeight="900">
         {title}
       </Text>
-      <Text fontSize={12} color={bondfireColors.ash}>
+      <Text fontSize={12} color={'$placeholderColor'}>
         {subtitle}
       </Text>
     </YStack>
@@ -232,9 +231,9 @@ function PersonalCampCard({
         <YStack
           padding={14}
           borderRadius={14}
-          backgroundColor={bondfireColors.gunmetal}
+          backgroundColor={'$backgroundHover'}
           borderWidth={1}
-          borderColor={bondfireColors.bondfireCopper}
+          borderColor={'$primary'}
           gap={8}
         >
           <XStack alignItems="center" justifyContent="space-between" gap={10}>
@@ -243,17 +242,17 @@ function PersonalCampCard({
                 width={36}
                 height={36}
                 borderRadius={18}
-                backgroundColor={`${bondfireColors.bondfireCopper}20`}
+                backgroundColor={'rgba(217, 119, 54, 0.13)'}
                 alignItems="center"
                 justifyContent="center"
               >
-                <Flame size={18} color={bondfireColors.bondfireCopper} />
+                <Flame size={18} color={'$primary'} />
               </YStack>
               <YStack gap={2} flex={1}>
                 <Text fontSize={15} fontWeight="900" numberOfLines={1}>
                   {personalCamp.name}
                 </Text>
-                <Text fontSize={12} color={bondfireColors.ash}>
+                <Text fontSize={12} color={'$placeholderColor'}>
                   Your Hearth
                 </Text>
               </YStack>
@@ -263,11 +262,11 @@ function PersonalCampCard({
                 borderRadius={999}
                 paddingHorizontal={8}
                 paddingVertical={4}
-                backgroundColor={`${bondfireColors.warning}20`}
+                backgroundColor={'rgba(245, 158, 11, 0.13)'}
                 borderWidth={1}
-                borderColor={bondfireColors.warning}
+                borderColor={'$warning'}
               >
-                <Text fontSize={10} color={bondfireColors.warning} fontWeight="900">
+                <Text fontSize={10} color={'$warning'} fontWeight="900">
                   Frozen
                 </Text>
               </YStack>
@@ -284,9 +283,9 @@ function PersonalCampCard({
         <YStack
           padding={14}
           borderRadius={14}
-          backgroundColor={bondfireColors.gunmetal}
+          backgroundColor={'$backgroundHover'}
           borderWidth={1}
-          borderColor={bondfireColors.bondfireCopper}
+          borderColor={'$primary'}
           gap={8}
         >
           <XStack alignItems="center" gap={10}>
@@ -294,17 +293,17 @@ function PersonalCampCard({
               width={36}
               height={36}
               borderRadius={18}
-              backgroundColor={`${bondfireColors.bondfireCopper}20`}
+              backgroundColor={'rgba(217, 119, 54, 0.13)'}
               alignItems="center"
               justifyContent="center"
             >
-              <Flame size={18} color={bondfireColors.bondfireCopper} />
+              <Flame size={18} color={'$primary'} />
             </YStack>
             <YStack gap={2} flex={1}>
               <Text fontSize={15} fontWeight="900">
                 Hearth
               </Text>
-              <Text fontSize={12} color={bondfireColors.ash}>
+              <Text fontSize={12} color={'$placeholderColor'}>
                 Your private fires will appear here once your hearth is ready.
               </Text>
             </YStack>
@@ -319,9 +318,9 @@ function PersonalCampCard({
       <YStack
         padding={14}
         borderRadius={14}
-        backgroundColor={bondfireColors.gunmetal}
+        backgroundColor={'$backgroundHover'}
         borderWidth={1}
-        borderColor={bondfireColors.iron}
+        borderColor={'$borderColor'}
         gap={8}
       >
         <XStack alignItems="center" gap={10}>
@@ -329,17 +328,17 @@ function PersonalCampCard({
             width={36}
             height={36}
             borderRadius={18}
-            backgroundColor={`${bondfireColors.ash}20`}
+            backgroundColor={'rgba(156, 163, 175, 0.13)'}
             alignItems="center"
             justifyContent="center"
           >
-            <Lock size={18} color={bondfireColors.ash} />
+            <Lock size={18} color={'$placeholderColor'} />
           </YStack>
           <YStack gap={2} flex={1}>
-            <Text fontSize={15} fontWeight="900" color={bondfireColors.ash}>
+            <Text fontSize={15} fontWeight="900" color={'$placeholderColor'}>
               Hearth
             </Text>
-            <Text fontSize={12} color={bondfireColors.ash}>
+            <Text fontSize={12} color={'$placeholderColor'}>
               Upgrade to Plus to start your own hearth.
             </Text>
           </YStack>
@@ -350,6 +349,7 @@ function PersonalCampCard({
 }
 
 export default function CampsScreen() {
+  const { themeName } = useAppTheme()
   const router = useRouter()
   const camps = useQuery(api.camps.list, {})
   const myCamps = useQuery(api.camps.listMine, {})
@@ -548,15 +548,14 @@ export default function CampsScreen() {
 
   if (camps === undefined) {
     return (
-      <YStack
-        flex={1}
-        backgroundColor={bondfireColors.obsidian}
-        alignItems="center"
-        justifyContent="center"
-      >
-        <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-        <Spinner size="large" color={bondfireColors.bondfireCopper} />
-        <Text marginTop={18} color={bondfireColors.ash}>
+      <YStack flex={1} backgroundColor={'$background'} alignItems="center" justifyContent="center">
+        <StatusBar
+          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
+          backgroundColor="transparent"
+          translucent
+        />
+        <Spinner size="large" color={'$primary'} />
+        <Text marginTop={18} color={'$placeholderColor'}>
           Loading camps...
         </Text>
       </YStack>
@@ -564,8 +563,12 @@ export default function CampsScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
-      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+    <YStack flex={1} backgroundColor={'$background'}>
+      <StatusBar
+        barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
+        backgroundColor="transparent"
+        translucent
+      />
 
       <FlatList
         data={listItems}
@@ -574,8 +577,8 @@ export default function CampsScreen() {
           <RefreshControl
             refreshing={isRefreshing}
             onRefresh={handleRefresh}
-            tintColor={bondfireColors.bondfireCopper}
-            colors={[bondfireColors.bondfireCopper]}
+            tintColor={'$primary'}
+            colors={['$primary']}
           />
         }
         renderItem={({ item }) =>
@@ -590,7 +593,7 @@ export default function CampsScreen() {
           )
         }
         ItemSeparatorComponent={() => (
-          <Separator borderColor={bondfireColors.iron} opacity={0.6} marginHorizontal={16} />
+          <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
         )}
         ListHeaderComponent={
           <YStack paddingTop={68} paddingBottom={14} paddingHorizontal={16} gap={14}>
@@ -598,7 +601,7 @@ export default function CampsScreen() {
               <Text fontSize={28} fontWeight="900">
                 Camps
               </Text>
-              <Text fontSize={14} color={bondfireColors.ash}>
+              <Text fontSize={14} color={'$placeholderColor'}>
                 Browse the spaces where Bondfires gather.
               </Text>
             </YStack>
@@ -620,8 +623,8 @@ export default function CampsScreen() {
                   flex={1}
                   onPress={() => setIsCreatePrivateOpen(true)}
                 >
-                  <Sparkles size={15} color={bondfireColors.whiteSmoke} />
-                  <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+                  <Sparkles size={15} color={'$color'} />
+                  <Text color={'$color'} fontWeight="900">
                     Create Camp
                   </Text>
                 </Button>
@@ -632,7 +635,7 @@ export default function CampsScreen() {
                 flex={1}
                 onPress={() => setIsRedeemInviteOpen(true)}
               >
-                <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+                <Text color={'$color'} fontWeight="900">
                   Redeem Invite
                 </Text>
               </Button>
@@ -641,14 +644,14 @@ export default function CampsScreen() {
             <XStack
               alignItems="center"
               gap={10}
-              backgroundColor={bondfireColors.gunmetal}
+              backgroundColor={'$backgroundHover'}
               borderRadius={14}
               borderWidth={1}
-              borderColor={bondfireColors.iron}
+              borderColor={'$borderColor'}
               paddingHorizontal={12}
               paddingVertical={10}
             >
-              <Search size={18} color={bondfireColors.ash} />
+              <Search size={18} color={'$placeholderColor'} />
               <Input
                 value={query}
                 onChangeText={setQuery}
@@ -659,7 +662,7 @@ export default function CampsScreen() {
                 paddingHorizontal={0}
                 flex={1}
               />
-              <Text fontSize={12} color={bondfireColors.ash} fontWeight="900">
+              <Text fontSize={12} color={'$placeholderColor'} fontWeight="900">
                 {filtered?.length ?? 0}
               </Text>
             </XStack>
@@ -679,21 +682,21 @@ export default function CampsScreen() {
                   alignItems="center"
                   gap={8}
                   borderTopWidth={1}
-                  borderTopColor={bondfireColors.iron}
+                  borderTopColor={'$borderColor'}
                   marginTop={8}
                 >
                   <YStack flex={1} gap={2}>
-                    <Text fontSize={13} color={bondfireColors.error} fontWeight="900">
+                    <Text fontSize={13} color={'$error'} fontWeight="900">
                       Archived ({archivedCamps.length})
                     </Text>
-                    <Text fontSize={12} color={bondfireColors.ash}>
+                    <Text fontSize={12} color={'$placeholderColor'}>
                       Read-only. Content will be deleted after 30 days.
                     </Text>
                   </YStack>
                   {archivedExpanded ? (
-                    <ChevronUp size={18} color={bondfireColors.ash} />
+                    <ChevronUp size={18} color={'$placeholderColor'} />
                   ) : (
-                    <ChevronDown size={18} color={bondfireColors.ash} />
+                    <ChevronDown size={18} color={'$placeholderColor'} />
                   )}
                 </XStack>
               </Pressable>
@@ -714,17 +717,17 @@ export default function CampsScreen() {
                             width={40}
                             height={40}
                             borderRadius={12}
-                            backgroundColor={camp.color ?? bondfireColors.gunmetal}
+                            backgroundColor={camp.color ?? '$backgroundHover'}
                             alignItems="center"
                             justifyContent="center"
                           >
-                            <Lock size={18} color={bondfireColors.whiteSmoke} />
+                            <Lock size={18} color={'$color'} />
                           </YStack>
                           <YStack flex={1} gap={2}>
                             <Text fontSize={14} fontWeight="900" numberOfLines={1}>
                               {camp.name}
                             </Text>
-                            <Text fontSize={12} color={bondfireColors.ash}>
+                            <Text fontSize={12} color={'$placeholderColor'}>
                               Archived {camp.archivedAt ? getTimeAgo(camp.archivedAt) : 'recently'}{' '}
                               · {camp.activeMemberCount ?? 0}{' '}
                               {camp.activeMemberCount === 1 ? 'member' : 'members'}
@@ -734,7 +737,7 @@ export default function CampsScreen() {
                       </Pressable>
                       {index < archivedCamps.length - 1 ? (
                         <Separator
-                          borderColor={bondfireColors.iron}
+                          borderColor={'$borderColor'}
                           opacity={0.4}
                           marginHorizontal={16}
                         />
@@ -756,13 +759,13 @@ export default function CampsScreen() {
         dismissOnSnapToBottom
       >
         <Sheet.Overlay backgroundColor="rgba(0,0,0,0.45)" />
-        <Sheet.Frame padding={20} backgroundColor={bondfireColors.charcoal} gap={16}>
-          <Sheet.Handle backgroundColor={bondfireColors.iron} />
+        <Sheet.Frame padding={20} backgroundColor={'$backgroundPress'} gap={16}>
+          <Sheet.Handle backgroundColor={'$borderColor'} />
           <YStack gap={6}>
             <Text fontSize={22} fontWeight="900">
               Create Camp
             </Text>
-            <Text fontSize={14} color={bondfireColors.ash} lineHeight={20}>
+            <Text fontSize={14} color={'$placeholderColor'} lineHeight={20}>
               Owner-led and invite-only. You spark; members respond.
             </Text>
           </YStack>
@@ -781,24 +784,24 @@ export default function CampsScreen() {
           {subscription?.tier === 'pro' && kindlingBalance !== undefined ? (
             <YStack
               borderRadius={10}
-              backgroundColor={bondfireColors.gunmetal}
+              backgroundColor={'$backgroundHover'}
               borderWidth={1}
-              borderColor={bondfireColors.iron}
+              borderColor={'$borderColor'}
               padding={10}
               gap={4}
             >
-              <Text fontSize={11} color={bondfireColors.ash} fontWeight="900">
+              <Text fontSize={11} color={'$placeholderColor'} fontWeight="900">
                 CAMP KINDLING
               </Text>
               <Text
                 fontSize={18}
                 fontWeight="900"
-                color={kindlingBalance.balance > 0 ? bondfireColors.success : bondfireColors.error}
+                color={kindlingBalance.balance > 0 ? '$success' : '$error'}
               >
                 {kindlingBalance.balance} kindling remaining
               </Text>
               {kindlingBalance.balance < 1 ? (
-                <Text fontSize={12} color={bondfireColors.ash}>
+                <Text fontSize={12} color={'$placeholderColor'}>
                   Buy a kindling pack to create more camps.
                 </Text>
               ) : null}
@@ -816,9 +819,9 @@ export default function CampsScreen() {
             onPress={handleCreatePrivateCamp}
           >
             {isSubmitting ? (
-              <Spinner color={bondfireColors.whiteSmoke} />
+              <Spinner color={'$color'} />
             ) : (
-              <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+              <Text color={'$color'} fontWeight="900">
                 Create Camp
               </Text>
             )}
@@ -834,13 +837,13 @@ export default function CampsScreen() {
         dismissOnSnapToBottom
       >
         <Sheet.Overlay backgroundColor="rgba(0,0,0,0.45)" />
-        <Sheet.Frame padding={20} backgroundColor={bondfireColors.charcoal} gap={16}>
-          <Sheet.Handle backgroundColor={bondfireColors.iron} />
+        <Sheet.Frame padding={20} backgroundColor={'$backgroundPress'} gap={16}>
+          <Sheet.Handle backgroundColor={'$borderColor'} />
           <YStack gap={6}>
             <Text fontSize={22} fontWeight="900">
               Redeem Invite
             </Text>
-            <Text fontSize={14} color={bondfireColors.ash} lineHeight={20}>
+            <Text fontSize={14} color={'$placeholderColor'} lineHeight={20}>
               Enter the three-word code from the camp owner.
             </Text>
           </YStack>
@@ -852,9 +855,9 @@ export default function CampsScreen() {
           />
           <Button variant="primary" size="$lg" disabled={isSubmitting} onPress={handleRedeemInvite}>
             {isSubmitting ? (
-              <Spinner color={bondfireColors.whiteSmoke} />
+              <Spinner color={'$color'} />
             ) : (
-              <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+              <Text color={'$color'} fontWeight="900">
                 Join Camp
               </Text>
             )}

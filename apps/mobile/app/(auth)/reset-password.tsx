@@ -1,16 +1,16 @@
 import { getAuthErrorMessage } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { CheckCircle, ChevronLeft, KeyRound } from '@tamagui/lucide-icons'
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { Pressable, StatusBar } from 'react-native'
+import { Pressable, StatusBar, useColorScheme } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { Spinner, YStack } from 'tamagui'
 import { routes } from '../../lib/routes'
 
 export default function ResetPasswordScreen() {
+  const colorScheme = useColorScheme()
   const router = useRouter()
   const { signIn } = useAuthActions()
   const params = useLocalSearchParams<{ email?: string }>()
@@ -107,32 +107,35 @@ export default function ResetPasswordScreen() {
     return (
       <YStack
         flex={1}
-        backgroundColor={bondfireColors.obsidian}
+        backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}
         paddingHorizontal={24}
         alignItems="center"
         justifyContent="center"
       >
-        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+        <StatusBar
+          barStyle={colorScheme === 'light' ? 'dark-content' : 'light-content'}
+          backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}
+        />
 
         <YStack alignItems="center" gap={24} maxWidth={320}>
           <YStack
             width={100}
             height={100}
             borderRadius={50}
-            backgroundColor={bondfireColors.gunmetal}
+            backgroundColor={'$backgroundHover'}
             alignItems="center"
             justifyContent="center"
             borderWidth={2}
-            borderColor={bondfireColors.success}
+            borderColor={'$success'}
           >
-            <CheckCircle size={50} color={bondfireColors.success} />
+            <CheckCircle size={50} color={'$success'} />
           </YStack>
 
           <YStack alignItems="center" gap={12}>
             <Text fontSize={24} fontWeight="700" textAlign="center">
               Password reset!
             </Text>
-            <Text fontSize={15} color={bondfireColors.ash} textAlign="center">
+            <Text fontSize={15} color={'$placeholderColor'} textAlign="center">
               Your password has been updated. Redirecting to sign in...
             </Text>
           </YStack>
@@ -142,8 +145,11 @@ export default function ResetPasswordScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
-      <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+    <YStack flex={1} backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}>
+      <StatusBar
+        barStyle={colorScheme === 'light' ? 'dark-content' : 'light-content'}
+        backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}
+      />
 
       {/* Back button */}
       <YStack paddingTop={60} paddingHorizontal={16}>
@@ -152,11 +158,11 @@ export default function ResetPasswordScreen() {
             width={40}
             height={40}
             borderRadius={20}
-            backgroundColor={bondfireColors.gunmetal}
+            backgroundColor={'$backgroundHover'}
             alignItems="center"
             justifyContent="center"
           >
-            <ChevronLeft size={24} color={bondfireColors.whiteSmoke} />
+            <ChevronLeft size={24} color={'$color'} />
           </YStack>
         </Pressable>
       </YStack>
@@ -173,19 +179,19 @@ export default function ResetPasswordScreen() {
               width={80}
               height={80}
               borderRadius={40}
-              backgroundColor={bondfireColors.gunmetal}
+              backgroundColor={'$backgroundHover'}
               alignItems="center"
               justifyContent="center"
               borderWidth={2}
-              borderColor={bondfireColors.bondfireCopper}
+              borderColor={'$primary'}
             >
-              <KeyRound size={36} color={bondfireColors.bondfireCopper} />
+              <KeyRound size={36} color={'$primary'} />
             </YStack>
             <YStack alignItems="center" gap={8}>
               <Text fontSize={28} fontWeight="700">
                 Set new password
               </Text>
-              <Text fontSize={15} color={bondfireColors.ash} textAlign="center">
+              <Text fontSize={15} color={'$placeholderColor'} textAlign="center">
                 Enter the code from your email and choose a new password.
               </Text>
             </YStack>
@@ -194,7 +200,7 @@ export default function ResetPasswordScreen() {
           {/* Form */}
           <YStack gap={20}>
             <YStack gap={8}>
-              <Text variant="label" color={bondfireColors.whiteSmoke}>
+              <Text variant="label" color={'$color'}>
                 Reset Code
               </Text>
               <Input
@@ -211,7 +217,7 @@ export default function ResetPasswordScreen() {
             </YStack>
 
             <YStack gap={8}>
-              <Text variant="label" color={bondfireColors.whiteSmoke}>
+              <Text variant="label" color={'$color'}>
                 New Password
               </Text>
               <Input
@@ -225,7 +231,7 @@ export default function ResetPasswordScreen() {
             </YStack>
 
             <YStack gap={8}>
-              <Text variant="label" color={bondfireColors.whiteSmoke}>
+              <Text variant="label" color={'$color'}>
                 Confirm Password
               </Text>
               <Input
@@ -239,7 +245,7 @@ export default function ResetPasswordScreen() {
             </YStack>
 
             {error && (
-              <Text color={bondfireColors.error} fontSize={14} textAlign="center">
+              <Text color={'$error'} fontSize={14} textAlign="center">
                 {error}
               </Text>
             )}
@@ -254,17 +260,17 @@ export default function ResetPasswordScreen() {
               disabled={isLoading || !code || !newPassword || !confirmPassword}
             >
               {isLoading ? (
-                <Spinner color={bondfireColors.whiteSmoke} />
+                <Spinner color={'$color'} />
               ) : (
-                <Text color={bondfireColors.whiteSmoke}>Reset Password</Text>
+                <Text color={'$color'}>Reset Password</Text>
               )}
             </Button>
 
             <Button variant="ghost" size="$md" onPress={handleResend} disabled={isResending}>
               {isResending ? (
-                <Spinner size="small" color={bondfireColors.ash} />
+                <Spinner size="small" color={'$placeholderColor'} />
               ) : (
-                <Text color={bondfireColors.ash}>Didn't receive it? Resend code</Text>
+                <Text color={'$placeholderColor'}>Didn't receive it? Resend code</Text>
               )}
             </Button>
           </YStack>

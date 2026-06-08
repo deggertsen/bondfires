@@ -1,14 +1,13 @@
-import { bondfireColors } from '@bondfires/config'
 import { type GetProps, styled, Card as TamaguiCard } from 'tamagui'
 
 export const Card = styled(TamaguiCard, {
   name: 'Card',
   // Use Bondfire gunmetal for card background
-  backgroundColor: bondfireColors.gunmetal,
+  backgroundColor: '$backgroundHover',
   borderRadius: 12,
   padding: '$4',
   borderWidth: 1,
-  borderColor: bondfireColors.iron,
+  borderColor: '$borderColor',
   overflow: 'hidden',
 
   variants: {
@@ -25,12 +24,12 @@ export const Card = styled(TamaguiCard, {
       true: {
         cursor: 'pointer',
         hoverStyle: {
-          backgroundColor: bondfireColors.iron,
-          borderColor: bondfireColors.ash,
+          backgroundColor: '$borderColor',
+          borderColor: '$placeholderColor',
         },
         pressStyle: {
-          backgroundColor: bondfireColors.charcoal,
-          borderColor: bondfireColors.bondfireCopper,
+          backgroundColor: '$backgroundPress',
+          borderColor: '$primary',
           opacity: 0.95,
         },
       },
@@ -39,14 +38,14 @@ export const Card = styled(TamaguiCard, {
       default: {},
       outline: {
         backgroundColor: 'transparent',
-        borderColor: bondfireColors.iron,
+        borderColor: '$borderColor',
       },
       ghost: {
         backgroundColor: 'transparent',
         borderWidth: 0,
       },
       highlight: {
-        borderColor: bondfireColors.bondfireCopper,
+        borderColor: '$primary',
         borderWidth: 2,
       },
     },
@@ -61,7 +60,7 @@ export const CardHeader = styled(TamaguiCard.Header, {
   name: 'CardHeader',
   paddingBottom: '$3',
   borderBottomWidth: 1,
-  borderBottomColor: bondfireColors.iron,
+  borderBottomColor: '$borderColor',
   marginBottom: '$3',
 })
 
@@ -69,7 +68,7 @@ export const CardFooter = styled(TamaguiCard.Footer, {
   name: 'CardFooter',
   paddingTop: '$3',
   borderTopWidth: 1,
-  borderTopColor: bondfireColors.iron,
+  borderTopColor: '$borderColor',
   marginTop: '$3',
 })
 

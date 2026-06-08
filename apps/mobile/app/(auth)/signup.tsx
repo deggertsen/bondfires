@@ -1,5 +1,4 @@
 import { getAuthErrorMessage } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
@@ -7,7 +6,7 @@ import DateTimePicker, { type DateTimePickerEvent } from '@react-native-communit
 import { Flame, UserPlus } from '@tamagui/lucide-icons'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useState } from 'react'
-import { Platform, Pressable, StatusBar } from 'react-native'
+import { Platform, Pressable, StatusBar, useColorScheme } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { Spinner, XStack, YStack } from 'tamagui'
 import { routes } from '../../lib/routes'
@@ -46,6 +45,7 @@ function getMinBirthDate(): Date {
 }
 
 export default function SignupScreen() {
+  const colorScheme = useColorScheme()
   const router = useRouter()
   const { redirectTo } = useLocalSearchParams<{ redirectTo?: string }>()
   const { signIn } = useAuthActions()
@@ -177,8 +177,11 @@ export default function SignupScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
-      <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+    <YStack flex={1} backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}>
+      <StatusBar
+        barStyle={colorScheme === 'light' ? 'dark-content' : 'light-content'}
+        backgroundColor={colorScheme === 'light' ? '#FAFAFA' : '#141416'}
+      />
       <KeyboardAwareScrollView
         contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
         keyboardShouldPersistTaps="handled"
@@ -191,19 +194,19 @@ export default function SignupScreen() {
               width={80}
               height={80}
               borderRadius={40}
-              backgroundColor={bondfireColors.gunmetal}
+              backgroundColor={'$backgroundHover'}
               alignItems="center"
               justifyContent="center"
               borderWidth={2}
-              borderColor={bondfireColors.moltenGold}
+              borderColor={'$secondary'}
             >
-              <UserPlus size={36} color={bondfireColors.moltenGold} />
+              <UserPlus size={36} color={'$secondary'} />
             </YStack>
             <YStack alignItems="center" gap={8}>
               <Text fontSize={28} fontWeight="700">
                 Create account
               </Text>
-              <Text fontSize={15} color={bondfireColors.ash}>
+              <Text fontSize={15} color={'$placeholderColor'}>
                 Join Bondfires and start sharing
               </Text>
             </YStack>
@@ -213,7 +216,7 @@ export default function SignupScreen() {
           <YStack gap={16}>
             {/* First Name */}
             <YStack gap={8}>
-              <Text variant="label" color={bondfireColors.whiteSmoke}>
+              <Text variant="label" color={'$color'}>
                 First Name
               </Text>
               <Input
@@ -227,7 +230,7 @@ export default function SignupScreen() {
 
             {/* Last Name */}
             <YStack gap={8}>
-              <Text variant="label" color={bondfireColors.whiteSmoke}>
+              <Text variant="label" color={'$color'}>
                 Last Name
               </Text>
               <Input
@@ -241,7 +244,7 @@ export default function SignupScreen() {
 
             {/* Email */}
             <YStack gap={8}>
-              <Text variant="label" color={bondfireColors.whiteSmoke}>
+              <Text variant="label" color={'$color'}>
                 Email
               </Text>
               <Input
@@ -256,7 +259,7 @@ export default function SignupScreen() {
 
             {/* Gender */}
             <YStack gap={8}>
-              <Text variant="label" color={bondfireColors.whiteSmoke}>
+              <Text variant="label" color={'$color'}>
                 Gender
               </Text>
               <XStack gap={8}>
@@ -270,10 +273,7 @@ export default function SignupScreen() {
                       flex={1}
                       onPress={() => form$.gender.set(option.value)}
                     >
-                      <Text
-                        color={selected ? bondfireColors.whiteSmoke : bondfireColors.ash}
-                        fontWeight="900"
-                      >
+                      <Text color={selected ? '$color' : '$placeholderColor'} fontWeight="900">
                         {option.label}
                       </Text>
                     </Button>
@@ -284,10 +284,10 @@ export default function SignupScreen() {
 
             {/* Birth Date with Calendar Picker */}
             <YStack gap={8}>
-              <Text variant="label" color={bondfireColors.whiteSmoke}>
+              <Text variant="label" color={'$color'}>
                 Birth Date
               </Text>
-              <Text fontSize={12} color={bondfireColors.ash} marginBottom={4}>
+              <Text fontSize={12} color={'$placeholderColor'} marginBottom={4}>
                 Required. You must be at least 13. Private; not shown publicly.
               </Text>
               <Pressable onPress={() => setShowDatePicker(true)}>
@@ -313,7 +313,7 @@ export default function SignupScreen() {
 
             {/* Password */}
             <YStack gap={8}>
-              <Text variant="label" color={bondfireColors.whiteSmoke}>
+              <Text variant="label" color={'$color'}>
                 Password
               </Text>
               <Input
@@ -327,7 +327,7 @@ export default function SignupScreen() {
 
             {/* Confirm Password */}
             <YStack gap={8}>
-              <Text variant="label" color={bondfireColors.whiteSmoke}>
+              <Text variant="label" color={'$color'}>
                 Confirm Password
               </Text>
               <Input
@@ -341,7 +341,7 @@ export default function SignupScreen() {
             </YStack>
 
             {error && (
-              <Text color={bondfireColors.error} fontSize={14}>
+              <Text color={'$error'} fontSize={14}>
                 {error}
               </Text>
             )}
@@ -351,11 +351,11 @@ export default function SignupScreen() {
           <YStack gap={12}>
             <Button variant="primary" size="$lg" onPress={handleSignup} disabled={isLoading}>
               {isLoading ? (
-                <Spinner color={bondfireColors.whiteSmoke} />
+                <Spinner color={'$color'} />
               ) : (
                 <>
-                  <Flame size={20} color={bondfireColors.whiteSmoke} />
-                  <Text color={bondfireColors.whiteSmoke}>Create Account</Text>
+                  <Flame size={20} color={'$color'} />
+                  <Text color={'$color'}>Create Account</Text>
                 </>
               )}
             </Button>

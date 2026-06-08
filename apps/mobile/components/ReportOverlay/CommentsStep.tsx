@@ -1,4 +1,3 @@
-import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
 import { ArrowLeft } from '@tamagui/lucide-icons'
 import { useEffect, useRef } from 'react'
@@ -21,13 +20,13 @@ export function CommentsStep({ value, onChange, onNext, onBack }: CommentsStepPr
     <YStack gap={16}>
       <XStack alignItems="center" gap={8}>
         <Pressable onPress={onBack}>
-          <ArrowLeft size={24} color={bondfireColors.whiteSmoke} />
+          <ArrowLeft size={24} color={'$color'} />
         </Pressable>
-        <Text fontSize={18} fontWeight="600" color={bondfireColors.whiteSmoke}>
+        <Text fontSize={18} fontWeight="600" color={'$color'}>
           Describe the Issue
         </Text>
       </XStack>
-      <Text fontSize={14} color={bondfireColors.ash}>
+      <Text fontSize={14} color={'$placeholderColor'}>
         Please provide details about what you observed. This helps us review your report more
         effectively.
       </Text>
@@ -36,19 +35,19 @@ export function CommentsStep({ value, onChange, onNext, onBack }: CommentsStepPr
           ref={textInputRef}
           style={styles.textInput}
           placeholder="Describe the issue in detail..."
-          placeholderTextColor={bondfireColors.ash}
+          placeholderTextColor={'$placeholderColor'}
           multiline
           value={value}
           onChangeText={onChange}
           textAlignVertical="top"
         />
         <XStack justifyContent="space-between" marginTop={8}>
-          <Text fontSize={12} color={isValid ? bondfireColors.ash : bondfireColors.error}>
+          <Text fontSize={12} color={isValid ? '$placeholderColor' : '$error'}>
             {isValid
               ? 'Thank you for the details'
               : `Minimum ${MIN_COMMENT_LENGTH} characters required`}
           </Text>
-          <Text fontSize={12} color={isValid ? bondfireColors.ash : bondfireColors.error}>
+          <Text fontSize={12} color={isValid ? '$placeholderColor' : '$error'}>
             {charCount}/{MIN_COMMENT_LENGTH}
           </Text>
         </XStack>
@@ -60,7 +59,7 @@ export function CommentsStep({ value, onChange, onNext, onBack }: CommentsStepPr
         disabled={!isValid}
         opacity={isValid ? 1 : 0.5}
       >
-        <Text color={bondfireColors.whiteSmoke} fontWeight="600">
+        <Text color={'$color'} fontWeight="600">
           Continue
         </Text>
       </Button>
@@ -70,11 +69,11 @@ export function CommentsStep({ value, onChange, onNext, onBack }: CommentsStepPr
 
 const styles = StyleSheet.create({
   textInput: {
-    backgroundColor: bondfireColors.gunmetal,
+    backgroundColor: '$backgroundHover',
     borderRadius: 12,
     padding: 16,
     minHeight: 120,
-    color: bondfireColors.whiteSmoke,
+    color: '$color',
     fontSize: 16,
   },
 })

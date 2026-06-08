@@ -71,6 +71,7 @@ function currentUser(user: Doc<'users'>) {
     totalViews: user.totalViews ?? 0,
     isAdmin: user.isAdmin,
     role: user.role,
+    themePreference: user.themePreference ?? 'system',
   }
 }
 
@@ -122,6 +123,24 @@ export const updateProfile = mutation({
     if (args.gender !== undefined) updates.gender = args.gender
 
     await ctx.db.patch(userId, updates)
+    const user = await ctx.db.get(userId)
+    return user ? currentUser(user) : null
+  },
+})
+
+export const setThemePreference = mutation({
+  args: {
+    themePreference: v.union(v.literal('system'), v.literal('light'), v.literal('dark')),
+  },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      throwUserError('Not authenticated')
+    }
+    await ctx.db.patch(userId, {
+      themePreference: args.themePreference,
+      updatedAt: Date.now(),
+    })
     const user = await ctx.db.get(userId)
     return user ? currentUser(user) : null
   },

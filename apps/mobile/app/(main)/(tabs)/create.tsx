@@ -12,10 +12,10 @@ import {
   shouldShowReportIssue,
   startBackgroundUpload,
   telemetry,
+  useAppTheme,
   useLivePublisher,
   useSubscription,
 } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
@@ -59,6 +59,7 @@ function formatMaxDuration(seconds: number) {
 }
 
 export default function CreateScreen() {
+  const { themeName } = useAppTheme()
   const router = useRouter()
   const { campId, respondTo, personalCamp } = useLocalSearchParams<{
     campId?: string
@@ -1235,29 +1236,32 @@ export default function CreateScreen() {
     return (
       <YStack
         flex={1}
-        backgroundColor={bondfireColors.obsidian}
+        backgroundColor={'$background'}
         alignItems="center"
         justifyContent="center"
         paddingHorizontal={24}
       >
-        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+        <StatusBar
+          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
+          backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
+        />
         <YStack alignItems="center" gap={24}>
           <YStack
             width={100}
             height={100}
             borderRadius={50}
-            backgroundColor={bondfireColors.gunmetal}
+            backgroundColor={'$backgroundHover'}
             alignItems="center"
             justifyContent="center"
             borderWidth={2}
-            borderColor={bondfireColors.bondfireCopper}
+            borderColor={'$primary'}
           >
-            <Flame size={50} color={bondfireColors.bondfireCopper} />
+            <Flame size={50} color={'$primary'} />
           </YStack>
           <Text fontSize={20} fontWeight="600" textAlign="center">
             Camera and microphone access required
           </Text>
-          <Text textAlign="center" color={bondfireColors.ash}>
+          <Text textAlign="center" color={'$placeholderColor'}>
             We need access to your camera and microphone to record videos.
           </Text>
           <Button variant="primary" size="$lg" onPress={requestPermissions}>
@@ -1272,14 +1276,17 @@ export default function CreateScreen() {
     return (
       <YStack
         flex={1}
-        backgroundColor={bondfireColors.obsidian}
+        backgroundColor={'$background'}
         alignItems="center"
         justifyContent="center"
         gap={14}
       >
-        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
-        <Spinner size="large" color={bondfireColors.bondfireCopper} />
-        <Text color={bondfireColors.ash}>Loading camp...</Text>
+        <StatusBar
+          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
+          backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
+        />
+        <Spinner size="large" color={'$primary'} />
+        <Text color={'$placeholderColor'}>Loading camp...</Text>
       </YStack>
     )
   }
@@ -1288,17 +1295,20 @@ export default function CreateScreen() {
     return (
       <YStack
         flex={1}
-        backgroundColor={bondfireColors.obsidian}
+        backgroundColor={'$background'}
         alignItems="center"
         justifyContent="center"
         padding={24}
         gap={16}
       >
-        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+        <StatusBar
+          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
+          backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
+        />
         <Text fontSize={24} fontWeight="900" textAlign="center">
           Camp unavailable
         </Text>
-        <Text fontSize={15} color={bondfireColors.ash} textAlign="center" lineHeight={22}>
+        <Text fontSize={15} color={'$placeholderColor'} textAlign="center" lineHeight={22}>
           Choose an active camp before recording.
         </Text>
         <Button
@@ -1311,7 +1321,7 @@ export default function CreateScreen() {
             router.replace(routes.create)
           }}
         >
-          <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+          <Text color={'$color'} fontWeight="900">
             Choose Camp
           </Text>
         </Button>
@@ -1321,21 +1331,23 @@ export default function CreateScreen() {
 
   if (!respondTo && !isPersonalCamp && !effectiveCampId) {
     return (
-      <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
-        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+      <YStack flex={1} backgroundColor={'$background'}>
+        <StatusBar
+          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
+          backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
+        />
         <YStack paddingTop={64} paddingHorizontal={20} paddingBottom={16} gap={8}>
           <Text fontSize={28} fontWeight="900">
             Choose a Camp
           </Text>
-          <Text fontSize={14} color={bondfireColors.ash} lineHeight={20}>
+          <Text fontSize={14} color={'$placeholderColor'} lineHeight={20}>
             Every Bondfire starts in a camp.
           </Text>
-
         </YStack>
         {camps === undefined ? (
           <YStack flex={1} alignItems="center" justifyContent="center" gap={14}>
-            <Spinner size="large" color={bondfireColors.bondfireCopper} />
-            <Text color={bondfireColors.ash}>Loading camps...</Text>
+            <Spinner size="large" color={'$primary'} />
+            <Text color={'$placeholderColor'}>Loading camps...</Text>
           </YStack>
         ) : (
           <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 32 }}>
@@ -1352,9 +1364,9 @@ export default function CreateScreen() {
                     <YStack
                       padding={14}
                       borderRadius={16}
-                      backgroundColor={bondfireColors.gunmetal}
+                      backgroundColor={'$backgroundHover'}
                       borderWidth={1}
-                      borderColor={camp.color ?? bondfireColors.iron}
+                      borderColor={camp.color ?? '$borderColor'}
                       opacity={isPending ? 0.65 : 1}
                       gap={8}
                     >
@@ -1363,19 +1375,19 @@ export default function CreateScreen() {
                           <Text fontSize={17} fontWeight="900" numberOfLines={1}>
                             {camp.name}
                           </Text>
-                          <Text fontSize={12} color={bondfireColors.ash} numberOfLines={1}>
+                          <Text fontSize={12} color={'$placeholderColor'} numberOfLines={1}>
                             {camp.theme ?? 'Camp'}
                           </Text>
                         </YStack>
                         <Text
                           fontSize={12}
-                          color={isActiveMember ? bondfireColors.success : bondfireColors.ash}
+                          color={isActiveMember ? '$success' : '$placeholderColor'}
                           fontWeight="900"
                         >
                           {isPending ? 'Pending' : isActiveMember ? 'Joined' : 'Join'}
                         </Text>
                       </XStack>
-                      <Text fontSize={14} color={bondfireColors.whiteSmoke} lineHeight={20}>
+                      <Text fontSize={14} color={'$color'} lineHeight={20}>
                         {camp.purpose}
                       </Text>
                     </YStack>
@@ -1387,9 +1399,9 @@ export default function CreateScreen() {
                 <YStack
                   padding={14}
                   borderRadius={16}
-                  backgroundColor={`${bondfireColors.bondfireCopper}12`}
+                  backgroundColor={'rgba(217, 119, 54, 0.07)'}
                   borderWidth={1}
-                  borderColor={bondfireColors.bondfireCopper}
+                  borderColor={'$primary'}
                   borderStyle="dashed"
                   gap={8}
                 >
@@ -1399,29 +1411,24 @@ export default function CreateScreen() {
                         width={36}
                         height={36}
                         borderRadius={18}
-                        backgroundColor={`${bondfireColors.bondfireCopper}25`}
+                        backgroundColor={'rgba(217, 119, 54, 0.15)'}
                         alignItems="center"
                         justifyContent="center"
                       >
-                        <Flame size={18} color={bondfireColors.bondfireCopper} />
+                        <Flame size={18} color={'$primary'} />
                       </YStack>
                       <YStack flex={1} gap={2}>
-                        <Text
-                          fontSize={16}
-                          fontWeight="900"
-                          color={bondfireColors.bondfireCopper}
-                          numberOfLines={1}
-                        >
+                        <Text fontSize={16} fontWeight="900" color={'$primary'} numberOfLines={1}>
                           {personalCampDoc?.name ?? 'My Hearth'}
                         </Text>
-                        <Text fontSize={12} color={bondfireColors.ash} numberOfLines={1}>
+                        <Text fontSize={12} color={'$placeholderColor'} numberOfLines={1}>
                           Your personal space
                         </Text>
                       </YStack>
                     </XStack>
-                    <Sparkles size={16} color={bondfireColors.bondfireCopper} />
+                    <Sparkles size={16} color={'$primary'} />
                   </XStack>
-                  <Text fontSize={14} color={bondfireColors.whiteSmoke} lineHeight={20}>
+                  <Text fontSize={14} color={'$color'} lineHeight={20}>
                     Private sparks just for you. No camp rules, no audience — just your own fire.
                   </Text>
                 </YStack>
@@ -1437,31 +1444,34 @@ export default function CreateScreen() {
     return (
       <YStack
         flex={1}
-        backgroundColor={bondfireColors.obsidian}
+        backgroundColor={'$background'}
         alignItems="center"
         justifyContent="center"
         padding={24}
         gap={18}
       >
-        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+        <StatusBar
+          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
+          backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
+        />
         <YStack
           width={78}
           height={78}
           borderRadius={22}
-          backgroundColor={selectedCamp.color ?? bondfireColors.gunmetal}
+          backgroundColor={selectedCamp.color ?? '$backgroundHover'}
           alignItems="center"
           justifyContent="center"
         >
-          <Flame size={38} color={bondfireColors.whiteSmoke} />
+          <Flame size={38} color={'$color'} />
         </YStack>
         <Text fontSize={24} fontWeight="900" textAlign="center">
           {selectedCamp.name}
         </Text>
-        <Text fontSize={16} color={bondfireColors.whiteSmoke} textAlign="center" lineHeight={23}>
+        <Text fontSize={16} color={'$color'} textAlign="center" lineHeight={23}>
           {selectedCamp.defaultPrompt ?? selectedCamp.purpose}
         </Text>
         <Button variant="primary" size="$lg" onPress={() => state$.promptDismissed.set(true)}>
-          <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+          <Text color={'$color'} fontWeight="900">
             Continue
           </Text>
         </Button>
@@ -1473,16 +1483,19 @@ export default function CreateScreen() {
     return (
       <YStack
         flex={1}
-        backgroundColor={bondfireColors.obsidian}
+        backgroundColor={'$background'}
         padding={24}
         justifyContent="center"
         gap={18}
       >
-        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+        <StatusBar
+          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
+          backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
+        />
         <Text fontSize={24} fontWeight="900" textAlign="center">
           Need or Offer?
         </Text>
-        <Text fontSize={15} color={bondfireColors.ash} textAlign="center" lineHeight={22}>
+        <Text fontSize={15} color={'$placeholderColor'} textAlign="center" lineHeight={22}>
           Trading Post sparks need a clear tag before recording.
         </Text>
         <XStack gap={12}>
@@ -1494,7 +1507,7 @@ export default function CreateScreen() {
               flex={1}
               onPress={() => state$.tradeTag.set(tag)}
             >
-              <Text color={bondfireColors.whiteSmoke} fontWeight="900" textTransform="capitalize">
+              <Text color={'$color'} fontWeight="900" textTransform="capitalize">
                 {tag}
               </Text>
             </Button>
@@ -1545,30 +1558,28 @@ export default function CreateScreen() {
       progressStage !== 'Combining camera segments...' && progressStage !== 'Preparing video...'
 
     return (
-      <YStack
-        flex={1}
-        backgroundColor={bondfireColors.obsidian}
-        alignItems="center"
-        justifyContent="center"
-      >
-        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+      <YStack flex={1} backgroundColor={'$background'} alignItems="center" justifyContent="center">
+        <StatusBar
+          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
+          backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
+        />
         <YStack alignItems="center" gap={20}>
-          <Spinner size="large" color={bondfireColors.bondfireCopper} />
+          <Spinner size="large" color={'$primary'} />
           <Text fontSize={20} fontWeight="600">
             Processing Video
           </Text>
-          <Text color={bondfireColors.ash} fontSize={14}>
+          <Text color={'$placeholderColor'} fontSize={14}>
             {progressStage}
           </Text>
-          <YStack width={200} height={6} backgroundColor={bondfireColors.iron} borderRadius={3}>
+          <YStack width={200} height={6} backgroundColor={'$borderColor'} borderRadius={3}>
             <YStack
               height={6}
-              backgroundColor={bondfireColors.bondfireCopper}
+              backgroundColor={'$primary'}
               borderRadius={3}
               width={`${progress}%`}
             />
           </YStack>
-          <Text color={bondfireColors.ash}>{Math.round(progress)}%</Text>
+          <Text color={'$placeholderColor'}>{Math.round(progress)}%</Text>
 
           {canCancelProcessing && (
             <Button
@@ -1591,30 +1602,28 @@ export default function CreateScreen() {
   // Uploading state
   if (recordingState === 'uploading') {
     return (
-      <YStack
-        flex={1}
-        backgroundColor={bondfireColors.obsidian}
-        alignItems="center"
-        justifyContent="center"
-      >
-        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+      <YStack flex={1} backgroundColor={'$background'} alignItems="center" justifyContent="center">
+        <StatusBar
+          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
+          backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
+        />
         <YStack alignItems="center" gap={20}>
-          <Spinner size="large" color={bondfireColors.success} />
+          <Spinner size="large" color={'$success'} />
           <Text fontSize={20} fontWeight="600">
             Uploading
           </Text>
-          <Text color={bondfireColors.ash} fontSize={14}>
+          <Text color={'$placeholderColor'} fontSize={14}>
             {progressStage}
           </Text>
-          <YStack width={200} height={6} backgroundColor={bondfireColors.iron} borderRadius={3}>
+          <YStack width={200} height={6} backgroundColor={'$borderColor'} borderRadius={3}>
             <YStack
               height={6}
-              backgroundColor={bondfireColors.success}
+              backgroundColor={'$success'}
               borderRadius={3}
               width={`${progress}%`}
             />
           </YStack>
-          <Text color={bondfireColors.ash}>{Math.round(progress)}%</Text>
+          <Text color={'$placeholderColor'}>{Math.round(progress)}%</Text>
         </YStack>
       </YStack>
     )
@@ -1638,8 +1647,12 @@ export default function CreateScreen() {
                 : 'Tap to go live'
 
     return (
-      <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
-        <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      <YStack flex={1} backgroundColor={'$background'}>
+        <StatusBar
+          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
+          backgroundColor="transparent"
+          translucent
+        />
         {shouldRenderCamera ? (
           <>
             <LivePublisherView style={{ flex: 1 }} />
@@ -1663,20 +1676,18 @@ export default function CreateScreen() {
                   alignItems="center"
                   justifyContent="center"
                 >
-                  <X size={24} color={bondfireColors.whiteSmoke} />
+                  <X size={24} color={'$color'} />
                 </YStack>
               </Pressable>
 
               {isLiveRecording && (
                 <YStack
-                  backgroundColor={
-                    showRecordingLimitCountdown ? bondfireColors.warningDark : bondfireColors.error
-                  }
+                  backgroundColor={showRecordingLimitCountdown ? '$warning' : '$error'}
                   paddingHorizontal={16}
                   paddingVertical={6}
                   borderRadius={16}
                 >
-                  <Text color={bondfireColors.whiteSmoke} fontWeight="800" fontSize={14}>
+                  <Text color={'$color'} fontWeight="800" fontSize={14}>
                     {liveStatus === 'live' ? `LIVE ${recordingTimerLabel}` : statusLabel}
                   </Text>
                 </YStack>
@@ -1692,7 +1703,7 @@ export default function CreateScreen() {
                   justifyContent="center"
                   opacity={isLiveBusy ? 0.5 : 1}
                 >
-                  <SwitchCamera size={22} color={bondfireColors.whiteSmoke} />
+                  <SwitchCamera size={22} color={'$color'} />
                 </YStack>
               </Pressable>
             </XStack>
@@ -1708,12 +1719,12 @@ export default function CreateScreen() {
               {!isLiveRecording && !isLiveBusy && (
                 <YStack alignItems="center" gap={12}>
                   <XStack alignItems="center" gap={8}>
-                    <Flame size={28} color={bondfireColors.bondfireCopper} />
-                    <Text color={bondfireColors.whiteSmoke} fontSize={22} fontWeight="700">
+                    <Flame size={28} color={'$primary'} />
+                    <Text color={'$color'} fontSize={22} fontWeight="700">
                       {respondTo ? 'Respond Live' : (selectedCamp?.name ?? 'Spark a Bondfire')}
                     </Text>
                   </XStack>
-                  <Text color={bondfireColors.ash} fontSize={14}>
+                  <Text color={'$placeholderColor'} fontSize={14}>
                     Tap to start a live broadcast
                   </Text>
                 </YStack>
@@ -1721,8 +1732,8 @@ export default function CreateScreen() {
 
               {isLiveBusy && (
                 <YStack alignItems="center" gap={12}>
-                  <Spinner size="large" color={bondfireColors.whiteSmoke} />
-                  <Text color={bondfireColors.whiteSmoke} fontSize={18} fontWeight="700">
+                  <Spinner size="large" color={'$color'} />
+                  <Text color={'$color'} fontSize={18} fontWeight="700">
                     {statusLabel}
                   </Text>
                 </YStack>
@@ -1746,28 +1757,26 @@ export default function CreateScreen() {
                   height={80}
                   borderRadius={40}
                   borderWidth={4}
-                  borderColor={bondfireColors.whiteSmoke}
+                  borderColor={'$color'}
                   alignItems="center"
                   justifyContent="center"
-                  backgroundColor={isLiveRecording ? bondfireColors.error : 'transparent'}
+                  backgroundColor={isLiveRecording ? '$error' : 'transparent'}
                   opacity={isLiveBusy ? 0.7 : 1}
                 >
                   {isLiveBusy ? (
-                    <Spinner size="small" color={bondfireColors.whiteSmoke} />
+                    <Spinner size="small" color={'$color'} />
                   ) : (
                     <YStack
                       width={isLiveRecording ? 30 : 60}
                       height={isLiveRecording ? 30 : 60}
                       borderRadius={isLiveRecording ? 6 : 30}
-                      backgroundColor={
-                        isLiveRecording ? bondfireColors.whiteSmoke : bondfireColors.bondfireCopper
-                      }
+                      backgroundColor={isLiveRecording ? '$color' : '$primary'}
                     />
                   )}
                 </YStack>
               </Pressable>
 
-              <Text color={bondfireColors.ash} fontSize={13} marginTop={12}>
+              <Text color={'$placeholderColor'} fontSize={13} marginTop={12}>
                 {isLiveRecording
                   ? showRecordingLimitCountdown && autoStopStatusLabel
                     ? autoStopStatusLabel
@@ -1785,8 +1794,12 @@ export default function CreateScreen() {
 
   // Camera view
   return (
-    <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
-      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+    <YStack flex={1} backgroundColor={'$background'}>
+      <StatusBar
+        barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
+        backgroundColor="transparent"
+        translucent
+      />
       {shouldRenderCamera ? (
         <CameraView
           key={`${cameraResetCounter}-${facing}`}
@@ -1847,20 +1860,18 @@ export default function CreateScreen() {
                 alignItems="center"
                 justifyContent="center"
               >
-                <X size={24} color={bondfireColors.whiteSmoke} />
+                <X size={24} color={'$color'} />
               </YStack>
             </Pressable>
 
             {recordingState === 'recording' && (
               <YStack
-                backgroundColor={
-                  showRecordingLimitCountdown ? bondfireColors.warningDark : bondfireColors.error
-                }
+                backgroundColor={showRecordingLimitCountdown ? '$warning' : '$error'}
                 paddingHorizontal={16}
                 paddingVertical={6}
                 borderRadius={16}
               >
-                <Text color={bondfireColors.whiteSmoke} fontWeight="700" fontSize={14}>
+                <Text color={'$color'} fontWeight="700" fontSize={14}>
                   {isSwitchingCamera ? 'Switching...' : recordingTimerLabel}
                 </Text>
               </YStack>
@@ -1880,9 +1891,9 @@ export default function CreateScreen() {
                 opacity={recordingState === 'stopping' || isSwitchingCamera ? 0.5 : 1}
               >
                 {isSwitchingCamera ? (
-                  <Spinner size="small" color={bondfireColors.whiteSmoke} />
+                  <Spinner size="small" color={'$color'} />
                 ) : (
-                  <SwitchCamera size={22} color={bondfireColors.whiteSmoke} />
+                  <SwitchCamera size={22} color={'$color'} />
                 )}
               </YStack>
             </Pressable>
@@ -1893,12 +1904,12 @@ export default function CreateScreen() {
             {recordingState === 'idle' && (
               <YStack alignItems="center" gap={12}>
                 <XStack alignItems="center" gap={8}>
-                  <Flame size={28} color={bondfireColors.bondfireCopper} />
-                  <Text color={bondfireColors.whiteSmoke} fontSize={22} fontWeight="700">
+                  <Flame size={28} color={'$primary'} />
+                  <Text color={'$color'} fontSize={22} fontWeight="700">
                     {respondTo ? 'Add Your Response' : (selectedCamp?.name ?? 'Spark a Bondfire')}
                   </Text>
                 </XStack>
-                <Text color={bondfireColors.ash} fontSize={14}>
+                <Text color={'$placeholderColor'} fontSize={14}>
                   Tap to start recording
                 </Text>
               </YStack>
@@ -1906,11 +1917,11 @@ export default function CreateScreen() {
 
             {recordingState === 'stopping' && (
               <YStack alignItems="center" gap={12}>
-                <Spinner size="large" color={bondfireColors.whiteSmoke} />
-                <Text color={bondfireColors.whiteSmoke} fontSize={18} fontWeight="700">
+                <Spinner size="large" color={'$color'} />
+                <Text color={'$color'} fontSize={18} fontWeight="700">
                   Finishing recording
                 </Text>
-                <Text color={bondfireColors.ash} fontSize={14}>
+                <Text color={'$placeholderColor'} fontSize={14}>
                   Please wait a moment...
                 </Text>
               </YStack>
@@ -1918,11 +1929,11 @@ export default function CreateScreen() {
 
             {isSwitchingCamera && (
               <YStack alignItems="center" gap={12}>
-                <Spinner size="large" color={bondfireColors.whiteSmoke} />
-                <Text color={bondfireColors.whiteSmoke} fontSize={18} fontWeight="700">
+                <Spinner size="large" color={'$color'} />
+                <Text color={'$color'} fontSize={18} fontWeight="700">
                   Switching camera
                 </Text>
-                <Text color={bondfireColors.ash} fontSize={14}>
+                <Text color={'$placeholderColor'} fontSize={14}>
                   Recording will continue automatically.
                 </Text>
               </YStack>
@@ -1951,12 +1962,12 @@ export default function CreateScreen() {
                 height={80}
                 borderRadius={40}
                 borderWidth={4}
-                borderColor={bondfireColors.whiteSmoke}
+                borderColor={'$color'}
                 alignItems="center"
                 justifyContent="center"
                 backgroundColor={
                   recordingState === 'recording' || recordingState === 'stopping'
-                    ? bondfireColors.error
+                    ? '$error'
                     : 'transparent'
                 }
                 opacity={
@@ -1968,23 +1979,19 @@ export default function CreateScreen() {
                 }
               >
                 {recordingState === 'stopping' ? (
-                  <Spinner size="small" color={bondfireColors.whiteSmoke} />
+                  <Spinner size="small" color={'$color'} />
                 ) : (
                   <YStack
                     width={recordingState === 'recording' ? 30 : 60}
                     height={recordingState === 'recording' ? 30 : 60}
                     borderRadius={recordingState === 'recording' ? 6 : 30}
-                    backgroundColor={
-                      recordingState === 'recording'
-                        ? bondfireColors.whiteSmoke
-                        : bondfireColors.bondfireCopper
-                    }
+                    backgroundColor={recordingState === 'recording' ? '$color' : '$primary'}
                   />
                 )}
               </YStack>
             </Pressable>
 
-            <Text color={bondfireColors.ash} fontSize={13} marginTop={12}>
+            <Text color={'$placeholderColor'} fontSize={13} marginTop={12}>
               {recordingState === 'stopping'
                 ? 'Stopping recording...'
                 : recordingState === 'recording'

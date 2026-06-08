@@ -1,4 +1,3 @@
-import { bondfireColors } from '@bondfires/config'
 import { ChevronDown, ChevronUp, Search, Shield } from '@tamagui/lucide-icons'
 import { useCallback, useState } from 'react'
 import { Alert } from 'react-native'
@@ -99,15 +98,15 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier }: AdminPanelProps) {
       >
         <XStack justifyContent="space-between" alignItems="center">
           <XStack alignItems="center" gap={8}>
-            <Shield size={18} color={bondfireColors.moltenGold} />
+            <Shield size={18} color={'$secondary'} />
             <Text fontSize={16} fontWeight="700">
               Admin Panel
             </Text>
           </XStack>
           {expanded ? (
-            <ChevronUp size={18} color={bondfireColors.ash} />
+            <ChevronUp size={18} color={'$placeholderColor'} />
           ) : (
-            <ChevronDown size={18} color={bondfireColors.ash} />
+            <ChevronDown size={18} color={'$placeholderColor'} />
           )}
         </XStack>
       </Card>
@@ -133,18 +132,18 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier }: AdminPanelProps) {
                 disabled={isSearching || emailQuery.trim().length < 2}
               >
                 {isSearching ? (
-                  <Spinner size="small" color={bondfireColors.whiteSmoke} />
+                  <Spinner size="small" color={'$color'} />
                 ) : (
                   <>
-                    <Search size={16} color={bondfireColors.whiteSmoke} />
-                    <Text color={bondfireColors.whiteSmoke}>Search</Text>
+                    <Search size={16} color={'$color'} />
+                    <Text color={'$color'}>Search</Text>
                   </>
                 )}
               </Button>
             </XStack>
 
             {searchError && (
-              <Text fontSize={13} color={bondfireColors.error}>
+              <Text fontSize={13} color={'$error'}>
                 {searchError}
               </Text>
             )}
@@ -162,10 +161,10 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier }: AdminPanelProps) {
                               <Text fontSize={14} fontWeight="600">
                                 {user.name ?? 'Unknown'}
                               </Text>
-                              <Text fontSize={12} color={bondfireColors.ash}>
+                              <Text fontSize={12} color={'$placeholderColor'}>
                                 {user.email}
                               </Text>
-                              <Text fontSize={12} color={bondfireColors.ash}>
+                              <Text fontSize={12} color={'$placeholderColor'}>
                                 Current:{' '}
                                 {user.forcedTier ? TIER_LABELS[user.forcedTier] : 'Store default'}
                               </Text>
@@ -190,9 +189,7 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier }: AdminPanelProps) {
                                   >
                                     <Text
                                       fontSize={12}
-                                      color={
-                                        isCurrent ? bondfireColors.whiteSmoke : bondfireColors.ash
-                                      }
+                                      color={isCurrent ? '$color' : '$placeholderColor'}
                                     >
                                       {isUpdating && isCurrent ? '...' : option.label}
                                     </Text>

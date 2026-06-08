@@ -3,8 +3,8 @@ import {
   getBondfireVideoIndex,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
+  useAppTheme,
 } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
 import { Flame, MessageCircle, Pin, User } from '@tamagui/lucide-icons'
 import { useQuery } from 'convex/react'
@@ -56,13 +56,13 @@ function ParticipantStack({ participants }: { participants: ThreadParticipant[] 
           size="$2"
           marginLeft={index === 0 ? 0 : -8}
           borderWidth={1}
-          borderColor={bondfireColors.obsidian}
+          borderColor={'$background'}
         >
           {participant.user.photoUrl ? (
             <Avatar.Image source={{ uri: participant.user.photoUrl }} />
           ) : (
-            <Avatar.Fallback backgroundColor={bondfireColors.gunmetal}>
-              <User size={14} color={bondfireColors.ash} />
+            <Avatar.Fallback backgroundColor={'$backgroundHover'}>
+              <User size={14} color={'$placeholderColor'} />
             </Avatar.Fallback>
           )}
         </Avatar>
@@ -85,16 +85,13 @@ function MyFireRow({ thread, onOpen }: { thread: MyFire; onOpen: () => void }) {
           width={66}
           height={66}
           borderRadius={16}
-          backgroundColor={thread.unread ? bondfireColors.bondfireCopper : bondfireColors.gunmetal}
+          backgroundColor={thread.unread ? '$primary' : '$backgroundHover'}
           borderWidth={1}
-          borderColor={thread.unread ? bondfireColors.moltenGold : bondfireColors.iron}
+          borderColor={thread.unread ? '$secondary' : '$borderColor'}
           alignItems="center"
           justifyContent="center"
         >
-          <Flame
-            size={30}
-            color={thread.unread ? bondfireColors.obsidian : bondfireColors.bondfireCopper}
-          />
+          <Flame size={30} color={thread.unread ? '$background' : '$primary'} />
           {thread.unread ? (
             <YStack
               position="absolute"
@@ -103,7 +100,7 @@ function MyFireRow({ thread, onOpen }: { thread: MyFire; onOpen: () => void }) {
               width={10}
               height={10}
               borderRadius={5}
-              backgroundColor={bondfireColors.error}
+              backgroundColor={'$error'}
             />
           ) : null}
         </YStack>
@@ -114,7 +111,7 @@ function MyFireRow({ thread, onOpen }: { thread: MyFire; onOpen: () => void }) {
               <Text fontSize={16} fontWeight="900" numberOfLines={1}>
                 {thread.creatorName ?? 'Anonymous'}
               </Text>
-              <Text fontSize={12} color={bondfireColors.ash} numberOfLines={1}>
+              <Text fontSize={12} color={'$placeholderColor'} numberOfLines={1}>
                 {thread.camp?.name ?? 'Bondfire'} · {getTimeAgo(thread.lastActivityAt)}
               </Text>
             </YStack>
@@ -124,9 +121,9 @@ function MyFireRow({ thread, onOpen }: { thread: MyFire; onOpen: () => void }) {
                 paddingHorizontal={8}
                 paddingVertical={4}
                 borderRadius={999}
-                backgroundColor={bondfireColors.error}
+                backgroundColor={'$error'}
               >
-                <Text color={bondfireColors.whiteSmoke} fontSize={10} fontWeight="900">
+                <Text color={'$color'} fontSize={10} fontWeight="900">
                   NEW
                 </Text>
               </YStack>
@@ -136,14 +133,14 @@ function MyFireRow({ thread, onOpen }: { thread: MyFire; onOpen: () => void }) {
           <XStack alignItems="center" justifyContent="space-between" gap={12}>
             <XStack alignItems="center" gap={8} flex={1}>
               <ParticipantStack participants={thread.participants} />
-              <Text fontSize={12} color={bondfireColors.ash} numberOfLines={1} flex={1}>
+              <Text fontSize={12} color={'$placeholderColor'} numberOfLines={1} flex={1}>
                 {participantNames}
               </Text>
             </XStack>
 
             <XStack alignItems="center" gap={5}>
-              <MessageCircle size={15} color={bondfireColors.ash} />
-              <Text fontSize={12} color={bondfireColors.ash}>
+              <MessageCircle size={15} color={'$placeholderColor'} />
+              <Text fontSize={12} color={'$placeholderColor'}>
                 {responses}
               </Text>
             </XStack>
@@ -155,6 +152,7 @@ function MyFireRow({ thread, onOpen }: { thread: MyFire; onOpen: () => void }) {
 }
 
 export default function MyFiresScreen() {
+  const { themeName } = useAppTheme()
   const router = useRouter()
   const [refreshKey, setRefreshKey] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -183,18 +181,24 @@ export default function MyFiresScreen() {
 
   if (threads === undefined) {
     return (
-      <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
-        <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+      <YStack flex={1} backgroundColor={'$background'}>
+        <StatusBar
+          barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
+          backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
+        />
         <YStack flex={1} alignItems="center" justifyContent="center">
-          <Spinner size="large" color={bondfireColors.bondfireCopper} />
+          <Spinner size="large" color={'$primary'} />
         </YStack>
       </YStack>
     )
   }
 
   return (
-    <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
-      <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+    <YStack flex={1} backgroundColor={'$background'}>
+      <StatusBar
+        barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
+        backgroundColor={themeName === 'dark' ? '#141416' : '#FAFAFA'}
+      />
       <FlatList
         key={refreshKey}
         data={threads}
@@ -203,13 +207,13 @@ export default function MyFiresScreen() {
           <RefreshControl
             refreshing={isRefreshing}
             onRefresh={handleRefresh}
-            tintColor={bondfireColors.bondfireCopper}
-            colors={[bondfireColors.bondfireCopper]}
+            tintColor={'$primary'}
+            colors={['$primary']}
           />
         }
         renderItem={({ item }) => <MyFireRow thread={item} onOpen={() => handleOpen(item._id)} />}
         ItemSeparatorComponent={() => (
-          <Separator borderColor={bondfireColors.iron} opacity={0.6} marginHorizontal={16} />
+          <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
         )}
         ListHeaderComponent={
           <YStack paddingTop={62} paddingHorizontal={16} paddingBottom={14} gap={10}>
@@ -218,23 +222,23 @@ export default function MyFiresScreen() {
                 <Text fontSize={28} fontWeight="900">
                   My Fires
                 </Text>
-                <Text fontSize={13} color={bondfireColors.ash}>
+                <Text fontSize={13} color={'$placeholderColor'}>
                   {unreadCount > 0
                     ? `${unreadCount} unread ${unreadCount === 1 ? 'thread' : 'threads'}`
                     : 'All caught up'}
                 </Text>
               </YStack>
-              <Pin size={22} color={bondfireColors.bondfireCopper} />
+              <Pin size={22} color={'$primary'} />
             </XStack>
           </YStack>
         }
         ListEmptyComponent={
           <YStack flex={1} alignItems="center" justifyContent="center" paddingHorizontal={40}>
-            <Flame size={58} color={bondfireColors.bondfireCopper} />
+            <Flame size={58} color={'$primary'} />
             <Text fontSize={22} fontWeight="900" marginTop={18} textAlign="center">
               No active fires yet
             </Text>
-            <Text fontSize={15} color={bondfireColors.ash} textAlign="center" marginTop={8}>
+            <Text fontSize={15} color={'$placeholderColor'} textAlign="center" marginTop={8}>
               Threads appear here once you spark or respond.
             </Text>
             <Button
@@ -243,7 +247,7 @@ export default function MyFiresScreen() {
               marginTop={24}
               onPress={() => router.push(routes.feed)}
             >
-              <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+              <Text color={'$color'} fontWeight="900">
                 Browse Feed
               </Text>
             </Button>

@@ -1,4 +1,3 @@
-import { bondfireColors } from '@bondfires/config'
 import { AlertTriangle, RefreshCw, Send } from '@tamagui/lucide-icons'
 import { Linking } from 'react-native'
 import { YStack } from 'tamagui'
@@ -186,9 +185,9 @@ export function ErrorDisplay({
       : 'Something went wrong'
 
   const icon = isNetworkError ? (
-    <RefreshCw size={24} color={bondfireColors.warning} />
+    <RefreshCw size={24} color={'$warning'} />
   ) : (
-    <AlertTriangle size={24} color={bondfireColors.error} />
+    <AlertTriangle size={24} color={'$error'} />
   )
 
   if (compact) {
@@ -196,7 +195,7 @@ export function ErrorDisplay({
       <YStack gap={8} paddingHorizontal={16} paddingVertical={12}>
         <YStack flexDirection="row" alignItems="flex-start" gap={8}>
           {icon}
-          <Text fontSize={14} color={bondfireColors.ash} flexShrink={1} lineHeight={20}>
+          <Text fontSize={14} color={'$placeholderColor'} flexShrink={1} lineHeight={20}>
             {isNetworkError ? 'Check your connection and try again.' : message}
           </Text>
         </YStack>
@@ -209,7 +208,7 @@ export function ErrorDisplay({
             variant="ghost"
             size="$sm"
             marginTop={4}
-            icon={<Send size={14} color={bondfireColors.ash} />}
+            icon={<Send size={14} color={'$placeholderColor'} />}
             onPress={handleReport}
           >
             Report Issue
@@ -229,17 +228,17 @@ export function ErrorDisplay({
     >
       {icon}
       <YStack gap={4} alignItems="center">
-        <Text fontSize={16} fontWeight="600" color={bondfireColors.whiteSmoke} textAlign="center">
+        <Text fontSize={16} fontWeight="600" color={'$color'} textAlign="center">
           {title}
         </Text>
-        <Text fontSize={14} color={bondfireColors.ash} textAlign="center" lineHeight={20}>
+        <Text fontSize={14} color={'$placeholderColor'} textAlign="center" lineHeight={20}>
           {isNetworkError ? 'Check your connection and try again.' : message}
         </Text>
       </YStack>
       <YStack gap={8} width="100%" maxWidth={280}>
         {isNetworkError && onRetry ? (
           <Button
-            icon={<RefreshCw size={16} color={bondfireColors.whiteSmoke} />}
+            icon={<RefreshCw size={16} color={'$color'} />}
             variant="primary"
             size="$md"
             onPress={onRetry}
@@ -249,7 +248,7 @@ export function ErrorDisplay({
         ) : null}
         {showReportButton ? (
           <Button
-            icon={<Send size={16} color={bondfireColors.ash} />}
+            icon={<Send size={16} color={'$placeholderColor'} />}
             variant="secondary"
             size="$md"
             onPress={handleReport}

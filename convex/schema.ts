@@ -114,6 +114,11 @@ export default defineSchema({
     // Admin-forced subscription tier override for QA and app review.
     // When set, this overrides any store-based subscription in entitlements.
     forcedTier: v.optional(subscriptionTier),
+
+    // UI theme preference ("system" | "light" | "dark")
+    themePreference: v.optional(
+      v.union(v.literal('system'), v.literal('light'), v.literal('dark')),
+    ),
   })
     .index('email', ['email']) // Required by @convex-dev/auth (must be named exactly 'email')
     .index('by_role', ['role'])

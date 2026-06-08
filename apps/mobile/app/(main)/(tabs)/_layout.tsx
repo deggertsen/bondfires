@@ -1,4 +1,3 @@
-import { bondfireColors } from '@bondfires/config'
 import { Flame, Home, Map, MessageCircle, User } from '@tamagui/lucide-icons'
 import { Tabs } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -10,11 +9,11 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: bondfireColors.bondfireCopper,
-        tabBarInactiveTintColor: bondfireColors.ash,
+        tabBarActiveTintColor: '$primary',
+        tabBarInactiveTintColor: '$placeholderColor',
         tabBarStyle: {
-          backgroundColor: bondfireColors.gunmetal,
-          borderTopColor: bondfireColors.iron,
+          backgroundColor: '$backgroundHover',
+          borderTopColor: '$borderColor',
           borderTopWidth: 1,
           paddingTop: 8,
           paddingBottom: 8 + insets.bottom,

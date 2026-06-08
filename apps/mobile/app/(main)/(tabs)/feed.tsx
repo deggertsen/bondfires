@@ -8,8 +8,8 @@ import {
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
   telemetry,
+  useAppTheme,
 } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { Eye, Flame, MessageCircle, Search } from '@tamagui/lucide-icons'
@@ -66,15 +66,11 @@ function ModePill({
         paddingHorizontal={14}
         paddingVertical={8}
         borderRadius={999}
-        backgroundColor={selected ? bondfireColors.bondfireCopper : bondfireColors.gunmetal}
+        backgroundColor={selected ? '$primary' : '$backgroundHover'}
         borderWidth={1}
-        borderColor={selected ? bondfireColors.bondfireCopper : bondfireColors.iron}
+        borderColor={selected ? '$primary' : '$borderColor'}
       >
-        <Text
-          fontSize={13}
-          fontWeight="800"
-          color={selected ? bondfireColors.obsidian : bondfireColors.whiteSmoke}
-        >
+        <Text fontSize={13} fontWeight="800" color={selected ? '$background' : '$color'}>
           {label}
         </Text>
       </YStack>
@@ -98,15 +94,15 @@ function CampPill({
         paddingHorizontal={12}
         paddingVertical={8}
         borderRadius={12}
-        backgroundColor={selected ? bondfireColors.bondfireCopper : bondfireColors.gunmetal}
+        backgroundColor={selected ? '$primary' : '$backgroundHover'}
         borderWidth={1}
-        borderColor={selected ? bondfireColors.bondfireCopper : bondfireColors.iron}
+        borderColor={selected ? '$primary' : '$borderColor'}
         alignItems="center"
       >
         <Text
           fontSize={12}
           fontWeight="900"
-          color={selected ? bondfireColors.obsidian : bondfireColors.whiteSmoke}
+          color={selected ? '$background' : '$color'}
           numberOfLines={1}
         >
           {label}
@@ -140,9 +136,9 @@ function BondfireRow({
           height={74}
           borderRadius={16}
           overflow="hidden"
-          backgroundColor={bondfireColors.gunmetal}
+          backgroundColor={'$backgroundHover'}
           borderWidth={1}
-          borderColor={bondfireColors.iron}
+          borderColor={'$borderColor'}
           alignItems="center"
           justifyContent="center"
         >
@@ -154,19 +150,19 @@ function BondfireRow({
               cachePolicy="memory-disk"
             />
           ) : (
-            <Flame size={30} color={bondfireColors.bondfireCopper} />
+            <Flame size={30} color={'$primary'} />
           )}
           {isLive && (
             <YStack
               position="absolute"
               top={6}
               left={6}
-              backgroundColor={bondfireColors.error}
+              backgroundColor={'$error'}
               paddingHorizontal={7}
               paddingVertical={3}
               borderRadius={10}
             >
-              <Text color={bondfireColors.whiteSmoke} fontSize={9} fontWeight="900">
+              <Text color={'$color'} fontSize={9} fontWeight="900">
                 LIVE
               </Text>
             </YStack>
@@ -179,18 +175,13 @@ function BondfireRow({
               <Text fontSize={16} fontWeight="900" numberOfLines={1}>
                 {bondfire.creatorName ?? 'Anonymous'}
               </Text>
-              <Text fontSize={12} color={bondfireColors.ash} numberOfLines={1}>
+              <Text fontSize={12} color={'$placeholderColor'} numberOfLines={1}>
                 {isLive ? 'Live now' : `${timeAgo} · ${viewed ? 'Viewed' : 'New'}`}
               </Text>
             </YStack>
 
-            <Button
-              variant="outline"
-              size="$sm"
-              onPress={onRespond}
-              borderColor={bondfireColors.bondfireCopper}
-            >
-              <Text color={bondfireColors.whiteSmoke} fontWeight="800">
+            <Button variant="outline" size="$sm" onPress={onRespond} borderColor={'$primary'}>
+              <Text color={'$color'} fontWeight="800">
                 Respond
               </Text>
             </Button>
@@ -198,14 +189,14 @@ function BondfireRow({
 
           <XStack alignItems="center" gap={14}>
             <XStack alignItems="center" gap={6}>
-              <Eye size={16} color={bondfireColors.ash} />
-              <Text fontSize={13} color={bondfireColors.ash}>
+              <Eye size={16} color={'$placeholderColor'} />
+              <Text fontSize={13} color={'$placeholderColor'}>
                 {bondfire.viewCount ?? 0}
               </Text>
             </XStack>
             <XStack alignItems="center" gap={6}>
-              <MessageCircle size={16} color={bondfireColors.ash} />
-              <Text fontSize={13} color={bondfireColors.ash}>
+              <MessageCircle size={16} color={'$placeholderColor'} />
+              <Text fontSize={13} color={'$placeholderColor'}>
                 {responses} {responses === 1 ? 'response' : 'responses'}
               </Text>
             </XStack>
@@ -216,16 +207,11 @@ function BondfireRow({
                 paddingHorizontal={8}
                 paddingVertical={3}
                 borderRadius={8}
-                backgroundColor={bondfireColors.gunmetal}
+                backgroundColor={'$backgroundHover'}
                 borderWidth={1}
-                borderColor={bondfireColors.iron}
+                borderColor={'$borderColor'}
               >
-                <Text
-                  fontSize={11}
-                  fontWeight="800"
-                  color={bondfireColors.bondfireCopper}
-                  numberOfLines={1}
-                >
+                <Text fontSize={11} fontWeight="800" color={'$primary'} numberOfLines={1}>
                   {bondfire.campLabel}
                 </Text>
               </YStack>
@@ -245,29 +231,29 @@ function EmptyFeed() {
       flex={1}
       alignItems="center"
       justifyContent="center"
-      backgroundColor={bondfireColors.obsidian}
+      backgroundColor={'$background'}
       paddingHorizontal={40}
     >
       <YStack
         width={120}
         height={120}
         borderRadius={60}
-        backgroundColor={bondfireColors.gunmetal}
+        backgroundColor={'$backgroundHover'}
         alignItems="center"
         justifyContent="center"
         marginBottom={32}
       >
-        <Flame size={60} color={bondfireColors.bondfireCopper} />
+        <Flame size={60} color={'$primary'} />
       </YStack>
       <Text fontSize={24} fontWeight="900" marginBottom={12} textAlign="center">
         Spark a Bondfire
       </Text>
-      <Text fontSize={16} color={bondfireColors.ash} textAlign="center" marginBottom={32}>
+      <Text fontSize={16} color={'$placeholderColor'} textAlign="center" marginBottom={32}>
         Be the first to share a video!
       </Text>
       <Button variant="primary" size="$lg" onPress={() => router.push(routes.create)}>
-        <Flame size={20} color={bondfireColors.whiteSmoke} />
-        <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+        <Flame size={20} color={'$color'} />
+        <Text color={'$color'} fontWeight="900">
           Spark Bondfire
         </Text>
       </Button>
@@ -277,14 +263,9 @@ function EmptyFeed() {
 
 function LoadingFeed() {
   return (
-    <YStack
-      flex={1}
-      alignItems="center"
-      justifyContent="center"
-      backgroundColor={bondfireColors.obsidian}
-    >
-      <Spinner size="large" color={bondfireColors.bondfireCopper} />
-      <Text marginTop={20} color={bondfireColors.ash}>
+    <YStack flex={1} alignItems="center" justifyContent="center" backgroundColor={'$background'}>
+      <Spinner size="large" color={'$primary'} />
+      <Text marginTop={20} color={'$placeholderColor'}>
         Loading bondfires...
       </Text>
     </YStack>
@@ -315,6 +296,7 @@ function FeedSubscription({
 }
 
 export default function FeedScreen() {
+  const { themeName } = useAppTheme()
   const router = useRouter()
   const insets = useSafeAreaInsets()
   const getThumbnailUrl = useAction(api.videos.getThumbnailUrl)
@@ -612,13 +594,17 @@ export default function FeedScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
+    <YStack flex={1} backgroundColor={'$background'}>
       <FeedSubscription
         key={`${refreshKey}-${selectedCampId ?? 'all'}`}
         selectedCampId={selectedCampId}
         onResolved={handleBondfiresResolved}
       />
-      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      <StatusBar
+        barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'}
+        backgroundColor="transparent"
+        translucent
+      />
 
       <FlatList
         ref={(r) => {
@@ -630,8 +616,8 @@ export default function FeedScreen() {
           <RefreshControl
             refreshing={isRefreshing}
             onRefresh={handleRefresh}
-            tintColor={bondfireColors.bondfireCopper}
-            colors={[bondfireColors.bondfireCopper]}
+            tintColor={'$primary'}
+            colors={['$primary']}
             progressViewOffset={insets.top + 100}
           />
         }
@@ -650,7 +636,7 @@ export default function FeedScreen() {
           />
         )}
         ItemSeparatorComponent={() => (
-          <Separator borderColor={bondfireColors.iron} opacity={0.6} marginHorizontal={16} />
+          <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
         )}
         ListHeaderComponent={
           <YStack paddingTop={insets.top + 16} paddingBottom={12} paddingHorizontal={16} gap={12}>
@@ -659,13 +645,13 @@ export default function FeedScreen() {
                 <Text fontSize={26} fontWeight="900" numberOfLines={1}>
                   Camp Feed
                 </Text>
-                <Text fontSize={13} color={bondfireColors.ash}>
+                <Text fontSize={13} color={'$placeholderColor'}>
                   Filter by joined camp or scan every fire.
                 </Text>
               </YStack>
 
               <Button variant="secondary" size="$sm" onPress={handleSpark}>
-                <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+                <Text color={'$color'} fontWeight="900">
                   Spark
                 </Text>
               </Button>
@@ -674,14 +660,14 @@ export default function FeedScreen() {
             <XStack
               alignItems="center"
               gap={10}
-              backgroundColor={bondfireColors.gunmetal}
+              backgroundColor={'$backgroundHover'}
               borderRadius={14}
               borderWidth={1}
-              borderColor={bondfireColors.iron}
+              borderColor={'$borderColor'}
               paddingHorizontal={12}
               paddingVertical={10}
             >
-              <Search size={18} color={bondfireColors.ash} />
+              <Search size={18} color={'$placeholderColor'} />
               <Input
                 value={query}
                 onChangeText={setQuery}
@@ -693,7 +679,7 @@ export default function FeedScreen() {
                 flex={1}
               />
               {filtered ? (
-                <Text fontSize={12} color={bondfireColors.ash} fontWeight="900">
+                <Text fontSize={12} color={'$placeholderColor'} fontWeight="900">
                   {filtered.length}
                 </Text>
               ) : null}
@@ -760,13 +746,13 @@ export default function FeedScreen() {
             <EmptyFeed />
           ) : (
             <YStack paddingVertical={80} alignItems="center" justifyContent="center" gap={12}>
-              <Flame size={56} color={bondfireColors.bondfireCopper} />
+              <Flame size={56} color={'$primary'} />
               <Text fontSize={18} fontWeight="900">
                 No matches
               </Text>
               <Text
                 fontSize={14}
-                color={bondfireColors.ash}
+                color={'$placeholderColor'}
                 textAlign="center"
                 paddingHorizontal={48}
               >
@@ -780,7 +766,7 @@ export default function FeedScreen() {
                   setViewMode('discover')
                 }}
               >
-                <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+                <Text color={'$color'} fontWeight="900">
                   Reset
                 </Text>
               </Button>

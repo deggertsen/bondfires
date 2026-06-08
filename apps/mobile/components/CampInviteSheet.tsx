@@ -1,4 +1,3 @@
-import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
 import { Check, Copy, Share, X } from '@tamagui/lucide-icons'
 import { useMutation } from 'convex/react'
@@ -89,32 +88,32 @@ export function CampInviteSheet({ campId, open, onClose }: Props) {
     >
       <Sheet.Overlay backgroundColor="rgba(0,0,0,0.45)" />
       <Sheet.Frame
-        backgroundColor={bondfireColors.charcoal}
+        backgroundColor={'$backgroundPress'}
         borderTopLeftRadius={20}
         borderTopRightRadius={20}
         padding={24}
       >
         <YStack gap={20}>
-          <Sheet.Handle backgroundColor={bondfireColors.iron} />
+          <Sheet.Handle backgroundColor={'$borderColor'} />
 
           <Text fontSize={22} fontWeight="900" textAlign="center">
             Invite Someone
           </Text>
-          <Text fontSize={14} color={bondfireColors.ash} textAlign="center" lineHeight={20}>
+          <Text fontSize={14} color={'$placeholderColor'} textAlign="center" lineHeight={20}>
             This camp is invite-only. Share this link so someone can join.
           </Text>
 
           {loading ? (
             <YStack alignItems="center" paddingVertical={24} gap={12}>
-              <Spinner size="large" color={bondfireColors.bondfireCopper} />
-              <Text color={bondfireColors.ash}>Generating invite...</Text>
+              <Spinner size="large" color={'$primary'} />
+              <Text color={'$placeholderColor'}>Generating invite...</Text>
             </YStack>
           ) : inviteCode ? (
             <YStack gap={16} alignItems="center">
               <YStack
-                backgroundColor={bondfireColors.gunmetal}
+                backgroundColor={'$backgroundHover'}
                 borderWidth={1}
-                borderColor={bondfireColors.iron}
+                borderColor={'$borderColor'}
                 borderRadius={14}
                 paddingHorizontal={24}
                 paddingVertical={16}
@@ -123,22 +122,17 @@ export function CampInviteSheet({ campId, open, onClose }: Props) {
               >
                 <Text
                   fontSize={12}
-                  color={bondfireColors.ash}
+                  color={'$placeholderColor'}
                   fontWeight="600"
                   textTransform="uppercase"
                   letterSpacing={1}
                 >
                   Your Invite Code
                 </Text>
-                <Text
-                  fontSize={32}
-                  fontWeight="900"
-                  letterSpacing={2}
-                  color={bondfireColors.whiteSmoke}
-                >
+                <Text fontSize={32} fontWeight="900" letterSpacing={2} color={'$color'}>
                   {inviteCode}
                 </Text>
-                <Text fontSize={12} color={bondfireColors.ash} numberOfLines={1}>
+                <Text fontSize={12} color={'$placeholderColor'} numberOfLines={1}>
                   {inviteUrl}
                 </Text>
               </YStack>
@@ -150,16 +144,13 @@ export function CampInviteSheet({ campId, open, onClose }: Props) {
                   onPress={handleCopy}
                   icon={
                     copied ? (
-                      <Check size={18} color={bondfireColors.success} />
+                      <Check size={18} color={'$success'} />
                     ) : (
-                      <Copy size={18} color={bondfireColors.whiteSmoke} />
+                      <Copy size={18} color={'$color'} />
                     )
                   }
                 >
-                  <Text
-                    color={copied ? bondfireColors.success : bondfireColors.whiteSmoke}
-                    fontWeight="700"
-                  >
+                  <Text color={copied ? '$success' : '$color'} fontWeight="700">
                     {copied ? 'Copied' : 'Copy Link'}
                   </Text>
                 </Button>
@@ -167,9 +158,9 @@ export function CampInviteSheet({ campId, open, onClose }: Props) {
                   variant="primary"
                   flex={1}
                   onPress={handleShare}
-                  icon={<Share size={18} color={bondfireColors.whiteSmoke} />}
+                  icon={<Share size={18} color={'$color'} />}
                 >
-                  <Text color={bondfireColors.whiteSmoke} fontWeight="700">
+                  <Text color={'$color'} fontWeight="700">
                     Share
                   </Text>
                 </Button>
@@ -178,7 +169,7 @@ export function CampInviteSheet({ campId, open, onClose }: Props) {
           ) : (
             <YStack alignItems="center" paddingVertical={24}>
               <Button variant="primary" onPress={generateInvite}>
-                <Text color={bondfireColors.whiteSmoke} fontWeight="700">
+                <Text color={'$color'} fontWeight="700">
                   Generate Invite
                 </Text>
               </Button>
@@ -190,11 +181,11 @@ export function CampInviteSheet({ campId, open, onClose }: Props) {
               width={40}
               height={40}
               borderRadius={20}
-              backgroundColor={bondfireColors.gunmetal}
+              backgroundColor={'$backgroundHover'}
               alignItems="center"
               justifyContent="center"
             >
-              <X size={20} color={bondfireColors.ash} />
+              <X size={20} color={'$placeholderColor'} />
             </YStack>
           </Pressable>
         </YStack>

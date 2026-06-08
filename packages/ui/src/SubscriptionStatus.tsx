@@ -1,5 +1,4 @@
 import { type SubscriptionTier, TIER_LABELS } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
 import { Crown, Flame, Sparkles, Star } from '@tamagui/lucide-icons'
 import { Pressable } from 'react-native'
 import { Card, Spinner, Text, XStack, YStack } from 'tamagui'
@@ -34,18 +33,18 @@ export function SubscriptionStatus({
   const TierIcon = TIER_ICONS[currentTier] ?? Star
   const tierColor =
     currentTier === 'pro'
-      ? bondfireColors.moltenGold
+      ? '$secondary'
       : currentTier === 'premium'
-        ? bondfireColors.bondfireCopper
+        ? '$primary'
         : currentTier === 'plus'
-          ? bondfireColors.ember
-          : bondfireColors.ash
+          ? '$primaryPress'
+          : '$placeholderColor'
 
   return (
     <Card
-      backgroundColor={bondfireColors.charcoal}
+      backgroundColor={'$backgroundPress'}
       borderWidth={1}
-      borderColor={bondfireColors.iron}
+      borderColor={'$borderColor'}
       borderRadius={12}
       padding={16}
     >
@@ -64,17 +63,17 @@ export function SubscriptionStatus({
           </YStack>
           <YStack>
             <Text
-              color={bondfireColors.ash}
+              color={'$placeholderColor'}
               fontSize={11}
               fontWeight="700"
               textTransform="uppercase"
             >
               Subscription
             </Text>
-            <Text color={bondfireColors.whiteSmoke} fontSize={16} fontWeight="700">
+            <Text color={'$color'} fontSize={16} fontWeight="700">
               {TIER_LABELS[currentTier]} Plan
             </Text>
-            <Text color={bondfireColors.ash} fontSize={12}>
+            <Text color={'$placeholderColor'} fontSize={12}>
               {TIER_SUMMARIES[currentTier]}
             </Text>
           </YStack>
@@ -90,12 +89,12 @@ export function SubscriptionStatus({
           style={{ flex: 1 }}
         >
           <YStack
-            backgroundColor={bondfireColors.bondfireCopper}
+            backgroundColor={'$primary'}
             borderRadius={12}
             paddingVertical={12}
             alignItems="center"
           >
-            <Text color={bondfireColors.whiteSmoke} fontSize={14} fontWeight="600">
+            <Text color={'$color'} fontSize={14} fontWeight="600">
               {currentTier === 'free' ? 'Upgrade' : 'Manage'}
             </Text>
           </YStack>
@@ -108,7 +107,7 @@ export function SubscriptionStatus({
           disabled={isRestoring}
         >
           <YStack
-            backgroundColor={bondfireColors.iron}
+            backgroundColor={'$borderColor'}
             borderRadius={12}
             paddingVertical={12}
             paddingHorizontal={16}
@@ -117,9 +116,9 @@ export function SubscriptionStatus({
             opacity={isRestoring ? 0.6 : 1}
           >
             {isRestoring ? (
-              <Spinner size="small" color={bondfireColors.whiteSmoke} />
+              <Spinner size="small" color={'$color'} />
             ) : (
-              <Text color={bondfireColors.whiteSmoke} fontSize={14} fontWeight="600">
+              <Text color={'$color'} fontSize={14} fontWeight="600">
                 Restore
               </Text>
             )}

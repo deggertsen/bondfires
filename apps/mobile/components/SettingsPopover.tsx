@@ -1,5 +1,4 @@
 import { appActions, appStore$ } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
 import { useValue } from '@legendapp/state/react'
 import { Pressable, StyleSheet } from 'react-native'
 import { Slider, Text, XStack, YStack } from 'tamagui'
@@ -33,7 +32,7 @@ export function SettingsPopover({ onClose }: SettingsPopoverProps) {
         borderRadius={8}
         zIndex={1000}
       >
-        <Text fontSize={14} fontWeight="600" color={bondfireColors.whiteSmoke} marginBottom={12}>
+        <Text fontSize={14} fontWeight="600" color={'$color'} marginBottom={12}>
           Playback Speed
         </Text>
         <XStack alignItems="center" gap={8}>
@@ -48,12 +47,12 @@ export function SettingsPopover({ onClose }: SettingsPopoverProps) {
               height={40}
             >
               <Slider.Track>
-                <Slider.TrackActive backgroundColor={bondfireColors.bondfireCopper} />
+                <Slider.TrackActive backgroundColor={'$primary'} />
               </Slider.Track>
-              <Slider.Thumb index={0} circular backgroundColor={bondfireColors.bondfireCopper} />
+              <Slider.Thumb index={0} circular backgroundColor={'$primary'} />
             </Slider>
           </YStack>
-          <Text fontSize={14} color={bondfireColors.whiteSmoke} minWidth={40}>
+          <Text fontSize={14} color={'$color'} minWidth={40}>
             {playbackSpeed.toFixed(2)}x
           </Text>
         </XStack>

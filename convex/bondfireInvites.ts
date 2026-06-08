@@ -1,8 +1,7 @@
 import { v } from 'convex/values'
-import type { Id } from './_generated/dataModel'
-import type { Doc } from './_generated/dataModel'
-import { internalAction, mutation, query } from './_generated/server'
 import { internal } from './_generated/api'
+import type { Doc, Id } from './_generated/dataModel'
+import { internalAction, mutation, query } from './_generated/server'
 import { auth } from './auth'
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -140,9 +139,7 @@ export const sendBondfireInvite = mutation({
     if (bondfire.campId) {
       const membership = await ctx.db
         .query('campMembers')
-        .withIndex('by_user_camp', (q) =>
-          q.eq('userId', userId).eq('campId', bondfire.campId!),
-        )
+        .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', bondfire.campId!))
         .unique()
 
       // Allow invite if user is owner, moderator, or the camp is public (all members can invite)
@@ -261,9 +258,7 @@ export const canAccessBondfire = query({
 
     const membership = await ctx.db
       .query('campMembers')
-      .withIndex('by_user_camp', (q) =>
-        q.eq('userId', userId).eq('campId', bondfire.campId!),
-      )
+      .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', bondfire.campId!))
       .unique()
 
     if (membership && membership.status === 'active') {

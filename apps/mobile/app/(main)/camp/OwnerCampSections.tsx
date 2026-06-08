@@ -1,5 +1,4 @@
 import { parseError, subscriptionActions } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
 import { Button, ColorPicker, StatCard, Text } from '@bondfires/ui'
 import { ImagePlus } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
@@ -17,12 +16,7 @@ function LoadingSkeleton() {
   return (
     <YStack gap={4}>
       {LOADING_SKELETON_IDS.map((id) => (
-        <YStack
-          key={id}
-          height={40}
-          borderRadius={10}
-          backgroundColor={`${bondfireColors.iron}40`}
-        />
+        <YStack key={id} height={40} borderRadius={10} backgroundColor={'rgba(51, 53, 58, 0.25)'} />
       ))}
     </YStack>
   )
@@ -34,7 +28,7 @@ function KindlingBalanceSection() {
   if (summary === undefined) {
     return (
       <YStack gap={12}>
-        <Text fontSize={14} color={bondfireColors.bondfireCopper} fontWeight="900">
+        <Text fontSize={14} color={'$primary'} fontWeight="900">
           CAMP KINDLING
         </Text>
         <LoadingSkeleton />
@@ -42,48 +36,48 @@ function KindlingBalanceSection() {
     )
   }
 
-  const balanceColor = summary.balance > 0 ? bondfireColors.success : bondfireColors.error
+  const balanceColor = summary.balance > 0 ? '$success' : '$error'
   const handleGetMoreKindling = () => {
     subscriptionActions.showPaywall()
   }
 
   return (
     <YStack gap={12}>
-      <Text fontSize={14} color={bondfireColors.bondfireCopper} fontWeight="900">
+      <Text fontSize={14} color={'$primary'} fontWeight="900">
         CAMP KINDLING
       </Text>
 
       <YStack
         padding={16}
         borderRadius={14}
-        backgroundColor={bondfireColors.gunmetal}
+        backgroundColor={'$backgroundHover'}
         borderWidth={1}
-        borderColor={bondfireColors.iron}
+        borderColor={'$borderColor'}
         gap={8}
       >
         <XStack alignItems="baseline" gap={8}>
           <Text fontSize={36} fontWeight="900" color={balanceColor}>
             {summary.balance}
           </Text>
-          <Text fontSize={14} color={bondfireColors.ash}>
+          <Text fontSize={14} color={'$placeholderColor'}>
             kindling remaining
           </Text>
         </XStack>
 
         <XStack gap={16}>
           <XStack alignItems="center" gap={4}>
-            <Text fontSize={12} color={bondfireColors.success} fontWeight="900">
+            <Text fontSize={12} color={'$success'} fontWeight="900">
               +{summary.kindlingGrantedThisPeriod}
             </Text>
-            <Text fontSize={12} color={bondfireColors.ash}>
+            <Text fontSize={12} color={'$placeholderColor'}>
               granted this month
             </Text>
           </XStack>
           <XStack alignItems="center" gap={4}>
-            <Text fontSize={12} color={bondfireColors.error} fontWeight="900">
+            <Text fontSize={12} color={'$error'} fontWeight="900">
               -{summary.kindlingBurnedThisPeriod}
             </Text>
-            <Text fontSize={12} color={bondfireColors.ash}>
+            <Text fontSize={12} color={'$placeholderColor'}>
               consumed this month
             </Text>
           </XStack>
@@ -91,7 +85,7 @@ function KindlingBalanceSection() {
 
         {summary.activeCamps.length > 0 ? (
           <YStack gap={6} marginTop={4}>
-            <Text fontSize={12} color={bondfireColors.ash} fontWeight="900">
+            <Text fontSize={12} color={'$placeholderColor'} fontWeight="900">
               ACTIVE CAMPS ({summary.activeCamps.length})
             </Text>
             {summary.activeCamps.map((activeCamp) => (
@@ -102,18 +96,18 @@ function KindlingBalanceSection() {
                 paddingVertical={6}
                 gap={8}
               >
-                <Text fontSize={13} color={bondfireColors.whiteSmoke} flex={1} numberOfLines={1}>
+                <Text fontSize={13} color={'$color'} flex={1} numberOfLines={1}>
                   {activeCamp.name}
                 </Text>
                 <XStack gap={8} alignItems="center">
-                  <Text fontSize={11} color={bondfireColors.ash}>
+                  <Text fontSize={11} color={'$placeholderColor'}>
                     Renews{' '}
                     {new Date(activeCamp.renewalDate).toLocaleDateString('en-US', {
                       month: 'short',
                       day: 'numeric',
                     })}
                   </Text>
-                  <Text fontSize={11} color={bondfireColors.ash} fontWeight="900">
+                  <Text fontSize={11} color={'$placeholderColor'} fontWeight="900">
                     {activeCamp.kindlingCost} kindling
                   </Text>
                 </XStack>
@@ -124,7 +118,7 @@ function KindlingBalanceSection() {
 
         {summary.balance < 3 ? (
           <Button variant="outline" size="$sm" onPress={handleGetMoreKindling} marginTop={4}>
-            <Text color={bondfireColors.bondfireCopper} fontWeight="900">
+            <Text color={'$primary'} fontWeight="900">
               Get More Kindling
             </Text>
           </Button>
@@ -140,7 +134,7 @@ function AnalyticsSection({ campId }: { campId: Id<'camps'> }) {
   if (analytics === undefined) {
     return (
       <YStack gap={12}>
-        <Text fontSize={14} color={bondfireColors.bondfireCopper} fontWeight="900">
+        <Text fontSize={14} color={'$primary'} fontWeight="900">
           ANALYTICS
         </Text>
         <LoadingSkeleton />
@@ -150,7 +144,7 @@ function AnalyticsSection({ campId }: { campId: Id<'camps'> }) {
 
   return (
     <YStack gap={12}>
-      <Text fontSize={14} color={bondfireColors.bondfireCopper} fontWeight="900">
+      <Text fontSize={14} color={'$primary'} fontWeight="900">
         ANALYTICS
       </Text>
       <XStack gap={10}>
@@ -230,13 +224,13 @@ function BrandingEditor({ camp }: { camp: Doc<'camps'> }) {
 
   return (
     <YStack gap={12}>
-      <Text fontSize={14} color={bondfireColors.bondfireCopper} fontWeight="900">
+      <Text fontSize={14} color={'$primary'} fontWeight="900">
         BRANDING
       </Text>
 
       {/* Cover Image */}
       <YStack gap={8}>
-        <Text fontSize={12} color={bondfireColors.ash} fontWeight="900">
+        <Text fontSize={12} color={'$placeholderColor'} fontWeight="900">
           COVER IMAGE
         </Text>
         <Pressable onPress={handleCoverImageTap}>
@@ -244,17 +238,17 @@ function BrandingEditor({ camp }: { camp: Doc<'camps'> }) {
             width="100%"
             height={160}
             borderRadius={14}
-            backgroundColor={bondfireColors.gunmetal}
+            backgroundColor={'$backgroundHover'}
             borderWidth={1}
-            borderColor={bondfireColors.iron}
+            borderColor={'$borderColor'}
             overflow="hidden"
             alignItems="center"
             justifyContent="center"
           >
             {isUploading ? (
               <YStack gap={8} alignItems="center">
-                <Spinner size="large" color={bondfireColors.bondfireCopper} />
-                <Text fontSize={12} color={bondfireColors.ash}>
+                <Spinner size="large" color={'$primary'} />
+                <Text fontSize={12} color={'$placeholderColor'}>
                   Uploading...
                 </Text>
               </YStack>
@@ -267,8 +261,8 @@ function BrandingEditor({ camp }: { camp: Doc<'camps'> }) {
               />
             ) : (
               <YStack gap={6} alignItems="center">
-                <ImagePlus size={32} color={bondfireColors.ash} />
-                <Text fontSize={13} color={bondfireColors.ash}>
+                <ImagePlus size={32} color={'$placeholderColor'} />
+                <Text fontSize={13} color={'$placeholderColor'}>
                   Tap to add cover image
                 </Text>
               </YStack>
@@ -279,15 +273,15 @@ function BrandingEditor({ camp }: { camp: Doc<'camps'> }) {
 
       {/* Accent Color */}
       <YStack gap={8}>
-        <Text fontSize={12} color={bondfireColors.ash} fontWeight="900">
+        <Text fontSize={12} color={'$placeholderColor'} fontWeight="900">
           ACCENT COLOR
         </Text>
         <YStack
           padding={14}
           borderRadius={14}
-          backgroundColor={bondfireColors.gunmetal}
+          backgroundColor={'$backgroundHover'}
           borderWidth={1}
-          borderColor={bondfireColors.iron}
+          borderColor={'$borderColor'}
           gap={10}
         >
           <ColorPicker
@@ -303,9 +297,9 @@ function BrandingEditor({ camp }: { camp: Doc<'camps'> }) {
                 borderRadius={8}
                 backgroundColor={camp.accentColor}
                 borderWidth={1}
-                borderColor={bondfireColors.iron}
+                borderColor={'$borderColor'}
               />
-              <Text fontSize={12} color={bondfireColors.ash}>
+              <Text fontSize={12} color={'$placeholderColor'}>
                 Current: {camp.accentColor}
               </Text>
             </XStack>

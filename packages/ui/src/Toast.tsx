@@ -6,7 +6,6 @@
  * and share with support.
  */
 
-import { bondfireColors } from '@bondfires/config'
 import { useCallback, useEffect, useRef } from 'react'
 import { Animated, Pressable, Text, View } from 'react-native'
 
@@ -26,23 +25,23 @@ export interface ToastEntry {
 const TYPE_STYLES: Record<ToastType, { bg: string; border: string; text: string }> = {
   error: {
     bg: 'rgba(239, 68, 68, 0.95)',
-    border: bondfireColors.error,
-    text: bondfireColors.whiteSmoke,
+    border: '$error',
+    text: '$color',
   },
   warn: {
     bg: 'rgba(245, 158, 11, 0.95)',
-    border: bondfireColors.warning,
-    text: bondfireColors.whiteSmoke,
+    border: '$warning',
+    text: '$color',
   },
   info: {
     bg: 'rgba(156, 163, 175, 0.95)',
-    border: bondfireColors.ash,
-    text: bondfireColors.whiteSmoke,
+    border: '$placeholderColor',
+    text: '$color',
   },
   success: {
     bg: 'rgba(34, 197, 94, 0.95)',
-    border: bondfireColors.success,
-    text: bondfireColors.whiteSmoke,
+    border: '$success',
+    text: '$color',
   },
 }
 
@@ -102,13 +101,13 @@ function ToastItem({ entry, onDismiss }: { entry: ToastEntry; onDismiss: (id: st
                 {entry.message}
               </Text>
               {entry.referenceId ? (
-                <Text style={{ fontSize: 11, color: bondfireColors.ash, lineHeight: 14 }}>
+                <Text style={{ fontSize: 11, color: '$placeholderColor', lineHeight: 14 }}>
                   Ref: {entry.referenceId}
                 </Text>
               ) : null}
             </View>
             <Pressable onPress={handleDismiss} style={{ marginLeft: 8, padding: 4 }}>
-              <Text style={{ fontSize: 16, color: bondfireColors.ash }}>✕</Text>
+              <Text style={{ fontSize: 16, color: '$placeholderColor' }}>✕</Text>
             </Pressable>
           </View>
         </View>

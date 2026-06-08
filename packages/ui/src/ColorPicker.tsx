@@ -1,4 +1,3 @@
-import { bondfireColors } from '@bondfires/config'
 import { Pressable } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 
@@ -41,18 +40,13 @@ function ColorCircle({
         borderRadius={20}
         backgroundColor={color}
         borderWidth={selected ? 3 : 2}
-        borderColor={selected ? bondfireColors.whiteSmoke : bondfireColors.iron}
+        borderColor={selected ? '$color' : '$borderColor'}
         alignItems="center"
         justifyContent="center"
         opacity={disabled ? 0.55 : 1}
       >
         {selected ? (
-          <YStack
-            width={8}
-            height={8}
-            borderRadius={4}
-            backgroundColor={bondfireColors.whiteSmoke}
-          />
+          <YStack width={8} height={8} borderRadius={4} backgroundColor={'$color'} />
         ) : null}
       </YStack>
     </Pressable>

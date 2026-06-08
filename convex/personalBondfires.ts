@@ -226,15 +226,11 @@ export const createBondfire = mutation({
       .first()
 
     if (!personalCamp) {
-      throwUserError(
-        'Hearth not found. Subscribe to Plus, Premium, or Pro to create one.',
-      )
+      throwUserError('Hearth not found. Subscribe to Plus, Premium, or Pro to create one.')
     }
 
     if (personalCamp.status !== 'active') {
-      throwUserError(
-        'Your hearth is currently frozen. Please re-subscribe to reactivate it.',
-      )
+      throwUserError('Your hearth is currently frozen. Please re-subscribe to reactivate it.')
     }
 
     // Create the bondfire with personalCampId.

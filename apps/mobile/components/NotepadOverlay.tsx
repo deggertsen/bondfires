@@ -1,5 +1,4 @@
 import { notepadActions, notepadStore$ } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
 import { Button, Text, XStack, YStack } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
 import { Trash2 } from '@tamagui/lucide-icons'
@@ -52,7 +51,7 @@ export function NotepadOverlay({ onClose }: NotepadOverlayProps) {
             ref={textInputRef}
             style={styles.textInput}
             placeholder="Type your notes here..."
-            placeholderTextColor={bondfireColors.ash}
+            placeholderTextColor={'$placeholderColor'}
             multiline
             value={content}
             onChangeText={handleTextChange}
@@ -62,7 +61,7 @@ export function NotepadOverlay({ onClose }: NotepadOverlayProps) {
           {/* Clear button */}
           <XStack paddingTop={16}>
             <Button variant="secondary" size="$sm" onPress={handleClear} icon={Trash2}>
-              <Text color={bondfireColors.whiteSmoke}>Clear Notepad</Text>
+              <Text color={'$color'}>Clear Notepad</Text>
             </Button>
           </XStack>
         </YStack>
@@ -77,7 +76,7 @@ const styles = StyleSheet.create({
   },
   textInput: {
     flex: 1,
-    color: bondfireColors.whiteSmoke,
+    color: '$color',
     fontSize: 16,
     textAlignVertical: 'top',
   },

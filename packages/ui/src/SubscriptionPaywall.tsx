@@ -5,7 +5,6 @@ import type {
   SubscriptionTier,
   TierInfo,
 } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
 import { Check, Crown, Flame, Sparkles, Star, X } from '@tamagui/lucide-icons'
 import { useState } from 'react'
 import { Pressable, ScrollView } from 'react-native'
@@ -84,7 +83,7 @@ export function SubscriptionPaywall({
         backgroundColor="rgba(0,0,0,0.6)"
       />
       <Sheet.Frame
-        backgroundColor={bondfireColors.gunmetal}
+        backgroundColor={'$backgroundHover'}
         borderTopLeftRadius={24}
         borderTopRightRadius={24}
         padding={20}
@@ -92,10 +91,10 @@ export function SubscriptionPaywall({
         {/* Header */}
         <XStack justifyContent="space-between" alignItems="center" marginBottom={20}>
           <YStack>
-            <Text color={bondfireColors.whiteSmoke} fontSize={22} fontWeight="700">
+            <Text color={'$color'} fontSize={22} fontWeight="700">
               Choose a Plan
             </Text>
-            <Text color={bondfireColors.ash} fontSize={14} marginTop={4}>
+            <Text color={'$placeholderColor'} fontSize={14} marginTop={4}>
               Create bondfires with Plus or higher
             </Text>
           </YStack>
@@ -108,24 +107,19 @@ export function SubscriptionPaywall({
               width={36}
               height={36}
               borderRadius={18}
-              backgroundColor={bondfireColors.iron}
+              backgroundColor={'$borderColor'}
               alignItems="center"
               justifyContent="center"
             >
-              <X size={20} color={bondfireColors.whiteSmoke} />
+              <X size={20} color={'$color'} />
             </YStack>
           </Pressable>
         </XStack>
 
         {/* Error message */}
         {lastError && (
-          <Card
-            backgroundColor={bondfireColors.error}
-            padding={12}
-            borderRadius={12}
-            marginBottom={16}
-          >
-            <Text color={bondfireColors.whiteSmoke} fontSize={13}>
+          <Card backgroundColor={'$error'} padding={12} borderRadius={12} marginBottom={16}>
+            <Text color={'$color'} fontSize={13}>
               {lastError}
             </Text>
           </Card>
@@ -206,8 +200,8 @@ export function SubscriptionPaywall({
             disabled={isRestoring}
           >
             <XStack alignItems="center" gap={6}>
-              {isRestoring ? <Spinner size="small" color={bondfireColors.ash} /> : null}
-              <Text color={bondfireColors.ash} fontSize={13} textDecorationLine="underline">
+              {isRestoring ? <Spinner size="small" color={'$placeholderColor'} /> : null}
+              <Text color={'$placeholderColor'} fontSize={13} textDecorationLine="underline">
                 {isRestoring ? 'Restoring...' : 'Restore purchases'}
               </Text>
             </XStack>
@@ -268,18 +262,14 @@ function TierCard({
   const selectedProductId = activePeriod === 'annual' ? annualProductId : productId
   const selectedPrice = activePeriod === 'annual' ? annualPrice : price
   const isComingSoon = !isFree && (!isAvailable || !selectedProductId || !selectedPrice)
-  const accentColor = isFeatured
-    ? bondfireColors.moltenGold
-    : isCurrent
-      ? bondfireColors.bondfireCopper
-      : bondfireColors.iron
-  const priceColor = isComingSoon ? bondfireColors.ash : bondfireColors.moltenGold
-  const ctaColor = isFeatured ? bondfireColors.whiteSmoke : bondfireColors.bondfireCopper
+  const accentColor = isFeatured ? '$secondary' : isCurrent ? '$primary' : '$borderColor'
+  const priceColor = isComingSoon ? '$placeholderColor' : '$secondary'
+  const ctaColor = isFeatured ? '$color' : '$primary'
   const ctaLabel = isFree ? 'Continue free' : `Choose ${displayName}`
 
   return (
     <Card
-      backgroundColor={bondfireColors.charcoal}
+      backgroundColor={'$backgroundPress'}
       borderWidth={isFeatured ? 2 : isCurrent ? 2 : 1}
       borderColor={accentColor}
       borderRadius={12}
@@ -289,16 +279,16 @@ function TierCard({
       {/* Tier header */}
       <XStack justifyContent="space-between" alignItems="center" marginBottom={12}>
         <XStack alignItems="center" gap={8}>
-          <TierIcon size={20} color={bondfireColors.bondfireCopper} />
+          <TierIcon size={20} color={'$primary'} />
           <YStack gap={2}>
             <XStack alignItems="center" gap={8}>
-              <Text color={bondfireColors.whiteSmoke} fontSize={18} fontWeight="700">
+              <Text color={'$color'} fontSize={18} fontWeight="700">
                 {displayName}
               </Text>
               {isFeatured ? <PlanBadge label="Recommended" /> : null}
             </XStack>
             {isCurrent ? (
-              <Text color={bondfireColors.bondfireCopper} fontSize={11}>
+              <Text color={'$primary'} fontSize={11}>
                 Current
               </Text>
             ) : null}
@@ -309,7 +299,7 @@ function TierCard({
             {selectedPrice ?? 'Coming Soon'}
           </Text>
           {!isFree && !isComingSoon && (
-            <Text color={bondfireColors.ash} fontSize={11}>
+            <Text color={'$placeholderColor'} fontSize={11}>
               /{activePeriod === 'annual' ? 'year' : 'month'}
             </Text>
           )}
@@ -317,7 +307,7 @@ function TierCard({
       </XStack>
 
       {/* Description */}
-      <Text color={bondfireColors.ash} fontSize={13} marginBottom={12}>
+      <Text color={'$placeholderColor'} fontSize={13} marginBottom={12}>
         {description}
       </Text>
 
@@ -345,12 +335,12 @@ function TierCard({
         {features.map((feature) => (
           <XStack key={feature.label} alignItems="center" gap={8}>
             {feature.included ? (
-              <Check size={14} color={bondfireColors.success} />
+              <Check size={14} color={'$success'} />
             ) : (
-              <X size={14} color={bondfireColors.ash} opacity={0.45} />
+              <X size={14} color={'$placeholderColor'} opacity={0.45} />
             )}
             <Text
-              color={feature.included ? bondfireColors.whiteSmoke : bondfireColors.ash}
+              color={feature.included ? '$color' : '$placeholderColor'}
               fontSize={13}
               opacity={feature.included ? 1 : 0.55}
             >
@@ -367,10 +357,10 @@ function TierCard({
           size="$md"
           disabled
           opacity={0.7}
-          borderColor={bondfireColors.bondfireCopper}
-          color={bondfireColors.bondfireCopper}
+          borderColor={'$primary'}
+          color={'$primary'}
         >
-          <Text color={bondfireColors.bondfireCopper} fontWeight="600">
+          <Text color={'$primary'} fontWeight="600">
             Current plan
           </Text>
         </Button>
@@ -380,20 +370,17 @@ function TierCard({
           size="$md"
           disabled={isPurchasing || isComingSoon}
           onPress={() => onPurchase(tier, selectedProductId ?? undefined)}
-          backgroundColor={isFeatured ? bondfireColors.bondfireCopper : 'transparent'}
+          backgroundColor={isFeatured ? '$primary' : 'transparent'}
           borderColor={
-            isFeatured ? 'transparent' : isAvailable ? bondfireColors.ash : bondfireColors.iron
+            isFeatured ? 'transparent' : isAvailable ? '$placeholderColor' : '$borderColor'
           }
           opacity={isPurchasing || isComingSoon ? 0.65 : 1}
         >
           <XStack alignItems="center" gap={8}>
             {isPurchasing ? (
-              <Spinner
-                size="small"
-                color={isFeatured ? bondfireColors.whiteSmoke : bondfireColors.bondfireCopper}
-              />
+              <Spinner size="small" color={isFeatured ? '$color' : '$primary'} />
             ) : null}
-            <Text color={isComingSoon ? bondfireColors.ash : ctaColor} fontWeight="600">
+            <Text color={isComingSoon ? '$placeholderColor' : ctaColor} fontWeight="600">
               {isFree
                 ? ctaLabel
                 : isComingSoon
@@ -441,45 +428,45 @@ function AddOnCard({
 
   return (
     <Card
-      backgroundColor={bondfireColors.charcoal}
+      backgroundColor={'$backgroundPress'}
       borderWidth={1}
-      borderColor={bondfireColors.iron}
+      borderColor={'$borderColor'}
       borderRadius={12}
       padding={16}
       opacity={isComingSoon ? 0.72 : 1}
     >
       <XStack justifyContent="space-between" alignItems="center" marginBottom={12}>
         <XStack alignItems="center" gap={8}>
-          <Sparkles size={20} color={bondfireColors.moltenGold} />
+          <Sparkles size={20} color={'$secondary'} />
           <YStack gap={2}>
             <XStack alignItems="center" gap={8}>
-              <Text color={bondfireColors.whiteSmoke} fontSize={18} fontWeight="700">
+              <Text color={'$color'} fontSize={18} fontWeight="700">
                 {addOn.displayName}
               </Text>
               <PlanBadge label="Pro add-on" />
             </XStack>
-            <Text color={bondfireColors.ash} fontSize={11}>
+            <Text color={'$placeholderColor'} fontSize={11}>
               Permanent public camp kindling packs
             </Text>
           </YStack>
         </XStack>
         <YStack alignItems="flex-end">
           <Text
-            color={isComingSoon ? bondfireColors.ash : bondfireColors.moltenGold}
+            color={isComingSoon ? '$placeholderColor' : '$secondary'}
             fontSize={18}
             fontWeight="700"
           >
             {selectedPrice ?? 'Coming Soon'}
           </Text>
           {!isComingSoon ? (
-            <Text color={bondfireColors.ash} fontSize={11}>
+            <Text color={'$placeholderColor'} fontSize={11}>
               {activeSize === 'tenPack' ? '10 kindling' : '3 kindling'}
             </Text>
           ) : null}
         </YStack>
       </XStack>
 
-      <Text color={bondfireColors.ash} fontSize={13} marginBottom={12}>
+      <Text color={'$placeholderColor'} fontSize={13} marginBottom={12}>
         {addOn.description}
       </Text>
 
@@ -505,15 +492,12 @@ function AddOnCard({
         size="$md"
         disabled={isPurchasing || isComingSoon}
         onPress={() => onPurchase(selectedProductId)}
-        borderColor={addOn.isAvailable ? bondfireColors.ash : bondfireColors.iron}
+        borderColor={addOn.isAvailable ? '$placeholderColor' : '$borderColor'}
         opacity={isPurchasing || isComingSoon ? 0.65 : 1}
       >
         <XStack alignItems="center" gap={8}>
-          {isPurchasing ? <Spinner size="small" color={bondfireColors.bondfireCopper} /> : null}
-          <Text
-            color={isComingSoon ? bondfireColors.ash : bondfireColors.bondfireCopper}
-            fontWeight="600"
-          >
+          {isPurchasing ? <Spinner size="small" color={'$primary'} /> : null}
+          <Text color={isComingSoon ? '$placeholderColor' : '$primary'} fontWeight="600">
             {isComingSoon ? 'Coming soon' : isPurchasing ? 'Processing...' : 'Buy kindling pack'}
           </Text>
         </XStack>
@@ -525,14 +509,14 @@ function AddOnCard({
 function PlanBadge({ label }: { label: string }) {
   return (
     <YStack
-      backgroundColor={`${bondfireColors.moltenGold}20`}
-      borderColor={bondfireColors.moltenGold}
+      backgroundColor={'rgba(240, 171, 104, 0.13)'}
+      borderColor={'$secondary'}
       borderWidth={1}
       borderRadius={999}
       paddingHorizontal={8}
       paddingVertical={2}
     >
-      <Text color={bondfireColors.moltenGold} fontSize={10} fontWeight="700">
+      <Text color={'$secondary'} fontSize={10} fontWeight="700">
         {label}
       </Text>
     </YStack>
@@ -562,17 +546,17 @@ function BillingOption({ label, price, selected, disabled, onPress }: BillingOpt
     >
       <YStack
         borderWidth={1}
-        borderColor={selected ? bondfireColors.bondfireCopper : bondfireColors.iron}
-        backgroundColor={selected ? `${bondfireColors.bondfireCopper}20` : bondfireColors.gunmetal}
+        borderColor={selected ? '$primary' : '$borderColor'}
+        backgroundColor={selected ? 'rgba(217, 119, 54, 0.13)' : '$backgroundHover'}
         borderRadius={10}
         paddingVertical={8}
         paddingHorizontal={10}
         opacity={disabled ? 0.55 : 1}
       >
-        <Text color={bondfireColors.whiteSmoke} fontSize={12} fontWeight="700">
+        <Text color={'$color'} fontSize={12} fontWeight="700">
           {label}
         </Text>
-        <Text color={bondfireColors.ash} fontSize={11} numberOfLines={1}>
+        <Text color={'$placeholderColor'} fontSize={11} numberOfLines={1}>
           {price ?? 'Coming Soon'}
         </Text>
       </YStack>

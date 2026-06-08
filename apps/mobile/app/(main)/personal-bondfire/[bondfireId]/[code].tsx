@@ -1,5 +1,4 @@
 import { telemetry } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
 import { Text } from '@bondfires/ui'
 import { useMutation, useQuery } from 'convex/react'
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
@@ -159,12 +158,12 @@ export default function PersonalBondfireInviteScreen() {
     return (
       <YStack
         flex={1}
-        backgroundColor={bondfireColors.obsidian}
+        backgroundColor={'$background'}
         alignItems="center"
         justifyContent="center"
         gap={12}
       >
-        <Text fontSize={16} color={bondfireColors.whiteSmoke}>
+        <Text fontSize={16} color={'$color'}>
           Invalid invite link.
         </Text>
       </YStack>
@@ -176,13 +175,13 @@ export default function PersonalBondfireInviteScreen() {
       <Stack.Screen options={{ headerShown: false }} />
       <YStack
         flex={1}
-        backgroundColor={bondfireColors.obsidian}
+        backgroundColor={'$background'}
         alignItems="center"
         justifyContent="center"
         gap={16}
       >
-        <Spinner size="large" color={bondfireColors.bondfireCopper} />
-        <Text fontSize={16} color={bondfireColors.ash}>
+        <Spinner size="large" color={'$primary'} />
+        <Text fontSize={16} color={'$placeholderColor'}>
           Joining bondfire...
         </Text>
       </YStack>
