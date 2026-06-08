@@ -173,8 +173,8 @@ function BondfireRow({
     actions.push({
       key: 'delete',
       label: 'Delete',
-      color: '$error',
-      backgroundColor: '$backgroundHover',
+      color: '$color',
+      backgroundColor: '$errorDark',
       onPress: onDelete,
     })
   } else {
@@ -789,6 +789,7 @@ export default function FeedScreen() {
           listRef.current = r
         }}
         data={filtered ?? []}
+        extraData={{ currentUserId, pinnedIds }}
         keyExtractor={(item) => item._id}
         refreshControl={
           <RefreshControl

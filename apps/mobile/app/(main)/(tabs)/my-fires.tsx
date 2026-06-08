@@ -1,19 +1,21 @@
 import {
   appActions,
+  appStore$,
   getBondfireVideoIndex,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
   useAppThemeColors,
 } from '@bondfires/app'
-import { Button, Text } from '@bondfires/ui'
+import { Button, SwipeableRow, Text } from '@bondfires/ui'
 import { Flame, MessageCircle, Pin, User } from '@tamagui/lucide-icons'
-import { useQuery } from 'convex/react'
+import { useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useMemo, useState } from 'react'
-import { FlatList, Pressable, RefreshControl, StatusBar } from 'react-native'
+import { Alert, FlatList, Pressable, RefreshControl, StatusBar } from 'react-native'
 import { Avatar, Separator, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
+import { useValue } from '@legendapp/state/react'
 import { routes } from '../../../lib/routes'
 
 type PublicUser = {
@@ -71,14 +73,68 @@ function ParticipantStack({ participants }: { participants: ThreadParticipant[] 
   )
 }
 
-function MyFireRow({ thread, onOpen }: { thread: MyFire; onOpen: () => void }) {
+function MyFireRow({
+  thread,
+  currentUserId,
+  pinnedIds,
+  onOpen,
+  onDelete,
+  onPin,
+  onUnpin,
+  onReport,
+}: {
+  thread: MyFire
+  currentUserId: string | null
+  pinnedIds: string[]
+  onOpen: () => void
+  onDelete: () => void
+  onPin: () => void
+  onUnpin: () => void
+  onReport: () => void
+}) {
   const responses = Math.max(0, thread.videoCount - 1)
   const participantNames = thread.participants
     .slice(0, 3)
     .map((participant) => participant.user.displayName ?? participant.user.name ?? 'Someone')
     .join(', ')
+  const isOwner = currentUserId === thread.userId
+  const isPinned = pinnedIds.includes(thread._id)
 
-  return (
+  const actions: Array<{
+    key: string
+    label: string
+    color?: string
+    backgroundColor?: string
+    onPress: () => void
+  }> = []
+
+  if (isOwner) {
+    actions.push({
+      key: 'delete',
+      label: 'Delete',
+      color: '$color',
+      backgroundColor: '$errorDark',
+      onPress: onDelete,
+    })
+  } else {
+    actions.push({
+      key: 'report',
+      label: 'Report',
+      color: '$warning',
+      backgroundColor: '$backgroundHover',
+      onPress: onReport,
+    })
+  }
+
+  actions.push({
+    key: 'pin',
+    label: isPinned ? 'Unpin' : 'Pin',
+    color: '$primary',
+    backgroundColor: '$backgroundHover',
+    onPress: isPinned ? onUnpin : onPin,
+  })
+
+  const row = (
     <Pressable onPress={onOpen}>
       <XStack paddingHorizontal={16} paddingVertical={14} gap={12} alignItems="center">
         <YStack
@@ -149,6 +205,8 @@ function MyFireRow({ thread, onOpen }: { thread: MyFire; onOpen: () => void }) {
       </XStack>
     </Pressable>
   )
+
+  return <SwipeableRow actions={actions}>{row}</SwipeableRow>
 }
 
 export default function MyFiresScreen() {
@@ -157,6 +215,20 @@ export default function MyFiresScreen() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const threads = useQuery(api.conversations.listMyFires, { limit: 80 }) as MyFire[] | undefined
+
+  // Swipe action mutations
+  const deleteBondfire = useMutation(api.bondfires.deleteBondfire)
+  const pinBondfire = useMutation(api.bondfires.pinBondfire)
+  const unpinBondfire = useMutation(api.bondfires.unpinBondfire)
+  const reportBondfire = useMutation(api.reports.submit)
+  const currentUserId = useValue(appStore$.userId)
+
+  // Pinned bondfire IDs from user doc
+  const currentUser = useQuery(api.users.current, currentUserId ? {} : 'skip')
+  const pinnedIds = useMemo(
+    () => (currentUser?.pinnedBondfireIds ?? []) as string[],
+    [currentUser?.pinnedBondfireIds],
+  )
 
   const unreadCount = useMemo(
     () => threads?.filter((thread) => thread.unread).length ?? 0,
@@ -179,6 +251,119 @@ export default function MyFiresScreen() {
     [router],
   )
 
+  const handleDelete = useCallback(
+    (bondfireId: string) => {
+      Alert.alert(
+        'Delete Bondfire',
+        'This will permanently remove your bondfire and all responses. This cannot be undone.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await deleteBondfire({ bondfireId: bondfireId as Id<'bondfires'> })
+                setRefreshKey((current) => current + 1)
+              } catch (error) {
+                Alert.alert('Error', 'Failed to delete bondfire. Please try again.')
+              }
+            },
+          },
+        ],
+      )
+    },
+    [deleteBondfire],
+  )
+
+  const handlePin = useCallback(
+    async (bondfireId: string) => {
+      try {
+        await pinBondfire({ bondfireId: bondfireId as Id<'bondfires'> })
+        setRefreshKey((current) => current + 1)
+      } catch (error) {
+        Alert.alert('Error', String(error))
+      }
+    },
+    [pinBondfire],
+  )
+
+  const handleUnpin = useCallback(
+    async (bondfireId: string) => {
+      try {
+        await unpinBondfire({ bondfireId: bondfireId as Id<'bondfires'> })
+        setRefreshKey((current) => current + 1)
+      } catch (error) {
+        Alert.alert('Error', String(error))
+      }
+    },
+    [unpinBondfire],
+  )
+
+  const handleReport = useCallback(
+    (bondfireId: string, videoOwnerId: string) => {
+      Alert.alert(
+        'Report Content',
+        'What category best describes the issue?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Harassment',
+            onPress: async () => {
+              try {
+                await reportBondfire({
+                  bondfireId: bondfireId as Id<'bondfires'>,
+                  videoOwnerId: videoOwnerId as Id<'users'>,
+                  category: 'community_guidelines',
+                  subCategory: 'harassment_or_abuse',
+                  comments: 'Reported from My Fires swipe action',
+                })
+                Alert.alert('Reported', 'Thank you. We will review this content.')
+              } catch (error) {
+                Alert.alert('Error', String(error))
+              }
+            },
+          },
+          {
+            text: 'Inappropriate',
+            onPress: async () => {
+              try {
+                await reportBondfire({
+                  bondfireId: bondfireId as Id<'bondfires'>,
+                  videoOwnerId: videoOwnerId as Id<'users'>,
+                  category: 'community_guidelines',
+                  subCategory: 'pornographic_content',
+                  comments: 'Reported from My Fires swipe action',
+                })
+                Alert.alert('Reported', 'Thank you. We will review this content.')
+              } catch (error) {
+                Alert.alert('Error', String(error))
+              }
+            },
+          },
+          {
+            text: 'Spam',
+            onPress: async () => {
+              try {
+                await reportBondfire({
+                  bondfireId: bondfireId as Id<'bondfires'>,
+                  videoOwnerId: videoOwnerId as Id<'users'>,
+                  category: 'community_guidelines',
+                  subCategory: 'spam_or_solicitation',
+                  comments: 'Reported from My Fires swipe action',
+                })
+                Alert.alert('Reported', 'Thank you. We will review this content.')
+              } catch (error) {
+                Alert.alert('Error', String(error))
+              }
+            },
+          },
+        ],
+      )
+    },
+    [reportBondfire],
+  )
+
   if (threads === undefined) {
     return (
       <YStack flex={1} backgroundColor={'$background'}>
@@ -196,6 +381,7 @@ export default function MyFiresScreen() {
       <FlatList
         key={refreshKey}
         data={threads}
+        extraData={currentUserId}
         keyExtractor={(item) => item._id}
         refreshControl={
           <RefreshControl
@@ -205,7 +391,18 @@ export default function MyFiresScreen() {
             colors={[colors.primary]}
           />
         }
-        renderItem={({ item }) => <MyFireRow thread={item} onOpen={() => handleOpen(item._id)} />}
+        renderItem={({ item }) => (
+          <MyFireRow
+            thread={item}
+            currentUserId={currentUserId}
+            pinnedIds={pinnedIds}
+            onOpen={() => handleOpen(item._id)}
+            onDelete={() => handleDelete(item._id)}
+            onPin={() => handlePin(item._id)}
+            onUnpin={() => handleUnpin(item._id)}
+            onReport={() => handleReport(item._id, item.userId)}
+          />
+        )}
         ItemSeparatorComponent={() => (
           <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
         )}
