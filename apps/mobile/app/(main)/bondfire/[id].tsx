@@ -52,6 +52,7 @@ import { NotepadOverlay } from '../../../components/NotepadOverlay'
 import { ReportButton } from '../../../components/ReportButton'
 import { ReportOverlay } from '../../../components/ReportOverlay'
 import { SettingsPopover } from '../../../components/SettingsPopover'
+import { VIDEO_OVERLAY_COLORS as OVERLAY_COLORS } from '../../../components/videoOverlayColors'
 import { routes } from '../../../lib/routes'
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window')
@@ -104,22 +105,6 @@ interface VideoPlayerProps {
   isMainVideo: boolean
   responseIndex?: number
   isLive?: boolean
-}
-
-// Theme-independent overlay colors for video UI.
-// These always use light text on dark semi-transparent backgrounds
-// because video content is unpredictable and dark overlays work universally.
-const OVERLAY_COLORS = {
-  gradientTop: ['rgba(20, 20, 22, 0.9)', 'rgba(20, 20, 22, 0.5)', 'transparent'] as const,
-  gradientBottom: ['transparent', 'rgba(20, 20, 22, 0.6)', 'rgba(20, 20, 22, 0.9)'] as const,
-  gradientBottomThin: ['transparent', 'rgba(20, 20, 22, 0.9)'] as const,
-  pillBg: 'rgba(31, 32, 35, 0.8)',
-  textPrimary: '#F3F4F6',
-  textSecondary: '#9CA3AF',
-  progressTrack: 'rgba(255,255,255,0.3)',
-  dotInactive: 'rgba(255,255,255,0.4)',
-  playPauseBg: 'rgba(20, 20, 22, 0.6)',
-  loadingBg: 'rgba(20, 20, 22, 0.7)',
 }
 
 function VideoPlayer({
@@ -683,7 +668,7 @@ function VideoPlayer({
           bottom={0}
           alignItems="center"
           justifyContent="center"
-          backgroundColor={OVERLAY_COLORS.loadingBg}
+          backgroundColor={OVERLAY_COLORS.loadingBackground}
           zIndex={2}
           pointerEvents="none"
         >
@@ -708,14 +693,18 @@ function VideoPlayer({
             width={80}
             height={80}
             borderRadius={40}
-            backgroundColor={OVERLAY_COLORS.playPauseBg}
+            backgroundColor={OVERLAY_COLORS.playPauseBackground}
             alignItems="center"
             justifyContent="center"
           >
             {hasEnded ? (
               <RotateCcw size={40} color={OVERLAY_COLORS.textPrimary} />
             ) : (
-              <Play size={40} color={OVERLAY_COLORS.textPrimary} fill={OVERLAY_COLORS.textPrimary} />
+              <Play
+                size={40}
+                color={OVERLAY_COLORS.textPrimary}
+                fill={OVERLAY_COLORS.textPrimary}
+              />
             )}
           </YStack>
         </YStack>
@@ -822,7 +811,7 @@ function VideoPlayer({
             width={44}
             height={44}
             borderRadius={22}
-            backgroundColor={OVERLAY_COLORS.pillBg}
+            backgroundColor={OVERLAY_COLORS.pillBackground}
             alignItems="center"
             justifyContent="center"
           >
@@ -1206,7 +1195,7 @@ export default function BondfireDetailScreen() {
                 paddingHorizontal={12}
                 height={40}
                 borderRadius={20}
-                backgroundColor={OVERLAY_COLORS.pillBg}
+                backgroundColor={OVERLAY_COLORS.pillBackground}
                 alignItems="center"
                 gap={6}
               >
@@ -1234,7 +1223,7 @@ export default function BondfireDetailScreen() {
                   width={40}
                   height={40}
                   borderRadius={20}
-                  backgroundColor={showSettings ? '$primary' : OVERLAY_COLORS.pillBg}
+                  backgroundColor={showSettings ? '$primary' : OVERLAY_COLORS.pillBackground}
                   alignItems="center"
                   justifyContent="center"
                 >
@@ -1248,7 +1237,7 @@ export default function BondfireDetailScreen() {
                   width={40}
                   height={40}
                   borderRadius={20}
-                  backgroundColor={showNotepad ? '$primary' : OVERLAY_COLORS.pillBg}
+                  backgroundColor={showNotepad ? '$primary' : OVERLAY_COLORS.pillBackground}
                   alignItems="center"
                   justifyContent="center"
                 >

@@ -4,6 +4,7 @@ import { useValue } from '@legendapp/state/react'
 import { Trash2 } from '@tamagui/lucide-icons'
 import { useEffect, useRef } from 'react'
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, TextInput } from 'react-native'
+import { VIDEO_OVERLAY_COLORS } from './videoOverlayColors'
 
 interface NotepadOverlayProps {
   onClose: () => void
@@ -14,7 +15,8 @@ export function NotepadOverlay({ onClose }: NotepadOverlayProps) {
   const content = useValue(notepadStore$.content)
   const textInputRef = useRef<TextInput>(null)
 
-  const overlayBg = themeName === 'dark' ? 'rgba(20, 20, 22, 0.6)' : 'rgba(250, 250, 250, 0.85)'
+  const overlayBg =
+    themeName === 'dark' ? VIDEO_OVERLAY_COLORS.playPauseBackground : 'rgba(250, 250, 250, 0.85)'
 
   // Auto-focus on mount
   useEffect(() => {

@@ -28,8 +28,8 @@ import 'react-native-reanimated'
 
 import {
   type AppThemeName,
-  appThemeColors,
   appStore$,
+  appThemeColors,
   mmkvStorage,
   telemetry,
   toastActions,
