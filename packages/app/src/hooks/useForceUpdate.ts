@@ -72,6 +72,17 @@ export function useForceUpdate(): ForceUpdateState {
     // Still loading from Convex
     if (minVersion === undefined) return
 
+    // Dev builds should not be blocked by production minimum-version gating.
+    if (__DEV__) {
+      setState({
+        loading: false,
+        updateRequired: false,
+        minRequiredVersion: minVersion ?? null,
+        storeUrl: getStoreUrl(),
+      })
+      return
+    }
+
     const currentVersion = Constants.expoConfig?.version ?? '0.0.0'
     const required = minVersion ?? null
 

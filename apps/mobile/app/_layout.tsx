@@ -10,15 +10,25 @@ import { useFonts } from 'expo-font'
 import type * as Notifications from 'expo-notifications'
 import { Stack, useRouter } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
-import { Component, type ErrorInfo, type ReactNode, useCallback, useEffect, useRef } from 'react'
+import {
+  Component,
+  type ErrorInfo,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
 import { KeyboardProvider } from 'react-native-keyboard-controller'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
-import { TamaguiProvider, Theme, YStack } from 'tamagui'
+import { AnimatePresence, TamaguiProvider, Theme, YStack } from 'tamagui'
 // Import config for TamaguiProvider
 import config from '../tamagui.config'
 import 'react-native-reanimated'
 
 import {
+  type AppThemeName,
+  appThemeColors,
   appStore$,
   mmkvStorage,
   telemetry,
@@ -43,7 +53,7 @@ SplashScreen.preventAutoHideAsync()
 const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL
 if (!convexUrl) {
   throw new Error(
-    'EXPO_PUBLIC_CONVEX_URL is not set. Please create a .env.local file in the project root with EXPO_PUBLIC_CONVEX_URL=your-convex-url',
+    'EXPO_PUBLIC_CONVEX_URL is not set. Please create apps/mobile/.env.local with EXPO_PUBLIC_CONVEX_URL=<your-convex-url> (copy CONVEX_URL from repo-root .env.local)',
   )
 }
 
@@ -186,6 +196,51 @@ export function ErrorBoundary(props: { error: Error; retry: () => void }) {
 }
 
 // ---------------------------------------------------------------------------
+// Theme transition — crossfade overlay (avoids remounting navigators)
+// ---------------------------------------------------------------------------
+
+function ThemeTransitionOverlay({ themeName }: { themeName: AppThemeName }) {
+  const previousThemeRef = useRef(themeName)
+  const [fadingTheme, setFadingTheme] = useState<AppThemeName | null>(null)
+
+  useEffect(() => {
+    if (previousThemeRef.current === themeName) return
+    setFadingTheme(previousThemeRef.current)
+    previousThemeRef.current = themeName
+  }, [themeName])
+
+  useEffect(() => {
+    if (fadingTheme === null) return
+    const frame = requestAnimationFrame(() => {
+      setFadingTheme(null)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [fadingTheme])
+
+  return (
+    <AnimatePresence>
+      {fadingTheme !== null && (
+        <YStack
+          key={fadingTheme}
+          position="absolute"
+          top={0}
+          left={0}
+          right={0}
+          bottom={0}
+          pointerEvents="none"
+          zIndex={999999}
+          backgroundColor={appThemeColors[fadingTheme].background}
+          animation="themeCrossfade"
+          enterStyle={{ opacity: 1 }}
+          exitStyle={{ opacity: 0 }}
+          opacity={1}
+        />
+      )}
+    </AnimatePresence>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // App Content
 // ---------------------------------------------------------------------------
 
@@ -304,6 +359,7 @@ function AppContent() {
             <Stack.Screen name="(main)" options={{ headerShown: false }} />
           </Stack>
           <ToastContainer toasts={toasts} onDismiss={toastActions.dismiss} />
+          <ThemeTransitionOverlay themeName={themeName} />
         </YStack>
       </Theme>
     </TamaguiProvider>

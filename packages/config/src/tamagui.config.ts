@@ -269,6 +269,10 @@ const animations = createAnimations({
     damping: 20,
     stiffness: 60,
   },
+  themeCrossfade: {
+    type: 'timing',
+    duration: 450,
+  },
 })
 
 // ============================================

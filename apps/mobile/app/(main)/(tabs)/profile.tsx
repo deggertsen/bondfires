@@ -108,7 +108,7 @@ function ProfileSubscription({
 }
 
 function ThemeSelector() {
-  const { themePreference, setThemePreference, isLoading } = useAppTheme()
+  const { themePreference, setThemePreference, isLoading, isSaving } = useAppTheme()
 
   const options: Array<{
     value: 'system' | 'light' | 'dark'
@@ -120,11 +120,23 @@ function ThemeSelector() {
     { value: 'dark', label: 'Dark', Icon: Moon },
   ]
 
+  const handleSelectTheme = useCallback(
+    async (value: 'system' | 'light' | 'dark') => {
+      try {
+        await setThemePreference(value)
+      } catch (error) {
+        const message = parseError(error).message
+        Alert.alert('Error', message)
+      }
+    },
+    [setThemePreference],
+  )
+
   if (isLoading) return null
 
   return (
-    <XStack justifyContent="space-between" alignItems="center">
-      <XStack alignItems="center" gap={12} flex={1}>
+    <YStack gap={12}>
+      <XStack alignItems="center" gap={12}>
         <Monitor size={20} color={'$primary'} />
         <YStack>
           <Text fontWeight="500" fontSize={15}>
@@ -138,36 +150,35 @@ function ThemeSelector() {
           </Text>
         </YStack>
       </XStack>
-      <XStack gap={4}>
+
+      <XStack gap={8}>
         {options.map((opt) => {
           const { Icon, value, label } = opt
           const isSelected = themePreference === value
           return (
-            <Pressable key={value} onPress={() => setThemePreference(value)}>
-              <XStack
-                alignItems="center"
-                gap={8}
-                paddingVertical={6}
-                paddingHorizontal={12}
-                borderRadius={8}
-                borderWidth={1}
-                backgroundColor={isSelected ? '$primary' : '$backgroundHover'}
-                borderColor={isSelected ? '$primary' : '$borderColor'}
-              >
+            <Button
+              key={value}
+              flex={1}
+              variant={isSelected ? 'primary' : 'outline'}
+              size="$sm"
+              disabled={isSaving}
+              onPress={() => handleSelectTheme(value)}
+            >
+              <XStack alignItems="center" justifyContent="center" gap={6}>
                 <Icon size={16} color={isSelected ? '$color' : '$placeholderColor'} />
                 <Text
-                  fontSize={13}
-                  fontWeight={isSelected ? '600' : '400'}
                   color={isSelected ? '$color' : '$placeholderColor'}
+                  fontWeight={isSelected ? '700' : '500'}
+                  fontSize={13}
                 >
                   {label}
                 </Text>
               </XStack>
-            </Pressable>
+            </Button>
           )
         })}
       </XStack>
-    </XStack>
+    </YStack>
   )
 }
 
