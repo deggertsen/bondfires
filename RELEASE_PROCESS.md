@@ -86,9 +86,12 @@ The `scripts/release.sh` script performs these steps automatically:
 2. Bumps the version in `apps/mobile/app.json`
 3. Commits the version bump
 4. **Deploys Convex backend to production** (`npx convex deploy`)
-5. **Sets minAppVersion in Convex publicConfig** (forces outdated clients to update)
-6. Kicks off EAS production builds for iOS + Android
-7. Auto-submits to App Store Connect and Google Play
+5. Kicks off EAS production builds for iOS + Android
+6. Auto-submits to App Store Connect and Google Play
+
+It intentionally does **not** set `minAppVersion`. Force-update gating must only be
+enabled after the new version is live and downloadable in both App Store Connect
+and Google Play.
 
 ## Release Command
 
@@ -106,6 +109,23 @@ yarn release:major  # major bump
 2. **Android:** Internal testing track (completed status)
 3. **iOS:** App Store Connect review process
 4. **Version tracking:** Monitor for crashes/issues in first 24 hours
+
+## Enabling Force Updates
+
+Only after the new version is live in both stores and can actually be downloaded:
+
+```bash
+npx convex run publicConfig:setMinVersion '{"version":"1.0.27"}'
+```
+
+For Android flexible in-app updates:
+
+```bash
+npx convex run publicConfig:setMinVersion '{"version":"1.0.27","updatePriority":"flexible"}'
+```
+
+Never set `minAppVersion` while either store is still processing, reviewing, or
+serving the previous version. Existing clients may block on that value.
 
 ## Common Issues Caught by Audit
 
@@ -129,4 +149,4 @@ If critical issues found after release:
 ---
 
 **Established:** 2026-02-19 after critical navigation routing bug reached users
-**Last Updated:** 2026-06-07 — added Convex deploy + minAppVersion steps now in release.sh
+**Last Updated:** 2026-06-08 — force-update gating is now a manual post-store-availability step

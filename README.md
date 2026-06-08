@@ -171,8 +171,9 @@ yarn release:major
 This runs `scripts/release.sh` which:
 1. Bumps the version in `app.json`
 2. Commits the version bump
-3. Kicks off EAS production builds for iOS + Android
-4. Auto-submits to App Store Connect and Google Play when builds finish
+3. Deploys Convex backend changes
+4. Kicks off EAS production builds for iOS + Android
+5. Auto-submits to App Store Connect and Google Play when builds finish
 
 **Requirements:** Clean git tree, `eas-cli` installed and logged in.
 
@@ -181,6 +182,7 @@ This runs `scripts/release.sh` which:
 - The `version` string in `app.json` must be bumped for each store submission (stores reject duplicate versions)
 - Android submits to the `internal` track as a draft
 - iOS submits to App Store Connect (you still need to submit for review from there)
+- Force updates are enabled manually with `publicConfig:setMinVersion` only after the new version is live and downloadable in both stores
 
 Monitor builds at: https://expo.dev/accounts/deggertsen/projects/bondfires/builds
 
