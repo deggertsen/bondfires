@@ -7,7 +7,8 @@
  */
 
 import { useCallback, useEffect, useRef } from 'react'
-import { Animated, Pressable, Text, View } from 'react-native'
+import { Animated, Pressable, View } from 'react-native'
+import { Text as TamaguiText, View as TamaguiView } from 'tamagui'
 
 export type ToastType = 'error' | 'warn' | 'info' | 'success'
 
@@ -22,26 +23,30 @@ export interface ToastEntry {
 // Styling per toast type
 // ---------------------------------------------------------------------------
 
+// Toast backgrounds are fixed overlays, so text stays fixed white for contrast in both themes.
+const TOAST_TEXT_COLOR = '#FFFFFF'
+const TOAST_MUTED_TEXT_COLOR = 'rgba(255, 255, 255, 0.82)'
+
 const TYPE_STYLES: Record<ToastType, { bg: string; border: string; text: string }> = {
   error: {
     bg: 'rgba(239, 68, 68, 0.95)',
     border: '$error',
-    text: '$color',
+    text: TOAST_TEXT_COLOR,
   },
   warn: {
     bg: 'rgba(245, 158, 11, 0.95)',
     border: '$warning',
-    text: '$color',
+    text: TOAST_TEXT_COLOR,
   },
   info: {
     bg: 'rgba(156, 163, 175, 0.95)',
     border: '$placeholderColor',
-    text: '$color',
+    text: TOAST_TEXT_COLOR,
   },
   success: {
     bg: 'rgba(34, 197, 94, 0.95)',
     border: '$success',
-    text: '$color',
+    text: TOAST_TEXT_COLOR,
   },
 }
 
@@ -74,15 +79,15 @@ function ToastItem({ entry, onDismiss }: { entry: ToastEntry; onDismiss: (id: st
   return (
     <Animated.View style={{ opacity, transform: [{ translateY }] }} pointerEvents="auto">
       <Pressable onPress={handleDismiss}>
-        <View
+        <TamaguiView
+          backgroundColor={styles.bg}
+          borderWidth={1}
+          borderColor={styles.border}
+          borderRadius={12}
+          paddingVertical={10}
+          paddingHorizontal={14}
+          gap={4}
           style={{
-            backgroundColor: styles.bg,
-            borderWidth: 1,
-            borderColor: styles.border,
-            borderRadius: 12,
-            paddingVertical: 10,
-            paddingHorizontal: 14,
-            gap: 4,
             shadowColor: 'rgba(0,0,0,0.3)',
             shadowOffset: { width: 0, height: 2 },
             shadowOpacity: 0.3,
@@ -90,27 +95,30 @@ function ToastItem({ entry, onDismiss }: { entry: ToastEntry; onDismiss: (id: st
             elevation: 4,
           }}
         >
-          <View
-            style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
-          >
-            <View style={{ flex: 1, gap: 2 }}>
-              <Text
-                style={{ fontSize: 14, fontWeight: '600', color: styles.text, lineHeight: 18 }}
+          <TamaguiView flexDirection="row" alignItems="center" justifyContent="space-between">
+            <TamaguiView flex={1} gap={2}>
+              <TamaguiText
+                fontSize={14}
+                fontWeight="600"
+                color={styles.text}
+                lineHeight={18}
                 numberOfLines={2}
               >
                 {entry.message}
-              </Text>
+              </TamaguiText>
               {entry.referenceId ? (
-                <Text style={{ fontSize: 11, color: '$placeholderColor', lineHeight: 14 }}>
+                <TamaguiText fontSize={11} color={TOAST_MUTED_TEXT_COLOR} lineHeight={14}>
                   Ref: {entry.referenceId}
-                </Text>
+                </TamaguiText>
               ) : null}
-            </View>
+            </TamaguiView>
             <Pressable onPress={handleDismiss} style={{ marginLeft: 8, padding: 4 }}>
-              <Text style={{ fontSize: 16, color: '$placeholderColor' }}>✕</Text>
+              <TamaguiText fontSize={16} color={TOAST_MUTED_TEXT_COLOR}>
+                ✕
+              </TamaguiText>
             </Pressable>
-          </View>
-        </View>
+          </TamaguiView>
+        </TamaguiView>
       </Pressable>
     </Animated.View>
   )
