@@ -176,32 +176,9 @@ function BondfireRow({
         <YStack flex={1} gap={6}>
           <XStack alignItems="center" justifyContent="space-between" gap={10}>
             <YStack flex={1} gap={2}>
-              <XStack alignItems="center" gap={8} maxWidth="100%">
-                <Text fontSize={16} fontWeight="900" numberOfLines={1} flexShrink={1}>
-                  {bondfire.creatorName ?? 'Anonymous'}
-                </Text>
-                {bondfire.campLabel ? (
-                  <YStack
-                    flexShrink={1}
-                    maxWidth="55%"
-                    paddingHorizontal={8}
-                    paddingVertical={3}
-                    borderRadius={8}
-                    backgroundColor={bondfireColors.gunmetal}
-                    borderWidth={1}
-                    borderColor={bondfireColors.iron}
-                  >
-                    <Text
-                      fontSize={11}
-                      fontWeight="800"
-                      color={bondfireColors.bondfireCopper}
-                      numberOfLines={1}
-                    >
-                      {bondfire.campLabel}
-                    </Text>
-                  </YStack>
-                ) : null}
-              </XStack>
+              <Text fontSize={16} fontWeight="900" numberOfLines={1}>
+                {bondfire.creatorName ?? 'Anonymous'}
+              </Text>
               <Text fontSize={12} color={bondfireColors.ash} numberOfLines={1}>
                 {isLive ? 'Live now' : `${timeAgo} · ${viewed ? 'Viewed' : 'New'}`}
               </Text>
@@ -232,6 +209,27 @@ function BondfireRow({
                 {responses} {responses === 1 ? 'response' : 'responses'}
               </Text>
             </XStack>
+            {bondfire.campLabel ? (
+              <YStack
+                flexShrink={1}
+                maxWidth="55%"
+                paddingHorizontal={8}
+                paddingVertical={3}
+                borderRadius={8}
+                backgroundColor={bondfireColors.gunmetal}
+                borderWidth={1}
+                borderColor={bondfireColors.iron}
+              >
+                <Text
+                  fontSize={11}
+                  fontWeight="800"
+                  color={bondfireColors.bondfireCopper}
+                  numberOfLines={1}
+                >
+                  {bondfire.campLabel}
+                </Text>
+              </YStack>
+            ) : null}
           </XStack>
         </YStack>
       </XStack>
