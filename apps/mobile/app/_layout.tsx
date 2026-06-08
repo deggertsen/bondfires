@@ -207,7 +207,6 @@ function AppContent() {
     minRequiredVersion,
     updatePriority,
     startUpdate,
-    installUpdate,
   } = useForceUpdate()
 
   // Handle notification taps
@@ -317,7 +316,6 @@ function AppContent() {
                 downloading={downloading}
                 updateReady={updateReady}
                 onStartUpdate={startUpdate}
-                onInstallUpdate={installUpdate}
               />
             ) : updateCheckLoading ? null : null}
 

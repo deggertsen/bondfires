@@ -26,7 +26,7 @@ export const getUpdateConfig = query({
     return {
       minAppVersion: minVersionDoc?.value ?? null,
       // "flexible" = background download (Android), "immediate" = blocking modal
-      updatePriority: (updatePriorityDoc?.value as 'flexible' | 'immediate') ?? 'immediate',
+      updatePriority: updatePriorityDoc?.value === 'flexible' ? 'flexible' : 'immediate',
     }
   },
 })
@@ -56,6 +56,8 @@ export const setMinVersion = mutation({
     updatePriority: v.optional(v.union(v.literal('flexible'), v.literal('immediate'))),
   },
   handler: async (ctx, args) => {
+    const updatePriority = args.updatePriority ?? 'immediate'
+
     // Upsert minAppVersion
     const existing = await ctx.db
       .query('publicConfig')
@@ -76,28 +78,26 @@ export const setMinVersion = mutation({
       })
     }
 
-    // Upsert updatePriority if provided
-    if (args.updatePriority) {
-      const existingPriority = await ctx.db
-        .query('publicConfig')
-        .withIndex('by_key', (q) => q.eq('key', 'updatePriority'))
-        .first()
+    // Upsert updatePriority. The release script omits this arg, which should reset to immediate.
+    const existingPriority = await ctx.db
+      .query('publicConfig')
+      .withIndex('by_key', (q) => q.eq('key', 'updatePriority'))
+      .first()
 
-      if (existingPriority) {
-        await ctx.db.patch(existingPriority._id, {
-          value: args.updatePriority,
-          updatedAt: Date.now(),
-        })
-      } else {
-        await ctx.db.insert('publicConfig', {
-          key: 'updatePriority',
-          value: args.updatePriority,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        })
-      }
+    if (existingPriority) {
+      await ctx.db.patch(existingPriority._id, {
+        value: updatePriority,
+        updatedAt: Date.now(),
+      })
+    } else {
+      await ctx.db.insert('publicConfig', {
+        key: 'updatePriority',
+        value: updatePriority,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      })
     }
 
-    return { success: true, minAppVersion: args.version, updatePriority: args.updatePriority }
+    return { success: true, minAppVersion: args.version, updatePriority }
   },
 })

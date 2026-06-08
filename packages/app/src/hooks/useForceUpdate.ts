@@ -1,8 +1,9 @@
-import Constants from 'expo-constants'
-import { useEffect, useRef, useState } from 'react'
-import { Platform } from 'react-native'
-import ExpoInAppUpdates from 'expo-in-app-updates'
 import { useQuery } from 'convex/react'
+import Constants from 'expo-constants'
+import * as ExpoInAppUpdates from 'expo-in-app-updates'
+import * as Linking from 'expo-linking'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Platform } from 'react-native'
 import { api } from '../../../../convex/_generated/api'
 
 // ---------------------------------------------------------------------------
@@ -29,15 +30,14 @@ export interface ForceUpdateState {
 export interface InAppUpdateActions {
   /** Start a flexible update download (Android) or open the store (iOS). */
   startUpdate: () => Promise<void>
-  /** Install the downloaded flexible update and restart the app (Android only). */
-  installUpdate: () => Promise<void>
 }
 
 // ---------------------------------------------------------------------------
-// Store URLs (iOS fallback)
+// Store URLs (fallback)
 // ---------------------------------------------------------------------------
 
 const APP_STORE_URL = 'https://apps.apple.com/us/app/bondfires/id6755933598'
+const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=org.bondfires'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -56,6 +56,15 @@ function compareVersions(a: string, b: string): number {
   return 0
 }
 
+function getStoreUrl(): string {
+  if (Platform.OS === 'android') return PLAY_STORE_URL
+  return APP_STORE_URL
+}
+
+async function openPlatformStore(): Promise<void> {
+  await Linking.openURL(getStoreUrl())
+}
+
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
@@ -71,148 +80,166 @@ export function useForceUpdate(): ForceUpdateState & InAppUpdateActions {
   })
 
   const updateConfig = useQuery(api.publicConfig.getUpdateConfig)
-  const startedRef = useRef(false)
-  const checkRanRef = useRef(false)
+  const autoStartAttemptedRef = useRef(false)
 
   // ----------------------------------------------------------
   // Step 1: Check Convex remote config for min version
   // ----------------------------------------------------------
   useEffect(() => {
-    if (updateConfig === undefined || checkRanRef.current) return
-    checkRanRef.current = true
+    if (updateConfig === undefined) return
 
     const currentVersion = Constants.expoConfig?.version ?? '0.0.0'
-    const { minAppVersion, updatePriority } = updateConfig
+    const { minAppVersion } = updateConfig
+    const updatePriority: UpdatePriority =
+      updateConfig.updatePriority === 'flexible' ? 'flexible' : 'immediate'
+    const updateRequired = !!minAppVersion && compareVersions(currentVersion, minAppVersion) < 0
 
-    if (minAppVersion && compareVersions(currentVersion, minAppVersion) < 0) {
-      setState((s) => ({
-        ...s,
-        loading: false,
-        updateRequired: true,
-        minRequiredVersion: minAppVersion,
-        updatePriority,
-      }))
-    } else {
-      setState((s) => ({
-        ...s,
-        loading: false,
-        updateRequired: false,
-        minRequiredVersion: minAppVersion,
-        updatePriority,
-      }))
+    if (!updateRequired) {
+      autoStartAttemptedRef.current = false
     }
+
+    setState((s) => ({
+      ...s,
+      loading: false,
+      updateRequired,
+      downloading: updateRequired ? s.downloading : false,
+      updateReady: updateRequired ? s.updateReady : false,
+      minRequiredVersion: minAppVersion,
+      updatePriority,
+    }))
   }, [updateConfig])
 
   // ----------------------------------------------------------
-  // Step 2: On Android, try native check first for flexible mode
+  // Step 2: Track native in-app update events
   // ----------------------------------------------------------
   useEffect(() => {
-    if (!state.updateRequired || state.updatePriority !== 'flexible' || startedRef.current) return
-
-    // Only Android supports flexible in-app updates
     if (Platform.OS !== 'android') return
 
-    // Give the native module a moment, then attempt flexible update
-    const timer = setTimeout(async () => {
-      try {
-        const result = await ExpoInAppUpdates.checkForUpdate()
-        if (result.updateAvailable && result.flexibleAllowed) {
-          startedRef.current = true
-          setState((s) => ({ ...s, downloading: true }))
-          await ExpoInAppUpdates.startUpdate()
-          // On successful start, the Play Core UI handles progress.
-          // We check again to see if it was completed synchronously.
-          const checkAgain = await ExpoInAppUpdates.checkForUpdate()
-          if (!checkAgain.updateAvailable) {
-            // Update was applied — this shouldn't normally happen
-            // without a restart, but handle it gracefully
-            setState((s) => ({ ...s, downloading: false, updateReady: true }))
-          }
-        }
-      } catch (_err) {
-        // Flexible update failed — revert to immediate/fallback UI
-        setState((s) => ({ ...s, downloading: false }))
-      }
-    }, 500)
+    const removeStartListener = ExpoInAppUpdates.addUpdateListener('updateStart', (event) => {
+      setState((s) => ({
+        ...s,
+        downloading: event.updateType === 'FLEXIBLE',
+        updateReady: false,
+      }))
+    })
 
-    return () => clearTimeout(timer)
-  }, [state.updateRequired, state.updatePriority])
+    const removeDownloadedListener = ExpoInAppUpdates.addUpdateListener(
+      'updateDownloaded',
+      (event) => {
+        if (event.readyToInstall) {
+          setState((s) => ({ ...s, downloading: false, updateReady: true }))
+        }
+      },
+    )
+
+    const removeCompletedListener = ExpoInAppUpdates.addUpdateListener('updateCompleted', () => {
+      setState((s) => ({
+        ...s,
+        updateRequired: false,
+        downloading: false,
+        updateReady: false,
+      }))
+    })
+
+    const removeCancelledListener = ExpoInAppUpdates.addUpdateListener('updateCancelled', () => {
+      setState((s) => ({ ...s, downloading: false, updateReady: false }))
+    })
+
+    return () => {
+      removeStartListener()
+      removeDownloadedListener()
+      removeCompletedListener()
+      removeCancelledListener()
+    }
+  }, [])
 
   // ----------------------------------------------------------
   // Actions
   // ----------------------------------------------------------
 
-  const startUpdate = async () => {
+  const startUpdate = useCallback(async () => {
     if (Platform.OS === 'android') {
       try {
         const result = await ExpoInAppUpdates.checkForUpdate()
-        if (result.updateAvailable && result.flexibleAllowed) {
-          setState((s) => ({ ...s, downloading: true }))
-          await ExpoInAppUpdates.startUpdate()
-          // After startUpdate returns, the download is in progress.
-          // The Play Core library downloads in the background.
-          // We poll checkForUpdate to detect completion.
-          pollForCompletion()
-        } else if (result.updateAvailable && result.immediateAllowed) {
-          // Fallback to immediate update within the app
-          await ExpoInAppUpdates.startUpdate()
-        } else {
-          // Fallback to Play Store
-          const { Linking } = require('react-native')
-          Linking.openURL('https://play.google.com/store/apps/details?id=org.bondfires')
-        }
-      } catch (_err) {
-        // Fallback to store
-        const { Linking } = require('react-native')
-        Linking.openURL('https://play.google.com/store/apps/details?id=org.bondfires')
-      }
-    } else {
-      // iOS: open App Store via expo-in-app-updates
-      try {
-        await ExpoInAppUpdates.checkAndStartUpdate()
-      } catch (_err) {
-        const { Linking } = require('react-native')
-        Linking.openURL(APP_STORE_URL)
-      }
-    }
-  }
 
-  const pollForCompletion = async () => {
-    // Poll for flexible update download completion
-    const maxPolls = 60 // ~2 minutes at 2s intervals
-    for (let i = 0; i < maxPolls; i++) {
-      await new Promise((r) => setTimeout(r, 2000))
-      try {
-        const result = await ExpoInAppUpdates.checkForUpdate()
-        // When flexible update downloads, updateAvailable becomes false
-        // and the app needs a restart to apply
-        if (result.updateAvailable === false && state.downloading) {
-          setState((s) => ({ ...s, downloading: false, updateReady: true }))
+        if (!result.updateAvailable) {
+          await openPlatformStore()
           return
         }
-      } catch (_e) {
-        // Continue polling
+
+        if (state.updatePriority === 'flexible' && result.flexibleAllowed) {
+          setState((s) => ({ ...s, downloading: true }))
+          const started = await ExpoInAppUpdates.startUpdate(false)
+          if (started) return
+          setState((s) => ({ ...s, downloading: false }))
+        }
+
+        if (result.immediateAllowed) {
+          const started = await ExpoInAppUpdates.startUpdate(true)
+          if (started) return
+        }
+
+        await openPlatformStore()
+      } catch (_err) {
+        setState((s) => ({ ...s, downloading: false }))
+        await openPlatformStore().catch(() => {
+          // Store fallback failed; keep the force-update UI visible for retry.
+        })
       }
+      return
     }
-    // Timeout — assume it completed
-    setState((s) => ({ ...s, downloading: false, updateReady: true }))
-  }
 
-  const installUpdate = async () => {
-    if (Platform.OS !== 'android') return
-    // Restart the app to apply the downloaded update
-    const { NativeModules } = require('react-native')
-    const { RNAppRestart } = NativeModules
-    // The Play Core library applies the update on restart.
-    // expo-updates or a simple process restart handles this.
-    if (RNAppRestart) {
-      RNAppRestart.restartApp()
-    } else {
-      // Fallback: kill the process — Android will restart the activity
-      const { BackHandler } = require('react-native')
-      BackHandler.exitApp()
+    try {
+      const started = await ExpoInAppUpdates.startUpdate()
+      if (!started) {
+        await openPlatformStore()
+      }
+    } catch (_err) {
+      await openPlatformStore().catch(() => {
+        // Store fallback failed; keep the force-update UI visible for retry.
+      })
     }
-  }
+  }, [state.updatePriority])
 
-  return { ...state, startUpdate, installUpdate }
+  // ----------------------------------------------------------
+  // Step 3: Automatically start Android flexible updates once
+  // ----------------------------------------------------------
+  useEffect(() => {
+    if (
+      Platform.OS !== 'android' ||
+      !state.updateRequired ||
+      state.updatePriority !== 'flexible' ||
+      state.downloading ||
+      state.updateReady ||
+      autoStartAttemptedRef.current
+    ) {
+      return
+    }
+
+    autoStartAttemptedRef.current = true
+    const timer = setTimeout(() => {
+      startUpdate().catch(() => {
+        setState((s) => ({ ...s, downloading: false }))
+      })
+    }, 500)
+
+    return () => clearTimeout(timer)
+  }, [
+    startUpdate,
+    state.downloading,
+    state.updatePriority,
+    state.updateReady,
+    state.updateRequired,
+  ])
+
+  return { ...state, startUpdate }
+}
+
+/**
+ * Opens the app store listing for the current platform.
+ */
+export function openAppStore(): void {
+  openPlatformStore().catch(() => {
+    // Fallback failed; nothing more we can do from this fire-and-forget helper.
+  })
 }
