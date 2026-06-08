@@ -4,8 +4,8 @@ import {
   parseError,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
+  useAppThemeColors,
 } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
 import {
   ArrowLeft,
@@ -98,11 +98,11 @@ function RulePill({ label }: { label: string }) {
       paddingHorizontal={10}
       paddingVertical={6}
       borderRadius={999}
-      backgroundColor={bondfireColors.gunmetal}
+      backgroundColor={'$backgroundHover'}
       borderWidth={1}
-      borderColor={bondfireColors.iron}
+      borderColor={'$borderColor'}
     >
-      <Text fontSize={12} color={bondfireColors.whiteSmoke} fontWeight="800">
+      <Text fontSize={12} color={'$color'} fontWeight="800">
         {label}
       </Text>
     </YStack>
@@ -129,9 +129,9 @@ function getFirstVisitBanner(camp: Doc<'camps'>) {
 }
 
 function getRoleBadgeColor(role: string) {
-  if (role === 'owner') return bondfireColors.moltenGold
-  if (role === 'moderator') return bondfireColors.warning
-  return bondfireColors.ash
+  if (role === 'owner') return '$secondary'
+  if (role === 'moderator') return '$warning'
+  return '$placeholderColor'
 }
 
 function MemberRow({
@@ -154,24 +154,24 @@ function MemberRow({
       alignItems="center"
       gap={12}
       borderBottomWidth={1}
-      borderBottomColor={`${bondfireColors.iron}40`}
+      borderBottomColor={'rgba(51, 53, 58, 0.25)'}
     >
       <YStack
         width={40}
         height={40}
         borderRadius={20}
-        backgroundColor={bondfireColors.gunmetal}
+        backgroundColor={'$backgroundHover'}
         borderWidth={1}
-        borderColor={bondfireColors.iron}
+        borderColor={'$borderColor'}
         alignItems="center"
         justifyContent="center"
       >
         {member.role === 'owner' ? (
-          <Shield size={18} color={bondfireColors.moltenGold} />
+          <Shield size={18} color={'$secondary'} />
         ) : member.role === 'moderator' ? (
-          <Shield size={18} color={bondfireColors.warning} />
+          <Shield size={18} color={'$warning'} />
         ) : null}
-        {member.role === 'member' ? <Flame size={16} color={bondfireColors.ash} /> : null}
+        {member.role === 'member' ? <Flame size={16} color={'$placeholderColor'} /> : null}
       </YStack>
 
       <YStack flex={1} gap={2}>
@@ -191,7 +191,7 @@ function MemberRow({
               {member.role}
             </Text>
           </YStack>
-          <Text fontSize={11} color={bondfireColors.ash}>
+          <Text fontSize={11} color={'$placeholderColor'}>
             {getTimeAgo(member.joinedAt)}
           </Text>
         </XStack>
@@ -204,13 +204,13 @@ function MemberRow({
               width={36}
               height={36}
               borderRadius={18}
-              backgroundColor={bondfireColors.gunmetal}
+              backgroundColor={'$backgroundHover'}
               borderWidth={1}
-              borderColor={bondfireColors.error}
+              borderColor={'$error'}
               alignItems="center"
               justifyContent="center"
             >
-              <UserX size={16} color={bondfireColors.error} />
+              <UserX size={16} color={'$error'} />
             </YStack>
           </Pressable>
           <Pressable onPress={() => onBan(member)}>
@@ -218,13 +218,13 @@ function MemberRow({
               width={36}
               height={36}
               borderRadius={18}
-              backgroundColor={bondfireColors.gunmetal}
+              backgroundColor={'$backgroundHover'}
               borderWidth={1}
-              borderColor={bondfireColors.warning}
+              borderColor={'$warning'}
               alignItems="center"
               justifyContent="center"
             >
-              <Ban size={16} color={bondfireColors.warning} />
+              <Ban size={16} color={'$warning'} />
             </YStack>
           </Pressable>
         </XStack>
@@ -295,7 +295,7 @@ function CampHeader({
   const cooldownEndDate = rejectedAt != null ? new Date(rejectedAt + REJECTION_COOLDOWN_MS) : null
 
   const canJoin = !isActiveMember && !isPending && !isInCooldown && camp.access !== 'invite'
-  const accentColor = camp.accentColor ?? bondfireColors.bondfireCopper
+  const accentColor = camp.accentColor ?? '$primary'
   const coverImageUrl = camp.coverImageUrl
 
   return (
@@ -314,38 +314,38 @@ function CampHeader({
             left={0}
             right={0}
             height={60}
-            backgroundColor={`${bondfireColors.obsidian}CC`}
+            backgroundColor={'rgba(20, 20, 22, 0.8)'}
           />
         </YStack>
       ) : null}
       {isFrozen ? (
         <YStack
-          backgroundColor={`${bondfireColors.warning}20`}
-          borderColor={bondfireColors.warning}
+          backgroundColor={'rgba(245, 158, 11, 0.13)'}
+          borderColor={'$warning'}
           borderWidth={1}
           borderRadius={12}
           padding={12}
         >
-          <Text color={bondfireColors.warning} fontSize={14} fontWeight="600">
+          <Text color={'$warning'} fontSize={14} fontWeight="600">
             🔒 This camp is frozen
           </Text>
-          <Text color={bondfireColors.ash} fontSize={12} marginTop={4}>
+          <Text color={'$placeholderColor'} fontSize={12} marginTop={4}>
             No new videos can be created here. Upgrade to manage this camp.
           </Text>
         </YStack>
       ) : null}
       {isArchived ? (
         <YStack
-          backgroundColor={`${bondfireColors.error}20`}
-          borderColor={bondfireColors.error}
+          backgroundColor={'rgba(239, 68, 68, 0.13)'}
+          borderColor={'$error'}
           borderWidth={1}
           borderRadius={12}
           padding={12}
         >
-          <Text color={bondfireColors.error} fontSize={14} fontWeight="600">
+          <Text color={'$error'} fontSize={14} fontWeight="600">
             📦 This camp has been archived
           </Text>
-          <Text color={bondfireColors.ash} fontSize={12} marginTop={4}>
+          <Text color={'$placeholderColor'} fontSize={12} marginTop={4}>
             This camp is read-only. Content will be permanently deleted 30 days after archival.
           </Text>
         </YStack>
@@ -358,11 +358,11 @@ function CampHeader({
             borderRadius={21}
             alignItems="center"
             justifyContent="center"
-            backgroundColor={bondfireColors.gunmetal}
+            backgroundColor={'$backgroundHover'}
             borderWidth={1}
-            borderColor={bondfireColors.iron}
+            borderColor={'$borderColor'}
           >
-            <ArrowLeft size={22} color={bondfireColors.whiteSmoke} />
+            <ArrowLeft size={22} color={'$color'} />
           </YStack>
         </Pressable>
 
@@ -374,14 +374,14 @@ function CampHeader({
               borderRadius={21}
               alignItems="center"
               justifyContent="center"
-              backgroundColor={bondfireColors.gunmetal}
+              backgroundColor={'$backgroundHover'}
               borderWidth={1}
-              borderColor={muted ? bondfireColors.warning : bondfireColors.iron}
+              borderColor={muted ? '$warning' : '$borderColor'}
             >
               {muted ? (
-                <BellOff size={20} color={bondfireColors.warning} />
+                <BellOff size={20} color={'$warning'} />
               ) : (
-                <Bell size={20} color={bondfireColors.whiteSmoke} />
+                <Bell size={20} color={'$color'} />
               )}
             </YStack>
           </Pressable>
@@ -393,14 +393,14 @@ function CampHeader({
           width={72}
           height={72}
           borderRadius={20}
-          backgroundColor={camp.color ?? bondfireColors.gunmetal}
+          backgroundColor={camp.color ?? '$backgroundHover'}
           alignItems="center"
           justifyContent="center"
         >
           {camp.access === 'invite' ? (
-            <Lock size={32} color={bondfireColors.whiteSmoke} />
+            <Lock size={32} color={'$color'} />
           ) : (
-            <Flame size={36} color={bondfireColors.whiteSmoke} />
+            <Flame size={36} color={'$color'} />
           )}
         </YStack>
 
@@ -408,13 +408,13 @@ function CampHeader({
           <Text fontSize={26} fontWeight="900" numberOfLines={2}>
             {camp.name}
           </Text>
-          <Text fontSize={14} color={bondfireColors.ash}>
+          <Text fontSize={14} color={'$placeholderColor'}>
             {camp.theme ?? getAccessLabel(camp)}
           </Text>
         </YStack>
       </XStack>
 
-      <Text fontSize={15} color={bondfireColors.whiteSmoke} lineHeight={22}>
+      <Text fontSize={15} color={'$color'} lineHeight={22}>
         {camp.purpose}
       </Text>
 
@@ -422,15 +422,15 @@ function CampHeader({
         <YStack
           padding={14}
           borderRadius={16}
-          backgroundColor={bondfireColors.charcoal}
+          backgroundColor={'$backgroundPress'}
           borderWidth={1}
-          borderColor={camp.color ?? bondfireColors.iron}
+          borderColor={camp.color ?? '$borderColor'}
           gap={6}
         >
-          <Text fontSize={12} color={bondfireColors.moltenGold} fontWeight="900">
+          <Text fontSize={12} color={'$secondary'} fontWeight="900">
             {firstVisitBanner.title}
           </Text>
-          <Text fontSize={14} color={bondfireColors.whiteSmoke} lineHeight={20}>
+          <Text fontSize={14} color={'$color'} lineHeight={20}>
             {firstVisitBanner.body}
           </Text>
         </YStack>
@@ -456,15 +456,15 @@ function CampHeader({
         <YStack
           padding={14}
           borderRadius={16}
-          backgroundColor={bondfireColors.gunmetal}
+          backgroundColor={'$backgroundHover'}
           borderWidth={1}
-          borderColor={bondfireColors.iron}
+          borderColor={'$borderColor'}
           gap={6}
         >
-          <Text fontSize={12} color={bondfireColors.ash} fontWeight="900">
+          <Text fontSize={12} color={'$placeholderColor'} fontWeight="900">
             Prompt
           </Text>
-          <Text fontSize={15} color={bondfireColors.whiteSmoke} lineHeight={21}>
+          <Text fontSize={15} color={'$color'} lineHeight={21}>
             {camp.defaultPrompt}
           </Text>
         </YStack>
@@ -474,15 +474,15 @@ function CampHeader({
         <YStack gap={10}>
           {camp.access !== 'invite' || isOwner ? (
             <Button variant="primary" size="$lg" onPress={onSpark} backgroundColor={accentColor}>
-              <Flame size={20} color={bondfireColors.whiteSmoke} />
-              <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+              <Flame size={20} color={'$color'} />
+              <Text color={'$color'} fontWeight="900">
                 Spark Here
               </Text>
             </Button>
           ) : null}
           {isOwner && camp.access === 'invite' ? (
             <Button variant="outline" size="$lg" onPress={onCreateInvite}>
-              <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+              <Text color={'$color'} fontWeight="900">
                 Create Invite Code
               </Text>
             </Button>
@@ -492,7 +492,7 @@ function CampHeader({
 
       {!isArchived && canJoin ? (
         <Button variant="primary" size="$lg" onPress={onJoin}>
-          <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+          <Text color={'$color'} fontWeight="900">
             {cooldownExpired
               ? 'Request to Join Again'
               : camp.access === 'approval'
@@ -506,11 +506,11 @@ function CampHeader({
         <YStack
           padding={12}
           borderRadius={14}
-          backgroundColor={bondfireColors.gunmetal}
+          backgroundColor={'$backgroundHover'}
           borderWidth={1}
-          borderColor={bondfireColors.warning}
+          borderColor={'$warning'}
         >
-          <Text color={bondfireColors.warning} fontWeight="900" textAlign="center">
+          <Text color={'$warning'} fontWeight="900" textAlign="center">
             Request pending — awaiting camp owner approval
           </Text>
         </YStack>
@@ -520,11 +520,11 @@ function CampHeader({
         <YStack
           padding={12}
           borderRadius={14}
-          backgroundColor={bondfireColors.gunmetal}
+          backgroundColor={'$backgroundHover'}
           borderWidth={1}
-          borderColor={bondfireColors.error}
+          borderColor={'$error'}
         >
-          <Text color={bondfireColors.error} fontWeight="900" textAlign="center">
+          <Text color={'$error'} fontWeight="900" textAlign="center">
             Request denied — you can try again on{' '}
             {cooldownEndDate?.toLocaleDateString('en-US', {
               year: 'numeric',
@@ -538,7 +538,7 @@ function CampHeader({
       {/* Owner: Pending access request queue */}
       {isOwner && pendingRequests.length > 0 ? (
         <YStack gap={12}>
-          <Text fontSize={14} color={bondfireColors.moltenGold} fontWeight="900">
+          <Text fontSize={14} color={'$secondary'} fontWeight="900">
             Pending Requests ({pendingRequests.length})
           </Text>
           {pendingRequests.map((req) => (
@@ -546,9 +546,9 @@ function CampHeader({
               key={req.membershipId}
               padding={14}
               borderRadius={14}
-              backgroundColor={bondfireColors.gunmetal}
+              backgroundColor={'$backgroundHover'}
               borderWidth={1}
-              borderColor={bondfireColors.iron}
+              borderColor={'$borderColor'}
               gap={10}
             >
               <XStack alignItems="center" justifyContent="space-between" gap={10}>
@@ -556,18 +556,18 @@ function CampHeader({
                   <Text fontSize={15} fontWeight="900">
                     {req.displayName || req.userName}
                   </Text>
-                  <Text fontSize={12} color={bondfireColors.ash}>
+                  <Text fontSize={12} color={'$placeholderColor'}>
                     {getTimeAgo(req.requestedAt)}
                   </Text>
                 </YStack>
                 <XStack gap={8}>
                   <Button variant="outline" size="$sm" onPress={() => onReject(req.membershipId)}>
-                    <Text color={bondfireColors.error} fontWeight="900">
+                    <Text color={'$error'} fontWeight="900">
                       Deny
                     </Text>
                   </Button>
                   <Button variant="primary" size="$sm" onPress={() => onApprove(req.membershipId)}>
-                    <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+                    <Text color={'$color'} fontWeight="900">
                       Approve
                     </Text>
                   </Button>
@@ -581,14 +581,14 @@ function CampHeader({
       {/* Manager: Member management section */}
       {isManager && members !== undefined ? (
         <YStack gap={12}>
-          <Text fontSize={14} color={bondfireColors.moltenGold} fontWeight="900">
+          <Text fontSize={14} color={'$secondary'} fontWeight="900">
             Members ({members.length})
           </Text>
           <YStack
             borderRadius={14}
-            backgroundColor={bondfireColors.gunmetal}
+            backgroundColor={'$backgroundHover'}
             borderWidth={1}
-            borderColor={bondfireColors.iron}
+            borderColor={'$borderColor'}
             overflow="hidden"
           >
             {members.map((member) => (
@@ -609,22 +609,22 @@ function CampHeader({
         <YStack gap={8}>
           <Pressable onPress={() => setBannedExpanded(!bannedExpanded)}>
             <XStack alignItems="center" gap={6}>
-              <Text fontSize={13} color={bondfireColors.error} fontWeight="900">
+              <Text fontSize={13} color={'$error'} fontWeight="900">
                 Banned Members ({bannedMembers.length})
               </Text>
               {bannedExpanded ? (
-                <ChevronUp size={14} color={bondfireColors.error} />
+                <ChevronUp size={14} color={'$error'} />
               ) : (
-                <ChevronDown size={14} color={bondfireColors.error} />
+                <ChevronDown size={14} color={'$error'} />
               )}
             </XStack>
           </Pressable>
           {bannedExpanded ? (
             <YStack
               borderRadius={14}
-              backgroundColor={bondfireColors.gunmetal}
+              backgroundColor={'$backgroundHover'}
               borderWidth={1}
-              borderColor={`${bondfireColors.error}40`}
+              borderColor={'rgba(239, 68, 68, 0.25)'}
               overflow="hidden"
             >
               {bannedMembers.map((banned) => (
@@ -634,7 +634,7 @@ function CampHeader({
                   paddingVertical={12}
                   gap={6}
                   borderBottomWidth={1}
-                  borderBottomColor={`${bondfireColors.iron}40`}
+                  borderBottomColor={'rgba(51, 53, 58, 0.25)'}
                 >
                   <XStack alignItems="center" justifyContent="space-between">
                     <YStack flex={1} gap={2}>
@@ -642,11 +642,11 @@ function CampHeader({
                         {banned.displayName || banned.name || 'Unknown'}
                       </Text>
                       {banned.moderationReason ? (
-                        <Text fontSize={12} color={bondfireColors.ash} numberOfLines={2}>
+                        <Text fontSize={12} color={'$placeholderColor'} numberOfLines={2}>
                           Reason: {banned.moderationReason}
                         </Text>
                       ) : null}
-                      <Text fontSize={11} color={bondfireColors.ash}>
+                      <Text fontSize={11} color={'$placeholderColor'}>
                         Banned {getTimeAgo(banned.updatedAt)}
                       </Text>
                     </YStack>
@@ -656,15 +656,11 @@ function CampHeader({
                           paddingHorizontal={12}
                           paddingVertical={6}
                           borderRadius={10}
-                          backgroundColor={bondfireColors.gunmetal}
+                          backgroundColor={'$backgroundHover'}
                           borderWidth={1}
-                          borderColor={bondfireColors.bondfireCopper}
+                          borderColor={'$primary'}
                         >
-                          <Text
-                            fontSize={12}
-                            color={bondfireColors.bondfireCopper}
-                            fontWeight="900"
-                          >
+                          <Text fontSize={12} color={'$primary'} fontWeight="900">
                             Unban
                           </Text>
                         </YStack>
@@ -675,7 +671,7 @@ function CampHeader({
               ))}
               {bannedMembers.length === 0 ? (
                 <YStack padding={16} alignItems="center">
-                  <Text fontSize={13} color={bondfireColors.ash}>
+                  <Text fontSize={13} color={'$placeholderColor'}>
                     No banned members
                   </Text>
                 </YStack>
@@ -689,11 +685,11 @@ function CampHeader({
       {isOwner && !isArchived ? (
         <YStack paddingTop={8}>
           <Button variant="outline" size="$lg" onPress={onArchive}>
-            <Text color={bondfireColors.error} fontWeight="900">
+            <Text color={'$error'} fontWeight="900">
               Archive Camp
             </Text>
           </Button>
-          <Text fontSize={11} color={bondfireColors.ash} marginTop={4} textAlign="center">
+          <Text fontSize={11} color={'$placeholderColor'} marginTop={4} textAlign="center">
             Archiving makes the camp read-only. Content will be permanently deleted after 30 days.
           </Text>
         </YStack>
@@ -712,27 +708,27 @@ function BondfireRow({ bondfire, onOpen }: { bondfire: BondfireData; onOpen: () 
           width={50}
           height={50}
           borderRadius={15}
-          backgroundColor={bondfireColors.gunmetal}
+          backgroundColor={'$backgroundHover'}
           borderWidth={1}
-          borderColor={bondfireColors.iron}
+          borderColor={'$borderColor'}
           alignItems="center"
           justifyContent="center"
         >
-          <Flame size={24} color={bondfireColors.bondfireCopper} />
+          <Flame size={24} color={'$primary'} />
         </YStack>
 
         <YStack flex={1} gap={4}>
           <Text fontSize={16} fontWeight="900" numberOfLines={1}>
             {bondfire.creatorName ?? 'Anonymous'}
           </Text>
-          <Text fontSize={12} color={bondfireColors.ash}>
+          <Text fontSize={12} color={'$placeholderColor'}>
             {bondfire.videoStatus === 'live' ? 'Live now' : getTimeAgo(bondfire.createdAt)}
           </Text>
         </YStack>
 
         <XStack alignItems="center" gap={6}>
-          <MessageCircle size={15} color={bondfireColors.ash} />
-          <Text fontSize={13} color={bondfireColors.ash}>
+          <MessageCircle size={15} color={'$placeholderColor'} />
+          <Text fontSize={13} color={'$placeholderColor'}>
             {responses}
           </Text>
         </XStack>
@@ -742,6 +738,7 @@ function BondfireRow({ bondfire, onOpen }: { bondfire: BondfireData; onOpen: () 
 }
 
 export default function CampDetailScreen() {
+  const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const { id } = useLocalSearchParams<{ id?: string }>()
   const campId = id as Id<'camps'> | undefined
@@ -935,15 +932,10 @@ export default function CampDetailScreen() {
 
   if (camp === undefined || bondfires === undefined) {
     return (
-      <YStack
-        flex={1}
-        backgroundColor={bondfireColors.obsidian}
-        alignItems="center"
-        justifyContent="center"
-      >
-        <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-        <Spinner size="large" color={bondfireColors.bondfireCopper} />
-        <Text marginTop={18} color={bondfireColors.ash}>
+      <YStack flex={1} backgroundColor={'$background'} alignItems="center" justifyContent="center">
+        <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
+        <Spinner size="large" color={'$primary'} />
+        <Text marginTop={18} color={'$placeholderColor'}>
           Loading camp...
         </Text>
       </YStack>
@@ -954,7 +946,7 @@ export default function CampDetailScreen() {
     return (
       <YStack
         flex={1}
-        backgroundColor={bondfireColors.obsidian}
+        backgroundColor={'$background'}
         padding={24}
         justifyContent="center"
         gap={16}
@@ -963,7 +955,7 @@ export default function CampDetailScreen() {
           Camp unavailable
         </Text>
         <Button variant="primary" size="$lg" onPress={() => router.back()}>
-          <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+          <Text color={'$color'} fontWeight="900">
             Go Back
           </Text>
         </Button>
@@ -972,8 +964,8 @@ export default function CampDetailScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
-      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+    <YStack flex={1} backgroundColor={'$background'}>
+      <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
       <FlatList
         data={bondfires ?? []}
         keyExtractor={(item) => item._id}
@@ -981,7 +973,7 @@ export default function CampDetailScreen() {
           <BondfireRow bondfire={item} onOpen={() => handleOpenBondfire(item._id)} />
         )}
         ItemSeparatorComponent={() => (
-          <Separator borderColor={bondfireColors.iron} opacity={0.6} marginHorizontal={16} />
+          <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
         )}
         ListHeaderComponent={
           <>
@@ -1008,11 +1000,11 @@ export default function CampDetailScreen() {
         }
         ListEmptyComponent={
           <YStack paddingVertical={64} paddingHorizontal={32} alignItems="center" gap={12}>
-            <Flame size={54} color={bondfireColors.bondfireCopper} />
+            <Flame size={54} color={'$primary'} />
             <Text fontSize={19} fontWeight="900" textAlign="center">
               No Bondfires yet
             </Text>
-            <Text fontSize={14} color={bondfireColors.ash} textAlign="center" lineHeight={21}>
+            <Text fontSize={14} color={'$placeholderColor'} textAlign="center" lineHeight={21}>
               This camp is ready. The first spark will set the tone.
             </Text>
           </YStack>
@@ -1035,7 +1027,7 @@ export default function CampDetailScreen() {
           padding={24}
         >
           <YStack
-            backgroundColor={bondfireColors.charcoal}
+            backgroundColor={'$backgroundPress'}
             borderRadius={16}
             padding={20}
             gap={16}
@@ -1046,7 +1038,7 @@ export default function CampDetailScreen() {
               <Text fontSize={18} fontWeight="900">
                 Ban Member
               </Text>
-              <Text fontSize={14} color={bondfireColors.ash}>
+              <Text fontSize={14} color={'$placeholderColor'}>
                 {banReasonModalMember
                   ? `Ban ${banReasonModalMember.displayName || banReasonModalMember.name || 'this member'} from this camp?`
                   : ''}
@@ -1055,17 +1047,17 @@ export default function CampDetailScreen() {
 
             <TextInput
               style={{
-                backgroundColor: bondfireColors.gunmetal,
+                backgroundColor: colors.backgroundHover,
                 borderWidth: 1,
-                borderColor: bondfireColors.iron,
+                borderColor: colors.borderColor,
                 borderRadius: 10,
                 paddingHorizontal: 14,
                 paddingVertical: 12,
-                color: bondfireColors.whiteSmoke,
+                color: colors.color,
                 fontSize: 15,
               }}
               placeholder="Reason (optional)"
-              placeholderTextColor={bondfireColors.ash}
+              placeholderTextColor={colors.placeholderColor}
               value={banReason}
               onChangeText={setBanReason}
               maxLength={500}
@@ -1079,12 +1071,12 @@ export default function CampDetailScreen() {
                 size="$lg"
                 onPress={() => setBanReasonModalMember(null)}
               >
-                <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+                <Text color={'$color'} fontWeight="900">
                   Cancel
                 </Text>
               </Button>
               <Button variant="primary" flex={1} size="$lg" onPress={handleConfirmBan}>
-                <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+                <Text color={'$color'} fontWeight="900">
                   Ban
                 </Text>
               </Button>
@@ -1108,7 +1100,7 @@ export default function CampDetailScreen() {
           padding={24}
         >
           <YStack
-            backgroundColor={bondfireColors.charcoal}
+            backgroundColor={'$backgroundPress'}
             borderRadius={16}
             padding={20}
             gap={16}
@@ -1119,7 +1111,7 @@ export default function CampDetailScreen() {
               <Text fontSize={18} fontWeight="900">
                 Archive Camp
               </Text>
-              <Text fontSize={14} color={bondfireColors.ash} lineHeight={20}>
+              <Text fontSize={14} color={'$placeholderColor'} lineHeight={20}>
                 Archiving this camp will make it read-only for all members. After 30 days, all
                 content will be permanently deleted. This cannot be undone.
               </Text>
@@ -1127,17 +1119,17 @@ export default function CampDetailScreen() {
 
             <TextInput
               style={{
-                backgroundColor: bondfireColors.gunmetal,
+                backgroundColor: colors.backgroundHover,
                 borderWidth: 1,
-                borderColor: bondfireColors.iron,
+                borderColor: colors.borderColor,
                 borderRadius: 10,
                 paddingHorizontal: 14,
                 paddingVertical: 12,
-                color: bondfireColors.whiteSmoke,
+                color: colors.color,
                 fontSize: 15,
               }}
               placeholder='Type "Archive Camp" to confirm'
-              placeholderTextColor={bondfireColors.ash}
+              placeholderTextColor={colors.placeholderColor}
               value={archiveConfirmText}
               onChangeText={setArchiveConfirmText}
               autoCapitalize="none"
@@ -1150,7 +1142,7 @@ export default function CampDetailScreen() {
                 size="$lg"
                 onPress={() => setIsArchiveModalOpen(false)}
               >
-                <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+                <Text color={'$color'} fontWeight="900">
                   Cancel
                 </Text>
               </Button>
@@ -1161,7 +1153,7 @@ export default function CampDetailScreen() {
                 disabled={archiveConfirmText.trim() !== 'Archive Camp'}
                 onPress={handleConfirmArchive}
               >
-                <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+                <Text color={'$color'} fontWeight="900">
                   Archive
                 </Text>
               </Button>

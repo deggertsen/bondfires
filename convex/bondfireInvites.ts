@@ -1,8 +1,7 @@
 import { v } from 'convex/values'
-import type { Id } from './_generated/dataModel'
-import type { Doc } from './_generated/dataModel'
-import { internalAction, mutation, query } from './_generated/server'
 import { internal } from './_generated/api'
+import type { Doc, Id } from './_generated/dataModel'
+import { internalAction, mutation, query } from './_generated/server'
 import { auth } from './auth'
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -138,16 +137,15 @@ export const sendBondfireInvite = mutation({
     let hasCampPermission = false
 
     if (bondfire.campId) {
+      const campId = bondfire.campId
       const membership = await ctx.db
         .query('campMembers')
-        .withIndex('by_user_camp', (q) =>
-          q.eq('userId', userId).eq('campId', bondfire.campId!),
-        )
+        .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', campId))
         .unique()
 
       // Allow invite if user is owner, moderator, or the camp is public (all members can invite)
       if (membership) {
-        const camp = await ctx.db.get(bondfire.campId)
+        const camp = await ctx.db.get(campId)
         hasCampPermission =
           membership.role === 'owner' ||
           membership.role === 'moderator' ||
@@ -249,7 +247,8 @@ export const canAccessBondfire = query({
       return { needsCampJoin: false, campId: null }
     }
 
-    const camp = await ctx.db.get(bondfire.campId)
+    const campId = bondfire.campId
+    const camp = await ctx.db.get(campId)
     if (!camp) return null
 
     if (!userId) {
@@ -261,9 +260,7 @@ export const canAccessBondfire = query({
 
     const membership = await ctx.db
       .query('campMembers')
-      .withIndex('by_user_camp', (q) =>
-        q.eq('userId', userId).eq('campId', bondfire.campId!),
-      )
+      .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', campId))
       .unique()
 
     if (membership && membership.status === 'active') {

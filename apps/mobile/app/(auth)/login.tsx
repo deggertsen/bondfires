@@ -1,5 +1,4 @@
-import { telemetry } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
+import { telemetry, useSystemThemeColors } from '@bondfires/app'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
@@ -14,6 +13,7 @@ import { api } from '../../../../convex/_generated/api'
 import { resolveAuthRedirect, routes } from '../../lib/routes'
 
 export default function LoginScreen() {
+  const { colors, statusBarStyle } = useSystemThemeColors()
   const router = useRouter()
   const { redirectTo } = useLocalSearchParams<{ redirectTo?: string }>()
   const { signIn } = useAuthActions()
@@ -126,8 +126,8 @@ export default function LoginScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
-      <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+    <YStack flex={1} backgroundColor={colors.background}>
+      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
       <KeyboardAwareScrollView
         contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
         keyboardShouldPersistTaps="handled"
@@ -140,19 +140,19 @@ export default function LoginScreen() {
               width={80}
               height={80}
               borderRadius={40}
-              backgroundColor={bondfireColors.gunmetal}
+              backgroundColor={'$backgroundHover'}
               alignItems="center"
               justifyContent="center"
               borderWidth={2}
-              borderColor={bondfireColors.bondfireCopper}
+              borderColor={'$primary'}
             >
-              <Flame size={40} color={bondfireColors.bondfireCopper} />
+              <Flame size={40} color={'$primary'} />
             </YStack>
             <YStack alignItems="center" gap={8}>
               <Text fontSize={28} fontWeight="700">
                 Welcome back
               </Text>
-              <Text fontSize={15} color={bondfireColors.ash}>
+              <Text fontSize={15} color={'$placeholderColor'}>
                 Sign in to continue to Bondfires
               </Text>
             </YStack>
@@ -161,7 +161,7 @@ export default function LoginScreen() {
           {/* Form */}
           <YStack gap={20}>
             <YStack gap={8}>
-              <Text variant="label" color={bondfireColors.whiteSmoke}>
+              <Text variant="label" color={'$color'}>
                 Email
               </Text>
               <Input
@@ -176,7 +176,7 @@ export default function LoginScreen() {
             </YStack>
 
             <YStack gap={8}>
-              <Text variant="label" color={bondfireColors.whiteSmoke}>
+              <Text variant="label" color={'$color'}>
                 Password
               </Text>
               <Input
@@ -190,7 +190,7 @@ export default function LoginScreen() {
             </YStack>
 
             {error && (
-              <Text color={bondfireColors.error} fontSize={14}>
+              <Text color={'$error'} fontSize={14}>
                 {error}
               </Text>
             )}
@@ -208,11 +208,7 @@ export default function LoginScreen() {
           {/* Actions */}
           <YStack gap={12}>
             <Button variant="primary" size="$lg" onPress={handleLogin} disabled={isLoading}>
-              {isLoading ? (
-                <Spinner color={bondfireColors.whiteSmoke} />
-              ) : (
-                <Text color={bondfireColors.whiteSmoke}>Sign In</Text>
-              )}
+              {isLoading ? <Spinner color={'$color'} /> : <Text color={'$color'}>Sign In</Text>}
             </Button>
 
             <Button variant="outline" size="$md" onPress={() => router.push(routes.signup)}>

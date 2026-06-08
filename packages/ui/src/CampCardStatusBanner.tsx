@@ -1,4 +1,3 @@
-import { bondfireColors } from '@bondfires/config'
 import { YStack } from 'tamagui'
 import { Text } from './Text'
 
@@ -9,14 +8,14 @@ function getBannerConfig(variant: BannerVariant) {
     case 'pending':
       return {
         label: 'Awaiting Approval',
-        bgColor: bondfireColors.warning,
-        textColor: bondfireColors.obsidian,
+        bgColor: '$warning',
+        textColor: '$background',
       }
     case 'rejected':
       return {
         label: 'Request Denied',
-        bgColor: bondfireColors.error,
-        textColor: bondfireColors.whiteSmoke,
+        bgColor: '$error',
+        textColor: '$color',
       }
   }
 }

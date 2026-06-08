@@ -1,4 +1,4 @@
-import { bondfireColors } from '@bondfires/config'
+import { useSystemThemeColors } from '@bondfires/app'
 import { Button, Text } from '@bondfires/ui'
 import { ArrowLeft, Flame } from '@tamagui/lucide-icons'
 import type { Href } from 'expo-router'
@@ -34,6 +34,7 @@ export function InviteRedemptionScreen({
   successText,
   fallbackErrorText,
 }: InviteRedemptionScreenProps) {
+  const { statusBarStyle } = useSystemThemeColors()
   const router = useRouter()
   const code = normalizeCode(codeParam)
   const [status, setStatus] = useState<RedemptionStatus>('loading')
@@ -77,8 +78,8 @@ export function InviteRedemptionScreen({
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <YStack flex={1} backgroundColor={bondfireColors.charcoal}>
-        <StatusBar barStyle="light-content" />
+      <YStack flex={1} backgroundColor={'$backgroundPress'}>
+        <StatusBar barStyle={statusBarStyle} />
 
         <YStack paddingTop={58} paddingHorizontal={16} paddingBottom={18}>
           <Pressable onPress={() => router.back()}>
@@ -88,11 +89,11 @@ export function InviteRedemptionScreen({
               borderRadius={21}
               alignItems="center"
               justifyContent="center"
-              backgroundColor={bondfireColors.gunmetal}
+              backgroundColor={'$backgroundHover'}
               borderWidth={1}
-              borderColor={bondfireColors.iron}
+              borderColor={'$borderColor'}
             >
-              <ArrowLeft size={22} color={bondfireColors.whiteSmoke} />
+              <ArrowLeft size={22} color={'$color'} />
             </YStack>
           </Pressable>
         </YStack>
@@ -108,16 +109,16 @@ export function InviteRedemptionScreen({
             width={80}
             height={80}
             borderRadius={24}
-            backgroundColor={bondfireColors.bondfireCopper}
+            backgroundColor={'$primary'}
             alignItems="center"
             justifyContent="center"
           >
-            <Flame size={44} color={bondfireColors.whiteSmoke} />
+            <Flame size={44} color={'$color'} />
           </YStack>
 
           {status === 'loading' && (
             <>
-              <Spinner size="large" color={bondfireColors.bondfireCopper} />
+              <Spinner size="large" color={'$primary'} />
               <Text fontSize={18} fontWeight="700" textAlign="center">
                 {loadingText}
               </Text>
@@ -126,15 +127,10 @@ export function InviteRedemptionScreen({
 
           {status === 'success' && (
             <>
-              <Text
-                fontSize={22}
-                fontWeight="900"
-                textAlign="center"
-                color={bondfireColors.success}
-              >
+              <Text fontSize={22} fontWeight="900" textAlign="center" color={'$success'}>
                 You're in!
               </Text>
-              <Text fontSize={15} color={bondfireColors.ash} textAlign="center" lineHeight={22}>
+              <Text fontSize={15} color={'$placeholderColor'} textAlign="center" lineHeight={22}>
                 {successText}
               </Text>
             </>
@@ -142,10 +138,10 @@ export function InviteRedemptionScreen({
 
           {status === 'error' && (
             <>
-              <Text fontSize={22} fontWeight="900" textAlign="center" color={bondfireColors.error}>
+              <Text fontSize={22} fontWeight="900" textAlign="center" color={'$error'}>
                 Couldn't join
               </Text>
-              <Text fontSize={15} color={bondfireColors.ash} textAlign="center" lineHeight={22}>
+              <Text fontSize={15} color={'$placeholderColor'} textAlign="center" lineHeight={22}>
                 {error ?? fallbackErrorText}
               </Text>
               <Button
@@ -163,7 +159,7 @@ export function InviteRedemptionScreen({
               <Pressable onPress={() => router.replace(routes.feed)} style={{ marginTop: 8 }}>
                 <Text
                   fontSize={14}
-                  color={bondfireColors.bondfireCopper}
+                  color={'$primary'}
                   fontWeight="700"
                   textDecorationLine="underline"
                 >

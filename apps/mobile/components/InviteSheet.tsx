@@ -1,6 +1,5 @@
-import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
-import { Check, Copy, Share, Send, X } from '@tamagui/lucide-icons'
+import { Check, Copy, Send, Share, X } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import * as Clipboard from 'expo-clipboard'
 import { useCallback, useState } from 'react'
@@ -46,7 +45,7 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
         message: `Watch this Bondfire!\n\n${shareUrl}`,
         url: shareUrl,
       })
-    } catch (error) {
+    } catch {
       // User cancelled share — that's fine, not an error
     }
   }, [shareUrl])
@@ -75,58 +74,47 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
     >
       <Sheet.Overlay backgroundColor="rgba(0,0,0,0.45)" />
       <Sheet.Frame
-        backgroundColor={bondfireColors.charcoal}
+        backgroundColor={'$backgroundPress'}
         borderTopLeftRadius={20}
         borderTopRightRadius={20}
         padding={24}
       >
         <YStack gap={20} flex={1}>
-          <Sheet.Handle backgroundColor={bondfireColors.iron} />
+          <Sheet.Handle backgroundColor={'$borderColor'} />
 
           <Text fontSize={22} fontWeight="900" textAlign="center">
             Share Bondfire
           </Text>
 
           {/* Tab Bar */}
-          <XStack
-            backgroundColor={bondfireColors.gunmetal}
-            borderRadius={12}
-            padding={4}
-            gap={4}
-          >
-            <Pressable
-              onPress={() => setTab('contacts')}
-              style={{ flex: 1 }}
-            >
+          <XStack backgroundColor={'$backgroundHover'} borderRadius={12} padding={4} gap={4}>
+            <Pressable onPress={() => setTab('contacts')} style={{ flex: 1 }}>
               <YStack
                 paddingVertical={10}
                 alignItems="center"
                 borderRadius={10}
-                backgroundColor={tab === 'contacts' ? bondfireColors.bondfireCopper : 'transparent'}
+                backgroundColor={tab === 'contacts' ? '$primary' : 'transparent'}
               >
                 <Text
                   fontSize={14}
                   fontWeight="700"
-                  color={tab === 'contacts' ? bondfireColors.whiteSmoke : bondfireColors.ash}
+                  color={tab === 'contacts' ? '$color' : '$placeholderColor'}
                 >
                   In-App
                 </Text>
               </YStack>
             </Pressable>
-            <Pressable
-              onPress={() => setTab('link')}
-              style={{ flex: 1 }}
-            >
+            <Pressable onPress={() => setTab('link')} style={{ flex: 1 }}>
               <YStack
                 paddingVertical={10}
                 alignItems="center"
                 borderRadius={10}
-                backgroundColor={tab === 'link' ? bondfireColors.bondfireCopper : 'transparent'}
+                backgroundColor={tab === 'link' ? '$primary' : 'transparent'}
               >
                 <Text
                   fontSize={14}
                   fontWeight="700"
-                  color={tab === 'link' ? bondfireColors.whiteSmoke : bondfireColors.ash}
+                  color={tab === 'link' ? '$color' : '$placeholderColor'}
                 >
                   Share Link
                 </Text>
@@ -138,14 +126,14 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
             <YStack flex={1}>
               {contacts === undefined ? (
                 <YStack alignItems="center" paddingVertical={24}>
-                  <Spinner size="large" color={bondfireColors.bondfireCopper} />
+                  <Spinner size="large" color={'$primary'} />
                 </YStack>
               ) : contacts.length === 0 ? (
                 <YStack alignItems="center" paddingVertical={32} gap={8}>
-                  <Text color={bondfireColors.ash} fontSize={14} textAlign="center">
+                  <Text color={'$placeholderColor'} fontSize={14} textAlign="center">
                     No contacts yet.
                   </Text>
-                  <Text color={bondfireColors.ash} fontSize={12} textAlign="center">
+                  <Text color={'$placeholderColor'} fontSize={12} textAlign="center">
                     People you interact with in camps or bondfires will appear here.
                   </Text>
                 </YStack>
@@ -154,24 +142,22 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
                   data={contacts}
                   keyExtractor={(item) => item._id}
                   ItemSeparatorComponent={() => (
-                    <Separator borderColor={`${bondfireColors.iron}40`} />
+                    <Separator borderColor={'rgba(51, 53, 58, 0.25)'} />
                   )}
                   renderItem={({ item }) => {
                     const sent = sentIds.has(item._id)
                     return (
-                      <Pressable onPress={() => !sent && handleSendToContact(item._id as Id<'users'>)}>
-                        <XStack
-                          paddingVertical={10}
-                          gap={12}
-                          alignItems="center"
-                        >
+                      <Pressable
+                        onPress={() => !sent && handleSendToContact(item._id as Id<'users'>)}
+                      >
+                        <XStack paddingVertical={10} gap={12} alignItems="center">
                           <YStack
                             width={40}
                             height={40}
                             borderRadius={20}
-                            backgroundColor={bondfireColors.gunmetal}
+                            backgroundColor={'$backgroundHover'}
                             borderWidth={1}
-                            borderColor={bondfireColors.iron}
+                            borderColor={'$borderColor'}
                             alignItems="center"
                             justifyContent="center"
                           >
@@ -183,12 +169,12 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
                             {item.displayName ?? item.name ?? 'Unknown'}
                           </Text>
                           {sent ? (
-                            <Text fontSize={13} color={bondfireColors.success} fontWeight="700">
+                            <Text fontSize={13} color={'$success'} fontWeight="700">
                               Sent ✓
                             </Text>
                           ) : (
                             <Button variant="outline" size="small" disabled={sent}>
-                              <Send size={14} color={bondfireColors.whiteSmoke} />
+                              <Send size={14} color={'$color'} />
                             </Button>
                           )}
                         </XStack>
@@ -201,9 +187,9 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
           ) : (
             <YStack gap={16} alignItems="center">
               <YStack
-                backgroundColor={bondfireColors.gunmetal}
+                backgroundColor={'$backgroundHover'}
                 borderWidth={1}
-                borderColor={bondfireColors.iron}
+                borderColor={'$borderColor'}
                 borderRadius={14}
                 paddingHorizontal={24}
                 paddingVertical={16}
@@ -213,7 +199,7 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
               >
                 <Text
                   fontSize={12}
-                  color={bondfireColors.ash}
+                  color={'$placeholderColor'}
                   fontWeight="600"
                   textTransform="uppercase"
                   letterSpacing={1}
@@ -222,7 +208,7 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
                 </Text>
                 <Text
                   fontSize={13}
-                  color={bondfireColors.ash}
+                  color={'$placeholderColor'}
                   numberOfLines={2}
                   textAlign="center"
                 >
@@ -237,16 +223,13 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
                   onPress={handleCopyLink}
                   icon={
                     copied ? (
-                      <Check size={18} color={bondfireColors.success} />
+                      <Check size={18} color={'$success'} />
                     ) : (
-                      <Copy size={18} color={bondfireColors.whiteSmoke} />
+                      <Copy size={18} color={'$color'} />
                     )
                   }
                 >
-                  <Text
-                    color={copied ? bondfireColors.success : bondfireColors.whiteSmoke}
-                    fontWeight="700"
-                  >
+                  <Text color={copied ? '$success' : '$color'} fontWeight="700">
                     {copied ? 'Copied' : 'Copy Link'}
                   </Text>
                 </Button>
@@ -254,9 +237,9 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
                   variant="primary"
                   flex={1}
                   onPress={handleShareLink}
-                  icon={<Share size={18} color={bondfireColors.whiteSmoke} />}
+                  icon={<Share size={18} color={'$color'} />}
                 >
-                  <Text color={bondfireColors.whiteSmoke} fontWeight="700">
+                  <Text color={'$color'} fontWeight="700">
                     Share
                   </Text>
                 </Button>
@@ -270,11 +253,11 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
               width={40}
               height={40}
               borderRadius={20}
-              backgroundColor={bondfireColors.gunmetal}
+              backgroundColor={'$backgroundHover'}
               alignItems="center"
               justifyContent="center"
             >
-              <X size={20} color={bondfireColors.ash} />
+              <X size={20} color={'$placeholderColor'} />
             </YStack>
           </Pressable>
         </YStack>

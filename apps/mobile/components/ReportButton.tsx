@@ -1,4 +1,3 @@
-import { bondfireColors } from '@bondfires/config'
 import { Flag } from '@tamagui/lucide-icons'
 import { Pressable, type StyleProp, type ViewStyle } from 'react-native'
 import { YStack } from 'tamagui'
@@ -19,7 +18,7 @@ export function ReportButton({ onPress, style }: ReportButtonProps) {
         alignItems="center"
         justifyContent="center"
       >
-        <Flag size={22} color={bondfireColors.whiteSmoke} />
+        <Flag size={22} color={'$color'} />
       </YStack>
     </Pressable>
   )

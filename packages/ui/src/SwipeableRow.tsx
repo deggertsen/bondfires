@@ -1,4 +1,3 @@
-import { bondfireColors } from '@bondfires/config'
 import { useCallback, useMemo, useRef } from 'react'
 import {
   Animated,
@@ -32,7 +31,7 @@ type Props = {
 
 /**
  * A swipeable row that reveals action buttons when swiped left.
- * Uses React Native's PanResponder + Animated — no extra deps beyond reanimated.
+ * Uses React Native's PanResponder + Animated - no extra deps beyond reanimated.
  *
  * Designed for list items where you want a Marco Polo-style
  * "swipe left to reveal menu" UX.
@@ -99,7 +98,7 @@ export function SwipeableRow({
 
   return (
     <YStack style={style}>
-      {/* Action buttons — positioned absolutely behind the row */}
+      {/* Action buttons - positioned absolutely behind the row */}
       <XStack position="absolute" right={0} top={0} bottom={0} width={actionPanelWidth}>
         {actions.map((action) => (
           <Pressable
@@ -117,13 +116,13 @@ export function SwipeableRow({
               flex={1}
               alignItems="center"
               justifyContent="center"
-              backgroundColor={action.backgroundColor ?? bondfireColors.gunmetal}
+              backgroundColor={action.backgroundColor ?? '$backgroundHover'}
               paddingHorizontal={8}
             >
               <Text
                 fontSize={12}
                 fontWeight="800"
-                color={action.color ?? bondfireColors.whiteSmoke}
+                color={action.color ?? '$color'}
                 textAlign="center"
               >
                 {action.label}
@@ -133,7 +132,7 @@ export function SwipeableRow({
         ))}
       </XStack>
 
-      {/* Foreground content — slides left to reveal actions */}
+      {/* Foreground content - slides left to reveal actions */}
       <Animated.View
         style={{
           transform: [{ translateX }],

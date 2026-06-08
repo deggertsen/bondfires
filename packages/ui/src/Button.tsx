@@ -1,4 +1,3 @@
-import { bondfireColors } from '@bondfires/config'
 import { type GetProps, styled, Button as TamaguiButton } from 'tamagui'
 
 export const Button = styled(TamaguiButton, {
@@ -16,59 +15,59 @@ export const Button = styled(TamaguiButton, {
   variants: {
     variant: {
       primary: {
-        backgroundColor: bondfireColors.bondfireCopper,
-        color: bondfireColors.whiteSmoke,
+        backgroundColor: '$primary',
+        color: '$color',
         hoverStyle: {
-          backgroundColor: bondfireColors.moltenGold,
+          backgroundColor: '$secondary',
         },
         pressStyle: {
-          backgroundColor: bondfireColors.deepEmber,
+          backgroundColor: '$primaryPress',
           opacity: 0.9,
         },
       },
       secondary: {
-        backgroundColor: bondfireColors.gunmetal,
-        color: bondfireColors.whiteSmoke,
+        backgroundColor: '$backgroundHover',
+        color: '$color',
         hoverStyle: {
-          backgroundColor: bondfireColors.iron,
+          backgroundColor: '$borderColor',
         },
         pressStyle: {
-          backgroundColor: bondfireColors.charcoal,
+          backgroundColor: '$backgroundPress',
           opacity: 0.9,
         },
       },
       outline: {
         backgroundColor: 'transparent',
         borderWidth: 1,
-        borderColor: bondfireColors.iron,
+        borderColor: '$borderColor',
         color: '$color',
         hoverStyle: {
-          backgroundColor: bondfireColors.gunmetal,
-          borderColor: bondfireColors.ash,
+          backgroundColor: '$backgroundHover',
+          borderColor: '$placeholderColor',
         },
         pressStyle: {
-          backgroundColor: bondfireColors.charcoal,
-          borderColor: bondfireColors.bondfireCopper,
+          backgroundColor: '$backgroundPress',
+          borderColor: '$primary',
         },
       },
       ghost: {
         backgroundColor: 'transparent',
         color: '$color',
         hoverStyle: {
-          backgroundColor: bondfireColors.gunmetal,
+          backgroundColor: '$backgroundHover',
         },
         pressStyle: {
-          backgroundColor: bondfireColors.iron,
+          backgroundColor: '$borderColor',
         },
       },
       destructive: {
-        backgroundColor: bondfireColors.error,
-        color: bondfireColors.whiteSmoke,
+        backgroundColor: '$error',
+        color: '$color',
         hoverStyle: {
-          backgroundColor: bondfireColors.errorDark,
+          backgroundColor: '$error',
         },
         pressStyle: {
-          backgroundColor: bondfireColors.errorDark,
+          backgroundColor: '$error',
           opacity: 0.9,
         },
       },

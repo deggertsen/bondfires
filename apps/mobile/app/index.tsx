@@ -1,5 +1,4 @@
 import { appActions, appStore$, getLastLocation, telemetry } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
 import { useValue } from '@legendapp/state/react'
 import { AlertTriangle, RefreshCw } from '@tamagui/lucide-icons'
 import { useQuery } from 'convex/react'
@@ -88,15 +87,15 @@ export default function SplashScreen() {
           flex={1}
           alignItems="center"
           justifyContent="center"
-          backgroundColor={bondfireColors.obsidian}
+          backgroundColor={'$background'}
           padding="$6"
           gap="$4"
         >
-          <AlertTriangle size={48} color={bondfireColors.bondfireCopper} />
-          <Text fontSize="$6" fontWeight="700" color={bondfireColors.ash} textAlign="center">
+          <AlertTriangle size={48} color={'$primary'} />
+          <Text fontSize="$6" fontWeight="700" color={'$placeholderColor'} textAlign="center">
             Connection Issue
           </Text>
-          <Text fontSize="$4" color={bondfireColors.ash} opacity={0.7} textAlign="center">
+          <Text fontSize="$4" color={'$placeholderColor'} opacity={0.7} textAlign="center">
             We're having trouble connecting. Check your internet connection and try again.
           </Text>
           <Pressable
@@ -111,13 +110,13 @@ export default function SplashScreen() {
               flexDirection="row"
               alignItems="center"
               gap="$2"
-              backgroundColor={bondfireColors.bondfireCopper}
+              backgroundColor={'$primary'}
               paddingHorizontal="$5"
               paddingVertical="$3"
               borderRadius="$4"
             >
-              <RefreshCw size={18} color={bondfireColors.obsidian} />
-              <Text fontSize="$4" fontWeight="600" color={bondfireColors.obsidian}>
+              <RefreshCw size={18} color={'$background'} />
+              <Text fontSize="$4" fontWeight="600" color={'$background'}>
                 Try Again
               </Text>
             </YStack>
@@ -127,14 +126,9 @@ export default function SplashScreen() {
     }
 
     return (
-      <YStack
-        flex={1}
-        alignItems="center"
-        justifyContent="center"
-        backgroundColor={bondfireColors.obsidian}
-      >
-        <Spinner size="large" color={bondfireColors.bondfireCopper} />
-        <Text marginTop="$4" color={bondfireColors.ash}>
+      <YStack flex={1} alignItems="center" justifyContent="center" backgroundColor={'$background'}>
+        <Spinner size="large" color={'$primary'} />
+        <Text marginTop="$4" color={'$placeholderColor'}>
           Loading...
         </Text>
       </YStack>

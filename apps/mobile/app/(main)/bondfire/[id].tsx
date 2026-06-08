@@ -5,13 +5,12 @@ import {
   hasViewedToday,
   type MuxDataVideoMetadata,
   markViewed,
-  parseError,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
   telemetry,
+  useAppThemeColors,
   useMuxData,
 } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
 import { Button, Text } from '@bondfires/ui'
 import { useObservable, useObserveEffect, useValue } from '@legendapp/state/react'
 import { useIsFocused, useNavigation } from '@react-navigation/native'
@@ -440,25 +439,25 @@ function VideoPlayer({
       <YStack
         flex={1}
         width={SCREEN_WIDTH}
-        backgroundColor={bondfireColors.obsidian}
+        backgroundColor={'$background'}
         alignItems="center"
         justifyContent="center"
         gap={14}
       >
         <YStack
-          backgroundColor={bondfireColors.error}
+          backgroundColor={'$error'}
           paddingHorizontal={16}
           paddingVertical={8}
           borderRadius={16}
         >
-          <Text color={bondfireColors.whiteSmoke} fontWeight="900" fontSize={13}>
+          <Text color={'$color'} fontWeight="900" fontSize={13}>
             LIVE
           </Text>
         </YStack>
-        <Text color={bondfireColors.whiteSmoke} fontSize={22} fontWeight="900">
+        <Text color={'$color'} fontSize={22} fontWeight="900">
           You are live
         </Text>
-        <Text color={bondfireColors.ash} fontSize={14}>
+        <Text color={'$placeholderColor'} fontSize={14}>
           Your replay will appear here after Mux finishes saving it.
         </Text>
       </YStack>
@@ -466,7 +465,7 @@ function VideoPlayer({
   }
 
   return (
-    <YStack flex={1} width={SCREEN_WIDTH} backgroundColor={bondfireColors.obsidian}>
+    <YStack flex={1} width={SCREEN_WIDTH} backgroundColor={'$background'}>
       {currentUrl && player ? (
         <VideoView
           player={player}
@@ -477,7 +476,7 @@ function VideoPlayer({
         />
       ) : (
         <YStack flex={1} alignItems="center" justifyContent="center">
-          <Spinner size="large" color={bondfireColors.bondfireCopper} />
+          <Spinner size="large" color={'$primary'} />
         </YStack>
       )}
 
@@ -508,7 +507,7 @@ function VideoPlayer({
           zIndex={2}
           pointerEvents="none"
         >
-          <Spinner size="large" color={bondfireColors.bondfireCopper} />
+          <Spinner size="large" color={'$primary'} />
         </YStack>
       )}
 
@@ -534,9 +533,9 @@ function VideoPlayer({
             justifyContent="center"
           >
             {hasEnded ? (
-              <RotateCcw size={40} color={bondfireColors.whiteSmoke} />
+              <RotateCcw size={40} color={'$color'} />
             ) : (
-              <Play size={40} color={bondfireColors.whiteSmoke} fill={bondfireColors.whiteSmoke} />
+              <Play size={40} color={'$color'} fill={'$color'} />
             )}
           </YStack>
         </YStack>
@@ -559,12 +558,12 @@ function VideoPlayer({
       {isLive ? (
         <YStack position="absolute" bottom={104} left={20} zIndex={3}>
           <YStack
-            backgroundColor={bondfireColors.error}
+            backgroundColor={'$error'}
             paddingHorizontal={14}
             paddingVertical={7}
             borderRadius={16}
           >
-            <Text color={bondfireColors.whiteSmoke} fontSize={12} fontWeight="900">
+            <Text color={'$color'} fontSize={12} fontWeight="900">
               LIVE
             </Text>
           </YStack>
@@ -582,7 +581,7 @@ function VideoPlayer({
               <YStack height={4} backgroundColor="rgba(255,255,255,0.3)" borderRadius={2}>
                 <YStack
                   height={4}
-                  backgroundColor={bondfireColors.bondfireCopper}
+                  backgroundColor={'$primary'}
                   borderRadius={2}
                   width={`${progress * 100}%`}
                 />
@@ -594,16 +593,16 @@ function VideoPlayer({
                   width={12}
                   height={12}
                   borderRadius={6}
-                  backgroundColor={bondfireColors.bondfireCopper}
+                  backgroundColor={'$primary'}
                 />
               </YStack>
             </YStack>
           </View>
           <XStack justifyContent="space-between" marginTop={4}>
-            <Text fontSize={12} color={bondfireColors.ash}>
+            <Text fontSize={12} color={'$placeholderColor'}>
               {formatTime(progress * duration)}
             </Text>
-            <Text fontSize={12} color={bondfireColors.ash}>
+            <Text fontSize={12} color={'$placeholderColor'}>
               {formatTime(duration)}
             </Text>
           </XStack>
@@ -617,22 +616,19 @@ function VideoPlayer({
             width={40}
             height={40}
             borderRadius={20}
-            backgroundColor={bondfireColors.gunmetal}
+            backgroundColor={'$backgroundHover'}
             alignItems="center"
             justifyContent="center"
             borderWidth={2}
-            borderColor={isMainVideo ? bondfireColors.bondfireCopper : bondfireColors.moltenGold}
+            borderColor={isMainVideo ? '$primary' : '$secondary'}
           >
-            <Flame
-              size={20}
-              color={isMainVideo ? bondfireColors.bondfireCopper : bondfireColors.moltenGold}
-            />
+            <Flame size={20} color={isMainVideo ? '$primary' : '$secondary'} />
           </YStack>
           <YStack>
             <Text fontWeight="600" fontSize={15}>
               {creatorName}
             </Text>
-            <Text fontSize={12} color={bondfireColors.ash}>
+            <Text fontSize={12} color={'$placeholderColor'}>
               {isMainVideo ? 'Spark' : `Response ${responseIndex}`}
             </Text>
           </YStack>
@@ -653,9 +649,9 @@ function VideoPlayer({
             justifyContent="center"
           >
             {isMuted ? (
-              <VolumeX size={22} color={bondfireColors.whiteSmoke} />
+              <VolumeX size={22} color={'$color'} />
             ) : (
-              <Volume2 size={22} color={bondfireColors.whiteSmoke} />
+              <Volume2 size={22} color={'$color'} />
             )}
           </YStack>
         </Pressable>
@@ -682,6 +678,7 @@ function formatTime(ms: number): string {
 }
 
 export default function BondfireDetailScreen() {
+  const { colors, statusBarStyle } = useAppThemeColors()
   const { id } = useLocalSearchParams<{ id: string }>()
   const router = useRouter()
   const navigation = useNavigation()
@@ -962,13 +959,8 @@ export default function BondfireDetailScreen() {
 
   if (!bondfireData) {
     return (
-      <YStack
-        flex={1}
-        backgroundColor={bondfireColors.obsidian}
-        alignItems="center"
-        justifyContent="center"
-      >
-        <Spinner size="large" color={bondfireColors.bondfireCopper} />
+      <YStack flex={1} backgroundColor={'$background'} alignItems="center" justifyContent="center">
+        <Spinner size="large" color={'$primary'} />
       </YStack>
     )
   }
@@ -1006,9 +998,9 @@ export default function BondfireDetailScreen() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
 
-      <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
+      <YStack flex={1} backgroundColor={'$background'}>
         {/* Header */}
         <XStack
           position="absolute"
@@ -1040,8 +1032,8 @@ export default function BondfireDetailScreen() {
                 alignItems="center"
                 gap={6}
               >
-                <ChevronLeft size={22} color={bondfireColors.whiteSmoke} />
-                <Text fontSize={13} fontWeight="700" color={bondfireColors.whiteSmoke}>
+                <ChevronLeft size={22} color={'$color'} />
+                <Text fontSize={13} fontWeight="700" color={'$color'}>
                   Campground
                 </Text>
               </XStack>
@@ -1051,7 +1043,7 @@ export default function BondfireDetailScreen() {
               <Text fontWeight="600" fontSize={16}>
                 {currentVideoIndex + 1} / {totalVideos}
               </Text>
-              <Text fontSize={12} color={bondfireColors.ash}>
+              <Text fontSize={12} color={'$placeholderColor'}>
                 Swipe for responses
               </Text>
             </YStack>
@@ -1064,13 +1056,11 @@ export default function BondfireDetailScreen() {
                   width={40}
                   height={40}
                   borderRadius={20}
-                  backgroundColor={
-                    showSettings ? bondfireColors.bondfireCopper : 'rgba(31, 32, 35, 0.8)'
-                  }
+                  backgroundColor={showSettings ? '$primary' : 'rgba(31, 32, 35, 0.8)'}
                   alignItems="center"
                   justifyContent="center"
                 >
-                  <Settings size={22} color={bondfireColors.whiteSmoke} />
+                  <Settings size={22} color={'$color'} />
                 </YStack>
               </Pressable>
               <Pressable
@@ -1080,13 +1070,11 @@ export default function BondfireDetailScreen() {
                   width={40}
                   height={40}
                   borderRadius={20}
-                  backgroundColor={
-                    showNotepad ? bondfireColors.bondfireCopper : 'rgba(31, 32, 35, 0.8)'
-                  }
+                  backgroundColor={showNotepad ? '$primary' : 'rgba(31, 32, 35, 0.8)'}
                   alignItems="center"
                   justifyContent="center"
                 >
-                  <FileText size={22} color={bondfireColors.whiteSmoke} />
+                  <FileText size={22} color={'$color'} />
                 </YStack>
               </Pressable>
             </XStack>
@@ -1141,7 +1129,7 @@ export default function BondfireDetailScreen() {
             opacity={0.6}
             pointerEvents="none"
           >
-            <ChevronRight size={32} color={bondfireColors.whiteSmoke} />
+            <ChevronRight size={32} color={'$color'} />
           </YStack>
         )}
 
@@ -1173,21 +1161,21 @@ export default function BondfireDetailScreen() {
                   flex={1}
                   onPress={() => setIsInviteSheetOpen(true)}
                 >
-                  <Text color={bondfireColors.whiteSmoke} fontWeight="700">
+                  <Text color={'$color'} fontWeight="700">
                     Share Bondfire
                   </Text>
                 </Button>
                 <Button variant="primary" size="$lg" flex={1} onPress={handleRespond}>
-                  <Flame size={18} color={bondfireColors.whiteSmoke} />
-                  <Text color={bondfireColors.whiteSmoke} fontWeight="700">
+                  <Flame size={18} color={'$color'} />
+                  <Text color={'$color'} fontWeight="700">
                     Respond
                   </Text>
                 </Button>
               </XStack>
             ) : (
               <Button variant="primary" size="$lg" onPress={handleRespond}>
-                <Flame size={20} color={bondfireColors.whiteSmoke} />
-                <Text color={bondfireColors.whiteSmoke}>Add Your Response</Text>
+                <Flame size={20} color={'$color'} />
+                <Text color={'$color'}>Add Your Response</Text>
               </Button>
             )}
           </YStack>
@@ -1206,9 +1194,7 @@ export default function BondfireDetailScreen() {
                 width={i === currentVideoIndex ? 24 : 8}
                 height={8}
                 borderRadius={4}
-                backgroundColor={
-                  i === currentVideoIndex ? bondfireColors.bondfireCopper : 'rgba(255,255,255,0.4)'
-                }
+                backgroundColor={i === currentVideoIndex ? '$primary' : 'rgba(255,255,255,0.4)'}
               />
             </Pressable>
           ))}
@@ -1232,17 +1218,17 @@ export default function BondfireDetailScreen() {
           >
             <Sheet.Overlay backgroundColor="rgba(0,0,0,0.45)" />
             <Sheet.Frame
-              backgroundColor={bondfireColors.charcoal}
+              backgroundColor={'$backgroundPress'}
               borderTopLeftRadius={20}
               borderTopRightRadius={20}
               padding={24}
             >
               <YStack gap={20} alignItems="center">
-                <Sheet.Handle backgroundColor={bondfireColors.iron} />
+                <Sheet.Handle backgroundColor={'$borderColor'} />
                 <Text fontSize={22} fontWeight="900" textAlign="center">
                   Join Camp to View
                 </Text>
-                <Text fontSize={14} color={bondfireColors.ash} textAlign="center" lineHeight={20}>
+                <Text fontSize={14} color={'$placeholderColor'} textAlign="center" lineHeight={20}>
                   This bondfire is in a camp you haven't joined yet. Join to watch and respond.
                 </Text>
                 <Button
@@ -1266,7 +1252,7 @@ export default function BondfireDetailScreen() {
                   }}
                   disabled={joinLoading}
                 >
-                  <Text color={bondfireColors.whiteSmoke} fontWeight="700">
+                  <Text color={'$color'} fontWeight="700">
                     {joinLoading ? 'Joining...' : 'Join Camp'}
                   </Text>
                 </Button>

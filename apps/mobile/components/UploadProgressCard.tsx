@@ -1,5 +1,4 @@
 import { type UploadTask, uploadQueueStore$ } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
 import { Card, Text } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
 import { AlertTriangle, CheckCircle2, CloudUpload } from '@tamagui/lucide-icons'
@@ -56,8 +55,8 @@ export function UploadProgressCard() {
   return (
     <YStack gap={12} marginBottom={24}>
       <XStack alignItems="center" gap={8}>
-        <CloudUpload size={18} color={bondfireColors.ash} />
-        <Text variant="label" color={bondfireColors.ash} fontSize={13} fontWeight="600">
+        <CloudUpload size={18} color={'$placeholderColor'} />
+        <Text variant="label" color={'$placeholderColor'} fontSize={13} fontWeight="600">
           UPLOADS
         </Text>
       </XStack>
@@ -74,35 +73,31 @@ export function UploadProgressCard() {
                   <Text fontWeight="600" fontSize={14}>
                     {getTaskLabel(task)}
                   </Text>
-                  <Text fontSize={13} fontWeight="600" color={bondfireColors.bondfireCopper}>
+                  <Text fontSize={13} fontWeight="600" color={'$primary'}>
                     {progress}%
                   </Text>
                 </XStack>
 
-                <Text fontSize={12} color={bondfireColors.ash}>
+                <Text fontSize={12} color={'$placeholderColor'}>
                   {stage}
                 </Text>
 
                 <YStack
                   height={6}
                   borderRadius={3}
-                  backgroundColor={bondfireColors.iron}
+                  backgroundColor={'$borderColor'}
                   overflow="hidden"
                 >
                   <YStack
                     height={6}
                     borderRadius={3}
-                    backgroundColor={
-                      task.status === 'uploading'
-                        ? bondfireColors.success
-                        : bondfireColors.bondfireCopper
-                    }
+                    backgroundColor={task.status === 'uploading' ? '$success' : '$primary'}
                     width={`${Math.max(progress, 2)}%`}
                   />
                 </YStack>
 
                 {task.attemptCount > 0 && (
-                  <Text fontSize={11} color={bondfireColors.ash}>
+                  <Text fontSize={11} color={'$placeholderColor'}>
                     Retrying attempt {task.attemptCount + 1} of 5
                   </Text>
                 )}
@@ -112,8 +107,8 @@ export function UploadProgressCard() {
 
           {activeTasks.length === 0 && latestCompletedTask && (
             <XStack alignItems="center" gap={8}>
-              <CheckCircle2 size={16} color={bondfireColors.success} />
-              <Text fontSize={13} color={bondfireColors.ash}>
+              <CheckCircle2 size={16} color={'$success'} />
+              <Text fontSize={13} color={'$placeholderColor'}>
                 Latest upload completed successfully.
               </Text>
             </XStack>
@@ -121,12 +116,12 @@ export function UploadProgressCard() {
 
           {latestFailedTask && (
             <XStack alignItems="center" gap={8}>
-              <AlertTriangle size={16} color={bondfireColors.error} />
+              <AlertTriangle size={16} color={'$error'} />
               <YStack flex={1}>
-                <Text fontSize={13} fontWeight="600" color={bondfireColors.error}>
+                <Text fontSize={13} fontWeight="600" color={'$error'}>
                   Upload failed
                 </Text>
-                <Text fontSize={12} color={bondfireColors.ash}>
+                <Text fontSize={12} color={'$placeholderColor'}>
                   {latestFailedTask.errorMessage || 'Please try recording and uploading again.'}
                 </Text>
               </YStack>

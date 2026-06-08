@@ -1,20 +1,19 @@
 // Convex React Native polyfill - MUST be imported before any Convex imports
 import '../polyfills/convex-react-native'
 
+import { openAppStore, useForceUpdate } from '@bondfires/app'
 import { Button, ForceUpdateModal, Text, ToastContainer } from '@bondfires/ui'
-import { useForceUpdate, openAppStore } from '@bondfires/app'
 import { ConvexAuthProvider } from '@convex-dev/auth/react'
 import { ConvexReactClient, useMutation } from 'convex/react'
-import { useFonts } from 'expo-font'
 import Constants from 'expo-constants'
+import { useFonts } from 'expo-font'
 import type * as Notifications from 'expo-notifications'
 import { Stack, useRouter } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
 import { Component, type ErrorInfo, type ReactNode, useCallback, useEffect, useRef } from 'react'
-import { useColorScheme } from 'react-native'
 import { KeyboardProvider } from 'react-native-keyboard-controller'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
-import { TamaguiProvider, Theme, YStack } from 'tamagui'
+import { AnimatePresence, TamaguiProvider, Theme, YStack } from 'tamagui'
 // Import config for TamaguiProvider
 import config from '../tamagui.config'
 import 'react-native-reanimated'
@@ -25,9 +24,9 @@ import {
   telemetry,
   toastActions,
   toastStore$,
+  useAppTheme,
   usePushNotifications,
 } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
 import { useObserve, useValue } from '@legendapp/state/react'
 import { api } from '../../../convex/_generated/api'
 import { resolveExternalRoute, routes } from '../lib/routes'
@@ -116,16 +115,16 @@ function ErrorFallback({ error, retry }: ErrorFallbackProps) {
   return (
     <YStack
       flex={1}
-      backgroundColor={bondfireColors.obsidian}
+      backgroundColor="$background"
       alignItems="center"
       justifyContent="center"
       paddingHorizontal={24}
       gap={16}
     >
-      <Text fontSize={28} fontWeight="700" color={bondfireColors.whiteSmoke} textAlign="center">
+      <Text fontSize={28} fontWeight="700" color="$color" textAlign="center">
         Something went wrong
       </Text>
-      <Text fontSize={14} color={bondfireColors.ash} textAlign="center">
+      <Text fontSize={14} color="$colorPress" textAlign="center">
         {error.message}
       </Text>
       <Button variant="primary" onPress={retry}>
@@ -164,7 +163,7 @@ class LayoutErrorBoundary extends Component<
   render() {
     if (this.state.hasError && this.state.error) {
       return (
-        <TamaguiProvider config={config} defaultTheme="dark">
+        <TamaguiProvider config={config}>
           <Theme name="dark">
             <ErrorFallback error={this.state.error} retry={this.handleRetry} />
           </Theme>
@@ -178,7 +177,7 @@ class LayoutErrorBoundary extends Component<
 // Override expo-router's default ErrorBoundary.
 export function ErrorBoundary(props: { error: Error; retry: () => void }) {
   return (
-    <TamaguiProvider config={config} defaultTheme="dark">
+    <TamaguiProvider config={config}>
       <Theme name="dark">
         <ErrorFallback error={props.error} retry={props.retry} />
       </Theme>
@@ -191,7 +190,7 @@ export function ErrorBoundary(props: { error: Error; retry: () => void }) {
 // ---------------------------------------------------------------------------
 
 function AppContent() {
-  const colorScheme = useColorScheme()
+  const { themeName } = useAppTheme()
   const router = useRouter()
   const toasts = useValue(toastStore$.toasts)
   const isAuthenticated = useValue(appStore$.isAuthenticated)
@@ -199,7 +198,7 @@ function AppContent() {
   const unregisterDevice = useMutation(api.notifications.unregisterDevice)
 
   // Force-update check: compares current version against remote minAppVersion.
-  const { loading: updateCheckLoading, updateRequired, minRequiredVersion, storeUrl } = useForceUpdate()
+  const { loading: updateCheckLoading, updateRequired, minRequiredVersion } = useForceUpdate()
 
   // Handle notification taps
   const handleNotificationResponse = useCallback(
@@ -284,26 +283,37 @@ function AppContent() {
   }, [pushError])
 
   return (
-    <TamaguiProvider config={config} defaultTheme={colorScheme ?? 'dark'}>
-      <Theme name={colorScheme ?? 'dark'}>
-        <TelemetryInitializer />
+    <TamaguiProvider config={config} defaultTheme={themeName}>
+      <Theme name={themeName}>
+        <AnimatePresence>
+          <YStack
+            key={themeName}
+            flex={1}
+            animation="quick"
+            enterStyle={{ opacity: 0 }}
+            exitStyle={{ opacity: 0 }}
+            opacity={1}
+          >
+            <TelemetryInitializer />
 
-        {/* Force-update modal — shown when app version is below minimum required */}
-        {updateRequired && minRequiredVersion ? (
-          <ForceUpdateModal
-            visible
-            minRequiredVersion={minRequiredVersion}
-            currentVersion={Constants.expoConfig?.version ?? '0.0.0'}
-            onUpdate={openAppStore}
-          />
-        ) : updateCheckLoading ? null : null}
+            {/* Force-update modal — shown when app version is below minimum required */}
+            {updateRequired && minRequiredVersion ? (
+              <ForceUpdateModal
+                visible
+                minRequiredVersion={minRequiredVersion}
+                currentVersion={Constants.expoConfig?.version ?? '0.0.0'}
+                onUpdate={openAppStore}
+              />
+            ) : updateCheckLoading ? null : null}
 
-        <Stack screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="index" />
-          <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-          <Stack.Screen name="(main)" options={{ headerShown: false }} />
-        </Stack>
-        <ToastContainer toasts={toasts} onDismiss={toastActions.dismiss} />
+            <Stack screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="index" />
+              <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+              <Stack.Screen name="(main)" options={{ headerShown: false }} />
+            </Stack>
+            <ToastContainer toasts={toasts} onDismiss={toastActions.dismiss} />
+          </YStack>
+        </AnimatePresence>
       </Theme>
     </TamaguiProvider>
   )

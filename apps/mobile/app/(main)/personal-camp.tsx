@@ -1,5 +1,4 @@
-import { subscriptionActions } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
+import { subscriptionActions, useAppThemeColors } from '@bondfires/app'
 import { Button, Text } from '@bondfires/ui'
 import { ArrowLeft, Flame, Lock, MessageCircle, Plus, Users } from '@tamagui/lucide-icons'
 import { useQuery } from 'convex/react'
@@ -35,34 +34,34 @@ function BondfireRow({ bondfire, onOpen }: { bondfire: BondfireData; onOpen: () 
           width={50}
           height={50}
           borderRadius={15}
-          backgroundColor={bondfireColors.gunmetal}
+          backgroundColor={'$backgroundHover'}
           borderWidth={1}
-          borderColor={bondfireColors.iron}
+          borderColor={'$borderColor'}
           alignItems="center"
           justifyContent="center"
         >
-          <Flame size={24} color={bondfireColors.bondfireCopper} />
+          <Flame size={24} color={'$primary'} />
         </YStack>
 
         <YStack flex={1} gap={4}>
           <Text fontSize={16} fontWeight="900" numberOfLines={1}>
             {bondfire.creatorName ?? 'Anonymous'}
           </Text>
-          <Text fontSize={12} color={bondfireColors.ash}>
+          <Text fontSize={12} color={'$placeholderColor'}>
             {bondfire.videoStatus === 'live' ? 'Live now' : getTimeAgo(bondfire.createdAt)}
           </Text>
         </YStack>
 
         <XStack alignItems="center" gap={12}>
           <XStack alignItems="center" gap={4}>
-            <Users size={15} color={bondfireColors.ash} />
-            <Text fontSize={13} color={bondfireColors.ash}>
+            <Users size={15} color={'$placeholderColor'} />
+            <Text fontSize={13} color={'$placeholderColor'}>
               {bondfire.participantCount}
             </Text>
           </XStack>
           <XStack alignItems="center" gap={4}>
-            <MessageCircle size={15} color={bondfireColors.ash} />
-            <Text fontSize={13} color={bondfireColors.ash}>
+            <MessageCircle size={15} color={'$placeholderColor'} />
+            <Text fontSize={13} color={'$placeholderColor'}>
               {responses}
             </Text>
           </XStack>
@@ -73,6 +72,7 @@ function BondfireRow({ bondfire, onOpen }: { bondfire: BondfireData; onOpen: () 
 }
 
 export default function PersonalCampScreen() {
+  const { statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const { newFire, createdAfter } = useLocalSearchParams<{
     newFire?: string
@@ -144,12 +144,12 @@ export default function PersonalCampScreen() {
     return (
       <YStack
         flex={1}
-        backgroundColor={bondfireColors.charcoal}
+        backgroundColor={'$backgroundPress'}
         alignItems="center"
         justifyContent="center"
       >
-        <StatusBar barStyle="light-content" />
-        <Spinner size="large" color={bondfireColors.bondfireCopper} />
+        <StatusBar barStyle={statusBarStyle} />
+        <Spinner size="large" color={'$primary'} />
       </YStack>
     )
   }
@@ -159,12 +159,12 @@ export default function PersonalCampScreen() {
     return (
       <YStack
         flex={1}
-        backgroundColor={bondfireColors.charcoal}
+        backgroundColor={'$backgroundPress'}
         paddingTop={58}
         paddingHorizontal={16}
         gap={16}
       >
-        <StatusBar barStyle="light-content" />
+        <StatusBar barStyle={statusBarStyle} />
         <Pressable onPress={handleBack}>
           <YStack
             width={42}
@@ -172,19 +172,19 @@ export default function PersonalCampScreen() {
             borderRadius={21}
             alignItems="center"
             justifyContent="center"
-            backgroundColor={bondfireColors.gunmetal}
+            backgroundColor={'$backgroundHover'}
             borderWidth={1}
-            borderColor={bondfireColors.iron}
+            borderColor={'$borderColor'}
           >
-            <ArrowLeft size={22} color={bondfireColors.whiteSmoke} />
+            <ArrowLeft size={22} color={'$color'} />
           </YStack>
         </Pressable>
         <YStack flex={1} alignItems="center" justifyContent="center" gap={12}>
-          <Flame size={48} color={bondfireColors.ash} />
-          <Text fontSize={18} fontWeight="900" color={bondfireColors.ash} textAlign="center">
+          <Flame size={48} color={'$placeholderColor'} />
+          <Text fontSize={18} fontWeight="900" color={'$placeholderColor'} textAlign="center">
             No Hearth
           </Text>
-          <Text fontSize={14} color={bondfireColors.ash} textAlign="center" lineHeight={20}>
+          <Text fontSize={14} color={'$placeholderColor'} textAlign="center" lineHeight={20}>
             Subscribe to Plus, Premium, or Pro to unlock your Hearth.
           </Text>
           <Button marginTop={8} onPress={handleUpgrade}>
@@ -198,8 +198,8 @@ export default function PersonalCampScreen() {
   const isFrozen = personalCamp.status === 'frozen'
 
   return (
-    <YStack flex={1} backgroundColor={bondfireColors.charcoal}>
-      <StatusBar barStyle="light-content" />
+    <YStack flex={1} backgroundColor={'$backgroundPress'}>
+      <StatusBar barStyle={statusBarStyle} />
 
       {/* Header */}
       <YStack paddingTop={58} paddingHorizontal={16} paddingBottom={18} gap={14}>
@@ -211,11 +211,11 @@ export default function PersonalCampScreen() {
               borderRadius={21}
               alignItems="center"
               justifyContent="center"
-              backgroundColor={bondfireColors.gunmetal}
+              backgroundColor={'$backgroundHover'}
               borderWidth={1}
-              borderColor={bondfireColors.iron}
+              borderColor={'$borderColor'}
             >
-              <ArrowLeft size={22} color={bondfireColors.whiteSmoke} />
+              <ArrowLeft size={22} color={'$color'} />
             </YStack>
           </Pressable>
           {bondfires && bondfires.length > 0 && !isFrozen && (
@@ -226,9 +226,9 @@ export default function PersonalCampScreen() {
                 borderRadius={21}
                 alignItems="center"
                 justifyContent="center"
-                backgroundColor={bondfireColors.bondfireCopper}
+                backgroundColor={'$primary'}
               >
-                <Plus size={22} color={bondfireColors.whiteSmoke} />
+                <Plus size={22} color={'$color'} />
               </YStack>
             </Pressable>
           )}
@@ -239,18 +239,18 @@ export default function PersonalCampScreen() {
             width={72}
             height={72}
             borderRadius={20}
-            backgroundColor={bondfireColors.bondfireCopper}
+            backgroundColor={'$primary'}
             alignItems="center"
             justifyContent="center"
           >
-            <Flame size={36} color={bondfireColors.whiteSmoke} />
+            <Flame size={36} color={'$color'} />
           </YStack>
 
           <YStack flex={1} gap={4}>
             <Text fontSize={26} fontWeight="900" numberOfLines={2}>
               {personalCamp.name}
             </Text>
-            <Text fontSize={14} color={bondfireColors.ash}>
+            <Text fontSize={14} color={'$placeholderColor'}>
               Your hearth
             </Text>
           </YStack>
@@ -259,31 +259,31 @@ export default function PersonalCampScreen() {
         {/* Frozen banner */}
         {isFrozen ? (
           <YStack
-            backgroundColor={`${bondfireColors.warning}20`}
-            borderColor={bondfireColors.warning}
+            backgroundColor={'rgba(245, 158, 11, 0.13)'}
+            borderColor={'$warning'}
             borderWidth={1}
             borderRadius={12}
             padding={12}
           >
             <XStack alignItems="center" gap={8}>
-              <Lock size={16} color={bondfireColors.warning} />
-              <Text color={bondfireColors.warning} fontSize={14} fontWeight="700">
+              <Lock size={16} color={'$warning'} />
+              <Text color={'$warning'} fontSize={14} fontWeight="700">
                 Your Hearth is frozen
               </Text>
             </XStack>
-            <Text color={bondfireColors.ash} fontSize={12} marginTop={4}>
+            <Text color={'$placeholderColor'} fontSize={12} marginTop={4}>
               Re-subscribe to Plus, Premium, or Pro to reactivate your Hearth.
             </Text>
           </YStack>
         ) : null}
       </YStack>
 
-      <Separator borderColor={`${bondfireColors.iron}40`} />
+      <Separator borderColor={'rgba(51, 53, 58, 0.25)'} />
 
       {/* Bondfires list */}
       {bondfires === undefined ? (
         <YStack flex={1} alignItems="center" justifyContent="center">
-          <Spinner size="large" color={bondfireColors.bondfireCopper} />
+          <Spinner size="large" color={'$primary'} />
         </YStack>
       ) : bondfires.length === 0 ? (
         <YStack
@@ -293,11 +293,11 @@ export default function PersonalCampScreen() {
           paddingHorizontal={32}
           gap={12}
         >
-          <Flame size={48} color={bondfireColors.ash} />
-          <Text fontSize={18} fontWeight="900" color={bondfireColors.ash} textAlign="center">
+          <Flame size={48} color={'$placeholderColor'} />
+          <Text fontSize={18} fontWeight="900" color={'$placeholderColor'} textAlign="center">
             No fires yet
           </Text>
-          <Text fontSize={14} color={bondfireColors.ash} textAlign="center" lineHeight={20}>
+          <Text fontSize={14} color={'$placeholderColor'} textAlign="center" lineHeight={20}>
             Your personal bondfires will appear here.
           </Text>
           {!isFrozen && (
@@ -305,9 +305,9 @@ export default function PersonalCampScreen() {
               variant="primary"
               marginTop={8}
               onPress={handleCreateBondfire}
-              icon={<Plus size={18} color={bondfireColors.whiteSmoke} />}
+              icon={<Plus size={18} color={'$color'} />}
             >
-              <Text color={bondfireColors.whiteSmoke} fontWeight="900">
+              <Text color={'$color'} fontWeight="900">
                 Create Bondfire
               </Text>
             </Button>
@@ -317,7 +317,7 @@ export default function PersonalCampScreen() {
         <FlatList
           data={bondfires}
           keyExtractor={(item) => item._id}
-          ItemSeparatorComponent={() => <Separator borderColor={`${bondfireColors.iron}40`} />}
+          ItemSeparatorComponent={() => <Separator borderColor={'rgba(51, 53, 58, 0.25)'} />}
           contentContainerStyle={{ paddingBottom: 40 }}
           renderItem={({ item }) => (
             <BondfireRow bondfire={item} onOpen={() => handleOpenBondfire(item._id)} />

@@ -6,11 +6,12 @@ import {
   setFeedActiveBondfireId,
   telemetry,
   uploadQueueActions,
+  useAppTheme,
+  useAppThemeColors,
   useKindlingBalance,
   usePreferences,
   useSubscription,
 } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
 import { AdminPanel, Button, Card, Input, SubscriptionStatus, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
@@ -22,9 +23,12 @@ import {
   Flame,
   LogOut,
   MessageCircle,
+  Monitor,
+  Moon,
   Pin,
   Play,
   Settings,
+  Sun,
   Trash2,
   User,
   Video,
@@ -103,7 +107,72 @@ function ProfileSubscription({
   return null
 }
 
+function ThemeSelector() {
+  const { themePreference, setThemePreference, isLoading } = useAppTheme()
+
+  const options: Array<{
+    value: 'system' | 'light' | 'dark'
+    label: string
+    Icon: typeof Monitor
+  }> = [
+    { value: 'system', label: 'System', Icon: Monitor },
+    { value: 'light', label: 'Light', Icon: Sun },
+    { value: 'dark', label: 'Dark', Icon: Moon },
+  ]
+
+  if (isLoading) return null
+
+  return (
+    <XStack justifyContent="space-between" alignItems="center">
+      <XStack alignItems="center" gap={12} flex={1}>
+        <Monitor size={20} color={'$primary'} />
+        <YStack>
+          <Text fontWeight="500" fontSize={15}>
+            Theme
+          </Text>
+          <Text fontSize={13} color={'$placeholderColor'}>
+            Current:{' '}
+            {themePreference === 'system'
+              ? 'System default'
+              : themePreference.charAt(0).toUpperCase() + themePreference.slice(1)}
+          </Text>
+        </YStack>
+      </XStack>
+      <XStack gap={4}>
+        {options.map((opt) => {
+          const { Icon, value, label } = opt
+          const isSelected = themePreference === value
+          return (
+            <Pressable key={value} onPress={() => setThemePreference(value)}>
+              <XStack
+                alignItems="center"
+                gap={8}
+                paddingVertical={6}
+                paddingHorizontal={12}
+                borderRadius={8}
+                borderWidth={1}
+                backgroundColor={isSelected ? '$primary' : '$backgroundHover'}
+                borderColor={isSelected ? '$primary' : '$borderColor'}
+              >
+                <Icon size={16} color={isSelected ? '$color' : '$placeholderColor'} />
+                <Text
+                  fontSize={13}
+                  fontWeight={isSelected ? '600' : '400'}
+                  color={isSelected ? '$color' : '$placeholderColor'}
+                >
+                  {label}
+                </Text>
+              </XStack>
+            </Pressable>
+          )
+        })}
+      </XStack>
+    </XStack>
+  )
+}
+
 export default function ProfileScreen() {
+  const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const { signOut } = useAuthActions()
   const convex = useConvex()
@@ -373,11 +442,11 @@ export default function ProfileScreen() {
         <ProfileSubscription key={refreshKey} onResolved={handleProfileResolved} />
         <YStack
           flex={1}
-          backgroundColor={bondfireColors.obsidian}
+          backgroundColor={'$background'}
           alignItems="center"
           justifyContent="center"
         >
-          <Spinner size="large" color={bondfireColors.bondfireCopper} />
+          <Spinner size="large" color={'$primary'} />
         </YStack>
       </YStack>
     )
@@ -390,9 +459,9 @@ export default function ProfileScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
+    <YStack flex={1} backgroundColor={'$background'}>
       <ProfileSubscription key={refreshKey} onResolved={handleProfileResolved} />
-      <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
 
       <XStack
         justifyContent="space-between"
@@ -409,11 +478,11 @@ export default function ProfileScreen() {
             width={40}
             height={40}
             borderRadius={20}
-            backgroundColor={bondfireColors.gunmetal}
+            backgroundColor={'$backgroundHover'}
             alignItems="center"
             justifyContent="center"
           >
-            <LogOut size={20} color={bondfireColors.ash} />
+            <LogOut size={20} color={'$placeholderColor'} />
           </YStack>
         </Pressable>
       </XStack>
@@ -425,8 +494,8 @@ export default function ProfileScreen() {
           <RefreshControl
             refreshing={isRefreshing}
             onRefresh={handleRefresh}
-            tintColor={bondfireColors.bondfireCopper}
-            colors={[bondfireColors.bondfireCopper]}
+            tintColor={colors.primary}
+            colors={[colors.primary]}
           />
         }
         showsVerticalScrollIndicator={false}
@@ -440,14 +509,14 @@ export default function ProfileScreen() {
                     <Avatar.Image source={{ uri: currentUser.photoUrl }} />
                   ) : (
                     <Avatar.Fallback
-                      backgroundColor={bondfireColors.gunmetal}
+                      backgroundColor={'$backgroundHover'}
                       borderWidth={2}
                       borderRadius={100}
-                      borderColor={bondfireColors.bondfireCopper}
+                      borderColor={'$primary'}
                       alignItems="center"
                       justifyContent="center"
                     >
-                      <User size={32} color={bondfireColors.bondfireCopper} />
+                      <User size={32} color={'$primary'} />
                     </Avatar.Fallback>
                   )}
                 </Avatar>
@@ -458,16 +527,16 @@ export default function ProfileScreen() {
                   width={28}
                   height={28}
                   borderRadius={14}
-                  backgroundColor={bondfireColors.bondfireCopper}
+                  backgroundColor={'$primary'}
                   alignItems="center"
                   justifyContent="center"
                   borderWidth={2}
-                  borderColor={bondfireColors.obsidian}
+                  borderColor={'$background'}
                 >
                   {isUploadingPhoto ? (
-                    <Spinner size="small" color={bondfireColors.whiteSmoke} />
+                    <Spinner size="small" color={'$color'} />
                   ) : (
-                    <Camera size={14} color={bondfireColors.whiteSmoke} />
+                    <Camera size={14} color={'$color'} />
                   )}
                 </YStack>
               </Pressable>
@@ -476,10 +545,10 @@ export default function ProfileScreen() {
                 <Text fontWeight="700" fontSize={18}>
                   {currentUser.displayName ?? currentUser.name ?? 'User'}
                 </Text>
-                <Text color={bondfireColors.ash} fontSize={14}>
+                <Text color={'$placeholderColor'} fontSize={14}>
                   {currentUser.email}
                 </Text>
-                <Text color={bondfireColors.ash} fontSize={12} textTransform="capitalize">
+                <Text color={'$placeholderColor'} fontSize={12} textTransform="capitalize">
                   {currentUser.gender ?? 'Gender not set'}
                 </Text>
               </YStack>
@@ -489,11 +558,11 @@ export default function ProfileScreen() {
                   width={40}
                   height={40}
                   borderRadius={20}
-                  backgroundColor={bondfireColors.iron}
+                  backgroundColor={'$borderColor'}
                   alignItems="center"
                   justifyContent="center"
                 >
-                  <Edit3 size={18} color={bondfireColors.whiteSmoke} />
+                  <Edit3 size={18} color={'$color'} />
                 </YStack>
               </Pressable>
             </XStack>
@@ -503,40 +572,40 @@ export default function ProfileScreen() {
             <XStack justifyContent="space-around" paddingVertical={8}>
               <YStack alignItems="center" gap={4}>
                 <XStack alignItems="center" gap={6}>
-                  <Flame size={20} color={bondfireColors.bondfireCopper} />
-                  <Text fontSize={24} fontWeight="700" color={bondfireColors.bondfireCopper}>
+                  <Flame size={20} color={'$primary'} />
+                  <Text fontSize={24} fontWeight="700" color={'$primary'}>
                     {stats.bondfireCount}
                   </Text>
                 </XStack>
-                <Text color={bondfireColors.ash} fontSize={12}>
+                <Text color={'$placeholderColor'} fontSize={12}>
                   Bondfires
                 </Text>
               </YStack>
 
-              <Separator vertical borderColor={bondfireColors.iron} />
+              <Separator vertical borderColor={'$borderColor'} />
 
               <YStack alignItems="center" gap={4}>
                 <XStack alignItems="center" gap={6}>
-                  <MessageCircle size={20} color={bondfireColors.moltenGold} />
-                  <Text fontSize={24} fontWeight="700" color={bondfireColors.moltenGold}>
+                  <MessageCircle size={20} color={'$secondary'} />
+                  <Text fontSize={24} fontWeight="700" color={'$secondary'}>
                     {stats.responseCount}
                   </Text>
                 </XStack>
-                <Text color={bondfireColors.ash} fontSize={12}>
+                <Text color={'$placeholderColor'} fontSize={12}>
                   Responses
                 </Text>
               </YStack>
 
-              <Separator vertical borderColor={bondfireColors.iron} />
+              <Separator vertical borderColor={'$borderColor'} />
 
               <YStack alignItems="center" gap={4}>
                 <XStack alignItems="center" gap={6}>
-                  <Eye size={20} color={bondfireColors.whiteSmoke} />
-                  <Text fontSize={24} fontWeight="700" color={bondfireColors.whiteSmoke}>
+                  <Eye size={20} color={'$color'} />
+                  <Text fontSize={24} fontWeight="700" color={'$color'}>
                     {stats.totalViews}
                   </Text>
                 </XStack>
-                <Text color={bondfireColors.ash} fontSize={12}>
+                <Text color={'$placeholderColor'} fontSize={12}>
                   Views
                 </Text>
               </YStack>
@@ -553,7 +622,7 @@ export default function ProfileScreen() {
                   <Text fontSize={15} fontWeight="600">
                     Camp Kindling
                   </Text>
-                  <Text fontSize={13} color={bondfireColors.ash}>
+                  <Text fontSize={13} color={'$placeholderColor'}>
                     {kindlingBalance > 0
                       ? `${kindlingBalance} kindling available`
                       : 'No kindling available'}
@@ -561,7 +630,7 @@ export default function ProfileScreen() {
                 </YStack>
                 {kindlingBalance < 3 && (
                   <Button variant="primary" size="$sm" onPress={showPaywall}>
-                    <Text color={bondfireColors.whiteSmoke} fontWeight="600" fontSize={13}>
+                    <Text color={'$color'} fontWeight="600" fontSize={13}>
                       Get More
                     </Text>
                   </Button>
@@ -592,8 +661,8 @@ export default function ProfileScreen() {
           {closeCircle && closeCircle.length > 0 && (
             <YStack gap={12} marginBottom={24}>
               <XStack alignItems="center" gap={8}>
-                <Pin size={18} color={bondfireColors.ash} />
-                <Text variant="label" color={bondfireColors.ash} fontSize={13} fontWeight="600">
+                <Pin size={18} color={'$placeholderColor'} />
+                <Text variant="label" color={'$placeholderColor'} fontSize={13} fontWeight="600">
                   CLOSE CIRCLE
                 </Text>
               </XStack>
@@ -622,11 +691,11 @@ export default function ProfileScreen() {
                             <Avatar.Image source={{ uri: item.user.photoUrl }} />
                           ) : (
                             <Avatar.Fallback
-                              backgroundColor={bondfireColors.gunmetal}
+                              backgroundColor={'$backgroundHover'}
                               borderWidth={1}
-                              borderColor={bondfireColors.bondfireCopper}
+                              borderColor={'$primary'}
                             >
-                              <User size={24} color={bondfireColors.bondfireCopper} />
+                              <User size={24} color={'$primary'} />
                             </Avatar.Fallback>
                           )}
                         </Avatar>
@@ -634,10 +703,10 @@ export default function ProfileScreen() {
                           {item.user.displayName ?? item.user.name ?? 'Someone'}
                         </Text>
                         <YStack gap={4} alignItems="center">
-                          <Text fontSize={12} color={bondfireColors.ash}>
+                          <Text fontSize={12} color={'$placeholderColor'}>
                             {sharedCount} shared
                           </Text>
-                          <Text fontSize={12} color={bondfireColors.ash}>
+                          <Text fontSize={12} color={'$placeholderColor'}>
                             {privateCount} private camp
                           </Text>
                         </YStack>
@@ -651,8 +720,8 @@ export default function ProfileScreen() {
 
           <YStack gap={12} marginBottom={24}>
             <XStack alignItems="center" gap={8}>
-              <Settings size={18} color={bondfireColors.ash} />
-              <Text variant="label" color={bondfireColors.ash} fontSize={13} fontWeight="600">
+              <Settings size={18} color={'$placeholderColor'} />
+              <Text variant="label" color={'$placeholderColor'} fontSize={13} fontWeight="600">
                 SETTINGS
               </Text>
             </XStack>
@@ -662,32 +731,32 @@ export default function ProfileScreen() {
                 <Pressable onPress={() => state$.isVideoQualitySheetOpen.set(true)}>
                   <XStack justifyContent="space-between" alignItems="center">
                     <XStack alignItems="center" gap={12}>
-                      <Video size={20} color={bondfireColors.bondfireCopper} />
+                      <Video size={20} color={'$primary'} />
                       <YStack>
                         <Text fontWeight="500" fontSize={15}>
                           Video Quality
                         </Text>
-                        <Text fontSize={13} color={bondfireColors.ash}>
+                        <Text fontSize={13} color={'$placeholderColor'}>
                           Tap to change quality preference
                         </Text>
                       </YStack>
                     </XStack>
-                    <Text color={bondfireColors.bondfireCopper} fontWeight="600" fontSize={14}>
+                    <Text color={'$primary'} fontWeight="600" fontSize={14}>
                       {preferences.videoQuality.toUpperCase()}
                     </Text>
                   </XStack>
                 </Pressable>
 
-                <Separator borderColor={bondfireColors.iron} />
+                <Separator borderColor={'$borderColor'} />
 
                 <XStack justifyContent="space-between" alignItems="center">
                   <XStack alignItems="center" gap={12}>
-                    <Play size={20} color={bondfireColors.moltenGold} />
+                    <Play size={20} color={'$secondary'} />
                     <YStack>
                       <Text fontWeight="500" fontSize={15}>
                         Autoplay Videos
                       </Text>
-                      <Text fontSize={13} color={bondfireColors.ash}>
+                      <Text fontSize={13} color={'$placeholderColor'}>
                         Play videos automatically in feed
                       </Text>
                     </YStack>
@@ -695,29 +764,27 @@ export default function ProfileScreen() {
                   <Switch
                     checked={preferences.autoplayVideos}
                     onCheckedChange={setAutoplayVideos}
-                    backgroundColor={bondfireColors.iron}
+                    backgroundColor={'$borderColor'}
                   >
                     <Switch.Thumb
                       animation="quick"
                       backgroundColor={
-                        preferences.autoplayVideos
-                          ? bondfireColors.bondfireCopper
-                          : bondfireColors.ash
+                        preferences.autoplayVideos ? '$primary' : '$placeholderColor'
                       }
                     />
                   </Switch>
                 </XStack>
 
-                <Separator borderColor={bondfireColors.iron} />
+                <Separator borderColor={'$borderColor'} />
 
                 <XStack justifyContent="space-between" alignItems="center">
                   <XStack alignItems="center" gap={12}>
-                    <Bell size={20} color={bondfireColors.deepEmber} />
+                    <Bell size={20} color={'$primaryPress'} />
                     <YStack>
                       <Text fontWeight="500" fontSize={15}>
                         Notifications
                       </Text>
-                      <Text fontSize={13} color={bondfireColors.ash}>
+                      <Text fontSize={13} color={'$placeholderColor'}>
                         Get notified of new responses
                       </Text>
                     </YStack>
@@ -725,18 +792,20 @@ export default function ProfileScreen() {
                   <Switch
                     checked={preferences.notificationsEnabled}
                     onCheckedChange={setNotificationsEnabled}
-                    backgroundColor={bondfireColors.iron}
+                    backgroundColor={'$borderColor'}
                   >
                     <Switch.Thumb
                       animation="quick"
                       backgroundColor={
-                        preferences.notificationsEnabled
-                          ? bondfireColors.bondfireCopper
-                          : bondfireColors.ash
+                        preferences.notificationsEnabled ? '$primary' : '$placeholderColor'
                       }
                     />
                   </Switch>
                 </XStack>
+
+                <Separator borderColor={'$borderColor'} />
+
+                <ThemeSelector />
               </YStack>
             </Card>
           </YStack>
@@ -744,8 +813,8 @@ export default function ProfileScreen() {
           {userBondfires && userBondfires.length > 0 && (
             <YStack gap={12} marginBottom={24}>
               <XStack alignItems="center" gap={8}>
-                <Flame size={18} color={bondfireColors.ash} />
-                <Text variant="label" color={bondfireColors.ash} fontSize={13} fontWeight="600">
+                <Flame size={18} color={'$placeholderColor'} />
+                <Text variant="label" color={'$placeholderColor'} fontSize={13} fontWeight="600">
                   YOUR BONDFIRES
                 </Text>
               </XStack>
@@ -769,22 +838,22 @@ export default function ProfileScreen() {
                   >
                     <YStack
                       flex={1}
-                      backgroundColor={bondfireColors.charcoal}
+                      backgroundColor={'$backgroundPress'}
                       alignItems="center"
                       justifyContent="center"
                     >
-                      <Flame size={40} color={bondfireColors.bondfireCopper} />
+                      <Flame size={40} color={'$primary'} />
                     </YStack>
-                    <YStack padding={12} gap={4} backgroundColor={bondfireColors.gunmetal}>
+                    <YStack padding={12} gap={4} backgroundColor={'$backgroundHover'}>
                       <XStack alignItems="center" gap={6}>
-                        <MessageCircle size={14} color={bondfireColors.ash} />
-                        <Text fontSize={13} color={bondfireColors.whiteSmoke}>
+                        <MessageCircle size={14} color={'$placeholderColor'} />
+                        <Text fontSize={13} color={'$color'}>
                           {item.videoCount} videos
                         </Text>
                       </XStack>
                       <XStack alignItems="center" gap={6}>
-                        <Eye size={14} color={bondfireColors.ash} />
-                        <Text fontSize={12} color={bondfireColors.ash}>
+                        <Eye size={14} color={'$placeholderColor'} />
+                        <Text fontSize={12} color={'$placeholderColor'}>
                           {item.viewCount ?? 0} views
                         </Text>
                       </XStack>
@@ -797,19 +866,19 @@ export default function ProfileScreen() {
 
           <YStack gap={12} marginBottom={24}>
             <XStack alignItems="center" gap={8}>
-              <Trash2 size={18} color={bondfireColors.error} />
-              <Text variant="label" color={bondfireColors.error} fontSize={13} fontWeight="600">
+              <Trash2 size={18} color={'$error'} />
+              <Text variant="label" color={'$error'} fontSize={13} fontWeight="600">
                 DANGER ZONE
               </Text>
             </XStack>
 
-            <Card borderColor={bondfireColors.error} borderWidth={1}>
+            <Card borderColor={'$error'} borderWidth={1}>
               <YStack gap={12}>
                 <YStack gap={4}>
                   <Text fontWeight="500" fontSize={15}>
                     Delete Account
                   </Text>
-                  <Text fontSize={13} color={bondfireColors.ash}>
+                  <Text fontSize={13} color={'$placeholderColor'}>
                     Permanently delete your account and all associated data. This action cannot be
                     undone.
                   </Text>
@@ -819,14 +888,14 @@ export default function ProfileScreen() {
                   size="$sm"
                   onPress={handleDeleteAccount}
                   disabled={isDeleting}
-                  borderColor={bondfireColors.error}
+                  borderColor={'$error'}
                 >
                   {isDeleting ? (
-                    <Spinner size="small" color={bondfireColors.error} />
+                    <Spinner size="small" color={'$error'} />
                   ) : (
                     <>
-                      <Trash2 size={16} color={bondfireColors.error} />
-                      <Text color={bondfireColors.error}>Delete My Account</Text>
+                      <Trash2 size={16} color={'$error'} />
+                      <Text color={'$error'}>Delete My Account</Text>
                     </>
                   )}
                 </Button>
@@ -845,18 +914,18 @@ export default function ProfileScreen() {
         <Sheet.Overlay backgroundColor="rgba(0,0,0,0.6)" />
         <Sheet.Frame
           padding={20}
-          backgroundColor={bondfireColors.gunmetal}
+          backgroundColor={'$backgroundHover'}
           borderTopLeftRadius={24}
           borderTopRightRadius={24}
         >
-          <Sheet.Handle backgroundColor={bondfireColors.iron} />
+          <Sheet.Handle backgroundColor={'$borderColor'} />
           <YStack gap={20} marginTop={16}>
             <Text fontSize={20} fontWeight="700">
               Edit Profile
             </Text>
 
             <YStack gap={8}>
-              <Text variant="label" color={bondfireColors.whiteSmoke}>
+              <Text variant="label" color={'$color'}>
                 Display Name
               </Text>
               <Input
@@ -867,7 +936,7 @@ export default function ProfileScreen() {
             </YStack>
 
             <YStack gap={8}>
-              <Text variant="label" color={bondfireColors.whiteSmoke}>
+              <Text variant="label" color={'$color'}>
                 Gender
               </Text>
               <XStack gap={8}>
@@ -881,10 +950,7 @@ export default function ProfileScreen() {
                       flex={1}
                       onPress={() => state$.editGender.set(option.value)}
                     >
-                      <Text
-                        color={selected ? bondfireColors.whiteSmoke : bondfireColors.ash}
-                        fontWeight="900"
-                      >
+                      <Text color={selected ? '$color' : '$placeholderColor'} fontWeight="900">
                         {option.label}
                       </Text>
                     </Button>
@@ -894,13 +960,13 @@ export default function ProfileScreen() {
             </YStack>
 
             <YStack gap={8}>
-              <Text variant="label" color={bondfireColors.whiteSmoke}>
+              <Text variant="label" color={'$color'}>
                 Age
               </Text>
-              <Text fontSize={12} color={bondfireColors.ash}>
+              <Text fontSize={12} color={'$placeholderColor'}>
                 {currentUser?.age !== undefined ? currentUser.age : 'Not set'}
               </Text>
-              <Text fontSize={12} color={bondfireColors.ash}>
+              <Text fontSize={12} color={'$placeholderColor'}>
                 Based on your private birth date. Contact support to request a correction.
               </Text>
             </YStack>
@@ -912,7 +978,7 @@ export default function ProfileScreen() {
                 size="$md"
                 onPress={() => state$.isEditSheetOpen.set(false)}
               >
-                <Text color={bondfireColors.whiteSmoke}>Cancel</Text>
+                <Text color={'$color'}>Cancel</Text>
               </Button>
               <Button
                 variant="primary"
@@ -922,9 +988,9 @@ export default function ProfileScreen() {
                 disabled={isSaving}
               >
                 {isSaving ? (
-                  <Spinner size="small" color={bondfireColors.whiteSmoke} />
+                  <Spinner size="small" color={'$color'} />
                 ) : (
-                  <Text color={bondfireColors.whiteSmoke}>Save</Text>
+                  <Text color={'$color'}>Save</Text>
                 )}
               </Button>
             </XStack>
@@ -941,11 +1007,11 @@ export default function ProfileScreen() {
         <Sheet.Overlay backgroundColor="rgba(0,0,0,0.6)" />
         <Sheet.Frame
           padding={20}
-          backgroundColor={bondfireColors.gunmetal}
+          backgroundColor={'$backgroundHover'}
           borderTopLeftRadius={24}
           borderTopRightRadius={24}
         >
-          <Sheet.Handle backgroundColor={bondfireColors.iron} />
+          <Sheet.Handle backgroundColor={'$borderColor'} />
           <YStack gap={20} marginTop={16}>
             <Text fontSize={20} fontWeight="700">
               Video Quality
@@ -964,12 +1030,10 @@ export default function ProfileScreen() {
                     padding={16}
                     borderRadius={12}
                     backgroundColor={
-                      preferences.videoQuality === quality
-                        ? bondfireColors.charcoal
-                        : bondfireColors.iron
+                      preferences.videoQuality === quality ? '$backgroundPress' : '$borderColor'
                     }
                     borderWidth={preferences.videoQuality === quality ? 2 : 0}
-                    borderColor={bondfireColors.bondfireCopper}
+                    borderColor={'$primary'}
                     justifyContent="space-between"
                     alignItems="center"
                   >
@@ -981,7 +1045,7 @@ export default function ProfileScreen() {
                             ? 'High (HD)'
                             : 'Standard (SD)'}
                       </Text>
-                      <Text fontSize={13} color={bondfireColors.ash}>
+                      <Text fontSize={13} color={'$placeholderColor'}>
                         {quality === 'auto'
                           ? 'Adjusts based on network speed'
                           : quality === 'hd'
@@ -989,9 +1053,7 @@ export default function ProfileScreen() {
                             : 'Lower quality, saves data'}
                       </Text>
                     </YStack>
-                    {preferences.videoQuality === quality && (
-                      <Video size={20} color={bondfireColors.bondfireCopper} />
-                    )}
+                    {preferences.videoQuality === quality && <Video size={20} color={'$primary'} />}
                   </XStack>
                 </Pressable>
               ))}

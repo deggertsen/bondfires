@@ -1,5 +1,4 @@
-import { getAuthErrorMessage } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
+import { getAuthErrorMessage, useSystemThemeColors } from '@bondfires/app'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { ChevronLeft, Mail } from '@tamagui/lucide-icons'
@@ -11,6 +10,7 @@ import { Spinner, YStack } from 'tamagui'
 import { routes } from '../../lib/routes'
 
 export default function ForgotPasswordScreen() {
+  const { colors, statusBarStyle } = useSystemThemeColors()
   const router = useRouter()
   const { signIn } = useAuthActions()
 
@@ -43,8 +43,8 @@ export default function ForgotPasswordScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
-      <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+    <YStack flex={1} backgroundColor={colors.background}>
+      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
 
       {/* Back button */}
       <YStack paddingTop={60} paddingHorizontal={16}>
@@ -53,11 +53,11 @@ export default function ForgotPasswordScreen() {
             width={40}
             height={40}
             borderRadius={20}
-            backgroundColor={bondfireColors.gunmetal}
+            backgroundColor={'$backgroundHover'}
             alignItems="center"
             justifyContent="center"
           >
-            <ChevronLeft size={24} color={bondfireColors.whiteSmoke} />
+            <ChevronLeft size={24} color={'$color'} />
           </YStack>
         </Pressable>
       </YStack>
@@ -74,19 +74,19 @@ export default function ForgotPasswordScreen() {
               width={80}
               height={80}
               borderRadius={40}
-              backgroundColor={bondfireColors.gunmetal}
+              backgroundColor={'$backgroundHover'}
               alignItems="center"
               justifyContent="center"
               borderWidth={2}
-              borderColor={bondfireColors.bondfireCopper}
+              borderColor={'$primary'}
             >
-              <Mail size={36} color={bondfireColors.bondfireCopper} />
+              <Mail size={36} color={'$primary'} />
             </YStack>
             <YStack alignItems="center" gap={8}>
               <Text fontSize={28} fontWeight="700">
                 Reset password
               </Text>
-              <Text fontSize={15} color={bondfireColors.ash} textAlign="center">
+              <Text fontSize={15} color={'$placeholderColor'} textAlign="center">
                 Enter your email and we'll send you a link to reset your password.
               </Text>
             </YStack>
@@ -95,7 +95,7 @@ export default function ForgotPasswordScreen() {
           {/* Form */}
           <YStack gap={20}>
             <YStack gap={8}>
-              <Text variant="label" color={bondfireColors.whiteSmoke}>
+              <Text variant="label" color={'$color'}>
                 Email
               </Text>
               <Input
@@ -110,7 +110,7 @@ export default function ForgotPasswordScreen() {
             </YStack>
 
             {error && (
-              <Text color={bondfireColors.error} fontSize={14}>
+              <Text color={'$error'} fontSize={14}>
                 {error}
               </Text>
             )}
@@ -119,7 +119,7 @@ export default function ForgotPasswordScreen() {
           {/* Actions */}
           <YStack gap={12}>
             <Button variant="primary" size="$lg" onPress={handleSubmit} disabled={isLoading}>
-              {isLoading ? <Spinner color={bondfireColors.whiteSmoke} /> : 'Send Reset Link'}
+              {isLoading ? <Spinner color={'$color'} /> : 'Send Reset Link'}
             </Button>
           </YStack>
         </YStack>

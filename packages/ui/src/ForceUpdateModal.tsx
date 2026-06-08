@@ -1,4 +1,3 @@
-import { bondfireColors } from '@bondfires/config'
 import { ArrowUpCircle } from '@tamagui/lucide-icons'
 import { useState } from 'react'
 import { Modal, Platform, StyleSheet } from 'react-native'
@@ -42,7 +41,7 @@ export function ForceUpdateModal({
     >
       <YStack
         flex={1}
-        backgroundColor={bondfireColors.obsidian}
+        backgroundColor={'$background'}
         alignItems="center"
         justifyContent="center"
         paddingHorizontal={32}
@@ -50,21 +49,21 @@ export function ForceUpdateModal({
         style={StyleSheet.absoluteFill}
       >
         {/* Icon */}
-        <ArrowUpCircle size={64} color={bondfireColors.bondfireCopper} />
+        <ArrowUpCircle size={64} color={'$primary'} />
 
         {/* Title */}
         <YStack gap={4} alignItems="center">
-          <Text fontSize={28} fontWeight="700" color={bondfireColors.whiteSmoke} textAlign="center">
+          <Text fontSize={28} fontWeight="700" color={'$color'} textAlign="center">
             Update Required
           </Text>
-          <Text fontSize={15} color={bondfireColors.ash} textAlign="center" lineHeight={22}>
+          <Text fontSize={15} color={'$placeholderColor'} textAlign="center" lineHeight={22}>
             A new version of Bondfires is available. You must update to continue using the app.
           </Text>
         </YStack>
 
         {/* Version info */}
         <YStack
-          backgroundColor={bondfireColors.gunmetal}
+          backgroundColor={'$backgroundHover'}
           borderRadius={12}
           paddingHorizontal={20}
           paddingVertical={12}
@@ -74,18 +73,18 @@ export function ForceUpdateModal({
           alignItems="center"
         >
           <YStack flexDirection="row" gap={8} alignItems="center">
-            <Text fontSize={13} color={bondfireColors.ash}>
+            <Text fontSize={13} color={'$placeholderColor'}>
               Your version:
             </Text>
-            <Text fontSize={13} fontWeight="600" color={bondfireColors.error}>
+            <Text fontSize={13} fontWeight="600" color={'$error'}>
               {currentVersion}
             </Text>
           </YStack>
           <YStack flexDirection="row" gap={8} alignItems="center">
-            <Text fontSize={13} color={bondfireColors.ash}>
+            <Text fontSize={13} color={'$placeholderColor'}>
               Required:
             </Text>
-            <Text fontSize={13} fontWeight="600" color={bondfireColors.success}>
+            <Text fontSize={13} fontWeight="600" color={'$success'}>
               {minRequiredVersion}
             </Text>
           </YStack>
@@ -99,13 +98,13 @@ export function ForceUpdateModal({
           size="$lg"
           onPress={handleUpdate}
           disabled={updating}
-          icon={<ArrowUpCircle size={20} color={bondfireColors.whiteSmoke} />}
+          icon={<ArrowUpCircle size={20} color={'$color'} />}
         >
           {updating ? `Opening ${storeName}...` : `Update on ${storeName}`}
         </Button>
 
         {/* Footer text */}
-        <Text fontSize={12} color={bondfireColors.slate} textAlign="center">
+        <Text fontSize={12} color={'$placeholderColor'} textAlign="center">
           You'll be redirected to the {storeName} to download the latest version.
         </Text>
       </YStack>

@@ -1,4 +1,3 @@
-import { bondfireColors } from '@bondfires/config'
 import { Text } from '@bondfires/ui'
 import { ArrowLeft, ChevronRight } from '@tamagui/lucide-icons'
 import { Pressable, ScrollView } from 'react-native'
@@ -10,13 +9,13 @@ export function SubCategoryStep({ onSelect, onBack }: SubCategoryStepProps) {
     <YStack gap={12}>
       <XStack alignItems="center" gap={8}>
         <Pressable onPress={onBack}>
-          <ArrowLeft size={24} color={bondfireColors.whiteSmoke} />
+          <ArrowLeft size={24} color={'$color'} />
         </Pressable>
-        <Text fontSize={18} fontWeight="600" color={bondfireColors.whiteSmoke}>
+        <Text fontSize={18} fontWeight="600" color={'$color'}>
           Community Guidelines
         </Text>
       </XStack>
-      <Text fontSize={14} color={bondfireColors.ash}>
+      <Text fontSize={14} color={'$placeholderColor'}>
         What type of violation is this?
       </Text>
       <ScrollView style={{ maxHeight: 400 }}>
@@ -25,13 +24,13 @@ export function SubCategoryStep({ onSelect, onBack }: SubCategoryStepProps) {
             <Pressable key={subCat.value} onPress={() => onSelect(subCat.value as SubCategory)}>
               <XStack
                 padding={16}
-                backgroundColor={bondfireColors.gunmetal}
+                backgroundColor={'$backgroundHover'}
                 borderRadius={12}
                 alignItems="center"
                 justifyContent="space-between"
               >
-                <Text color={bondfireColors.whiteSmoke}>{subCat.label}</Text>
-                <ChevronRight size={20} color={bondfireColors.ash} />
+                <Text color={'$color'}>{subCat.label}</Text>
+                <ChevronRight size={20} color={'$placeholderColor'} />
               </XStack>
             </Pressable>
           ))}

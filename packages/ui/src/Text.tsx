@@ -1,49 +1,48 @@
-import { bondfireColors } from '@bondfires/config'
 import { type GetProps, styled, Text as TamaguiText } from 'tamagui'
 
 export const Text = styled(TamaguiText, {
   name: 'Text',
   fontFamily: '$body',
   // Default to Bondfire whiteSmoke for text
-  color: bondfireColors.whiteSmoke,
+  color: '$color',
 
   variants: {
     variant: {
       heading: {
         fontFamily: '$heading',
         fontWeight: '700',
-        color: bondfireColors.whiteSmoke,
+        color: '$color',
       },
       subheading: {
         fontFamily: '$heading',
         fontWeight: '600',
         fontSize: '$4',
-        color: bondfireColors.whiteSmoke,
+        color: '$color',
       },
       body: {
         fontFamily: '$body',
-        color: bondfireColors.whiteSmoke,
+        color: '$color',
       },
       label: {
         fontFamily: '$body',
         fontWeight: '600',
         fontSize: 14,
-        color: bondfireColors.whiteSmoke,
+        color: '$color',
       },
       caption: {
         fontFamily: '$body',
         fontSize: 12,
-        color: bondfireColors.ash,
+        color: '$placeholderColor',
       },
       link: {
         fontFamily: '$body',
-        color: bondfireColors.bondfireCopper,
+        color: '$primary',
         textDecorationLine: 'underline',
       },
     },
     muted: {
       true: {
-        color: bondfireColors.ash,
+        color: '$placeholderColor',
       },
     },
     center: {
@@ -58,7 +57,7 @@ export const Text = styled(TamaguiText, {
     },
     accent: {
       true: {
-        color: bondfireColors.bondfireCopper,
+        color: '$primary',
       },
     },
   } as const,

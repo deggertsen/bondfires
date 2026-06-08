@@ -1,5 +1,4 @@
-import { getAuthErrorMessage } from '@bondfires/app'
-import { bondfireColors } from '@bondfires/config'
+import { getAuthErrorMessage, useSystemThemeColors } from '@bondfires/app'
 import { Button, Input, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { CheckCircle, Mail } from '@tamagui/lucide-icons'
@@ -11,6 +10,7 @@ import { Spinner, YStack } from 'tamagui'
 import { resolveAuthRedirect } from '../../lib/routes'
 
 export default function VerifyEmailScreen() {
+  const { colors, statusBarStyle } = useSystemThemeColors()
   const router = useRouter()
   const { signIn } = useAuthActions()
   const params = useLocalSearchParams<{ email?: string; redirectTo?: string }>()
@@ -70,8 +70,8 @@ export default function VerifyEmailScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor={bondfireColors.obsidian}>
-      <StatusBar barStyle="light-content" backgroundColor={bondfireColors.obsidian} />
+    <YStack flex={1} backgroundColor={colors.background}>
+      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
       <KeyboardAwareScrollView
         contentContainerStyle={{
           flexGrow: 1,
@@ -88,16 +88,16 @@ export default function VerifyEmailScreen() {
               width={100}
               height={100}
               borderRadius={50}
-              backgroundColor={bondfireColors.gunmetal}
+              backgroundColor={'$backgroundHover'}
               alignItems="center"
               justifyContent="center"
               borderWidth={2}
-              borderColor={success ? bondfireColors.success : bondfireColors.moltenGold}
+              borderColor={success ? '$success' : '$secondary'}
             >
               {success ? (
-                <CheckCircle size={50} color={bondfireColors.success} />
+                <CheckCircle size={50} color={'$success'} />
               ) : (
-                <Mail size={50} color={bondfireColors.moltenGold} />
+                <Mail size={50} color={'$secondary'} />
               )}
             </YStack>
 
@@ -106,7 +106,7 @@ export default function VerifyEmailScreen() {
               <Text fontSize={24} fontWeight="700" textAlign="center">
                 {success ? 'Email verified!' : 'Check your email'}
               </Text>
-              <Text fontSize={15} color={bondfireColors.ash} textAlign="center" lineHeight={22}>
+              <Text fontSize={15} color={'$placeholderColor'} textAlign="center" lineHeight={22}>
                 {success
                   ? 'Your account is now verified. Redirecting...'
                   : `We've sent a verification code to ${params.email ?? 'your email'}. Enter it below to verify your account.`}
@@ -130,7 +130,7 @@ export default function VerifyEmailScreen() {
                     error={!!error}
                   />
                   {error && (
-                    <Text color={bondfireColors.error} fontSize={14} textAlign="center">
+                    <Text color={'$error'} fontSize={14} textAlign="center">
                       {error}
                     </Text>
                   )}
@@ -145,20 +145,20 @@ export default function VerifyEmailScreen() {
                     disabled={isVerifying || !code}
                   >
                     {isVerifying ? (
-                      <Spinner color={bondfireColors.whiteSmoke} />
+                      <Spinner color={'$color'} />
                     ) : (
                       <>
-                        <CheckCircle size={20} color={bondfireColors.whiteSmoke} />
-                        <Text color={bondfireColors.whiteSmoke}>Verify Email</Text>
+                        <CheckCircle size={20} color={'$color'} />
+                        <Text color={'$color'}>Verify Email</Text>
                       </>
                     )}
                   </Button>
 
                   <Button variant="ghost" size="$md" onPress={handleResend} disabled={isResending}>
                     {isResending ? (
-                      <Spinner size="small" color={bondfireColors.ash} />
+                      <Spinner size="small" color={'$placeholderColor'} />
                     ) : (
-                      <Text color={bondfireColors.ash}>Didn't receive it? Resend</Text>
+                      <Text color={'$placeholderColor'}>Didn't receive it? Resend</Text>
                     )}
                   </Button>
                 </YStack>

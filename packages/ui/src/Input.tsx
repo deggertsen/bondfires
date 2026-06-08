@@ -1,30 +1,29 @@
-import { bondfireColors } from '@bondfires/config'
 import { type GetProps, styled, Input as TamaguiInput, TextArea as TamaguiTextArea } from 'tamagui'
 
 export const Input = styled(TamaguiInput, {
   name: 'Input',
   fontFamily: '$body',
   // Bondfire styling - gunmetal background with iron border
-  backgroundColor: bondfireColors.gunmetal,
-  color: bondfireColors.whiteSmoke,
-  placeholderTextColor: bondfireColors.ash,
+  backgroundColor: '$backgroundHover',
+  color: '$color',
+  placeholderTextColor: '$placeholderColor',
   borderWidth: 1,
-  borderColor: bondfireColors.iron,
+  borderColor: '$borderColor',
   borderRadius: 12,
   paddingHorizontal: 16,
   height: 44,
 
   focusStyle: {
-    borderColor: bondfireColors.bondfireCopper,
+    borderColor: '$primary',
     borderWidth: 2,
   },
 
   variants: {
     error: {
       true: {
-        borderColor: bondfireColors.error,
+        borderColor: '$error',
         focusStyle: {
-          borderColor: bondfireColors.error,
+          borderColor: '$error',
         },
       },
     },
@@ -57,24 +56,24 @@ export const TextArea = styled(TamaguiTextArea, {
   name: 'TextArea',
   fontFamily: '$body',
   // Bondfire styling
-  backgroundColor: bondfireColors.gunmetal,
-  color: bondfireColors.whiteSmoke,
-  placeholderTextColor: bondfireColors.ash,
+  backgroundColor: '$backgroundHover',
+  color: '$color',
+  placeholderTextColor: '$placeholderColor',
   borderWidth: 1,
-  borderColor: bondfireColors.iron,
+  borderColor: '$borderColor',
   borderRadius: 12,
   padding: 16,
   minHeight: 100,
 
   focusStyle: {
-    borderColor: bondfireColors.bondfireCopper,
+    borderColor: '$primary',
     borderWidth: 2,
   },
 
   variants: {
     error: {
       true: {
-        borderColor: bondfireColors.error,
+        borderColor: '$error',
       },
     },
   } as const,
