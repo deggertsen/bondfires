@@ -1,7 +1,7 @@
 // Convex React Native polyfill - MUST be imported before any Convex imports
 import '../polyfills/convex-react-native'
 
-import { openAppStore, useForceUpdate } from '@bondfires/app'
+import { useForceUpdate } from '@bondfires/app'
 import { Button, ForceUpdateModal, Text, ToastContainer } from '@bondfires/ui'
 import { ConvexAuthProvider } from '@convex-dev/auth/react'
 import { ConvexReactClient, useMutation } from 'convex/react'
@@ -253,7 +253,16 @@ function AppContent() {
   const unregisterDevice = useMutation(api.notifications.unregisterDevice)
 
   // Force-update check: compares current version against remote minAppVersion.
-  const { loading: updateCheckLoading, updateRequired, minRequiredVersion } = useForceUpdate()
+  // On Android with flexible priority, downloads in background via Play Core.
+  const {
+    loading: updateCheckLoading,
+    updateRequired,
+    downloading,
+    updateReady,
+    minRequiredVersion,
+    updatePriority,
+    startUpdate,
+  } = useForceUpdate()
 
   // Handle notification taps
   const handleNotificationResponse = useCallback(
@@ -343,13 +352,17 @@ function AppContent() {
         <YStack flex={1}>
           <TelemetryInitializer />
 
-          {/* Force-update modal — shown when app version is below minimum required */}
+          {/* Force-update gate — shown when app version is below minimum required.
+              Supports flexible (background download) on Android and immediate on iOS. */}
           {updateRequired && minRequiredVersion ? (
             <ForceUpdateModal
               visible
               minRequiredVersion={minRequiredVersion}
               currentVersion={Constants.expoConfig?.version ?? '0.0.0'}
-              onUpdate={openAppStore}
+              updatePriority={updatePriority}
+              downloading={downloading}
+              updateReady={updateReady}
+              onStartUpdate={startUpdate}
             />
           ) : updateCheckLoading ? null : null}
 

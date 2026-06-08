@@ -1,7 +1,8 @@
 import { useQuery } from 'convex/react'
 import Constants from 'expo-constants'
+import * as ExpoInAppUpdates from 'expo-in-app-updates'
 import * as Linking from 'expo-linking'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Platform } from 'react-native'
 import { api } from '../../../../convex/_generated/api'
 
@@ -9,38 +10,43 @@ import { api } from '../../../../convex/_generated/api'
 // Types
 // ---------------------------------------------------------------------------
 
-interface ForceUpdateState {
+export type UpdatePriority = 'flexible' | 'immediate'
+
+export interface ForceUpdateState {
   /** True while checking the remote config. */
   loading: boolean
   /** True if the current app version is below the minimum required. */
   updateRequired: boolean
+  /** True while a flexible (background) update is downloading on Android. */
+  downloading: boolean
+  /** True when a flexible update has been downloaded and is ready to install. */
+  updateReady: boolean
   /** The minimum required version from remote config. */
   minRequiredVersion: string | null
-  /** Deep link to the app store listing. */
-  storeUrl: string | null
+  /** The update priority from remote config. */
+  updatePriority: UpdatePriority | null
+}
+
+export interface InAppUpdateActions {
+  /** Start a flexible update download (Android) or open the store (iOS). */
+  startUpdate: () => Promise<void>
 }
 
 // ---------------------------------------------------------------------------
-// Store URLs
+// Store URLs (fallback)
 // ---------------------------------------------------------------------------
 
 const APP_STORE_URL = 'https://apps.apple.com/us/app/bondfires/id6755933598'
 const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=org.bondfires'
 
-function getStoreUrl(): string {
-  if (Platform.OS === 'ios') return APP_STORE_URL
-  if (Platform.OS === 'android') return PLAY_STORE_URL
-  return APP_STORE_URL
-}
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Compare two semver strings (e.g. "1.0.23" vs "1.0.24").
- * Returns -1 if a < b, 0 if equal, 1 if a > b.
- */
+function getUpdatePriority(value: string | null | undefined): UpdatePriority {
+  return value === 'flexible' ? 'flexible' : 'immediate'
+}
+
 function compareVersions(a: string, b: string): number {
   const aParts = a.split('.').map(Number)
   const bParts = b.split('.').map(Number)
@@ -54,70 +60,306 @@ function compareVersions(a: string, b: string): number {
   return 0
 }
 
+function getStoreUrl(): string {
+  if (Platform.OS === 'android') return PLAY_STORE_URL
+  return APP_STORE_URL
+}
+
+async function openPlatformStore(): Promise<void> {
+  await Linking.openURL(getStoreUrl())
+}
+
+function storeVersionCanSatisfyRequiredVersion(
+  storeVersion: string | undefined,
+  minRequiredVersion: string,
+): boolean {
+  if (Platform.OS !== 'ios') return true
+  if (!storeVersion) return false
+  return compareVersions(storeVersion, minRequiredVersion) >= 0
+}
+
+function canDownloadAndroidUpdate(
+  result: Awaited<ReturnType<typeof ExpoInAppUpdates.checkForUpdate>>,
+) {
+  return !!(result.updateAvailable && (result.flexibleAllowed || result.immediateAllowed))
+}
+
+async function canDownloadRequiredUpdate(minRequiredVersion: string): Promise<boolean> {
+  try {
+    const result = await ExpoInAppUpdates.checkForUpdate()
+
+    if (!result.updateAvailable) return false
+    if (!storeVersionCanSatisfyRequiredVersion(result.storeVersion, minRequiredVersion))
+      return false
+
+    if (Platform.OS === 'android') {
+      return canDownloadAndroidUpdate(result)
+    }
+
+    return true
+  } catch (_err) {
+    return false
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
 
-export function useForceUpdate(): ForceUpdateState {
+export function useForceUpdate(): ForceUpdateState & InAppUpdateActions {
   const [state, setState] = useState<ForceUpdateState>({
     loading: true,
     updateRequired: false,
+    downloading: false,
+    updateReady: false,
     minRequiredVersion: null,
-    storeUrl: null,
+    updatePriority: null,
   })
 
-  const minVersion = useQuery(api.publicConfig.getMinVersion)
+  const updateConfig = useQuery(api.publicConfig.getUpdateConfig)
+  const autoStartAttemptedRef = useRef(false)
 
+  // ----------------------------------------------------------
+  // Step 1: Check Convex remote config and verify a downloadable update exists
+  // ----------------------------------------------------------
   useEffect(() => {
-    // Still loading from Convex
-    if (minVersion === undefined) return
+    if (updateConfig === undefined) return
 
     // Dev builds should not be blocked by production minimum-version gating.
     if (__DEV__) {
       setState({
         loading: false,
         updateRequired: false,
-        minRequiredVersion: minVersion ?? null,
-        storeUrl: getStoreUrl(),
+        downloading: false,
+        updateReady: false,
+        minRequiredVersion: updateConfig.minAppVersion ?? null,
+        updatePriority: getUpdatePriority(updateConfig.updatePriority),
       })
       return
     }
 
+    let cancelled = false
     const currentVersion = Constants.expoConfig?.version ?? '0.0.0'
-    const required = minVersion ?? null
+    const { minAppVersion } = updateConfig
+    const updatePriority = getUpdatePriority(updateConfig.updatePriority)
+    const belowRequiredVersion =
+      !!minAppVersion && compareVersions(currentVersion, minAppVersion) < 0
 
-    if (required && compareVersions(currentVersion, required) < 0) {
-      setState({
-        loading: false,
-        updateRequired: true,
-        minRequiredVersion: required,
-        storeUrl: getStoreUrl(),
-      })
-    } else {
-      setState({
+    if (!belowRequiredVersion || !minAppVersion) {
+      autoStartAttemptedRef.current = false
+      setState((s) => ({
+        ...s,
         loading: false,
         updateRequired: false,
-        minRequiredVersion: required,
-        storeUrl: getStoreUrl(),
-      })
+        downloading: false,
+        updateReady: false,
+        minRequiredVersion: minAppVersion,
+        updatePriority,
+      }))
+      return
     }
-  }, [minVersion])
 
-  return state
+    setState((s) => ({
+      ...s,
+      loading: true,
+      updateRequired: false,
+      downloading: false,
+      updateReady: false,
+      minRequiredVersion: minAppVersion,
+      updatePriority,
+    }))
+
+    canDownloadRequiredUpdate(minAppVersion).then((canDownload) => {
+      if (cancelled) return
+
+      if (!canDownload) {
+        autoStartAttemptedRef.current = false
+      }
+
+      setState((s) => ({
+        ...s,
+        loading: false,
+        updateRequired: canDownload,
+        downloading: canDownload ? s.downloading : false,
+        updateReady: canDownload ? s.updateReady : false,
+        minRequiredVersion: minAppVersion,
+        updatePriority,
+      }))
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [updateConfig])
+
+  // ----------------------------------------------------------
+  // Step 2: Track native in-app update events
+  // ----------------------------------------------------------
+  useEffect(() => {
+    if (Platform.OS !== 'android') return
+
+    const removeStartListener = ExpoInAppUpdates.addUpdateListener('updateStart', (event) => {
+      setState((s) => ({
+        ...s,
+        downloading: event.updateType === 'FLEXIBLE',
+        updateReady: false,
+      }))
+    })
+
+    const removeDownloadedListener = ExpoInAppUpdates.addUpdateListener(
+      'updateDownloaded',
+      (event) => {
+        if (event.readyToInstall) {
+          setState((s) => ({ ...s, downloading: false, updateReady: true }))
+        }
+      },
+    )
+
+    const removeCompletedListener = ExpoInAppUpdates.addUpdateListener('updateCompleted', () => {
+      setState((s) => ({
+        ...s,
+        updateRequired: false,
+        downloading: false,
+        updateReady: false,
+      }))
+    })
+
+    const removeCancelledListener = ExpoInAppUpdates.addUpdateListener('updateCancelled', () => {
+      setState((s) => ({ ...s, downloading: false, updateReady: false }))
+    })
+
+    return () => {
+      removeStartListener()
+      removeDownloadedListener()
+      removeCompletedListener()
+      removeCancelledListener()
+    }
+  }, [])
+
+  // ----------------------------------------------------------
+  // Actions
+  // ----------------------------------------------------------
+
+  const startUpdate = useCallback(async () => {
+    if (Platform.OS === 'android') {
+      try {
+        const result = await ExpoInAppUpdates.checkForUpdate()
+
+        if (!result.updateAvailable || !canDownloadAndroidUpdate(result)) {
+          setState((s) => ({
+            ...s,
+            updateRequired: false,
+            downloading: false,
+            updateReady: false,
+          }))
+          return
+        }
+
+        if (state.updatePriority === 'flexible' && result.flexibleAllowed) {
+          setState((s) => ({ ...s, downloading: true }))
+          const started = await ExpoInAppUpdates.startUpdate(false)
+          if (started) return
+          setState((s) => ({ ...s, downloading: false }))
+        }
+
+        if (result.immediateAllowed) {
+          const started = await ExpoInAppUpdates.startUpdate(true)
+          if (started) return
+        }
+
+        if (result.flexibleAllowed) {
+          setState((s) => ({ ...s, downloading: true }))
+          const started = await ExpoInAppUpdates.startUpdate(false)
+          if (started) return
+          setState((s) => ({ ...s, downloading: false }))
+        }
+
+        setState((s) => ({
+          ...s,
+          updateRequired: false,
+          downloading: false,
+          updateReady: false,
+        }))
+      } catch (_err) {
+        setState((s) => ({
+          ...s,
+          updateRequired: false,
+          downloading: false,
+          updateReady: false,
+        }))
+      }
+      return
+    }
+
+    try {
+      const result = await ExpoInAppUpdates.checkForUpdate()
+      if (
+        !result.updateAvailable ||
+        !state.minRequiredVersion ||
+        !storeVersionCanSatisfyRequiredVersion(result.storeVersion, state.minRequiredVersion)
+      ) {
+        setState((s) => ({
+          ...s,
+          updateRequired: false,
+          downloading: false,
+          updateReady: false,
+        }))
+        return
+      }
+
+      const started = await ExpoInAppUpdates.startUpdate()
+      if (!started) {
+        await openPlatformStore()
+      }
+    } catch (_err) {
+      setState((s) => ({
+        ...s,
+        updateRequired: false,
+        downloading: false,
+        updateReady: false,
+      }))
+    }
+  }, [state.minRequiredVersion, state.updatePriority])
+
+  // ----------------------------------------------------------
+  // Step 3: Automatically start Android flexible updates once
+  // ----------------------------------------------------------
+  useEffect(() => {
+    if (
+      Platform.OS !== 'android' ||
+      !state.updateRequired ||
+      state.updatePriority !== 'flexible' ||
+      state.downloading ||
+      state.updateReady ||
+      autoStartAttemptedRef.current
+    ) {
+      return
+    }
+
+    autoStartAttemptedRef.current = true
+    const timer = setTimeout(() => {
+      startUpdate().catch(() => {
+        setState((s) => ({ ...s, downloading: false }))
+      })
+    }, 500)
+
+    return () => clearTimeout(timer)
+  }, [
+    startUpdate,
+    state.downloading,
+    state.updatePriority,
+    state.updateReady,
+    state.updateRequired,
+  ])
+
+  return { ...state, startUpdate }
 }
 
 /**
  * Opens the app store listing for the current platform.
  */
 export function openAppStore(): void {
-  const url =
-    Platform.OS === 'ios'
-      ? APP_STORE_URL
-      : Platform.OS === 'android'
-        ? PLAY_STORE_URL
-        : APP_STORE_URL
-
-  Linking.openURL(url).catch(() => {
-    // Fallback: couldn't open store link — nothing more we can do
+  openPlatformStore().catch(() => {
+    // Fallback failed; nothing more we can do from this fire-and-forget helper.
   })
 }
