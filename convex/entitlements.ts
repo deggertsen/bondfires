@@ -51,8 +51,9 @@ export const PLUS_MAX_VIDEO_DURATION_MS = 15 * 60 * 1000 // 15 minutes
 /** Maximum video duration (ms) for Premium tier members. */
 export const PREMIUM_MAX_VIDEO_DURATION_MS = 30 * 60 * 1000 // 30 minutes
 
-/** Private-camp video retention window for Plus users (30 days). */
-export const PLUS_PRIVATE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+/** Video retention window for Plus/Free users (30 days).
+ * Bondfires where the newest video is older than this are eligible for cleanup. */
+export const BONDFIRE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 
 /** Maximum active private camps a Plus/Premium user may own. */
 export const MAX_PRIVATE_CAMPS_FOR_NON_PRO = 1
@@ -217,7 +218,7 @@ export async function getPrivateCampExpiresAt(
 
   const ownerTier = await getEntitlementSubscriptionTier(ctx, camp.ownerId)
   if (ownerTier === 'plus') {
-    return now + PLUS_PRIVATE_RETENTION_MS
+    return now + BONDFIRE_RETENTION_MS
   }
 
   // Premium and Pro owners have unlimited retention.

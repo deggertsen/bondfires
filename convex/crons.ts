@@ -9,13 +9,6 @@ crons.interval(
   internal.videos.disableStaleLiveStreams,
 )
 
-crons.daily(
-  'cleanup expired private camp videos',
-  { hourUTC: 8, minuteUTC: 0 },
-  internal.videos.cleanupExpiredPrivateCampVideos,
-  { limit: 100 },
-)
-
 // Process frozen camps whose 30-day reclaim window has expired.
 // Runs daily at 9:00 UTC to catch expired reclaim deadlines.
 crons.daily(
@@ -70,15 +63,18 @@ crons.daily(
   internal.reconciliation.dailyReconciliation,
 )
 
-// Enforce hearth video retention: Plus = 30-day rolling deletion.
-// Premium and Pro owners have unlimited retention and are skipped.
-// Only deletes videos (and their Mux assets) — bondfire shells and
-// participant data are preserved.
+// Enforce bondfire-level video retention: Plus/Free = 30-day expiry from
+// newest activity in the bondfire thread. An entire bondfire (spark + all
+// responses) is deleted when no video in the thread is newer than 30 days.
+// Premium and Pro owners have unlimited retention and are always skipped.
 // Runs daily at 15:00 UTC, after all other daily cleanup jobs.
+//
+// TODO: Increase frequency as traffic grows (every 6h → every 1h) to avoid
+// large batch backlogs.
 crons.daily(
-  'enforce hearth video retention',
+  'enforce bondfire video retention',
   { hourUTC: 15, minuteUTC: 0 },
-  internal.personalCampRetention.enforcePersonalCampRetention,
+  internal.bondfireRetention.enforceBondfireRetention,
 )
 
 export default crons
