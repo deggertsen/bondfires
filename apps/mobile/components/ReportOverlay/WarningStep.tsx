@@ -1,6 +1,6 @@
-import { Button, Text } from '@bondfires/ui'
+import { Button, Spinner, Text } from '@bondfires/ui'
 import { AlertTriangle } from '@tamagui/lucide-icons'
-import { Spinner, XStack, YStack } from 'tamagui'
+import { XStack, YStack } from 'tamagui'
 import type { WarningStepProps } from './types'
 
 export function WarningStep({ isSubmitting, error, onSubmit, onBack }: WarningStepProps) {

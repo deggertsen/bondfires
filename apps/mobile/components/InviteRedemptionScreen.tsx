@@ -1,11 +1,11 @@
 import { useSystemThemeColors } from '@bondfires/app'
-import { Button, Text } from '@bondfires/ui'
+import { Button, Spinner, Text } from '@bondfires/ui'
 import { ArrowLeft, Flame } from '@tamagui/lucide-icons'
 import type { Href } from 'expo-router'
 import { Redirect, Stack, useRouter } from 'expo-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Pressable, StatusBar } from 'react-native'
-import { Spinner, YStack } from 'tamagui'
+import { YStack } from 'tamagui'
 import { routes } from '../lib/routes'
 
 type RedemptionStatus = 'loading' | 'success' | 'error'

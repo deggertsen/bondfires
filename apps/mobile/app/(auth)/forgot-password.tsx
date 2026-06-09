@@ -1,12 +1,12 @@
 import { getAuthErrorMessage, useSystemThemeColors } from '@bondfires/app'
-import { Button, Input, Text } from '@bondfires/ui'
+import { Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { ChevronLeft, Mail } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
 import { useState } from 'react'
 import { Pressable, StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
-import { Spinner, YStack } from 'tamagui'
+import { YStack } from 'tamagui'
 import { routes } from '../../lib/routes'
 
 export default function ForgotPasswordScreen() {

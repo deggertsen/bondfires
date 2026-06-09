@@ -1,7 +1,8 @@
 import { type SubscriptionTier, TIER_LABELS } from '@bondfires/app'
 import { Crown, Flame, Sparkles, Star } from '@tamagui/lucide-icons'
 import { Pressable } from 'react-native'
-import { Card, Spinner, Text, XStack, YStack } from 'tamagui'
+import { Card, Text, XStack, YStack } from 'tamagui'
+import { Spinner } from './Spinner'
 
 const TIER_ICONS: Record<string, typeof Star> = {
   free: Star,

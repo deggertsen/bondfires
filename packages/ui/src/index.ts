@@ -27,7 +27,6 @@ export {
   Sheet,
   SizableText,
   Slider,
-  Spinner,
   Square,
   Stack,
   Switch,
@@ -48,6 +47,7 @@ export * from './Container'
 export * from './ErrorDisplay'
 export * from './ForceUpdateModal'
 export * from './Input'
+export * from './Spinner'
 export * from './StatCard'
 export * from './SubscriptionPaywall'
 export * from './SubscriptionStatus'

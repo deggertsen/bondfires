@@ -1,10 +1,11 @@
 import { ChevronDown, ChevronUp, Search, Shield } from '@tamagui/lucide-icons'
 import { useCallback, useState } from 'react'
 import { Alert } from 'react-native'
-import { ScrollView, Spinner, XStack, YStack } from 'tamagui'
+import { ScrollView, XStack, YStack } from 'tamagui'
 import { Button } from './Button'
 import { Card } from './Card'
 import { Input } from './Input'
+import { Spinner } from './Spinner'
 import { Text } from './Text'
 
 type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'

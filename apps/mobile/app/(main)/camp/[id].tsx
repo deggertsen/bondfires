@@ -6,7 +6,7 @@ import {
   setFeedActiveBondfireId,
   useAppThemeColors,
 } from '@bondfires/app'
-import { Button, Text } from '@bondfires/ui'
+import { Button, Spinner, Text } from '@bondfires/ui'
 import {
   ArrowLeft,
   Ban,
@@ -24,7 +24,7 @@ import { useMutation, useQuery } from 'convex/react'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useCallback, useState } from 'react'
 import { Alert, FlatList, Modal, Pressable, StatusBar, TextInput } from 'react-native'
-import { Separator, Spinner, Image as TamaguiImage, XStack, YStack } from 'tamagui'
+import { Separator, Image as TamaguiImage, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { CampInviteSheet } from '../../../components/CampInviteSheet'
