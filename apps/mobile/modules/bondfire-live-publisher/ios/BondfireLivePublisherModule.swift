@@ -231,13 +231,10 @@ final class LivePublisher {
       fallbackHeight: options.height
     )
 
-    mixer.videoMixerSettings.videoSize = .init(
-      width: captureSize.width,
-      height: captureSize.height
-    )
-    // Cap encode fps at the display refresh rate, never exceed requested fps
+    // Cap capture fps at the display refresh rate, never exceed requested fps.
     let maxFps = UIScreen.main.maximumFramesPerSecond
-    mixer.videoMixerSettings.frameRate = min(Float64(options.fps), Float64(maxFps > 0 ? maxFps : 30))
+    let captureFps = min(Float64(options.fps), Float64(maxFps > 0 ? maxFps : 30))
+    await mixer.setFrameRate(captureFps)
 
     isCaptureRunning = true
   }
@@ -287,7 +284,10 @@ final class LivePublisher {
 
     var videoSettings = await newSession.stream.videoSettings
     videoSettings.bitRate = options.videoBitrate
-    videoSettings.videoSize = .init(width: captureSize.width, height: captureSize.height)
+    videoSettings.videoSize = CGSize(
+      width: Int(captureSize.width),
+      height: Int(captureSize.height)
+    )
     await newSession.stream.setVideoSettings(videoSettings)
 
     var audioSettings = await newSession.stream.audioSettings
