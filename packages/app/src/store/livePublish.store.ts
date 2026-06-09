@@ -3,6 +3,7 @@ import { observable } from '@legendapp/state'
 export type LivePublishStatus =
   | 'idle'
   | 'creating'
+  | 'pre_connected'
   | 'connecting'
   | 'live'
   | 'reconnecting'
