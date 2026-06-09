@@ -244,11 +244,8 @@ class BondfireLivePublisherModule : Module() {
     )
     newStreamer.setVideoConfig(videoConfig)
 
-    // Bind preview with proper aspect ratio
-    previewView?.let { pv ->
-      pv.setVideoSourceProvider(newStreamer)
-      pv.scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
-    }
+    // Bind preview — StreamPack PreviewView fills the view by default.
+    previewView?.setVideoSourceProvider(newStreamer)
 
     // Ensure unmuted at start
     isMuted = false
