@@ -16,7 +16,7 @@ import {
   useLivePublisher,
   useSubscription,
 } from '@bondfires/app'
-import { Button, Text } from '@bondfires/ui'
+import { Button, Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
 import { Flame, Sparkles, SwitchCamera, X } from '@tamagui/lucide-icons'
@@ -31,7 +31,7 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { Alert, AppState, Linking, Platform, Pressable, ScrollView, StatusBar } from 'react-native'
-import { Spinner, XStack, YStack } from 'tamagui'
+import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { CompletionScreen } from '../../../components/CompletionScreen'

@@ -1,10 +1,10 @@
-import { Button, Text } from '@bondfires/ui'
+import { Button, Spinner, Text } from '@bondfires/ui'
 import { Check, Copy, Share, X } from '@tamagui/lucide-icons'
 import { useMutation } from 'convex/react'
 import * as Clipboard from 'expo-clipboard'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, Pressable, Share as RNShare } from 'react-native'
-import { Sheet, Spinner, XStack, YStack } from 'tamagui'
+import { Sheet, XStack, YStack } from 'tamagui'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
 

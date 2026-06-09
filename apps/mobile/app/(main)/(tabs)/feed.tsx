@@ -11,7 +11,7 @@ import {
   telemetry,
   useAppThemeColors,
 } from '@bondfires/app'
-import { BondfireRow, type BondfireRowProps, Button, Input, Text } from '@bondfires/ui'
+import { BondfireRow, type BondfireRowProps, Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { Flame, Search } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
@@ -27,7 +27,7 @@ import {
   type ViewToken,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { Separator, Spinner, XStack, YStack } from 'tamagui'
+import { Separator, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { SparkTitleSheet } from '../../../components/SparkTitleSheet'

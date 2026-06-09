@@ -1,8 +1,9 @@
 import { ArrowUpCircle, Download, RefreshCw } from '@tamagui/lucide-icons'
 import { useState } from 'react'
 import { Modal, Platform, StyleSheet } from 'react-native'
-import { Spinner, YStack } from 'tamagui'
+import { YStack } from 'tamagui'
 import { Button } from './Button'
+import { Spinner } from './Spinner'
 import { Text } from './Text'
 
 export type UpdatePriority = 'flexible' | 'immediate'

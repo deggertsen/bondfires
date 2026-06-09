@@ -8,8 +8,9 @@ import type {
 import { Check, Crown, Flame, Sparkles, Star, X } from '@tamagui/lucide-icons'
 import { useState } from 'react'
 import { Pressable, ScrollView } from 'react-native'
-import { Card, Sheet, Spinner, Text, XStack, YStack } from 'tamagui'
+import { Card, Sheet, Text, XStack, YStack } from 'tamagui'
 import { Button } from './Button'
+import { Spinner } from './Spinner'
 
 const TIER_ICONS: Record<string, typeof Flame> = {
   plus: Flame,

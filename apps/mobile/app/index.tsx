@@ -1,11 +1,12 @@
 import { appActions, appStore$, getLastLocation, telemetry } from '@bondfires/app'
+import { Spinner } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
 import { AlertTriangle, RefreshCw } from '@tamagui/lucide-icons'
 import { useQuery } from 'convex/react'
 import { Redirect } from 'expo-router'
 import { useEffect, useRef, useState } from 'react'
 import { Pressable } from 'react-native'
-import { Spinner, Text, YStack } from 'tamagui'
+import { Text, YStack } from 'tamagui'
 import { api } from '../../../convex/_generated/api'
 import { routes } from '../lib/routes'
 

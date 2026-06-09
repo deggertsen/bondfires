@@ -12,7 +12,7 @@ import {
   usePreferences,
   useSubscription,
 } from '@bondfires/app'
-import { AdminPanel, Button, Card, Input, SubscriptionStatus, Text } from '@bondfires/ui'
+import { AdminPanel, Button, Card, Input, Spinner, SubscriptionStatus, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
 import {
@@ -39,7 +39,7 @@ import * as ImagePicker from 'expo-image-picker'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, FlatList, Pressable, RefreshControl, ScrollView, StatusBar } from 'react-native'
-import { Avatar, Separator, Sheet, Spinner, Switch, XStack, YStack } from 'tamagui'
+import { Avatar, Separator, Sheet, Switch, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { UploadProgressCard } from '../../../components/UploadProgressCard'

@@ -7,14 +7,14 @@ import {
   setFeedActiveBondfireId,
   useAppThemeColors,
 } from '@bondfires/app'
-import { BondfireRow, type BondfireRowProps, Button, Text } from '@bondfires/ui'
+import { BondfireRow, type BondfireRowProps, Button, Spinner, Text } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
 import { Flame, Pin } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, FlatList, RefreshControl, StatusBar } from 'react-native'
-import { Separator, Spinner, XStack, YStack } from 'tamagui'
+import { Separator, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import {

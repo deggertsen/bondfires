@@ -11,7 +11,7 @@ import {
   useAppThemeColors,
   useMuxData,
 } from '@bondfires/app'
-import { Button, Text } from '@bondfires/ui'
+import { Button, Spinner, Text } from '@bondfires/ui'
 import { useObservable, useObserveEffect, useValue } from '@legendapp/state/react'
 import { useIsFocused, useNavigation } from '@react-navigation/native'
 import {
@@ -45,7 +45,7 @@ import {
   View,
   type ViewToken,
 } from 'react-native'
-import { Sheet, Spinner, XStack, YStack } from 'tamagui'
+import { Sheet, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { InviteSheet } from '../../../components/InviteSheet'
