@@ -1,5 +1,5 @@
 import { getAuthErrorMessage, useSystemThemeColors } from '@bondfires/app'
-import { Button, Input, Text } from '@bondfires/ui'
+import { Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker'
@@ -8,7 +8,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useState } from 'react'
 import { Platform, Pressable, StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
-import { Spinner, XStack, YStack } from 'tamagui'
+import { XStack, YStack } from 'tamagui'
 import { routes } from '../../lib/routes'
 
 type Gender = 'male' | 'female' | 'other'
@@ -213,7 +213,7 @@ export default function SignupScreen() {
           <YStack gap={16}>
             {/* First Name */}
             <YStack gap={8}>
-              <Text variant="label" color={'$gray12'}>
+              <Text variant="label" color={'$color'}>
                 First Name
               </Text>
               <Input
@@ -227,7 +227,7 @@ export default function SignupScreen() {
 
             {/* Last Name */}
             <YStack gap={8}>
-              <Text variant="label" color={'$gray12'}>
+              <Text variant="label" color={'$color'}>
                 Last Name
               </Text>
               <Input
@@ -241,7 +241,7 @@ export default function SignupScreen() {
 
             {/* Email */}
             <YStack gap={8}>
-              <Text variant="label" color={'$gray12'}>
+              <Text variant="label" color={'$color'}>
                 Email
               </Text>
               <Input
@@ -256,7 +256,7 @@ export default function SignupScreen() {
 
             {/* Gender */}
             <YStack gap={8}>
-              <Text variant="label" color={'$gray12'}>
+              <Text variant="label" color={'$color'}>
                 Gender
               </Text>
               <XStack gap={8}>
@@ -270,7 +270,7 @@ export default function SignupScreen() {
                       flex={1}
                       onPress={() => form$.gender.set(option.value)}
                     >
-                      <Text color={selected ? '$gray12' : '$placeholderColor'} fontWeight="900">
+                      <Text color={selected ? '$color' : '$placeholderColor'} fontWeight="900">
                         {option.label}
                       </Text>
                     </Button>
@@ -281,7 +281,7 @@ export default function SignupScreen() {
 
             {/* Birth Date with Calendar Picker */}
             <YStack gap={8}>
-              <Text variant="label" color={'$gray12'}>
+              <Text variant="label" color={'$color'}>
                 Birth Date
               </Text>
               <Text fontSize={12} color={'$placeholderColor'} marginBottom={4}>
@@ -310,7 +310,7 @@ export default function SignupScreen() {
 
             {/* Password */}
             <YStack gap={8}>
-              <Text variant="label" color={'$gray12'}>
+              <Text variant="label" color={'$color'}>
                 Password
               </Text>
               <Input
@@ -324,7 +324,7 @@ export default function SignupScreen() {
 
             {/* Confirm Password */}
             <YStack gap={8}>
-              <Text variant="label" color={'$gray12'}>
+              <Text variant="label" color={'$color'}>
                 Confirm Password
               </Text>
               <Input
@@ -348,11 +348,11 @@ export default function SignupScreen() {
           <YStack gap={12}>
             <Button variant="primary" size="$lg" onPress={handleSignup} disabled={isLoading}>
               {isLoading ? (
-                <Spinner color={'$gray12'} />
+                <Spinner color={'$color'} />
               ) : (
                 <>
-                  <Flame size={20} color={'$gray12'} />
-                  <Text color={'$gray12'}>Create Account</Text>
+                  <Flame size={20} color={'$color'} />
+                  <Text color={'$color'}>Create Account</Text>
                 </>
               )}
             </Button>

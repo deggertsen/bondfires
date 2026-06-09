@@ -12,7 +12,7 @@ import {
   usePreferences,
   useSubscription,
 } from '@bondfires/app'
-import { AdminPanel, Button, Card, Input, SubscriptionStatus, Text } from '@bondfires/ui'
+import { AdminPanel, Button, Card, Input, Spinner, SubscriptionStatus, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
 import {
@@ -39,7 +39,7 @@ import * as ImagePicker from 'expo-image-picker'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, FlatList, Pressable, RefreshControl, ScrollView, StatusBar } from 'react-native'
-import { Avatar, Separator, Sheet, Spinner, Switch, XStack, YStack } from 'tamagui'
+import { Avatar, Separator, Sheet, Switch, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { UploadProgressCard } from '../../../components/UploadProgressCard'
@@ -165,9 +165,9 @@ function ThemeSelector() {
               onPress={() => handleSelectTheme(value)}
             >
               <XStack alignItems="center" justifyContent="center" gap={6}>
-                <Icon size={16} color={isSelected ? '$gray12' : '$placeholderColor'} />
+                <Icon size={16} color={isSelected ? '$color' : '$placeholderColor'} />
                 <Text
-                  color={isSelected ? '$gray12' : '$placeholderColor'}
+                  color={isSelected ? '$color' : '$placeholderColor'}
                   fontWeight={isSelected ? '700' : '500'}
                   fontSize={13}
                 >
@@ -554,9 +554,9 @@ export default function ProfileScreen() {
                   borderColor={'$background'}
                 >
                   {isUploadingPhoto ? (
-                    <Spinner size="small" color={'$gray12'} />
+                    <Spinner size="small" color={'$color'} />
                   ) : (
-                    <Camera size={14} color={'$gray12'} />
+                    <Camera size={14} color={'$color'} />
                   )}
                 </YStack>
               </Pressable>
@@ -582,7 +582,7 @@ export default function ProfileScreen() {
                   alignItems="center"
                   justifyContent="center"
                 >
-                  <Edit3 size={18} color={'$gray12'} />
+                  <Edit3 size={18} color={'$color'} />
                 </YStack>
               </Pressable>
             </XStack>
@@ -620,8 +620,8 @@ export default function ProfileScreen() {
 
               <YStack alignItems="center" gap={4}>
                 <XStack alignItems="center" gap={6}>
-                  <Eye size={20} color={'$gray12'} />
-                  <Text fontSize={24} fontWeight="700" color={'$gray12'}>
+                  <Eye size={20} color={'$color'} />
+                  <Text fontSize={24} fontWeight="700" color={'$color'}>
                     {stats.totalViews}
                   </Text>
                 </XStack>
@@ -650,7 +650,7 @@ export default function ProfileScreen() {
                 </YStack>
                 {kindlingBalance < 3 && (
                   <Button variant="primary" size="$sm" onPress={showPaywall}>
-                    <Text color={'$gray12'} fontWeight="600" fontSize={13}>
+                    <Text color={'$color'} fontWeight="600" fontSize={13}>
                       Get More
                     </Text>
                   </Button>
@@ -914,7 +914,7 @@ export default function ProfileScreen() {
                     <YStack padding={12} gap={4} backgroundColor={'$backgroundHover'}>
                       <XStack alignItems="center" gap={6}>
                         <MessageCircle size={14} color={'$placeholderColor'} />
-                        <Text fontSize={13} color={'$gray12'}>
+                        <Text fontSize={13} color={'$color'}>
                           {item.videoCount} videos
                         </Text>
                       </XStack>
@@ -992,7 +992,7 @@ export default function ProfileScreen() {
             </Text>
 
             <YStack gap={8}>
-              <Text variant="label" color={'$gray12'}>
+              <Text variant="label" color={'$color'}>
                 Display Name
               </Text>
               <Input
@@ -1003,7 +1003,7 @@ export default function ProfileScreen() {
             </YStack>
 
             <YStack gap={8}>
-              <Text variant="label" color={'$gray12'}>
+              <Text variant="label" color={'$color'}>
                 Gender
               </Text>
               <XStack gap={8}>
@@ -1017,7 +1017,7 @@ export default function ProfileScreen() {
                       flex={1}
                       onPress={() => state$.editGender.set(option.value)}
                     >
-                      <Text color={selected ? '$gray12' : '$placeholderColor'} fontWeight="900">
+                      <Text color={selected ? '$color' : '$placeholderColor'} fontWeight="900">
                         {option.label}
                       </Text>
                     </Button>
@@ -1027,7 +1027,7 @@ export default function ProfileScreen() {
             </YStack>
 
             <YStack gap={8}>
-              <Text variant="label" color={'$gray12'}>
+              <Text variant="label" color={'$color'}>
                 Age
               </Text>
               <Text fontSize={12} color={'$placeholderColor'}>
@@ -1045,7 +1045,7 @@ export default function ProfileScreen() {
                 size="$md"
                 onPress={() => state$.isEditSheetOpen.set(false)}
               >
-                <Text color={'$gray12'}>Cancel</Text>
+                <Text color={'$color'}>Cancel</Text>
               </Button>
               <Button
                 variant="primary"
@@ -1055,9 +1055,9 @@ export default function ProfileScreen() {
                 disabled={isSaving}
               >
                 {isSaving ? (
-                  <Spinner size="small" color={'$gray12'} />
+                  <Spinner size="small" color={'$color'} />
                 ) : (
-                  <Text color={'$gray12'}>Save</Text>
+                  <Text color={'$color'}>Save</Text>
                 )}
               </Button>
             </XStack>

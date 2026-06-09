@@ -1,12 +1,12 @@
 import { parseError, subscriptionActions } from '@bondfires/app'
-import { Button, ColorPicker, StatCard, Text } from '@bondfires/ui'
+import { Button, ColorPicker, Spinner, StatCard, Text } from '@bondfires/ui'
 import { ImagePlus } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator'
 import * as ImagePicker from 'expo-image-picker'
 import { useCallback, useState } from 'react'
 import { Alert, Pressable } from 'react-native'
-import { Image, Spinner, XStack, YStack } from 'tamagui'
+import { Image, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 
@@ -96,7 +96,7 @@ function KindlingBalanceSection() {
                 paddingVertical={6}
                 gap={8}
               >
-                <Text fontSize={13} color={'$gray12'} flex={1} numberOfLines={1}>
+                <Text fontSize={13} color={'$color'} flex={1} numberOfLines={1}>
                   {activeCamp.name}
                 </Text>
                 <XStack gap={8} alignItems="center">

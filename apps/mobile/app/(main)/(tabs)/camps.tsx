@@ -1,11 +1,11 @@
 import { parseError, subscriptionActions, useAppThemeColors } from '@bondfires/app'
-import { Button, CampCardStatusBanner, Input, Text } from '@bondfires/ui'
+import { Button, CampCardStatusBanner, Input, Spinner, Text } from '@bondfires/ui'
 import { ChevronDown, ChevronUp, Flame, Lock, Search, Sparkles, Users } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, FlatList, Pressable, RefreshControl, StatusBar } from 'react-native'
-import { Image, Separator, Sheet, Spinner, XStack, YStack } from 'tamagui'
+import { Image, Separator, Sheet, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc } from '../../../../../convex/_generated/dataModel'
 import { routes } from '../../../lib/routes'
@@ -88,9 +88,9 @@ function CampCard({
             {coverImageUrl ? (
               <Image source={{ uri: coverImageUrl }} width={54} height={54} resizeMode="cover" />
             ) : camp.access === 'invite' ? (
-              <Lock size={25} color={'$gray12'} />
+              <Lock size={25} color={'$color'} />
             ) : (
-              <Flame size={28} color={'$gray12'} />
+              <Flame size={28} color={'$color'} />
             )}
           </YStack>
 
@@ -127,14 +127,14 @@ function CampCard({
                   borderWidth={1}
                   borderColor={'$borderColor'}
                 >
-                  <Text fontSize={11} color={'$gray12'} fontWeight="900">
+                  <Text fontSize={11} color={'$color'} fontWeight="900">
                     Joined
                   </Text>
                 </YStack>
               ) : null}
             </XStack>
 
-            <Text fontSize={14} color={'$gray12'} lineHeight={20} numberOfLines={2}>
+            <Text fontSize={14} color={'$color'} lineHeight={20} numberOfLines={2}>
               {camp.purpose}
             </Text>
 
@@ -153,7 +153,7 @@ function CampCard({
 
               {canJoinFromList ? (
                 <Button variant="outline" size="$sm" onPress={onJoin}>
-                  <Text color={'$gray12'} fontWeight="900">
+                  <Text color={'$color'} fontWeight="900">
                     {camp.access === 'approval' ? 'Request' : 'Join'}
                   </Text>
                 </Button>
@@ -192,7 +192,7 @@ function EmptyCamps({ hasQuery, onReset }: { hasQuery: boolean; onReset: () => v
       </Text>
       {hasQuery ? (
         <Button variant="outline" size="$md" onPress={onReset}>
-          <Text color={'$gray12'} fontWeight="900">
+          <Text color={'$color'} fontWeight="900">
             Clear Search
           </Text>
         </Button>
@@ -615,8 +615,8 @@ export default function CampsScreen() {
                   flex={1}
                   onPress={() => setIsCreatePrivateOpen(true)}
                 >
-                  <Sparkles size={15} color={'$gray12'} />
-                  <Text color={'$gray12'} fontWeight="900">
+                  <Sparkles size={15} color={'$color'} />
+                  <Text color={'$color'} fontWeight="900">
                     Create Camp
                   </Text>
                 </Button>
@@ -627,7 +627,7 @@ export default function CampsScreen() {
                 flex={1}
                 onPress={() => setIsRedeemInviteOpen(true)}
               >
-                <Text color={'$gray12'} fontWeight="900">
+                <Text color={'$color'} fontWeight="900">
                   Redeem Invite
                 </Text>
               </Button>
@@ -713,7 +713,7 @@ export default function CampsScreen() {
                             alignItems="center"
                             justifyContent="center"
                           >
-                            <Lock size={18} color={'$gray12'} />
+                            <Lock size={18} color={'$color'} />
                           </YStack>
                           <YStack flex={1} gap={2}>
                             <Text fontSize={14} fontWeight="900" numberOfLines={1}>
@@ -811,9 +811,9 @@ export default function CampsScreen() {
             onPress={handleCreatePrivateCamp}
           >
             {isSubmitting ? (
-              <Spinner color={'$gray12'} />
+              <Spinner color={'$color'} />
             ) : (
-              <Text color={'$gray12'} fontWeight="900">
+              <Text color={'$color'} fontWeight="900">
                 Create Camp
               </Text>
             )}
@@ -847,9 +847,9 @@ export default function CampsScreen() {
           />
           <Button variant="primary" size="$lg" disabled={isSubmitting} onPress={handleRedeemInvite}>
             {isSubmitting ? (
-              <Spinner color={'$gray12'} />
+              <Spinner color={'$color'} />
             ) : (
-              <Text color={'$gray12'} fontWeight="900">
+              <Text color={'$color'} fontWeight="900">
                 Join Camp
               </Text>
             )}

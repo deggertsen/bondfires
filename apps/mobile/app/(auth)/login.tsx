@@ -1,5 +1,5 @@
 import { telemetry, useSystemThemeColors } from '@bondfires/app'
-import { Button, Input, Text } from '@bondfires/ui'
+import { Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { Flame } from '@tamagui/lucide-icons'
@@ -8,7 +8,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useRef } from 'react'
 import { StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
-import { Spinner, YStack } from 'tamagui'
+import { YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import { resolveAuthRedirect, routes } from '../../lib/routes'
 
@@ -161,7 +161,7 @@ export default function LoginScreen() {
           {/* Form */}
           <YStack gap={20}>
             <YStack gap={8}>
-              <Text variant="label" color={'$gray12'}>
+              <Text variant="label" color={'$color'}>
                 Email
               </Text>
               <Input
@@ -176,7 +176,7 @@ export default function LoginScreen() {
             </YStack>
 
             <YStack gap={8}>
-              <Text variant="label" color={'$gray12'}>
+              <Text variant="label" color={'$color'}>
                 Password
               </Text>
               <Input
@@ -208,7 +208,7 @@ export default function LoginScreen() {
           {/* Actions */}
           <YStack gap={12}>
             <Button variant="primary" size="$lg" onPress={handleLogin} disabled={isLoading}>
-              {isLoading ? <Spinner color={'$gray12'} /> : <Text color={'$gray12'}>Sign In</Text>}
+              {isLoading ? <Spinner color={'$color'} /> : <Text color={'$color'}>Sign In</Text>}
             </Button>
 
             <Button variant="outline" size="$md" onPress={() => router.push(routes.signup)}>

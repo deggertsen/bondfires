@@ -1,12 +1,12 @@
 import { getAuthErrorMessage, useSystemThemeColors } from '@bondfires/app'
-import { Button, Input, Text } from '@bondfires/ui'
+import { Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { CheckCircle, ChevronLeft, KeyRound } from '@tamagui/lucide-icons'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { Pressable, StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
-import { Spinner, YStack } from 'tamagui'
+import { YStack } from 'tamagui'
 import { routes } from '../../lib/routes'
 
 export default function ResetPasswordScreen() {
@@ -156,7 +156,7 @@ export default function ResetPasswordScreen() {
             alignItems="center"
             justifyContent="center"
           >
-            <ChevronLeft size={24} color={'$gray12'} />
+            <ChevronLeft size={24} color={'$color'} />
           </YStack>
         </Pressable>
       </YStack>
@@ -194,7 +194,7 @@ export default function ResetPasswordScreen() {
           {/* Form */}
           <YStack gap={20}>
             <YStack gap={8}>
-              <Text variant="label" color={'$gray12'}>
+              <Text variant="label" color={'$color'}>
                 Reset Code
               </Text>
               <Input
@@ -211,7 +211,7 @@ export default function ResetPasswordScreen() {
             </YStack>
 
             <YStack gap={8}>
-              <Text variant="label" color={'$gray12'}>
+              <Text variant="label" color={'$color'}>
                 New Password
               </Text>
               <Input
@@ -225,7 +225,7 @@ export default function ResetPasswordScreen() {
             </YStack>
 
             <YStack gap={8}>
-              <Text variant="label" color={'$gray12'}>
+              <Text variant="label" color={'$color'}>
                 Confirm Password
               </Text>
               <Input
@@ -254,9 +254,9 @@ export default function ResetPasswordScreen() {
               disabled={isLoading || !code || !newPassword || !confirmPassword}
             >
               {isLoading ? (
-                <Spinner color={'$gray12'} />
+                <Spinner color={'$color'} />
               ) : (
-                <Text color={'$gray12'}>Reset Password</Text>
+                <Text color={'$color'}>Reset Password</Text>
               )}
             </Button>
 

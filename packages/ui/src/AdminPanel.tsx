@@ -1,10 +1,11 @@
 import { ChevronDown, ChevronUp, Search, Shield } from '@tamagui/lucide-icons'
 import { useCallback, useState } from 'react'
 import { Alert } from 'react-native'
-import { ScrollView, Spinner, XStack, YStack } from 'tamagui'
+import { ScrollView, XStack, YStack } from 'tamagui'
 import { Button } from './Button'
 import { Card } from './Card'
 import { Input } from './Input'
+import { Spinner } from './Spinner'
 import { Text } from './Text'
 
 type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'
@@ -132,11 +133,11 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier }: AdminPanelProps) {
                 disabled={isSearching || emailQuery.trim().length < 2}
               >
                 {isSearching ? (
-                  <Spinner size="small" color={'$gray12'} />
+                  <Spinner size="small" color={'$color'} />
                 ) : (
                   <>
-                    <Search size={16} color={'$gray12'} />
-                    <Text color={'$gray12'}>Search</Text>
+                    <Search size={16} color={'$color'} />
+                    <Text color={'$color'}>Search</Text>
                   </>
                 )}
               </Button>
@@ -189,7 +190,7 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier }: AdminPanelProps) {
                                   >
                                     <Text
                                       fontSize={12}
-                                      color={isCurrent ? '$gray12' : '$placeholderColor'}
+                                      color={isCurrent ? '$color' : '$placeholderColor'}
                                     >
                                       {isUpdating && isCurrent ? '...' : option.label}
                                     </Text>

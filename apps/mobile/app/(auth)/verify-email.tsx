@@ -1,12 +1,12 @@
 import { getAuthErrorMessage, useSystemThemeColors } from '@bondfires/app'
-import { Button, Input, Text } from '@bondfires/ui'
+import { Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { CheckCircle, Mail } from '@tamagui/lucide-icons'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useState } from 'react'
 import { StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
-import { Spinner, YStack } from 'tamagui'
+import { YStack } from 'tamagui'
 import { resolveAuthRedirect } from '../../lib/routes'
 
 export default function VerifyEmailScreen() {
@@ -145,11 +145,11 @@ export default function VerifyEmailScreen() {
                     disabled={isVerifying || !code}
                   >
                     {isVerifying ? (
-                      <Spinner color={'$gray12'} />
+                      <Spinner color={'$color'} />
                     ) : (
                       <>
-                        <CheckCircle size={20} color={'$gray12'} />
-                        <Text color={'$gray12'}>Verify Email</Text>
+                        <CheckCircle size={20} color={'$color'} />
+                        <Text color={'$color'}>Verify Email</Text>
                       </>
                     )}
                   </Button>

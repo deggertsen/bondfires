@@ -4,30 +4,30 @@ export const Text = styled(TamaguiText, {
   name: 'Text',
   fontFamily: '$body',
   // Default to Bondfire whiteSmoke for text
-  color: '$gray12',
+  color: '$color',
 
   variants: {
     variant: {
       heading: {
         fontFamily: '$heading',
         fontWeight: '700',
-        color: '$gray12',
+        color: '$color',
       },
       subheading: {
         fontFamily: '$heading',
         fontWeight: '600',
         fontSize: '$4',
-        color: '$gray12',
+        color: '$color',
       },
       body: {
         fontFamily: '$body',
-        color: '$gray12',
+        color: '$color',
       },
       label: {
         fontFamily: '$body',
         fontWeight: '600',
         fontSize: 14,
-        color: '$gray12',
+        color: '$color',
       },
       caption: {
         fontFamily: '$body',

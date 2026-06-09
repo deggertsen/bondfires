@@ -1,10 +1,10 @@
 import { telemetry } from '@bondfires/app'
-import { Text } from '@bondfires/ui'
+import { Spinner, Text } from '@bondfires/ui'
 import { useMutation, useQuery } from 'convex/react'
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { useCallback, useEffect, useRef } from 'react'
 import { Alert } from 'react-native'
-import { Spinner, YStack } from 'tamagui'
+import { YStack } from 'tamagui'
 import { api } from '../../../../../../convex/_generated/api'
 import { personalBondfirePath, routes } from '../../../../lib/routes'
 
@@ -163,7 +163,7 @@ export default function PersonalBondfireInviteScreen() {
         justifyContent="center"
         gap={12}
       >
-        <Text fontSize={16} color={'$gray12'}>
+        <Text fontSize={16} color={'$color'}>
           Invalid invite link.
         </Text>
       </YStack>

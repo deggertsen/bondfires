@@ -1,7 +1,8 @@
 import { type SubscriptionTier, TIER_LABELS } from '@bondfires/app'
 import { Crown, Flame, Sparkles, Star } from '@tamagui/lucide-icons'
 import { Pressable } from 'react-native'
-import { Card, Spinner, Text, XStack, YStack } from 'tamagui'
+import { Card, Text, XStack, YStack } from 'tamagui'
+import { Spinner } from './Spinner'
 
 const TIER_ICONS: Record<string, typeof Star> = {
   free: Star,
@@ -70,7 +71,7 @@ export function SubscriptionStatus({
             >
               Subscription
             </Text>
-            <Text color={'$gray12'} fontSize={16} fontWeight="700">
+            <Text color={'$color'} fontSize={16} fontWeight="700">
               {TIER_LABELS[currentTier]} Plan
             </Text>
             <Text color={'$placeholderColor'} fontSize={12}>
@@ -94,7 +95,7 @@ export function SubscriptionStatus({
             paddingVertical={12}
             alignItems="center"
           >
-            <Text color={'$gray12'} fontSize={14} fontWeight="600">
+            <Text color={'$color'} fontSize={14} fontWeight="600">
               {currentTier === 'free' ? 'Upgrade' : 'Manage'}
             </Text>
           </YStack>
@@ -116,9 +117,9 @@ export function SubscriptionStatus({
             opacity={isRestoring ? 0.6 : 1}
           >
             {isRestoring ? (
-              <Spinner size="small" color={'$gray12'} />
+              <Spinner size="small" color={'$color'} />
             ) : (
-              <Text color={'$gray12'} fontSize={14} fontWeight="600">
+              <Text color={'$color'} fontSize={14} fontWeight="600">
                 Restore
               </Text>
             )}

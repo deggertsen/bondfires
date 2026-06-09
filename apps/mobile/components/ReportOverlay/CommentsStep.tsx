@@ -22,9 +22,9 @@ export function CommentsStep({ value, onChange, onNext, onBack }: CommentsStepPr
     <YStack gap={16}>
       <XStack alignItems="center" gap={8}>
         <Pressable onPress={onBack}>
-          <ArrowLeft size={24} color={'$gray12'} />
+          <ArrowLeft size={24} color={'$color'} />
         </Pressable>
-        <Text fontSize={18} fontWeight="600" color={'$gray12'}>
+        <Text fontSize={18} fontWeight="600" color={'$color'}>
           Describe the Issue
         </Text>
       </XStack>
@@ -67,7 +67,7 @@ export function CommentsStep({ value, onChange, onNext, onBack }: CommentsStepPr
         disabled={!isValid}
         opacity={isValid ? 1 : 0.5}
       >
-        <Text color={'$gray12'} fontWeight="600">
+        <Text color={'$color'} fontWeight="600">
           Continue
         </Text>
       </Button>

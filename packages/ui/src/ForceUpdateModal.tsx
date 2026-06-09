@@ -1,8 +1,9 @@
 import { ArrowUpCircle, Download, RefreshCw } from '@tamagui/lucide-icons'
 import { useState } from 'react'
 import { Modal, Platform, StyleSheet } from 'react-native'
-import { Spinner, YStack } from 'tamagui'
+import { YStack } from 'tamagui'
 import { Button } from './Button'
+import { Spinner } from './Spinner'
 import { Text } from './Text'
 
 export type UpdatePriority = 'flexible' | 'immediate'
@@ -65,7 +66,7 @@ export function ForceUpdateModal({
         >
           <RefreshCw size={64} color="$success" />
           <YStack gap={4} alignItems="center">
-            <Text fontSize={28} fontWeight="700" color="$gray12" textAlign="center">
+            <Text fontSize={28} fontWeight="700" color="$color" textAlign="center">
               Finishing Update
             </Text>
             <Text fontSize={15} color="$placeholderColor" textAlign="center" lineHeight={22}>
@@ -140,7 +141,7 @@ export function ForceUpdateModal({
           <ArrowUpCircle size={64} color="$primary" />
         )}
         <YStack gap={4} alignItems="center">
-          <Text fontSize={28} fontWeight="700" color="$gray12" textAlign="center">
+          <Text fontSize={28} fontWeight="700" color="$color" textAlign="center">
             Update Required
           </Text>
           <Text fontSize={15} color="$placeholderColor" textAlign="center" lineHeight={22}>
@@ -185,9 +186,9 @@ export function ForceUpdateModal({
           disabled={starting}
           icon={
             isFlexible ? (
-              <Download size={20} color="$gray12" />
+              <Download size={20} color="$color" />
             ) : (
-              <ArrowUpCircle size={20} color="$gray12" />
+              <ArrowUpCircle size={20} color="$color" />
             )
           }
         >

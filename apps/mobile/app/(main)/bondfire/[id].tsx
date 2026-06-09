@@ -11,7 +11,7 @@ import {
   useAppThemeColors,
   useMuxData,
 } from '@bondfires/app'
-import { Button, Text } from '@bondfires/ui'
+import { Button, Spinner, Text } from '@bondfires/ui'
 import { useObservable, useObserveEffect, useValue } from '@legendapp/state/react'
 import { useIsFocused, useNavigation } from '@react-navigation/native'
 import {
@@ -44,7 +44,7 @@ import {
   View,
   type ViewToken,
 } from 'react-native'
-import { Sheet, Spinner, XStack, YStack } from 'tamagui'
+import { Sheet, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { InviteSheet } from '../../../components/InviteSheet'
@@ -615,11 +615,11 @@ function VideoPlayer({
           paddingVertical={8}
           borderRadius={16}
         >
-          <Text color={'$gray12'} fontWeight="900" fontSize={13}>
+          <Text color={'$color'} fontWeight="900" fontSize={13}>
             LIVE
           </Text>
         </YStack>
-        <Text color={'$gray12'} fontSize={22} fontWeight="900">
+        <Text color={'$color'} fontSize={22} fontWeight="900">
           You are live
         </Text>
         <Text color={'$placeholderColor'} fontSize={14}>
@@ -732,7 +732,7 @@ function VideoPlayer({
             paddingVertical={7}
             borderRadius={16}
           >
-            <Text color={'$gray12'} fontSize={12} fontWeight="900">
+            <Text color={'$color'} fontSize={12} fontWeight="900">
               LIVE
             </Text>
           </YStack>
@@ -1420,7 +1420,7 @@ export default function BondfireDetailScreen() {
                   }}
                   disabled={joinLoading}
                 >
-                  <Text color={'$gray12'} fontWeight="700">
+                  <Text color={'$color'} fontWeight="700">
                     {joinLoading ? 'Joining...' : 'Join Camp'}
                   </Text>
                 </Button>

@@ -11,7 +11,7 @@ import {
   telemetry,
   useAppThemeColors,
 } from '@bondfires/app'
-import { BondfireRow, type BondfireRowProps, Button, Input, Text } from '@bondfires/ui'
+import { BondfireRow, type BondfireRowProps, Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { Flame, Search } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
@@ -27,7 +27,7 @@ import {
   type ViewToken,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { Separator, Spinner, XStack, YStack } from 'tamagui'
+import { Separator, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import {
@@ -65,7 +65,7 @@ function ModePill({
         borderWidth={1}
         borderColor={selected ? '$primary' : '$borderColor'}
       >
-        <Text fontSize={13} fontWeight="800" color={selected ? '$background' : '$gray12'}>
+        <Text fontSize={13} fontWeight="800" color={selected ? '$background' : '$color'}>
           {label}
         </Text>
       </YStack>
@@ -97,7 +97,7 @@ function CampPill({
         <Text
           fontSize={12}
           fontWeight="900"
-          color={selected ? '$background' : '$gray12'}
+          color={selected ? '$background' : '$color'}
           numberOfLines={1}
         >
           {label}
@@ -174,8 +174,8 @@ function EmptyFeed() {
         Be the first to share a video!
       </Text>
       <Button variant="primary" size="$lg" onPress={() => router.push(routes.create)}>
-        <Flame size={20} color={'$gray12'} />
-        <Text color={'$gray12'} fontWeight="900">
+        <Flame size={20} color={'$color'} />
+        <Text color={'$color'} fontWeight="900">
           Spark Bondfire
         </Text>
       </Button>
@@ -685,7 +685,7 @@ export default function FeedScreen() {
               </YStack>
 
               <Button variant="secondary" size="$sm" onPress={handleSpark}>
-                <Text color={'$gray12'} fontWeight="900">
+                <Text color={'$color'} fontWeight="900">
                   Spark
                 </Text>
               </Button>
@@ -800,7 +800,7 @@ export default function FeedScreen() {
                   setViewMode('discover')
                 }}
               >
-                <Text color={'$gray12'} fontWeight="900">
+                <Text color={'$color'} fontWeight="900">
                   Reset
                 </Text>
               </Button>

@@ -5,7 +5,7 @@ export const Input = styled(TamaguiInput, {
   fontFamily: '$body',
   // Bondfire styling - gunmetal background with iron border
   backgroundColor: '$backgroundHover',
-  color: '$gray12',
+  color: '$color',
   placeholderTextColor: '$placeholderColor',
   borderWidth: 1,
   borderColor: '$borderColor',
@@ -57,7 +57,7 @@ export const TextArea = styled(TamaguiTextArea, {
   fontFamily: '$body',
   // Bondfire styling
   backgroundColor: '$backgroundHover',
-  color: '$gray12',
+  color: '$color',
   placeholderTextColor: '$placeholderColor',
   borderWidth: 1,
   borderColor: '$borderColor',

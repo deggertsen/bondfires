@@ -1,12 +1,12 @@
 import { getAuthErrorMessage, useSystemThemeColors } from '@bondfires/app'
-import { Button, Input, Text } from '@bondfires/ui'
+import { Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { ChevronLeft, Mail } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
 import { useState } from 'react'
 import { Pressable, StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
-import { Spinner, YStack } from 'tamagui'
+import { YStack } from 'tamagui'
 import { routes } from '../../lib/routes'
 
 export default function ForgotPasswordScreen() {
@@ -57,7 +57,7 @@ export default function ForgotPasswordScreen() {
             alignItems="center"
             justifyContent="center"
           >
-            <ChevronLeft size={24} color={'$gray12'} />
+            <ChevronLeft size={24} color={'$color'} />
           </YStack>
         </Pressable>
       </YStack>
@@ -95,7 +95,7 @@ export default function ForgotPasswordScreen() {
           {/* Form */}
           <YStack gap={20}>
             <YStack gap={8}>
-              <Text variant="label" color={'$gray12'}>
+              <Text variant="label" color={'$color'}>
                 Email
               </Text>
               <Input
@@ -119,7 +119,7 @@ export default function ForgotPasswordScreen() {
           {/* Actions */}
           <YStack gap={12}>
             <Button variant="primary" size="$lg" onPress={handleSubmit} disabled={isLoading}>
-              {isLoading ? <Spinner color={'$gray12'} /> : 'Send Reset Link'}
+              {isLoading ? <Spinner color={'$color'} /> : 'Send Reset Link'}
             </Button>
           </YStack>
         </YStack>

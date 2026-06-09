@@ -19,7 +19,7 @@ export function StatCard({ value, label, color }: StatCardProps) {
       alignItems="center"
       gap={4}
     >
-      <Text fontSize={28} fontWeight="900" color={color ?? '$gray12'}>
+      <Text fontSize={28} fontWeight="900" color={color ?? '$color'}>
         {typeof value === 'number' ? value.toLocaleString() : value}
       </Text>
       <Text fontSize={12} color={'$placeholderColor'} textAlign="center">

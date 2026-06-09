@@ -7,7 +7,7 @@ import { CATEGORIES, type Category, type CategoryStepProps } from './types'
 export function CategoryStep({ onSelect }: CategoryStepProps) {
   return (
     <YStack gap={12}>
-      <Text fontSize={18} fontWeight="600" color={'$gray12'}>
+      <Text fontSize={18} fontWeight="600" color={'$color'}>
         Report Video
       </Text>
       <Text fontSize={14} color={'$placeholderColor'}>
@@ -23,7 +23,7 @@ export function CategoryStep({ onSelect }: CategoryStepProps) {
               alignItems="center"
               justifyContent="space-between"
             >
-              <Text color={'$gray12'}>{cat.label}</Text>
+              <Text color={'$color'}>{cat.label}</Text>
               <ChevronRight size={20} color={'$placeholderColor'} />
             </XStack>
           </Pressable>

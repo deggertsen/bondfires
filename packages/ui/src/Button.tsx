@@ -16,7 +16,7 @@ export const Button = styled(TamaguiButton, {
     variant: {
       primary: {
         backgroundColor: '$primary',
-        color: '$gray12',
+        color: '$color',
         hoverStyle: {
           backgroundColor: '$secondary',
         },
@@ -27,7 +27,7 @@ export const Button = styled(TamaguiButton, {
       },
       secondary: {
         backgroundColor: '$backgroundHover',
-        color: '$gray12',
+        color: '$color',
         hoverStyle: {
           backgroundColor: '$borderColor',
         },
@@ -40,7 +40,7 @@ export const Button = styled(TamaguiButton, {
         backgroundColor: 'transparent',
         borderWidth: 1,
         borderColor: '$borderColor',
-        color: '$gray12',
+        color: '$color',
         hoverStyle: {
           backgroundColor: '$backgroundHover',
           borderColor: '$placeholderColor',
@@ -52,7 +52,7 @@ export const Button = styled(TamaguiButton, {
       },
       ghost: {
         backgroundColor: 'transparent',
-        color: '$gray12',
+        color: '$color',
         hoverStyle: {
           backgroundColor: '$backgroundHover',
         },
@@ -62,7 +62,7 @@ export const Button = styled(TamaguiButton, {
       },
       destructive: {
         backgroundColor: '$error',
-        color: '$gray12',
+        color: '$color',
         hoverStyle: {
           backgroundColor: '$error',
         },

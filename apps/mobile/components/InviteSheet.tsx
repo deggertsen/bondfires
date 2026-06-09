@@ -1,10 +1,10 @@
-import { Button, Text } from '@bondfires/ui'
+import { Button, Spinner, Text } from '@bondfires/ui'
 import { Check, Copy, Send, Share, X } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import * as Clipboard from 'expo-clipboard'
 import { useCallback, useState } from 'react'
 import { Alert, FlatList, Pressable, Share as RNShare } from 'react-native'
-import { Separator, Sheet, Spinner, XStack, YStack } from 'tamagui'
+import { Separator, Sheet, XStack, YStack } from 'tamagui'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
 
@@ -98,7 +98,7 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
                 <Text
                   fontSize={14}
                   fontWeight="700"
-                  color={tab === 'contacts' ? '$gray12' : '$placeholderColor'}
+                  color={tab === 'contacts' ? '$color' : '$placeholderColor'}
                 >
                   In-App
                 </Text>
@@ -114,7 +114,7 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
                 <Text
                   fontSize={14}
                   fontWeight="700"
-                  color={tab === 'link' ? '$gray12' : '$placeholderColor'}
+                  color={tab === 'link' ? '$color' : '$placeholderColor'}
                 >
                   Share Link
                 </Text>
@@ -174,7 +174,7 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
                             </Text>
                           ) : (
                             <Button variant="outline" size="small" disabled={sent}>
-                              <Send size={14} color={'$gray12'} />
+                              <Send size={14} color={'$color'} />
                             </Button>
                           )}
                         </XStack>
@@ -225,11 +225,11 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
                     copied ? (
                       <Check size={18} color={'$success'} />
                     ) : (
-                      <Copy size={18} color={'$gray12'} />
+                      <Copy size={18} color={'$color'} />
                     )
                   }
                 >
-                  <Text color={copied ? '$success' : '$gray12'} fontWeight="700">
+                  <Text color={copied ? '$success' : '$color'} fontWeight="700">
                     {copied ? 'Copied' : 'Copy Link'}
                   </Text>
                 </Button>
@@ -237,9 +237,9 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
                   variant="primary"
                   flex={1}
                   onPress={handleShareLink}
-                  icon={<Share size={18} color={'$gray12'} />}
+                  icon={<Share size={18} color={'$color'} />}
                 >
-                  <Text color={'$gray12'} fontWeight="700">
+                  <Text color={'$color'} fontWeight="700">
                     Share
                   </Text>
                 </Button>

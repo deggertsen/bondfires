@@ -1,10 +1,10 @@
-import { Button, Text } from '@bondfires/ui'
+import { Button, Spinner, Text } from '@bondfires/ui'
 import { Check, Copy, Share, X } from '@tamagui/lucide-icons'
 import { useMutation } from 'convex/react'
 import * as Clipboard from 'expo-clipboard'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, Pressable, Share as RNShare } from 'react-native'
-import { Sheet, Spinner, XStack, YStack } from 'tamagui'
+import { Sheet, XStack, YStack } from 'tamagui'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
 
@@ -129,7 +129,7 @@ export function PersonalInviteSheet({ bondfireId, open, onClose }: Props) {
                 >
                   Your Invite Code
                 </Text>
-                <Text fontSize={32} fontWeight="900" letterSpacing={2} color={'$gray12'}>
+                <Text fontSize={32} fontWeight="900" letterSpacing={2} color={'$color'}>
                   {inviteCode}
                 </Text>
                 {expiresAt && (
@@ -148,11 +148,11 @@ export function PersonalInviteSheet({ bondfireId, open, onClose }: Props) {
                     copied ? (
                       <Check size={18} color={'$success'} />
                     ) : (
-                      <Copy size={18} color={'$gray12'} />
+                      <Copy size={18} color={'$color'} />
                     )
                   }
                 >
-                  <Text color={copied ? '$success' : '$gray12'} fontWeight="700">
+                  <Text color={copied ? '$success' : '$color'} fontWeight="700">
                     {copied ? 'Copied' : 'Copy'}
                   </Text>
                 </Button>
@@ -160,9 +160,9 @@ export function PersonalInviteSheet({ bondfireId, open, onClose }: Props) {
                   variant="primary"
                   flex={1}
                   onPress={handleShare}
-                  icon={<Share size={18} color={'$gray12'} />}
+                  icon={<Share size={18} color={'$color'} />}
                 >
-                  <Text color={'$gray12'} fontWeight="700">
+                  <Text color={'$color'} fontWeight="700">
                     Share
                   </Text>
                 </Button>
@@ -171,7 +171,7 @@ export function PersonalInviteSheet({ bondfireId, open, onClose }: Props) {
           ) : (
             <YStack alignItems="center" paddingVertical={24}>
               <Button variant="primary" onPress={generateInvite}>
-                <Text color={'$gray12'} fontWeight="700">
+                <Text color={'$color'} fontWeight="700">
                   Generate Invite
                 </Text>
               </Button>

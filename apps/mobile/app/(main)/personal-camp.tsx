@@ -1,11 +1,11 @@
 import { subscriptionActions, useAppThemeColors } from '@bondfires/app'
-import { Button, Text } from '@bondfires/ui'
+import { Button, Spinner, Text } from '@bondfires/ui'
 import { ArrowLeft, Flame, Lock, MessageCircle, Plus, Users } from '@tamagui/lucide-icons'
 import { useQuery } from 'convex/react'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FlatList, Pressable, StatusBar } from 'react-native'
-import { Separator, Spinner, XStack, YStack } from 'tamagui'
+import { Separator, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../convex/_generated/dataModel'
 import { PersonalInviteSheet } from '../../components/PersonalInviteSheet'
@@ -176,7 +176,7 @@ export default function PersonalCampScreen() {
             borderWidth={1}
             borderColor={'$borderColor'}
           >
-            <ArrowLeft size={22} color={'$gray12'} />
+            <ArrowLeft size={22} color={'$color'} />
           </YStack>
         </Pressable>
         <YStack flex={1} alignItems="center" justifyContent="center" gap={12}>
@@ -215,7 +215,7 @@ export default function PersonalCampScreen() {
               borderWidth={1}
               borderColor={'$borderColor'}
             >
-              <ArrowLeft size={22} color={'$gray12'} />
+              <ArrowLeft size={22} color={'$color'} />
             </YStack>
           </Pressable>
           {bondfires && bondfires.length > 0 && !isFrozen && (
@@ -228,7 +228,7 @@ export default function PersonalCampScreen() {
                 justifyContent="center"
                 backgroundColor={'$primary'}
               >
-                <Plus size={22} color={'$gray12'} />
+                <Plus size={22} color={'$color'} />
               </YStack>
             </Pressable>
           )}
@@ -243,7 +243,7 @@ export default function PersonalCampScreen() {
             alignItems="center"
             justifyContent="center"
           >
-            <Flame size={36} color={'$gray12'} />
+            <Flame size={36} color={'$color'} />
           </YStack>
 
           <YStack flex={1} gap={4}>
@@ -305,9 +305,9 @@ export default function PersonalCampScreen() {
               variant="primary"
               marginTop={8}
               onPress={handleCreateBondfire}
-              icon={<Plus size={18} color={'$gray12'} />}
+              icon={<Plus size={18} color={'$color'} />}
             >
-              <Text color={'$gray12'} fontWeight="900">
+              <Text color={'$color'} fontWeight="900">
                 Create Bondfire
               </Text>
             </Button>

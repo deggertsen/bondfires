@@ -228,7 +228,7 @@ export function ErrorDisplay({
     >
       {icon}
       <YStack gap={4} alignItems="center">
-        <Text fontSize={16} fontWeight="600" color={'$gray12'} textAlign="center">
+        <Text fontSize={16} fontWeight="600" color={'$color'} textAlign="center">
           {title}
         </Text>
         <Text fontSize={14} color={'$placeholderColor'} textAlign="center" lineHeight={20}>
@@ -238,7 +238,7 @@ export function ErrorDisplay({
       <YStack gap={8} width="100%" maxWidth={280}>
         {isNetworkError && onRetry ? (
           <Button
-            icon={<RefreshCw size={16} color={'$gray12'} />}
+            icon={<RefreshCw size={16} color={'$color'} />}
             variant="primary"
             size="$md"
             onPress={onRetry}
