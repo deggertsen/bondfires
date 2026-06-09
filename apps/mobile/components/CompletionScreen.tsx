@@ -50,7 +50,7 @@ export function CompletionScreen({ detail, onContinue, shareBondfireId }: Comple
         <Text
           fontSize={24}
           fontWeight="700"
-          color={'$color'}
+          color={'$gray12'}
           textAlign="center"
           marginBottom={detail ? 16 : 48}
         >
@@ -76,19 +76,19 @@ export function CompletionScreen({ detail, onContinue, shareBondfireId }: Comple
               variant="outline"
               size="$lg"
               onPress={() => setIsInviteSheetOpen(true)}
-              icon={<Share size={18} color={'$color'} />}
+              icon={<Share size={18} color={'$gray12'} />}
             >
-              <Text color={'$color'} fontWeight="700">
+              <Text color={'$gray12'} fontWeight="700">
                 Share
               </Text>
             </Button>
             <Button variant="primary" size="$lg" onPress={handleContinue} icon={Check}>
-              <Text color={'$color'}>Continue</Text>
+              <Text color={'$gray12'}>Continue</Text>
             </Button>
           </XStack>
         ) : (
           <Button variant="primary" size="$lg" onPress={handleContinue} icon={Check}>
-            <Text color={'$color'}>Continue</Text>
+            <Text color={'$gray12'}>Continue</Text>
           </Button>
         )}
       </YStack>

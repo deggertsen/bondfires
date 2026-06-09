@@ -134,8 +134,8 @@ export default function OnboardingScreen() {
 
       <YStack gap={12} marginTop={24}>
         <Button variant="primary" size="$lg" onPress={handleContinue}>
-          <Flame size={20} color={'$color'} />
-          <Text color={'$color'}>Get Started</Text>
+          <Flame size={20} color={'$gray12'} />
+          <Text color={'$gray12'}>Get Started</Text>
         </Button>
         <Button variant="ghost" size="$md" onPress={handleLogin}>
           <YStack alignItems="center" gap={2}>

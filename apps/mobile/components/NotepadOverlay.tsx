@@ -66,7 +66,7 @@ export function NotepadOverlay({ onClose }: NotepadOverlayProps) {
           {/* Clear button */}
           <XStack paddingTop={16}>
             <Button variant="secondary" size="$sm" onPress={handleClear} icon={Trash2}>
-              <Text color={'$color'}>Clear Notepad</Text>
+              <Text color={'$gray12'}>Clear Notepad</Text>
             </Button>
           </XStack>
         </YStack>

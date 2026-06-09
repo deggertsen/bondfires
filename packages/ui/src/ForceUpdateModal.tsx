@@ -65,7 +65,7 @@ export function ForceUpdateModal({
         >
           <RefreshCw size={64} color="$success" />
           <YStack gap={4} alignItems="center">
-            <Text fontSize={28} fontWeight="700" color="$color" textAlign="center">
+            <Text fontSize={28} fontWeight="700" color="$gray12" textAlign="center">
               Finishing Update
             </Text>
             <Text fontSize={15} color="$placeholderColor" textAlign="center" lineHeight={22}>
@@ -140,7 +140,7 @@ export function ForceUpdateModal({
           <ArrowUpCircle size={64} color="$primary" />
         )}
         <YStack gap={4} alignItems="center">
-          <Text fontSize={28} fontWeight="700" color="$color" textAlign="center">
+          <Text fontSize={28} fontWeight="700" color="$gray12" textAlign="center">
             Update Required
           </Text>
           <Text fontSize={15} color="$placeholderColor" textAlign="center" lineHeight={22}>
@@ -185,9 +185,9 @@ export function ForceUpdateModal({
           disabled={starting}
           icon={
             isFlexible ? (
-              <Download size={20} color="$color" />
+              <Download size={20} color="$gray12" />
             ) : (
-              <ArrowUpCircle size={20} color="$color" />
+              <ArrowUpCircle size={20} color="$gray12" />
             )
           }
         >

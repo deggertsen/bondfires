@@ -156,7 +156,7 @@ export default function ResetPasswordScreen() {
             alignItems="center"
             justifyContent="center"
           >
-            <ChevronLeft size={24} color={'$color'} />
+            <ChevronLeft size={24} color={'$gray12'} />
           </YStack>
         </Pressable>
       </YStack>
@@ -194,7 +194,7 @@ export default function ResetPasswordScreen() {
           {/* Form */}
           <YStack gap={20}>
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'$gray12'}>
                 Reset Code
               </Text>
               <Input
@@ -211,7 +211,7 @@ export default function ResetPasswordScreen() {
             </YStack>
 
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'$gray12'}>
                 New Password
               </Text>
               <Input
@@ -225,7 +225,7 @@ export default function ResetPasswordScreen() {
             </YStack>
 
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'$gray12'}>
                 Confirm Password
               </Text>
               <Input
@@ -254,9 +254,9 @@ export default function ResetPasswordScreen() {
               disabled={isLoading || !code || !newPassword || !confirmPassword}
             >
               {isLoading ? (
-                <Spinner color={'$color'} />
+                <Spinner color={'$gray12'} />
               ) : (
-                <Text color={'$color'}>Reset Password</Text>
+                <Text color={'$gray12'}>Reset Password</Text>
               )}
             </Button>
 

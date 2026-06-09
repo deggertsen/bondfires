@@ -96,7 +96,7 @@ function KindlingBalanceSection() {
                 paddingVertical={6}
                 gap={8}
               >
-                <Text fontSize={13} color={'$color'} flex={1} numberOfLines={1}>
+                <Text fontSize={13} color={'$gray12'} flex={1} numberOfLines={1}>
                   {activeCamp.name}
                 </Text>
                 <XStack gap={8} alignItems="center">

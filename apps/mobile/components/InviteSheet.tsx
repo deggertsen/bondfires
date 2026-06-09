@@ -98,7 +98,7 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
                 <Text
                   fontSize={14}
                   fontWeight="700"
-                  color={tab === 'contacts' ? '$color' : '$placeholderColor'}
+                  color={tab === 'contacts' ? '$gray12' : '$placeholderColor'}
                 >
                   In-App
                 </Text>
@@ -114,7 +114,7 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
                 <Text
                   fontSize={14}
                   fontWeight="700"
-                  color={tab === 'link' ? '$color' : '$placeholderColor'}
+                  color={tab === 'link' ? '$gray12' : '$placeholderColor'}
                 >
                   Share Link
                 </Text>
@@ -174,7 +174,7 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
                             </Text>
                           ) : (
                             <Button variant="outline" size="small" disabled={sent}>
-                              <Send size={14} color={'$color'} />
+                              <Send size={14} color={'$gray12'} />
                             </Button>
                           )}
                         </XStack>
@@ -225,11 +225,11 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
                     copied ? (
                       <Check size={18} color={'$success'} />
                     ) : (
-                      <Copy size={18} color={'$color'} />
+                      <Copy size={18} color={'$gray12'} />
                     )
                   }
                 >
-                  <Text color={copied ? '$success' : '$color'} fontWeight="700">
+                  <Text color={copied ? '$success' : '$gray12'} fontWeight="700">
                     {copied ? 'Copied' : 'Copy Link'}
                   </Text>
                 </Button>
@@ -237,9 +237,9 @@ export function InviteSheet({ bondfireId, open, onClose }: Props) {
                   variant="primary"
                   flex={1}
                   onPress={handleShareLink}
-                  icon={<Share size={18} color={'$color'} />}
+                  icon={<Share size={18} color={'$gray12'} />}
                 >
-                  <Text color={'$color'} fontWeight="700">
+                  <Text color={'$gray12'} fontWeight="700">
                     Share
                   </Text>
                 </Button>

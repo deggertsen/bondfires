@@ -40,13 +40,13 @@ function ColorCircle({
         borderRadius={20}
         backgroundColor={color}
         borderWidth={selected ? 3 : 2}
-        borderColor={selected ? '$color' : '$borderColor'}
+        borderColor={selected ? '$gray12' : '$borderColor'}
         alignItems="center"
         justifyContent="center"
         opacity={disabled ? 0.55 : 1}
       >
         {selected ? (
-          <YStack width={8} height={8} borderRadius={4} backgroundColor={'$color'} />
+          <YStack width={8} height={8} borderRadius={4} backgroundColor={'$gray12'} />
         ) : null}
       </YStack>
     </Pressable>

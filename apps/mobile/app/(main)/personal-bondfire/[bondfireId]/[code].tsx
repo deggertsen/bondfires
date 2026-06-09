@@ -163,7 +163,7 @@ export default function PersonalBondfireInviteScreen() {
         justifyContent="center"
         gap={12}
       >
-        <Text fontSize={16} color={'$color'}>
+        <Text fontSize={16} color={'$gray12'}>
           Invalid invite link.
         </Text>
       </YStack>

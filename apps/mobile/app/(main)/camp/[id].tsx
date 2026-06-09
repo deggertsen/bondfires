@@ -102,7 +102,7 @@ function RulePill({ label }: { label: string }) {
       borderWidth={1}
       borderColor={'$borderColor'}
     >
-      <Text fontSize={12} color={'$color'} fontWeight="800">
+      <Text fontSize={12} color={'$gray12'} fontWeight="800">
         {label}
       </Text>
     </YStack>
@@ -362,7 +362,7 @@ function CampHeader({
             borderWidth={1}
             borderColor={'$borderColor'}
           >
-            <ArrowLeft size={22} color={'$color'} />
+            <ArrowLeft size={22} color={'$gray12'} />
           </YStack>
         </Pressable>
 
@@ -381,7 +381,7 @@ function CampHeader({
               {muted ? (
                 <BellOff size={20} color={'$warning'} />
               ) : (
-                <Bell size={20} color={'$color'} />
+                <Bell size={20} color={'$gray12'} />
               )}
             </YStack>
           </Pressable>
@@ -398,9 +398,9 @@ function CampHeader({
           justifyContent="center"
         >
           {camp.access === 'invite' ? (
-            <Lock size={32} color={'$color'} />
+            <Lock size={32} color={'$gray12'} />
           ) : (
-            <Flame size={36} color={'$color'} />
+            <Flame size={36} color={'$gray12'} />
           )}
         </YStack>
 
@@ -414,7 +414,7 @@ function CampHeader({
         </YStack>
       </XStack>
 
-      <Text fontSize={15} color={'$color'} lineHeight={22}>
+      <Text fontSize={15} color={'$gray12'} lineHeight={22}>
         {camp.purpose}
       </Text>
 
@@ -430,7 +430,7 @@ function CampHeader({
           <Text fontSize={12} color={'$secondary'} fontWeight="900">
             {firstVisitBanner.title}
           </Text>
-          <Text fontSize={14} color={'$color'} lineHeight={20}>
+          <Text fontSize={14} color={'$gray12'} lineHeight={20}>
             {firstVisitBanner.body}
           </Text>
         </YStack>
@@ -464,7 +464,7 @@ function CampHeader({
           <Text fontSize={12} color={'$placeholderColor'} fontWeight="900">
             Prompt
           </Text>
-          <Text fontSize={15} color={'$color'} lineHeight={21}>
+          <Text fontSize={15} color={'$gray12'} lineHeight={21}>
             {camp.defaultPrompt}
           </Text>
         </YStack>
@@ -474,15 +474,15 @@ function CampHeader({
         <YStack gap={10}>
           {camp.access !== 'invite' || isOwner ? (
             <Button variant="primary" size="$lg" onPress={onSpark} backgroundColor={accentColor}>
-              <Flame size={20} color={'$color'} />
-              <Text color={'$color'} fontWeight="900">
+              <Flame size={20} color={'$gray12'} />
+              <Text color={'$gray12'} fontWeight="900">
                 Spark Here
               </Text>
             </Button>
           ) : null}
           {isOwner && camp.access === 'invite' ? (
             <Button variant="outline" size="$lg" onPress={onCreateInvite}>
-              <Text color={'$color'} fontWeight="900">
+              <Text color={'$gray12'} fontWeight="900">
                 Create Invite Code
               </Text>
             </Button>
@@ -492,7 +492,7 @@ function CampHeader({
 
       {!isArchived && canJoin ? (
         <Button variant="primary" size="$lg" onPress={onJoin}>
-          <Text color={'$color'} fontWeight="900">
+          <Text color={'$gray12'} fontWeight="900">
             {cooldownExpired
               ? 'Request to Join Again'
               : camp.access === 'approval'
@@ -567,7 +567,7 @@ function CampHeader({
                     </Text>
                   </Button>
                   <Button variant="primary" size="$sm" onPress={() => onApprove(req.membershipId)}>
-                    <Text color={'$color'} fontWeight="900">
+                    <Text color={'$gray12'} fontWeight="900">
                       Approve
                     </Text>
                   </Button>
@@ -955,7 +955,7 @@ export default function CampDetailScreen() {
           Camp unavailable
         </Text>
         <Button variant="primary" size="$lg" onPress={() => router.back()}>
-          <Text color={'$color'} fontWeight="900">
+          <Text color={'$gray12'} fontWeight="900">
             Go Back
           </Text>
         </Button>
@@ -1071,12 +1071,12 @@ export default function CampDetailScreen() {
                 size="$lg"
                 onPress={() => setBanReasonModalMember(null)}
               >
-                <Text color={'$color'} fontWeight="900">
+                <Text color={'$gray12'} fontWeight="900">
                   Cancel
                 </Text>
               </Button>
               <Button variant="primary" flex={1} size="$lg" onPress={handleConfirmBan}>
-                <Text color={'$color'} fontWeight="900">
+                <Text color={'$gray12'} fontWeight="900">
                   Ban
                 </Text>
               </Button>
@@ -1142,7 +1142,7 @@ export default function CampDetailScreen() {
                 size="$lg"
                 onPress={() => setIsArchiveModalOpen(false)}
               >
-                <Text color={'$color'} fontWeight="900">
+                <Text color={'$gray12'} fontWeight="900">
                   Cancel
                 </Text>
               </Button>
@@ -1153,7 +1153,7 @@ export default function CampDetailScreen() {
                 disabled={archiveConfirmText.trim() !== 'Archive Camp'}
                 onPress={handleConfirmArchive}
               >
-                <Text color={'$color'} fontWeight="900">
+                <Text color={'$gray12'} fontWeight="900">
                   Archive
                 </Text>
               </Button>

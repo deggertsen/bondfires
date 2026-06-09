@@ -43,7 +43,7 @@ export function getBondfireSwipeActions({
       ? {
           key: 'delete',
           label: 'Delete',
-          color: '$color',
+          color: '$gray12',
           backgroundColor: '$errorDark',
           onPress: onDelete,
         }

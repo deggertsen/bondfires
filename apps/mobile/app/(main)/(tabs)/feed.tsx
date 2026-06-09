@@ -65,7 +65,7 @@ function ModePill({
         borderWidth={1}
         borderColor={selected ? '$primary' : '$borderColor'}
       >
-        <Text fontSize={13} fontWeight="800" color={selected ? '$background' : '$color'}>
+        <Text fontSize={13} fontWeight="800" color={selected ? '$background' : '$gray12'}>
           {label}
         </Text>
       </YStack>
@@ -97,7 +97,7 @@ function CampPill({
         <Text
           fontSize={12}
           fontWeight="900"
-          color={selected ? '$background' : '$color'}
+          color={selected ? '$background' : '$gray12'}
           numberOfLines={1}
         >
           {label}
@@ -174,8 +174,8 @@ function EmptyFeed() {
         Be the first to share a video!
       </Text>
       <Button variant="primary" size="$lg" onPress={() => router.push(routes.create)}>
-        <Flame size={20} color={'$color'} />
-        <Text color={'$color'} fontWeight="900">
+        <Flame size={20} color={'$gray12'} />
+        <Text color={'$gray12'} fontWeight="900">
           Spark Bondfire
         </Text>
       </Button>
@@ -685,7 +685,7 @@ export default function FeedScreen() {
               </YStack>
 
               <Button variant="secondary" size="$sm" onPress={handleSpark}>
-                <Text color={'$color'} fontWeight="900">
+                <Text color={'$gray12'} fontWeight="900">
                   Spark
                 </Text>
               </Button>
@@ -800,7 +800,7 @@ export default function FeedScreen() {
                   setViewMode('discover')
                 }}
               >
-                <Text color={'$color'} fontWeight="900">
+                <Text color={'$gray12'} fontWeight="900">
                   Reset
                 </Text>
               </Button>

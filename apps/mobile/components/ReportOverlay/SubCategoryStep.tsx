@@ -9,9 +9,9 @@ export function SubCategoryStep({ onSelect, onBack }: SubCategoryStepProps) {
     <YStack gap={12}>
       <XStack alignItems="center" gap={8}>
         <Pressable onPress={onBack}>
-          <ArrowLeft size={24} color={'$color'} />
+          <ArrowLeft size={24} color={'$gray12'} />
         </Pressable>
-        <Text fontSize={18} fontWeight="600" color={'$color'}>
+        <Text fontSize={18} fontWeight="600" color={'$gray12'}>
           Community Guidelines
         </Text>
       </XStack>
@@ -29,7 +29,7 @@ export function SubCategoryStep({ onSelect, onBack }: SubCategoryStepProps) {
                 alignItems="center"
                 justifyContent="space-between"
               >
-                <Text color={'$color'}>{subCat.label}</Text>
+                <Text color={'$gray12'}>{subCat.label}</Text>
                 <ChevronRight size={20} color={'$placeholderColor'} />
               </XStack>
             </Pressable>

@@ -16,7 +16,7 @@ export function WarningStep({ isSubmitting, error, onSubmit, onBack }: WarningSt
       >
         <AlertTriangle size={32} color={'$background'} />
       </YStack>
-      <Text fontSize={18} fontWeight="600" color={'$color'} textAlign="center">
+      <Text fontSize={18} fontWeight="600" color={'$gray12'} textAlign="center">
         Before You Submit
       </Text>
       <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
@@ -30,7 +30,7 @@ export function WarningStep({ isSubmitting, error, onSubmit, onBack }: WarningSt
       )}
       <XStack gap={12} width="100%">
         <Button variant="secondary" size="$md" flex={1} onPress={onBack} disabled={isSubmitting}>
-          <Text color={'$color'}>Go Back</Text>
+          <Text color={'$gray12'}>Go Back</Text>
         </Button>
         <Button
           variant="destructive"
@@ -40,9 +40,9 @@ export function WarningStep({ isSubmitting, error, onSubmit, onBack }: WarningSt
           disabled={isSubmitting}
         >
           {isSubmitting ? (
-            <Spinner size="small" color={'$color'} />
+            <Spinner size="small" color={'$gray12'} />
           ) : (
-            <Text color={'$color'} fontWeight="600">
+            <Text color={'$gray12'} fontWeight="600">
               Submit Report
             </Text>
           )}

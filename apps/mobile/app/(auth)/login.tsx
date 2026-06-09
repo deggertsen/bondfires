@@ -161,7 +161,7 @@ export default function LoginScreen() {
           {/* Form */}
           <YStack gap={20}>
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'$gray12'}>
                 Email
               </Text>
               <Input
@@ -176,7 +176,7 @@ export default function LoginScreen() {
             </YStack>
 
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'$gray12'}>
                 Password
               </Text>
               <Input
@@ -208,7 +208,7 @@ export default function LoginScreen() {
           {/* Actions */}
           <YStack gap={12}>
             <Button variant="primary" size="$lg" onPress={handleLogin} disabled={isLoading}>
-              {isLoading ? <Spinner color={'$color'} /> : <Text color={'$color'}>Sign In</Text>}
+              {isLoading ? <Spinner color={'$gray12'} /> : <Text color={'$gray12'}>Sign In</Text>}
             </Button>
 
             <Button variant="outline" size="$md" onPress={() => router.push(routes.signup)}>

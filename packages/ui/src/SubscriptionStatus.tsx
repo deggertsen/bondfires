@@ -70,7 +70,7 @@ export function SubscriptionStatus({
             >
               Subscription
             </Text>
-            <Text color={'$color'} fontSize={16} fontWeight="700">
+            <Text color={'$gray12'} fontSize={16} fontWeight="700">
               {TIER_LABELS[currentTier]} Plan
             </Text>
             <Text color={'$placeholderColor'} fontSize={12}>
@@ -94,7 +94,7 @@ export function SubscriptionStatus({
             paddingVertical={12}
             alignItems="center"
           >
-            <Text color={'$color'} fontSize={14} fontWeight="600">
+            <Text color={'$gray12'} fontSize={14} fontWeight="600">
               {currentTier === 'free' ? 'Upgrade' : 'Manage'}
             </Text>
           </YStack>
@@ -116,9 +116,9 @@ export function SubscriptionStatus({
             opacity={isRestoring ? 0.6 : 1}
           >
             {isRestoring ? (
-              <Spinner size="small" color={'$color'} />
+              <Spinner size="small" color={'$gray12'} />
             ) : (
-              <Text color={'$color'} fontSize={14} fontWeight="600">
+              <Text color={'$gray12'} fontSize={14} fontWeight="600">
                 Restore
               </Text>
             )}

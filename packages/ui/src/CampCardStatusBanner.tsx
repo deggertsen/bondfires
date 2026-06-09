@@ -15,7 +15,7 @@ function getBannerConfig(variant: BannerVariant) {
       return {
         label: 'Request Denied',
         bgColor: '$error',
-        textColor: '$color',
+        textColor: '$gray12',
       }
   }
 }

@@ -615,11 +615,11 @@ function VideoPlayer({
           paddingVertical={8}
           borderRadius={16}
         >
-          <Text color={'$color'} fontWeight="900" fontSize={13}>
+          <Text color={'$gray12'} fontWeight="900" fontSize={13}>
             LIVE
           </Text>
         </YStack>
-        <Text color={'$color'} fontSize={22} fontWeight="900">
+        <Text color={'$gray12'} fontSize={22} fontWeight="900">
           You are live
         </Text>
         <Text color={'$placeholderColor'} fontSize={14}>
@@ -732,7 +732,7 @@ function VideoPlayer({
             paddingVertical={7}
             borderRadius={16}
           >
-            <Text color={'$color'} fontSize={12} fontWeight="900">
+            <Text color={'$gray12'} fontSize={12} fontWeight="900">
               LIVE
             </Text>
           </YStack>
@@ -1420,7 +1420,7 @@ export default function BondfireDetailScreen() {
                   }}
                   disabled={joinLoading}
                 >
-                  <Text color={'$color'} fontWeight="700">
+                  <Text color={'$gray12'} fontWeight="700">
                     {joinLoading ? 'Joining...' : 'Join Camp'}
                   </Text>
                 </Button>

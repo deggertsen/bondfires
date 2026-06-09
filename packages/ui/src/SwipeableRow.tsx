@@ -122,7 +122,7 @@ export function SwipeableRow({
               <Text
                 fontSize={12}
                 fontWeight="800"
-                color={action.color ?? '$color'}
+                color={action.color ?? '$gray12'}
                 textAlign="center"
               >
                 {action.label}

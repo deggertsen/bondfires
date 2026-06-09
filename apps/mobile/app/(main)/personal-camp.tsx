@@ -176,7 +176,7 @@ export default function PersonalCampScreen() {
             borderWidth={1}
             borderColor={'$borderColor'}
           >
-            <ArrowLeft size={22} color={'$color'} />
+            <ArrowLeft size={22} color={'$gray12'} />
           </YStack>
         </Pressable>
         <YStack flex={1} alignItems="center" justifyContent="center" gap={12}>
@@ -215,7 +215,7 @@ export default function PersonalCampScreen() {
               borderWidth={1}
               borderColor={'$borderColor'}
             >
-              <ArrowLeft size={22} color={'$color'} />
+              <ArrowLeft size={22} color={'$gray12'} />
             </YStack>
           </Pressable>
           {bondfires && bondfires.length > 0 && !isFrozen && (
@@ -228,7 +228,7 @@ export default function PersonalCampScreen() {
                 justifyContent="center"
                 backgroundColor={'$primary'}
               >
-                <Plus size={22} color={'$color'} />
+                <Plus size={22} color={'$gray12'} />
               </YStack>
             </Pressable>
           )}
@@ -243,7 +243,7 @@ export default function PersonalCampScreen() {
             alignItems="center"
             justifyContent="center"
           >
-            <Flame size={36} color={'$color'} />
+            <Flame size={36} color={'$gray12'} />
           </YStack>
 
           <YStack flex={1} gap={4}>
@@ -305,9 +305,9 @@ export default function PersonalCampScreen() {
               variant="primary"
               marginTop={8}
               onPress={handleCreateBondfire}
-              icon={<Plus size={18} color={'$color'} />}
+              icon={<Plus size={18} color={'$gray12'} />}
             >
-              <Text color={'$color'} fontWeight="900">
+              <Text color={'$gray12'} fontWeight="900">
                 Create Bondfire
               </Text>
             </Button>

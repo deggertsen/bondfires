@@ -145,11 +145,11 @@ export default function VerifyEmailScreen() {
                     disabled={isVerifying || !code}
                   >
                     {isVerifying ? (
-                      <Spinner color={'$color'} />
+                      <Spinner color={'$gray12'} />
                     ) : (
                       <>
-                        <CheckCircle size={20} color={'$color'} />
-                        <Text color={'$color'}>Verify Email</Text>
+                        <CheckCircle size={20} color={'$gray12'} />
+                        <Text color={'$gray12'}>Verify Email</Text>
                       </>
                     )}
                   </Button>

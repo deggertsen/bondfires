@@ -57,7 +57,7 @@ export default function ForgotPasswordScreen() {
             alignItems="center"
             justifyContent="center"
           >
-            <ChevronLeft size={24} color={'$color'} />
+            <ChevronLeft size={24} color={'$gray12'} />
           </YStack>
         </Pressable>
       </YStack>
@@ -95,7 +95,7 @@ export default function ForgotPasswordScreen() {
           {/* Form */}
           <YStack gap={20}>
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'$gray12'}>
                 Email
               </Text>
               <Input
@@ -119,7 +119,7 @@ export default function ForgotPasswordScreen() {
           {/* Actions */}
           <YStack gap={12}>
             <Button variant="primary" size="$lg" onPress={handleSubmit} disabled={isLoading}>
-              {isLoading ? <Spinner color={'$color'} /> : 'Send Reset Link'}
+              {isLoading ? <Spinner color={'$gray12'} /> : 'Send Reset Link'}
             </Button>
           </YStack>
         </YStack>

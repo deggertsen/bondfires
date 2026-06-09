@@ -328,7 +328,7 @@ export default function MyFiresScreen() {
               marginTop={24}
               onPress={() => router.push(routes.feed)}
             >
-              <Text color={'$color'} fontWeight="900">
+              <Text color={'$gray12'} fontWeight="900">
                 Browse Feed
               </Text>
             </Button>

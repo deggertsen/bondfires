@@ -128,7 +128,7 @@ export function BondfireRow({
               paddingVertical={3}
               borderRadius={10}
             >
-              <Text color="$color" fontSize={9} fontWeight="900">
+              <Text color="$gray12" fontSize={9} fontWeight="900">
                 LIVE
               </Text>
             </YStack>
@@ -148,7 +148,7 @@ export function BondfireRow({
             </YStack>
 
             <Button variant="outline" size="$sm" onPress={onRespond} borderColor="$primary">
-              <Text color="$color" fontWeight="800">
+              <Text color="$gray12" fontWeight="800">
                 Respond
               </Text>
             </Button>

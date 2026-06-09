@@ -131,7 +131,7 @@ function ErrorFallback({ error, retry }: ErrorFallbackProps) {
       paddingHorizontal={24}
       gap={16}
     >
-      <Text fontSize={28} fontWeight="700" color="$color" textAlign="center">
+      <Text fontSize={28} fontWeight="700" color="$gray12" textAlign="center">
         Something went wrong
       </Text>
       <Text fontSize={14} color="$colorPress" textAlign="center">

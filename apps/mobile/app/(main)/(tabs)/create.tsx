@@ -1340,7 +1340,7 @@ export default function CreateScreen() {
             router.replace(routes.create)
           }}
         >
-          <Text color={'$color'} fontWeight="900">
+          <Text color={'$gray12'} fontWeight="900">
             Choose Camp
           </Text>
         </Button>
@@ -1403,7 +1403,7 @@ export default function CreateScreen() {
                           {isPending ? 'Pending' : isActiveMember ? 'Joined' : 'Join'}
                         </Text>
                       </XStack>
-                      <Text fontSize={14} color={'$color'} lineHeight={20}>
+                      <Text fontSize={14} color={'$gray12'} lineHeight={20}>
                         {camp.purpose}
                       </Text>
                     </YStack>
@@ -1444,7 +1444,7 @@ export default function CreateScreen() {
                     </XStack>
                     <Sparkles size={16} color={'$primary'} />
                   </XStack>
-                  <Text fontSize={14} color={'$color'} lineHeight={20}>
+                  <Text fontSize={14} color={'$gray12'} lineHeight={20}>
                     Private sparks just for you. No camp rules, no audience — just your own fire.
                   </Text>
                 </YStack>
@@ -1475,16 +1475,16 @@ export default function CreateScreen() {
           alignItems="center"
           justifyContent="center"
         >
-          <Flame size={38} color={'$color'} />
+          <Flame size={38} color={'$gray12'} />
         </YStack>
         <Text fontSize={24} fontWeight="900" textAlign="center">
           {selectedCamp.name}
         </Text>
-        <Text fontSize={16} color={'$color'} textAlign="center" lineHeight={23}>
+        <Text fontSize={16} color={'$gray12'} textAlign="center" lineHeight={23}>
           {selectedCamp.defaultPrompt ?? selectedCamp.purpose}
         </Text>
         <Button variant="primary" size="$lg" onPress={() => state$.promptDismissed.set(true)}>
-          <Text color={'$color'} fontWeight="900">
+          <Text color={'$gray12'} fontWeight="900">
             Continue
           </Text>
         </Button>
@@ -1517,7 +1517,7 @@ export default function CreateScreen() {
               flex={1}
               onPress={() => state$.tradeTag.set(tag)}
             >
-              <Text color={'$color'} fontWeight="900" textTransform="capitalize">
+              <Text color={'$gray12'} fontWeight="900" textTransform="capitalize">
                 {tag}
               </Text>
             </Button>
@@ -1676,7 +1676,7 @@ export default function CreateScreen() {
                   alignItems="center"
                   justifyContent="center"
                 >
-                  <X size={24} color={'$color'} />
+                  <X size={24} color={'$gray12'} />
                 </YStack>
               </Pressable>
 
@@ -1687,7 +1687,7 @@ export default function CreateScreen() {
                   paddingVertical={6}
                   borderRadius={16}
                 >
-                  <Text color={'$color'} fontWeight="800" fontSize={14}>
+                  <Text color={'$gray12'} fontWeight="800" fontSize={14}>
                     {liveStatus === 'live' ? `LIVE ${recordingTimerLabel}` : statusLabel}
                   </Text>
                 </YStack>
@@ -1703,7 +1703,7 @@ export default function CreateScreen() {
                   justifyContent="center"
                   opacity={isLiveBusy ? 0.5 : 1}
                 >
-                  <SwitchCamera size={22} color={'$color'} />
+                  <SwitchCamera size={22} color={'$gray12'} />
                 </YStack>
               </Pressable>
             </XStack>
@@ -1720,7 +1720,7 @@ export default function CreateScreen() {
                 <YStack alignItems="center" gap={12}>
                   <XStack alignItems="center" gap={8}>
                     <Flame size={28} color={'$primary'} />
-                    <Text color={'$color'} fontSize={22} fontWeight="700">
+                    <Text color={'$gray12'} fontSize={22} fontWeight="700">
                       {respondTo ? 'Respond Live' : (selectedCamp?.name ?? 'Spark a Bondfire')}
                     </Text>
                   </XStack>
@@ -1732,8 +1732,8 @@ export default function CreateScreen() {
 
               {isLiveBusy && (
                 <YStack alignItems="center" gap={12}>
-                  <Spinner size="large" color={'$color'} />
-                  <Text color={'$color'} fontSize={18} fontWeight="700">
+                  <Spinner size="large" color={'$gray12'} />
+                  <Text color={'$gray12'} fontSize={18} fontWeight="700">
                     {statusLabel}
                   </Text>
                 </YStack>
@@ -1757,20 +1757,20 @@ export default function CreateScreen() {
                   height={80}
                   borderRadius={40}
                   borderWidth={4}
-                  borderColor={'$color'}
+                  borderColor={'$gray12'}
                   alignItems="center"
                   justifyContent="center"
                   backgroundColor={isLiveRecording ? '$error' : 'transparent'}
                   opacity={isLiveBusy ? 0.7 : 1}
                 >
                   {isLiveBusy ? (
-                    <Spinner size="small" color={'$color'} />
+                    <Spinner size="small" color={'$gray12'} />
                   ) : (
                     <YStack
                       width={isLiveRecording ? 30 : 60}
                       height={isLiveRecording ? 30 : 60}
                       borderRadius={isLiveRecording ? 6 : 30}
-                      backgroundColor={isLiveRecording ? '$color' : '$primary'}
+                      backgroundColor={isLiveRecording ? '$gray12' : '$primary'}
                     />
                   )}
                 </YStack>
@@ -1856,7 +1856,7 @@ export default function CreateScreen() {
                 alignItems="center"
                 justifyContent="center"
               >
-                <X size={24} color={'$color'} />
+                <X size={24} color={'$gray12'} />
               </YStack>
             </Pressable>
 
@@ -1867,7 +1867,7 @@ export default function CreateScreen() {
                 paddingVertical={6}
                 borderRadius={16}
               >
-                <Text color={'$color'} fontWeight="700" fontSize={14}>
+                <Text color={'$gray12'} fontWeight="700" fontSize={14}>
                   {isSwitchingCamera ? 'Switching...' : recordingTimerLabel}
                 </Text>
               </YStack>
@@ -1887,9 +1887,9 @@ export default function CreateScreen() {
                 opacity={recordingState === 'stopping' || isSwitchingCamera ? 0.5 : 1}
               >
                 {isSwitchingCamera ? (
-                  <Spinner size="small" color={'$color'} />
+                  <Spinner size="small" color={'$gray12'} />
                 ) : (
-                  <SwitchCamera size={22} color={'$color'} />
+                  <SwitchCamera size={22} color={'$gray12'} />
                 )}
               </YStack>
             </Pressable>
@@ -1901,7 +1901,7 @@ export default function CreateScreen() {
               <YStack alignItems="center" gap={12}>
                 <XStack alignItems="center" gap={8}>
                   <Flame size={28} color={'$primary'} />
-                  <Text color={'$color'} fontSize={22} fontWeight="700">
+                  <Text color={'$gray12'} fontSize={22} fontWeight="700">
                     {respondTo ? 'Add Your Response' : (selectedCamp?.name ?? 'Spark a Bondfire')}
                   </Text>
                 </XStack>
@@ -1913,8 +1913,8 @@ export default function CreateScreen() {
 
             {recordingState === 'stopping' && (
               <YStack alignItems="center" gap={12}>
-                <Spinner size="large" color={'$color'} />
-                <Text color={'$color'} fontSize={18} fontWeight="700">
+                <Spinner size="large" color={'$gray12'} />
+                <Text color={'$gray12'} fontSize={18} fontWeight="700">
                   Finishing recording
                 </Text>
                 <Text color={'$placeholderColor'} fontSize={14}>
@@ -1925,8 +1925,8 @@ export default function CreateScreen() {
 
             {isSwitchingCamera && (
               <YStack alignItems="center" gap={12}>
-                <Spinner size="large" color={'$color'} />
-                <Text color={'$color'} fontSize={18} fontWeight="700">
+                <Spinner size="large" color={'$gray12'} />
+                <Text color={'$gray12'} fontSize={18} fontWeight="700">
                   Switching camera
                 </Text>
                 <Text color={'$placeholderColor'} fontSize={14}>
@@ -1958,7 +1958,7 @@ export default function CreateScreen() {
                 height={80}
                 borderRadius={40}
                 borderWidth={4}
-                borderColor={'$color'}
+                borderColor={'$gray12'}
                 alignItems="center"
                 justifyContent="center"
                 backgroundColor={
@@ -1975,13 +1975,13 @@ export default function CreateScreen() {
                 }
               >
                 {recordingState === 'stopping' ? (
-                  <Spinner size="small" color={'$color'} />
+                  <Spinner size="small" color={'$gray12'} />
                 ) : (
                   <YStack
                     width={recordingState === 'recording' ? 30 : 60}
                     height={recordingState === 'recording' ? 30 : 60}
                     borderRadius={recordingState === 'recording' ? 6 : 30}
-                    backgroundColor={recordingState === 'recording' ? '$color' : '$primary'}
+                    backgroundColor={recordingState === 'recording' ? '$gray12' : '$primary'}
                   />
                 )}
               </YStack>

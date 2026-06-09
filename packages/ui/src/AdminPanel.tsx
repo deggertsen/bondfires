@@ -132,11 +132,11 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier }: AdminPanelProps) {
                 disabled={isSearching || emailQuery.trim().length < 2}
               >
                 {isSearching ? (
-                  <Spinner size="small" color={'$color'} />
+                  <Spinner size="small" color={'$gray12'} />
                 ) : (
                   <>
-                    <Search size={16} color={'$color'} />
-                    <Text color={'$color'}>Search</Text>
+                    <Search size={16} color={'$gray12'} />
+                    <Text color={'$gray12'}>Search</Text>
                   </>
                 )}
               </Button>
@@ -189,7 +189,7 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier }: AdminPanelProps) {
                                   >
                                     <Text
                                       fontSize={12}
-                                      color={isCurrent ? '$color' : '$placeholderColor'}
+                                      color={isCurrent ? '$gray12' : '$placeholderColor'}
                                     >
                                       {isUpdating && isCurrent ? '...' : option.label}
                                     </Text>

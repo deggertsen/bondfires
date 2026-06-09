@@ -91,7 +91,7 @@ export function SubscriptionPaywall({
         {/* Header */}
         <XStack justifyContent="space-between" alignItems="center" marginBottom={20}>
           <YStack>
-            <Text color={'$color'} fontSize={22} fontWeight="700">
+            <Text color={'$gray12'} fontSize={22} fontWeight="700">
               Choose a Plan
             </Text>
             <Text color={'$placeholderColor'} fontSize={14} marginTop={4}>
@@ -111,7 +111,7 @@ export function SubscriptionPaywall({
               alignItems="center"
               justifyContent="center"
             >
-              <X size={20} color={'$color'} />
+              <X size={20} color={'$gray12'} />
             </YStack>
           </Pressable>
         </XStack>
@@ -119,7 +119,7 @@ export function SubscriptionPaywall({
         {/* Error message */}
         {lastError && (
           <Card backgroundColor={'$error'} padding={12} borderRadius={12} marginBottom={16}>
-            <Text color={'$color'} fontSize={13}>
+            <Text color={'$gray12'} fontSize={13}>
               {lastError}
             </Text>
           </Card>
@@ -264,7 +264,7 @@ function TierCard({
   const isComingSoon = !isFree && (!isAvailable || !selectedProductId || !selectedPrice)
   const accentColor = isFeatured ? '$secondary' : isCurrent ? '$primary' : '$borderColor'
   const priceColor = isComingSoon ? '$placeholderColor' : '$secondary'
-  const ctaColor = isFeatured ? '$color' : '$primary'
+  const ctaColor = isFeatured ? '$gray12' : '$primary'
   const ctaLabel = isFree ? 'Continue free' : `Choose ${displayName}`
 
   return (
@@ -282,7 +282,7 @@ function TierCard({
           <TierIcon size={20} color={'$primary'} />
           <YStack gap={2}>
             <XStack alignItems="center" gap={8}>
-              <Text color={'$color'} fontSize={18} fontWeight="700">
+              <Text color={'$gray12'} fontSize={18} fontWeight="700">
                 {displayName}
               </Text>
               {isFeatured ? <PlanBadge label="Recommended" /> : null}
@@ -340,7 +340,7 @@ function TierCard({
               <X size={14} color={'$placeholderColor'} opacity={0.45} />
             )}
             <Text
-              color={feature.included ? '$color' : '$placeholderColor'}
+              color={feature.included ? '$gray12' : '$placeholderColor'}
               fontSize={13}
               opacity={feature.included ? 1 : 0.55}
             >
@@ -378,7 +378,7 @@ function TierCard({
         >
           <XStack alignItems="center" gap={8}>
             {isPurchasing ? (
-              <Spinner size="small" color={isFeatured ? '$color' : '$primary'} />
+              <Spinner size="small" color={isFeatured ? '$gray12' : '$primary'} />
             ) : null}
             <Text color={isComingSoon ? '$placeholderColor' : ctaColor} fontWeight="600">
               {isFree
@@ -440,7 +440,7 @@ function AddOnCard({
           <Sparkles size={20} color={'$secondary'} />
           <YStack gap={2}>
             <XStack alignItems="center" gap={8}>
-              <Text color={'$color'} fontSize={18} fontWeight="700">
+              <Text color={'$gray12'} fontSize={18} fontWeight="700">
                 {addOn.displayName}
               </Text>
               <PlanBadge label="Pro add-on" />
@@ -553,7 +553,7 @@ function BillingOption({ label, price, selected, disabled, onPress }: BillingOpt
         paddingHorizontal={10}
         opacity={disabled ? 0.55 : 1}
       >
-        <Text color={'$color'} fontSize={12} fontWeight="700">
+        <Text color={'$gray12'} fontSize={12} fontWeight="700">
           {label}
         </Text>
         <Text color={'$placeholderColor'} fontSize={11} numberOfLines={1}>

@@ -213,7 +213,7 @@ export default function SignupScreen() {
           <YStack gap={16}>
             {/* First Name */}
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'$gray12'}>
                 First Name
               </Text>
               <Input
@@ -227,7 +227,7 @@ export default function SignupScreen() {
 
             {/* Last Name */}
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'$gray12'}>
                 Last Name
               </Text>
               <Input
@@ -241,7 +241,7 @@ export default function SignupScreen() {
 
             {/* Email */}
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'$gray12'}>
                 Email
               </Text>
               <Input
@@ -256,7 +256,7 @@ export default function SignupScreen() {
 
             {/* Gender */}
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'$gray12'}>
                 Gender
               </Text>
               <XStack gap={8}>
@@ -270,7 +270,7 @@ export default function SignupScreen() {
                       flex={1}
                       onPress={() => form$.gender.set(option.value)}
                     >
-                      <Text color={selected ? '$color' : '$placeholderColor'} fontWeight="900">
+                      <Text color={selected ? '$gray12' : '$placeholderColor'} fontWeight="900">
                         {option.label}
                       </Text>
                     </Button>
@@ -281,7 +281,7 @@ export default function SignupScreen() {
 
             {/* Birth Date with Calendar Picker */}
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'$gray12'}>
                 Birth Date
               </Text>
               <Text fontSize={12} color={'$placeholderColor'} marginBottom={4}>
@@ -310,7 +310,7 @@ export default function SignupScreen() {
 
             {/* Password */}
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'$gray12'}>
                 Password
               </Text>
               <Input
@@ -324,7 +324,7 @@ export default function SignupScreen() {
 
             {/* Confirm Password */}
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'$gray12'}>
                 Confirm Password
               </Text>
               <Input
@@ -348,11 +348,11 @@ export default function SignupScreen() {
           <YStack gap={12}>
             <Button variant="primary" size="$lg" onPress={handleSignup} disabled={isLoading}>
               {isLoading ? (
-                <Spinner color={'$color'} />
+                <Spinner color={'$gray12'} />
               ) : (
                 <>
-                  <Flame size={20} color={'$color'} />
-                  <Text color={'$color'}>Create Account</Text>
+                  <Flame size={20} color={'$gray12'} />
+                  <Text color={'$gray12'}>Create Account</Text>
                 </>
               )}
             </Button>

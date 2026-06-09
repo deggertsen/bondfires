@@ -93,7 +93,7 @@ export function InviteRedemptionScreen({
               borderWidth={1}
               borderColor={'$borderColor'}
             >
-              <ArrowLeft size={22} color={'$color'} />
+              <ArrowLeft size={22} color={'$gray12'} />
             </YStack>
           </Pressable>
         </YStack>
@@ -113,7 +113,7 @@ export function InviteRedemptionScreen({
             alignItems="center"
             justifyContent="center"
           >
-            <Flame size={44} color={'$color'} />
+            <Flame size={44} color={'$gray12'} />
           </YStack>
 
           {status === 'loading' && (

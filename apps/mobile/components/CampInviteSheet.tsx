@@ -129,7 +129,7 @@ export function CampInviteSheet({ campId, open, onClose }: Props) {
                 >
                   Your Invite Code
                 </Text>
-                <Text fontSize={32} fontWeight="900" letterSpacing={2} color={'$color'}>
+                <Text fontSize={32} fontWeight="900" letterSpacing={2} color={'$gray12'}>
                   {inviteCode}
                 </Text>
                 <Text fontSize={12} color={'$placeholderColor'} numberOfLines={1}>
@@ -146,11 +146,11 @@ export function CampInviteSheet({ campId, open, onClose }: Props) {
                     copied ? (
                       <Check size={18} color={'$success'} />
                     ) : (
-                      <Copy size={18} color={'$color'} />
+                      <Copy size={18} color={'$gray12'} />
                     )
                   }
                 >
-                  <Text color={copied ? '$success' : '$color'} fontWeight="700">
+                  <Text color={copied ? '$success' : '$gray12'} fontWeight="700">
                     {copied ? 'Copied' : 'Copy Link'}
                   </Text>
                 </Button>
@@ -158,9 +158,9 @@ export function CampInviteSheet({ campId, open, onClose }: Props) {
                   variant="primary"
                   flex={1}
                   onPress={handleShare}
-                  icon={<Share size={18} color={'$color'} />}
+                  icon={<Share size={18} color={'$gray12'} />}
                 >
-                  <Text color={'$color'} fontWeight="700">
+                  <Text color={'$gray12'} fontWeight="700">
                     Share
                   </Text>
                 </Button>
@@ -169,7 +169,7 @@ export function CampInviteSheet({ campId, open, onClose }: Props) {
           ) : (
             <YStack alignItems="center" paddingVertical={24}>
               <Button variant="primary" onPress={generateInvite}>
-                <Text color={'$color'} fontWeight="700">
+                <Text color={'$gray12'} fontWeight="700">
                   Generate Invite
                 </Text>
               </Button>
