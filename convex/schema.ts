@@ -392,11 +392,13 @@ export default defineSchema({
     creatorName: v.optional(v.string()), // Denormalized for display
     campId: v.optional(v.id('camps')),
     personalCampId: v.optional(v.id('personalCamps')),
+    title: v.optional(v.string()),
     frozen: v.optional(v.boolean()),
 
     // Video storage
     videoStatus: v.optional(
       v.union(
+        v.literal('pending'),
         v.literal('waiting_for_upload'),
         v.literal('processing'),
         v.literal('live'),
@@ -419,6 +421,7 @@ export default defineSchema({
     durationMs: v.optional(v.number()),
     width: v.optional(v.number()),
     height: v.optional(v.number()),
+    recordedAt: v.optional(v.number()),
 
     // Content metadata
     tags: v.optional(v.array(v.string())),

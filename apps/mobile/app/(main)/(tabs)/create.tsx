@@ -35,11 +35,19 @@ import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { CompletionScreen } from '../../../components/CompletionScreen'
+import { InviteSheet } from '../../../components/InviteSheet'
 import { routes } from '../../../lib/routes'
 import { mergeVideoSegments } from '../../../lib/videoSegmentMerger'
 import { BondfireLivePublisher, LivePublisherView } from '../../../modules/bondfire-live-publisher'
 
-type RecordingState = 'idle' | 'recording' | 'stopping' | 'completion' | 'processing' | 'uploading'
+type RecordingState =
+  | 'idle'
+  | 'pre_connected'
+  | 'recording'
+  | 'stopping'
+  | 'completion'
+  | 'processing'
+  | 'uploading'
 type TradeTag = 'need' | 'offer'
 type CampWithMembership = Doc<'camps'> & { membership: Doc<'campMembers'> | null }
 
@@ -61,10 +69,11 @@ function formatMaxDuration(seconds: number) {
 export default function CreateScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
-  const { campId, respondTo, personalCamp } = useLocalSearchParams<{
+  const { campId, respondTo, personalCamp, title } = useLocalSearchParams<{
     campId?: string
     respondTo?: string
     personalCamp?: string
+    title?: string
   }>()
   const isPersonalCamp = personalCamp === '1'
   const isFocused = useIsFocused()
@@ -86,6 +95,8 @@ export default function CreateScreen() {
   const wasFocusedRef = useRef(isFocused)
   const didRouteFirstSparkRef = useRef(false)
   const personalCreateStartedAtRef = useRef<number | null>(null)
+  const backgroundCancelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const preConnectInFlightRef = useRef(false)
 
   const state$ = useObservable({
     facing: 'front' as CameraType,
@@ -105,6 +116,8 @@ export default function CreateScreen() {
     promptCampId: null as Id<'camps'> | null,
     promptDismissed: false,
     tradeTag: null as TradeTag | null,
+    showInviteSheet: false,
+    preConnectFailed: false,
   })
 
   const facing = useValue(state$.facing)
@@ -122,6 +135,8 @@ export default function CreateScreen() {
   const selectedCampId = useValue(state$.selectedCampId)
   const promptDismissed = useValue(state$.promptDismissed)
   const tradeTag = useValue(state$.tradeTag)
+  const showInviteSheet = useValue(state$.showInviteSheet)
+  const preConnectFailed = useValue(state$.preConnectFailed)
   const livePublishEnabled = useValue(appStore$.preferences.livePublishEnabled)
   const currentCampId = useValue(appStore$.currentCampId)
   const shouldUseLivePublish = livePublishEnabled && isLivePublisherAvailable
@@ -135,6 +150,8 @@ export default function CreateScreen() {
   const createLiveStream = useAction(api.videos.createLiveStream)
   const endLiveStream = useAction(api.videos.endLiveStream)
   const cancelLiveStream = useAction(api.videos.cancelLiveStream)
+  const markBondfireLive = useMutation(api.videos.markBondfireLive)
+  const touchLiveSession = useMutation(api.videos.touchLiveSession)
   const camps = useQuery(api.camps.list, respondTo ? 'skip' : {})
   const subscription = useQuery(api.subscriptions.current, {})
   const currentUser = useQuery(api.users.current)
@@ -213,6 +230,8 @@ export default function CreateScreen() {
         bondfireId: args.bondfireId as Id<'bondfires'> | undefined,
         campId: args.campId as Id<'camps'> | undefined,
         tags: args.tags,
+        title: args.title,
+        pending: args.pending,
       }),
     endLiveStream: async (args) =>
       await endLiveStream({
@@ -321,7 +340,7 @@ export default function CreateScreen() {
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | undefined
 
-    if (recordingState === 'recording' || liveStatus === 'live') {
+    if (recordingState === 'recording') {
       interval = setInterval(() => {
         state$.recordingDuration.set((prev) => prev + 1)
       }, 1000)
@@ -330,7 +349,7 @@ export default function CreateScreen() {
     return () => {
       if (interval) clearInterval(interval)
     }
-  }, [recordingState, liveStatus, state$])
+  }, [recordingState, state$])
 
   // Cleanup on unmount
   useEffect(() => {
@@ -342,6 +361,10 @@ export default function CreateScreen() {
       if (uploadStartTimeoutRef.current) {
         clearTimeout(uploadStartTimeoutRef.current)
         uploadStartTimeoutRef.current = null
+      }
+      if (backgroundCancelTimeoutRef.current) {
+        clearTimeout(backgroundCancelTimeoutRef.current)
+        backgroundCancelTimeoutRef.current = null
       }
       cancelProcessing()
     }
@@ -397,7 +420,6 @@ export default function CreateScreen() {
         recordingState === 'processing' ||
         recordingState === 'uploading' ||
         liveStatus === 'connecting' ||
-        liveStatus === 'live' ||
         liveStatus === 'reconnecting' ||
         liveStatus === 'stopping')
 
@@ -475,23 +497,6 @@ export default function CreateScreen() {
     // Include permission status deps so telemetry reflects latest state
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state$, cameraPermission?.status, micPermission?.status])
-
-  useEffect(() => {
-    if (!shouldUseLivePublish) {
-      return
-    }
-
-    if (
-      (!isFocused || !isAppActive) &&
-      (liveStatus === 'connecting' || liveStatus === 'live' || liveStatus === 'reconnecting')
-    ) {
-      livePublisher.stop().catch((error) => {
-        telemetry.error('live:stop', 'Failed to stop live stream while screen lost focus', {
-          error: String(error),
-        })
-      })
-    }
-  }, [isAppActive, isFocused, livePublisher, liveStatus, shouldUseLivePublish])
 
   const logRecordingError = useCallback(
     (error: unknown) => {
@@ -575,6 +580,10 @@ export default function CreateScreen() {
 
   // Tear down the camera session whenever the screen or app becomes inactive.
   useEffect(() => {
+    if (shouldUseLivePublish) {
+      return
+    }
+
     if (!isFocused || !isAppActive) {
       if (
         state$.recordingState.get() === 'recording' ||
@@ -613,7 +622,14 @@ export default function CreateScreen() {
     } else {
       clearUploadStartTimeout()
     }
-  }, [clearUploadStartTimeout, isAppActive, isFocused, schedulePendingUploads, state$])
+  }, [
+    clearUploadStartTimeout,
+    isAppActive,
+    isFocused,
+    schedulePendingUploads,
+    shouldUseLivePublish,
+    state$,
+  ])
 
   const resetCameraPreview = useCallback(() => {
     clearStopTimeout()
@@ -1083,44 +1099,69 @@ export default function CreateScreen() {
     state$.facing.set(nextFacing)
   }, [clearStopTimeout, logRecordingError, resetRecordingState, state$])
 
-  const startLiveRecording = useCallback(async () => {
-    if (liveStatus !== 'idle' && liveStatus !== 'ended' && liveStatus !== 'errored') {
+  const startLivePreConnect = useCallback(async () => {
+    const currentStatus = livePublishStore$.status.get()
+    const currentRecordingState = state$.recordingState.get()
+    if (
+      preConnectInFlightRef.current ||
+      currentRecordingState !== 'idle' ||
+      (currentStatus !== 'idle' && currentStatus !== 'ended' && currentStatus !== 'errored')
+    ) {
+      return
+    }
+
+    // Guard failures are surfaced through preConnectBlockReason in the UI.
+    if (!respondTo && !canCreate) {
       return
     }
 
     if (!respondTo && !isPersonalCamp && (!effectiveCampId || !selectedCamp)) {
-      Alert.alert('Choose a Camp', 'Pick where this Bondfire belongs before going live.')
       return
     }
 
-    if (needsTradeTag) {
-      Alert.alert('Choose Need or Offer', 'Trading Post sparks need a need or offer tag.')
+    if (needsTradeTag || !state$.isFocused.get() || !state$.isAppActive.get()) {
       return
     }
 
-    if (!state$.isFocused.get() || !state$.isAppActive.get()) {
-      Alert.alert('Camera Not Ready', 'Please return to the app and try again.')
-      return
-    }
-
+    preConnectInFlightRef.current = true
     try {
+      state$.preConnectFailed.set(false)
       state$.recordingDuration.set(0)
       state$.videoUri.set(null)
+      state$.progressStage.set('Preparing camera...')
       if (isPersonalCamp) {
         personalCreateStartedAtRef.current = Date.now()
       }
-      await livePublisher.start({
-        respondToBondfireId: respondTo,
-        campId: effectiveCampId,
-        personalCamp: isPersonalCamp || undefined,
-        tags: selectedCampTags,
+
+      // Camera preview only — nothing is published or recorded until the
+      // user taps record and the RTMP connection opens.
+      await livePublisher.preview({
         initialCamera: state$.facing.get() === 'back' ? 'back' : 'front',
       })
+
+      if (!respondTo) {
+        // Provision the live stream + pending bondfire so the share link
+        // works while waiting, but defer publishing to the record tap.
+        await livePublisher.provision({
+          campId: effectiveCampId,
+          personalCamp: isPersonalCamp || undefined,
+          tags: selectedCampTags,
+          title: title || undefined,
+          pending: true,
+        })
+      }
+
+      state$.recordingState.set('pre_connected')
+      state$.showInviteSheet.set(false)
     } catch (error) {
       logRecordingError(error)
+      livePublishActions.reset()
+      state$.recordingState.set('idle')
+      state$.preConnectFailed.set(true)
+      state$.showInviteSheet.set(false)
       const errorInfo = parseError(error)
       Alert.alert(
-        errorInfo.isNetworkError ? 'No internet connection' : 'Live Stream Failed',
+        errorInfo.isNetworkError ? 'No internet connection' : 'Recording Failed',
         getUserFacingErrorMessage(errorInfo),
         shouldShowReportIssue(errorInfo)
           ? [
@@ -1131,7 +1172,7 @@ export default function CreateScreen() {
                   const url = buildErrorReportMailto({
                     error,
                     userId: currentUser?._id,
-                    context: 'Starting live stream',
+                    context: 'Starting recording',
                   })
                   Linking.openURL(url).catch(() => {})
                 },
@@ -1139,20 +1180,81 @@ export default function CreateScreen() {
             ]
           : [{ text: 'OK', style: 'default' }],
       )
+    } finally {
+      preConnectInFlightRef.current = false
     }
   }, [
+    canCreate,
+    currentUser?._id,
     effectiveCampId,
+    isPersonalCamp,
     livePublisher,
-    liveStatus,
     logRecordingError,
     needsTradeTag,
     respondTo,
-    isPersonalCamp,
     selectedCamp,
     selectedCampTags,
     state$,
-    currentUser?._id,
+    title,
   ])
+
+  const startLiveRecording = useCallback(async () => {
+    if (state$.recordingState.get() !== 'pre_connected') {
+      return
+    }
+
+    const currentStatus = livePublishStore$.status.get()
+    if (
+      currentStatus === 'connecting' ||
+      currentStatus === 'live' ||
+      currentStatus === 'reconnecting'
+    ) {
+      return
+    }
+
+    if (!state$.isFocused.get() || !state$.isAppActive.get()) {
+      Alert.alert('Camera Not Ready', 'Please return to the app and try again.')
+      return
+    }
+
+    const initialCamera = state$.facing.get() === 'back' ? ('back' as const) : ('front' as const)
+
+    try {
+      if (respondTo) {
+        // Responses provision + connect at tap so the response is never
+        // visible to viewers before recording actually starts.
+        await livePublisher.start({
+          respondToBondfireId: respondTo,
+          tags: selectedCampTags,
+          initialCamera,
+        })
+      } else {
+        // Recording starts the moment the RTMP connection opens.
+        await livePublisher.connect({ initialCamera })
+      }
+    } catch (error) {
+      logRecordingError(error)
+      Alert.alert('Recording Failed', getUserFacingErrorMessage(parseError(error)))
+      return
+    }
+
+    if (!respondTo) {
+      const recordId = livePublishStore$.recordId.get()
+      if (recordId) {
+        try {
+          await markBondfireLive({ bondfireId: recordId as Id<'bondfires'> })
+        } catch (error) {
+          // Keep recording — the VOD pipeline still completes via webhooks;
+          // viewers just won't see the live state for this bondfire.
+          logRecordingError(error)
+        }
+      }
+    }
+
+    state$.showInviteSheet.set(false)
+    state$.recordingDuration.set(0)
+    state$.recordingState.set('recording')
+  }, [livePublisher, logRecordingError, markBondfireLive, respondTo, selectedCampTags, state$])
 
   const handleSelectCamp = useCallback(
     async (camp: CampWithMembership) => {
@@ -1181,7 +1283,12 @@ export default function CreateScreen() {
   }, [router])
 
   const stopLiveRecording = useCallback(async () => {
-    if (liveStatus !== 'connecting' && liveStatus !== 'live' && liveStatus !== 'reconnecting') {
+    const currentRecordingState = state$.recordingState.get()
+    const isConnectionActive =
+      liveStatus === 'connecting' || liveStatus === 'live' || liveStatus === 'reconnecting'
+    // Also allow stopping when the connection errored mid-recording so the
+    // partial recording is finalized instead of leaving the UI stuck on REC.
+    if (currentRecordingState !== 'recording' && !isConnectionActive) {
       return
     }
 
@@ -1189,17 +1296,17 @@ export default function CreateScreen() {
       await livePublisher.stop()
       state$.recordingState.set('completion')
       state$.videoUri.set('live')
+      state$.showInviteSheet.set(false)
     } catch (error) {
       logRecordingError(error)
       Alert.alert(
-        'Live Stream Stopping',
-        'The live connection stopped locally, but the saved video may still finish processing.',
+        'Stopping...',
+        'The connection stopped locally, but the saved video may still finish processing.',
       )
-      // Roll back local UI state so the user isn't stuck on the live capture
-      // screen with a publisher session that's already been torn down.
       livePublishActions.reset()
       state$.recordingState.set('idle')
       state$.videoUri.set(null)
+      state$.showInviteSheet.set(false)
     }
   }, [livePublisher, liveStatus, logRecordingError, state$])
 
@@ -1226,24 +1333,50 @@ export default function CreateScreen() {
   ])
 
   const cancelLiveRecording = useCallback(async () => {
+    state$.showInviteSheet.set(false)
+
     try {
+      // cancel() tears down the publisher and deletes the pending bondfire +
+      // Mux live stream server-side via cancelLiveStream — single cleanup path.
       await livePublisher.cancel()
     } catch (error) {
       logRecordingError(error)
       const errorInfo = parseError(error)
-      Alert.alert('Live Stream', getUserFacingErrorMessage(errorInfo))
+      Alert.alert('Recording', getUserFacingErrorMessage(errorInfo))
     } finally {
-      // useLivePublisher.cancel already calls livePublishActions.reset() in its
-      // own finally, but reset here as well so this code path stays correct
-      // even if the hook's behavior changes.
       livePublishActions.reset()
       state$.recordingState.set('idle')
       state$.videoUri.set(null)
+      state$.showInviteSheet.set(false)
     }
   }, [livePublisher, logRecordingError, state$])
 
+  useEffect(() => {
+    if (!shouldUseLivePublish || (isFocused && isAppActive)) {
+      return
+    }
+
+    const currentRecordingState = state$.recordingState.get()
+    if (currentRecordingState === 'recording' || currentRecordingState === 'stopping') {
+      void stopLiveRecording()
+      return
+    }
+
+    if (currentRecordingState === 'pre_connected' && !isFocused) {
+      void cancelLiveRecording()
+    }
+  }, [cancelLiveRecording, isAppActive, isFocused, shouldUseLivePublish, state$, stopLiveRecording])
+
   const toggleLiveFacing = useCallback(() => {
-    if (liveStatus === 'connecting' || liveStatus === 'live' || liveStatus === 'reconnecting') {
+    const currentRecordingState = state$.recordingState.get()
+    if (
+      currentRecordingState === 'pre_connected' ||
+      currentRecordingState === 'recording' ||
+      liveStatus === 'connecting' ||
+      liveStatus === 'live' ||
+      liveStatus === 'reconnecting'
+    ) {
+      // The native publisher owns the camera during preview and recording.
       livePublisher.swapCamera().catch((error) => {
         logRecordingError(error)
         const errorInfo = parseError(error)
@@ -1258,6 +1391,109 @@ export default function CreateScreen() {
 
   const shouldRenderCamera =
     cameraPermission?.granted && micPermission?.granted && isFocused && isAppActive
+
+  // Reason the pre-connect guards refused to arm the camera, surfaced in the UI
+  // instead of leaving the user on a silent spinner.
+  const preConnectBlockReason = !shouldUseLivePublish
+    ? null
+    : !respondTo && !canCreate
+      ? 'You have reached your plan limit. Upgrade to spark more Bondfires.'
+      : !respondTo && !isPersonalCamp && camps !== undefined && !selectedCamp
+        ? 'Choose a Camp before sparking a Bondfire.'
+        : needsTradeTag
+          ? 'This camp asks each spark to be a Need or an Offer.'
+          : null
+
+  useEffect(() => {
+    if (
+      !shouldUseLivePublish ||
+      !shouldRenderCamera ||
+      recordingState !== 'idle' ||
+      preConnectFailed
+    ) {
+      return
+    }
+
+    void startLivePreConnect()
+  }, [
+    preConnectFailed,
+    recordingState,
+    shouldRenderCamera,
+    shouldUseLivePublish,
+    startLivePreConnect,
+  ])
+
+  // Clean up an abandoned pre-connect after 2 minutes in the background.
+  useEffect(() => {
+    if (!shouldUseLivePublish || recordingState !== 'pre_connected') {
+      return
+    }
+
+    if (!isAppActive) {
+      if (backgroundCancelTimeoutRef.current) {
+        clearTimeout(backgroundCancelTimeoutRef.current)
+      }
+      backgroundCancelTimeoutRef.current = setTimeout(() => {
+        void cancelLiveRecording()
+      }, 120_000)
+      return
+    }
+
+    if (backgroundCancelTimeoutRef.current) {
+      clearTimeout(backgroundCancelTimeoutRef.current)
+      backgroundCancelTimeoutRef.current = null
+    }
+  }, [cancelLiveRecording, isAppActive, recordingState, shouldUseLivePublish])
+
+  // Keep the provisioned session from being reaped as stale while previewing.
+  useEffect(() => {
+    if (!shouldUseLivePublish || recordingState !== 'pre_connected') {
+      return
+    }
+
+    const interval = setInterval(() => {
+      const sessionId = livePublishStore$.sessionId.get()
+      if (sessionId) {
+        touchLiveSession({ liveSessionId: sessionId as Id<'liveSessions'> }).catch(() => {})
+      }
+    }, 120_000)
+
+    return () => clearInterval(interval)
+  }, [recordingState, shouldUseLivePublish, touchLiveSession])
+
+  // If the connection dies mid-recording, finalize the partial recording
+  // instead of leaving the UI stuck on REC with nothing being ingested.
+  useEffect(() => {
+    if (!shouldUseLivePublish || recordingState !== 'recording' || liveStatus !== 'errored') {
+      return
+    }
+
+    Alert.alert(
+      'Connection Lost',
+      'The live connection dropped. Everything recorded so far will be saved.',
+    )
+    void stopLiveRecording()
+  }, [liveStatus, recordingState, shouldUseLivePublish, stopLiveRecording])
+
+  const cancelLiveRecordingRef = useRef(cancelLiveRecording)
+  useEffect(() => {
+    cancelLiveRecordingRef.current = cancelLiveRecording
+  }, [cancelLiveRecording])
+
+  // Mount-scoped unmount cleanup: cancel a provisioned-but-unstarted session.
+  // Uses refs/observables so changing callback identities can't fire this early.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reads latest state via observables at cleanup time
+  useEffect(() => {
+    return () => {
+      const currentRecordingState = state$.recordingState.get()
+      if (
+        (currentRecordingState === 'pre_connected' || currentRecordingState === 'idle') &&
+        livePublishStore$.recordId.get()
+      ) {
+        void cancelLiveRecordingRef.current()
+      }
+    }
+  }, [])
 
   // Permission denied state
   if (!cameraPermission?.granted || !micPermission?.granted) {
@@ -1634,21 +1870,32 @@ export default function CreateScreen() {
   }
 
   if (shouldUseLivePublish) {
-    const isLiveRecording =
-      liveStatus === 'connecting' || liveStatus === 'live' || liveStatus === 'reconnecting'
-    const isLiveBusy = liveStatus === 'creating' || liveStatus === 'stopping'
+    const isPreConnected = recordingState === 'pre_connected'
+    const isLiveRecording = recordingState === 'recording'
+    const isLiveBusy =
+      liveStatus === 'creating' || liveStatus === 'connecting' || liveStatus === 'stopping'
     const statusLabel =
       liveStatus === 'creating'
-        ? 'Creating live stream...'
+        ? 'Preparing camera...'
         : liveStatus === 'connecting'
-          ? 'Connecting...'
-          : liveStatus === 'live'
-            ? 'LIVE'
-            : liveStatus === 'reconnecting'
-              ? 'Reconnecting...'
-              : liveStatus === 'stopping'
-                ? 'Saving live moment...'
-                : 'Tap to go live'
+          ? 'Starting...'
+          : liveStatus === 'stopping'
+            ? 'Saving...'
+            : isLiveRecording
+              ? liveStatus === 'reconnecting'
+                ? 'Reconnecting...'
+                : '● REC'
+              : isPreConnected
+                ? 'Tap to record'
+                : 'Preparing camera...'
+    const showPreConnectError = !isLiveRecording && !isPreConnected && preConnectFailed
+    const showPreConnectBlocked =
+      !isLiveRecording && !isPreConnected && !preConnectFailed && !!preConnectBlockReason
+    const showBusySpinner =
+      !isLiveRecording &&
+      !showPreConnectError &&
+      !showPreConnectBlocked &&
+      (isLiveBusy || !isPreConnected)
 
     return (
       <YStack flex={1} backgroundColor={'$background'}>
@@ -1667,7 +1914,22 @@ export default function CreateScreen() {
               justifyContent="space-between"
               alignItems="center"
             >
-              <Pressable onPress={isLiveRecording ? cancelLiveRecording : () => router.back()}>
+              <Pressable
+                onPress={() => {
+                  if (isLiveRecording) {
+                    // Confirm before stopping so X can't accidentally publish.
+                    Alert.alert('Stop recording?', 'Your Bondfire will be saved and shared.', [
+                      { text: 'Keep Recording', style: 'cancel' },
+                      { text: 'Stop & Save', onPress: () => void stopLiveRecording() },
+                    ])
+                    return
+                  }
+                  if (isPreConnected) {
+                    void cancelLiveRecording()
+                  }
+                  router.back()
+                }}
+              >
                 <YStack
                   width={40}
                   height={40}
@@ -1688,12 +1950,15 @@ export default function CreateScreen() {
                   borderRadius={16}
                 >
                   <Text color={'$color'} fontWeight="800" fontSize={14}>
-                    {liveStatus === 'live' ? `LIVE ${recordingTimerLabel}` : statusLabel}
+                    {`● REC ${recordingTimerLabel}`}
                   </Text>
                 </YStack>
               )}
 
-              <Pressable onPress={toggleLiveFacing} disabled={isLiveBusy}>
+              <Pressable
+                onPress={toggleLiveFacing}
+                disabled={isLiveBusy || (!isPreConnected && !isLiveRecording)}
+              >
                 <YStack
                   width={40}
                   height={40}
@@ -1701,7 +1966,7 @@ export default function CreateScreen() {
                   backgroundColor="rgba(31, 32, 35, 0.7)"
                   alignItems="center"
                   justifyContent="center"
-                  opacity={isLiveBusy ? 0.5 : 1}
+                  opacity={isLiveBusy || (!isPreConnected && !isLiveRecording) ? 0.5 : 1}
                 >
                   <SwitchCamera size={22} color={'$color'} />
                 </YStack>
@@ -1714,24 +1979,85 @@ export default function CreateScreen() {
               right={0}
               top="40%"
               alignItems="center"
-              pointerEvents="none"
+              pointerEvents="box-none"
             >
-              {!isLiveRecording && !isLiveBusy && (
-                <YStack alignItems="center" gap={12}>
+              {isPreConnected && !isLiveRecording && !isLiveBusy && (
+                <YStack alignItems="center" gap={12} pointerEvents="none">
                   <XStack alignItems="center" gap={8}>
                     <Flame size={28} color={'$primary'} />
                     <Text color={'$color'} fontSize={22} fontWeight="700">
-                      {respondTo ? 'Respond Live' : (selectedCamp?.name ?? 'Spark a Bondfire')}
+                      {respondTo ? 'Respond' : (selectedCamp?.name ?? 'Spark a Bondfire')}
                     </Text>
                   </XStack>
                   <Text color={'$placeholderColor'} fontSize={14}>
-                    Tap to start a live broadcast
+                    Tap to record
                   </Text>
                 </YStack>
               )}
 
-              {isLiveBusy && (
-                <YStack alignItems="center" gap={12}>
+              {showPreConnectError && (
+                <YStack alignItems="center" gap={16}>
+                  <Text color={'$color'} fontSize={18} fontWeight="700">
+                    Camera couldn't start
+                  </Text>
+                  <Pressable
+                    onPress={() => {
+                      state$.preConnectFailed.set(false)
+                      void startLivePreConnect()
+                    }}
+                  >
+                    <YStack
+                      paddingHorizontal={24}
+                      paddingVertical={10}
+                      borderRadius={20}
+                      backgroundColor={'$primary'}
+                    >
+                      <Text color={'$color'} fontWeight="800">
+                        Try Again
+                      </Text>
+                    </YStack>
+                  </Pressable>
+                </YStack>
+              )}
+
+              {showPreConnectBlocked && (
+                <YStack alignItems="center" gap={16} paddingHorizontal={32}>
+                  <Text color={'$color'} fontSize={16} fontWeight="700" textAlign="center">
+                    {preConnectBlockReason}
+                  </Text>
+                  {needsTradeTag && (
+                    <XStack gap={12}>
+                      <Pressable onPress={() => state$.tradeTag.set('need')}>
+                        <YStack
+                          paddingHorizontal={24}
+                          paddingVertical={10}
+                          borderRadius={20}
+                          backgroundColor={'$primary'}
+                        >
+                          <Text color={'$color'} fontWeight="800">
+                            Need
+                          </Text>
+                        </YStack>
+                      </Pressable>
+                      <Pressable onPress={() => state$.tradeTag.set('offer')}>
+                        <YStack
+                          paddingHorizontal={24}
+                          paddingVertical={10}
+                          borderRadius={20}
+                          backgroundColor={'$primary'}
+                        >
+                          <Text color={'$color'} fontWeight="800">
+                            Offer
+                          </Text>
+                        </YStack>
+                      </Pressable>
+                    </XStack>
+                  )}
+                </YStack>
+              )}
+
+              {showBusySpinner && (
+                <YStack alignItems="center" gap={12} pointerEvents="none">
                   <Spinner size="large" color={'$color'} />
                   <Text color={'$color'} fontSize={18} fontWeight="700">
                     {statusLabel}
@@ -1741,8 +2067,23 @@ export default function CreateScreen() {
             </YStack>
 
             <YStack position="absolute" left={0} right={0} bottom={40} alignItems="center">
+              {(isPreConnected || isLiveRecording) && liveRecordId && !respondTo ? (
+                <Pressable onPress={() => state$.showInviteSheet.set(true)}>
+                  <YStack
+                    paddingHorizontal={14}
+                    paddingVertical={8}
+                    borderRadius={16}
+                    backgroundColor="rgba(31, 32, 35, 0.7)"
+                    marginBottom={14}
+                  >
+                    <Text color={'$color'} fontSize={13} fontWeight="800">
+                      Share Link
+                    </Text>
+                  </YStack>
+                </Pressable>
+              ) : null}
               <Pressable
-                disabled={isLiveBusy}
+                disabled={isLiveBusy || (!isPreConnected && !isLiveRecording)}
                 onPress={() => {
                   if (isLiveRecording) {
                     void stopLiveRecording()
@@ -1761,7 +2102,7 @@ export default function CreateScreen() {
                   alignItems="center"
                   justifyContent="center"
                   backgroundColor={isLiveRecording ? '$error' : 'transparent'}
-                  opacity={isLiveBusy ? 0.7 : 1}
+                  opacity={isLiveBusy || (!isPreConnected && !isLiveRecording) ? 0.7 : 1}
                 >
                   {isLiveBusy ? (
                     <Spinner size="small" color={'$color'} />
@@ -1784,6 +2125,13 @@ export default function CreateScreen() {
                   : statusLabel}
               </Text>
             </YStack>
+            {liveRecordId && !respondTo ? (
+              <InviteSheet
+                bondfireId={liveRecordId as Id<'bondfires'>}
+                open={showInviteSheet}
+                onClose={() => state$.showInviteSheet.set(false)}
+              />
+            ) : null}
           </>
         ) : (
           <YStack flex={1} />

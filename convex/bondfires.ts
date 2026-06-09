@@ -51,6 +51,24 @@ function isPlayableVideoRecord(record: {
   )
 }
 
+function isDetailVisibleVideoRecord(record: {
+  videoStatus?: string
+  muxPlaybackId?: string
+  muxLivePlaybackId?: string
+  expiresAt?: number
+}) {
+  if (record.expiresAt !== undefined && record.expiresAt <= Date.now()) {
+    return false
+  }
+
+  const status = record.videoStatus ?? 'ready'
+  if (status === 'pending' || status === 'processing') {
+    return true
+  }
+
+  return isPlayableVideoRecord(record)
+}
+
 function toPublicUser(user: Doc<'users'>): PublicUser {
   return {
     _id: user._id,
@@ -298,7 +316,7 @@ export const get = query({
   args: { id: v.id('bondfires') },
   handler: async (ctx, args) => {
     const bondfire = await ctx.db.get(args.id)
-    if (!bondfire || !isPlayableVideoRecord(bondfire)) {
+    if (!bondfire || !isDetailVisibleVideoRecord(bondfire)) {
       return null
     }
 
@@ -316,7 +334,7 @@ export const getWithCampContext = query({
   args: { id: v.id('bondfires') },
   handler: async (ctx, args) => {
     const bondfire = await ctx.db.get(args.id)
-    if (!bondfire || !isPlayableVideoRecord(bondfire)) {
+    if (!bondfire || !isDetailVisibleVideoRecord(bondfire)) {
       return null
     }
 
@@ -362,7 +380,7 @@ export const getForNotification = internalQuery({
   args: { id: v.id('bondfires') },
   handler: async (ctx, args) => {
     const bondfire = await ctx.db.get(args.id)
-    if (!bondfire || !isPlayableVideoRecord(bondfire)) {
+    if (!bondfire || !isDetailVisibleVideoRecord(bondfire)) {
       return null
     }
 
@@ -375,7 +393,7 @@ export const getWithVideos = query({
   args: { bondfireId: v.id('bondfires') },
   handler: async (ctx, args) => {
     const bondfire = await ctx.db.get(args.bondfireId)
-    if (!bondfire || !isPlayableVideoRecord(bondfire)) {
+    if (!bondfire || !isDetailVisibleVideoRecord(bondfire)) {
       return null
     }
 
@@ -396,6 +414,7 @@ export const getWithVideos = query({
     return {
       ...withLiveFlags(bondfire),
       campStatus: camp?.status,
+      campName: camp?.name,
       videos: readyVideos,
       participants: await getThreadParticipants(ctx, bondfire),
     }
@@ -449,8 +468,12 @@ export const create = mutation({
     muxAssetId: v.optional(v.string()),
     muxPlaybackId: v.optional(v.string()),
     muxPlaybackPolicy: v.optional(v.union(v.literal('public'), v.literal('signed'))),
+    muxLiveStreamId: v.optional(v.string()),
+    muxLivePlaybackId: v.optional(v.string()),
+    title: v.optional(v.string()),
     videoStatus: v.optional(
       v.union(
+        v.literal('pending'),
         v.literal('waiting_for_upload'),
         v.literal('processing'),
         v.literal('live'),
@@ -476,7 +499,10 @@ export const create = mutation({
     }
 
     if (!args.muxAssetId || !args.muxPlaybackId) {
-      throw new Error('Mux asset ID and playback ID are required for Mux videos')
+      if (args.videoStatus !== 'pending') {
+        throw new Error('Mux asset ID and playback ID are required for Mux videos')
+      }
+      // Pending bondfires don't require Mux asset IDs yet; fall through.
     }
 
     if (!args.campId) {
@@ -540,12 +566,15 @@ export const create = mutation({
       userId,
       creatorName: user?.displayName ?? user?.name,
       campId,
+      title: args.title,
       frozen: false,
       videoStatus: args.videoStatus ?? 'ready',
       muxUploadId: args.muxUploadId,
       muxAssetId: args.muxAssetId,
       muxPlaybackId: args.muxPlaybackId,
       muxPlaybackPolicy: args.muxPlaybackPolicy,
+      muxLiveStreamId: args.muxLiveStreamId,
+      muxLivePlaybackId: args.muxLivePlaybackId,
       muxAssetStatus: args.videoStatus,
       durationMs: args.durationMs,
       width: args.width,
@@ -572,7 +601,8 @@ export const create = mutation({
       })
     }
 
-    if ((args.videoStatus ?? 'ready') === 'ready') {
+    const finalStatus = args.videoStatus ?? 'ready'
+    if (finalStatus === 'ready' || finalStatus === 'live') {
       await ctx.scheduler.runAfter(0, internal.sendNotification.notifyCampBondfire, {
         bondfireId,
         creatorId: userId,

@@ -2,6 +2,7 @@ package org.bondfires.livepublisher
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioFormat
 import android.media.MediaFormat
@@ -31,8 +32,15 @@ import kotlinx.coroutines.launch
 class LivePublisherStartOptions : Record {
   @Field val rtmpsUrl: String = ""
   @Field val streamKey: String = ""
-  @Field val width: Int = 720
-  @Field val height: Int = 1280
+  @Field val width: Int = 0
+  @Field val height: Int = 0
+  @Field val fps: Int = 30
+  @Field val videoBitrate: Int = 2_500_000
+  @Field val audioBitrate: Int = 128_000
+  @Field val initialCamera: String = "front"
+}
+
+class LivePublisherPreviewOptions : Record {
   @Field val fps: Int = 30
   @Field val videoBitrate: Int = 2_500_000
   @Field val audioBitrate: Int = 128_000
@@ -113,56 +121,40 @@ class BondfireLivePublisherModule : Module() {
       }
     }
 
-    AsyncFunction("start") Coroutine { options: LivePublisherStartOptions ->
-      val context = appContext.reactContext
-        ?: throw LivePublisherException("No React context available")
+    AsyncFunction("startPreview") Coroutine { options: LivePublisherPreviewOptions ->
+      // Camera preview only — nothing is connected or streamed until start() is called.
+      if (streamer != null) {
+        return@Coroutine
+      }
+      currentFacing = options.initialCamera
+      createStreamer(
+        fps = options.fps,
+        videoBitrate = options.videoBitrate,
+        audioBitrate = options.audioBitrate,
+      )
+    }
 
+    AsyncFunction("start") Coroutine { options: LivePublisherStartOptions ->
       // Build the RTMPS URL
       val rtmpsUrl = buildRtmpsUrl(options.rtmpsUrl, options.streamKey)
-      currentFacing = options.initialCamera
-      val cameraId = findCameraIdForFacing(currentFacing)
 
-      // Create camera + microphone streamer
-      val newStreamer = cameraSingleStreamer(
-        context,
-        cameraId = cameraId,
-        audioSourceFactory = MicrophoneSourceFactory(),
-        endpointFactory = RtmpEndpointFactory(),
-      )
-      streamer = newStreamer
-
-      // Configure audio
-      val audioConfig = AudioCodecConfig(
-        mimeType = MediaFormat.MIMETYPE_AUDIO_AAC,
-        startBitrate = options.audioBitrate,
-        sampleRate = 44100,
-        channelConfig = AudioFormat.CHANNEL_IN_MONO,
-        byteFormat = AudioFormat.ENCODING_PCM_16BIT,
-      )
-      newStreamer.setAudioConfig(audioConfig)
-
-      // Configure video
-      val videoConfig = VideoCodecConfig(
-        mimeType = MediaFormat.MIMETYPE_VIDEO_AVC,
-        startBitrate = options.videoBitrate,
-        resolution = Size(options.width, options.height),
-        fps = options.fps,
-        gopDurationInS = 2.0f,
-      )
-      newStreamer.setVideoConfig(videoConfig)
-
-      // Bind preview if already set
-      previewView?.let { pv ->
-        pv.setVideoSourceProvider(newStreamer)
+      // Reuse the previewing streamer when startPreview() already ran;
+      // otherwise set the capture pipeline up now.
+      if (streamer == null) {
+        currentFacing = options.initialCamera
+        createStreamer(
+          fps = options.fps,
+          videoBitrate = options.videoBitrate,
+          audioBitrate = options.audioBitrate,
+        )
       }
-
-      // Ensure unmuted at start
-      isMuted = false
+      val activeStreamer = streamer
+        ?: throw LivePublisherException("Streamer unavailable")
 
       // Connect and start streaming
       try {
         sendStatus("connecting")
-        newStreamer.startStream(rtmpsUrl)
+        activeStreamer.startStream(rtmpsUrl)
         // startStream blocks until successful connection or throws
         sendStatus("live")
       } catch (e: Exception) {
@@ -207,6 +199,61 @@ class BondfireLivePublisherModule : Module() {
     View(BondfireLivePublisherView::class) {}
   }
 
+  /**
+   * Create the camera + microphone streamer and bind the preview view.
+   * This powers the camera preview but does NOT open any network connection —
+   * streaming only begins when startStream() is called in start().
+   */
+  private suspend fun createStreamer(fps: Int, videoBitrate: Int, audioBitrate: Int) {
+    val context = appContext.reactContext
+      ?: throw LivePublisherException("No React context available")
+
+    val cameraId = findCameraIdForFacing(currentFacing)
+
+    // Query camera for a supported output resolution to avoid stretching frames.
+    val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+    val resolution = getBestCameraResolution(cameraManager, cameraId, 0, 0)
+    Log.i(TAG, "Using camera output resolution ${resolution.width}x${resolution.height}")
+
+    // Create camera + microphone streamer
+    val newStreamer = cameraSingleStreamer(
+      context,
+      cameraId = cameraId,
+      audioSourceFactory = MicrophoneSourceFactory(),
+      endpointFactory = RtmpEndpointFactory(),
+    )
+    streamer = newStreamer
+
+    // Configure audio
+    val audioConfig = AudioCodecConfig(
+      mimeType = MediaFormat.MIMETYPE_AUDIO_AAC,
+      startBitrate = audioBitrate,
+      sampleRate = 44100,
+      channelConfig = AudioFormat.CHANNEL_IN_MONO,
+      byteFormat = AudioFormat.ENCODING_PCM_16BIT,
+    )
+    newStreamer.setAudioConfig(audioConfig)
+
+    // Configure video
+    val videoConfig = VideoCodecConfig(
+      mimeType = MediaFormat.MIMETYPE_VIDEO_AVC,
+      startBitrate = videoBitrate,
+      resolution = resolution,
+      fps = fps,
+      gopDurationInS = 2.0f,
+    )
+    newStreamer.setVideoConfig(videoConfig)
+
+    // Bind preview with proper aspect ratio
+    previewView?.let { pv ->
+      pv.setVideoSourceProvider(newStreamer)
+      pv.scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+    }
+
+    // Ensure unmuted at start
+    isMuted = false
+  }
+
   private fun buildRtmpsUrl(rtmpsUrl: String, streamKey: String): String {
     return if (rtmpsUrl.endsWith("/")) {
       rtmpsUrl + streamKey
@@ -230,6 +277,77 @@ class BondfireLivePublisherModule : Module() {
       characteristics.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING) == lensFacing
     } ?: cameraManager.cameraIdList.firstOrNull()
       ?: throw LivePublisherException("No camera available")
+  }
+
+  /**
+   * Query the camera's supported output resolutions and pick an encoder size that
+   * matches the selected camera's native output shape. Hardcoding portrait sizes
+   * can stretch landscape camera frames and cause distorted recordings.
+   */
+  private fun getBestCameraResolution(
+    cameraManager: CameraManager,
+    cameraId: String,
+    desiredWidth: Int,
+    desiredHeight: Int,
+  ): Size {
+    return try {
+      val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+      val configMap = characteristics.get(
+        CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP
+      )
+      val outputSizes = configMap?.getOutputSizes(android.media.MediaCodec::class.java)
+        ?: configMap?.getOutputSizes(android.graphics.SurfaceTexture::class.java)
+        ?: return fallbackCameraResolution(desiredWidth, desiredHeight)
+
+      val usableSizes = outputSizes.filter { it.width > 0 && it.height > 0 }
+
+      if (usableSizes.isEmpty()) {
+        return fallbackCameraResolution(desiredWidth, desiredHeight)
+      }
+
+      val sensorRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+      val requestedAspectRatio =
+        if (desiredWidth > 0 && desiredHeight > 0) {
+          normalizedAspectRatio(desiredWidth, desiredHeight)
+        } else if (sensorRect != null && sensorRect.width() > 0 && sensorRect.height() > 0) {
+          normalizedAspectRatio(sensorRect.width(), sensorRect.height())
+        } else {
+          normalizedAspectRatio(1920, 1080)
+        }
+      val aspectRatioTolerance = 0.05
+
+      val matchedSizes = usableSizes.filter { size ->
+        val aspectRatio = normalizedAspectRatio(size.width, size.height)
+        Math.abs(aspectRatio - requestedAspectRatio) < aspectRatioTolerance
+      }
+      val candidateSizes = if (matchedSizes.isNotEmpty()) matchedSizes else usableSizes
+      val fullHdPixels = 1920L * 1080L
+      val cappedSizes = candidateSizes.filter { size ->
+        size.width.toLong() * size.height.toLong() <= fullHdPixels
+      }
+      val preferredSizes = if (cappedSizes.isNotEmpty()) cappedSizes else candidateSizes
+
+      preferredSizes.maxByOrNull { size ->
+        size.width.toLong() * size.height.toLong()
+      } ?: fallbackCameraResolution(desiredWidth, desiredHeight)
+    } catch (e: Exception) {
+      Log.w(TAG, "Failed to query camera resolutions, falling back to default", e)
+      fallbackCameraResolution(desiredWidth, desiredHeight)
+    }
+  }
+
+  private fun normalizedAspectRatio(width: Int, height: Int): Double {
+    val longEdge = maxOf(width, height).toDouble()
+    val shortEdge = minOf(width, height).toDouble()
+    return longEdge / shortEdge
+  }
+
+  private fun fallbackCameraResolution(width: Int, height: Int): Size {
+    return if (width > 0 && height > 0) {
+      Size(width, height)
+    } else {
+      Size(1920, 1080)
+    }
   }
 
   fun attachPreview(view: PreviewView) {

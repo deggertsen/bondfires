@@ -28,6 +28,7 @@ import { Separator, Image as TamaguiImage, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { CampInviteSheet } from '../../../components/CampInviteSheet'
+import { SparkTitleSheet } from '../../../components/SparkTitleSheet'
 import { routes } from '../../../lib/routes'
 import { OwnerCampSections } from './OwnerCampSections'
 
@@ -777,6 +778,7 @@ export default function CampDetailScreen() {
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false)
   const [archiveConfirmText, setArchiveConfirmText] = useState('')
   const [isInviteSheetOpen, setIsInviteSheetOpen] = useState(false)
+  const [isSparkSheetOpen, setIsSparkSheetOpen] = useState(false)
 
   const handleJoin = useCallback(async () => {
     if (!campId) return
@@ -802,8 +804,18 @@ export default function CampDetailScreen() {
   const handleSpark = useCallback(() => {
     if (!campId) return
     appActions.setCurrentCampId(campId)
-    router.push(routes.createForCamp(campId))
-  }, [campId, router])
+    setIsSparkSheetOpen(true)
+  }, [campId])
+
+  const handleSparkTitleSubmit = useCallback(
+    (sparkTitle: string) => {
+      if (!campId) return
+      setIsSparkSheetOpen(false)
+      appActions.setCurrentCampId(campId)
+      router.push(routes.createForCamp(campId, sparkTitle))
+    },
+    [campId, router],
+  )
 
   const handleCreateInvite = useCallback(() => {
     setIsInviteSheetOpen(true)
@@ -1168,6 +1180,12 @@ export default function CampDetailScreen() {
           onClose={() => setIsInviteSheetOpen(false)}
         />
       ) : null}
+      <SparkTitleSheet
+        open={isSparkSheetOpen}
+        campName={camp.name}
+        onSubmit={handleSparkTitleSubmit}
+        onCancel={() => setIsSparkSheetOpen(false)}
+      />
     </YStack>
   )
 }

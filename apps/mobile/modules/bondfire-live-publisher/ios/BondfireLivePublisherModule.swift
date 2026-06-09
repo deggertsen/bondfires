@@ -7,8 +7,8 @@ import Foundation
 struct LivePublisherStartOptions: Record {
   @Field var rtmpsUrl: String = ""
   @Field var streamKey: String = ""
-  @Field var width: Int = 720
-  @Field var height: Int = 1280
+  @Field var width: Int = 0
+  @Field var height: Int = 0
   @Field var fps: Int = 30
   @Field var videoBitrate: Int = 2_500_000
   @Field var audioBitrate: Int = 128_000
@@ -77,8 +77,16 @@ public class BondfireLivePublisherModule: Module {
       #endif
     }
 
+    AsyncFunction("startPreview") { (options: LivePublisherStartOptions) in
+      // Camera preview only — nothing is connected or streamed until start() is called.
+      let publisher = try await MainActor.run { try self.ensurePublisher() }
+      await MainActor.run { BondfireLivePublisherView.current?.attachPreviewIfAvailable() }
+      try await publisher.startPreview(options: options)
+    }
+
     AsyncFunction("start") { (options: LivePublisherStartOptions) in
       let publisher = try await MainActor.run { try self.ensurePublisher() }
+      await MainActor.run { BondfireLivePublisherView.current?.attachPreviewIfAvailable() }
       await MainActor.run { self.sendEvent("statusChange", ["status": "connecting"]) }
       try await publisher.start(options: options)
     }
@@ -153,6 +161,8 @@ final class LivePublisher {
   private var session: (any Session)?
   private var currentOptions: LivePublisherStartOptions?
   private var currentCameraPosition: AVCaptureDevice.Position = .front
+  private var isCaptureRunning = false
+  private var captureSize = CMVideoDimensions(width: 1920, height: 1080)
   private let eventHandler: (LivePublisherEvent) -> Void
 
   /// MTHKView registered as a mixer output — HaishinKit 2.x preview approach
@@ -169,15 +179,77 @@ final class LivePublisher {
     self.eventHandler = eventHandler
   }
 
-  // MARK: - Start
+  // MARK: - Preview
 
-  func start(options: LivePublisherStartOptions) async throws {
+  /// Start the capture pipeline (camera, mic, preview view) WITHOUT opening any
+  /// network connection. Nothing is streamed or recorded until start() runs.
+  func startPreview(options: LivePublisherStartOptions) async throws {
     currentOptions = options
+
+    if isCaptureRunning {
+      return
+    }
 
     let position: AVCaptureDevice.Position = options.initialCamera == "back" ? .back : .front
     currentCameraPosition = position
 
     setupAudioSession()
+
+    await mixer.addOutput(previewView)
+
+    guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position) else {
+      emitError("camera_not_found", "No camera for position: \(position == .back ? "back" : "front")")
+      throw LivePublisherException(message: "No camera for position: \(position == .back ? "back" : "front")")
+    }
+    do {
+      if position == .front {
+        try await mixer.attachVideo(camera, track: 0) { videoUnit in
+          videoUnit.isVideoMirrored = true
+        }
+      } else {
+        try await mixer.attachVideo(camera, track: 0)
+      }
+    } catch {
+      emitError("attachCamera_failed", error.localizedDescription)
+    }
+
+    if let audioDevice = AVCaptureDevice.default(for: .audio) {
+      do {
+        try await mixer.attachAudio(audioDevice)
+      } catch {
+        emitError("attachAudio_failed", error.localizedDescription)
+      }
+    } else {
+      emitError("no_mic", "No audio input device found.")
+    }
+
+    await mixer.startRunning()
+
+    captureSize = resolveCameraVideoSize(
+      camera,
+      fallbackWidth: options.width,
+      fallbackHeight: options.height
+    )
+
+    mixer.videoMixerSettings.videoSize = .init(
+      width: captureSize.width,
+      height: captureSize.height
+    )
+    // Cap encode fps at the display refresh rate, never exceed requested fps
+    let maxFps = UIScreen.main.maximumFramesPerSecond
+    mixer.videoMixerSettings.frameRate = min(Float64(options.fps), Float64(maxFps > 0 ? maxFps : 30))
+
+    isCaptureRunning = true
+  }
+
+  // MARK: - Start
+
+  func start(options: LivePublisherStartOptions) async throws {
+    // Reuse the running capture pipeline when startPreview() already ran.
+    if !isCaptureRunning {
+      try await startPreview(options: options)
+    }
+    currentOptions = options
 
     let urlString: String
     if options.rtmpsUrl.hasSuffix("/") {
@@ -210,41 +282,12 @@ final class LivePublisher {
     }
     self.session = newSession
 
-    // Wire stream output and preview view into the mixer
+    // Wire the stream output into the already-running mixer
     await mixer.addOutput(newSession.stream)
-    await mixer.addOutput(previewView)
-
-    guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position) else {
-      emitError("camera_not_found", "No camera for position: \(position == .back ? "back" : "front")")
-      emitStatusChange("errored")
-      return
-    }
-    do {
-      if position == .front {
-        try await mixer.attachVideo(camera, track: 0) { videoUnit in
-          videoUnit.isVideoMirrored = true
-        }
-      } else {
-        try await mixer.attachVideo(camera, track: 0)
-      }
-    } catch {
-      emitError("attachCamera_failed", error.localizedDescription)
-    }
-
-    if let audioDevice = AVCaptureDevice.default(for: .audio) {
-      do {
-        try await mixer.attachAudio(audioDevice)
-      } catch {
-        emitError("attachAudio_failed", error.localizedDescription)
-      }
-    } else {
-      emitError("no_mic", "No audio input device found.")
-    }
-
-    await mixer.startRunning()
 
     var videoSettings = await newSession.stream.videoSettings
     videoSettings.bitRate = options.videoBitrate
+    videoSettings.videoSize = .init(width: captureSize.width, height: captureSize.height)
     await newSession.stream.setVideoSettings(videoSettings)
 
     var audioSettings = await newSession.stream.audioSettings
@@ -260,6 +303,23 @@ final class LivePublisher {
     }
 
     emitStatusChange("live")
+  }
+
+  private func resolveCameraVideoSize(
+    _ camera: AVCaptureDevice,
+    fallbackWidth: Int,
+    fallbackHeight: Int
+  ) -> CMVideoDimensions {
+    let dimensions = camera.activeFormat.formatDescription.dimensions
+    if dimensions.width > 0 && dimensions.height > 0 {
+      return dimensions
+    }
+
+    if fallbackWidth > 0 && fallbackHeight > 0 {
+      return CMVideoDimensions(width: Int32(fallbackWidth), height: Int32(fallbackHeight))
+    }
+
+    return CMVideoDimensions(width: 1920, height: 1080)
   }
 
   // MARK: - Stop
@@ -288,6 +348,7 @@ final class LivePublisher {
     }
     session = nil
     currentOptions = nil
+    isCaptureRunning = false
   }
 
   // MARK: - Swap Camera
@@ -353,18 +414,26 @@ final class LivePublisher {
 // MARK: - Live Publisher View
 
 final class BondfireLivePublisherView: ExpoView {
+  /// The most recently mounted preview view, so the module can re-attach the
+  /// camera preview when the publisher is created after the view mounts.
+  static weak var current: BondfireLivePublisherView?
+
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
     clipsToBounds = true
     backgroundColor = UIColor.black
+    Self.current = self
   }
 
   override func didMoveToWindow() {
     super.didMoveToWindow()
+    if window != nil {
+      Self.current = self
+    }
     attachPreviewIfAvailable()
   }
 
-  private func attachPreviewIfAvailable() {
+  func attachPreviewIfAvailable() {
     guard let module = BondfireLivePublisherModule.currentInstance,
           let publisher = module.publisher else {
       return
