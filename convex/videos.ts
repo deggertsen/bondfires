@@ -1324,6 +1324,8 @@ export const createLiveStream = action({
     tags: v.optional(v.array(v.string())),
     width: v.optional(v.number()),
     height: v.optional(v.number()),
+    title: v.optional(v.string()),
+    pending: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<MuxLiveStreamResult> => {
     const userId = await auth.getUserId(ctx)
@@ -1420,6 +1422,8 @@ export const createLiveStream = action({
       tags: args.tags,
       width: args.width,
       height: args.height,
+      title: args.title,
+      pending: args.pending,
     })
 
     return {
@@ -1443,7 +1447,7 @@ export const endLiveStream = action({
     liveSessionId: v.id('liveSessions'),
     reason: v.optional(v.string()),
   },
-  handler: async (ctx, args): Promise<{ ended: boolean }> => {
+  handler: async (ctx, args): Promise<{ ended: boolean; assetReady?: boolean }> => {
     const userId = await auth.getUserId(ctx)
     if (!userId) {
       throwUserError('Not authenticated')
@@ -1469,11 +1473,100 @@ export const endLiveStream = action({
       console.warn('Failed to signal Mux live stream complete:', error)
     }
 
-    return await ctx.runMutation(internal.videos.markMuxLiveSessionEnding, {
+    await ctx.runMutation(internal.videos.markMuxLiveSessionEnding, {
       userId,
       liveSessionId: args.liveSessionId,
       reason: args.reason,
     })
+
+    // Set videoStatus to "processing" while waiting for VOD
+    await ctx.runMutation(internal.videos.markLinkedRecordProcessing, {
+      liveSessionId: args.liveSessionId,
+    })
+
+    // Poll Mux for the recorded VOD asset (up to 60s)
+    const maxPolls = 30
+    const pollIntervalMs = 2000
+    let assetReady = false
+
+    for (let i = 0; i < maxPolls; i++) {
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
+
+      const session = await ctx.runQuery(internal.videos.getMuxLiveSessionForUser, {
+        userId,
+        liveSessionId: args.liveSessionId,
+      })
+
+      if (session?.muxRecordedAssetId) {
+        const asset = await muxRequest(`/assets/${session.muxRecordedAssetId}`)
+        const status = readOptionalString(asset.status)
+        if (status === 'ready') {
+          const info = readMuxAssetInfo(asset)
+          if (info.playbackId) {
+            if (!info.playbackId) {
+              console.warn('No playback ID for live stream asset, skipping')
+              continue
+            }
+            await ctx.runMutation(internal.videos.markMuxAssetReady, {
+              assetId: info.assetId,
+              playbackId: info.playbackId,
+              assetStatus: info.assetStatus,
+              durationMs: info.durationMs,
+              muxAspectRatio: info.muxAspectRatio,
+              muxMaxResolution: info.muxMaxResolution,
+            })
+            assetReady = true
+          }
+          break
+        }
+        if (status === 'errored') {
+          await ctx.runMutation(internal.videos.markMuxAssetErrored, {
+            assetId: session.muxRecordedAssetId,
+            assetStatus: status,
+          })
+          break
+        }
+      }
+
+      // If session ended without a recorded asset, give up
+      if (session?.status === 'ended' && !session?.muxRecordedAssetId) {
+        break
+      }
+    }
+
+    return { ended: true, assetReady }
+  },
+})
+
+// ── New mutation: mark linked record as processing after stream ends ──
+
+export const markLinkedRecordProcessing = internalMutation({
+  args: {
+    liveSessionId: v.id('liveSessions'),
+  },
+  handler: async (ctx, args) => {
+    const liveSession = await ctx.db.get(args.liveSessionId)
+    if (!liveSession) {
+      return { updated: false }
+    }
+
+    const patch = {
+      videoStatus: 'processing' as const,
+      muxAssetStatus: 'processing',
+    }
+
+    if (liveSession.bondfireVideoId) {
+      await ctx.db.patch(liveSession.bondfireVideoId, patch)
+    }
+
+    if (liveSession.bondfireId) {
+      await ctx.db.patch(liveSession.bondfireId, {
+        ...patch,
+        updatedAt: Date.now(),
+      })
+    }
+
+    return { updated: true }
   },
 })
 
@@ -1514,6 +1607,103 @@ export const cancelLiveStream = action({
       liveSessionId: args.liveSessionId,
       reason: args.reason ?? 'cancelled',
     })
+  },
+})
+
+/**
+ * Flip a bondfire from pending to live — recording has started.
+ * Called when the user taps record after pre-connect.
+ */
+export const markBondfireLive = internalMutation({
+  args: {
+    bondfireId: v.id('bondfires'),
+  },
+  handler: async (ctx, args) => {
+    const bondfire = await ctx.db.get(args.bondfireId)
+    if (!bondfire) throw new Error('Bondfire not found')
+    const now = Date.now()
+    await ctx.db.patch(args.bondfireId, {
+      videoStatus: 'live',
+      updatedAt: now,
+    })
+
+    // Check if we should send notifications (was pending → live)
+    if (bondfire.campId) {
+      await ctx.scheduler.runAfter(0, internal.sendNotification.notifyCampBondfire, {
+        bondfireId: args.bondfireId,
+        creatorId: bondfire.userId,
+        creatorName: bondfire.creatorName ?? 'Someone',
+      })
+    }
+  },
+})
+
+/**
+ * Cancel a pending bondfire: delete Mux live stream + bondfire row.
+ * Used when user backs out without recording.
+ */
+export const cancelPendingBondfire = action({
+  args: {
+    bondfireId: v.id('bondfires'),
+    liveStreamId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) throwUserError('Not authenticated')
+
+    const bondfire = await ctx.runQuery(internal.videos.getBondfireById, {
+      bondfireId: args.bondfireId,
+    })
+    if (!bondfire) throwUserError('Bondfire not found')
+
+    if (bondfire.videoStatus !== 'pending') {
+      throwUserError('Only pending bondfires can be cancelled')
+    }
+
+    // Delete the Mux live stream if it was provisioned
+    const streamId = args.liveStreamId ?? bondfire.muxLiveStreamId
+    if (streamId) {
+      try {
+        await muxRequest(`/live-streams/${streamId}`, {
+          method: 'DELETE',
+        })
+      } catch (error) {
+        console.warn('Failed to delete Mux live stream during pending cancel:', error)
+      }
+    }
+
+    await ctx.runMutation(internal.videos.deletePendingBondfireRecord, {
+      bondfireId: args.bondfireId,
+      userId,
+    })
+  },
+})
+
+/** Internal query: get bondfire by ID for actions to use */
+export const getBondfireById = internalQuery({
+  args: { bondfireId: v.id('bondfires') },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.bondfireId)
+  },
+})
+
+/** Internal mutation: delete pending bondfire row and decrement count */
+export const deletePendingBondfireRecord = internalMutation({
+  args: {
+    bondfireId: v.id('bondfires'),
+    userId: v.id('users'),
+  },
+  handler: async (ctx, args) => {
+    const bondfire = await ctx.db.get(args.bondfireId)
+    if (!bondfire) return
+    await ctx.db.delete(args.bondfireId)
+    const user = await ctx.db.get(args.userId)
+    if (user?.bondfireCount) {
+      await ctx.db.patch(args.userId, {
+        bondfireCount: user.bondfireCount - 1,
+        updatedAt: Date.now(),
+      })
+    }
   },
 })
 
@@ -2315,6 +2505,8 @@ export const createLinkedMuxLiveSession = internalMutation({
     tags: v.optional(v.array(v.string())),
     width: v.optional(v.number()),
     height: v.optional(v.number()),
+    title: v.optional(v.string()),
+    pending: v.optional(v.boolean()), // If true, create bondfire in 'pending' status
   },
   handler: async (ctx, args) => {
     const now = Date.now()
@@ -2423,17 +2615,19 @@ export const createLinkedMuxLiveSession = internalMutation({
 
     if (args.personalCamp) {
       const personalCamp = await assertCanCreatePersonalBondfire(ctx, { userId: args.userId })
+      const initialStatus = args.pending ? 'pending' : 'live'
       const recordId = await ctx.db.insert('bondfires', {
         userId: args.userId,
         creatorName: user?.displayName ?? user?.name,
         personalCampId: personalCamp._id,
+        title: args.title,
         frozen: false,
         liveSessionId,
-        videoStatus: 'live',
+        videoStatus: initialStatus,
         muxLiveStreamId: args.liveStreamId,
         muxLivePlaybackId: args.playbackId,
         muxPlaybackPolicy: args.playbackPolicy,
-        muxAssetStatus: 'live',
+        muxAssetStatus: initialStatus,
         width: args.width,
         height: args.height,
         tags: args.tags,
@@ -2467,17 +2661,19 @@ export const createLinkedMuxLiveSession = internalMutation({
       return { liveSessionId, recordId, recordType: 'bondfire' as const }
     }
 
+    const initialStatus = args.pending ? 'pending' : 'live'
     const recordId = await ctx.db.insert('bondfires', {
       userId: args.userId,
       creatorName: user?.displayName ?? user?.name,
       campId: args.campId,
+      title: args.title,
       frozen: false,
       liveSessionId,
-      videoStatus: 'live',
+      videoStatus: initialStatus,
       muxLiveStreamId: args.liveStreamId,
       muxLivePlaybackId: args.playbackId,
       muxPlaybackPolicy: args.playbackPolicy,
-      muxAssetStatus: 'live',
+      muxAssetStatus: initialStatus,
       width: args.width,
       height: args.height,
       tags: args.tags,
