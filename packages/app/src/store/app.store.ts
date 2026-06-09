@@ -30,9 +30,6 @@ export interface AppState {
 
   // Camp context
   currentCampId: string | null
-
-  // Migrations — bump this to force-apply migrations on app start
-  _migrationVersion: number
 }
 
 const defaultState: AppState = {
@@ -43,16 +40,12 @@ const defaultState: AppState = {
     videoMuted: true,
     notificationsEnabled: true,
     playbackSpeed: 1.0,
-    livePublishEnabled: false,
+    livePublishEnabled: true,
   },
   isAuthenticated: false,
   userId: null,
   currentCampId: null,
-  _migrationVersion: 0,
 }
-
-// Current migration version — bump when running migration logic
-const CURRENT_MIGRATION_VERSION = 1
 
 // Create the observable store
 export const appStore$ = observable<AppState>(defaultState)
@@ -63,33 +56,6 @@ syncObservable(appStore$, {
     name: 'bondfires-app',
   },
 })
-
-// ---------------------------------------------------------------------------
-// Migrations — run once on app start when migration version is behind
-// ---------------------------------------------------------------------------
-function runMigrations(): void {
-  const version = appStore$._migrationVersion.peek() ?? 0
-
-  if (version < 1) {
-    // Migration v1: force-reset livePublishEnabled to false for all users.
-    // Commit 86eb177 accidentally set the default to true, enabling the
-    // live publisher UI for every user — even when the native module was
-    // unavailable or the camera wasn't ready.
-    appStore$.preferences.livePublishEnabled.set(false)
-
-    appStore$._migrationVersion.set(1)
-  }
-
-  // Future migrations: add version checks >= 2 here...
-
-  // Always stamp current version so future migrations don't re-run.
-  appStore$._migrationVersion.set(CURRENT_MIGRATION_VERSION)
-}
-
-// Run migrations when persistence initializes.
-// syncObservable resolves the persisted snapshot before the first observer
-// triggers, so we queue on the next microtask.
-queueMicrotask(runMigrations)
 
 // Actions
 export const appActions = {
