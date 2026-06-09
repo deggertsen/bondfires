@@ -871,7 +871,7 @@ async function markRecordErrored(
 // to live-session state transitions. Narrowing the type prevents accidental
 // patches with fields that only exist on one of the two tables.
 type LiveLinkedRecordPatch = {
-  videoStatus?: 'waiting_for_upload' | 'pre_connected' | 'processing' | 'live' | 'ready' | 'errored'
+  videoStatus?: 'waiting_for_upload' | 'processing' | 'live' | 'ready' | 'errored'
   muxAssetStatus?: string
   muxAssetId?: string
 }
@@ -1513,40 +1513,6 @@ export const cancelLiveStream = action({
       userId,
       liveSessionId: args.liveSessionId,
       reason: args.reason ?? 'cancelled',
-    })
-  },
-})
-
-/**
- * Marks a pre-connected live stream as live (visible to viewers).
- * Called when the user taps record — the RTMP connection is already flowing.
- * This is an instant transition because the encoder is already sending frames.
- */
-export const markStreamLive = action({
-  args: {
-    liveSessionId: v.id('liveSessions'),
-  },
-  handler: async (ctx, args): Promise<{ live: boolean }> => {
-    const userId = await auth.getUserId(ctx)
-    if (!userId) {
-      throwUserError('Not authenticated')
-    }
-
-    const liveSession: Doc<'liveSessions'> | null = await ctx.runQuery(
-      internal.videos.getMuxLiveSessionForUser,
-      {
-        userId,
-        liveSessionId: args.liveSessionId,
-      },
-    )
-
-    if (!liveSession) {
-      throwUserError('Live session not found')
-    }
-
-    return await ctx.runMutation(internal.videos.markMuxLiveSessionStarted, {
-      userId,
-      liveSessionId: args.liveSessionId,
     })
   },
 })
@@ -2391,7 +2357,7 @@ export const createLinkedMuxLiveSession = internalMutation({
       muxLivePlaybackId: args.playbackId,
       transport: 'rtmps',
       latencyMode: args.latencyMode,
-      status: 'pre_connected',
+      status: 'created',
       createdAt: now,
       updatedAt: now,
     })
@@ -2417,11 +2383,11 @@ export const createLinkedMuxLiveSession = internalMutation({
         creatorName: user?.displayName ?? user?.name,
         sequenceNumber,
         liveSessionId,
-        videoStatus: 'pre_connected',
+        videoStatus: 'live',
         muxLiveStreamId: args.liveStreamId,
         muxLivePlaybackId: args.playbackId,
         muxPlaybackPolicy: args.playbackPolicy,
-        muxAssetStatus: 'preparing',
+        muxAssetStatus: 'live',
         width: args.width,
         height: args.height,
         tags: args.tags,
@@ -2463,11 +2429,11 @@ export const createLinkedMuxLiveSession = internalMutation({
         personalCampId: personalCamp._id,
         frozen: false,
         liveSessionId,
-        videoStatus: 'pre_connected',
+        videoStatus: 'live',
         muxLiveStreamId: args.liveStreamId,
         muxLivePlaybackId: args.playbackId,
         muxPlaybackPolicy: args.playbackPolicy,
-        muxAssetStatus: 'preparing',
+        muxAssetStatus: 'live',
         width: args.width,
         height: args.height,
         tags: args.tags,
@@ -2507,11 +2473,11 @@ export const createLinkedMuxLiveSession = internalMutation({
       campId: args.campId,
       frozen: false,
       liveSessionId,
-      videoStatus: 'pre_connected',
+      videoStatus: 'live',
       muxLiveStreamId: args.liveStreamId,
       muxLivePlaybackId: args.playbackId,
       muxPlaybackPolicy: args.playbackPolicy,
-      muxAssetStatus: 'preparing',
+      muxAssetStatus: 'live',
       width: args.width,
       height: args.height,
       tags: args.tags,
@@ -2555,7 +2521,7 @@ export const getActiveMuxLiveSessionForUser = internalQuery({
       .order('desc')
       .take(10)
 
-    const activeStatuses = new Set(['created', 'pre_connected', 'starting', 'live', 'ending'])
+    const activeStatuses = new Set(['created', 'starting', 'live', 'ending'])
     return sessions.find((session) => activeStatuses.has(session.status)) ?? null
   },
 })
@@ -2566,7 +2532,7 @@ export const listStaleMuxLiveSessions = internalQuery({
     const staleBefore = Date.now() - 5 * 60 * 1000
     // 'created' covers sessions where the client errored before going live —
     // those would otherwise stay parked on Mux billing forever.
-    const statuses = ['created', 'pre_connected', 'starting', 'live', 'ending'] as const
+    const statuses = ['created', 'starting', 'live', 'ending'] as const
     const batches = await Promise.all(
       statuses.map((status) =>
         ctx.db
@@ -2601,52 +2567,6 @@ export const markMuxLiveSessionEnding = internalMutation({
     })
 
     return { ended: true }
-  },
-})
-
-/**
- * Flips a pre-connected live session to live — marks the stream as visible to viewers.
- * The stream was already flowing (RTMP connected, encoder running) — this just updates
- * Convex status so queries and feed know to show it.
- */
-export const markMuxLiveSessionStarted = internalMutation({
-  args: {
-    userId: v.id('users'),
-    liveSessionId: v.id('liveSessions'),
-  },
-  handler: async (ctx, args) => {
-    const liveSession = await ctx.db.get(args.liveSessionId)
-    if (!liveSession || liveSession.userId !== args.userId) {
-      throwUserError('Live session not found')
-    }
-
-    const now = Date.now()
-    await ctx.db.patch(args.liveSessionId, {
-      status: 'live',
-      startedAt: now,
-      updatedAt: now,
-    })
-
-    // Update the linked bondfire/video record to show it's live
-    if (liveSession.bondfireId && !liveSession.bondfireVideoId) {
-      await ctx.db.patch(liveSession.bondfireId, {
-        videoStatus: 'live',
-        muxAssetStatus: 'live',
-        updatedAt: now,
-      })
-    }
-
-    if (liveSession.bondfireVideoId) {
-      const video = await ctx.db.get(liveSession.bondfireVideoId)
-      if (video) {
-        await ctx.db.patch(liveSession.bondfireVideoId, {
-          videoStatus: 'live',
-          muxAssetStatus: 'live',
-        })
-      }
-    }
-
-    return { live: true }
   },
 })
 

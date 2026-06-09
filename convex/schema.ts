@@ -398,7 +398,6 @@ export default defineSchema({
     videoStatus: v.optional(
       v.union(
         v.literal('waiting_for_upload'),
-        v.literal('pre_connected'),
         v.literal('processing'),
         v.literal('live'),
         v.literal('ready'),
@@ -461,7 +460,6 @@ export default defineSchema({
     videoStatus: v.optional(
       v.union(
         v.literal('waiting_for_upload'),
-        v.literal('pre_connected'),
         v.literal('processing'),
         v.literal('live'),
         v.literal('ready'),
@@ -539,7 +537,6 @@ export default defineSchema({
     latencyMode: v.optional(v.union(v.literal('standard'), v.literal('reduced'), v.literal('low'))),
     status: v.union(
       v.literal('created'),
-      v.literal('pre_connected'),
       v.literal('starting'),
       v.literal('live'),
       v.literal('ending'),

@@ -83,7 +83,6 @@ export default function CreateScreen() {
   const recordedSegmentUrisRef = useRef<string[]>([])
   const stopTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const uploadStartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const preConnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const wasFocusedRef = useRef(isFocused)
   const didRouteFirstSparkRef = useRef(false)
   const personalCreateStartedAtRef = useRef<number | null>(null)
@@ -134,7 +133,6 @@ export default function CreateScreen() {
   const getMuxUploadStatus = useAction(api.videos.getMuxUploadStatus)
   const convex = useConvex()
   const createLiveStream = useAction(api.videos.createLiveStream)
-  const markStreamLive = useAction(api.videos.markStreamLive)
   const endLiveStream = useAction(api.videos.endLiveStream)
   const cancelLiveStream = useAction(api.videos.cancelLiveStream)
   const camps = useQuery(api.camps.list, respondTo ? 'skip' : {})
@@ -215,11 +213,6 @@ export default function CreateScreen() {
         bondfireId: args.bondfireId as Id<'bondfires'> | undefined,
         campId: args.campId as Id<'camps'> | undefined,
         tags: args.tags,
-      }),
-    markStreamLive: async (args) =>
-      await markStreamLive({
-        ...args,
-        liveSessionId: args.liveSessionId as Id<'liveSessions'>,
       }),
     endLiveStream: async (args) =>
       await endLiveStream({
@@ -406,8 +399,7 @@ export default function CreateScreen() {
         liveStatus === 'connecting' ||
         liveStatus === 'live' ||
         liveStatus === 'reconnecting' ||
-        liveStatus === 'stopping' ||
-        liveStatus === 'pre_connected')
+        liveStatus === 'stopping')
 
     if (shouldKeepAwake) {
       activateKeepAwakeAsync(keepAwakeTag)
@@ -1092,51 +1084,6 @@ export default function CreateScreen() {
   }, [clearStopTimeout, logRecordingError, resetRecordingState, state$])
 
   const startLiveRecording = useCallback(async () => {
-    // Pre-connected path: use markLive for instant recording start
-    if (liveStatus === 'pre_connected') {
-      // Clear the 90s timeout since we're now recording
-      if (preConnectTimeoutRef.current) {
-        clearTimeout(preConnectTimeoutRef.current)
-        preConnectTimeoutRef.current = null
-      }
-
-      try {
-        state$.recordingDuration.set(0)
-        state$.videoUri.set(null)
-        if (isPersonalCamp) {
-          personalCreateStartedAtRef.current = Date.now()
-        }
-        // Instant! Just flips Convex status — encoder is already running
-        await livePublisher.markLive()
-        // The live publisher status is already set to 'live' by markLive
-      } catch (error) {
-        logRecordingError(error)
-        const errorInfo = parseError(error)
-        Alert.alert(
-          errorInfo.isNetworkError ? 'No internet connection' : 'Recording Failed',
-          getUserFacingErrorMessage(errorInfo),
-          shouldShowReportIssue(errorInfo)
-            ? [
-                { text: 'OK', style: 'default' },
-                {
-                  text: 'Report Issue',
-                  onPress: () => {
-                    const url = buildErrorReportMailto({
-                      error,
-                      userId: currentUser?._id,
-                      context: 'Marking stream live',
-                    })
-                    Linking.openURL(url).catch(() => {})
-                  },
-                },
-              ]
-            : [{ text: 'OK', style: 'default' }],
-        )
-      }
-      return
-    }
-
-    // Cold start path: pre-connect was unavailable or was cleaned up
     if (liveStatus !== 'idle' && liveStatus !== 'ended' && liveStatus !== 'errored') {
       return
     }
@@ -1266,7 +1213,7 @@ export default function CreateScreen() {
       return
     }
 
-    if (liveStatus === 'live' || liveStatus === 'reconnecting' || liveStatus === 'pre_connected') {
+    if (liveStatus === 'live' || liveStatus === 'reconnecting') {
       void stopLiveRecording()
     }
   }, [
@@ -1311,90 +1258,6 @@ export default function CreateScreen() {
 
   const shouldRenderCamera =
     cameraPermission?.granted && micPermission?.granted && isFocused && isAppActive
-
-  // Pre-connect live stream when camera screen opens.
-  // The RTMP connection is established before the user taps record,
-  // so the transition to recording is instant — no "Connecting..." spinner.
-  useEffect(() => {
-    if (!shouldUseLivePublish || !shouldRenderCamera) {
-      return
-    }
-
-    const currentStatus = livePublishStore$.status.peek()
-    if (currentStatus !== 'idle' && currentStatus !== 'ended' && currentStatus !== 'errored') {
-      return
-    }
-
-    let cancelled = false
-
-    const preConnect = async () => {
-      try {
-        await livePublisher.preConnect({
-          respondToBondfireId: respondTo,
-          campId: effectiveCampId,
-          personalCamp: isPersonalCamp || undefined,
-          tags: selectedCampTags,
-          initialCamera: state$.facing.get() === 'back' ? 'back' : 'front',
-        })
-
-        if (cancelled) {
-          return
-        }
-
-        // Start 90s timeout — if the user doesn't record by then,
-        // cancel the pre-connect to avoid wasting encoding resources.
-        preConnectTimeoutRef.current = setTimeout(() => {
-          const status = livePublishStore$.status.peek()
-          if (status === 'pre_connected') {
-            telemetry.info('live:preconnect_timeout', 'Pre-connect timed out — cancelling', {
-              sessionId: livePublishStore$.sessionId.peek(),
-            })
-            livePublisher.cancel().catch((error) => {
-              telemetry.warn('live:cancel', 'Failed to cancel timed-out pre-connect', {
-                error: String(error),
-              })
-            })
-          }
-        }, 90_000)
-      } catch (error) {
-        if (cancelled) {
-          return
-        }
-        telemetry.warn(
-          'live:preconnect',
-          'Pre-connect failed — recording will fall back to cold start',
-          {
-            error: String(error),
-          },
-        )
-        // Don't throw or show an alert — this is a background optimization.
-        // The user can still record normally via cold start.
-      }
-    }
-
-    preConnect()
-
-    return () => {
-      cancelled = true
-      if (preConnectTimeoutRef.current) {
-        clearTimeout(preConnectTimeoutRef.current)
-        preConnectTimeoutRef.current = null
-      }
-
-      // Cleanup on unmount: cancel pre-connect if we never started recording
-      const status = livePublishStore$.status.peek()
-      if (status === 'pre_connected' || status === 'creating' || status === 'connecting') {
-        livePublisher.cancel().catch((error) => {
-          telemetry.warn('live:cancel', 'Failed to cancel pre-connect on unmount', {
-            error: String(error),
-          })
-        })
-      }
-    }
-    // These deps are the fundamental preconditions for pre-connect.
-    // effectiveCampId, respondTo etc. are stable for a given session.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shouldUseLivePublish, shouldRenderCamera])
 
   // Permission denied state
   if (!cameraPermission?.granted || !micPermission?.granted) {
@@ -1773,21 +1636,16 @@ export default function CreateScreen() {
   if (shouldUseLivePublish) {
     const isLiveRecording =
       liveStatus === 'connecting' || liveStatus === 'live' || liveStatus === 'reconnecting'
-    const isLiveBusy =
-      liveStatus === 'creating' ||
-      liveStatus === 'pre_connected' ||
-      liveStatus === 'stopping'
+    const isLiveBusy = liveStatus === 'creating' || liveStatus === 'stopping'
     const statusLabel =
       liveStatus === 'creating'
         ? 'Preparing camera...'
-        : liveStatus === 'pre_connected'
-          ? 'Ready'
-          : liveStatus === 'connecting'
-            ? 'Starting...'
-            : liveStatus === 'live'
-              ? '● REC'
-              : liveStatus === 'reconnecting'
-                ? 'Reconnecting...'
+        : liveStatus === 'connecting'
+          ? 'Starting...'
+          : liveStatus === 'live'
+            ? '● REC'
+            : liveStatus === 'reconnecting'
+              ? 'Reconnecting...'
               : liveStatus === 'stopping'
                 ? 'Saving...'
                 : 'Tap to record'

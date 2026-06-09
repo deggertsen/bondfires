@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { telemetry } from '../services/telemetry'
-import {
-  type LivePublishStatus,
-  livePublishActions,
-  livePublishStore$,
-} from '../store/livePublish.store'
+import { livePublishActions, livePublishStore$ } from '../store/livePublish.store'
 
 export interface LivePublisherStartOptions {
   rtmpsUrl: string
@@ -67,7 +63,6 @@ export function useLivePublisher(options: {
     width?: number
     height?: number
   }) => Promise<CreateLiveStreamResult>
-  markStreamLive: (args: { liveSessionId: string }) => Promise<{ live: boolean }>
   endLiveStream: (args: { liveSessionId: string; reason?: string }) => Promise<unknown>
   cancelLiveStream: (args: { liveSessionId: string; reason?: string }) => Promise<unknown>
 }) {
@@ -206,134 +201,6 @@ export function useLivePublisher(options: {
     [options, startStatsSampling],
   )
 
-  /**
-   * Pre-connect: provisions Mux live stream and starts the native encoder
-   * in the background before the user taps record. The stream flows but is
-   * not visible to viewers yet (Convex status = pre_connected).
-   *
-   * Returns the session data so the caller can track state and call
-   * markLive() later when the user actually taps record.
-   */
-  const preConnect = useCallback(
-    async (
-      args: {
-        respondToBondfireId?: string
-        campId?: string
-        personalCamp?: boolean
-        tags?: string[]
-        initialCamera?: 'front' | 'back'
-      } = {},
-    ) => {
-      const currentStatus = livePublishStore$.status.peek()
-      if (currentStatus !== 'idle' && currentStatus !== 'ended' && currentStatus !== 'errored') {
-        telemetry.info('live:preconnect_skip', 'Skipping pre-connect — already in progress', {
-          status: currentStatus,
-        })
-        return null
-      }
-
-      telemetry.info('live:preconnect', 'Pre-connect live stream requested', {
-        camera: args.initialCamera ?? 'unknown',
-        isResponse: !!args.respondToBondfireId,
-      })
-
-      livePublishActions.beginCreate()
-      let provisionedSessionId: string | null = null
-
-      try {
-        const liveStream = await options.createLiveStream({
-          isResponse: !!args.respondToBondfireId,
-          bondfireId: args.respondToBondfireId,
-          campId: args.campId,
-          personalCamp: args.personalCamp,
-          tags: args.tags,
-          width: 1080,
-          height: 1920,
-        })
-        provisionedSessionId = liveStream.liveSessionId
-
-        livePublishActions.start({
-          sessionId: liveStream.liveSessionId,
-          recordId: liveStream.recordId,
-          liveStreamId: liveStream.liveStreamId,
-          playbackId: liveStream.playbackId,
-        })
-
-        // Start the native encoder — RTMP connection begins flowing to Mux
-        await options.publisher.start({
-          rtmpsUrl: liveStream.ingest.rtmpsUrl,
-          streamKey: liveStream.ingest.streamKey,
-          width: 1080,
-          height: 1920,
-          fps: 30,
-          videoBitrate: 2_500_000,
-          audioBitrate: 128_000,
-          initialCamera: args.initialCamera ?? 'front',
-        })
-        startStatsSampling()
-
-        // Encoder is running, Convex already has pre_connected status.
-        // Update the local store to reflect this.
-        livePublishActions.setStatus('pre_connected' as LivePublishStatus)
-        telemetry.info('live:preconnect_success', 'Pre-connect established — encoder running', {
-          sessionId: liveStream.liveSessionId,
-          recordId: liveStream.recordId,
-        })
-
-        return {
-          sessionId: liveStream.liveSessionId,
-          recordId: liveStream.recordId,
-        }
-      } catch (error) {
-        const errObj = error instanceof Error ? error : new Error(String(error))
-        telemetry.error('live:preconnect_failed', 'Pre-connect failed', {
-          errorMessage: errObj.message,
-          errorName: errObj.name,
-          code: (error as { code?: string })?.code,
-          sessionId: provisionedSessionId,
-        })
-        livePublishActions.fail(error)
-
-        // Clean up the Mux live stream
-        if (provisionedSessionId) {
-          try {
-            await options.cancelLiveStream({
-              liveSessionId: provisionedSessionId,
-              reason: 'preconnect_failed',
-            })
-          } catch (cancelError) {
-            telemetry.warn('live:cancel', 'Failed to cancel pre-connected Mux live stream', {
-              error: String(cancelError),
-            })
-          }
-        }
-        throw error
-      }
-    },
-    [options, startStatsSampling],
-  )
-
-  /**
-   * Marks a pre-connected stream as live — the transition is instant because
-   * the RTMP connection is already flowing. This just updates Convex status
-   * so viewers can see and join the broadcast.
-   */
-  const markLive = useCallback(async () => {
-    const sessionId = livePublishStore$.sessionId.get()
-    if (!sessionId) {
-      throw new Error('No pre-connected session to mark live')
-    }
-
-    telemetry.info('live:mark_live', 'Marking pre-connected stream as live', { sessionId })
-
-    await options.markStreamLive({ liveSessionId: sessionId })
-    livePublishActions.setStatus('live')
-
-    telemetry.info('live:mark_live_success', 'Stream marked live — visible to viewers', {
-      sessionId,
-    })
-  }, [options])
-
   const stop = useCallback(async () => {
     const sessionId = livePublishStore$.sessionId.get()
     livePublishActions.setStatus('stopping')
@@ -428,8 +295,6 @@ export function useLivePublisher(options: {
 
   return {
     start,
-    preConnect,
-    markLive,
     stop,
     cancel,
     swapCamera,
