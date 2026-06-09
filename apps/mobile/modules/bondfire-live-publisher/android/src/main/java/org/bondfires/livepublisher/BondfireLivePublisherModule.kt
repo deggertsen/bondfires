@@ -32,8 +32,8 @@ import kotlinx.coroutines.launch
 class LivePublisherStartOptions : Record {
   @Field val rtmpsUrl: String = ""
   @Field val streamKey: String = ""
-  @Field val width: Int = 1080
-  @Field val height: Int = 1920
+  @Field val width: Int = 0
+  @Field val height: Int = 0
   @Field val fps: Int = 30
   @Field val videoBitrate: Int = 2_500_000
   @Field val audioBitrate: Int = 128_000
@@ -123,9 +123,10 @@ class BondfireLivePublisherModule : Module() {
       currentFacing = options.initialCamera
       val cameraId = findCameraIdForFacing(currentFacing)
 
-      // Query camera for best supported output resolution to avoid fisheye distortion
+      // Query camera for a supported output resolution to avoid stretching frames.
       val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
       val resolution = getBestCameraResolution(cameraManager, cameraId, options.width, options.height)
+      Log.i(TAG, "Using camera output resolution ${resolution.width}x${resolution.height}")
 
       // Create camera + microphone streamer
       val newStreamer = cameraSingleStreamer(
@@ -239,9 +240,9 @@ class BondfireLivePublisherModule : Module() {
   }
 
   /**
-   * Query the camera's supported output resolutions and pick the best match for encoding.
-   * Matching the camera's output aspect ratio avoids stretching a 9:16 encoder size
-   * across sensors that expose a different native video shape.
+   * Query the camera's supported output resolutions and pick an encoder size that
+   * matches the selected camera's native output shape. Hardcoding portrait sizes
+   * can stretch landscape camera frames and cause distorted recordings.
    */
   private fun getBestCameraResolution(
     cameraManager: CameraManager,
@@ -256,44 +257,56 @@ class BondfireLivePublisherModule : Module() {
       )
       val outputSizes = configMap?.getOutputSizes(android.media.MediaCodec::class.java)
         ?: configMap?.getOutputSizes(android.graphics.SurfaceTexture::class.java)
-        ?: return Size(1080, 1920)
+        ?: return fallbackCameraResolution(desiredWidth, desiredHeight)
 
-      val portraitSizes = outputSizes
-        .filter { it.height >= it.width && it.height >= 480 }
-        .sortedByDescending { it.width.toLong() * it.height.toLong() }
+      val usableSizes = outputSizes.filter { it.width > 0 && it.height > 0 }
 
-      if (portraitSizes.isEmpty()) {
-        return Size(1080, 1920)
+      if (usableSizes.isEmpty()) {
+        return fallbackCameraResolution(desiredWidth, desiredHeight)
       }
 
-      val requestedAspectRatio = desiredWidth.toDouble() / desiredHeight.toDouble()
-      val targetPixels = desiredWidth * desiredHeight
+      val sensorRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+      val requestedAspectRatio =
+        if (desiredWidth > 0 && desiredHeight > 0) {
+          normalizedAspectRatio(desiredWidth, desiredHeight)
+        } else if (sensorRect != null && sensorRect.width() > 0 && sensorRect.height() > 0) {
+          normalizedAspectRatio(sensorRect.width(), sensorRect.height())
+        } else {
+          normalizedAspectRatio(1920, 1080)
+        }
       val aspectRatioTolerance = 0.05
 
-      val matchedSizes = portraitSizes.filter { size ->
-        val aspectRatio = size.width.toDouble() / size.height.toDouble()
+      val matchedSizes = usableSizes.filter { size ->
+        val aspectRatio = normalizedAspectRatio(size.width, size.height)
         Math.abs(aspectRatio - requestedAspectRatio) < aspectRatioTolerance
       }
-
-      if (matchedSizes.isNotEmpty()) {
-        return matchedSizes.minByOrNull { size ->
-          Math.abs(size.width * size.height - targetPixels)
-        } ?: Size(1080, 1920)
+      val candidateSizes = if (matchedSizes.isNotEmpty()) matchedSizes else usableSizes
+      val fullHdPixels = 1920L * 1080L
+      val cappedSizes = candidateSizes.filter { size ->
+        size.width.toLong() * size.height.toLong() <= fullHdPixels
       }
+      val preferredSizes = if (cappedSizes.isNotEmpty()) cappedSizes else candidateSizes
 
-      val aspectRatioGroups = portraitSizes.groupBy { size ->
-        Math.round(size.width.toDouble() / size.height.toDouble() * 100.0) / 100.0
-      }
-      val largestAspectRatioGroup =
-        aspectRatioGroups.maxByOrNull { it.value.size }?.value ?: portraitSizes
-
-      val fullHdPortraitPixels = 1080 * 1920
-      largestAspectRatioGroup.minByOrNull { size ->
-        Math.abs(size.width * size.height - fullHdPortraitPixels)
-      } ?: Size(1080, 1920)
+      preferredSizes.maxByOrNull { size ->
+        size.width.toLong() * size.height.toLong()
+      } ?: fallbackCameraResolution(desiredWidth, desiredHeight)
     } catch (e: Exception) {
-      Log.w(TAG, "Failed to query camera resolutions, falling back to 1080x1920", e)
-      Size(1080, 1920)
+      Log.w(TAG, "Failed to query camera resolutions, falling back to default", e)
+      fallbackCameraResolution(desiredWidth, desiredHeight)
+    }
+  }
+
+  private fun normalizedAspectRatio(width: Int, height: Int): Double {
+    val longEdge = maxOf(width, height).toDouble()
+    val shortEdge = minOf(width, height).toDouble()
+    return longEdge / shortEdge
+  }
+
+  private fun fallbackCameraResolution(width: Int, height: Int): Size {
+    return if (width > 0 && height > 0) {
+      Size(width, height)
+    } else {
+      Size(1920, 1080)
     }
   }
 

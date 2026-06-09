@@ -7,8 +7,8 @@ import Foundation
 struct LivePublisherStartOptions: Record {
   @Field var rtmpsUrl: String = ""
   @Field var streamKey: String = ""
-  @Field var width: Int = 1080
-  @Field var height: Int = 1920
+  @Field var width: Int = 0
+  @Field var height: Int = 0
   @Field var fps: Int = 30
   @Field var videoBitrate: Int = 2_500_000
   @Field var audioBitrate: Int = 128_000
@@ -243,13 +243,15 @@ final class LivePublisher {
 
     await mixer.startRunning()
 
-    // Resolve output resolution: prefer the passed-in dimensions, default to 1080x1920
-    let captureWidth: Int32 = Int32(options.width > 0 ? options.width : 1080)
-    let captureHeight: Int32 = Int32(options.height > 0 ? options.height : 1920)
+    let captureSize = resolveCameraVideoSize(
+      camera,
+      fallbackWidth: options.width,
+      fallbackHeight: options.height
+    )
 
     mixer.videoMixerSettings.videoSize = .init(
-      width: captureWidth,
-      height: captureHeight
+      width: captureSize.width,
+      height: captureSize.height
     )
     // Use screen refresh rate as a hint, never exceed requested fps
     let maxFps = UIScreen.main.maximumFramesPerSecond
@@ -257,7 +259,7 @@ final class LivePublisher {
 
     var videoSettings = await newSession.stream.videoSettings
     videoSettings.bitRate = options.videoBitrate
-    videoSettings.videoSize = .init(width: captureWidth, height: captureHeight)
+    videoSettings.videoSize = .init(width: captureSize.width, height: captureSize.height)
     await newSession.stream.setVideoSettings(videoSettings)
 
     var audioSettings = await newSession.stream.audioSettings
@@ -273,6 +275,23 @@ final class LivePublisher {
     }
 
     emitStatusChange("live")
+  }
+
+  private func resolveCameraVideoSize(
+    _ camera: AVCaptureDevice,
+    fallbackWidth: Int,
+    fallbackHeight: Int
+  ) -> CMVideoDimensions {
+    let dimensions = camera.activeFormat.formatDescription.dimensions
+    if dimensions.width > 0 && dimensions.height > 0 {
+      return dimensions
+    }
+
+    if fallbackWidth > 0 && fallbackHeight > 0 {
+      return CMVideoDimensions(width: Int32(fallbackWidth), height: Int32(fallbackHeight))
+    }
+
+    return CMVideoDimensions(width: 1920, height: 1080)
   }
 
   // MARK: - Stop
