@@ -80,6 +80,11 @@ export function useLivePublisher(options: {
       livePublishActions.setStatus(status === 'ended' ? 'ended' : status)
     })
     const errorSub = options.publisher.addListener('error', (error) => {
+      telemetry.error('live:crash', 'Live publisher native error', {
+        code: error.code,
+        message: error.message,
+        sessionId: livePublishStore$.sessionId.peek(),
+      })
       livePublishActions.fail(new Error(error.message))
     })
 
@@ -122,6 +127,13 @@ export function useLivePublisher(options: {
         initialCamera?: 'front' | 'back'
       } = {},
     ) => {
+      telemetry.info('live:start', 'Live publisher start requested', {
+        camera: args.initialCamera ?? 'unknown',
+        isResponse: !!args.respondToBondfireId,
+        hasCampId: !!args.campId,
+        isPersonalCamp: !!args.personalCamp,
+      })
+
       livePublishActions.beginCreate()
       let provisionedSessionId: string | null = null
       try {
@@ -154,7 +166,20 @@ export function useLivePublisher(options: {
           initialCamera: args.initialCamera ?? 'front',
         })
         startStatsSampling()
+        telemetry.info('live:start_success', 'Live publisher started successfully', {
+          sessionId: liveStream.liveSessionId,
+          recordId: liveStream.recordId,
+          playbackId: liveStream.playbackId,
+        })
       } catch (error) {
+        const errObj = error instanceof Error ? error : new Error(String(error))
+        telemetry.error('live:start_failed', 'Live publisher start failed', {
+          errorMessage: errObj.message,
+          errorName: errObj.name,
+          code: (error as { code?: string })?.code,
+          sessionId: provisionedSessionId,
+          camera: args.initialCamera ?? 'unknown',
+        })
         livePublishActions.fail(error)
         // Roll back the Mux live stream we provisioned so we don't keep paying
         // for an orphaned session that no client will ever publish to.
@@ -199,6 +224,13 @@ export function useLivePublisher(options: {
       livePublishActions.setStatus('ended')
     }
 
+    telemetry.info('live:stop', 'Live publisher stopped', {
+      sessionId,
+      reason: publisherError ? 'error' : 'user_stopped',
+      publisherError: publisherError ? String(publisherError) : undefined,
+      backendError: backendError ? String(backendError) : undefined,
+    })
+
     if (publisherError) {
       if (backendError) {
         telemetry.warn(
@@ -236,6 +268,12 @@ export function useLivePublisher(options: {
       stopStatsSampling()
       livePublishActions.reset()
     }
+
+    telemetry.info('live:stop', 'Live publisher cancelled', {
+      sessionId,
+      reason: 'user_cancelled',
+      publisherError: publisherError ? String(publisherError) : undefined,
+    })
 
     if (publisherError) {
       if (backendError) {

@@ -1,6 +1,8 @@
 package org.bondfires.livepublisher
 
 import android.content.Context
+import android.content.pm.PackageManager
+import android.hardware.camera2.CameraManager
 import android.media.AudioFormat
 import android.media.MediaFormat
 import android.util.Log
@@ -70,7 +72,45 @@ class BondfireLivePublisherModule : Module() {
     }
 
     AsyncFunction("isAvailable") {
-      true
+      val context = appContext.reactContext ?: return@AsyncFunction false
+
+      // 1) Camera permission via package manager
+      val hasCameraPerm = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+        context.checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+      } else {
+        // Pre-M permissions are granted at install time
+        true
+      }
+
+      if (!hasCameraPerm) {
+        Log.w(TAG, "isAvailable: CAMERA permission not granted")
+        return@AsyncFunction false
+      }
+
+      // 2) At least one camera available
+      return@AsyncFunction try {
+        val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
+        val cameras = cameraManager?.cameraIdList
+        val available = !cameras.isNullOrEmpty()
+        if (!available) {
+          Log.w(TAG, "isAvailable: no cameras found on device")
+        }
+        available
+      } catch (e: Exception) {
+        Log.e(TAG, "isAvailable: error enumerating cameras", e)
+        false
+      }
+    }
+
+    AsyncFunction("getCameraCount") {
+      val context = appContext.reactContext ?: return@AsyncFunction 0
+      return@AsyncFunction try {
+        val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
+        cameraManager?.cameraIdList?.size ?: 0
+      } catch (e: Exception) {
+        Log.e(TAG, "getCameraCount: error enumerating cameras", e)
+        0
+      }
     }
 
     AsyncFunction("start") Coroutine { options: LivePublisherStartOptions ->

@@ -32,6 +32,7 @@ type EventSubscription = { remove: () => void }
 
 interface NativeLivePublisher {
   isAvailable?: () => Promise<boolean>
+  getCameraCount?: () => Promise<number>
   start(options: LivePublisherStartOptions): Promise<void>
   stop(): Promise<void>
   swapCamera(): Promise<void>
@@ -97,6 +98,10 @@ const addListener: AddListener = (
 export const BondfireLivePublisher = {
   isAvailable() {
     return nativeModule?.isAvailable?.() ?? Promise.resolve(false)
+  },
+
+  getCameraCount() {
+    return nativeModule?.getCameraCount?.() ?? Promise.resolve(0)
   },
 
   start(options: LivePublisherStartOptions) {
