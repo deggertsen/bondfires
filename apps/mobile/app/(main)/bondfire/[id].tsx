@@ -1327,22 +1327,23 @@ export default function BondfireDetailScreen() {
                   size="$lg"
                   flex={1}
                   onPress={() => setIsInviteSheetOpen(true)}
+                  borderColor={OVERLAY_COLORS.textPrimary}
                 >
-                  <Text color={'$color'} fontWeight="700">
+                  <Text color={OVERLAY_COLORS.textPrimary} fontWeight="700">
                     Share Bondfire
                   </Text>
                 </Button>
                 <Button variant="primary" size="$lg" flex={1} onPress={handleRespond}>
-                  <Flame size={18} color={'$color'} />
-                  <Text color={'$color'} fontWeight="700">
+                  <Flame size={18} color={OVERLAY_COLORS.textPrimary} />
+                  <Text color={OVERLAY_COLORS.textPrimary} fontWeight="700">
                     Respond
                   </Text>
                 </Button>
               </XStack>
             ) : (
               <Button variant="primary" size="$lg" onPress={handleRespond}>
-                <Flame size={20} color={'$color'} />
-                <Text color={'$color'}>Add Your Response</Text>
+                <Flame size={20} color={OVERLAY_COLORS.textPrimary} />
+                <Text color={OVERLAY_COLORS.textPrimary}>Add Your Response</Text>
               </Button>
             )}
           </YStack>
