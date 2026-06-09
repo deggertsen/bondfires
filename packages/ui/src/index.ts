@@ -39,6 +39,7 @@ export {
   ZStack,
 } from 'tamagui'
 export * from './AdminPanel'
+export * from './BondfireRow'
 export * from './Button'
 export * from './CampCardStatusBanner'
 export * from './Card'
