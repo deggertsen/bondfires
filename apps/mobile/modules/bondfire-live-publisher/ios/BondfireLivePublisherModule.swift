@@ -7,8 +7,8 @@ import Foundation
 struct LivePublisherStartOptions: Record {
   @Field var rtmpsUrl: String = ""
   @Field var streamKey: String = ""
-  @Field var width: Int = 720
-  @Field var height: Int = 1280
+  @Field var width: Int = 1080
+  @Field var height: Int = 1920
   @Field var fps: Int = 30
   @Field var videoBitrate: Int = 2_500_000
   @Field var audioBitrate: Int = 128_000

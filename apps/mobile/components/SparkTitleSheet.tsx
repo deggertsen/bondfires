@@ -1,3 +1,4 @@
+import { useAppThemeColors } from '@bondfires/app'
 import { Button, Text } from '@bondfires/ui'
 import { Flame, X } from '@tamagui/lucide-icons'
 import { useQuery } from 'convex/react'
@@ -21,6 +22,7 @@ function truncateToTwoWords(name: string): string {
 }
 
 export function SparkTitleSheet({ open, campName, onSubmit, onCancel }: Props) {
+  const { colors } = useAppThemeColors()
   const currentUser = useQuery(api.users.current)
   const inputRef = useRef<TextInput>(null)
   const [title, setTitle] = useState('')
@@ -104,17 +106,17 @@ export function SparkTitleSheet({ open, campName, onSubmit, onCancel }: Props) {
               value={title}
               onChangeText={setTitle}
               placeholder={defaultTitle || 'Give your Bondfire a title...'}
-              placeholderTextColor="#666"
+              placeholderTextColor={colors.placeholderColor}
               style={{
-                backgroundColor: '#1a1b1e',
-                color: '#fff',
+                backgroundColor: colors.backgroundHover,
+                color: colors.color,
                 fontSize: 16,
                 fontWeight: '600',
                 paddingHorizontal: 16,
                 paddingVertical: 14,
                 borderRadius: 12,
                 borderWidth: 1,
-                borderColor: '#333',
+                borderColor: colors.borderColor,
               }}
               returnKeyType="done"
               onSubmitEditing={handleSubmit}

@@ -32,8 +32,8 @@ import kotlinx.coroutines.launch
 class LivePublisherStartOptions : Record {
   @Field val rtmpsUrl: String = ""
   @Field val streamKey: String = ""
-  @Field val width: Int = 720
-  @Field val height: Int = 1280
+  @Field val width: Int = 1080
+  @Field val height: Int = 1920
   @Field val fps: Int = 30
   @Field val videoBitrate: Int = 2_500_000
   @Field val audioBitrate: Int = 128_000
@@ -239,8 +239,9 @@ class BondfireLivePublisherModule : Module() {
   }
 
   /**
-   * Query the camera's supported output resolutions and pick the best match.
-   * Prefers 1080x1920 (portrait). Falls back to the largest supported size.
+   * Query the camera's supported output resolutions and pick the best match for encoding.
+   * Matching the camera's output aspect ratio avoids stretching a 9:16 encoder size
+   * across sensors that expose a different native video shape.
    */
   private fun getBestCameraResolution(
     cameraManager: CameraManager,
@@ -248,36 +249,51 @@ class BondfireLivePublisherModule : Module() {
     desiredWidth: Int,
     desiredHeight: Int,
   ): Size {
-    try {
+    return try {
       val characteristics = cameraManager.getCameraCharacteristics(cameraId)
       val configMap = characteristics.get(
         CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP
       )
-      val outputSizes = configMap?.getOutputSizes(MediaFormat.MIMETYPE_VIDEO_AVC)
-        ?: configMap?.getOutputSizes(android.graphics.ImageFormat.YUV_420_888)
-        ?: return Size(desiredWidth, desiredHeight)
+      val outputSizes = configMap?.getOutputSizes(android.media.MediaCodec::class.java)
+        ?: configMap?.getOutputSizes(android.graphics.SurfaceTexture::class.java)
+        ?: return Size(1080, 1920)
 
-      // Prefer 1080x1920 portrait
-      val targetWidth = 1080
-      val targetHeight = 1920
-
-      outputSizes.firstOrNull { it.width == targetWidth && it.height == targetHeight }
-        ?.let { return it }
-
-      // Fall back: largest 9:16-ish portrait size
-      val portraitSizes = outputSizes.filter { it.height > it.width }
+      val portraitSizes = outputSizes
+        .filter { it.height >= it.width && it.height >= 480 }
         .sortedByDescending { it.width.toLong() * it.height.toLong() }
 
-      if (portraitSizes.isNotEmpty()) {
-        return portraitSizes.first()
+      if (portraitSizes.isEmpty()) {
+        return Size(1080, 1920)
       }
 
-      // Last resort: largest size overall
-      return outputSizes.maxByOrNull { it.width * it.height }
-        ?: Size(desiredWidth, desiredHeight)
+      val requestedAspectRatio = desiredWidth.toDouble() / desiredHeight.toDouble()
+      val targetPixels = desiredWidth * desiredHeight
+      val aspectRatioTolerance = 0.05
+
+      val matchedSizes = portraitSizes.filter { size ->
+        val aspectRatio = size.width.toDouble() / size.height.toDouble()
+        Math.abs(aspectRatio - requestedAspectRatio) < aspectRatioTolerance
+      }
+
+      if (matchedSizes.isNotEmpty()) {
+        return matchedSizes.minByOrNull { size ->
+          Math.abs(size.width * size.height - targetPixels)
+        } ?: Size(1080, 1920)
+      }
+
+      val aspectRatioGroups = portraitSizes.groupBy { size ->
+        Math.round(size.width.toDouble() / size.height.toDouble() * 100.0) / 100.0
+      }
+      val largestAspectRatioGroup =
+        aspectRatioGroups.maxByOrNull { it.value.size }?.value ?: portraitSizes
+
+      val fullHdPortraitPixels = 1080 * 1920
+      largestAspectRatioGroup.minByOrNull { size ->
+        Math.abs(size.width * size.height - fullHdPortraitPixels)
+      } ?: Size(1080, 1920)
     } catch (e: Exception) {
-      Log.w(TAG, "Failed to query camera resolutions, using default", e)
-      return Size(desiredWidth, desiredHeight)
+      Log.w(TAG, "Failed to query camera resolutions, falling back to 1080x1920", e)
+      Size(1080, 1920)
     }
   }
 
