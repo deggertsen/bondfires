@@ -66,11 +66,14 @@ interface MuxLiveStreamResult {
 }
 
 const MUX_API_BASE_URL = 'https://api.mux.com/video/v1'
+const MUX_UPLOAD_TIMEOUT_MIN_SECONDS = 60
+const MUX_UPLOAD_TIMEOUT_MAX_SECONDS = 7 * 24 * 60 * 60
 const DEFAULT_MUX_UPLOAD_TIMEOUT_SECONDS = 60 * 60
 const MUX_READY_STATUSES = new Set(['ready'])
 const MUX_FAILED_STATUSES = new Set(['errored', 'cancelled', 'timed_out'])
-const MUX_LIVE_RTMPS_ENDPOINT = 'rtmps://global-live.mux.com/app'
+const MUX_LIVE_RTMPS_ENDPOINT = 'rtmps://global-live.mux.com:443/app'
 const DEFAULT_MUX_LIVE_RECONNECT_WINDOW_SECONDS = 30
+const MUX_LIVE_RECONNECT_WINDOW_MAX_SECONDS = 30 * 60
 const SIGNED_PLAYBACK_URL_TTL_SECONDS = 12 * 60 * 60
 const DURATION_LIMIT_EXCEEDED_STATUS = 'duration_limit_exceeded'
 
@@ -104,6 +107,20 @@ function getConfiguredPlaybackPolicy(): PlaybackPolicy {
 
 function readLiveLatencyMode(value: string | undefined): LiveLatencyMode {
   return value === 'standard' || value === 'reduced' || value === 'low' ? value : 'low'
+}
+
+function readMuxSeconds(
+  value: string | undefined,
+  defaultSeconds: number,
+  minSeconds: number,
+  maxSeconds: number,
+): number {
+  const parsed = value === undefined ? defaultSeconds : Number(value)
+  if (!Number.isFinite(parsed)) {
+    return defaultSeconds
+  }
+
+  return Math.min(maxSeconds, Math.max(minSeconds, Math.trunc(parsed)))
 }
 
 function getMuxAuthorizationHeader(tokenId: string, tokenSecret: string): string {
@@ -987,15 +1004,15 @@ export const createMuxDirectUpload = action({
     }
 
     const config = getMuxConfig()
-    const uploadTimeout = Number(
-      process.env.MUX_UPLOAD_TIMEOUT_SECONDS ?? DEFAULT_MUX_UPLOAD_TIMEOUT_SECONDS,
+    const uploadTimeout = readMuxSeconds(
+      process.env.MUX_UPLOAD_TIMEOUT_SECONDS,
+      DEFAULT_MUX_UPLOAD_TIMEOUT_SECONDS,
+      MUX_UPLOAD_TIMEOUT_MIN_SECONDS,
+      MUX_UPLOAD_TIMEOUT_MAX_SECONDS,
     )
     const payload = {
       cors_origin: config.uploadCorsOrigin,
-      timeout:
-        Number.isFinite(uploadTimeout) && uploadTimeout > 0
-          ? uploadTimeout
-          : DEFAULT_MUX_UPLOAD_TIMEOUT_SECONDS,
+      timeout: uploadTimeout,
       new_asset_settings: {
         playback_policies: [playbackPolicy],
         video_quality: config.videoQuality,
@@ -1355,8 +1372,11 @@ export const createLiveStream = action({
     }
 
     const config = getMuxConfig()
-    const reconnectWindow = Number(
-      process.env.MUX_LIVE_RECONNECT_WINDOW_SECONDS ?? DEFAULT_MUX_LIVE_RECONNECT_WINDOW_SECONDS,
+    const reconnectWindow = readMuxSeconds(
+      process.env.MUX_LIVE_RECONNECT_WINDOW_SECONDS,
+      DEFAULT_MUX_LIVE_RECONNECT_WINDOW_SECONDS,
+      0,
+      MUX_LIVE_RECONNECT_WINDOW_MAX_SECONDS,
     )
     const data = parseMuxData(
       await muxRequest('/live-streams', {
@@ -1364,10 +1384,7 @@ export const createLiveStream = action({
         body: JSON.stringify({
           playback_policies: [playbackPolicy],
           latency_mode: config.liveLatencyMode,
-          reconnect_window:
-            Number.isFinite(reconnectWindow) && reconnectWindow >= 0
-              ? reconnectWindow
-              : DEFAULT_MUX_LIVE_RECONNECT_WINDOW_SECONDS,
+          reconnect_window: reconnectWindow,
           passthrough: JSON.stringify({
             userId,
             isResponse: args.isResponse,
@@ -1430,6 +1447,26 @@ export const endLiveStream = action({
     const userId = await auth.getUserId(ctx)
     if (!userId) {
       throwUserError('Not authenticated')
+    }
+
+    const liveSession: Doc<'liveSessions'> | null = await ctx.runQuery(
+      internal.videos.getMuxLiveSessionForUser,
+      {
+        userId,
+        liveSessionId: args.liveSessionId,
+      },
+    )
+
+    if (!liveSession) {
+      throwUserError('Live session not found')
+    }
+
+    try {
+      await muxRequest(`/live-streams/${liveSession.muxLiveStreamId}/complete`, {
+        method: 'PUT',
+      })
+    } catch (error) {
+      console.warn('Failed to signal Mux live stream complete:', error)
     }
 
     return await ctx.runMutation(internal.videos.markMuxLiveSessionEnding, {
