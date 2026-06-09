@@ -1637,6 +1637,8 @@ export default function CreateScreen() {
     const isLiveRecording =
       liveStatus === 'connecting' || liveStatus === 'live' || liveStatus === 'reconnecting'
     const isLiveBusy = liveStatus === 'creating' || liveStatus === 'stopping'
+    const isLiveCaptureActive = isLiveRecording || isLiveBusy
+    const isIdleLivePreviewReady = isCameraReady && !cameraMountError
     const statusLabel =
       liveStatus === 'creating'
         ? 'Preparing camera...'
@@ -1654,41 +1656,37 @@ export default function CreateScreen() {
       <YStack flex={1} backgroundColor={'$background'}>
         <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
         {shouldRenderCamera ? (
-          <CameraView
-            key={`live-${cameraResetCounter}-${facing}`}
-            style={{ flex: 1 }}
-            facing={facing}
-            mode="video"
-            onCameraReady={() => {
-              state$.isCameraReady.set(true)
-              state$.cameraMountError.set(null)
-            }}
-            onMountError={(event) => {
-              const message = event?.message ?? 'Unknown camera mount error'
-              state$.cameraMountError.set(message)
-              state$.isCameraReady.set(false)
-              telemetry.error('create:camera', 'Camera mount error', {
-                platform: Platform.OS,
-                message,
-              })
-              Alert.alert('Camera Error', message)
-            }}
-          >
-            {/* Hidden LivePublisherView — present only for RTMP encoding */}
-            <LivePublisherView
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: 1,
-                height: 1,
-                opacity: 0,
-              }}
-              pointerEvents="none"
-            />
+          <>
+            {isLiveCaptureActive ? (
+              <LivePublisherView style={{ flex: 1 }} />
+            ) : (
+              <CameraView
+                key={`live-${cameraResetCounter}-${facing}`}
+                style={{ flex: 1 }}
+                facing={facing}
+                mode="video"
+                onCameraReady={() => {
+                  state$.isCameraReady.set(true)
+                  state$.cameraMountError.set(null)
+                }}
+                onMountError={(event) => {
+                  const message = event?.message ?? 'Unknown camera mount error'
+                  state$.cameraMountError.set(message)
+                  state$.isCameraReady.set(false)
+                  telemetry.error('create:camera', 'Camera mount error', {
+                    platform: Platform.OS,
+                    message,
+                  })
+                  Alert.alert('Camera Error', message)
+                }}
+              />
+            )}
 
-            {/* Header */}
             <XStack
+              position="absolute"
+              top={0}
+              left={0}
+              right={0}
               paddingTop={60}
               paddingHorizontal={20}
               justifyContent="space-between"
@@ -1735,8 +1733,14 @@ export default function CreateScreen() {
               </Pressable>
             </XStack>
 
-            {/* Title */}
-            <YStack flex={1} justifyContent="center" alignItems="center">
+            <YStack
+              position="absolute"
+              left={0}
+              right={0}
+              top="40%"
+              alignItems="center"
+              pointerEvents="none"
+            >
               {!isLiveRecording && !isLiveBusy && (
                 <YStack alignItems="center" gap={12}>
                   <XStack alignItems="center" gap={8}>
@@ -1761,10 +1765,9 @@ export default function CreateScreen() {
               )}
             </YStack>
 
-            {/* Record button */}
-            <YStack paddingBottom={40} alignItems="center">
+            <YStack position="absolute" left={0} right={0} bottom={40} alignItems="center">
               <Pressable
-                disabled={isLiveBusy}
+                disabled={isLiveBusy || (!isLiveRecording && !isIdleLivePreviewReady)}
                 onPress={() => {
                   if (isLiveRecording) {
                     void stopLiveRecording()
@@ -1783,7 +1786,7 @@ export default function CreateScreen() {
                   alignItems="center"
                   justifyContent="center"
                   backgroundColor={isLiveRecording ? '$error' : 'transparent'}
-                  opacity={isLiveBusy ? 0.7 : 1}
+                  opacity={isLiveBusy || (!isLiveRecording && !isIdleLivePreviewReady) ? 0.7 : 1}
                 >
                   {isLiveBusy ? (
                     <Spinner size="small" color={'$color'} />
@@ -1803,11 +1806,13 @@ export default function CreateScreen() {
                   ? showRecordingLimitCountdown && autoStopStatusLabel
                     ? autoStopStatusLabel
                     : 'Tap to stop'
-                  : cameraMountError
-                    ? 'Camera failed to initialize'
-                    : isCameraReady
-                      ? 'Tap to record'
-                      : 'Initializing camera...'}
+                  : isLiveBusy
+                    ? statusLabel
+                    : cameraMountError
+                      ? 'Camera failed to initialize'
+                      : isCameraReady
+                        ? 'Tap to record'
+                        : 'Initializing camera...'}
               </Text>
 
               {cameraMountError && !isLiveRecording && !isLiveBusy && (
@@ -1816,17 +1821,9 @@ export default function CreateScreen() {
                 </Button>
               )}
             </YStack>
-          </CameraView>
-        ) : (
-          <>
-            {/* Even without camera permissions, render LivePublisherView so the
-                 native module lifecycle isn't broken if permissions are granted later */}
-            <LivePublisherView
-              style={{ position: 'absolute', top: 0, left: 0, width: 1, height: 1, opacity: 0 }}
-              pointerEvents="none"
-            />
-            <YStack flex={1} />
           </>
+        ) : (
+          <YStack flex={1} />
         )}
       </YStack>
     )

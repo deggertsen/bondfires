@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
-import android.hardware.camera2.params.StreamConfigurationMap
 import android.media.AudioFormat
 import android.media.MediaFormat
 import android.util.Log
@@ -143,7 +142,7 @@ class BondfireLivePublisherModule : Module() {
       )
       newStreamer.setAudioConfig(audioConfig)
 
-      // Configure video — query camera's native output sizes to avoid fisheye distortion
+      // Configure video by querying the camera's native output sizes to avoid distortion.
       val bestResolution = getBestEncodingResolution(cameraId, options.width, options.height)
       Log.i(TAG, "Using encoding resolution ${bestResolution.width}x${bestResolution.height} " +
         "(requested ${options.width}x${options.height})")
@@ -291,7 +290,7 @@ class BondfireLivePublisherModule : Module() {
         } ?: Size(1080, 1920)
       }
 
-      // No exact AR match — pick the most common camera AR group
+      // No exact AR match; pick the most common camera AR group.
       // Group by aspect ratio (rounded to 2 decimal places) and find the largest group
       val arGroups = portraitSizes.groupBy { size ->
         Math.round(size.width.toDouble() / size.height.toDouble() * 100.0) / 100.0
