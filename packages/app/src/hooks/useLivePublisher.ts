@@ -143,8 +143,8 @@ export function useLivePublisher(options: {
           campId: args.campId,
           personalCamp: args.personalCamp,
           tags: args.tags,
-          width: 720,
-          height: 1280,
+          width: 1080,
+          height: 1920,
         })
         provisionedSessionId = liveStream.liveSessionId
 
@@ -158,8 +158,8 @@ export function useLivePublisher(options: {
         await options.publisher.start({
           rtmpsUrl: liveStream.ingest.rtmpsUrl,
           streamKey: liveStream.ingest.streamKey,
-          width: 720,
-          height: 1280,
+          width: 1080,
+          height: 1920,
           fps: 30,
           videoBitrate: 2_500_000,
           audioBitrate: 128_000,

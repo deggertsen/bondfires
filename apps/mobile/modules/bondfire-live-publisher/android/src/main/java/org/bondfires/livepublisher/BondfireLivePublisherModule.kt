@@ -2,7 +2,9 @@ package org.bondfires.livepublisher
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.hardware.camera2.params.StreamConfigurationMap
 import android.media.AudioFormat
 import android.media.MediaFormat
 import android.util.Log
@@ -141,11 +143,14 @@ class BondfireLivePublisherModule : Module() {
       )
       newStreamer.setAudioConfig(audioConfig)
 
-      // Configure video
+      // Configure video — query camera's native output sizes to avoid fisheye distortion
+      val bestResolution = getBestEncodingResolution(cameraId, options.width, options.height)
+      Log.i(TAG, "Using encoding resolution ${bestResolution.width}x${bestResolution.height} " +
+        "(requested ${options.width}x${options.height})")
       val videoConfig = VideoCodecConfig(
         mimeType = MediaFormat.MIMETYPE_VIDEO_AVC,
         startBitrate = options.videoBitrate,
-        resolution = Size(options.width, options.height),
+        resolution = bestResolution,
         fps = options.fps,
         gopDurationInS = 2.0f,
       )
@@ -230,6 +235,78 @@ class BondfireLivePublisherModule : Module() {
       characteristics.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING) == lensFacing
     } ?: cameraManager.cameraIdList.firstOrNull()
       ?: throw LivePublisherException("No camera available")
+  }
+
+  /**
+   * Query the camera's supported output sizes and pick the best match for encoding.
+   * Avoids fisheye distortion by matching the encoding resolution to the camera's
+   * native aspect ratio rather than forcing an arbitrary size.
+   *
+   * Strategy:
+   * 1. Get all supported high-speed (or regular) output sizes for MediaCodec
+   * 2. Filter to portrait-mode sizes (height > width)
+   * 3. Group by aspect ratio and find the group closest to the requested resolution
+   * 4. Within that group, pick the size closest to the requested pixel count
+   * 5. Fall back to 1080x1920 if camera query fails
+   */
+  private fun getBestEncodingResolution(cameraId: String, requestedWidth: Int, requestedHeight: Int): Size {
+    val context = appContext.reactContext ?: return Size(1080, 1920)
+    val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
+      ?: return Size(1080, 1920)
+
+    return try {
+      val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+      val configMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+        ?: return Size(1080, 1920)
+
+      // Get output sizes for MediaCodec (SurfaceTexture class used as proxy)
+      val outputSizes = configMap.getOutputSizes(android.media.MediaCodec::class.java)
+        ?: configMap.getOutputSizes(android.graphics.SurfaceTexture::class.java)
+        ?: return Size(1080, 1920)
+
+      // Filter to portrait sizes (height >= width) and at least 480p
+      val portraitSizes = outputSizes
+        .filter { it.height >= it.width && it.height >= 480 }
+        .sortedByDescending { it.width * it.height }
+
+      if (portraitSizes.isEmpty()) {
+        return Size(1080, 1920)
+      }
+
+      // Compute requested aspect ratio (e.g., 9:16 = 0.5625)
+      val requestedAr = requestedWidth.toDouble() / requestedHeight.toDouble()
+      val tolerance = 0.05 // 5% tolerance for aspect ratio matching
+
+      // Find sizes with aspect ratio close to the requested one
+      val matchedSizes = portraitSizes.filter { size ->
+        val ar = size.width.toDouble() / size.height.toDouble()
+        Math.abs(ar - requestedAr) < tolerance
+      }
+
+      // If we found matching-AR sizes, pick the one closest to requested pixel count
+      if (matchedSizes.isNotEmpty()) {
+        val targetPixels = requestedWidth * requestedHeight
+        return matchedSizes.minByOrNull { size ->
+          Math.abs(size.width * size.height - targetPixels)
+        } ?: Size(1080, 1920)
+      }
+
+      // No exact AR match — pick the most common camera AR group
+      // Group by aspect ratio (rounded to 2 decimal places) and find the largest group
+      val arGroups = portraitSizes.groupBy { size ->
+        Math.round(size.width.toDouble() / size.height.toDouble() * 100.0) / 100.0
+      }
+      val largestGroup = arGroups.maxByOrNull { it.value.size }?.value ?: portraitSizes
+
+      // Within the most common AR group, pick the size closest to 1080p (1080x1920)
+      val targetPixels = 1080 * 1920
+      largestGroup.minByOrNull { size ->
+        Math.abs(size.width * size.height - targetPixels)
+      } ?: Size(1080, 1920)
+    } catch (e: Exception) {
+      Log.w(TAG, "Failed to query camera output sizes, falling back to 1080x1920", e)
+      Size(1080, 1920)
+    }
   }
 
   fun attachPreview(view: PreviewView) {

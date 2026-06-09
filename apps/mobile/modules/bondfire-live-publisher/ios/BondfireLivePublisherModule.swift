@@ -243,8 +243,24 @@ final class LivePublisher {
 
     await mixer.startRunning()
 
+    // Determine the best encoding resolution from the camera's native format
+    // to avoid fisheye distortion from forcing a mismatched aspect ratio.
     var videoSettings = await newSession.stream.videoSettings
     videoSettings.bitRate = options.videoBitrate
+    if let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position) {
+      let formatDimensions = camera.activeFormat.formatDescription.dimensions
+      if formatDimensions.width > 0 && formatDimensions.height > 0 {
+        videoSettings.frameSize = CGSize(
+          width: CGFloat(formatDimensions.width),
+          height: CGFloat(formatDimensions.height)
+        )
+      } else {
+        // Fallback: 1080x1920 (full HD portrait) matches most phone sensors
+        videoSettings.frameSize = CGSize(width: 1080, height: 1920)
+      }
+    } else {
+      videoSettings.frameSize = CGSize(width: 1080, height: 1920)
+    }
     await newSession.stream.setVideoSettings(videoSettings)
 
     var audioSettings = await newSession.stream.audioSettings

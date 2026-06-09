@@ -1089,7 +1089,7 @@ export default function CreateScreen() {
     }
 
     if (!respondTo && !isPersonalCamp && (!effectiveCampId || !selectedCamp)) {
-      Alert.alert('Choose a Camp', 'Pick where this Bondfire belongs before going live.')
+      Alert.alert('Choose a Camp', 'Pick where this Bondfire belongs before recording.')
       return
     }
 
@@ -1120,7 +1120,7 @@ export default function CreateScreen() {
       logRecordingError(error)
       const errorInfo = parseError(error)
       Alert.alert(
-        errorInfo.isNetworkError ? 'No internet connection' : 'Live Stream Failed',
+        errorInfo.isNetworkError ? 'No internet connection' : 'Recording Failed',
         getUserFacingErrorMessage(errorInfo),
         shouldShowReportIssue(errorInfo)
           ? [
@@ -1192,7 +1192,7 @@ export default function CreateScreen() {
     } catch (error) {
       logRecordingError(error)
       Alert.alert(
-        'Live Stream Stopping',
+        'Recording',
         'The live connection stopped locally, but the saved video may still finish processing.',
       )
       // Roll back local UI state so the user isn't stuck on the live capture
@@ -1231,7 +1231,7 @@ export default function CreateScreen() {
     } catch (error) {
       logRecordingError(error)
       const errorInfo = parseError(error)
-      Alert.alert('Live Stream', getUserFacingErrorMessage(errorInfo))
+      Alert.alert('Recording', getUserFacingErrorMessage(errorInfo))
     } finally {
       // useLivePublisher.cancel already calls livePublishActions.reset() in its
       // own finally, but reset here as well so this code path stays correct
@@ -1639,29 +1639,56 @@ export default function CreateScreen() {
     const isLiveBusy = liveStatus === 'creating' || liveStatus === 'stopping'
     const statusLabel =
       liveStatus === 'creating'
-        ? 'Creating live stream...'
+        ? 'Preparing camera...'
         : liveStatus === 'connecting'
-          ? 'Connecting...'
+          ? 'Starting...'
           : liveStatus === 'live'
-            ? 'LIVE'
+            ? '● REC'
             : liveStatus === 'reconnecting'
               ? 'Reconnecting...'
               : liveStatus === 'stopping'
-                ? 'Saving live moment...'
-                : 'Tap to go live'
+                ? 'Saving...'
+                : 'Tap to record'
 
     return (
       <YStack flex={1} backgroundColor={'$background'}>
         <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
         {shouldRenderCamera ? (
-          <>
-            <LivePublisherView style={{ flex: 1 }} />
+          <CameraView
+            key={`live-${cameraResetCounter}-${facing}`}
+            style={{ flex: 1 }}
+            facing={facing}
+            mode="video"
+            onCameraReady={() => {
+              state$.isCameraReady.set(true)
+              state$.cameraMountError.set(null)
+            }}
+            onMountError={(event) => {
+              const message = event?.message ?? 'Unknown camera mount error'
+              state$.cameraMountError.set(message)
+              state$.isCameraReady.set(false)
+              telemetry.error('create:camera', 'Camera mount error', {
+                platform: Platform.OS,
+                message,
+              })
+              Alert.alert('Camera Error', message)
+            }}
+          >
+            {/* Hidden LivePublisherView — present only for RTMP encoding */}
+            <LivePublisherView
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: 1,
+                height: 1,
+                opacity: 0,
+              }}
+              pointerEvents="none"
+            />
 
+            {/* Header */}
             <XStack
-              position="absolute"
-              top={0}
-              left={0}
-              right={0}
               paddingTop={60}
               paddingHorizontal={20}
               justifyContent="space-between"
@@ -1688,7 +1715,7 @@ export default function CreateScreen() {
                   borderRadius={16}
                 >
                   <Text color={'$color'} fontWeight="800" fontSize={14}>
-                    {liveStatus === 'live' ? `LIVE ${recordingTimerLabel}` : statusLabel}
+                    {liveStatus === 'live' ? `● REC ${recordingTimerLabel}` : statusLabel}
                   </Text>
                 </YStack>
               )}
@@ -1708,24 +1735,18 @@ export default function CreateScreen() {
               </Pressable>
             </XStack>
 
-            <YStack
-              position="absolute"
-              left={0}
-              right={0}
-              top="40%"
-              alignItems="center"
-              pointerEvents="none"
-            >
+            {/* Title */}
+            <YStack flex={1} justifyContent="center" alignItems="center">
               {!isLiveRecording && !isLiveBusy && (
                 <YStack alignItems="center" gap={12}>
                   <XStack alignItems="center" gap={8}>
                     <Flame size={28} color={'$primary'} />
                     <Text color={'$color'} fontSize={22} fontWeight="700">
-                      {respondTo ? 'Respond Live' : (selectedCamp?.name ?? 'Spark a Bondfire')}
+                      {respondTo ? 'Respond' : (selectedCamp?.name ?? 'Spark a Bondfire')}
                     </Text>
                   </XStack>
                   <Text color={'$placeholderColor'} fontSize={14}>
-                    Tap to start a live broadcast
+                    Tap to start recording
                   </Text>
                 </YStack>
               )}
@@ -1740,7 +1761,8 @@ export default function CreateScreen() {
               )}
             </YStack>
 
-            <YStack position="absolute" left={0} right={0} bottom={40} alignItems="center">
+            {/* Record button */}
+            <YStack paddingBottom={40} alignItems="center">
               <Pressable
                 disabled={isLiveBusy}
                 onPress={() => {
@@ -1781,12 +1803,30 @@ export default function CreateScreen() {
                   ? showRecordingLimitCountdown && autoStopStatusLabel
                     ? autoStopStatusLabel
                     : 'Tap to stop'
-                  : statusLabel}
+                  : cameraMountError
+                    ? 'Camera failed to initialize'
+                    : isCameraReady
+                      ? 'Tap to record'
+                      : 'Initializing camera...'}
               </Text>
+
+              {cameraMountError && !isLiveRecording && !isLiveBusy && (
+                <Button variant="ghost" size="$sm" marginTop={12} onPress={resetCameraPreview}>
+                  Retry Camera
+                </Button>
+              )}
             </YStack>
-          </>
+          </CameraView>
         ) : (
-          <YStack flex={1} />
+          <>
+            {/* Even without camera permissions, render LivePublisherView so the
+                 native module lifecycle isn't broken if permissions are granted later */}
+            <LivePublisherView
+              style={{ position: 'absolute', top: 0, left: 0, width: 1, height: 1, opacity: 0 }}
+              pointerEvents="none"
+            />
+            <YStack flex={1} />
+          </>
         )}
       </YStack>
     )
