@@ -3,6 +3,7 @@ import { observable } from '@legendapp/state'
 export type LivePublishStatus =
   | 'idle'
   | 'creating'
+  | 'ready'
   | 'connecting'
   | 'live'
   | 'reconnecting'
@@ -60,6 +61,24 @@ export const livePublishActions = {
       playbackId: session.playbackId ?? null,
       status: 'connecting',
       startedAt: Date.now(),
+    })
+  },
+
+  // A live stream + record row exist, but nothing is publishing yet.
+  provisioned: (session: {
+    sessionId: string
+    recordId: string
+    liveStreamId: string
+    playbackId?: string | null
+  }) => {
+    livePublishStore$.set({
+      ...defaultLivePublishState,
+      sessionId: session.sessionId,
+      recordId: session.recordId,
+      liveStreamId: session.liveStreamId,
+      playbackId: session.playbackId ?? null,
+      status: 'ready',
+      startedAt: null,
     })
   },
 

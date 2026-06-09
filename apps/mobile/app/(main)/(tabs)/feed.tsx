@@ -467,13 +467,8 @@ export default function FeedScreen() {
       return
     }
 
-    if (selectedCampId) {
-      setIsSparkSheetOpen(true)
-      return
-    }
-
     setIsSparkSheetOpen(true)
-  }, [selectedCamp, selectedCampId])
+  }, [selectedCamp])
 
   const handleSparkTitleSubmit = useCallback(
     (sparkTitle: string) => {
@@ -830,7 +825,6 @@ export default function FeedScreen() {
       />
       <SparkTitleSheet
         open={isSparkSheetOpen}
-        campId={selectedCampId ?? undefined}
         campName={selectedCamp?.name}
         onSubmit={handleSparkTitleSubmit}
         onCancel={() => setIsSparkSheetOpen(false)}

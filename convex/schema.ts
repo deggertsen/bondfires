@@ -447,8 +447,7 @@ export default defineSchema({
     .index('by_expires_at', ['expiresAt'])
     .index('by_mux_upload', ['muxUploadId'])
     .index('by_mux_asset', ['muxAssetId'])
-    .index('by_live_stream', ['muxLiveStreamId'])
-    .index('by_live_status', ['videoStatus', 'createdAt']),
+    .index('by_live_stream', ['muxLiveStreamId']),
 
   // Bondfire Videos - response videos to bondfires
   bondfireVideos: defineTable({

@@ -9,11 +9,12 @@ import { api } from '../../../convex/_generated/api'
 
 interface Props {
   open: boolean
-  campId?: string
   campName?: string
   onSubmit: (title: string) => void
   onCancel: () => void
 }
+
+const MAX_TITLE_LENGTH = 80
 
 /** Truncate a string to its first two words. */
 function truncateToTwoWords(name: string): string {
@@ -46,7 +47,7 @@ export function SparkTitleSheet({ open, campName, onSubmit, onCancel }: Props) {
   }, [open, defaultTitle])
 
   const handleSubmit = useCallback(() => {
-    onSubmit(title.trim() || defaultTitle)
+    onSubmit((title.trim() || defaultTitle).slice(0, MAX_TITLE_LENGTH))
   }, [title, defaultTitle, onSubmit])
 
   return (
@@ -118,6 +119,7 @@ export function SparkTitleSheet({ open, campName, onSubmit, onCancel }: Props) {
                 borderWidth: 1,
                 borderColor: colors.borderColor,
               }}
+              maxLength={MAX_TITLE_LENGTH}
               returnKeyType="done"
               onSubmitEditing={handleSubmit}
               autoFocus

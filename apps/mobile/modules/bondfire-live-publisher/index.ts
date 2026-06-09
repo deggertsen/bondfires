@@ -18,6 +18,13 @@ export interface LivePublisherStartOptions {
   initialCamera?: 'front' | 'back'
 }
 
+export interface LivePublisherPreviewOptions {
+  fps?: number
+  videoBitrate?: number
+  audioBitrate?: number
+  initialCamera?: 'front' | 'back'
+}
+
 export interface LivePublisherStats {
   bitrateBps: number
   rttMs: number
@@ -33,6 +40,7 @@ type EventSubscription = { remove: () => void }
 interface NativeLivePublisher {
   isAvailable?: () => Promise<boolean>
   getCameraCount?: () => Promise<number>
+  startPreview?: (options: LivePublisherPreviewOptions) => Promise<void>
   start(options: LivePublisherStartOptions): Promise<void>
   stop(): Promise<void>
   swapCamera(): Promise<void>
@@ -102,6 +110,10 @@ export const BondfireLivePublisher = {
 
   getCameraCount() {
     return nativeModule?.getCameraCount?.() ?? Promise.resolve(0)
+  },
+
+  startPreview(options: LivePublisherPreviewOptions) {
+    return nativeModule?.startPreview?.(options) ?? unavailablePromise()
   },
 
   start(options: LivePublisherStartOptions) {

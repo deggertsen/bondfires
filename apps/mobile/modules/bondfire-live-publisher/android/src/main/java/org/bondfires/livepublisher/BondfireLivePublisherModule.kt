@@ -40,6 +40,13 @@ class LivePublisherStartOptions : Record {
   @Field val initialCamera: String = "front"
 }
 
+class LivePublisherPreviewOptions : Record {
+  @Field val fps: Int = 30
+  @Field val videoBitrate: Int = 2_500_000
+  @Field val audioBitrate: Int = 128_000
+  @Field val initialCamera: String = "front"
+}
+
 class BondfireLivePublisherModule : Module() {
   companion object {
     private const val TAG = "BondfireLivePublisher"
@@ -114,62 +121,40 @@ class BondfireLivePublisherModule : Module() {
       }
     }
 
-    AsyncFunction("start") Coroutine { options: LivePublisherStartOptions ->
-      val context = appContext.reactContext
-        ?: throw LivePublisherException("No React context available")
+    AsyncFunction("startPreview") Coroutine { options: LivePublisherPreviewOptions ->
+      // Camera preview only — nothing is connected or streamed until start() is called.
+      if (streamer != null) {
+        return@Coroutine
+      }
+      currentFacing = options.initialCamera
+      createStreamer(
+        fps = options.fps,
+        videoBitrate = options.videoBitrate,
+        audioBitrate = options.audioBitrate,
+      )
+    }
 
+    AsyncFunction("start") Coroutine { options: LivePublisherStartOptions ->
       // Build the RTMPS URL
       val rtmpsUrl = buildRtmpsUrl(options.rtmpsUrl, options.streamKey)
-      currentFacing = options.initialCamera
-      val cameraId = findCameraIdForFacing(currentFacing)
 
-      // Query camera for a supported output resolution to avoid stretching frames.
-      val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-      val resolution = getBestCameraResolution(cameraManager, cameraId, options.width, options.height)
-      Log.i(TAG, "Using camera output resolution ${resolution.width}x${resolution.height}")
-
-      // Create camera + microphone streamer
-      val newStreamer = cameraSingleStreamer(
-        context,
-        cameraId = cameraId,
-        audioSourceFactory = MicrophoneSourceFactory(),
-        endpointFactory = RtmpEndpointFactory(),
-      )
-      streamer = newStreamer
-
-      // Configure audio
-      val audioConfig = AudioCodecConfig(
-        mimeType = MediaFormat.MIMETYPE_AUDIO_AAC,
-        startBitrate = options.audioBitrate,
-        sampleRate = 44100,
-        channelConfig = AudioFormat.CHANNEL_IN_MONO,
-        byteFormat = AudioFormat.ENCODING_PCM_16BIT,
-      )
-      newStreamer.setAudioConfig(audioConfig)
-
-      // Configure video
-      val videoConfig = VideoCodecConfig(
-        mimeType = MediaFormat.MIMETYPE_VIDEO_AVC,
-        startBitrate = options.videoBitrate,
-        resolution = resolution,
-        fps = options.fps,
-        gopDurationInS = 2.0f,
-      )
-      newStreamer.setVideoConfig(videoConfig)
-
-      // Bind preview with proper aspect ratio
-      previewView?.let { pv ->
-        pv.setVideoSourceProvider(newStreamer)
-        pv.scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+      // Reuse the previewing streamer when startPreview() already ran;
+      // otherwise set the capture pipeline up now.
+      if (streamer == null) {
+        currentFacing = options.initialCamera
+        createStreamer(
+          fps = options.fps,
+          videoBitrate = options.videoBitrate,
+          audioBitrate = options.audioBitrate,
+        )
       }
-
-      // Ensure unmuted at start
-      isMuted = false
+      val activeStreamer = streamer
+        ?: throw LivePublisherException("Streamer unavailable")
 
       // Connect and start streaming
       try {
         sendStatus("connecting")
-        newStreamer.startStream(rtmpsUrl)
+        activeStreamer.startStream(rtmpsUrl)
         // startStream blocks until successful connection or throws
         sendStatus("live")
       } catch (e: Exception) {
@@ -212,6 +197,61 @@ class BondfireLivePublisherModule : Module() {
     }
 
     View(BondfireLivePublisherView::class) {}
+  }
+
+  /**
+   * Create the camera + microphone streamer and bind the preview view.
+   * This powers the camera preview but does NOT open any network connection —
+   * streaming only begins when startStream() is called in start().
+   */
+  private suspend fun createStreamer(fps: Int, videoBitrate: Int, audioBitrate: Int) {
+    val context = appContext.reactContext
+      ?: throw LivePublisherException("No React context available")
+
+    val cameraId = findCameraIdForFacing(currentFacing)
+
+    // Query camera for a supported output resolution to avoid stretching frames.
+    val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+    val resolution = getBestCameraResolution(cameraManager, cameraId, 0, 0)
+    Log.i(TAG, "Using camera output resolution ${resolution.width}x${resolution.height}")
+
+    // Create camera + microphone streamer
+    val newStreamer = cameraSingleStreamer(
+      context,
+      cameraId = cameraId,
+      audioSourceFactory = MicrophoneSourceFactory(),
+      endpointFactory = RtmpEndpointFactory(),
+    )
+    streamer = newStreamer
+
+    // Configure audio
+    val audioConfig = AudioCodecConfig(
+      mimeType = MediaFormat.MIMETYPE_AUDIO_AAC,
+      startBitrate = audioBitrate,
+      sampleRate = 44100,
+      channelConfig = AudioFormat.CHANNEL_IN_MONO,
+      byteFormat = AudioFormat.ENCODING_PCM_16BIT,
+    )
+    newStreamer.setAudioConfig(audioConfig)
+
+    // Configure video
+    val videoConfig = VideoCodecConfig(
+      mimeType = MediaFormat.MIMETYPE_VIDEO_AVC,
+      startBitrate = videoBitrate,
+      resolution = resolution,
+      fps = fps,
+      gopDurationInS = 2.0f,
+    )
+    newStreamer.setVideoConfig(videoConfig)
+
+    // Bind preview with proper aspect ratio
+    previewView?.let { pv ->
+      pv.setVideoSourceProvider(newStreamer)
+      pv.scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+    }
+
+    // Ensure unmuted at start
+    isMuted = false
   }
 
   private fun buildRtmpsUrl(rtmpsUrl: String, streamKey: String): String {

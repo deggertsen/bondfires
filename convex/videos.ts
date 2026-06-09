@@ -1456,7 +1456,7 @@ export const endLiveStream = action({
     liveSessionId: v.id('liveSessions'),
     reason: v.optional(v.string()),
   },
-  handler: async (ctx, args): Promise<{ ended: boolean; assetReady?: boolean }> => {
+  handler: async (ctx, args): Promise<{ ended: boolean }> => {
     const userId = await auth.getUserId(ctx)
     if (!userId) {
       throwUserError('Not authenticated')
@@ -1493,57 +1493,77 @@ export const endLiveStream = action({
       liveSessionId: args.liveSessionId,
     })
 
-    // Poll Mux for the recorded VOD asset (up to 60s)
+    // Poll for the recorded VOD in the background so the creator's stop tap
+    // returns immediately. The Mux webhook is the durable fallback if polling
+    // misses the asset.
+    await ctx.scheduler.runAfter(0, internal.videos.pollRecordedVodAsset, {
+      userId,
+      liveSessionId: args.liveSessionId,
+    })
+
+    return { ended: true }
+  },
+})
+
+/**
+ * Background fast-path: poll Mux for the recorded VOD asset (up to 60s) after
+ * a live stream ends, flipping the record from 'processing' to 'ready' sooner
+ * than the webhook would. Safe to lose — the asset-ready webhook covers it.
+ */
+export const pollRecordedVodAsset = internalAction({
+  args: {
+    userId: v.id('users'),
+    liveSessionId: v.id('liveSessions'),
+  },
+  handler: async (ctx, args) => {
     const maxPolls = 30
     const pollIntervalMs = 2000
-    let assetReady = false
 
     for (let i = 0; i < maxPolls; i++) {
       await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
 
       const session = await ctx.runQuery(internal.videos.getMuxLiveSessionForUser, {
-        userId,
+        userId: args.userId,
         liveSessionId: args.liveSessionId,
       })
+      if (!session) {
+        return
+      }
 
-      if (session?.muxRecordedAssetId) {
+      if (session.muxRecordedAssetId) {
         const asset = await muxRequest(`/assets/${session.muxRecordedAssetId}`)
         const status = readOptionalString(asset.status)
         if (status === 'ready') {
           const info = readMuxAssetInfo(asset)
-          if (info.playbackId) {
-            if (!info.playbackId) {
-              console.warn('No playback ID for live stream asset, skipping')
-              continue
-            }
-            await ctx.runMutation(internal.videos.markMuxAssetReady, {
-              assetId: info.assetId,
-              playbackId: info.playbackId,
-              assetStatus: info.assetStatus,
-              durationMs: info.durationMs,
-              muxAspectRatio: info.muxAspectRatio,
-              muxMaxResolution: info.muxMaxResolution,
-            })
-            assetReady = true
+          if (!info.playbackId) {
+            // Asset is ready but has no playback ID yet — let the webhook finish.
+            console.warn('Recorded live asset ready without playback ID, deferring to webhook')
+            return
           }
-          break
+          await ctx.runMutation(internal.videos.markMuxAssetReady, {
+            assetId: info.assetId,
+            playbackId: info.playbackId,
+            assetStatus: info.assetStatus,
+            durationMs: info.durationMs,
+            muxAspectRatio: info.muxAspectRatio,
+            muxMaxResolution: info.muxMaxResolution,
+          })
+          return
         }
         if (status === 'errored') {
           await ctx.runMutation(internal.videos.markMuxAssetErrored, {
             assetId: session.muxRecordedAssetId,
             assetStatus: status,
           })
-          break
+          return
         }
       }
 
-      // If session ended without a recorded asset, give up
-      if (session?.status === 'ended' && !session?.muxRecordedAssetId) {
-        break
+      // If the session ended without a recorded asset, give up
+      if (session.status === 'ended' && !session.muxRecordedAssetId) {
+        return
       }
     }
-
-    return { ended: true, assetReady }
   },
 })
 
@@ -1665,86 +1685,24 @@ export const markBondfireLive = mutation({
 })
 
 /**
- * Internal mutation for server-side live stream state transitions.
+ * Heartbeat for a provisioned-but-not-yet-publishing live session so the
+ * stale-session cron doesn't reap it while the creator is still previewing.
  */
-export const markBondfireLiveRaw = internalMutation({
+export const touchLiveSession = mutation({
   args: {
-    bondfireId: v.id('bondfires'),
-  },
-  handler: async (ctx, args) => {
-    await markBondfireLiveFromPending(ctx, args.bondfireId)
-  },
-})
-
-/**
- * Cancel a pending bondfire: delete Mux live stream + bondfire row.
- * Used when user backs out without recording.
- */
-export const cancelPendingBondfire = action({
-  args: {
-    bondfireId: v.id('bondfires'),
-    liveStreamId: v.optional(v.string()),
+    liveSessionId: v.id('liveSessions'),
   },
   handler: async (ctx, args) => {
     const userId = await auth.getUserId(ctx)
     if (!userId) throwUserError('Not authenticated')
 
-    const bondfire = await ctx.runQuery(internal.videos.getBondfireById, {
-      bondfireId: args.bondfireId,
-    })
-    if (!bondfire) throwUserError('Bondfire not found')
-    if (bondfire.userId !== userId) {
-      throwUserError('Not authorized')
+    const liveSession = await ctx.db.get(args.liveSessionId)
+    if (!liveSession || liveSession.userId !== userId) {
+      return { touched: false }
     }
 
-    if (bondfire.videoStatus !== 'pending') {
-      throwUserError('Only pending bondfires can be cancelled')
-    }
-
-    // Delete the Mux live stream if it was provisioned
-    const streamId = args.liveStreamId ?? bondfire.muxLiveStreamId
-    if (streamId) {
-      try {
-        await muxRequest(`/live-streams/${streamId}`, {
-          method: 'DELETE',
-        })
-      } catch (error) {
-        console.warn('Failed to delete Mux live stream during pending cancel:', error)
-      }
-    }
-
-    await ctx.runMutation(internal.videos.deletePendingBondfireRecord, {
-      bondfireId: args.bondfireId,
-      userId,
-    })
-  },
-})
-
-/** Internal query: get bondfire by ID for actions to use */
-export const getBondfireById = internalQuery({
-  args: { bondfireId: v.id('bondfires') },
-  handler: async (ctx, args) => {
-    return await ctx.db.get(args.bondfireId)
-  },
-})
-
-/** Internal mutation: delete pending bondfire row and decrement count */
-export const deletePendingBondfireRecord = internalMutation({
-  args: {
-    bondfireId: v.id('bondfires'),
-    userId: v.id('users'),
-  },
-  handler: async (ctx, args) => {
-    const bondfire = await ctx.db.get(args.bondfireId)
-    if (!bondfire) return
-    await ctx.db.delete(args.bondfireId)
-    const user = await ctx.db.get(args.userId)
-    if (bondfire.personalCampId && user?.bondfireCount) {
-      await ctx.db.patch(args.userId, {
-        bondfireCount: user.bondfireCount - 1,
-        updatedAt: Date.now(),
-      })
-    }
+    await ctx.db.patch(args.liveSessionId, { updatedAt: Date.now() })
+    return { touched: true }
   },
 })
 
@@ -2845,7 +2803,11 @@ export const cancelMuxLiveSessionRecord = internalMutation({
       await ctx.db.delete(liveSession.bondfireVideoId)
     }
     if (liveSession.bondfireId && !liveSession.bondfireVideoId) {
-      await ctx.db.delete(liveSession.bondfireId)
+      // Tolerate retried cancels — the row may already be gone.
+      const bondfire = await ctx.db.get(liveSession.bondfireId)
+      if (bondfire) {
+        await ctx.db.delete(liveSession.bondfireId)
+      }
     }
 
     await ctx.db.patch(args.liveSessionId, {

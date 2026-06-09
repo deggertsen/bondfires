@@ -884,7 +884,6 @@ export default function BondfireDetailScreen() {
   const [showJoinPrompt, setShowJoinPrompt] = useState(false)
   const [joinLoading, setJoinLoading] = useState(false)
   const [isInviteSheetOpen, setIsInviteSheetOpen] = useState(false)
-  const [, setStatusPollTick] = useState(0)
 
   // Auto-show camp join prompt for invited users who aren't members
   useEffect(() => {
@@ -893,18 +892,8 @@ export default function BondfireDetailScreen() {
     }
   }, [accessCheck])
 
-  useEffect(() => {
-    const status = bondfireData?.videoStatus
-    if (status !== 'pending' && status !== 'live' && status !== 'processing') {
-      return
-    }
-
-    const interval = setInterval(() => {
-      setStatusPollTick((tick) => tick + 1)
-    }, 2000)
-
-    return () => clearInterval(interval)
-  }, [bondfireData?.videoStatus])
+  // Note: no polling needed for pending/live/processing transitions —
+  // the Convex useQuery subscription pushes status changes automatically.
 
   useEffect(() => {
     if (bondfireData?.videoStatus !== 'pending') {
@@ -1239,17 +1228,28 @@ export default function BondfireDetailScreen() {
         <YStack
           flex={1}
           backgroundColor={'$background'}
-          alignItems="center"
+          paddingHorizontal={24}
           justifyContent="center"
-          gap={16}
+          gap={22}
         >
-          <Spinner size="large" color={'$primary'} />
-          <Text fontSize={22} fontWeight="900">
-            Processing...
-          </Text>
-          <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
-            The recording will play as soon as it is ready.
-          </Text>
+          <Pressable onPress={handleBackPress}>
+            <XStack alignItems="center" gap={6}>
+              <ChevronLeft size={22} color={'$color'} />
+              <Text color={'$color'} fontWeight="800">
+                Campground
+              </Text>
+            </XStack>
+          </Pressable>
+
+          <YStack alignItems="center" gap={16}>
+            <Spinner size="large" color={'$primary'} />
+            <Text fontSize={22} fontWeight="900">
+              Processing...
+            </Text>
+            <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
+              The recording will play as soon as it is ready.
+            </Text>
+          </YStack>
         </YStack>
       </>
     )

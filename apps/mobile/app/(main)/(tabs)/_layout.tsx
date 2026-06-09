@@ -101,7 +101,6 @@ export default function TabsLayout() {
       </Tabs>
       <SparkTitleSheet
         open={isSparkSheetOpen}
-        campId={selectedCamp?._id}
         campName={selectedCamp?.name}
         onSubmit={handleSparkSubmit}
         onCancel={() => setIsSparkSheetOpen(false)}

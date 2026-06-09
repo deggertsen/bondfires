@@ -1182,7 +1182,6 @@ export default function CampDetailScreen() {
       ) : null}
       <SparkTitleSheet
         open={isSparkSheetOpen}
-        campId={camp._id}
         campName={camp.name}
         onSubmit={handleSparkTitleSubmit}
         onCancel={() => setIsSparkSheetOpen(false)}

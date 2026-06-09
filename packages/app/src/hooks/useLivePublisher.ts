@@ -23,8 +23,16 @@ export interface LivePublisherSubscription {
   remove: () => void
 }
 
+export interface LivePublisherPreviewOptions {
+  fps?: number
+  videoBitrate?: number
+  audioBitrate?: number
+  initialCamera?: 'front' | 'back'
+}
+
 export interface LivePublisherNativeModule {
   isAvailable?: () => Promise<boolean>
+  startPreview(options: LivePublisherPreviewOptions): Promise<void>
   start(options: LivePublisherStartOptions): Promise<void>
   stop(): Promise<void>
   swapCamera(): Promise<void>
@@ -69,6 +77,7 @@ export function useLivePublisher(options: {
   cancelLiveStream: (args: { liveSessionId: string; reason?: string }) => Promise<unknown>
 }) {
   const statsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const ingestRef = useRef<{ rtmpsUrl: string; streamKey: string } | null>(null)
 
   const stopStatsSampling = useCallback(() => {
     if (statsIntervalRef.current) {
@@ -119,6 +128,113 @@ export function useLivePublisher(options: {
     }, 5000)
   }, [options.publisher])
 
+  /**
+   * Start the native camera preview only. No live stream is provisioned and
+   * nothing is published — the camera output stays on-device.
+   */
+  const preview = useCallback(
+    async (args: { initialCamera?: 'front' | 'back' } = {}) => {
+      await options.publisher.startPreview({
+        fps: 30,
+        videoBitrate: 2_500_000,
+        audioBitrate: 128_000,
+        initialCamera: args.initialCamera ?? 'front',
+      })
+    },
+    [options.publisher],
+  )
+
+  /**
+   * Provision the Mux live stream + record row without publishing.
+   * Stores the ingest credentials for a later connect().
+   */
+  const provision = useCallback(
+    async (
+      args: {
+        respondToBondfireId?: string
+        campId?: string
+        personalCamp?: boolean
+        tags?: string[]
+        title?: string
+        pending?: boolean
+      } = {},
+    ) => {
+      telemetry.info('live:provision', 'Live stream provisioning requested', {
+        isResponse: !!args.respondToBondfireId,
+        hasCampId: !!args.campId,
+        isPersonalCamp: !!args.personalCamp,
+      })
+
+      livePublishActions.beginCreate()
+      try {
+        const liveStream = await options.createLiveStream({
+          isResponse: !!args.respondToBondfireId,
+          bondfireId: args.respondToBondfireId,
+          campId: args.campId,
+          personalCamp: args.personalCamp,
+          tags: args.tags,
+          title: args.title,
+          pending: args.pending,
+        })
+
+        ingestRef.current = liveStream.ingest
+        livePublishActions.provisioned({
+          sessionId: liveStream.liveSessionId,
+          recordId: liveStream.recordId,
+          liveStreamId: liveStream.liveStreamId,
+          playbackId: liveStream.playbackId,
+        })
+
+        return liveStream
+      } catch (error) {
+        livePublishActions.fail(error)
+        throw error
+      }
+    },
+    [options],
+  )
+
+  /**
+   * Open the RTMP connection for a previously provisioned stream and start
+   * publishing. This is the moment recording actually begins.
+   */
+  const connect = useCallback(
+    async (args: { initialCamera?: 'front' | 'back' } = {}) => {
+      const ingest = ingestRef.current
+      if (!ingest) {
+        throw new Error('No provisioned live stream to connect')
+      }
+
+      try {
+        await options.publisher.start({
+          rtmpsUrl: ingest.rtmpsUrl,
+          streamKey: ingest.streamKey,
+          fps: 30,
+          videoBitrate: 2_500_000,
+          audioBitrate: 128_000,
+          initialCamera: args.initialCamera ?? 'front',
+        })
+        startStatsSampling()
+        telemetry.info('live:start_success', 'Live publisher connected', {
+          sessionId: livePublishStore$.sessionId.peek(),
+          recordId: livePublishStore$.recordId.peek(),
+        })
+      } catch (error) {
+        // Keep the provisioned session intact so the user can retry the tap;
+        // status goes back to 'ready' rather than 'errored'.
+        const errObj = error instanceof Error ? error : new Error(String(error))
+        telemetry.error('live:start_failed', 'Live publisher connect failed', {
+          errorMessage: errObj.message,
+          errorName: errObj.name,
+          sessionId: livePublishStore$.sessionId.peek(),
+        })
+        livePublishActions.setStatus('ready')
+        throw error
+      }
+    },
+    [options.publisher, startStatsSampling],
+  )
+
   const start = useCallback(
     async (
       args: {
@@ -151,6 +267,7 @@ export function useLivePublisher(options: {
           pending: args.pending,
         })
         provisionedSessionId = liveStream.liveSessionId
+        ingestRef.current = liveStream.ingest
 
         livePublishActions.start({
           sessionId: liveStream.liveSessionId,
@@ -223,6 +340,7 @@ export function useLivePublisher(options: {
       backendError = error
     } finally {
       stopStatsSampling()
+      ingestRef.current = null
       livePublishActions.setStatus('ended')
     }
 
@@ -268,6 +386,7 @@ export function useLivePublisher(options: {
       backendError = error
     } finally {
       stopStatsSampling()
+      ingestRef.current = null
       livePublishActions.reset()
     }
 
@@ -296,6 +415,9 @@ export function useLivePublisher(options: {
   }, [options.publisher])
 
   return {
+    preview,
+    provision,
+    connect,
     start,
     stop,
     cancel,
