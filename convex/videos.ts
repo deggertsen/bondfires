@@ -809,11 +809,13 @@ async function markRecordReady(
           })
         }
       }
-      await ctx.scheduler.runAfter(0, internal.sendNotification.notifyCampBondfire, {
-        bondfireId: record.document._id,
-        creatorId: record.document.userId,
-        creatorName: user?.displayName ?? user?.name ?? 'Someone',
-      })
+      if (!record.document.liveSessionId) {
+        await ctx.scheduler.runAfter(0, internal.sendNotification.notifyCampBondfire, {
+          bondfireId: record.document._id,
+          creatorId: record.document.userId,
+          creatorName: user?.displayName ?? user?.name ?? 'Someone',
+        })
+      }
     }
     return 'ready'
   }
@@ -1634,6 +1636,7 @@ async function markBondfireLiveFromPending(
   const now = Date.now()
   await ctx.db.patch(bondfireId, {
     videoStatus: 'live',
+    recordedAt: now,
     updatedAt: now,
   })
 
@@ -1690,6 +1693,9 @@ export const cancelPendingBondfire = action({
       bondfireId: args.bondfireId,
     })
     if (!bondfire) throwUserError('Bondfire not found')
+    if (bondfire.userId !== userId) {
+      throwUserError('Not authorized')
+    }
 
     if (bondfire.videoStatus !== 'pending') {
       throwUserError('Only pending bondfires can be cancelled')
@@ -1733,7 +1739,7 @@ export const deletePendingBondfireRecord = internalMutation({
     if (!bondfire) return
     await ctx.db.delete(args.bondfireId)
     const user = await ctx.db.get(args.userId)
-    if (user?.bondfireCount) {
+    if (bondfire.personalCampId && user?.bondfireCount) {
       await ctx.db.patch(args.userId, {
         bondfireCount: user.bondfireCount - 1,
         updatedAt: Date.now(),

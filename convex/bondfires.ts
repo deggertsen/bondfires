@@ -393,7 +393,7 @@ export const getWithVideos = query({
   args: { bondfireId: v.id('bondfires') },
   handler: async (ctx, args) => {
     const bondfire = await ctx.db.get(args.bondfireId)
-    if (!bondfire || !isPlayableVideoRecord(bondfire)) {
+    if (!bondfire || !isDetailVisibleVideoRecord(bondfire)) {
       return null
     }
 

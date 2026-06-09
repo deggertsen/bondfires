@@ -508,23 +508,6 @@ export default function CreateScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state$, cameraPermission?.status, micPermission?.status])
 
-  useEffect(() => {
-    if (!shouldUseLivePublish) {
-      return
-    }
-
-    if (
-      !isFocused &&
-      (liveStatus === 'connecting' || liveStatus === 'live' || liveStatus === 'reconnecting')
-    ) {
-      livePublisher.stop().catch((error) => {
-        telemetry.error('live:stop', 'Failed to stop live stream while screen lost focus', {
-          error: String(error),
-        })
-      })
-    }
-  }, [isFocused, livePublisher, liveStatus, shouldUseLivePublish])
-
   const logRecordingError = useCallback(
     (error: unknown) => {
       type ErrorLike = { message?: unknown; name?: unknown; stack?: unknown }
@@ -607,6 +590,10 @@ export default function CreateScreen() {
 
   // Tear down the camera session whenever the screen or app becomes inactive.
   useEffect(() => {
+    if (shouldUseLivePublish) {
+      return
+    }
+
     if (!isFocused || !isAppActive) {
       if (
         state$.recordingState.get() === 'recording' ||
@@ -645,7 +632,14 @@ export default function CreateScreen() {
     } else {
       clearUploadStartTimeout()
     }
-  }, [clearUploadStartTimeout, isAppActive, isFocused, schedulePendingUploads, state$])
+  }, [
+    clearUploadStartTimeout,
+    isAppActive,
+    isFocused,
+    schedulePendingUploads,
+    shouldUseLivePublish,
+    state$,
+  ])
 
   const resetCameraPreview = useCallback(() => {
     clearStopTimeout()
@@ -1168,7 +1162,7 @@ export default function CreateScreen() {
       })
 
       state$.recordingState.set('pre_connected')
-      state$.showInviteSheet.set(!respondTo)
+      state$.showInviteSheet.set(false)
       state$.preConnectTimer.set(90)
       clearPreConnectTimers()
       state$.preConnectTimer.set(90)
@@ -1238,11 +1232,6 @@ export default function CreateScreen() {
       return
     }
 
-    clearPreConnectTimers()
-    state$.showInviteSheet.set(false)
-    state$.recordingDuration.set(0)
-    state$.recordingState.set('recording')
-
     const recordId = livePublishStore$.recordId.get()
     if (recordId && !respondTo) {
       try {
@@ -1251,8 +1240,14 @@ export default function CreateScreen() {
         logRecordingError(error)
         Alert.alert('Recording Failed', getUserFacingErrorMessage(parseError(error)))
         state$.recordingState.set('pre_connected')
+        return
       }
     }
+
+    clearPreConnectTimers()
+    state$.showInviteSheet.set(false)
+    state$.recordingDuration.set(0)
+    state$.recordingState.set('recording')
   }, [clearPreConnectTimers, logRecordingError, markBondfireLive, respondTo, state$])
 
   const handleSelectCamp = useCallback(
@@ -1350,6 +1345,22 @@ export default function CreateScreen() {
       state$.showInviteSheet.set(false)
     }
   }, [clearPreConnectTimers, livePublisher, logRecordingError, state$, cancelPendingBondfire])
+
+  useEffect(() => {
+    if (!shouldUseLivePublish || (isFocused && isAppActive)) {
+      return
+    }
+
+    const currentRecordingState = state$.recordingState.get()
+    if (currentRecordingState === 'recording' || currentRecordingState === 'stopping') {
+      void stopLiveRecording()
+      return
+    }
+
+    if (currentRecordingState === 'pre_connected' && !isFocused) {
+      void cancelLiveRecording()
+    }
+  }, [cancelLiveRecording, isAppActive, isFocused, shouldUseLivePublish, state$, stopLiveRecording])
 
   const toggleLiveFacing = useCallback(() => {
     if (liveStatus === 'connecting' || liveStatus === 'live' || liveStatus === 'reconnecting') {
@@ -1828,27 +1839,7 @@ export default function CreateScreen() {
         <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
         {shouldRenderCamera ? (
           <>
-            <CameraView
-              key={`live-preview-${facing}`}
-              style={{ flex: 1 }}
-              facing={facing}
-              mode="video"
-              onCameraReady={() => {
-                state$.isCameraReady.set(true)
-                state$.cameraMountError.set(null)
-              }}
-              onMountError={(event) => {
-                const message = event?.message ?? 'Unknown camera mount error'
-                state$.cameraMountError.set(message)
-                state$.isCameraReady.set(false)
-                telemetry.error('create:camera', 'Camera mount error', {
-                  platform: Platform.OS,
-                  message,
-                })
-                Alert.alert('Camera Error', message)
-              }}
-            />
-            <LivePublisherView style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }} />
+            <LivePublisherView style={{ flex: 1 }} />
 
             <XStack
               position="absolute"
@@ -1860,7 +1851,19 @@ export default function CreateScreen() {
               justifyContent="space-between"
               alignItems="center"
             >
-              <Pressable onPress={isPreConnected ? cancelLiveRecording : () => router.back()}>
+              <Pressable
+                onPress={() => {
+                  if (isLiveRecording) {
+                    void stopLiveRecording()
+                    return
+                  }
+                  if (isPreConnected) {
+                    void cancelLiveRecording()
+                    return
+                  }
+                  router.back()
+                }}
+              >
                 <YStack
                   width={40}
                   height={40}
@@ -1937,7 +1940,7 @@ export default function CreateScreen() {
             </YStack>
 
             <YStack position="absolute" left={0} right={0} bottom={40} alignItems="center">
-              {isLiveRecording && liveRecordId && !respondTo ? (
+              {(isPreConnected || isLiveRecording) && liveRecordId && !respondTo ? (
                 <Pressable onPress={() => state$.showInviteSheet.set(true)}>
                   <YStack
                     paddingHorizontal={14}
