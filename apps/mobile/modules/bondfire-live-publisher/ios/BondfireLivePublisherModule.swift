@@ -36,7 +36,45 @@ public class BondfireLivePublisherModule: Module {
     }
 
     AsyncFunction("isAvailable") { () -> Bool in
-      true
+      #if targetEnvironment(simulator)
+        // No physical camera on simulator
+        return false
+      #else
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        guard status == .authorized else {
+          return false
+        }
+        // Check that at least one camera exists
+        let cameraTypes: [AVCaptureDevice.DeviceType] = [
+          .builtInWideAngleCamera,
+          .builtInTelephotoCamera,
+          .builtInUltraWideCamera,
+        ]
+        let discovery = AVCaptureDevice.DiscoverySession(
+          deviceTypes: cameraTypes,
+          mediaType: .video,
+          position: .unspecified
+        )
+        return !discovery.devices.isEmpty
+      #endif
+    }
+
+    AsyncFunction("getCameraCount") { () -> Int in
+      #if targetEnvironment(simulator)
+        return 0
+      #else
+        let cameraTypes: [AVCaptureDevice.DeviceType] = [
+          .builtInWideAngleCamera,
+          .builtInTelephotoCamera,
+          .builtInUltraWideCamera,
+        ]
+        let discovery = AVCaptureDevice.DiscoverySession(
+          deviceTypes: cameraTypes,
+          mediaType: .video,
+          position: .unspecified
+        )
+        return discovery.devices.count
+      #endif
     }
 
     AsyncFunction("start") { (options: LivePublisherStartOptions) in

@@ -195,8 +195,13 @@ export default function ProfileScreen() {
   const adminSetForcedTier = useMutation(api.admin.adminSetForcedTier)
   const closeCircle = useQuery(api.conversations.listCloseCircle) as CloseCircleEntry[] | undefined
 
-  const { preferences, setVideoQuality, setAutoplayVideos, setNotificationsEnabled } =
-    usePreferences()
+  const {
+    preferences,
+    setVideoQuality,
+    setAutoplayVideos,
+    setNotificationsEnabled,
+    setLivePublishEnabled,
+  } = usePreferences()
 
   const { currentTier, isRestoring, managePlan, restore, showPaywall } = useSubscription()
   const { balance: kindlingBalance, isLoading: kindlingBalanceLoading } = useKindlingBalance()
@@ -215,7 +220,11 @@ export default function ProfileScreen() {
     isSaving: false,
     isDeleting: false,
     isUploadingPhoto: false,
+    devSettingsVisible: false,
+    devLongPressCount: 0,
   })
+
+  const devSettingsVisible = useValue(state$.devSettingsVisible)
 
   const isEditSheetOpen = useValue(state$.isEditSheetOpen)
   const isVideoQualitySheetOpen = useValue(state$.isVideoQualitySheetOpen)
@@ -730,12 +739,19 @@ export default function ProfileScreen() {
           )}
 
           <YStack gap={12} marginBottom={24}>
-            <XStack alignItems="center" gap={8}>
-              <Settings size={18} color={'$placeholderColor'} />
-              <Text variant="label" color={'$placeholderColor'} fontSize={13} fontWeight="600">
-                SETTINGS
-              </Text>
-            </XStack>
+            <Pressable
+              onLongPress={() => {
+                state$.devSettingsVisible.set(!devSettingsVisible)
+              }}
+              delayLongPress={800}
+            >
+              <XStack alignItems="center" gap={8}>
+                <Settings size={18} color={'$placeholderColor'} />
+                <Text variant="label" color={'$placeholderColor'} fontSize={13} fontWeight="600">
+                  SETTINGS
+                </Text>
+              </XStack>
+            </Pressable>
 
             <Card>
               <YStack gap={16}>
@@ -817,6 +833,46 @@ export default function ProfileScreen() {
                 <Separator borderColor={'$borderColor'} />
 
                 <ThemeSelector />
+
+                {devSettingsVisible && (
+                  <>
+                    <Separator borderColor={'$borderColor'} />
+                    <XStack alignItems="center" gap={8}>
+                      <Flame size={16} color={'$warning'} />
+                      <Text variant="label" color={'$warning'} fontSize={11} fontWeight="700">
+                        DEV SETTINGS
+                      </Text>
+                    </XStack>
+                    <XStack justifyContent="space-between" alignItems="center">
+                      <XStack alignItems="center" gap={12}>
+                        <Camera size={20} color={'$warning'} />
+                        <YStack>
+                          <Text fontWeight="500" fontSize={15}>
+                            Live Publisher
+                          </Text>
+                          <Text fontSize={13} color={'$placeholderColor'}>
+                            Native RTMP live streaming (dev only)
+                          </Text>
+                        </YStack>
+                      </XStack>
+                      <Switch
+                        checked={preferences.livePublishEnabled}
+                        onCheckedChange={setLivePublishEnabled}
+                        backgroundColor={'$borderColor'}
+                      >
+                        <Switch.Thumb
+                          animation="quick"
+                          backgroundColor={
+                            preferences.livePublishEnabled ? '$warning' : '$placeholderColor'
+                          }
+                        />
+                      </Switch>
+                    </XStack>
+                    <Text fontSize={12} color={'$placeholderColor'} fontStyle="italic">
+                      Long-press "SETTINGS" header to hide dev options
+                    </Text>
+                  </>
+                )}
               </YStack>
             </Card>
           </YStack>

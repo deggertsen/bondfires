@@ -425,18 +425,44 @@ export default function CreateScreen() {
     requestPermissions()
   }, [requestPermissions])
 
+  // Track camera permission state changes for live path
+  useEffect(() => {
+    if (cameraPermission?.status) {
+      telemetry.info('live:camera_permission', 'Camera permission state', {
+        status: cameraPermission.status,
+        granted: cameraPermission.granted,
+        canAskAgain: cameraPermission.canAskAgain,
+      })
+    }
+  }, [cameraPermission?.status, cameraPermission?.granted, cameraPermission?.canAskAgain])
+
   useEffect(() => {
     let isCancelled = false
 
     BondfireLivePublisher.isAvailable()
       .then((isAvailable) => {
+        telemetry.info('live:availability', 'Live publisher availability check', {
+          available: isAvailable,
+          cameraPermission: cameraPermission?.status,
+          micPermission: micPermission?.status,
+        })
         if (!isCancelled) {
           state$.isLivePublisherAvailable.set(isAvailable)
+        }
+        // Also report camera count for telemetry
+        return BondfireLivePublisher.getCameraCount()
+      })
+      .then((cameraCount) => {
+        if (cameraCount !== undefined) {
+          telemetry.info('live:camera_list', 'Available cameras on device', {
+            cameraCount,
+          })
         }
       })
       .catch((error) => {
         telemetry.warn('live:availability', 'Failed to check live publisher availability', {
           error: String(error),
+          cameraPermission: cameraPermission?.status,
         })
         if (!isCancelled) {
           state$.isLivePublisherAvailable.set(false)
@@ -446,7 +472,9 @@ export default function CreateScreen() {
     return () => {
       isCancelled = true
     }
-  }, [state$])
+    // Include permission status deps so telemetry reflects latest state
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state$, cameraPermission?.status, micPermission?.status])
 
   useEffect(() => {
     if (!shouldUseLivePublish) {
