@@ -30,6 +30,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Separator, Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
+import { SparkTitleSheet } from '../../../components/SparkTitleSheet'
 import {
   BONDFIRE_REPORT_OPTIONS,
   getBondfireSwipeActions,
@@ -145,9 +146,7 @@ function toBondfireRowProps(
   }
 }
 
-function EmptyFeed() {
-  const router = useRouter()
-
+function EmptyFeed({ onSpark }: { onSpark: () => void }) {
   return (
     <YStack
       flex={1}
@@ -173,7 +172,7 @@ function EmptyFeed() {
       <Text fontSize={16} color={'$placeholderColor'} textAlign="center" marginBottom={32}>
         Be the first to share a video!
       </Text>
-      <Button variant="primary" size="$lg" onPress={() => router.push(routes.create)}>
+      <Button variant="primary" size="$lg" onPress={onSpark}>
         <Flame size={20} color={'$color'} />
         <Text color={'$color'} fontWeight="900">
           Spark Bondfire
@@ -228,6 +227,7 @@ export default function FeedScreen() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [bondfires, setBondfires] = useState<BondfireData[] | undefined>(undefined)
+  const [isSparkSheetOpen, setIsSparkSheetOpen] = useState(false)
   const currentUserId = useValue(appStore$.userId)
   const currentCampId = useValue(appStore$.currentCampId)
   const joinedCamps = useQuery(api.camps.listMine, currentUserId ? {} : 'skip') as
@@ -468,12 +468,24 @@ export default function FeedScreen() {
     }
 
     if (selectedCampId) {
-      router.push(routes.createForCamp(selectedCampId))
+      setIsSparkSheetOpen(true)
       return
     }
 
-    router.push(routes.create)
-  }, [router, selectedCamp, selectedCampId])
+    setIsSparkSheetOpen(true)
+  }, [selectedCamp, selectedCampId])
+
+  const handleSparkTitleSubmit = useCallback(
+    (sparkTitle: string) => {
+      setIsSparkSheetOpen(false)
+      if (selectedCampId) {
+        router.push(routes.createForCamp(selectedCampId, sparkTitle))
+        return
+      }
+      router.push(routes.createWithTitle(sparkTitle))
+    },
+    [router, selectedCampId],
+  )
 
   const handleSelectCamp = useCallback(
     (campId: string | null) => {
@@ -777,7 +789,7 @@ export default function FeedScreen() {
         }
         ListEmptyComponent={
           bondfires.length === 0 ? (
-            <EmptyFeed />
+            <EmptyFeed onSpark={handleSpark} />
           ) : (
             <YStack paddingVertical={80} alignItems="center" justifyContent="center" gap={12}>
               <Flame size={56} color={'$primary'} />
@@ -815,6 +827,13 @@ export default function FeedScreen() {
         showsVerticalScrollIndicator={false}
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
+      />
+      <SparkTitleSheet
+        open={isSparkSheetOpen}
+        campId={selectedCampId ?? undefined}
+        campName={selectedCamp?.name}
+        onSubmit={handleSparkTitleSubmit}
+        onCancel={() => setIsSparkSheetOpen(false)}
       />
     </YStack>
   )

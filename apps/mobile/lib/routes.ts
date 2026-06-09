@@ -57,9 +57,17 @@ export const routes = {
     params: { respondTo: bondfireId },
   }),
 
-  createForCamp: (campId: string): Href => ({
+  createWithTitle: (title: string, campId?: string): Href => ({
     pathname: '/(main)/(tabs)/create',
-    params: { campId },
+    params: {
+      title,
+      ...(campId ? { campId } : {}),
+    },
+  }),
+
+  createForCamp: (campId: string, title?: string): Href => ({
+    pathname: '/(main)/(tabs)/create',
+    params: title ? { campId, title } : { campId },
   }),
 
   createForPersonalCamp: (newFire?: string): Href => ({

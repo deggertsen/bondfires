@@ -2,7 +2,14 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
-import { action, internalAction, internalMutation, internalQuery, query } from './_generated/server'
+import {
+  action,
+  internalAction,
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from './_generated/server'
 import { auth } from './auth'
 import {
   isCampParticipableStatus,
@@ -1610,31 +1617,59 @@ export const cancelLiveStream = action({
   },
 })
 
+async function markBondfireLiveFromPending(
+  ctx: MutationCtx,
+  bondfireId: Id<'bondfires'>,
+  expectedUserId?: Id<'users'>,
+) {
+  const bondfire = await ctx.db.get(bondfireId)
+  if (!bondfire) throwUserError('Bondfire not found')
+  if (expectedUserId && bondfire.userId !== expectedUserId) {
+    throwUserError('Not authorized')
+  }
+  if (bondfire.videoStatus !== 'pending') {
+    return
+  }
+
+  const now = Date.now()
+  await ctx.db.patch(bondfireId, {
+    videoStatus: 'live',
+    updatedAt: now,
+  })
+
+  if (bondfire.campId) {
+    const user = await ctx.db.get(bondfire.userId)
+    await ctx.scheduler.runAfter(0, internal.sendNotification.notifyCampBondfire, {
+      bondfireId,
+      creatorId: bondfire.userId,
+      creatorName: user?.displayName ?? user?.name ?? 'Someone',
+    })
+  }
+}
+
 /**
- * Flip a bondfire from pending to live — recording has started.
- * Called when the user taps record after pre-connect.
+ * Public mutation: flip pending to live when the user taps record after pre-connect.
  */
-export const markBondfireLive = internalMutation({
+export const markBondfireLive = mutation({
   args: {
     bondfireId: v.id('bondfires'),
   },
   handler: async (ctx, args) => {
-    const bondfire = await ctx.db.get(args.bondfireId)
-    if (!bondfire) throw new Error('Bondfire not found')
-    const now = Date.now()
-    await ctx.db.patch(args.bondfireId, {
-      videoStatus: 'live',
-      updatedAt: now,
-    })
+    const userId = await auth.getUserId(ctx)
+    if (!userId) throwUserError('Not authenticated')
+    await markBondfireLiveFromPending(ctx, args.bondfireId, userId)
+  },
+})
 
-    // Check if we should send notifications (was pending → live)
-    if (bondfire.campId) {
-      await ctx.scheduler.runAfter(0, internal.sendNotification.notifyCampBondfire, {
-        bondfireId: args.bondfireId,
-        creatorId: bondfire.userId,
-        creatorName: bondfire.creatorName ?? 'Someone',
-      })
-    }
+/**
+ * Internal mutation for server-side live stream state transitions.
+ */
+export const markBondfireLiveRaw = internalMutation({
+  args: {
+    bondfireId: v.id('bondfires'),
+  },
+  handler: async (ctx, args) => {
+    await markBondfireLiveFromPending(ctx, args.bondfireId)
   },
 })
 

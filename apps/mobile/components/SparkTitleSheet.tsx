@@ -1,7 +1,7 @@
 import { Button, Text } from '@bondfires/ui'
 import { Flame, X } from '@tamagui/lucide-icons'
 import { useQuery } from 'convex/react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Pressable, TextInput } from 'react-native'
 import { Sheet, XStack, YStack } from 'tamagui'
 import { api } from '../../../convex/_generated/api'
@@ -20,19 +20,19 @@ function truncateToTwoWords(name: string): string {
   return words.slice(0, 2).join(' ')
 }
 
-export function SparkTitleSheet({ open, campId, campName, onSubmit, onCancel }: Props) {
+export function SparkTitleSheet({ open, campName, onSubmit, onCancel }: Props) {
   const currentUser = useQuery(api.users.current)
   const inputRef = useRef<TextInput>(null)
   const [title, setTitle] = useState('')
 
-  const defaultTitle = (() => {
+  const defaultTitle = useMemo(() => {
     const firstName =
       currentUser?.displayName?.split(' ')[0] ?? currentUser?.name?.split(' ')[0] ?? ''
     const campTwoWords = campName ? truncateToTwoWords(campName) : ''
     if (firstName && campTwoWords) return `${firstName} - ${campTwoWords}`
     if (firstName) return firstName
     return ''
-  })()
+  }, [campName, currentUser?.displayName, currentUser?.name])
 
   useEffect(() => {
     if (open) {

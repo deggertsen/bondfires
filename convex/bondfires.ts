@@ -51,6 +51,24 @@ function isPlayableVideoRecord(record: {
   )
 }
 
+function isDetailVisibleVideoRecord(record: {
+  videoStatus?: string
+  muxPlaybackId?: string
+  muxLivePlaybackId?: string
+  expiresAt?: number
+}) {
+  if (record.expiresAt !== undefined && record.expiresAt <= Date.now()) {
+    return false
+  }
+
+  const status = record.videoStatus ?? 'ready'
+  if (status === 'pending' || status === 'processing') {
+    return true
+  }
+
+  return isPlayableVideoRecord(record)
+}
+
 function toPublicUser(user: Doc<'users'>): PublicUser {
   return {
     _id: user._id,
@@ -298,7 +316,7 @@ export const get = query({
   args: { id: v.id('bondfires') },
   handler: async (ctx, args) => {
     const bondfire = await ctx.db.get(args.id)
-    if (!bondfire || !isPlayableVideoRecord(bondfire)) {
+    if (!bondfire || !isDetailVisibleVideoRecord(bondfire)) {
       return null
     }
 
@@ -316,7 +334,7 @@ export const getWithCampContext = query({
   args: { id: v.id('bondfires') },
   handler: async (ctx, args) => {
     const bondfire = await ctx.db.get(args.id)
-    if (!bondfire || !isPlayableVideoRecord(bondfire)) {
+    if (!bondfire || !isDetailVisibleVideoRecord(bondfire)) {
       return null
     }
 
@@ -362,7 +380,7 @@ export const getForNotification = internalQuery({
   args: { id: v.id('bondfires') },
   handler: async (ctx, args) => {
     const bondfire = await ctx.db.get(args.id)
-    if (!bondfire || !isPlayableVideoRecord(bondfire)) {
+    if (!bondfire || !isDetailVisibleVideoRecord(bondfire)) {
       return null
     }
 
@@ -396,6 +414,7 @@ export const getWithVideos = query({
     return {
       ...withLiveFlags(bondfire),
       campStatus: camp?.status,
+      campName: camp?.name,
       videos: readyVideos,
       participants: await getThreadParticipants(ctx, bondfire),
     }

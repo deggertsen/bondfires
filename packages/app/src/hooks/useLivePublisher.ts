@@ -62,6 +62,8 @@ export function useLivePublisher(options: {
     tags?: string[]
     width?: number
     height?: number
+    title?: string
+    pending?: boolean
   }) => Promise<CreateLiveStreamResult>
   endLiveStream: (args: { liveSessionId: string; reason?: string }) => Promise<unknown>
   cancelLiveStream: (args: { liveSessionId: string; reason?: string }) => Promise<unknown>
@@ -147,6 +149,8 @@ export function useLivePublisher(options: {
           tags: args.tags,
           width: 720,
           height: 1280,
+          title: args.title,
+          pending: args.pending,
         })
         provisionedSessionId = liveStream.liveSessionId
 
