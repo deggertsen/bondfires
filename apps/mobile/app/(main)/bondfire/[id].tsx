@@ -33,6 +33,7 @@ import { useVideoPlayer, VideoView } from 'expo-video'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
+  Animated,
   AppState,
   Dimensions,
   FlatList,
@@ -74,6 +75,7 @@ type ThreadParticipant = {
 
 type BondfireDetailData = Doc<'bondfires'> & {
   campStatus?: Doc<'camps'>['status']
+  campName?: string
   videos: Doc<'bondfireVideos'>[]
   participants?: ThreadParticipant[]
 }
@@ -286,12 +288,7 @@ function VideoPlayer({
 
       // Update progress when status changes to readyToPlay
       if (status.status === 'readyToPlay') {
-        if (
-          !isScrubbingRef.current &&
-          !isLive &&
-          player.currentTime !== undefined &&
-          player.duration
-        ) {
+        if (!isScrubbingRef.current && player.currentTime !== undefined && player.duration) {
           const currentProgress = player.currentTime / player.duration
           state$.progress.set(currentProgress)
           onProgress(currentProgress)
@@ -314,7 +311,6 @@ function VideoPlayer({
     const progressInterval = setInterval(() => {
       if (
         !isScrubbingRef.current &&
-        !isLive &&
         player.status === 'readyToPlay' &&
         player.currentTime !== undefined &&
         player.duration
@@ -330,7 +326,7 @@ function VideoPlayer({
       endSubscription.remove()
       clearInterval(progressInterval)
     }
-  }, [player, onComplete, onProgress, state$, isLive])
+  }, [player, onComplete, onProgress, state$])
 
   // Buffering detection - switch to SD if buffer is low (only in auto mode)
   useEffect(() => {
@@ -440,7 +436,7 @@ function VideoPlayer({
 
   const seekToProgressLocation = useCallback(
     (locationX: number, shouldSeek = true) => {
-      if (!player || isLive) return
+      if (!player) return
 
       const videoDuration = player.duration
       if (!Number.isFinite(videoDuration) || videoDuration <= 0) return
@@ -458,11 +454,10 @@ function VideoPlayer({
         state$.userInitiatedPlay.set(true)
       }
     },
-    [player, state$, isLive],
+    [player, state$],
   )
 
-  const canSeekProgress =
-    !isLive && Number.isFinite(player?.duration) && (player?.duration ?? 0) > 0
+  const canSeekProgress = Number.isFinite(player?.duration) && (player?.duration ?? 0) > 0
   const canSeekProgressRef = useRef(canSeekProgress)
   const seekToProgressLocationRef = useRef(seekToProgressLocation)
 
@@ -557,10 +552,8 @@ function VideoPlayer({
   }, [])
 
   useLayoutEffect(() => {
-    if (!isLive) {
-      measureProgressBar()
-    }
-  }, [isLive, measureProgressBar])
+    measureProgressBar()
+  }, [measureProgressBar])
 
   useEffect(() => {
     return () => {
@@ -725,7 +718,7 @@ function VideoPlayer({
       />
 
       {isLive ? (
-        <YStack position="absolute" bottom={104} left={20} zIndex={3}>
+        <YStack position="absolute" bottom={132} left={20} zIndex={3}>
           <YStack
             backgroundColor={'$error'}
             paddingHorizontal={14}
@@ -737,44 +730,44 @@ function VideoPlayer({
             </Text>
           </YStack>
         </YStack>
-      ) : (
-        <YStack position="absolute" bottom={100} left={20} right={20} zIndex={3}>
-          <View
-            ref={progressBarViewRef}
-            onLayout={handleProgressBarLayout}
-            {...progressBarPanResponder.panHandlers}
-          >
-            <YStack paddingVertical={10}>
-              <YStack height={4} backgroundColor={OVERLAY_COLORS.progressTrack} borderRadius={2}>
-                <YStack
-                  height={4}
-                  backgroundColor={'$primary'}
-                  borderRadius={2}
-                  width={`${progress * 100}%`}
-                />
-                <YStack
-                  position="absolute"
-                  top={-4}
-                  left={`${progress * 100}%`}
-                  marginLeft={-6}
-                  width={12}
-                  height={12}
-                  borderRadius={6}
-                  backgroundColor={'$primary'}
-                />
-              </YStack>
+      ) : null}
+
+      <YStack position="absolute" bottom={100} left={20} right={20} zIndex={3}>
+        <View
+          ref={progressBarViewRef}
+          onLayout={handleProgressBarLayout}
+          {...progressBarPanResponder.panHandlers}
+        >
+          <YStack paddingVertical={10}>
+            <YStack height={4} backgroundColor={OVERLAY_COLORS.progressTrack} borderRadius={2}>
+              <YStack
+                height={4}
+                backgroundColor={'$primary'}
+                borderRadius={2}
+                width={`${progress * 100}%`}
+              />
+              <YStack
+                position="absolute"
+                top={-4}
+                left={`${progress * 100}%`}
+                marginLeft={-6}
+                width={12}
+                height={12}
+                borderRadius={6}
+                backgroundColor={'$primary'}
+              />
             </YStack>
-          </View>
-          <XStack justifyContent="space-between" marginTop={4}>
-            <Text fontSize={12} color={OVERLAY_COLORS.textSecondary}>
-              {formatTime(progress * duration)}
-            </Text>
-            <Text fontSize={12} color={OVERLAY_COLORS.textSecondary}>
-              {formatTime(duration)}
-            </Text>
-          </XStack>
-        </YStack>
-      )}
+          </YStack>
+        </View>
+        <XStack justifyContent="space-between" marginTop={4}>
+          <Text fontSize={12} color={OVERLAY_COLORS.textSecondary}>
+            {formatTime(progress * duration)}
+          </Text>
+          <Text fontSize={12} color={OVERLAY_COLORS.textSecondary}>
+            {formatTime(duration)}
+          </Text>
+        </XStack>
+      </YStack>
 
       {/* Creator info */}
       <YStack position="absolute" bottom={148} left={20} zIndex={3} pointerEvents="box-none">
@@ -844,6 +837,12 @@ function formatTime(ms: number): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
+function withLiveDvrStart(url: string, isLive: boolean): string {
+  if (!isLive) return url
+  const separator = url.includes('?') ? '&' : '?'
+  return `${url}${separator}start=0`
+}
+
 export default function BondfireDetailScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
   const { id } = useLocalSearchParams<{ id: string }>()
@@ -860,6 +859,7 @@ export default function BondfireDetailScreen() {
     showNotepad: false,
     isAppActive: AppState.currentState === 'active',
   })
+  const pendingPulse = useRef(new Animated.Value(0.55)).current
 
   const currentVideoIndex = useValue(screenState$.currentVideoIndex)
   const videoUrls = useValue(screenState$.videoUrls)
@@ -884,6 +884,7 @@ export default function BondfireDetailScreen() {
   const [showJoinPrompt, setShowJoinPrompt] = useState(false)
   const [joinLoading, setJoinLoading] = useState(false)
   const [isInviteSheetOpen, setIsInviteSheetOpen] = useState(false)
+  const [, setStatusPollTick] = useState(0)
 
   // Auto-show camp join prompt for invited users who aren't members
   useEffect(() => {
@@ -891,6 +892,43 @@ export default function BondfireDetailScreen() {
       setShowJoinPrompt(true)
     }
   }, [accessCheck])
+
+  useEffect(() => {
+    const status = bondfireData?.videoStatus
+    if (status !== 'pending' && status !== 'live' && status !== 'processing') {
+      return
+    }
+
+    const interval = setInterval(() => {
+      setStatusPollTick((tick) => tick + 1)
+    }, 2000)
+
+    return () => clearInterval(interval)
+  }, [bondfireData?.videoStatus])
+
+  useEffect(() => {
+    if (bondfireData?.videoStatus !== 'pending') {
+      return
+    }
+
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pendingPulse, {
+          toValue: 1,
+          duration: 900,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pendingPulse, {
+          toValue: 0.55,
+          duration: 900,
+          useNativeDriver: true,
+        }),
+      ]),
+    )
+    animation.start()
+
+    return () => animation.stop()
+  }, [bondfireData?.videoStatus, pendingPulse])
 
   const didRestorePositionRef = useRef(false)
   const persistPositionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -946,7 +984,12 @@ export default function BondfireDetailScreen() {
           ),
         )
 
-        screenState$.videoUrls.set([mainUrl.hdUrl, ...responseUrls.map((r) => r.hdUrl)])
+        screenState$.videoUrls.set([
+          withLiveDvrStart(mainUrl.hdUrl, bondfireData.videoStatus === 'live'),
+          ...responseUrls.map((r, index) =>
+            withLiveDvrStart(r.hdUrl, playableResponses[index]?.videoStatus === 'live'),
+          ),
+        ])
         screenState$.videoUrlsSd.set([mainUrl.sdUrl, ...responseUrls.map((r) => r.sdUrl)])
 
         telemetry.info('video:urls:resolved', 'Video URLs resolved', {
@@ -1129,6 +1172,86 @@ export default function BondfireDetailScreen() {
       <YStack flex={1} backgroundColor={'$background'} alignItems="center" justifyContent="center">
         <Spinner size="large" color={'$primary'} />
       </YStack>
+    )
+  }
+
+  if (bondfireData.videoStatus === 'pending') {
+    const creatorName = bondfireData.creatorName ?? 'Someone'
+
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+        <YStack
+          flex={1}
+          backgroundColor={'$background'}
+          paddingHorizontal={24}
+          justifyContent="center"
+          gap={22}
+        >
+          <Pressable onPress={handleBackPress}>
+            <XStack alignItems="center" gap={6}>
+              <ChevronLeft size={22} color={'$color'} />
+              <Text color={'$color'} fontWeight="800">
+                Campground
+              </Text>
+            </XStack>
+          </Pressable>
+
+          <Animated.View style={{ opacity: pendingPulse }}>
+            <YStack
+              width={96}
+              height={96}
+              borderRadius={28}
+              backgroundColor={'$backgroundHover'}
+              borderWidth={1}
+              borderColor={'$primary'}
+              alignItems="center"
+              justifyContent="center"
+              alignSelf="center"
+            >
+              <Flame size={44} color={'$primary'} />
+            </YStack>
+          </Animated.View>
+
+          <YStack gap={8} alignItems="center">
+            <Text fontSize={24} fontWeight="900" textAlign="center">
+              {bondfireData.title ?? `${creatorName}'s Bondfire`}
+            </Text>
+            <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
+              {[creatorName, bondfireData.campName].filter(Boolean).join(' • ')}
+            </Text>
+          </YStack>
+
+          <Text fontSize={17} color={'$color'} textAlign="center" lineHeight={24}>
+            Waiting for {creatorName} to start recording...
+          </Text>
+        </YStack>
+      </>
+    )
+  }
+
+  if (bondfireData.videoStatus === 'processing') {
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+        <YStack
+          flex={1}
+          backgroundColor={'$background'}
+          alignItems="center"
+          justifyContent="center"
+          gap={16}
+        >
+          <Spinner size="large" color={'$primary'} />
+          <Text fontSize={22} fontWeight="900">
+            Processing...
+          </Text>
+          <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
+            The recording will play as soon as it is ready.
+          </Text>
+        </YStack>
+      </>
     )
   }
 
