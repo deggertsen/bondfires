@@ -2,6 +2,7 @@ package org.bondfires.livepublisher
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioFormat
 import android.media.MediaFormat
@@ -122,6 +123,10 @@ class BondfireLivePublisherModule : Module() {
       currentFacing = options.initialCamera
       val cameraId = findCameraIdForFacing(currentFacing)
 
+      // Query camera for best supported output resolution to avoid fisheye distortion
+      val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+      val resolution = getBestCameraResolution(cameraManager, cameraId, options.width, options.height)
+
       // Create camera + microphone streamer
       val newStreamer = cameraSingleStreamer(
         context,
@@ -145,15 +150,16 @@ class BondfireLivePublisherModule : Module() {
       val videoConfig = VideoCodecConfig(
         mimeType = MediaFormat.MIMETYPE_VIDEO_AVC,
         startBitrate = options.videoBitrate,
-        resolution = Size(options.width, options.height),
+        resolution = resolution,
         fps = options.fps,
         gopDurationInS = 2.0f,
       )
       newStreamer.setVideoConfig(videoConfig)
 
-      // Bind preview if already set
+      // Bind preview with proper aspect ratio
       previewView?.let { pv ->
         pv.setVideoSourceProvider(newStreamer)
+        pv.scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
       }
 
       // Ensure unmuted at start
@@ -230,6 +236,49 @@ class BondfireLivePublisherModule : Module() {
       characteristics.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING) == lensFacing
     } ?: cameraManager.cameraIdList.firstOrNull()
       ?: throw LivePublisherException("No camera available")
+  }
+
+  /**
+   * Query the camera's supported output resolutions and pick the best match.
+   * Prefers 1080x1920 (portrait). Falls back to the largest supported size.
+   */
+  private fun getBestCameraResolution(
+    cameraManager: CameraManager,
+    cameraId: String,
+    desiredWidth: Int,
+    desiredHeight: Int,
+  ): Size {
+    try {
+      val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+      val configMap = characteristics.get(
+        CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP
+      )
+      val outputSizes = configMap?.getOutputSizes(MediaFormat.MIMETYPE_VIDEO_AVC)
+        ?: configMap?.getOutputSizes(android.graphics.ImageFormat.YUV_420_888)
+        ?: return Size(desiredWidth, desiredHeight)
+
+      // Prefer 1080x1920 portrait
+      val targetWidth = 1080
+      val targetHeight = 1920
+
+      outputSizes.firstOrNull { it.width == targetWidth && it.height == targetHeight }
+        ?.let { return it }
+
+      // Fall back: largest 9:16-ish portrait size
+      val portraitSizes = outputSizes.filter { it.height > it.width }
+        .sortedByDescending { it.width.toLong() * it.height.toLong() }
+
+      if (portraitSizes.isNotEmpty()) {
+        return portraitSizes.first()
+      }
+
+      // Last resort: largest size overall
+      return outputSizes.maxByOrNull { it.width * it.height }
+        ?: Size(desiredWidth, desiredHeight)
+    } catch (e: Exception) {
+      Log.w(TAG, "Failed to query camera resolutions, using default", e)
+      return Size(desiredWidth, desiredHeight)
+    }
   }
 
   fun attachPreview(view: PreviewView) {

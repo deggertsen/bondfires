@@ -29,12 +29,14 @@ import {
 } from 'expo-camera'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, AppState, Linking, Platform, Pressable, ScrollView, StatusBar } from 'react-native'
 import { Spinner, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { CompletionScreen } from '../../../components/CompletionScreen'
+import { InviteSheet } from '../../../components/InviteSheet'
+import { SparkTitleSheet } from '../../../components/SparkTitleSheet'
 import { routes } from '../../../lib/routes'
 import { mergeVideoSegments } from '../../../lib/videoSegmentMerger'
 import { BondfireLivePublisher, LivePublisherView } from '../../../modules/bondfire-live-publisher'
@@ -61,10 +63,11 @@ function formatMaxDuration(seconds: number) {
 export default function CreateScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
-  const { campId, respondTo, personalCamp } = useLocalSearchParams<{
+  const { campId, respondTo, personalCamp, title } = useLocalSearchParams<{
     campId?: string
     respondTo?: string
     personalCamp?: string
+    title?: string
   }>()
   const isPersonalCamp = personalCamp === '1'
   const isFocused = useIsFocused()
@@ -86,6 +89,9 @@ export default function CreateScreen() {
   const wasFocusedRef = useRef(isFocused)
   const didRouteFirstSparkRef = useRef(false)
   const personalCreateStartedAtRef = useRef<number | null>(null)
+  const preConnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const backgroundTimestampRef = useRef<number | null>(null)
+  const preConnectTimerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const state$ = useObservable({
     facing: 'front' as CameraType,
@@ -105,6 +111,8 @@ export default function CreateScreen() {
     promptCampId: null as Id<'camps'> | null,
     promptDismissed: false,
     tradeTag: null as TradeTag | null,
+    showInviteSheet: false,
+    preConnectTimer: 0,
   })
 
   const facing = useValue(state$.facing)
@@ -122,6 +130,8 @@ export default function CreateScreen() {
   const selectedCampId = useValue(state$.selectedCampId)
   const promptDismissed = useValue(state$.promptDismissed)
   const tradeTag = useValue(state$.tradeTag)
+  const showInviteSheet = useValue(state$.showInviteSheet)
+  const preConnectTimer = useValue(state$.preConnectTimer)
   const livePublishEnabled = useValue(appStore$.preferences.livePublishEnabled)
   const currentCampId = useValue(appStore$.currentCampId)
   const shouldUseLivePublish = livePublishEnabled && isLivePublisherAvailable
@@ -135,6 +145,8 @@ export default function CreateScreen() {
   const createLiveStream = useAction(api.videos.createLiveStream)
   const endLiveStream = useAction(api.videos.endLiveStream)
   const cancelLiveStream = useAction(api.videos.cancelLiveStream)
+  const cancelPendingBondfire = useAction(api.videos.cancelPendingBondfire)
+  const markBondfireLive = useMutation(api.videos.markBondfireLive)
   const camps = useQuery(api.camps.list, respondTo ? 'skip' : {})
   const subscription = useQuery(api.subscriptions.current, {})
   const currentUser = useQuery(api.users.current)
@@ -1089,7 +1101,7 @@ export default function CreateScreen() {
     }
 
     if (!respondTo && !isPersonalCamp && (!effectiveCampId || !selectedCamp)) {
-      Alert.alert('Choose a Camp', 'Pick where this Bondfire belongs before going live.')
+      Alert.alert('Choose a Camp', 'Pick where this Bondfire belongs before recording.')
       return
     }
 
@@ -1115,12 +1127,20 @@ export default function CreateScreen() {
         personalCamp: isPersonalCamp || undefined,
         tags: selectedCampTags,
         initialCamera: state$.facing.get() === 'back' ? 'back' : 'front',
+        title: title || undefined,
+        pending: true,
       })
+
+      // Mark the bondfire as live (user tapped record)
+      const recordId = livePublishStore$.recordId.get()
+      if (recordId) {
+        void markBondfireLive({ bondfireId: recordId as Id<'bondfires'> })
+      }
     } catch (error) {
       logRecordingError(error)
       const errorInfo = parseError(error)
       Alert.alert(
-        errorInfo.isNetworkError ? 'No internet connection' : 'Live Stream Failed',
+        errorInfo.isNetworkError ? 'No internet connection' : 'Recording Failed',
         getUserFacingErrorMessage(errorInfo),
         shouldShowReportIssue(errorInfo)
           ? [
@@ -1131,7 +1151,7 @@ export default function CreateScreen() {
                   const url = buildErrorReportMailto({
                     error,
                     userId: currentUser?._id,
-                    context: 'Starting live stream',
+                    context: 'Starting recording',
                   })
                   Linking.openURL(url).catch(() => {})
                 },
@@ -1152,6 +1172,8 @@ export default function CreateScreen() {
     selectedCampTags,
     state$,
     currentUser?._id,
+    title,
+    markBondfireLive,
   ])
 
   const handleSelectCamp = useCallback(
@@ -1181,6 +1203,16 @@ export default function CreateScreen() {
   }, [router])
 
   const stopLiveRecording = useCallback(async () => {
+    // Clear pre-connect timeout
+    if (preConnectTimeoutRef.current) {
+      clearTimeout(preConnectTimeoutRef.current)
+      preConnectTimeoutRef.current = null
+    }
+    if (preConnectTimerIntervalRef.current) {
+      clearInterval(preConnectTimerIntervalRef.current)
+      preConnectTimerIntervalRef.current = null
+    }
+
     if (liveStatus !== 'connecting' && liveStatus !== 'live' && liveStatus !== 'reconnecting') {
       return
     }
@@ -1192,11 +1224,9 @@ export default function CreateScreen() {
     } catch (error) {
       logRecordingError(error)
       Alert.alert(
-        'Live Stream Stopping',
-        'The live connection stopped locally, but the saved video may still finish processing.',
+        'Stopping...',
+        'The connection stopped locally, but the saved video may still finish processing.',
       )
-      // Roll back local UI state so the user isn't stuck on the live capture
-      // screen with a publisher session that's already been torn down.
       livePublishActions.reset()
       state$.recordingState.set('idle')
       state$.videoUri.set(null)
@@ -1226,21 +1256,34 @@ export default function CreateScreen() {
   ])
 
   const cancelLiveRecording = useCallback(async () => {
+    // Clear pre-connect timeout and timer
+    if (preConnectTimeoutRef.current) {
+      clearTimeout(preConnectTimeoutRef.current)
+      preConnectTimeoutRef.current = null
+    }
+    if (preConnectTimerIntervalRef.current) {
+      clearInterval(preConnectTimerIntervalRef.current)
+      preConnectTimerIntervalRef.current = null
+    }
+
+    // Cancel the pending bondfire if we have a record ID
+    const recordId = livePublishStore$.recordId.get()
+    if (recordId) {
+      void cancelPendingBondfire({ bondfireId: recordId as Id<'bondfires'> })
+    }
+
     try {
       await livePublisher.cancel()
     } catch (error) {
       logRecordingError(error)
       const errorInfo = parseError(error)
-      Alert.alert('Live Stream', getUserFacingErrorMessage(errorInfo))
+      Alert.alert('Recording', getUserFacingErrorMessage(errorInfo))
     } finally {
-      // useLivePublisher.cancel already calls livePublishActions.reset() in its
-      // own finally, but reset here as well so this code path stays correct
-      // even if the hook's behavior changes.
       livePublishActions.reset()
       state$.recordingState.set('idle')
       state$.videoUri.set(null)
     }
-  }, [livePublisher, logRecordingError, state$])
+  }, [livePublisher, logRecordingError, state$, cancelPendingBondfire])
 
   const toggleLiveFacing = useCallback(() => {
     if (liveStatus === 'connecting' || liveStatus === 'live' || liveStatus === 'reconnecting') {
@@ -1639,16 +1682,16 @@ export default function CreateScreen() {
     const isLiveBusy = liveStatus === 'creating' || liveStatus === 'stopping'
     const statusLabel =
       liveStatus === 'creating'
-        ? 'Creating live stream...'
+        ? 'Preparing camera...'
         : liveStatus === 'connecting'
-          ? 'Connecting...'
+          ? 'Starting...'
           : liveStatus === 'live'
-            ? 'LIVE'
+            ? '● REC'
             : liveStatus === 'reconnecting'
               ? 'Reconnecting...'
               : liveStatus === 'stopping'
-                ? 'Saving live moment...'
-                : 'Tap to go live'
+                ? 'Saving...'
+                : 'Tap to record'
 
     return (
       <YStack flex={1} backgroundColor={'$background'}>
@@ -1688,7 +1731,7 @@ export default function CreateScreen() {
                   borderRadius={16}
                 >
                   <Text color={'$color'} fontWeight="800" fontSize={14}>
-                    {liveStatus === 'live' ? `LIVE ${recordingTimerLabel}` : statusLabel}
+                    {liveStatus === 'live' ? `● REC ${recordingTimerLabel}` : statusLabel}
                   </Text>
                 </YStack>
               )}
@@ -1721,11 +1764,11 @@ export default function CreateScreen() {
                   <XStack alignItems="center" gap={8}>
                     <Flame size={28} color={'$primary'} />
                     <Text color={'$color'} fontSize={22} fontWeight="700">
-                      {respondTo ? 'Respond Live' : (selectedCamp?.name ?? 'Spark a Bondfire')}
+                      {respondTo ? 'Respond' : (selectedCamp?.name ?? 'Spark a Bondfire')}
                     </Text>
                   </XStack>
                   <Text color={'$placeholderColor'} fontSize={14}>
-                    Tap to start a live broadcast
+                    Tap to start recording
                   </Text>
                 </YStack>
               )}

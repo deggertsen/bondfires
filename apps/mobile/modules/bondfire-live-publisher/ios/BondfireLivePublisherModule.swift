@@ -243,8 +243,21 @@ final class LivePublisher {
 
     await mixer.startRunning()
 
+    // Resolve output resolution: prefer the passed-in dimensions, default to 1080x1920
+    let captureWidth: Int32 = Int32(options.width > 0 ? options.width : 1080)
+    let captureHeight: Int32 = Int32(options.height > 0 ? options.height : 1920)
+
+    mixer.videoMixerSettings.videoSize = .init(
+      width: captureWidth,
+      height: captureHeight
+    )
+    // Use screen refresh rate as a hint, never exceed requested fps
+    let maxFps = UIScreen.main.maximumFramesPerSecond
+    mixer.videoMixerSettings.frameRate = min(Float64(options.fps), Float64(maxFps > 0 ? maxFps : 30))
+
     var videoSettings = await newSession.stream.videoSettings
     videoSettings.bitRate = options.videoBitrate
+    videoSettings.videoSize = .init(width: captureWidth, height: captureHeight)
     await newSession.stream.setVideoSettings(videoSettings)
 
     var audioSettings = await newSession.stream.audioSettings

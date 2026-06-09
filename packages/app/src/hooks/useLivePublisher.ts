@@ -125,6 +125,8 @@ export function useLivePublisher(options: {
         personalCamp?: boolean
         tags?: string[]
         initialCamera?: 'front' | 'back'
+        title?: string
+        pending?: boolean
       } = {},
     ) => {
       telemetry.info('live:start', 'Live publisher start requested', {
