@@ -1,4 +1,4 @@
-import { getAuthErrorMessage, useSystemThemeColors } from '@bondfires/app'
+import { getAuthErrorMessage, useAppThemeColors } from '@bondfires/app'
 import { Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { CheckCircle, Mail } from '@tamagui/lucide-icons'
@@ -10,7 +10,7 @@ import { YStack } from 'tamagui'
 import { resolveAuthRedirect } from '../../lib/routes'
 
 export default function VerifyEmailScreen() {
-  const { colors, statusBarStyle } = useSystemThemeColors()
+  const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const { signIn } = useAuthActions()
   const params = useLocalSearchParams<{ email?: string; redirectTo?: string }>()

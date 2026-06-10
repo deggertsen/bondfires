@@ -1,4 +1,4 @@
-import { getAuthErrorMessage, useSystemThemeColors } from '@bondfires/app'
+import { getAuthErrorMessage, useAppThemeColors } from '@bondfires/app'
 import { Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
@@ -45,7 +45,7 @@ function getMinBirthDate(): Date {
 }
 
 export default function SignupScreen() {
-  const { colors, statusBarStyle } = useSystemThemeColors()
+  const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const { redirectTo } = useLocalSearchParams<{ redirectTo?: string }>()
   const { signIn } = useAuthActions()

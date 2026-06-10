@@ -1,4 +1,4 @@
-import { useSystemThemeColors } from '@bondfires/app'
+import { useAppThemeColors } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
 import { ArrowLeft, Flame } from '@tamagui/lucide-icons'
 import type { Href } from 'expo-router'
@@ -34,7 +34,7 @@ export function InviteRedemptionScreen({
   successText,
   fallbackErrorText,
 }: InviteRedemptionScreenProps) {
-  const { statusBarStyle } = useSystemThemeColors()
+  const { statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const code = normalizeCode(codeParam)
   const [status, setStatus] = useState<RedemptionStatus>('loading')

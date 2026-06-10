@@ -1,4 +1,4 @@
-import { appActions, useSystemThemeColors } from '@bondfires/app'
+import { appActions, useAppThemeColors } from '@bondfires/app'
 import { Button, Text } from '@bondfires/ui'
 import { Flame } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
@@ -7,7 +7,7 @@ import { XStack, YStack } from 'tamagui'
 import { routes } from '../../lib/routes'
 
 export default function OnboardingScreen() {
-  const { colors, statusBarStyle } = useSystemThemeColors()
+  const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
 
   const handleContinue = () => {
@@ -23,7 +23,7 @@ export default function OnboardingScreen() {
   return (
     <YStack
       flex={1}
-      backgroundColor={colors.background}
+      backgroundColor={'$background'}
       paddingHorizontal={24}
       paddingVertical={60}
     >

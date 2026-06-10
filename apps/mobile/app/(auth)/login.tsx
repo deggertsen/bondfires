@@ -1,4 +1,4 @@
-import { telemetry, useSystemThemeColors } from '@bondfires/app'
+import { telemetry, useAppThemeColors } from '@bondfires/app'
 import { Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
@@ -13,7 +13,7 @@ import { api } from '../../../../convex/_generated/api'
 import { resolveAuthRedirect, routes } from '../../lib/routes'
 
 export default function LoginScreen() {
-  const { colors, statusBarStyle } = useSystemThemeColors()
+  const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const { redirectTo } = useLocalSearchParams<{ redirectTo?: string }>()
   const { signIn } = useAuthActions()

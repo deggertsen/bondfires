@@ -1,4 +1,4 @@
-import { getRandomCompletionMessage, useSystemThemeColors } from '@bondfires/app'
+import { getRandomCompletionMessage, useAppThemeColors } from '@bondfires/app'
 import { Button, Text } from '@bondfires/ui'
 import { Check, Share } from '@tamagui/lucide-icons'
 import { useRouter } from 'expo-router'
@@ -17,7 +17,7 @@ interface CompletionScreenProps {
 }
 
 export function CompletionScreen({ detail, onContinue, shareBondfireId }: CompletionScreenProps) {
-  const { colors, statusBarStyle } = useSystemThemeColors()
+  const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const [message] = useState(() => getRandomCompletionMessage())
   const [isInviteSheetOpen, setIsInviteSheetOpen] = useState(!!shareBondfireId)
@@ -34,7 +34,7 @@ export function CompletionScreen({ detail, onContinue, shareBondfireId }: Comple
     <>
       <YStack
         flex={1}
-        backgroundColor={colors.background}
+        backgroundColor={'$background'}
         alignItems="center"
         justifyContent="center"
         padding={32}
