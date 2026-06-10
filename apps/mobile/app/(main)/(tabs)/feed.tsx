@@ -231,6 +231,11 @@ export default function FeedScreen() {
   const joinedCamps = useQuery(api.camps.listMine, currentUserId ? {} : 'skip') as
     | JoinedCamp[]
     | undefined
+  // Filter out archived camps from feed filter pills — they can't show bondfires
+  const feedCamps = useMemo(
+    () => (joinedCamps ?? []).filter((camp) => camp.status !== 'archived'),
+    [joinedCamps],
+  )
   const selectedCampId = currentCampId as Doc<'camps'>['_id'] | null
   const selectedCamp = joinedCamps?.find((camp) => camp._id === selectedCampId)
 
@@ -726,7 +731,7 @@ export default function FeedScreen() {
                 selected={!selectedCampId}
                 onPress={() => handleSelectCamp(null)}
               />
-              {(joinedCamps ?? []).map((camp) => (
+              {(feedCamps ?? []).map((camp) => (
                 <CampPill
                   key={camp._id}
                   label={camp.name.replace(/ \((Men|Women)\)$/, '')}
