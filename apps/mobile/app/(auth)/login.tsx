@@ -8,12 +8,13 @@ import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useRef } from 'react'
 import { StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
-import { YStack } from 'tamagui'
+import { YStack, useTheme } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import { resolveAuthRedirect, routes } from '../../lib/routes'
 
 export default function LoginScreen() {
-  const { colors, statusBarStyle } = useSystemThemeColors()
+  const { statusBarStyle } = useSystemThemeColors()
+  const theme = useTheme()
   const router = useRouter()
   const { redirectTo } = useLocalSearchParams<{ redirectTo?: string }>()
   const { signIn } = useAuthActions()
@@ -63,7 +64,9 @@ export default function LoginScreen() {
     form$.isLoading.set(true)
     form$.error.set(null)
 
-    // Timeout wrapper — if signIn hangs beyond 30s, reject so the user isn't stuck forever
+    // Timeout wrapper — if signIn hangs (e.g., Convex WebSocket still connecting),
+    // reject so the user isn't stuck forever. Cold starts after app updates can
+    // take a few seconds for the WebSocket to re-establish.
     const SIGN_IN_TIMEOUT_MS = 30_000
     const signInPromise = signIn('password', {
       email: currentEmail,
@@ -126,8 +129,8 @@ export default function LoginScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor={colors.background}>
-      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+    <YStack flex={1} backgroundColor="$background">
+      <StatusBar barStyle={statusBarStyle} backgroundColor={theme.background?.val ?? '#141416'} />
       <KeyboardAwareScrollView
         contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
         keyboardShouldPersistTaps="handled"
