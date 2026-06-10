@@ -58,6 +58,7 @@ export function SparkTitleSheet({ open, campName, onSubmit, onCancel }: Props) {
       }}
       snapPoints={[42]}
       dismissOnSnapToBottom
+      moveOnKeyboardChange
     >
       <Sheet.Overlay backgroundColor="rgba(0,0,0,0.45)" />
       <Sheet.Frame
