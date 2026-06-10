@@ -1,40 +1,18 @@
-import { appStore$, useAppThemeColors } from '@bondfires/app'
-import { useValue } from '@legendapp/state/react'
+import { useAppThemeColors } from '@bondfires/app'
 import { Flame, Home, Map, MessageCircle, User } from '@tamagui/lucide-icons'
-import { useQuery } from 'convex/react'
 import { Tabs, useRouter } from 'expo-router'
-import { useCallback, useState } from 'react'
+import { useCallback } from 'react'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { api } from '../../../../../convex/_generated/api'
-import type { Doc } from '../../../../../convex/_generated/dataModel'
-import { SparkTitleSheet } from '../../../components/SparkTitleSheet'
 import { routes } from '../../../lib/routes'
-
-type JoinedCamp = Doc<'camps'> & { membership: Doc<'campMembers'> }
 
 export default function TabsLayout() {
   const insets = useSafeAreaInsets()
   const { colors } = useAppThemeColors()
   const router = useRouter()
-  const currentUserId = useValue(appStore$.userId)
-  const currentCampId = useValue(appStore$.currentCampId)
-  const joinedCamps = useQuery(api.camps.listMine, currentUserId ? {} : 'skip') as
-    | JoinedCamp[]
-    | undefined
-  const selectedCamp = joinedCamps?.find((camp) => camp._id === currentCampId)
-  const [isSparkSheetOpen, setIsSparkSheetOpen] = useState(false)
 
-  const openSparkSheet = useCallback(() => {
-    setIsSparkSheetOpen(true)
-  }, [])
-
-  const handleSparkSubmit = useCallback(
-    (title: string) => {
-      setIsSparkSheetOpen(false)
-      router.push(routes.createWithTitle(title, selectedCamp?._id))
-    },
-    [router, selectedCamp?._id],
-  )
+  const openSparkTab = useCallback(() => {
+    router.push(routes.create)
+  }, [router])
 
   return (
     <>
@@ -83,7 +61,7 @@ export default function TabsLayout() {
           listeners={{
             tabPress: (event) => {
               event.preventDefault()
-              openSparkSheet()
+              openSparkTab()
             },
           }}
           options={{
@@ -99,12 +77,6 @@ export default function TabsLayout() {
           }}
         />
       </Tabs>
-      <SparkTitleSheet
-        open={isSparkSheetOpen}
-        campName={selectedCamp?.name}
-        onSubmit={handleSparkSubmit}
-        onCancel={() => setIsSparkSheetOpen(false)}
-      />
     </>
   )
 }

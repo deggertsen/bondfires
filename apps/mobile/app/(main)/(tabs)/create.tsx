@@ -29,13 +29,14 @@ import {
 } from 'expo-camera'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, AppState, Linking, Platform, Pressable, ScrollView, StatusBar } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { CompletionScreen } from '../../../components/CompletionScreen'
 import { InviteSheet } from '../../../components/InviteSheet'
+import { SparkTitleSheet } from '../../../components/SparkTitleSheet'
 import { routes } from '../../../lib/routes'
 import { mergeVideoSegments } from '../../../lib/videoSegmentMerger'
 import { BondfireLivePublisher, LivePublisherView } from '../../../modules/bondfire-live-publisher'
@@ -170,6 +171,7 @@ export default function CreateScreen() {
   const isResolvingSelectedCamp = !respondTo && !!effectiveCampId && camps === undefined
   const isSelectedCampUnavailable =
     !respondTo && !!effectiveCampId && camps !== undefined && selectedCamp === null
+  const [sparkTitleSheetCamp, setSparkTitleSheetCamp] = useState<CampWithMembership | null>(null)
   const sortedCamps = useMemo(() => {
     if (!camps) return []
     const userGender = currentUser?.gender
@@ -1267,15 +1269,28 @@ export default function CreateScreen() {
           }
         }
 
-        state$.selectedCampId.set(camp._id)
-        state$.tradeTag.set(null)
-        appActions.setCurrentCampId(camp._id)
+        // Show the title sheet before proceeding to the camp prompt
+        setSparkTitleSheetCamp(camp)
       } catch (error) {
         const message = parseError(error).message
         Alert.alert('Camp Unavailable', message)
       }
     },
-    [joinCamp, state$],
+    [joinCamp],
+  )
+
+  const handleSparkTitleSubmit = useCallback(
+    (sparkTitle: string) => {
+      const camp = sparkTitleSheetCamp
+      setSparkTitleSheetCamp(null)
+      if (!camp) return
+      state$.selectedCampId.set(camp._id)
+      state$.tradeTag.set(null)
+      appActions.setCurrentCampId(camp._id)
+      // Navigate with title param so it flows through the recording pipeline
+      router.replace(routes.createForCamp(camp._id, sparkTitle || undefined))
+    },
+    [router, sparkTitleSheetCamp, state$],
   )
 
   const handleOpenPersonalHearth = useCallback(() => {
@@ -2363,6 +2378,12 @@ export default function CreateScreen() {
       ) : (
         <YStack flex={1} />
       )}
+      <SparkTitleSheet
+        open={sparkTitleSheetCamp !== null}
+        campName={sparkTitleSheetCamp?.name}
+        onSubmit={handleSparkTitleSubmit}
+        onCancel={() => setSparkTitleSheetCamp(null)}
+      />
     </YStack>
   )
 }
