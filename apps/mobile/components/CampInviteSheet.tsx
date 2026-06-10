@@ -129,7 +129,7 @@ export function CampInviteSheet({ campId, open, onClose }: Props) {
                 >
                   Your Invite Code
                 </Text>
-                <Text fontSize={32} fontWeight="900" letterSpacing={2} color={'$color'}>
+                <Text fontSize={26} fontWeight="900" letterSpacing={1.5} color={'$color'} numberOfLines={1}>
                   {inviteCode}
                 </Text>
                 <Text fontSize={12} color={'$placeholderColor'} numberOfLines={1}>
