@@ -30,7 +30,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Separator, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
-import { SparkTitleSheet } from '../../../components/SparkTitleSheet'
 import {
   BONDFIRE_REPORT_OPTIONS,
   getBondfireSwipeActions,
@@ -227,7 +226,6 @@ export default function FeedScreen() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [bondfires, setBondfires] = useState<BondfireData[] | undefined>(undefined)
-  const [isSparkSheetOpen, setIsSparkSheetOpen] = useState(false)
   const currentUserId = useValue(appStore$.userId)
   const currentCampId = useValue(appStore$.currentCampId)
   const joinedCamps = useQuery(api.camps.listMine, currentUserId ? {} : 'skip') as
@@ -467,20 +465,12 @@ export default function FeedScreen() {
       return
     }
 
-    setIsSparkSheetOpen(true)
-  }, [selectedCamp])
-
-  const handleSparkTitleSubmit = useCallback(
-    (sparkTitle: string) => {
-      setIsSparkSheetOpen(false)
-      if (selectedCampId) {
-        router.push(routes.createForCamp(selectedCampId, sparkTitle))
-        return
-      }
-      router.push(routes.createWithTitle(sparkTitle))
-    },
-    [router, selectedCampId],
-  )
+    if (selectedCampId) {
+      router.push(routes.createForCamp(selectedCampId))
+      return
+    }
+    router.push(routes.create)
+  }, [router, selectedCamp, selectedCampId])
 
   const handleSelectCamp = useCallback(
     (campId: string | null) => {
@@ -822,12 +812,6 @@ export default function FeedScreen() {
         showsVerticalScrollIndicator={false}
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
-      />
-      <SparkTitleSheet
-        open={isSparkSheetOpen}
-        campName={selectedCamp?.name}
-        onSubmit={handleSparkTitleSubmit}
-        onCancel={() => setIsSparkSheetOpen(false)}
       />
     </YStack>
   )
