@@ -6,12 +6,11 @@ import { CheckCircle, ChevronLeft, KeyRound } from '@tamagui/lucide-icons'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { Pressable, StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
-import { YStack, useTheme } from 'tamagui'
+import { YStack } from 'tamagui'
 import { routes } from '../../lib/routes'
 
 export default function ResetPasswordScreen() {
-  const { statusBarStyle } = useSystemThemeColors()
-  const theme = useTheme()
+  const { colors, statusBarStyle } = useSystemThemeColors()
   const router = useRouter()
   const { signIn } = useAuthActions()
   const params = useLocalSearchParams<{ email?: string }>()
@@ -113,7 +112,7 @@ export default function ResetPasswordScreen() {
         alignItems="center"
         justifyContent="center"
       >
-        <StatusBar barStyle={statusBarStyle} backgroundColor={theme.background?.val ?? '#141416'} />
+        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
 
         <YStack alignItems="center" gap={24} maxWidth={320}>
           <YStack
@@ -144,7 +143,7 @@ export default function ResetPasswordScreen() {
 
   return (
     <YStack flex={1} backgroundColor="$background">
-      <StatusBar barStyle={statusBarStyle} backgroundColor={theme.background?.val ?? '#141416'} />
+      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
 
       {/* Back button */}
       <YStack paddingTop={60} paddingHorizontal={16}>

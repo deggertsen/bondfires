@@ -8,13 +8,12 @@ import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useRef } from 'react'
 import { StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
-import { YStack, useTheme } from 'tamagui'
+import { YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import { resolveAuthRedirect, routes } from '../../lib/routes'
 
 export default function LoginScreen() {
-  const { statusBarStyle } = useSystemThemeColors()
-  const theme = useTheme()
+  const { colors, statusBarStyle } = useSystemThemeColors()
   const router = useRouter()
   const { redirectTo } = useLocalSearchParams<{ redirectTo?: string }>()
   const { signIn } = useAuthActions()
@@ -130,7 +129,7 @@ export default function LoginScreen() {
 
   return (
     <YStack flex={1} backgroundColor="$background">
-      <StatusBar barStyle={statusBarStyle} backgroundColor={theme.background?.val ?? '#141416'} />
+      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
       <KeyboardAwareScrollView
         contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
         keyboardShouldPersistTaps="handled"

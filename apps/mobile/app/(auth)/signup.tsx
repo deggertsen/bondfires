@@ -8,7 +8,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useState } from 'react'
 import { Platform, Pressable, StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
-import { XStack, YStack, useTheme } from 'tamagui'
+import { XStack, YStack } from 'tamagui'
 import { routes } from '../../lib/routes'
 
 type Gender = 'male' | 'female' | 'other'
@@ -45,8 +45,7 @@ function getMinBirthDate(): Date {
 }
 
 export default function SignupScreen() {
-  const { statusBarStyle } = useSystemThemeColors()
-  const theme = useTheme()
+  const { colors, statusBarStyle } = useSystemThemeColors()
   const router = useRouter()
   const { redirectTo } = useLocalSearchParams<{ redirectTo?: string }>()
   const { signIn } = useAuthActions()
@@ -179,7 +178,7 @@ export default function SignupScreen() {
 
   return (
     <YStack flex={1} backgroundColor="$background">
-      <StatusBar barStyle={statusBarStyle} backgroundColor={theme.background?.val ?? '#141416'} />
+      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
       <KeyboardAwareScrollView
         contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
         keyboardShouldPersistTaps="handled"

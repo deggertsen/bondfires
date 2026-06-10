@@ -6,12 +6,11 @@ import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useState } from 'react'
 import { StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
-import { YStack, useTheme } from 'tamagui'
+import { YStack } from 'tamagui'
 import { resolveAuthRedirect } from '../../lib/routes'
 
 export default function VerifyEmailScreen() {
-  const { statusBarStyle } = useSystemThemeColors()
-  const theme = useTheme()
+  const { colors, statusBarStyle } = useSystemThemeColors()
   const router = useRouter()
   const { signIn } = useAuthActions()
   const params = useLocalSearchParams<{ email?: string; redirectTo?: string }>()
@@ -72,7 +71,7 @@ export default function VerifyEmailScreen() {
 
   return (
     <YStack flex={1} backgroundColor="$background">
-      <StatusBar barStyle={statusBarStyle} backgroundColor={theme.background?.val ?? '#141416'} />
+      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
       <KeyboardAwareScrollView
         contentContainerStyle={{
           flexGrow: 1,

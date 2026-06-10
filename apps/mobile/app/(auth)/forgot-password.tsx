@@ -6,12 +6,11 @@ import { useRouter } from 'expo-router'
 import { useState } from 'react'
 import { Pressable, StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
-import { YStack, useTheme } from 'tamagui'
+import { YStack } from 'tamagui'
 import { routes } from '../../lib/routes'
 
 export default function ForgotPasswordScreen() {
-  const { statusBarStyle } = useSystemThemeColors()
-  const theme = useTheme()
+  const { colors, statusBarStyle } = useSystemThemeColors()
   const router = useRouter()
   const { signIn } = useAuthActions()
 
@@ -45,7 +44,7 @@ export default function ForgotPasswordScreen() {
 
   return (
     <YStack flex={1} backgroundColor="$background">
-      <StatusBar barStyle={statusBarStyle} backgroundColor={theme.background?.val ?? '#141416'} />
+      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
 
       {/* Back button */}
       <YStack paddingTop={60} paddingHorizontal={16}>
