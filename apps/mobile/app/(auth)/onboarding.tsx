@@ -21,12 +21,7 @@ export default function OnboardingScreen() {
   }
 
   return (
-    <YStack
-      flex={1}
-      backgroundColor={'$background'}
-      paddingHorizontal={24}
-      paddingVertical={60}
-    >
+    <YStack flex={1} backgroundColor={'$background'} paddingHorizontal={24} paddingVertical={60}>
       <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
 
       <YStack flex={1} justifyContent="center" alignItems="center" gap={40}>

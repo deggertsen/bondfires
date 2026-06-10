@@ -54,6 +54,7 @@ import { ReportButton } from '../../../components/ReportButton'
 import { ReportOverlay } from '../../../components/ReportOverlay'
 import { SettingsPopover } from '../../../components/SettingsPopover'
 import { VIDEO_OVERLAY_COLORS as OVERLAY_COLORS } from '../../../components/videoOverlayColors'
+import { goBackOrReplace } from '../../../lib/navigation'
 import { routes } from '../../../lib/routes'
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window')
@@ -819,14 +820,7 @@ function VideoPlayer({
 
       {/* Report Overlay */}
       {showReport && (
-        <YStack
-          position="absolute"
-          top={0}
-          left={0}
-          right={0}
-          bottom={0}
-          zIndex={10}
-        >
+        <YStack position="absolute" top={0} left={0} right={0} bottom={0} zIndex={10}>
           <ReportOverlay
             bondfireId={bondfireId}
             bondfireVideoId={bondfireVideoId}
@@ -1092,12 +1086,7 @@ export default function BondfireDetailScreen() {
   }, [bondfireId, currentVideoIndex])
 
   const handleBackPress = useCallback(() => {
-    // If opened from a deep link / notification, there may not be a back stack.
-    if (navigation.canGoBack()) {
-      router.back()
-    } else {
-      router.replace(routes.feed)
-    }
+    goBackOrReplace(router, navigation, routes.feed)
   }, [navigation, router])
 
   const handleVideoComplete = useCallback(() => {

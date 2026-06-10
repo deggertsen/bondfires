@@ -92,7 +92,9 @@ export default function MyFiresScreen() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [pinnedFirst, setPinnedFirst] = useState(false)
-  const threads = useQuery(api.conversations.listMyFires, { limit: 80, pinnedFirst }) as MyFire[] | undefined
+  const threads = useQuery(api.conversations.listMyFires, { limit: 80, pinnedFirst }) as
+    | MyFire[]
+    | undefined
   const getThumbnailUrl = useAction(api.videos.getThumbnailUrl)
 
   // Swipe action mutations

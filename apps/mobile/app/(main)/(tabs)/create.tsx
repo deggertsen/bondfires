@@ -28,7 +28,7 @@ import {
   useMicrophonePermissions,
 } from 'expo-camera'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
-import { useLocalSearchParams, useRouter } from 'expo-router'
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, AppState, Linking, Platform, Pressable, ScrollView, StatusBar } from 'react-native'
 import { XStack, YStack } from 'tamagui'
@@ -37,6 +37,7 @@ import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { CompletionScreen } from '../../../components/CompletionScreen'
 import { InviteSheet } from '../../../components/InviteSheet'
 import { SparkTitleSheet } from '../../../components/SparkTitleSheet'
+import { goBackOrReplace } from '../../../lib/navigation'
 import { routes } from '../../../lib/routes'
 import { mergeVideoSegments } from '../../../lib/videoSegmentMerger'
 import { BondfireLivePublisher, LivePublisherView } from '../../../modules/bondfire-live-publisher'
@@ -70,6 +71,7 @@ function formatMaxDuration(seconds: number) {
 export default function CreateScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
+  const navigation = useNavigation()
   const { campId, respondTo, personalCamp, title } = useLocalSearchParams<{
     campId?: string
     respondTo?: string
@@ -1495,6 +1497,10 @@ export default function CreateScreen() {
     cancelLiveRecordingRef.current = cancelLiveRecording
   }, [cancelLiveRecording])
 
+  const handleBack = useCallback(() => {
+    goBackOrReplace(router, navigation, routes.feed)
+  }, [navigation, router])
+
   // Mount-scoped unmount cleanup: cancel a provisioned-but-unstarted session.
   // Uses refs/observables so changing callback identities can't fire this early.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reads latest state via observables at cleanup time
@@ -1942,7 +1948,7 @@ export default function CreateScreen() {
                   if (isPreConnected) {
                     void cancelLiveRecording()
                   }
-                  router.back()
+                  handleBack()
                 }}
               >
                 <YStack
@@ -2210,7 +2216,7 @@ export default function CreateScreen() {
             justifyContent="space-between"
             alignItems="center"
           >
-            <Pressable onPress={() => router.back()}>
+            <Pressable onPress={handleBack}>
               <YStack
                 width={40}
                 height={40}
