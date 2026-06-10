@@ -352,7 +352,7 @@ class BondfireLivePublisherModule : Module() {
         null
       }
       if (avcEncoder != null) {
-        val capabilities = avcEncoder.capabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
+        val capabilities = avcEncoder.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
         val encoderCaps = capabilities.videoCapabilities
         if (encoderCaps != null && !encoderCaps.isSizeSupported(bestSize.width, bestSize.height)) {
           Log.w(TAG, "AVC encoder does not support ${bestSize.width}x${bestSize.height}, falling back")
