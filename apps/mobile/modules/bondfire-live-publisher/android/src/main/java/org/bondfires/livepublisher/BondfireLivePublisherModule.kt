@@ -393,7 +393,33 @@ class BondfireLivePublisherView(context: Context, appContext: expo.modules.kotli
   }
 
   override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-    previewView.layout(0, 0, right - left, bottom - top)
+    val width = right - left
+    val height = bottom - top
+    // React Native skips the native measure pass for manually-added children.
+    // Without an explicit measure, PreviewView's measured size stays 0x0 and it
+    // lays out its internal SurfaceView at zero size, so no preview surface is
+    // ever created and the camera preview renders black.
+    previewView.measure(
+      MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
+      MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY),
+    )
+    previewView.layout(0, 0, width, height)
+  }
+
+  // React Native owns layout via Yoga and ignores native requestLayout() calls,
+  // so when StreamPack's viewfinder resizes its internal SurfaceView after the
+  // camera surface is ready, the layout pass never happens. Re-run it manually.
+  override fun requestLayout() {
+    super.requestLayout()
+    post(measureAndLayout)
+  }
+
+  private val measureAndLayout = Runnable {
+    measure(
+      MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
+      MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY),
+    )
+    layout(left, top, right, bottom)
   }
 }
 
