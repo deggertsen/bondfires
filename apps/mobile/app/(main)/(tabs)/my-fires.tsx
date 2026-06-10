@@ -1,14 +1,14 @@
 import {
   appActions,
-  appStore$,
   getBondfireVideoIndex,
   getErrorMessage,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
+  telemetry,
   useAppThemeColors,
+  useCurrentUserId,
 } from '@bondfires/app'
 import { BondfireRow, type BondfireRowProps, Button, Spinner, Text } from '@bondfires/ui'
-import { useValue } from '@legendapp/state/react'
 import { Flame, Pin } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
@@ -100,14 +100,29 @@ export default function MyFiresScreen() {
   const pinBondfire = useMutation(api.bondfires.pinBondfire)
   const unpinBondfire = useMutation(api.bondfires.unpinBondfire)
   const reportBondfire = useMutation(api.reports.submit)
-  const currentUserId = useValue(appStore$.userId)
+  const { userId: currentUserId, isLoading: isUserLoading, currentUser } = useCurrentUserId()
 
-  // Pinned bondfire IDs from user doc
-  const currentUser = useQuery(api.users.current, currentUserId ? {} : 'skip')
   const pinnedIds = useMemo(
     () => (currentUser?.pinnedBondfireIds ?? []) as string[],
     [currentUser?.pinnedBondfireIds],
   )
+
+  useEffect(() => {
+    if (!threads || isUserLoading || !currentUserId) {
+      return
+    }
+
+    const ownedThreads = threads.filter((thread) => thread.userId === currentUserId)
+    if (ownedThreads.length === 0) {
+      return
+    }
+
+    telemetry.breadcrumb('myFires:ownership-check', {
+      ownedCount: ownedThreads.length,
+      currentUserId,
+      threadCount: threads.length,
+    })
+  }, [currentUserId, isUserLoading, threads])
 
   const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string | null>>({})
   const loadingThumbsRef = useRef<Set<string>>(new Set())
@@ -252,7 +267,7 @@ export default function MyFiresScreen() {
     [reportBondfire],
   )
 
-  if (threads === undefined) {
+  if (threads === undefined || isUserLoading) {
     return (
       <YStack flex={1} backgroundColor={'$background'}>
         <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />

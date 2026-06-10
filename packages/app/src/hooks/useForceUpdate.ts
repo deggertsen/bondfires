@@ -1,10 +1,102 @@
 import { useQuery } from 'convex/react'
+import { requireOptionalNativeModule } from 'expo'
 import Constants from 'expo-constants'
-import * as ExpoInAppUpdates from 'expo-in-app-updates'
+import type {
+  UpdateCancelledEvent,
+  UpdateCompletedEvent,
+  UpdateDownloadedEvent,
+  UpdateStartEvent,
+} from 'expo-in-app-updates'
 import * as Linking from 'expo-linking'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Platform } from 'react-native'
 import { api } from '../../../../convex/_generated/api'
+import { telemetry } from '../services/telemetry'
+
+// ---------------------------------------------------------------------------
+// Guarded native module access
+// ---------------------------------------------------------------------------
+//
+// `expo-in-app-updates` eagerly calls `requireNativeModule()` at import time,
+// which throws (and white-screens the entire app) when the native pod is not
+// present in the binary — e.g. on iOS where the module's podspec minimum
+// deployment target is higher than the app's. In-app updates are an optional,
+// non-critical feature, so we load the module defensively and degrade to the
+// App Store / Play Store redirect path when it is unavailable.
+
+type CheckForUpdateResult = {
+  updateAvailable: boolean
+  storeVersion?: string
+  flexibleAllowed?: boolean
+  immediateAllowed?: boolean
+}
+
+type InAppUpdateEventMap = {
+  updateStart: UpdateStartEvent
+  updateDownloaded: UpdateDownloadedEvent
+  updateCompleted: UpdateCompletedEvent
+  updateCancelled: UpdateCancelledEvent
+}
+
+type NativeInAppUpdatesModule = {
+  FLEXIBLE: number
+  IMMEDIATE: number
+  checkForUpdate: () => Promise<CheckForUpdateResult>
+  startUpdate: (updateType?: number) => Promise<boolean>
+  addListener: <K extends keyof InAppUpdateEventMap>(
+    eventName: K,
+    listener: (event: InAppUpdateEventMap[K]) => void,
+  ) => { remove: () => void }
+}
+
+const nativeInAppUpdates = requireOptionalNativeModule<NativeInAppUpdatesModule>('ExpoInAppUpdates')
+
+let nativeMissingLogged = false
+function warnNativeModuleMissing(): void {
+  if (nativeMissingLogged) return
+  nativeMissingLogged = true
+  telemetry.warn(
+    'inAppUpdates:nativeModuleMissing',
+    'ExpoInAppUpdates native module unavailable; in-app updates disabled',
+    { platform: Platform.OS },
+  )
+}
+
+const ExpoInAppUpdates = {
+  async checkForUpdate(): Promise<CheckForUpdateResult> {
+    if (!nativeInAppUpdates) {
+      warnNativeModuleMissing()
+      return { updateAvailable: false }
+    }
+    return nativeInAppUpdates.checkForUpdate()
+  },
+  async startUpdate(isImmediate?: boolean): Promise<boolean> {
+    if (!nativeInAppUpdates) {
+      warnNativeModuleMissing()
+      return false
+    }
+    if (Platform.OS === 'android') {
+      const updateType =
+        isImmediate === undefined
+          ? undefined
+          : isImmediate
+            ? nativeInAppUpdates.IMMEDIATE
+            : nativeInAppUpdates.FLEXIBLE
+      return nativeInAppUpdates.startUpdate(updateType)
+    }
+    return nativeInAppUpdates.startUpdate()
+  },
+  addUpdateListener<K extends keyof InAppUpdateEventMap>(
+    eventName: K,
+    listener: (event: InAppUpdateEventMap[K]) => void,
+  ): () => void {
+    if (!nativeInAppUpdates) {
+      warnNativeModuleMissing()
+      return () => {}
+    }
+    return nativeInAppUpdates.addListener(eventName, listener).remove
+  },
+}
 
 // ---------------------------------------------------------------------------
 // Types

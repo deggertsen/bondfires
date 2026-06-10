@@ -28624,6 +28624,10 @@
           "type": "spring",
           "damping": 20,
           "stiffness": 60
+        },
+        "themeCrossfade": {
+          "type": "timing",
+          "duration": 450
         }
       },
       "View": "Component",
