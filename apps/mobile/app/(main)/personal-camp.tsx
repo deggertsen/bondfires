@@ -1,75 +1,25 @@
-import { subscriptionActions, useAppThemeColors } from '@bondfires/app'
-import { Button, Spinner, Text } from '@bondfires/ui'
-import { ArrowLeft, Flame, Lock, MessageCircle, Plus, Users } from '@tamagui/lucide-icons'
-import { useQuery } from 'convex/react'
+import { subscriptionActions, telemetry, useAppThemeColors } from '@bondfires/app'
+import { BondfireRow, type BondfireRowProps, Button, Spinner, Text } from '@bondfires/ui'
+import { ArrowLeft, Flame, Lock, Plus } from '@tamagui/lucide-icons'
+import { useAction, useMutation, useQuery } from 'convex/react'
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { FlatList, Pressable, StatusBar } from 'react-native'
+import { Alert, FlatList, Pressable, StatusBar } from 'react-native'
 import { Separator, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../convex/_generated/dataModel'
 import { PersonalInviteSheet } from '../../components/PersonalInviteSheet'
+import {
+  BONDFIRE_REPORT_OPTIONS,
+  getBondfireSwipeActions,
+  getSwipeReportComment,
+} from '../../lib/bondfireSwipeActions'
 import { goBackOrReplace } from '../../lib/navigation'
 import { routes } from '../../lib/routes'
 
 type BondfireData = Doc<'bondfires'> & {
   participantCount: number
-}
-
-function getTimeAgo(timestamp: number): string {
-  const seconds = Math.floor((Date.now() - timestamp) / 1000)
-  if (seconds < 60) return 'just now'
-  if (seconds < 3600) return [Math.floor(seconds / 60), 'm ago'].join('')
-  if (seconds < 86400) return [Math.floor(seconds / 3600), 'h ago'].join('')
-  if (seconds < 604800) return [Math.floor(seconds / 86400), 'd ago'].join('')
-  return [Math.floor(seconds / 604800), 'w ago'].join('')
-}
-
-function BondfireRow({ bondfire, onOpen }: { bondfire: BondfireData; onOpen: () => void }) {
-  const responses = Math.max(0, bondfire.videoCount - 1)
-
-  return (
-    <Pressable onPress={onOpen}>
-      <XStack paddingHorizontal={16} paddingVertical={13} gap={12} alignItems="center">
-        <YStack
-          width={50}
-          height={50}
-          borderRadius={15}
-          backgroundColor={'$backgroundHover'}
-          borderWidth={1}
-          borderColor={'$borderColor'}
-          alignItems="center"
-          justifyContent="center"
-        >
-          <Flame size={24} color={'$primary'} />
-        </YStack>
-
-        <YStack flex={1} gap={4}>
-          <Text fontSize={16} fontWeight="900" numberOfLines={1}>
-            {bondfire.creatorName ?? 'Anonymous'}
-          </Text>
-          <Text fontSize={12} color={'$placeholderColor'}>
-            {bondfire.videoStatus === 'live' ? 'Live now' : getTimeAgo(bondfire.createdAt)}
-          </Text>
-        </YStack>
-
-        <XStack alignItems="center" gap={12}>
-          <XStack alignItems="center" gap={4}>
-            <Users size={15} color={'$placeholderColor'} />
-            <Text fontSize={13} color={'$placeholderColor'}>
-              {bondfire.participantCount}
-            </Text>
-          </XStack>
-          <XStack alignItems="center" gap={4}>
-            <MessageCircle size={15} color={'$placeholderColor'} />
-            <Text fontSize={13} color={'$placeholderColor'}>
-              {responses}
-            </Text>
-          </XStack>
-        </XStack>
-      </XStack>
-    </Pressable>
-  )
+  campLabel?: string
 }
 
 export default function PersonalCampScreen() {
@@ -82,22 +32,45 @@ export default function PersonalCampScreen() {
   }>()
   const [inviteFireId, setInviteFireId] = useState<Id<'bondfires'> | null>(null)
   const handledInviteRouteRef = useRef<string | null>(null)
+
   const personalCamp = useQuery(api.personalCamps.getMyPersonalCamp, {})
   const bondfires = useQuery(
     api.personalBondfires.listMyPersonalBondfires,
     personalCamp ? {} : 'skip',
   )
 
-  const sortedBondfires = useMemo(() => {
-    if (!bondfires) return bondfires
-    return [...bondfires].sort((a, b) => b.createdAt - a.createdAt)
-  }, [bondfires])
+  // Thumbnail loading (same pattern as feed)
+  const getThumbnailUrl = useAction(api.videos.getThumbnailUrl)
+  const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string | null>>({})
+  const loadingThumbsRef = useRef<Set<string>>(new Set())
 
+  // Auth user for pin state
+  const currentUser = useQuery(api.users.current, {})
+  const pinnedIds = useMemo(
+    () => (currentUser?.pinnedBondfireIds ?? []) as string[],
+    [currentUser?.pinnedBondfireIds],
+  )
+
+  // Mutations
+  const deleteBondfire = useMutation(api.personalBondfires.deleteBondfire)
+  const pinBondfire = useMutation(api.bondfires.pinBondfire)
+  const unpinBondfire = useMutation(api.bondfires.unpinBondfire)
+  const reportBondfire = useMutation(api.reports.submit)
+
+  // Add camp label and sort
+  const enrichedBondfires = useMemo(() => {
+    if (!bondfires || !personalCamp) return undefined
+    return bondfires.map((b) => ({
+      ...b,
+      campLabel: personalCamp.name,
+    }))
+  }, [bondfires, personalCamp])
+
+  // Handle invite sheet routing from params
   useEffect(() => {
-    if (!newFire) return
-    const inviteRouteKey = [newFire, createdAfter ?? ''].join(':')
+    if (!newFire || !enrichedBondfires || enrichedBondfires.length === 0) return
+    const inviteRouteKey = `${newFire}:${createdAfter ?? ''}`
     if (handledInviteRouteRef.current === inviteRouteKey) return
-    if (!sortedBondfires || sortedBondfires.length === 0) return
 
     if (newFire !== 'new') {
       setInviteFireId(newFire as Id<'bondfires'>)
@@ -109,29 +82,89 @@ export default function PersonalCampScreen() {
     const createdAfterCutoff = Number.isFinite(parsedCreatedAfter)
       ? parsedCreatedAfter - 5000
       : undefined
-    const newest = sortedBondfires.find(
-      (bondfire) => createdAfterCutoff === undefined || bondfire.createdAt >= createdAfterCutoff,
+    const newest = enrichedBondfires.find(
+      (b) => createdAfterCutoff === undefined || b.createdAt >= createdAfterCutoff,
     )
     if (newest) {
       setInviteFireId(newest._id)
       handledInviteRouteRef.current = inviteRouteKey
     }
-  }, [createdAfter, newFire, sortedBondfires])
+  }, [createdAfter, newFire, enrichedBondfires])
+
+  // Lazy-load thumbnails
+  const ensureThumbnailUrl = useCallback(
+    async (bondfire: BondfireData) => {
+      if (!bondfire.muxPlaybackId) return
+      if (thumbnailUrls[bondfire._id] !== undefined) return
+      if (loadingThumbsRef.current.has(bondfire._id)) return
+
+      loadingThumbsRef.current.add(bondfire._id)
+      try {
+        const result = await getThumbnailUrl({
+          muxPlaybackId: bondfire.muxPlaybackId,
+          muxPlaybackPolicy: bondfire.muxPlaybackPolicy,
+          bondfireId: bondfire._id,
+        })
+        setThumbnailUrls((prev) => ({ ...prev, [bondfire._id]: result.thumbnailUrl }))
+      } catch (error) {
+        setThumbnailUrls((prev) => ({ ...prev, [bondfire._id]: null }))
+        telemetry.warn('personalCamp:thumbnail', 'Failed to load thumbnail URL', {
+          bondfireId: bondfire._id,
+          error: String(error),
+        })
+      } finally {
+        loadingThumbsRef.current.delete(bondfire._id)
+      }
+    },
+    [getThumbnailUrl, thumbnailUrls],
+  )
+
+  // Preload first 10 thumbnails
+  useEffect(() => {
+    if (!enrichedBondfires) return
+    for (const bondfire of enrichedBondfires.slice(0, 10)) {
+      ensureThumbnailUrl(bondfire)
+    }
+  }, [enrichedBondfires, ensureThumbnailUrl])
+
+  // Preload thumbnails for visible items
+  const handleViewableChanged = useCallback(
+    ({ viewableItems }: { viewableItems: { index: number | null }[] }) => {
+      if (!enrichedBondfires) return
+      const indices = viewableItems
+        .map((v) => v.index)
+        .filter((i): i is number => typeof i === 'number' && i >= 0)
+      if (indices.length === 0) return
+
+      const minIdx = Math.max(0, Math.min(...indices) - 2)
+      const maxIdx = Math.min(enrichedBondfires.length - 1, Math.max(...indices) + 8)
+      for (let i = minIdx; i <= maxIdx; i++) {
+        ensureThumbnailUrl(enrichedBondfires[i])
+      }
+    },
+    [enrichedBondfires, ensureThumbnailUrl],
+  )
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 10 }).current
+
+  // ── Navigation ──────────────────────────────────────────────────────
 
   const handleBack = useCallback(() => {
     goBackOrReplace(router, navigation, routes.feed)
   }, [navigation, router])
 
   const handleOpenBondfire = useCallback(
-    (bondfireId: Id<'bondfires'>) => {
+    (bondfireId: string) => {
       router.push(routes.bondfire(bondfireId))
     },
     [router],
   )
 
-  const handleUpgrade = useCallback(() => {
-    subscriptionActions.showPaywall()
-  }, [])
+  const handleRespond = useCallback(
+    (bondfireId: string) => {
+      router.push(routes.createRespondTo(bondfireId))
+    },
+    [router],
+  )
 
   const handleCreateBondfire = useCallback(() => {
     router.push(routes.createForPersonalCamp())
@@ -141,7 +174,129 @@ export default function PersonalCampScreen() {
     setInviteFireId(null)
   }, [])
 
-  // Loading state
+  // ── Swipe actions ───────────────────────────────────────────────────
+
+  const handleDelete = useCallback(
+    (bondfireId: string) => {
+      Alert.alert(
+        'Delete Bondfire',
+        'This will permanently remove your bondfire and all responses. This cannot be undone.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await deleteBondfire({ bondfireId: bondfireId as Id<'bondfires'> })
+              } catch (error) {
+                Alert.alert('Error', 'Failed to delete bondfire. Please try again.')
+                telemetry.error('personalCamp:deleteBondfire', String(error))
+              }
+            },
+          },
+        ],
+      )
+    },
+    [deleteBondfire],
+  )
+
+  const handlePin = useCallback(
+    async (bondfireId: string) => {
+      try {
+        await pinBondfire({ bondfireId: bondfireId as Id<'bondfires'> })
+      } catch {
+        Alert.alert('Error', 'Failed to pin bondfire.')
+      }
+    },
+    [pinBondfire],
+  )
+
+  const handleUnpin = useCallback(
+    async (bondfireId: string) => {
+      try {
+        await unpinBondfire({ bondfireId: bondfireId as Id<'bondfires'> })
+      } catch {
+        Alert.alert('Error', 'Failed to unpin bondfire.')
+      }
+    },
+    [unpinBondfire],
+  )
+
+  const handleReport = useCallback(
+    (bondfireId: string, videoOwnerId: string) => {
+      Alert.alert('Report Content', 'What category best describes the issue?', [
+        { text: 'Cancel', style: 'cancel' },
+        ...BONDFIRE_REPORT_OPTIONS.map((option) => ({
+          text: option.label,
+          onPress: async () => {
+            try {
+              await reportBondfire({
+                bondfireId: bondfireId as Id<'bondfires'>,
+                videoOwnerId: videoOwnerId as Id<'users'>,
+                category: 'community_guidelines',
+                subCategory: option.subCategory,
+                comments: getSwipeReportComment('personal-camp'),
+              })
+              Alert.alert('Reported', 'Thank you. We will review this content.')
+            } catch {
+              Alert.alert('Error', 'Failed to submit report.')
+            }
+          },
+        })),
+      ])
+    },
+    [reportBondfire],
+  )
+
+  const handleUpgrade = useCallback(() => {
+    subscriptionActions.showPaywall()
+  }, [])
+
+  // ── Build BondfireRow props ─────────────────────────────────────────
+
+  const toBondfireRowProps = useCallback(
+    (bondfire: BondfireData): BondfireRowProps => {
+      const isOwner = bondfire.userId === currentUser?._id
+      const isPinned = pinnedIds.includes(bondfire._id)
+
+      return {
+        creatorName: bondfire.creatorName ?? 'Anonymous',
+        timestamp: bondfire.createdAt,
+        videoCount: bondfire.videoCount,
+        campLabel: bondfire.campLabel,
+        thumbnailUrl: thumbnailUrls[bondfire._id] ?? null,
+        isLive: bondfire.videoStatus === 'live',
+        statusLabel: '',
+        participants: [],
+        actions: getBondfireSwipeActions({
+          isOwner,
+          isPinned,
+          onDelete: () => handleDelete(bondfire._id),
+          onPin: () => handlePin(bondfire._id),
+          onUnpin: () => handleUnpin(bondfire._id),
+          onReport: () => handleReport(bondfire._id, bondfire.userId),
+        }),
+        onOpen: () => handleOpenBondfire(bondfire._id),
+        onRespond: () => handleRespond(bondfire._id),
+      }
+    },
+    [
+      currentUser?._id,
+      pinnedIds,
+      thumbnailUrls,
+      handleDelete,
+      handlePin,
+      handleUnpin,
+      handleReport,
+      handleOpenBondfire,
+      handleRespond,
+    ],
+  )
+
+  // ── Render states ───────────────────────────────────────────────────
+
+  // Loading
   if (personalCamp === undefined) {
     return (
       <YStack
@@ -282,7 +437,7 @@ export default function PersonalCampScreen() {
 
       <Separator borderColor={'rgba(51, 53, 58, 0.25)'} />
 
-      {/* Bondfires list */}
+      {/* Bondfires list using shared BondfireRow */}
       {bondfires === undefined ? (
         <YStack flex={1} alignItems="center" justifyContent="center">
           <Spinner size="large" color={'$primary'} />
@@ -317,13 +472,15 @@ export default function PersonalCampScreen() {
         </YStack>
       ) : (
         <FlatList
-          data={bondfires}
+          data={enrichedBondfires}
           keyExtractor={(item) => item._id}
-          ItemSeparatorComponent={() => <Separator borderColor={'rgba(51, 53, 58, 0.25)'} />}
-          contentContainerStyle={{ paddingBottom: 40 }}
-          renderItem={({ item }) => (
-            <BondfireRow bondfire={item} onOpen={() => handleOpenBondfire(item._id)} />
+          ItemSeparatorComponent={() => (
+            <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
           )}
+          contentContainerStyle={{ paddingBottom: 40 }}
+          renderItem={({ item }) => <BondfireRow {...toBondfireRowProps(item)} />}
+          onViewableItemsChanged={handleViewableChanged}
+          viewabilityConfig={viewabilityConfig}
         />
       )}
 
