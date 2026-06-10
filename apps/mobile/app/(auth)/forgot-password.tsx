@@ -7,6 +7,7 @@ import { useState } from 'react'
 import { Pressable, StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { YStack } from 'tamagui'
+import { goBackOrReplace } from '../../lib/navigation'
 import { routes } from '../../lib/routes'
 
 export default function ForgotPasswordScreen() {
@@ -49,7 +50,7 @@ export default function ForgotPasswordScreen() {
 
       {/* Back button */}
       <YStack paddingTop={60} paddingHorizontal={16}>
-        <Pressable onPress={() => { navigation.canGoBack() ? router.back() : router.replace(routes.forgotPassword) }}>
+        <Pressable onPress={() => goBackOrReplace(router, navigation, routes.login())}>
           <YStack
             width={40}
             height={40}

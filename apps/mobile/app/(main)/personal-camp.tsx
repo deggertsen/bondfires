@@ -9,6 +9,7 @@ import { Separator, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../convex/_generated/dataModel'
 import { PersonalInviteSheet } from '../../components/PersonalInviteSheet'
+import { goBackOrReplace } from '../../lib/navigation'
 import { routes } from '../../lib/routes'
 
 type BondfireData = Doc<'bondfires'> & {
@@ -118,11 +119,7 @@ export default function PersonalCampScreen() {
   }, [createdAfter, newFire, sortedBondfires])
 
   const handleBack = useCallback(() => {
-    if (navigation.canGoBack()) {
-      router.back()
-    } else {
-      router.replace(routes.feed)
-    }
+    goBackOrReplace(router, navigation, routes.feed)
   }, [navigation, router])
 
   const handleOpenBondfire = useCallback(

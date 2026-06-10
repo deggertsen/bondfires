@@ -6,6 +6,7 @@ import { Redirect, Stack, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Pressable, StatusBar } from 'react-native'
 import { YStack } from 'tamagui'
+import { goBackOrReplace } from '../lib/navigation'
 import { routes } from '../lib/routes'
 
 type RedemptionStatus = 'loading' | 'success' | 'error'
@@ -83,7 +84,7 @@ export function InviteRedemptionScreen({
         <StatusBar barStyle={statusBarStyle} />
 
         <YStack paddingTop={58} paddingHorizontal={16} paddingBottom={18}>
-          <Pressable onPress={() => { navigation.canGoBack() ? router.back() : router.replace(routes.feed) }}>
+          <Pressable onPress={() => goBackOrReplace(router, navigation, routes.feed)}>
             <YStack
               width={42}
               height={42}

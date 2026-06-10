@@ -37,6 +37,7 @@ import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { CompletionScreen } from '../../../components/CompletionScreen'
 import { InviteSheet } from '../../../components/InviteSheet'
 import { SparkTitleSheet } from '../../../components/SparkTitleSheet'
+import { goBackOrReplace } from '../../../lib/navigation'
 import { routes } from '../../../lib/routes'
 import { mergeVideoSegments } from '../../../lib/videoSegmentMerger'
 import { BondfireLivePublisher, LivePublisherView } from '../../../modules/bondfire-live-publisher'
@@ -1496,6 +1497,10 @@ export default function CreateScreen() {
     cancelLiveRecordingRef.current = cancelLiveRecording
   }, [cancelLiveRecording])
 
+  const handleBack = useCallback(() => {
+    goBackOrReplace(router, navigation, routes.feed)
+  }, [navigation, router])
+
   // Mount-scoped unmount cleanup: cancel a provisioned-but-unstarted session.
   // Uses refs/observables so changing callback identities can't fire this early.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reads latest state via observables at cleanup time
@@ -1943,11 +1948,7 @@ export default function CreateScreen() {
                   if (isPreConnected) {
                     void cancelLiveRecording()
                   }
-                  if (navigation.canGoBack()) {
-                    router.back()
-                  } else {
-                    router.replace(routes.feed)
-                  }
+                  handleBack()
                 }}
               >
                 <YStack
@@ -2215,7 +2216,7 @@ export default function CreateScreen() {
             justifyContent="space-between"
             alignItems="center"
           >
-            <Pressable onPress={() => { navigation.canGoBack() ? router.back() : router.replace(routes.feed) }}>
+            <Pressable onPress={handleBack}>
               <YStack
                 width={40}
                 height={40}

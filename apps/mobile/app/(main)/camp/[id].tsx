@@ -29,6 +29,7 @@ import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { CampInviteSheet } from '../../../components/CampInviteSheet'
 import { SparkTitleSheet } from '../../../components/SparkTitleSheet'
+import { goBackOrReplace } from '../../../lib/navigation'
 import { routes } from '../../../lib/routes'
 import { OwnerCampSections } from './OwnerCampSections'
 
@@ -943,6 +944,10 @@ export default function CampDetailScreen() {
     [router],
   )
 
+  const handleBack = useCallback(() => {
+    goBackOrReplace(router, navigation, routes.feed)
+  }, [navigation, router])
+
   if (camp === undefined || bondfires === undefined) {
     return (
       <YStack flex={1} backgroundColor={'$background'} alignItems="center" justifyContent="center">
@@ -967,7 +972,7 @@ export default function CampDetailScreen() {
         <Text fontSize={22} fontWeight="900" textAlign="center">
           Camp unavailable
         </Text>
-        <Button variant="primary" size="$lg" onPress={() => { navigation.canGoBack() ? router.back() : router.replace(routes.feed) }}>
+        <Button variant="primary" size="$lg" onPress={handleBack}>
           <Text color={'$color'} fontWeight="900">
             Go Back
           </Text>
@@ -992,7 +997,7 @@ export default function CampDetailScreen() {
           <>
             <CampHeader
               camp={camp}
-              onBack={() => { navigation.canGoBack() ? router.back() : router.replace(routes.feed) }}
+              onBack={handleBack}
               onJoin={handleJoin}
               onMute={handleMute}
               onCreateInvite={handleCreateInvite}
