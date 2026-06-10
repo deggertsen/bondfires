@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioFormat
+import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.util.Log
 import android.util.Size
@@ -242,7 +243,19 @@ class BondfireLivePublisherModule : Module() {
       fps = fps,
       gopDurationInS = 2.0f,
     )
-    newStreamer.setVideoConfig(videoConfig)
+    try {
+      newStreamer.setVideoConfig(videoConfig)
+    } catch (e: Exception) {
+      Log.w(TAG, "Video config with ${resolution.width}x${resolution.height} failed, falling back to 720x1280", e)
+      val fallbackConfig = VideoCodecConfig(
+        mimeType = MediaFormat.MIMETYPE_VIDEO_AVC,
+        startBitrate = videoBitrate,
+        resolution = Size(720, 1280),
+        fps = fps,
+        gopDurationInS = 2.0f,
+      )
+      newStreamer.setVideoConfig(fallbackConfig)
+    }
 
     // Bind preview — StreamPack PreviewView fills the view by default.
     previewView?.setVideoSourceProvider(newStreamer)
@@ -324,9 +337,30 @@ class BondfireLivePublisherModule : Module() {
       }
       val preferredSizes = if (cappedSizes.isNotEmpty()) cappedSizes else candidateSizes
 
-      preferredSizes.maxByOrNull { size ->
+      val bestSize = preferredSizes.maxByOrNull { size ->
         size.width.toLong() * size.height.toLong()
-      } ?: fallbackCameraResolution(desiredWidth, desiredHeight)
+      } ?: return fallbackCameraResolution(desiredWidth, desiredHeight)
+
+      // Validate that the AVC encoder actually supports this resolution.
+      // Some devices report MediaCodec output sizes that their hardware AVC
+      // encoder rejects with InvalidParameterException.
+      val avcEncoder = try {
+        MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.firstOrNull { info ->
+          info.isEncoder && info.supportedTypes.contains(MediaFormat.MIMETYPE_VIDEO_AVC)
+        }
+      } catch (_: Exception) {
+        null
+      }
+      if (avcEncoder != null) {
+        val capabilities = avcEncoder.capabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
+        val encoderCaps = capabilities.videoCapabilities
+        if (encoderCaps != null && !encoderCaps.isSizeSupported(bestSize.width, bestSize.height)) {
+          Log.w(TAG, "AVC encoder does not support ${bestSize.width}x${bestSize.height}, falling back")
+          return fallbackCameraResolution(desiredWidth, desiredHeight)
+        }
+      }
+
+      bestSize
     } catch (e: Exception) {
       Log.w(TAG, "Failed to query camera resolutions, falling back to default", e)
       fallbackCameraResolution(desiredWidth, desiredHeight)
