@@ -166,6 +166,7 @@ export function useLivePublisher(options: {
       })
 
       livePublishActions.beginCreate()
+      let provisionedSessionId: string | null = null
       try {
         const liveStream = await options.createLiveStream({
           isResponse: !!args.respondToBondfireId,
@@ -176,6 +177,7 @@ export function useLivePublisher(options: {
           title: args.title,
           pending: args.pending,
         })
+        provisionedSessionId = liveStream.liveSessionId
 
         ingestRef.current = liveStream.ingest
         livePublishActions.provisioned({
@@ -188,6 +190,24 @@ export function useLivePublisher(options: {
         return liveStream
       } catch (error) {
         livePublishActions.fail(error)
+        // Roll back the Mux live stream we provisioned so we don't keep paying
+        // for an orphaned session. This mirrors the same safeguard in start().
+        if (provisionedSessionId) {
+          try {
+            await options.cancelLiveStream({
+              liveSessionId: provisionedSessionId,
+              reason: 'provision_failed',
+            })
+          } catch (cancelError) {
+            telemetry.warn(
+              'live:cancel',
+              'Failed to cancel orphaned Mux live stream after provision error',
+              {
+                error: String(cancelError),
+              },
+            )
+          }
+        }
         throw error
       }
     },

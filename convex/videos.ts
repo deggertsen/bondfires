@@ -607,6 +607,28 @@ async function deleteMuxAsset(assetId: string): Promise<'deleted' | 'missing'> {
   return 'deleted'
 }
 
+async function deleteMuxLiveStream(liveStreamId: string): Promise<'deleted' | 'missing'> {
+  const config = getMuxConfig()
+  const response = await fetch(`${MUX_API_BASE_URL}/live-streams/${liveStreamId}`, {
+    method: 'DELETE',
+    headers: {
+      Accept: 'application/json',
+      Authorization: getMuxAuthorizationHeader(config.tokenId, config.tokenSecret),
+    },
+  })
+
+  if (response.status === 404) {
+    return 'missing'
+  }
+
+  if (!response.ok) {
+    const message = await response.text()
+    throw new Error(`Mux live stream delete failed: ${response.status} ${message}`)
+  }
+
+  return 'deleted'
+}
+
 function isPlayableVideoRecord(record: {
   videoStatus?: string
   muxPlaybackId?: string
@@ -1414,26 +1436,37 @@ export const createLiveStream = action({
     const streamKey = readString(data.stream_key, 'stream key')
     const playbackId = getMuxPlaybackId(data)
 
-    const pendingRecord: {
+    let pendingRecord: {
       liveSessionId: Id<'liveSessions'>
       recordId: Id<'bondfires'> | Id<'bondfireVideos'>
       recordType: 'bondfire' | 'response'
-    } = await ctx.runMutation(internal.videos.createLinkedMuxLiveSession, {
-      userId,
-      liveStreamId,
-      playbackId,
-      isResponse: args.isResponse,
-      bondfireId: args.bondfireId,
-      campId: args.campId,
-      personalCamp: args.personalCamp,
-      playbackPolicy,
-      latencyMode: config.liveLatencyMode,
-      tags: args.tags,
-      width: args.width,
-      height: args.height,
-      title: args.title,
-      pending: args.pending,
-    })
+    }
+
+    try {
+      pendingRecord = await ctx.runMutation(internal.videos.createLinkedMuxLiveSession, {
+        userId,
+        liveStreamId,
+        playbackId,
+        isResponse: args.isResponse,
+        bondfireId: args.bondfireId,
+        campId: args.campId,
+        personalCamp: args.personalCamp,
+        playbackPolicy,
+        latencyMode: config.liveLatencyMode,
+        tags: args.tags,
+        width: args.width,
+        height: args.height,
+        title: args.title,
+        pending: args.pending,
+      })
+    } catch (error) {
+      try {
+        await deleteMuxLiveStream(liveStreamId)
+      } catch (deleteError) {
+        console.warn('Failed to delete Mux live stream after Convex linking failed:', deleteError)
+      }
+      throw error
+    }
 
     return {
       liveStreamId,
@@ -1623,9 +1656,7 @@ export const cancelLiveStream = action({
     }
 
     try {
-      await muxRequest(`/live-streams/${liveSession.muxLiveStreamId}`, {
-        method: 'DELETE',
-      })
+      await deleteMuxLiveStream(liveSession.muxLiveStreamId)
     } catch (error) {
       console.warn('Failed to delete Mux live stream during cancellation:', error)
       throw new Error('Failed to cancel Mux live stream')
