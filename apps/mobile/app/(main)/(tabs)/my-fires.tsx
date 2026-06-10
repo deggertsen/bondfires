@@ -13,7 +13,7 @@ import { Flame, Pin } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, FlatList, RefreshControl, StatusBar } from 'react-native'
+import { Alert, FlatList, Pressable, RefreshControl, StatusBar } from 'react-native'
 import { Separator, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
@@ -91,7 +91,8 @@ export default function MyFiresScreen() {
   const router = useRouter()
   const [refreshKey, setRefreshKey] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const threads = useQuery(api.conversations.listMyFires, { limit: 80 }) as MyFire[] | undefined
+  const [pinnedFirst, setPinnedFirst] = useState(false)
+  const threads = useQuery(api.conversations.listMyFires, { limit: 80, pinnedFirst }) as MyFire[] | undefined
   const getThumbnailUrl = useAction(api.videos.getThumbnailUrl)
 
   // Swipe action mutations
@@ -309,7 +310,13 @@ export default function MyFiresScreen() {
                     : 'All caught up'}
                 </Text>
               </YStack>
-              <Pin size={22} color={'$primary'} />
+              <Pressable onPress={() => setPinnedFirst((prev) => !prev)} hitSlop={12}>
+                <Pin
+                  size={22}
+                  color={pinnedFirst ? '$primary' : '$placeholderColor'}
+                  fill={pinnedFirst ? '$primary' : 'transparent'}
+                />
+              </Pressable>
             </XStack>
           </YStack>
         }

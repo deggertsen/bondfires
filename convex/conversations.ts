@@ -308,6 +308,7 @@ async function listVisiblePrivateCampThreadsByUser(
 export const listMyFires = query({
   args: {
     limit: v.optional(v.number()),
+    pinnedFirst: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = await auth.getUserId(ctx)
@@ -317,11 +318,14 @@ export const listMyFires = query({
 
     const limit = clampLimit(args.limit)
     const candidateLimit = limit * THREAD_CANDIDATE_MULTIPLIER
-    const [threadIds, memberCampIds, pinnedUserIds] = await Promise.all([
+    const [threadIds, memberCampIds, pinnedUserIds, user] = await Promise.all([
       getParticipantThreadIds(ctx, userId, candidateLimit),
       getVisibleCampIds(ctx, userId),
       getPinnedUserIds(ctx, userId),
+      ctx.db.get(userId),
     ])
+
+    const pinnedBondfireIds = new Set(user?.pinnedBondfireIds ?? [])
 
     const threads: ThreadSummary[] = []
     for (const threadId of threadIds) {
@@ -339,7 +343,18 @@ export const listMyFires = query({
       }
     }
 
-    return threads.sort((a, b) => b.lastActivityAt - a.lastActivityAt).slice(0, limit)
+    if (args.pinnedFirst) {
+      threads.sort((a, b) => {
+        const aPinned = pinnedBondfireIds.has(a._id) ? 1 : 0
+        const bPinned = pinnedBondfireIds.has(b._id) ? 1 : 0
+        if (aPinned !== bPinned) return bPinned - aPinned
+        return b.lastActivityAt - a.lastActivityAt
+      })
+    } else {
+      threads.sort((a, b) => b.lastActivityAt - a.lastActivityAt)
+    }
+
+    return threads.slice(0, limit)
   },
 })
 
