@@ -199,9 +199,13 @@ export function useLivePublisher(options: {
               reason: 'provision_failed',
             })
           } catch (cancelError) {
-            telemetry.warn('live:cancel', 'Failed to cancel orphaned Mux live stream after provision error', {
-              error: String(cancelError),
-            })
+            telemetry.warn(
+              'live:cancel',
+              'Failed to cancel orphaned Mux live stream after provision error',
+              {
+                error: String(cancelError),
+              },
+            )
           }
         }
         throw error
