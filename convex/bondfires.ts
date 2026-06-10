@@ -821,8 +821,8 @@ export const deleteBondfire = mutation({
       }
 
       const invites = await ctx.db
-        .query('personalBondfireInvites')
-        .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
+        .query('inviteCodes')
+        .withIndex('by_parent', (q) => q.eq('parentType', 'personal-bondfire').eq('parentId', args.bondfireId))
         .collect()
       for (const inv of invites) {
         await ctx.db.delete(inv._id)

@@ -1552,7 +1552,8 @@ export default function BondfireDetailScreen() {
 
         {/* Invite Sheet */}
         <InviteSheet
-          bondfireId={bondfireId}
+          mode="bondfire"
+          id={bondfireId}
           open={isInviteSheetOpen}
           onClose={() => setIsInviteSheetOpen(false)}
         />

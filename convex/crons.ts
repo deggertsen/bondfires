@@ -47,6 +47,14 @@ crons.daily(
 // Runs daily at 12:00 UTC.
 crons.daily('purge old client logs', { hourUTC: 12, minuteUTC: 0 }, internal.clientLogs.purgeOld)
 
+// Cleanup expired invite codes.
+// Runs daily at 12:30 UTC, after log purge.
+crons.daily(
+  'cleanup expired invite codes',
+  { hourUTC: 12, minuteUTC: 30 },
+  internal.inviteCodes.cleanupExpiredInviteCodes,
+)
+
 // Cleanup archived camps past the 30-day retention window.
 // Runs daily at 13:00 UTC — deletes Mux assets then camp data.
 crons.daily(

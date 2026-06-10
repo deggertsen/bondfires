@@ -2174,7 +2174,8 @@ export default function CreateScreen() {
             </YStack>
             {liveRecordId && !respondTo ? (
               <InviteSheet
-                bondfireId={liveRecordId as Id<'bondfires'>}
+                mode="bondfire"
+                id={liveRecordId as Id<'bondfires'>}
                 open={showInviteSheet}
                 onClose={() => state$.showInviteSheet.set(false)}
               />

@@ -27,7 +27,7 @@ import { Alert, FlatList, Modal, Pressable, StatusBar, TextInput } from 'react-n
 import { Separator, Image as TamaguiImage, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
-import { CampInviteSheet } from '../../../components/CampInviteSheet'
+import { InviteSheet } from '../../../components/InviteSheet'
 import { SparkTitleSheet } from '../../../components/SparkTitleSheet'
 import { goBackOrReplace } from '../../../lib/navigation'
 import { routes } from '../../../lib/routes'
@@ -1180,8 +1180,9 @@ export default function CampDetailScreen() {
         </YStack>
       </Modal>
       {campId ? (
-        <CampInviteSheet
-          campId={campId as Id<'camps'>}
+        <InviteSheet
+          mode="camp"
+          id={campId as Id<'camps'>}
           open={isInviteSheetOpen}
           onClose={() => setIsInviteSheetOpen(false)}
         />
