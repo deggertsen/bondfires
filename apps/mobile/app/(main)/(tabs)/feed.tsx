@@ -196,15 +196,19 @@ function FeedSubscription({
   selectedCampId,
   onResolved,
 }: {
-  selectedCampId: Doc<'camps'>['_id'] | null
+  selectedCampId: Doc<'camps'>['_id'] | null | undefined
   onResolved: (bondfires: BondfireData[]) => void
 }) {
-  const allBondfires = useQuery(api.bondfires.listFeed, selectedCampId ? 'skip' : { limit: 50 })
+  const allBondfires = useQuery(
+    api.bondfires.listFeed,
+    selectedCampId === null ? { limit: 50 } : 'skip',
+  )
   const campBondfires = useQuery(
     api.bondfires.listByCamp,
     selectedCampId ? { campId: selectedCampId, limit: 50 } : 'skip',
   )
-  const bondfires = selectedCampId ? campBondfires : allBondfires
+  const bondfires =
+    selectedCampId === undefined ? undefined : selectedCampId ? campBondfires : allBondfires
 
   useEffect(() => {
     if (bondfires !== undefined) {
@@ -231,13 +235,17 @@ export default function FeedScreen() {
   const joinedCamps = useQuery(api.camps.listMine, currentUserId ? {} : 'skip') as
     | JoinedCamp[]
     | undefined
-  // Filter out archived camps from feed filter pills — they can't show bondfires
   const feedCamps = useMemo(
     () => (joinedCamps ?? []).filter((camp) => camp.status !== 'archived'),
     [joinedCamps],
   )
   const selectedCampId = currentCampId as Doc<'camps'>['_id'] | null
-  const selectedCamp = joinedCamps?.find((camp) => camp._id === selectedCampId)
+  const selectedCamp = feedCamps.find((camp) => camp._id === selectedCampId)
+  const activeCampId =
+    selectedCampId && joinedCamps === undefined ? undefined : (selectedCamp?._id ?? null)
+  const feedSubscriptionKey = `${refreshKey}-${
+    activeCampId === undefined ? 'resolving' : (activeCampId ?? 'all')
+  }`
 
   // Authenticated user data for private pin state.
   const currentUser = useQuery(api.users.current, currentUserId ? {} : 'skip')
@@ -302,13 +310,13 @@ export default function FeedScreen() {
       return
     }
 
-    if (!joinedCamps.some((camp) => camp._id === selectedCampId)) {
+    if (!feedCamps.some((camp) => camp._id === selectedCampId)) {
       setBondfires(undefined)
       state$.thumbnailUrls.set({})
       loadingThumbsRef.current = new Set()
       appActions.setCurrentCampId(null)
     }
-  }, [joinedCamps, selectedCampId, state$])
+  }, [feedCamps, joinedCamps, selectedCampId, state$])
 
   const filtered = useMemo(() => {
     if (!bondfires) return bondfires
@@ -470,12 +478,12 @@ export default function FeedScreen() {
       return
     }
 
-    if (selectedCampId) {
-      router.push(routes.createForCamp(selectedCampId))
+    if (activeCampId) {
+      router.push(routes.createForCamp(activeCampId))
       return
     }
     router.push(routes.create)
-  }, [router, selectedCamp, selectedCampId])
+  }, [activeCampId, router, selectedCamp])
 
   const handleSelectCamp = useCallback(
     (campId: string | null) => {
@@ -616,8 +624,8 @@ export default function FeedScreen() {
     return (
       <YStack flex={1}>
         <FeedSubscription
-          key={`${refreshKey}-${selectedCampId ?? 'all'}`}
-          selectedCampId={selectedCampId}
+          key={feedSubscriptionKey}
+          selectedCampId={activeCampId}
           onResolved={handleBondfiresResolved}
         />
         <LoadingFeed />
@@ -628,8 +636,8 @@ export default function FeedScreen() {
   return (
     <YStack flex={1} backgroundColor={'$background'}>
       <FeedSubscription
-        key={`${refreshKey}-${selectedCampId ?? 'all'}`}
-        selectedCampId={selectedCampId}
+        key={feedSubscriptionKey}
+        selectedCampId={activeCampId}
         onResolved={handleBondfiresResolved}
       />
       <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
@@ -728,14 +736,14 @@ export default function FeedScreen() {
             >
               <CampPill
                 label="All"
-                selected={!selectedCampId}
+                selected={!activeCampId}
                 onPress={() => handleSelectCamp(null)}
               />
-              {(feedCamps ?? []).map((camp) => (
+              {feedCamps.map((camp) => (
                 <CampPill
                   key={camp._id}
                   label={camp.name.replace(/ \((Men|Women)\)$/, '')}
-                  selected={selectedCampId === camp._id}
+                  selected={activeCampId === camp._id}
                   onPress={() => handleSelectCamp(camp._id)}
                 />
               ))}
