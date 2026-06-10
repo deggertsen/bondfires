@@ -3311,7 +3311,9 @@ async function reconcileStuckMuxRecord(
       const recentAssetIds = Array.isArray(liveData.recent_asset_ids)
         ? liveData.recent_asset_ids.filter((id): id is string => typeof id === 'string')
         : []
-      assetId = readOptionalString(liveData.active_asset_id) ?? recentAssetIds.at(-1)
+      assetId =
+        readOptionalString(liveData.active_asset_id) ??
+        (recentAssetIds.length > 0 ? recentAssetIds[recentAssetIds.length - 1] : undefined)
     }
 
     if (!assetId && record.videoStatus === 'processing') {
