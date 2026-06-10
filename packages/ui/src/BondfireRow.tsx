@@ -60,7 +60,11 @@ function ParticipantStack({ participants }: { participants: BondfireParticipant[
           {participant.photoUrl ? (
             <Avatar.Image source={{ uri: participant.photoUrl }} />
           ) : (
-            <Avatar.Fallback backgroundColor="$backgroundHover">
+            <Avatar.Fallback
+              backgroundColor="$backgroundHover"
+              alignItems="center"
+              justifyContent="center"
+            >
               <User size={14} color="$placeholderColor" />
             </Avatar.Fallback>
           )}
