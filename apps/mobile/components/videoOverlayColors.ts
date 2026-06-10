@@ -9,7 +9,7 @@ export const VIDEO_OVERLAY_COLORS = {
   playPauseBackground: 'rgba(20, 20, 22, 0.6)',
   loadingBackground: 'rgba(20, 20, 22, 0.7)',
   textPrimary: '#F3F4F6',
-  textSecondary: '#9CA3AF',
+  textSecondary: '#D1D5DB',
   progressTrack: 'rgba(255,255,255,0.3)',
   dotInactive: 'rgba(255,255,255,0.4)',
 } as const
