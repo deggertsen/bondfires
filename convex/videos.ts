@@ -21,7 +21,9 @@ import {
   assertVideoDurationWithinTierLimit,
   getEntitlementSubscriptionTier,
   getPrivateCampExpiresAt,
+  getTierMaxVideoDurationMs,
   PAID_TIERS,
+  PRO_MAX_VIDEO_DURATION_MS,
 } from './entitlements'
 import { throwUserError } from './errors'
 import {
@@ -81,6 +83,17 @@ const MUX_FAILED_STATUSES = new Set(['errored', 'cancelled', 'timed_out'])
 const MUX_LIVE_RTMPS_ENDPOINT = 'rtmps://global-live.mux.com:443/app'
 const DEFAULT_MUX_LIVE_RECONNECT_WINDOW_SECONDS = 30
 const MUX_LIVE_RECONNECT_WINDOW_MAX_SECONDS = 30 * 60
+// Grace period past the tier recording limit before Mux force-terminates the
+// stream. The client auto-stops at the tier limit; this is the server-side
+// backstop for crashed or hostile clients.
+const MUX_LIVE_MAX_DURATION_BUFFER_SECONDS = 5 * 60
+// Mux accepts max_continuous_duration between 60s and 12h.
+const MUX_LIVE_MAX_CONTINUOUS_DURATION_MIN_SECONDS = 60
+const MUX_LIVE_MAX_CONTINUOUS_DURATION_MAX_SECONDS = 12 * 60 * 60
+// Pending (provisioned but never published) live sessions are reaped after
+// this age regardless of client heartbeats. The client expires its preview
+// before this deadline, so only abandoned sessions hit the reaper.
+export const MAX_PENDING_LIVE_SESSION_AGE_MS = 5 * 60 * 1000
 const SIGNED_PLAYBACK_URL_TTL_SECONDS = 12 * 60 * 60
 const DURATION_LIMIT_EXCEEDED_STATUS = 'duration_limit_exceeded'
 
@@ -1411,6 +1424,10 @@ export const createLiveStream = action({
       0,
       MUX_LIVE_RECONNECT_WINDOW_MAX_SECONDS,
     )
+    const maxContinuousDuration: number = await ctx.runQuery(
+      internal.videos.getLiveMaxContinuousDurationSeconds,
+      { userId },
+    )
     const data = parseMuxData(
       await muxRequest('/live-streams', {
         method: 'POST',
@@ -1418,6 +1435,7 @@ export const createLiveStream = action({
           playback_policies: [playbackPolicy],
           latency_mode: config.liveLatencyMode,
           reconnect_window: reconnectWindow,
+          max_continuous_duration: maxContinuousDuration,
           passthrough: JSON.stringify({
             userId,
             isResponse: args.isResponse,
@@ -1716,8 +1734,10 @@ export const markBondfireLive = mutation({
 })
 
 /**
- * Heartbeat for a provisioned-but-not-yet-publishing live session so the
- * stale-session cron doesn't reap it while the creator is still previewing.
+ * Heartbeat for an in-flight live session so the stale-session cron doesn't
+ * reap it while the creator is still previewing or actively recording.
+ * Pending ('created') sessions are still hard-capped by
+ * MAX_PENDING_LIVE_SESSION_AGE_MS regardless of heartbeats.
  */
 export const touchLiveSession = mutation({
   args: {
@@ -2752,10 +2772,30 @@ export const getActiveMuxLiveSessionForUser = internalQuery({
   },
 })
 
+/**
+ * Tier-aware cap (in seconds) passed to Mux as `max_continuous_duration` so
+ * a stream the client never stops gets terminated by Mux itself instead of
+ * running to Mux's 12-hour default.
+ */
+export const getLiveMaxContinuousDurationSeconds = internalQuery({
+  args: { userId: v.id('users') },
+  handler: async (ctx, args): Promise<number> => {
+    const tier = await getEntitlementSubscriptionTier(ctx, args.userId)
+    const maxDurationMs = getTierMaxVideoDurationMs(tier) ?? PRO_MAX_VIDEO_DURATION_MS
+    const withBuffer = Math.ceil(maxDurationMs / 1000) + MUX_LIVE_MAX_DURATION_BUFFER_SECONDS
+    return Math.min(
+      MUX_LIVE_MAX_CONTINUOUS_DURATION_MAX_SECONDS,
+      Math.max(MUX_LIVE_MAX_CONTINUOUS_DURATION_MIN_SECONDS, withBuffer),
+    )
+  },
+})
+
 export const listStaleMuxLiveSessions = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const staleBefore = Date.now() - 5 * 60 * 1000
+    const now = Date.now()
+    const staleBefore = now - 5 * 60 * 1000
+    const pendingMaxAgeBefore = now - MAX_PENDING_LIVE_SESSION_AGE_MS
     // 'created' covers sessions where the client errored before going live —
     // those would otherwise stay parked on Mux billing forever.
     const statuses = ['created', 'starting', 'live', 'ending'] as const
@@ -2769,7 +2809,13 @@ export const listStaleMuxLiveSessions = internalQuery({
       ),
     )
 
-    return batches.flat().filter((session) => session.updatedAt < staleBefore)
+    return batches.flat().filter(
+      (session) =>
+        session.updatedAt < staleBefore ||
+        // Hard cap on pending sessions: even an actively heartbeating preview
+        // can't hold a provisioned stream open past the max pending age.
+        (session.status === 'created' && session.createdAt < pendingMaxAgeBefore),
+    )
   },
 })
 

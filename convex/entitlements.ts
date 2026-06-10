@@ -51,6 +51,10 @@ export const PLUS_MAX_VIDEO_DURATION_MS = 15 * 60 * 1000 // 15 minutes
 /** Maximum video duration (ms) for Premium tier members. */
 export const PREMIUM_MAX_VIDEO_DURATION_MS = 30 * 60 * 1000 // 30 minutes
 
+/** Maximum video duration (ms) for Pro tier members. Caps live streaming so
+ * an abandoned or runaway stream can't accrue unbounded Mux encoding cost. */
+export const PRO_MAX_VIDEO_DURATION_MS = 3 * 60 * 60 * 1000 // 3 hours
+
 /** Video retention window for Plus/Free users (30 days).
  * Bondfires where the newest video is older than this are eligible for cleanup. */
 export const BONDFIRE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
@@ -163,7 +167,7 @@ export function tierCanCreateBondfires(tier: SubscriptionTier): boolean {
  * - Free: 5 minutes for responses; Bondfire creation is blocked separately
  * - Plus: 15 minutes
  * - Premium: 30 minutes
- * - Pro: no limit (returns undefined)
+ * - Pro: 3 hours
  */
 export function getTierMaxVideoDurationMs(tier: SubscriptionTier): number | undefined {
   switch (tier) {
@@ -174,7 +178,7 @@ export function getTierMaxVideoDurationMs(tier: SubscriptionTier): number | unde
     case 'premium':
       return PREMIUM_MAX_VIDEO_DURATION_MS
     case 'pro':
-      return undefined
+      return PRO_MAX_VIDEO_DURATION_MS
   }
 }
 
@@ -376,6 +380,10 @@ export async function assertVideoDurationWithinTierLimit(
 
   if (maxDurationMs !== undefined && durationMs > maxDurationMs) {
     const maxMinutes = Math.round(maxDurationMs / 60000)
+    if (tier === 'pro') {
+      // Pro is the top tier — there is no upgrade path past the hard cap.
+      throwUserError(`Videos can't be longer than ${maxMinutes} minutes`)
+    }
     const requiredTier = getVideoDurationUpgradeRequirement(tier)
     throwUserError(`Videos longer than ${maxMinutes} minutes require ${requiredTier}`)
   }

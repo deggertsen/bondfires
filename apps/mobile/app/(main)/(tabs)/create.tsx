@@ -121,6 +121,7 @@ export default function CreateScreen() {
     tradeTag: null as TradeTag | null,
     showInviteSheet: false,
     preConnectFailed: false,
+    previewExpired: false,
   })
 
   const facing = useValue(state$.facing)
@@ -140,6 +141,7 @@ export default function CreateScreen() {
   const tradeTag = useValue(state$.tradeTag)
   const showInviteSheet = useValue(state$.showInviteSheet)
   const preConnectFailed = useValue(state$.preConnectFailed)
+  const previewExpired = useValue(state$.previewExpired)
   const livePublishEnabled = useValue(appStore$.preferences.livePublishEnabled)
   const currentCampId = useValue(appStore$.currentCampId)
   const shouldUseLivePublish = livePublishEnabled && isLivePublisherAvailable
@@ -1130,6 +1132,7 @@ export default function CreateScreen() {
     preConnectInFlightRef.current = true
     try {
       state$.preConnectFailed.set(false)
+      state$.previewExpired.set(false)
       state$.recordingDuration.set(0)
       state$.videoUri.set(null)
       state$.progressStage.set('Preparing camera...')
@@ -1462,9 +1465,15 @@ export default function CreateScreen() {
     }
   }, [cancelLiveRecording, isAppActive, recordingState, shouldUseLivePublish])
 
-  // Keep the provisioned session from being reaped as stale while previewing.
+  // Keep the session from being reaped as stale while previewing or recording.
+  // Mux sends no webhooks between stream start and disconnect, so without this
+  // heartbeat the stale-session cron would disable healthy recordings longer
+  // than its 5-minute threshold.
   useEffect(() => {
-    if (!shouldUseLivePublish || recordingState !== 'pre_connected') {
+    if (
+      !shouldUseLivePublish ||
+      (recordingState !== 'pre_connected' && recordingState !== 'recording')
+    ) {
       return
     }
 
@@ -1477,6 +1486,23 @@ export default function CreateScreen() {
 
     return () => clearInterval(interval)
   }, [recordingState, shouldUseLivePublish, touchLiveSession])
+
+  // Expire an idle preview before the server hard-caps the pending session
+  // (5 minutes). Without this, a user who lingers on the preview screen would
+  // tap record against a stream the reaper already disabled.
+  useEffect(() => {
+    if (!shouldUseLivePublish || recordingState !== 'pre_connected') {
+      return
+    }
+
+    const timeout = setTimeout(() => {
+      state$.previewExpired.set(true)
+      state$.preConnectFailed.set(true)
+      void cancelLiveRecording()
+    }, 240_000)
+
+    return () => clearTimeout(timeout)
+  }, [cancelLiveRecording, recordingState, shouldUseLivePublish, state$])
 
   // If the connection dies mid-recording, finalize the partial recording
   // instead of leaving the UI stuck on REC with nothing being ingested.
@@ -2019,7 +2045,7 @@ export default function CreateScreen() {
               {showPreConnectError && (
                 <YStack alignItems="center" gap={16}>
                   <Text color={'$color'} fontSize={18} fontWeight="700">
-                    Camera couldn't start
+                    {previewExpired ? 'Camera timed out' : "Camera couldn't start"}
                   </Text>
                   <Pressable
                     onPress={() => {
