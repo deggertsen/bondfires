@@ -302,7 +302,9 @@ export const deleteAccount = mutation({
 
       const personalInvites = await ctx.db
         .query('inviteCodes')
-        .withIndex('by_parent', (q) => q.eq('parentType', 'personal-bondfire').eq('parentId', bondfire._id))
+        .withIndex('by_parent', (q) =>
+          q.eq('parentType', 'personal-bondfire').eq('parentId', bondfire._id),
+        )
         .collect()
 
       for (const invite of personalInvites) {

@@ -212,7 +212,7 @@ export default defineSchema({
   // Unified invite codes for all invite types (bondfires, personal bondfires, camps)
   inviteCodes: defineTable({
     code: v.string(),
-    parentType: v.string(), // 'bondfire' | 'personal-bondfire' | 'camp'
+    parentType: v.union(v.literal('bondfire'), v.literal('personal-bondfire'), v.literal('camp')),
     parentId: v.string(), // bondfire or camp ID (stored as string since it can be either type)
     uses: v.number(),
     maxUses: v.optional(v.number()),

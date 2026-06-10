@@ -64,6 +64,7 @@ const MAX_QUEUE_SIZE = 100
 const FLUSH_INTERVAL_MS = 10000
 const MAX_SERIALIZE_DEPTH = 5
 const MAX_SERIALIZE_KEYS = 50
+const TELEMETRY_BATCH_SIZE = 20
 
 function serializeForConvex(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') {
@@ -315,10 +316,14 @@ export class TelemetryLogger {
     const batch = this.queue.drain()
     if (batch.length === 0) return
 
-    try {
-      await this._mutationCreateBatch({ entries: batch })
-    } catch {
-      // Silently drop — telemetry failures should not surface to users
+    // Match the Convex createBatch limit.
+    for (let i = 0; i < batch.length; i += TELEMETRY_BATCH_SIZE) {
+      const chunk = batch.slice(i, i + TELEMETRY_BATCH_SIZE)
+      try {
+        await this._mutationCreateBatch({ entries: chunk })
+      } catch {
+        // Silently drop — telemetry failures should not surface to users
+      }
     }
   }
 

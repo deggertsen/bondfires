@@ -9,8 +9,8 @@ import {
   PAID_TIERS,
 } from './entitlements'
 import { throwUserError } from './errors'
+import { generateAndInsertInviteCode, normalizeInviteCode } from './inviteCodes'
 import { canViewPersonalBondfire, getPersonalBondfireParticipant } from './personalBondfireAccess'
-import { generateAndInsertInviteCode } from './inviteCodes'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -23,10 +23,6 @@ function getParticipantCap(tier: string): number {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-
-function normalizeInviteCode(code: string) {
-  return code.trim().toLowerCase().replace(/\s+/g, '-').replace(/-+/g, '-')
-}
 
 async function getCurrentUser(ctx: QueryCtx | MutationCtx) {
   const userId = await auth.getUserId(ctx)
@@ -243,7 +239,6 @@ export const createInvite = mutation({
  * Redeem an invite code to join a personal bondfire.
  * Validates: code not expired, bondfire exists, cap not reached.
  * Re-joins users who previously left/were removed.
- * Now checks the unified inviteCodes table first, with fallback to legacy table.
  */
 export const redeemInvite = mutation({
   args: {
@@ -274,7 +269,6 @@ export const redeemInvite = mutation({
     }
 
     const bondfireId = unifiedInvite.parentId as Id<'bondfires'>
-    await ctx.db.patch(unifiedInvite._id, { uses: unifiedInvite.uses + 1 })
 
     const bondfire = await ctx.db.get(bondfireId)
     if (!bondfire) {
@@ -330,6 +324,8 @@ export const redeemInvite = mutation({
         updatedAt: now,
       })
     }
+
+    await ctx.db.patch(unifiedInvite._id, { uses: unifiedInvite.uses + 1 })
 
     return { bondfireId: bondfire._id, alreadyJoined: false }
   },
@@ -490,7 +486,6 @@ export const deleteBondfire = mutation({
 /**
  * Check if an invite code is valid and return bondfire info.
  * Used by the client before showing the join screen.
- * Now checks the unified inviteCodes table first with fallback to legacy table.
  */
 export const checkInvite = query({
   args: {
@@ -544,8 +539,6 @@ export const checkInvite = query({
       participantCount: activeCount,
       cap,
     }
-
-    return { valid: false, reason: 'not_found' as const }
   },
 })
 

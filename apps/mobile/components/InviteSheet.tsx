@@ -1,12 +1,12 @@
 import { Button, Text } from '@bondfires/ui'
-import { Check, Copy, Share, UserPlus, X } from '@tamagui/lucide-icons'
+import { Check, Copy, Share, X } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import * as Clipboard from 'expo-clipboard'
-import { useCallback, useEffect, useState } from 'react'
-import { Alert, Pressable, ScrollView, Share as RNShare } from 'react-native'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Alert, Pressable, Share as RNShare, ScrollView } from 'react-native'
 import { Avatar, Sheet, XStack, YStack } from 'tamagui'
-import type { Id } from '../../../convex/_generated/dataModel'
 import { api } from '../../../convex/_generated/api'
+import type { Id } from '../../../convex/_generated/dataModel'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -27,55 +27,110 @@ interface Props {
 // ── Component ──────────────────────────────────────────────────────────────
 
 export function InviteSheet({ mode, id, title, open, onClose }: Props) {
+  const inviteTargetKey = `${mode}:${id}`
   const [copied, setCopied] = useState(false)
   const [code, setCode] = useState<string | null>(null)
+  const [isGeneratingCode, setIsGeneratingCode] = useState(false)
+  const [codeError, setCodeError] = useState(false)
   const [inviteSent, setInviteSent] = useState<Record<string, boolean>>({})
+  const hasRequestedCodeRef = useRef(false)
 
-  // Lazy-load or generate invite code
-  const existingCode = useQuery(api.inviteCodes.getInviteCode, { parentType: mode, parentId: id })
-  const generateCode = useMutation(api.inviteCodes.generateInviteCode)
-
-  useEffect(() => {
-    if (open && existingCode) {
-      setCode(existingCode.code)
-    }
-  }, [open, existingCode])
+  const createCampInvite = useMutation(api.camps.createInvite)
+  const createPersonalInvite = useMutation(api.personalBondfires.createInvite)
 
   useEffect(() => {
-    if (open && existingCode === null) {
-      // Lazy generate
-      generateCode({ parentType: mode, parentId: id, expiresInDays: 7 })
-        .then((result) => setCode(result.code))
-        .catch(() => {}) // Silently fail, code section just won't show
+    void inviteTargetKey
+    setCopied(false)
+    setCode(null)
+    setCodeError(false)
+    setInviteSent({})
+    hasRequestedCodeRef.current = false
+  }, [inviteTargetKey])
+
+  useEffect(() => {
+    if (open) return
+    setCopied(false)
+    setCodeError(false)
+    setIsGeneratingCode(false)
+    if (!code) {
+      hasRequestedCodeRef.current = false
     }
-  }, [open, existingCode, generateCode, mode, id])
+  }, [code, open])
+
+  useEffect(() => {
+    if (
+      !open ||
+      mode === 'bondfire' ||
+      code ||
+      codeError ||
+      isGeneratingCode ||
+      hasRequestedCodeRef.current
+    ) {
+      return
+    }
+
+    let cancelled = false
+    hasRequestedCodeRef.current = true
+    setIsGeneratingCode(true)
+
+    const createInvite =
+      mode === 'camp'
+        ? createCampInvite({ campId: id as Id<'camps'> })
+        : createPersonalInvite({ bondfireId: id as Id<'bondfires'> })
+
+    createInvite
+      .then((result) => {
+        if (!cancelled) {
+          setCode(result.code)
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setCodeError(true)
+          Alert.alert('Invite Failed', error instanceof Error ? error.message : String(error))
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsGeneratingCode(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [code, codeError, createCampInvite, createPersonalInvite, id, isGeneratingCode, mode, open])
 
   // ── In-app contacts ──────────────────────────────────────────────────
 
-  const contacts = useQuery(api.bondfireInvites.listInvitableContacts, {}) ?? []
+  const contacts =
+    useQuery(api.bondfireInvites.listInvitableContacts, mode === 'bondfire' ? {} : 'skip') ?? []
   const sendInvite = useMutation(api.bondfireInvites.sendBondfireInvite)
 
   const handleSendInvite = useCallback(
     async (recipientId: Id<'users'>) => {
       try {
+        if (mode !== 'bondfire') return
         await sendInvite({ bondfireId: id as Id<'bondfires'>, recipientId })
         setInviteSent((prev) => ({ ...prev, [recipientId]: true }))
       } catch (error) {
         Alert.alert('Invite Failed', error instanceof Error ? error.message : String(error))
       }
     },
-    [sendInvite, id],
+    [sendInvite, id, mode],
   )
 
   // ── Link sharing ─────────────────────────────────────────────────────
 
-  const shareUrl = code
-    ? `${INVITE_BASE_URL}/camp/${code}` // camp invites use /camp/ prefix
-    : mode === 'camp'
-      ? `${INVITE_BASE_URL}/camp/${id}`
-      : `${INVITE_BASE_URL}/${id}`
+  const shareUrl =
+    mode === 'bondfire'
+      ? `${INVITE_BASE_URL}/${id}`
+      : code
+        ? `${INVITE_BASE_URL}${mode === 'camp' ? '/camp' : ''}/${code}`
+        : null
 
   const handleCopyLink = useCallback(async () => {
+    if (!shareUrl) return
     try {
       await Clipboard.setStringAsync(shareUrl)
       setCopied(true)
@@ -86,6 +141,7 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
   }, [shareUrl])
 
   const handleShareSheet = useCallback(async () => {
+    if (!shareUrl) return
     try {
       await RNShare.share({
         message: `Join me on Bondfires!\n\n${shareUrl}`,
@@ -138,17 +194,25 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
           </XStack>
 
           {/* ── In-app contacts ─────────────────────────────────────── */}
-          {contacts.length > 0 && (
+          {mode === 'bondfire' && contacts.length > 0 && (
             <YStack gap={12}>
-              <Text fontSize={13} fontWeight="700" color={'$placeholderColor'} textTransform="uppercase" letterSpacing={1}>
+              <Text
+                fontSize={13}
+                fontWeight="700"
+                color={'$placeholderColor'}
+                textTransform="uppercase"
+                letterSpacing={1}
+              >
                 Invite People
               </Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 <XStack gap={12} paddingRight={16}>
                   {contacts.map((contact) => {
                     const sent = inviteSent[contact._id]
-                    const hasPhoto = !!contact.photoUrl
-                    const initial = ((contact.displayName ?? contact.name ?? '?')[0] ?? '?').toUpperCase()
+                    const photoUrl = contact.photoUrl
+                    const initial = (
+                      (contact.displayName ?? contact.name ?? '?')[0] ?? '?'
+                    ).toUpperCase()
 
                     return (
                       <Pressable
@@ -158,8 +222,10 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
                       >
                         <YStack alignItems="center" gap={6} width={64}>
                           <Avatar size={52} borderRadius={26}>
-                            {hasPhoto && <Avatar.Image source={{ uri: contact.photoUrl! }} />}
-                            <Avatar.Fallback backgroundColor={sent ? '$green10Light' : '$orange8Light'}>
+                            {photoUrl ? <Avatar.Image source={{ uri: photoUrl }} /> : null}
+                            <Avatar.Fallback
+                              backgroundColor={sent ? '$green10Light' : '$orange8Light'}
+                            >
                               {sent ? (
                                 <Check size={22} color="$green10Dark" />
                               ) : (
@@ -169,7 +235,12 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
                               )}
                             </Avatar.Fallback>
                           </Avatar>
-                          <Text fontSize={11} textAlign="center" numberOfLines={1} color={sent ? '$placeholderColor' : '$color'}>
+                          <Text
+                            fontSize={11}
+                            textAlign="center"
+                            numberOfLines={1}
+                            color={sent ? '$placeholderColor' : '$color'}
+                          >
                             {contact.displayName ?? contact.name ?? 'Unknown'}
                           </Text>
                         </YStack>
@@ -183,7 +254,13 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
 
           {/* ── Share Link ──────────────────────────────────────────── */}
           <YStack gap={12}>
-            <Text fontSize={13} fontWeight="700" color={'$placeholderColor'} textTransform="uppercase" letterSpacing={1}>
+            <Text
+              fontSize={13}
+              fontWeight="700"
+              color={'$placeholderColor'}
+              textTransform="uppercase"
+              letterSpacing={1}
+            >
               Share Link
             </Text>
             <YStack
@@ -198,7 +275,8 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
               width="100%"
             >
               <Text fontSize={12} color={'$placeholderColor'} numberOfLines={1} textAlign="center">
-                {shareUrl}
+                {shareUrl ??
+                  (isGeneratingCode ? 'Generating invite...' : 'Invite link unavailable')}
               </Text>
             </YStack>
             <XStack gap={12} width="100%">
@@ -206,13 +284,8 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
                 variant="primary"
                 flex={1}
                 onPress={handleCopyLink}
-                icon={
-                  copied ? (
-                    <Check size={18} />
-                  ) : (
-                    <Copy size={18} />
-                  )
-                }
+                disabled={!shareUrl}
+                icon={copied ? <Check size={18} /> : <Copy size={18} />}
               >
                 <Text color={copied ? '$success' : '$color'} fontWeight="700">
                   {copied ? 'Copied' : 'Copy Link'}
@@ -222,6 +295,7 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
                 variant="outline"
                 flex={1}
                 onPress={handleShareSheet}
+                disabled={!shareUrl}
                 icon={<Share size={18} />}
               >
                 <Text color={'$color'} fontWeight="700">
@@ -232,9 +306,15 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
           </YStack>
 
           {/* ── Invite Code Fallback ────────────────────────────────── */}
-          {code && (
+          {mode !== 'bondfire' && code && (
             <YStack alignItems="center" gap={4} paddingTop={4}>
-              <Text fontSize={11} color={'$placeholderColor'} textTransform="uppercase" letterSpacing={1} fontWeight="600">
+              <Text
+                fontSize={11}
+                color={'$placeholderColor'}
+                textTransform="uppercase"
+                letterSpacing={1}
+                fontWeight="600"
+              >
                 Trouble joining? Use this code
               </Text>
               <Text fontSize={20} fontWeight="900" letterSpacing={1.5} numberOfLines={1}>

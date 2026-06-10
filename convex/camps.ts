@@ -16,7 +16,7 @@ import {
   TIER_RANK,
 } from './entitlements'
 import { throwUserError } from './errors'
-import { generateAndInsertInviteCode } from './inviteCodes'
+import { generateAndInsertInviteCode, normalizeInviteCode } from './inviteCodes'
 
 type CampAccess = 'open' | 'approval' | 'invite'
 type CampGender = 'male' | 'female' | 'any'
@@ -1309,7 +1309,8 @@ export const createInvite = mutation({
       parentType: 'camp',
       parentId: camp._id,
       createdBy: user._id,
-      expiresInDays: 7,
+      code: args.code,
+      expiresAt: args.expiresAt,
       maxUses: args.maxUses,
     })
 
@@ -1327,7 +1328,7 @@ export const redeemInvite = mutation({
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx)
     const now = Date.now()
-    const normalizedCode = args.code.toLowerCase()
+    const normalizedCode = normalizeInviteCode(args.code)
 
     const invite = await ctx.db
       .query('inviteCodes')

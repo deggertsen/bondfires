@@ -1,8 +1,6 @@
-import { v } from 'convex/values'
 import type { Id } from './_generated/dataModel'
-import type { MutationCtx, QueryCtx } from './_generated/server'
-import { internalMutation, mutation, query } from './_generated/server'
-import { auth } from './auth'
+import type { MutationCtx } from './_generated/server'
+import { internalMutation } from './_generated/server'
 import { throwUserError } from './errors'
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -107,22 +105,8 @@ function makeInviteCode(seed: string): string {
   return [first, second, third].join('-')
 }
 
-function normalizeInviteCode(code: string): string {
+export function normalizeInviteCode(code: string): string {
   return code.trim().toLowerCase().replace(/\s+/g, '-').replace(/-+/g, '-')
-}
-
-async function getCurrentUser(ctx: QueryCtx | MutationCtx) {
-  const userId = await auth.getUserId(ctx)
-  if (!userId) {
-    throwUserError('Not authenticated')
-  }
-
-  const user = await ctx.db.get(userId)
-  if (!user) {
-    throwUserError('User not found')
-  }
-
-  return user
 }
 
 // ── Internal Helpers ───────────────────────────────────────────────────────
@@ -138,18 +122,26 @@ export async function generateAndInsertInviteCode(
     parentType: InviteParentType
     parentId: string
     createdBy: Id<'users'>
+    code?: string
+    expiresAt?: number
     expiresInDays?: number
     maxUses?: number
   },
 ): Promise<{ code: string; expiresAt: number }> {
   const now = Date.now()
   const expiresAt =
-    args.expiresInDays !== undefined
+    args.expiresAt ??
+    (args.expiresInDays !== undefined
       ? now + args.expiresInDays * 24 * 60 * 60 * 1000
-      : now + DEFAULT_EXPIRY_MS
+      : now + DEFAULT_EXPIRY_MS)
 
   const seed = [args.parentType, args.parentId, now].join('-')
-  let code = makeInviteCode(seed)
+  let code = args.code ? normalizeInviteCode(args.code) : makeInviteCode(seed)
+
+  if (!code) {
+    throwUserError('Invite code is required')
+  }
+
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const existing = await ctx.db
       .query('inviteCodes')
@@ -157,6 +149,9 @@ export async function generateAndInsertInviteCode(
       .first()
     if (!existing) {
       break
+    }
+    if (args.code) {
+      throwUserError('Invite code already exists')
     }
     code = makeInviteCode([seed, String(attempt + 1)].join('-'))
   }
@@ -182,132 +177,6 @@ export async function generateAndInsertInviteCode(
 
   return { code, expiresAt }
 }
-
-// ── Mutations ──────────────────────────────────────────────────────────────
-
-/**
- * Generate an invite code for any parent type.
- * Used directly for public bondfires, and called internally by camp/personal-bondfire mutations.
- */
-export const generateInviteCode = mutation({
-  args: {
-    parentType: v.string(),
-    parentId: v.string(),
-    expiresInDays: v.optional(v.number()),
-    maxUses: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    const user = await getCurrentUser(ctx)
-    return await generateAndInsertInviteCode(ctx, {
-      parentType: args.parentType as InviteParentType,
-      parentId: args.parentId,
-      createdBy: user._id,
-      expiresInDays: args.expiresInDays,
-      maxUses: args.maxUses,
-    })
-  },
-})
-
-/**
- * Create an invite code for a public bondfire.
- * Wraps generateInviteCode with parentType = 'bondfire'.
- */
-export const createBondfireInviteCode = mutation({
-  args: {
-    bondfireId: v.id('bondfires'),
-    expiresInDays: v.optional(v.number()),
-    maxUses: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    const user = await getCurrentUser(ctx)
-    return await generateAndInsertInviteCode(ctx, {
-      parentType: 'bondfire',
-      parentId: args.bondfireId,
-      createdBy: user._id,
-      expiresInDays: args.expiresInDays,
-      maxUses: args.maxUses,
-    })
-  },
-})
-
-/**
- * Redeem an invite code. Looks up the code, validates it's not expired or
- * overused, increments the usage counter, and returns the parent type + id.
- *
- * Used by both camp and personal bondfire redemption flows — each caller
- * is responsible for actually performing the join.
- */
-export const redeemInviteCode = mutation({
-  args: {
-    code: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const code = normalizeInviteCode(args.code)
-    const now = Date.now()
-
-    const invite = await ctx.db
-      .query('inviteCodes')
-      .withIndex('by_code', (q) => q.eq('code', code))
-      .first()
-
-    if (!invite) {
-      throwUserError('Invite not found.')
-    }
-
-    if (invite.expiresAt !== undefined && invite.expiresAt <= now) {
-      throwUserError('This invite has expired.')
-    }
-
-    if (invite.maxUses !== undefined && invite.uses >= invite.maxUses) {
-      throwUserError('This invite has already been used.')
-    }
-
-    // Increment usage
-    await ctx.db.patch(invite._id, {
-      uses: invite.uses + 1,
-    })
-
-    return {
-      parentType: invite.parentType,
-      parentId: invite.parentId,
-    }
-  },
-})
-
-// ── Queries ────────────────────────────────────────────────────────────────
-
-/**
- * Get an existing active invite code for a parent, or null if none exists.
- * Used for lazy generation — callers can check if one already exists before creating.
- */
-export const getInviteCode = query({
-  args: {
-    parentType: v.string(),
-    parentId: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const now = Date.now()
-
-    const invites = await ctx.db
-      .query('inviteCodes')
-      .withIndex('by_parent', (q) =>
-        q.eq('parentType', args.parentType).eq('parentId', args.parentId),
-      )
-      .order('desc')
-      .take(100)
-
-    // Return the first active (non-expired, not overused) invite, or null
-    for (const invite of invites) {
-      const expired = invite.expiresAt !== undefined && invite.expiresAt <= now
-      const overused = invite.maxUses !== undefined && invite.uses >= invite.maxUses
-      if (!expired && !overused) {
-        return invite
-      }
-    }
-
-    return null
-  },
-})
 
 // ── Internal Mutations ─────────────────────────────────────────────────────
 
