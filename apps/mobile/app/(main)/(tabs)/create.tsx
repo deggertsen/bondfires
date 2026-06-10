@@ -28,7 +28,7 @@ import {
   useMicrophonePermissions,
 } from 'expo-camera'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
-import { useLocalSearchParams, useRouter } from 'expo-router'
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, AppState, Linking, Platform, Pressable, ScrollView, StatusBar } from 'react-native'
 import { XStack, YStack } from 'tamagui'
@@ -70,6 +70,7 @@ function formatMaxDuration(seconds: number) {
 export default function CreateScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
+  const navigation = useNavigation()
   const { campId, respondTo, personalCamp, title } = useLocalSearchParams<{
     campId?: string
     respondTo?: string
@@ -1942,7 +1943,11 @@ export default function CreateScreen() {
                   if (isPreConnected) {
                     void cancelLiveRecording()
                   }
-                  router.back()
+                  if (navigation.canGoBack()) {
+                    router.back()
+                  } else {
+                    router.replace(routes.feed)
+                  }
                 }}
               >
                 <YStack
@@ -2210,7 +2215,7 @@ export default function CreateScreen() {
             justifyContent="space-between"
             alignItems="center"
           >
-            <Pressable onPress={() => router.back()}>
+            <Pressable onPress={() => { navigation.canGoBack() ? router.back() : router.replace(routes.feed) }}>
               <YStack
                 width={40}
                 height={40}

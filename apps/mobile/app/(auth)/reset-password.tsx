@@ -3,7 +3,7 @@ import { Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { CheckCircle, ChevronLeft, KeyRound } from '@tamagui/lucide-icons'
-import { useLocalSearchParams, useRouter } from 'expo-router'
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { Pressable, StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { YStack } from 'tamagui'
@@ -12,6 +12,7 @@ import { routes } from '../../lib/routes'
 export default function ResetPasswordScreen() {
   const { colors, statusBarStyle } = useSystemThemeColors()
   const router = useRouter()
+  const navigation = useNavigation()
   const { signIn } = useAuthActions()
   const params = useLocalSearchParams<{ email?: string }>()
 
@@ -147,7 +148,7 @@ export default function ResetPasswordScreen() {
 
       {/* Back button */}
       <YStack paddingTop={60} paddingHorizontal={16}>
-        <Pressable onPress={() => router.back()}>
+        <Pressable onPress={() => { navigation.canGoBack() ? router.back() : router.replace(routes.login()) }}>
           <YStack
             width={40}
             height={40}

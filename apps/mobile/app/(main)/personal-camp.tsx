@@ -2,7 +2,7 @@ import { subscriptionActions, useAppThemeColors } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
 import { ArrowLeft, Flame, Lock, MessageCircle, Plus, Users } from '@tamagui/lucide-icons'
 import { useQuery } from 'convex/react'
-import { useLocalSearchParams, useRouter } from 'expo-router'
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FlatList, Pressable, StatusBar } from 'react-native'
 import { Separator, XStack, YStack } from 'tamagui'
@@ -74,6 +74,7 @@ function BondfireRow({ bondfire, onOpen }: { bondfire: BondfireData; onOpen: () 
 export default function PersonalCampScreen() {
   const { statusBarStyle } = useAppThemeColors()
   const router = useRouter()
+  const navigation = useNavigation()
   const { newFire, createdAfter } = useLocalSearchParams<{
     newFire?: string
     createdAfter?: string
@@ -117,8 +118,12 @@ export default function PersonalCampScreen() {
   }, [createdAfter, newFire, sortedBondfires])
 
   const handleBack = useCallback(() => {
-    router.back()
-  }, [router])
+    if (navigation.canGoBack()) {
+      router.back()
+    } else {
+      router.replace(routes.feed)
+    }
+  }, [navigation, router])
 
   const handleOpenBondfire = useCallback(
     (bondfireId: Id<'bondfires'>) => {

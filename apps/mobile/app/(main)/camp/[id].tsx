@@ -21,7 +21,7 @@ import {
   UserX,
 } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
-import { useLocalSearchParams, useRouter } from 'expo-router'
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useState } from 'react'
 import { Alert, FlatList, Modal, Pressable, StatusBar, TextInput } from 'react-native'
 import { Separator, Image as TamaguiImage, XStack, YStack } from 'tamagui'
@@ -741,6 +741,7 @@ function BondfireRow({ bondfire, onOpen }: { bondfire: BondfireData; onOpen: () 
 export default function CampDetailScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
+  const navigation = useNavigation()
   const { id } = useLocalSearchParams<{ id?: string }>()
   const campId = id as Id<'camps'> | undefined
   const camp = useQuery(api.camps.get, campId ? { campId } : 'skip')
@@ -966,7 +967,7 @@ export default function CampDetailScreen() {
         <Text fontSize={22} fontWeight="900" textAlign="center">
           Camp unavailable
         </Text>
-        <Button variant="primary" size="$lg" onPress={() => router.back()}>
+        <Button variant="primary" size="$lg" onPress={() => { navigation.canGoBack() ? router.back() : router.replace(routes.feed) }}>
           <Text color={'$color'} fontWeight="900">
             Go Back
           </Text>
@@ -991,7 +992,7 @@ export default function CampDetailScreen() {
           <>
             <CampHeader
               camp={camp}
-              onBack={() => router.back()}
+              onBack={() => { navigation.canGoBack() ? router.back() : router.replace(routes.feed) }}
               onJoin={handleJoin}
               onMute={handleMute}
               onCreateInvite={handleCreateInvite}

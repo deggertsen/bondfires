@@ -2,7 +2,7 @@ import { getAuthErrorMessage, useSystemThemeColors } from '@bondfires/app'
 import { Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { ChevronLeft, Mail } from '@tamagui/lucide-icons'
-import { useRouter } from 'expo-router'
+import { useNavigation, useRouter } from 'expo-router'
 import { useState } from 'react'
 import { Pressable, StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
@@ -12,6 +12,7 @@ import { routes } from '../../lib/routes'
 export default function ForgotPasswordScreen() {
   const { colors, statusBarStyle } = useSystemThemeColors()
   const router = useRouter()
+  const navigation = useNavigation()
   const { signIn } = useAuthActions()
 
   const [email, setEmail] = useState('')
@@ -48,7 +49,7 @@ export default function ForgotPasswordScreen() {
 
       {/* Back button */}
       <YStack paddingTop={60} paddingHorizontal={16}>
-        <Pressable onPress={() => router.back()}>
+        <Pressable onPress={() => { navigation.canGoBack() ? router.back() : router.replace(routes.forgotPassword) }}>
           <YStack
             width={40}
             height={40}

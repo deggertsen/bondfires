@@ -2,7 +2,7 @@ import { useAppThemeColors } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
 import { ArrowLeft, Flame } from '@tamagui/lucide-icons'
 import type { Href } from 'expo-router'
-import { Redirect, Stack, useRouter } from 'expo-router'
+import { Redirect, Stack, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Pressable, StatusBar } from 'react-native'
 import { YStack } from 'tamagui'
@@ -36,6 +36,7 @@ export function InviteRedemptionScreen({
 }: InviteRedemptionScreenProps) {
   const { statusBarStyle } = useAppThemeColors()
   const router = useRouter()
+  const navigation = useNavigation()
   const code = normalizeCode(codeParam)
   const [status, setStatus] = useState<RedemptionStatus>('loading')
   const [error, setError] = useState<string | null>(null)
@@ -82,7 +83,7 @@ export function InviteRedemptionScreen({
         <StatusBar barStyle={statusBarStyle} />
 
         <YStack paddingTop={58} paddingHorizontal={16} paddingBottom={18}>
-          <Pressable onPress={() => router.back()}>
+          <Pressable onPress={() => { navigation.canGoBack() ? router.back() : router.replace(routes.feed) }}>
             <YStack
               width={42}
               height={42}
