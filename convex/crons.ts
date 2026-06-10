@@ -9,6 +9,16 @@ crons.interval(
   internal.videos.disableStaleLiveStreams,
 )
 
+// Recover videos stuck in 'processing' / 'waiting_for_upload' when a Mux
+// webhook was missed or unmatched. Queries Mux directly as the source of
+// truth and promotes records to 'ready' or marks them 'errored'.
+crons.interval(
+  'reconcile stuck Mux videos',
+  { minutes: 15 },
+  internal.videos.reconcileStuckMuxVideos,
+  {},
+)
+
 // Process frozen camps whose 30-day reclaim window has expired.
 // Runs daily at 9:00 UTC to catch expired reclaim deadlines.
 crons.daily(

@@ -438,7 +438,9 @@ export default defineSchema({
     .index('by_expires_at', ['expiresAt'])
     .index('by_mux_upload', ['muxUploadId'])
     .index('by_mux_asset', ['muxAssetId'])
-    .index('by_live_stream', ['muxLiveStreamId']),
+    .index('by_live_stream', ['muxLiveStreamId'])
+    // Reconciliation: find records stuck in a non-terminal video status
+    .index('by_video_status', ['videoStatus', 'updatedAt']),
 
   // Bondfire Videos - response videos to bondfires
   bondfireVideos: defineTable({
@@ -491,7 +493,9 @@ export default defineSchema({
     .index('by_expires_at', ['expiresAt'])
     .index('by_mux_upload', ['muxUploadId'])
     .index('by_mux_asset', ['muxAssetId'])
-    .index('by_live_stream', ['muxLiveStreamId']),
+    .index('by_live_stream', ['muxLiveStreamId'])
+    // Reconciliation: find records stuck in a non-terminal video status
+    .index('by_video_status', ['videoStatus', 'createdAt']),
 
   // Per-user read markers for ongoing Bondfire conversations.
   bondfireThreadReads: defineTable({
@@ -677,7 +681,7 @@ export default defineSchema({
     event: v.string(),
     message: v.string(),
     data: v.optional(v.any()),
-    platform: v.union(v.literal('ios'), v.literal('android')),
+    platform: v.union(v.literal('ios'), v.literal('android'), v.literal('server')),
     appVersion: v.optional(v.string()),
     sessionId: v.optional(v.string()),
     createdAt: v.number(),

@@ -1,7 +1,7 @@
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
-import type { MutationCtx, QueryCtx } from './_generated/server'
+import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server'
 import {
   action,
   internalAction,
@@ -43,6 +43,17 @@ type ExpiredPrivateCampVideoCleanupBatch = {
   expiredBondfires: number
   remainingMayExist: boolean
 }
+type StuckMuxRecord = {
+  table: 'bondfires' | 'bondfireVideos'
+  recordId: Id<'bondfires'> | Id<'bondfireVideos'>
+  userId: Id<'users'>
+  videoStatus: 'waiting_for_upload' | 'processing'
+  stuckForMs: number
+  muxUploadId?: string
+  muxAssetId?: string
+  muxLiveStreamId?: string
+}
+type ReconcileOutcome = 'recovered' | 'errored' | 'still_processing' | 'unresolved'
 type ExpiredPrivateCampVideoCleanupResult = {
   expiredBondfires?: number
   muxAssetsToDelete?: number
@@ -96,6 +107,15 @@ const MUX_LIVE_MAX_CONTINUOUS_DURATION_MAX_SECONDS = 12 * 60 * 60
 export const MAX_PENDING_LIVE_SESSION_AGE_MS = 5 * 60 * 1000
 const SIGNED_PLAYBACK_URL_TTL_SECONDS = 12 * 60 * 60
 const DURATION_LIMIT_EXCEEDED_STATUS = 'duration_limit_exceeded'
+// Reconciliation: how long a record may sit in a non-terminal status before
+// the cron re-queries Mux directly. The webhook is the fast path; this is the
+// durable fallback for missed/unmatched webhook events.
+const STUCK_PROCESSING_THRESHOLD_MS = 10 * 60 * 1000
+const STUCK_WAITING_FOR_UPLOAD_THRESHOLD_MS = 30 * 60 * 1000
+// A finished live stream whose recorded asset never appears on Mux after this
+// long is marked errored instead of spinning on "Processing..." forever.
+const STUCK_LIVE_RECORDING_GIVE_UP_MS = 60 * 60 * 1000
+const RECONCILE_BATCH_LIMIT = 25
 
 function getMuxConfig() {
   const tokenId = process.env.MUX_TOKEN_ID
@@ -596,6 +616,50 @@ async function muxRequest(path: string, init: RequestInit = {}): Promise<Record<
   }
 
   return readObject(await response.json())
+}
+
+/** Like muxRequest, but returns null on 404 instead of throwing. */
+async function muxRequestOptional(path: string): Promise<Record<string, unknown> | null> {
+  const config = getMuxConfig()
+  const response = await fetch(`${MUX_API_BASE_URL}${path}`, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: getMuxAuthorizationHeader(config.tokenId, config.tokenSecret),
+    },
+  })
+
+  if (response.status === 404) {
+    return null
+  }
+
+  if (!response.ok) {
+    const message = await response.text()
+    throw new Error(`Mux API request failed: ${response.status} ${message}`)
+  }
+
+  return readObject(await response.json())
+}
+
+/** Persist a server-side telemetry entry from inside a mutation. */
+async function logServerEvent(
+  ctx: MutationCtx,
+  args: {
+    level: 'error' | 'warn' | 'info'
+    event: string
+    message: string
+    data?: unknown
+    userId?: Id<'users'>
+  },
+) {
+  await ctx.db.insert('clientLogs', {
+    userId: args.userId,
+    level: args.level,
+    event: args.event,
+    message: args.message,
+    data: args.data,
+    platform: 'server',
+    createdAt: Date.now(),
+  })
 }
 
 async function deleteMuxAsset(assetId: string): Promise<'deleted' | 'missing'> {
@@ -1582,7 +1646,7 @@ export const pollRecordedVodAsset = internalAction({
       }
 
       if (session.muxRecordedAssetId) {
-        const asset = await muxRequest(`/assets/${session.muxRecordedAssetId}`)
+        const asset = parseMuxData(await muxRequest(`/assets/${session.muxRecordedAssetId}`))
         const status = readOptionalString(asset.status)
         if (status === 'ready') {
           const info = readMuxAssetInfo(asset)
@@ -1593,6 +1657,7 @@ export const pollRecordedVodAsset = internalAction({
           }
           await ctx.runMutation(internal.videos.markMuxAssetReady, {
             assetId: info.assetId,
+            liveStreamId: session.muxLiveStreamId,
             playbackId: info.playbackId,
             assetStatus: info.assetStatus,
             durationMs: info.durationMs,
@@ -1604,6 +1669,7 @@ export const pollRecordedVodAsset = internalAction({
         if (status === 'errored') {
           await ctx.runMutation(internal.videos.markMuxAssetErrored, {
             assetId: session.muxRecordedAssetId,
+            liveStreamId: session.muxLiveStreamId,
             assetStatus: status,
           })
           return
@@ -1828,7 +1894,7 @@ export const getVideoUrls = action({
             bondfireVideoId: args.bondfireVideoId,
             stack,
           },
-          platform: 'ios',
+          platform: 'server',
           createdAt: Date.now(),
         })
       } catch {
@@ -1870,7 +1936,7 @@ export const getVideoUrls = action({
               playbackPolicy,
               stack,
             },
-            platform: 'ios',
+            platform: 'server',
             createdAt: Date.now(),
           })
         } catch {
@@ -1932,7 +1998,7 @@ export const getThumbnailUrl = action({
             bondfireId: args.bondfireId,
             bondfireVideoId: args.bondfireVideoId,
           },
-          platform: 'ios',
+          platform: 'server',
           createdAt: Date.now(),
         })
       } catch {
@@ -1970,7 +2036,7 @@ export const getThumbnailUrl = action({
               playbackPolicy,
               stack,
             },
-            platform: 'ios',
+            platform: 'server',
             createdAt: Date.now(),
           })
         } catch {
@@ -2506,6 +2572,7 @@ export const markMuxAssetReady = internalMutation({
   args: {
     uploadId: v.optional(v.string()),
     assetId: v.string(),
+    liveStreamId: v.optional(v.string()),
     playbackId: v.string(),
     playbackPolicy: v.optional(v.union(v.literal('public'), v.literal('signed'))),
     assetStatus: v.optional(v.string()),
@@ -2528,6 +2595,7 @@ export const markMuxAssetErrored = internalMutation({
   args: {
     uploadId: v.optional(v.string()),
     assetId: v.optional(v.string()),
+    liveStreamId: v.optional(v.string()),
     assetStatus: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -2944,17 +3012,47 @@ export const handleMuxWebhookEvent = internalMutation({
     })
 
     const data = readObject(JSON.parse(args.dataJson), 'Mux webhook data')
-    const uploadId = readOptionalString(data.upload_id) ?? readOptionalString(data.id)
+    // `data.id` is only an upload ID for video.upload.* events. For
+    // video.asset.* events it is the asset ID and must not be used as one.
+    const uploadId =
+      readOptionalString(data.upload_id) ??
+      (args.eventType.startsWith('video.upload.') ? readOptionalString(data.id) : undefined)
     const assetId =
       readOptionalString(data.asset_id) ??
       (args.eventType.startsWith('video.asset.') ? readOptionalString(data.id) : undefined)
     const assetStatus = readOptionalString(data.status)
     const liveStreamId = readOptionalString(data.live_stream_id)
+    const webhookIds = { eventType: args.eventType, uploadId, assetId, liveStreamId }
 
     if (args.eventType === 'video.upload.asset_created' && uploadId && assetId) {
       const record = await findMuxRecord(ctx, { uploadId, assetId })
       if (record) {
         await markRecordAssetCreated(ctx, record, { assetId, assetStatus })
+      } else {
+        await logServerEvent(ctx, {
+          level: 'warn',
+          event: 'video:webhook:unmatched',
+          message: 'Mux upload.asset_created webhook matched no bondfire record',
+          data: webhookIds,
+        })
+      }
+      return { handled: true }
+    }
+
+    if (args.eventType === 'video.asset.created' && assetId && liveStreamId) {
+      // A live stream's recording asset was created. Remember it on the
+      // session so pollRecordedVodAsset can promote the record to 'ready'
+      // without waiting for the asset.ready webhook.
+      const liveSession = await ctx.db
+        .query('liveSessions')
+        .withIndex('by_mux_live_stream', (q) => q.eq('muxLiveStreamId', liveStreamId))
+        .first()
+      if (liveSession) {
+        await ctx.db.patch(liveSession._id, {
+          muxRecordedAssetId: liveSession.muxRecordedAssetId ?? assetId,
+          muxRecentAssetId: assetId,
+          updatedAt: Date.now(),
+        })
       }
       return { handled: true }
     }
@@ -2970,6 +3068,17 @@ export const handleMuxWebhookEvent = internalMutation({
           durationMs: parseMuxDurationMs(data.duration),
           muxAspectRatio: readOptionalString(data.aspect_ratio),
           muxMaxResolution: readOptionalString(data.max_stored_resolution),
+        })
+      } else {
+        // Dropping this event would leave the record stuck in 'processing'
+        // until the reconciliation cron catches it — log loudly.
+        await logServerEvent(ctx, {
+          level: 'warn',
+          event: record ? 'video:webhook:missing_playback_id' : 'video:webhook:unmatched',
+          message: record
+            ? 'Mux asset.ready webhook arrived without a playback ID'
+            : 'Mux asset.ready webhook matched no bondfire record',
+          data: webhookIds,
         })
       }
 
@@ -2997,6 +3106,20 @@ export const handleMuxWebhookEvent = internalMutation({
       const record = await findMuxRecord(ctx, { uploadId, assetId, liveStreamId })
       if (record) {
         await markRecordErrored(ctx, record, { assetId, assetStatus })
+        await logServerEvent(ctx, {
+          level: 'warn',
+          event: 'video:webhook:asset_errored',
+          message: `Mux reported ${args.eventType} for a bondfire record`,
+          data: { ...webhookIds, table: record.table, recordId: record.document._id },
+          userId: record.document.userId,
+        })
+      } else {
+        await logServerEvent(ctx, {
+          level: 'warn',
+          event: 'video:webhook:unmatched',
+          message: `Mux ${args.eventType} webhook matched no bondfire record`,
+          data: webhookIds,
+        })
       }
       return { handled: true }
     }
@@ -3015,6 +3138,19 @@ export const handleMuxWebhookEvent = internalMutation({
         .first()
 
       if (!liveSession) {
+        const stateChangingEvents = [
+          'video.live_stream.active',
+          'video.live_stream.idle',
+          'video.live_stream.errored',
+        ]
+        if (stateChangingEvents.includes(args.eventType)) {
+          await logServerEvent(ctx, {
+            level: 'warn',
+            event: 'video:webhook:unmatched',
+            message: `Mux ${args.eventType} webhook matched no live session`,
+            data: { eventType: args.eventType, liveStreamId: eventLiveStreamId },
+          })
+        }
         return { handled: false }
       }
 
@@ -3071,5 +3207,255 @@ export const handleMuxWebhookEvent = internalMutation({
     }
 
     return { handled: false }
+  },
+})
+
+// ── Stuck video reconciliation ──────────────────────────────────────────────
+//
+// The Mux webhook is the primary driver of videoStatus transitions, but a
+// missed/unmatched event leaves records stuck in 'processing' or
+// 'waiting_for_upload' forever (the dedup table ignores Mux retries once an
+// event ID has been recorded). This cron re-queries Mux — the source of
+// truth — for any record stuck in a non-terminal status and resolves it.
+
+export const listStuckMuxRecords = internalQuery({
+  args: {
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<StuckMuxRecord[]> => {
+    const now = Date.now()
+    const limit = args.limit ?? RECONCILE_BATCH_LIMIT
+    const thresholds = {
+      processing: STUCK_PROCESSING_THRESHOLD_MS,
+      waiting_for_upload: STUCK_WAITING_FOR_UPLOAD_THRESHOLD_MS,
+    } as const
+
+    const results: StuckMuxRecord[] = []
+
+    for (const status of ['processing', 'waiting_for_upload'] as const) {
+      const cutoff = now - thresholds[status]
+
+      const bondfires = await ctx.db
+        .query('bondfires')
+        .withIndex('by_video_status', (q) => q.eq('videoStatus', status).lte('updatedAt', cutoff))
+        .take(limit)
+      for (const bondfire of bondfires) {
+        results.push({
+          table: 'bondfires',
+          recordId: bondfire._id,
+          userId: bondfire.userId,
+          videoStatus: status,
+          stuckForMs: now - bondfire.updatedAt,
+          muxUploadId: bondfire.muxUploadId,
+          muxAssetId: bondfire.muxAssetId,
+          muxLiveStreamId: bondfire.muxLiveStreamId,
+        })
+      }
+
+      // bondfireVideos has no updatedAt, so createdAt is the stuck clock.
+      // It can only over-trigger (checking Mux early is harmless and idempotent).
+      const responses = await ctx.db
+        .query('bondfireVideos')
+        .withIndex('by_video_status', (q) => q.eq('videoStatus', status).lte('createdAt', cutoff))
+        .take(limit)
+      for (const video of responses) {
+        results.push({
+          table: 'bondfireVideos',
+          recordId: video._id,
+          userId: video.userId,
+          videoStatus: status,
+          stuckForMs: now - video.createdAt,
+          muxUploadId: video.muxUploadId,
+          muxAssetId: video.muxAssetId,
+          muxLiveStreamId: video.muxLiveStreamId,
+        })
+      }
+    }
+
+    return results.slice(0, limit)
+  },
+})
+
+async function reconcileStuckMuxRecord(
+  ctx: ActionCtx,
+  record: StuckMuxRecord,
+): Promise<{ outcome: ReconcileOutcome; detail?: string }> {
+  const recordRef = {
+    uploadId: record.muxUploadId,
+    liveStreamId: record.muxLiveStreamId,
+  }
+
+  // 1. Resolve the asset ID, asking Mux when our record doesn't have one yet.
+  let assetId = record.muxAssetId
+
+  if (!assetId && record.muxUploadId) {
+    const upload = await muxRequestOptional(`/uploads/${record.muxUploadId}`)
+    if (upload) {
+      const uploadData = parseMuxData(upload)
+      const uploadStatus = readOptionalString(uploadData.status) ?? 'waiting'
+      assetId = readOptionalString(uploadData.asset_id)
+      if (!assetId && MUX_FAILED_STATUSES.has(uploadStatus)) {
+        await ctx.runMutation(internal.videos.markMuxAssetErrored, {
+          uploadId: record.muxUploadId,
+          assetStatus: uploadStatus,
+        })
+        return { outcome: 'errored', detail: `upload ${uploadStatus}` }
+      }
+    }
+  }
+
+  if (!assetId && record.muxLiveStreamId) {
+    const liveStream = await muxRequestOptional(`/live-streams/${record.muxLiveStreamId}`)
+    if (liveStream) {
+      const liveData = parseMuxData(liveStream)
+      const recentAssetIds = Array.isArray(liveData.recent_asset_ids)
+        ? liveData.recent_asset_ids.filter((id): id is string => typeof id === 'string')
+        : []
+      assetId = readOptionalString(liveData.active_asset_id) ?? recentAssetIds.at(-1)
+    }
+
+    if (!assetId && record.videoStatus === 'processing') {
+      if (record.stuckForMs > STUCK_LIVE_RECORDING_GIVE_UP_MS) {
+        await ctx.runMutation(internal.videos.markMuxAssetErrored, {
+          liveStreamId: record.muxLiveStreamId,
+          assetStatus: 'recording_never_appeared',
+        })
+        return { outcome: 'errored', detail: 'live recording never appeared on Mux' }
+      }
+      return { outcome: 'still_processing', detail: 'awaiting live recording asset' }
+    }
+  }
+
+  if (!assetId) {
+    if (record.videoStatus === 'waiting_for_upload') {
+      // Upload window may still be open — Mux will report timed_out when it closes.
+      return { outcome: 'still_processing', detail: 'upload not received yet' }
+    }
+    // 'processing' with no Mux identifiers at all can never self-resolve.
+    return { outcome: 'unresolved', detail: 'no Mux identifiers on record' }
+  }
+
+  // 2. The asset is the source of truth — sync our record to it.
+  const asset = await muxRequestOptional(`/assets/${assetId}`)
+  if (!asset) {
+    await ctx.runMutation(internal.videos.markMuxAssetErrored, {
+      ...recordRef,
+      assetId,
+      assetStatus: 'deleted',
+    })
+    return { outcome: 'errored', detail: 'asset deleted on Mux' }
+  }
+
+  const info = readMuxAssetInfo(parseMuxData(asset))
+
+  if (info.assetStatus && MUX_READY_STATUSES.has(info.assetStatus) && info.playbackId) {
+    const result: { updated: boolean; rejected?: boolean } = await ctx.runMutation(
+      internal.videos.markMuxAssetReady,
+      {
+        ...recordRef,
+        assetId: info.assetId,
+        playbackId: info.playbackId,
+        assetStatus: info.assetStatus,
+        durationMs: info.durationMs,
+        muxAspectRatio: info.muxAspectRatio,
+        muxMaxResolution: info.muxMaxResolution,
+      },
+    )
+    if (!result.updated) {
+      return { outcome: 'unresolved', detail: 'asset ready but record lookup failed' }
+    }
+    return result.rejected
+      ? { outcome: 'errored', detail: 'duration limit exceeded' }
+      : { outcome: 'recovered' }
+  }
+
+  if (info.assetStatus && MUX_FAILED_STATUSES.has(info.assetStatus)) {
+    await ctx.runMutation(internal.videos.markMuxAssetErrored, {
+      ...recordRef,
+      assetId,
+      assetStatus: info.assetStatus,
+    })
+    return { outcome: 'errored', detail: `asset ${info.assetStatus}` }
+  }
+
+  return { outcome: 'still_processing', detail: `asset ${info.assetStatus ?? 'unknown'}` }
+}
+
+export const reconcileStuckMuxVideos = internalAction({
+  args: {
+    dryRun: v.optional(v.boolean()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    checked: number
+    recovered: number
+    errored: number
+    stillProcessing: number
+    unresolved: number
+    failed: number
+  }> => {
+    const stuck: StuckMuxRecord[] = await ctx.runQuery(internal.videos.listStuckMuxRecords, {
+      limit: args.limit,
+    })
+
+    const summary = {
+      checked: stuck.length,
+      recovered: 0,
+      errored: 0,
+      stillProcessing: 0,
+      unresolved: 0,
+      failed: 0,
+    }
+
+    if (args.dryRun || stuck.length === 0) {
+      return summary
+    }
+
+    for (const record of stuck) {
+      let outcome: ReconcileOutcome | 'failed'
+      let detail: string | undefined
+
+      try {
+        const result = await reconcileStuckMuxRecord(ctx, record)
+        outcome = result.outcome
+        detail = result.detail
+      } catch (error) {
+        outcome = 'failed'
+        detail = error instanceof Error ? error.message : String(error)
+      }
+
+      if (outcome === 'recovered') summary.recovered += 1
+      else if (outcome === 'errored') summary.errored += 1
+      else if (outcome === 'still_processing') summary.stillProcessing += 1
+      else if (outcome === 'unresolved') summary.unresolved += 1
+      else summary.failed += 1
+
+      // 'still_processing' repeats every run for slow assets — don't log it.
+      if (outcome !== 'still_processing') {
+        await ctx.runMutation(internal.clientLogs.createInternal, {
+          level: outcome === 'recovered' ? 'info' : 'warn',
+          event: `video:reconcile:${outcome}`,
+          message: `Stuck ${record.videoStatus} ${record.table} record reconciled: ${outcome}${detail ? ` (${detail})` : ''}`,
+          data: {
+            table: record.table,
+            recordId: record.recordId,
+            videoStatus: record.videoStatus,
+            stuckForMs: record.stuckForMs,
+            muxUploadId: record.muxUploadId,
+            muxAssetId: record.muxAssetId,
+            muxLiveStreamId: record.muxLiveStreamId,
+            detail,
+          },
+          platform: 'server',
+          createdAt: Date.now(),
+          userId: record.userId,
+        })
+      }
+    }
+
+    return summary
   },
 })

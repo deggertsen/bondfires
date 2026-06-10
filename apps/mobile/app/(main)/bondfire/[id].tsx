@@ -59,6 +59,9 @@ import { routes } from '../../../lib/routes'
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window')
 const SCRUB_SEEK_THROTTLE_MS = 100
+// Processing normally completes within a couple of minutes; past this it is
+// likely stuck (missed Mux webhook) and worth a telemetry warning.
+const STUCK_PROCESSING_TELEMETRY_THRESHOLD_MS = 5 * 60 * 1000
 
 type PublicUser = {
   _id: Id<'users'>
@@ -925,6 +928,51 @@ export default function BondfireDetailScreen() {
   const didRestorePositionRef = useRef(false)
   const persistPositionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Telemetry: surface stuck/unavailable playback states so they can be
+  // correlated with the server-side Mux webhook + reconciliation logs.
+  const loggedPlaybackStateRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (bondfireData === undefined) return
+
+    let key: string
+    let log: () => void
+
+    if (bondfireData === null) {
+      key = `${bondfireId}:unavailable`
+      log = () =>
+        telemetry.warn('video:detail:unavailable', 'Bondfire detail query returned null', {
+          bondfireId,
+        })
+    } else if (bondfireData.videoStatus === 'processing') {
+      const processingForMs = Date.now() - bondfireData.updatedAt
+      key = `${bondfireData._id}:processing`
+      const data = {
+        bondfireId: bondfireData._id,
+        processingForMs,
+        hasMuxAssetId: !!bondfireData.muxAssetId,
+        hasMuxUploadId: !!bondfireData.muxUploadId,
+        hasMuxLiveStreamId: !!bondfireData.muxLiveStreamId,
+        muxAssetStatus: bondfireData.muxAssetStatus,
+      }
+      log =
+        processingForMs > STUCK_PROCESSING_TELEMETRY_THRESHOLD_MS
+          ? () =>
+              telemetry.warn(
+                'video:detail:stuck_processing',
+                'Viewer hit a bondfire stuck in processing',
+                data,
+              )
+          : () =>
+              telemetry.info('video:detail:processing', 'Viewer hit a processing bondfire', data)
+    } else {
+      return
+    }
+
+    if (loggedPlaybackStateRef.current === key) return
+    loggedPlaybackStateRef.current = key
+    log()
+  }, [bondfireData, bondfireId])
+
   // Track app active state (external subscription - keep useEffect)
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (appState) => {
@@ -1154,11 +1202,42 @@ export default function BondfireDetailScreen() {
     itemVisiblePercentThreshold: 50,
   }).current
 
-  if (!bondfireData) {
+  if (bondfireData === undefined) {
     return (
       <YStack flex={1} backgroundColor={'$background'} alignItems="center" justifyContent="center">
         <Spinner size="large" color={'$primary'} />
       </YStack>
+    )
+  }
+
+  // The query resolved to null: the bondfire is gone, expired, inaccessible,
+  // or its video errored during processing. Don't spin forever.
+  if (bondfireData === null) {
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+        <YStack flex={1} backgroundColor={'$background'} paddingHorizontal={24}>
+          <Pressable onPress={handleBackPress}>
+            <XStack alignItems="center" gap={6} paddingTop={50} paddingBottom={12}>
+              <ChevronLeft size={22} color={'$color'} />
+              <Text color={'$color'} fontWeight="800">
+                Campground
+              </Text>
+            </XStack>
+          </Pressable>
+
+          <YStack flex={1} alignItems="center" justifyContent="center" gap={16}>
+            <Flame size={44} color={'$placeholderColor'} />
+            <Text fontSize={22} fontWeight="900" textAlign="center">
+              This Bondfire isn't available
+            </Text>
+            <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
+              It may have expired, been removed, or its recording failed to process.
+            </Text>
+          </YStack>
+        </YStack>
+      </>
     )
   }
 
@@ -1169,15 +1248,9 @@ export default function BondfireDetailScreen() {
       <>
         <Stack.Screen options={{ headerShown: false }} />
         <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
-        <YStack
-          flex={1}
-          backgroundColor={'$background'}
-          paddingHorizontal={24}
-          justifyContent="center"
-          gap={22}
-        >
+        <YStack flex={1} backgroundColor={'$background'} paddingHorizontal={24}>
           <Pressable onPress={handleBackPress}>
-            <XStack alignItems="center" gap={6}>
+            <XStack alignItems="center" gap={6} paddingTop={50} paddingBottom={12}>
               <ChevronLeft size={22} color={'$color'} />
               <Text color={'$color'} fontWeight="800">
                 Campground
@@ -1185,34 +1258,36 @@ export default function BondfireDetailScreen() {
             </XStack>
           </Pressable>
 
-          <Animated.View style={{ opacity: pendingPulse }}>
-            <YStack
-              width={96}
-              height={96}
-              borderRadius={28}
-              backgroundColor={'$backgroundHover'}
-              borderWidth={1}
-              borderColor={'$primary'}
-              alignItems="center"
-              justifyContent="center"
-              alignSelf="center"
-            >
-              <Flame size={44} color={'$primary'} />
-            </YStack>
-          </Animated.View>
+          <YStack flex={1} justifyContent="center" gap={22}>
+            <Animated.View style={{ opacity: pendingPulse }}>
+              <YStack
+                width={96}
+                height={96}
+                borderRadius={28}
+                backgroundColor={'$backgroundHover'}
+                borderWidth={1}
+                borderColor={'$primary'}
+                alignItems="center"
+                justifyContent="center"
+                alignSelf="center"
+              >
+                <Flame size={44} color={'$primary'} />
+              </YStack>
+            </Animated.View>
 
-          <YStack gap={8} alignItems="center">
-            <Text fontSize={24} fontWeight="900" textAlign="center">
-              {bondfireData.title ?? `${creatorName}'s Bondfire`}
-            </Text>
-            <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
-              {[creatorName, bondfireData.campName].filter(Boolean).join(' • ')}
+            <YStack gap={8} alignItems="center">
+              <Text fontSize={24} fontWeight="900" textAlign="center">
+                {bondfireData.title ?? `${creatorName}'s Bondfire`}
+              </Text>
+              <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
+                {[creatorName, bondfireData.campName].filter(Boolean).join(' • ')}
+              </Text>
+            </YStack>
+
+            <Text fontSize={17} color={'$color'} textAlign="center" lineHeight={24}>
+              Waiting for {creatorName} to start recording...
             </Text>
           </YStack>
-
-          <Text fontSize={17} color={'$color'} textAlign="center" lineHeight={24}>
-            Waiting for {creatorName} to start recording...
-          </Text>
         </YStack>
       </>
     )
@@ -1223,15 +1298,9 @@ export default function BondfireDetailScreen() {
       <>
         <Stack.Screen options={{ headerShown: false }} />
         <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
-        <YStack
-          flex={1}
-          backgroundColor={'$background'}
-          paddingHorizontal={24}
-          justifyContent="center"
-          gap={22}
-        >
+        <YStack flex={1} backgroundColor={'$background'} paddingHorizontal={24}>
           <Pressable onPress={handleBackPress}>
-            <XStack alignItems="center" gap={6}>
+            <XStack alignItems="center" gap={6} paddingTop={50} paddingBottom={12}>
               <ChevronLeft size={22} color={'$color'} />
               <Text color={'$color'} fontWeight="800">
                 Campground
@@ -1239,7 +1308,7 @@ export default function BondfireDetailScreen() {
             </XStack>
           </Pressable>
 
-          <YStack alignItems="center" gap={16}>
+          <YStack flex={1} alignItems="center" justifyContent="center" gap={16}>
             <Spinner size="large" color={'$primary'} />
             <Text fontSize={22} fontWeight="900">
               Processing...

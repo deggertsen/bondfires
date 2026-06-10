@@ -288,7 +288,7 @@ export const createInternal = internalMutation({
     event: v.string(),
     message: v.string(),
     data: v.optional(v.any()),
-    platform: v.union(v.literal('ios'), v.literal('android')),
+    platform: v.union(v.literal('ios'), v.literal('android'), v.literal('server')),
     createdAt: v.number(),
     userId: v.optional(v.id('users')),
   },
