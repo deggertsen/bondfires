@@ -107,7 +107,7 @@ export default function ResetPasswordScreen() {
     return (
       <YStack
         flex={1}
-        backgroundColor={colors.background}
+        backgroundColor="$background"
         paddingHorizontal={24}
         alignItems="center"
         justifyContent="center"
@@ -142,7 +142,7 @@ export default function ResetPasswordScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor={colors.background}>
+    <YStack flex={1} backgroundColor="$background">
       <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
 
       {/* Back button */}

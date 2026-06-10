@@ -43,7 +43,7 @@ export default function ForgotPasswordScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor={colors.background}>
+    <YStack flex={1} backgroundColor="$background">
       <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
 
       {/* Back button */}

@@ -63,7 +63,9 @@ export default function LoginScreen() {
     form$.isLoading.set(true)
     form$.error.set(null)
 
-    // Timeout wrapper — if signIn hangs beyond 30s, reject so the user isn't stuck forever
+    // Timeout wrapper — if signIn hangs (e.g., Convex WebSocket still connecting),
+    // reject so the user isn't stuck forever. Cold starts after app updates can
+    // take a few seconds for the WebSocket to re-establish.
     const SIGN_IN_TIMEOUT_MS = 30_000
     const signInPromise = signIn('password', {
       email: currentEmail,
@@ -126,7 +128,7 @@ export default function LoginScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor={colors.background}>
+    <YStack flex={1} backgroundColor="$background">
       <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
       <KeyboardAwareScrollView
         contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
