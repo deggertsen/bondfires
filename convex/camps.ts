@@ -16,6 +16,7 @@ import {
   TIER_RANK,
 } from './entitlements'
 import { throwUserError } from './errors'
+import { generateAndInsertInviteCode, normalizeInviteCode } from './inviteCodes'
 
 type CampAccess = 'open' | 'approval' | 'invite'
 type CampGender = 'male' | 'female' | 'any'
@@ -81,27 +82,6 @@ const accessValidator = v.union(v.literal('open'), v.literal('approval'), v.lite
 const accessVisibilityModeValidator = v.union(v.literal('hide'), v.literal('gate'))
 
 const ALL_TIERS: readonly SubscriptionTier[] = ['free', 'plus', 'premium', 'pro']
-const INVITE_WORDS = [
-  'amber',
-  'ash',
-  'canyon',
-  'cedar',
-  'ember',
-  'forge',
-  'harbor',
-  'iron',
-  'lantern',
-  'mesa',
-  'oak',
-  'river',
-  'signal',
-  'stone',
-  'summit',
-  'trail',
-  'valley',
-  'watch',
-] as const
-
 const BASE_LAUNCH_CAMPS = [
   {
     slug: 'welcome-fires',
@@ -289,22 +269,6 @@ function normalizePrivateCampSlug(name: string, userId: Id<'users'>) {
     .slice(0, 48)
 
   return ['private', base || 'camp', userId.slice(-6)].join('-')
-}
-
-function generateInviteCode(seed: string) {
-  let hash = 0
-  for (let i = 0; i < seed.length; i += 1) {
-    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0
-  }
-
-  const first = INVITE_WORDS[hash % INVITE_WORDS.length]
-  const second = INVITE_WORDS[Math.floor(hash / INVITE_WORDS.length) % INVITE_WORDS.length]
-  const third =
-    INVITE_WORDS[
-      Math.floor(hash / (INVITE_WORDS.length * INVITE_WORDS.length)) % INVITE_WORDS.length
-    ]
-
-  return [first, second, third].join('-')
 }
 
 function isAdmin(user: Doc<'users'>) {
@@ -1339,42 +1303,20 @@ export const createInvite = mutation({
     }
 
     const user = await assertCanManageCamp(ctx, camp)
-    let code = (args.code ?? generateInviteCode([camp._id, Date.now()].join('-'))).toLowerCase()
 
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const existing = await ctx.db
-        .query('campInvites')
-        .withIndex('by_code', (q) => q.eq('code', code))
-        .first()
-      if (!existing) {
-        break
-      }
-      if (args.code) {
-        throwUserError('Invite code already exists')
-      }
-      code = generateInviteCode([camp._id, Date.now(), attempt].join('-'))
-    }
-    const existing = await ctx.db
-      .query('campInvites')
-      .withIndex('by_code', (q) => q.eq('code', code))
-      .first()
-    if (existing) {
-      throwUserError('Could not generate a unique invite code')
-    }
-
-    const inviteId = await ctx.db.insert('campInvites', {
-      code,
-      campId: camp._id,
-      uses: 0,
-      maxUses: args.maxUses,
-      expiresAt: args.expiresAt,
+    // Use the unified invite codes system
+    const result = await generateAndInsertInviteCode(ctx, {
+      parentType: 'camp',
+      parentId: camp._id,
       createdBy: user._id,
-      createdAt: Date.now(),
+      code: args.code,
+      expiresAt: args.expiresAt,
+      maxUses: args.maxUses,
     })
 
     return {
-      inviteId,
-      code,
+      inviteId: null, // inviteCodes entries are keyed by code, not numeric ID
+      code: result.code,
     }
   },
 })
@@ -1385,25 +1327,34 @@ export const redeemInvite = mutation({
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx)
+    const now = Date.now()
+    const normalizedCode = normalizeInviteCode(args.code)
+
     const invite = await ctx.db
-      .query('campInvites')
-      .withIndex('by_code', (q) => q.eq('code', args.code.toLowerCase()))
+      .query('inviteCodes')
+      .withIndex('by_code', (q) => q.eq('code', normalizedCode))
       .first()
 
     if (!invite) {
       throwUserError('Invite not found')
     }
 
-    if (invite.expiresAt && invite.expiresAt <= Date.now()) {
+    if (invite.expiresAt !== undefined && invite.expiresAt <= now) {
       throwUserError('Invite has expired')
     }
-
     if (invite.maxUses !== undefined && invite.uses >= invite.maxUses) {
       throwUserError('Invite has already been used')
     }
+    if (invite.parentType !== 'camp') {
+      throwUserError('Invite not found')
+    }
 
-    const camp = await ctx.db.get(invite.campId)
-    if (!camp || !isCampVisibleStatus(camp.status)) {
+    const camp = await ctx.db.get(invite.parentId as Id<'camps'>)
+    if (!camp) {
+      throwUserError('Camp not found')
+    }
+
+    if (!isCampVisibleStatus(camp.status)) {
       throwUserError('Camp not found')
     }
 
@@ -1563,8 +1514,8 @@ export const resetAndReseed = mutation({
 
       // Delete camp invites
       const invites = await ctx.db
-        .query('campInvites')
-        .withIndex('by_camp', (q) => q.eq('campId', camp._id))
+        .query('inviteCodes')
+        .withIndex('by_parent', (q) => q.eq('parentType', 'camp').eq('parentId', camp._id))
         .collect()
       for (const invite of invites) {
         await ctx.db.delete(invite._id)
@@ -1624,8 +1575,8 @@ export const resetAndReseedAdmin = internalMutation({
         await ctx.db.delete(membership._id)
       }
       const invites = await ctx.db
-        .query('campInvites')
-        .withIndex('by_camp', (q) => q.eq('campId', camp._id))
+        .query('inviteCodes')
+        .withIndex('by_parent', (q) => q.eq('parentType', 'camp').eq('parentId', camp._id))
         .collect()
       for (const invite of invites) {
         await ctx.db.delete(invite._id)

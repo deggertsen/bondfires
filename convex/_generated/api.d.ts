@@ -30,6 +30,7 @@ import type * as email from "../email.js";
 import type * as entitlements from "../entitlements.js";
 import type * as errors from "../errors.js";
 import type * as http from "../http.js";
+import type * as inviteCodes from "../inviteCodes.js";
 import type * as liveSessions from "../liveSessions.js";
 import type * as notifications from "../notifications.js";
 import type * as personalBondfireAccess from "../personalBondfireAccess.js";
@@ -73,6 +74,7 @@ declare const fullApi: ApiFromModules<{
   entitlements: typeof entitlements;
   errors: typeof errors;
   http: typeof http;
+  inviteCodes: typeof inviteCodes;
   liveSessions: typeof liveSessions;
   notifications: typeof notifications;
   personalBondfireAccess: typeof personalBondfireAccess;

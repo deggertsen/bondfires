@@ -209,10 +209,11 @@ export default defineSchema({
     .index('by_user_camp', ['userId', 'campId'])
     .index('by_camp_status', ['campId', 'status']),
 
-  // Invite codes for private/invite-only camps
-  campInvites: defineTable({
+  // Unified invite codes for all invite types (bondfires, personal bondfires, camps)
+  inviteCodes: defineTable({
     code: v.string(),
-    campId: v.id('camps'),
+    parentType: v.union(v.literal('bondfire'), v.literal('personal-bondfire'), v.literal('camp')),
+    parentId: v.string(), // bondfire or camp ID (stored as string since it can be either type)
     uses: v.number(),
     maxUses: v.optional(v.number()),
     expiresAt: v.optional(v.number()),
@@ -220,8 +221,9 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index('by_code', ['code'])
-    .index('by_camp', ['campId', 'createdAt'])
-    .index('by_created_by', ['createdBy', 'createdAt']),
+    .index('by_parent', ['parentType', 'parentId', 'createdAt'])
+    .index('by_created_by', ['createdBy', 'createdAt'])
+    .index('by_expires_at', ['expiresAt']),
 
   // Store subscription state. Client sync only records pending receipts; entitlement helpers
   // count active/trialing rows after server-side store validation marks them verified.
@@ -324,18 +326,7 @@ export default defineSchema({
     .index('by_user_status', ['userId', 'status', 'joinedAt']),
 
   // Invite codes for personal bondfires
-  personalBondfireInvites: defineTable({
-    bondfireId: v.id('bondfires'),
-    code: v.string(),
-    uses: v.number(),
-    maxUses: v.optional(v.number()),
-    createdBy: v.id('users'),
-    expiresAt: v.optional(v.number()),
-    createdAt: v.number(),
-  })
-    .index('by_code', ['code'])
-    .index('by_bondfire', ['bondfireId', 'createdAt'])
-    .index('by_created_by', ['createdBy', 'createdAt']),
+  // REMOVED — replaced by inviteCodes table
 
   // Reconciliation audit log for daily kindling balance checks and refunds.
   reconciliationLog: defineTable({

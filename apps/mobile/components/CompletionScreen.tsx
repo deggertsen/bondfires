@@ -96,7 +96,8 @@ export function CompletionScreen({ detail, onContinue, shareBondfireId }: Comple
       {/* Invite Sheet */}
       {shareBondfireId && (
         <InviteSheet
-          bondfireId={shareBondfireId}
+          mode="bondfire"
+          id={shareBondfireId}
           open={isInviteSheetOpen}
           onClose={() => setIsInviteSheetOpen(false)}
         />

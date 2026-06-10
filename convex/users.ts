@@ -301,8 +301,10 @@ export const deleteAccount = mutation({
       }
 
       const personalInvites = await ctx.db
-        .query('personalBondfireInvites')
-        .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
+        .query('inviteCodes')
+        .withIndex('by_parent', (q) =>
+          q.eq('parentType', 'personal-bondfire').eq('parentId', bondfire._id),
+        )
         .collect()
 
       for (const invite of personalInvites) {
@@ -363,7 +365,7 @@ export const deleteAccount = mutation({
     }
 
     const personalInvites = await ctx.db
-      .query('personalBondfireInvites')
+      .query('inviteCodes')
       .withIndex('by_created_by', (q) => q.eq('createdBy', userId))
       .collect()
 
@@ -401,7 +403,7 @@ export const deleteAccount = mutation({
     }
 
     const campInvites = await ctx.db
-      .query('campInvites')
+      .query('inviteCodes')
       .withIndex('by_created_by', (q) => q.eq('createdBy', userId))
       .collect()
 

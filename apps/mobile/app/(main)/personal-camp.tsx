@@ -8,7 +8,7 @@ import { Alert, FlatList, Pressable, StatusBar } from 'react-native'
 import { Separator, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../convex/_generated/dataModel'
-import { PersonalInviteSheet } from '../../components/PersonalInviteSheet'
+import { InviteSheet } from '../../components/InviteSheet'
 import {
   BONDFIRE_REPORT_OPTIONS,
   getBondfireSwipeActions,
@@ -486,7 +486,12 @@ export default function PersonalCampScreen() {
 
       {/* Invite Sheet */}
       {inviteFireId && (
-        <PersonalInviteSheet bondfireId={inviteFireId} open={true} onClose={handleCloseInvite} />
+        <InviteSheet
+          mode="personal-bondfire"
+          id={inviteFireId}
+          open={true}
+          onClose={handleCloseInvite}
+        />
       )}
     </YStack>
   )

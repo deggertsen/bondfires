@@ -85,8 +85,8 @@ export const deleteArchivedCampData = internalMutation({
 
       // Delete camp invites
       const invites = await ctx.db
-        .query('campInvites')
-        .withIndex('by_camp', (q) => q.eq('campId', camp._id))
+        .query('inviteCodes')
+        .withIndex('by_parent', (q) => q.eq('parentType', 'camp').eq('parentId', camp._id))
         .collect()
       for (const invite of invites) {
         await ctx.db.delete(invite._id)

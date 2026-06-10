@@ -316,8 +316,10 @@ export const deleteExpiredBondfireRecords = internalMutation({
         }
 
         const invites = await ctx.db
-          .query('personalBondfireInvites')
-          .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfireId))
+          .query('inviteCodes')
+          .withIndex('by_parent', (q) =>
+            q.eq('parentType', 'personal-bondfire').eq('parentId', bondfireId),
+          )
           .collect()
         for (const invite of invites) {
           await ctx.db.delete(invite._id)

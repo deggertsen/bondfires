@@ -9,87 +9,10 @@ import {
   PAID_TIERS,
 } from './entitlements'
 import { throwUserError } from './errors'
+import { generateAndInsertInviteCode, normalizeInviteCode } from './inviteCodes'
 import { canViewPersonalBondfire, getPersonalBondfireParticipant } from './personalBondfireAccess'
 
 // ── Constants ──────────────────────────────────────────────────────────────
-
-const INVITE_WORDS = [
-  'amber',
-  'ash',
-  'canyon',
-  'cedar',
-  'ember',
-  'forge',
-  'harbor',
-  'iron',
-  'lantern',
-  'mesa',
-  'oak',
-  'river',
-  'signal',
-  'stone',
-  'summit',
-  'trail',
-  'valley',
-  'watch',
-  'aurora',
-  'basin',
-  'beacon',
-  'birch',
-  'brook',
-  'cairn',
-  'cliff',
-  'cloud',
-  'copper',
-  'dawn',
-  'drift',
-  'field',
-  'flint',
-  'grove',
-  'hearth',
-  'hollow',
-  'kindle',
-  'lake',
-  'meadow',
-  'moon',
-  'pine',
-  'ridge',
-  'root',
-  'spark',
-  'spring',
-  'star',
-  'thicket',
-  'timber',
-  'willow',
-  'wind',
-  'blaze',
-  'bloom',
-  'branch',
-  'bright',
-  'coast',
-  'echo',
-  'fern',
-  'frost',
-  'glade',
-  'gold',
-  'hill',
-  'leaf',
-  'maple',
-  'mist',
-  'north',
-  'prairie',
-  'rain',
-  'shade',
-  'shore',
-  'silver',
-  'south',
-  'torch',
-  'west',
-  'wild',
-  'wood',
-] as const
-
-const INVITE_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 
 /** Plus users get 2 participants (sparker + 1), Premium/Pro get 8. */
 function getParticipantCap(tier: string): number {
@@ -100,26 +23,6 @@ function getParticipantCap(tier: string): number {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-
-function generateInviteCode(seed: string) {
-  let hash = 0
-  for (let i = 0; i < seed.length; i += 1) {
-    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0
-  }
-
-  const first = INVITE_WORDS[hash % INVITE_WORDS.length]
-  const second = INVITE_WORDS[Math.floor(hash / INVITE_WORDS.length) % INVITE_WORDS.length]
-  const third =
-    INVITE_WORDS[
-      Math.floor(hash / (INVITE_WORDS.length * INVITE_WORDS.length)) % INVITE_WORDS.length
-    ]
-
-  return [first, second, third].join('-')
-}
-
-function normalizeInviteCode(code: string) {
-  return code.trim().toLowerCase().replace(/\s+/g, '-').replace(/-+/g, '-')
-}
 
 async function getCurrentUser(ctx: QueryCtx | MutationCtx) {
   const userId = await auth.getUserId(ctx)
@@ -279,6 +182,7 @@ export const createBondfire = mutation({
  * Generate an invite code for a personal bondfire.
  * Only the bondfire owner can create invites.
  * Checks participant cap: Plus=2, Premium/Pro=8.
+ * Now delegates to the unified inviteCodes.generateAndInsertInviteCode helper.
  */
 export const createInvite = mutation({
   args: {
@@ -286,7 +190,6 @@ export const createInvite = mutation({
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx)
-    const now = Date.now()
 
     const bondfire = await getPersonalBondfireOrThrow(ctx, args.bondfireId)
 
@@ -316,41 +219,17 @@ export const createInvite = mutation({
       throwUserError('This fire is full.')
     }
 
-    // Generate a unique 3-word code.
-    const seed = [args.bondfireId, now].join('-')
-    let code = generateInviteCode(seed)
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const existing = await ctx.db
-        .query('personalBondfireInvites')
-        .withIndex('by_code', (q) => q.eq('code', code))
-        .first()
-      if (!existing) {
-        break
-      }
-      code = generateInviteCode([seed, String(attempt)].join('-'))
-    }
-
-    const finalExisting = await ctx.db
-      .query('personalBondfireInvites')
-      .withIndex('by_code', (q) => q.eq('code', code))
-      .first()
-    if (finalExisting) {
-      throwUserError('Could not generate a unique invite code. Please try again.')
-    }
-
-    const expiresAt = now + INVITE_EXPIRY_MS
-    await ctx.db.insert('personalBondfireInvites', {
-      bondfireId: args.bondfireId,
-      code,
-      uses: 0,
+    // Delegate to the unified invite code system
+    const result = await generateAndInsertInviteCode(ctx, {
+      parentType: 'personal-bondfire',
+      parentId: args.bondfireId,
       createdBy: user._id,
-      expiresAt,
-      createdAt: now,
+      expiresInDays: 7,
     })
 
     return {
-      code,
-      expiresAt,
+      code: result.code,
+      expiresAt: result.expiresAt,
       bondfireId: args.bondfireId,
     }
   },
@@ -370,24 +249,28 @@ export const redeemInvite = mutation({
     const now = Date.now()
     const code = normalizeInviteCode(args.code)
 
-    const invite = await ctx.db
-      .query('personalBondfireInvites')
+    const unifiedInvite = await ctx.db
+      .query('inviteCodes')
       .withIndex('by_code', (q) => q.eq('code', code))
       .first()
 
-    if (!invite) {
+    if (!unifiedInvite) {
       throwUserError('Invite not found.')
     }
 
-    if (invite.expiresAt !== undefined && invite.expiresAt <= now) {
+    if (unifiedInvite.expiresAt !== undefined && unifiedInvite.expiresAt <= now) {
       throwUserError('This invite has expired.')
     }
-
-    if (invite.maxUses !== undefined && invite.uses >= invite.maxUses) {
+    if (unifiedInvite.maxUses !== undefined && unifiedInvite.uses >= unifiedInvite.maxUses) {
       throwUserError('This invite has already been used.')
     }
+    if (unifiedInvite.parentType !== 'personal-bondfire') {
+      throwUserError('Invite not found.')
+    }
 
-    const bondfire = await ctx.db.get(invite.bondfireId)
+    const bondfireId = unifiedInvite.parentId as Id<'bondfires'>
+
+    const bondfire = await ctx.db.get(bondfireId)
     if (!bondfire) {
       throwUserError('This fire has ended.')
     }
@@ -442,9 +325,7 @@ export const redeemInvite = mutation({
       })
     }
 
-    await ctx.db.patch(invite._id, {
-      uses: invite.uses + 1,
-    })
+    await ctx.db.patch(unifiedInvite._id, { uses: unifiedInvite.uses + 1 })
 
     return { bondfireId: bondfire._id, alreadyJoined: false }
   },
@@ -564,8 +445,10 @@ export const deleteBondfire = mutation({
 
     // Delete all invites.
     const invites = await ctx.db
-      .query('personalBondfireInvites')
-      .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
+      .query('inviteCodes')
+      .withIndex('by_parent', (q) =>
+        q.eq('parentType', 'personal-bondfire').eq('parentId', args.bondfireId),
+      )
       .collect()
 
     for (const inv of invites) {
@@ -612,8 +495,9 @@ export const checkInvite = query({
     const code = normalizeInviteCode(args.code)
     const now = Date.now()
 
+    // Check unified inviteCodes table
     const invite = await ctx.db
-      .query('personalBondfireInvites')
+      .query('inviteCodes')
       .withIndex('by_code', (q) => q.eq('code', code))
       .first()
 
@@ -629,25 +513,25 @@ export const checkInvite = query({
       return { valid: false, reason: 'used' as const }
     }
 
-    const bondfire = await ctx.db.get(invite.bondfireId)
+    if (invite.parentType !== 'personal-bondfire') {
+      return { valid: false, reason: 'not_found' as const }
+    }
+
+    const bondfire = await ctx.db.get(invite.parentId as Id<'bondfires'>)
     if (!bondfire) {
       return { valid: false, reason: 'ended' as const }
     }
-
     if (!bondfire.personalCampId) {
       return { valid: false, reason: 'invalid' as const }
     }
-
     const personalCamp = await ctx.db.get(bondfire.personalCampId)
     if (!personalCamp || personalCamp.status !== 'active') {
       return { valid: false, reason: 'frozen' as const }
     }
-
     const activeCount = await getActiveParticipantCount(ctx, bondfire._id)
     const owner = await ctx.db.get(bondfire.userId)
     const ownerTier = owner ? await getEntitlementSubscriptionTier(ctx, owner._id) : 'free'
     const cap = getParticipantCap(ownerTier)
-
     return {
       valid: true,
       bondfireId: bondfire._id,
