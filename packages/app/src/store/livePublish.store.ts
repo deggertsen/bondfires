@@ -7,6 +7,8 @@ export type LivePublishStatus =
   | 'connecting'
   | 'live'
   | 'reconnecting'
+  | 'stream_stopped_unexpectedly'
+  | 'endpoint_closed'
   | 'stopping'
   | 'ended'
   | 'errored'

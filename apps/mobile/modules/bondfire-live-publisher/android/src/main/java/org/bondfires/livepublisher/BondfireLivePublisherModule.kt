@@ -29,6 +29,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -227,6 +228,52 @@ class BondfireLivePublisherModule : Module() {
       endpointFactory = RtmpEndpointFactory(),
     )
     streamer = newStreamer
+
+    // Collect StreamPack internal errors (encoder failures, codec crashes,
+    // camera disconnects, etc.) and forward them to JS as error events.
+    // Without this, the app has zero visibility into why a recording freezes
+    // or truncates.
+    scope.launch {
+      newStreamer.throwableFlow.collect { throwable ->
+        if (throwable == null) return@collect
+        val msg = throwable.message ?: throwable.javaClass.simpleName
+        Log.e(TAG, "Streamer internal error: $msg", throwable)
+        sendEvent(
+          "error", mapOf(
+            "code" to "streamer_internal_error",
+            "message" to msg,
+            "throwableClass" to throwable.javaClass.name,
+          )
+        )
+      }
+    }
+
+    // Track streaming state changes so we can detect unexpected drops.
+    // If isStreaming goes false without us calling stop(), the encoder
+    // crashed or the RTMP connection dropped.
+    scope.launch {
+      newStreamer.isStreamingFlow.collect { isStreaming ->
+        Log.i(TAG, "Streamer isStreaming changed: $isStreaming")
+        if (!isStreaming) {
+          sendEvent(
+            "statusChange", mapOf("status" to "stream_stopped_unexpectedly")
+          )
+        }
+      }
+    }
+
+    // Track endpoint open/close state — if the RTMP connection drops
+    // (network, Mux side), isOpen goes false.
+    scope.launch {
+      newStreamer.isOpenFlow.collect { isOpen ->
+        Log.i(TAG, "Streamer isOpen changed: $isOpen")
+        if (!isOpen) {
+          sendEvent(
+            "statusChange", mapOf("status" to "endpoint_closed")
+          )
+        }
+      }
+    }
 
     // Configure audio
     val audioConfig = AudioCodecConfig(

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { telemetry } from '../services/telemetry'
-import { livePublishActions, livePublishStore$ } from '../store/livePublish.store'
+import { livePublishActions, livePublishStore$, type LivePublishStatus } from '../store/livePublish.store'
 
 export interface LivePublisherStartOptions {
   rtmpsUrl: string
@@ -40,7 +40,7 @@ export interface LivePublisherNativeModule {
   getStats(): Promise<LivePublisherStats>
   addListener(
     event: 'statusChange',
-    cb: (status: 'idle' | 'connecting' | 'live' | 'reconnecting' | 'errored' | 'ended') => void,
+    cb: (status: string) => void,
   ): LivePublisherSubscription
   addListener(
     event: 'error',
@@ -88,7 +88,22 @@ export function useLivePublisher(options: {
 
   useEffect(() => {
     const statusSub = options.publisher.addListener('statusChange', (status) => {
-      livePublishActions.setStatus(status === 'ended' ? 'ended' : status)
+      livePublishActions.setStatus(
+        (status === 'ended' ? 'ended' : status) as LivePublishStatus,
+      )
+
+      // Unexpected stream drops are equivalent to errors — surface them
+      // in telemetry so we can diagnose freezing/truncation issues.
+      if (status === 'stream_stopped_unexpectedly' || status === 'endpoint_closed') {
+        telemetry.error('live:unexpected_drop', 'Live stream stopped unexpectedly', {
+          reason: status,
+          sessionId: livePublishStore$.sessionId.peek(),
+          recordId: livePublishStore$.recordId.peek(),
+          durationMs: livePublishStore$.startedAt.peek()
+            ? Date.now() - livePublishStore$.startedAt.peek()!
+            : undefined,
+        })
+      }
     })
     const errorSub = options.publisher.addListener('error', (error) => {
       telemetry.error('live:crash', 'Live publisher native error', {
