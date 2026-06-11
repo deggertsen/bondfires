@@ -87,13 +87,29 @@ export function useLivePublisher(options: {
   }, [])
 
   useEffect(() => {
-    const statusSub = options.publisher.addListener('statusChange', (status) => {
+    const statusSub = options.publisher.addListener('statusChange', (rawStatus) => {
+      // Native emits { status: "..." } from sendStatus helper, but could
+      // also emit a plain string. Normalize to a string.
+      const status: string =
+        typeof rawStatus === 'string' ? rawStatus : (rawStatus as Record<string, unknown>)?.status as string ?? 'unknown'
+
+      // Suppress spurious events during intentional stop — the collectors
+      // for isStreamingFlow / isOpenFlow fire before the explicit "ended",
+      // but the native module now guards with isStoppingIntentionally.
+      // This is a belt-and-suspenders check on the JS side.
+      if (status === 'stream_stopped_unexpectedly' || status === 'endpoint_closed') {
+        const currentStatus = livePublishStore$.status.peek()
+        if (currentStatus === 'stopping' || currentStatus === 'ended' || currentStatus === 'idle') {
+          return // intentional stop in progress, ignore
+        }
+      }
+
       livePublishActions.setStatus(
         (status === 'ended' ? 'ended' : status) as LivePublishStatus,
       )
 
-      // Log unexpected drops to telemetry for diagnosis, but don't show
-      // a user-facing toast — the UI already handles the status transition.
+      // Log unexpected drops to telemetry for diagnosis. No user-facing
+      // toast — the UI already handles the status transition silently.
       if (status === 'stream_stopped_unexpectedly' || status === 'endpoint_closed') {
         telemetry.info('live:unexpected_drop', 'Live stream stopped unexpectedly', {
           reason: status,

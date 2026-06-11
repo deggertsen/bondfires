@@ -65,6 +65,8 @@ class BondfireLivePublisherModule : Module() {
   private var streamer: SingleStreamer? = null
   private var isMuted = false
   private var currentFacing: String = "front"
+  @Volatile
+  private var isStoppingIntentionally = false
 
   var previewView: PreviewView? = null
 
@@ -251,10 +253,12 @@ class BondfireLivePublisherModule : Module() {
     // Track streaming state changes so we can detect unexpected drops.
     // If isStreaming goes false without us calling stop(), the encoder
     // crashed or the RTMP connection dropped.
+    // NOTE: isStreaming naturally goes false during intentional stop() —
+    // we must guard against emitting false-positive "unexpected" events.
     scope.launch {
       newStreamer.isStreamingFlow.collect { isStreaming ->
-        Log.i(TAG, "Streamer isStreaming changed: $isStreaming")
-        if (!isStreaming) {
+        Log.i(TAG, "Streamer isStreaming changed: $isStreaming (intentionalStop=$isStoppingIntentionally)")
+        if (!isStreaming && !isStoppingIntentionally) {
           sendEvent(
             "statusChange", mapOf("status" to "stream_stopped_unexpectedly")
           )
@@ -264,10 +268,11 @@ class BondfireLivePublisherModule : Module() {
 
     // Track endpoint open/close state — if the RTMP connection drops
     // (network, Mux side), isOpen goes false.
+    // NOTE: isOpen also goes false during intentional stop() — guard.
     scope.launch {
       newStreamer.isOpenFlow.collect { isOpen ->
-        Log.i(TAG, "Streamer isOpen changed: $isOpen")
-        if (!isOpen) {
+        Log.i(TAG, "Streamer isOpen changed: $isOpen (intentionalStop=$isStoppingIntentionally)")
+        if (!isOpen && !isStoppingIntentionally) {
           sendEvent(
             "statusChange", mapOf("status" to "endpoint_closed")
           )
@@ -446,6 +451,7 @@ class BondfireLivePublisherModule : Module() {
 
   private suspend fun cleanupStreamer() {
     val s = streamer ?: return
+    isStoppingIntentionally = true
     streamer = null
     isMuted = false
 
@@ -477,6 +483,8 @@ class BondfireLivePublisherModule : Module() {
         Log.w(TAG, "Error releasing streamer", e)
       }
     }
+
+    isStoppingIntentionally = false
   }
 
   /**
