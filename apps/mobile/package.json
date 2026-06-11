@@ -50,7 +50,7 @@
     "@tamagui/metro-plugin": "^1.144.1",
     "@tamagui/shorthands": "^1.144.0",
     "@tamagui/themes": "^1.144.0",
-    "convex": "^1.31.3",
+    "convex": "^1.41.0",
     "expo": "~54.0.35",
     "expo-av": "^16.0.8",
     "expo-background-fetch": "~14.0.9",

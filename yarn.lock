@@ -5547,7 +5547,7 @@ __metadata:
     "@biomejs/biome": "npm:^2.4.6"
     "@convex-dev/auth": "npm:^0.0.90"
     "@types/node": "npm:^25.0.3"
-    convex: "npm:^1.31.3"
+    convex: "npm:^1.41.0"
     turbo: "npm:^2.3.0"
     typescript: "npm:^6.0.0"
   languageName: unknown
@@ -6032,26 +6032,30 @@ __metadata:
   languageName: node
   linkType: hard
 
-"convex@npm:^1.31.3":
-  version: 1.31.3
-  resolution: "convex@npm:1.31.3"
+"convex@npm:^1.41.0":
+  version: 1.41.0
+  resolution: "convex@npm:1.41.0"
   dependencies:
     esbuild: "npm:0.27.0"
     prettier: "npm:^3.0.0"
+    ws: "npm:8.20.1"
   peerDependencies:
     "@auth0/auth0-react": ^2.0.1
     "@clerk/clerk-react": ^4.12.8 || ^5.0.0
+    "@clerk/react": ^6.4.3
     react: ^18.0.0 || ^19.0.0-0 || ^19.0.0
   peerDependenciesMeta:
     "@auth0/auth0-react":
       optional: true
     "@clerk/clerk-react":
       optional: true
+    "@clerk/react":
+      optional: true
     react:
       optional: true
   bin:
     convex: bin/main.js
-  checksum: 10c0/9d5c37824449c0de7a2174ffe0dc9a177e819c248c2e17e156db65fe4f3b3a07fcb062d6b6134b22ff76900ba5efa2823075b959ca81d89628d76162dea042eb
+  checksum: 10c0/d37df4f873dd4242bb1c0cfbee5f165a1858342f1989c01fc8b5fedf01ba6632239b8310a31a0a28e63d817705524958d2315eea6445c20433a7f6ffe1a33283
   languageName: node
   linkType: hard
 
@@ -9081,7 +9085,7 @@ __metadata:
     "@tamagui/themes": "npm:^1.144.0"
     "@types/react": "npm:~19.1.0"
     babel-preset-expo: "npm:~54.0.10"
-    convex: "npm:^1.31.3"
+    convex: "npm:^1.41.0"
     expo: "npm:~54.0.35"
     expo-av: "npm:^16.0.8"
     expo-background-fetch: "npm:~14.0.9"
@@ -11605,6 +11609,21 @@ __metadata:
     imurmurhash: "npm:^0.1.4"
     signal-exit: "npm:^3.0.7"
   checksum: 10c0/a2c282c95ef5d8e1c27b335ae897b5eca00e85590d92a3fd69a437919b7b93ff36a69ea04145da55829d2164e724bc62202cdb5f4b208b425aba0807889375c7
+  languageName: node
+  linkType: hard
+
+"ws@npm:8.20.1":
+  version: 8.20.1
+  resolution: "ws@npm:8.20.1"
+  peerDependencies:
+    bufferutil: ^4.0.1
+    utf-8-validate: ">=5.0.2"
+  peerDependenciesMeta:
+    bufferutil:
+      optional: true
+    utf-8-validate:
+      optional: true
+  checksum: 10c0/ce162433218399cdedeb76fd33363d4d86a7d910058d4e3c679dce08cea65d6da6b39f11baa4d7808d024cf46ed88f6a05c17611621aaad8fc5e62edacc30c5d
   languageName: node
   linkType: hard
 
