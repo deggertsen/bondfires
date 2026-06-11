@@ -28,7 +28,10 @@ import io.github.thibaultbee.streampack.ui.views.PreviewView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 class LivePublisherStartOptions : Record {
   @Field val rtmpsUrl: String = ""
@@ -396,23 +399,59 @@ class BondfireLivePublisherModule : Module() {
 
   private suspend fun cleanupStreamer() {
     val s = streamer ?: return
-    try {
-      s.stopStream()
-    } catch (e: Exception) {
-      Log.w(TAG, "Error stopping stream", e)
-    }
-    try {
-      s.close()
-    } catch (e: Exception) {
-      Log.w(TAG, "Error closing streamer", e)
-    }
-    try {
-      s.release()
-    } catch (e: Exception) {
-      Log.w(TAG, "Error releasing streamer", e)
-    }
     streamer = null
     isMuted = false
+
+    // Run teardown on a background thread with a total timeout so a hung
+    // codec teardown cannot block the JS thread indefinitely.  We also add
+    // small delays between steps — MediaCodec teardown is async under the
+    // hood, and hammering stop→close→release without yielding can trigger
+    // native races on some devices.
+    runBlockingWithTimeout(5000) {
+      try {
+        s.stopStream()
+      } catch (e: Exception) {
+        Log.w(TAG, "Error stopping stream", e)
+      }
+
+      delay(200)
+
+      try {
+        s.close()
+      } catch (e: Exception) {
+        Log.w(TAG, "Error closing streamer", e)
+      }
+
+      delay(200)
+
+      try {
+        s.release()
+      } catch (e: Exception) {
+        Log.w(TAG, "Error releasing streamer", e)
+      }
+    }
+  }
+
+  /**
+   * Run [block] on the IO dispatcher, cancelling it after [timeoutMs].
+   * This protects against native codec teardown hangs that would otherwise
+   * block the calling coroutine forever.
+   */
+  private suspend fun runBlockingWithTimeout(
+    timeoutMs: Long,
+    block: suspend () -> Unit,
+  ) {
+    try {
+      kotlinx.coroutines.withTimeout(timeoutMs) {
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+          block()
+        }
+      }
+    } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+      Log.w(TAG, "Streamer cleanup timed out after ${timeoutMs}ms — resources may leak", e)
+    } catch (e: Exception) {
+      Log.w(TAG, "Unexpected error during streamer cleanup", e)
+    }
   }
 }
 

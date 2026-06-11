@@ -252,6 +252,35 @@ export default function CreateScreen() {
   })
   const keepAwakeTag = 'create-recording'
 
+  // Clean up any orphaned live sessions from a previous crash so Mux billing
+  // stops immediately and the bondfire transitions out of 'live' status. The
+  // 5-minute stale-session cron is the durable fallback; this is best-effort.
+  const listMyActiveSessions = useQuery(api.liveSessions.listMyActive, {})
+  const activeSessions = listMyActiveSessions ?? []
+  useEffect(() => {
+    if (!shouldUseLivePublish || activeSessions.length === 0) return
+
+    // Don't clean up sessions that are currently being used by this screen.
+    const currentSessionId = livePublishStore$.sessionId.peek()
+    const orphaned = activeSessions.filter((s) => s._id !== currentSessionId)
+
+    for (const session of orphaned) {
+      telemetry.warn('live:orphan', 'Cleaning up orphaned live session from previous crash', {
+        sessionId: session._id,
+        status: session.status,
+      })
+      cancelLiveStream({
+        liveSessionId: session._id as Id<'liveSessions'>,
+        reason: 'crash_recovery',
+      }).catch((err) => {
+        telemetry.error('live:orphan_cleanup', 'Failed to clean up orphaned live session', {
+          sessionId: session._id,
+          error: String(err),
+        })
+      })
+    }
+  }, [shouldUseLivePublish, activeSessions, cancelLiveStream])
+
   useEffect(() => {
     if (respondTo || !campId) {
       return
