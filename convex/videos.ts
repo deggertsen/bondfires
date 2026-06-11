@@ -395,7 +395,7 @@ function assertDurationWithinCampRules(camp: Doc<'camps'>, durationMs: number | 
   }
 
   if (
-    camp.rules.participation.maxDurationMs &&
+    camp.rules?.participation.maxDurationMs &&
     durationMs > camp.rules.participation.maxDurationMs
   ) {
     throwUserError('This recording is longer than the camp allows')
@@ -514,7 +514,7 @@ async function assertUserCanParticipateInCamp(
     throwUserError('Only the private camp owner can spark here')
   }
 
-  const campGender = camp.rules.access.gender?.value
+  const campGender = camp.rules?.access.gender?.value
   if (campGender && campGender !== 'any' && user.gender !== campGender) {
     throwUserError('This camp is limited to members who match its gender setting')
   }
@@ -523,7 +523,7 @@ async function assertUserCanParticipateInCamp(
 
   if (
     args.operation === 'spark' &&
-    camp.rules.access.allowedTiers?.value &&
+    camp.rules?.access.allowedTiers?.value &&
     camp.rules.access.allowedTiers.value.length > 0
   ) {
     const tier = await getEntitlementSubscriptionTier(ctx, args.userId)
@@ -537,7 +537,7 @@ async function assertUserCanParticipateInCamp(
     await assertVideoDurationWithinTierLimit(ctx, args.userId, args.durationMs)
   }
 
-  if (args.operation === 'spark' && camp.rules.advisory.requiresTradeTags) {
+  if (args.operation === 'spark' && camp.rules?.advisory.requiresTradeTags) {
     const tags = args.tags ?? []
     if (!tags.includes('need') && !tags.includes('offer')) {
       throwUserError('The Trading Post requires a need or offer tag')
@@ -584,7 +584,7 @@ async function assertCanRespondToBondfire(
     durationMs: args.durationMs,
   })
 
-  if (camp.rules.participation.maxResponses !== undefined) {
+  if (camp.rules?.participation.maxResponses !== undefined) {
     const existingVideos = await ctx.db
       .query('bondfireVideos')
       .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))

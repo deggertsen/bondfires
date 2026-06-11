@@ -3,6 +3,7 @@ import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import { internalAction, mutation, query } from './_generated/server'
 import { auth } from './auth'
+import { buildViewerVisibilityContext, isCampContentVisibleToViewer } from './bondfireVisibility'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -268,6 +269,13 @@ export const canAccessBondfire = query({
     }
 
     if (camp.access === 'open') {
+      // Only show the join prompt if the camp is actually visible/joinable for
+      // this user (readable status + gender, age, and tier rules from
+      // rules.access with hide-mode visibility).
+      const viewer = await buildViewerVisibilityContext(ctx, userId)
+      if (!isCampContentVisibleToViewer(camp, viewer)) {
+        return null
+      }
       return { needsCampJoin: true, campId: camp._id }
     }
 

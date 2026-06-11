@@ -20,9 +20,13 @@ import { generateAndInsertInviteCode, normalizeInviteCode } from './inviteCodes'
 
 type CampAccess = 'open' | 'approval' | 'invite'
 type CampGender = 'male' | 'female' | 'any'
-type CampAccessVisibilityMode = 'hide' | 'gate'
-type CampVisibilityDeniedReason = 'wrong_gender' | 'tier_too_low' | 'underage' | 'invite_only'
-type CampVisibilityResult = {
+export type CampAccessVisibilityMode = 'hide' | 'gate'
+export type CampVisibilityDeniedReason =
+  | 'wrong_gender'
+  | 'tier_too_low'
+  | 'underage'
+  | 'invite_only'
+export type CampVisibilityResult = {
   visible: boolean
   accessDeniedReason?: string
   accessDeniedCode?: CampVisibilityDeniedReason
@@ -410,11 +414,16 @@ function getMinimumTier(tiers: readonly SubscriptionTier[]): SubscriptionTier | 
  * - 'gate' mode rules: user doesn't match → camp is visible but accessDeniedReason is set
  * - Invite-only camps default to hidden for non-members.
  */
-function computeVisibility(
+export function computeVisibility(
   user: { gender?: string; tier: SubscriptionTier; birthDate?: string },
   camp: Doc<'camps'>,
 ): CampVisibilityResult {
-  const access = camp.rules.access
+  // Legacy camps created before the rules field was introduced have no access
+  // rules — treat them as visible to everyone.
+  const access = camp.rules?.access
+  if (!access) {
+    return { visible: true }
+  }
 
   if (camp.access === 'invite') {
     return deniedByAccessRule('hide', 'invite_only', 'This camp requires an invitation')
@@ -558,18 +567,21 @@ function computeSortRank(
 
 /** Human-readable locked reason from access rules. */
 function lockedReason(camp: Doc<'camps'>, userTier: SubscriptionTier): string | undefined {
-  const access = camp.rules.access
-  if (access.allowedTiers) {
-    if (!access.allowedTiers.value.includes(userTier)) {
-      const minTier = getMinimumTier(access.allowedTiers.value)
-      return minTier ? MINIMUM_TIER_REASON[minTier] : 'Your membership tier cannot join this camp'
-    }
+  // Legacy camps created before the rules field existed have no tier restrictions.
+  const access = camp.rules?.access
+  if (!access?.allowedTiers) {
+    return undefined
+  }
+  if (!access.allowedTiers.value.includes(userTier)) {
+    const minTier = getMinimumTier(access.allowedTiers.value)
+    return minTier ? MINIMUM_TIER_REASON[minTier] : 'Your membership tier cannot join this camp'
   }
   return undefined
 }
 
 function isInviteOnlyCamp(camp: Doc<'camps'>): boolean {
-  return camp.access === 'invite' || camp.rules.access.inviteOnly?.value === true
+  // Legacy camps without rules are never invite-only at the rule level.
+  return camp.access === 'invite' || camp.rules?.access.inviteOnly?.value === true
 }
 
 /** Resolve camp display name — invite-only camps use nameOverride or ownerDisplayName. */

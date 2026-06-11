@@ -5,6 +5,7 @@ import {
   hasViewedToday,
   type MuxDataVideoMetadata,
   markViewed,
+  parseError,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
   telemetry,
@@ -1600,10 +1601,12 @@ export default function BondfireDetailScreen() {
                       await joinCamp({ campId: accessCheck.campId })
                       setShowJoinPrompt(false)
                     } catch (error) {
-                      Alert.alert(
-                        'Could not join',
-                        error instanceof Error ? error.message : String(error),
-                      )
+                      telemetry.error('camp:join', 'Failed to join camp from bondfire detail', {
+                        campId: accessCheck.campId,
+                        error: String(error),
+                      })
+                      const { message } = parseError(error)
+                      Alert.alert('Could not join', message)
                     } finally {
                       setJoinLoading(false)
                     }

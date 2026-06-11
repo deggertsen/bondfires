@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { telemetry } from '../services/telemetry'
-import { livePublishActions, livePublishStore$, type LivePublishStatus } from '../store/livePublish.store'
+import {
+  type LivePublishStatus,
+  livePublishActions,
+  livePublishStore$,
+} from '../store/livePublish.store'
 
 export interface LivePublisherStartOptions {
   rtmpsUrl: string
@@ -38,10 +42,7 @@ export interface LivePublisherNativeModule {
   swapCamera(): Promise<void>
   setMuted(muted: boolean): Promise<void>
   getStats(): Promise<LivePublisherStats>
-  addListener(
-    event: 'statusChange',
-    cb: (status: string) => void,
-  ): LivePublisherSubscription
+  addListener(event: 'statusChange', cb: (status: string) => void): LivePublisherSubscription
   addListener(
     event: 'error',
     cb: (error: { code: string; message: string }) => void,
@@ -91,7 +92,9 @@ export function useLivePublisher(options: {
       // Native emits { status: "..." } from sendStatus helper, but could
       // also emit a plain string. Normalize to a string.
       const status: string =
-        typeof rawStatus === 'string' ? rawStatus : (rawStatus as Record<string, unknown>)?.status as string ?? 'unknown'
+        typeof rawStatus === 'string'
+          ? rawStatus
+          : (((rawStatus as Record<string, unknown>)?.status as string) ?? 'unknown')
 
       // Suppress spurious events during intentional stop — the collectors
       // for isStreamingFlow / isOpenFlow fire before the explicit "ended",
@@ -104,24 +107,36 @@ export function useLivePublisher(options: {
         }
       }
 
-      livePublishActions.setStatus(
-        (status === 'ended' ? 'ended' : status) as LivePublishStatus,
-      )
+      livePublishActions.setStatus((status === 'ended' ? 'ended' : status) as LivePublishStatus)
 
       // Log unexpected drops to telemetry for diagnosis. No user-facing
       // toast — the UI already handles the status transition silently.
       if (status === 'stream_stopped_unexpectedly' || status === 'endpoint_closed') {
+        const startedAt = livePublishStore$.startedAt.peek()
         telemetry.info('live:unexpected_drop', 'Live stream stopped unexpectedly', {
           reason: status,
           sessionId: livePublishStore$.sessionId.peek(),
           recordId: livePublishStore$.recordId.peek(),
-          durationMs: livePublishStore$.startedAt.peek()
-            ? Date.now() - livePublishStore$.startedAt.peek()!
-            : undefined,
+          durationMs: startedAt ? Date.now() - startedAt : undefined,
         })
       }
     })
     const errorSub = options.publisher.addListener('error', (error) => {
+      // Suppress errors that fire during/after teardown. The native streaming
+      // libraries (StreamPack/HaishinKit) can emit internal errors as the
+      // encoder, camera, and RTMP connection are being torn down — these are
+      // teardown artifacts, not user-facing failures.
+      const currentStatus = livePublishStore$.status.peek()
+      if (currentStatus === 'stopping' || currentStatus === 'ended' || currentStatus === 'idle') {
+        telemetry.warn('live:crash_stale', 'Live publisher native error (teardown artifact)', {
+          code: error.code,
+          message: error.message,
+          sessionId: livePublishStore$.sessionId.peek(),
+          statusAtError: currentStatus,
+        })
+        return
+      }
+
       telemetry.error('live:crash', 'Live publisher native error', {
         code: error.code,
         message: error.message,

@@ -17,6 +17,7 @@ export function isCampParticipableStatus(status: Camp['status']) {
 export function requiresActiveMembershipForVisibility(camp: Camp) {
   return (
     camp.access === 'invite' ||
+    camp.rules?.access.inviteOnly?.value === true ||
     camp.status === 'frozen' ||
     camp.status === 'grace' ||
     camp.status === 'archived'

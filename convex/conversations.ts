@@ -3,9 +3,12 @@ import type { Doc, Id } from './_generated/dataModel'
 import type { QueryCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
-import { isCampReadableStatus, requiresActiveMembershipForVisibility } from './campLifecycle'
+import {
+  buildViewerVisibilityContext,
+  isBondfireVisibleToViewer,
+  type ViewerVisibilityContext,
+} from './bondfireVisibility'
 import { throwUserError } from './errors'
-import { canViewPersonalBondfire } from './personalBondfireAccess'
 
 type ThreadParticipant = {
   user: PublicUser
@@ -63,40 +66,6 @@ function isPlayableVideoRecord(record: {
     (status === 'ready' && !!record.muxPlaybackId) ||
     (status === 'live' && !!record.muxLivePlaybackId)
   )
-}
-
-async function getVisibleCampIds(ctx: QueryCtx, userId: Id<'users'>) {
-  const memberships = await ctx.db
-    .query('campMembers')
-    .withIndex('by_user', (q) => q.eq('userId', userId).eq('status', 'active'))
-    .collect()
-
-  return new Set(memberships.map((membership) => membership.campId))
-}
-
-async function isBondfireVisibleToViewer(
-  ctx: QueryCtx,
-  bondfire: Doc<'bondfires'>,
-  userId: Id<'users'>,
-  memberCampIds: Set<Id<'camps'>>,
-) {
-  if (bondfire.personalCampId) {
-    return await canViewPersonalBondfire(ctx, { bondfire, userId })
-  }
-
-  if (!bondfire.campId) {
-    return true
-  }
-
-  const camp = await ctx.db.get(bondfire.campId)
-  if (!camp || !isCampReadableStatus(camp.status)) {
-    return false
-  }
-
-  if (requiresActiveMembershipForVisibility(camp)) {
-    return memberCampIds.has(camp._id)
-  }
-  return true
 }
 
 async function getParticipantMap(
@@ -229,7 +198,7 @@ async function listSharedThreads(
   args: {
     viewerId: Id<'users'>
     pinnedUserId: Id<'users'>
-    memberCampIds: Set<Id<'camps'>>
+    viewer: ViewerVisibilityContext
     pinnedUserIds: Set<Id<'users'>>
     limit: number
     candidateLimit: number
@@ -247,7 +216,7 @@ async function listSharedThreads(
     if (!bondfire || !isPlayableVideoRecord(bondfire)) {
       continue
     }
-    if (!(await isBondfireVisibleToViewer(ctx, bondfire, args.viewerId, args.memberCampIds))) {
+    if (!(await isBondfireVisibleToViewer(ctx, bondfire, args.viewer))) {
       continue
     }
 
@@ -269,7 +238,7 @@ async function listVisiblePrivateCampThreadsByUser(
   args: {
     viewerId: Id<'users'>
     ownerId: Id<'users'>
-    memberCampIds: Set<Id<'camps'>>
+    viewer: ViewerVisibilityContext
     pinnedUserIds: Set<Id<'users'>>
     limit: number
     candidateLimit: number
@@ -288,7 +257,7 @@ async function listVisiblePrivateCampThreadsByUser(
     }
 
     const camp = await ctx.db.get(bondfire.campId)
-    if (!camp || camp.access !== 'invite' || !args.memberCampIds.has(camp._id)) {
+    if (!camp || camp.access !== 'invite' || !args.viewer.memberCampIds.has(camp._id)) {
       continue
     }
 
@@ -318,14 +287,13 @@ export const listMyFires = query({
 
     const limit = clampLimit(args.limit)
     const candidateLimit = limit * THREAD_CANDIDATE_MULTIPLIER
-    const [threadIds, memberCampIds, pinnedUserIds, user] = await Promise.all([
+    const [threadIds, viewer, pinnedUserIds] = await Promise.all([
       getParticipantThreadIds(ctx, userId, candidateLimit),
-      getVisibleCampIds(ctx, userId),
+      buildViewerVisibilityContext(ctx, userId),
       getPinnedUserIds(ctx, userId),
-      ctx.db.get(userId),
     ])
 
-    const pinnedBondfireIds = new Set(user?.pinnedBondfireIds ?? [])
+    const pinnedBondfireIds = new Set(viewer.user?.pinnedBondfireIds ?? [])
 
     const threads: ThreadSummary[] = []
     for (const threadId of threadIds) {
@@ -333,7 +301,7 @@ export const listMyFires = query({
       if (!bondfire || !isPlayableVideoRecord(bondfire)) {
         continue
       }
-      if (!(await isBondfireVisibleToViewer(ctx, bondfire, userId, memberCampIds))) {
+      if (!(await isBondfireVisibleToViewer(ctx, bondfire, viewer))) {
         continue
       }
 
@@ -366,12 +334,12 @@ export const listCloseCircle = query({
       return []
     }
 
-    const [pins, memberCampIds, pinnedUserIds] = await Promise.all([
+    const [pins, viewer, pinnedUserIds] = await Promise.all([
       ctx.db
         .query('closeCirclePins')
         .withIndex('by_owner', (q) => q.eq('ownerId', userId))
         .take(CLOSE_CIRCLE_LIMIT),
-      getVisibleCampIds(ctx, userId),
+      buildViewerVisibilityContext(ctx, userId),
       getPinnedUserIds(ctx, userId),
     ])
 
@@ -386,7 +354,7 @@ export const listCloseCircle = query({
         listSharedThreads(ctx, {
           viewerId: userId,
           pinnedUserId: pin.pinnedUserId,
-          memberCampIds,
+          viewer,
           pinnedUserIds,
           limit: 3,
           candidateLimit: CLOSE_CIRCLE_THREAD_CANDIDATE_LIMIT,
@@ -394,7 +362,7 @@ export const listCloseCircle = query({
         listVisiblePrivateCampThreadsByUser(ctx, {
           viewerId: userId,
           ownerId: pin.pinnedUserId,
-          memberCampIds,
+          viewer,
           pinnedUserIds,
           limit: 3,
           candidateLimit: CLOSE_CIRCLE_THREAD_CANDIDATE_LIMIT,

@@ -5,10 +5,12 @@ import type { MutationCtx, QueryCtx } from './_generated/server'
 import { action, internalQuery, mutation, query } from './_generated/server'
 import { auth } from './auth'
 import {
-  isCampParticipableStatus,
-  isCampReadableStatus,
-  requiresActiveMembershipForVisibility,
-} from './campLifecycle'
+  buildViewerVisibilityContext,
+  filterVisibleBondfiresForViewer,
+  isBondfireVisibleToViewer,
+  isCampContentVisibleToViewer,
+} from './bondfireVisibility'
+import { isCampParticipableStatus } from './campLifecycle'
 import {
   assertCanCreateBondfire,
   assertVideoDurationWithinTierLimit,
@@ -144,53 +146,10 @@ async function getThreadParticipants(ctx: QueryCtx, bondfire: Doc<'bondfires'>) 
     .sort((a, b) => b.latestAt - a.latestAt)
 }
 
-async function getVisibleCampIds(ctx: QueryCtx, userId: Id<'users'> | null) {
-  if (!userId) {
-    return new Set<Id<'camps'>>()
-  }
-
-  const memberships = await ctx.db
-    .query('campMembers')
-    .withIndex('by_user', (q) => q.eq('userId', userId).eq('status', 'active'))
-    .collect()
-
-  return new Set(memberships.map((membership) => membership.campId))
-}
-
-async function isBondfireVisibleToViewer(
-  ctx: QueryCtx,
-  bondfire: Doc<'bondfires'>,
-  userId: Id<'users'> | null,
-  memberCampIds: Set<Id<'camps'>>,
-) {
-  if (bondfire.personalCampId) {
-    return await canViewPersonalBondfire(ctx, { bondfire, userId })
-  }
-
-  if (!bondfire.campId) {
-    return true
-  }
-
-  const camp = await ctx.db.get(bondfire.campId)
-  if (!camp || !isCampReadableStatus(camp.status)) {
-    return false
-  }
-
-  if (requiresActiveMembershipForVisibility(camp)) {
-    return memberCampIds.has(camp._id)
-  }
-
-  return true
-}
-
 async function filterVisibleBondfires(ctx: QueryCtx, bondfires: Doc<'bondfires'>[]) {
   const userId = await auth.getUserId(ctx)
-  const memberCampIds = await getVisibleCampIds(ctx, userId)
-  const visibility = await Promise.all(
-    bondfires.map((bondfire) => isBondfireVisibleToViewer(ctx, bondfire, userId, memberCampIds)),
-  )
-
-  return bondfires.filter((_, index) => visibility[index])
+  const viewer = await buildViewerVisibilityContext(ctx, userId)
+  return await filterVisibleBondfiresForViewer(ctx, bondfires, viewer)
 }
 
 async function resolveCampLabel(ctx: QueryCtx, bondfire: Doc<'bondfires'>) {
@@ -279,24 +238,14 @@ export const listByCamp = query({
   handler: async (ctx, args) => {
     const limit = args.limit ?? 20
     const camp = await ctx.db.get(args.campId)
-    if (!camp || !isCampReadableStatus(camp.status)) {
+    if (!camp) {
       return []
     }
 
-    if (requiresActiveMembershipForVisibility(camp)) {
-      const userId = await auth.getUserId(ctx)
-      if (!userId) {
-        return []
-      }
-
-      const membership = await ctx.db
-        .query('campMembers')
-        .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', args.campId))
-        .first()
-
-      if (membership?.status !== 'active') {
-        return []
-      }
+    const userId = await auth.getUserId(ctx)
+    const viewer = await buildViewerVisibilityContext(ctx, userId)
+    if (!isCampContentVisibleToViewer(camp, viewer)) {
+      return []
     }
 
     const bondfires = await ctx.db
@@ -527,13 +476,13 @@ export const create = mutation({
       throw new Error('Only the private camp owner can spark here')
     }
 
-    const campGender = camp.rules.access.gender?.value
+    const campGender = camp.rules?.access.gender?.value
     if (campGender && campGender !== 'any' && user.gender !== campGender) {
       throw new Error('This camp is limited to members who match its gender setting')
     }
 
     if (
-      camp.rules.participation.maxDurationMs &&
+      camp.rules?.participation.maxDurationMs &&
       args.durationMs &&
       args.durationMs > camp.rules.participation.maxDurationMs
     ) {
@@ -545,13 +494,13 @@ export const create = mutation({
 
     // Enforce tier-based Bondfire creation permission (Free cannot create).
     const tier = await assertCanCreateBondfire(ctx, userId)
-    if (camp.rules.access.allowedTiers?.value && camp.rules.access.allowedTiers.value.length > 0) {
+    if (camp.rules?.access.allowedTiers?.value && camp.rules.access.allowedTiers.value.length > 0) {
       if (!camp.rules.access.allowedTiers.value.includes(tier)) {
         throw new Error('Your membership tier cannot spark in this camp')
       }
     }
 
-    if (camp.rules.advisory.requiresTradeTags) {
+    if (camp.rules?.advisory.requiresTradeTags) {
       const tags = args.tags ?? []
       if (!tags.includes('need') && !tags.includes('offer')) {
         throw new Error('The Trading Post requires a need or offer tag')
@@ -642,19 +591,13 @@ export const incrementViews = mutation({
       }
     } else if (bondfire.campId) {
       const camp = await ctx.db.get(bondfire.campId)
-      if (!camp || !isCampReadableStatus(camp.status)) {
+      if (!camp) {
         throw new Error('Camp not found')
       }
 
-      if (requiresActiveMembershipForVisibility(camp)) {
-        const membership = await ctx.db
-          .query('campMembers')
-          .withIndex('by_user_camp', (q) => q.eq('userId', viewerId).eq('campId', camp._id))
-          .first()
-
-        if (membership?.status !== 'active') {
-          throw new Error('Bondfire not found')
-        }
+      const viewer = await buildViewerVisibilityContext(ctx, viewerId)
+      if (!isCampContentVisibleToViewer(camp, viewer)) {
+        throw new Error('Bondfire not found')
       }
     }
 
@@ -713,8 +656,8 @@ export const pinBondfire = mutation({
     if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
       throw new Error('Bondfire not found')
     }
-    const memberCampIds = await getVisibleCampIds(ctx, userId)
-    const canViewBondfire = await isBondfireVisibleToViewer(ctx, bondfire, userId, memberCampIds)
+    const viewer = await buildViewerVisibilityContext(ctx, userId)
+    const canViewBondfire = await isBondfireVisibleToViewer(ctx, bondfire, viewer)
     if (!canViewBondfire) {
       throw new Error('Bondfire not found')
     }

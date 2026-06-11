@@ -1,61 +1,13 @@
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
-import type { MutationCtx, QueryCtx } from './_generated/server'
+import type { MutationCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
-import {
-  isCampParticipableStatus,
-  isCampReadableStatus,
-  requiresActiveMembershipForVisibility,
-} from './campLifecycle'
+import { buildViewerVisibilityContext, isBondfireVisibleToViewer } from './bondfireVisibility'
+import { isCampParticipableStatus } from './campLifecycle'
 import { assertVideoDurationWithinTierLimit } from './entitlements'
-import {
-  assertCanRespondToPersonalBondfire,
-  canViewPersonalBondfire,
-} from './personalBondfireAccess'
-
-async function getVisibleCampIds(ctx: QueryCtx, userId: Id<'users'> | null) {
-  if (!userId) {
-    return new Set<Id<'camps'>>()
-  }
-
-  const memberships = await ctx.db
-    .query('campMembers')
-    .withIndex('by_user', (q) => q.eq('userId', userId).eq('status', 'active'))
-    .collect()
-
-  return new Set(memberships.map((membership) => membership.campId))
-}
-
-async function isBondfireVisibleToViewer(
-  ctx: QueryCtx,
-  bondfire: Doc<'bondfires'>,
-  userId: Id<'users'> | null,
-  memberCampIds: Set<Id<'camps'>>,
-) {
-  if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
-    return false
-  }
-
-  if (bondfire.personalCampId) {
-    return await canViewPersonalBondfire(ctx, { bondfire, userId })
-  }
-
-  if (!bondfire.campId) {
-    return true
-  }
-
-  const camp = await ctx.db.get(bondfire.campId)
-  if (!camp || !isCampReadableStatus(camp.status)) {
-    return false
-  }
-
-  if (requiresActiveMembershipForVisibility(camp)) {
-    return memberCampIds.has(camp._id)
-  }
-  return true
-}
+import { assertCanRespondToPersonalBondfire } from './personalBondfireAccess'
 
 async function assertCanRespondToBondfire(
   ctx: MutationCtx,
@@ -103,20 +55,20 @@ async function assertCanRespondToBondfire(
     throw new Error('Join this camp before responding here')
   }
 
-  const campGender = camp.rules.access.gender?.value
+  const campGender = camp.rules?.access.gender?.value
   if (campGender && campGender !== 'any' && user.gender !== campGender) {
     throw new Error('This camp is limited to members who match its gender setting')
   }
 
   if (
-    camp.rules.participation.maxDurationMs &&
+    camp.rules?.participation.maxDurationMs &&
     args.durationMs &&
     args.durationMs > camp.rules.participation.maxDurationMs
   ) {
     throw new Error('This recording is longer than the camp allows')
   }
 
-  if (camp.rules.participation.maxResponses !== undefined) {
+  if (camp.rules?.participation.maxResponses !== undefined) {
     const existingVideos = await ctx.db
       .query('bondfireVideos')
       .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
@@ -140,8 +92,8 @@ export const listByBondfire = query({
     }
 
     const userId = await auth.getUserId(ctx)
-    const memberCampIds = await getVisibleCampIds(ctx, userId)
-    const canViewBondfire = await isBondfireVisibleToViewer(ctx, bondfire, userId, memberCampIds)
+    const viewer = await buildViewerVisibilityContext(ctx, userId)
+    const canViewBondfire = await isBondfireVisibleToViewer(ctx, bondfire, viewer)
     if (!canViewBondfire) {
       return []
     }
@@ -171,7 +123,7 @@ export const listByUser = query({
   args: { userId: v.id('users') },
   handler: async (ctx, args) => {
     const viewerId = await auth.getUserId(ctx)
-    const memberCampIds = await getVisibleCampIds(ctx, viewerId)
+    const viewer = await buildViewerVisibilityContext(ctx, viewerId)
     const videos = await ctx.db
       .query('bondfireVideos')
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
@@ -185,7 +137,7 @@ export const listByUser = query({
       }
 
       const bondfire = await ctx.db.get(video.bondfireId)
-      if (bondfire && (await isBondfireVisibleToViewer(ctx, bondfire, viewerId, memberCampIds))) {
+      if (bondfire && (await isBondfireVisibleToViewer(ctx, bondfire, viewer))) {
         visibleVideos.push(video)
       }
     }
