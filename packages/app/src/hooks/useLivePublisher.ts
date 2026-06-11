@@ -92,10 +92,10 @@ export function useLivePublisher(options: {
         (status === 'ended' ? 'ended' : status) as LivePublishStatus,
       )
 
-      // Unexpected stream drops are equivalent to errors — surface them
-      // in telemetry so we can diagnose freezing/truncation issues.
+      // Log unexpected drops to telemetry for diagnosis, but don't show
+      // a user-facing toast — the UI already handles the status transition.
       if (status === 'stream_stopped_unexpectedly' || status === 'endpoint_closed') {
-        telemetry.error('live:unexpected_drop', 'Live stream stopped unexpectedly', {
+        telemetry.info('live:unexpected_drop', 'Live stream stopped unexpectedly', {
           reason: status,
           sessionId: livePublishStore$.sessionId.peek(),
           recordId: livePublishStore$.recordId.peek(),

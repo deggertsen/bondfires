@@ -15,6 +15,7 @@ import {
   useAppThemeColors,
   useLivePublisher,
   useSubscription,
+  type LivePublishStatus,
 } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
@@ -1137,10 +1138,17 @@ export default function CreateScreen() {
   const startLivePreConnect = useCallback(async () => {
     const currentStatus = livePublishStore$.status.get()
     const currentRecordingState = state$.recordingState.get()
+    const recoveredStatuses: LivePublishStatus[] = [
+      'idle',
+      'ended',
+      'errored',
+      'stream_stopped_unexpectedly',
+      'endpoint_closed',
+    ]
     if (
       preConnectInFlightRef.current ||
       currentRecordingState !== 'idle' ||
-      (currentStatus !== 'idle' && currentStatus !== 'ended' && currentStatus !== 'errored')
+      !recoveredStatuses.includes(currentStatus)
     ) {
       return
     }
@@ -1533,17 +1541,20 @@ export default function CreateScreen() {
     return () => clearTimeout(timeout)
   }, [cancelLiveRecording, recordingState, shouldUseLivePublish, state$])
 
-  // If the connection dies mid-recording, finalize the partial recording
-  // instead of leaving the UI stuck on REC with nothing being ingested.
+  // If the connection dies or the encoder unexpectedly stops mid-recording,
+  // finalize the partial recording instead of leaving the UI stuck on REC.
   useEffect(() => {
-    if (!shouldUseLivePublish || recordingState !== 'recording' || liveStatus !== 'errored') {
+    const isDead =
+      liveStatus === 'errored' ||
+      liveStatus === 'stream_stopped_unexpectedly' ||
+      liveStatus === 'endpoint_closed'
+
+    if (!shouldUseLivePublish || recordingState !== 'recording' || !isDead) {
       return
     }
 
-    Alert.alert(
-      'Connection Lost',
-      'The live connection dropped. Everything recorded so far will be saved.',
-    )
+    // Don't show an alert — the status transition is visible in the UI and
+    // the completed upload will show whatever was captured.
     void stopLiveRecording()
   }, [liveStatus, recordingState, shouldUseLivePublish, stopLiveRecording])
 
