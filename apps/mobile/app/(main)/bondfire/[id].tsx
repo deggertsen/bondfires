@@ -1323,6 +1323,37 @@ export default function BondfireDetailScreen() {
     )
   }
 
+  if (bondfireData.videoStatus === 'errored') {
+    const creatorName = bondfireData.creatorName ?? 'Someone'
+
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+        <YStack flex={1} backgroundColor={'$background'} paddingHorizontal={24}>
+          <Pressable onPress={handleBackPress}>
+            <XStack alignItems="center" gap={6} paddingTop={50} paddingBottom={12}>
+              <ChevronLeft size={22} color={'$color'} />
+              <Text color={'$color'} fontWeight="800">
+                Campground
+              </Text>
+            </XStack>
+          </Pressable>
+
+          <YStack flex={1} alignItems="center" justifyContent="center" gap={16}>
+            <Flame size={44} color={'$placeholderColor'} />
+            <Text fontSize={22} fontWeight="900" textAlign="center">
+              Recording failed
+            </Text>
+            <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
+              {creatorName}'s recording didn't process correctly. They can try again.
+            </Text>
+          </YStack>
+        </YStack>
+      </>
+    )
+  }
+
   const totalVideos = 1 + bondfireData.videos.length
 
   // Build video items with metadata - using typed IDs for type safety
