@@ -64,7 +64,7 @@ function isDetailVisibleVideoRecord(record: {
   }
 
   const status = record.videoStatus ?? 'ready'
-  if (status === 'pending' || status === 'processing') {
+  if (status === 'pending' || status === 'processing' || status === 'errored') {
     return true
   }
 

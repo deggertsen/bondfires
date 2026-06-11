@@ -1002,29 +1002,50 @@ async function patchLinkedLiveRecord(
   }
 }
 
-async function markLinkedLiveRecordProcessing(ctx: MutationCtx, liveSession: Doc<'liveSessions'>) {
-  const livePatch = {
-    videoStatus: 'processing' as const,
-    muxAssetStatus: 'processing',
-  }
-
+async function getLinkedLiveRecord(
+  ctx: MutationCtx,
+  liveSession: Doc<'liveSessions'>,
+): Promise<Doc<'bondfires'> | Doc<'bondfireVideos'> | null> {
   if (liveSession.bondfireVideoId) {
-    const video = await ctx.db.get(liveSession.bondfireVideoId)
-    if (video && (video.videoStatus ?? 'ready') === 'live') {
-      await ctx.db.patch(liveSession.bondfireVideoId, livePatch)
-    }
+    return await ctx.db.get(liveSession.bondfireVideoId)
+  }
+  if (liveSession.bondfireId) {
+    return await ctx.db.get(liveSession.bondfireId)
+  }
+  return null
+}
+
+// The recorded VOD asset has already resolved for this record. muxPlaybackId
+// is only ever written by markRecordReady (live playback uses the separate
+// muxLivePlaybackId field), so these two fields together mean the asset.ready
+// webhook (or the VOD poller) already succeeded.
+function hasResolvedRecordedAsset(record: { muxAssetId?: string; muxPlaybackId?: string }) {
+  return !!record.muxAssetId && !!record.muxPlaybackId
+}
+
+async function markLinkedLiveRecordProcessing(ctx: MutationCtx, liveSession: Doc<'liveSessions'>) {
+  const record = await getLinkedLiveRecord(ctx, liveSession)
+  if (!record || (record.videoStatus ?? 'ready') !== 'live') {
     return
   }
 
-  if (liveSession.bondfireId) {
-    const bondfire = await ctx.db.get(liveSession.bondfireId)
-    if (bondfire && (bondfire.videoStatus ?? 'ready') === 'live') {
-      await ctx.db.patch(liveSession.bondfireId, {
-        ...livePatch,
-        updatedAt: Date.now(),
-      })
-    }
+  // Mux webhooks are not delivered in order: asset.ready can arrive before
+  // the stream's own active/idle events. When that happens the 'active'
+  // handler clobbers the ready record back to 'live'. Restore 'ready' here
+  // instead of demoting to 'processing' — the asset.ready webhook already
+  // fired, so nothing would ever re-promote a demoted record.
+  if (hasResolvedRecordedAsset(record)) {
+    await patchLinkedLiveRecord(ctx, liveSession, {
+      videoStatus: 'ready',
+      muxAssetStatus: 'ready',
+    })
+    return
   }
+
+  await patchLinkedLiveRecord(ctx, liveSession, {
+    videoStatus: 'processing',
+    muxAssetStatus: 'processing',
+  })
 }
 
 async function markLinkedLiveRecordErrored(ctx: MutationCtx, liveSession: Doc<'liveSessions'>) {
@@ -3168,10 +3189,16 @@ export const handleMuxWebhookEvent = internalMutation({
             readOptionalString(data.active_asset_id) ?? liveSession.muxActiveAssetId,
           updatedAt: now,
         })
-        await patchLinkedLiveRecord(ctx, liveSession, {
-          videoStatus: 'live',
-          muxAssetStatus: 'live',
-        })
+        // A late or retried 'active' delivery can arrive after asset.ready
+        // already resolved the recording — don't clobber a finished record
+        // back to 'live'.
+        const linkedRecord = await getLinkedLiveRecord(ctx, liveSession)
+        if (linkedRecord && !hasResolvedRecordedAsset(linkedRecord)) {
+          await patchLinkedLiveRecord(ctx, liveSession, {
+            videoStatus: 'live',
+            muxAssetStatus: 'live',
+          })
+        }
         if (liveSession.bondfireId && !liveSession.bondfireVideoId && !liveSession.startedAt) {
           const user = await ctx.db.get(liveSession.userId)
           await ctx.scheduler.runAfter(0, internal.sendNotification.notifyBondfireLive, {
