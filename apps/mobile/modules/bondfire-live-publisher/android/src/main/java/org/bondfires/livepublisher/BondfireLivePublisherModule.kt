@@ -455,30 +455,32 @@ class BondfireLivePublisherModule : Module() {
     streamer = null
     isMuted = false
 
-    // Run teardown on a background thread with a total timeout so a hung
-    // codec teardown cannot block the JS thread indefinitely.  We also add
-    // small delays between steps — MediaCodec teardown is async under the
-    // hood, and hammering stop→close→release without yielding can trigger
-    // native races on some devices.
+    // On some devices, calling stopStream() triggers a native SIGSEGV inside
+    // MediaCodec teardown — a signal-level crash that no Kotlin try/catch can
+    // survive. The app dies, Mux never sees an RTMP disconnect, and the stream
+    // runs until server-side timeout.
+    //
+    // We skip stopStream() entirely and go directly to close() + release()
+    // with a generous timeout on a background thread. If the encoder is hung,
+    // the timeout cancels the coroutine and we accept a small resource leak in
+    // exchange for keeping the app alive.
+    Log.i(TAG, "cleanupStreamer: beginning teardown (no stopStream)")
     runBlockingWithTimeout(5000) {
       try {
-        s.stopStream()
-      } catch (e: Exception) {
-        Log.w(TAG, "Error stopping stream", e)
-      }
-
-      delay(200)
-
-      try {
+        // close() sends an RTMP disconnect and tears down the encoder;
+        // it's equivalent to stopStream+close but without the synchronous
+        // MediaCodec.stop() that triggers the SIGSEGV on affected devices.
         s.close()
+        Log.i(TAG, "cleanupStreamer: close() completed")
       } catch (e: Exception) {
-        Log.w(TAG, "Error closing streamer", e)
+        Log.w(TAG, "Error closing streamer (encoder may have already crashed)", e)
       }
 
       delay(200)
 
       try {
         s.release()
+        Log.i(TAG, "cleanupStreamer: release() completed")
       } catch (e: Exception) {
         Log.w(TAG, "Error releasing streamer", e)
       }
