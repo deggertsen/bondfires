@@ -30,9 +30,6 @@
   },
   "devDependencies": {
     "@types/react": "^19.1.0",
-    "expo-iap": "^4.3.1",
-    "expo-in-app-updates": "^0.12.0",
-    "expo-linking": "*",
     "typescript": "^6.0.0"
   }
 }
