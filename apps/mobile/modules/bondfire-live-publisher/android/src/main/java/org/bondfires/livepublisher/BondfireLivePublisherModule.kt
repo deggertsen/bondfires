@@ -27,6 +27,7 @@ import io.github.thibaultbee.streampack.ext.rtmp.elements.endpoints.RtmpEndpoint
 import io.github.thibaultbee.streampack.ui.views.PreviewView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
@@ -63,6 +64,9 @@ class BondfireLivePublisherModule : Module() {
 
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
   private var streamer: SingleStreamer? = null
+  // Flow collectors for the current streamer. Cancelled in cleanupStreamer so
+  // a torn-down streamer can never emit stale events into a new session.
+  private val collectorJobs = mutableListOf<Job>()
   private var isMuted = false
   private var currentFacing: String = "front"
   @Volatile
@@ -235,11 +239,14 @@ class BondfireLivePublisherModule : Module() {
     // camera disconnects, etc.) and forward them to JS as error events.
     // Without this, the app has zero visibility into why a recording freezes
     // or truncates.
-    scope.launch {
+    collectorJobs += scope.launch {
       newStreamer.throwableFlow.collect { throwable ->
         if (throwable == null) return@collect
         val msg = throwable.message ?: throwable.javaClass.simpleName
         Log.e(TAG, "Streamer internal error: $msg", throwable)
+        // Errors surfacing during/after teardown belong to a dead session;
+        // forwarding them would mark a subsequent healthy session as failed.
+        if (streamer !== newStreamer || isStoppingIntentionally) return@collect
         sendEvent(
           "error", mapOf(
             "code" to "streamer_internal_error",
@@ -253,12 +260,16 @@ class BondfireLivePublisherModule : Module() {
     // Track streaming state changes so we can detect unexpected drops.
     // If isStreaming goes false without us calling stop(), the encoder
     // crashed or the RTMP connection dropped.
-    // NOTE: isStreaming naturally goes false during intentional stop() —
-    // we must guard against emitting false-positive "unexpected" events.
-    scope.launch {
+    // NOTE: isStreamingFlow is a StateFlow — it replays its current value
+    // (false) on subscribe, and it also goes false during intentional stop().
+    // Only a true -> false transition outside an intentional stop is a drop.
+    collectorJobs += scope.launch {
+      var wasStreaming = false
       newStreamer.isStreamingFlow.collect { isStreaming ->
         Log.i(TAG, "Streamer isStreaming changed: $isStreaming (intentionalStop=$isStoppingIntentionally)")
-        if (!isStreaming && !isStoppingIntentionally) {
+        val dropped = wasStreaming && !isStreaming
+        wasStreaming = isStreaming
+        if (dropped && !isStoppingIntentionally && streamer === newStreamer) {
           sendEvent(
             "statusChange", mapOf("status" to "stream_stopped_unexpectedly")
           )
@@ -268,11 +279,15 @@ class BondfireLivePublisherModule : Module() {
 
     // Track endpoint open/close state — if the RTMP connection drops
     // (network, Mux side), isOpen goes false.
-    // NOTE: isOpen also goes false during intentional stop() — guard.
-    scope.launch {
+    // NOTE: isOpenFlow is also a StateFlow with the same replay/intentional
+    // stop caveats as isStreamingFlow above.
+    collectorJobs += scope.launch {
+      var wasOpen = false
       newStreamer.isOpenFlow.collect { isOpen ->
         Log.i(TAG, "Streamer isOpen changed: $isOpen (intentionalStop=$isStoppingIntentionally)")
-        if (!isOpen && !isStoppingIntentionally) {
+        val closed = wasOpen && !isOpen
+        wasOpen = isOpen
+        if (closed && !isStoppingIntentionally && streamer === newStreamer) {
           sendEvent(
             "statusChange", mapOf("status" to "endpoint_closed")
           )
@@ -454,6 +469,13 @@ class BondfireLivePublisherModule : Module() {
     isStoppingIntentionally = true
     streamer = null
     isMuted = false
+
+    // Cancel the flow collectors before tearing anything down. If release()
+    // times out below, the old streamer's flows stay live in the background —
+    // without this, a late emission after isStoppingIntentionally resets
+    // would surface as a bogus error/drop on the next session.
+    collectorJobs.forEach { it.cancel() }
+    collectorJobs.clear()
 
     // On some devices, calling stopStream() triggers a native SIGSEGV inside
     // MediaCodec teardown — a signal-level crash that no Kotlin try/catch can

@@ -261,6 +261,12 @@ export default function CreateScreen() {
   useEffect(() => {
     if (!shouldUseLivePublish || activeSessions.length === 0) return
 
+    // Only sweep while live publishing is fully idle. createLiveStream inserts
+    // the liveSessions row before the action resolves, so this reactive query
+    // can deliver our own in-flight session before sessionId lands in the
+    // store — sweeping then would cancel the session we're about to record on.
+    if (livePublishStore$.status.peek() !== 'idle') return
+
     // Don't clean up sessions that are currently being used by this screen.
     const currentSessionId = livePublishStore$.sessionId.peek()
     const orphaned = activeSessions.filter((s) => s._id !== currentSessionId)
