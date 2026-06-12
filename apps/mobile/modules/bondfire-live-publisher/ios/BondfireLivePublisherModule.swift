@@ -87,7 +87,7 @@ public class BondfireLivePublisherModule: Module {
     AsyncFunction("start") { (options: LivePublisherStartOptions) in
       let publisher = try await MainActor.run { try self.ensurePublisher() }
       await MainActor.run { BondfireLivePublisherView.current?.attachPreviewIfAvailable() }
-      await MainActor.run { self.sendEvent("statusChange", ["status": "connecting"]) }
+      await MainActor.run { self.sendEvent("statusChange", ["status": PublisherStatus.connecting.rawValue]) }
       try await publisher.start(options: options)
     }
 
@@ -146,6 +146,19 @@ public class BondfireLivePublisherModule: Module {
 }
 
 // MARK: - Live Publisher Events
+
+/// Wire statuses — keep in sync with NATIVE_PUBLISHER_STATUSES in
+/// packages/app/src/store/livePublisherContract.ts and the Kotlin
+/// PublisherStatus enum (parity table in the module README).
+enum PublisherStatus: String {
+  case connecting
+  case live
+  case reconnecting
+  case ended
+  case errored
+  case streamStoppedUnexpectedly = "stream_stopped_unexpectedly"
+  case endpointClosed = "endpoint_closed"
+}
 
 enum LivePublisherEvent {
   case statusChange(String)
@@ -268,7 +281,7 @@ final class LivePublisher {
 
     guard let url = URL(string: urlString) else {
       emitError("invalid_url", "Could not parse RTMPS URL: \(urlString)")
-      emitStatusChange("errored")
+      emitStatusChange(.errored)
       return
     }
 
@@ -277,7 +290,7 @@ final class LivePublisher {
     do {
       guard let built = try await SessionBuilderFactory.shared.make(url).build() else {
         emitError("session_build_failed", "Session builder returned nil for URL: \(urlString)")
-        emitStatusChange("errored")
+        emitStatusChange(.errored)
         throw LivePublisherException(message: "Session builder returned nil")
       }
       newSession = built
@@ -285,7 +298,7 @@ final class LivePublisher {
       throw e
     } catch {
       emitError("session_build_failed", "Failed to build RTMP session: \(error.localizedDescription)")
-      emitStatusChange("errored")
+      emitStatusChange(.errored)
       throw LivePublisherException(message: "Failed to build RTMP session: \(error.localizedDescription)")
     }
     self.session = newSession
@@ -309,11 +322,11 @@ final class LivePublisher {
       try await newSession.connect(.ingest)
     } catch {
       emitError("connection_failed", "RTMP connection failed: \(error.localizedDescription)")
-      emitStatusChange("errored")
+      emitStatusChange(.errored)
       throw LivePublisherException(message: "RTMP connection failed: \(error.localizedDescription)")
     }
 
-    emitStatusChange("live")
+    emitStatusChange(.live)
     startConnectionMonitor()
   }
 
@@ -332,7 +345,7 @@ final class LivePublisher {
         let connected = await session.isConnected
         if Task.isCancelled || self.isStopping || self.session == nil { return }
         if !connected {
-          self.emitStatusChange("endpoint_closed")
+          self.emitStatusChange(.endpointClosed)
           return
         }
       }
@@ -411,7 +424,7 @@ final class LivePublisher {
   // MARK: - Stop
 
   func stop() async {
-    emitStatusChange("ended")
+    emitStatusChange(.ended)
     await cleanup()
   }
 
@@ -510,8 +523,8 @@ final class LivePublisher {
 
   // MARK: - Event emission
 
-  private func emitStatusChange(_ status: String) {
-    eventHandler(.statusChange(status))
+  private func emitStatusChange(_ status: PublisherStatus) {
+    eventHandler(.statusChange(status.rawValue))
   }
 
   private func emitError(_ code: String, _ message: String) {

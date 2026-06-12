@@ -1,5 +1,6 @@
 export * from './app.store'
 export * from './livePublish.store'
+export * from './livePublisherContract'
 export * from './notepad.store'
 export * from './subscription.store'
 export * from './toast.store'

@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { telemetry } from '../services/telemetry'
-import {
-  type LivePublishStatus,
-  livePublishActions,
-  livePublishStore$,
-} from '../store/livePublish.store'
+import { livePublishActions, livePublishStore$ } from '../store/livePublish.store'
+import { isNativePublisherStatus } from '../store/livePublisherContract'
 
 export interface LivePublisherStartOptions {
   rtmpsUrl: string
@@ -98,6 +95,17 @@ export function useLivePublisher(options: {
           ? rawStatus
           : (((rawStatus as Record<string, unknown>)?.status as string) ?? 'unknown')
 
+      // Contract enforcement: native may only emit statuses from
+      // NATIVE_PUBLISHER_STATUSES. Anything else is a native-side bug —
+      // log loudly and ignore rather than corrupting the state machine.
+      if (!isNativePublisherStatus(status)) {
+        telemetry.error('live:contract', 'Native publisher emitted unknown status', {
+          status,
+          sessionId: livePublishStore$.sessionId.peek(),
+        })
+        return
+      }
+
       // Suppress spurious events during intentional stop — the collectors
       // for isStreamingFlow / isOpenFlow fire before the explicit "ended",
       // but the native module now guards with isStoppingIntentionally.
@@ -109,7 +117,7 @@ export function useLivePublisher(options: {
         }
       }
 
-      livePublishActions.setStatus((status === 'ended' ? 'ended' : status) as LivePublishStatus)
+      livePublishActions.setStatus(status)
 
       // Log unexpected drops to telemetry for diagnosis. No user-facing
       // toast — the UI already handles the status transition silently.

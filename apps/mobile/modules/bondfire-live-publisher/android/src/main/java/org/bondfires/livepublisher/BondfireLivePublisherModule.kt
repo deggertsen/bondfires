@@ -53,6 +53,21 @@ class LivePublisherPreviewOptions : Record {
   @Field val initialCamera: String = "front"
 }
 
+/**
+ * Wire statuses — keep in sync with NATIVE_PUBLISHER_STATUSES in
+ * packages/app/src/store/livePublisherContract.ts and the Swift
+ * PublisherStatus enum (parity table in the module README).
+ */
+enum class PublisherStatus(val wire: String) {
+  CONNECTING("connecting"),
+  LIVE("live"),
+  RECONNECTING("reconnecting"),
+  ENDED("ended"),
+  ERRORED("errored"),
+  STREAM_STOPPED_UNEXPECTEDLY("stream_stopped_unexpectedly"),
+  ENDPOINT_CLOSED("endpoint_closed"),
+}
+
 class BondfireLivePublisherModule : Module() {
   companion object {
     private const val TAG = "BondfireLivePublisher"
@@ -164,10 +179,10 @@ class BondfireLivePublisherModule : Module() {
 
       // Connect and start streaming
       try {
-        sendStatus("connecting")
+        sendStatus(PublisherStatus.CONNECTING)
         activeStreamer.startStream(rtmpsUrl)
         // startStream blocks until successful connection or throws
-        sendStatus("live")
+        sendStatus(PublisherStatus.LIVE)
       } catch (e: Exception) {
         Log.e(TAG, "Failed to start stream", e)
         sendEvent(
@@ -176,13 +191,13 @@ class BondfireLivePublisherModule : Module() {
             "message" to (e.message ?: "Failed to start RTMPS stream")
           )
         )
-        sendStatus("errored")
+        sendStatus(PublisherStatus.ERRORED)
         throw LivePublisherException("Failed to start RTMPS stream: ${e.message}")
       }
     }
 
     AsyncFunction("stop") Coroutine { ->
-      sendStatus("ended")
+      sendStatus(PublisherStatus.ENDED)
       cleanupStreamer()
     }
 
@@ -271,7 +286,7 @@ class BondfireLivePublisherModule : Module() {
         wasStreaming = isStreaming
         if (dropped && !isStoppingIntentionally && streamer === newStreamer) {
           sendEvent(
-            "statusChange", mapOf("status" to "stream_stopped_unexpectedly")
+            "statusChange", mapOf("status" to PublisherStatus.STREAM_STOPPED_UNEXPECTEDLY.wire)
           )
         }
       }
@@ -289,7 +304,7 @@ class BondfireLivePublisherModule : Module() {
         wasOpen = isOpen
         if (closed && !isStoppingIntentionally && streamer === newStreamer) {
           sendEvent(
-            "statusChange", mapOf("status" to "endpoint_closed")
+            "statusChange", mapOf("status" to PublisherStatus.ENDPOINT_CLOSED.wire)
           )
         }
       }
@@ -460,8 +475,8 @@ class BondfireLivePublisherModule : Module() {
     }
   }
 
-  private fun sendStatus(status: String) {
-    sendEvent("statusChange", mapOf("status" to status))
+  private fun sendStatus(status: PublisherStatus) {
+    sendEvent("statusChange", mapOf("status" to status.wire))
   }
 
   private suspend fun cleanupStreamer() {

@@ -33,7 +33,17 @@ export interface LivePublisherStats {
 
 export interface LivePublisherViewProps extends ViewProps {}
 
-type Status = 'idle' | 'connecting' | 'live' | 'reconnecting' | 'errored' | 'ended'
+// Keep in sync with NATIVE_PUBLISHER_STATUSES in
+// packages/app/src/store/livePublisherContract.ts and the PublisherStatus
+// enums in the Swift/Kotlin modules (see README.md).
+type Status =
+  | 'connecting'
+  | 'live'
+  | 'reconnecting'
+  | 'ended'
+  | 'errored'
+  | 'stream_stopped_unexpectedly'
+  | 'endpoint_closed'
 type StatusEvent = Status | { status?: Status }
 type EventSubscription = { remove: () => void }
 
