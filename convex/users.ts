@@ -365,7 +365,7 @@ export const deleteAccount = mutation({
 
     const incomingPins = await ctx.db
       .query('closeCirclePins')
-      .withIndex('by_pinned_user', (q) => q.eq('pinnedUserId', userId))
+      .withIndex('by_pinned', (q) => q.eq('pinnedUserId', userId))
       .collect()
 
     for (const pin of incomingPins) {

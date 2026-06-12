@@ -542,8 +542,7 @@ export default defineSchema({
     .index('by_owner', ['ownerId', 'order'])
     .index('by_owner_pinned', ['ownerId', 'pinnedUserId'])
     // Reverse lookup: who pinned this user (Close Circle notification copy)
-    .index('by_pinned', ['pinnedUserId'])
-    .index('by_pinned_user', ['pinnedUserId']),
+    .index('by_pinned', ['pinnedUserId']),
 
   // Live Sessions - Mux live broadcasts before they become replay assets
   liveSessions: defineTable({
