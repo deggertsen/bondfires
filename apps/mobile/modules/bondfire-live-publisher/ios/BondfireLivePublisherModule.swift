@@ -98,7 +98,10 @@ public class BondfireLivePublisherModule: Module {
     }
 
     AsyncFunction("swapCamera") {
-      await self.publisher?.swapCamera()
+      guard let publisher = self.publisher else {
+        throw LivePublisherException(message: "No active publisher to swap camera")
+      }
+      try await publisher.swapCamera()
     }
 
     AsyncFunction("setMuted") { (muted: Bool) in
@@ -457,11 +460,17 @@ final class LivePublisher {
 
   // MARK: - Swap Camera
 
-  func swapCamera() async {
+  /// Throws on failure instead of emitting an `error` event. The error event
+  /// path is reserved for fatal publisher failures — useLivePublisher escalates
+  /// it to livePublishActions.fail(), which would tear down the whole session
+  /// state over a non-fatal swap failure. Throwing rejects the JS promise so
+  /// toggleLiveFacing can show its "Switch Camera Failed" alert and keep
+  /// recording on the current camera. Matches the Android Coroutine behavior.
+  func swapCamera() async throws {
     let newPosition: AVCaptureDevice.Position = currentCameraPosition == .front ? .back : .front
+    let positionLabel = newPosition == .back ? "back" : "front"
     guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: newPosition) else {
-      emitError("camera_not_found", "Could not find camera at position \(newPosition)")
-      return
+      throw LivePublisherException(message: "Could not find camera at position \(positionLabel)")
     }
 
     do {
@@ -470,7 +479,7 @@ final class LivePublisher {
       }
       currentCameraPosition = newPosition
     } catch {
-      emitError("swapCamera_failed", error.localizedDescription)
+      throw LivePublisherException(message: "Camera swap to \(positionLabel) failed: \(error.localizedDescription)")
     }
   }
 
