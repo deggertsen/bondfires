@@ -490,13 +490,19 @@ final class LivePublisher {
   /// them. The JS stall watchdog uses bitrateBps==0 (after having seen
   /// nonzero) to detect a frozen encoder that the connection poll misses.
   func getStats() async -> [String: Int] {
-    guard let session, let rtmpStream = session.stream as? RTMPStream else {
-      return [
-        "bitrateBps": 0,
-        "rttMs": 0,
-        "droppedFrames": 0,
-        "currentFps": 0,
-      ]
+    let zeros = [
+      "bitrateBps": 0,
+      "rttMs": 0,
+      "droppedFrames": 0,
+      "currentFps": 0,
+    ]
+    guard let session else {
+      return zeros
+    }
+    // `Session.stream` is actor-isolated, so the access must be awaited
+    // (mirrors the awaited stream access in start()).
+    guard let rtmpStream = await session.stream as? RTMPStream else {
+      return zeros
     }
 
     let info = await rtmpStream.info
