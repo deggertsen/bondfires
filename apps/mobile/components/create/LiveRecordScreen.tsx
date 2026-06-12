@@ -1,5 +1,6 @@
 import {
   buildErrorReportMailto,
+  getDefaultBondfireTitle,
   getUserFacingErrorMessage,
   type LivePublishStatus,
   livePublishActions,
@@ -36,7 +37,6 @@ interface LiveRecordScreenProps {
   effectiveCampId: Id<'camps'> | undefined
   selectedCamp: CampWithMembership | null
   selectedCampTags: TradeTag[] | undefined
-  title: string | undefined
   effectiveMaxRecordingSeconds: number | undefined
   currentUser: FunctionReturnType<typeof api.users.current> | undefined
   canCreate: boolean
@@ -57,7 +57,6 @@ export function LiveRecordScreen({
   effectiveCampId,
   selectedCamp,
   selectedCampTags,
-  title,
   effectiveMaxRecordingSeconds,
   currentUser,
   canCreate,
@@ -286,11 +285,13 @@ export function LiveRecordScreen({
       if (!respondTo) {
         // Provision the live stream + pending bondfire so the share link
         // works while waiting, but defer publishing to the record tap.
+        // Seed the default title at creation so the bondfire is never
+        // untitled if the user skips the completion-screen title edit.
         await livePublisher.provision({
           campId: effectiveCampId,
           personalCamp: isPersonalCamp || undefined,
           tags: selectedCampTags,
-          title: title || undefined,
+          title: getDefaultBondfireTitle(currentUser, selectedCamp?.name) || undefined,
           pending: true,
         })
       }
@@ -329,7 +330,7 @@ export function LiveRecordScreen({
     }
   }, [
     canCreate,
-    currentUser?._id,
+    currentUser,
     effectiveCampId,
     isPersonalCamp,
     livePublisher,
@@ -340,7 +341,6 @@ export function LiveRecordScreen({
     selectedCamp,
     selectedCampTags,
     state$,
-    title,
   ])
 
   const startLiveRecording = useCallback(async () => {
@@ -440,11 +440,7 @@ export function LiveRecordScreen({
       return
     }
 
-    if (
-      phase === 'recording' ||
-      liveStatus === 'live' ||
-      liveStatus === 'reconnecting'
-    ) {
+    if (phase === 'recording' || liveStatus === 'live' || liveStatus === 'reconnecting') {
       void stopLiveRecording()
     }
   }, [liveStatus, phase, recordingDuration, effectiveMaxRecordingSeconds, stopLiveRecording])

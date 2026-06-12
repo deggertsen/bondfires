@@ -3,13 +3,12 @@ import { Spinner, Text } from '@bondfires/ui'
 import { Flame, Sparkles } from '@tamagui/lucide-icons'
 import type { FunctionReturnType } from 'convex/server'
 import { useRouter } from 'expo-router'
-import { useCallback, useState } from 'react'
+import { useCallback } from 'react'
 import { Alert, Pressable, ScrollView, StatusBar } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 import type { api } from '../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../convex/_generated/dataModel'
 import { routes } from '../../lib/routes'
-import { SparkTitleSheet } from '../SparkTitleSheet'
 import type { CampWithMembership } from './shared'
 
 interface CampPickerScreenProps {
@@ -18,7 +17,7 @@ interface CampPickerScreenProps {
   personalCampDoc: Doc<'personalCamps'> | null | undefined
   joinCamp: (args: { campId: Id<'camps'> }) => Promise<FunctionReturnType<typeof api.camps.join>>
   /**
-   * Called once the user has confirmed a camp (after the title sheet).
+   * Called once the user has selected (and if needed, joined) a camp.
    * The router owns selectedCampId/tradeTag and the persisted camp id.
    */
   onCampConfirmed: (campId: Id<'camps'>) => void
@@ -33,7 +32,6 @@ export function CampPickerScreen({
 }: CampPickerScreenProps) {
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
-  const [sparkTitleSheetCamp, setSparkTitleSheetCamp] = useState<CampWithMembership | null>(null)
 
   const handleSelectCamp = useCallback(
     async (camp: CampWithMembership) => {
@@ -46,26 +44,16 @@ export function CampPickerScreen({
           }
         }
 
-        // Show the title sheet before proceeding to the camp prompt
-        setSparkTitleSheetCamp(camp)
+        // Straight to recording — the title is edited post-record on the
+        // completion screen.
+        onCampConfirmed(camp._id)
+        router.replace(routes.createForCamp(camp._id))
       } catch (error) {
         const message = parseError(error).message
         Alert.alert('Camp Unavailable', message)
       }
     },
-    [joinCamp],
-  )
-
-  const handleSparkTitleSubmit = useCallback(
-    (sparkTitle: string) => {
-      const camp = sparkTitleSheetCamp
-      setSparkTitleSheetCamp(null)
-      if (!camp) return
-      onCampConfirmed(camp._id)
-      // Navigate with title param so it flows through the recording pipeline
-      router.replace(routes.createForCamp(camp._id, sparkTitle || undefined))
-    },
-    [onCampConfirmed, router, sparkTitleSheetCamp],
+    [joinCamp, onCampConfirmed, router],
   )
 
   const handleOpenPersonalHearth = useCallback(() => {
@@ -95,7 +83,11 @@ export function CampPickerScreen({
               const isActiveMember = camp.membership?.status === 'active'
               const isPending = camp.membership?.status === 'pending'
               return (
-                <Pressable key={camp._id} disabled={isPending} onPress={() => handleSelectCamp(camp)}>
+                <Pressable
+                  key={camp._id}
+                  disabled={isPending}
+                  onPress={() => handleSelectCamp(camp)}
+                >
                   <YStack
                     padding={14}
                     borderRadius={16}
@@ -171,12 +163,6 @@ export function CampPickerScreen({
           </YStack>
         </ScrollView>
       )}
-      <SparkTitleSheet
-        open={sparkTitleSheetCamp !== null}
-        campName={sparkTitleSheetCamp?.name}
-        onSubmit={handleSparkTitleSubmit}
-        onCancel={() => setSparkTitleSheetCamp(null)}
-      />
     </YStack>
   )
 }
