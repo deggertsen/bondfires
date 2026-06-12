@@ -1138,6 +1138,19 @@ export const updateMemberStatus = mutation({
     })
     await refreshActiveMemberCount(ctx, args.campId)
 
+    // A pending request approved through this path also notifies the
+    // requester. Other transitions (rejections, removals) stay silent.
+    if (membership.status === 'pending' && args.status === 'active') {
+      await ctx.scheduler.runAfter(0, internal.sendNotification.notifyAccessApproved, {
+        campId: args.campId,
+        userId: args.userId,
+      })
+      await ctx.scheduler.runAfter(0, internal.sendNotification.emailAccessApproved, {
+        campId: args.campId,
+        userId: args.userId,
+      })
+    }
+
     return membership._id
   },
 })
@@ -1171,6 +1184,16 @@ export const approveAccessRequest = mutation({
       updatedAt: now,
     })
     await refreshActiveMemberCount(ctx, camp._id)
+
+    // Tell the requester they're in (push + email). Denials stay silent.
+    await ctx.scheduler.runAfter(0, internal.sendNotification.notifyAccessApproved, {
+      campId: camp._id,
+      userId: membership.userId,
+    })
+    await ctx.scheduler.runAfter(0, internal.sendNotification.emailAccessApproved, {
+      campId: camp._id,
+      userId: membership.userId,
+    })
 
     return { success: true }
   },

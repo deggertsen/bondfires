@@ -12,6 +12,7 @@
  */
 
 import { v } from 'convex/values'
+import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalMutation, internalQuery, query } from './_generated/server'
@@ -569,6 +570,11 @@ export const burnDailyCampKindling = internalMutation({
             gracePeriodEnd,
             updatedAt: now,
           })
+          // Warn the owner (push + email); idempotent via claimDeliveries.
+          await ctx.scheduler.runAfter(0, internal.sendNotification.notifyCampLifecycle, {
+            campId: camp._id,
+            stage: 'grace',
+          })
           graceEntered++
         } else {
           burned++
@@ -704,6 +710,11 @@ export const expireGracePeriodCamps = internalMutation({
         gracePeriodEnd: undefined,
         reclaimDeadline: now + INACTIVE_CLAIM_WINDOW_MS,
         updatedAt: now,
+      })
+      // Warn the owner (push + email); idempotent via claimDeliveries.
+      await ctx.scheduler.runAfter(0, internal.sendNotification.notifyCampLifecycle, {
+        campId: camp._id,
+        stage: 'inactive',
       })
       expired++
     }

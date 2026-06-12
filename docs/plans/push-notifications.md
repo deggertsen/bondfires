@@ -95,11 +95,11 @@ Mechanics — **daily digest window**, not rolling per-video timers:
 
 In priority order:
 
-1. **Access request approved** — push + email: `{Camp} let you in` / `You're now a member. Tap to look around.` Denied: **silent** (decided).
-2. **Hearth invite/join** — invited to a Hearth; someone joined your Hearth.
-3. **Camp lifecycle warnings** — push + email to owner before camp goes dormant / slot expires (`campLifecycle`). Email matters here: an owner drifting away from the app is exactly who push won't reach.
-4. **Close Circle posts** — someone you pinned posted (respects camp mute per decision; revisit if Close Circle proves to be the stronger signal).
-5. **Report outcome** — `We reviewed your report` (compliance posture).
+1. **Access request approved** ✅ — push + email: `{Camp} let you in` / `You're now a member. Tap to look around.` Denied: **silent** (decided). Hooked in `approveAccessRequest` and `updateMemberStatus` (pending→active).
+2. **Hearth join** ✅ — bondfire creator notified when someone redeems an invite into their Hearth bondfire.
+3. **Camp lifecycle warnings** ✅ — push + email to owner on grace / frozen / inactive transitions, plus a daily-cron final warning 3 days before the reclaim deadline. All idempotent via `claimDeliveries` (`campstage:` keys).
+4. **Close Circle posts** ✅ — recipients who pinned the creator get personalized copy ("{Name} from your Close Circle…") on camp bondfire + live notifications; mute still applies. New `by_pinned` index on `closeCirclePins`.
+5. **Report outcome** — DEFERRED: reports currently have no resolution flow (only `submit` + admin email), so there is no event to hook. Revisit when moderation resolution lands.
 
 ## Phase 4 — Preferences
 

@@ -308,6 +308,19 @@ export const getPersonalCampName = internalQuery({
   },
 })
 
+/** Users who pinned this creator to their Close Circle — they get
+ * personalized copy for the creator's camp activity (mute still applies). */
+export const getCloseCirclePinnerIds = internalQuery({
+  args: { pinnedUserId: v.id('users') },
+  handler: async (ctx, args): Promise<Array<Id<'users'>>> => {
+    const pins = await ctx.db
+      .query('closeCirclePins')
+      .withIndex('by_pinned', (q) => q.eq('pinnedUserId', args.pinnedUserId))
+      .collect()
+    return uniqueUserIds(pins.map((pin) => pin.ownerId))
+  },
+})
+
 export const getCampNotificationRecipientIds = internalQuery({
   args: {
     campId: v.id('camps'),
@@ -479,12 +492,25 @@ export const notifyCampBondfire = internalAction({
     }
 
     const copy = getCampNotificationCopy(camp, args.creatorName)
+
+    // Personalized copy for recipients who pinned this creator to their
+    // Close Circle (regular bondfires only — crisis/welcome copy wins).
+    const isRegularCopy = !camp.crisisBroadcast && !camp.welcomeBroadcast
+    const pinnerIds: Array<Id<'users'>> = isRegularCopy
+      ? await ctx.runQuery(internal.sendNotification.getCloseCirclePinnerIds, {
+          pinnedUserId: args.creatorId,
+        })
+      : []
+    const pinnerSet = new Set(pinnerIds)
+
     await Promise.all(
       claimedIds.map((userId) =>
         ctx.runAction(internal.sendNotification.sendToUser, {
           userId,
           title: copy.title,
-          body: copy.body,
+          body: pinnerSet.has(userId)
+            ? `${args.creatorName} from your Close Circle sparked a new Bondfire`
+            : copy.body,
           data: {
             type: camp.crisisBroadcast
               ? 'camp_crisis'
@@ -654,12 +680,24 @@ export const notifyBondfireLive = internalAction({
         ? `${args.creatorName} is sharing "${bondfire.title}" — watch live or later`
         : `${args.creatorName} is sharing a Bondfire — watch live or later`)
 
+    // Personalized copy for Close Circle pinners (regular copy only).
+    const livePinnerIds: Array<Id<'users'>> =
+      !crisisOrWelcomeCopy && bondfire.campId
+        ? await ctx.runQuery(internal.sendNotification.getCloseCirclePinnerIds, {
+            pinnedUserId: args.creatorId,
+          })
+        : []
+    const livePinnerSet = new Set(livePinnerIds)
+    const pinnerBody = bondfire.title
+      ? `${args.creatorName} from your Close Circle is sharing "${bondfire.title}" — watch live or later`
+      : `${args.creatorName} from your Close Circle is sharing a Bondfire — watch live or later`
+
     await Promise.all(
       claimedIds.map((userId) =>
         ctx.runAction(internal.sendNotification.sendToUser, {
           userId,
           title: crisisOrWelcomeCopy?.title ?? title,
-          body,
+          body: livePinnerSet.has(userId) ? pinnerBody : body,
           data: {
             type: 'bondfire_live',
             bondfireId: args.bondfireId,
@@ -840,5 +878,357 @@ export const getUserEmail = internalQuery({
     const user = await ctx.db.get(args.userId)
     if (!user) return null
     return { email: user.email }
+  },
+})
+
+// ── Shared email helper (Resend) ──
+
+async function sendResendEmail(options: {
+  to: string
+  subject: string
+  heading: string
+  bodyHtml: string
+  ctaLabel: string
+  ctaUrl: string
+  footer: string
+}): Promise<{ success: boolean; error?: string }> {
+  const apiKey = process.env.RESEND_API_KEY
+  if (!apiKey) {
+    return { success: true }
+  }
+
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        from: process.env.EMAIL_FROM || 'Bondfires <support@bondfires.org>',
+        to: options.to,
+        subject: options.subject,
+        html: `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h1 style="color: #F59E0B; margin-bottom: 8px;">${options.heading}</h1>
+            <p style="font-size: 16px; color: #333; line-height: 1.5;">
+              ${options.bodyHtml}
+            </p>
+            <div style="margin-top: 24px;">
+              <a href="${options.ctaUrl}"
+                 style="display: inline-block; background: #D97736; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;">
+                ${options.ctaLabel}
+              </a>
+            </div>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;" />
+            <p style="font-size: 12px; color: #999;">${options.footer}</p>
+          </div>
+        `,
+      }),
+    })
+
+    if (!response.ok) {
+      const error = await response.text()
+      console.error('Failed to send email:', error)
+      return { success: false, error }
+    }
+
+    return { success: true }
+  } catch (error) {
+    console.error('Error sending email:', error)
+    return { success: false, error: String(error) }
+  }
+}
+
+/** Camp lookup without the participable-status filter — lifecycle
+ * notifications are precisely about frozen/grace/inactive camps. */
+export const getCampAnyStatus = internalQuery({
+  args: { campId: v.id('camps') },
+  handler: async (ctx, args): Promise<Doc<'camps'> | null> => {
+    return await ctx.db.get(args.campId)
+  },
+})
+
+// ── Access Approved Notifications ──
+// Denials are intentionally silent (product decision, June 2026).
+
+/** Push to the requester when their camp access request is approved. */
+export const notifyAccessApproved = internalAction({
+  args: {
+    campId: v.id('camps'),
+    userId: v.id('users'),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    success: boolean
+    skipped?: boolean
+    error?: string
+  }> => {
+    const camp = await ctx.runQuery(internal.sendNotification.getCampAnyStatus, {
+      campId: args.campId,
+    })
+    if (!camp) {
+      return { success: false, error: 'Camp not found' }
+    }
+
+    return await ctx.runAction(internal.sendNotification.sendToUser, {
+      userId: args.userId,
+      title: `${camp.name} let you in`,
+      body: "You're now a member. Tap to look around.",
+      data: {
+        type: 'camp_access_approved',
+        campId: args.campId,
+      },
+    })
+  },
+})
+
+/** Email to the requester when their camp access request is approved. */
+export const emailAccessApproved = internalAction({
+  args: {
+    campId: v.id('camps'),
+    userId: v.id('users'),
+  },
+  handler: async (ctx, args): Promise<{ success: boolean; error?: string }> => {
+    const camp = await ctx.runQuery(internal.sendNotification.getCampAnyStatus, {
+      campId: args.campId,
+    })
+    if (!camp) {
+      return { success: false, error: 'Camp not found' }
+    }
+
+    const user = await ctx.runQuery(internal.sendNotification.getUserEmail, {
+      userId: args.userId,
+    })
+    if (!user?.email) {
+      return { success: true }
+    }
+
+    const safeCampName = escapeHtml(camp.name)
+    return await sendResendEmail({
+      to: user.email,
+      subject: `You're in — welcome to ${camp.name}`,
+      heading: "You're in",
+      bodyHtml: `Your request to join <strong>${safeCampName}</strong> was approved. Pull up a log — the fire's going.`,
+      ctaLabel: 'Visit the Camp',
+      ctaUrl: `https://bondfires.org/camp/${args.campId}`,
+      footer:
+        'This email was sent automatically by Bondfires because your access request was approved.',
+    })
+  },
+})
+
+// ── Hearth Join Notification ──
+
+/** Notify a Hearth bondfire's creator when someone joins the conversation. */
+export const notifyHearthJoin = internalAction({
+  args: {
+    bondfireId: v.id('bondfires'),
+    joinerId: v.id('users'),
+    joinerName: v.string(),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    success: boolean
+    skipped?: boolean
+    error?: string
+  }> => {
+    const bondfire = await ctx.runQuery(internal.bondfires.getForNotification, {
+      id: args.bondfireId,
+    })
+    if (!bondfire?.personalCampId || bondfire.userId === args.joinerId) {
+      return { success: true, skipped: true }
+    }
+
+    const hearthName: string | null = await ctx.runQuery(
+      internal.sendNotification.getPersonalCampName,
+      { personalCampId: bondfire.personalCampId },
+    )
+
+    return await ctx.runAction(internal.sendNotification.sendToUser, {
+      userId: bondfire.userId,
+      title: hearthName ?? 'Your Hearth',
+      body: `${args.joinerName} joined the conversation`,
+      data: {
+        type: 'hearth_join',
+        bondfireId: args.bondfireId,
+        personalCampId: bondfire.personalCampId,
+      },
+    })
+  },
+})
+
+// ── Camp Lifecycle Warnings ──
+// Push + email to the owner at each lifecycle transition, and a final
+// reminder 3 days before the reclaim deadline. Email matters here: an
+// owner drifting away from the app is exactly who push won't reach.
+
+const lifecycleStage = v.union(
+  v.literal('grace'),
+  v.literal('frozen'),
+  v.literal('inactive'),
+  v.literal('reclaim_reminder'),
+)
+
+function formatDeadline(timestamp: number | undefined): string {
+  if (!timestamp) return 'soon'
+  try {
+    return new Date(timestamp).toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+    })
+  } catch {
+    return 'soon'
+  }
+}
+
+function getLifecycleCopy(
+  camp: Doc<'camps'>,
+): Record<
+  'grace' | 'frozen' | 'inactive' | 'reclaim_reminder',
+  { title: string; body: string; subject: string; emailBody: string }
+> {
+  const graceEnds = formatDeadline(camp.gracePeriodEnd)
+  const reclaimBy = formatDeadline(camp.reclaimDeadline)
+  const safeName = escapeHtml(camp.name)
+
+  return {
+    grace: {
+      title: `${camp.name} needs kindling`,
+      body: `Add kindling by ${graceEnds} to keep the fire burning`,
+      subject: `${camp.name} needs kindling`,
+      emailBody: `<strong>${safeName}</strong> has run out of kindling and entered its grace period. Add kindling by <strong>${graceEnds}</strong> to keep the camp active.`,
+    },
+    frozen: {
+      title: `${camp.name} is frozen`,
+      body: `Reclaim your camp by ${reclaimBy} before it's archived`,
+      subject: `${camp.name} is frozen`,
+      emailBody: `<strong>${safeName}</strong> was frozen because it's no longer covered by your subscription. Reclaim it by <strong>${reclaimBy}</strong> or it will be archived.`,
+    },
+    inactive: {
+      title: `${camp.name} went quiet`,
+      body: `Reclaim your camp by ${reclaimBy} before it's archived`,
+      subject: `${camp.name} is inactive`,
+      emailBody: `<strong>${safeName}</strong>'s grace period ended and the camp is now inactive. Reclaim it by <strong>${reclaimBy}</strong> or it will be archived.`,
+    },
+    reclaim_reminder: {
+      title: `${camp.name} archives soon`,
+      body: `Last chance — reclaim your camp by ${reclaimBy}`,
+      subject: `Last chance to reclaim ${camp.name}`,
+      emailBody: `<strong>${safeName}</strong> will be archived after <strong>${reclaimBy}</strong>. Reclaim it now to keep the camp and its Bondfires.`,
+    },
+  }
+}
+
+/** Push + email to the camp owner for a lifecycle transition. */
+export const notifyCampLifecycle = internalAction({
+  args: {
+    campId: v.id('camps'),
+    stage: lifecycleStage,
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    success: boolean
+    skipped?: boolean
+    error?: string
+  }> => {
+    const camp = await ctx.runQuery(internal.sendNotification.getCampAnyStatus, {
+      campId: args.campId,
+    })
+    if (!camp?.ownerId) {
+      return { success: true, skipped: true }
+    }
+
+    // Idempotency: lifecycle crons re-run safely, so claim a delivery key
+    // tied to this camp + stage + deadline before sending anything.
+    const deadline = camp.reclaimDeadline ?? camp.gracePeriodEnd ?? 0
+    const claimed: Array<Id<'users'>> = await ctx.runMutation(
+      internal.sendNotification.claimDeliveries,
+      {
+        userIds: [camp.ownerId],
+        videoKey: `campstage:${args.campId}:${args.stage}:${deadline}`,
+        threadKey: `campstage:${args.campId}`,
+      },
+    )
+    if (claimed.length === 0) {
+      return { success: true, skipped: true }
+    }
+
+    const copy = getLifecycleCopy(camp)[args.stage]
+
+    await ctx.runAction(internal.sendNotification.sendToUser, {
+      userId: camp.ownerId,
+      title: copy.title,
+      body: copy.body,
+      data: {
+        type: 'camp_lifecycle',
+        stage: args.stage,
+        campId: args.campId,
+      },
+    })
+
+    const owner = await ctx.runQuery(internal.sendNotification.getUserEmail, {
+      userId: camp.ownerId,
+    })
+    if (owner?.email) {
+      await sendResendEmail({
+        to: owner.email,
+        subject: copy.subject,
+        heading: copy.title,
+        bodyHtml: copy.emailBody,
+        ctaLabel: 'Manage Camp',
+        ctaUrl: `https://bondfires.org/camp/${args.campId}`,
+        footer: 'This email was sent automatically by Bondfires because you are the camp owner.',
+      })
+    }
+
+    return { success: true }
+  },
+})
+
+const RECLAIM_WARNING_WINDOW_MS = 3 * 24 * 60 * 60 * 1000
+
+export const listCampsNearingReclaimDeadline = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<Array<Id<'camps'>>> => {
+    const now = Date.now()
+    const cutoff = now + RECLAIM_WARNING_WINDOW_MS
+    const camps = await ctx.db
+      .query('camps')
+      .filter((q) =>
+        q.and(
+          q.or(q.eq(q.field('status'), 'frozen'), q.eq(q.field('status'), 'inactive')),
+          q.gt(q.field('reclaimDeadline'), now),
+          q.lte(q.field('reclaimDeadline'), cutoff),
+        ),
+      )
+      .collect()
+    return camps.map((camp) => camp._id)
+  },
+})
+
+/** Daily cron: final warning to owners 3 days before reclaim deadline. */
+export const sendReclaimWarnings = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ warned: number }> => {
+    const campIds: Array<Id<'camps'>> = await ctx.runQuery(
+      internal.sendNotification.listCampsNearingReclaimDeadline,
+      {},
+    )
+
+    for (const campId of campIds) {
+      await ctx.runAction(internal.sendNotification.notifyCampLifecycle, {
+        campId,
+        stage: 'reclaim_reminder',
+      })
+    }
+
+    return { warned: campIds.length }
   },
 })

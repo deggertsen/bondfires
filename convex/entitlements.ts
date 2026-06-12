@@ -16,6 +16,7 @@
  *              unlimited video length, analytics, custom camp branding
  */
 
+import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { burnKindlingForCamp, computeKindlingBalance } from './campKindling'
@@ -437,6 +438,11 @@ export async function freezeExcessOwnedCamps(
       frozenAt: now,
       reclaimDeadline: now + CAMP_RECLAIM_WINDOW_MS,
       updatedAt: now,
+    })
+    // Warn the owner (push + email); idempotent via claimDeliveries.
+    await ctx.scheduler.runAfter(0, internal.sendNotification.notifyCampLifecycle, {
+      campId: camp._id,
+      stage: 'frozen',
     })
     campsFrozen++
   }
