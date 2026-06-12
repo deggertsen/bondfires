@@ -8,6 +8,11 @@ export * from './features'
 export * from './hooks'
 // Services
 export * from './services/backgroundUpload'
+export {
+  isPushPermissionGranted,
+  requestPushPermission,
+  setPushPermissionRequester,
+} from './services/pushPermissions'
 export type { LogEntry, LogLevel, TelemetryLogger } from './services/telemetry'
 export { telemetry } from './services/telemetry'
 export * from './store'

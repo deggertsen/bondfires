@@ -122,6 +122,28 @@ export default defineSchema({
     themePreference: v.optional(
       v.union(v.literal('system'), v.literal('light'), v.literal('dark')),
     ),
+
+    // Last app open/foreground (heartbeat from the client, throttled).
+    // Kill switch for 72h re-engagement nudges — see convex/digest.ts.
+    lastActiveAt: v.optional(v.number()),
+
+    // Per-category push preferences, enforced server-side in sendToUser
+    // (convex/sendNotification.ts). Missing field/keys mean enabled.
+    // Account-critical notifications (camp lifecycle) always send.
+    notificationPrefs: v.optional(
+      v.object({
+        // Camp bondfires, responses, live notifications
+        recordingActivity: v.optional(v.boolean()),
+        // Daily digest + 72h nudge
+        reminders: v.optional(v.boolean()),
+        // Bondfire invites, access requests/approvals
+        invitesAndMembership: v.optional(v.boolean()),
+        // Hearth bondfires, responses, joins (default on by design)
+        hearth: v.optional(v.boolean()),
+        // Local hour (0-23) the daily digest window opens. Default 17.
+        digestWindowHour: v.optional(v.number()),
+      }),
+    ),
   })
     .index('email', ['email']) // Required by @convex-dev/auth (must be named exactly 'email')
     .index('by_role', ['role'])
@@ -519,6 +541,8 @@ export default defineSchema({
   })
     .index('by_owner', ['ownerId', 'order'])
     .index('by_owner_pinned', ['ownerId', 'pinnedUserId'])
+    // Reverse lookup: who pinned this user (Close Circle notification copy)
+    .index('by_pinned', ['pinnedUserId'])
     .index('by_pinned_user', ['pinnedUserId']),
 
   // Live Sessions - Mux live broadcasts before they become replay assets
@@ -597,12 +621,30 @@ export default defineSchema({
     // Device identifier (for managing multiple devices per user)
     deviceId: v.optional(v.string()),
 
+    // IANA timezone (e.g. 'America/Denver') for local-time digest delivery
+    timezone: v.optional(v.string()),
+
     // Timestamps
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
     .index('by_token', ['token']),
+
+  // Push notification deliveries — one row per (recipient, video) push.
+  // Powers per-video dedupe (live-start suppresses publish-time sends)
+  // and per-thread response throttling (max 1 response push per
+  // bondfire per recipient per hour).
+  notificationDeliveries: defineTable({
+    userId: v.id('users'),
+    // bondfireId or bondfireVideoId the push was about
+    videoKey: v.string(),
+    // bondfireId of the thread, for throttle lookups
+    threadKey: v.string(),
+    sentAt: v.number(),
+  })
+    .index('by_video_user', ['videoKey', 'userId'])
+    .index('by_user_thread', ['userId', 'threadKey']),
 
   // Video Reports - for content moderation / child safety compliance
   reports: defineTable({

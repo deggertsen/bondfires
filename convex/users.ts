@@ -4,6 +4,23 @@ import { mutation, query } from './_generated/server'
 import { auth } from './auth'
 import { throwUserError } from './errors'
 
+/**
+ * App-open heartbeat. The client calls this on launch/foreground
+ * (throttled client-side). Powers the 72h nudge kill switch in
+ * convex/digest.ts — a user who opened the app recently never gets a
+ * re-engagement nudge. No-op when unauthenticated.
+ */
+export const recordActive = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      return
+    }
+    await ctx.db.patch(userId, { lastActiveAt: Date.now() })
+  },
+})
+
 function publicUser(user: Doc<'users'>) {
   return {
     _id: user._id,

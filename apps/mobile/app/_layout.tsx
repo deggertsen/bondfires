@@ -19,6 +19,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import { type AppStateStatus, AppState as RNAppState } from 'react-native'
 import { KeyboardProvider } from 'react-native-keyboard-controller'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { AnimatePresence, TamaguiProvider, Theme, YStack } from 'tamagui'
@@ -31,6 +32,7 @@ import {
   appStore$,
   appThemeColors,
   mmkvStorage,
+  setPushPermissionRequester,
   telemetry,
   toastActions,
   toastStore$,
@@ -251,6 +253,31 @@ function AppContent() {
   const isAuthenticated = useValue(appStore$.isAuthenticated)
   const registerDevice = useMutation(api.notifications.registerDevice)
   const unregisterDevice = useMutation(api.notifications.unregisterDevice)
+  const recordActive = useMutation(api.users.recordActive)
+
+  // App-open heartbeat — powers the 72h nudge kill switch (convex/digest.ts).
+  // Throttled so foreground flapping doesn't spam mutations.
+  const lastHeartbeatRef = useRef(0)
+  const recordActiveRef = useRef(recordActive)
+  recordActiveRef.current = recordActive
+  const sendHeartbeat = useCallback(() => {
+    if (!appStore$.isAuthenticated.peek()) return
+    const now = Date.now()
+    if (now - lastHeartbeatRef.current < 30 * 60 * 1000) return
+    lastHeartbeatRef.current = now
+    recordActiveRef.current().catch(() => {
+      // Best-effort: allow retry on the next foreground.
+      lastHeartbeatRef.current = 0
+    })
+  }, [])
+
+  useEffect(() => {
+    sendHeartbeat()
+    const subscription = RNAppState.addEventListener('change', (state: AppStateStatus) => {
+      if (state === 'active') sendHeartbeat()
+    })
+    return () => subscription.remove()
+  }, [sendHeartbeat])
 
   // Force-update check: compares current version against remote minAppVersion.
   // On Android with flexible priority, downloads in background via Play Core.
@@ -276,6 +303,9 @@ function AppContent() {
       } else if (typeof data?.screen === 'string') {
         const target = resolveExternalRoute(data.screen)
         if (target) router.push(target)
+      } else if (data?.type === 'digest' || data?.type === 'nudge') {
+        // Multi-item digest/nudge has no single target — land on the feed.
+        router.push(routes.feed)
       }
     },
     [router],
@@ -285,6 +315,7 @@ function AppContent() {
   const {
     error: pushError,
     requestPermissions,
+    registerIfGranted,
     unregister,
   } = usePushNotifications({
     isAuthenticated,
@@ -292,10 +323,12 @@ function AppContent() {
       token: string
       tokenType: string
       platform: string
+      timezone?: string
     }) => {
       await registerDevice({
         token: params.token,
         platform: params.platform as 'ios' | 'android',
+        timezone: params.timezone,
       })
     },
     unregisterTokenMutation: async (params: { token: string }) => {
@@ -314,25 +347,42 @@ function AppContent() {
   unregisterDeviceRef.current = unregisterDevice
   const requestPermissionsRef = useRef(requestPermissions)
   requestPermissionsRef.current = requestPermissions
+  const registerIfGrantedRef = useRef(registerIfGranted)
+  registerIfGrantedRef.current = registerIfGranted
   const unregisterRef = useRef(unregister)
   unregisterRef.current = unregister
   const handleNotificationResponseRef = useRef(handleNotificationResponse)
   handleNotificationResponseRef.current = handleNotificationResponse
 
+  // Expose the OS permission dialog to feature screens (push pre-prompt,
+  // settings toggle). The dialog is one-shot on iOS, so it only ever fires
+  // from explicit user intent — never automatically here.
+  useEffect(() => {
+    setPushPermissionRequester(() => requestPermissionsRef.current())
+    return () => setPushPermissionRequester(null)
+  }, [])
+
   useObserve(appStore$.preferences.notificationsEnabled, ({ value: notificationsEnabled }) => {
-    // Avoid prompting for notification permissions before the user signs in.
     if (!appStore$.isAuthenticated.peek()) return
     if (notificationsEnabled) {
-      requestPermissionsRef.current()
+      // Silent: registers only when OS permission is already granted.
+      // The OS dialog is triggered contextually (PushPrimerSheet) or from
+      // the settings toggle, not here.
+      registerIfGrantedRef.current()
     } else {
       unregisterRef.current()
     }
   })
 
-  // When the user signs in, trigger push registration if notifications are enabled
+  // When the user signs in, register the device silently if notifications
+  // are enabled and OS permission was already granted. Never prompt here.
   useObserve(appStore$.isAuthenticated, ({ value: isAuthenticated }) => {
     if (isAuthenticated && appStore$.preferences.notificationsEnabled.peek()) {
-      requestPermissionsRef.current()
+      registerIfGrantedRef.current()
+    }
+    if (isAuthenticated) {
+      // The mount-time heartbeat may have fired pre-auth and no-opped.
+      sendHeartbeat()
     }
   })
 

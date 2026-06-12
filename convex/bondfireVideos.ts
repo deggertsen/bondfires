@@ -239,11 +239,12 @@ export const addResponse = mutation({
       updatedAt: now,
     })
 
-    // Send push notification to bondfire creator
+    // Send push notification to thread participants (deduped + throttled)
     await ctx.scheduler.runAfter(0, internal.sendNotification.notifyBondfireResponse, {
       bondfireId: args.bondfireId,
       responderId: userId,
       responderName: user?.displayName ?? user?.name ?? 'Someone',
+      bondfireVideoId: videoId,
     })
 
     return videoId

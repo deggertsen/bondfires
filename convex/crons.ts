@@ -95,4 +95,17 @@ crons.daily(
   internal.bondfireRetention.enforceBondfireRetention,
 )
 
+// Send daily unwatched-activity digests (and 72h nudges) to users whose
+// local digest window (~5pm) just opened. Runs hourly so every timezone
+// gets local-evening delivery; idempotent via notificationDeliveries.
+crons.hourly('send digest reminders', { minuteUTC: 10 }, internal.digest.runHourlySweep)
+
+// Final push + email warning to owners of frozen/inactive camps whose
+// reclaim deadline is within 3 days. Idempotent via notificationDeliveries.
+crons.daily(
+  'send camp reclaim warnings',
+  { hourUTC: 16, minuteUTC: 0 },
+  internal.sendNotification.sendReclaimWarnings,
+)
+
 export default crons

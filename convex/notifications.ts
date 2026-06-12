@@ -9,6 +9,8 @@ export const registerDevice = mutation({
     platform: v.union(v.literal('ios'), v.literal('android')),
     tokenType: v.optional(v.union(v.literal('fcm'), v.literal('expo'))),
     deviceId: v.optional(v.string()),
+    // IANA timezone (e.g. 'America/Denver') for local-time digest delivery
+    timezone: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await auth.getUserId(ctx)
@@ -31,6 +33,7 @@ export const registerDevice = mutation({
         platform: args.platform,
         tokenType: args.tokenType ?? 'expo',
         deviceId: args.deviceId,
+        timezone: args.timezone ?? existing.timezone,
         updatedAt: now,
       })
       return existing._id
@@ -43,6 +46,7 @@ export const registerDevice = mutation({
       platform: args.platform,
       tokenType: args.tokenType ?? 'fcm',
       deviceId: args.deviceId,
+      timezone: args.timezone,
       createdAt: now,
       updatedAt: now,
     })
@@ -95,5 +99,98 @@ export const getTokensForUser = query({
       .query('deviceTokens')
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
       .collect()
+  },
+})
+
+// ── Per-category notification preferences ──
+// Enforced server-side in sendNotification.sendToUser. Missing keys mean
+// enabled; account-critical notifications (camp lifecycle) always send.
+
+export interface NotificationPreferences {
+  recordingActivity: boolean
+  reminders: boolean
+  invitesAndMembership: boolean
+  hearth: boolean
+  digestWindowHour: number
+}
+
+export const DEFAULT_DIGEST_WINDOW_HOUR = 17
+
+export function resolveNotificationPrefs(
+  prefs:
+    | {
+        recordingActivity?: boolean
+        reminders?: boolean
+        invitesAndMembership?: boolean
+        hearth?: boolean
+        digestWindowHour?: number
+      }
+    | undefined,
+): NotificationPreferences {
+  return {
+    recordingActivity: prefs?.recordingActivity ?? true,
+    reminders: prefs?.reminders ?? true,
+    invitesAndMembership: prefs?.invitesAndMembership ?? true,
+    hearth: prefs?.hearth ?? true,
+    digestWindowHour: prefs?.digestWindowHour ?? DEFAULT_DIGEST_WINDOW_HOUR,
+  }
+}
+
+/** Current user's notification preferences (defaults filled in). */
+export const getPreferences = query({
+  args: {},
+  handler: async (ctx): Promise<NotificationPreferences | null> => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      return null
+    }
+    const user = await ctx.db.get(userId)
+    return resolveNotificationPrefs(user?.notificationPrefs)
+  },
+})
+
+/** Update the current user's notification preferences (partial). */
+export const updatePreferences = mutation({
+  args: {
+    recordingActivity: v.optional(v.boolean()),
+    reminders: v.optional(v.boolean()),
+    invitesAndMembership: v.optional(v.boolean()),
+    hearth: v.optional(v.boolean()),
+    digestWindowHour: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      throw new Error('Not authenticated')
+    }
+
+    if (
+      args.digestWindowHour !== undefined &&
+      (!Number.isInteger(args.digestWindowHour) ||
+        args.digestWindowHour < 0 ||
+        args.digestWindowHour > 23)
+    ) {
+      throw new Error('digestWindowHour must be an integer between 0 and 23')
+    }
+
+    const user = await ctx.db.get(userId)
+    const existing = user?.notificationPrefs ?? {}
+
+    await ctx.db.patch(userId, {
+      notificationPrefs: {
+        ...existing,
+        ...(args.recordingActivity !== undefined
+          ? { recordingActivity: args.recordingActivity }
+          : {}),
+        ...(args.reminders !== undefined ? { reminders: args.reminders } : {}),
+        ...(args.invitesAndMembership !== undefined
+          ? { invitesAndMembership: args.invitesAndMembership }
+          : {}),
+        ...(args.hearth !== undefined ? { hearth: args.hearth } : {}),
+        ...(args.digestWindowHour !== undefined ? { digestWindowHour: args.digestWindowHour } : {}),
+      },
+    })
+
+    return { success: true }
   },
 })

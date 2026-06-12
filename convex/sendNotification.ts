@@ -1,8 +1,50 @@
 import { v } from 'convex/values'
 import { api, internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
-import { action, internalAction, internalQuery } from './_generated/server'
+import { action, internalAction, internalMutation, internalQuery } from './_generated/server'
 import { isCampParticipableStatus } from './campLifecycle'
+import { resolveNotificationPrefs } from './notifications'
+
+// Max one response push per bondfire per recipient per hour.
+const RESPONSE_THROTTLE_MS = 60 * 60 * 1000
+
+// ── Notification categories (server-side preference enforcement) ──
+// Every push is tagged with a category; sendToUser drops it when the
+// recipient disabled that category. 'account' (camp lifecycle) and the
+// debug test path always send.
+export const notificationCategory = v.union(
+  v.literal('recording'), // camp bondfires, responses, live
+  v.literal('reminder'), // daily digest + 72h nudge
+  v.literal('membership'), // invites, access requests/approvals
+  v.literal('hearth'), // Hearth bondfires, responses, joins
+  v.literal('account'), // lifecycle warnings — always delivered
+)
+export type NotificationCategory = 'recording' | 'reminder' | 'membership' | 'hearth' | 'account'
+
+/** Whether the user's preferences allow a push in this category. */
+export const isCategoryEnabledForUser = internalQuery({
+  args: {
+    userId: v.id('users'),
+    category: notificationCategory,
+  },
+  handler: async (ctx, args): Promise<boolean> => {
+    if (args.category === 'account') return true
+    const user = await ctx.db.get(args.userId)
+    const prefs = resolveNotificationPrefs(user?.notificationPrefs)
+    switch (args.category) {
+      case 'recording':
+        return prefs.recordingActivity
+      case 'reminder':
+        return prefs.reminders
+      case 'membership':
+        return prefs.invitesAndMembership
+      case 'hearth':
+        return prefs.hearth
+      default:
+        return true
+    }
+  },
+})
 
 // Expo Push API types
 interface ExpoPushMessage {
@@ -40,6 +82,60 @@ const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send'
 function uniqueUserIds(userIds: Array<Id<'users'>>) {
   return [...new Set(userIds)]
 }
+
+/**
+ * Atomically claim notification deliveries for a set of recipients.
+ *
+ * A recipient is claimable when (a) they have never been notified about
+ * this video (`videoKey` dedupe — live-start suppresses publish-time
+ * sends), and (b) if `throttleMs` is given, their most recent delivery in
+ * this thread (`threadKey`) is older than the throttle window.
+ *
+ * Claiming inserts the delivery row inside one mutation, so concurrent
+ * notify paths (live-start webhook vs. publish) cannot double-send.
+ * Returns only the userIds that were claimed and should receive a push.
+ */
+export const claimDeliveries = internalMutation({
+  args: {
+    userIds: v.array(v.id('users')),
+    videoKey: v.string(),
+    threadKey: v.string(),
+    throttleMs: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<Array<Id<'users'>>> => {
+    const now = Date.now()
+    const claimed: Array<Id<'users'>> = []
+
+    for (const userId of uniqueUserIds(args.userIds)) {
+      const alreadyNotified = await ctx.db
+        .query('notificationDeliveries')
+        .withIndex('by_video_user', (q) => q.eq('videoKey', args.videoKey).eq('userId', userId))
+        .first()
+      if (alreadyNotified) continue
+
+      if (args.throttleMs !== undefined) {
+        const latestInThread = await ctx.db
+          .query('notificationDeliveries')
+          .withIndex('by_user_thread', (q) =>
+            q.eq('userId', userId).eq('threadKey', args.threadKey),
+          )
+          .order('desc')
+          .first()
+        if (latestInThread && now - latestInThread.sentAt < args.throttleMs) continue
+      }
+
+      await ctx.db.insert('notificationDeliveries', {
+        userId,
+        videoKey: args.videoKey,
+        threadKey: args.threadKey,
+        sentAt: now,
+      })
+      claimed.push(userId)
+    }
+
+    return claimed
+  },
+})
 
 function getCampNotificationCopy(camp: Doc<'camps'>, creatorName: string) {
   if (camp.crisisBroadcast) {
@@ -109,17 +205,31 @@ export const sendToUser = internalAction({
     title: v.string(),
     body: v.string(),
     data: v.optional(v.any()),
+    // Preference category. Omitted = always send (debug/test paths).
+    category: v.optional(notificationCategory),
   },
   handler: async (
     ctx,
     args,
   ): Promise<{
     success: boolean
+    skipped?: boolean
     successCount?: number
     failureCount?: number
     error?: string
     errors?: (string | undefined)[]
   }> => {
+    // Server-side preference enforcement — single choke point for all push.
+    if (args.category) {
+      const enabled: boolean = await ctx.runQuery(
+        internal.sendNotification.isCategoryEnabledForUser,
+        { userId: args.userId, category: args.category },
+      )
+      if (!enabled) {
+        return { success: true, skipped: true }
+      }
+    }
+
     // Get all device tokens for the user
     const tokens: DeviceToken[] = await ctx.runQuery(api.notifications.getTokensForUser, {
       userId: args.userId,
@@ -216,6 +326,54 @@ export const getCampNotificationDetails = internalQuery({
   },
 })
 
+/**
+ * Recipients for a Hearth (personal camp) bondfire: the active
+ * participants of that specific bondfire, minus the creator. Hearth
+ * notifications are localized to the conversation — never the whole
+ * Hearth membership — and have no mute concept (Hearths aren't camps).
+ */
+export const getHearthBondfireRecipientIds = internalQuery({
+  args: {
+    bondfireId: v.id('bondfires'),
+    creatorId: v.id('users'),
+  },
+  handler: async (ctx, args): Promise<Array<Id<'users'>>> => {
+    const participants = await ctx.db
+      .query('personalBondfireParticipants')
+      .withIndex('by_bondfire_status', (q) =>
+        q.eq('bondfireId', args.bondfireId).eq('status', 'active'),
+      )
+      .collect()
+
+    return uniqueUserIds(
+      participants
+        .map((participant) => participant.userId)
+        .filter((userId) => userId !== args.creatorId),
+    )
+  },
+})
+
+export const getPersonalCampName = internalQuery({
+  args: { personalCampId: v.id('personalCamps') },
+  handler: async (ctx, args): Promise<string | null> => {
+    const personalCamp = await ctx.db.get(args.personalCampId)
+    return personalCamp?.name ?? null
+  },
+})
+
+/** Users who pinned this creator to their Close Circle — they get
+ * personalized copy for the creator's camp activity (mute still applies). */
+export const getCloseCirclePinnerIds = internalQuery({
+  args: { pinnedUserId: v.id('users') },
+  handler: async (ctx, args): Promise<Array<Id<'users'>>> => {
+    const pins = await ctx.db
+      .query('closeCirclePins')
+      .withIndex('by_pinned', (q) => q.eq('pinnedUserId', args.pinnedUserId))
+      .collect()
+    return uniqueUserIds(pins.map((pin) => pin.ownerId))
+  },
+})
+
 export const getCampNotificationRecipientIds = internalQuery({
   args: {
     campId: v.id('camps'),
@@ -306,7 +464,55 @@ export const notifyCampBondfire = internalAction({
     const bondfire = await ctx.runQuery(internal.bondfires.getForNotification, {
       id: args.bondfireId,
     })
-    if (!bondfire?.campId) {
+    if (!bondfire) {
+      return { success: true, skipped: true }
+    }
+
+    // Hearth bondfires: notify the bondfire's active participants only.
+    if (!bondfire.campId && bondfire.personalCampId) {
+      const hearthRecipientIds: Array<Id<'users'>> = await ctx.runQuery(
+        internal.sendNotification.getHearthBondfireRecipientIds,
+        { bondfireId: args.bondfireId, creatorId: args.creatorId },
+      )
+
+      const claimedHearthIds: Array<Id<'users'>> = await ctx.runMutation(
+        internal.sendNotification.claimDeliveries,
+        {
+          userIds: hearthRecipientIds,
+          videoKey: args.bondfireId,
+          threadKey: args.bondfireId,
+        },
+      )
+
+      if (claimedHearthIds.length === 0) {
+        return { success: true, skipped: true }
+      }
+
+      const hearthName: string | null = await ctx.runQuery(
+        internal.sendNotification.getPersonalCampName,
+        { personalCampId: bondfire.personalCampId },
+      )
+
+      await Promise.all(
+        claimedHearthIds.map((userId) =>
+          ctx.runAction(internal.sendNotification.sendToUser, {
+            userId,
+            title: hearthName ?? 'Your Hearth',
+            body: `${args.creatorName} sparked a new Bondfire`,
+            category: 'hearth',
+            data: {
+              type: 'hearth_bondfire',
+              bondfireId: args.bondfireId,
+              personalCampId: bondfire.personalCampId,
+            },
+          }),
+        ),
+      )
+
+      return { success: true }
+    }
+
+    if (!bondfire.campId) {
       return { success: true, skipped: true }
     }
 
@@ -325,17 +531,41 @@ export const notifyCampBondfire = internalAction({
       },
     )
 
-    if (recipientIds.length === 0) {
+    // Skip anyone already notified about this video (e.g. at live-start).
+    const claimedIds: Array<Id<'users'>> = await ctx.runMutation(
+      internal.sendNotification.claimDeliveries,
+      {
+        userIds: recipientIds,
+        videoKey: args.bondfireId,
+        threadKey: args.bondfireId,
+      },
+    )
+
+    if (claimedIds.length === 0) {
       return { success: true, skipped: true }
     }
 
     const copy = getCampNotificationCopy(camp, args.creatorName)
+
+    // Personalized copy for recipients who pinned this creator to their
+    // Close Circle (regular bondfires only — crisis/welcome copy wins).
+    const isRegularCopy = !camp.crisisBroadcast && !camp.welcomeBroadcast
+    const pinnerIds: Array<Id<'users'>> = isRegularCopy
+      ? await ctx.runQuery(internal.sendNotification.getCloseCirclePinnerIds, {
+          pinnedUserId: args.creatorId,
+        })
+      : []
+    const pinnerSet = new Set(pinnerIds)
+
     await Promise.all(
-      recipientIds.map((userId) =>
+      claimedIds.map((userId) =>
         ctx.runAction(internal.sendNotification.sendToUser, {
           userId,
           title: copy.title,
-          body: copy.body,
+          body: pinnerSet.has(userId)
+            ? `${args.creatorName} from your Close Circle sparked a new Bondfire`
+            : copy.body,
+          category: 'recording',
           data: {
             type: camp.crisisBroadcast
               ? 'camp_crisis'
@@ -353,12 +583,19 @@ export const notifyCampBondfire = internalAction({
   },
 })
 
-// Send notification when someone responds to a bondfire
+// Send notification when someone responds to a bondfire.
+// Deduped per video and throttled to 1 response push per bondfire per
+// recipient per hour; throttled responses are absorbed silently.
 export const notifyBondfireResponse = internalAction({
   args: {
     bondfireId: v.id('bondfires'),
     responderId: v.id('users'),
     responderName: v.string(),
+    // The response video this push is about (used as the dedupe key so a
+    // live-start push suppresses the publish-time push for the same video).
+    bondfireVideoId: v.optional(v.id('bondfireVideos')),
+    // True when sent at live-start (stream watchable) rather than publish.
+    isLive: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
@@ -384,16 +621,34 @@ export const notifyBondfireResponse = internalAction({
       },
     )
 
-    if (recipientIds.length === 0) {
+    const videoKey: string = args.bondfireVideoId ?? `${args.bondfireId}:resp:${args.responderId}`
+    const claimedIds: Array<Id<'users'>> = await ctx.runMutation(
+      internal.sendNotification.claimDeliveries,
+      {
+        userIds: recipientIds,
+        videoKey,
+        threadKey: args.bondfireId,
+        throttleMs: RESPONSE_THROTTLE_MS,
+      },
+    )
+
+    if (claimedIds.length === 0) {
       return { success: true, skipped: true }
     }
 
+    const body = args.isLive
+      ? bondfire.title
+        ? `${args.responderName} is responding in "${bondfire.title}" — watch live or later`
+        : `${args.responderName} is responding live — watch now or later`
+      : `${args.responderName} added a video to a Bondfire you're in`
+
     await Promise.all(
-      recipientIds.map((userId) =>
+      claimedIds.map((userId) =>
         ctx.runAction(internal.sendNotification.sendToUser, {
           userId,
           title: 'New response',
-          body: `${args.responderName} added a video to a Bondfire you're in`,
+          body,
+          category: bondfire.personalCampId ? 'hearth' : 'recording',
           data: {
             type: 'bondfire_response',
             bondfireId: args.bondfireId,
@@ -430,27 +685,81 @@ export const notifyBondfireLive = internalAction({
       return { success: false, error: 'Bondfire not found' }
     }
 
-    const recipientIds: Array<Id<'users'>> = await ctx.runQuery(
-      internal.sendNotification.getLiveNotificationRecipientIds,
-      {
+    // Resolve recipients + notification title by context (camp vs. Hearth).
+    let recipientIds: Array<Id<'users'>> = []
+    let title = 'Live now'
+    let crisisOrWelcomeCopy: { title: string; body: string } | null = null
+
+    if (bondfire.campId) {
+      recipientIds = await ctx.runQuery(internal.sendNotification.getLiveNotificationRecipientIds, {
         creatorId: args.creatorId,
         campId: bondfire.campId,
+      })
+      const camp = await ctx.runQuery(internal.sendNotification.getCampNotificationDetails, {
+        campId: bondfire.campId,
+      })
+      if (camp) {
+        title = camp.name
+        if (camp.crisisBroadcast || camp.welcomeBroadcast) {
+          crisisOrWelcomeCopy = getCampNotificationCopy(camp, args.creatorName)
+        }
+      }
+    } else if (bondfire.personalCampId) {
+      recipientIds = await ctx.runQuery(internal.sendNotification.getHearthBondfireRecipientIds, {
+        bondfireId: args.bondfireId,
+        creatorId: args.creatorId,
+      })
+      const hearthName: string | null = await ctx.runQuery(
+        internal.sendNotification.getPersonalCampName,
+        { personalCampId: bondfire.personalCampId },
+      )
+      title = hearthName ?? 'Your Hearth'
+    }
+
+    // Claim so the publish-time notification skips these recipients.
+    const claimedIds: Array<Id<'users'>> = await ctx.runMutation(
+      internal.sendNotification.claimDeliveries,
+      {
+        userIds: recipientIds,
+        videoKey: args.bondfireId,
+        threadKey: args.bondfireId,
       },
     )
 
-    if (recipientIds.length === 0) {
+    if (claimedIds.length === 0) {
       return { success: true, skipped: true }
     }
 
+    const body =
+      crisisOrWelcomeCopy?.body ??
+      (bondfire.title
+        ? `${args.creatorName} is sharing "${bondfire.title}" — watch live or later`
+        : `${args.creatorName} is sharing a Bondfire — watch live or later`)
+
+    // Personalized copy for Close Circle pinners (regular copy only).
+    const livePinnerIds: Array<Id<'users'>> =
+      !crisisOrWelcomeCopy && bondfire.campId
+        ? await ctx.runQuery(internal.sendNotification.getCloseCirclePinnerIds, {
+            pinnedUserId: args.creatorId,
+          })
+        : []
+    const livePinnerSet = new Set(livePinnerIds)
+    const pinnerBody = bondfire.title
+      ? `${args.creatorName} from your Close Circle is sharing "${bondfire.title}" — watch live or later`
+      : `${args.creatorName} from your Close Circle is sharing a Bondfire — watch live or later`
+
     await Promise.all(
-      recipientIds.map((userId) =>
+      claimedIds.map((userId) =>
         ctx.runAction(internal.sendNotification.sendToUser, {
           userId,
-          title: 'Live now',
-          body: `${args.creatorName} is live right now`,
+          title: crisisOrWelcomeCopy?.title ?? title,
+          body: livePinnerSet.has(userId) ? pinnerBody : body,
+          category: bondfire.campId ? 'recording' : 'hearth',
           data: {
             type: 'bondfire_live',
             bondfireId: args.bondfireId,
+            campId: bondfire.campId,
+            personalCampId: bondfire.personalCampId,
           },
         }),
       ),
@@ -523,6 +832,7 @@ export const notifyAccessRequest = internalAction({
       userId: camp.ownerId,
       title: 'New access request',
       body: `${args.requesterName} wants to join ${camp.name}`,
+      category: 'membership',
       data: {
         type: 'camp_access_request',
         campId: args.campId,
@@ -626,5 +936,369 @@ export const getUserEmail = internalQuery({
     const user = await ctx.db.get(args.userId)
     if (!user) return null
     return { email: user.email }
+  },
+})
+
+// ── Shared email helper (Resend) ──
+
+async function sendResendEmail(options: {
+  to: string
+  subject: string
+  heading: string
+  bodyHtml: string
+  ctaLabel: string
+  ctaUrl: string
+  footer: string
+}): Promise<{ success: boolean; error?: string }> {
+  const apiKey = process.env.RESEND_API_KEY
+  if (!apiKey) {
+    return { success: true }
+  }
+
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        from: process.env.EMAIL_FROM || 'Bondfires <support@bondfires.org>',
+        to: options.to,
+        subject: options.subject,
+        html: `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h1 style="color: #F59E0B; margin-bottom: 8px;">${options.heading}</h1>
+            <p style="font-size: 16px; color: #333; line-height: 1.5;">
+              ${options.bodyHtml}
+            </p>
+            <div style="margin-top: 24px;">
+              <a href="${options.ctaUrl}"
+                 style="display: inline-block; background: #D97736; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;">
+                ${options.ctaLabel}
+              </a>
+            </div>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;" />
+            <p style="font-size: 12px; color: #999;">${options.footer}</p>
+          </div>
+        `,
+      }),
+    })
+
+    if (!response.ok) {
+      const error = await response.text()
+      console.error('Failed to send email:', error)
+      return { success: false, error }
+    }
+
+    return { success: true }
+  } catch (error) {
+    console.error('Error sending email:', error)
+    return { success: false, error: String(error) }
+  }
+}
+
+/** Camp lookup without the participable-status filter — lifecycle
+ * notifications are precisely about frozen/grace/inactive camps. */
+export const getCampAnyStatus = internalQuery({
+  args: { campId: v.id('camps') },
+  handler: async (ctx, args): Promise<Doc<'camps'> | null> => {
+    return await ctx.db.get(args.campId)
+  },
+})
+
+// ── Access Approved Notifications ──
+// Denials are intentionally silent (product decision, June 2026).
+
+/** Push to the requester when their camp access request is approved. */
+export const notifyAccessApproved = internalAction({
+  args: {
+    campId: v.id('camps'),
+    userId: v.id('users'),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    success: boolean
+    skipped?: boolean
+    error?: string
+  }> => {
+    const camp = await ctx.runQuery(internal.sendNotification.getCampAnyStatus, {
+      campId: args.campId,
+    })
+    if (!camp) {
+      return { success: false, error: 'Camp not found' }
+    }
+
+    return await ctx.runAction(internal.sendNotification.sendToUser, {
+      userId: args.userId,
+      title: `${camp.name} let you in`,
+      body: "You're now a member. Tap to look around.",
+      category: 'membership',
+      data: {
+        type: 'camp_access_approved',
+        campId: args.campId,
+      },
+    })
+  },
+})
+
+/** Email to the requester when their camp access request is approved. */
+export const emailAccessApproved = internalAction({
+  args: {
+    campId: v.id('camps'),
+    userId: v.id('users'),
+  },
+  handler: async (ctx, args): Promise<{ success: boolean; error?: string }> => {
+    // Email follows the same preference as the push so they stay consistent.
+    const enabled: boolean = await ctx.runQuery(
+      internal.sendNotification.isCategoryEnabledForUser,
+      { userId: args.userId, category: 'membership' },
+    )
+    if (!enabled) {
+      return { success: true }
+    }
+
+    const camp = await ctx.runQuery(internal.sendNotification.getCampAnyStatus, {
+      campId: args.campId,
+    })
+    if (!camp) {
+      return { success: false, error: 'Camp not found' }
+    }
+
+    const user = await ctx.runQuery(internal.sendNotification.getUserEmail, {
+      userId: args.userId,
+    })
+    if (!user?.email) {
+      return { success: true }
+    }
+
+    const safeCampName = escapeHtml(camp.name)
+    return await sendResendEmail({
+      to: user.email,
+      subject: `You're in — welcome to ${camp.name}`,
+      heading: "You're in",
+      bodyHtml: `Your request to join <strong>${safeCampName}</strong> was approved. Pull up a log — the fire's going.`,
+      ctaLabel: 'Visit the Camp',
+      ctaUrl: `https://bondfires.org/camp/${args.campId}`,
+      footer:
+        'This email was sent automatically by Bondfires because your access request was approved.',
+    })
+  },
+})
+
+// ── Hearth Join Notification ──
+
+/** Notify a Hearth bondfire's creator when someone joins the conversation. */
+export const notifyHearthJoin = internalAction({
+  args: {
+    bondfireId: v.id('bondfires'),
+    joinerId: v.id('users'),
+    joinerName: v.string(),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    success: boolean
+    skipped?: boolean
+    error?: string
+  }> => {
+    const bondfire = await ctx.runQuery(internal.bondfires.getForNotification, {
+      id: args.bondfireId,
+    })
+    if (!bondfire?.personalCampId || bondfire.userId === args.joinerId) {
+      return { success: true, skipped: true }
+    }
+
+    const hearthName: string | null = await ctx.runQuery(
+      internal.sendNotification.getPersonalCampName,
+      { personalCampId: bondfire.personalCampId },
+    )
+
+    return await ctx.runAction(internal.sendNotification.sendToUser, {
+      userId: bondfire.userId,
+      title: hearthName ?? 'Your Hearth',
+      body: `${args.joinerName} joined the conversation`,
+      category: 'hearth',
+      data: {
+        type: 'hearth_join',
+        bondfireId: args.bondfireId,
+        personalCampId: bondfire.personalCampId,
+      },
+    })
+  },
+})
+
+// ── Camp Lifecycle Warnings ──
+// Push + email to the owner at each lifecycle transition, and a final
+// reminder 3 days before the reclaim deadline. Email matters here: an
+// owner drifting away from the app is exactly who push won't reach.
+
+const lifecycleStage = v.union(
+  v.literal('grace'),
+  v.literal('frozen'),
+  v.literal('inactive'),
+  v.literal('reclaim_reminder'),
+)
+
+function formatDeadline(timestamp: number | undefined): string {
+  if (!timestamp) return 'soon'
+  try {
+    return new Date(timestamp).toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+    })
+  } catch {
+    return 'soon'
+  }
+}
+
+function getLifecycleCopy(
+  camp: Doc<'camps'>,
+): Record<
+  'grace' | 'frozen' | 'inactive' | 'reclaim_reminder',
+  { title: string; body: string; subject: string; emailBody: string }
+> {
+  const graceEnds = formatDeadline(camp.gracePeriodEnd)
+  const reclaimBy = formatDeadline(camp.reclaimDeadline)
+  const safeName = escapeHtml(camp.name)
+
+  return {
+    grace: {
+      title: `${camp.name} needs kindling`,
+      body: `Add kindling by ${graceEnds} to keep the fire burning`,
+      subject: `${camp.name} needs kindling`,
+      emailBody: `<strong>${safeName}</strong> has run out of kindling and entered its grace period. Add kindling by <strong>${graceEnds}</strong> to keep the camp active.`,
+    },
+    frozen: {
+      title: `${camp.name} is frozen`,
+      body: `Reclaim your camp by ${reclaimBy} before it's archived`,
+      subject: `${camp.name} is frozen`,
+      emailBody: `<strong>${safeName}</strong> was frozen because it's no longer covered by your subscription. Reclaim it by <strong>${reclaimBy}</strong> or it will be archived.`,
+    },
+    inactive: {
+      title: `${camp.name} went quiet`,
+      body: `Reclaim your camp by ${reclaimBy} before it's archived`,
+      subject: `${camp.name} is inactive`,
+      emailBody: `<strong>${safeName}</strong>'s grace period ended and the camp is now inactive. Reclaim it by <strong>${reclaimBy}</strong> or it will be archived.`,
+    },
+    reclaim_reminder: {
+      title: `${camp.name} archives soon`,
+      body: `Last chance — reclaim your camp by ${reclaimBy}`,
+      subject: `Last chance to reclaim ${camp.name}`,
+      emailBody: `<strong>${safeName}</strong> will be archived after <strong>${reclaimBy}</strong>. Reclaim it now to keep the camp and its Bondfires.`,
+    },
+  }
+}
+
+/** Push + email to the camp owner for a lifecycle transition. */
+export const notifyCampLifecycle = internalAction({
+  args: {
+    campId: v.id('camps'),
+    stage: lifecycleStage,
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    success: boolean
+    skipped?: boolean
+    error?: string
+  }> => {
+    const camp = await ctx.runQuery(internal.sendNotification.getCampAnyStatus, {
+      campId: args.campId,
+    })
+    if (!camp?.ownerId) {
+      return { success: true, skipped: true }
+    }
+
+    // Idempotency: lifecycle crons re-run safely, so claim a delivery key
+    // tied to this camp + stage + deadline before sending anything.
+    const deadline = camp.reclaimDeadline ?? camp.gracePeriodEnd ?? 0
+    const claimed: Array<Id<'users'>> = await ctx.runMutation(
+      internal.sendNotification.claimDeliveries,
+      {
+        userIds: [camp.ownerId],
+        videoKey: `campstage:${args.campId}:${args.stage}:${deadline}`,
+        threadKey: `campstage:${args.campId}`,
+      },
+    )
+    if (claimed.length === 0) {
+      return { success: true, skipped: true }
+    }
+
+    const copy = getLifecycleCopy(camp)[args.stage]
+
+    await ctx.runAction(internal.sendNotification.sendToUser, {
+      userId: camp.ownerId,
+      title: copy.title,
+      body: copy.body,
+      category: 'account',
+      data: {
+        type: 'camp_lifecycle',
+        stage: args.stage,
+        campId: args.campId,
+      },
+    })
+
+    const owner = await ctx.runQuery(internal.sendNotification.getUserEmail, {
+      userId: camp.ownerId,
+    })
+    if (owner?.email) {
+      await sendResendEmail({
+        to: owner.email,
+        subject: copy.subject,
+        heading: copy.title,
+        bodyHtml: copy.emailBody,
+        ctaLabel: 'Manage Camp',
+        ctaUrl: `https://bondfires.org/camp/${args.campId}`,
+        footer: 'This email was sent automatically by Bondfires because you are the camp owner.',
+      })
+    }
+
+    return { success: true }
+  },
+})
+
+const RECLAIM_WARNING_WINDOW_MS = 3 * 24 * 60 * 60 * 1000
+
+export const listCampsNearingReclaimDeadline = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<Array<Id<'camps'>>> => {
+    const now = Date.now()
+    const cutoff = now + RECLAIM_WARNING_WINDOW_MS
+    const camps = await ctx.db
+      .query('camps')
+      .filter((q) =>
+        q.and(
+          q.or(q.eq(q.field('status'), 'frozen'), q.eq(q.field('status'), 'inactive')),
+          q.gt(q.field('reclaimDeadline'), now),
+          q.lte(q.field('reclaimDeadline'), cutoff),
+        ),
+      )
+      .collect()
+    return camps.map((camp) => camp._id)
+  },
+})
+
+/** Daily cron: final warning to owners 3 days before reclaim deadline. */
+export const sendReclaimWarnings = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ warned: number }> => {
+    const campIds: Array<Id<'camps'>> = await ctx.runQuery(
+      internal.sendNotification.listCampsNearingReclaimDeadline,
+      {},
+    )
+
+    for (const campId of campIds) {
+      await ctx.runAction(internal.sendNotification.notifyCampLifecycle, {
+        campId,
+        stage: 'reclaim_reminder',
+      })
+    }
+
+    return { warned: campIds.length }
   },
 })

@@ -134,7 +134,30 @@ function getMuxConfig() {
     liveLatencyMode: readLiveLatencyMode(process.env.MUX_LIVE_LATENCY_MODE),
     videoQuality: process.env.MUX_VIDEO_QUALITY ?? 'basic',
     uploadCorsOrigin: process.env.MUX_UPLOAD_CORS_ORIGIN ?? '*',
+    reconnectSlateUrl: readMuxSlateUrl(process.env.MUX_LIVE_RECONNECT_SLATE_URL),
   }
+}
+
+// Public image that Mux downloads at the start of each recorded live asset and
+// uses as slate media during reconnect-window interruptions.
+function readMuxSlateUrl(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  if (!trimmed) {
+    return undefined
+  }
+
+  let url: URL
+  try {
+    url = new URL(trimmed)
+  } catch {
+    throw new Error('MUX_LIVE_RECONNECT_SLATE_URL must be an absolute HTTP(S) URL.')
+  }
+
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw new Error('MUX_LIVE_RECONNECT_SLATE_URL must use http or https.')
+  }
+
+  return url.toString()
 }
 
 function readPlaybackPolicy(value: string | undefined): PlaybackPolicy {
@@ -940,6 +963,7 @@ async function markRecordReady(
       bondfireId: record.document.bondfireId,
       responderId: record.document.userId,
       responderName: user?.displayName ?? user?.name ?? 'Someone',
+      bondfireVideoId: record.document._id,
     })
   }
 
@@ -1509,6 +1533,9 @@ export const createLiveStream = action({
       0,
       MUX_LIVE_RECONNECT_WINDOW_MAX_SECONDS,
     )
+    const reconnectSlateUrl =
+      reconnectWindow > 0 && config.reconnectSlateUrl ? config.reconnectSlateUrl : undefined
+    const useSlateForStandardLatency = config.liveLatencyMode === 'standard' && reconnectWindow > 0
     const maxContinuousDuration: number = await ctx.runQuery(
       internal.videos.getLiveMaxContinuousDurationSeconds,
       { userId },
@@ -1521,6 +1548,12 @@ export const createLiveStream = action({
           latency_mode: config.liveLatencyMode,
           reconnect_window: reconnectWindow,
           max_continuous_duration: maxContinuousDuration,
+          // Replace Mux's default slate during reconnect-window interruptions
+          // when a public Bondfires slate image is configured.
+          ...(reconnectSlateUrl ? { reconnect_slate_url: reconnectSlateUrl } : {}),
+          // Standard-latency streams don't insert slate media unless this is
+          // enabled; all latency modes require reconnect_window > 0.
+          ...(useSlateForStandardLatency ? { use_slate_for_standard_latency: true } : {}),
           passthrough: JSON.stringify({
             userId,
             isResponse: args.isResponse,
@@ -1592,7 +1625,7 @@ export const endLiveStream = action({
     liveSessionId: v.id('liveSessions'),
     reason: v.optional(v.string()),
   },
-  handler: async (ctx, args): Promise<{ ended: boolean }> => {
+  handler: async (ctx, args): Promise<{ ended: boolean; completeSignaled: boolean }> => {
     const userId = await auth.getUserId(ctx)
     if (!userId) {
       throwUserError('Not authenticated')
@@ -1610,11 +1643,13 @@ export const endLiveStream = action({
       throwUserError('Live session not found')
     }
 
+    let completeSignaled = true
     try {
       await muxRequest(`/live-streams/${liveSession.muxLiveStreamId}/complete`, {
         method: 'PUT',
       })
     } catch (error) {
+      completeSignaled = false
       console.warn('Failed to signal Mux live stream complete:', error)
     }
 
@@ -1637,7 +1672,7 @@ export const endLiveStream = action({
       liveSessionId: args.liveSessionId,
     })
 
-    return { ended: true }
+    return { ended: true, completeSignaled }
   },
 })
 
@@ -2738,12 +2773,9 @@ export const createLinkedMuxLiveSession = internalMutation({
         })
       }
 
-      await ctx.scheduler.runAfter(0, internal.sendNotification.notifyBondfireResponse, {
-        bondfireId: args.bondfireId,
-        responderId: args.userId,
-        responderName: user?.displayName ?? user?.name ?? 'Someone',
-      })
-
+      // Response notification is sent by the Mux webhook at
+      // live_stream.active (when the stream is actually watchable), not at
+      // provisioning time — see handleMuxWebhook.
       await ctx.db.patch(liveSessionId, {
         bondfireVideoId: recordId,
         updatedAt: now,
@@ -3199,13 +3231,33 @@ export const handleMuxWebhookEvent = internalMutation({
             muxAssetStatus: 'live',
           })
         }
-        if (liveSession.bondfireId && !liveSession.bondfireVideoId && !liveSession.startedAt) {
+        // Notify at the moment the stream is actually watchable. The
+        // !startedAt guard keeps retried 'active' deliveries from
+        // re-notifying; claimDeliveries dedupes against publish-time sends.
+        if (!liveSession.startedAt) {
           const user = await ctx.db.get(liveSession.userId)
-          await ctx.scheduler.runAfter(0, internal.sendNotification.notifyBondfireLive, {
-            bondfireId: liveSession.bondfireId,
-            creatorId: liveSession.userId,
-            creatorName: user?.displayName ?? user?.name ?? 'Someone',
-          })
+          const creatorName = user?.displayName ?? user?.name ?? 'Someone'
+
+          if (liveSession.bondfireVideoId) {
+            // Live response recording
+            const responseVideo = await ctx.db.get(liveSession.bondfireVideoId)
+            if (responseVideo) {
+              await ctx.scheduler.runAfter(0, internal.sendNotification.notifyBondfireResponse, {
+                bondfireId: responseVideo.bondfireId,
+                responderId: liveSession.userId,
+                responderName: creatorName,
+                bondfireVideoId: liveSession.bondfireVideoId,
+                isLive: true,
+              })
+            }
+          } else if (liveSession.bondfireId) {
+            // New live bondfire (camp or Hearth)
+            await ctx.scheduler.runAfter(0, internal.sendNotification.notifyBondfireLive, {
+              bondfireId: liveSession.bondfireId,
+              creatorId: liveSession.userId,
+              creatorName,
+            })
+          }
         }
       } else if (args.eventType === 'video.live_stream.disconnected') {
         await ctx.db.patch(liveSession._id, {

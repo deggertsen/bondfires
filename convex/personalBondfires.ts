@@ -1,4 +1,5 @@
 import { v } from 'convex/values'
+import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
@@ -326,6 +327,13 @@ export const redeemInvite = mutation({
     }
 
     await ctx.db.patch(unifiedInvite._id, { uses: unifiedInvite.uses + 1 })
+
+    // Let the Hearth bondfire's creator know someone joined.
+    await ctx.scheduler.runAfter(0, internal.sendNotification.notifyHearthJoin, {
+      bondfireId: bondfire._id,
+      joinerId: user._id,
+      joinerName: user.displayName ?? user.name ?? 'Someone',
+    })
 
     return { bondfireId: bondfire._id, alreadyJoined: false }
   },
