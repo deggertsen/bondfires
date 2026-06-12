@@ -164,6 +164,16 @@ final class LivePublisher {
   private var isCaptureRunning = false
   private var captureSize = CMVideoDimensions(width: 1920, height: 1080)
   private let eventHandler: (LivePublisherEvent) -> Void
+  /// True while stop()/cleanup() is tearing the pipeline down, so health
+  /// monitoring never reports an intentional stop as a failure. Mirrors
+  /// isStoppingIntentionally in the Android module.
+  private var isStopping = false
+  /// Polls Session.isConnected while publishing. The HaishinKit Session API
+  /// exposes no event stream for disconnects, so without this poll an RTMP
+  /// drop mid-recording is completely silent on iOS — the UI stays on "REC"
+  /// with a frozen pipeline. Android gets the same signal from isOpenFlow.
+  private var connectionMonitorTask: Task<Void, Never>?
+  private var captureObservers: [NSObjectProtocol] = []
 
   /// MTHKView registered as a mixer output — HaishinKit 2.x preview approach
   private lazy var previewView: MTHKView = {
@@ -194,6 +204,7 @@ final class LivePublisher {
     currentCameraPosition = position
 
     setupAudioSession()
+    addCaptureObservers()
 
     await mixer.addOutput(previewView)
 
@@ -303,6 +314,81 @@ final class LivePublisher {
     }
 
     emitStatusChange("live")
+    startConnectionMonitor()
+  }
+
+  // MARK: - Health monitoring
+
+  /// Detect a dropped RTMP connection while publishing. The JS side already
+  /// handles "endpoint_closed" by finalizing the partial recording, so this
+  /// converts a silent freeze into a graceful auto-stop-and-save.
+  private func startConnectionMonitor() {
+    connectionMonitorTask?.cancel()
+    connectionMonitorTask = Task { [weak self] in
+      while !Task.isCancelled {
+        try? await Task.sleep(nanoseconds: 3_000_000_000)
+        guard let self, !Task.isCancelled else { return }
+        guard let session = self.session, !self.isStopping else { return }
+        let connected = await session.isConnected
+        if Task.isCancelled || self.isStopping || self.session == nil { return }
+        if !connected {
+          self.emitStatusChange("endpoint_closed")
+          return
+        }
+      }
+    }
+  }
+
+  /// Surface capture-session interruptions (phone call, Slide Over, thermal
+  /// shutdown, camera grabbed by another app) and runtime errors while
+  /// publishing. Without these observers the preview freezes with no event,
+  /// the UI stays on "REC", and nothing is saved.
+  private func addCaptureObservers() {
+    guard captureObservers.isEmpty else { return }
+    let center = NotificationCenter.default
+
+    captureObservers.append(center.addObserver(
+      forName: AVCaptureSession.wasInterruptedNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] notification in
+      let reasonValue =
+        (notification.userInfo?[AVCaptureSessionInterruptionReasonKey] as? NSNumber)?.intValue
+      Task { @MainActor [weak self] in
+        guard let self, self.isCaptureRunning, !self.isStopping else { return }
+        // Preview-only interruptions (no session yet) resume automatically
+        // when the interruption ends; only a publishing pipeline needs to
+        // fail fast so the partial recording gets finalized.
+        guard self.session != nil else { return }
+        self.emitError(
+          "capture_interrupted",
+          "Camera capture was interrupted (reason: \(reasonValue.map(String.init) ?? "unknown"))"
+        )
+      }
+    })
+
+    captureObservers.append(center.addObserver(
+      forName: AVCaptureSession.runtimeErrorNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] notification in
+      let errorDescription =
+        (notification.userInfo?[AVCaptureSessionErrorKey] as? NSError)?.localizedDescription
+      Task { @MainActor [weak self] in
+        guard let self, self.isCaptureRunning, !self.isStopping else { return }
+        self.emitError(
+          "capture_runtime_error",
+          errorDescription ?? "Camera capture hit a runtime error"
+        )
+      }
+    })
+  }
+
+  private func removeCaptureObservers() {
+    for observer in captureObservers {
+      NotificationCenter.default.removeObserver(observer)
+    }
+    captureObservers = []
   }
 
   private func resolveCameraVideoSize(
@@ -334,6 +420,10 @@ final class LivePublisher {
   }
 
   private func cleanup() async {
+    isStopping = true
+    connectionMonitorTask?.cancel()
+    connectionMonitorTask = nil
+    removeCaptureObservers()
     do {
       try await session?.close()
     } catch {
@@ -349,6 +439,7 @@ final class LivePublisher {
     session = nil
     currentOptions = nil
     isCaptureRunning = false
+    isStopping = false
   }
 
   // MARK: - Swap Camera

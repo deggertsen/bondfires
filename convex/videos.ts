@@ -995,7 +995,53 @@ async function markRecordErrored(
       updatedAt: Date.now(),
     })
   } else {
+    // Reconcile counters using the pre-patch document so the previous status
+    // is still visible to the wasCounted check.
+    await reconcileErroredResponseCounts(ctx, record.document)
     await ctx.db.patch(record.document._id, patch)
+  }
+}
+
+// A response that errors after it was counted leaves bondfire.videoCount (and
+// the responder's responseCount) permanently inflated — the bondfire shows
+// "N responses" while the swipe list, filtered to playable videos by
+// isPlayableVideoRecord, only has N-1. Live responses are counted at
+// provisioning (createMuxLiveStream) and upload responses at
+// markRecordReady/addResponse, so a row was counted iff it is a live-path row
+// (liveSessionId set) or had already reached 'ready'. Rows already 'errored'
+// were reconciled before, so skip them — retried webhooks and a later
+// cancelMuxLiveSessionRecord can't double-decrement.
+async function reconcileErroredResponseCounts(
+  ctx: MutationCtx,
+  video: Doc<'bondfireVideos'>,
+) {
+  const prevStatus = video.videoStatus ?? 'ready'
+  if (prevStatus === 'errored') {
+    return
+  }
+
+  const wasCounted = video.liveSessionId !== undefined || prevStatus === 'ready'
+  if (!wasCounted) {
+    return
+  }
+
+  const [bondfire, user] = await Promise.all([
+    ctx.db.get(video.bondfireId),
+    ctx.db.get(video.userId),
+  ])
+
+  if (bondfire) {
+    await ctx.db.patch(video.bondfireId, {
+      videoCount: Math.max(1, bondfire.videoCount - 1),
+      updatedAt: Date.now(),
+    })
+  }
+
+  if (user) {
+    await ctx.db.patch(video.userId, {
+      responseCount: Math.max(0, (user.responseCount ?? 0) - 1),
+      updatedAt: Date.now(),
+    })
   }
 }
 
@@ -1083,6 +1129,16 @@ async function markLinkedLiveRecordErrored(ctx: MutationCtx, liveSession: Doc<'l
       muxAssetStatus: 'processing',
     })
     return
+  }
+
+  // Live responses are counted in bondfire.videoCount at provisioning, so a
+  // session that errors before going live must give that count back or the
+  // thread permanently shows a response nobody can swipe to.
+  if (liveSession.bondfireVideoId) {
+    const video = await ctx.db.get(liveSession.bondfireVideoId)
+    if (video) {
+      await reconcileErroredResponseCounts(ctx, video)
+    }
   }
 
   await patchLinkedLiveRecord(ctx, liveSession, {
@@ -2978,24 +3034,10 @@ export const cancelMuxLiveSessionRecord = internalMutation({
     if (liveSession.bondfireVideoId) {
       const video = await ctx.db.get(liveSession.bondfireVideoId)
       if (video) {
-        const [bondfire, user] = await Promise.all([
-          ctx.db.get(video.bondfireId),
-          ctx.db.get(video.userId),
-        ])
-
-        if (bondfire) {
-          await ctx.db.patch(video.bondfireId, {
-            videoCount: Math.max(1, bondfire.videoCount - 1),
-            updatedAt: Date.now(),
-          })
-        }
-
-        if (user) {
-          await ctx.db.patch(video.userId, {
-            responseCount: Math.max(0, (user.responseCount ?? 0) - 1),
-            updatedAt: Date.now(),
-          })
-        }
+        // Skips rows already reconciled by markRecordErrored /
+        // markLinkedLiveRecordErrored so a cancel retry after the stale-session
+        // reaper can't double-decrement.
+        await reconcileErroredResponseCounts(ctx, video)
       }
 
       await ctx.db.delete(liveSession.bondfireVideoId)

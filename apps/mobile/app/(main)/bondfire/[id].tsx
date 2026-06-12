@@ -82,6 +82,12 @@ type BondfireDetailData = Doc<'bondfires'> & {
   campStatus?: Doc<'camps'>['status']
   campName?: string
   videos: Doc<'bondfireVideos'>[]
+  processingResponses?: Array<{
+    _id: Id<'bondfireVideos'>
+    userId: Id<'users'>
+    creatorName?: string
+    createdAt: number
+  }>
   participants?: ThreadParticipant[]
 }
 
@@ -1355,6 +1361,10 @@ export default function BondfireDetailScreen() {
   }
 
   const totalVideos = 1 + bondfireData.videos.length
+  // Responses that exist (and are included in the bondfire's response count)
+  // but aren't playable yet — surfaced in the header so the count and the
+  // swipe list never appear to disagree while Mux finishes processing.
+  const processingResponseCount = bondfireData.processingResponses?.length ?? 0
 
   // Build video items with metadata - using typed IDs for type safety
   const videoItems = [
@@ -1433,7 +1443,9 @@ export default function BondfireDetailScreen() {
                 {currentVideoIndex + 1} / {totalVideos}
               </Text>
               <Text fontSize={12} color={OVERLAY_COLORS.textSecondary}>
-                Swipe for responses
+                {processingResponseCount > 0
+                  ? `${processingResponseCount} ${processingResponseCount === 1 ? 'response' : 'responses'} processing…`
+                  : 'Swipe for responses'}
               </Text>
             </YStack>
 
