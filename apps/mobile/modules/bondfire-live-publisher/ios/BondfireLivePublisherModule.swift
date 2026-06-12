@@ -471,11 +471,28 @@ final class LivePublisher {
 
   // MARK: - Stats
 
+  /// Real throughput stats while publishing. The Session protocol only
+  /// exposes `any HKStream`, but the RTMP implementation is an RTMPStream
+  /// actor with per-second byte counts and encoder FPS — downcast to reach
+  /// them. The JS stall watchdog uses bitrateBps==0 (after having seen
+  /// nonzero) to detect a frozen encoder that the connection poll misses.
   func getStats() async -> [String: Int] {
+    guard let session, let rtmpStream = session.stream as? RTMPStream else {
+      return [
+        "bitrateBps": 0,
+        "rttMs": 0,
+        "droppedFrames": 0,
+        "currentFps": 0,
+      ]
+    }
+
+    let info = await rtmpStream.info
+    let fps = await rtmpStream.currentFPS
     return [
-      "bitrateBps": 0,
+      "bitrateBps": info.currentBytesPerSecond * 8,
       "rttMs": 0,
       "droppedFrames": 0,
+      "currentFps": Int(fps),
     ]
   }
 

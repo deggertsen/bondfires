@@ -1440,12 +1440,18 @@ export default function CreateScreen() {
       liveStatus === 'reconnecting'
     ) {
       // The native publisher owns the camera during preview and recording.
-      livePublisher.swapCamera().catch((error) => {
-        logRecordingError(error)
-        const errorInfo = parseError(error)
-        Alert.alert('Switch Camera Failed', getUserFacingErrorMessage(errorInfo))
-      })
-      state$.facing.set(state$.facing.get() === 'back' ? 'front' : 'back')
+      // Only flip the tracked facing once the native swap actually succeeds,
+      // so a failed swap can't leave JS and the capture pipeline disagreeing.
+      livePublisher
+        .swapCamera()
+        .then(() => {
+          state$.facing.set(state$.facing.get() === 'back' ? 'front' : 'back')
+        })
+        .catch((error) => {
+          logRecordingError(error)
+          const errorInfo = parseError(error)
+          Alert.alert('Switch Camera Failed', getUserFacingErrorMessage(errorInfo))
+        })
       return
     }
 
