@@ -114,6 +114,9 @@ interface VideoPlayerProps {
   isAppActive: boolean
   onComplete: () => void
   onProgress: (progress: number) => void
+  /** Notifies the parent while the user is dragging the scrubber so the
+   * paging carousel can disable scrolling and not steal the gesture. */
+  onScrubbingChange?: (scrubbing: boolean) => void
   creatorName: string
   isMainVideo: boolean
   responseIndex?: number
@@ -131,6 +134,7 @@ function VideoPlayer({
   isAppActive,
   onComplete,
   onProgress,
+  onScrubbingChange,
   creatorName,
   isMainVideo,
   responseIndex,
@@ -188,6 +192,9 @@ function VideoPlayer({
   const progressBarViewRef = useRef<View>(null)
   const progressBarRef = useRef<ProgressBarMetrics>({ width: 0, pageX: null })
   const isScrubbingRef = useRef(false)
+  // Ref so the once-created PanResponder always sees the latest callback.
+  const onScrubbingChangeRef = useRef(onScrubbingChange)
+  onScrubbingChangeRef.current = onScrubbingChange
   const pendingScrubSeekRef = useRef<PendingScrubSeek>({
     locationX: null,
     timeout: null,
@@ -547,6 +554,7 @@ function VideoPlayer({
       const locationX = getProgressLocationFromPageX(pageX)
       clearPendingScrubSeek()
       isScrubbingRef.current = false
+      onScrubbingChangeRef.current?.(false)
 
       if (locationX !== null) {
         applyScrubSeekLocation(locationX)
@@ -569,6 +577,8 @@ function VideoPlayer({
   useEffect(() => {
     return () => {
       clearPendingScrubSeek()
+      // Never leave the carousel locked if this player unmounts mid-scrub.
+      onScrubbingChangeRef.current?.(false)
     }
   }, [clearPendingScrubSeek])
 
@@ -576,9 +586,14 @@ function VideoPlayer({
     PanResponder.create({
       onStartShouldSetPanResponder: () => canSeekProgressRef.current,
       onMoveShouldSetPanResponder: () => canSeekProgressRef.current,
+      // Don't yield the responder to the paging FlatList mid-scrub — without
+      // this (plus scrollEnabled={false} on the carousel while scrubbing) the
+      // native scroll view steals the drag and pages to the next response.
+      onPanResponderTerminationRequest: () => false,
 
       onPanResponderGrant: (evt) => {
         isScrubbingRef.current = true
+        onScrubbingChangeRef.current?.(true)
         clearPendingScrubSeek()
 
         const touchPageX = evt.nativeEvent.pageX
@@ -828,16 +843,14 @@ function VideoPlayer({
         </Pressable>
       </YStack>
 
-      {/* Report Overlay */}
+      {/* Report Overlay — renders in a Modal, so no absolute wrapper needed */}
       {showReport && (
-        <YStack position="absolute" top={0} left={0} right={0} bottom={0} zIndex={10}>
-          <ReportOverlay
-            bondfireId={bondfireId}
-            bondfireVideoId={bondfireVideoId}
-            videoOwnerId={videoOwnerId}
-            onClose={() => state$.showReport.set(false)}
-          />
-        </YStack>
+        <ReportOverlay
+          bondfireId={bondfireId}
+          bondfireVideoId={bondfireVideoId}
+          videoOwnerId={videoOwnerId}
+          onClose={() => state$.showReport.set(false)}
+        />
       )}
     </YStack>
   )
@@ -871,6 +884,9 @@ export default function BondfireDetailScreen() {
     showSettings: false,
     showNotepad: false,
     isAppActive: AppState.currentState === 'active',
+    // True while the user drags a video scrubber — the response carousel
+    // disables scrolling so the horizontal drag isn't stolen as a page swipe.
+    isScrubbing: false,
   })
   const pendingPulse = useRef(new Animated.Value(0.55)).current
 
@@ -880,6 +896,7 @@ export default function BondfireDetailScreen() {
   const showSettings = useValue(screenState$.showSettings)
   const showNotepad = useValue(screenState$.showNotepad)
   const isAppActive = useValue(screenState$.isAppActive)
+  const isScrubbing = useValue(screenState$.isScrubbing)
   const currentUserId = useValue(appStore$.userId)
 
   const bondfireId = id as Id<'bondfires'>
@@ -1163,6 +1180,13 @@ export default function BondfireDetailScreen() {
       })
     }
   }, [bondfireData, currentVideoIndex, videoUrls.length, recordWatchEvent])
+
+  const handleScrubbingChange = useCallback(
+    (scrubbing: boolean) => {
+      screenState$.isScrubbing.set(scrubbing)
+    },
+    [screenState$],
+  )
 
   const handleProgress = useCallback(
     (progress: number) => {
@@ -1499,6 +1523,7 @@ export default function BondfireDetailScreen() {
               isAppActive={isAppActive}
               onComplete={handleVideoComplete}
               onProgress={handleProgress}
+              onScrubbingChange={handleScrubbingChange}
               creatorName={item.creatorName}
               isMainVideo={item.isMainVideo}
               responseIndex={item.responseIndex}
@@ -1507,6 +1532,9 @@ export default function BondfireDetailScreen() {
           )}
           horizontal
           pagingEnabled
+          // Locked while a scrubber drag is active so the horizontal drag
+          // seeks the video instead of paging to the next/previous response.
+          scrollEnabled={!isScrubbing}
           showsHorizontalScrollIndicator={false}
           snapToInterval={SCREEN_WIDTH}
           snapToAlignment="start"
