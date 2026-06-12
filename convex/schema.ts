@@ -505,6 +505,11 @@ export default defineSchema({
     metadata: v.optional(v.any()),
     expiresAt: v.optional(v.number()),
 
+    // Set when this response was counted into bondfire.videoCount and
+    // user.responseCount (see responseCounts.ts). Single source of truth for
+    // idempotent count/uncount across webhooks, reapers, and cancels.
+    countedAt: v.optional(v.number()),
+
     // Timestamps
     createdAt: v.number(),
   })

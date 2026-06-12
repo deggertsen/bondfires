@@ -8,6 +8,7 @@ import { buildViewerVisibilityContext, isBondfireVisibleToViewer } from './bondf
 import { isCampParticipableStatus } from './campLifecycle'
 import { assertVideoDurationWithinTierLimit } from './entitlements'
 import { assertCanRespondToPersonalBondfire } from './personalBondfireAccess'
+import { countResponse } from './responseCounts'
 
 async function assertCanRespondToBondfire(
   ctx: MutationCtx,
@@ -227,17 +228,12 @@ export const addResponse = mutation({
       createdAt: now,
     })
 
-    // Update the bondfire's video count
-    await ctx.db.patch(args.bondfireId, {
-      videoCount: bondfire.videoCount + 1,
-      updatedAt: now,
-    })
-
-    // Update user's response count
-    await ctx.db.patch(userId, {
-      responseCount: (user?.responseCount ?? 0) + 1,
-      updatedAt: now,
-    })
+    // Count the response (videoCount + responseCount) through the shared
+    // helper so every counter mutation stays idempotent via countedAt.
+    const insertedVideo = await ctx.db.get(videoId)
+    if (insertedVideo) {
+      await countResponse(ctx, insertedVideo)
+    }
 
     // Send push notification to thread participants (deduped + throttled)
     await ctx.scheduler.runAfter(0, internal.sendNotification.notifyBondfireResponse, {

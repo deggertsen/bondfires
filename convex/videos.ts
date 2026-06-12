@@ -30,6 +30,7 @@ import {
   assertCanRespondToPersonalBondfire,
   canViewPersonalBondfire,
 } from './personalBondfireAccess'
+import { countResponse, uncountResponse } from './responseCounts'
 
 type PlaybackPolicy = 'public' | 'signed'
 type LiveLatencyMode = 'standard' | 'reduced' | 'low'
@@ -944,7 +945,17 @@ async function markRecordReady(
 
   await ctx.db.patch(record.document._id, patch)
 
-  if (wasReady || record.document.liveSessionId) {
+  if (wasReady) {
+    return 'ready'
+  }
+
+  // Live responses are normally counted at the live_stream.active webhook;
+  // this covers upload responses and any live row whose 'active' event was
+  // missed. Idempotent via countedAt either way.
+  await countResponse(ctx, record.document)
+
+  if (record.document.liveSessionId) {
+    // Live responses were already announced at stream-watchable.
     return 'ready'
   }
 
@@ -954,23 +965,11 @@ async function markRecordReady(
   ])
 
   if (bondfire) {
-    await ctx.db.patch(record.document.bondfireId, {
-      videoCount: bondfire.videoCount + 1,
-      updatedAt: Date.now(),
-    })
-
     await ctx.scheduler.runAfter(0, internal.sendNotification.notifyBondfireResponse, {
       bondfireId: record.document.bondfireId,
       responderId: record.document.userId,
       responderName: user?.displayName ?? user?.name ?? 'Someone',
       bondfireVideoId: record.document._id,
-    })
-  }
-
-  if (user) {
-    await ctx.db.patch(record.document.userId, {
-      responseCount: (user.responseCount ?? 0) + 1,
-      updatedAt: Date.now(),
     })
   }
 
@@ -995,53 +994,9 @@ async function markRecordErrored(
       updatedAt: Date.now(),
     })
   } else {
-    // Reconcile counters using the pre-patch document so the previous status
-    // is still visible to the wasCounted check.
-    await reconcileErroredResponseCounts(ctx, record.document)
+    // Uncount using the pre-patch document so countedAt is still visible.
+    await uncountResponse(ctx, record.document)
     await ctx.db.patch(record.document._id, patch)
-  }
-}
-
-// A response that errors after it was counted leaves bondfire.videoCount (and
-// the responder's responseCount) permanently inflated — the bondfire shows
-// "N responses" while the swipe list, filtered to playable videos by
-// isPlayableVideoRecord, only has N-1. Live responses are counted at
-// provisioning (createMuxLiveStream) and upload responses at
-// markRecordReady/addResponse, so a row was counted iff it is a live-path row
-// (liveSessionId set) or had already reached 'ready'. Rows already 'errored'
-// were reconciled before, so skip them — retried webhooks and a later
-// cancelMuxLiveSessionRecord can't double-decrement.
-async function reconcileErroredResponseCounts(
-  ctx: MutationCtx,
-  video: Doc<'bondfireVideos'>,
-) {
-  const prevStatus = video.videoStatus ?? 'ready'
-  if (prevStatus === 'errored') {
-    return
-  }
-
-  const wasCounted = video.liveSessionId !== undefined || prevStatus === 'ready'
-  if (!wasCounted) {
-    return
-  }
-
-  const [bondfire, user] = await Promise.all([
-    ctx.db.get(video.bondfireId),
-    ctx.db.get(video.userId),
-  ])
-
-  if (bondfire) {
-    await ctx.db.patch(video.bondfireId, {
-      videoCount: Math.max(1, bondfire.videoCount - 1),
-      updatedAt: Date.now(),
-    })
-  }
-
-  if (user) {
-    await ctx.db.patch(video.userId, {
-      responseCount: Math.max(0, (user.responseCount ?? 0) - 1),
-      updatedAt: Date.now(),
-    })
   }
 }
 
@@ -1131,13 +1086,12 @@ async function markLinkedLiveRecordErrored(ctx: MutationCtx, liveSession: Doc<'l
     return
   }
 
-  // Live responses are counted in bondfire.videoCount at provisioning, so a
-  // session that errors before going live must give that count back or the
-  // thread permanently shows a response nobody can swipe to.
+  // Give back any count this response holds so the thread doesn't
+  // permanently show a response nobody can swipe to.
   if (liveSession.bondfireVideoId) {
     const video = await ctx.db.get(liveSession.bondfireVideoId)
     if (video) {
-      await reconcileErroredResponseCounts(ctx, video)
+      await uncountResponse(ctx, video)
     }
   }
 
@@ -2817,18 +2771,12 @@ export const createLinkedMuxLiveSession = internalMutation({
         createdAt: now,
       })
 
-      await ctx.db.patch(args.bondfireId, {
-        videoCount: bondfire.videoCount + 1,
-        updatedAt: now,
-      })
-
-      if (user) {
-        await ctx.db.patch(args.userId, {
-          responseCount: (user.responseCount ?? 0) + 1,
-          updatedAt: now,
-        })
-      }
-
+      // The response is NOT counted into bondfire.videoCount here. Counting
+      // happens at the live_stream.active webhook (when the stream is
+      // actually watchable) via countResponse — same moment the response
+      // notification fires. A stream that never goes active never shows up
+      // in the response count.
+      //
       // Response notification is sent by the Mux webhook at
       // live_stream.active (when the stream is actually watchable), not at
       // provisioning time — see handleMuxWebhook.
@@ -3034,10 +2982,10 @@ export const cancelMuxLiveSessionRecord = internalMutation({
     if (liveSession.bondfireVideoId) {
       const video = await ctx.db.get(liveSession.bondfireVideoId)
       if (video) {
-        // Skips rows already reconciled by markRecordErrored /
-        // markLinkedLiveRecordErrored so a cancel retry after the stale-session
-        // reaper can't double-decrement.
-        await reconcileErroredResponseCounts(ctx, video)
+        // No-op for rows already uncounted by markRecordErrored /
+        // markLinkedLiveRecordErrored, so a cancel retry after the
+        // stale-session reaper can't double-decrement.
+        await uncountResponse(ctx, video)
       }
 
       await ctx.db.delete(liveSession.bondfireVideoId)
@@ -3281,9 +3229,11 @@ export const handleMuxWebhookEvent = internalMutation({
           const creatorName = user?.displayName ?? user?.name ?? 'Someone'
 
           if (liveSession.bondfireVideoId) {
-            // Live response recording
+            // Live response recording: the stream is watchable now, so this
+            // is also the moment the response counts toward the thread.
             const responseVideo = await ctx.db.get(liveSession.bondfireVideoId)
             if (responseVideo) {
+              await countResponse(ctx, responseVideo)
               await ctx.scheduler.runAfter(0, internal.sendNotification.notifyBondfireResponse, {
                 bondfireId: responseVideo.bondfireId,
                 responderId: liveSession.userId,
