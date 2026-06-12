@@ -35,8 +35,9 @@ type PublicUser = {
 }
 
 // Works for both `bondfires` and `bondfireVideos` rows — they share the
-// status/playback fields this predicate touches.
-function isPlayableVideoRecord(record: {
+// status/playback fields this predicate touches. Exported for the
+// videoCountRepair cron, which uses it to decide which rows count.
+export function isPlayableVideoRecord(record: {
   videoStatus?: string
   muxPlaybackId?: string
   muxLivePlaybackId?: string

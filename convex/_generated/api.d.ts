@@ -41,9 +41,11 @@ import type * as personalCamps from "../personalCamps.js";
 import type * as publicConfig from "../publicConfig.js";
 import type * as reconciliation from "../reconciliation.js";
 import type * as reports from "../reports.js";
+import type * as responseCounts from "../responseCounts.js";
 import type * as sendNotification from "../sendNotification.js";
 import type * as subscriptions from "../subscriptions.js";
 import type * as users from "../users.js";
+import type * as videoCountRepair from "../videoCountRepair.js";
 import type * as videos from "../videos.js";
 import type * as watchEvents from "../watchEvents.js";
 
@@ -87,9 +89,11 @@ declare const fullApi: ApiFromModules<{
   publicConfig: typeof publicConfig;
   reconciliation: typeof reconciliation;
   reports: typeof reports;
+  responseCounts: typeof responseCounts;
   sendNotification: typeof sendNotification;
   subscriptions: typeof subscriptions;
   users: typeof users;
+  videoCountRepair: typeof videoCountRepair;
   videos: typeof videos;
   watchEvents: typeof watchEvents;
 }>;

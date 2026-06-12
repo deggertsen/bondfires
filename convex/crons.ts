@@ -73,6 +73,16 @@ crons.daily(
   internal.cleanup.dailyCleanupArchivedCamps,
 )
 
+// Repair bondfire.videoCount drift and backfill countedAt markers.
+// Self-paginates; logs video:count_drift for any disagreement it heals.
+// Runs daily at 13:30 UTC, between archived-camp cleanup and reconciliation.
+crons.daily(
+  'repair bondfire video counts',
+  { hourUTC: 13, minuteUTC: 30 },
+  internal.videoCountRepair.repairVideoCounts,
+  {},
+)
+
 // Run daily camp kindling reconciliation at 14:00 UTC.
 // Compares ledger against verified store purchases and logs discrepancies.
 crons.daily(
