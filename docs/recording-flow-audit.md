@@ -1,5 +1,27 @@
 # Recording Flow Audit — June 12, 2026
 
+> **Execution status (June 12, 2026, branch `recording-flow-redesign`):** all
+> redesign steps below are implemented except the "remaining freeze risks"
+> Android stats item. Commits, in order: bug fixes + audit → countedAt
+> counting refactor → repair cron → real stats + stall watchdog → typed event
+> contract → recording state machine → create.tsx split. Notes:
+>
+> - Counting moved to **count-at-watchable** (live_stream.active), keyed on a
+>   new `countedAt` field; `videoCountRepair` cron heals legacy rows/drift.
+>   **Run `internal.videoCountRepair.repairVideoCounts {}` once from the
+>   dashboard right after deploy.** `user.responseCount` recompute is not
+>   included (drift there is cosmetic; same helpers maintain it forward).
+> - The split surfaced and fixed two latent bugs: live recordings hitting the
+>   duration cap were finalized through the legacy path ("Recording Failed"
+>   while still streaming), and SparkTitleSheet was mounted in unreachable
+>   JSX while the camp picker was showing.
+> - Behavior change to verify on device: live pre-connect now starts after
+>   the camp-prompt screen is dismissed (it previously warmed up behind it),
+>   so the preview appears slightly later but never provisions for a user
+>   who backs out at the prompt.
+> - Native changes (Swift/Kotlin) need a dev build to compile-verify; JS/TS
+>   typechecks are green across convex, packages/app, and apps/mobile.
+
 Audit of the video recording/creation system prompted by two field reports: a camera freeze mid-recording, and a response that the bondfire metadata counted but the thread viewer couldn't reach. Both root causes were found and fixed in this pass; the second half of this doc proposes a cleaner architecture.
 
 ## Bug 1: Response counted but not swipeable
