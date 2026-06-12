@@ -2,6 +2,7 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
+import { DEFAULT_DIGEST_WINDOW_HOUR, resolveNotificationPrefs } from './notifications'
 
 // ── Daily digest + 72h nudge ──
 //
@@ -15,8 +16,9 @@ import { internalAction, internalMutation, internalQuery } from './_generated/se
 // (`digest:{videoId}`, `nudge:{videoId}`), so each video appears in at
 // most one digest and at most one nudge, ever.
 
-/** Local hour (0-23) when the digest window opens. User-configurable in Phase 4. */
-const DIGEST_LOCAL_HOUR = 17
+// Default digest window hour lives in notifications.ts
+// (DEFAULT_DIGEST_WINDOW_HOUR, currently 17 = 5pm local). Users can
+// change theirs via notifications.updatePreferences.
 
 /** Activity must be at least this old before it appears in a digest. */
 const DIGEST_MIN_AGE_MS = 20 * 60 * 60 * 1000
@@ -44,6 +46,7 @@ interface DigestItem {
 interface PushUser {
   userId: Id<'users'>
   timezone: string | null
+  digestHour: number
 }
 
 /**
@@ -65,7 +68,8 @@ function getLocalHour(timezone: string | null, date: Date): number {
   }
 }
 
-/** Distinct push-capable users with their best-known timezone. */
+/** Distinct push-capable users with their best-known timezone and
+ * preferred digest window hour. */
 export const listPushUsers = internalQuery({
   args: {},
   handler: async (ctx): Promise<PushUser[]> => {
@@ -78,7 +82,16 @@ export const listPushUsers = internalQuery({
         byUser.set(token.userId, token.timezone ?? null)
       }
     }
-    return [...byUser.entries()].map(([userId, timezone]) => ({ userId, timezone }))
+
+    const users: PushUser[] = []
+    for (const [userId, timezone] of byUser.entries()) {
+      const user = await ctx.db.get(userId)
+      const digestHour = user
+        ? resolveNotificationPrefs(user.notificationPrefs).digestWindowHour
+        : DEFAULT_DIGEST_WINDOW_HOUR
+      users.push({ userId, timezone, digestHour })
+    }
+    return users
   },
 })
 
@@ -330,6 +343,7 @@ export const runDigestForUser = internalAction({
           userId: args.userId,
           title: 'Waiting for you',
           body,
+          category: 'reminder',
           data: {
             type: 'digest',
             bondfireId: single?.bondfireId,
@@ -379,6 +393,7 @@ export const runDigestForUser = internalAction({
       userId: args.userId,
       title: 'Still waiting',
       body,
+      category: 'reminder',
       data: {
         type: 'nudge',
         bondfireId: single?.bondfireId,
@@ -402,7 +417,7 @@ export const runHourlySweep = internalAction({
 
     let scheduled = 0
     for (const user of users) {
-      if (getLocalHour(user.timezone, now) !== DIGEST_LOCAL_HOUR) continue
+      if (getLocalHour(user.timezone, now) !== user.digestHour) continue
       await ctx.scheduler.runAfter(0, internal.digest.runDigestForUser, {
         userId: user.userId,
       })

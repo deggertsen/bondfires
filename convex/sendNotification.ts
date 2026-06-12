@@ -3,9 +3,48 @@ import { api, internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import { action, internalAction, internalMutation, internalQuery } from './_generated/server'
 import { isCampParticipableStatus } from './campLifecycle'
+import { resolveNotificationPrefs } from './notifications'
 
 // Max one response push per bondfire per recipient per hour.
 const RESPONSE_THROTTLE_MS = 60 * 60 * 1000
+
+// ── Notification categories (server-side preference enforcement) ──
+// Every push is tagged with a category; sendToUser drops it when the
+// recipient disabled that category. 'account' (camp lifecycle) and the
+// debug test path always send.
+export const notificationCategory = v.union(
+  v.literal('recording'), // camp bondfires, responses, live
+  v.literal('reminder'), // daily digest + 72h nudge
+  v.literal('membership'), // invites, access requests/approvals
+  v.literal('hearth'), // Hearth bondfires, responses, joins
+  v.literal('account'), // lifecycle warnings — always delivered
+)
+export type NotificationCategory = 'recording' | 'reminder' | 'membership' | 'hearth' | 'account'
+
+/** Whether the user's preferences allow a push in this category. */
+export const isCategoryEnabledForUser = internalQuery({
+  args: {
+    userId: v.id('users'),
+    category: notificationCategory,
+  },
+  handler: async (ctx, args): Promise<boolean> => {
+    if (args.category === 'account') return true
+    const user = await ctx.db.get(args.userId)
+    const prefs = resolveNotificationPrefs(user?.notificationPrefs)
+    switch (args.category) {
+      case 'recording':
+        return prefs.recordingActivity
+      case 'reminder':
+        return prefs.reminders
+      case 'membership':
+        return prefs.invitesAndMembership
+      case 'hearth':
+        return prefs.hearth
+      default:
+        return true
+    }
+  },
+})
 
 // Expo Push API types
 interface ExpoPushMessage {
@@ -166,17 +205,31 @@ export const sendToUser = internalAction({
     title: v.string(),
     body: v.string(),
     data: v.optional(v.any()),
+    // Preference category. Omitted = always send (debug/test paths).
+    category: v.optional(notificationCategory),
   },
   handler: async (
     ctx,
     args,
   ): Promise<{
     success: boolean
+    skipped?: boolean
     successCount?: number
     failureCount?: number
     error?: string
     errors?: (string | undefined)[]
   }> => {
+    // Server-side preference enforcement — single choke point for all push.
+    if (args.category) {
+      const enabled: boolean = await ctx.runQuery(
+        internal.sendNotification.isCategoryEnabledForUser,
+        { userId: args.userId, category: args.category },
+      )
+      if (!enabled) {
+        return { success: true, skipped: true }
+      }
+    }
+
     // Get all device tokens for the user
     const tokens: DeviceToken[] = await ctx.runQuery(api.notifications.getTokensForUser, {
       userId: args.userId,
@@ -446,6 +499,7 @@ export const notifyCampBondfire = internalAction({
             userId,
             title: hearthName ?? 'Your Hearth',
             body: `${args.creatorName} sparked a new Bondfire`,
+            category: 'hearth',
             data: {
               type: 'hearth_bondfire',
               bondfireId: args.bondfireId,
@@ -511,6 +565,7 @@ export const notifyCampBondfire = internalAction({
           body: pinnerSet.has(userId)
             ? `${args.creatorName} from your Close Circle sparked a new Bondfire`
             : copy.body,
+          category: 'recording',
           data: {
             type: camp.crisisBroadcast
               ? 'camp_crisis'
@@ -593,6 +648,7 @@ export const notifyBondfireResponse = internalAction({
           userId,
           title: 'New response',
           body,
+          category: bondfire.personalCampId ? 'hearth' : 'recording',
           data: {
             type: 'bondfire_response',
             bondfireId: args.bondfireId,
@@ -698,6 +754,7 @@ export const notifyBondfireLive = internalAction({
           userId,
           title: crisisOrWelcomeCopy?.title ?? title,
           body: livePinnerSet.has(userId) ? pinnerBody : body,
+          category: bondfire.campId ? 'recording' : 'hearth',
           data: {
             type: 'bondfire_live',
             bondfireId: args.bondfireId,
@@ -775,6 +832,7 @@ export const notifyAccessRequest = internalAction({
       userId: camp.ownerId,
       title: 'New access request',
       body: `${args.requesterName} wants to join ${camp.name}`,
+      category: 'membership',
       data: {
         type: 'camp_access_request',
         campId: args.campId,
@@ -977,6 +1035,7 @@ export const notifyAccessApproved = internalAction({
       userId: args.userId,
       title: `${camp.name} let you in`,
       body: "You're now a member. Tap to look around.",
+      category: 'membership',
       data: {
         type: 'camp_access_approved',
         campId: args.campId,
@@ -992,6 +1051,15 @@ export const emailAccessApproved = internalAction({
     userId: v.id('users'),
   },
   handler: async (ctx, args): Promise<{ success: boolean; error?: string }> => {
+    // Email follows the same preference as the push so they stay consistent.
+    const enabled: boolean = await ctx.runQuery(
+      internal.sendNotification.isCategoryEnabledForUser,
+      { userId: args.userId, category: 'membership' },
+    )
+    if (!enabled) {
+      return { success: true }
+    }
+
     const camp = await ctx.runQuery(internal.sendNotification.getCampAnyStatus, {
       campId: args.campId,
     })
@@ -1053,6 +1121,7 @@ export const notifyHearthJoin = internalAction({
       userId: bondfire.userId,
       title: hearthName ?? 'Your Hearth',
       body: `${args.joinerName} joined the conversation`,
+      category: 'hearth',
       data: {
         type: 'hearth_join',
         bondfireId: args.bondfireId,
@@ -1166,6 +1235,7 @@ export const notifyCampLifecycle = internalAction({
       userId: camp.ownerId,
       title: copy.title,
       body: copy.body,
+      category: 'account',
       data: {
         type: 'camp_lifecycle',
         stage: args.stage,

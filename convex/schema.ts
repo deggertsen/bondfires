@@ -126,6 +126,24 @@ export default defineSchema({
     // Last app open/foreground (heartbeat from the client, throttled).
     // Kill switch for 72h re-engagement nudges — see convex/digest.ts.
     lastActiveAt: v.optional(v.number()),
+
+    // Per-category push preferences, enforced server-side in sendToUser
+    // (convex/sendNotification.ts). Missing field/keys mean enabled.
+    // Account-critical notifications (camp lifecycle) always send.
+    notificationPrefs: v.optional(
+      v.object({
+        // Camp bondfires, responses, live notifications
+        recordingActivity: v.optional(v.boolean()),
+        // Daily digest + 72h nudge
+        reminders: v.optional(v.boolean()),
+        // Bondfire invites, access requests/approvals
+        invitesAndMembership: v.optional(v.boolean()),
+        // Hearth bondfires, responses, joins (default on by design)
+        hearth: v.optional(v.boolean()),
+        // Local hour (0-23) the daily digest window opens. Default 17.
+        digestWindowHour: v.optional(v.number()),
+      }),
+    ),
   })
     .index('email', ['email']) // Required by @convex-dev/auth (must be named exactly 'email')
     .index('by_role', ['role'])

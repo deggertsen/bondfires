@@ -1,6 +1,8 @@
 # Push Notifications Plan
 
-Status: draft for review · June 2026
+Status: IMPLEMENTED (phases 0–4) · June 2026 · branch `push-notifications`
+Only remaining item: report-outcome notification, deferred until a report
+resolution flow exists.
 
 ## Principles
 
@@ -101,18 +103,27 @@ In priority order:
 4. **Close Circle posts** ✅ — recipients who pinned the creator get personalized copy ("{Name} from your Close Circle…") on camp bondfire + live notifications; mute still applies. New `by_pinned` index on `closeCirclePins`.
 5. **Report outcome** — DEFERRED: reports currently have no resolution flow (only `submit` + admin email), so there is no event to hook. Revisit when moderation resolution lands.
 
-## Phase 4 — Preferences
+## Phase 4 — Preferences ✅
 
-Once types multiply, a single toggle is too coarse. Add per-category server-side checks + settings UI:
+Implemented as four per-category toggles + digest window picker, stored in
+`users.notificationPrefs` and enforced server-side in `sendToUser` (every
+push is tagged with a category; the choke point drops disabled ones):
 
-- Recording activity (Phase 1 types)
-- Reminders (Phase 2)
-- **Digest window time** — user-configurable (default 5–7pm local)
-- Live (if anyone wants recordings-only)
-- Invites & membership
-- Hearth (default on, arguably not mutable)
+- `recording` — camp bondfires, responses, live
+- `reminder` — daily digest + 72h nudge (plus `digestWindowHour`, picker
+  offers 8am / noon / 5pm / 8pm local; default 17)
+- `membership` — bondfire invites, access requests/approvals (the approval
+  email follows the same preference, so push/email stay consistent)
+- `hearth` — Hearth bondfires, responses, joins (default on)
+- `account` — camp lifecycle warnings; always delivered, no toggle
 
-Server-side enforcement (check prefs in `sendToUser`), not just client token removal, so email/push stay consistent.
+UI: `NotificationPreferencesSection` under the master Notifications switch
+in profile settings. The master switch still controls token registration
+entirely; categories refine what reaches a registered device.
+
+Note: "Live" did not get its own category — live and publish are the same
+notification now (one push per video), so a separate toggle would be
+meaningless.
 
 ## Decisions log (June 11, 2026)
 

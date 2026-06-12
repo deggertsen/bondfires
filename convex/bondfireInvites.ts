@@ -221,6 +221,7 @@ export const sendBondfireInviteNotification = internalAction({
       userId: args.recipientId,
       title: `${args.senderName} shared a bondfire with you`,
       body: `"${args.bondfireCreatorName}" — tap to watch`,
+      category: 'membership',
       data: {
         type: 'bondfire_invite',
         bondfireId: args.bondfireId,

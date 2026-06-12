@@ -43,6 +43,7 @@ import { Alert, FlatList, Pressable, RefreshControl, ScrollView, StatusBar } fro
 import { Avatar, Separator, Sheet, Switch, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
+import { NotificationPreferencesSection } from '../../../components/NotificationPreferencesSection'
 import { UploadProgressCard } from '../../../components/UploadProgressCard'
 import { routes } from '../../../lib/routes'
 
@@ -837,6 +838,8 @@ export default function ProfileScreen() {
                     />
                   </Switch>
                 </XStack>
+
+                {preferences.notificationsEnabled && <NotificationPreferencesSection />}
 
                 <Separator borderColor={'$borderColor'} />
 
