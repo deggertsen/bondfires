@@ -392,18 +392,22 @@ export function useLivePublisher(options: {
     let publisherError: unknown
     let backendError: unknown
 
-    try {
-      await options.publisher.stop()
-    } catch (error) {
-      publisherError = error
-    }
-
+    // Signal Mux to complete the recording BEFORE tearing down the RTMP
+    // connection. Mux finalizes the asset at the last real frame it received,
+    // avoiding the slate placeholder it would otherwise record during the gap
+    // between the encoder disconnecting and the complete signal arriving.
     try {
       if (sessionId) {
         await options.endLiveStream({ liveSessionId: sessionId, reason: 'creator_stopped' })
       }
     } catch (error) {
       backendError = error
+    }
+
+    try {
+      await options.publisher.stop()
+    } catch (error) {
+      publisherError = error
     } finally {
       stopStatsSampling()
       ingestRef.current = null

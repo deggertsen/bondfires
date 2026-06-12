@@ -18,9 +18,37 @@ MUX_SIGNING_KEY_ID=...
 MUX_SIGNING_PRIVATE_KEY=...
 MUX_LIVE_LATENCY_MODE=low
 MUX_LIVE_RECONNECT_WINDOW_SECONDS=30
+MUX_LIVE_RECONNECT_SLATE_URL=https://<public-host>/mux-live-slate.png
 ```
 
 `MUX_PLAYBACK_POLICY`, `MUX_VIDEO_QUALITY`, and `MUX_UPLOAD_CORS_ORIGIN` keep their existing meanings for VOD uploads.
+
+### Reconnect slate (branded placeholder)
+
+When the RTMP encoder disconnects (including the brief gap when a creator stops),
+Mux fills the reconnect window with a "slate" image. Without configuration it uses
+Mux's own generic placeholder (a laptop/coffee illustration), which can get baked
+into the last couple seconds of the recorded VOD.
+
+Set `MUX_LIVE_RECONNECT_SLATE_URL` to a **publicly downloadable** `.png`/`.jpg`
+to show a Bondfires-branded frame instead. The branded asset lives at
+`docs/brand/mux-live-slate.png` (1080×1920 portrait / 9:16, matching mobile
+capture) — host it on a public URL (e.g. the marketing site / Cloudflare Pages /
+R2) and point the env var at it. Notes:
+
+- Mux downloads the image at the start of each live recording, so the URL must
+  stay reachable (no auth). If the download fails, Mux falls back to its default
+  slate and fires a `video.live_stream.warning` webhook.
+- The asset is already portrait/9:16 to match mobile capture; if the captured
+  aspect ratio ever changes, re-export to match or Mux will letterbox it.
+- Slate insertion needs `reconnect_window > 0`. For `standard` latency mode the
+  backend also sets `use_slate_for_standard_latency: true`; `low`/`reduced` only
+  need the window. Leaving the env var unset keeps Mux's default slate.
+
+The client also signals Mux to complete the recording *before* tearing down the
+RTMP connection (`useLivePublisher.stop`), so in the normal stop path Mux
+finalizes at the last real frame and the slate should not appear at the end at
+all — the slate is the safety net for mid-stream reconnect blips.
 `MUX_SIGNING_PRIVATE_KEY` can be the raw PEM returned by the Mux signing key API
 with escaped newlines, or a base64-encoded PEM. These signing variables are
 required for private camp videos because private camp assets are created with
