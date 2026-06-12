@@ -9,6 +9,8 @@ export const registerDevice = mutation({
     platform: v.union(v.literal('ios'), v.literal('android')),
     tokenType: v.optional(v.union(v.literal('fcm'), v.literal('expo'))),
     deviceId: v.optional(v.string()),
+    // IANA timezone (e.g. 'America/Denver') for local-time digest delivery
+    timezone: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await auth.getUserId(ctx)
@@ -31,6 +33,7 @@ export const registerDevice = mutation({
         platform: args.platform,
         tokenType: args.tokenType ?? 'expo',
         deviceId: args.deviceId,
+        timezone: args.timezone ?? existing.timezone,
         updatedAt: now,
       })
       return existing._id
@@ -43,6 +46,7 @@ export const registerDevice = mutation({
       platform: args.platform,
       tokenType: args.tokenType ?? 'fcm',
       deviceId: args.deviceId,
+      timezone: args.timezone,
       createdAt: now,
       updatedAt: now,
     })

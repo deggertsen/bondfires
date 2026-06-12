@@ -95,4 +95,9 @@ crons.daily(
   internal.bondfireRetention.enforceBondfireRetention,
 )
 
+// Send daily unwatched-activity digests (and 72h nudges) to users whose
+// local digest window (~5pm) just opened. Runs hourly so every timezone
+// gets local-evening delivery; idempotent via notificationDeliveries.
+crons.hourly('send digest reminders', { minuteUTC: 10 }, internal.digest.runHourlySweep)
+
 export default crons

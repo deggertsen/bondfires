@@ -2,6 +2,7 @@ import {
   appActions,
   getBondfireVideoIndex,
   parseError,
+  requestPushPermission,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
   telemetry,
@@ -818,7 +819,14 @@ export default function ProfileScreen() {
                   </XStack>
                   <Switch
                     checked={preferences.notificationsEnabled}
-                    onCheckedChange={setNotificationsEnabled}
+                    onCheckedChange={(enabled: boolean) => {
+                      setNotificationsEnabled(enabled)
+                      if (enabled) {
+                        // Explicit user intent — OK to fire the OS
+                        // permission dialog if it hasn't been asked yet.
+                        requestPushPermission()
+                      }
+                    }}
                     backgroundColor={'$borderColor'}
                   >
                     <Switch.Thumb

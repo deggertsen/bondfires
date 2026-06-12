@@ -8,6 +8,7 @@ import { XStack, YStack } from 'tamagui'
 import type { Id } from '../../../convex/_generated/dataModel'
 import { routes } from '../lib/routes'
 import { InviteSheet } from './InviteSheet'
+import { PushPrimerSheet } from './PushPrimerSheet'
 
 interface CompletionScreenProps {
   onContinue?: () => void
@@ -102,6 +103,11 @@ export function CompletionScreen({ detail, onContinue, shareBondfireId }: Comple
           onClose={() => setIsInviteSheetOpen(false)}
         />
       )}
+
+      {/* Push permission pre-prompt — the user just committed a video, the
+          highest-intent moment to ask about response notifications. Defers
+          to the InviteSheet when that auto-opened. */}
+      <PushPrimerSheet trigger={!isInviteSheetOpen} />
     </>
   )
 }

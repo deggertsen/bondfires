@@ -21,6 +21,16 @@ interface TokenRegistrationParams {
   tokenType: string
   platform: string
   deviceId: string
+  // IANA timezone (e.g. 'America/Denver') for local-time digest delivery
+  timezone?: string
+}
+
+function getDeviceTimezone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone ?? undefined
+  } catch {
+    return undefined
+  }
 }
 
 interface TokenUnregistrationParams {
@@ -44,7 +54,18 @@ export interface UsePushNotificationsResult {
   expoPushToken: string | null
   isRegistered: boolean
   error: string | null
+  /**
+   * Fires the OS permission dialog if needed, then registers the token.
+   * iOS only ever shows this dialog once — call it solely from explicit
+   * user intent (the push pre-prompt or the settings toggle), never
+   * automatically at sign-in or app start.
+   */
   requestPermissions: () => Promise<boolean>
+  /**
+   * Registers the device token only when OS permission is already
+   * granted. Never prompts — safe to call at sign-in / app start.
+   */
+  registerIfGranted: () => Promise<boolean>
   unregister: () => Promise<void>
 }
 
@@ -86,6 +107,7 @@ export function usePushNotifications(
           tokenType: 'expo',
           platform: Platform.OS,
           deviceId: Constants.deviceId ?? 'unknown',
+          timezone: getDeviceTimezone(),
         })
         setIsRegistered(true)
         setError(null)
@@ -195,6 +217,27 @@ export function usePushNotifications(
     }
   }, [getExpoPushToken, registerWithBackend])
 
+  // Register the token only if OS permission is already granted — never prompts.
+  const registerIfGranted = useCallback(async (): Promise<boolean> => {
+    if (!isAuthenticatedRef.current) return false
+    if (!Device.isDevice) return false
+
+    try {
+      const { status } = await Notifications.getPermissionsAsync()
+      if (status !== 'granted') return false
+
+      const token = await getExpoPushToken()
+      if (!token) return false
+
+      setExpoPushToken(token)
+      await registerWithBackend(token)
+      return true
+    } catch {
+      // getExpoPushToken already logs helpful messages
+      return false
+    }
+  }, [getExpoPushToken, registerWithBackend])
+
   // Unregister from push notifications
   const unregister = useCallback(async () => {
     try {
@@ -285,6 +328,7 @@ export function usePushNotifications(
     isRegistered,
     error,
     requestPermissions,
+    registerIfGranted,
     unregister,
   }
 }

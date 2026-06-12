@@ -1,8 +1,11 @@
 import { v } from 'convex/values'
 import { api, internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
-import { action, internalAction, internalQuery } from './_generated/server'
+import { action, internalAction, internalMutation, internalQuery } from './_generated/server'
 import { isCampParticipableStatus } from './campLifecycle'
+
+// Max one response push per bondfire per recipient per hour.
+const RESPONSE_THROTTLE_MS = 60 * 60 * 1000
 
 // Expo Push API types
 interface ExpoPushMessage {
@@ -40,6 +43,60 @@ const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send'
 function uniqueUserIds(userIds: Array<Id<'users'>>) {
   return [...new Set(userIds)]
 }
+
+/**
+ * Atomically claim notification deliveries for a set of recipients.
+ *
+ * A recipient is claimable when (a) they have never been notified about
+ * this video (`videoKey` dedupe — live-start suppresses publish-time
+ * sends), and (b) if `throttleMs` is given, their most recent delivery in
+ * this thread (`threadKey`) is older than the throttle window.
+ *
+ * Claiming inserts the delivery row inside one mutation, so concurrent
+ * notify paths (live-start webhook vs. publish) cannot double-send.
+ * Returns only the userIds that were claimed and should receive a push.
+ */
+export const claimDeliveries = internalMutation({
+  args: {
+    userIds: v.array(v.id('users')),
+    videoKey: v.string(),
+    threadKey: v.string(),
+    throttleMs: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<Array<Id<'users'>>> => {
+    const now = Date.now()
+    const claimed: Array<Id<'users'>> = []
+
+    for (const userId of uniqueUserIds(args.userIds)) {
+      const alreadyNotified = await ctx.db
+        .query('notificationDeliveries')
+        .withIndex('by_video_user', (q) => q.eq('videoKey', args.videoKey).eq('userId', userId))
+        .first()
+      if (alreadyNotified) continue
+
+      if (args.throttleMs !== undefined) {
+        const latestInThread = await ctx.db
+          .query('notificationDeliveries')
+          .withIndex('by_user_thread', (q) =>
+            q.eq('userId', userId).eq('threadKey', args.threadKey),
+          )
+          .order('desc')
+          .first()
+        if (latestInThread && now - latestInThread.sentAt < args.throttleMs) continue
+      }
+
+      await ctx.db.insert('notificationDeliveries', {
+        userId,
+        videoKey: args.videoKey,
+        threadKey: args.threadKey,
+        sentAt: now,
+      })
+      claimed.push(userId)
+    }
+
+    return claimed
+  },
+})
 
 function getCampNotificationCopy(camp: Doc<'camps'>, creatorName: string) {
   if (camp.crisisBroadcast) {
@@ -216,6 +273,41 @@ export const getCampNotificationDetails = internalQuery({
   },
 })
 
+/**
+ * Recipients for a Hearth (personal camp) bondfire: the active
+ * participants of that specific bondfire, minus the creator. Hearth
+ * notifications are localized to the conversation — never the whole
+ * Hearth membership — and have no mute concept (Hearths aren't camps).
+ */
+export const getHearthBondfireRecipientIds = internalQuery({
+  args: {
+    bondfireId: v.id('bondfires'),
+    creatorId: v.id('users'),
+  },
+  handler: async (ctx, args): Promise<Array<Id<'users'>>> => {
+    const participants = await ctx.db
+      .query('personalBondfireParticipants')
+      .withIndex('by_bondfire_status', (q) =>
+        q.eq('bondfireId', args.bondfireId).eq('status', 'active'),
+      )
+      .collect()
+
+    return uniqueUserIds(
+      participants
+        .map((participant) => participant.userId)
+        .filter((userId) => userId !== args.creatorId),
+    )
+  },
+})
+
+export const getPersonalCampName = internalQuery({
+  args: { personalCampId: v.id('personalCamps') },
+  handler: async (ctx, args): Promise<string | null> => {
+    const personalCamp = await ctx.db.get(args.personalCampId)
+    return personalCamp?.name ?? null
+  },
+})
+
 export const getCampNotificationRecipientIds = internalQuery({
   args: {
     campId: v.id('camps'),
@@ -306,7 +398,54 @@ export const notifyCampBondfire = internalAction({
     const bondfire = await ctx.runQuery(internal.bondfires.getForNotification, {
       id: args.bondfireId,
     })
-    if (!bondfire?.campId) {
+    if (!bondfire) {
+      return { success: true, skipped: true }
+    }
+
+    // Hearth bondfires: notify the bondfire's active participants only.
+    if (!bondfire.campId && bondfire.personalCampId) {
+      const hearthRecipientIds: Array<Id<'users'>> = await ctx.runQuery(
+        internal.sendNotification.getHearthBondfireRecipientIds,
+        { bondfireId: args.bondfireId, creatorId: args.creatorId },
+      )
+
+      const claimedHearthIds: Array<Id<'users'>> = await ctx.runMutation(
+        internal.sendNotification.claimDeliveries,
+        {
+          userIds: hearthRecipientIds,
+          videoKey: args.bondfireId,
+          threadKey: args.bondfireId,
+        },
+      )
+
+      if (claimedHearthIds.length === 0) {
+        return { success: true, skipped: true }
+      }
+
+      const hearthName: string | null = await ctx.runQuery(
+        internal.sendNotification.getPersonalCampName,
+        { personalCampId: bondfire.personalCampId },
+      )
+
+      await Promise.all(
+        claimedHearthIds.map((userId) =>
+          ctx.runAction(internal.sendNotification.sendToUser, {
+            userId,
+            title: hearthName ?? 'Your Hearth',
+            body: `${args.creatorName} sparked a new Bondfire`,
+            data: {
+              type: 'hearth_bondfire',
+              bondfireId: args.bondfireId,
+              personalCampId: bondfire.personalCampId,
+            },
+          }),
+        ),
+      )
+
+      return { success: true }
+    }
+
+    if (!bondfire.campId) {
       return { success: true, skipped: true }
     }
 
@@ -325,13 +464,23 @@ export const notifyCampBondfire = internalAction({
       },
     )
 
-    if (recipientIds.length === 0) {
+    // Skip anyone already notified about this video (e.g. at live-start).
+    const claimedIds: Array<Id<'users'>> = await ctx.runMutation(
+      internal.sendNotification.claimDeliveries,
+      {
+        userIds: recipientIds,
+        videoKey: args.bondfireId,
+        threadKey: args.bondfireId,
+      },
+    )
+
+    if (claimedIds.length === 0) {
       return { success: true, skipped: true }
     }
 
     const copy = getCampNotificationCopy(camp, args.creatorName)
     await Promise.all(
-      recipientIds.map((userId) =>
+      claimedIds.map((userId) =>
         ctx.runAction(internal.sendNotification.sendToUser, {
           userId,
           title: copy.title,
@@ -353,12 +502,19 @@ export const notifyCampBondfire = internalAction({
   },
 })
 
-// Send notification when someone responds to a bondfire
+// Send notification when someone responds to a bondfire.
+// Deduped per video and throttled to 1 response push per bondfire per
+// recipient per hour; throttled responses are absorbed silently.
 export const notifyBondfireResponse = internalAction({
   args: {
     bondfireId: v.id('bondfires'),
     responderId: v.id('users'),
     responderName: v.string(),
+    // The response video this push is about (used as the dedupe key so a
+    // live-start push suppresses the publish-time push for the same video).
+    bondfireVideoId: v.optional(v.id('bondfireVideos')),
+    // True when sent at live-start (stream watchable) rather than publish.
+    isLive: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
@@ -384,16 +540,33 @@ export const notifyBondfireResponse = internalAction({
       },
     )
 
-    if (recipientIds.length === 0) {
+    const videoKey: string = args.bondfireVideoId ?? `${args.bondfireId}:resp:${args.responderId}`
+    const claimedIds: Array<Id<'users'>> = await ctx.runMutation(
+      internal.sendNotification.claimDeliveries,
+      {
+        userIds: recipientIds,
+        videoKey,
+        threadKey: args.bondfireId,
+        throttleMs: RESPONSE_THROTTLE_MS,
+      },
+    )
+
+    if (claimedIds.length === 0) {
       return { success: true, skipped: true }
     }
 
+    const body = args.isLive
+      ? bondfire.title
+        ? `${args.responderName} is responding in "${bondfire.title}" — watch live or later`
+        : `${args.responderName} is responding live — watch now or later`
+      : `${args.responderName} added a video to a Bondfire you're in`
+
     await Promise.all(
-      recipientIds.map((userId) =>
+      claimedIds.map((userId) =>
         ctx.runAction(internal.sendNotification.sendToUser, {
           userId,
           title: 'New response',
-          body: `${args.responderName} added a video to a Bondfire you're in`,
+          body,
           data: {
             type: 'bondfire_response',
             bondfireId: args.bondfireId,
@@ -430,27 +603,68 @@ export const notifyBondfireLive = internalAction({
       return { success: false, error: 'Bondfire not found' }
     }
 
-    const recipientIds: Array<Id<'users'>> = await ctx.runQuery(
-      internal.sendNotification.getLiveNotificationRecipientIds,
-      {
+    // Resolve recipients + notification title by context (camp vs. Hearth).
+    let recipientIds: Array<Id<'users'>> = []
+    let title = 'Live now'
+    let crisisOrWelcomeCopy: { title: string; body: string } | null = null
+
+    if (bondfire.campId) {
+      recipientIds = await ctx.runQuery(internal.sendNotification.getLiveNotificationRecipientIds, {
         creatorId: args.creatorId,
         campId: bondfire.campId,
+      })
+      const camp = await ctx.runQuery(internal.sendNotification.getCampNotificationDetails, {
+        campId: bondfire.campId,
+      })
+      if (camp) {
+        title = camp.name
+        if (camp.crisisBroadcast || camp.welcomeBroadcast) {
+          crisisOrWelcomeCopy = getCampNotificationCopy(camp, args.creatorName)
+        }
+      }
+    } else if (bondfire.personalCampId) {
+      recipientIds = await ctx.runQuery(internal.sendNotification.getHearthBondfireRecipientIds, {
+        bondfireId: args.bondfireId,
+        creatorId: args.creatorId,
+      })
+      const hearthName: string | null = await ctx.runQuery(
+        internal.sendNotification.getPersonalCampName,
+        { personalCampId: bondfire.personalCampId },
+      )
+      title = hearthName ?? 'Your Hearth'
+    }
+
+    // Claim so the publish-time notification skips these recipients.
+    const claimedIds: Array<Id<'users'>> = await ctx.runMutation(
+      internal.sendNotification.claimDeliveries,
+      {
+        userIds: recipientIds,
+        videoKey: args.bondfireId,
+        threadKey: args.bondfireId,
       },
     )
 
-    if (recipientIds.length === 0) {
+    if (claimedIds.length === 0) {
       return { success: true, skipped: true }
     }
 
+    const body =
+      crisisOrWelcomeCopy?.body ??
+      (bondfire.title
+        ? `${args.creatorName} is sharing "${bondfire.title}" — watch live or later`
+        : `${args.creatorName} is sharing a Bondfire — watch live or later`)
+
     await Promise.all(
-      recipientIds.map((userId) =>
+      claimedIds.map((userId) =>
         ctx.runAction(internal.sendNotification.sendToUser, {
           userId,
-          title: 'Live now',
-          body: `${args.creatorName} is live right now`,
+          title: crisisOrWelcomeCopy?.title ?? title,
+          body,
           data: {
             type: 'bondfire_live',
             bondfireId: args.bondfireId,
+            campId: bondfire.campId,
+            personalCampId: bondfire.personalCampId,
           },
         }),
       ),
