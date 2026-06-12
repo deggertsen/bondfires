@@ -179,3 +179,143 @@ agent-device network dump 50 --session bondfires-ios
 - **Use `agent-device`** for local simulator/emulator automation of Bondfires mobile UI flows.
 - **Use in-browser / web automation tools** for the marketing site ([bondfires-website](https://github.com/deggertsen/bondfires-website)) or other web targets — not this skill.
 - **Do not rely on this skill** for remote device farms unless that integration is explicitly available in your environment.
+
+## Physical iPhone playbook (hard-won, June 2026)
+
+Testing the **live recording / camera** path REQUIRES a physical device: the native
+live publisher reports `isAvailable() === false` on the simulator (no camera), so the
+whole RTMP record/swap/stop flow is disabled there. The simulator can only exercise
+non-camera UI. The steps below are the end-to-end path that actually worked; expect
+each gate to bite if skipped.
+
+### 0. Compile-verify native code WITHOUT a device or signing (do this first)
+
+This is the fastest way to catch Swift/Kotlin build breaks (it caught a real
+actor-isolation bug in `getStats()`):
+
+```bash
+# Swift — compiles for real device arch (arm64), no signing/provisioning needed
+cd apps/mobile/ios
+xcodebuild -workspace Bondfires.xcworkspace -scheme Bondfires -configuration Debug \
+  -destination 'generic/platform=iOS' \
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+# Kotlin
+cd apps/mobile/android
+./gradlew :app:compileDebugKotlin :bondfire-live-publisher:compileDebugKotlin
+```
+
+The full xcodebuild log is huge; grep it for `: error:` and `BUILD SUCCEEDED|FAILED`.
+Expo truncates its own error output, so prefer running `xcodebuild` directly and
+teeing to a file.
+
+### 1. Signing (the #1 blocker)
+
+- App id **`org.bondfires`** is owned by team **`A9BJ2VA78M`** (the EAS/App Store team).
+- Local Expo/Xcode auto-selects the WRONG team (whatever cert is in the keychain, e.g.
+  `J8UCZDVZ8K` Latitude Inc) → fails with *"app identifier cannot be registered to your
+  development team."* Always pass the team explicitly.
+- Requires Xcode signed in to **`deggertsen@gmail.com`** with dev access to `A9BJ2VA78M`.
+  If you see *"Unable to log in with account … login details were rejected,"* the human
+  must re-auth Xcode (Settings → Accounts) — you cannot do the Apple ID 2FA.
+
+```bash
+cd apps/mobile/ios
+xcodebuild -workspace Bondfires.xcworkspace -scheme Bondfires -configuration Debug \
+  -destination 'id=<DEVICE_UDID>' \
+  -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
+  DEVELOPMENT_TEAM=A9BJ2VA78M build
+```
+
+### 2. Install + launch + trust
+
+```bash
+APP=~/Library/Developer/Xcode/DerivedData/Bondfires-*/Build/Products/Debug-iphoneos/Bondfires.app
+xcrun devicectl device install app --device <UDID> "$APP"
+xcrun devicectl device process launch --device <UDID> --terminate-existing org.bondfires
+```
+
+After a freshly-minted dev cert you MUST **trust it on the device** (Settings → General →
+VPN & Device Management → Trust) and keep the phone **unlocked**, or automation hangs.
+
+### 3. agent-device on a physical iPhone signs its own XCTest runner
+
+The UI driver builds/installs an `AgentDeviceRunner` XCTest app that defaults to
+callstack's team (`2S799L9W4M`) and `com.callstack.*` bundle ids — both unusable here.
+Override via env, and set them **before the first `agent-device open`** (the daemon
+caches its environment):
+
+```bash
+export AGENT_DEVICE_IOS_TEAM_ID=A9BJ2VA78M
+export AGENT_DEVICE_IOS_RUNNER_APP_BUNDLE_ID=org.bondfires.adrunner
+export AGENT_DEVICE_IOS_RUNNER_CONTAINER_BUNDLE_ID=org.bondfires.adrunner
+export AGENT_DEVICE_IOS_RUNNER_TEST_BUNDLE_ID=org.bondfires.adrunner.uitests
+```
+
+If you set them late, kill the daemon so it re-reads env, then re-open:
+`pkill -f "agent-device/dist"` and `rm -rf ~/.agent-device/ios-runner/derived`.
+The first runner build is slow and the default 90s request window times out — pass
+`--timeout 240000` to the first `snapshot`. Symptom of the trust/lock issue: repeated
+`xcodebuild test-without-building … ** BUILD INTERRUPTED **` in
+`~/.agent-device/sessions/<session>/runner.log`.
+
+### 4. Metro: use a TUNNEL, not LAN
+
+The phone usually can't reach the Mac's Metro over LAN (different subnet / Wi-Fi AP
+isolation) — `Failed to connect to http://<mac-ip>:8081`. Use a tunnel:
+
+```bash
+npm install -g @expo/ngrok@^4.1.0      # one-time
+cd apps/mobile && npx expo start --dev-client --tunnel
+curl -s http://127.0.0.1:4040/api/tunnels | grep -oE 'https://[a-z0-9-]+\.exp\.direct'
+```
+
+The deep link `bondfires://expo-development-client/?url=<encoded>` does NOT reliably
+auto-load; instead drive the dev launcher UI: tap **Enter URL manually**, fill the
+tunnel URL, tap **Connect**, then **Allow** the iOS "find devices on local networks"
+prompt. The launcher's RN buttons aren't in the a11y tree — use coordinate taps.
+
+### 5. Driving the RN app (a11y tree is sparse)
+
+- The interactive snapshot (`-i -c`) frequently returns only the app root (1 node) for
+  the RN app. Use **screenshots as truth**, `snapshot --raw -d 80` to read element
+  `rect`s, and **coordinate taps** (`press <x> <y>`). Device coordinate space here is
+  **375×667 points**; the 5-tab bar centers at x = 37/112/187/262/337, y ≈ 642.
+- First record triggers **Camera** then **Microphone** permission dialogs (Allow).
+- **Recording flow:** Spark tab → "Choose a Camp" (dismiss keyboard via `done`) → pick a
+  camp → record screen. Use **"David Eggertsen's Fire" (personal, no-audience camp)** for
+  throwaway test data — it stays out of the public Discover feed.
+- The live camera **preview renders fine** despite a Metro warning that
+  `BondfireLivePublisher`'s view manager "isn't exported" (cosmetic).
+- **Duration cap is 180 min** — not exercisable live; lower it in a debug build to test
+  the cap-finalization path.
+- Known quirk: the **`+`** button in a personal-camp detail view re-presents stale
+  "…being processed" success modals; use the **Spark tab** for a clean recording entry.
+
+### 5b. Network-kill testing on a physical iPhone (gotcha)
+
+agent-device's control channel to a physical iPhone is **wireless**, not USB. So
+toggling **airplane mode** to simulate a network drop ALSO severs your automation
+control — you go blind until Wi-Fi returns, and only the human at the device can
+toggle it back. Plan for that: kick off the recording, ask the owner to toggle
+airplane mode (and to report what the screen shows during the blind window), then
+ask them to toggle it back so the runner reconnects (runner re-attach took ~60s).
+
+What the recording fix actually does on connection death (verified June 2026): the
+connection monitor emits `endpoint_closed`/`stream_stopped_unexpectedly`, and
+`LiveRecordScreen.stopLiveRecording()` fires. The **freeze is fixed** — the UI leaves
+the red "● REC" screen and returns to idle. BUT `stopLiveRecording()` calls
+`livePublisher.stop()` → Mux `/complete`, which **throws while still offline**; the
+catch path shows a "Stopping… may still finish processing" alert and resets to idle.
+If the device is still offline at finalize AND you then navigate away (unmount runs
+`cancelLiveRecording`), the partial session is cancelled and **no bondfire is saved**.
+So "auto-save the partial" only holds when connectivity returns by finalize time. To
+verify save-vs-loss, query prod Convex (read-only): `videos:listStuckMuxRecords`,
+`videos:listStaleMuxLiveSessions`, and `convex data liveSessions/bondfires --order desc`.
+
+### 6. Backend reality
+
+`apps/mobile/.env` bakes **prod** Convex (`EXPO_PUBLIC_CONVEX_URL=…ideal-akita-27…`) and
+the repo's root `.env.local` sets `CONVEX_DEPLOYMENT=prod` — there is no dev deployment.
+So `convex dev` deploys to prod, and on-device recording creates **real prod data
++ Mux live streams**. Confirm with the owner before recording, and prefer the personal
+camp for cleanup.
