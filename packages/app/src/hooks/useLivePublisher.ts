@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { telemetry } from '../services/telemetry'
-import {
-  type LivePublishStatus,
-  livePublishActions,
-  livePublishStore$,
-} from '../store/livePublish.store'
+import { livePublishActions, livePublishStore$ } from '../store/livePublish.store'
+import { isNativePublisherStatus } from '../store/livePublisherContract'
 
 export interface LivePublisherStartOptions {
   rtmpsUrl: string
@@ -21,6 +18,8 @@ export interface LivePublisherStats {
   bitrateBps: number
   rttMs: number
   droppedFrames: number
+  /** Encoder output FPS (iOS only for now; 0 where unsupported). */
+  currentFps?: number
 }
 
 export interface LivePublisherSubscription {
@@ -96,6 +95,17 @@ export function useLivePublisher(options: {
           ? rawStatus
           : (((rawStatus as Record<string, unknown>)?.status as string) ?? 'unknown')
 
+      // Contract enforcement: native may only emit statuses from
+      // NATIVE_PUBLISHER_STATUSES. Anything else is a native-side bug —
+      // log loudly and ignore rather than corrupting the state machine.
+      if (!isNativePublisherStatus(status)) {
+        telemetry.error('live:contract', 'Native publisher emitted unknown status', {
+          status,
+          sessionId: livePublishStore$.sessionId.peek(),
+        })
+        return
+      }
+
       // Suppress spurious events during intentional stop — the collectors
       // for isStreamingFlow / isOpenFlow fire before the explicit "ended",
       // but the native module now guards with isStoppingIntentionally.
@@ -107,7 +117,7 @@ export function useLivePublisher(options: {
         }
       }
 
-      livePublishActions.setStatus((status === 'ended' ? 'ended' : status) as LivePublishStatus)
+      livePublishActions.setStatus(status)
 
       // Log unexpected drops to telemetry for diagnosis. No user-facing
       // toast — the UI already handles the status transition silently.
@@ -152,10 +162,19 @@ export function useLivePublisher(options: {
     }
   }, [options.publisher, stopStatsSampling])
 
+  // Stall watchdog state. Only armed after at least one nonzero throughput
+  // sample, so platforms whose getStats returns hard zeros (no real stats)
+  // can never false-positive.
+  const sawThroughputRef = useRef(false)
+  const zeroThroughputSamplesRef = useRef(0)
+  const STALL_SAMPLE_LIMIT = 3 // 3 × 5s sampling = ~15s of silence
+
   const startStatsSampling = useCallback(() => {
     if (statsIntervalRef.current) {
       clearInterval(statsIntervalRef.current)
     }
+    sawThroughputRef.current = false
+    zeroThroughputSamplesRef.current = 0
 
     statsIntervalRef.current = setInterval(() => {
       options.publisher
@@ -165,6 +184,38 @@ export function useLivePublisher(options: {
             bitrateBps: stats.bitrateBps,
             droppedFrames: stats.droppedFrames,
           })
+
+          // Frozen-encoder watchdog: the connection poll catches dropped
+          // sockets, but an encoder that stalls while the socket stays open
+          // produces zero bytes with no error event. Treat sustained zero
+          // throughput (after proven-live throughput) as an unexpected stop —
+          // the UI then finalizes the partial recording instead of sitting
+          // on a frozen REC screen.
+          if (livePublishStore$.status.peek() !== 'live') {
+            zeroThroughputSamplesRef.current = 0
+            return
+          }
+
+          if (stats.bitrateBps > 0) {
+            sawThroughputRef.current = true
+            zeroThroughputSamplesRef.current = 0
+            return
+          }
+
+          if (!sawThroughputRef.current) {
+            return
+          }
+
+          zeroThroughputSamplesRef.current += 1
+          if (zeroThroughputSamplesRef.current >= STALL_SAMPLE_LIMIT) {
+            zeroThroughputSamplesRef.current = 0
+            telemetry.error('live:stall', 'Zero throughput while live — treating as stalled', {
+              sessionId: livePublishStore$.sessionId.peek(),
+              recordId: livePublishStore$.recordId.peek(),
+              samples: STALL_SAMPLE_LIMIT,
+            })
+            livePublishActions.setStatus('stream_stopped_unexpectedly')
+          }
         })
         .catch((error) => {
           telemetry.warn('live:stats', 'Failed to sample live publisher stats', {

@@ -35,8 +35,9 @@ type PublicUser = {
 }
 
 // Works for both `bondfires` and `bondfireVideos` rows — they share the
-// status/playback fields this predicate touches.
-function isPlayableVideoRecord(record: {
+// status/playback fields this predicate touches. Exported for the
+// videoCountRepair cron, which uses it to decide which rows count.
+export function isPlayableVideoRecord(record: {
   videoStatus?: string
   muxPlaybackId?: string
   muxLivePlaybackId?: string
@@ -51,6 +52,28 @@ function isPlayableVideoRecord(record: {
     (status === 'ready' && !!record.muxPlaybackId) ||
     (status === 'live' && !!record.muxLivePlaybackId)
   )
+}
+
+// In-flight responses: counted in bondfire.videoCount (live responses count at
+// provisioning, see videos.ts createMuxLiveStream) but not yet playable. The
+// thread viewer surfaces these so the response count and the swipe list never
+// silently disagree while Mux finishes the recorded asset.
+function isProcessingVideoRecord(record: {
+  videoStatus?: string
+  muxPlaybackId?: string
+  muxLivePlaybackId?: string
+  expiresAt?: number
+}) {
+  if (record.expiresAt !== undefined && record.expiresAt <= Date.now()) {
+    return false
+  }
+
+  const status = record.videoStatus ?? 'ready'
+  if (status === 'errored') {
+    return false
+  }
+
+  return !isPlayableVideoRecord(record)
 }
 
 function isDetailVisibleVideoRecord(record: {
@@ -360,11 +383,20 @@ export const getWithVideos = query({
 
     const readyVideos = videos.filter(isPlayableVideoRecord).map(withLiveFlags)
 
+    // Lightweight projection only — no Mux IDs leak for unfinished videos.
+    const processingResponses = videos.filter(isProcessingVideoRecord).map((video) => ({
+      _id: video._id,
+      userId: video.userId,
+      creatorName: video.creatorName,
+      createdAt: video.createdAt,
+    }))
+
     return {
       ...withLiveFlags(bondfire),
       campStatus: camp?.status,
       campName: camp?.name,
       videos: readyVideos,
+      processingResponses,
       participants: await getThreadParticipants(ctx, bondfire),
     }
   },

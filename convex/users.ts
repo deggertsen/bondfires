@@ -3,6 +3,7 @@ import type { Doc } from './_generated/dataModel'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
 import { throwUserError } from './errors'
+import { uncountResponse } from './responseCounts'
 
 /**
  * App-open heartbeat. The client calls this on launch/foreground
@@ -274,14 +275,8 @@ export const deleteAccount = mutation({
       .collect()
 
     for (const video of userVideos) {
-      // Decrement the parent bondfire's video count
-      const bondfire = await ctx.db.get(video.bondfireId)
-      if (bondfire) {
-        await ctx.db.patch(video.bondfireId, {
-          videoCount: Math.max(0, bondfire.videoCount - 1),
-          updatedAt: Date.now(),
-        })
-      }
+      // Give the count back only if this response was actually counted.
+      await uncountResponse(ctx, video)
       if (video.liveSessionId) {
         await ctx.db.delete(video.liveSessionId)
       }

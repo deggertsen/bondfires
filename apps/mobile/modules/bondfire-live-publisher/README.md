@@ -1,0 +1,48 @@
+# bondfire-live-publisher
+
+Expo native module that runs the camera capture pipeline and publishes RTMPS
+to Mux. iOS uses HaishinKit; Android uses StreamPack.
+
+## Event contract
+
+The JS source of truth is `packages/app/src/store/livePublisherContract.ts`
+(`NATIVE_PUBLISHER_STATUSES`, `NATIVE_PUBLISHER_ERROR_CODES`). Each native
+module mirrors it with a `PublisherStatus` enum. **Any new status or error
+code must be added in all three places.** JS rejects unknown statuses with a
+`live:contract` telemetry error instead of accepting them.
+
+### Status events (`statusChange`)
+
+| Status | Meaning | iOS emits | Android emits |
+|---|---|---|---|
+| `connecting` | RTMP connection opening | ✅ (module `start`) | ✅ |
+| `live` | Publishing / recording running | ✅ | ✅ |
+| `reconnecting` | Transient drop, retrying | — (reserved) | — (reserved) |
+| `ended` | Intentional stop completed | ✅ | ✅ |
+| `errored` | Start/connect failed | ✅ | ✅ |
+| `stream_stopped_unexpectedly` | Encoder/stream died without stop() | — (JS stall watchdog emits) | ✅ (`isStreamingFlow`) |
+| `endpoint_closed` | Socket closed without stop() | ✅ (isConnected poll) | ✅ (`isOpenFlow`) |
+
+### Health monitoring parity
+
+| Signal | iOS | Android |
+|---|---|---|
+| Internal encoder/camera errors | capture-session interruption + runtime-error observers | `throwableFlow` |
+| Stream stopped | JS zero-throughput watchdog (via real getStats) | `isStreamingFlow` |
+| Connection dropped | `Session.isConnected` poll (3s) | `isOpenFlow` |
+| Intentional-stop suppression | `isStopping` | `isStoppingIntentionally` |
+| Real throughput stats | ✅ (`RTMPStream.info`) | ❌ (returns zeros — watchdog stays disarmed) |
+
+### Error events (`error`)
+
+`{ code, message }`. Known codes are listed in
+`NATIVE_PUBLISHER_ERROR_CODES`; emitting a new code works (JS treats the
+event itself as the signal) but add it to the contract for telemetry
+greppability.
+
+## Lifecycle
+
+`startPreview()` runs camera+mic+preview with **no network connection** —
+nothing is published or recorded until `start()` opens the RTMP connection.
+This split is a product requirement (pre-roll must never reach viewers);
+preserve it in any refactor.

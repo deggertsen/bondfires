@@ -87,7 +87,7 @@ public class BondfireLivePublisherModule: Module {
     AsyncFunction("start") { (options: LivePublisherStartOptions) in
       let publisher = try await MainActor.run { try self.ensurePublisher() }
       await MainActor.run { BondfireLivePublisherView.current?.attachPreviewIfAvailable() }
-      await MainActor.run { self.sendEvent("statusChange", ["status": "connecting"]) }
+      await MainActor.run { self.sendEvent("statusChange", ["status": PublisherStatus.connecting.rawValue]) }
       try await publisher.start(options: options)
     }
 
@@ -98,7 +98,10 @@ public class BondfireLivePublisherModule: Module {
     }
 
     AsyncFunction("swapCamera") {
-      await self.publisher?.swapCamera()
+      guard let publisher = self.publisher else {
+        throw LivePublisherException(message: "No active publisher to swap camera")
+      }
+      try await publisher.swapCamera()
     }
 
     AsyncFunction("setMuted") { (muted: Bool) in
@@ -147,6 +150,19 @@ public class BondfireLivePublisherModule: Module {
 
 // MARK: - Live Publisher Events
 
+/// Wire statuses — keep in sync with NATIVE_PUBLISHER_STATUSES in
+/// packages/app/src/store/livePublisherContract.ts and the Kotlin
+/// PublisherStatus enum (parity table in the module README).
+enum PublisherStatus: String {
+  case connecting
+  case live
+  case reconnecting
+  case ended
+  case errored
+  case streamStoppedUnexpectedly = "stream_stopped_unexpectedly"
+  case endpointClosed = "endpoint_closed"
+}
+
 enum LivePublisherEvent {
   case statusChange(String)
   case error(String, String)
@@ -164,6 +180,16 @@ final class LivePublisher {
   private var isCaptureRunning = false
   private var captureSize = CMVideoDimensions(width: 1920, height: 1080)
   private let eventHandler: (LivePublisherEvent) -> Void
+  /// True while stop()/cleanup() is tearing the pipeline down, so health
+  /// monitoring never reports an intentional stop as a failure. Mirrors
+  /// isStoppingIntentionally in the Android module.
+  private var isStopping = false
+  /// Polls Session.isConnected while publishing. The HaishinKit Session API
+  /// exposes no event stream for disconnects, so without this poll an RTMP
+  /// drop mid-recording is completely silent on iOS — the UI stays on "REC"
+  /// with a frozen pipeline. Android gets the same signal from isOpenFlow.
+  private var connectionMonitorTask: Task<Void, Never>?
+  private var captureObservers: [NSObjectProtocol] = []
 
   /// MTHKView registered as a mixer output — HaishinKit 2.x preview approach
   private lazy var previewView: MTHKView = {
@@ -194,6 +220,7 @@ final class LivePublisher {
     currentCameraPosition = position
 
     setupAudioSession()
+    addCaptureObservers()
 
     await mixer.addOutput(previewView)
 
@@ -257,7 +284,7 @@ final class LivePublisher {
 
     guard let url = URL(string: urlString) else {
       emitError("invalid_url", "Could not parse RTMPS URL: \(urlString)")
-      emitStatusChange("errored")
+      emitStatusChange(.errored)
       return
     }
 
@@ -266,7 +293,7 @@ final class LivePublisher {
     do {
       guard let built = try await SessionBuilderFactory.shared.make(url).build() else {
         emitError("session_build_failed", "Session builder returned nil for URL: \(urlString)")
-        emitStatusChange("errored")
+        emitStatusChange(.errored)
         throw LivePublisherException(message: "Session builder returned nil")
       }
       newSession = built
@@ -274,7 +301,7 @@ final class LivePublisher {
       throw e
     } catch {
       emitError("session_build_failed", "Failed to build RTMP session: \(error.localizedDescription)")
-      emitStatusChange("errored")
+      emitStatusChange(.errored)
       throw LivePublisherException(message: "Failed to build RTMP session: \(error.localizedDescription)")
     }
     self.session = newSession
@@ -298,11 +325,86 @@ final class LivePublisher {
       try await newSession.connect(.ingest)
     } catch {
       emitError("connection_failed", "RTMP connection failed: \(error.localizedDescription)")
-      emitStatusChange("errored")
+      emitStatusChange(.errored)
       throw LivePublisherException(message: "RTMP connection failed: \(error.localizedDescription)")
     }
 
-    emitStatusChange("live")
+    emitStatusChange(.live)
+    startConnectionMonitor()
+  }
+
+  // MARK: - Health monitoring
+
+  /// Detect a dropped RTMP connection while publishing. The JS side already
+  /// handles "endpoint_closed" by finalizing the partial recording, so this
+  /// converts a silent freeze into a graceful auto-stop-and-save.
+  private func startConnectionMonitor() {
+    connectionMonitorTask?.cancel()
+    connectionMonitorTask = Task { [weak self] in
+      while !Task.isCancelled {
+        try? await Task.sleep(nanoseconds: 3_000_000_000)
+        guard let self, !Task.isCancelled else { return }
+        guard let session = self.session, !self.isStopping else { return }
+        let connected = await session.isConnected
+        if Task.isCancelled || self.isStopping || self.session == nil { return }
+        if !connected {
+          self.emitStatusChange(.endpointClosed)
+          return
+        }
+      }
+    }
+  }
+
+  /// Surface capture-session interruptions (phone call, Slide Over, thermal
+  /// shutdown, camera grabbed by another app) and runtime errors while
+  /// publishing. Without these observers the preview freezes with no event,
+  /// the UI stays on "REC", and nothing is saved.
+  private func addCaptureObservers() {
+    guard captureObservers.isEmpty else { return }
+    let center = NotificationCenter.default
+
+    captureObservers.append(center.addObserver(
+      forName: AVCaptureSession.wasInterruptedNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] notification in
+      let reasonValue =
+        (notification.userInfo?[AVCaptureSessionInterruptionReasonKey] as? NSNumber)?.intValue
+      Task { @MainActor [weak self] in
+        guard let self, self.isCaptureRunning, !self.isStopping else { return }
+        // Preview-only interruptions (no session yet) resume automatically
+        // when the interruption ends; only a publishing pipeline needs to
+        // fail fast so the partial recording gets finalized.
+        guard self.session != nil else { return }
+        self.emitError(
+          "capture_interrupted",
+          "Camera capture was interrupted (reason: \(reasonValue.map(String.init) ?? "unknown"))"
+        )
+      }
+    })
+
+    captureObservers.append(center.addObserver(
+      forName: AVCaptureSession.runtimeErrorNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] notification in
+      let errorDescription =
+        (notification.userInfo?[AVCaptureSessionErrorKey] as? NSError)?.localizedDescription
+      Task { @MainActor [weak self] in
+        guard let self, self.isCaptureRunning, !self.isStopping else { return }
+        self.emitError(
+          "capture_runtime_error",
+          errorDescription ?? "Camera capture hit a runtime error"
+        )
+      }
+    })
+  }
+
+  private func removeCaptureObservers() {
+    for observer in captureObservers {
+      NotificationCenter.default.removeObserver(observer)
+    }
+    captureObservers = []
   }
 
   private func resolveCameraVideoSize(
@@ -325,7 +427,7 @@ final class LivePublisher {
   // MARK: - Stop
 
   func stop() async {
-    emitStatusChange("ended")
+    emitStatusChange(.ended)
     await cleanup()
   }
 
@@ -334,6 +436,10 @@ final class LivePublisher {
   }
 
   private func cleanup() async {
+    isStopping = true
+    connectionMonitorTask?.cancel()
+    connectionMonitorTask = nil
+    removeCaptureObservers()
     do {
       try await session?.close()
     } catch {
@@ -349,15 +455,22 @@ final class LivePublisher {
     session = nil
     currentOptions = nil
     isCaptureRunning = false
+    isStopping = false
   }
 
   // MARK: - Swap Camera
 
-  func swapCamera() async {
+  /// Throws on failure instead of emitting an `error` event. The error event
+  /// path is reserved for fatal publisher failures — useLivePublisher escalates
+  /// it to livePublishActions.fail(), which would tear down the whole session
+  /// state over a non-fatal swap failure. Throwing rejects the JS promise so
+  /// toggleLiveFacing can show its "Switch Camera Failed" alert and keep
+  /// recording on the current camera. Matches the Android Coroutine behavior.
+  func swapCamera() async throws {
     let newPosition: AVCaptureDevice.Position = currentCameraPosition == .front ? .back : .front
+    let positionLabel = newPosition == .back ? "back" : "front"
     guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: newPosition) else {
-      emitError("camera_not_found", "Could not find camera at position \(newPosition)")
-      return
+      throw LivePublisherException(message: "Could not find camera at position \(positionLabel)")
     }
 
     do {
@@ -366,7 +479,7 @@ final class LivePublisher {
       }
       currentCameraPosition = newPosition
     } catch {
-      emitError("swapCamera_failed", error.localizedDescription)
+      throw LivePublisherException(message: "Camera swap to \(positionLabel) failed: \(error.localizedDescription)")
     }
   }
 
@@ -380,11 +493,34 @@ final class LivePublisher {
 
   // MARK: - Stats
 
+  /// Real throughput stats while publishing. The Session protocol only
+  /// exposes `any HKStream`, but the RTMP implementation is an RTMPStream
+  /// actor with per-second byte counts and encoder FPS — downcast to reach
+  /// them. The JS stall watchdog uses bitrateBps==0 (after having seen
+  /// nonzero) to detect a frozen encoder that the connection poll misses.
   func getStats() async -> [String: Int] {
-    return [
+    let zeros = [
       "bitrateBps": 0,
       "rttMs": 0,
       "droppedFrames": 0,
+      "currentFps": 0,
+    ]
+    guard let session else {
+      return zeros
+    }
+    // `Session.stream` is actor-isolated, so the access must be awaited
+    // (mirrors the awaited stream access in start()).
+    guard let rtmpStream = await session.stream as? RTMPStream else {
+      return zeros
+    }
+
+    let info = await rtmpStream.info
+    let fps = await rtmpStream.currentFPS
+    return [
+      "bitrateBps": info.currentBytesPerSecond * 8,
+      "rttMs": 0,
+      "droppedFrames": 0,
+      "currentFps": Int(fps),
     ]
   }
 
@@ -402,8 +538,8 @@ final class LivePublisher {
 
   // MARK: - Event emission
 
-  private func emitStatusChange(_ status: String) {
-    eventHandler(.statusChange(status))
+  private func emitStatusChange(_ status: PublisherStatus) {
+    eventHandler(.statusChange(status.rawValue))
   }
 
   private func emitError(_ code: String, _ message: String) {

@@ -1,7 +1,7 @@
 import { useObservable, useValue } from '@legendapp/state/react'
 import { X } from '@tamagui/lucide-icons'
 import { useMutation } from 'convex/react'
-import { KeyboardAvoidingView, Platform, Pressable, StyleSheet } from 'react-native'
+import { KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import { CategoryStep } from './CategoryStep'
@@ -138,35 +138,42 @@ export function ReportOverlay({
     }
   }
 
+  // Rendered in a Modal so the overlay escapes its mount point's stacking
+  // context — it was previously drawn underneath screen-level siblings (the
+  // Share Bondfire / Respond bar) when mounted inside a carousel item, and
+  // the nested KeyboardAvoidingView mismeasured the keyboard overlap there,
+  // leaving the Continue button hidden behind the iOS keyboard.
   return (
-    <Pressable style={StyleSheet.absoluteFill} onPress={onClose}>
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <YStack flex={1} justifyContent="flex-end">
-          <Pressable onPress={(e) => e.stopPropagation()}>
-            <YStack
-              backgroundColor={'$backgroundPress'}
-              borderTopLeftRadius={24}
-              borderTopRightRadius={24}
-              padding={20}
-              paddingBottom={40}
-            >
-              {/* Close button - hide on success screen */}
-              {step !== 'success' && (
-                <XStack justifyContent="flex-end" marginBottom={16}>
-                  <Pressable onPress={onClose}>
-                    <X size={24} color={'$placeholderColor'} />
-                  </Pressable>
-                </XStack>
-              )}
-              {renderContent()}
-            </YStack>
-          </Pressable>
-        </YStack>
-      </KeyboardAvoidingView>
-    </Pressable>
+    <Modal transparent visible animationType="slide" onRequestClose={onClose}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onClose}>
+        <KeyboardAvoidingView
+          style={styles.container}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <YStack flex={1} justifyContent="flex-end">
+            <Pressable onPress={(e) => e.stopPropagation()}>
+              <YStack
+                backgroundColor={'$backgroundPress'}
+                borderTopLeftRadius={24}
+                borderTopRightRadius={24}
+                padding={20}
+                paddingBottom={40}
+              >
+                {/* Close button - hide on success screen */}
+                {step !== 'success' && (
+                  <XStack justifyContent="flex-end" marginBottom={16}>
+                    <Pressable onPress={onClose}>
+                      <X size={24} color={'$placeholderColor'} />
+                    </Pressable>
+                  </XStack>
+                )}
+                {renderContent()}
+              </YStack>
+            </Pressable>
+          </YStack>
+        </KeyboardAvoidingView>
+      </Pressable>
+    </Modal>
   )
 }
 

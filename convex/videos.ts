@@ -30,6 +30,7 @@ import {
   assertCanRespondToPersonalBondfire,
   canViewPersonalBondfire,
 } from './personalBondfireAccess'
+import { countResponse, uncountResponse } from './responseCounts'
 
 type PlaybackPolicy = 'public' | 'signed'
 type LiveLatencyMode = 'standard' | 'reduced' | 'low'
@@ -944,7 +945,17 @@ async function markRecordReady(
 
   await ctx.db.patch(record.document._id, patch)
 
-  if (wasReady || record.document.liveSessionId) {
+  if (wasReady) {
+    return 'ready'
+  }
+
+  // Live responses are normally counted at the live_stream.active webhook;
+  // this covers upload responses and any live row whose 'active' event was
+  // missed. Idempotent via countedAt either way.
+  await countResponse(ctx, record.document)
+
+  if (record.document.liveSessionId) {
+    // Live responses were already announced at stream-watchable.
     return 'ready'
   }
 
@@ -954,23 +965,11 @@ async function markRecordReady(
   ])
 
   if (bondfire) {
-    await ctx.db.patch(record.document.bondfireId, {
-      videoCount: bondfire.videoCount + 1,
-      updatedAt: Date.now(),
-    })
-
     await ctx.scheduler.runAfter(0, internal.sendNotification.notifyBondfireResponse, {
       bondfireId: record.document.bondfireId,
       responderId: record.document.userId,
       responderName: user?.displayName ?? user?.name ?? 'Someone',
       bondfireVideoId: record.document._id,
-    })
-  }
-
-  if (user) {
-    await ctx.db.patch(record.document.userId, {
-      responseCount: (user.responseCount ?? 0) + 1,
-      updatedAt: Date.now(),
     })
   }
 
@@ -995,6 +994,8 @@ async function markRecordErrored(
       updatedAt: Date.now(),
     })
   } else {
+    // Uncount using the pre-patch document so countedAt is still visible.
+    await uncountResponse(ctx, record.document)
     await ctx.db.patch(record.document._id, patch)
   }
 }
@@ -1083,6 +1084,15 @@ async function markLinkedLiveRecordErrored(ctx: MutationCtx, liveSession: Doc<'l
       muxAssetStatus: 'processing',
     })
     return
+  }
+
+  // Give back any count this response holds so the thread doesn't
+  // permanently show a response nobody can swipe to.
+  if (liveSession.bondfireVideoId) {
+    const video = await ctx.db.get(liveSession.bondfireVideoId)
+    if (video) {
+      await uncountResponse(ctx, video)
+    }
   }
 
   await patchLinkedLiveRecord(ctx, liveSession, {
@@ -2761,18 +2771,12 @@ export const createLinkedMuxLiveSession = internalMutation({
         createdAt: now,
       })
 
-      await ctx.db.patch(args.bondfireId, {
-        videoCount: bondfire.videoCount + 1,
-        updatedAt: now,
-      })
-
-      if (user) {
-        await ctx.db.patch(args.userId, {
-          responseCount: (user.responseCount ?? 0) + 1,
-          updatedAt: now,
-        })
-      }
-
+      // The response is NOT counted into bondfire.videoCount here. Counting
+      // happens at the live_stream.active webhook (when the stream is
+      // actually watchable) via countResponse — same moment the response
+      // notification fires. A stream that never goes active never shows up
+      // in the response count.
+      //
       // Response notification is sent by the Mux webhook at
       // live_stream.active (when the stream is actually watchable), not at
       // provisioning time — see handleMuxWebhook.
@@ -2978,24 +2982,10 @@ export const cancelMuxLiveSessionRecord = internalMutation({
     if (liveSession.bondfireVideoId) {
       const video = await ctx.db.get(liveSession.bondfireVideoId)
       if (video) {
-        const [bondfire, user] = await Promise.all([
-          ctx.db.get(video.bondfireId),
-          ctx.db.get(video.userId),
-        ])
-
-        if (bondfire) {
-          await ctx.db.patch(video.bondfireId, {
-            videoCount: Math.max(1, bondfire.videoCount - 1),
-            updatedAt: Date.now(),
-          })
-        }
-
-        if (user) {
-          await ctx.db.patch(video.userId, {
-            responseCount: Math.max(0, (user.responseCount ?? 0) - 1),
-            updatedAt: Date.now(),
-          })
-        }
+        // No-op for rows already uncounted by markRecordErrored /
+        // markLinkedLiveRecordErrored, so a cancel retry after the
+        // stale-session reaper can't double-decrement.
+        await uncountResponse(ctx, video)
       }
 
       await ctx.db.delete(liveSession.bondfireVideoId)
@@ -3239,9 +3229,11 @@ export const handleMuxWebhookEvent = internalMutation({
           const creatorName = user?.displayName ?? user?.name ?? 'Someone'
 
           if (liveSession.bondfireVideoId) {
-            // Live response recording
+            // Live response recording: the stream is watchable now, so this
+            // is also the moment the response counts toward the thread.
             const responseVideo = await ctx.db.get(liveSession.bondfireVideoId)
             if (responseVideo) {
+              await countResponse(ctx, responseVideo)
               await ctx.scheduler.runAfter(0, internal.sendNotification.notifyBondfireResponse, {
                 bondfireId: responseVideo.bondfireId,
                 responderId: liveSession.userId,

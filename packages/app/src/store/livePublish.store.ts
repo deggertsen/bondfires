@@ -1,17 +1,15 @@
 import { observable } from '@legendapp/state'
+import type { NativePublisherStatus } from './livePublisherContract'
 
+// JS-side lifecycle states layered on top of the native contract:
+// idle (nothing happening), creating (provisioning Mux), ready (provisioned,
+// not publishing), stopping (teardown in flight).
 export type LivePublishStatus =
+  | NativePublisherStatus
   | 'idle'
   | 'creating'
   | 'ready'
-  | 'connecting'
-  | 'live'
-  | 'reconnecting'
-  | 'stream_stopped_unexpectedly'
-  | 'endpoint_closed'
   | 'stopping'
-  | 'ended'
-  | 'errored'
 
 export interface LivePublishState {
   sessionId: string | null
