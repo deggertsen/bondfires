@@ -392,18 +392,26 @@ export function useLivePublisher(options: {
     let publisherError: unknown
     let backendError: unknown
 
+    // Ask Mux to finish the recorded asset before closing our RTMP publisher.
+    // The /complete API ends recording immediately instead of waiting for the
+    // reconnect window, while Mux keeps the encoder connection open briefly.
+    let completeSignaled: boolean | undefined
+    try {
+      if (sessionId) {
+        const result = await options.endLiveStream({
+          liveSessionId: sessionId,
+          reason: 'creator_stopped',
+        })
+        completeSignaled = readCompleteSignaled(result)
+      }
+    } catch (error) {
+      backendError = error
+    }
+
     try {
       await options.publisher.stop()
     } catch (error) {
       publisherError = error
-    }
-
-    try {
-      if (sessionId) {
-        await options.endLiveStream({ liveSessionId: sessionId, reason: 'creator_stopped' })
-      }
-    } catch (error) {
-      backendError = error
     } finally {
       stopStatsSampling()
       ingestRef.current = null
@@ -413,6 +421,7 @@ export function useLivePublisher(options: {
     telemetry.info('live:stop', 'Live publisher stopped', {
       sessionId,
       reason: publisherError ? 'error' : 'user_stopped',
+      muxCompleteSignaled: completeSignaled,
       publisherError: publisherError ? String(publisherError) : undefined,
       backendError: backendError ? String(backendError) : undefined,
     })
@@ -490,4 +499,13 @@ export function useLivePublisher(options: {
     swapCamera,
     stats$: livePublishStore$,
   }
+}
+
+function readCompleteSignaled(result: unknown): boolean | undefined {
+  if (!result || typeof result !== 'object' || !('completeSignaled' in result)) {
+    return undefined
+  }
+
+  const value = (result as { completeSignaled?: unknown }).completeSignaled
+  return typeof value === 'boolean' ? value : undefined
 }
