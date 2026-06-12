@@ -138,13 +138,26 @@ function getMuxConfig() {
   }
 }
 
-// Public PNG/JPG that Mux downloads and shows as slate media during live-stream
-// interruptions (including the brief gap when the creator stops). Without this,
-// Mux falls back to its own generic placeholder image. Best matched to the
-// stream's aspect ratio (portrait for mobile capture).
+// Public image that Mux downloads at the start of each recorded live asset and
+// uses as slate media during reconnect-window interruptions.
 function readMuxSlateUrl(value: string | undefined): string | undefined {
   const trimmed = value?.trim()
-  return trimmed && trimmed.length > 0 ? trimmed : undefined
+  if (!trimmed) {
+    return undefined
+  }
+
+  let url: URL
+  try {
+    url = new URL(trimmed)
+  } catch {
+    throw new Error('MUX_LIVE_RECONNECT_SLATE_URL must be an absolute HTTP(S) URL.')
+  }
+
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw new Error('MUX_LIVE_RECONNECT_SLATE_URL must use http or https.')
+  }
+
+  return url.toString()
 }
 
 function readPlaybackPolicy(value: string | undefined): PlaybackPolicy {
@@ -1519,6 +1532,9 @@ export const createLiveStream = action({
       0,
       MUX_LIVE_RECONNECT_WINDOW_MAX_SECONDS,
     )
+    const reconnectSlateUrl =
+      reconnectWindow > 0 && config.reconnectSlateUrl ? config.reconnectSlateUrl : undefined
+    const useSlateForStandardLatency = config.liveLatencyMode === 'standard' && reconnectWindow > 0
     const maxContinuousDuration: number = await ctx.runQuery(
       internal.videos.getLiveMaxContinuousDurationSeconds,
       { userId },
@@ -1531,14 +1547,12 @@ export const createLiveStream = action({
           latency_mode: config.liveLatencyMode,
           reconnect_window: reconnectWindow,
           max_continuous_duration: maxContinuousDuration,
-          // Replace Mux's default placeholder slate (shown during interruptions
-          // and the stop gap) with a Bondfire-branded image when configured.
-          ...(config.reconnectSlateUrl ? { reconnect_slate_url: config.reconnectSlateUrl } : {}),
+          // Replace Mux's default slate during reconnect-window interruptions
+          // when a public Bondfires slate image is configured.
+          ...(reconnectSlateUrl ? { reconnect_slate_url: reconnectSlateUrl } : {}),
           // Standard-latency streams don't insert slate media unless this is
-          // enabled; low/reduced only need reconnect_window > 0.
-          ...(config.liveLatencyMode === 'standard'
-            ? { use_slate_for_standard_latency: true }
-            : {}),
+          // enabled; all latency modes require reconnect_window > 0.
+          ...(useSlateForStandardLatency ? { use_slate_for_standard_latency: true } : {}),
           passthrough: JSON.stringify({
             userId,
             isResponse: args.isResponse,
@@ -1610,7 +1624,7 @@ export const endLiveStream = action({
     liveSessionId: v.id('liveSessions'),
     reason: v.optional(v.string()),
   },
-  handler: async (ctx, args): Promise<{ ended: boolean }> => {
+  handler: async (ctx, args): Promise<{ ended: boolean; completeSignaled: boolean }> => {
     const userId = await auth.getUserId(ctx)
     if (!userId) {
       throwUserError('Not authenticated')
@@ -1628,11 +1642,13 @@ export const endLiveStream = action({
       throwUserError('Live session not found')
     }
 
+    let completeSignaled = true
     try {
       await muxRequest(`/live-streams/${liveSession.muxLiveStreamId}/complete`, {
         method: 'PUT',
       })
     } catch (error) {
+      completeSignaled = false
       console.warn('Failed to signal Mux live stream complete:', error)
     }
 
@@ -1655,7 +1671,7 @@ export const endLiveStream = action({
       liveSessionId: args.liveSessionId,
     })
 
-    return { ended: true }
+    return { ended: true, completeSignaled }
   },
 })
 

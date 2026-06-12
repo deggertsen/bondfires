@@ -25,10 +25,10 @@ MUX_LIVE_RECONNECT_SLATE_URL=https://<public-host>/mux-live-slate.png
 
 ### Reconnect slate (branded placeholder)
 
-When the RTMP encoder disconnects (including the brief gap when a creator stops),
-Mux fills the reconnect window with a "slate" image. Without configuration it uses
-Mux's own generic placeholder (a laptop/coffee illustration), which can get baked
-into the last couple seconds of the recorded VOD.
+When the RTMP encoder disconnects and the live stream has a positive
+`reconnect_window`, Mux can fill that interruption with a "slate" image. Without
+configuration it uses Mux's own generic placeholder, which can appear in the
+recorded VOD if an interruption is captured before the recording is completed.
 
 Set `MUX_LIVE_RECONNECT_SLATE_URL` to a **publicly downloadable** `.png`/`.jpg`
 to show a Bondfires-branded frame instead. The branded asset lives at
@@ -42,13 +42,17 @@ R2) and point the env var at it. Notes:
 - The asset is already portrait/9:16 to match mobile capture; if the captured
   aspect ratio ever changes, re-export to match or Mux will letterbox it.
 - Slate insertion needs `reconnect_window > 0`. For `standard` latency mode the
-  backend also sets `use_slate_for_standard_latency: true`; `low`/`reduced` only
-  need the window. Leaving the env var unset keeps Mux's default slate.
+  backend also sets `use_slate_for_standard_latency: true` when the reconnect
+  window is positive; `low`/`reduced` only need the window. Leaving the env var
+  unset keeps Mux's default slate.
 
-The client also signals Mux to complete the recording *before* tearing down the
-RTMP connection (`useLivePublisher.stop`), so in the normal stop path Mux
-finalizes at the last real frame and the slate should not appear at the end at
-all — the slate is the safety net for mid-stream reconnect blips.
+The client also calls Mux's live-stream `/complete` endpoint through
+`useLivePublisher.stop` before tearing down the RTMP publisher. Per Mux's API,
+that ends the recorded asset immediately instead of waiting for the reconnect
+window; Mux intentionally does not close the encoder connection immediately, so
+the app still stops the native publisher afterward. The custom slate is the
+safety net for mid-stream reconnect blips and any interruption that is captured
+before completion.
 `MUX_SIGNING_PRIVATE_KEY` can be the raw PEM returned by the Mux signing key API
 with escaped newlines, or a base64-encoded PEM. These signing variables are
 required for private camp videos because private camp assets are created with
