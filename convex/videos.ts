@@ -11,6 +11,7 @@ import {
   query,
 } from './_generated/server'
 import { auth } from './auth'
+import { type BondfireFailureReason, handleFailedBondfire } from './bondfireFailureCleanup'
 import {
   isCampParticipableStatus,
   isCampReadableStatus,
@@ -125,6 +126,11 @@ const STUCK_WAITING_FOR_UPLOAD_THRESHOLD_MS = 30 * 60 * 1000
 // A finished live stream whose recorded asset never appears on Mux after this
 // long is marked errored instead of spinning on "Processing..." forever.
 const STUCK_LIVE_RECORDING_GIVE_UP_MS = 60 * 60 * 1000
+// A record stuck in 'waiting_for_upload' this long — whose Mux upload object is
+// gone or never resolves — is terminated rather than left as a permanent,
+// unreachable orphan. Generous beyond any plausible upload completion (Mux
+// direct-upload URLs expire in ~1h) so we never kill an in-flight upload.
+const STUCK_WAITING_FOR_UPLOAD_GIVE_UP_MS = 6 * 60 * 60 * 1000
 const RECONCILE_BATCH_LIMIT = 25
 
 function getMuxConfig() {
@@ -746,6 +752,7 @@ async function logServerEvent(
     message: args.message,
     data: args.data,
     platform: 'server',
+    retention: 'standard',
     createdAt: Date.now(),
   })
 }
@@ -1057,6 +1064,29 @@ async function markRecordErrored(
       ...patch,
       updatedAt: Date.now(),
     })
+
+    // A spark whose recording terminally failed must never remain a reachable
+    // "isn't available" dead end. Capture forensics and (when enabled) delete it.
+    const errored = await ctx.db.get(record.document._id)
+    if (errored) {
+      const reason: BondfireFailureReason =
+        args.assetStatus === DURATION_LIMIT_EXCEEDED_STATUS
+          ? 'duration_limit_exceeded'
+          : 'recording_errored'
+      const result = await handleFailedBondfire(ctx, errored, reason, {
+        assetStatus: args.assetStatus,
+        muxErrorMessage: args.muxErrorMessage,
+        durationMs: args.durationMs,
+        source: 'markRecordErrored',
+      })
+      if (result.deleted && result.muxAssetIds.length > 0) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.bondfireFailureCleanup.deleteFailedBondfireMuxAssets,
+          { assetIds: result.muxAssetIds },
+        )
+      }
+    }
   } else {
     // Uncount using the pre-patch document so countedAt is still visible.
     await uncountResponse(ctx, record.document)
@@ -1198,6 +1228,29 @@ async function markLinkedLiveRecordErrored(ctx: MutationCtx, liveSession: Doc<'l
     videoStatus: 'errored',
     muxAssetStatus: 'errored',
   })
+
+  // A spark live recording that never went live has no recoverable video and
+  // must not linger as an unreachable "isn't available" dead end. Capture
+  // forensics and (when enabled) delete it. Responses are handled by their own
+  // thread/uncount logic above, so only act on sparks here.
+  if (liveSession.bondfireId && !liveSession.bondfireVideoId) {
+    const spark = await ctx.db.get(liveSession.bondfireId)
+    if (spark) {
+      const result = await handleFailedBondfire(ctx, spark, 'live_never_watchable', {
+        liveSessionId: liveSession._id,
+        liveSessionStatus: liveSession.status,
+        liveSessionErrorMessage: liveSession.errorMessage,
+        source: 'markLinkedLiveRecordErrored',
+      })
+      if (result.deleted && result.muxAssetIds.length > 0) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.bondfireFailureCleanup.deleteFailedBondfireMuxAssets,
+          { assetIds: result.muxAssetIds },
+        )
+      }
+    }
+  }
 }
 
 function readMuxAssetInfo(asset: Record<string, unknown>) {
@@ -3586,7 +3639,24 @@ async function reconcileStuckMuxRecord(
 
   if (!assetId) {
     if (record.videoStatus === 'waiting_for_upload') {
-      // Upload window may still be open — Mux will report timed_out when it closes.
+      // Upload window may still be open — Mux reports timed_out when it closes,
+      // which terminates the record on a later pass. But if the Mux upload
+      // object is already gone (404) or never resolves, the record would sit in
+      // waiting_for_upload forever: a permanent, unreachable orphan and a prime
+      // source of "isn't available" dead ends. After a hard give-up window,
+      // terminate it so it routes through markRecordErrored → the failure
+      // handler (forensics + gated cleanup) instead of trapping viewers.
+      if (record.stuckForMs > STUCK_WAITING_FOR_UPLOAD_GIVE_UP_MS) {
+        if (record.muxUploadId || record.muxLiveStreamId) {
+          await ctx.runMutation(internal.videos.markMuxAssetErrored, {
+            uploadId: record.muxUploadId,
+            liveStreamId: record.muxLiveStreamId,
+            assetStatus: 'upload_never_received',
+          })
+          return { outcome: 'errored', detail: 'upload never received (gave up)' }
+        }
+        return { outcome: 'unresolved', detail: 'waiting_for_upload with no Mux identifiers' }
+      }
       return { outcome: 'still_processing', detail: 'upload not received yet' }
     }
     // 'processing' with no Mux identifiers at all can never self-resolve.

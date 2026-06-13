@@ -402,6 +402,35 @@ export const getWithVideos = query({
   },
 })
 
+/**
+ * Diagnose why `getWithVideos` returned null for a bondfire. Read-only, mirrors
+ * the exact null branches in `getWithVideos`. The detail screen calls this when
+ * it hits the unavailable state so the precise reason lands in telemetry —
+ * critical for root-causing user reports of recently-recorded bondfires that
+ * show "isn't available".
+ */
+export const getUnavailableReason = query({
+  args: { bondfireId: v.id('bondfires') },
+  handler: async (ctx, args) => {
+    const bondfire = await ctx.db.get(args.bondfireId)
+    if (!bondfire) {
+      return { reason: 'deleted' as const, videoStatus: undefined }
+    }
+    if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
+      return { reason: 'expired' as const, videoStatus: bondfire.videoStatus }
+    }
+    if (!isDetailVisibleVideoRecord(bondfire)) {
+      return { reason: 'video_unavailable' as const, videoStatus: bondfire.videoStatus }
+    }
+    const [visible] = await filterVisibleBondfires(ctx, [bondfire])
+    if (!visible) {
+      return { reason: 'access_filtered' as const, videoStatus: bondfire.videoStatus }
+    }
+    // Resolves fine now — the null was a transient read/connect race.
+    return { reason: 'available' as const, videoStatus: bondfire.videoStatus }
+  },
+})
+
 // Get bondfires by user
 export const listByUser = query({
   args: { userId: v.id('users') },
