@@ -279,6 +279,29 @@ export const deleteExpiredBondfireRecords = internalMutation({
       const currentMuxAssetIds = collectMuxAssetIds([bondfire, ...responses])
       if (!currentMuxAssetIds.every((assetId) => expectedMuxAssetIds.has(assetId))) {
         bondfiresSkippedAssetDrift++
+        // Drift means a new asset appeared after we computed the delete set, so
+        // we skip to avoid orphaning an undeleted Mux asset. But the expired
+        // assets were ALREADY deleted by the action — so this bondfire can be
+        // left pointing at deleted assets (an unreachable orphan that violates
+        // "expired bondfires are removed entirely"). Log it loudly so we can see
+        // whether this race actually happens before reworking the handshake.
+        await ctx.db.insert('clientLogs', {
+          userId: bondfire.userId,
+          level: 'warn',
+          event: 'bondfire:failed:retention_asset_drift',
+          message: `Retention skipped ${bondfireId} after Mux asset drift; bondfire may now be orphaned`,
+          data: {
+            reason: 'retention_asset_drift',
+            bondfireId,
+            videoStatus: bondfire.videoStatus,
+            expectedMuxAssetIds: [...expectedMuxAssetIds],
+            currentMuxAssetIds,
+            createdAt: bondfire.createdAt,
+            ageMs: Date.now() - bondfire.createdAt,
+          },
+          platform: 'server',
+          createdAt: Date.now(),
+        })
         continue
       }
 
