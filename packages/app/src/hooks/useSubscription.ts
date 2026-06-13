@@ -55,6 +55,56 @@ function getIapErrorMessage(error: unknown, fallback: string) {
   return getErrorField(error, 'message') ?? getErrorField(error, 'debugMessage') ?? fallback
 }
 
+const IAP_ERROR_FIELDS = [
+  'name',
+  'message',
+  'debugMessage',
+  'code',
+  'responseCode',
+  'underlyingErrorMessage',
+  'productId',
+  'platform',
+] as const
+
+/**
+ * Convert any caught value (Error, expo-iap PurchaseError, plain object, string)
+ * into a JSON-serializable shape suitable for telemetry `data`. Plain `String(err)`
+ * yields '[object Object]' for non-Error throws, which is what the IAP audit
+ * flagged.
+ */
+function serializeIapError(err: unknown): Record<string, unknown> {
+  if (err == null) {
+    return { value: String(err) }
+  }
+
+  if (typeof err === 'string') {
+    return { message: err }
+  }
+
+  if (typeof err === 'object') {
+    const record = err as Record<string, unknown>
+    const out: Record<string, unknown> = {}
+    for (const key of IAP_ERROR_FIELDS) {
+      const value = record[key]
+      if (value === undefined) continue
+      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+        out[key] = value
+      }
+    }
+    if (err instanceof Error) {
+      out.name ??= err.name
+      out.message ??= err.message
+      if (err.stack) out.stack = err.stack
+    }
+    if (Object.keys(out).length === 0) {
+      out.message = String(err)
+    }
+    return out
+  }
+
+  return { value: String(err) }
+}
+
 function isUserCancelledPurchase(error: unknown, message: string) {
   const normalizedMessage = message.toLowerCase()
   return (
@@ -121,7 +171,7 @@ async function loadSubscriptionProducts(showExtraCampAddon: boolean) {
 
   if (inappProducts.status === 'rejected') {
     telemetry.warn('iap:fetch', 'Failed to fetch in-app (kindling pack) products', {
-      error: String(inappProducts.reason),
+      error: serializeIapError(inappProducts.reason),
     })
   }
 
@@ -232,7 +282,9 @@ function subscribeToPurchaseUpdates(
           )
         }
       } catch (err) {
-        telemetry.warn('iap:update', 'Error processing purchase update', { error: String(err) })
+        telemetry.warn('iap:update', 'Error processing purchase update', {
+          error: serializeIapError(err),
+        })
         subscriptionActions.failPurchase(
           'Purchase completed, but could not be verified. Please restore purchases.',
         )
@@ -242,7 +294,7 @@ function subscribeToPurchaseUpdates(
 
   if (!purchaseErrorSub) {
     purchaseErrorSub = purchaseErrorListener((error) => {
-      telemetry.warn('iap:error', 'IAP purchase error', { error: String(error) })
+      telemetry.warn('iap:error', 'IAP purchase error', { error: serializeIapError(error) })
       const errMsg = error?.message ?? error?.debugMessage ?? 'Purchase failed. Please try again.'
       subscriptionActions.failPurchase(errMsg)
     })
@@ -317,7 +369,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
         })
         await loadSubscriptionProducts(showExtraCampAddon)
       } catch (err) {
-        telemetry.warn('iap:init', 'Failed to initialize IAP', { error: String(err) })
+        telemetry.warn('iap:init', 'Failed to initialize IAP', { error: serializeIapError(err) })
         if (mounted) {
           subscriptionActions.setProductsLoaded(true)
         }
@@ -331,7 +383,9 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
       iapConsumerCount = Math.max(0, iapConsumerCount - 1)
       if (iapConsumerCount === 0) {
         releaseIapConnection().catch((err) => {
-          telemetry.warn('iap:close', 'Failed to close IAP connection', { error: String(err) })
+          telemetry.warn('iap:close', 'Failed to close IAP connection', {
+            error: serializeIapError(err),
+          })
         })
       }
     }
