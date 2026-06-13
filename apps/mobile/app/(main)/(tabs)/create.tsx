@@ -703,18 +703,17 @@ export default function CreateScreen() {
         campName={selectedCamp?.name}
         inviteMode={isPersonalCamp ? 'personal-bondfire' : 'bondfire'}
         onContinue={() => {
-          const targetBondfireId = respondTo ?? liveRecordId
-          // Live publish already has the Convex bondfire ID; background upload doesn't yet
-          const personalBondfireId = shouldUseLivePublish && liveRecordId ? liveRecordId : 'new'
-          const target = isPersonalCamp
-            ? routes.personalCampWithInvite(
-                personalBondfireId,
-                personalCreateStartedAtRef.current ?? Date.now(),
-              )
-            : shouldUseLivePublish && targetBondfireId
-              ? routes.bondfire(targetBondfireId)
-              : routes.feed
-          router.replace(target)
+          // Always return to the Feed with the navigation stack reset — for
+          // every flow (camp, personal hearth, and responses). Previously
+          // personal routed to the hearth screen and camp/responses to a
+          // bondfire detail page, which could strand the user behind pushed
+          // screens (and, for personal, an auto-opened invite sheet) requiring
+          // multiple back presses to escape. dismissAll() clears any pushed
+          // (main)-stack screens; replace() then selects the Feed tab.
+          if (router.canDismiss()) {
+            router.dismissAll()
+          }
+          router.replace(routes.feed)
 
           // Tear down completion state NOW instead of waiting for the
           // blur→refocus effect above. That effect is only a safety net: some
