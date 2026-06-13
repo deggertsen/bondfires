@@ -64,6 +64,15 @@ type ExpiredPrivateCampVideoCleanupResult = {
   missingMuxAssets?: number
   remainingMayExist: boolean
 }
+type MuxErrorDetail = {
+  type?: string
+  code?: string
+  messages: string[]
+}
+type MuxErrorInfo = {
+  message?: string
+  details?: MuxErrorDetail[]
+}
 
 interface MuxDirectUploadResult {
   uploadId: string
@@ -216,6 +225,12 @@ function readOptionalNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : []
+}
+
 function parseMuxData(payload: unknown): Record<string, unknown> {
   return readObject(readObject(payload).data, 'Mux API data')
 }
@@ -238,6 +253,55 @@ function getMuxPlaybackId(asset: Record<string, unknown>): string | undefined {
   }
 
   return undefined
+}
+
+function readMuxErrorDetail(value: unknown): MuxErrorDetail | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  const error = value as Record<string, unknown>
+  const message = readOptionalString(error.message)
+  const messages = [...readStringArray(error.messages), ...(message ? [message] : [])]
+  const type = readOptionalString(error.type)
+  const code = readOptionalString(error.code)
+  if (!type && !code && messages.length === 0) {
+    return null
+  }
+
+  return {
+    ...(type ? { type } : {}),
+    ...(code ? { code } : {}),
+    messages: Array.from(new Set(messages)),
+  }
+}
+
+function readMuxErrorInfo(data: Record<string, unknown>): MuxErrorInfo {
+  const details: MuxErrorDetail[] = []
+  const errors = data.errors
+
+  if (Array.isArray(errors)) {
+    for (const entry of errors) {
+      const detail = readMuxErrorDetail(entry)
+      if (detail) details.push(detail)
+    }
+  } else {
+    const detail = readMuxErrorDetail(errors)
+    if (detail) details.push(detail)
+  }
+
+  if (Array.isArray(data.tracks)) {
+    for (const track of data.tracks) {
+      if (!track || typeof track !== 'object' || Array.isArray(track)) continue
+      const detail = readMuxErrorDetail((track as Record<string, unknown>).error)
+      if (detail) details.push(detail)
+    }
+  }
+
+  return {
+    message: readOptionalString(data.error_message) ?? details[0]?.messages[0],
+    details: details.length > 0 ? details : undefined,
+  }
 }
 
 function getMuxPlaybackUrl(playbackId: string): string {
@@ -979,7 +1043,7 @@ async function markRecordReady(
 async function markRecordErrored(
   ctx: MutationCtx,
   record: MuxRecord,
-  args: { assetId?: string; assetStatus?: string; durationMs?: number },
+  args: { assetId?: string; assetStatus?: string; durationMs?: number; muxErrorMessage?: string },
 ) {
   const patch = {
     videoStatus: 'errored' as const,
@@ -1007,15 +1071,17 @@ async function markRecordErrored(
   if (liveSessionId) {
     const liveSession = await ctx.db.get(liveSessionId)
     if (liveSession && liveSession.errorMessage == null) {
-      const reason = args.assetStatus
-        ? args.assetStatus === 'cancelled'
-          ? 'upload cancelled'
-          : args.assetStatus === 'timed_out'
-            ? 'upload timed out'
-            : args.assetStatus === 'errored'
-              ? 'Mux rejected the upload'
-              : `Mux asset ${args.assetStatus}`
-        : 'Mux rejected the upload'
+      const reason =
+        args.muxErrorMessage ??
+        (args.assetStatus
+          ? args.assetStatus === 'cancelled'
+            ? 'upload cancelled'
+            : args.assetStatus === 'timed_out'
+              ? 'upload timed out'
+              : args.assetStatus === 'errored'
+                ? 'Mux rejected the upload'
+                : `Mux asset ${args.assetStatus}`
+          : 'Mux rejected the upload')
       await ctx.db.patch(liveSession._id, {
         errorMessage: reason,
         updatedAt: Date.now(),
@@ -1772,10 +1838,12 @@ export const pollRecordedVodAsset = internalAction({
           return
         }
         if (status === 'errored') {
+          const muxErrorInfo = readMuxErrorInfo(asset)
           await ctx.runMutation(internal.videos.markMuxAssetErrored, {
             assetId: polledAssetId,
             liveStreamId: session.muxLiveStreamId,
             assetStatus: status,
+            muxErrorMessage: muxErrorInfo.message,
           })
           return
         }
@@ -2767,6 +2835,7 @@ export const markMuxAssetErrored = internalMutation({
     assetId: v.optional(v.string()),
     liveStreamId: v.optional(v.string()),
     assetStatus: v.optional(v.string()),
+    muxErrorMessage: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const record = await findMuxRecord(ctx, args)
@@ -3251,49 +3320,24 @@ export const handleMuxWebhookEvent = internalMutation({
       )
     ) {
       const record = await findMuxRecord(ctx, { uploadId, assetId, liveStreamId })
-      // Mux surfaces the underlying failure on `errors[].message` for asset
-      // events and on `error_message` for live_stream events. Capture both so
-      // the audit can tell *why* a recording was rejected (corrupt source,
-      // codec mismatch, etc.) instead of just seeing 'errored'.
-      const muxErrorMessage = readOptionalString(data.error_message)
-      const muxErrorDetails: { type?: string; message?: string; code?: string }[] = []
-      if (Array.isArray(data.errors)) {
-        for (const entry of data.errors as unknown[]) {
-          if (!entry || typeof entry !== 'object') continue
-          const err = entry as Record<string, unknown>
-          const type = readOptionalString(err.type)
-          const message = readOptionalString(err.message)
-          const code = readOptionalString(err.code)
-          if (!type && !message && !code) continue
-          muxErrorDetails.push({ type, message, code })
-        }
-      }
-      const logData = {
+      const muxErrorInfo = readMuxErrorInfo(data)
+      const logData: Record<string, unknown> = {
         ...webhookIds,
         table: record?.table,
         recordId: record?.document._id,
-        muxErrorMessage: muxErrorMessage,
-        muxErrorDetails: muxErrorDetails.length > 0 ? muxErrorDetails : undefined,
       }
+      if (muxErrorInfo.message) logData.muxErrorMessage = muxErrorInfo.message
+      if (muxErrorInfo.details) logData.muxErrorDetails = muxErrorInfo.details
       if (record) {
-        // Persist Mux's underlying error message on the live session row
-        // (if there is one) so the audit shows the cause, not just the
-        // status transition. The live session is the only record with an
-        // errorMessage field in our schema.
-        if (record.document.liveSessionId && muxErrorMessage) {
-          const liveSession = await ctx.db.get(record.document.liveSessionId)
-          if (liveSession && liveSession.errorMessage == null) {
-            await ctx.db.patch(liveSession._id, {
-              errorMessage: muxErrorMessage,
-              updatedAt: Date.now(),
-            })
-          }
-        }
-        await markRecordErrored(ctx, record, { assetId, assetStatus })
+        await markRecordErrored(ctx, record, {
+          assetId,
+          assetStatus,
+          muxErrorMessage: muxErrorInfo.message,
+        })
         await logServerEvent(ctx, {
           level: 'warn',
           event: 'video:webhook:asset_errored',
-          message: `Mux reported ${args.eventType} for a bondfire record${muxErrorMessage ? `: ${muxErrorMessage}` : ''}`,
+          message: `Mux reported ${args.eventType} for a bondfire record${muxErrorInfo.message ? `: ${muxErrorInfo.message}` : ''}`,
           data: logData,
           userId: record.document.userId,
         })
@@ -3301,7 +3345,7 @@ export const handleMuxWebhookEvent = internalMutation({
         await logServerEvent(ctx, {
           level: 'warn',
           event: 'video:webhook:unmatched',
-          message: `Mux ${args.eventType} webhook matched no bondfire record${muxErrorMessage ? `: ${muxErrorMessage}` : ''}`,
+          message: `Mux ${args.eventType} webhook matched no bondfire record${muxErrorInfo.message ? `: ${muxErrorInfo.message}` : ''}`,
           data: logData,
         })
       }
@@ -3560,7 +3604,8 @@ async function reconcileStuckMuxRecord(
     return { outcome: 'errored', detail: 'asset deleted on Mux' }
   }
 
-  const info = readMuxAssetInfo(parseMuxData(asset))
+  const assetData = parseMuxData(asset)
+  const info = readMuxAssetInfo(assetData)
 
   if (info.assetStatus && MUX_READY_STATUSES.has(info.assetStatus) && info.playbackId) {
     const result: { updated: boolean; rejected?: boolean } = await ctx.runMutation(
@@ -3584,10 +3629,12 @@ async function reconcileStuckMuxRecord(
   }
 
   if (info.assetStatus && MUX_FAILED_STATUSES.has(info.assetStatus)) {
+    const muxErrorInfo = readMuxErrorInfo(assetData)
     await ctx.runMutation(internal.videos.markMuxAssetErrored, {
       ...recordRef,
       assetId,
       assetStatus: info.assetStatus,
+      muxErrorMessage: muxErrorInfo.message,
     })
     return { outcome: 'errored', detail: `asset ${info.assetStatus}` }
   }

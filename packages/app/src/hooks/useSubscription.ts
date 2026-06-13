@@ -55,6 +55,17 @@ function getIapErrorMessage(error: unknown, fallback: string) {
   return getErrorField(error, 'message') ?? getErrorField(error, 'debugMessage') ?? fallback
 }
 
+const IAP_ERROR_FIELDS = [
+  'name',
+  'message',
+  'debugMessage',
+  'code',
+  'responseCode',
+  'underlyingErrorMessage',
+  'productId',
+  'platform',
+] as const
+
 /**
  * Convert any caught value (Error, expo-iap PurchaseError, plain object, string)
  * into a JSON-serializable shape suitable for telemetry `data`. Plain `String(err)`
@@ -70,33 +81,20 @@ function serializeIapError(err: unknown): Record<string, unknown> {
     return { message: err }
   }
 
-  if (err instanceof Error) {
-    return {
-      name: err.name,
-      message: err.message,
-      code: getErrorField(err, 'code'),
-      stack: err.stack,
-    }
-  }
-
   if (typeof err === 'object') {
     const record = err as Record<string, unknown>
     const out: Record<string, unknown> = {}
-    for (const key of [
-      'name',
-      'message',
-      'debugMessage',
-      'code',
-      'responseCode',
-      'underlyingErrorMessage',
-      'productId',
-      'platform',
-    ]) {
+    for (const key of IAP_ERROR_FIELDS) {
       const value = record[key]
       if (value === undefined) continue
       if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
         out[key] = value
       }
+    }
+    if (err instanceof Error) {
+      out.name ??= err.name
+      out.message ??= err.message
+      if (err.stack) out.stack = err.stack
     }
     if (Object.keys(out).length === 0) {
       out.message = String(err)
