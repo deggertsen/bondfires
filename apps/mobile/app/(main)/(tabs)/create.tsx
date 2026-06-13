@@ -79,6 +79,15 @@ export default function CreateScreen() {
   const shouldUseLivePublish = livePublishEnabled && isLivePublisherAvailable
   const liveRecordId = useValue(livePublishStore$.recordId)
 
+  // Invariant: on the live create flow (not a response), the bondfire row is
+  // provisioned BEFORE recording, so reaching completion guarantees a recordId.
+  // If we ever hit 'completion' here without one, nothing was actually created —
+  // showing the degraded, un-shareable completion screen would be a lie. Detect
+  // that state so we can recover to the camera instead of rendering it.
+  const isLiveBondfireCompletion =
+    recordingPhase === 'completion' && !!videoUri && shouldUseLivePublish && !respondTo
+  const liveCompletionMissingRecord = isLiveBondfireCompletion && !liveRecordId
+
   const createMuxDirectUpload = useAction(api.videos.createMuxDirectUpload)
   const getMuxUploadStatus = useAction(api.videos.getMuxUploadStatus)
   const camps = useQuery(api.camps.list, respondTo ? 'skip' : {})
@@ -274,6 +283,25 @@ export default function CreateScreen() {
       }
     }
   }, [isFocused, respondTo, router])
+
+  // Recover from an inconsistent live completion: phase says 'completion' but no
+  // bondfire was provisioned. This shouldn't happen (provisioning precedes
+  // recording), but if stale state ever produces it, reset to idle so the
+  // pre-connect re-provisions and the user can record again — rather than being
+  // stranded on a completion screen with no title to edit and nothing to share.
+  useEffect(() => {
+    if (!liveCompletionMissingRecord) {
+      return
+    }
+    telemetry.warn(
+      'create:completion',
+      'Live completion reached without a provisioned bondfire id; recovering to idle',
+      { isPersonalCamp },
+    )
+    livePublishActions.reset()
+    recordingActions.setPhase('idle', 'live completion missing record id')
+    recordingStore$.videoUri.set(null)
+  }, [liveCompletionMissingRecord, isPersonalCamp])
 
   const requestPermissions = useCallback(async () => {
     if (!cameraPermission?.granted) {
@@ -630,7 +658,28 @@ export default function CreateScreen() {
     )
   }
 
-  // Completion screen - shown immediately after recording
+  // While the recovery effect above resets the inconsistent state, show a
+  // spinner rather than flashing either the camera or the degraded completion
+  // screen.
+  if (liveCompletionMissingRecord) {
+    return (
+      <YStack
+        flex={1}
+        backgroundColor={'$background'}
+        alignItems="center"
+        justifyContent="center"
+        gap={14}
+      >
+        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+        <Spinner size="large" color={'$primary'} />
+      </YStack>
+    )
+  }
+
+  // Completion screen - shown immediately after recording. For the live create
+  // flow this is only reached with a provisioned bondfire id (see the invariant
+  // above), so the completion screen always has a title to edit and a row to
+  // share; the id-less branch is only for responses and legacy uploads.
   if (recordingPhase === 'completion' && videoUri) {
     const completionDetail = respondTo
       ? 'Awesome, great video! We are getting your response ready now. It may take up to two minutes to show in activity lists.'
