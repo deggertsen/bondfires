@@ -1,4 +1,5 @@
 export * from './app.store'
+export * from './freeUpgrade.store'
 export * from './livePublish.store'
 export * from './livePublisherContract'
 export * from './notepad.store'

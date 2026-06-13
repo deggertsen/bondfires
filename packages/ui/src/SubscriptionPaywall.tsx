@@ -57,6 +57,8 @@ export function SubscriptionPaywall({
 
   if (!open) return null
 
+  const freeTier = tiers.find((tier) => tier.tier === 'free')
+
   const handlePurchase = (tier: SubscriptionTier, productId?: string) => {
     if (tier === 'free' || tier === currentTier) {
       onOpenChange(false)
@@ -133,23 +135,21 @@ export function SubscriptionPaywall({
           contentContainerStyle={{ paddingBottom: 20 }}
         >
           <YStack gap={12}>
-            {/* Free tier */}
-            <TierCard
-              tier="free"
-              displayName="Free"
-              price="$0"
-              description="Browse, join, and watch."
-              features={[
-                { label: 'Browse camps and bondfires', included: true },
-                { label: 'Watch and respond to bondfires', included: true },
-                { label: 'Up to 30 minutes of viewing', included: true },
-                { label: 'Create your own bondfires', included: false },
-                { label: 'Private camps', included: false },
-              ]}
-              isCurrent={currentTier === 'free'}
-              onPurchase={handlePurchase}
-              isPurchasing={isPurchasing && purchasingTier === 'free'}
-            />
+            {/* Free tier — sourced from the `tiers` prop so the feature list
+                stays consistent with the in-flow messaging (empty state,
+                explainer, hearth card). See GlobalPaywall's freeTier. */}
+            {freeTier ? (
+              <TierCard
+                tier="free"
+                displayName={freeTier.displayName}
+                price={freeTier.price ?? '$0'}
+                description={freeTier.description}
+                features={freeTier.features}
+                isCurrent={freeTier.isCurrent}
+                onPurchase={handlePurchase}
+                isPurchasing={isPurchasing && purchasingTier === 'free'}
+              />
+            ) : null}
 
             {/* Paid tiers */}
             {tiers

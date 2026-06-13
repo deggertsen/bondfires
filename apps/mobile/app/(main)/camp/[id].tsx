@@ -1,10 +1,12 @@
 import {
   appActions,
+  freeUpgradeActions,
   getBondfireVideoIndex,
   parseError,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
   useAppThemeColors,
+  useSubscription,
 } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
 import {
@@ -241,6 +243,8 @@ function CampHeader({
   onMute,
   onCreateInvite,
   onSpark,
+  canCreate,
+  onUpgradeHint,
   pendingRequests,
   onApprove,
   onReject,
@@ -258,6 +262,8 @@ function CampHeader({
   onMute: () => void
   onCreateInvite: () => void
   onSpark: () => void
+  canCreate: boolean
+  onUpgradeHint: () => void
   pendingRequests: PendingRequest[]
   onApprove: (membershipId: string) => void
   onReject: (membershipId: string) => void
@@ -473,13 +479,39 @@ function CampHeader({
 
       {isActiveMember && !isFrozen && !isArchived ? (
         <YStack gap={10}>
-          {camp.access !== 'invite' || isOwner ? (
+          {(camp.access !== 'invite' || isOwner) && canCreate ? (
             <Button variant="primary" size="$lg" onPress={onSpark} backgroundColor={accentColor}>
               <Flame size={20} color={'$color'} />
               <Text color={'$color'} fontWeight="900">
                 Spark Here
               </Text>
             </Button>
+          ) : null}
+          {/* M4: free members see a soft invitation instead of a dead-end
+              Spark button. It only shows where a paid member would have seen
+              "Spark Here", and opens the explainer/paywall (never the camera). */}
+          {(camp.access !== 'invite' || isOwner) && !canCreate ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Free members can respond here. Upgrade to Plus to spark your own Bondfires."
+              onPress={onUpgradeHint}
+            >
+              <YStack
+                padding={12}
+                borderRadius={14}
+                backgroundColor={'$backgroundHover'}
+                borderWidth={1}
+                borderColor={'$borderColor'}
+                gap={2}
+              >
+                <Text fontSize={13} color={'$color'} fontWeight="900">
+                  Free members can join and respond here
+                </Text>
+                <Text fontSize={12} color={'$primary'} fontWeight="900">
+                  Spark your own with Plus →
+                </Text>
+              </YStack>
+            </Pressable>
           ) : null}
           {isOwner && camp.access === 'invite' ? (
             <Button variant="outline" size="$lg" onPress={onCreateInvite}>
@@ -741,6 +773,7 @@ function BondfireRow({ bondfire, onOpen }: { bondfire: BondfireData; onOpen: () 
 export default function CampDetailScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
+  const { canCreate } = useSubscription()
   const navigation = useNavigation()
   const { id } = useLocalSearchParams<{ id?: string }>()
   const campId = id as Id<'camps'> | undefined
@@ -808,6 +841,10 @@ export default function CampDetailScreen() {
     // completion screen.
     router.push(routes.createForCamp(campId))
   }, [campId, router])
+
+  const handleUpgradeHint = useCallback(() => {
+    freeUpgradeActions.openExplainer('camp_detail')
+  }, [])
 
   const handleCreateInvite = useCallback(() => {
     setIsInviteSheetOpen(true)
@@ -992,6 +1029,8 @@ export default function CampDetailScreen() {
               onMute={handleMute}
               onCreateInvite={handleCreateInvite}
               onSpark={handleSpark}
+              canCreate={canCreate}
+              onUpgradeHint={handleUpgradeHint}
               pendingRequests={pendingRequests}
               onApprove={handleApprove}
               onReject={handleReject}

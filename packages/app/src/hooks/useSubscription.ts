@@ -346,10 +346,16 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
 
   // Sync Convex state → local store
   useEffect(() => {
+    // `undefined` means the query is still loading; anything else (including a
+    // null/free result) means the live tier is now authoritative for this
+    // session, so the tab bar can stop relying on the persisted last-known tier.
+    if (subscriptionQuery !== undefined) {
+      subscriptionActions.markSubscriptionResolved()
+    }
     if (subscriptionQuery?.tier) {
       subscriptionActions.setCurrentTier(subscriptionQuery.tier)
     }
-  }, [subscriptionQuery?.tier])
+  }, [subscriptionQuery])
 
   // Initialize IAP: fetch products and listen for purchase updates
   useEffect(() => {

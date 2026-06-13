@@ -1,4 +1,12 @@
-import { useAppThemeColors } from '@bondfires/app'
+import {
+  CREATE_REQUIRED_TIER,
+  lastKnownTier$,
+  subscriptionStore$,
+  tierMeetsRequirement,
+  useAppThemeColors,
+  useSubscription,
+} from '@bondfires/app'
+import { useValue } from '@legendapp/state/react'
 import { Flame, Home, Map, MessageCircle, User } from '@tamagui/lucide-icons'
 import { Tabs, useRouter } from 'expo-router'
 import { useCallback } from 'react'
@@ -9,6 +17,23 @@ export default function TabsLayout() {
   const insets = useSafeAreaInsets()
   const { colors } = useAppThemeColors()
   const router = useRouter()
+
+  // Reactive source of truth for whether the user can spark (Plus+). Reading
+  // `useSubscription` here keeps the tab count live: a mid-session upgrade or
+  // lapse flips the Spark tab without an app restart (M13).
+  const { canCreate } = useSubscription()
+  const subscriptionResolved = useValue(subscriptionStore$.subscriptionResolved)
+  const lastTier = useValue(lastKnownTier$.tier)
+
+  // First-paint correctness (Edge Case 4): until the live subscription query
+  // resolves, fall back to the persisted last-known tier so a returning free
+  // user paints 4 tabs immediately with no 5→4 snap. Only a true first run (no
+  // persisted tier) optimistically shows all 5 tabs, then reconciles on resolve.
+  const showSparkTab = subscriptionResolved
+    ? canCreate
+    : lastTier != null
+      ? tierMeetsRequirement(lastTier, CREATE_REQUIRED_TIER)
+      : true
 
   const openSparkTab = useCallback(() => {
     router.push(routes.create)
@@ -64,6 +89,10 @@ export default function TabsLayout() {
           },
         }}
         options={{
+          // `href: null` hides the tab while keeping the route addressable
+          // (deep links, legacy affordances still resolve to the safety-net
+          // block-CTA in LiveRecordScreen). Free users never see this tab.
+          href: showSparkTab ? undefined : null,
           title: 'Spark',
           tabBarIcon: ({ color, size }) => <Flame color={color} size={size} />,
         }}

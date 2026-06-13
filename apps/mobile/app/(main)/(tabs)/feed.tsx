@@ -1,6 +1,8 @@
 import {
   appActions,
   appStore$,
+  freeSummaryDismissed$,
+  freeUpgradeActions,
   getBondfireVideoIndex,
   getErrorMessage,
   getFeedActiveBondfireId,
@@ -8,12 +10,14 @@ import {
   hasViewedToday,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
+  subscriptionStore$,
   telemetry,
   useAppThemeColors,
+  useSubscription,
 } from '@bondfires/app'
 import { BondfireRow, type BondfireRowProps, Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { Flame, Search } from '@tamagui/lucide-icons'
+import { Flame, Search, X } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -145,7 +149,15 @@ function toBondfireRowProps(
   }
 }
 
-function EmptyFeed({ onSpark }: { onSpark: () => void }) {
+function EmptyFeed({
+  canCreate,
+  onSpark,
+  onBrowseCamps,
+}: {
+  canCreate: boolean
+  onSpark: () => void
+  onBrowseCamps: () => void
+}) {
   return (
     <YStack
       flex={1}
@@ -165,19 +177,87 @@ function EmptyFeed({ onSpark }: { onSpark: () => void }) {
       >
         <Flame size={60} color={'$primary'} />
       </YStack>
-      <Text fontSize={24} fontWeight="900" marginBottom={12} textAlign="center">
-        Spark a Bondfire
-      </Text>
-      <Text fontSize={16} color={'$placeholderColor'} textAlign="center" marginBottom={32}>
-        Be the first to share a video!
-      </Text>
-      <Button variant="primary" size="$lg" onPress={onSpark}>
-        <Flame size={20} color={'$color'} />
-        <Text color={'$color'} fontWeight="900">
-          Spark Bondfire
-        </Text>
-      </Button>
+      {canCreate ? (
+        <>
+          <Text fontSize={24} fontWeight="900" marginBottom={12} textAlign="center">
+            Spark a Bondfire
+          </Text>
+          <Text fontSize={16} color={'$placeholderColor'} textAlign="center" marginBottom={32}>
+            Be the first to share a video!
+          </Text>
+          <Button variant="primary" size="$lg" onPress={onSpark}>
+            <Flame size={20} color={'$color'} />
+            <Text color={'$color'} fontWeight="900">
+              Spark Bondfire
+            </Text>
+          </Button>
+        </>
+      ) : (
+        <>
+          <Text fontSize={24} fontWeight="900" marginBottom={12} textAlign="center">
+            Find a fire to respond to
+          </Text>
+          <Text fontSize={16} color={'$placeholderColor'} textAlign="center" marginBottom={32}>
+            Join a camp to see its Bondfires here, then jump in with a video response.
+          </Text>
+          <Button variant="primary" size="$lg" onPress={onBrowseCamps}>
+            <Text color={'$color'} fontWeight="900">
+              Browse Camps
+            </Text>
+          </Button>
+        </>
+      )}
     </YStack>
+  )
+}
+
+/**
+ * Persistent, low-friction upgrade front door for free users (M11/M12).
+ * Replaces the always-visible Spark tab as the conversion surface: it states
+ * the respond-first value prop proactively, links to the paywall, and can be
+ * dismissed (persisted) to reclaim its vertical space.
+ */
+function FreeSummaryCard() {
+  return (
+    <XStack
+      alignItems="center"
+      gap={12}
+      backgroundColor={'$backgroundHover'}
+      borderRadius={14}
+      borderWidth={1}
+      borderColor={'$borderColor'}
+      paddingVertical={12}
+      paddingHorizontal={14}
+    >
+      <Flame size={20} color={'$primary'} />
+      <YStack flex={1} gap={2}>
+        <Text fontSize={13} color={'$color'} fontWeight="900">
+          You're on the free plan
+        </Text>
+        <Text fontSize={12} color={'$placeholderColor'} lineHeight={17}>
+          Respond to any fire, or{' '}
+          <Text
+            fontSize={12}
+            color={'$primary'}
+            fontWeight="900"
+            accessibilityRole="button"
+            accessibilityLabel="Upgrade to spark your own Bondfires"
+            onPress={() => freeUpgradeActions.pressPaywallCta('feed_summary')}
+          >
+            upgrade
+          </Text>{' '}
+          to spark your own.
+        </Text>
+      </YStack>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Dismiss free plan card"
+        hitSlop={10}
+        onPress={() => freeUpgradeActions.dismissSummaryCard()}
+      >
+        <X size={18} color={'$placeholderColor'} />
+      </Pressable>
+    </XStack>
   )
 }
 
@@ -224,6 +304,12 @@ export default function FeedScreen() {
   const router = useRouter()
   const insets = useSafeAreaInsets()
   const getThumbnailUrl = useAction(api.videos.getThumbnailUrl)
+  const { canCreate } = useSubscription()
+  const subscriptionResolved = useValue(subscriptionStore$.subscriptionResolved)
+  const summaryDismissed = useValue(freeSummaryDismissed$.dismissed)
+  // Gate on `subscriptionResolved` so a returning paid user never sees the card
+  // flash on cold start (currentTier defaults to free until the query lands).
+  const showFreeSummaryCard = subscriptionResolved && !canCreate && !summaryDismissed
 
   const [viewMode, setViewMode] = useState<ViewMode>('discover')
   const [query, setQuery] = useState('')
@@ -470,6 +556,14 @@ export default function FeedScreen() {
   )
 
   const handleSpark = useCallback(() => {
+    // Free users never route into the live record screen from the Feed header.
+    // The Spark button becomes an invitation that opens the paywall directly
+    // (M6 / dead-end vs. invitation).
+    if (!canCreate) {
+      freeUpgradeActions.pressPaywallCta('feed_spark')
+      return
+    }
+
     if (selectedCamp?.access === 'invite' && selectedCamp.membership.role !== 'owner') {
       Alert.alert(
         'Owner Sparks Only',
@@ -483,7 +577,11 @@ export default function FeedScreen() {
       return
     }
     router.push(routes.create)
-  }, [activeCampId, router, selectedCamp])
+  }, [activeCampId, canCreate, router, selectedCamp])
+
+  const handleBrowseCamps = useCallback(() => {
+    router.push(routes.camps)
+  }, [router])
 
   const handleSelectCamp = useCallback(
     (campId: string | null) => {
@@ -701,6 +799,8 @@ export default function FeedScreen() {
               </Button>
             </XStack>
 
+            {showFreeSummaryCard ? <FreeSummaryCard /> : null}
+
             <XStack
               alignItems="center"
               gap={10}
@@ -787,7 +887,11 @@ export default function FeedScreen() {
         }
         ListEmptyComponent={
           bondfires.length === 0 ? (
-            <EmptyFeed onSpark={handleSpark} />
+            <EmptyFeed
+              canCreate={canCreate}
+              onSpark={handleSpark}
+              onBrowseCamps={handleBrowseCamps}
+            />
           ) : (
             <YStack paddingVertical={80} alignItems="center" justifyContent="center" gap={12}>
               <Flame size={56} color={'$primary'} />

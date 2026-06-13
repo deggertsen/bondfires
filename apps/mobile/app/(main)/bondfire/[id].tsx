@@ -2,12 +2,14 @@ import {
   appActions,
   appStore$,
   getBondfireVideoIndex,
+  getLastLocation,
   hasViewedToday,
   type MuxDataVideoMetadata,
   markViewed,
   parseError,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
+  setLastLocation,
   telemetry,
   useAppThemeColors,
   useMuxData,
@@ -996,6 +998,21 @@ export default function BondfireDetailScreen() {
     loggedPlaybackStateRef.current = key
     log()
   }, [bondfireData, bondfireId])
+
+  // When the detail query resolves to null, the bondfire is gone, expired, or no longer
+  // visible to this viewer. Never trap the user on the "isn't available" dead end: repair
+  // the persisted location so a cold start stops restoring this dead route, and if the
+  // screen was restored as the navigation root (no back stack), bounce to the feed.
+  useEffect(() => {
+    if (bondfireData !== null) return
+    const last = getLastLocation()
+    if (last?.type === 'bondfire' && last.bondfireId === bondfireId) {
+      setLastLocation({ type: 'feed', updatedAt: Date.now() })
+    }
+    if (!router.canGoBack()) {
+      router.replace(routes.feed)
+    }
+  }, [bondfireData, bondfireId, router])
 
   // Track app active state (external subscription - keep useEffect)
   useEffect(() => {

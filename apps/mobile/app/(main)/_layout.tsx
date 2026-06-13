@@ -9,6 +9,7 @@ import { SubscriptionPaywall } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
 import { Stack } from 'expo-router'
 import { useMemo } from 'react'
+import { FreeCapabilitiesExplainer } from '../../components/FreeCapabilitiesExplainer'
 
 function GlobalPaywall() {
   const {
@@ -127,6 +128,7 @@ export default function MainLayout() {
         <Stack.Screen name="personal-camp" options={{ headerShown: false }} />
       </Stack>
       <GlobalPaywall />
+      <FreeCapabilitiesExplainer />
     </>
   )
 }

@@ -1,6 +1,15 @@
-import { parseError, subscriptionActions, useAppThemeColors } from '@bondfires/app'
+import { freeUpgradeActions, parseError, useAppThemeColors } from '@bondfires/app'
 import { Button, CampCardStatusBanner, Input, Spinner, Text } from '@bondfires/ui'
-import { ChevronDown, ChevronUp, Flame, Lock, Search, Sparkles, Users } from '@tamagui/lucide-icons'
+import {
+  ChevronDown,
+  ChevronUp,
+  Flame,
+  Info,
+  Lock,
+  Search,
+  Sparkles,
+  Users,
+} from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -219,11 +228,13 @@ function PersonalCampCard({
   canCreatePrivateCamp,
   onOpen,
   onUpgrade,
+  onExplainer,
 }: {
   personalCamp: Doc<'personalCamps'> | null
   canCreatePrivateCamp: boolean
   onOpen: () => void
   onUpgrade: () => void
+  onExplainer: () => void
 }) {
   if (personalCamp) {
     return (
@@ -313,6 +324,11 @@ function PersonalCampCard({
     )
   }
 
+  // Free-tier Hearth card (M3): same outer card style as above, but richer
+  // content — a real value prop for what Hearth is, a discoverability "i" that
+  // opens the free-capabilities explainer (W2), and an inline upgrade CTA. The
+  // whole card stays tappable (opens the paywall). Outer padding/radius/colors
+  // are unchanged so the card frame matches the paid-tier states.
   return (
     <Pressable onPress={onUpgrade}>
       <YStack
@@ -334,14 +350,32 @@ function PersonalCampCard({
           >
             <Lock size={18} color={'$placeholderColor'} />
           </YStack>
-          <YStack gap={2} flex={1}>
-            <Text fontSize={15} fontWeight="900" color={'$placeholderColor'}>
+          <YStack gap={3} flex={1}>
+            <Text fontSize={15} fontWeight="900">
               Hearth
             </Text>
-            <Text fontSize={12} color={'$placeholderColor'}>
-              Upgrade to Plus to start your own hearth.
+            <Text fontSize={12} color={'$placeholderColor'} lineHeight={17}>
+              A private camp for your inner circle — invite-only, with 7-day invite codes and fires
+              that stay between the people you trust.
             </Text>
           </YStack>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="What can I do for free?"
+            hitSlop={10}
+            onPress={(event) => {
+              event.stopPropagation()
+              onExplainer()
+            }}
+          >
+            <Info size={18} color={'$placeholderColor'} />
+          </Pressable>
+        </XStack>
+        <XStack alignItems="center" gap={6} paddingLeft={46}>
+          <Flame size={13} color={'$primary'} />
+          <Text fontSize={13} color={'$primary'} fontWeight="900">
+            Upgrade to Plus →
+          </Text>
         </XStack>
       </YStack>
     </Pressable>
@@ -457,7 +491,11 @@ export default function CampsScreen() {
   }, [router])
 
   const handleUpgrade = useCallback(() => {
-    subscriptionActions.showPaywall()
+    freeUpgradeActions.pressPaywallCta('camps_hearth_card')
+  }, [])
+
+  const handleHearthExplainer = useCallback(() => {
+    freeUpgradeActions.openExplainer('camps_hearth_card')
   }, [])
 
   const handleJoin = useCallback(
@@ -604,6 +642,7 @@ export default function CampsScreen() {
                 canCreatePrivateCamp={canCreatePrivateCamp}
                 onOpen={handleOpenPersonalCamp}
                 onUpgrade={handleUpgrade}
+                onExplainer={handleHearthExplainer}
               />
             ) : null}
 

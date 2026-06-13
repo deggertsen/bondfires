@@ -32,6 +32,8 @@ yarn dev:ios          # iOS simulator
 yarn dev:android      # Android
 ```
 
+> **Worktree gotcha:** `apps/mobile/.env` is gitignored, so a fresh `git worktree` (or clone) will **not** have it — only `.env.example`. Metro inlines `EXPO_PUBLIC_*` at bundle time, so a missing `.env` means `EXPO_PUBLIC_CONVEX_URL` is `undefined` and the app crashes on launch with a `ConvexProvider` / "Could not find Convex client" render error. Copy it in before running the app from a worktree: `cp /path/to/main/apps/mobile/.env apps/mobile/.env` (then restart Metro with `--clear`).
+
 ## Validation (run before every commit)
 
 ```bash
