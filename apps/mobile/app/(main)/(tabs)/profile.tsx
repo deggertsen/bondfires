@@ -2,6 +2,7 @@ import {
   appActions,
   getBondfireVideoIndex,
   parseError,
+  recordingStore$,
   requestPushPermission,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
@@ -204,6 +205,15 @@ export default function ProfileScreen() {
     setNotificationsEnabled,
     setLivePublishEnabled,
   } = usePreferences()
+
+  // Live publish is the only recording path now. The upload queue is dead
+  // weight on this path (live recordings never enqueue, and the resume hook
+  // short-circuits on `shouldUseLivePublish`), so the legacy progress card
+  // should never appear here. Keeping the gate local to the render is enough —
+  // `cleanupForRefresh` is harmless and the queue store itself stays persisted.
+  const isLivePublisherAvailable = useValue(recordingStore$.isLivePublisherAvailable)
+  const shouldUseLivePublish =
+    preferences.livePublishEnabled && isLivePublisherAvailable
 
   const { currentTier, isRestoring, managePlan, restore, showPaywall } = useSubscription()
   const { balance: kindlingBalance, isLoading: kindlingBalanceLoading } = useKindlingBalance()
@@ -634,7 +644,7 @@ export default function ProfileScreen() {
             </XStack>
           </Card>
 
-          <UploadProgressCard />
+          {!shouldUseLivePublish && <UploadProgressCard />}
 
           {/* Camp Kindling Balance */}
           {!kindlingBalanceLoading && currentTier === 'pro' ? (
