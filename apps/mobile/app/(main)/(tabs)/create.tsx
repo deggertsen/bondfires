@@ -271,12 +271,7 @@ export default function CreateScreen() {
     }
 
     if (recordingStore$.phase.get() === 'completion') {
-      recordingActions.setPhase('idle', 'returned to create tab after completion')
-      recordingStore$.pendingFacing.set(null)
-      recordingStore$.videoUri.set(null)
-      recordingStore$.recordingDuration.set(0)
-      recordingStore$.progress.set(0)
-      recordingStore$.progressStage.set('')
+      recordingActions.resetFlow('returned to create tab after completion')
       // Clear respondTo param so user can create a new spark instead of responding.
       if (respondTo) {
         router.replace(routes.create)
@@ -299,8 +294,7 @@ export default function CreateScreen() {
       { isPersonalCamp },
     )
     livePublishActions.reset()
-    recordingActions.setPhase('idle', 'live completion missing record id')
-    recordingStore$.videoUri.set(null)
+    recordingActions.resetFlow('live completion missing record id')
   }, [liveCompletionMissingRecord, isPersonalCamp])
 
   const requestPermissions = useCallback(async () => {
@@ -722,12 +716,7 @@ export default function CreateScreen() {
           // a zombie completion screen — and because recordId had already been
           // reset, it rendered without the title field — instead of the camera.
           livePublishActions.reset()
-          recordingActions.setPhase('idle', 'completion dismissed via continue')
-          recordingStore$.pendingFacing.set(null)
-          recordingStore$.videoUri.set(null)
-          recordingStore$.recordingDuration.set(0)
-          recordingStore$.progress.set(0)
-          recordingStore$.progressStage.set('')
+          recordingActions.resetFlow('completion dismissed via continue')
         }}
       />
     )

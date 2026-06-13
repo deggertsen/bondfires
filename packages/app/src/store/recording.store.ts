@@ -112,8 +112,8 @@ export const recordingActions = {
    * Clear all per-attempt state and return to idle. Camera availability and
    * facing survive — they describe the device/session, not the attempt.
    */
-  resetFlow: () => {
-    recordingStore$.phase.set('idle')
+  resetFlow: (reason?: string) => {
+    recordingActions.setPhase('idle', reason)
     recordingStore$.pendingFacing.set(null)
     recordingStore$.recordingDuration.set(0)
     recordingStore$.videoUri.set(null)
