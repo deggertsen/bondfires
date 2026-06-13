@@ -998,6 +998,30 @@ async function markRecordErrored(
     await uncountResponse(ctx, record.document)
     await ctx.db.patch(record.document._id, patch)
   }
+
+  // Mirror Mux's error message on the live session so the row itself
+  // (not just the client log) tells us *why* the asset was rejected.
+  // bondfires/bondfireVideos don't have an errorMessage field; the
+  // clientLogs entry from the caller carries the same payload.
+  const liveSessionId = record.document.liveSessionId
+  if (liveSessionId) {
+    const liveSession = await ctx.db.get(liveSessionId)
+    if (liveSession && liveSession.errorMessage == null) {
+      const reason = args.assetStatus
+        ? args.assetStatus === 'cancelled'
+          ? 'upload cancelled'
+          : args.assetStatus === 'timed_out'
+            ? 'upload timed out'
+            : args.assetStatus === 'errored'
+              ? 'Mux rejected the upload'
+              : `Mux asset ${args.assetStatus}`
+        : 'Mux rejected the upload'
+      await ctx.db.patch(liveSession._id, {
+        errorMessage: reason,
+        updatedAt: Date.now(),
+      })
+    }
+  }
 }
 
 // Fields shared by `bondfires` and `bondfireVideos` that we patch in response
@@ -1009,8 +1033,17 @@ type LiveLinkedRecordPatch = {
   muxAssetId?: string
 }
 
+// Shared subset of Convex ctx that only needs `db.get` — used by
+// helpers reachable from both query and mutation contexts.
+type DbReadCtx = { db: { get: MutationCtx['db']['get'] } }
+
+// Shared subset of Convex ctx that needs both `db.get` and `db.patch`.
+type DbWriteCtx = {
+  db: { get: MutationCtx['db']['get']; patch: MutationCtx['db']['patch'] }
+}
+
 async function patchLinkedLiveRecord(
-  ctx: MutationCtx,
+  ctx: DbWriteCtx,
   liveSession: Doc<'liveSessions'>,
   patch: LiveLinkedRecordPatch,
 ) {
@@ -1028,7 +1061,7 @@ async function patchLinkedLiveRecord(
 }
 
 async function getLinkedLiveRecord(
-  ctx: MutationCtx,
+  ctx: DbReadCtx,
   liveSession: Doc<'liveSessions'>,
 ): Promise<Doc<'bondfires'> | Doc<'bondfireVideos'> | null> {
   if (liveSession.bondfireVideoId) {
@@ -1711,8 +1744,14 @@ export const pollRecordedVodAsset = internalAction({
         return
       }
 
-      if (session.muxRecordedAssetId) {
-        const asset = parseMuxData(await muxRequest(`/assets/${session.muxRecordedAssetId}`))
+      // Prefer the asset ID the asset.created webhook recorded. Fall back to
+      // muxRecentAssetId (set by the live_stream.idle webhook) so a creator
+      // who taps End before video.asset.created arrives still gets the VOD
+      // promoted as soon as Mux finishes encoding.
+      const polledAssetId = session.muxRecordedAssetId ?? session.muxRecentAssetId
+
+      if (polledAssetId) {
+        const asset = parseMuxData(await muxRequest(`/assets/${polledAssetId}`))
         const status = readOptionalString(asset.status)
         if (status === 'ready') {
           const info = readMuxAssetInfo(asset)
@@ -1734,7 +1773,7 @@ export const pollRecordedVodAsset = internalAction({
         }
         if (status === 'errored') {
           await ctx.runMutation(internal.videos.markMuxAssetErrored, {
-            assetId: session.muxRecordedAssetId,
+            assetId: polledAssetId,
             liveStreamId: session.muxLiveStreamId,
             assetStatus: status,
           })
@@ -1742,11 +1781,76 @@ export const pollRecordedVodAsset = internalAction({
         }
       }
 
-      // If the session ended without a recorded asset, give up
-      if (session.status === 'ended' && !session.muxRecordedAssetId) {
+      // No asset known yet. If Mux has already linked a recorded asset to the
+      // stream, persist it on the session so we can start polling against it.
+      // Cheaper than GETting the live stream on every iteration.
+      if (!polledAssetId) {
+        const liveStream = await muxRequestOptional(`/live-streams/${session.muxLiveStreamId}`)
+        if (liveStream) {
+          const liveData = parseMuxData(liveStream)
+          const recentAssetIds = Array.isArray(liveData.recent_asset_ids)
+            ? (liveData.recent_asset_ids as unknown[]).filter(
+                (id): id is string => typeof id === 'string',
+              )
+            : []
+          const discoveredAssetId =
+            readOptionalString(liveData.active_asset_id) ??
+            (recentAssetIds.length > 0 ? recentAssetIds[recentAssetIds.length - 1] : undefined)
+          if (discoveredAssetId) {
+            await ctx.runMutation(internal.videos.recordPolledLiveAssetId, {
+              liveSessionId: session._id,
+              assetId: discoveredAssetId,
+            })
+          }
+        }
+      }
+
+      // If the linked record has already been promoted to 'ready' or
+      // 'errored' (by a webhook arriving between polls), there is nothing
+      // left to do.
+      const linkedVideoStatus = await ctx.runQuery(internal.videos.getLinkedLiveRecordVideoStatus, {
+        liveSessionId: session._id,
+      })
+      if (linkedVideoStatus === 'ready' || linkedVideoStatus === 'errored') {
         return
       }
     }
+  },
+})
+
+// Persist a discovered recorded-asset ID on a live session so the VOD poller
+// can keep tracking it after a fresh discovery. Distinct from the
+// video.asset.created webhook path so poller-only writes don't fire side
+// effects.
+export const recordPolledLiveAssetId = internalMutation({
+  args: {
+    liveSessionId: v.id('liveSessions'),
+    assetId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const liveSession = await ctx.db.get(args.liveSessionId)
+    if (!liveSession) return { updated: false }
+    if (liveSession.muxRecordedAssetId === args.assetId) {
+      return { updated: false }
+    }
+    await ctx.db.patch(liveSession._id, {
+      muxRecentAssetId: liveSession.muxRecentAssetId ?? args.assetId,
+      muxRecordedAssetId: args.assetId,
+      updatedAt: Date.now(),
+    })
+    return { updated: true }
+  },
+})
+
+export const getLinkedLiveRecordVideoStatus = internalQuery({
+  args: {
+    liveSessionId: v.id('liveSessions'),
+  },
+  handler: async (ctx, args) => {
+    const liveSession = await ctx.db.get(args.liveSessionId)
+    if (!liveSession) return null
+    const record = await getLinkedLiveRecord(ctx, liveSession)
+    return record?.videoStatus ?? null
   },
 })
 
@@ -3147,21 +3251,58 @@ export const handleMuxWebhookEvent = internalMutation({
       )
     ) {
       const record = await findMuxRecord(ctx, { uploadId, assetId, liveStreamId })
+      // Mux surfaces the underlying failure on `errors[].message` for asset
+      // events and on `error_message` for live_stream events. Capture both so
+      // the audit can tell *why* a recording was rejected (corrupt source,
+      // codec mismatch, etc.) instead of just seeing 'errored'.
+      const muxErrorMessage = readOptionalString(data.error_message)
+      const muxErrorDetails: { type?: string; message?: string; code?: string }[] = []
+      if (Array.isArray(data.errors)) {
+        for (const entry of data.errors as unknown[]) {
+          if (!entry || typeof entry !== 'object') continue
+          const err = entry as Record<string, unknown>
+          const type = readOptionalString(err.type)
+          const message = readOptionalString(err.message)
+          const code = readOptionalString(err.code)
+          if (!type && !message && !code) continue
+          muxErrorDetails.push({ type, message, code })
+        }
+      }
+      const logData = {
+        ...webhookIds,
+        table: record?.table,
+        recordId: record?.document._id,
+        muxErrorMessage: muxErrorMessage,
+        muxErrorDetails: muxErrorDetails.length > 0 ? muxErrorDetails : undefined,
+      }
       if (record) {
+        // Persist Mux's underlying error message on the live session row
+        // (if there is one) so the audit shows the cause, not just the
+        // status transition. The live session is the only record with an
+        // errorMessage field in our schema.
+        if (record.document.liveSessionId && muxErrorMessage) {
+          const liveSession = await ctx.db.get(record.document.liveSessionId)
+          if (liveSession && liveSession.errorMessage == null) {
+            await ctx.db.patch(liveSession._id, {
+              errorMessage: muxErrorMessage,
+              updatedAt: Date.now(),
+            })
+          }
+        }
         await markRecordErrored(ctx, record, { assetId, assetStatus })
         await logServerEvent(ctx, {
           level: 'warn',
           event: 'video:webhook:asset_errored',
-          message: `Mux reported ${args.eventType} for a bondfire record`,
-          data: { ...webhookIds, table: record.table, recordId: record.document._id },
+          message: `Mux reported ${args.eventType} for a bondfire record${muxErrorMessage ? `: ${muxErrorMessage}` : ''}`,
+          data: logData,
           userId: record.document.userId,
         })
       } else {
         await logServerEvent(ctx, {
           level: 'warn',
           event: 'video:webhook:unmatched',
-          message: `Mux ${args.eventType} webhook matched no bondfire record`,
-          data: webhookIds,
+          message: `Mux ${args.eventType} webhook matched no bondfire record${muxErrorMessage ? `: ${muxErrorMessage}` : ''}`,
+          data: logData,
         })
       }
       return { handled: true }
