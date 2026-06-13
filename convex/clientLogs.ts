@@ -10,6 +10,7 @@ import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalMutation, mutation, query } from './_generated/server'
 import { auth } from './auth'
+import { BONDFIRE_FAILURE_EVENT_PREFIX } from './bondfireFailureCleanup'
 
 const LOG_LEVELS = ['error', 'warn', 'info', 'breadcrumb'] as const
 const MAX_BATCH_SIZE = 20
@@ -326,6 +327,11 @@ export const purgeOld = internalMutation({
         .take(500)
 
       for (const entry of oldEntries) {
+        // Preserve forensic failure records past the normal window — these are
+        // the evidence trail for auto-deleted/broken bondfires.
+        if (entry.event.startsWith(BONDFIRE_FAILURE_EVENT_PREFIX)) {
+          continue
+        }
         await ctx.db.delete(entry._id)
         deleted++
       }

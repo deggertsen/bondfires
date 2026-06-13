@@ -11,6 +11,7 @@ import {
   query,
 } from './_generated/server'
 import { auth } from './auth'
+import { type BondfireFailureReason, handleFailedBondfire } from './bondfireFailureCleanup'
 import {
   isCampParticipableStatus,
   isCampReadableStatus,
@@ -1057,6 +1058,29 @@ async function markRecordErrored(
       ...patch,
       updatedAt: Date.now(),
     })
+
+    // A spark whose recording terminally failed must never remain a reachable
+    // "isn't available" dead end. Capture forensics and (when enabled) delete it.
+    const errored = await ctx.db.get(record.document._id)
+    if (errored) {
+      const reason: BondfireFailureReason =
+        args.assetStatus === DURATION_LIMIT_EXCEEDED_STATUS
+          ? 'duration_limit_exceeded'
+          : 'recording_errored'
+      const result = await handleFailedBondfire(ctx, errored, reason, {
+        assetStatus: args.assetStatus,
+        muxErrorMessage: args.muxErrorMessage,
+        durationMs: args.durationMs,
+        source: 'markRecordErrored',
+      })
+      if (result.deleted && result.muxAssetIds.length > 0) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.bondfireFailureCleanup.deleteFailedBondfireMuxAssets,
+          { assetIds: result.muxAssetIds },
+        )
+      }
+    }
   } else {
     // Uncount using the pre-patch document so countedAt is still visible.
     await uncountResponse(ctx, record.document)
