@@ -14,7 +14,7 @@ const CAPABILITIES = [
   {
     Icon: PlayCircle,
     title: 'Watch Bondfires',
-    body: 'Scroll the feed and watch every fire, TikTok-style.',
+    body: 'Scroll the feed and watch every fire.',
   },
   {
     Icon: MessageCircle,
