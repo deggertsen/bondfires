@@ -907,6 +907,13 @@ export default function BondfireDetailScreen() {
     | null
     | undefined
   const accessCheck = useQuery(api.bondfireInvites.canAccessBondfire, { bondfireId })
+  // Only resolve the unavailable reason when the detail query actually came back
+  // null — it tells us (and telemetry) whether the dead end is a deleted/broken
+  // video, an access filter, expiry, or a transient race.
+  const unavailableReason = useQuery(
+    api.bondfires.getUnavailableReason,
+    bondfireData === null ? { bondfireId } : 'skip',
+  )
   const getVideoUrls = useAction(api.videos.getVideoUrls)
   const campContext = useQuery(api.bondfires.getWithCampContext, { id: bondfireId })
   const recordWatchEvent = useMutation(api.watchEvents.record)
@@ -964,10 +971,12 @@ export default function BondfireDetailScreen() {
     let log: () => void
 
     if (bondfireData === null) {
-      key = `${bondfireId}:unavailable`
+      key = `${bondfireId}:unavailable:${unavailableReason?.reason ?? 'unknown'}`
       log = () =>
         telemetry.warn('video:detail:unavailable', 'Bondfire detail query returned null', {
           bondfireId,
+          reason: unavailableReason?.reason,
+          videoStatus: unavailableReason?.videoStatus,
         })
     } else if (bondfireData.videoStatus === 'processing') {
       const processingForMs = Date.now() - bondfireData.updatedAt
@@ -997,7 +1006,7 @@ export default function BondfireDetailScreen() {
     if (loggedPlaybackStateRef.current === key) return
     loggedPlaybackStateRef.current = key
     log()
-  }, [bondfireData, bondfireId])
+  }, [bondfireData, bondfireId, unavailableReason])
 
   // When the detail query resolves to null, the bondfire is gone, expired, or no longer
   // visible to this viewer. Never trap the user on the "isn't available" dead end: repair

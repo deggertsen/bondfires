@@ -1222,6 +1222,29 @@ async function markLinkedLiveRecordErrored(ctx: MutationCtx, liveSession: Doc<'l
     videoStatus: 'errored',
     muxAssetStatus: 'errored',
   })
+
+  // A spark live recording that never went live has no recoverable video and
+  // must not linger as an unreachable "isn't available" dead end. Capture
+  // forensics and (when enabled) delete it. Responses are handled by their own
+  // thread/uncount logic above, so only act on sparks here.
+  if (liveSession.bondfireId && !liveSession.bondfireVideoId) {
+    const spark = await ctx.db.get(liveSession.bondfireId)
+    if (spark) {
+      const result = await handleFailedBondfire(ctx, spark, 'live_never_watchable', {
+        liveSessionId: liveSession._id,
+        liveSessionStatus: liveSession.status,
+        liveSessionErrorMessage: liveSession.errorMessage,
+        source: 'markLinkedLiveRecordErrored',
+      })
+      if (result.deleted && result.muxAssetIds.length > 0) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.bondfireFailureCleanup.deleteFailedBondfireMuxAssets,
+          { assetIds: result.muxAssetIds },
+        )
+      }
+    }
+  }
 }
 
 function readMuxAssetInfo(asset: Record<string, unknown>) {
