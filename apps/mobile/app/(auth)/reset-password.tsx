@@ -221,7 +221,9 @@ export default function ResetPasswordScreen() {
                 value={newPassword}
                 onChangeText={(text) => form$.newPassword.set(text)}
                 secureTextEntry
+                autoCapitalize="none"
                 autoComplete="new-password"
+                autoCorrect={false}
                 error={!!error && error.includes('password')}
               />
             </YStack>
@@ -235,7 +237,9 @@ export default function ResetPasswordScreen() {
                 value={confirmPassword}
                 onChangeText={(text) => form$.confirmPassword.set(text)}
                 secureTextEntry
+                autoCapitalize="none"
                 autoComplete="new-password"
+                autoCorrect={false}
                 error={!!error && error.includes('match')}
               />
             </YStack>

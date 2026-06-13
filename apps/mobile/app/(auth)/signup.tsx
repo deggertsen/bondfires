@@ -318,7 +318,9 @@ export default function SignupScreen() {
                 value={password}
                 onChangeText={(text) => form$.password.set(text)}
                 secureTextEntry
+                autoCapitalize="none"
                 autoComplete="new-password"
+                autoCorrect={false}
               />
             </YStack>
 
@@ -332,7 +334,9 @@ export default function SignupScreen() {
                 value={confirmPassword}
                 onChangeText={(text) => form$.confirmPassword.set(text)}
                 secureTextEntry
+                autoCapitalize="none"
                 autoComplete="new-password"
+                autoCorrect={false}
                 error={confirmPassword.length > 0 && password !== confirmPassword}
               />
             </YStack>
