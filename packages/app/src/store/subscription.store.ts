@@ -1,4 +1,5 @@
 import { observable } from '@legendapp/state'
+import { syncObservable } from '@legendapp/state/sync'
 
 /**
  * Product IDs as defined in the Phase 2 launch plan.
@@ -216,6 +217,14 @@ export interface SubscriptionState {
   lastError: string | null
   /** Whether the paywall sheet is visible. */
   isPaywallVisible: boolean
+  /**
+   * Whether the Convex `subscriptions.current` query has resolved at least once
+   * this session. Surfaces (e.g. the tab bar) read this to know whether
+   * `currentTier` is authoritative or still a cold-start default, so they can
+   * fall back to the persisted last-known tier for first paint instead of
+   * snapping the layout once the query lands.
+   */
+  subscriptionResolved: boolean
 }
 
 export const subscriptionStore$ = observable<SubscriptionState>({
@@ -229,11 +238,39 @@ export const subscriptionStore$ = observable<SubscriptionState>({
   purchasingProductId: null,
   lastError: null,
   isPaywallVisible: false,
+  subscriptionResolved: false,
+})
+
+/**
+ * Persisted last-known subscription tier.
+ *
+ * Read by the tab bar so a returning user paints the correct tab count on the
+ * very first frame (e.g. a free user sees 4 tabs immediately, not a 5→4 snap)
+ * before the live `subscriptions.current` query resolves. `null` means we have
+ * never resolved a tier on this device (true first run), in which case surfaces
+ * may optimistically show the full layout and reconcile once the query lands.
+ */
+export const lastKnownTier$ = observable<{ tier: SubscriptionTier | null }>({ tier: null })
+
+syncObservable(lastKnownTier$, {
+  persist: {
+    name: 'bondfires-last-known-tier',
+  },
 })
 
 export const subscriptionActions = {
   setCurrentTier(tier: SubscriptionTier) {
     subscriptionStore$.currentTier.set(tier)
+    // Persist the resolved tier so the next cold start can paint the right
+    // tab layout immediately (see lastKnownTier$ docs / Edge Case 4).
+    lastKnownTier$.tier.set(tier)
+  },
+
+  /** Mark the live subscription query as resolved for this session. */
+  markSubscriptionResolved() {
+    if (!subscriptionStore$.subscriptionResolved.get()) {
+      subscriptionStore$.subscriptionResolved.set(true)
+    }
   },
 
   setProducts(products: Array<{ productId: string; price: string; offerToken?: string | null }>) {

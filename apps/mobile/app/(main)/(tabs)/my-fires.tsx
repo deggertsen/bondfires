@@ -344,7 +344,7 @@ export default function MyFiresScreen() {
               No active fires yet
             </Text>
             <Text fontSize={15} color={'$placeholderColor'} textAlign="center" marginTop={8}>
-              Threads appear here once you spark or respond.
+              Respond to a fire in the feed and the conversation shows up here.
             </Text>
             <Button
               variant="primary"

@@ -1,5 +1,6 @@
 import {
   buildErrorReportMailto,
+  freeUpgradeActions,
   getDefaultBondfireTitle,
   getUserFacingErrorMessage,
   type LivePublishStatus,
@@ -538,7 +539,7 @@ export function LiveRecordScreen({
   // instead of leaving the user on a silent spinner.
   const preConnectBlockReason =
     !respondTo && !canCreate
-      ? 'You have reached your plan limit. Upgrade to spark more Bondfires.'
+      ? 'Sparking your own Bondfire is a Plus feature. Free members can respond to any fire.'
       : !respondTo && !isPersonalCamp && isCampListLoaded && !selectedCamp
         ? 'Choose a Camp before sparking a Bondfire.'
         : needsTradeTag
@@ -669,11 +670,23 @@ export function LiveRecordScreen({
   const showPreConnectError = !isLiveRecording && !isPreConnected && preConnectFailed
   const showPreConnectBlocked =
     !isLiveRecording && !isPreConnected && !preConnectFailed && !!preConnectBlockReason
+  // Safety-net upgrade block (M2): a free user reached the camera via a path
+  // we didn't intercept upstream (stale deep link, notification, legacy
+  // affordance). Show a real "View Plans" CTA instead of dead-ending. This is
+  // NOT a primary flow — Feed header and camp detail open the paywall directly.
+  const showUpgradeBlock = showPreConnectBlocked && !respondTo && !canCreate
   const showBusySpinner =
     !isLiveRecording &&
     !showPreConnectError &&
     !showPreConnectBlocked &&
     (isLiveBusy || !isPreConnected)
+
+  // Telemetry: a free user hit the safety-net upgrade wall on the live screen.
+  useEffect(() => {
+    if (showUpgradeBlock) {
+      freeUpgradeActions.trackCtaShown('live_blocked')
+    }
+  }, [showUpgradeBlock])
 
   return (
     <YStack flex={1} backgroundColor={'$background'}>
@@ -803,6 +816,38 @@ export function LiveRecordScreen({
                 <Text color={'$color'} fontSize={16} fontWeight="700" textAlign="center">
                   {preConnectBlockReason}
                 </Text>
+                {showUpgradeBlock && (
+                  <YStack alignItems="center" gap={12}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="View subscription plans"
+                      onPress={() => {
+                        freeUpgradeActions.trackCtaClicked('live_blocked')
+                        freeUpgradeActions.openPaywall('live_blocked')
+                      }}
+                    >
+                      <YStack
+                        paddingHorizontal={24}
+                        paddingVertical={10}
+                        borderRadius={20}
+                        backgroundColor={'$primary'}
+                      >
+                        <Text color={'$color'} fontWeight="800">
+                          View Plans
+                        </Text>
+                      </YStack>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Learn what you can do for free"
+                      onPress={() => freeUpgradeActions.openExplainer('live_blocked')}
+                    >
+                      <Text color={'$color'} fontSize={14} textDecorationLine="underline">
+                        What can I do for free?
+                      </Text>
+                    </Pressable>
+                  </YStack>
+                )}
                 {needsTradeTag && (
                   <XStack gap={12}>
                     <Pressable onPress={() => onSelectTradeTag('need')}>
