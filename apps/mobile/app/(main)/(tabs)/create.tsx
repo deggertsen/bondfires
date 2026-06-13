@@ -701,6 +701,7 @@ export default function CreateScreen() {
         detail={completionDetail}
         bondfireId={editableBondfireId}
         campName={selectedCamp?.name}
+        inviteMode={isPersonalCamp ? 'personal-bondfire' : 'bondfire'}
         onContinue={() => {
           const targetBondfireId = respondTo ?? liveRecordId
           // Live publish already has the Convex bondfire ID; background upload doesn't yet
