@@ -126,6 +126,11 @@ const STUCK_WAITING_FOR_UPLOAD_THRESHOLD_MS = 30 * 60 * 1000
 // A finished live stream whose recorded asset never appears on Mux after this
 // long is marked errored instead of spinning on "Processing..." forever.
 const STUCK_LIVE_RECORDING_GIVE_UP_MS = 60 * 60 * 1000
+// A record stuck in 'waiting_for_upload' this long — whose Mux upload object is
+// gone or never resolves — is terminated rather than left as a permanent,
+// unreachable orphan. Generous beyond any plausible upload completion (Mux
+// direct-upload URLs expire in ~1h) so we never kill an in-flight upload.
+const STUCK_WAITING_FOR_UPLOAD_GIVE_UP_MS = 6 * 60 * 60 * 1000
 const RECONCILE_BATCH_LIMIT = 25
 
 function getMuxConfig() {
@@ -3633,7 +3638,24 @@ async function reconcileStuckMuxRecord(
 
   if (!assetId) {
     if (record.videoStatus === 'waiting_for_upload') {
-      // Upload window may still be open — Mux will report timed_out when it closes.
+      // Upload window may still be open — Mux reports timed_out when it closes,
+      // which terminates the record on a later pass. But if the Mux upload
+      // object is already gone (404) or never resolves, the record would sit in
+      // waiting_for_upload forever: a permanent, unreachable orphan and a prime
+      // source of "isn't available" dead ends. After a hard give-up window,
+      // terminate it so it routes through markRecordErrored → the failure
+      // handler (forensics + gated cleanup) instead of trapping viewers.
+      if (record.stuckForMs > STUCK_WAITING_FOR_UPLOAD_GIVE_UP_MS) {
+        if (record.muxUploadId || record.muxLiveStreamId) {
+          await ctx.runMutation(internal.videos.markMuxAssetErrored, {
+            uploadId: record.muxUploadId,
+            liveStreamId: record.muxLiveStreamId,
+            assetStatus: 'upload_never_received',
+          })
+          return { outcome: 'errored', detail: 'upload never received (gave up)' }
+        }
+        return { outcome: 'unresolved', detail: 'waiting_for_upload with no Mux identifiers' }
+      }
       return { outcome: 'still_processing', detail: 'upload not received yet' }
     }
     // 'processing' with no Mux identifiers at all can never self-resolve.
