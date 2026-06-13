@@ -310,7 +310,7 @@ export const subscriptionActions = {
     subscriptionStore$.purchasingTier.set(null)
     subscriptionStore$.purchasingProductId.set(null)
     if (success && tier) {
-      subscriptionStore$.currentTier.set(tier)
+      subscriptionActions.setCurrentTier(tier)
     }
   },
 

@@ -821,10 +821,7 @@ export function LiveRecordScreen({
                     <Pressable
                       accessibilityRole="button"
                       accessibilityLabel="View subscription plans"
-                      onPress={() => {
-                        freeUpgradeActions.trackCtaClicked('live_blocked')
-                        freeUpgradeActions.openPaywall('live_blocked')
-                      }}
+                      onPress={() => freeUpgradeActions.pressPaywallCta('live_blocked')}
                     >
                       <YStack
                         paddingHorizontal={24}

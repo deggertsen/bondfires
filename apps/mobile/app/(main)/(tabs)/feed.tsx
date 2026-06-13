@@ -242,7 +242,7 @@ function FreeSummaryCard() {
             fontWeight="900"
             accessibilityRole="button"
             accessibilityLabel="Upgrade to spark your own Bondfires"
-            onPress={() => freeUpgradeActions.openPaywall('feed_summary')}
+            onPress={() => freeUpgradeActions.pressPaywallCta('feed_summary')}
           >
             upgrade
           </Text>{' '}
@@ -560,8 +560,7 @@ export default function FeedScreen() {
     // The Spark button becomes an invitation that opens the paywall directly
     // (M6 / dead-end vs. invitation).
     if (!canCreate) {
-      freeUpgradeActions.trackCtaClicked('feed_spark')
-      freeUpgradeActions.openPaywall('feed_spark')
+      freeUpgradeActions.pressPaywallCta('feed_spark')
       return
     }
 

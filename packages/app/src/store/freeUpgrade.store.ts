@@ -48,6 +48,12 @@ export const freeUpgradeActions = {
     subscriptionActions.showPaywall()
   },
 
+  /** Record a user-tapped upgrade CTA and open the paywall. */
+  pressPaywallCta(source: PaywallSource) {
+    freeUpgradeActions.trackCtaClicked(source)
+    freeUpgradeActions.openPaywall(source)
+  },
+
   /** Open the free-capabilities explainer modal. */
   openExplainer(source: PaywallSource) {
     telemetry.info('paywall:explainer_clicked', 'Free-capabilities explainer opened', { source })
@@ -63,7 +69,7 @@ export const freeUpgradeActions = {
   openPaywallFromExplainer() {
     const source = freeUpgradeStore$.explainerSource.get() ?? 'live_blocked'
     freeUpgradeStore$.isExplainerVisible.set(false)
-    freeUpgradeActions.openPaywall(source)
+    freeUpgradeActions.pressPaywallCta(source)
   },
 
   /** Record that an upgrade CTA became visible (e.g. the live-screen safety net). */

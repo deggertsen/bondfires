@@ -491,7 +491,7 @@ export default function CampsScreen() {
   }, [router])
 
   const handleUpgrade = useCallback(() => {
-    freeUpgradeActions.openPaywall('camps_hearth_card')
+    freeUpgradeActions.pressPaywallCta('camps_hearth_card')
   }, [])
 
   const handleHearthExplainer = useCallback(() => {
