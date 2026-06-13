@@ -114,14 +114,19 @@ export function usePushNotifications(
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e)
         // Auth can still race with session establishment. Treat those failures
-        // as retryable instead of surfacing them as user-facing toasts.
+        // as retryable instead of surfacing them at all.
         if (message.includes('Not authenticated') || message.includes('Unauthorized')) {
           return
         }
-        telemetry.error('push:register', 'Failed to register token with backend', {
+        // Backend token registration is background infrastructure that auto-
+        // retries (sign-in, app foreground, app-state change). Its failures are
+        // never user-actionable — most commonly a transient network blip or the
+        // sign-out/sign-in auth gap whose error message slips past the filter
+        // above. Log as a warn (telemetry.error fires a user toast; warn does
+        // not) so we keep the breadcrumb without spamming a stream of toasts.
+        telemetry.warn('push:register', 'Failed to register token with backend', {
           error: message,
         })
-        setError('Failed to register with server')
       }
     },
     [registerTokenMutation],
