@@ -50,6 +50,19 @@ type CampJoinResult = {
     | 'private'
 }
 
+const JOIN_DENIED_MESSAGES: Partial<Record<CampJoinResult['reason'], string>> = {
+  wrong_gender: 'This camp is limited to members who match its gender setting',
+  tier_too_low: 'Your subscription tier is too low to join this camp',
+  underage: 'You do not meet the age requirement for this camp',
+  invite_only: 'This camp requires an invite',
+  banned: 'You cannot join this camp',
+  already_member: 'You are already a member of this camp',
+  already_pending: 'You already have a pending request for this camp',
+  rejected_cooldown:
+    'Your previous request was denied. You can try again after the cooldown period.',
+  private: 'This is a private camp',
+}
+
 /** Cooldown duration for re-applying after rejection (30 days in ms). */
 const REJECTION_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000
 
@@ -600,6 +613,10 @@ function getJoinMembershipStatus(camp: Doc<'camps'>): 'pending' | 'active' {
   return 'active'
 }
 
+function throwJoinDeniedError(eligibility: CampJoinResult): never {
+  throwUserError(JOIN_DENIED_MESSAGES[eligibility.reason] ?? 'You cannot join this camp')
+}
+
 async function upsertMembership(
   ctx: MutationCtx,
   args: {
@@ -666,6 +683,58 @@ async function scheduleAccessRequestNotifications(
     requesterId: args.requester._id,
     requesterName,
   })
+}
+
+async function joinCamp(
+  ctx: MutationCtx,
+  campId: Id<'camps'>,
+  options?: { requireApprovalAccess?: boolean },
+) {
+  const user = await getCurrentUser(ctx)
+  const camp = await ctx.db.get(campId)
+  if (!camp || !isCampVisibleStatus(camp.status)) {
+    throwUserError('Camp not found')
+  }
+
+  if (camp.status === 'frozen' || camp.status === 'grace') {
+    throwUserError('This camp is not accepting new members right now.')
+  }
+  if (options?.requireApprovalAccess && camp.access !== 'approval') {
+    throwUserError('This camp does not require approval to join')
+  }
+
+  const existing = await getMembership(ctx, user._id, camp._id)
+  const userTier = await getEntitlementSubscriptionTier(ctx, user._id)
+  const eligibility = evaluateJoinRules(camp, user, userTier, existing)
+
+  if (!eligibility.canJoin) {
+    throwJoinDeniedError(eligibility)
+  }
+
+  const status = getJoinMembershipStatus(camp)
+  const membershipId = await upsertMembership(ctx, {
+    userId: user._id,
+    campId: camp._id,
+    status,
+    role: 'member',
+  })
+
+  if (status === 'active') {
+    await refreshActiveMemberCount(ctx, camp._id)
+  }
+
+  if (status === 'pending') {
+    await scheduleAccessRequestNotifications(ctx, {
+      membershipId,
+      camp,
+      requester: user,
+    })
+  }
+
+  return {
+    membershipId,
+    status,
+  }
 }
 
 async function refreshActiveMemberCount(ctx: MutationCtx, campId: Id<'camps'>) {
@@ -965,62 +1034,7 @@ export const join = mutation({
     withUserFacingErrors(
       'camps.join',
       'Something went wrong joining this camp. Please try again.',
-      async () => {
-        const user = await getCurrentUser(ctx)
-        const camp = await ctx.db.get(args.campId)
-        if (!camp || !isCampVisibleStatus(camp.status)) {
-          throwUserError('Camp not found')
-        }
-
-        // Frozen and grace camps do not accept new members.
-        if (camp.status === 'frozen' || camp.status === 'grace') {
-          throwUserError('This camp is not accepting new members right now.')
-        }
-
-        const existing = await getMembership(ctx, user._id, camp._id)
-        const userTier = await getEntitlementSubscriptionTier(ctx, user._id)
-        const eligibility = evaluateJoinRules(camp, user, userTier, existing)
-
-        if (!eligibility.canJoin) {
-          const messages: Record<string, string> = {
-            wrong_gender: 'This camp is limited to members who match its gender setting',
-            tier_too_low: 'Your subscription tier is too low to join this camp',
-            underage: 'You do not meet the age requirement for this camp',
-            invite_only: 'This camp requires an invite',
-            banned: 'You cannot join this camp',
-            already_member: 'You are already a member of this camp',
-            already_pending: 'You already have a pending request for this camp',
-            rejected_cooldown:
-              'Your previous request was denied. You can try again after the cooldown period.',
-            private: 'This is a private camp',
-          }
-          throwUserError(messages[eligibility.reason] ?? 'You cannot join this camp')
-        }
-
-        const status = getJoinMembershipStatus(camp)
-        const membershipId = await upsertMembership(ctx, {
-          userId: user._id,
-          campId: camp._id,
-          status,
-          role: 'member',
-        })
-
-        if (status === 'active') {
-          await refreshActiveMemberCount(ctx, camp._id)
-        }
-        if (status === 'pending') {
-          await scheduleAccessRequestNotifications(ctx, {
-            membershipId,
-            camp,
-            requester: user,
-          })
-        }
-
-        return {
-          membershipId,
-          status,
-        }
-      },
+      () => joinCamp(ctx, args.campId),
     ),
 })
 
@@ -1032,66 +1046,7 @@ export const requestJoin = mutation({
     withUserFacingErrors(
       'camps.requestJoin',
       'Something went wrong requesting to join this camp. Please try again.',
-      async () => {
-        const user = await getCurrentUser(ctx)
-        const camp = await ctx.db.get(args.campId)
-        if (!camp || !isCampVisibleStatus(camp.status)) {
-          throwUserError('Camp not found')
-        }
-
-        // Frozen and grace camps do not accept new join requests.
-        if (camp.status === 'frozen' || camp.status === 'grace') {
-          throwUserError('This camp is not accepting new members right now.')
-        }
-        if (camp.access !== 'approval') {
-          throwUserError('This camp does not require approval to join')
-        }
-
-        const existing = await getMembership(ctx, user._id, camp._id)
-        const userTier = await getEntitlementSubscriptionTier(ctx, user._id)
-        const eligibility = evaluateJoinRules(camp, user, userTier, existing)
-
-        if (!eligibility.canJoin) {
-          const messages: Record<string, string> = {
-            wrong_gender: 'This camp is limited to members who match its gender setting',
-            tier_too_low: 'Your subscription tier is too low to join this camp',
-            underage: 'You do not meet the age requirement for this camp',
-            invite_only: 'This camp requires an invite',
-            banned: 'You cannot join this camp',
-            already_member: 'You are already a member of this camp',
-            already_pending: 'You already have a pending request for this camp',
-            rejected_cooldown:
-              'Your previous request was denied. You can try again after the cooldown period.',
-            private: 'This is a private camp',
-          }
-          throwUserError(messages[eligibility.reason] ?? 'You cannot join this camp')
-        }
-
-        const status = getJoinMembershipStatus(camp)
-        const membershipId = await upsertMembership(ctx, {
-          userId: user._id,
-          campId: camp._id,
-          status,
-          role: 'member',
-        })
-
-        if (status === 'active') {
-          await refreshActiveMemberCount(ctx, camp._id)
-        }
-
-        if (status === 'pending') {
-          await scheduleAccessRequestNotifications(ctx, {
-            membershipId,
-            camp,
-            requester: user,
-          })
-        }
-
-        return {
-          membershipId,
-          status,
-        }
-      },
+      () => joinCamp(ctx, args.campId, { requireApprovalAccess: true }),
     ),
 })
 
