@@ -31,6 +31,12 @@ interface CompletionScreenProps {
   bondfireId?: Id<'bondfires'>
   /** Camp name used to build the pre-filled default title. */
   campName?: string
+  /**
+   * Which invite flow the Invite button opens. Personal bondfires use signed
+   * playback and require a code-based 'personal-bondfire' invite; camp
+   * bondfires use the public 'bondfire' deep link. Defaults to 'bondfire'.
+   */
+  inviteMode?: 'bondfire' | 'personal-bondfire'
 }
 
 export function CompletionScreen({
@@ -38,6 +44,7 @@ export function CompletionScreen({
   onContinue,
   bondfireId,
   campName,
+  inviteMode = 'bondfire',
 }: CompletionScreenProps) {
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
@@ -66,6 +73,9 @@ export function CompletionScreen({
    */
   const saveTitle = useCallback(async () => {
     if (!bondfireId) return
+    // Untouched: provisioning already persisted this exact default title, so
+    // there's nothing to re-save. (editedTitle is only set once the user types.)
+    if (editedTitle === null) return
     const trimmed = title.trim().slice(0, MAX_TITLE_LENGTH)
     if (!trimmed || savedTitleRef.current === trimmed) return
     try {
@@ -77,7 +87,7 @@ export function CompletionScreen({
         bondfireId,
       })
     }
-  }, [bondfireId, title, updateTitle])
+  }, [bondfireId, editedTitle, title, updateTitle])
 
   const handleDone = useCallback(async () => {
     if (isSaving) return
@@ -212,7 +222,7 @@ export function CompletionScreen({
       {/* Invite Sheet — closing it also closes the completion screen */}
       {bondfireId && (
         <InviteSheet
-          mode="bondfire"
+          mode={inviteMode}
           id={bondfireId}
           title={title.trim() || undefined}
           open={isInviteSheetOpen}

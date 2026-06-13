@@ -51,7 +51,10 @@ export default function CreateScreen() {
   const { canCreate, showPaywall } = useSubscription()
 
   const uploadStartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const wasFocusedRef = useRef(isFocused)
+  // Starts false (not isFocused) so a fresh mount counts as "returning":
+  // initializing to true permanently skipped the completion-reset effect when
+  // this screen remounted while the recording store held stale state.
+  const wasFocusedRef = useRef(false)
   const didRouteFirstSparkRef = useRef(false)
   const personalCreateStartedAtRef = useRef<number | null>(null)
 
@@ -75,6 +78,15 @@ export default function CreateScreen() {
   const currentCampId = useValue(appStore$.currentCampId)
   const shouldUseLivePublish = livePublishEnabled && isLivePublisherAvailable
   const liveRecordId = useValue(livePublishStore$.recordId)
+
+  // Invariant: on the live create flow (not a response), the bondfire row is
+  // provisioned BEFORE recording, so reaching completion guarantees a recordId.
+  // If we ever hit 'completion' here without one, nothing was actually created —
+  // showing the degraded, un-shareable completion screen would be a lie. Detect
+  // that state so we can recover to the camera instead of rendering it.
+  const isLiveBondfireCompletion =
+    recordingPhase === 'completion' && !!videoUri && shouldUseLivePublish && !respondTo
+  const liveCompletionMissingRecord = isLiveBondfireCompletion && !liveRecordId
 
   const createMuxDirectUpload = useAction(api.videos.createMuxDirectUpload)
   const getMuxUploadStatus = useAction(api.videos.getMuxUploadStatus)
@@ -259,18 +271,31 @@ export default function CreateScreen() {
     }
 
     if (recordingStore$.phase.get() === 'completion') {
-      recordingActions.setPhase('idle', 'returned to create tab after completion')
-      recordingStore$.pendingFacing.set(null)
-      recordingStore$.videoUri.set(null)
-      recordingStore$.recordingDuration.set(0)
-      recordingStore$.progress.set(0)
-      recordingStore$.progressStage.set('')
+      recordingActions.resetFlow('returned to create tab after completion')
       // Clear respondTo param so user can create a new spark instead of responding.
       if (respondTo) {
         router.replace(routes.create)
       }
     }
   }, [isFocused, respondTo, router])
+
+  // Recover from an inconsistent live completion: phase says 'completion' but no
+  // bondfire was provisioned. This shouldn't happen (provisioning precedes
+  // recording), but if stale state ever produces it, reset to idle so the
+  // pre-connect re-provisions and the user can record again — rather than being
+  // stranded on a completion screen with no title to edit and nothing to share.
+  useEffect(() => {
+    if (!liveCompletionMissingRecord) {
+      return
+    }
+    telemetry.warn(
+      'create:completion',
+      'Live completion reached without a provisioned bondfire id; recovering to idle',
+      { isPersonalCamp },
+    )
+    livePublishActions.reset()
+    recordingActions.resetFlow('live completion missing record id')
+  }, [liveCompletionMissingRecord, isPersonalCamp])
 
   const requestPermissions = useCallback(async () => {
     if (!cameraPermission?.granted) {
@@ -627,7 +652,28 @@ export default function CreateScreen() {
     )
   }
 
-  // Completion screen - shown immediately after recording
+  // While the recovery effect above resets the inconsistent state, show a
+  // spinner rather than flashing either the camera or the degraded completion
+  // screen.
+  if (liveCompletionMissingRecord) {
+    return (
+      <YStack
+        flex={1}
+        backgroundColor={'$background'}
+        alignItems="center"
+        justifyContent="center"
+        gap={14}
+      >
+        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+        <Spinner size="large" color={'$primary'} />
+      </YStack>
+    )
+  }
+
+  // Completion screen - shown immediately after recording. For the live create
+  // flow this is only reached with a provisioned bondfire id (see the invariant
+  // above), so the completion screen always has a title to edit and a row to
+  // share; the id-less branch is only for responses and legacy uploads.
   if (recordingPhase === 'completion' && videoUri) {
     const completionDetail = respondTo
       ? 'Awesome, great video! We are getting your response ready now. It may take up to two minutes to show in activity lists.'
@@ -649,25 +695,28 @@ export default function CreateScreen() {
         detail={completionDetail}
         bondfireId={editableBondfireId}
         campName={selectedCamp?.name}
+        inviteMode={isPersonalCamp ? 'personal-bondfire' : 'bondfire'}
         onContinue={() => {
-          const targetBondfireId = respondTo ?? liveRecordId
-          livePublishActions.reset()
-          if (isPersonalCamp) {
-            // Live publish already has the Convex bondfire ID; background upload doesn't yet
-            const personalBondfireId = shouldUseLivePublish && liveRecordId ? liveRecordId : 'new'
-            router.replace(
-              routes.personalCampWithInvite(
-                personalBondfireId,
-                personalCreateStartedAtRef.current ?? Date.now(),
-              ),
-            )
-            return
-          }
-          if (shouldUseLivePublish && targetBondfireId) {
-            router.replace(routes.bondfire(targetBondfireId))
-            return
+          // Always return to the Feed with the navigation stack reset — for
+          // every flow (camp, personal hearth, and responses). Previously
+          // personal routed to the hearth screen and camp/responses to a
+          // bondfire detail page, which could strand the user behind pushed
+          // screens (and, for personal, an auto-opened invite sheet) requiring
+          // multiple back presses to escape. dismissAll() clears any pushed
+          // (main)-stack screens; replace() then selects the Feed tab.
+          if (router.canDismiss()) {
+            router.dismissAll()
           }
           router.replace(routes.feed)
+
+          // Tear down completion state NOW instead of waiting for the
+          // blur→refocus effect above. That effect is only a safety net: some
+          // exit routes never produce the focus transition it expects, which
+          // left phase stuck at 'completion'. Re-entering this tab then showed
+          // a zombie completion screen — and because recordId had already been
+          // reset, it rendered without the title field — instead of the camera.
+          livePublishActions.reset()
+          recordingActions.resetFlow('completion dismissed via continue')
         }}
       />
     )
