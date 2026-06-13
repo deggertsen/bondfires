@@ -144,7 +144,7 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
     if (!shareUrl) return
     try {
       await RNShare.share({
-        message: `Join me on Bondfires!\n\n${shareUrl}`,
+        message: `Join my Bondfire!\n\n${shareUrl}`,
         url: shareUrl,
       })
     } catch {
