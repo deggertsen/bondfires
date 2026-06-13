@@ -4,12 +4,7 @@ import type { NativePublisherStatus } from './livePublisherContract'
 // JS-side lifecycle states layered on top of the native contract:
 // idle (nothing happening), creating (provisioning Mux), ready (provisioned,
 // not publishing), stopping (teardown in flight).
-export type LivePublishStatus =
-  | NativePublisherStatus
-  | 'idle'
-  | 'creating'
-  | 'ready'
-  | 'stopping'
+export type LivePublishStatus = NativePublisherStatus | 'idle' | 'creating' | 'ready' | 'stopping'
 
 export interface LivePublishState {
   sessionId: string | null

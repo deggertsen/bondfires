@@ -186,7 +186,9 @@ export default function LoginScreen() {
                 value={password}
                 onChangeText={(text) => form$.password.set(text)}
                 secureTextEntry
-                autoComplete="password"
+                autoCapitalize="none"
+                autoComplete="current-password"
+                autoCorrect={false}
                 error={!!error}
               />
             </YStack>

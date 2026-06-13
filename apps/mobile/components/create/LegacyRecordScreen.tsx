@@ -206,7 +206,10 @@ export function LegacyRecordScreen({
   // create router, since uploads are shared between paths.)
   useEffect(() => {
     if (!isFocused || !isAppActive) {
-      if (recordingStore$.phase.get() === 'recording' || recordingStore$.phase.get() === 'stopping') {
+      if (
+        recordingStore$.phase.get() === 'recording' ||
+        recordingStore$.phase.get() === 'stopping'
+      ) {
         try {
           cameraRef.current?.stopRecording()
         } catch (error) {
@@ -866,10 +869,7 @@ export function LegacyRecordScreen({
               </YStack>
             )}
 
-            <Pressable
-              onPress={toggleFacing}
-              disabled={phase === 'stopping' || isSwitchingCamera}
-            >
+            <Pressable onPress={toggleFacing} disabled={phase === 'stopping' || isSwitchingCamera}>
               <YStack
                 width={40}
                 height={40}
@@ -956,11 +956,7 @@ export function LegacyRecordScreen({
                   phase === 'recording' || phase === 'stopping' ? '$error' : 'transparent'
                 }
                 opacity={
-                  !isCameraReady && phase !== 'recording'
-                    ? 0.5
-                    : phase === 'stopping'
-                      ? 0.7
-                      : 1
+                  !isCameraReady && phase !== 'recording' ? 0.5 : phase === 'stopping' ? 0.7 : 1
                 }
               >
                 {phase === 'stopping' ? (
