@@ -36,11 +36,10 @@ export default function CreateScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const navigation = useNavigation()
-  const { campId, respondTo, personalCamp, title } = useLocalSearchParams<{
+  const { campId, respondTo, personalCamp } = useLocalSearchParams<{
     campId?: string
     respondTo?: string
     personalCamp?: string
-    title?: string
   }>()
   const isPersonalCamp = personalCamp === '1'
   const isFocused = useIsFocused()
@@ -425,7 +424,13 @@ export default function CreateScreen() {
     } else {
       clearUploadStartTimeout()
     }
-  }, [clearUploadStartTimeout, isAppActive, isFocused, schedulePendingUploads, shouldUseLivePublish])
+  }, [
+    clearUploadStartTimeout,
+    isAppActive,
+    isFocused,
+    schedulePendingUploads,
+    shouldUseLivePublish,
+  ])
 
   const handleCampConfirmed = useCallback(
     (selectedId: Id<'camps'>) => {
@@ -630,9 +635,20 @@ export default function CreateScreen() {
         ? 'Your Personal Bondfire is being processed. Invite someone to join the conversation!'
         : 'Awesome, great video! We are getting it ready now. It may take up to two minutes for your video to show in Discover, Recent, and Active.'
 
+    // The inline title field / Invite button only apply when the user owns
+    // the just-created bondfire and it already exists server-side: the
+    // live-publish camp and personal flows. Responses edit someone else's
+    // bondfire, and legacy background uploads have no bondfire ID yet.
+    const editableBondfireId =
+      !respondTo && shouldUseLivePublish && liveRecordId
+        ? (liveRecordId as Id<'bondfires'>)
+        : undefined
+
     return (
       <CompletionScreen
         detail={completionDetail}
+        bondfireId={editableBondfireId}
+        campName={selectedCamp?.name}
         onContinue={() => {
           const targetBondfireId = respondTo ?? liveRecordId
           livePublishActions.reset()
@@ -665,7 +681,6 @@ export default function CreateScreen() {
         effectiveCampId={effectiveCampId}
         selectedCamp={selectedCamp}
         selectedCampTags={selectedCampTags}
-        title={title}
         effectiveMaxRecordingSeconds={effectiveMaxRecordingSeconds}
         currentUser={currentUser}
         canCreate={canCreate}

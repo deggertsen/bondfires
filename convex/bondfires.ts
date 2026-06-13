@@ -595,6 +595,37 @@ export const create = mutation({
   },
 })
 
+// Update a bondfire's title. Owner-only; called from the post-record
+// completion screen where the user can edit the pre-filled default title.
+export const updateTitle = mutation({
+  args: {
+    bondfireId: v.id('bondfires'),
+    title: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      throw new Error('Not authenticated')
+    }
+
+    const bondfire = await ctx.db.get(args.bondfireId)
+    if (!bondfire) {
+      throw new Error('Bondfire not found')
+    }
+    if (bondfire.userId !== userId) {
+      throw new Error('Not authorized to edit this bondfire')
+    }
+
+    const trimmed = args.title.trim().slice(0, 80)
+    // Empty titles fall back to a sensible default rather than clearing the field.
+    const title =
+      trimmed || (bondfire.creatorName ? `${bondfire.creatorName}'s Bondfire` : 'My Bondfire')
+
+    await ctx.db.patch(args.bondfireId, { title, updatedAt: Date.now() })
+    return { title }
+  },
+})
+
 // Record a unique view for the current user. Views are counted once per
 // viewer/bondfire and never for the creator's own videos.
 export const incrementViews = mutation({

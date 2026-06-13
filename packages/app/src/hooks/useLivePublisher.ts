@@ -60,6 +60,13 @@ export interface CreateLiveStreamResult {
   recordType: 'bondfire' | 'response'
 }
 
+export interface LivePublisherStopResult {
+  /** Whether Mux acknowledged the /complete signal that ends recording early. */
+  completeSignaled: boolean | undefined
+  /** False when the backend was unreachable (e.g. offline) at stop time. */
+  backendNotified: boolean
+}
+
 export function useLivePublisher(options: {
   publisher: LivePublisherNativeModule
   createLiveStream: (args: {
@@ -437,7 +444,7 @@ export function useLivePublisher(options: {
     [options, startStatsSampling],
   )
 
-  const stop = useCallback(async () => {
+  const stop = useCallback(async (): Promise<LivePublisherStopResult> => {
     const sessionId = livePublishStore$.sessionId.get()
     livePublishActions.setStatus('stopping')
     let publisherError: unknown
@@ -488,8 +495,15 @@ export function useLivePublisher(options: {
       throw publisherError
     }
 
-    if (backendError) {
-      throw backendError
+    // A failed /complete signal is non-fatal. The native publisher has already
+    // captured and flushed the recording to Mux, which finalizes the recorded
+    // asset via the reconnect window even when we never reach the backend; the
+    // asset.ready webhook then promotes the record to 'ready'. Surface whether
+    // the backend was notified instead of throwing — throwing here used to dump
+    // an offline creator back to an idle camera as if the recording was lost.
+    return {
+      completeSignaled,
+      backendNotified: !backendError,
     }
   }, [options, stopStatsSampling])
 
