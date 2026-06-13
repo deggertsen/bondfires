@@ -51,7 +51,10 @@ export default function CreateScreen() {
   const { canCreate, showPaywall } = useSubscription()
 
   const uploadStartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const wasFocusedRef = useRef(isFocused)
+  // Starts false (not isFocused) so a fresh mount counts as "returning":
+  // initializing to true permanently skipped the completion-reset effect when
+  // this screen remounted while the recording store held stale state.
+  const wasFocusedRef = useRef(false)
   const didRouteFirstSparkRef = useRef(false)
   const personalCreateStartedAtRef = useRef<number | null>(null)
 
@@ -651,23 +654,31 @@ export default function CreateScreen() {
         campName={selectedCamp?.name}
         onContinue={() => {
           const targetBondfireId = respondTo ?? liveRecordId
-          livePublishActions.reset()
-          if (isPersonalCamp) {
-            // Live publish already has the Convex bondfire ID; background upload doesn't yet
-            const personalBondfireId = shouldUseLivePublish && liveRecordId ? liveRecordId : 'new'
-            router.replace(
-              routes.personalCampWithInvite(
+          // Live publish already has the Convex bondfire ID; background upload doesn't yet
+          const personalBondfireId = shouldUseLivePublish && liveRecordId ? liveRecordId : 'new'
+          const target = isPersonalCamp
+            ? routes.personalCampWithInvite(
                 personalBondfireId,
                 personalCreateStartedAtRef.current ?? Date.now(),
-              ),
-            )
-            return
-          }
-          if (shouldUseLivePublish && targetBondfireId) {
-            router.replace(routes.bondfire(targetBondfireId))
-            return
-          }
-          router.replace(routes.feed)
+              )
+            : shouldUseLivePublish && targetBondfireId
+              ? routes.bondfire(targetBondfireId)
+              : routes.feed
+          router.replace(target)
+
+          // Tear down completion state NOW instead of waiting for the
+          // blur→refocus effect above. That effect is only a safety net: some
+          // exit routes never produce the focus transition it expects, which
+          // left phase stuck at 'completion'. Re-entering this tab then showed
+          // a zombie completion screen — and because recordId had already been
+          // reset, it rendered without the title field — instead of the camera.
+          livePublishActions.reset()
+          recordingActions.setPhase('idle', 'completion dismissed via continue')
+          recordingStore$.pendingFacing.set(null)
+          recordingStore$.videoUri.set(null)
+          recordingStore$.recordingDuration.set(0)
+          recordingStore$.progress.set(0)
+          recordingStore$.progressStage.set('')
         }}
       />
     )
