@@ -74,6 +74,13 @@ export function LiveRecordScreen({
 
   const preConnectInFlightRef = useRef(false)
   const backgroundCancelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Debounce timer for tearing down a provisioned-but-unstarted session when
+  // the screen loses focus. useIsFocused() can flap during navigation
+  // transitions; cancelling on the first blur let the auto-arm effect rebuild
+  // the session immediately, producing an infinite provision/cancel loop (the
+  // UI flickered between "Tap to record" and "Preparing camera..."). We only
+  // act on a blur that persists past this grace window.
+  const blurCancelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const state$ = useObservable({
     isAppActive: AppState.currentState === 'active',
@@ -193,6 +200,10 @@ export function LiveRecordScreen({
       if (backgroundCancelTimeoutRef.current) {
         clearTimeout(backgroundCancelTimeoutRef.current)
         backgroundCancelTimeoutRef.current = null
+      }
+      if (blurCancelTimeoutRef.current) {
+        clearTimeout(blurCancelTimeoutRef.current)
+        blurCancelTimeoutRef.current = null
       }
     }
   }, [])
@@ -481,6 +492,13 @@ export function LiveRecordScreen({
 
   useEffect(() => {
     if (isFocused && isAppActive) {
+      // Focus/active regained — abort any pending blur teardown. Clearing here
+      // is what absorbs a flapping useIsFocused() and breaks the otherwise
+      // infinite arm/cancel loop.
+      if (blurCancelTimeoutRef.current) {
+        clearTimeout(blurCancelTimeoutRef.current)
+        blurCancelTimeoutRef.current = null
+      }
       return
     }
 
@@ -491,9 +509,22 @@ export function LiveRecordScreen({
     }
 
     if (currentRecordingState === 'pre_connected' && !isFocused) {
-      void cancelLiveRecording()
+      // Debounce: only tear down the provisioned session if the blur persists.
+      // A brief navigation-transition blur must not cancel, or the auto-arm
+      // effect rebuilds the session on the next render and we ping-pong
+      // forever (provision/cancel storm against Mux). Re-check state at fire
+      // time so a refocus or a phase change between scheduling and firing is a
+      // no-op. (App-background teardown is handled separately on a 2-min timer.)
+      if (!blurCancelTimeoutRef.current) {
+        blurCancelTimeoutRef.current = setTimeout(() => {
+          blurCancelTimeoutRef.current = null
+          if (recordingStore$.phase.get() === 'pre_connected' && !state$.isFocused.get()) {
+            void cancelLiveRecording()
+          }
+        }, 1500)
+      }
     }
-  }, [cancelLiveRecording, isAppActive, isFocused, stopLiveRecording])
+  }, [cancelLiveRecording, isAppActive, isFocused, state$, stopLiveRecording])
 
   const toggleLiveFacing = useCallback(() => {
     const currentRecordingState = recordingStore$.phase.get()
@@ -547,12 +578,16 @@ export function LiveRecordScreen({
           : null
 
   useEffect(() => {
-    if (!shouldRenderCamera || phase !== 'idle' || preConnectFailed) {
+    // Gate arming on the same focus/active signal the blur-teardown effect
+    // uses. If they keyed off different sources, one could arm while the other
+    // tears down and the screen would oscillate. (startLivePreConnect also
+    // re-checks state$ internally as a belt-and-suspenders guard.)
+    if (!shouldRenderCamera || phase !== 'idle' || preConnectFailed || !isFocused || !isAppActive) {
       return
     }
 
     void startLivePreConnect()
-  }, [preConnectFailed, phase, shouldRenderCamera, startLivePreConnect])
+  }, [preConnectFailed, phase, shouldRenderCamera, startLivePreConnect, isFocused, isAppActive])
 
   // Clean up an abandoned pre-connect after 2 minutes in the background.
   useEffect(() => {
