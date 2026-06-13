@@ -31,7 +31,6 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
   const [copied, setCopied] = useState(false)
   const [code, setCode] = useState<string | null>(null)
   const [isGeneratingCode, setIsGeneratingCode] = useState(false)
-  const [codeError, setCodeError] = useState(false)
   const [inviteSent, setInviteSent] = useState<Record<string, boolean>>({})
   const hasRequestedCodeRef = useRef(false)
 
@@ -42,7 +41,6 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
     void inviteTargetKey
     setCopied(false)
     setCode(null)
-    setCodeError(false)
     setInviteSent({})
     hasRequestedCodeRef.current = false
   }, [inviteTargetKey])
@@ -50,7 +48,6 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
   useEffect(() => {
     if (open) return
     setCopied(false)
-    setCodeError(false)
     setIsGeneratingCode(false)
     if (!code) {
       hasRequestedCodeRef.current = false
@@ -58,14 +55,13 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
   }, [code, open])
 
   useEffect(() => {
-    if (
-      !open ||
-      mode === 'bondfire' ||
-      code ||
-      codeError ||
-      isGeneratingCode ||
-      hasRequestedCodeRef.current
-    ) {
+    // hasRequestedCodeRef is the single-fire guard. Do NOT gate on (or depend
+    // on) code/isGeneratingCode: those are state this effect itself sets, so
+    // listing them as deps made the effect re-run the instant we set
+    // isGeneratingCode(true). The re-run's cleanup flipped `cancelled` to true
+    // and orphaned the in-flight mutation before it resolved — leaving the
+    // sheet stuck on "Generating invite..." forever.
+    if (!open || mode === 'bondfire' || hasRequestedCodeRef.current) {
       return
     }
 
@@ -86,7 +82,6 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
       })
       .catch((error) => {
         if (!cancelled) {
-          setCodeError(true)
           Alert.alert('Invite Failed', error instanceof Error ? error.message : String(error))
         }
       })
@@ -99,7 +94,7 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
     return () => {
       cancelled = true
     }
-  }, [code, codeError, createCampInvite, createPersonalInvite, id, isGeneratingCode, mode, open])
+  }, [open, mode, id, createCampInvite, createPersonalInvite])
 
   // ── In-app contacts ──────────────────────────────────────────────────
 
