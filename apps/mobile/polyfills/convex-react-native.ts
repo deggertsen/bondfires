@@ -13,17 +13,19 @@
  * fell back to slow internal backoff — the app would sit on a spinner with all
  * queries stuck in `undefined`.
  *
- * This polyfill instead keeps a real listener registry and drives an `online`
- * event whenever the app returns to the foreground (via `AppState`), so Convex
- * reconnects promptly. This is dependency-free; a fuller connectivity-driven
- * reconnect that also catches mid-session network flaps would layer NetInfo /
- * expo-network on top of the same registry.
+ * This polyfill instead keeps a real listener registry and drives `online` /
+ * `offline` events from two sources, so Convex reconnects promptly:
+ *   - `expo-network` connectivity changes catch mid-session network flaps (the
+ *     socket silently dies when the connection drops and comes back).
+ *   - `AppState` foregrounding catches the common "came back to the app" case
+ *     and serves as a belt-and-suspenders nudge.
  *
  * This should be imported BEFORE any Convex imports.
  *
  * See: https://github.com/get-convex/convex-backend/issues/74
  */
 
+import * as Network from 'expo-network'
 import { AppState, Platform } from 'react-native'
 
 if (Platform.OS !== 'web') {
@@ -69,10 +71,34 @@ if (Platform.OS !== 'web') {
       }
     }
 
-    // RN has no browser `online` event. Use foregrounding as the reconnect
-    // trigger: when the app becomes active, tell Convex the connection is
-    // available again so it resets backoff and reconnects immediately rather
-    // than waiting out a long backoff with the socket silently dead.
+    // RN has no browser `online`/`offline` events. Synthesize them so Convex's
+    // WebSocket manager resets backoff and reconnects immediately instead of
+    // sitting out a long backoff with a silently-dead socket.
+
+    // 1. Connectivity changes (mid-session flaps). expo-network reports when the
+    //    device regains/loses reachability — the real signal we want.
+    let lastOnline: boolean | null = null
+    const applyConnectivity = (isConnected?: boolean, isInternetReachable?: boolean | null) => {
+      // Treat "connected and not explicitly unreachable" as online;
+      // isInternetReachable is null/undefined on some platforms.
+      const online = isConnected === true && isInternetReachable !== false
+      if (online === lastOnline) return
+      lastOnline = online
+      dispatch(online ? 'online' : 'offline')
+    }
+
+    Network.addNetworkStateListener((state) => {
+      applyConnectivity(state.isConnected, state.isInternetReachable)
+    })
+    // Seed the initial state so a launch on a flaky connection still resolves.
+    Network.getNetworkStateAsync()
+      .then((state) => applyConnectivity(state.isConnected, state.isInternetReachable))
+      .catch(() => {
+        // Best-effort seeding; the listener will correct it on the next change.
+      })
+
+    // 2. Foregrounding (belt-and-suspenders): nudge a reconnect when the app
+    //    becomes active, regardless of connectivity-event timing.
     AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         dispatch('online')

@@ -7048,6 +7048,16 @@ __metadata:
   languageName: node
   linkType: hard
 
+"expo-network@npm:~8.0.8":
+  version: 8.0.8
+  resolution: "expo-network@npm:8.0.8"
+  peerDependencies:
+    expo: "*"
+    react: "*"
+  checksum: 10c0/e12e4d136dae02e22ceaf0344ed7ee053e5aed126a71e69718c91bf7161c8bc97f745eec6e794f66e60cfba44d341b4462ce2987c958671a80fc5bea85dd124d
+  languageName: node
+  linkType: hard
+
 "expo-notifications@npm:~0.32.17":
   version: 0.32.17
   resolution: "expo-notifications@npm:0.32.17"
@@ -9105,6 +9115,7 @@ __metadata:
     expo-keep-awake: "npm:~15.0.8"
     expo-linear-gradient: "npm:~15.0.8"
     expo-linking: "npm:~8.0.12"
+    expo-network: "npm:~8.0.8"
     expo-notifications: "npm:~0.32.17"
     expo-router: "npm:~6.0.24"
     expo-splash-screen: "npm:~31.0.13"
