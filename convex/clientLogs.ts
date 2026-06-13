@@ -10,9 +10,9 @@ import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalMutation, mutation, query } from './_generated/server'
 import { auth } from './auth'
-import { BONDFIRE_FAILURE_EVENT_PREFIX } from './bondfireFailureCleanup'
 
 const LOG_LEVELS = ['error', 'warn', 'info', 'breadcrumb'] as const
+const PURGEABLE_RETENTIONS = [undefined, 'standard'] as const
 const MAX_BATCH_SIZE = 20
 const MAX_RETENTION_DAYS = 30
 const MAX_LIST_LIMIT = 100
@@ -41,6 +41,7 @@ function logEntry(doc: Doc<'clientLogs'>) {
     platform: doc.platform,
     appVersion: doc.appVersion,
     sessionId: doc.sessionId,
+    retention: doc.retention,
     createdAt: doc.createdAt,
   }
 }
@@ -83,6 +84,7 @@ export const create = mutation({
       platform: args.platform,
       appVersion: args.appVersion,
       sessionId: args.sessionId,
+      retention: 'standard',
       createdAt: args.createdAt,
     })
   },
@@ -133,6 +135,7 @@ export const createBatch = mutation({
         platform: entry.platform,
         appVersion: entry.appVersion,
         sessionId: entry.sessionId,
+        retention: 'standard',
         createdAt: entry.createdAt,
       })
       ids.push(id)
@@ -303,6 +306,7 @@ export const createInternal = internalMutation({
       platform: args.platform,
       appVersion: undefined,
       sessionId: undefined,
+      retention: 'standard',
       createdAt: args.createdAt,
     })
   },
@@ -318,22 +322,23 @@ export const purgeOld = internalMutation({
     const cutoff = Date.now() - MAX_RETENTION_DAYS * 24 * 60 * 60 * 1000
     let deleted = 0
 
-    // Scan each level index for old entries
+    // Scan purgeable retention buckets only. Forensic rows are intentionally
+    // retained indefinitely and should not block old standard logs from being
+    // reached by this capped cleanup query.
     for (const level of LOG_LEVELS) {
-      const oldEntries = await ctx.db
-        .query('clientLogs')
-        .withIndex('by_log_level', (q) => q.eq('level', level))
-        .filter((q) => q.lt(q.field('createdAt'), cutoff))
-        .take(500)
+      for (const retention of PURGEABLE_RETENTIONS) {
+        const oldEntries = await ctx.db
+          .query('clientLogs')
+          .withIndex('by_log_retention_level', (q) =>
+            q.eq('retention', retention).eq('level', level),
+          )
+          .filter((q) => q.lt(q.field('createdAt'), cutoff))
+          .take(500)
 
-      for (const entry of oldEntries) {
-        // Preserve forensic failure records past the normal window — these are
-        // the evidence trail for auto-deleted/broken bondfires.
-        if (entry.event.startsWith(BONDFIRE_FAILURE_EVENT_PREFIX)) {
-          continue
+        for (const entry of oldEntries) {
+          await ctx.db.delete(entry._id)
+          deleted++
         }
-        await ctx.db.delete(entry._id)
-        deleted++
       }
     }
 

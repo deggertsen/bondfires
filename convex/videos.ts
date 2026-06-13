@@ -752,6 +752,7 @@ async function logServerEvent(
     message: args.message,
     data: args.data,
     platform: 'server',
+    retention: 'standard',
     createdAt: Date.now(),
   })
 }

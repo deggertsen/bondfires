@@ -300,6 +300,7 @@ export const deleteExpiredBondfireRecords = internalMutation({
             ageMs: Date.now() - bondfire.createdAt,
           },
           platform: 'server',
+          retention: 'forensic',
           createdAt: Date.now(),
         })
         continue

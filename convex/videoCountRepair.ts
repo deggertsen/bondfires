@@ -80,6 +80,7 @@ export const repairVideoCounts = internalMutation({
             responses: videos.length,
           },
           platform: 'server',
+          retention: 'standard',
           createdAt: Date.now(),
         })
       }

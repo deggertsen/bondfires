@@ -730,12 +730,14 @@ export default defineSchema({
     platform: v.union(v.literal('ios'), v.literal('android'), v.literal('server')),
     appVersion: v.optional(v.string()),
     sessionId: v.optional(v.string()),
+    retention: v.optional(v.union(v.literal('standard'), v.literal('forensic'))),
     createdAt: v.number(),
   })
     .index('by_log_user', ['userId', 'createdAt'])
     .index('by_log_level', ['level', 'createdAt'])
     .index('by_log_event', ['event', 'createdAt'])
-    .index('by_log_session', ['sessionId', 'createdAt']),
+    .index('by_log_session', ['sessionId', 'createdAt'])
+    .index('by_log_retention_level', ['retention', 'level', 'createdAt']),
 
   // Bondfire Invites - in-app invites sent between users
   bondfireInvites: defineTable({

@@ -106,6 +106,7 @@ export async function recordBondfireFailure(
     platform: 'server',
     appVersion: undefined,
     sessionId: undefined,
+    retention: 'forensic',
     createdAt: Date.now(),
   })
 }
