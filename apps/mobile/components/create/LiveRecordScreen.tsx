@@ -413,16 +413,30 @@ export function LiveRecordScreen({
     }
 
     try {
-      await livePublisher.stop()
+      const result = await livePublisher.stop()
+      // The recording is captured the moment the publisher stops. Mux finalizes
+      // the VOD via its reconnect window and the asset.ready webhook saves it,
+      // so always advance to the completion/processing screen rather than
+      // resetting to idle (which read as "recording lost").
       recordingActions.setPhase('completion', 'live stop succeeded')
       recordingStore$.videoUri.set('live')
       state$.showInviteSheet.set(false)
+
+      if (result.backendNotified === false) {
+        // Stopped while offline / the backend was unreachable, so Mux was never
+        // signaled to end recording early. It still finalizes via the reconnect
+        // window once we're back online — set expectations so the creator
+        // doesn't think the recording vanished.
+        Alert.alert(
+          'Saving your Bondfire',
+          "You're offline, so this didn't finalize right away. Your recording will finish processing once you're back online.",
+        )
+      }
     } catch (error) {
+      // Only a native publisher.stop() failure reaches here. The local capture
+      // pipeline is in an unknown state, so reset to idle.
       logRecordingError(error)
-      Alert.alert(
-        'Stopping...',
-        'The connection stopped locally, but the saved video may still finish processing.',
-      )
+      Alert.alert('Recording Failed', "We couldn't stop the recording cleanly. Please try again.")
       livePublishActions.reset()
       recordingActions.setPhase('idle', 'live stop failed')
       recordingStore$.videoUri.set(null)
