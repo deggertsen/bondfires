@@ -212,8 +212,7 @@ export default function ProfileScreen() {
   // should never appear here. Keeping the gate local to the render is enough —
   // `cleanupForRefresh` is harmless and the queue store itself stays persisted.
   const isLivePublisherAvailable = useValue(recordingStore$.isLivePublisherAvailable)
-  const shouldUseLivePublish =
-    preferences.livePublishEnabled && isLivePublisherAvailable
+  const shouldUseLivePublish = preferences.livePublishEnabled && isLivePublisherAvailable
 
   const { currentTier, isRestoring, managePlan, restore, showPaywall } = useSubscription()
   const { balance: kindlingBalance, isLoading: kindlingBalanceLoading } = useKindlingBalance()

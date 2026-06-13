@@ -1,4 +1,4 @@
-import { observable } from '@legendapp/state'
+import { observable, syncState, when } from '@legendapp/state'
 import { ObservablePersistMMKV } from '@legendapp/state/persist-plugins/mmkv'
 import { configureObservableSync, syncObservable } from '@legendapp/state/sync'
 
@@ -31,6 +31,11 @@ export interface AppState {
   // Camp context
   currentCampId: string | null
 
+  // Bumped when we need a one-time fix to already-persisted state. See the
+  // migration block below. Absent on installs that predate this field, which
+  // read as 0 and get migrated.
+  migrationVersion: number
+
   // Push permission priming — we never fire the one-shot OS permission
   // dialog cold. An in-app pre-prompt asks first, at a high-intent moment
   // (the finished-recording screen after the user's first commit).
@@ -57,6 +62,7 @@ const defaultState: AppState = {
   isAuthenticated: false,
   userId: null,
   currentCampId: null,
+  migrationVersion: 0,
   pushPrimer: {
     lastShownAt: null,
     declineCount: 0,
@@ -75,6 +81,39 @@ syncObservable(appStore$, {
   persist: {
     name: 'bondfires-app',
   },
+})
+
+// ── One-time migrations for already-persisted state ──────────────────────────
+//
+// Persisted preferences shadow code defaults: once a value lives in MMKV, later
+// changes to `defaultState` never reach existing installs. Bump
+// CURRENT_MIGRATION_VERSION and add a step here when a default change must also
+// apply to devices that already wrote the old value.
+//
+// Must run AFTER persistence has loaded, or the loaded MMKV blob would clobber
+// whatever the migration set. `syncState(...).isPersistLoaded` resolves
+// synchronously for the MMKV plugin, so this normally fires on the same tick.
+const CURRENT_MIGRATION_VERSION = 1
+
+when(syncState(appStore$).isPersistLoaded, () => {
+  const persistedVersion = appStore$.migrationVersion.peek() ?? 0
+  if (persistedVersion >= CURRENT_MIGRATION_VERSION) {
+    return
+  }
+
+  // v1 — live publishing became the default recording path. It originally
+  // shipped as an opt-in dev toggle defaulting to `false`, so early installs
+  // (David's included) persisted `livePublishEnabled: false`. That stale value
+  // silently forced everyone back onto the legacy upload flow: queued Mux
+  // direct uploads stuck at 0%, bondfires missing from the feed until the
+  // asset finished processing, and the plain completion screen with no title
+  // or invite. Clear it once; the dev toggle still sticks afterward because the
+  // migration never runs again.
+  if (persistedVersion < 1) {
+    appStore$.preferences.livePublishEnabled.set(true)
+  }
+
+  appStore$.migrationVersion.set(CURRENT_MIGRATION_VERSION)
 })
 
 // Actions
