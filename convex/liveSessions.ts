@@ -75,8 +75,11 @@ export const listMyActive = query({
       .order('desc')
       .take(20)
 
-    return sessions.filter((session) =>
-      ['created', 'starting', 'live', 'ending'].includes(session.status),
-    )
+    // 'ending' is intentionally excluded: those sessions were cleanly stopped
+    // and are finalizing their recorded VOD on Mux. The screen's orphan-sweep
+    // cancels whatever this returns with reason 'crash_recovery' — cancelling an
+    // 'ending' session there destroys the just-recorded video before Mux saves
+    // it. Truly stuck 'ending' sessions are reclaimed by the 5-minute stale cron.
+    return sessions.filter((session) => ['created', 'starting', 'live'].includes(session.status))
   },
 })

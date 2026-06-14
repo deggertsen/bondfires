@@ -3118,7 +3118,11 @@ export const getActiveMuxLiveSessionForUser = internalQuery({
       .order('desc')
       .take(10)
 
-    const activeStatuses = new Set(['created', 'starting', 'live', 'ending'])
+    // 'ending' is intentionally excluded: that session was already cleanly
+    // stopped (we signaled Mux /complete) and is just finalizing its VOD. It no
+    // longer ingests, so it must not block the creator from starting their next
+    // recording. A genuinely stuck 'ending' session is swept by the stale cron.
+    const activeStatuses = new Set(['created', 'starting', 'live'])
     return sessions.find((session) => activeStatuses.has(session.status)) ?? null
   },
 })
