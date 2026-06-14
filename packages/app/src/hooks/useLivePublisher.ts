@@ -351,7 +351,7 @@ export function useLivePublisher(options: {
   const connect = useCallback(
     async (args: { initialCamera?: 'front' | 'back' } = {}) => {
       const ingest = ingestRef.current
-      if (!ingest) {
+      if (!ingest || ingest.sessionId !== livePublishStore$.sessionId.peek()) {
         throw new Error('No provisioned live stream to connect')
       }
 
