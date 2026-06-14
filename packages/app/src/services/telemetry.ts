@@ -8,6 +8,7 @@
 
 import Constants from 'expo-constants'
 import { Platform } from 'react-native'
+import { createMMKV, type MMKV } from 'react-native-mmkv'
 
 // ---------------------------------------------------------------------------
 // React Native global declarations
@@ -65,6 +66,9 @@ const FLUSH_INTERVAL_MS = 10000
 const MAX_SERIALIZE_DEPTH = 5
 const MAX_SERIALIZE_KEYS = 50
 const TELEMETRY_BATCH_SIZE = 20
+const PERSIST_DEBOUNCE_MS = 1000
+const STORAGE_ID = 'bondfires-telemetry'
+const STORAGE_KEY = 'queue'
 
 function serializeForConvex(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') {
@@ -156,6 +160,23 @@ class LogQueue {
     return batch
   }
 
+  /** Non-destructive copy of the current entries (for persistence). */
+  snapshot(): LogEntry[] {
+    return this.entries.slice()
+  }
+
+  /**
+   * Prepend entries ahead of any in-memory ones, capping at MAX_QUEUE_SIZE by
+   * dropping the oldest. Used to restore persisted logs on startup and to put
+   * failed-flush entries back so they retry instead of vanishing.
+   */
+  restore(entries: LogEntry[]): void {
+    if (entries.length === 0) return
+    const combined = [...entries, ...this.entries]
+    this.entries =
+      combined.length > MAX_QUEUE_SIZE ? combined.slice(combined.length - MAX_QUEUE_SIZE) : combined
+  }
+
   get length(): number {
     return this.entries.length
   }
@@ -173,6 +194,8 @@ export class TelemetryLogger {
   private userId: string | null = null
   private isInitialized = false
   private flushTimer: ReturnType<typeof setTimeout> | null = null
+  private persistTimer: ReturnType<typeof setTimeout> | null = null
+  private storage: MMKV | null = null
   private _mutationCreateBatch: ((args: unknown) => Promise<unknown>) | null = null
 
   // Preserved original console methods
@@ -193,6 +216,13 @@ export class TelemetryLogger {
     } catch {
       this.appVersion = undefined
     }
+
+    try {
+      this.storage = createMMKV({ id: STORAGE_ID })
+    } catch {
+      // MMKV native module unavailable (e.g. tests) — degrade to in-memory only.
+      this.storage = null
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -212,6 +242,14 @@ export class TelemetryLogger {
     this._mutationCreateBatch = api.createBatch
     this.isInitialized = true
 
+    // Reload any logs persisted by a previous session (e.g. the app was killed
+    // before they flushed, or flushes failed during the auth gap) so they get
+    // another delivery attempt.
+    this.loadPersisted()
+    // Drain whatever we just restored (plus anything queued during startup)
+    // promptly rather than waiting a full flush interval.
+    void this.sendBatch()
+
     this.startFlushTimer()
     this.installGlobalErrorHandler()
     this.installConsoleOverrides()
@@ -222,7 +260,13 @@ export class TelemetryLogger {
    * are tagged with the user.
    */
   setUserId(id: string | null): void {
+    const wasAnonymous = this.userId === null
     this.userId = id
+    // Auth just resolved: flush now so anything buffered across the sign-in
+    // (or sign-out/sign-in) auth gap is delivered without waiting a full cycle.
+    if (id !== null && wasAnonymous && this.isInitialized) {
+      void this.sendBatch()
+    }
   }
 
   /**
@@ -300,6 +344,8 @@ export class TelemetryLogger {
       createdAt: Date.now(),
       userId: this.userId ?? undefined,
     })
+
+    this.schedulePersist()
   }
 
   private startFlushTimer(): void {
@@ -316,13 +362,70 @@ export class TelemetryLogger {
     const batch = this.queue.drain()
     if (batch.length === 0) return
 
+    const failed: LogEntry[] = []
     // Match the Convex createBatch limit.
     for (let i = 0; i < batch.length; i += TELEMETRY_BATCH_SIZE) {
       const chunk = batch.slice(i, i + TELEMETRY_BATCH_SIZE)
       try {
         await this._mutationCreateBatch({ entries: chunk })
       } catch {
-        // Silently drop — telemetry failures should not surface to users
+        // Keep failed entries instead of dropping them. The flush can fail for
+        // non-user-facing reasons — a transient network blip or the
+        // sign-out/sign-in auth gap — and silently losing these breadcrumbs is
+        // exactly what blinds triage. They retry on the next flush.
+        failed.push(...chunk)
+      }
+    }
+
+    if (failed.length > 0) {
+      this.queue.restore(failed)
+    }
+    // Reflect the drained/re-queued state on disk immediately so a kill right
+    // after a (partial) flush doesn't resurrect already-delivered entries or
+    // lose the ones still pending.
+    this.persistNow()
+  }
+
+  // -----------------------------------------------------------------------
+  // Persistence (survives app restarts)
+  // -----------------------------------------------------------------------
+
+  private schedulePersist(): void {
+    if (!this.storage || this.persistTimer) return
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null
+      this.persistNow()
+    }, PERSIST_DEBOUNCE_MS)
+  }
+
+  private persistNow(): void {
+    if (!this.storage) return
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer)
+      this.persistTimer = null
+    }
+    try {
+      this.storage.set(STORAGE_KEY, JSON.stringify(this.queue.snapshot()))
+    } catch {
+      // Best-effort persistence; never let it surface.
+    }
+  }
+
+  private loadPersisted(): void {
+    if (!this.storage) return
+    try {
+      const raw = this.storage.getString(STORAGE_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        this.queue.restore(parsed as LogEntry[])
+      }
+    } catch {
+      // Corrupt payload — drop it so we don't get stuck reloading garbage.
+      try {
+        this.storage.remove(STORAGE_KEY)
+      } catch {
+        // ignore
       }
     }
   }

@@ -44,6 +44,7 @@ import type * as reconciliation from "../reconciliation.js";
 import type * as reports from "../reports.js";
 import type * as responseCounts from "../responseCounts.js";
 import type * as sendNotification from "../sendNotification.js";
+import type * as serverTelemetry from "../serverTelemetry.js";
 import type * as subscriptions from "../subscriptions.js";
 import type * as users from "../users.js";
 import type * as videoCountRepair from "../videoCountRepair.js";
@@ -93,6 +94,7 @@ declare const fullApi: ApiFromModules<{
   reports: typeof reports;
   responseCounts: typeof responseCounts;
   sendNotification: typeof sendNotification;
+  serverTelemetry: typeof serverTelemetry;
   subscriptions: typeof subscriptions;
   users: typeof users;
   videoCountRepair: typeof videoCountRepair;

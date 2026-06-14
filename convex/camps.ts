@@ -1032,6 +1032,7 @@ export const join = mutation({
   },
   handler: (ctx, args) =>
     withUserFacingErrors(
+      ctx,
       'camps.join',
       'Something went wrong joining this camp. Please try again.',
       () => joinCamp(ctx, args.campId),
@@ -1044,6 +1045,7 @@ export const requestJoin = mutation({
   },
   handler: (ctx, args) =>
     withUserFacingErrors(
+      ctx,
       'camps.requestJoin',
       'Something went wrong requesting to join this camp. Please try again.',
       () => joinCamp(ctx, args.campId, { requireApprovalAccess: true }),
