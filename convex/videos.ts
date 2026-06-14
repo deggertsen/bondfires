@@ -26,12 +26,13 @@ import {
   PAID_TIERS,
   PRO_MAX_VIDEO_DURATION_MS,
 } from './entitlements'
-import { throwUserError } from './errors'
+import { throwUserError, withUserFacingActionErrors } from './errors'
 import {
   assertCanRespondToPersonalBondfire,
   canViewPersonalBondfire,
 } from './personalBondfireAccess'
 import { countResponse, uncountResponse } from './responseCounts'
+import { logServerEvent } from './serverTelemetry'
 
 type PlaybackPolicy = 'public' | 'signed'
 type LiveLatencyMode = 'standard' | 'reduced' | 'low'
@@ -732,29 +733,6 @@ async function muxRequestOptional(path: string): Promise<Record<string, unknown>
   }
 
   return readObject(await response.json())
-}
-
-/** Persist a server-side telemetry entry from inside a mutation. */
-async function logServerEvent(
-  ctx: MutationCtx,
-  args: {
-    level: 'error' | 'warn' | 'info'
-    event: string
-    message: string
-    data?: unknown
-    userId?: Id<'users'>
-  },
-) {
-  await ctx.db.insert('clientLogs', {
-    userId: args.userId,
-    level: args.level,
-    event: args.event,
-    message: args.message,
-    data: args.data,
-    platform: 'server',
-    retention: 'standard',
-    createdAt: Date.now(),
-  })
 }
 
 async function deleteMuxAsset(assetId: string): Promise<'deleted' | 'missing'> {
@@ -1642,144 +1620,156 @@ export const createLiveStream = action({
     title: v.optional(v.string()),
     pending: v.optional(v.boolean()),
   },
-  handler: async (ctx, args): Promise<MuxLiveStreamResult> => {
-    const userId = await auth.getUserId(ctx)
-    if (!userId) {
-      throwUserError('Not authenticated')
-    }
+  handler: (ctx, args): Promise<MuxLiveStreamResult> =>
+    withUserFacingActionErrors(
+      ctx,
+      'videos.createLiveStream',
+      'Something went wrong starting your recording. Please try again.',
+      async () => {
+        const userId = await auth.getUserId(ctx)
+        if (!userId) {
+          throwUserError('Not authenticated')
+        }
 
-    let playbackPolicy: PlaybackPolicy
-    if (args.isResponse) {
-      if (!args.bondfireId) {
-        throwUserError('A bondfire ID is required when creating a live response')
-      }
+        let playbackPolicy: PlaybackPolicy
+        if (args.isResponse) {
+          if (!args.bondfireId) {
+            throwUserError('A bondfire ID is required when creating a live response')
+          }
 
-      const policy = await ctx.runQuery(internal.videos.getMuxPlaybackPolicyForNewRecord, {
-        userId,
-        isResponse: args.isResponse,
-        bondfireId: args.bondfireId,
-      })
-      playbackPolicy = policy.playbackPolicy
-    } else if (args.personalCamp) {
-      await ctx.runQuery(internal.videos.validatePersonalCreateForUser, { userId })
-      playbackPolicy = 'signed'
-    } else {
-      if (!args.campId) {
-        throwUserError('Choose a camp before sparking a Bondfire')
-      }
-
-      const policy = await ctx.runQuery(internal.videos.getMuxPlaybackPolicyForNewRecord, {
-        userId,
-        isResponse: args.isResponse,
-        campId: args.campId,
-        tags: args.tags,
-      })
-      playbackPolicy = policy.playbackPolicy
-    }
-
-    // Refuse to provision a billable Mux live stream while the user already
-    // has one in flight. The cron will sweep abandoned sessions, but this
-    // prevents a runaway loop from creating an unbounded number of them.
-    const existingActive: Doc<'liveSessions'> | null = await ctx.runQuery(
-      internal.videos.getActiveMuxLiveSessionForUser,
-      { userId },
-    )
-    if (existingActive) {
-      throwUserError('You already have an active live stream. End it before starting a new one.')
-    }
-
-    const config = getMuxConfig()
-    const reconnectWindow = readMuxSeconds(
-      process.env.MUX_LIVE_RECONNECT_WINDOW_SECONDS,
-      DEFAULT_MUX_LIVE_RECONNECT_WINDOW_SECONDS,
-      0,
-      MUX_LIVE_RECONNECT_WINDOW_MAX_SECONDS,
-    )
-    const reconnectSlateUrl =
-      reconnectWindow > 0 && config.reconnectSlateUrl ? config.reconnectSlateUrl : undefined
-    const useSlateForStandardLatency = config.liveLatencyMode === 'standard' && reconnectWindow > 0
-    const maxContinuousDuration: number = await ctx.runQuery(
-      internal.videos.getLiveMaxContinuousDurationSeconds,
-      { userId },
-    )
-    const data = parseMuxData(
-      await muxRequest('/live-streams', {
-        method: 'POST',
-        body: JSON.stringify({
-          playback_policies: [playbackPolicy],
-          latency_mode: config.liveLatencyMode,
-          reconnect_window: reconnectWindow,
-          max_continuous_duration: maxContinuousDuration,
-          // Replace Mux's default slate during reconnect-window interruptions
-          // when a public Bondfires slate image is configured.
-          ...(reconnectSlateUrl ? { reconnect_slate_url: reconnectSlateUrl } : {}),
-          // Standard-latency streams don't insert slate media unless this is
-          // enabled; all latency modes require reconnect_window > 0.
-          ...(useSlateForStandardLatency ? { use_slate_for_standard_latency: true } : {}),
-          passthrough: JSON.stringify({
+          const policy = await ctx.runQuery(internal.videos.getMuxPlaybackPolicyForNewRecord, {
             userId,
             isResponse: args.isResponse,
             bondfireId: args.bondfireId,
-            personalCamp: args.personalCamp,
-            source: 'bondfires-live',
+          })
+          playbackPolicy = policy.playbackPolicy
+        } else if (args.personalCamp) {
+          await ctx.runQuery(internal.videos.validatePersonalCreateForUser, { userId })
+          playbackPolicy = 'signed'
+        } else {
+          if (!args.campId) {
+            throwUserError('Choose a camp before sparking a Bondfire')
+          }
+
+          const policy = await ctx.runQuery(internal.videos.getMuxPlaybackPolicyForNewRecord, {
+            userId,
+            isResponse: args.isResponse,
+            campId: args.campId,
+            tags: args.tags,
+          })
+          playbackPolicy = policy.playbackPolicy
+        }
+
+        // Refuse to provision a billable Mux live stream while the user already
+        // has one in flight. The cron will sweep abandoned sessions, but this
+        // prevents a runaway loop from creating an unbounded number of them.
+        const existingActive: Doc<'liveSessions'> | null = await ctx.runQuery(
+          internal.videos.getActiveMuxLiveSessionForUser,
+          { userId },
+        )
+        if (existingActive) {
+          throwUserError(
+            'You already have an active live stream. End it before starting a new one.',
+          )
+        }
+
+        const config = getMuxConfig()
+        const reconnectWindow = readMuxSeconds(
+          process.env.MUX_LIVE_RECONNECT_WINDOW_SECONDS,
+          DEFAULT_MUX_LIVE_RECONNECT_WINDOW_SECONDS,
+          0,
+          MUX_LIVE_RECONNECT_WINDOW_MAX_SECONDS,
+        )
+        const reconnectSlateUrl =
+          reconnectWindow > 0 && config.reconnectSlateUrl ? config.reconnectSlateUrl : undefined
+        const useSlateForStandardLatency =
+          config.liveLatencyMode === 'standard' && reconnectWindow > 0
+        const maxContinuousDuration: number = await ctx.runQuery(
+          internal.videos.getLiveMaxContinuousDurationSeconds,
+          { userId },
+        )
+        const data = parseMuxData(
+          await muxRequest('/live-streams', {
+            method: 'POST',
+            body: JSON.stringify({
+              playback_policies: [playbackPolicy],
+              latency_mode: config.liveLatencyMode,
+              reconnect_window: reconnectWindow,
+              max_continuous_duration: maxContinuousDuration,
+              // Replace Mux's default slate during reconnect-window interruptions
+              // when a public Bondfires slate image is configured.
+              ...(reconnectSlateUrl ? { reconnect_slate_url: reconnectSlateUrl } : {}),
+              // Standard-latency streams don't insert slate media unless this is
+              // enabled; all latency modes require reconnect_window > 0.
+              ...(useSlateForStandardLatency ? { use_slate_for_standard_latency: true } : {}),
+              passthrough: JSON.stringify({
+                userId,
+                isResponse: args.isResponse,
+                bondfireId: args.bondfireId,
+                personalCamp: args.personalCamp,
+                source: 'bondfires-live',
+              }),
+              new_asset_settings: {
+                playback_policies: [playbackPolicy],
+                video_quality: config.videoQuality,
+              },
+            }),
           }),
-          new_asset_settings: {
-            playback_policies: [playbackPolicy],
-            video_quality: config.videoQuality,
+        )
+        const liveStreamId = readString(data.id, 'live stream id')
+        const streamKey = readString(data.stream_key, 'stream key')
+        const playbackId = getMuxPlaybackId(data)
+
+        let pendingRecord: {
+          liveSessionId: Id<'liveSessions'>
+          recordId: Id<'bondfires'> | Id<'bondfireVideos'>
+          recordType: 'bondfire' | 'response'
+        }
+
+        try {
+          pendingRecord = await ctx.runMutation(internal.videos.createLinkedMuxLiveSession, {
+            userId,
+            liveStreamId,
+            playbackId,
+            isResponse: args.isResponse,
+            bondfireId: args.bondfireId,
+            campId: args.campId,
+            personalCamp: args.personalCamp,
+            playbackPolicy,
+            latencyMode: config.liveLatencyMode,
+            tags: args.tags,
+            width: args.width,
+            height: args.height,
+            title: args.title,
+            pending: args.pending,
+          })
+        } catch (error) {
+          try {
+            await deleteMuxLiveStream(liveStreamId)
+          } catch (deleteError) {
+            console.warn(
+              'Failed to delete Mux live stream after Convex linking failed:',
+              deleteError,
+            )
+          }
+          throw error
+        }
+
+        return {
+          liveStreamId,
+          liveSessionId: pendingRecord.liveSessionId,
+          playbackId,
+          ingest: {
+            rtmpsUrl: MUX_LIVE_RTMPS_ENDPOINT,
+            streamKey,
           },
-        }),
-      }),
-    )
-    const liveStreamId = readString(data.id, 'live stream id')
-    const streamKey = readString(data.stream_key, 'stream key')
-    const playbackId = getMuxPlaybackId(data)
-
-    let pendingRecord: {
-      liveSessionId: Id<'liveSessions'>
-      recordId: Id<'bondfires'> | Id<'bondfireVideos'>
-      recordType: 'bondfire' | 'response'
-    }
-
-    try {
-      pendingRecord = await ctx.runMutation(internal.videos.createLinkedMuxLiveSession, {
-        userId,
-        liveStreamId,
-        playbackId,
-        isResponse: args.isResponse,
-        bondfireId: args.bondfireId,
-        campId: args.campId,
-        personalCamp: args.personalCamp,
-        playbackPolicy,
-        latencyMode: config.liveLatencyMode,
-        tags: args.tags,
-        width: args.width,
-        height: args.height,
-        title: args.title,
-        pending: args.pending,
-      })
-    } catch (error) {
-      try {
-        await deleteMuxLiveStream(liveStreamId)
-      } catch (deleteError) {
-        console.warn('Failed to delete Mux live stream after Convex linking failed:', deleteError)
-      }
-      throw error
-    }
-
-    return {
-      liveStreamId,
-      liveSessionId: pendingRecord.liveSessionId,
-      playbackId,
-      ingest: {
-        rtmpsUrl: MUX_LIVE_RTMPS_ENDPOINT,
-        streamKey,
+          playbackUrl:
+            playbackPolicy === 'public' && playbackId ? getMuxPlaybackUrl(playbackId) : undefined,
+          recordId: pendingRecord.recordId,
+          recordType: pendingRecord.recordType,
+        }
       },
-      playbackUrl:
-        playbackPolicy === 'public' && playbackId ? getMuxPlaybackUrl(playbackId) : undefined,
-      recordId: pendingRecord.recordId,
-      recordType: pendingRecord.recordType,
-    }
-  },
+    ),
 })
 
 export const endLiveStream = action({
@@ -1787,55 +1777,61 @@ export const endLiveStream = action({
     liveSessionId: v.id('liveSessions'),
     reason: v.optional(v.string()),
   },
-  handler: async (ctx, args): Promise<{ ended: boolean; completeSignaled: boolean }> => {
-    const userId = await auth.getUserId(ctx)
-    if (!userId) {
-      throwUserError('Not authenticated')
-    }
+  handler: (ctx, args): Promise<{ ended: boolean; completeSignaled: boolean }> =>
+    withUserFacingActionErrors(
+      ctx,
+      'videos.endLiveStream',
+      'Something went wrong ending your recording. Please try again.',
+      async () => {
+        const userId = await auth.getUserId(ctx)
+        if (!userId) {
+          throwUserError('Not authenticated')
+        }
 
-    const liveSession: Doc<'liveSessions'> | null = await ctx.runQuery(
-      internal.videos.getMuxLiveSessionForUser,
-      {
-        userId,
-        liveSessionId: args.liveSessionId,
+        const liveSession: Doc<'liveSessions'> | null = await ctx.runQuery(
+          internal.videos.getMuxLiveSessionForUser,
+          {
+            userId,
+            liveSessionId: args.liveSessionId,
+          },
+        )
+
+        if (!liveSession) {
+          throwUserError('Live session not found')
+        }
+
+        let completeSignaled = true
+        try {
+          await muxRequest(`/live-streams/${liveSession.muxLiveStreamId}/complete`, {
+            method: 'PUT',
+          })
+        } catch (error) {
+          completeSignaled = false
+          console.warn('Failed to signal Mux live stream complete:', error)
+        }
+
+        await ctx.runMutation(internal.videos.markMuxLiveSessionEnding, {
+          userId,
+          liveSessionId: args.liveSessionId,
+          reason: args.reason,
+        })
+
+        // Set videoStatus to "processing" while waiting for VOD
+        await ctx.runMutation(internal.videos.markLinkedRecordProcessing, {
+          liveSessionId: args.liveSessionId,
+        })
+
+        // Poll for the recorded VOD in the background so the creator's stop tap
+        // returns immediately. The Mux webhook is the durable fallback if polling
+        // misses the asset.
+        await ctx.scheduler.runAfter(0, internal.videos.pollRecordedVodAsset, {
+          userId,
+          liveSessionId: args.liveSessionId,
+        })
+
+        return { ended: true, completeSignaled }
       },
-    )
-
-    if (!liveSession) {
-      throwUserError('Live session not found')
-    }
-
-    let completeSignaled = true
-    try {
-      await muxRequest(`/live-streams/${liveSession.muxLiveStreamId}/complete`, {
-        method: 'PUT',
-      })
-    } catch (error) {
-      completeSignaled = false
-      console.warn('Failed to signal Mux live stream complete:', error)
-    }
-
-    await ctx.runMutation(internal.videos.markMuxLiveSessionEnding, {
-      userId,
-      liveSessionId: args.liveSessionId,
-      reason: args.reason,
-    })
-
-    // Set videoStatus to "processing" while waiting for VOD
-    await ctx.runMutation(internal.videos.markLinkedRecordProcessing, {
-      liveSessionId: args.liveSessionId,
-    })
-
-    // Poll for the recorded VOD in the background so the creator's stop tap
-    // returns immediately. The Mux webhook is the durable fallback if polling
-    // misses the asset.
-    await ctx.scheduler.runAfter(0, internal.videos.pollRecordedVodAsset, {
-      userId,
-      liveSessionId: args.liveSessionId,
-    })
-
-    return { ended: true, completeSignaled }
-  },
+    ),
 })
 
 /**
@@ -2012,37 +2008,43 @@ export const cancelLiveStream = action({
     liveSessionId: v.id('liveSessions'),
     reason: v.optional(v.string()),
   },
-  handler: async (ctx, args): Promise<{ cancelled: boolean }> => {
-    const userId = await auth.getUserId(ctx)
-    if (!userId) {
-      throwUserError('Not authenticated')
-    }
+  handler: (ctx, args): Promise<{ cancelled: boolean }> =>
+    withUserFacingActionErrors(
+      ctx,
+      'videos.cancelLiveStream',
+      'Something went wrong cancelling your recording. Please try again.',
+      async () => {
+        const userId = await auth.getUserId(ctx)
+        if (!userId) {
+          throwUserError('Not authenticated')
+        }
 
-    const liveSession: Doc<'liveSessions'> | null = await ctx.runQuery(
-      internal.videos.getMuxLiveSessionForUser,
-      {
-        userId,
-        liveSessionId: args.liveSessionId,
+        const liveSession: Doc<'liveSessions'> | null = await ctx.runQuery(
+          internal.videos.getMuxLiveSessionForUser,
+          {
+            userId,
+            liveSessionId: args.liveSessionId,
+          },
+        )
+
+        if (!liveSession) {
+          throwUserError('Live session not found')
+        }
+
+        try {
+          await deleteMuxLiveStream(liveSession.muxLiveStreamId)
+        } catch (error) {
+          console.warn('Failed to delete Mux live stream during cancellation:', error)
+          throw new Error('Failed to cancel Mux live stream')
+        }
+
+        return await ctx.runMutation(internal.videos.cancelMuxLiveSessionRecord, {
+          userId,
+          liveSessionId: args.liveSessionId,
+          reason: args.reason ?? 'cancelled',
+        })
       },
-    )
-
-    if (!liveSession) {
-      throwUserError('Live session not found')
-    }
-
-    try {
-      await deleteMuxLiveStream(liveSession.muxLiveStreamId)
-    } catch (error) {
-      console.warn('Failed to delete Mux live stream during cancellation:', error)
-      throw new Error('Failed to cancel Mux live stream')
-    }
-
-    return await ctx.runMutation(internal.videos.cancelMuxLiveSessionRecord, {
-      userId,
-      liveSessionId: args.liveSessionId,
-      reason: args.reason ?? 'cancelled',
-    })
-  },
+    ),
 })
 
 async function markBondfireLiveFromPending(
@@ -3228,6 +3230,41 @@ export const cancelMuxLiveSessionRecord = internalMutation({
       }
     }
 
+    // A cancel discards the session (and any linked record). If the session had
+    // already made progress — gone live, started ingesting, or produced a Mux
+    // asset — this likely destroyed a real recording. crash_recovery cancels of
+    // a progressed session are exactly the recording-loss class of bug, so we
+    // surface them as errors in triage; benign cancels of never-started sessions
+    // are just breadcrumbs.
+    const hadAsset = Boolean(
+      liveSession.muxRecordedAssetId ??
+        liveSession.muxActiveAssetId ??
+        liveSession.muxRecentAssetId,
+    )
+    const hadProgressed =
+      liveSession.status === 'live' ||
+      liveSession.status === 'ending' ||
+      Boolean(liveSession.startedAt) ||
+      hadAsset
+    await logServerEvent(ctx, {
+      level: hadProgressed ? 'error' : 'breadcrumb',
+      event: 'live:session:cancelled',
+      message: hadProgressed
+        ? `Cancelled a progressed live session (reason: ${args.reason})`
+        : `Cancelled live session (reason: ${args.reason})`,
+      userId: args.userId,
+      retention: hadProgressed ? 'forensic' : 'standard',
+      data: {
+        liveSessionId: args.liveSessionId,
+        reason: args.reason,
+        statusBefore: liveSession.status,
+        hadStarted: Boolean(liveSession.startedAt),
+        hadAsset,
+        hadLinkedRecord: Boolean(liveSession.bondfireId ?? liveSession.bondfireVideoId),
+        ageMs: Date.now() - liveSession.createdAt,
+      },
+    })
+
     await ctx.db.patch(args.liveSessionId, {
       status: 'ended',
       endedAt: Date.now(),
@@ -3250,6 +3287,27 @@ export const markStaleMuxLiveSessionEnded = internalMutation({
     }
 
     const now = Date.now()
+    // Reaping a session the cron deemed stale. An 'ending' session reclaimed
+    // here means Mux never finalized its VOD in time (the recording-loss
+    // fallback path), which is worth surfacing for triage.
+    await logServerEvent(ctx, {
+      level:
+        liveSession.status === 'ending' || liveSession.status === 'live' ? 'warn' : 'breadcrumb',
+      event: 'live:session:reaped_stale',
+      message: `Stale live session reaped (status: ${liveSession.status})`,
+      userId: liveSession.userId,
+      data: {
+        liveSessionId: args.liveSessionId,
+        statusBefore: liveSession.status,
+        hadStarted: Boolean(liveSession.startedAt),
+        hadAsset: Boolean(
+          liveSession.muxRecordedAssetId ??
+            liveSession.muxActiveAssetId ??
+            liveSession.muxRecentAssetId,
+        ),
+        ageMs: now - liveSession.createdAt,
+      },
+    })
     await ctx.db.patch(args.liveSessionId, {
       status: 'ended',
       endedAt: liveSession.endedAt ?? now,
