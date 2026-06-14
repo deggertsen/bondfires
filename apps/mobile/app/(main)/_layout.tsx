@@ -119,6 +119,11 @@ export default function MainLayout() {
     <>
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        {/* Create lives in the stack (not the tab bar) so it mounts on push and
+            fully unmounts on navigate-away — preventing a lingering duplicate
+            instance and any orphaned, still-billing Mux live session. The Flame
+            tab-bar entry just pushes this route. */}
+        <Stack.Screen name="create" options={{ headerShown: false }} />
         <Stack.Screen name="bondfire/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="camp/[id]" options={{ headerShown: false }} />
         <Stack.Screen
