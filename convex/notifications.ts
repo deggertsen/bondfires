@@ -1,6 +1,7 @@
 import { v } from 'convex/values'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
+import { throwUserError } from './errors'
 
 // Register a device token for push notifications
 export const registerDevice = mutation({
@@ -15,7 +16,11 @@ export const registerDevice = mutation({
   handler: async (ctx, args) => {
     const userId = await auth.getUserId(ctx)
     if (!userId) {
-      throw new Error('Not authenticated')
+      // Background token registration races the auth session on sign-in. Throw a
+      // ConvexError (not a raw Error, which Convex masks as a 500 "Server Error"
+      // and storms the client retry/telemetry path) so the client's retryable
+      // "Not authenticated" filter matches and silently waits for the session.
+      throwUserError('Not authenticated')
     }
 
     const now = Date.now()
@@ -61,7 +66,7 @@ export const unregisterDevice = mutation({
   handler: async (ctx, args) => {
     const userId = await auth.getUserId(ctx)
     if (!userId) {
-      throw new Error('Not authenticated')
+      throwUserError('Not authenticated')
     }
 
     const existing = await ctx.db
