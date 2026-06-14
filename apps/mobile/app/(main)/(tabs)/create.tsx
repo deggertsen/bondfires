@@ -296,7 +296,11 @@ export default function CreateScreen() {
   // pre-connect re-provisions and the user can record again — rather than being
   // stranded on a completion screen with no title to edit and nothing to share.
   useEffect(() => {
-    if (!liveCompletionMissingRecord) {
+    // Only the focused instance recovers. The Spark tab pushes a `create` route
+    // over the tab's own `create`, so two instances share the module-global
+    // recording phase; letting the unfocused one reset state fights the live
+    // instance (an infinite recover/re-arm loop).
+    if (!liveCompletionMissingRecord || !isFocused) {
       return
     }
     telemetry.warn(
@@ -306,7 +310,7 @@ export default function CreateScreen() {
     )
     livePublishActions.reset()
     recordingActions.resetFlow('live completion missing record id')
-  }, [liveCompletionMissingRecord, isPersonalCamp])
+  }, [liveCompletionMissingRecord, isPersonalCamp, isFocused])
 
   // Recover a non-response pre-connect that never provisioned a stream (a
   // response's preview-only 'pre_connected' that carried into the new-Bondfire
@@ -314,7 +318,9 @@ export default function CreateScreen() {
   // actually provisions — otherwise the record tap dead-ends and, because the
   // phase is stuck off 'idle', re-entering the tab never re-arms.
   useEffect(() => {
-    if (!livePreConnectMissingRecord) {
+    // Focused-instance-only (see note on liveCompletionMissingRecord above): a
+    // dormant duplicate `create` must not reset the live instance's flow.
+    if (!livePreConnectMissingRecord || !isFocused) {
       return
     }
     telemetry.warn(
@@ -325,7 +331,7 @@ export default function CreateScreen() {
     livePublishActions.reset()
     recordingStore$.preConnectFailed.set(false)
     recordingActions.resetFlow('pre-connect missing provisioned stream')
-  }, [livePreConnectMissingRecord, isPersonalCamp])
+  }, [livePreConnectMissingRecord, isPersonalCamp, isFocused])
 
   const requestPermissions = useCallback(async () => {
     if (!cameraPermission?.granted) {

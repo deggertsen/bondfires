@@ -483,11 +483,25 @@ export function LiveRecordScreen({
     if (!effectiveMaxRecordingSeconds || recordingDuration < effectiveMaxRecordingSeconds) {
       return
     }
+    // Ownership gate (see hasProvisionedIngest): only the instance that owns the
+    // current live session may stop it. A dormant duplicate create screen reads
+    // the same module-global phase/liveStatus and would otherwise tear down the
+    // active instance's recording.
+    if (!livePublisher.hasProvisionedIngest()) {
+      return
+    }
 
     if (phase === 'recording' || liveStatus === 'live' || liveStatus === 'reconnecting') {
       void stopLiveRecording()
     }
-  }, [liveStatus, phase, recordingDuration, effectiveMaxRecordingSeconds, stopLiveRecording])
+  }, [
+    liveStatus,
+    phase,
+    recordingDuration,
+    effectiveMaxRecordingSeconds,
+    stopLiveRecording,
+    livePublisher,
+  ])
 
   const cancelLiveRecording = useCallback(async () => {
     state$.showInviteSheet.set(false)
@@ -520,6 +534,17 @@ export function LiveRecordScreen({
       return
     }
 
+    // Ownership gate (see hasProvisionedIngest): a dormant duplicate of this
+    // screen is also `!isFocused`, and its blur-teardown effect re-runs on every
+    // render (the cancel/stop callbacks get fresh identities each render). Left
+    // ungated, that duplicate calls stopLiveRecording() the instant phase flips
+    // to 'recording' — killing the active instance's live stream mid-record
+    // ("disconnected before sufficient video data" → "Recording failed"). Only
+    // the instance that owns the current session may tear it down here.
+    if (!livePublisher.hasProvisionedIngest()) {
+      return
+    }
+
     const currentRecordingState = recordingStore$.phase.get()
     if (currentRecordingState === 'recording' || currentRecordingState === 'stopping') {
       void stopLiveRecording()
@@ -542,7 +567,7 @@ export function LiveRecordScreen({
         }, 1500)
       }
     }
-  }, [cancelLiveRecording, isAppActive, isFocused, state$, stopLiveRecording])
+  }, [cancelLiveRecording, isAppActive, isFocused, livePublisher, state$, stopLiveRecording])
 
   const toggleLiveFacing = useCallback(() => {
     const currentRecordingState = recordingStore$.phase.get()
@@ -623,6 +648,17 @@ export function LiveRecordScreen({
       staleReconcileFiredRef.current = false
       return
     }
+    // Only the focused instance may reconcile. The Spark tab pushes a `create`
+    // route while the tab's own `create` stays mounted underneath, so two
+    // instances coexist. They share the module-global phase but each has its
+    // own ingest ref, so an unfocused instance always sees "no local ingest"
+    // and would cancel the focused instance's freshly-provisioned session — an
+    // infinite provision/cancel loop ("Preparing camera…"). Gating on focus
+    // keeps the dormant instance from fighting the live one while still letting
+    // a genuine remount (one focused instance) recover its orphaned ingest.
+    if (!isFocused || !isAppActive) {
+      return
+    }
     if (respondTo || staleReconcileFiredRef.current || preConnectInFlightRef.current) {
       return
     }
@@ -640,11 +676,15 @@ export function LiveRecordScreen({
       { isPersonalCamp, status },
     )
     void cancelLiveRecording()
-  }, [phase, respondTo, isPersonalCamp, livePublisher, cancelLiveRecording])
+  }, [phase, respondTo, isPersonalCamp, isFocused, isAppActive, livePublisher, cancelLiveRecording])
 
   // Clean up an abandoned pre-connect after 2 minutes in the background.
   useEffect(() => {
     if (phase !== 'pre_connected') {
+      return
+    }
+    // Ownership gate (see hasProvisionedIngest): only the session owner cancels.
+    if (!livePublisher.hasProvisionedIngest()) {
       return
     }
 
@@ -662,7 +702,7 @@ export function LiveRecordScreen({
       clearTimeout(backgroundCancelTimeoutRef.current)
       backgroundCancelTimeoutRef.current = null
     }
-  }, [cancelLiveRecording, isAppActive, phase])
+  }, [cancelLiveRecording, isAppActive, phase, livePublisher])
 
   // Keep the session from being reaped as stale while previewing or recording.
   // Mux sends no webhooks between stream start and disconnect, so without this
@@ -690,6 +730,10 @@ export function LiveRecordScreen({
     if (phase !== 'pre_connected') {
       return
     }
+    // Ownership gate (see hasProvisionedIngest): only the session owner expires.
+    if (!livePublisher.hasProvisionedIngest()) {
+      return
+    }
 
     const timeout = setTimeout(() => {
       recordingStore$.previewExpired.set(true)
@@ -698,7 +742,7 @@ export function LiveRecordScreen({
     }, 240_000)
 
     return () => clearTimeout(timeout)
-  }, [cancelLiveRecording, phase])
+  }, [cancelLiveRecording, phase, livePublisher])
 
   // If the connection dies or the encoder unexpectedly stops mid-recording,
   // finalize the partial recording instead of leaving the UI stuck on REC.
@@ -711,22 +755,38 @@ export function LiveRecordScreen({
     if (phase !== 'recording' || !isDead) {
       return
     }
+    // Ownership gate (see hasProvisionedIngest): only the session owner finalizes.
+    if (!livePublisher.hasProvisionedIngest()) {
+      return
+    }
 
     // Don't show an alert — the status transition is visible in the UI and
     // the completed upload will show whatever was captured.
     void stopLiveRecording()
-  }, [liveStatus, phase, stopLiveRecording])
+  }, [liveStatus, phase, stopLiveRecording, livePublisher])
 
   const cancelLiveRecordingRef = useRef(cancelLiveRecording)
   useEffect(() => {
     cancelLiveRecordingRef.current = cancelLiveRecording
   }, [cancelLiveRecording])
 
+  // Track session ownership in a ref so the mount-scoped unmount cleanup below
+  // (which captures nothing reactively) can tell whether THIS instance owns the
+  // live session at teardown time.
+  const ownsLiveSessionRef = useRef(false)
+  useEffect(() => {
+    ownsLiveSessionRef.current = livePublisher.hasProvisionedIngest()
+  })
+
   // Mount-scoped unmount cleanup: cancel a provisioned-but-unstarted session.
   // Uses refs/observables so changing callback identities can't fire this early.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reads latest state via observables at cleanup time
   useEffect(() => {
     return () => {
+      // Ownership gate (see hasProvisionedIngest): a dormant duplicate of this
+      // screen unmounting must not cancel the active instance's session.
+      if (!ownsLiveSessionRef.current) {
+        return
+      }
       const currentRecordingState = recordingStore$.phase.get()
       if (
         (currentRecordingState === 'pre_connected' || currentRecordingState === 'idle') &&

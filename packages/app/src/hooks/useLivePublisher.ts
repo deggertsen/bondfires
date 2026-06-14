@@ -84,7 +84,12 @@ export function useLivePublisher(options: {
   cancelLiveStream: (args: { liveSessionId: string; reason?: string }) => Promise<unknown>
 }) {
   const statsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const ingestRef = useRef<{ rtmpsUrl: string; streamKey: string } | null>(null)
+  // The ingest is tagged with the session it belongs to. Ownership
+  // (hasProvisionedIngest) compares this against the module-global session so a
+  // stale instance — one whose session was cancelled/replaced by another mounted
+  // copy of the create screen — correctly reports that it no longer owns the
+  // live session and stays out of the active instance's way.
+  const ingestRef = useRef<{ rtmpsUrl: string; streamKey: string; sessionId: string } | null>(null)
 
   const stopStatsSampling = useCallback(() => {
     if (statsIntervalRef.current) {
@@ -283,7 +288,7 @@ export function useLivePublisher(options: {
         })
         provisionedSessionId = liveStream.liveSessionId
 
-        ingestRef.current = liveStream.ingest
+        ingestRef.current = { ...liveStream.ingest, sessionId: liveStream.liveSessionId }
         livePublishActions.provisioned({
           sessionId: liveStream.liveSessionId,
           recordId: liveStream.recordId,
@@ -319,13 +324,25 @@ export function useLivePublisher(options: {
   )
 
   /**
-   * Whether this hook instance holds the ingest credentials for a provisioned
-   * stream. `ingestRef` lives only in this instance, so a remounted screen
-   * always reports `false` until it provisions again — the signal callers use
-   * to detect a `pre_connected` phase (module-global, survives remounts) whose
-   * stream was orphaned by the unmount.
+   * Whether this hook instance owns the *current* live session — i.e. it holds
+   * ingest credentials AND they match the module-global session id.
+   *
+   * `ingestRef` lives only in this instance, so a freshly remounted screen
+   * reports `false` until it provisions again (the orphaned-pre_connect signal).
+   * The session-id match adds a second guarantee: when two copies of the create
+   * screen are mounted at once (the Spark tab leaves one mounted while a pushed
+   * route is focused), the instance whose session was cancelled/replaced by the
+   * other reports `false` even though its `ingestRef` is still populated. That
+   * keeps a stale duplicate from tearing down the active instance's recording —
+   * the exact race behind mid-recording "Recording failed" and the
+   * provision/cancel "Preparing camera…" loop.
    */
-  const hasProvisionedIngest = useCallback(() => ingestRef.current !== null, [])
+  const hasProvisionedIngest = useCallback(
+    () =>
+      ingestRef.current !== null &&
+      ingestRef.current.sessionId === livePublishStore$.sessionId.peek(),
+    [],
+  )
 
   /**
    * Open the RTMP connection for a previously provisioned stream and start
@@ -400,7 +417,7 @@ export function useLivePublisher(options: {
           pending: args.pending,
         })
         provisionedSessionId = liveStream.liveSessionId
-        ingestRef.current = liveStream.ingest
+        ingestRef.current = { ...liveStream.ingest, sessionId: liveStream.liveSessionId }
 
         livePublishActions.start({
           sessionId: liveStream.liveSessionId,
