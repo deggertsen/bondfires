@@ -50,20 +50,22 @@ export const routes = {
   feed: '/(main)/(tabs)/feed',
   camps: '/(main)/(tabs)/camps',
   myFires: '/(main)/(tabs)/my-fires',
-  create: '/(main)/(tabs)/create',
+  // The create screen is a pushed stack screen (see (main)/_layout.tsx), not a
+  // tab, so it cleanly unmounts when the user navigates away.
+  create: '/(main)/create',
 
   createRespondTo: (bondfireId: string): Href => ({
-    pathname: '/(main)/(tabs)/create',
+    pathname: '/(main)/create',
     params: { respondTo: bondfireId },
   }),
 
   createForCamp: (campId: string): Href => ({
-    pathname: '/(main)/(tabs)/create',
+    pathname: '/(main)/create',
     params: { campId },
   }),
 
   createForPersonalCamp: (newFire?: string): Href => ({
-    pathname: '/(main)/(tabs)/create',
+    pathname: '/(main)/create',
     params: newFire ? { personalCamp: '1', newFire } : { personalCamp: '1' },
   }),
 
@@ -150,7 +152,10 @@ const EXTERNAL_STATIC_ROUTES: Record<string, Href> = {
   '/(main)/(tabs)/feed': routes.feed,
   '/(main)/(tabs)/camps': routes.camps,
   '/(main)/(tabs)/my-fires': routes.myFires,
+  // Both the legacy tab path and the new stack path resolve to the real
+  // (pushed) create screen.
   '/(main)/(tabs)/create': routes.create,
+  '/(main)/create': routes.create,
   '/(main)/personal-camp': routes.personalCamp,
 }
 
