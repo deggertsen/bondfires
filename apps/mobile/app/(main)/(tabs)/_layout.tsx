@@ -81,7 +81,7 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="create"
+        name="spark"
         listeners={{
           tabPress: (event) => {
             event.preventDefault()

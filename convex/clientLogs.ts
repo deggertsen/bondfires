@@ -8,7 +8,7 @@
 import { v } from 'convex/values'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
-import { internalMutation, mutation, query } from './_generated/server'
+import { internalMutation, internalQuery, mutation, query } from './_generated/server'
 import { auth } from './auth'
 
 const LOG_LEVELS = ['error', 'warn', 'info', 'breadcrumb'] as const
@@ -309,6 +309,71 @@ export const createInternal = internalMutation({
       retention: 'standard',
       createdAt: args.createdAt,
     })
+  },
+})
+
+/**
+ * TEMPORARY triage query — remove after investigating the camera-freeze
+ * regression. Pulls recent rows by session, event prefix, or level.
+ */
+export const _debugTriage = internalQuery({
+  args: {
+    sessionId: v.optional(v.string()),
+    eventPrefix: v.optional(v.string()),
+    level: v.optional(
+      v.union(v.literal('error'), v.literal('warn'), v.literal('info'), v.literal('breadcrumb')),
+    ),
+    sinceMs: v.optional(v.number()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = Math.min(args.limit ?? 100, 500)
+    const since = args.sinceMs ?? Date.now() - 6 * 60 * 60 * 1000
+
+    let rows: Doc<'clientLogs'>[]
+    if (args.sessionId) {
+      const sessionId = args.sessionId
+      rows = await ctx.db
+        .query('clientLogs')
+        .withIndex('by_log_session', (q) => q.eq('sessionId', sessionId))
+        .order('desc')
+        .take(limit)
+    } else if (args.eventPrefix) {
+      const prefix = args.eventPrefix
+      rows = await ctx.db
+        .query('clientLogs')
+        .withIndex('by_log_event', (q) => q.gte('event', prefix).lt('event', `${prefix}\uffff`))
+        .order('desc')
+        .filter((q) => q.gte(q.field('createdAt'), since))
+        .take(limit)
+    } else if (args.level) {
+      const level = args.level
+      rows = await ctx.db
+        .query('clientLogs')
+        .withIndex('by_log_level', (q) => q.eq('level', level))
+        .order('desc')
+        .filter((q) => q.gte(q.field('createdAt'), since))
+        .take(limit)
+    } else {
+      rows = await ctx.db
+        .query('clientLogs')
+        .withIndex('by_log_event')
+        .order('desc')
+        .filter((q) => q.gte(q.field('createdAt'), since))
+        .take(limit)
+    }
+
+    return rows.map((doc) => ({
+      at: new Date(doc.createdAt).toISOString(),
+      level: doc.level,
+      event: doc.event,
+      message: doc.message,
+      platform: doc.platform,
+      appVersion: doc.appVersion,
+      sessionId: doc.sessionId,
+      userId: doc.userId,
+      data: doc.data,
+    }))
   },
 })
 
