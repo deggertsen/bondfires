@@ -81,6 +81,10 @@ export function LiveRecordScreen({
   // UI flickered between "Tap to record" and "Preparing camera..."). We only
   // act on a blur that persists past this grace window.
   const blurCancelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Single-fires the stale-pre-connect reconcile per pre_connected episode so a
+  // re-render (useLivePublisher returns a fresh object each time) can't fire
+  // overlapping teardowns. Reset once the phase leaves pre_connected.
+  const staleReconcileFiredRef = useRef(false)
 
   const state$ = useObservable({
     isAppActive: AppState.currentState === 'active',
@@ -392,6 +396,20 @@ export function LiveRecordScreen({
       }
     } catch (error) {
       logRecordingError(error)
+      // Defense-in-depth for a stale pre-connect that slipped past the reconcile
+      // effect (e.g. tapped during its async teardown). connect() can't recover
+      // an ingest this instance never had, so reset to idle and let the auto-arm
+      // re-provision instead of stranding the user on a button that can't work.
+      if (
+        !respondTo &&
+        error instanceof Error &&
+        error.message.includes('No provisioned live stream')
+      ) {
+        livePublishActions.reset()
+        recordingStore$.preConnectFailed.set(false)
+        recordingActions.setPhase('idle', 'stale pre-connect recovered at record tap')
+        return
+      }
       Alert.alert('Recording Failed', getUserFacingErrorMessage(parseError(error)))
       return
     }
@@ -588,6 +606,41 @@ export function LiveRecordScreen({
 
     void startLivePreConnect()
   }, [preConnectFailed, phase, shouldRenderCamera, startLivePreConnect, isFocused, isAppActive])
+
+  // Reconcile a stale non-response pre-connect after a remount. The recording
+  // phase is module-global and survives this screen unmounting/remounting, but
+  // the ingest credentials live in the useLivePublisher instance (a ref). A
+  // pre-connect abandoned by navigating away without recording leaves
+  // phase==='pre_connected' with no local ingest on the next mount: tapping
+  // record dead-ends on "No provisioned live stream to connect" (and the
+  // eagerly-provisioned pending bondfire shows viewers "Recording failed").
+  // recordId still being set is why the create-router recovery (keyed on a
+  // missing recordId) can't catch this. Tear the orphan down — cancelLive-
+  // Recording also deletes the pending bondfire + Mux stream server-side — so
+  // the auto-arm re-provisions a fresh, recordable session.
+  useEffect(() => {
+    if (phase !== 'pre_connected') {
+      staleReconcileFiredRef.current = false
+      return
+    }
+    if (respondTo || staleReconcileFiredRef.current || preConnectInFlightRef.current) {
+      return
+    }
+    if (livePublisher.hasProvisionedIngest()) {
+      return
+    }
+    const status = livePublishStore$.status.peek()
+    if (status === 'connecting' || status === 'live' || status === 'reconnecting') {
+      return
+    }
+    staleReconcileFiredRef.current = true
+    telemetry.warn(
+      'create:preconnect',
+      'Pre-connected with no local ingest (orphaned by remount); recovering',
+      { isPersonalCamp, status },
+    )
+    void cancelLiveRecording()
+  }, [phase, respondTo, isPersonalCamp, livePublisher, cancelLiveRecording])
 
   // Clean up an abandoned pre-connect after 2 minutes in the background.
   useEffect(() => {

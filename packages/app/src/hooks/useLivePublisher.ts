@@ -319,6 +319,15 @@ export function useLivePublisher(options: {
   )
 
   /**
+   * Whether this hook instance holds the ingest credentials for a provisioned
+   * stream. `ingestRef` lives only in this instance, so a remounted screen
+   * always reports `false` until it provisions again — the signal callers use
+   * to detect a `pre_connected` phase (module-global, survives remounts) whose
+   * stream was orphaned by the unmount.
+   */
+  const hasProvisionedIngest = useCallback(() => ingestRef.current !== null, [])
+
+  /**
    * Open the RTMP connection for a previously provisioned stream and start
    * publishing. This is the moment recording actually begins.
    */
@@ -562,6 +571,7 @@ export function useLivePublisher(options: {
     stop,
     cancel,
     swapCamera,
+    hasProvisionedIngest,
     stats$: livePublishStore$,
   }
 }
