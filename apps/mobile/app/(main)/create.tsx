@@ -58,6 +58,34 @@ export default function CreateScreen() {
   const didRouteFirstSparkRef = useRef(false)
   const personalCreateStartedAtRef = useRef<number | null>(null)
 
+  // TEMPORARY mount/unmount diagnostic — remove after the camera-freeze /
+  // remount-loop regression is confirmed fixed. A stable per-instance id lets
+  // us tell a single screen *remounting* (same id, alternating mount/unmount)
+  // apart from *duplicate* screens (two ids alive at once), and the route-name
+  // snapshot reveals whether the navigation stack holds more than one create.
+  const mountIdRef = useRef(Math.random().toString(36).slice(2, 8))
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only diagnostic
+  useEffect(() => {
+    const mountId = mountIdRef.current
+    let routeNames: string | undefined
+    let routeCount: number | undefined
+    try {
+      const navState = (
+        navigation as { getState?: () => { routes?: { name: string }[] } }
+      ).getState?.()
+      routeCount = navState?.routes?.length
+      routeNames = navState?.routes?.map((r) => r.name).join(',')
+    } catch {
+      // navigation state not available; ignore
+    }
+    telemetry.info('create:mount', 'Create screen mounted', { mountId, routeCount, routeNames })
+    return () => {
+      telemetry.info('create:unmount', 'Create screen unmounted', { mountId })
+    }
+    // Mount-only diagnostic; navigation state is read opportunistically.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const state$ = useObservable({
     isAppActive: AppState.currentState === 'active',
     isFocused: isFocused,

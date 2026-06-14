@@ -81,7 +81,7 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="create"
+        name="spark"
         listeners={{
           tabPress: (event) => {
             event.preventDefault()
@@ -90,8 +90,9 @@ export default function TabsLayout() {
         }}
         options={{
           // `href: null` hides the tab while keeping the route addressable
-          // (deep links, legacy affordances still resolve to the safety-net
-          // block-CTA in LiveRecordScreen). Free users never see this tab.
+          // for navigation state. Controlled legacy/deep-link inputs are
+          // resolved in lib/routes.ts to the pushed create route; free users
+          // never see this tab.
           href: showSparkTab ? undefined : null,
           title: 'Spark',
           tabBarIcon: ({ color, size }) => <Flame color={color} size={size} />,

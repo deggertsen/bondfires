@@ -152,9 +152,11 @@ const EXTERNAL_STATIC_ROUTES: Record<string, Href> = {
   '/(main)/(tabs)/feed': routes.feed,
   '/(main)/(tabs)/camps': routes.camps,
   '/(main)/(tabs)/my-fires': routes.myFires,
-  // Both the legacy tab path and the new stack path resolve to the real
-  // (pushed) create screen.
+  // Any controlled entry into Spark/create resolves directly to the pushed stack
+  // screen. The tab route component itself stays inert so it cannot redirect
+  // during navigation focus churn.
   '/(main)/(tabs)/create': routes.create,
+  '/(main)/(tabs)/spark': routes.create,
   '/(main)/create': routes.create,
   '/(main)/personal-camp': routes.personalCamp,
 }
