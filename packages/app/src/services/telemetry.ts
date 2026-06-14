@@ -111,7 +111,10 @@ function serializeForConvex(value: unknown, depth = 0, seen = new WeakSet<object
   seen.add(value)
 
   if (Array.isArray(value)) {
-    return value.map((item) => serializeForConvex(item, depth + 1, seen))
+    return value.map((item) => {
+      const serialized = serializeForConvex(item, depth + 1, seen)
+      return typeof serialized === 'undefined' ? null : serialized
+    })
   }
 
   const output: Record<string, unknown> = {}
@@ -143,6 +146,44 @@ function formatConsoleArgs(args: unknown[]): string {
       }
     })
     .join(' ')
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isLogLevel(value: unknown): value is LogLevel {
+  return value === 'error' || value === 'warn' || value === 'info' || value === 'breadcrumb'
+}
+
+function isPlatform(value: unknown): value is LogEntry['platform'] {
+  return value === 'ios' || value === 'android'
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined
+}
+
+function normalizePersistedEntry(value: unknown): LogEntry | null {
+  if (!isRecord(value)) return null
+
+  const { level, event, message, platform, createdAt } = value
+  if (!isLogLevel(level)) return null
+  if (typeof event !== 'string' || typeof message !== 'string') return null
+  if (!isPlatform(platform)) return null
+  if (typeof createdAt !== 'number' || !Number.isFinite(createdAt)) return null
+
+  return {
+    level,
+    event,
+    message,
+    data: value.data,
+    platform,
+    appVersion: optionalString(value.appVersion),
+    sessionId: optionalString(value.sessionId),
+    createdAt,
+    userId: optionalString(value.userId),
+  }
 }
 
 class LogQueue {
@@ -418,7 +459,16 @@ export class TelemetryLogger {
       if (!raw) return
       const parsed = JSON.parse(raw)
       if (Array.isArray(parsed)) {
-        this.queue.restore(parsed as LogEntry[])
+        const entries = parsed.flatMap((entry) => {
+          const normalized = normalizePersistedEntry(entry)
+          return normalized ? [normalized] : []
+        })
+        if (entries.length > 0) {
+          this.queue.restore(entries)
+        }
+        if (entries.length !== parsed.length) {
+          this.persistNow()
+        }
       }
     } catch {
       // Corrupt payload — drop it so we don't get stuck reloading garbage.

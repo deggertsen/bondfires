@@ -13,6 +13,9 @@ import type { Id } from './_generated/dataModel'
 import type { MutationCtx } from './_generated/server'
 import { internalMutation } from './_generated/server'
 
+const MAX_SERIALIZE_DEPTH = 5
+const MAX_SERIALIZE_KEYS = 50
+
 const SERVER_LOG_LEVEL = v.union(
   v.literal('error'),
   v.literal('warn'),
@@ -32,6 +35,77 @@ export interface ServerLogEntry {
   retention?: 'standard' | 'forensic'
 }
 
+export function serializeServerLogData(
+  value: unknown,
+  depth = 0,
+  seen = new WeakSet<object>(),
+): unknown {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
+    return value
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : String(value)
+  }
+
+  if (typeof value === 'undefined') return undefined
+  if (typeof value === 'bigint' || typeof value === 'symbol' || typeof value === 'function') {
+    return String(value)
+  }
+
+  if (value instanceof Error) {
+    return serializeServerLogData(
+      {
+        name: value.name,
+        message: value.message,
+        stack: value.stack,
+      },
+      depth + 1,
+      seen,
+    )
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString()
+  }
+
+  if (typeof value !== 'object') {
+    return String(value)
+  }
+
+  if (seen.has(value)) {
+    return '[Circular]'
+  }
+
+  if (depth >= MAX_SERIALIZE_DEPTH) {
+    return '[MaxDepth]'
+  }
+
+  seen.add(value)
+
+  if (Array.isArray(value)) {
+    return value.map((item) => {
+      const serialized = serializeServerLogData(item, depth + 1, seen)
+      return typeof serialized === 'undefined' ? null : serialized
+    })
+  }
+
+  const output: Record<string, unknown> = {}
+  for (const [index, [key, item]] of Object.entries(value as Record<string, unknown>).entries()) {
+    if (index >= MAX_SERIALIZE_KEYS) {
+      output.__truncated = true
+      break
+    }
+
+    const serialized = serializeServerLogData(item, depth + 1, seen)
+    if (typeof serialized !== 'undefined') {
+      output[key] = serialized
+    }
+  }
+
+  return output
+}
+
 /**
  * Insert a server-originated telemetry row. Best-effort: never throws, so a
  * logging failure can't take down the mutation that called it.
@@ -43,7 +117,7 @@ export async function logServerEvent(ctx: MutationCtx, entry: ServerLogEntry): P
       level: entry.level,
       event: entry.event,
       message: entry.message,
-      data: entry.data,
+      data: serializeServerLogData(entry.data),
       platform: 'server',
       appVersion: undefined,
       sessionId: undefined,

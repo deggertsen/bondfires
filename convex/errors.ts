@@ -1,7 +1,7 @@
 import { ConvexError } from 'convex/values'
 import { internal } from './_generated/api'
-import type { ActionCtx, MutationCtx } from './_generated/server'
-import { logServerEvent } from './serverTelemetry'
+import type { ActionCtx } from './_generated/server'
+import { serializeServerLogData } from './serverTelemetry'
 
 export function throwUserError(message: string): never {
   throw new ConvexError(message)
@@ -11,16 +11,15 @@ export function throwUserError(message: string): never {
  * Runs a mutation handler body and guarantees the client never receives a raw,
  * unactionable "Server Error" (HTTP 500). Expected, user-facing failures thrown
  * via {@link throwUserError} (i.e. `ConvexError`s) pass through unchanged. Any
- * other (unexpected) throw is logged — both to the Convex deployment console and
- * to the `clientLogs` triage table (with the real message + stack) — and then
+ * other (unexpected) throw is logged to the Convex deployment console and then
  * re-surfaced as a clean `ConvexError` carrying `fallbackMessage`.
  *
  * Without this, an unexpected throw reaches the client as an opaque "Server
- * Error" and the real cause exists only in ephemeral deployment logs. Surfacing
- * it into `clientLogs` means triage sees the actual failure.
+ * Error". Mutation writes roll back when we throw the fallback error, so this
+ * helper cannot durably write `clientLogs`; actions should use
+ * {@link withUserFacingActionErrors} for durable triage telemetry.
  */
 export async function withUserFacingErrors<T>(
-  ctx: MutationCtx,
   context: string,
   fallbackMessage: string,
   fn: () => Promise<T>,
@@ -32,12 +31,6 @@ export async function withUserFacingErrors<T>(
       throw error
     }
     console.error(`[${context}] unexpected error:`, error)
-    await logServerEvent(ctx, {
-      level: 'error',
-      event: `server:error:${context}`,
-      message: error instanceof Error ? error.message : String(error),
-      data: { context, stack: error instanceof Error ? error.stack : undefined },
-    })
     throw new ConvexError(fallbackMessage)
   }
 }
@@ -65,7 +58,10 @@ export async function withUserFacingActionErrors<T>(
         level: 'error',
         event: `server:error:${context}`,
         message: error instanceof Error ? error.message : String(error),
-        data: { context, stack: error instanceof Error ? error.stack : undefined },
+        data: serializeServerLogData({
+          context,
+          stack: error instanceof Error ? error.stack : undefined,
+        }),
       })
     } catch {
       // Best-effort telemetry; never mask the original failure path.
