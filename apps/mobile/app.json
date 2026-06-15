@@ -2,7 +2,7 @@
   "expo": {
     "name": "Bondfires",
     "slug": "bondfires",
-    "version": "1.0.54",
+    "version": "1.0.55",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "bondfires",
@@ -19,7 +19,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "org.bondfires",
-      "buildNumber": "68",
+      "buildNumber": "69",
       "googleServicesFile": "./GoogleService-Info.plist",
       "associatedDomains": [
         "applinks:bondfires.org",
@@ -45,7 +45,7 @@
     },
     "android": {
       "package": "org.bondfires",
-      "versionCode": 68,
+      "versionCode": 69,
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
