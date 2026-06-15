@@ -693,46 +693,86 @@ async function assertCanRespondToBondfire(
   return bondfire
 }
 
-async function muxRequest(path: string, init: RequestInit = {}): Promise<Record<string, unknown>> {
+/**
+ * Hard ceiling on any single Mux API call. Without this, a hung Mux request
+ * never settles, the Convex action exhausts its execution budget, and the
+ * runtime kills it — surfacing to the client as an opaque "Server Error" that
+ * escapes every JS `catch` (so it's also invisible to triage telemetry). An
+ * AbortController turns that silent hang into a catchable, loggable, and
+ * user-actionable failure. Mux normally responds in well under a second.
+ */
+const MUX_REQUEST_TIMEOUT_MS = 15_000
+
+async function muxRequest(
+  path: string,
+  init: RequestInit = {},
+  timeoutMs: number = MUX_REQUEST_TIMEOUT_MS,
+): Promise<Record<string, unknown>> {
   const config = getMuxConfig()
-  const response = await fetch(`${MUX_API_BASE_URL}${path}`, {
-    ...init,
-    headers: {
-      Accept: 'application/json',
-      Authorization: getMuxAuthorizationHeader(config.tokenId, config.tokenSecret),
-      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-      ...init.headers,
-    },
-  })
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(`${MUX_API_BASE_URL}${path}`, {
+      ...init,
+      signal: init.signal ?? controller.signal,
+      headers: {
+        Accept: 'application/json',
+        Authorization: getMuxAuthorizationHeader(config.tokenId, config.tokenSecret),
+        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+        ...init.headers,
+      },
+    })
 
-  if (!response.ok) {
-    const message = await response.text()
-    throw new Error(`Mux API request failed: ${response.status} ${message}`)
+    if (!response.ok) {
+      const message = await response.text()
+      throw new Error(`Mux API request failed: ${response.status} ${message}`)
+    }
+
+    return readObject(await response.json())
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(
+        `Mux API request timed out after ${timeoutMs}ms: ${init.method ?? 'GET'} ${path}`,
+      )
+    }
+    throw error
+  } finally {
+    clearTimeout(timer)
   }
-
-  return readObject(await response.json())
 }
 
 /** Like muxRequest, but returns null on 404 instead of throwing. */
 async function muxRequestOptional(path: string): Promise<Record<string, unknown> | null> {
   const config = getMuxConfig()
-  const response = await fetch(`${MUX_API_BASE_URL}${path}`, {
-    headers: {
-      Accept: 'application/json',
-      Authorization: getMuxAuthorizationHeader(config.tokenId, config.tokenSecret),
-    },
-  })
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), MUX_REQUEST_TIMEOUT_MS)
+  try {
+    const response = await fetch(`${MUX_API_BASE_URL}${path}`, {
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json',
+        Authorization: getMuxAuthorizationHeader(config.tokenId, config.tokenSecret),
+      },
+    })
 
-  if (response.status === 404) {
-    return null
+    if (response.status === 404) {
+      return null
+    }
+
+    if (!response.ok) {
+      const message = await response.text()
+      throw new Error(`Mux API request failed: ${response.status} ${message}`)
+    }
+
+    return readObject(await response.json())
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`Mux API request timed out after ${MUX_REQUEST_TIMEOUT_MS}ms: GET ${path}`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timer)
   }
-
-  if (!response.ok) {
-    const message = await response.text()
-    throw new Error(`Mux API request failed: ${response.status} ${message}`)
-  }
-
-  return readObject(await response.json())
 }
 
 async function deleteMuxAsset(assetId: string): Promise<'deleted' | 'missing'> {
