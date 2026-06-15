@@ -87,6 +87,15 @@ class BondfireLivePublisherModule : Module() {
   @Volatile
   private var isStoppingIntentionally = false
 
+  // Guards against binding the camera/video source to the preview before the
+  // SurfaceView has a real (non-zero) size. Binding at 0x0 makes CameraX open
+  // the camera, then tear the session down and reopen once the surface sizes
+  // up — and that reconfigure deadlocks the Pixel/Tensor camera HAL
+  // (createCaptureSession never returns; CameraX kills it after 5s), wedging
+  // the UI on "Preparing camera...". We bind exactly once, after layout.
+  @Volatile
+  private var previewBound = false
+
   var previewView: PreviewView? = null
 
   override fun definition() = ModuleDefinition {
@@ -342,8 +351,11 @@ class BondfireLivePublisherModule : Module() {
       newStreamer.setVideoConfig(fallbackConfig)
     }
 
-    // Bind preview — StreamPack PreviewView fills the view by default.
-    previewView?.setVideoSourceProvider(newStreamer)
+    // Bind preview — but only once the view has a real size (see
+    // bindPreviewIfReady). If the view isn't laid out yet, the view's onLayout
+    // callback will trigger the bind.
+    previewBound = false
+    bindPreviewIfReady()
 
     // Ensure unmuted at start
     isMuted = false
@@ -468,11 +480,48 @@ class BondfireLivePublisherModule : Module() {
 
   fun attachPreview(view: PreviewView) {
     previewView = view
-    streamer?.let { s ->
-      scope.launch {
+    // A freshly mounted create screen brings a brand-new PreviewView. The
+    // module (and its streamer) is a singleton that outlives any single screen
+    // instance, so when the screen remounts while a streamer is still alive
+    // (e.g. an orphaned preview session that wasn't torn down), previewBound is
+    // still true from the *previous* view and bindPreviewIfReady would no-op —
+    // leaving the new view permanently black / stuck on "Preparing camera...".
+    // Reset the guard so this view (re)binds to the current streamer. The bind
+    // itself still waits for a non-zero layout via bindPreviewIfReady.
+    previewBound = false
+    bindPreviewIfReady()
+  }
+
+  /**
+   * Bind the camera/video source to the preview view, but only once both the
+   * streamer exists AND the view has a real (non-zero) size. Binding while the
+   * SurfaceView is still 0x0 makes CameraX open the camera and then reconfigure
+   * the capture session when the surface finally sizes up — a reconfigure that
+   * deadlocks the Pixel/Tensor camera HAL and wedges the UI on "Preparing
+   * camera...". Binding once, after layout, lets CameraX configure a single
+   * stable session. Idempotent and Main-thread only, so the previewBound guard
+   * is race-free.
+   */
+  private fun bindPreviewIfReady() {
+    if (previewBound) return
+    val s = streamer ?: return
+    val view = previewView ?: return
+    if (view.width <= 0 || view.height <= 0) return
+    previewBound = true
+    scope.launch {
+      try {
         view.setVideoSourceProvider(s)
+        Log.i(TAG, "bindPreviewIfReady: bound preview at ${view.width}x${view.height}")
+      } catch (e: Exception) {
+        Log.e(TAG, "bindPreviewIfReady: failed to bind preview source", e)
+        previewBound = false
       }
     }
+  }
+
+  /** Called by the view once it has a laid-out, non-zero size. */
+  fun onPreviewLaidOut() {
+    bindPreviewIfReady()
   }
 
   private fun sendStatus(status: PublisherStatus) {
@@ -484,6 +533,8 @@ class BondfireLivePublisherModule : Module() {
     isStoppingIntentionally = true
     streamer = null
     isMuted = false
+    // Next session must rebind its preview from scratch.
+    previewBound = false
 
     // Cancel the flow collectors before tearing anything down. If release()
     // times out below, the old streamer's flows stay live in the background —
@@ -565,12 +616,19 @@ class BondfireLivePublisherView(context: Context, appContext: expo.modules.kotli
     // React Native skips the native measure pass for manually-added children.
     // Without an explicit measure, PreviewView's measured size stays 0x0 and it
     // lays out its internal SurfaceView at zero size, so no preview surface is
-    // ever created and the camera preview renders black.
+    // ever created and the camera preview renders black. StreamPack also drives
+    // its own SurfaceView (re)creation through these layout passes, so we must
+    // always forward them.
     previewView.measure(
       MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
       MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY),
     )
     previewView.layout(0, 0, width, height)
+    // Once the view has a real, non-zero size, it's safe to bind the camera
+    // source (bindPreviewIfReady is idempotent and a no-op at 0x0).
+    if (width > 0 && height > 0) {
+      BondfireLivePublisherModule.currentInstance?.onPreviewLaidOut()
+    }
   }
 
   // React Native owns layout via Yoga and ignores native requestLayout() calls,
