@@ -31,6 +31,7 @@ import { InviteSheet } from '../InviteSheet'
 import { type CampWithMembership, formatRecordingClock, type TradeTag } from './shared'
 
 const keepAwakeTag = 'create-recording'
+const EARLY_LIVE_DROP_MS = 8_000
 
 interface LiveRecordScreenProps {
   respondTo: string | undefined
@@ -85,6 +86,12 @@ export function LiveRecordScreen({
   // re-render (useLivePublisher returns a fresh object each time) can't fire
   // overlapping teardowns. Reset once the phase leaves pre_connected.
   const staleReconcileFiredRef = useRef(false)
+  // With lazy provisioning, a pre-connected screen may own only a native camera
+  // preview (no Mux session yet). Keep that ownership separate from ingest
+  // ownership so blur/unmount can still release the camera.
+  const ownsPreviewRef = useRef(false)
+  const cancelInFlightRef = useRef<Promise<void> | null>(null)
+  const liveTerminalRecoveryFiredRef = useRef(false)
 
   const state$ = useObservable({
     isAppActive: AppState.currentState === 'active',
@@ -96,6 +103,7 @@ export function LiveRecordScreen({
   const showInviteSheet = useValue(state$.showInviteSheet)
   const phase = useValue(recordingStore$.phase)
   const recordingDuration = useValue(recordingStore$.recordingDuration)
+  const progressStage = useValue(recordingStore$.progressStage)
   const preConnectFailed = useValue(recordingStore$.preConnectFailed)
   const previewExpired = useValue(recordingStore$.previewExpired)
   const liveStatus = useValue(livePublishStore$.status)
@@ -104,7 +112,6 @@ export function LiveRecordScreen({
   const createLiveStream = useAction(api.videos.createLiveStream)
   const endLiveStream = useAction(api.videos.endLiveStream)
   const cancelLiveStream = useAction(api.videos.cancelLiveStream)
-  const markBondfireLive = useMutation(api.videos.markBondfireLive)
   const touchLiveSession = useMutation(api.videos.touchLiveSession)
 
   const recordingTimeRemainingSeconds = effectiveMaxRecordingSeconds
@@ -251,8 +258,33 @@ export function LiveRecordScreen({
   }, [phase, liveStatus, isFocused, isAppActive])
 
   const startLivePreConnect = useCallback(async () => {
-    const currentStatus = livePublishStore$.status.get()
     const currentRecordingState = recordingStore$.phase.get()
+    let currentStatus = livePublishStore$.status.get()
+
+    // Self-heal a publisher store orphaned by an interrupted provision. When the
+    // create screen remounts mid-provision (duplicate-mount churn), its unmount
+    // resets the recording phase to 'idle' but leaves livePublishStore at
+    // 'creating'/'ready'. With phase idle, no ingest owned here, and nothing in
+    // flight, that limbo can never self-clear — and the guard below would refuse
+    // to re-arm, stranding the camera on "Preparing camera..." indefinitely
+    // (the telltale: a live preview with no live:provision ever firing).
+    // Resetting lets this call provision a fresh, recordable session; any Mux
+    // session the dead instance actually created is reaped by the orphan sweep.
+    if (
+      currentRecordingState === 'idle' &&
+      (currentStatus === 'creating' || currentStatus === 'ready') &&
+      !preConnectInFlightRef.current &&
+      !livePublisher.hasProvisionedIngest()
+    ) {
+      telemetry.warn(
+        'live:preconnect',
+        'Recovering orphaned publisher state before arming camera',
+        { staleStatus: currentStatus },
+      )
+      livePublishActions.reset()
+      currentStatus = livePublishStore$.status.get()
+    }
+
     const recoveredStatuses: LivePublishStatus[] = [
       'idle',
       'ended',
@@ -298,20 +330,7 @@ export function LiveRecordScreen({
         initialCamera: recordingStore$.facing.get() === 'back' ? 'back' : 'front',
       })
 
-      if (!respondTo) {
-        // Provision the live stream + pending bondfire so the share link
-        // works while waiting, but defer publishing to the record tap.
-        // Seed the default title at creation so the bondfire is never
-        // untitled if the user skips the completion-screen title edit.
-        await livePublisher.provision({
-          campId: effectiveCampId,
-          personalCamp: isPersonalCamp || undefined,
-          tags: selectedCampTags,
-          title: getDefaultBondfireTitle(currentUser, selectedCamp?.name) || undefined,
-          pending: true,
-        })
-      }
-
+      ownsPreviewRef.current = true
       recordingActions.setPhase('pre_connected', 'live pre-connect succeeded')
       state$.showInviteSheet.set(false)
     } catch (error) {
@@ -355,7 +374,6 @@ export function LiveRecordScreen({
     personalCreateStartedAtRef,
     respondTo,
     selectedCamp,
-    selectedCampTags,
     state$,
   ])
 
@@ -381,56 +399,44 @@ export function LiveRecordScreen({
     const initialCamera =
       recordingStore$.facing.get() === 'back' ? ('back' as const) : ('front' as const)
 
+    liveTerminalRecoveryFiredRef.current = false
+
     try {
-      if (respondTo) {
-        // Responses provision + connect at tap so the response is never
-        // visible to viewers before recording actually starts.
-        await livePublisher.start({
-          respondToBondfireId: respondTo,
-          tags: selectedCampTags,
-          initialCamera,
-        })
-      } else {
-        // Recording starts the moment the RTMP connection opens.
-        await livePublisher.connect({ initialCamera })
-      }
+      // Provision + connect at tap time so we do not hold an idle Mux stream
+      // open while the user is framing the shot. This also removes the brittle
+      // "pending but not recordable" state that caused orphaned sessions and
+      // stuck "Preparing camera..." loops when a screen remounted mid-provision.
+      await livePublisher.start({
+        respondToBondfireId: respondTo,
+        campId: effectiveCampId,
+        personalCamp: !respondTo && isPersonalCamp ? true : undefined,
+        tags: selectedCampTags,
+        title: !respondTo
+          ? getDefaultBondfireTitle(currentUser, selectedCamp?.name) || undefined
+          : undefined,
+        initialCamera,
+      })
+      ownsPreviewRef.current = false
     } catch (error) {
       logRecordingError(error)
-      // Defense-in-depth for a stale pre-connect that slipped past the reconcile
-      // effect (e.g. tapped during its async teardown). connect() can't recover
-      // an ingest this instance never had, so reset to idle and let the auto-arm
-      // re-provision instead of stranding the user on a button that can't work.
-      if (
-        !respondTo &&
-        error instanceof Error &&
-        error.message.includes('No provisioned live stream')
-      ) {
-        livePublishActions.reset()
-        recordingStore$.preConnectFailed.set(false)
-        recordingActions.setPhase('idle', 'stale pre-connect recovered at record tap')
-        return
-      }
       Alert.alert('Recording Failed', getUserFacingErrorMessage(parseError(error)))
       return
-    }
-
-    if (!respondTo) {
-      const recordId = livePublishStore$.recordId.get()
-      if (recordId) {
-        try {
-          await markBondfireLive({ bondfireId: recordId as Id<'bondfires'> })
-        } catch (error) {
-          // Keep recording — the VOD pipeline still completes via webhooks;
-          // viewers just won't see the live state for this bondfire.
-          logRecordingError(error)
-        }
-      }
     }
 
     state$.showInviteSheet.set(false)
     recordingStore$.recordingDuration.set(0)
     recordingActions.setPhase('recording', 'live record tap')
-  }, [livePublisher, logRecordingError, markBondfireLive, respondTo, selectedCampTags, state$])
+  }, [
+    currentUser,
+    effectiveCampId,
+    isPersonalCamp,
+    livePublisher,
+    logRecordingError,
+    respondTo,
+    selectedCamp,
+    selectedCampTags,
+    state$,
+  ])
 
   const stopLiveRecording = useCallback(async () => {
     const currentRecordingState = recordingStore$.phase.get()
@@ -444,6 +450,20 @@ export function LiveRecordScreen({
 
     try {
       const result = await livePublisher.stop()
+      if (result.recordingStarted === false) {
+        recordingStore$.preConnectFailed.set(true)
+        recordingStore$.previewExpired.set(false)
+        recordingStore$.progressStage.set("Recording didn't start")
+        recordingActions.setPhase('idle', 'live stop before mux active')
+        recordingStore$.videoUri.set(null)
+        state$.showInviteSheet.set(false)
+        Alert.alert(
+          "Recording didn't start",
+          "Mux never confirmed that video was flowing, so we didn't save a broken Bondfire. Please try again.",
+        )
+        return
+      }
+
       // The recording is captured the moment the publisher stops. Mux finalizes
       // the VOD via its reconnect window and the asset.ready webhook saves it,
       // so always advance to the completion/processing screen rather than
@@ -503,23 +523,34 @@ export function LiveRecordScreen({
     livePublisher,
   ])
 
-  const cancelLiveRecording = useCallback(async () => {
-    state$.showInviteSheet.set(false)
-
-    try {
-      // cancel() tears down the publisher and deletes the pending bondfire +
-      // Mux live stream server-side via cancelLiveStream — single cleanup path.
-      await livePublisher.cancel()
-    } catch (error) {
-      logRecordingError(error)
-      const errorInfo = parseError(error)
-      Alert.alert('Recording', getUserFacingErrorMessage(errorInfo))
-    } finally {
-      livePublishActions.reset()
-      recordingActions.setPhase('idle', 'live cancel')
-      recordingStore$.videoUri.set(null)
-      state$.showInviteSheet.set(false)
+  const cancelLiveRecording = useCallback(() => {
+    if (cancelInFlightRef.current) {
+      return cancelInFlightRef.current
     }
+
+    const cancelPromise = (async () => {
+      state$.showInviteSheet.set(false)
+
+      try {
+        // cancel() tears down the publisher and deletes the pending bondfire +
+        // Mux live stream server-side via cancelLiveStream — single cleanup path.
+        await livePublisher.cancel()
+      } catch (error) {
+        logRecordingError(error)
+        const errorInfo = parseError(error)
+        Alert.alert('Recording', getUserFacingErrorMessage(errorInfo))
+      } finally {
+        ownsPreviewRef.current = false
+        livePublishActions.reset()
+        recordingActions.setPhase('idle', 'live cancel')
+        recordingStore$.videoUri.set(null)
+        state$.showInviteSheet.set(false)
+        cancelInFlightRef.current = null
+      }
+    })()
+
+    cancelInFlightRef.current = cancelPromise
+    return cancelPromise
   }, [livePublisher, logRecordingError, state$])
 
   useEffect(() => {
@@ -534,19 +565,21 @@ export function LiveRecordScreen({
       return
     }
 
-    // Ownership gate (see hasProvisionedIngest): a dormant duplicate of this
-    // screen is also `!isFocused`, and its blur-teardown effect re-runs on every
-    // render (the cancel/stop callbacks get fresh identities each render). Left
-    // ungated, that duplicate calls stopLiveRecording() the instant phase flips
-    // to 'recording' — killing the active instance's live stream mid-record
-    // ("disconnected before sufficient video data" → "Recording failed"). Only
-    // the instance that owns the current session may tear it down here.
-    if (!livePublisher.hasProvisionedIngest()) {
+    const currentRecordingState = recordingStore$.phase.get()
+    const ownsLiveSession = livePublisher.hasProvisionedIngest()
+    const ownsPreview = currentRecordingState === 'pre_connected' && ownsPreviewRef.current
+
+    // Ownership gate: a dormant duplicate of this screen is also `!isFocused`.
+    // Only the instance that owns the current live session or preview may tear
+    // it down here.
+    if (!ownsLiveSession && !ownsPreview) {
       return
     }
 
-    const currentRecordingState = recordingStore$.phase.get()
     if (currentRecordingState === 'recording' || currentRecordingState === 'stopping') {
+      if (!ownsLiveSession) {
+        return
+      }
       void stopLiveRecording()
       return
     }
@@ -665,6 +698,9 @@ export function LiveRecordScreen({
     if (livePublisher.hasProvisionedIngest()) {
       return
     }
+    if (!livePublishStore$.sessionId.peek() && !livePublishStore$.recordId.peek()) {
+      return
+    }
     const status = livePublishStore$.status.peek()
     if (status === 'connecting' || status === 'live' || status === 'reconnecting') {
       return
@@ -683,8 +719,9 @@ export function LiveRecordScreen({
     if (phase !== 'pre_connected') {
       return
     }
-    // Ownership gate (see hasProvisionedIngest): only the session owner cancels.
-    if (!livePublisher.hasProvisionedIngest()) {
+    // Ownership gate: cancel either a provisioned session or a preview-only
+    // pre-connect owned by this screen.
+    if (!livePublisher.hasProvisionedIngest() && !ownsPreviewRef.current) {
       return
     }
 
@@ -730,8 +767,9 @@ export function LiveRecordScreen({
     if (phase !== 'pre_connected') {
       return
     }
-    // Ownership gate (see hasProvisionedIngest): only the session owner expires.
-    if (!livePublisher.hasProvisionedIngest()) {
+    // Ownership gate: expire either a provisioned session or a preview-only
+    // pre-connect owned by this screen.
+    if (!livePublisher.hasProvisionedIngest() && !ownsPreviewRef.current) {
       return
     }
 
@@ -755,15 +793,36 @@ export function LiveRecordScreen({
     if (phase !== 'recording' || !isDead) {
       return
     }
+    if (liveTerminalRecoveryFiredRef.current) {
+      return
+    }
     // Ownership gate (see hasProvisionedIngest): only the session owner finalizes.
     if (!livePublisher.hasProvisionedIngest()) {
       return
     }
 
-    // Don't show an alert — the status transition is visible in the UI and
-    // the completed upload will show whatever was captured.
+    liveTerminalRecoveryFiredRef.current = true
+
+    const startedAt = livePublishStore$.startedAt.peek()
+    const durationMs = startedAt ? Date.now() - startedAt : undefined
+    if (durationMs !== undefined && durationMs < EARLY_LIVE_DROP_MS) {
+      telemetry.warn('live:early_drop', 'Live stream dropped before sufficient video data', {
+        reason: liveStatus,
+        durationMs,
+        sessionId: livePublishStore$.sessionId.peek(),
+        recordId: livePublishStore$.recordId.peek(),
+      })
+      recordingStore$.preConnectFailed.set(true)
+      recordingStore$.previewExpired.set(false)
+      recordingStore$.progressStage.set("Recording didn't start")
+      void cancelLiveRecording()
+      return
+    }
+
+    // For a later drop, don't show an alert — the status transition is visible
+    // in the UI and the completed upload will show whatever was captured.
     void stopLiveRecording()
-  }, [liveStatus, phase, stopLiveRecording, livePublisher])
+  }, [liveStatus, phase, stopLiveRecording, livePublisher, cancelLiveRecording])
 
   const cancelLiveRecordingRef = useRef(cancelLiveRecording)
   useEffect(() => {
@@ -784,14 +843,15 @@ export function LiveRecordScreen({
     return () => {
       // Ownership gate (see hasProvisionedIngest): a dormant duplicate of this
       // screen unmounting must not cancel the active instance's session.
-      if (!ownsLiveSessionRef.current) {
+      if (!ownsLiveSessionRef.current && !ownsPreviewRef.current) {
         return
       }
       const currentRecordingState = recordingStore$.phase.get()
-      if (
-        (currentRecordingState === 'pre_connected' || currentRecordingState === 'idle') &&
-        livePublishStore$.recordId.get()
-      ) {
+      if (currentRecordingState === 'pre_connected') {
+        void cancelLiveRecordingRef.current()
+        return
+      }
+      if (currentRecordingState === 'idle' && livePublishStore$.recordId.get()) {
         void cancelLiveRecordingRef.current()
       }
     }
@@ -937,7 +997,11 @@ export function LiveRecordScreen({
             {showPreConnectError && (
               <YStack alignItems="center" gap={16}>
                 <Text color={'$color'} fontSize={18} fontWeight="700">
-                  {previewExpired ? 'Camera timed out' : "Camera couldn't start"}
+                  {previewExpired
+                    ? 'Camera timed out'
+                    : progressStage === "Recording didn't start"
+                      ? "Recording didn't start"
+                      : "Camera couldn't start"}
                 </Text>
                 <Pressable
                   onPress={() => {

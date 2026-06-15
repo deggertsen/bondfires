@@ -76,6 +76,12 @@ type MuxErrorInfo = {
   details?: MuxErrorDetail[]
 }
 
+interface EndLiveStreamResult {
+  ended: boolean
+  completeSignaled: boolean
+  recordingStarted: boolean
+}
+
 interface MuxDirectUploadResult {
   uploadId: string
   uploadUrl: string
@@ -133,6 +139,10 @@ const STUCK_LIVE_RECORDING_GIVE_UP_MS = 60 * 60 * 1000
 // direct-upload URLs expire in ~1h) so we never kill an in-flight upload.
 const STUCK_WAITING_FOR_UPLOAD_GIVE_UP_MS = 6 * 60 * 60 * 1000
 const RECONCILE_BATCH_LIMIT = 25
+// Existing mobile clients call endLiveStream before closing native RTMP. Do not
+// wait here, or Android can keep komuxer writing long enough to crash on stop.
+const MUX_LIVE_ACTIVE_BEFORE_COMPLETE_WAIT_MS = 0
+const MUX_LIVE_ACTIVE_BEFORE_COMPLETE_POLL_MS = 1_000
 
 function getMuxConfig() {
   const tokenId = process.env.MUX_TOKEN_ID
@@ -1812,12 +1822,34 @@ export const createLiveStream = action({
     ),
 })
 
+async function waitForLiveSessionToStart(
+  ctx: ActionCtx,
+  userId: Id<'users'>,
+  liveSessionId: Id<'liveSessions'>,
+): Promise<Doc<'liveSessions'> | null> {
+  const deadline = Date.now() + MUX_LIVE_ACTIVE_BEFORE_COMPLETE_WAIT_MS
+  let session: Doc<'liveSessions'> | null = await ctx.runQuery(
+    internal.videos.getMuxLiveSessionForUser,
+    { userId, liveSessionId },
+  )
+
+  while (session && !session.startedAt && session.status !== 'live' && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, MUX_LIVE_ACTIVE_BEFORE_COMPLETE_POLL_MS))
+    session = await ctx.runQuery(internal.videos.getMuxLiveSessionForUser, {
+      userId,
+      liveSessionId,
+    })
+  }
+
+  return session
+}
+
 export const endLiveStream = action({
   args: {
     liveSessionId: v.id('liveSessions'),
     reason: v.optional(v.string()),
   },
-  handler: (ctx, args): Promise<{ ended: boolean; completeSignaled: boolean }> =>
+  handler: (ctx, args): Promise<EndLiveStreamResult> =>
     withUserFacingActionErrors(
       ctx,
       'videos.endLiveStream',
@@ -1840,9 +1872,42 @@ export const endLiveStream = action({
           throwUserError('Live session not found')
         }
 
+        const activeSession = await waitForLiveSessionToStart(ctx, userId, args.liveSessionId)
+        if (!activeSession) {
+          throwUserError('Live session not found')
+        }
+
+        if (!activeSession.startedAt && activeSession.status !== 'live') {
+          await ctx.runMutation(internal.serverTelemetry.recordServerEvent, {
+            level: 'warn',
+            event: 'live:complete_not_active',
+            message: 'Live stream was stopped before Mux reported it active',
+            userId,
+            data: {
+              liveSessionId: args.liveSessionId,
+              status: activeSession.status,
+              ageMs: Date.now() - activeSession.createdAt,
+            },
+          })
+
+          try {
+            await deleteMuxLiveStream(activeSession.muxLiveStreamId)
+          } catch (error) {
+            console.warn('Failed to delete never-active Mux live stream:', error)
+          }
+
+          await ctx.runMutation(internal.videos.cancelMuxLiveSessionRecord, {
+            userId,
+            liveSessionId: args.liveSessionId,
+            reason: 'stopped_before_live_stream_active',
+          })
+
+          return { ended: false, completeSignaled: false, recordingStarted: false }
+        }
+
         let completeSignaled = true
         try {
-          await muxRequest(`/live-streams/${liveSession.muxLiveStreamId}/complete`, {
+          await muxRequest(`/live-streams/${activeSession.muxLiveStreamId}/complete`, {
             method: 'PUT',
           })
         } catch (error) {
@@ -1869,7 +1934,7 @@ export const endLiveStream = action({
           liveSessionId: args.liveSessionId,
         })
 
-        return { ended: true, completeSignaled }
+        return { ended: true, completeSignaled, recordingStarted: true }
       },
     ),
 })

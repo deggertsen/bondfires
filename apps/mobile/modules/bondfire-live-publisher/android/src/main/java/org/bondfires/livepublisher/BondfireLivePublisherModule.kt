@@ -173,16 +173,17 @@ class BondfireLivePublisherModule : Module() {
       // Build the RTMPS URL
       val rtmpsUrl = buildRtmpsUrl(options.rtmpsUrl, options.streamKey)
 
-      // Reuse the previewing streamer when startPreview() already ran;
-      // otherwise set the capture pipeline up now.
-      if (streamer == null) {
-        currentFacing = options.initialCamera
-        createStreamer(
-          fps = options.fps,
-          videoBitrate = options.videoBitrate,
-          audioBitrate = options.audioBitrate,
-        )
-      }
+      // A preview-only streamer can occasionally report RTMP "streaming" while
+      // never starting the video encoder after the record tap. Mux then closes
+      // the connection ~5s later because it received no video data. Build a
+      // fresh capture pipeline for the actual publish transition.
+      cleanupStreamer()
+      currentFacing = options.initialCamera
+      createStreamer(
+        fps = options.fps,
+        videoBitrate = options.videoBitrate,
+        audioBitrate = options.audioBitrate,
+      )
       val activeStreamer = streamer
         ?: throw LivePublisherException("Streamer unavailable")
 

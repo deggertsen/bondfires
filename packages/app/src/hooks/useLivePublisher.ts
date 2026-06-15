@@ -63,6 +63,8 @@ export interface CreateLiveStreamResult {
 export interface LivePublisherStopResult {
   /** Whether Mux acknowledged the /complete signal that ends recording early. */
   completeSignaled: boolean | undefined
+  /** False when Mux never reported the live stream active/watchable. */
+  recordingStarted: boolean
   /** False when the backend was unreachable (e.g. offline) at stop time. */
   backendNotified: boolean
 }
@@ -149,13 +151,24 @@ export function useLivePublisher(options: {
       // encoder, camera, and RTMP connection are being torn down — these are
       // teardown artifacts, not user-facing failures.
       const currentStatus = livePublishStore$.status.peek()
-      if (currentStatus === 'stopping' || currentStatus === 'ended' || currentStatus === 'idle') {
-        telemetry.warn('live:crash_stale', 'Live publisher native error (teardown artifact)', {
-          code: error.code,
-          message: error.message,
-          sessionId: livePublishStore$.sessionId.peek(),
-          statusAtError: currentStatus,
-        })
+      const isTerminalOrTeardownStatus =
+        currentStatus === 'stopping' ||
+        currentStatus === 'ended' ||
+        currentStatus === 'idle' ||
+        currentStatus === 'endpoint_closed' ||
+        currentStatus === 'stream_stopped_unexpectedly' ||
+        currentStatus === 'errored'
+      if (isTerminalOrTeardownStatus) {
+        telemetry.warn(
+          'live:crash_stale',
+          'Live publisher native error after terminal transport state',
+          {
+            code: error.code,
+            message: error.message,
+            sessionId: livePublishStore$.sessionId.peek(),
+            statusAtError: currentStatus,
+          },
+        )
         return
       }
 
@@ -476,22 +489,12 @@ export function useLivePublisher(options: {
     let publisherError: unknown
     let backendError: unknown
 
-    // Ask Mux to finish the recorded asset before closing our RTMP publisher.
-    // The /complete API ends recording immediately instead of waiting for the
-    // reconnect window, while Mux keeps the encoder connection open briefly.
     let completeSignaled: boolean | undefined
-    try {
-      if (sessionId) {
-        const result = await options.endLiveStream({
-          liveSessionId: sessionId,
-          reason: 'creator_stopped',
-        })
-        completeSignaled = readCompleteSignaled(result)
-      }
-    } catch (error) {
-      backendError = error
-    }
+    let recordingStarted = true
 
+    // Close native RTMP first. Waiting on the backend while StreamPack keeps
+    // writing packets can crash in komuxer/DirectByteBuffer on Android; the
+    // native publisher must leave the hot path as soon as the creator taps stop.
     try {
       await options.publisher.stop()
     } catch (error) {
@@ -502,10 +505,29 @@ export function useLivePublisher(options: {
       livePublishActions.setStatus('ended')
     }
 
+    // Then ask Mux to finalize the recorded asset. Mux keeps the live stream in
+    // its reconnect window after our RTMP socket closes, so /complete can still
+    // finalize a stream that actually became active. If the stream never became
+    // active, the backend reports recordingStarted=false and the UI offers a
+    // retry instead of showing a fake success screen.
+    try {
+      if (sessionId) {
+        const result = await options.endLiveStream({
+          liveSessionId: sessionId,
+          reason: 'creator_stopped',
+        })
+        completeSignaled = readCompleteSignaled(result)
+        recordingStarted = readRecordingStarted(result)
+      }
+    } catch (error) {
+      backendError = error
+    }
+
     telemetry.info('live:stop', 'Live publisher stopped', {
       sessionId,
       reason: publisherError ? 'error' : 'user_stopped',
       muxCompleteSignaled: completeSignaled,
+      recordingStarted,
       publisherError: publisherError ? String(publisherError) : undefined,
       backendError: backendError ? String(backendError) : undefined,
     })
@@ -529,6 +551,7 @@ export function useLivePublisher(options: {
     // an offline creator back to an idle camera as if the recording was lost.
     return {
       completeSignaled,
+      recordingStarted,
       backendNotified: !backendError,
     }
   }, [options, stopStatsSampling])
@@ -600,4 +623,13 @@ function readCompleteSignaled(result: unknown): boolean | undefined {
 
   const value = (result as { completeSignaled?: unknown }).completeSignaled
   return typeof value === 'boolean' ? value : undefined
+}
+
+function readRecordingStarted(result: unknown): boolean {
+  if (!result || typeof result !== 'object' || !('recordingStarted' in result)) {
+    return true
+  }
+
+  const value = (result as { recordingStarted?: unknown }).recordingStarted
+  return typeof value === 'boolean' ? value : true
 }

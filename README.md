@@ -100,6 +100,8 @@ MUX_SIGNING_KEY_ID=your-mux-signing-key-id
 MUX_SIGNING_PRIVATE_KEY=your-mux-private-key
 MUX_UPLOAD_CORS_ORIGIN=*
 MUX_VIDEO_QUALITY=basic
+MUX_LIVE_RECONNECT_WINDOW_SECONDS=30
+MUX_LIVE_RECONNECT_SLATE_URL=https://bondfires.app/images/mux-live-slate.png
 ```
 
 Configure the Mux webhook endpoint to point at the Convex HTTP action path
@@ -107,6 +109,8 @@ Configure the Mux webhook endpoint to point at the Convex HTTP action path
 Signing key variables are required for private camp video playback and any other
 video created with a signed Mux playback policy. The private key can be stored as
 raw PEM with escaped newlines or as a base64-encoded PEM.
+`MUX_LIVE_RECONNECT_SLATE_URL` must be publicly downloadable by Mux when each
+live recording starts; otherwise Mux falls back to its default slate.
 
 ### Development Setup
 

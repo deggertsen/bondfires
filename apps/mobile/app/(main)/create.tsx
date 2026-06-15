@@ -116,17 +116,6 @@ export default function CreateScreen() {
     recordingPhase === 'completion' && !!videoUri && shouldUseLivePublish && !respondTo
   const liveCompletionMissingRecord = isLiveBondfireCompletion && !liveRecordId
 
-  // Invariant: a non-response 'pre_connected' MUST have a provisioned bondfire
-  // (provision() sets recordId before the phase flips). A response pre-connect
-  // is preview-only and intentionally has no recordId — valid only while
-  // respondTo is set. When the flow carries over from a just-finished response
-  // into the new-Bondfire flow (respondTo cleared via a non-atomic router
-  // .replace), that preview-only 'pre_connected' lingers with no stream, and the
-  // record tap dead-ends on "No provisioned live stream to connect". Detect it
-  // so we can reset to idle and let the pre-connect re-arm with provisioning.
-  const livePreConnectMissingRecord =
-    recordingPhase === 'pre_connected' && shouldUseLivePublish && !respondTo && !liveRecordId
-
   const createMuxDirectUpload = useAction(api.videos.createMuxDirectUpload)
   const getMuxUploadStatus = useAction(api.videos.getMuxUploadStatus)
   const camps = useQuery(api.camps.list, respondTo ? 'skip' : {})
@@ -339,27 +328,6 @@ export default function CreateScreen() {
     livePublishActions.reset()
     recordingActions.resetFlow('live completion missing record id')
   }, [liveCompletionMissingRecord, isPersonalCamp, isFocused])
-
-  // Recover a non-response pre-connect that never provisioned a stream (a
-  // response's preview-only 'pre_connected' that carried into the new-Bondfire
-  // flow once respondTo cleared). Reset to idle so the pre-connect re-arms and
-  // actually provisions — otherwise the record tap dead-ends and, because the
-  // phase is stuck off 'idle', re-entering the tab never re-arms.
-  useEffect(() => {
-    // Focused-instance-only (see note on liveCompletionMissingRecord above): a
-    // dormant duplicate `create` must not reset the live instance's flow.
-    if (!livePreConnectMissingRecord || !isFocused) {
-      return
-    }
-    telemetry.warn(
-      'create:preconnect',
-      'Non-response pre-connect missing provisioned stream; recovering to idle',
-      { isPersonalCamp },
-    )
-    livePublishActions.reset()
-    recordingStore$.preConnectFailed.set(false)
-    recordingActions.resetFlow('pre-connect missing provisioned stream')
-  }, [livePreConnectMissingRecord, isPersonalCamp, isFocused])
 
   const requestPermissions = useCallback(async () => {
     if (!cameraPermission?.granted) {
