@@ -5,6 +5,19 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { AppState, type AppStateStatus, Platform } from 'react-native'
 import { telemetry } from '../services/telemetry'
 
+const ANDROID_NOTIFICATION_CHANNEL_ID = 'bondfires-default'
+
+async function ensureAndroidNotificationChannel() {
+  if (Platform.OS !== 'android') return
+
+  await Notifications.setNotificationChannelAsync(ANDROID_NOTIFICATION_CHANNEL_ID, {
+    name: 'Bondfires',
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 250, 250, 250],
+    lightColor: '#FF6B35',
+  })
+}
+
 // Configure how notifications are handled when app is in foreground
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -48,6 +61,8 @@ export interface UsePushNotificationsOptions {
   onNotificationReceived?: (notification: Notifications.Notification) => void
   // Called when user taps on a notification
   onNotificationResponse?: (response: Notifications.NotificationResponse) => void
+  // Called when OS push permission has been revoked since last active
+  onPermissionRevoked?: () => void
 }
 
 export interface UsePushNotificationsResult {
@@ -78,6 +93,7 @@ export function usePushNotifications(
     unregisterTokenMutation,
     onNotificationReceived,
     onNotificationResponse,
+    onPermissionRevoked,
   } = options
 
   const [expoPushToken, setExpoPushToken] = useState<string | null>(null)
@@ -89,6 +105,15 @@ export function usePushNotifications(
   const appStateRef = useRef(AppState.currentState)
   const isAuthenticatedRef = useRef(isAuthenticated)
   isAuthenticatedRef.current = isAuthenticated
+  const expoPushTokenRef = useRef(expoPushToken)
+  expoPushTokenRef.current = expoPushToken
+  const onPermissionRevokedRef = useRef(onPermissionRevoked)
+  onPermissionRevokedRef.current = onPermissionRevoked
+
+  const setStoredExpoPushToken = useCallback((token: string | null) => {
+    expoPushTokenRef.current = token
+    setExpoPushToken(token)
+  }, [])
 
   // Register token with backend
   const registerWithBackend = useCallback(
@@ -186,20 +211,12 @@ export function usePushNotifications(
         return false
       }
 
-      // Set up Android notification channel
-      if (Platform.OS === 'android') {
-        await Notifications.setNotificationChannelAsync('bondfires-default', {
-          name: 'Bondfires',
-          importance: Notifications.AndroidImportance.MAX,
-          vibrationPattern: [0, 250, 250, 250],
-          lightColor: '#FF6B35',
-        })
-      }
+      await ensureAndroidNotificationChannel()
 
       // Get Expo push token
       const token = await getExpoPushToken()
       if (token) {
-        setExpoPushToken(token)
+        setStoredExpoPushToken(token)
         await registerWithBackend(token)
       } else {
         setError('Failed to get push notification token')
@@ -220,7 +237,7 @@ export function usePushNotifications(
       setError('Failed to set up push notifications')
       return false
     }
-  }, [getExpoPushToken, registerWithBackend])
+  }, [getExpoPushToken, registerWithBackend, setStoredExpoPushToken])
 
   // Register the token only if OS permission is already granted — never prompts.
   const registerIfGranted = useCallback(async (): Promise<boolean> => {
@@ -231,32 +248,53 @@ export function usePushNotifications(
       const { status } = await Notifications.getPermissionsAsync()
       if (status !== 'granted') return false
 
+      await ensureAndroidNotificationChannel()
+
       const token = await getExpoPushToken()
       if (!token) return false
 
-      setExpoPushToken(token)
+      setStoredExpoPushToken(token)
       await registerWithBackend(token)
       return true
     } catch {
       // getExpoPushToken already logs helpful messages
       return false
     }
-  }, [getExpoPushToken, registerWithBackend])
+  }, [getExpoPushToken, registerWithBackend, setStoredExpoPushToken])
 
   // Unregister from push notifications
   const unregister = useCallback(async () => {
     try {
-      if (expoPushToken && unregisterTokenMutation) {
-        await unregisterTokenMutation({ token: expoPushToken })
+      const token = expoPushTokenRef.current
+      if (token && unregisterTokenMutation) {
+        await unregisterTokenMutation({ token })
       }
-      setExpoPushToken(null)
+      setStoredExpoPushToken(null)
       setIsRegistered(false)
     } catch (e) {
       telemetry.error('push:unregister', 'Error unregistering push notifications', {
         error: String(e),
       })
     }
-  }, [expoPushToken, unregisterTokenMutation])
+  }, [setStoredExpoPushToken, unregisterTokenMutation])
+
+  const handlePermissionRevoked = useCallback(async () => {
+    const token = expoPushTokenRef.current
+    setStoredExpoPushToken(null)
+    setIsRegistered(false)
+
+    if (token && unregisterTokenMutation) {
+      try {
+        await unregisterTokenMutation({ token })
+      } catch (e) {
+        telemetry.warn('push:unregister', 'Failed to unregister revoked push token', {
+          error: String(e),
+        })
+      }
+    }
+
+    onPermissionRevokedRef.current?.()
+  }, [setStoredExpoPushToken, unregisterTokenMutation])
 
   // Set up notification listeners
   useEffect(() => {
@@ -270,23 +308,37 @@ export function usePushNotifications(
       onNotificationResponse?.(response)
     })
 
-    // Handle app state changes (refresh token on foreground)
+    // Handle app state changes (refresh token on foreground, sync OS permission)
     const handleAppStateChange = async (nextAppState: AppStateStatus) => {
-      if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
+      const cameToForeground =
+        appStateRef.current.match(/inactive|background/) && nextAppState === 'active'
+      appStateRef.current = nextAppState
+
+      if (cameToForeground) {
         if (!isAuthenticatedRef.current) return
 
         // App came to foreground - verify token is still valid
         try {
+          const { status } = await Notifications.getPermissionsAsync()
+          if (status !== 'granted') {
+            // OS permission was revoked (e.g. via system settings) since last
+            // foreground. Clear the local token so we don't keep sending to a
+            // dead endpoint.
+            await handlePermissionRevoked()
+            return
+          }
+
+          await ensureAndroidNotificationChannel()
+
           const token = await getExpoPushToken()
-          if (token && token !== expoPushToken) {
-            setExpoPushToken(token)
+          if (token && token !== expoPushTokenRef.current) {
+            setStoredExpoPushToken(token)
             await registerWithBackend(token)
           }
         } catch {
           // Silently handle - getExpoPushToken already logs helpful messages
         }
       }
-      appStateRef.current = nextAppState
     }
 
     const appStateSubscription = AppState.addEventListener('change', handleAppStateChange)
@@ -297,12 +349,29 @@ export function usePushNotifications(
       appStateSubscription.remove()
     }
   }, [
-    expoPushToken,
     getExpoPushToken,
+    handlePermissionRevoked,
     onNotificationReceived,
     onNotificationResponse,
     registerWithBackend,
+    setStoredExpoPushToken,
   ])
+
+  // Ensure the Android notification channel exists on every mount.
+  // Channel creation is idempotent — safe to call even if it already exists.
+  // This is critical: the backend always sends pushes with channelId
+  // 'bondfires-default'. If the channel doesn't exist on the device, Android
+  // silently drops the notification with no error or log. The channel was
+  // previously only created inside requestPermissions(), which meant users
+  // who registered via registerIfGranted() (sign-in, app-state change) or
+  // the mount-time check below never got the channel and silently lost all
+  // push notifications.
+  useEffect(() => {
+    ensureAndroidNotificationChannel().catch(() => {
+      // setNotificationChannelAsync is best-effort; failures are non-fatal
+      // and typically only occur in emulators.
+    })
+  }, [])
 
   // Check initial permission status on mount, but never prompt pre-login.
   useEffect(() => {
@@ -314,9 +383,11 @@ export function usePushNotifications(
       if (status === 'granted') {
         // Already have permission, get token
         try {
+          await ensureAndroidNotificationChannel()
+
           const token = await getExpoPushToken()
           if (token) {
-            setExpoPushToken(token)
+            setStoredExpoPushToken(token)
             await registerWithBackend(token)
           }
         } catch {
@@ -326,7 +397,7 @@ export function usePushNotifications(
     }
 
     checkInitialStatus()
-  }, [getExpoPushToken, registerWithBackend])
+  }, [getExpoPushToken, registerWithBackend, setStoredExpoPushToken])
 
   return {
     expoPushToken,
