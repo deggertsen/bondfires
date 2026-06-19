@@ -49,7 +49,7 @@ export const registerDevice = mutation({
       userId,
       token: args.token,
       platform: args.platform,
-      tokenType: args.tokenType ?? 'fcm',
+      tokenType: args.tokenType ?? 'expo',
       deviceId: args.deviceId,
       timezone: args.timezone,
       createdAt: now,
