@@ -48,6 +48,8 @@ export interface UsePushNotificationsOptions {
   onNotificationReceived?: (notification: Notifications.Notification) => void
   // Called when user taps on a notification
   onNotificationResponse?: (response: Notifications.NotificationResponse) => void
+  // Called when OS push permission has been revoked since last active
+  onPermissionRevoked?: () => void
 }
 
 export interface UsePushNotificationsResult {
@@ -78,6 +80,7 @@ export function usePushNotifications(
     unregisterTokenMutation,
     onNotificationReceived,
     onNotificationResponse,
+    onPermissionRevoked,
   } = options
 
   const [expoPushToken, setExpoPushToken] = useState<string | null>(null)
@@ -89,6 +92,8 @@ export function usePushNotifications(
   const appStateRef = useRef(AppState.currentState)
   const isAuthenticatedRef = useRef(isAuthenticated)
   isAuthenticatedRef.current = isAuthenticated
+  const onPermissionRevokedRef = useRef(onPermissionRevoked)
+  onPermissionRevokedRef.current = onPermissionRevoked
 
   // Register token with backend
   const registerWithBackend = useCallback(
@@ -186,17 +191,8 @@ export function usePushNotifications(
         return false
       }
 
-      // Set up Android notification channel
-      if (Platform.OS === 'android') {
-        await Notifications.setNotificationChannelAsync('bondfires-default', {
-          name: 'Bondfires',
-          importance: Notifications.AndroidImportance.MAX,
-          vibrationPattern: [0, 250, 250, 250],
-          lightColor: '#FF6B35',
-        })
-      }
-
       // Get Expo push token
+      // (Android notification channel is created at mount — see useEffect above)
       const token = await getExpoPushToken()
       if (token) {
         setExpoPushToken(token)
@@ -270,13 +266,28 @@ export function usePushNotifications(
       onNotificationResponse?.(response)
     })
 
-    // Handle app state changes (refresh token on foreground)
+    // Handle app state changes (refresh token on foreground, sync OS permission)
     const handleAppStateChange = async (nextAppState: AppStateStatus) => {
       if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
         if (!isAuthenticatedRef.current) return
 
         // App came to foreground - verify token is still valid
         try {
+          const { status } = await Notifications.getPermissionsAsync()
+          if (status !== 'granted') {
+            // OS permission was revoked (e.g. via system settings) since last
+            // foreground. Clear the local token so we don't keep sending to a
+            // dead endpoint.
+            if (expoPushToken) {
+              setExpoPushToken(null)
+              if (unregisterTokenMutation) {
+                await unregisterTokenMutation({ token: expoPushToken })
+              }
+            }
+            onPermissionRevokedRef.current?.()
+            return
+          }
+
           const token = await getExpoPushToken()
           if (token && token !== expoPushToken) {
             setExpoPushToken(token)
@@ -302,7 +313,30 @@ export function usePushNotifications(
     onNotificationReceived,
     onNotificationResponse,
     registerWithBackend,
+    unregisterTokenMutation,
   ])
+
+  // Ensure the Android notification channel exists on every mount.
+  // Channel creation is idempotent — safe to call even if it already exists.
+  // This is critical: the backend always sends pushes with channelId
+  // 'bondfires-default'. If the channel doesn't exist on the device, Android
+  // silently drops the notification with no error or log. The channel was
+  // previously only created inside requestPermissions(), which meant users
+  // who registered via registerIfGranted() (sign-in, app-state change) or
+  // the mount-time check below never got the channel and silently lost all
+  // push notifications.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return
+    Notifications.setNotificationChannelAsync('bondfires-default', {
+      name: 'Bondfires',
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#FF6B35',
+    }).catch(() => {
+      // setNotificationChannelAsync is best-effort; failures are non-fatal
+      // and typically only occur in emulators.
+    })
+  }, [])
 
   // Check initial permission status on mount, but never prompt pre-login.
   useEffect(() => {

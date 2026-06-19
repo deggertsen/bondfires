@@ -29,6 +29,7 @@ import 'react-native-reanimated'
 
 import {
   type AppThemeName,
+  appActions,
   appStore$,
   appThemeColors,
   mmkvStorage,
@@ -323,11 +324,14 @@ function AppContent() {
       token: string
       tokenType: string
       platform: string
+      deviceId: string
       timezone?: string
     }) => {
       await registerDevice({
         token: params.token,
         platform: params.platform as 'ios' | 'android',
+        tokenType: params.tokenType as 'expo' | 'fcm',
+        deviceId: params.deviceId,
         timezone: params.timezone,
       })
     },
@@ -337,6 +341,12 @@ function AppContent() {
     onNotificationResponse: handleNotificationResponse,
     onNotificationReceived: (_notification) => {
       // Notification received in foreground - could show in-app alert here
+    },
+    onPermissionRevoked: () => {
+      // OS permission was revoked while app was backgrounded — sync the
+      // app store so the settings toggle reflects reality instead of
+      // showing notifications as "enabled" when nothing can arrive.
+      appActions.setNotificationsEnabled(false)
     },
   })
 
