@@ -960,6 +960,9 @@ export default function BondfireDetailScreen() {
 
   const didRestorePositionRef = useRef(false)
   const persistPositionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Tracks the bondfireId we last restored so we re-run the restore logic
+  // when navigating to a different bondfire without a full unmount.
+  const restoredBondfireIdRef = useRef<string | null>(null)
 
   // Telemetry: surface stuck/unavailable playback states so they can be
   // correlated with the server-side Mux webhook + reconciliation logs.
@@ -1144,10 +1147,15 @@ export default function BondfireDetailScreen() {
   }, [bondfireData, bondfireId, currentUserId, markThreadRead])
 
   // Restore last position within this conversation (camp) once data is available.
+  // Waits for videoUrls to be populated so the FlatList has its data laid out
+  // before attempting to scroll.
   useEffect(() => {
     if (!bondfireData) return
-    if (didRestorePositionRef.current) return
+    if (videoUrls.length === 0) return
+    // Re-run when navigating to a different bondfire without a full unmount.
+    if (restoredBondfireIdRef.current === bondfireId && didRestorePositionRef.current) return
     didRestorePositionRef.current = true
+    restoredBondfireIdRef.current = bondfireId
 
     setFeedActiveBondfireId(bondfireId)
 
@@ -1157,10 +1165,13 @@ export default function BondfireDetailScreen() {
 
     if (clamped === 0) return
     screenState$.currentVideoIndex.set(clamped)
+    // Use a small delay to let the FlatList finish laying out items after
+    // videoUrls are populated. onScrollToIndexFailed handles the edge case
+    // where layout still isn't ready.
     setTimeout(() => {
       flatListRef.current?.scrollToIndex({ index: clamped, animated: false })
-    }, 0)
-  }, [bondfireData, bondfireId, screenState$])
+    }, 50)
+  }, [bondfireData, bondfireId, videoUrls.length, screenState$])
 
   // Persist position as the user swipes through the conversation.
   useEffect(() => {
@@ -1572,6 +1583,21 @@ export default function BondfireDetailScreen() {
             offset: SCREEN_WIDTH * index,
             index,
           })}
+          onScrollToIndexFailed={({ index, highestMeasuredFrameIndex }) => {
+            // The FlatList hasn't laid out far enough yet. Wait one frame
+            // and retry — the item is within the total count so it will
+            // be available once layout catches up.
+            setTimeout(() => {
+              flatListRef.current?.scrollToIndex({
+                index: Math.min(index, highestMeasuredFrameIndex),
+                animated: false,
+              })
+              // Then try the actual target again after another frame.
+              setTimeout(() => {
+                flatListRef.current?.scrollToIndex({ index, animated: false })
+              }, 50)
+            }, 50)
+          }}
         />
 
         {/* Navigation hints */}
