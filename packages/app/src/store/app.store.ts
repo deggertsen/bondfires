@@ -16,7 +16,6 @@ export interface AppState {
 
   // User preferences
   preferences: {
-    videoQuality: 'auto' | 'hd' | 'sd'
     autoplayVideos: boolean
     videoMuted: boolean
     notificationsEnabled: boolean
@@ -52,7 +51,6 @@ export interface AppState {
 const defaultState: AppState = {
   hasSeenOnboarding: false,
   preferences: {
-    videoQuality: 'auto',
     autoplayVideos: true,
     videoMuted: true,
     notificationsEnabled: true,
@@ -120,10 +118,6 @@ when(syncState(appStore$).isPersistLoaded, () => {
 export const appActions = {
   completeOnboarding: () => {
     appStore$.hasSeenOnboarding.set(true)
-  },
-
-  setVideoQuality: (quality: AppState['preferences']['videoQuality']) => {
-    appStore$.preferences.videoQuality.set(quality)
   },
 
   setAutoplayVideos: (enabled: boolean) => {

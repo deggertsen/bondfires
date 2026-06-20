@@ -33,7 +33,6 @@ import {
   Sun,
   Trash2,
   User,
-  Video,
 } from '@tamagui/lucide-icons'
 import { useConvex, useMutation, useQuery } from 'convex/react'
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator'
@@ -198,13 +197,8 @@ export default function ProfileScreen() {
   const adminSetForcedTier = useMutation(api.admin.adminSetForcedTier)
   const closeCircle = useQuery(api.conversations.listCloseCircle) as CloseCircleEntry[] | undefined
 
-  const {
-    preferences,
-    setVideoQuality,
-    setAutoplayVideos,
-    setNotificationsEnabled,
-    setLivePublishEnabled,
-  } = usePreferences()
+  const { preferences, setAutoplayVideos, setNotificationsEnabled, setLivePublishEnabled } =
+    usePreferences()
 
   // Live publish is the only recording path now. The upload queue is dead
   // weight on this path (live recordings never enqueue, and the resume hook
@@ -225,7 +219,7 @@ export default function ProfileScreen() {
 
   const state$ = useObservable({
     isEditSheetOpen: false,
-    isVideoQualitySheetOpen: false,
+
     editName: '',
     editGender: null as Gender | null,
     isSaving: false,
@@ -238,7 +232,6 @@ export default function ProfileScreen() {
   const devSettingsVisible = useValue(state$.devSettingsVisible)
 
   const isEditSheetOpen = useValue(state$.isEditSheetOpen)
-  const isVideoQualitySheetOpen = useValue(state$.isVideoQualitySheetOpen)
   const editName = useValue(state$.editName)
   const editGender = useValue(state$.editGender)
   const isSaving = useValue(state$.isSaving)
@@ -766,27 +759,6 @@ export default function ProfileScreen() {
 
             <Card>
               <YStack gap={16}>
-                <Pressable onPress={() => state$.isVideoQualitySheetOpen.set(true)}>
-                  <XStack justifyContent="space-between" alignItems="center">
-                    <XStack alignItems="center" gap={12}>
-                      <Video size={20} color={'$primary'} />
-                      <YStack>
-                        <Text fontWeight="500" fontSize={15}>
-                          Video Quality
-                        </Text>
-                        <Text fontSize={13} color={'$placeholderColor'}>
-                          Tap to change quality preference
-                        </Text>
-                      </YStack>
-                    </XStack>
-                    <Text color={'$primary'} fontWeight="600" fontSize={14}>
-                      {preferences.videoQuality.toUpperCase()}
-                    </Text>
-                  </XStack>
-                </Pressable>
-
-                <Separator borderColor={'$borderColor'} />
-
                 <XStack justifyContent="space-between" alignItems="center">
                   <XStack alignItems="center" gap={12}>
                     <Play size={20} color={'$secondary'} />
@@ -1081,70 +1053,6 @@ export default function ProfileScreen() {
                 )}
               </Button>
             </XStack>
-          </YStack>
-        </Sheet.Frame>
-      </Sheet>
-
-      <Sheet
-        open={isVideoQualitySheetOpen}
-        onOpenChange={(open: boolean) => state$.isVideoQualitySheetOpen.set(open)}
-        snapPoints={[35]}
-        dismissOnSnapToBottom
-      >
-        <Sheet.Overlay backgroundColor="rgba(0,0,0,0.6)" />
-        <Sheet.Frame
-          padding={20}
-          backgroundColor={'$backgroundHover'}
-          borderTopLeftRadius={24}
-          borderTopRightRadius={24}
-        >
-          <Sheet.Handle backgroundColor={'$borderColor'} />
-          <YStack gap={20} marginTop={16}>
-            <Text fontSize={20} fontWeight="700">
-              Video Quality
-            </Text>
-
-            <YStack gap={12}>
-              {(['auto', 'hd', 'sd'] as const).map((quality) => (
-                <Pressable
-                  key={quality}
-                  onPress={() => {
-                    setVideoQuality(quality)
-                    state$.isVideoQualitySheetOpen.set(false)
-                  }}
-                >
-                  <XStack
-                    padding={16}
-                    borderRadius={12}
-                    backgroundColor={
-                      preferences.videoQuality === quality ? '$backgroundPress' : '$borderColor'
-                    }
-                    borderWidth={preferences.videoQuality === quality ? 2 : 0}
-                    borderColor={'$primary'}
-                    justifyContent="space-between"
-                    alignItems="center"
-                  >
-                    <YStack>
-                      <Text fontWeight="600" fontSize={16}>
-                        {quality === 'auto'
-                          ? 'Auto'
-                          : quality === 'hd'
-                            ? 'High (HD)'
-                            : 'Standard (SD)'}
-                      </Text>
-                      <Text fontSize={13} color={'$placeholderColor'}>
-                        {quality === 'auto'
-                          ? 'Adjusts based on network speed'
-                          : quality === 'hd'
-                            ? 'Best quality, uses more data'
-                            : 'Lower quality, saves data'}
-                      </Text>
-                    </YStack>
-                    {preferences.videoQuality === quality && <Video size={20} color={'$primary'} />}
-                  </XStack>
-                </Pressable>
-              ))}
-            </YStack>
           </YStack>
         </Sheet.Frame>
       </Sheet>
