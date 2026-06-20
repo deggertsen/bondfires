@@ -15,7 +15,7 @@ import {
   useMuxData,
 } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
-import { useObservable, useObserveEffect, useValue } from '@legendapp/state/react'
+import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused, useNavigation } from '@react-navigation/native'
 import {
   ChevronLeft,
@@ -160,6 +160,7 @@ function VideoPlayer({
   const autoplayVideos = useValue(appStore$.preferences.autoplayVideos)
   const videoQuality = useValue(appStore$.preferences.videoQuality)
   const isMuted = useValue(appStore$.preferences.videoMuted)
+  const playbackSpeed = useValue(appStore$.preferences.playbackSpeed)
   const currentUserId = useValue(appStore$.userId)
   const shouldSuppressPlayback = isLive && currentUserId === videoOwnerId
 
@@ -219,7 +220,7 @@ function VideoPlayer({
   const player = useVideoPlayer(currentUrl || '', (player) => {
     player.loop = false
     player.muted = isMuted
-    player.playbackRate = appStore$.preferences.playbackSpeed.get()
+    player.playbackRate = playbackSpeed
     player.preservesPitch = true
   })
 
@@ -261,18 +262,19 @@ function VideoPlayer({
 
   // Update playback speed only for the active, foreground player.
   // This prevents rate changes from mutating all mounted players in the response chain.
-  useObserveEffect(() => {
+  // useEffect also reacts to the plain foreground props that gate this mutation.
+  useEffect(() => {
     if (player && isActive && isScreenFocused && isAppActive) {
-      player.playbackRate = appStore$.preferences.playbackSpeed.get()
+      player.playbackRate = playbackSpeed
     }
-  })
+  }, [player, isActive, isScreenFocused, isAppActive, playbackSpeed])
 
-  // Update mute state when preference changes (effect phase for player mutations)
-  useObserveEffect(() => {
+  // Update mute state when preference changes.
+  useEffect(() => {
     if (player) {
-      player.muted = appStore$.preferences.videoMuted.get()
+      player.muted = isMuted
     }
-  })
+  }, [player, isMuted])
 
   // Play/pause based on isActive, screen focus, and app state
   useEffect(() => {
@@ -282,7 +284,7 @@ function VideoPlayer({
     const shouldPlay = isActive && isScreenFocused && isAppActive && !shouldSuppressPlayback
 
     if (shouldPlay) {
-      player.playbackRate = appStore$.preferences.playbackSpeed.get()
+      player.playbackRate = playbackSpeed
       // Only auto-play if autoplay is enabled OR user has manually initiated play
       if (autoplayVideos || state$.userInitiatedPlay.get()) {
         player.play()
@@ -300,6 +302,7 @@ function VideoPlayer({
     isScreenFocused,
     isAppActive,
     autoplayVideos,
+    playbackSpeed,
     state$,
     shouldSuppressPlayback,
   ])
@@ -456,8 +459,8 @@ function VideoPlayer({
 
   const toggleMute = useCallback(() => {
     if (!player) return
-    appActions.setVideoMuted(!appStore$.preferences.videoMuted.get())
-  }, [player])
+    appActions.setVideoMuted(!isMuted)
+  }, [player, isMuted])
 
   const handleProgressBarLayout = useCallback((event: LayoutChangeEvent) => {
     const { width } = event.nativeEvent.layout
