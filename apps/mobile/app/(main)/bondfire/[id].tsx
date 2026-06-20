@@ -158,13 +158,7 @@ function VideoPlayer({
     }
 
     return videoUrl
-  }, [
-    isActive,
-    isScreenFocused,
-    isAppActive,
-    videoUrl,
-    shouldSuppressPlayback,
-  ])
+  }, [isActive, isScreenFocused, isAppActive, videoUrl, shouldSuppressPlayback])
 
   const state$ = useObservable({
     showReport: false,

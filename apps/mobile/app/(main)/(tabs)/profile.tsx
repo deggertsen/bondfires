@@ -197,12 +197,8 @@ export default function ProfileScreen() {
   const adminSetForcedTier = useMutation(api.admin.adminSetForcedTier)
   const closeCircle = useQuery(api.conversations.listCloseCircle) as CloseCircleEntry[] | undefined
 
-  const {
-    preferences,
-    setAutoplayVideos,
-    setNotificationsEnabled,
-    setLivePublishEnabled,
-  } = usePreferences()
+  const { preferences, setAutoplayVideos, setNotificationsEnabled, setLivePublishEnabled } =
+    usePreferences()
 
   // Live publish is the only recording path now. The upload queue is dead
   // weight on this path (live recordings never enqueue, and the resume hook
@@ -1060,7 +1056,6 @@ export default function ProfileScreen() {
           </YStack>
         </Sheet.Frame>
       </Sheet>
-
     </YStack>
   )
 }
