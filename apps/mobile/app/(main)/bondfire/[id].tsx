@@ -40,6 +40,8 @@ import {
   AppState,
   Dimensions,
   FlatList,
+  type FlatListProps,
+  InteractionManager,
   type LayoutChangeEvent,
   PanResponder,
   Platform,
@@ -102,6 +104,17 @@ type PendingScrubSeek = {
   locationX: number | null
   timeout: ReturnType<typeof setTimeout> | null
   lastSeekAt: number
+}
+
+type ScrollToIndexFailedInfo = Parameters<
+  NonNullable<FlatListProps<unknown>['onScrollToIndexFailed']>
+>[0]
+
+function clampVideoIndex(index: number | null | undefined, totalVideos: number) {
+  if (totalVideos <= 0) return 0
+  if (index === null || index === undefined || !Number.isFinite(index)) return 0
+
+  return Math.max(0, Math.min(Math.floor(index), totalVideos - 1))
 }
 
 interface VideoPlayerProps {
@@ -958,11 +971,13 @@ export default function BondfireDetailScreen() {
     return () => animation.stop()
   }, [bondfireData?.videoStatus, pendingPulse])
 
-  const didRestorePositionRef = useRef(false)
   const persistPositionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Tracks the bondfireId we last restored so we re-run the restore logic
-  // when navigating to a different bondfire without a full unmount.
-  const restoredBondfireIdRef = useRef<string | null>(null)
+  const restoreScrollTaskRef = useRef<ReturnType<
+    typeof InteractionManager.runAfterInteractions
+  > | null>(null)
+  const restoreRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const restoreTargetRef = useRef<{ bondfireId: string; savedIndex: number } | null>(null)
+  const restoredPositionKeyRef = useRef<string | null>(null)
 
   // Telemetry: surface stuck/unavailable playback states so they can be
   // correlated with the server-side Mux webhook + reconciliation logs.
@@ -1036,6 +1051,38 @@ export default function BondfireDetailScreen() {
       subscription.remove()
     }
   }, [screenState$])
+
+  const clearScheduledRestoreScroll = useCallback(() => {
+    restoreScrollTaskRef.current?.cancel()
+    restoreScrollTaskRef.current = null
+
+    if (restoreRetryTimerRef.current) {
+      clearTimeout(restoreRetryTimerRef.current)
+      restoreRetryTimerRef.current = null
+    }
+  }, [])
+
+  const scrollToVideoIndex = useCallback((index: number, animated: boolean) => {
+    flatListRef.current?.scrollToIndex({ index, animated })
+  }, [])
+
+  const scheduleRestoreScroll = useCallback(
+    (index: number) => {
+      clearScheduledRestoreScroll()
+
+      if (index === 0) return
+
+      restoreScrollTaskRef.current = InteractionManager.runAfterInteractions(() => {
+        restoreScrollTaskRef.current = null
+        scrollToVideoIndex(index, false)
+      })
+    },
+    [clearScheduledRestoreScroll, scrollToVideoIndex],
+  )
+
+  useEffect(() => {
+    return clearScheduledRestoreScroll
+  }, [clearScheduledRestoreScroll])
 
   // Load video URLs when data is available
   useEffect(() => {
@@ -1146,32 +1193,29 @@ export default function BondfireDetailScreen() {
     })
   }, [bondfireData, bondfireId, currentUserId, markThreadRead])
 
-  // Restore last position within this conversation (camp) once data is available.
-  // Waits for videoUrls to be populated so the FlatList has its data laid out
-  // before attempting to scroll.
+  // Restore last position within this conversation once the playable list exists.
   useEffect(() => {
     if (!bondfireData) return
-    if (videoUrls.length === 0) return
-    // Re-run when navigating to a different bondfire without a full unmount.
-    if (restoredBondfireIdRef.current === bondfireId && didRestorePositionRef.current) return
-    didRestorePositionRef.current = true
-    restoredBondfireIdRef.current = bondfireId
+
+    if (restoreTargetRef.current?.bondfireId !== bondfireId) {
+      restoreTargetRef.current = {
+        bondfireId,
+        savedIndex: getBondfireVideoIndex(bondfireId) ?? 0,
+      }
+      restoredPositionKeyRef.current = null
+    }
 
     setFeedActiveBondfireId(bondfireId)
 
     const total = 1 + bondfireData.videos.length
-    const saved = getBondfireVideoIndex(bondfireId) ?? 0
-    const clamped = Math.max(0, Math.min(saved, total - 1))
+    const clamped = clampVideoIndex(restoreTargetRef.current.savedIndex, total)
+    const restoredPositionKey = `${bondfireId}:${clamped}`
+    if (restoredPositionKeyRef.current === restoredPositionKey) return
+    restoredPositionKeyRef.current = restoredPositionKey
 
-    if (clamped === 0) return
     screenState$.currentVideoIndex.set(clamped)
-    // Use a small delay to let the FlatList finish laying out items after
-    // videoUrls are populated. onScrollToIndexFailed handles the edge case
-    // where layout still isn't ready.
-    setTimeout(() => {
-      flatListRef.current?.scrollToIndex({ index: clamped, animated: false })
-    }, 50)
-  }, [bondfireData, bondfireId, videoUrls.length, screenState$])
+    scheduleRestoreScroll(clamped)
+  }, [bondfireData, bondfireId, scheduleRestoreScroll, screenState$])
 
   // Persist position as the user swipes through the conversation.
   useEffect(() => {
@@ -1269,6 +1313,31 @@ export default function BondfireDetailScreen() {
   const viewabilityConfig = useRef({
     itemVisiblePercentThreshold: 50,
   }).current
+
+  const handleScrollToIndexFailed = useCallback(
+    ({ index, averageItemLength }: ScrollToIndexFailedInfo) => {
+      if (index < 0) return
+
+      const itemLength =
+        Number.isFinite(averageItemLength) && averageItemLength > 0
+          ? averageItemLength
+          : SCREEN_WIDTH
+
+      flatListRef.current?.scrollToOffset({
+        offset: itemLength * index,
+        animated: false,
+      })
+
+      if (restoreRetryTimerRef.current) {
+        clearTimeout(restoreRetryTimerRef.current)
+      }
+      restoreRetryTimerRef.current = setTimeout(() => {
+        restoreRetryTimerRef.current = null
+        scrollToVideoIndex(index, false)
+      }, 100)
+    },
+    [scrollToVideoIndex],
+  )
 
   if (bondfireData === undefined) {
     return (
@@ -1422,6 +1491,7 @@ export default function BondfireDetailScreen() {
   }
 
   const totalVideos = 1 + bondfireData.videos.length
+  const initialVideoIndex = clampVideoIndex(getBondfireVideoIndex(bondfireId), totalVideos)
   // Responses that exist (and are included in the bondfire's response count)
   // but aren't playable yet — surfaced in the header so the count and the
   // swipe list never appear to disagree while Mux finishes processing.
@@ -1545,6 +1615,7 @@ export default function BondfireDetailScreen() {
 
         {/* Horizontal swipe video carousel */}
         <FlatList
+          key={bondfireId}
           ref={flatListRef}
           data={videoItems}
           keyExtractor={(item) => item.key}
@@ -1578,26 +1649,13 @@ export default function BondfireDetailScreen() {
           decelerationRate="fast"
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={viewabilityConfig}
+          initialScrollIndex={initialVideoIndex}
           getItemLayout={(_, index) => ({
             length: SCREEN_WIDTH,
             offset: SCREEN_WIDTH * index,
             index,
           })}
-          onScrollToIndexFailed={({ index, highestMeasuredFrameIndex }) => {
-            // The FlatList hasn't laid out far enough yet. Wait one frame
-            // and retry — the item is within the total count so it will
-            // be available once layout catches up.
-            setTimeout(() => {
-              flatListRef.current?.scrollToIndex({
-                index: Math.min(index, highestMeasuredFrameIndex),
-                animated: false,
-              })
-              // Then try the actual target again after another frame.
-              setTimeout(() => {
-                flatListRef.current?.scrollToIndex({ index, animated: false })
-              }, 50)
-            }, 50)
-          }}
+          onScrollToIndexFailed={handleScrollToIndexFailed}
         />
 
         {/* Navigation hints */}
