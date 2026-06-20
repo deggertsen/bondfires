@@ -11,11 +11,13 @@ import type { Doc, Id } from '../../../../convex/_generated/dataModel'
 import { InviteSheet } from '../../components/InviteSheet'
 import {
   BONDFIRE_REPORT_OPTIONS,
+  getBondfireRightSwipeActions,
   getBondfireSwipeActions,
   getSwipeReportComment,
 } from '../../lib/bondfireSwipeActions'
 import { goBackOrReplace } from '../../lib/navigation'
 import { routes } from '../../lib/routes'
+import { EditTitleSheet } from '../../components/EditTitleSheet'
 
 type BondfireData = Doc<'bondfires'> & {
   participantCount: number
@@ -253,6 +255,20 @@ export default function PersonalCampScreen() {
     subscriptionActions.showPaywall()
   }, [])
 
+  const [editingBondfire, setEditingBondfire] = useState<{
+    id: Id<'bondfires'>
+    title: string
+    creatorName?: string
+  } | null>(null)
+
+  const handleEdit = useCallback((bondfireId: string, title: string, creatorName?: string) => {
+    setEditingBondfire({
+      id: bondfireId as Id<'bondfires'>,
+      title,
+      creatorName,
+    })
+  }, [])
+
   // ── Build BondfireRow props ─────────────────────────────────────────
 
   const toBondfireRowProps = useCallback(
@@ -277,6 +293,10 @@ export default function PersonalCampScreen() {
           onUnpin: () => handleUnpin(bondfire._id),
           onReport: () => handleReport(bondfire._id, bondfire.userId),
         }),
+        rightActions: getBondfireRightSwipeActions({
+          isOwner,
+          onEdit: () => handleEdit(bondfire._id, bondfire.title ?? '', bondfire.creatorName ?? undefined),
+        }),
         onOpen: () => handleOpenBondfire(bondfire._id),
         onRespond: () => handleRespond(bondfire._id),
       }
@@ -289,6 +309,7 @@ export default function PersonalCampScreen() {
       handlePin,
       handleUnpin,
       handleReport,
+      handleEdit,
       handleOpenBondfire,
       handleRespond,
     ],
@@ -491,6 +512,17 @@ export default function PersonalCampScreen() {
           id={inviteFireId}
           open={true}
           onClose={handleCloseInvite}
+        />
+      )}
+
+      {/* Edit Title Sheet */}
+      {editingBondfire && (
+        <EditTitleSheet
+          bondfireId={editingBondfire.id}
+          currentTitle={editingBondfire.title}
+          creatorName={editingBondfire.creatorName}
+          open={true}
+          onClose={() => setEditingBondfire(null)}
         />
       )}
     </YStack>

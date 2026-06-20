@@ -1,4 +1,4 @@
-type BondfireSwipeActionsConfig = {
+export type BondfireSwipeActionsConfig = {
   isOwner: boolean
   isPinned: boolean
   onDelete: () => void
@@ -65,6 +65,30 @@ export function getBondfireSwipeActions({
   })
 
   return actions
+}
+
+/**
+ * Right-swipe actions for bondfire rows. Currently only "Edit" for owners.
+ * Returns an empty array for non-owners (no right-swipe).
+ */
+export function getBondfireRightSwipeActions({
+  isOwner,
+  onEdit,
+}: {
+  isOwner: boolean
+  onEdit?: () => void
+}): BondfireSwipeAction[] {
+  if (!isOwner || !onEdit) return []
+
+  return [
+    {
+      key: 'edit',
+      label: 'Edit',
+      color: '$color',
+      backgroundColor: '$primary',
+      onPress: onEdit,
+    },
+  ]
 }
 
 export function getSwipeReportComment(source: string): string {

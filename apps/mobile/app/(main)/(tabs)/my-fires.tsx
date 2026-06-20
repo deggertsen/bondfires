@@ -19,10 +19,12 @@ import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import {
   BONDFIRE_REPORT_OPTIONS,
+  getBondfireRightSwipeActions,
   getBondfireSwipeActions,
   getSwipeReportComment,
 } from '../../../lib/bondfireSwipeActions'
 import { routes } from '../../../lib/routes'
+import { EditTitleSheet } from '../../../components/EditTitleSheet'
 
 type ThreadParticipant = {
   user: PublicUser
@@ -56,6 +58,7 @@ function toBondfireRowProps(
   onPin: () => void,
   onUnpin: () => void,
   onReport: () => void,
+  onEdit: () => void,
 ): BondfireRowProps {
   const isOwner = currentUserId === thread.userId
   const isPinned = pinnedIds.includes(thread._id)
@@ -80,6 +83,10 @@ function toBondfireRowProps(
       onPin,
       onUnpin,
       onReport,
+    }),
+    rightActions: getBondfireRightSwipeActions({
+      isOwner,
+      onEdit,
     }),
     onOpen,
     onRespond,
@@ -128,9 +135,14 @@ export default function MyFiresScreen() {
 
   const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string | null>>({})
   const loadingThumbsRef = useRef<Set<string>>(new Set())
+  const [editingBondfire, setEditingBondfire] = useState<{
+    id: Id<'bondfires'>
+    title: string
+    creatorName?: string
+  } | null>(null)
   const listExtraData = useMemo(
-    () => ({ currentUserId, pinnedIds, thumbnailUrls }),
-    [currentUserId, pinnedIds, thumbnailUrls],
+    () => ({ currentUserId, pinnedIds, thumbnailUrls, editingBondfire }),
+    [currentUserId, pinnedIds, thumbnailUrls, editingBondfire],
   )
 
   const ensureThumbnailUrl = useCallback(
@@ -269,6 +281,14 @@ export default function MyFiresScreen() {
     [reportBondfire],
   )
 
+  const handleEdit = useCallback((bondfireId: string, title: string, creatorName?: string) => {
+    setEditingBondfire({
+      id: bondfireId as Id<'bondfires'>,
+      title,
+      creatorName,
+    })
+  }, [])
+
   if (threads === undefined || isUserLoading) {
     return (
       <YStack flex={1} backgroundColor={'$background'}>
@@ -308,6 +328,7 @@ export default function MyFiresScreen() {
             () => handlePin(item._id),
             () => handleUnpin(item._id),
             () => handleReport(item._id, item.userId),
+            () => handleEdit(item._id, item.title ?? '', item.creatorName ?? undefined),
           )
           return <BondfireRow {...props} />
         }}
@@ -359,6 +380,17 @@ export default function MyFiresScreen() {
           </YStack>
         }
       />
+
+      {/* Edit Title Sheet */}
+      {editingBondfire && (
+        <EditTitleSheet
+          bondfireId={editingBondfire.id}
+          currentTitle={editingBondfire.title}
+          creatorName={editingBondfire.creatorName}
+          open={true}
+          onClose={() => setEditingBondfire(null)}
+        />
+      )}
     </YStack>
   )
 }

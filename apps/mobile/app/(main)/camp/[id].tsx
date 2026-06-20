@@ -8,7 +8,7 @@ import {
   useAppThemeColors,
   useSubscription,
 } from '@bondfires/app'
-import { Button, Spinner, Text } from '@bondfires/ui'
+import { Button, Spinner, SwipeableRow, Text, type SwipeAction } from '@bondfires/ui'
 import {
   ArrowLeft,
   Ban,
@@ -30,8 +30,10 @@ import { Separator, Image as TamaguiImage, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { InviteSheet } from '../../../components/InviteSheet'
+import { EditTitleSheet } from '../../../components/EditTitleSheet'
 import { goBackOrReplace } from '../../../lib/navigation'
 import { routes } from '../../../lib/routes'
+import { getBondfireRightSwipeActions } from '../../../lib/bondfireSwipeActions'
 import { OwnerCampSections } from './OwnerCampSections'
 
 type CampWithMembership = Doc<'camps'> & {
@@ -731,10 +733,18 @@ function CampHeader({
   )
 }
 
-function BondfireRow({ bondfire, onOpen }: { bondfire: BondfireData; onOpen: () => void }) {
+function BondfireRow({
+  bondfire,
+  onOpen,
+  rightActions,
+}: {
+  bondfire: BondfireData
+  onOpen: () => void
+  rightActions?: SwipeAction[]
+}) {
   const responses = Math.max(0, bondfire.videoCount - 1)
 
-  return (
+  const row = (
     <Pressable onPress={onOpen}>
       <XStack paddingHorizontal={16} paddingVertical={13} gap={12} alignItems="center">
         <YStack
@@ -768,6 +778,16 @@ function BondfireRow({ bondfire, onOpen }: { bondfire: BondfireData; onOpen: () 
       </XStack>
     </Pressable>
   )
+
+  if (rightActions && rightActions.length > 0) {
+    return (
+      <SwipeableRow actions={[]} rightActions={rightActions}>
+        {row}
+      </SwipeableRow>
+    )
+  }
+
+  return row
 }
 
 export default function CampDetailScreen() {
@@ -812,6 +832,11 @@ export default function CampDetailScreen() {
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false)
   const [archiveConfirmText, setArchiveConfirmText] = useState('')
   const [isInviteSheetOpen, setIsInviteSheetOpen] = useState(false)
+  const [editingBondfire, setEditingBondfire] = useState<{
+    id: Id<'bondfires'>
+    title: string
+    creatorName?: string
+  } | null>(null)
 
   const handleJoin = useCallback(async () => {
     if (!campId) return
@@ -848,6 +873,14 @@ export default function CampDetailScreen() {
 
   const handleCreateInvite = useCallback(() => {
     setIsInviteSheetOpen(true)
+  }, [])
+
+  const handleEditTitle = useCallback((bondfireId: string, title: string, creatorName?: string) => {
+    setEditingBondfire({
+      id: bondfireId as Id<'bondfires'>,
+      title,
+      creatorName,
+    })
   }, [])
 
   const handleApprove = useCallback(
@@ -1014,9 +1047,19 @@ export default function CampDetailScreen() {
       <FlatList
         data={bondfires ?? []}
         keyExtractor={(item) => item._id}
-        renderItem={({ item }) => (
-          <BondfireRow bondfire={item} onOpen={() => handleOpenBondfire(item._id)} />
-        )}
+        renderItem={({ item }) => {
+          const isBondfireOwner = item.userId === camp.membership?.userId
+          return (
+            <BondfireRow
+              bondfire={item}
+              onOpen={() => handleOpenBondfire(item._id)}
+              rightActions={getBondfireRightSwipeActions({
+                isOwner: isBondfireOwner,
+                onEdit: () => handleEditTitle(item._id, item.title ?? '', item.creatorName ?? undefined),
+              })}
+            />
+          )
+        }}
         ItemSeparatorComponent={() => (
           <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
         )}
@@ -1216,6 +1259,17 @@ export default function CampDetailScreen() {
           onClose={() => setIsInviteSheetOpen(false)}
         />
       ) : null}
+
+      {/* Edit Title Sheet */}
+      {editingBondfire && (
+        <EditTitleSheet
+          bondfireId={editingBondfire.id}
+          currentTitle={editingBondfire.title}
+          creatorName={editingBondfire.creatorName}
+          open={true}
+          onClose={() => setEditingBondfire(null)}
+        />
+      )}
     </YStack>
   )
 }
