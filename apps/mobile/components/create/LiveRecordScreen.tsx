@@ -32,6 +32,9 @@ import { type CampWithMembership, formatRecordingClock, type TradeTag } from './
 
 const keepAwakeTag = 'create-recording'
 const EARLY_LIVE_DROP_MS = 8_000
+const LIVE_CAMERA_SWAP_TIMEOUT_MS = 5_000
+const LIVE_CAMERA_SWAP_TIMEOUT_MESSAGE =
+  'Could not switch cameras while recording. Please finish your recording and try switching before starting your next one.'
 
 interface LiveRecordScreenProps {
   respondTo: string | undefined
@@ -92,6 +95,7 @@ export function LiveRecordScreen({
   const ownsPreviewRef = useRef(false)
   const cancelInFlightRef = useRef<Promise<void> | null>(null)
   const liveTerminalRecoveryFiredRef = useRef(false)
+  const liveCameraSwapInFlightRef = useRef(false)
 
   const state$ = useObservable({
     isAppActive: AppState.currentState === 'active',
@@ -620,34 +624,56 @@ export function LiveRecordScreen({
       // some devices. The promise may never resolve or reject, leaving the UI in a silent
       // no-op state. We wrap the call with a 5-second timeout so the user gets feedback
       // instead of a frozen button.
-      const swapTimeoutMs = 5_000
+      if (liveCameraSwapInFlightRef.current) {
+        telemetry.info('live:swap_camera_skipped', 'Camera swap already in progress', {
+          phase: currentRecordingState,
+          liveStatus,
+        })
+        return
+      }
+
+      liveCameraSwapInFlightRef.current = true
+      let timeoutId: ReturnType<typeof setTimeout> | undefined
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error('Camera swap timed out')),
+          LIVE_CAMERA_SWAP_TIMEOUT_MS,
+        )
+      })
       const swapPromise = livePublisher.swapCamera()
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Camera swap timed out')), swapTimeoutMs),
-      )
 
       telemetry.info('live:swap_camera', 'Camera swap requested', {
         phase: currentRecordingState,
         liveStatus,
       })
 
-      Promise.race([swapPromise, timeoutPromise])
+      void Promise.race([swapPromise, timeoutPromise])
         .then(() => {
           recordingStore$.facing.set(recordingStore$.facing.get() === 'back' ? 'front' : 'back')
-          telemetry.info('live:swap_camera_ok', 'Camera swap succeeded')
+          telemetry.info('live:swap_camera_ok', 'Camera swap succeeded', {
+            phase: currentRecordingState,
+            liveStatus,
+          })
         })
         .catch((error) => {
+          const errObj = error instanceof Error ? error : new Error(String(error))
           logRecordingError(error)
-          telemetry.warn(
-            'live:swap_camera_failed',
-            'Camera swap failed',
-            { error: error.message, phase: currentRecordingState, liveStatus },
-          )
-          const errorInfo = parseError(error)
-          const message = error.message?.includes('timed out')
-            ? 'Could not switch cameras while recording. Please finish your recording and try switching before starting your next one.'
+          telemetry.warn('live:swap_camera_failed', 'Camera swap failed', {
+            error: errObj.message,
+            phase: currentRecordingState,
+            liveStatus,
+          })
+          const errorInfo = parseError(errObj)
+          const message = errObj.message.includes('timed out')
+            ? LIVE_CAMERA_SWAP_TIMEOUT_MESSAGE
             : getUserFacingErrorMessage(errorInfo)
           Alert.alert('Switch Camera Failed', message)
+        })
+        .finally(() => {
+          if (timeoutId) {
+            clearTimeout(timeoutId)
+          }
+          liveCameraSwapInFlightRef.current = false
         })
       return
     }
