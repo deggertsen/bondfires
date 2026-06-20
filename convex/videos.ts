@@ -2300,7 +2300,7 @@ export const getVideoUrls = action({
       }
       return {
         hdUrl: getMuxPlaybackUrl(args.muxPlaybackId),
-        sdUrl: null,
+
         thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
         expiresIn: 0,
       }
@@ -2313,7 +2313,6 @@ export const getVideoUrls = action({
 
         return {
           hdUrl: withMuxToken(getMuxPlaybackUrl(args.muxPlaybackId), token),
-          sdUrl: null,
           thumbnailUrl: withMuxToken(getMuxThumbnailUrl(args.muxPlaybackId), thumbnailToken),
           expiresIn: SIGNED_PLAYBACK_URL_TTL_SECONDS,
         }
@@ -2342,7 +2341,6 @@ export const getVideoUrls = action({
         }
         return {
           hdUrl: getMuxPlaybackUrl(args.muxPlaybackId),
-          sdUrl: null,
           thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
           expiresIn: 0,
         }
@@ -2351,7 +2349,6 @@ export const getVideoUrls = action({
 
     return {
       hdUrl: getMuxPlaybackUrl(args.muxPlaybackId),
-      sdUrl: null,
       thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
       expiresIn: 0,
     }

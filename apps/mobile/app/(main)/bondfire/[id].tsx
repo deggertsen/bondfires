@@ -109,7 +109,6 @@ interface VideoPlayerProps {
   bondfireId?: Id<'bondfires'>
   bondfireVideoId?: Id<'bondfireVideos'>
   videoUrl: string | null
-  videoUrlSd: string | null
   videoOwnerId: Id<'users'>
   isActive: boolean
   isScreenFocused: boolean
@@ -129,7 +128,6 @@ function VideoPlayer({
   bondfireId,
   bondfireVideoId,
   videoUrl,
-  videoUrlSd,
   videoOwnerId,
   isActive,
   isScreenFocused,
@@ -145,37 +143,32 @@ function VideoPlayer({
   // Get the video ID for internal use (keep-awake tag, etc.)
   const videoId = bondfireId || bondfireVideoId || ''
   const autoplayVideos = useValue(appStore$.preferences.autoplayVideos)
-  const videoQuality = useValue(appStore$.preferences.videoQuality)
   const isMuted = useValue(appStore$.preferences.videoMuted)
   const currentUserId = useValue(appStore$.userId)
   const shouldSuppressPlayback = isLive && currentUserId === videoOwnerId
 
-  // Determine URL based on quality preference and foreground state.
+  // Determine URL based on foreground state.
   const getTargetUrl = useCallback(() => {
     if (shouldSuppressPlayback) {
       return null
     }
 
     if (!isActive || !isScreenFocused || !isAppActive) {
-      return videoUrlSd ?? videoUrl
+      return videoUrl
     }
 
-    if (videoQuality === 'sd' && videoUrlSd) return videoUrlSd
-    return videoUrl // HD or auto starts with HD
+    return videoUrl
   }, [
     isActive,
     isScreenFocused,
     isAppActive,
-    videoQuality,
     videoUrl,
-    videoUrlSd,
     shouldSuppressPlayback,
   ])
 
   const state$ = useObservable({
     showReport: false,
     currentUrl: getTargetUrl(),
-    hasSwitchedToSD: false,
     progress: 0,
     duration: 0,
     isLoading: true,
@@ -190,7 +183,6 @@ function VideoPlayer({
   const isLoading = useValue(state$.isLoading)
   const hasEnded = useValue(state$.hasEnded)
 
-  const bufferingCheckInterval = useRef<ReturnType<typeof setInterval> | null>(null)
   const progressBarViewRef = useRef<View>(null)
   const progressBarRef = useRef<ProgressBarMetrics>({ width: 0, pageX: null })
   const isScrubbingRef = useRef(false)
@@ -348,66 +340,15 @@ function VideoPlayer({
     }
   }, [player, onComplete, onProgress, state$])
 
-  // Buffering detection - switch to SD if buffer is low (only in auto mode)
-  useEffect(() => {
-    // Only apply adaptive quality switching in 'auto' mode
-    if (videoQuality !== 'auto') return
-    if (!isActive || !isScreenFocused || !isAppActive) return
-    const hasSwitchedToSD = state$.hasSwitchedToSD.get()
-    const currentUrlValue = state$.currentUrl.get()
-    if (!videoUrlSd || hasSwitchedToSD || !currentUrlValue || currentUrlValue !== videoUrl) {
-      return
-    }
-
-    bufferingCheckInterval.current = setInterval(() => {
-      if (!player || state$.hasSwitchedToSD.get()) return
-
-      // Check if player is buffering and we have SD available
-      if (
-        !isLive &&
-        player.status === 'loading' &&
-        player.currentTime !== undefined &&
-        player.duration
-      ) {
-        const remaining = player.duration - player.currentTime
-        // Switch to SD if buffering and more than 5 seconds remaining
-        if (remaining > 5) {
-          state$.currentUrl.set(videoUrlSd)
-          state$.hasSwitchedToSD.set(true)
-        }
-      }
-    }, 1000)
-
-    return () => {
-      if (bufferingCheckInterval.current) {
-        clearInterval(bufferingCheckInterval.current)
-      }
-    }
-  }, [
-    player,
-    videoUrlSd,
-    videoUrl,
-    videoQuality,
-    isActive,
-    isScreenFocused,
-    isAppActive,
-    state$,
-    isLive,
-  ])
-
-  // Update URL when video quality preference, source URLs, or foreground state change.
+  // Update URL when source URL or foreground state changes.
   useEffect(() => {
     const targetUrl = getTargetUrl()
 
     const currentUrlValue = state$.currentUrl.get()
     if (targetUrl && currentUrlValue !== targetUrl) {
       state$.currentUrl.set(targetUrl)
-      // Only reset hasSwitchedToSD when preference changes or new video
-      if (videoQuality !== 'auto') {
-        state$.hasSwitchedToSD.set(false)
-      }
     }
-  }, [getTargetUrl, videoQuality, state$])
+  }, [getTargetUrl, state$])
 
   // Keep screen awake while video is playing
   const isPlaying = player?.playing ?? false
@@ -882,7 +823,6 @@ export default function BondfireDetailScreen() {
   const screenState$ = useObservable({
     currentVideoIndex: 0,
     videoUrls: [] as (string | null)[],
-    videoUrlsSd: [] as (string | null)[],
     showSettings: false,
     showNotepad: false,
     isAppActive: AppState.currentState === 'active',
@@ -894,7 +834,6 @@ export default function BondfireDetailScreen() {
 
   const currentVideoIndex = useValue(screenState$.currentVideoIndex)
   const videoUrls = useValue(screenState$.videoUrls)
-  const videoUrlsSd = useValue(screenState$.videoUrlsSd)
   const showSettings = useValue(screenState$.showSettings)
   const showNotepad = useValue(screenState$.showNotepad)
   const isAppActive = useValue(screenState$.isAppActive)
@@ -1064,7 +1003,7 @@ export default function BondfireDetailScreen() {
         const playableResponses = bondfireData.videos.filter((v: Doc<'bondfireVideos'>) =>
           v.videoStatus === 'live' ? !!v.muxLivePlaybackId : !!v.muxPlaybackId,
         )
-        const responseUrls: Array<{ hdUrl: string; sdUrl: string | null }> = await Promise.all(
+        const responseUrls: Array<{ hdUrl: string }> = await Promise.all(
           playableResponses.map((v) =>
             getVideoUrls({
               muxPlaybackId:
@@ -1083,7 +1022,6 @@ export default function BondfireDetailScreen() {
             withLiveDvrStart(r.hdUrl, playableResponses[index]?.videoStatus === 'live'),
           ),
         ])
-        screenState$.videoUrlsSd.set([mainUrl.sdUrl, ...responseUrls.map((r) => r.sdUrl)])
 
         telemetry.info('video:urls:resolved', 'Video URLs resolved', {
           bondfireId: bondfireData._id,
@@ -1434,7 +1372,6 @@ export default function BondfireDetailScreen() {
       bondfireId: bondfireData._id as Id<'bondfires'>,
       bondfireVideoId: undefined as Id<'bondfireVideos'> | undefined,
       url: videoUrls[0] ?? null,
-      urlSd: videoUrlsSd[0] ?? null,
       videoOwnerId: bondfireData.userId,
       creatorName: bondfireData.creatorName ?? 'Anonymous',
       isMainVideo: true,
@@ -1446,7 +1383,6 @@ export default function BondfireDetailScreen() {
       bondfireId: undefined as Id<'bondfires'> | undefined,
       bondfireVideoId: v._id as Id<'bondfireVideos'>,
       url: videoUrls[i + 1] ?? null,
-      urlSd: videoUrlsSd[i + 1] ?? null,
       videoOwnerId: v.userId,
       creatorName: v.creatorName ?? 'Anonymous',
       isMainVideo: false,
@@ -1553,7 +1489,6 @@ export default function BondfireDetailScreen() {
               bondfireId={item.bondfireId}
               bondfireVideoId={item.bondfireVideoId}
               videoUrl={item.url}
-              videoUrlSd={item.urlSd}
               videoOwnerId={item.videoOwnerId}
               isActive={index === currentVideoIndex}
               isScreenFocused={isFocused}
