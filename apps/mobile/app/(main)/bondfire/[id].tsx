@@ -249,9 +249,7 @@ function VideoPlayer({
 
   // Update playback speed only for the active, foreground player.
   // This prevents rate changes from mutating all mounted players in the response chain.
-  // Using useEffect (not useObserveEffect) so that prop changes (isActive, isScreenFocused,
-  // isAppActive) also re-apply the speed — useObserveEffect only re-fires on observable
-  // reads, which means stale closure props could prevent mid-playback speed changes.
+  // useEffect also reacts to the plain foreground props that gate this mutation.
   useEffect(() => {
     if (player && isActive && isScreenFocused && isAppActive) {
       player.playbackRate = playbackSpeed
@@ -291,6 +289,7 @@ function VideoPlayer({
     isScreenFocused,
     isAppActive,
     autoplayVideos,
+    playbackSpeed,
     state$,
     shouldSuppressPlayback,
   ])
@@ -447,8 +446,8 @@ function VideoPlayer({
 
   const toggleMute = useCallback(() => {
     if (!player) return
-    appActions.setVideoMuted(!appStore$.preferences.videoMuted.get())
-  }, [player])
+    appActions.setVideoMuted(!isMuted)
+  }, [player, isMuted])
 
   const handleProgressBarLayout = useCallback((event: LayoutChangeEvent) => {
     const { width } = event.nativeEvent.layout
