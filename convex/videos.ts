@@ -139,10 +139,12 @@ const STUCK_LIVE_RECORDING_GIVE_UP_MS = 60 * 60 * 1000
 // direct-upload URLs expire in ~1h) so we never kill an in-flight upload.
 const STUCK_WAITING_FOR_UPLOAD_GIVE_UP_MS = 6 * 60 * 60 * 1000
 const RECONCILE_BATCH_LIMIT = 25
-// Existing mobile clients call endLiveStream before closing native RTMP. Do not
-// wait here, or Android can keep komuxer writing long enough to crash on stop.
-const MUX_LIVE_ACTIVE_BEFORE_COMPLETE_WAIT_MS = 0
-const MUX_LIVE_ACTIVE_BEFORE_COMPLETE_POLL_MS = 1_000
+// The mobile client closes native RTMP before calling endLiveStream, so a short
+// wait here is safe. Mux's live_stream.active webhook can lag behind the ingest
+// the client already confirmed — with zero wait, endLiveStream treated every
+// quick stop (common on responses) as "never started" and deleted the row.
+const MUX_LIVE_ACTIVE_BEFORE_COMPLETE_WAIT_MS = 15_000
+const MUX_LIVE_ACTIVE_BEFORE_COMPLETE_POLL_MS = 500
 
 function getMuxConfig() {
   const tokenId = process.env.MUX_TOKEN_ID
@@ -1822,6 +1824,32 @@ export const createLiveStream = action({
     ),
 })
 
+function liveSessionReportsStarted(session: Doc<'liveSessions'>): boolean {
+  return Boolean(session.startedAt) || session.status === 'live' || session.status === 'starting'
+}
+
+async function muxLiveStreamReportsActive(liveStreamId: string): Promise<boolean> {
+  const liveStream = await muxRequestOptional(`/live-streams/${liveStreamId}`)
+  if (!liveStream) {
+    return false
+  }
+
+  const status = readOptionalString(parseMuxData(liveStream).status)
+  return status === 'active'
+}
+
+async function liveSessionHadIngest(session: Doc<'liveSessions'>): Promise<boolean> {
+  if (liveSessionReportsStarted(session)) {
+    return true
+  }
+
+  if (!session.muxLiveStreamId) {
+    return false
+  }
+
+  return muxLiveStreamReportsActive(session.muxLiveStreamId)
+}
+
 async function waitForLiveSessionToStart(
   ctx: ActionCtx,
   userId: Id<'users'>,
@@ -1833,7 +1861,7 @@ async function waitForLiveSessionToStart(
     { userId, liveSessionId },
   )
 
-  while (session && !session.startedAt && session.status !== 'live' && Date.now() < deadline) {
+  while (session && !(await liveSessionHadIngest(session)) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, MUX_LIVE_ACTIVE_BEFORE_COMPLETE_POLL_MS))
     session = await ctx.runQuery(internal.videos.getMuxLiveSessionForUser, {
       userId,
@@ -1877,11 +1905,11 @@ export const endLiveStream = action({
           throwUserError('Live session not found')
         }
 
-        if (!activeSession.startedAt && activeSession.status !== 'live') {
+        if (!(await liveSessionHadIngest(activeSession))) {
           await ctx.runMutation(internal.serverTelemetry.recordServerEvent, {
             level: 'warn',
             event: 'live:complete_not_active',
-            message: 'Live stream was stopped before Mux reported it active',
+            message: 'Live stream was stopped before Mux confirmed ingest',
             userId,
             data: {
               liveSessionId: args.liveSessionId,
