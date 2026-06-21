@@ -140,9 +140,10 @@ const STUCK_LIVE_RECORDING_GIVE_UP_MS = 60 * 60 * 1000
 const STUCK_WAITING_FOR_UPLOAD_GIVE_UP_MS = 6 * 60 * 60 * 1000
 const RECONCILE_BATCH_LIMIT = 25
 // The mobile client closes native RTMP before calling endLiveStream, so a short
-// wait here is safe. Mux's live_stream.active webhook can lag behind the ingest
-// the client already confirmed — with zero wait, endLiveStream treated every
-// quick stop (common on responses) as "never started" and deleted the row.
+// wait here is safe. Mux's live_stream.active webhook can lag behind the
+// recording asset Mux has already created — with zero wait, endLiveStream
+// treated quick stops (common on responses) as "never started" and deleted the
+// row.
 const MUX_LIVE_ACTIVE_BEFORE_COMPLETE_WAIT_MS = 15_000
 const MUX_LIVE_ACTIVE_BEFORE_COMPLETE_POLL_MS = 500
 
@@ -1824,22 +1825,31 @@ export const createLiveStream = action({
     ),
 })
 
-function liveSessionReportsStarted(session: Doc<'liveSessions'>): boolean {
-  return Boolean(session.startedAt) || session.status === 'live' || session.status === 'starting'
+function liveSessionHasIngestEvidence(session: Doc<'liveSessions'>): boolean {
+  return Boolean(
+    session.startedAt ||
+      session.muxRecordedAssetId ||
+      session.muxActiveAssetId ||
+      session.muxRecentAssetId ||
+      session.status === 'live',
+  )
 }
 
-async function muxLiveStreamReportsActive(liveStreamId: string): Promise<boolean> {
+async function muxLiveStreamHasIngestEvidence(liveStreamId: string): Promise<boolean> {
   const liveStream = await muxRequestOptional(`/live-streams/${liveStreamId}`)
   if (!liveStream) {
     return false
   }
 
-  const status = readOptionalString(parseMuxData(liveStream).status)
-  return status === 'active'
+  const liveData = parseMuxData(liveStream)
+  const status = readOptionalString(liveData.status)
+  const activeAssetId = readOptionalString(liveData.active_asset_id)
+  const recentAssetIds = readStringArray(liveData.recent_asset_ids)
+  return status === 'active' || !!activeAssetId || recentAssetIds.length > 0
 }
 
 async function liveSessionHadIngest(session: Doc<'liveSessions'>): Promise<boolean> {
-  if (liveSessionReportsStarted(session)) {
+  if (liveSessionHasIngestEvidence(session)) {
     return true
   }
 
@@ -1847,21 +1857,26 @@ async function liveSessionHadIngest(session: Doc<'liveSessions'>): Promise<boole
     return false
   }
 
-  return muxLiveStreamReportsActive(session.muxLiveStreamId)
+  return muxLiveStreamHasIngestEvidence(session.muxLiveStreamId)
 }
 
 async function waitForLiveSessionToStart(
   ctx: ActionCtx,
   userId: Id<'users'>,
   liveSessionId: Id<'liveSessions'>,
-): Promise<Doc<'liveSessions'> | null> {
+): Promise<{ session: Doc<'liveSessions'> | null; hadIngest: boolean }> {
   const deadline = Date.now() + MUX_LIVE_ACTIVE_BEFORE_COMPLETE_WAIT_MS
   let session: Doc<'liveSessions'> | null = await ctx.runQuery(
     internal.videos.getMuxLiveSessionForUser,
     { userId, liveSessionId },
   )
 
-  while (session && !(await liveSessionHadIngest(session)) && Date.now() < deadline) {
+  while (session) {
+    const hadIngest = await liveSessionHadIngest(session)
+    if (hadIngest || Date.now() >= deadline) {
+      return { session, hadIngest }
+    }
+
     await new Promise((resolve) => setTimeout(resolve, MUX_LIVE_ACTIVE_BEFORE_COMPLETE_POLL_MS))
     session = await ctx.runQuery(internal.videos.getMuxLiveSessionForUser, {
       userId,
@@ -1869,7 +1884,7 @@ async function waitForLiveSessionToStart(
     })
   }
 
-  return session
+  return { session: null, hadIngest: false }
 }
 
 export const endLiveStream = action({
@@ -1900,12 +1915,16 @@ export const endLiveStream = action({
           throwUserError('Live session not found')
         }
 
-        const activeSession = await waitForLiveSessionToStart(ctx, userId, args.liveSessionId)
+        const { session: activeSession, hadIngest } = await waitForLiveSessionToStart(
+          ctx,
+          userId,
+          args.liveSessionId,
+        )
         if (!activeSession) {
           throwUserError('Live session not found')
         }
 
-        if (!(await liveSessionHadIngest(activeSession))) {
+        if (!hadIngest) {
           await ctx.runMutation(internal.serverTelemetry.recordServerEvent, {
             level: 'warn',
             event: 'live:complete_not_active',
