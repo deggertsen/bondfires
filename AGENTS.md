@@ -17,7 +17,7 @@ infrastructure/terraform/       — Legacy AWS website infra (deprecated)
 packages/ui/                    — Shared Tamagui components
 packages/app/                   — Features, hooks, Legend State stores
 packages/config/                — Tamagui configuration
-packages/video-segment-merger/  — Native video processing package (iOS/Android)
+apps/mobile/modules/bondfire-live-publisher/  — Live streaming publisher module
 scripts/                        — Release, provisioning, dev helpers
 ```
 
