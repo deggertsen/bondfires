@@ -11,6 +11,8 @@
     "dev:ios": "./scripts/dev-ios.sh",
     "build": "turbo build",
     "typecheck": "turbo typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "lint": "npx biome check .",
     "lint:fix": "npx biome check --write .",
     "format": "npx biome format --write .",
@@ -25,7 +27,8 @@
     "@biomejs/biome": "^2.4.6",
     "@types/node": "^25.0.3",
     "turbo": "^2.3.0",
-    "typescript": "^6.0.0"
+    "typescript": "^6.0.0",
+    "vitest": "^4.1.9"
   },
   "packageManager": "yarn@4.12.0",
   "dependencies": {

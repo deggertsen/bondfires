@@ -27,6 +27,7 @@ import {
   PRO_MAX_VIDEO_DURATION_MS,
 } from './entitlements'
 import { throwUserError, withUserFacingActionErrors } from './errors'
+import { classifyMuxIngest, type IngestEvidence, localIngestSource } from './lib/liveIngest'
 import {
   assertCanRespondToPersonalBondfire,
   canViewPersonalBondfire,
@@ -1830,49 +1831,25 @@ export const createLiveStream = action({
     ),
 })
 
-// Tri-state ingest classification. We deliberately distinguish "Mux confirmed
-// the stream was empty" (safe to hard-delete) from "we could not reach Mux to
-// confirm" (must NOT destroy a possibly-real recording — demote and reconcile).
-type IngestEvidence = {
-  status: 'confirmed' | 'empty' | 'unknown'
-  source: string
-}
-
-// Evidence already persisted on our row. All of these are set by Mux's
-// authoritative webhooks (live_stream.active / asset events), never by an early
-// client-side "live" signal, so they are trustworthy ingest proof.
-function localIngestSource(session: Doc<'liveSessions'>): string | null {
-  if (session.startedAt) return 'started_at'
-  if (session.muxRecordedAssetId) return 'recorded_asset'
-  if (session.muxActiveAssetId) return 'active_asset'
-  if (session.muxRecentAssetId) return 'recent_asset'
-  if (session.status === 'live') return 'status_live'
-  return null
-}
-
 // Ask Mux directly. Mux's API often knows ingest happened before the
 // live_stream.active webhook reaches us, so this is the fast confirmation path
 // for quick stops. A null response (network error or 404) means we cannot
-// prove the stream was empty — we return 'unknown' so the caller preserves the
-// record instead of deleting a recording we simply failed to observe.
+// prove the stream was empty — classifyMuxIngest returns 'unknown' so the
+// caller preserves the record instead of deleting a recording we failed to see.
+// The pure decision logic lives in ./lib/liveIngest (unit-tested separately).
 async function classifyMuxLiveStreamIngest(liveStreamId: string): Promise<IngestEvidence> {
   const liveStream = await muxRequestOptional(`/live-streams/${liveStreamId}`)
   if (!liveStream) {
-    return { status: 'unknown', source: 'mux_unreachable' }
+    return classifyMuxIngest({ reachable: false })
   }
 
   const liveData = parseMuxData(liveStream)
-  const status = readOptionalString(liveData.status)
-  const activeAssetId = readOptionalString(liveData.active_asset_id)
-  const recentAssetIds = readStringArray(liveData.recent_asset_ids)
-
-  if (activeAssetId) return { status: 'confirmed', source: 'mux_active_asset' }
-  if (recentAssetIds.length > 0) return { status: 'confirmed', source: 'mux_recent_asset' }
-  if (status === 'active') return { status: 'confirmed', source: 'mux_status_active' }
-
-  // Mux answered and reports no asset and a non-active status: the stream
-  // genuinely never received media.
-  return { status: 'empty', source: `mux_${status ?? 'unknown'}` }
+  return classifyMuxIngest({
+    reachable: true,
+    status: readOptionalString(liveData.status),
+    activeAssetId: readOptionalString(liveData.active_asset_id),
+    recentAssetIds: readStringArray(liveData.recent_asset_ids),
+  })
 }
 
 async function waitForLiveSessionToStart(
