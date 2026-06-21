@@ -56,6 +56,11 @@ export function SwipeableRow({
   const translateX = useRef(new Animated.Value(0)).current
   const currentOffset = useRef(0)
 
+  const clampTranslateX = useCallback(
+    (value: number) => Math.max(-leftPanelWidth, Math.min(rightPanelWidth, value)),
+    [leftPanelWidth, rightPanelWidth],
+  )
+
   const snapTo = useCallback(
     (toValue: number) => {
       currentOffset.current = toValue
@@ -85,18 +90,11 @@ export function SwipeableRow({
           )
         },
         onPanResponderMove: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
-          const offset = currentOffset.current
-          // Clamp: allow left swipe (negative, up to -leftPanelWidth)
-          // and right swipe (positive, up to +rightPanelWidth)
-          const next = Math.max(
-            -leftPanelWidth,
-            Math.min(rightPanelWidth, offset + gs.dx),
-          )
+          const next = clampTranslateX(currentOffset.current + gs.dx)
           translateX.setValue(next)
         },
         onPanResponderRelease: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
-          const offset = currentOffset.current
-          const dragged = offset + gs.dx
+          const dragged = clampTranslateX(currentOffset.current + gs.dx)
 
           // Left-swipe snap: open if dragged past threshold
           const leftThreshold = -leftPanelWidth * openThreshold
@@ -117,7 +115,7 @@ export function SwipeableRow({
         onPanResponderTerminate: close,
         onPanResponderTerminationRequest: () => true,
       }),
-    [leftPanelWidth, rightPanelWidth, close, openThreshold, snapTo, translateX],
+    [clampTranslateX, leftPanelWidth, rightPanelWidth, close, openThreshold, snapTo, translateX],
   )
 
   return (

@@ -8,6 +8,7 @@ import { Alert, FlatList, Pressable, StatusBar } from 'react-native'
 import { Separator, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../convex/_generated/dataModel'
+import { EditTitleSheet, useEditTitleSheet } from '../../components/EditTitleSheet'
 import { InviteSheet } from '../../components/InviteSheet'
 import {
   BONDFIRE_REPORT_OPTIONS,
@@ -17,7 +18,6 @@ import {
 } from '../../lib/bondfireSwipeActions'
 import { goBackOrReplace } from '../../lib/navigation'
 import { routes } from '../../lib/routes'
-import { EditTitleSheet } from '../../components/EditTitleSheet'
 
 type BondfireData = Doc<'bondfires'> & {
   participantCount: number
@@ -255,19 +255,7 @@ export default function PersonalCampScreen() {
     subscriptionActions.showPaywall()
   }, [])
 
-  const [editingBondfire, setEditingBondfire] = useState<{
-    id: Id<'bondfires'>
-    title: string
-    creatorName?: string
-  } | null>(null)
-
-  const handleEdit = useCallback((bondfireId: string, title: string, creatorName?: string) => {
-    setEditingBondfire({
-      id: bondfireId as Id<'bondfires'>,
-      title,
-      creatorName,
-    })
-  }, [])
+  const { editingBondfire, openEditTitleSheet, closeEditTitleSheet } = useEditTitleSheet()
 
   // ── Build BondfireRow props ─────────────────────────────────────────
 
@@ -295,7 +283,12 @@ export default function PersonalCampScreen() {
         }),
         rightActions: getBondfireRightSwipeActions({
           isOwner,
-          onEdit: () => handleEdit(bondfire._id, bondfire.title ?? '', bondfire.creatorName ?? undefined),
+          onEdit: () =>
+            openEditTitleSheet(
+              bondfire._id,
+              bondfire.title ?? '',
+              bondfire.creatorName ?? undefined,
+            ),
         }),
         onOpen: () => handleOpenBondfire(bondfire._id),
         onRespond: () => handleRespond(bondfire._id),
@@ -309,7 +302,7 @@ export default function PersonalCampScreen() {
       handlePin,
       handleUnpin,
       handleReport,
-      handleEdit,
+      openEditTitleSheet,
       handleOpenBondfire,
       handleRespond,
     ],
@@ -522,7 +515,7 @@ export default function PersonalCampScreen() {
           currentTitle={editingBondfire.title}
           creatorName={editingBondfire.creatorName}
           open={true}
-          onClose={() => setEditingBondfire(null)}
+          onClose={closeEditTitleSheet}
         />
       )}
     </YStack>

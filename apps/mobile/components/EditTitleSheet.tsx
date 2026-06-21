@@ -1,14 +1,19 @@
-import { useAppThemeColors } from '@bondfires/app'
+import { getErrorMessage, telemetry, useAppThemeColors } from '@bondfires/app'
 import { Button, Text } from '@bondfires/ui'
 import { useMutation } from 'convex/react'
-import { useEffect, useRef, useState } from 'react'
-import { KeyboardAvoidingView, Platform, StatusBar, TextInput } from 'react-native'
+import { useCallback, useEffect, useState } from 'react'
+import { Alert, KeyboardAvoidingView, Platform, StatusBar, TextInput } from 'react-native'
 import { Sheet, XStack, YStack } from 'tamagui'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
-import { telemetry } from '@bondfires/app'
 
 const MAX_TITLE_LENGTH = 80
+
+export type EditableBondfireTitle = {
+  id: Id<'bondfires'>
+  title: string
+  creatorName?: string
+}
 
 interface EditTitleSheetProps {
   bondfireId: Id<'bondfires'>
@@ -31,11 +36,10 @@ export function EditTitleSheet({
   open,
   onClose,
 }: EditTitleSheetProps) {
-  const { colors } = useAppThemeColors()
+  const { colors, statusBarStyle } = useAppThemeColors()
   const updateTitle = useMutation(api.bondfires.updateTitle)
   const [editedTitle, setEditedTitle] = useState(currentTitle)
   const [isSaving, setIsSaving] = useState(false)
-  const inputRef = useRef<TextInput>(null)
 
   // Sync the input when the sheet opens or the bondfire changes
   useEffect(() => {
@@ -45,6 +49,8 @@ export function EditTitleSheet({
   }, [open, currentTitle])
 
   const handleSave = async () => {
+    if (isSaving) return
+
     const trimmed = editedTitle.trim().slice(0, MAX_TITLE_LENGTH)
     // The mutation already handles empty fallback, but we can skip
     // the round-trip if nothing changed.
@@ -62,7 +68,7 @@ export function EditTitleSheet({
         bondfireId,
         error: String(error),
       })
-      // Keep the sheet open so the user can retry
+      Alert.alert('Could not update title', getErrorMessage(error))
     } finally {
       setIsSaving(false)
     }
@@ -101,7 +107,7 @@ export function EditTitleSheet({
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
         >
-          <StatusBar barStyle="light-content" />
+          <StatusBar barStyle={statusBarStyle} />
 
           <Sheet.Handle backgroundColor={'$borderColor'} marginBottom={16} />
 
@@ -112,7 +118,6 @@ export function EditTitleSheet({
 
             <YStack gap={6}>
               <TextInput
-                ref={inputRef}
                 value={editedTitle}
                 onChangeText={(text) => setEditedTitle(text)}
                 placeholder={
@@ -133,7 +138,9 @@ export function EditTitleSheet({
                 maxLength={MAX_TITLE_LENGTH}
                 returnKeyType="done"
                 autoFocus={true}
-                onSubmitEditing={handleSave}
+                onSubmitEditing={() => {
+                  void handleSave()
+                }}
               />
               <XStack justifyContent="space-between" alignItems="center">
                 <Text fontSize={11} color={'$placeholderColor'}>
@@ -148,12 +155,26 @@ export function EditTitleSheet({
             </YStack>
 
             <XStack gap={12} marginTop={4}>
-              <Button variant="outline" size="$lg" flex={1} onPress={handleCancel} disabled={isSaving}>
+              <Button
+                variant="outline"
+                size="$lg"
+                flex={1}
+                onPress={handleCancel}
+                disabled={isSaving}
+              >
                 <Text color={'$color'} fontWeight="700">
                   Cancel
                 </Text>
               </Button>
-              <Button variant="primary" size="$lg" flex={1} onPress={handleSave} disabled={isSaving}>
+              <Button
+                variant="primary"
+                size="$lg"
+                flex={1}
+                onPress={() => {
+                  void handleSave()
+                }}
+                disabled={isSaving}
+              >
                 <Text color={'$color'} fontWeight="700">
                   {isSaving ? 'Saving...' : 'Save'}
                 </Text>
@@ -164,4 +185,29 @@ export function EditTitleSheet({
       </Sheet.Frame>
     </Sheet>
   )
+}
+
+export function useEditTitleSheet() {
+  const [editingBondfire, setEditingBondfire] = useState<EditableBondfireTitle | null>(null)
+
+  const openEditTitleSheet = useCallback(
+    (bondfireId: string, title: string, creatorName?: string) => {
+      setEditingBondfire({
+        id: bondfireId as Id<'bondfires'>,
+        title,
+        creatorName,
+      })
+    },
+    [],
+  )
+
+  const closeEditTitleSheet = useCallback(() => {
+    setEditingBondfire(null)
+  }, [])
+
+  return {
+    editingBondfire,
+    openEditTitleSheet,
+    closeEditTitleSheet,
+  }
 }

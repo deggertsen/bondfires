@@ -17,6 +17,7 @@ import { Alert, FlatList, Pressable, RefreshControl, StatusBar } from 'react-nat
 import { Separator, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
+import { EditTitleSheet, useEditTitleSheet } from '../../../components/EditTitleSheet'
 import {
   BONDFIRE_REPORT_OPTIONS,
   getBondfireRightSwipeActions,
@@ -24,7 +25,6 @@ import {
   getSwipeReportComment,
 } from '../../../lib/bondfireSwipeActions'
 import { routes } from '../../../lib/routes'
-import { EditTitleSheet } from '../../../components/EditTitleSheet'
 
 type ThreadParticipant = {
   user: PublicUser
@@ -135,11 +135,7 @@ export default function MyFiresScreen() {
 
   const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string | null>>({})
   const loadingThumbsRef = useRef<Set<string>>(new Set())
-  const [editingBondfire, setEditingBondfire] = useState<{
-    id: Id<'bondfires'>
-    title: string
-    creatorName?: string
-  } | null>(null)
+  const { editingBondfire, openEditTitleSheet, closeEditTitleSheet } = useEditTitleSheet()
   const listExtraData = useMemo(
     () => ({ currentUserId, pinnedIds, thumbnailUrls, editingBondfire }),
     [currentUserId, pinnedIds, thumbnailUrls, editingBondfire],
@@ -281,14 +277,6 @@ export default function MyFiresScreen() {
     [reportBondfire],
   )
 
-  const handleEdit = useCallback((bondfireId: string, title: string, creatorName?: string) => {
-    setEditingBondfire({
-      id: bondfireId as Id<'bondfires'>,
-      title,
-      creatorName,
-    })
-  }, [])
-
   if (threads === undefined || isUserLoading) {
     return (
       <YStack flex={1} backgroundColor={'$background'}>
@@ -328,7 +316,7 @@ export default function MyFiresScreen() {
             () => handlePin(item._id),
             () => handleUnpin(item._id),
             () => handleReport(item._id, item.userId),
-            () => handleEdit(item._id, item.title ?? '', item.creatorName ?? undefined),
+            () => openEditTitleSheet(item._id, item.title ?? '', item.creatorName ?? undefined),
           )
           return <BondfireRow {...props} />
         }}
@@ -388,7 +376,7 @@ export default function MyFiresScreen() {
           currentTitle={editingBondfire.title}
           creatorName={editingBondfire.creatorName}
           open={true}
-          onClose={() => setEditingBondfire(null)}
+          onClose={closeEditTitleSheet}
         />
       )}
     </YStack>

@@ -8,7 +8,7 @@ import {
   useAppThemeColors,
   useSubscription,
 } from '@bondfires/app'
-import { Button, Spinner, SwipeableRow, Text, type SwipeAction } from '@bondfires/ui'
+import { Button, Spinner, type SwipeAction, SwipeableRow, Text } from '@bondfires/ui'
 import {
   ArrowLeft,
   Ban,
@@ -29,11 +29,11 @@ import { Alert, FlatList, Modal, Pressable, StatusBar, TextInput } from 'react-n
 import { Separator, Image as TamaguiImage, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
+import { EditTitleSheet, useEditTitleSheet } from '../../../components/EditTitleSheet'
 import { InviteSheet } from '../../../components/InviteSheet'
-import { EditTitleSheet } from '../../../components/EditTitleSheet'
+import { getBondfireRightSwipeActions } from '../../../lib/bondfireSwipeActions'
 import { goBackOrReplace } from '../../../lib/navigation'
 import { routes } from '../../../lib/routes'
-import { getBondfireRightSwipeActions } from '../../../lib/bondfireSwipeActions'
 import { OwnerCampSections } from './OwnerCampSections'
 
 type CampWithMembership = Doc<'camps'> & {
@@ -832,11 +832,7 @@ export default function CampDetailScreen() {
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false)
   const [archiveConfirmText, setArchiveConfirmText] = useState('')
   const [isInviteSheetOpen, setIsInviteSheetOpen] = useState(false)
-  const [editingBondfire, setEditingBondfire] = useState<{
-    id: Id<'bondfires'>
-    title: string
-    creatorName?: string
-  } | null>(null)
+  const { editingBondfire, openEditTitleSheet, closeEditTitleSheet } = useEditTitleSheet()
 
   const handleJoin = useCallback(async () => {
     if (!campId) return
@@ -873,14 +869,6 @@ export default function CampDetailScreen() {
 
   const handleCreateInvite = useCallback(() => {
     setIsInviteSheetOpen(true)
-  }, [])
-
-  const handleEditTitle = useCallback((bondfireId: string, title: string, creatorName?: string) => {
-    setEditingBondfire({
-      id: bondfireId as Id<'bondfires'>,
-      title,
-      creatorName,
-    })
   }, [])
 
   const handleApprove = useCallback(
@@ -1055,7 +1043,8 @@ export default function CampDetailScreen() {
               onOpen={() => handleOpenBondfire(item._id)}
               rightActions={getBondfireRightSwipeActions({
                 isOwner: isBondfireOwner,
-                onEdit: () => handleEditTitle(item._id, item.title ?? '', item.creatorName ?? undefined),
+                onEdit: () =>
+                  openEditTitleSheet(item._id, item.title ?? '', item.creatorName ?? undefined),
               })}
             />
           )
@@ -1267,7 +1256,7 @@ export default function CampDetailScreen() {
           currentTitle={editingBondfire.title}
           creatorName={editingBondfire.creatorName}
           open={true}
-          onClose={() => setEditingBondfire(null)}
+          onClose={closeEditTitleSheet}
         />
       )}
     </YStack>
