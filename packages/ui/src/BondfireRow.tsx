@@ -29,8 +29,10 @@ export type BondfireRowProps = {
   statusLabel: string
   /** Participant avatars to show */
   participants: BondfireParticipant[]
-  /** Swipe actions supplied by the owning screen */
+  /** Swipe actions revealed by swiping LEFT (destructive / admin) */
   actions: SwipeAction[]
+  /** Swipe actions revealed by swiping RIGHT (e.g. Edit — owner only) */
+  rightActions?: SwipeAction[]
   /** Callbacks */
   onOpen: () => void
   onRespond: () => void
@@ -84,6 +86,7 @@ export function BondfireRow({
   statusLabel,
   participants,
   actions,
+  rightActions,
   onOpen,
   onRespond,
 }: BondfireRowProps) {
@@ -188,5 +191,9 @@ export function BondfireRow({
     </Pressable>
   )
 
-  return <SwipeableRow actions={actions}>{row}</SwipeableRow>
+  return (
+    <SwipeableRow actions={actions} rightActions={rightActions}>
+      {row}
+    </SwipeableRow>
+  )
 }
