@@ -8,9 +8,11 @@ import { Alert, FlatList, Pressable, StatusBar } from 'react-native'
 import { Separator, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../convex/_generated/dataModel'
+import { EditTitleSheet, useEditTitleSheet } from '../../components/EditTitleSheet'
 import { InviteSheet } from '../../components/InviteSheet'
 import {
   BONDFIRE_REPORT_OPTIONS,
+  getBondfireRightSwipeActions,
   getBondfireSwipeActions,
   getSwipeReportComment,
 } from '../../lib/bondfireSwipeActions'
@@ -253,6 +255,8 @@ export default function PersonalCampScreen() {
     subscriptionActions.showPaywall()
   }, [])
 
+  const { editingBondfire, openEditTitleSheet, closeEditTitleSheet } = useEditTitleSheet()
+
   // ── Build BondfireRow props ─────────────────────────────────────────
 
   const toBondfireRowProps = useCallback(
@@ -277,6 +281,15 @@ export default function PersonalCampScreen() {
           onUnpin: () => handleUnpin(bondfire._id),
           onReport: () => handleReport(bondfire._id, bondfire.userId),
         }),
+        rightActions: getBondfireRightSwipeActions({
+          isOwner,
+          onEdit: () =>
+            openEditTitleSheet(
+              bondfire._id,
+              bondfire.title ?? '',
+              bondfire.creatorName ?? undefined,
+            ),
+        }),
         onOpen: () => handleOpenBondfire(bondfire._id),
         onRespond: () => handleRespond(bondfire._id),
       }
@@ -289,6 +302,7 @@ export default function PersonalCampScreen() {
       handlePin,
       handleUnpin,
       handleReport,
+      openEditTitleSheet,
       handleOpenBondfire,
       handleRespond,
     ],
@@ -491,6 +505,17 @@ export default function PersonalCampScreen() {
           id={inviteFireId}
           open={true}
           onClose={handleCloseInvite}
+        />
+      )}
+
+      {/* Edit Title Sheet */}
+      {editingBondfire && (
+        <EditTitleSheet
+          bondfireId={editingBondfire.id}
+          currentTitle={editingBondfire.title}
+          creatorName={editingBondfire.creatorName}
+          open={true}
+          onClose={closeEditTitleSheet}
         />
       )}
     </YStack>

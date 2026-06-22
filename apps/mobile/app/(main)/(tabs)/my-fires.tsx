@@ -17,8 +17,10 @@ import { Alert, FlatList, Pressable, RefreshControl, StatusBar } from 'react-nat
 import { Separator, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
+import { EditTitleSheet, useEditTitleSheet } from '../../../components/EditTitleSheet'
 import {
   BONDFIRE_REPORT_OPTIONS,
+  getBondfireRightSwipeActions,
   getBondfireSwipeActions,
   getSwipeReportComment,
 } from '../../../lib/bondfireSwipeActions'
@@ -56,6 +58,7 @@ function toBondfireRowProps(
   onPin: () => void,
   onUnpin: () => void,
   onReport: () => void,
+  onEdit: () => void,
 ): BondfireRowProps {
   const isOwner = currentUserId === thread.userId
   const isPinned = pinnedIds.includes(thread._id)
@@ -80,6 +83,10 @@ function toBondfireRowProps(
       onPin,
       onUnpin,
       onReport,
+    }),
+    rightActions: getBondfireRightSwipeActions({
+      isOwner,
+      onEdit,
     }),
     onOpen,
     onRespond,
@@ -128,9 +135,10 @@ export default function MyFiresScreen() {
 
   const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string | null>>({})
   const loadingThumbsRef = useRef<Set<string>>(new Set())
+  const { editingBondfire, openEditTitleSheet, closeEditTitleSheet } = useEditTitleSheet()
   const listExtraData = useMemo(
-    () => ({ currentUserId, pinnedIds, thumbnailUrls }),
-    [currentUserId, pinnedIds, thumbnailUrls],
+    () => ({ currentUserId, pinnedIds, thumbnailUrls, editingBondfire }),
+    [currentUserId, pinnedIds, thumbnailUrls, editingBondfire],
   )
 
   const ensureThumbnailUrl = useCallback(
@@ -308,6 +316,7 @@ export default function MyFiresScreen() {
             () => handlePin(item._id),
             () => handleUnpin(item._id),
             () => handleReport(item._id, item.userId),
+            () => openEditTitleSheet(item._id, item.title ?? '', item.creatorName ?? undefined),
           )
           return <BondfireRow {...props} />
         }}
@@ -359,6 +368,17 @@ export default function MyFiresScreen() {
           </YStack>
         }
       />
+
+      {/* Edit Title Sheet */}
+      {editingBondfire && (
+        <EditTitleSheet
+          bondfireId={editingBondfire.id}
+          currentTitle={editingBondfire.title}
+          creatorName={editingBondfire.creatorName}
+          open={true}
+          onClose={closeEditTitleSheet}
+        />
+      )}
     </YStack>
   )
 }

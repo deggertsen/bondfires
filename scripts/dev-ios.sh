@@ -28,8 +28,11 @@ tmux split-window -v -t $SESSION_NAME -c "$PROJECT_ROOT"
 # Run Convex dev server in the top pane
 tmux send-keys -t $SESSION_NAME:0.0 "yarn dlx convex dev" C-m
 
-# Run Expo iOS in the bottom pane (builds native app if needed, then starts)
-tmux send-keys -t $SESSION_NAME:0.1 "cd apps/mobile && yarn ios" C-m
+# Run Expo iOS in the bottom pane (builds native app if needed, then starts).
+# `--device` makes Expo prompt for which connected target to use (physical
+# device or simulator) instead of silently defaulting to a simulator. Call
+# expo directly so the flag isn't swallowed by the yarn script indirection.
+tmux send-keys -t $SESSION_NAME:0.1 "cd apps/mobile && npx expo run:ios --device" C-m
 
 # Select the bottom pane (Expo) as the active one
 tmux select-pane -t $SESSION_NAME:0.1
