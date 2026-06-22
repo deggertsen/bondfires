@@ -90,6 +90,11 @@ export const routes = {
     params: { id },
   }),
 
+  campJoinGate: (campId: string, redirect?: string): Href => ({
+    pathname: '/(main)/camp/[id]/join',
+    params: { id: campId, ...(redirect ? { redirect } : {}) },
+  }),
+
   personalBondfire: (bondfireId: string, code: string): Href => ({
     pathname: '/(main)/personal-bondfire/[bondfireId]/[code]',
     params: { bondfireId, code },

@@ -6,7 +6,6 @@ import {
   hasViewedToday,
   type MuxDataVideoMetadata,
   markViewed,
-  parseError,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
   setLastLocation,
@@ -35,7 +34,6 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { useVideoPlayer, VideoView } from 'expo-video'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
-  Alert,
   Animated,
   AppState,
   Dimensions,
@@ -50,7 +48,7 @@ import {
   View,
   type ViewToken,
 } from 'react-native'
-import { Sheet, XStack, YStack } from 'tamagui'
+import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { InviteSheet } from '../../../components/InviteSheet'
@@ -855,7 +853,6 @@ export default function BondfireDetailScreen() {
     | BondfireDetailData
     | null
     | undefined
-  const accessCheck = useQuery(api.bondfireInvites.canAccessBondfire, { bondfireId })
   // Only resolve the unavailable reason when the detail query actually came back
   // null — it tells us (and telemetry) whether the dead end is a deleted/broken
   // video, an access filter, expiry, or a transient race.
@@ -868,17 +865,24 @@ export default function BondfireDetailScreen() {
   const recordWatchEvent = useMutation(api.watchEvents.record)
   const incrementViews = useMutation(api.bondfires.incrementViews)
   const markThreadRead = useMutation(api.conversations.markThreadRead)
-  const joinCamp = useMutation(api.camps.join)
-  const [showJoinPrompt, setShowJoinPrompt] = useState(false)
-  const [joinLoading, setJoinLoading] = useState(false)
   const [isInviteSheetOpen, setIsInviteSheetOpen] = useState(false)
+  const hasRedirectedToJoinGate = useRef(false)
 
-  // Auto-show camp join prompt for invited users who aren't members
+  // Redirect non-members to the full-screen camp join gate.
+  // Replaces the old dismissible bottom sheet — users can no longer
+  // dismiss and watch/respond without joining the camp first.
   useEffect(() => {
-    if (accessCheck?.needsCampJoin) {
-      setShowJoinPrompt(true)
-    }
-  }, [accessCheck])
+    if (hasRedirectedToJoinGate.current) return
+    if (!campContext || !campContext.camp) return
+    // If the bondfire has no camp (personal), no gate needed.
+    if (!campContext.bondfire?.campId) return
+    // If user is an active member, no gate needed.
+    if (campContext.membership?.status === 'active') return
+    // User is not a member — redirect to join gate with the bondfire id
+    // as redirect target so we can bring them back after they join.
+    hasRedirectedToJoinGate.current = true
+    router.replace(routes.campJoinGate(campContext.bondfire.campId, bondfireId))
+  }, [campContext, bondfireId, router])
 
   // Note: no polling needed for pending/live/processing transitions —
   // the Convex useQuery subscription pushes status changes automatically.
@@ -1677,63 +1681,6 @@ export default function BondfireDetailScreen() {
 
         {/* Notepad Overlay */}
         {showNotepad && <NotepadOverlay onClose={() => screenState$.showNotepad.set(false)} />}
-
-        {/* Camp Join Prompt — shown for invited users who aren't members */}
-        {showJoinPrompt && accessCheck?.campId && (
-          <Sheet
-            open={showJoinPrompt}
-            onOpenChange={(isOpen: boolean) => {
-              if (!isOpen) setShowJoinPrompt(false)
-            }}
-            snapPoints={[50]}
-            dismissOnSnapToBottom
-          >
-            <Sheet.Overlay backgroundColor="rgba(0,0,0,0.45)" />
-            <Sheet.Frame
-              backgroundColor={'$backgroundPress'}
-              borderTopLeftRadius={20}
-              borderTopRightRadius={20}
-              padding={24}
-            >
-              <YStack gap={20} alignItems="center">
-                <Sheet.Handle backgroundColor={'$borderColor'} />
-                <Text fontSize={22} fontWeight="900" textAlign="center">
-                  Join Camp to View
-                </Text>
-                <Text fontSize={14} color={'$placeholderColor'} textAlign="center" lineHeight={20}>
-                  This bondfire is in a camp you haven't joined yet. Join to watch and respond.
-                </Text>
-                <Button
-                  variant="primary"
-                  size="$lg"
-                  width="100%"
-                  onPress={async () => {
-                    if (!accessCheck.campId) return
-                    setJoinLoading(true)
-                    try {
-                      await joinCamp({ campId: accessCheck.campId })
-                      setShowJoinPrompt(false)
-                    } catch (error) {
-                      telemetry.error('camp:join', 'Failed to join camp from bondfire detail', {
-                        campId: accessCheck.campId,
-                        error: String(error),
-                      })
-                      const { message } = parseError(error)
-                      Alert.alert('Could not join', message)
-                    } finally {
-                      setJoinLoading(false)
-                    }
-                  }}
-                  disabled={joinLoading}
-                >
-                  <Text color={'$color'} fontWeight="700">
-                    {joinLoading ? 'Joining...' : 'Join Camp'}
-                  </Text>
-                </Button>
-              </YStack>
-            </Sheet.Frame>
-          </Sheet>
-        )}
 
         {/* Invite Sheet */}
         <InviteSheet
