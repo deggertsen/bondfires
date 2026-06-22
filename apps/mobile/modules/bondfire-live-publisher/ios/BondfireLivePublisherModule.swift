@@ -304,6 +304,12 @@ final class LivePublisher {
       return
     }
 
+    // HaishinKit 2.x resolves a URL scheme to a Session via factories that
+    // must be registered first; without this, build() throws .notFound. The
+    // factory's register() is idempotent, so calling it on every start() is
+    // safe and keeps the registration colocated with its only use.
+    await SessionBuilderFactory.shared.register(RTMPSessionFactory())
+
     // build() returns (any Session)? — guard-unwrap required
     let newSession: any Session
     do {
@@ -327,10 +333,14 @@ final class LivePublisher {
 
     var videoSettings = await newSession.stream.videoSettings
     videoSettings.bitRate = options.videoBitrate
-    videoSettings.videoSize = CGSize(
-      width: Int(captureSize.width),
-      height: Int(captureSize.height)
-    )
+    // The mixer emits portrait frames (matching the preview), but
+    // activeFormat reports the sensor's landscape dimensions. Encode in
+    // portrait orientation so HaishinKit's default .trim scaling doesn't
+    // center-crop a portrait frame into a landscape target, which makes the
+    // recording look zoomed in even though the preview is correct.
+    let shortSide = Int(min(captureSize.width, captureSize.height))
+    let longSide = Int(max(captureSize.width, captureSize.height))
+    videoSettings.videoSize = CGSize(width: shortSide, height: longSide)
     await newSession.stream.setVideoSettings(videoSettings)
 
     var audioSettings = await newSession.stream.audioSettings
