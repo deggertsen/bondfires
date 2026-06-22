@@ -258,20 +258,41 @@ The first runner build is slow and the default 90s request window times out — 
 `xcodebuild test-without-building … ** BUILD INTERRUPTED **` in
 `~/.agent-device/sessions/<session>/runner.log`.
 
-### 4. Metro: use a TUNNEL, not LAN
+### 4. Loading JS: prefer a self-contained RELEASE build over Metro
 
-The phone usually can't reach the Mac's Metro over LAN (different subnet / Wi-Fi AP
-isolation) — `Failed to connect to http://<mac-ip>:8081`. Use a tunnel:
+**For validating a native/config fix, skip Metro entirely.** Build in Release
+config — `xcodebuild ... -configuration Release` bundles the JS into the binary
+(`main.jsbundle`), so the installed app just runs: no Metro, no dev launcher, no
+tunnel, no URL to type. This is the most reliable loop and avoids every gotcha
+below. Install with `devicectl ... install app` then `... process launch`, and
+read results from prod Convex telemetry (`clientLogs:_debugTriage`). Recording
+in a personal camp is safe; just reaching the record screen fires
+`live:availability` / `live:camera_list`, which is enough to confirm a native
+registration fix without creating prod data.
+
+Only use a Debug build + Metro when you actually need hot reload / JS iteration.
+In that case the phone often can't reach the Mac's Metro over LAN (different
+subnet / Wi-Fi AP isolation) — try the LAN URL `exp://<mac-lan-ip>:8081` first
+(get the IP via `ipconfig getifaddr en0`), and fall back to a tunnel only if LAN
+fails:
 
 ```bash
 npm install -g @expo/ngrok@^4.1.0      # one-time
 cd apps/mobile && npx expo start --dev-client --tunnel
-curl -s http://127.0.0.1:4040/api/tunnels | grep -oE 'https://[a-z0-9-]+\.exp\.direct'
+```
+
+Getting the tunnel URL: the ngrok `4040` inspector API is often NOT exposed, and
+a backgrounded `expo start` won't print the QR banner. Pull the host from the
+dev server manifest instead:
+
+```bash
+curl -s -H "expo-platform: ios" http://127.0.0.1:8081/ | \
+  node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).extra?.expoClient?.hostUri||JSON.parse(s).hostUri))'
 ```
 
 The deep link `bondfires://expo-development-client/?url=<encoded>` does NOT reliably
 auto-load; instead drive the dev launcher UI: tap **Enter URL manually**, fill the
-tunnel URL, tap **Connect**, then **Allow** the iOS "find devices on local networks"
+URL, tap **Connect**, then **Allow** the iOS "find devices on local networks"
 prompt. The launcher's RN buttons aren't in the a11y tree — use coordinate taps.
 
 ### 5. Driving the RN app (a11y tree is sparse)
@@ -284,8 +305,12 @@ prompt. The launcher's RN buttons aren't in the a11y tree — use coordinate tap
 - **Recording flow:** Spark tab → "Choose a Camp" (dismiss keyboard via `done`) → pick a
   camp → record screen. Use **"David Eggertsen's Fire" (personal, no-audience camp)** for
   throwaway test data — it stays out of the public Discover feed.
-- The live camera **preview renders fine** despite a Metro warning that
-  `BondfireLivePublisher`'s view manager "isn't exported" (cosmetic).
+- A Metro warning that `BondfireLivePublisher`'s view manager "isn't exported"
+  is **NOT cosmetic** — it means the native module failed to register with Expo
+  (see "iOS autolinking gotcha" below). When that happens, `isAvailable()`
+  returns `false`, the live preview falls back to a blank `View`, and the app
+  silently routes recording to the legacy upload queue. If you see this warning,
+  fix the registration before trusting anything else on the live path.
 - **Duration cap is 180 min** — not exercisable live; lower it in a debug build to test
   the cap-finalization path.
 - Known quirk: the **`+`** button in a personal-camp detail view re-presents stale
@@ -319,3 +344,59 @@ the repo's root `.env.local` sets `CONVEX_DEPLOYMENT=prod` — there is no dev d
 So `convex dev` deploys to prod, and on-device recording creates **real prod data
 + Mux live streams**. Confirm with the owner before recording, and prefer the personal
 camp for cleanup.
+
+### 7. iOS autolinking gotcha (the bug that disabled live for ALL iOS users, June 2026)
+
+For a long stretch, iOS live recording **never worked** — every iOS user was
+silently routed to the dead legacy upload queue. The native `BondfireLivePublisher`
+module was compiled into the binary (the CocoaPods pod linked fine) but **never
+registered with Expo's module runtime**, so `requireNativeModule('BondfireLivePublisher')`
+threw and `index.ts` fell back to `isAvailable()=false` / `getCameraCount()=0`.
+Telemetry tell: `live:availability` was `available:false` and `live:camera_list`
+`cameraCount:0` on EVERY iOS device, forever, while Android worked.
+
+Root cause was in `apps/mobile/modules/bondfire-live-publisher/expo-module.config.json`,
+and `expo-modules-autolinking@3.x` exposed two traps, both invisible on Android:
+
+1. **Platform key:** autolinking reads the **`apple`** key, not legacy **`ios`**.
+   A config with `"platforms": ["ios", ...]` / `"ios": { "modules": [...] }` is
+   silently ignored on Apple. Use `"apple"`.
+2. **Podspec location:** Apple resolution (`resolveModuleAsync` → `findPodspecFiles`
+   → `listFilesInDirectories`) only finds `.podspec` files inside **top-level
+   subdirectories** (e.g. `ios/`). A podspec at the module **root** is dropped, and
+   the whole module silently disappears from resolution. Either move the podspec
+   into `ios/`, or point at it with `"apple": { "podspecPath": "Foo.podspec" }`.
+
+How to diagnose fast (no device, no build) — compare what autolinking resolves:
+
+```bash
+cd apps/mobile
+npx expo-modules-autolinking resolve -p apple --json  | grep -o '"packageName":"[^"]*"'
+npx expo-modules-autolinking resolve -p android --json | grep -o '"packageName":"[^"]*"'
+# If a local module shows up for android but not apple, it's this bug.
+```
+
+Ground truth: after `pod install`, the module must appear in
+`ios/Pods/Target Support Files/Pods-Bondfires/ExpoModulesProvider.swift`
+(both the `import` and `getModuleClasses()` lists, debug AND release). If it's
+absent there, it will not register at runtime no matter how good the Swift is.
+
+**Corollary — fixes in dead code:** because `start()` never ran on iOS until the
+registration was fixed, two native bugs sat latent behind it. Editing Swift that
+never executes proves nothing; verify the module is registered FIRST, then debug
+the live path. The two it hid:
+
+- **HaishinKit 2.x needs factory registration.** Call
+  `await SessionBuilderFactory.shared.register(RTMPSessionFactory())` before
+  `make(url).build()`, or `build()` throws `.notFound`
+  ("SessionBuilderFactory.Error error 1").
+- **Encoder orientation.** `camera.activeFormat.dimensions` is the sensor's
+  LANDSCAPE size; the mixer emits PORTRAIT frames. Setting `videoSize` to the
+  landscape dims makes HaishinKit's default `.trim` scaling center-crop the
+  portrait frame → "super zoomed in" recording with a correct preview. Encode
+  short-side × long-side (portrait).
+
+This is CNG/managed: `apps/mobile/ios` is gitignored and regenerated by `expo
+prebuild` during `eas build --local` (see `scripts/release.sh`), so the fix lives
+entirely in the committed `expo-module.config.json` + module Swift — no native
+state in git to go stale.
