@@ -27,7 +27,6 @@ import {
   PRO_MAX_VIDEO_DURATION_MS,
 } from './entitlements'
 import { throwUserError, withUserFacingActionErrors } from './errors'
-import { classifyDisableStatus } from './lib/muxLiveStream'
 import {
   assertCanRespondToPersonalBondfire,
   canViewPersonalBondfire,
@@ -58,6 +57,7 @@ type StuckMuxRecord = {
   muxLiveStreamId?: string
 }
 type ReconcileOutcome = 'recovered' | 'errored' | 'still_processing' | 'unresolved'
+type DisableMuxLiveStreamOutcome = 'disabled' | 'missing' | 'error'
 type ExpiredPrivateCampVideoCleanupResult = {
   expiredBondfires?: number
   muxAssetsToDelete?: number
@@ -830,6 +830,14 @@ async function deleteMuxLiveStream(liveStreamId: string): Promise<'deleted' | 'm
   return 'deleted'
 }
 
+export function classifyDisableMuxLiveStreamStatus(
+  httpStatus: number,
+): DisableMuxLiveStreamOutcome {
+  if (httpStatus === 404) return 'missing'
+  if (httpStatus >= 200 && httpStatus < 300) return 'disabled'
+  return 'error'
+}
+
 // Disable a Mux live stream, tolerating an already-gone stream. A 404 resolves
 // to 'missing' (the stream is already deleted on Mux) rather than throwing, so
 // the stale-session reaper can settle the DB row instead of retrying the same
@@ -837,21 +845,36 @@ async function deleteMuxLiveStream(liveStreamId: string): Promise<'deleted' | 'm
 // network, timeout) still throw so the caller leaves the row for the next run.
 async function disableMuxLiveStream(liveStreamId: string): Promise<'disabled' | 'missing'> {
   const config = getMuxConfig()
-  const response = await fetch(`${MUX_API_BASE_URL}/live-streams/${liveStreamId}/disable`, {
-    method: 'PUT',
-    headers: {
-      Accept: 'application/json',
-      Authorization: getMuxAuthorizationHeader(config.tokenId, config.tokenSecret),
-    },
-  })
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), MUX_REQUEST_TIMEOUT_MS)
 
-  const outcome = classifyDisableStatus(response.status)
-  if (outcome === 'error') {
-    const message = await response.text()
-    throw new Error(`Mux live stream disable failed: ${response.status} ${message}`)
+  try {
+    const response = await fetch(`${MUX_API_BASE_URL}/live-streams/${liveStreamId}/disable`, {
+      method: 'PUT',
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json',
+        Authorization: getMuxAuthorizationHeader(config.tokenId, config.tokenSecret),
+      },
+    })
+
+    const outcome = classifyDisableMuxLiveStreamStatus(response.status)
+    if (outcome === 'error') {
+      const message = await response.text()
+      throw new Error(`Mux live stream disable failed: ${response.status} ${message}`)
+    }
+
+    return outcome
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(
+        `Mux API request timed out after ${MUX_REQUEST_TIMEOUT_MS}ms: PUT /live-streams/${liveStreamId}/disable`,
+      )
+    }
+    throw error
+  } finally {
+    clearTimeout(timer)
   }
-
-  return outcome
 }
 
 function isPlayableVideoRecord(record: {

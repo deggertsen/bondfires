@@ -34,7 +34,6 @@ import type * as entitlements from "../entitlements.js";
 import type * as errors from "../errors.js";
 import type * as http from "../http.js";
 import type * as inviteCodes from "../inviteCodes.js";
-import type * as lib_muxLiveStream from "../lib/muxLiveStream.js";
 import type * as liveSessions from "../liveSessions.js";
 import type * as notifications from "../notifications.js";
 import type * as personalBondfireAccess from "../personalBondfireAccess.js";
@@ -85,7 +84,6 @@ declare const fullApi: ApiFromModules<{
   errors: typeof errors;
   http: typeof http;
   inviteCodes: typeof inviteCodes;
-  "lib/muxLiveStream": typeof lib_muxLiveStream;
   liveSessions: typeof liveSessions;
   notifications: typeof notifications;
   personalBondfireAccess: typeof personalBondfireAccess;
