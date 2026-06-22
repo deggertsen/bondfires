@@ -500,13 +500,9 @@ export default function CreateScreen() {
   // legacy camera-teardown-on-blur effect, whose teardown half now lives in
   // LegacyRecordScreen; scheduling stays here because uploads are shared.)
   //
-  // This used to early-return whenever live publish was active, which turned the
-  // legacy queue into a roach motel: any task enqueued while the live path was
-  // unavailable (e.g. the iOS camera-availability regression that forced every
-  // iOS user onto the fallback) became a permanent "Queued..." zombie that
-  // resurfaced on the profile and never uploaded. Drain regardless of the live
-  // gate so stale fallback tasks always finish — or fail out and get cleaned
-  // up — instead of lingering forever. No-op when the queue is empty.
+  // Drain regardless of the live gate. Fallback uploads can exist even when the
+  // live path is currently available, and leaving them scheduled-only makes
+  // stale "Queued..." profile tasks linger indefinitely. No-op when empty.
   useEffect(() => {
     if (!isFocused || !isAppActive) {
       if (!isFocused) {
