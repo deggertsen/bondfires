@@ -41,7 +41,11 @@ export function classifyMuxIngest(input: {
   }
   if (input.status === 'active') return { status: 'confirmed', source: 'mux_status_active' }
 
+  if (!input.status) {
+    return { status: 'unknown', source: 'mux_status_missing' }
+  }
+
   // Mux answered and reports no asset and a non-active status: the stream
   // genuinely never received media.
-  return { status: 'empty', source: `mux_${input.status ?? 'unknown'}` }
+  return { status: 'empty', source: `mux_${input.status}` }
 }

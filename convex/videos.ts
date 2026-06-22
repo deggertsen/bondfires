@@ -1838,7 +1838,14 @@ export const createLiveStream = action({
 // caller preserves the record instead of deleting a recording we failed to see.
 // The pure decision logic lives in ./lib/liveIngest (unit-tested separately).
 async function classifyMuxLiveStreamIngest(liveStreamId: string): Promise<IngestEvidence> {
-  const liveStream = await muxRequestOptional(`/live-streams/${liveStreamId}`)
+  let liveStream: Record<string, unknown> | null
+  try {
+    liveStream = await muxRequestOptional(`/live-streams/${liveStreamId}`)
+  } catch (error) {
+    console.warn('Failed to read Mux live stream ingest evidence:', error)
+    return classifyMuxIngest({ reachable: false })
+  }
+
   if (!liveStream) {
     return classifyMuxIngest({ reachable: false })
   }

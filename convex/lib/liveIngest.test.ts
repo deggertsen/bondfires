@@ -78,10 +78,10 @@ describe('classifyMuxIngest', () => {
     })
   })
 
-  it("returns 'empty' with an unknown source when Mux omits a status", () => {
+  it("returns 'unknown' when Mux omits a status", () => {
     expect(classifyMuxIngest({ reachable: true })).toEqual({
-      status: 'empty',
-      source: 'mux_unknown',
+      status: 'unknown',
+      source: 'mux_status_missing',
     })
   })
 
