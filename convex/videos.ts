@@ -27,6 +27,7 @@ import {
   PRO_MAX_VIDEO_DURATION_MS,
 } from './entitlements'
 import { throwUserError, withUserFacingActionErrors } from './errors'
+import { classifyMuxIngest, type IngestEvidence, localIngestSource } from './lib/liveIngest'
 import {
   assertCanRespondToPersonalBondfire,
   canViewPersonalBondfire,
@@ -57,6 +58,7 @@ type StuckMuxRecord = {
   muxLiveStreamId?: string
 }
 type ReconcileOutcome = 'recovered' | 'errored' | 'still_processing' | 'unresolved'
+type DisableMuxLiveStreamOutcome = 'disabled' | 'missing' | 'error'
 type ExpiredPrivateCampVideoCleanupResult = {
   expiredBondfires?: number
   muxAssetsToDelete?: number
@@ -139,10 +141,18 @@ const STUCK_LIVE_RECORDING_GIVE_UP_MS = 60 * 60 * 1000
 // direct-upload URLs expire in ~1h) so we never kill an in-flight upload.
 const STUCK_WAITING_FOR_UPLOAD_GIVE_UP_MS = 6 * 60 * 60 * 1000
 const RECONCILE_BATCH_LIMIT = 25
-// Existing mobile clients call endLiveStream before closing native RTMP. Do not
-// wait here, or Android can keep komuxer writing long enough to crash on stop.
-const MUX_LIVE_ACTIVE_BEFORE_COMPLETE_WAIT_MS = 0
-const MUX_LIVE_ACTIVE_BEFORE_COMPLETE_POLL_MS = 1_000
+// The mobile client closes native RTMP before calling endLiveStream, so a short
+// wait here is safe. Mux's live_stream.active webhook can lag behind the
+// recording asset Mux has already created — with zero wait, endLiveStream
+// treated quick stops (common on responses) as "never started" and deleted the
+// row.
+const MUX_LIVE_ACTIVE_BEFORE_COMPLETE_WAIT_MS = 15_000
+// Re-read our own row this often (cheap, local). Confirms the moment Mux's
+// active webhook lands without hammering the Mux API.
+const MUX_LIVE_ACTIVE_BEFORE_COMPLETE_POLL_MS = 500
+// Hit the Mux API at most this often while waiting (plus one final read at the
+// deadline). Keeps the wait responsive without ~30 API calls per quick stop.
+const MUX_LIVE_ACTIVE_INGEST_CHECK_INTERVAL_MS = 2_500
 
 function getMuxConfig() {
   const tokenId = process.env.MUX_TOKEN_ID
@@ -829,6 +839,53 @@ async function deleteMuxLiveStream(liveStreamId: string): Promise<'deleted' | 'm
   return 'deleted'
 }
 
+export function classifyDisableMuxLiveStreamStatus(
+  httpStatus: number,
+): DisableMuxLiveStreamOutcome {
+  if (httpStatus === 404) return 'missing'
+  if (httpStatus >= 200 && httpStatus < 300) return 'disabled'
+  return 'error'
+}
+
+// Disable a Mux live stream, tolerating an already-gone stream. A 404 resolves
+// to 'missing' (the stream is already deleted on Mux) rather than throwing, so
+// the stale-session reaper can settle the DB row instead of retrying the same
+// dead stream every cron tick forever. Genuinely transient failures (5xx,
+// network, timeout) still throw so the caller leaves the row for the next run.
+async function disableMuxLiveStream(liveStreamId: string): Promise<'disabled' | 'missing'> {
+  const config = getMuxConfig()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), MUX_REQUEST_TIMEOUT_MS)
+
+  try {
+    const response = await fetch(`${MUX_API_BASE_URL}/live-streams/${liveStreamId}/disable`, {
+      method: 'PUT',
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json',
+        Authorization: getMuxAuthorizationHeader(config.tokenId, config.tokenSecret),
+      },
+    })
+
+    const outcome = classifyDisableMuxLiveStreamStatus(response.status)
+    if (outcome === 'error') {
+      const message = await response.text()
+      throw new Error(`Mux live stream disable failed: ${response.status} ${message}`)
+    }
+
+    return outcome
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(
+        `Mux API request timed out after ${MUX_REQUEST_TIMEOUT_MS}ms: PUT /live-streams/${liveStreamId}/disable`,
+      )
+    }
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 function isPlayableVideoRecord(record: {
   videoStatus?: string
   muxPlaybackId?: string
@@ -1171,16 +1228,26 @@ async function patchLinkedLiveRecord(
   liveSession: Doc<'liveSessions'>,
   patch: LiveLinkedRecordPatch,
 ) {
+  // The linked record may already be gone — a cancelled session deletes its
+  // bondfire/bondfireVideo, and the stale-session reaper still runs afterward.
+  // Convex throws on patching a nonexistent id, which would roll back the whole
+  // reap (leaving the session wedged forever), so check existence first.
   if (liveSession.bondfireVideoId) {
-    await ctx.db.patch(liveSession.bondfireVideoId, patch)
+    const video = await ctx.db.get(liveSession.bondfireVideoId)
+    if (video) {
+      await ctx.db.patch(liveSession.bondfireVideoId, patch)
+    }
     return
   }
 
   if (liveSession.bondfireId) {
-    await ctx.db.patch(liveSession.bondfireId, {
-      ...patch,
-      updatedAt: Date.now(),
-    })
+    const bondfire = await ctx.db.get(liveSession.bondfireId)
+    if (bondfire) {
+      await ctx.db.patch(liveSession.bondfireId, {
+        ...patch,
+        updatedAt: Date.now(),
+      })
+    }
   }
 }
 
@@ -1822,18 +1889,74 @@ export const createLiveStream = action({
     ),
 })
 
+// Ask Mux directly. Mux's API often knows ingest happened before the
+// live_stream.active webhook reaches us, so this is the fast confirmation path
+// for quick stops. A null response (network error or 404) means we cannot
+// prove the stream was empty — classifyMuxIngest returns 'unknown' so the
+// caller preserves the record instead of deleting a recording we failed to see.
+// The pure decision logic lives in ./lib/liveIngest (unit-tested separately).
+async function classifyMuxLiveStreamIngest(liveStreamId: string): Promise<IngestEvidence> {
+  let liveStream: Record<string, unknown> | null
+  try {
+    liveStream = await muxRequestOptional(`/live-streams/${liveStreamId}`)
+  } catch (error) {
+    console.warn('Failed to read Mux live stream ingest evidence:', error)
+    return classifyMuxIngest({ reachable: false })
+  }
+
+  if (!liveStream) {
+    return classifyMuxIngest({ reachable: false })
+  }
+
+  const liveData = parseMuxData(liveStream)
+  return classifyMuxIngest({
+    reachable: true,
+    status: readOptionalString(liveData.status),
+    activeAssetId: readOptionalString(liveData.active_asset_id),
+    recentAssetIds: readStringArray(liveData.recent_asset_ids),
+  })
+}
+
 async function waitForLiveSessionToStart(
   ctx: ActionCtx,
   userId: Id<'users'>,
   liveSessionId: Id<'liveSessions'>,
-): Promise<Doc<'liveSessions'> | null> {
-  const deadline = Date.now() + MUX_LIVE_ACTIVE_BEFORE_COMPLETE_WAIT_MS
+): Promise<{ session: Doc<'liveSessions'> | null; ingest: IngestEvidence; waitedMs: number }> {
+  const start = Date.now()
+  const deadline = start + MUX_LIVE_ACTIVE_BEFORE_COMPLETE_WAIT_MS
   let session: Doc<'liveSessions'> | null = await ctx.runQuery(
     internal.videos.getMuxLiveSessionForUser,
     { userId, liveSessionId },
   )
+  let lastMuxCheckAt = 0
 
-  while (session && !session.startedAt && session.status !== 'live' && Date.now() < deadline) {
+  while (session) {
+    // Cheap local check on every iteration — no Mux API call.
+    const local = localIngestSource(session)
+    if (local) {
+      return {
+        session,
+        ingest: { status: 'confirmed', source: local },
+        waitedMs: Date.now() - start,
+      }
+    }
+
+    const now = Date.now()
+    const timedOut = now >= deadline
+    // Throttle Mux API reads to ~1 every few seconds instead of one per poll,
+    // but always do a final authoritative read at the deadline.
+    const muxCheckDue = now - lastMuxCheckAt >= MUX_LIVE_ACTIVE_INGEST_CHECK_INTERVAL_MS
+
+    if (muxCheckDue || timedOut) {
+      lastMuxCheckAt = now
+      const ingest = session.muxLiveStreamId
+        ? await classifyMuxLiveStreamIngest(session.muxLiveStreamId)
+        : ({ status: 'empty', source: 'no_live_stream_id' } as IngestEvidence)
+      if (ingest.status === 'confirmed' || timedOut) {
+        return { session, ingest, waitedMs: Date.now() - start }
+      }
+    }
+
     await new Promise((resolve) => setTimeout(resolve, MUX_LIVE_ACTIVE_BEFORE_COMPLETE_POLL_MS))
     session = await ctx.runQuery(internal.videos.getMuxLiveSessionForUser, {
       userId,
@@ -1841,7 +1964,11 @@ async function waitForLiveSessionToStart(
     })
   }
 
-  return session
+  return {
+    session: null,
+    ingest: { status: 'empty', source: 'session_gone' },
+    waitedMs: Date.now() - start,
+  }
 }
 
 export const endLiveStream = action({
@@ -1872,20 +1999,54 @@ export const endLiveStream = action({
           throwUserError('Live session not found')
         }
 
-        const activeSession = await waitForLiveSessionToStart(ctx, userId, args.liveSessionId)
+        // Idempotent double-stop. A retried or duplicate stop (flaky network,
+        // double tap) must not re-run completion/teardown on an already-finalized
+        // session. Answer from persisted state instead of touching Mux again.
+        if (
+          liveSession.status === 'ending' ||
+          liveSession.status === 'ended' ||
+          liveSession.status === 'errored'
+        ) {
+          await ctx.runMutation(internal.serverTelemetry.recordServerEvent, {
+            level: 'breadcrumb',
+            event: 'live:end_already_finalized',
+            message: `endLiveStream called on already-${liveSession.status} session`,
+            userId,
+            data: {
+              liveSessionId: args.liveSessionId,
+              status: liveSession.status,
+            },
+          })
+
+          return {
+            ended: liveSession.status !== 'errored',
+            completeSignaled: false,
+            recordingStarted: Boolean(localIngestSource(liveSession)),
+          }
+        }
+
+        const {
+          session: activeSession,
+          ingest,
+          waitedMs,
+        } = await waitForLiveSessionToStart(ctx, userId, args.liveSessionId)
         if (!activeSession) {
           throwUserError('Live session not found')
         }
 
-        if (!activeSession.startedAt && activeSession.status !== 'live') {
+        if (ingest.status === 'empty') {
+          // Mux is authoritative and confirms the stream never received media.
+          // This is the only case where deleting the record is safe.
           await ctx.runMutation(internal.serverTelemetry.recordServerEvent, {
             level: 'warn',
             event: 'live:complete_not_active',
-            message: 'Live stream was stopped before Mux reported it active',
+            message: 'Live stream was stopped before Mux confirmed ingest',
             userId,
             data: {
               liveSessionId: args.liveSessionId,
               status: activeSession.status,
+              source: ingest.source,
+              waitedMs,
               ageMs: Date.now() - activeSession.createdAt,
             },
           })
@@ -1913,6 +2074,43 @@ export const endLiveStream = action({
         } catch (error) {
           completeSignaled = false
           console.warn('Failed to signal Mux live stream complete:', error)
+        }
+
+        if (ingest.status === 'unknown') {
+          // We could not confirm ingest with Mux inside the window (Mux
+          // unreachable or ambiguous). Destroying the record here is exactly the
+          // recording-loss bug we are guarding against, so instead we demote to
+          // 'processing' and let the stuck-record reaper reconcile against Mux —
+          // it recovers a real VOD if one appears, or errors the row out after
+          // its give-up window if nothing ever does.
+          await ctx.runMutation(internal.serverTelemetry.recordServerEvent, {
+            level: 'warn',
+            event: 'live:complete_unconfirmed',
+            message: 'Could not confirm Mux ingest before timeout; demoting to processing',
+            userId,
+            data: {
+              liveSessionId: args.liveSessionId,
+              status: activeSession.status,
+              source: ingest.source,
+              completeSignaled,
+              waitedMs,
+              ageMs: Date.now() - activeSession.createdAt,
+            },
+          })
+        } else if (waitedMs > 0) {
+          // Confirmed, but only after waiting — telemetry to tune the window.
+          await ctx.runMutation(internal.serverTelemetry.recordServerEvent, {
+            level: 'info',
+            event: 'live:ingest_confirmed_after_wait',
+            message: `Mux ingest confirmed after ${waitedMs}ms via ${ingest.source}`,
+            userId,
+            data: {
+              liveSessionId: args.liveSessionId,
+              source: ingest.source,
+              waitedMs,
+              ageMs: Date.now() - activeSession.createdAt,
+            },
+          })
         }
 
         await ctx.runMutation(internal.videos.markMuxLiveSessionEnding, {
@@ -2230,26 +2428,37 @@ export const disableStaleLiveStreams = internalAction({
     )
 
     let disabled = 0
+    let missing = 0
     let failed = 0
 
     for (const session of staleSessions) {
+      let outcome: 'disabled' | 'missing'
       try {
-        await muxRequest(`/live-streams/${session.muxLiveStreamId}/disable`, {
-          method: 'PUT',
-        })
+        outcome = await disableMuxLiveStream(session.muxLiveStreamId)
       } catch (error) {
+        // Transient Mux/network failure — leave the row for the next cron tick.
+        // An already-deleted stream is a 404, handled as 'missing' below, not here.
         console.warn('Failed to disable stale Mux live stream:', session.muxLiveStreamId, error)
         failed += 1
         continue
       }
 
+      // Both a successful disable and an already-gone stream (404) mean Mux is
+      // settled, so reap the DB row either way. Skipping the reap on 404 is what
+      // wedged sessions in prod: the stream was already deleted (e.g. via cancel)
+      // so disable 404'd forever and the row never left the stale list.
       await ctx.runMutation(internal.videos.markStaleMuxLiveSessionEnded, {
         liveSessionId: session._id,
       })
-      disabled += 1
+
+      if (outcome === 'missing') {
+        missing += 1
+      } else {
+        disabled += 1
+      }
     }
 
-    return { disabled, failed }
+    return { disabled, missing, failed }
   },
 })
 

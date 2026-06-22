@@ -463,7 +463,9 @@ export function LiveRecordScreen({
         state$.showInviteSheet.set(false)
         Alert.alert(
           "Recording didn't start",
-          "Mux never confirmed that video was flowing, so we didn't save a broken Bondfire. Please try again.",
+          respondTo
+            ? "Mux never confirmed that video was flowing, so we didn't save a broken response. Please try again."
+            : "Mux never confirmed that video was flowing, so we didn't save a broken Bondfire. Please try again.",
         )
         return
       }
@@ -496,7 +498,7 @@ export function LiveRecordScreen({
       recordingStore$.videoUri.set(null)
       state$.showInviteSheet.set(false)
     }
-  }, [livePublisher, liveStatus, logRecordingError, state$])
+  }, [livePublisher, liveStatus, logRecordingError, respondTo, state$])
 
   // Auto-stop at the recording duration cap.
   // NOTE: the pre-refactor create screen routed this through the legacy
