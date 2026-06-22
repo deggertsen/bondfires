@@ -44,18 +44,8 @@ public class BondfireLivePublisherModule: Module {
         guard status == .authorized else {
           return false
         }
-        // Check that at least one camera exists
-        let cameraTypes: [AVCaptureDevice.DeviceType] = [
-          .builtInWideAngleCamera,
-          .builtInTelephotoCamera,
-          .builtInUltraWideCamera,
-        ]
-        let discovery = AVCaptureDevice.DiscoverySession(
-          deviceTypes: cameraTypes,
-          mediaType: .video,
-          position: .unspecified
-        )
-        return !discovery.devices.isEmpty
+        let count = await MainActor.run { BondfireLivePublisherModule.usableCameraCount() }
+        return count > 0
       #endif
     }
 
@@ -63,17 +53,7 @@ public class BondfireLivePublisherModule: Module {
       #if targetEnvironment(simulator)
         return 0
       #else
-        let cameraTypes: [AVCaptureDevice.DeviceType] = [
-          .builtInWideAngleCamera,
-          .builtInTelephotoCamera,
-          .builtInUltraWideCamera,
-        ]
-        let discovery = AVCaptureDevice.DiscoverySession(
-          deviceTypes: cameraTypes,
-          mediaType: .video,
-          position: .unspecified
-        )
-        return discovery.devices.count
+        return await MainActor.run { BondfireLivePublisherModule.usableCameraCount() }
       #endif
     }
 
@@ -146,6 +126,43 @@ public class BondfireLivePublisherModule: Module {
     self.publisher = publisher
     return publisher
   }
+
+  // MARK: - Camera availability
+
+  /// Number of usable video capture devices, probed on the main actor with the
+  /// SAME lookups `LivePublisher.startPreview` uses to attach a camera.
+  ///
+  /// `AVCaptureDevice.DiscoverySession` was observed to return an empty device
+  /// list on every iOS device in production when called from the Expo
+  /// background queue (the `AsyncFunction` execution context). That made
+  /// `isAvailable()` report `false` for all iOS users, silently forcing them
+  /// onto the legacy upload fallback instead of the live recording path.
+  /// `AVCaptureDevice.default(...)` on the main actor is the reliable source of
+  /// truth for "can we actually open a camera". Discovery is kept only as a
+  /// last-resort fallback.
+  #if !targetEnvironment(simulator)
+  @MainActor
+  fileprivate static func usableCameraCount() -> Int {
+    var devices = Set<AVCaptureDevice>()
+    for position in [AVCaptureDevice.Position.front, .back] {
+      if let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position) {
+        devices.insert(camera)
+      }
+    }
+    if let anyVideo = AVCaptureDevice.default(for: .video) {
+      devices.insert(anyVideo)
+    }
+    if devices.isEmpty {
+      let discovery = AVCaptureDevice.DiscoverySession(
+        deviceTypes: [.builtInWideAngleCamera, .builtInTelephotoCamera, .builtInUltraWideCamera],
+        mediaType: .video,
+        position: .unspecified
+      )
+      return discovery.devices.count
+    }
+    return devices.count
+  }
+  #endif
 }
 
 // MARK: - Live Publisher Events

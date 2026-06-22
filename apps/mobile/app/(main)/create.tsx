@@ -499,11 +499,15 @@ export default function CreateScreen() {
   // Resume pending uploads after the user leaves the screen. (Split out of the
   // legacy camera-teardown-on-blur effect, whose teardown half now lives in
   // LegacyRecordScreen; scheduling stays here because uploads are shared.)
+  //
+  // This used to early-return whenever live publish was active, which turned the
+  // legacy queue into a roach motel: any task enqueued while the live path was
+  // unavailable (e.g. the iOS camera-availability regression that forced every
+  // iOS user onto the fallback) became a permanent "Queued..." zombie that
+  // resurfaced on the profile and never uploaded. Drain regardless of the live
+  // gate so stale fallback tasks always finish — or fail out and get cleaned
+  // up — instead of lingering forever. No-op when the queue is empty.
   useEffect(() => {
-    if (shouldUseLivePublish) {
-      return
-    }
-
     if (!isFocused || !isAppActive) {
       if (!isFocused) {
         schedulePendingUploads()
@@ -511,13 +515,7 @@ export default function CreateScreen() {
     } else {
       clearUploadStartTimeout()
     }
-  }, [
-    clearUploadStartTimeout,
-    isAppActive,
-    isFocused,
-    schedulePendingUploads,
-    shouldUseLivePublish,
-  ])
+  }, [clearUploadStartTimeout, isAppActive, isFocused, schedulePendingUploads])
 
   const handleCampConfirmed = useCallback(
     (selectedId: Id<'camps'>) => {
