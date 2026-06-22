@@ -27,6 +27,7 @@ import {
   PRO_MAX_VIDEO_DURATION_MS,
 } from './entitlements'
 import { throwUserError, withUserFacingActionErrors } from './errors'
+import { classifyDisableStatus } from './lib/muxLiveStream'
 import {
   assertCanRespondToPersonalBondfire,
   canViewPersonalBondfire,
@@ -829,6 +830,30 @@ async function deleteMuxLiveStream(liveStreamId: string): Promise<'deleted' | 'm
   return 'deleted'
 }
 
+// Disable a Mux live stream, tolerating an already-gone stream. A 404 resolves
+// to 'missing' (the stream is already deleted on Mux) rather than throwing, so
+// the stale-session reaper can settle the DB row instead of retrying the same
+// dead stream every cron tick forever. Genuinely transient failures (5xx,
+// network, timeout) still throw so the caller leaves the row for the next run.
+async function disableMuxLiveStream(liveStreamId: string): Promise<'disabled' | 'missing'> {
+  const config = getMuxConfig()
+  const response = await fetch(`${MUX_API_BASE_URL}/live-streams/${liveStreamId}/disable`, {
+    method: 'PUT',
+    headers: {
+      Accept: 'application/json',
+      Authorization: getMuxAuthorizationHeader(config.tokenId, config.tokenSecret),
+    },
+  })
+
+  const outcome = classifyDisableStatus(response.status)
+  if (outcome === 'error') {
+    const message = await response.text()
+    throw new Error(`Mux live stream disable failed: ${response.status} ${message}`)
+  }
+
+  return outcome
+}
+
 function isPlayableVideoRecord(record: {
   videoStatus?: string
   muxPlaybackId?: string
@@ -1171,16 +1196,26 @@ async function patchLinkedLiveRecord(
   liveSession: Doc<'liveSessions'>,
   patch: LiveLinkedRecordPatch,
 ) {
+  // The linked record may already be gone — a cancelled session deletes its
+  // bondfire/bondfireVideo, and the stale-session reaper still runs afterward.
+  // Convex throws on patching a nonexistent id, which would roll back the whole
+  // reap (leaving the session wedged forever), so check existence first.
   if (liveSession.bondfireVideoId) {
-    await ctx.db.patch(liveSession.bondfireVideoId, patch)
+    const video = await ctx.db.get(liveSession.bondfireVideoId)
+    if (video) {
+      await ctx.db.patch(liveSession.bondfireVideoId, patch)
+    }
     return
   }
 
   if (liveSession.bondfireId) {
-    await ctx.db.patch(liveSession.bondfireId, {
-      ...patch,
-      updatedAt: Date.now(),
-    })
+    const bondfire = await ctx.db.get(liveSession.bondfireId)
+    if (bondfire) {
+      await ctx.db.patch(liveSession.bondfireId, {
+        ...patch,
+        updatedAt: Date.now(),
+      })
+    }
   }
 }
 
@@ -2230,26 +2265,37 @@ export const disableStaleLiveStreams = internalAction({
     )
 
     let disabled = 0
+    let missing = 0
     let failed = 0
 
     for (const session of staleSessions) {
+      let outcome: 'disabled' | 'missing'
       try {
-        await muxRequest(`/live-streams/${session.muxLiveStreamId}/disable`, {
-          method: 'PUT',
-        })
+        outcome = await disableMuxLiveStream(session.muxLiveStreamId)
       } catch (error) {
+        // Transient Mux/network failure — leave the row for the next cron tick.
+        // An already-deleted stream is a 404, handled as 'missing' below, not here.
         console.warn('Failed to disable stale Mux live stream:', session.muxLiveStreamId, error)
         failed += 1
         continue
       }
 
+      // Both a successful disable and an already-gone stream (404) mean Mux is
+      // settled, so reap the DB row either way. Skipping the reap on 404 is what
+      // wedged sessions in prod: the stream was already deleted (e.g. via cancel)
+      // so disable 404'd forever and the row never left the stale list.
       await ctx.runMutation(internal.videos.markStaleMuxLiveSessionEnded, {
         liveSessionId: session._id,
       })
-      disabled += 1
+
+      if (outcome === 'missing') {
+        missing += 1
+      } else {
+        disabled += 1
+      }
     }
 
-    return { disabled, failed }
+    return { disabled, missing, failed }
   },
 })
 
