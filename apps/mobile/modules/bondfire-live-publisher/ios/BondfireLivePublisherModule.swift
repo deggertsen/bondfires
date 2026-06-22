@@ -304,6 +304,12 @@ final class LivePublisher {
       return
     }
 
+    // HaishinKit 2.x resolves a URL scheme to a Session via factories that
+    // must be registered first; without this, build() throws .notFound. The
+    // factory's register() is idempotent, so calling it on every start() is
+    // safe and keeps the registration colocated with its only use.
+    await SessionBuilderFactory.shared.register(RTMPSessionFactory())
+
     // build() returns (any Session)? — guard-unwrap required
     let newSession: any Session
     do {
