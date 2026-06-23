@@ -78,6 +78,10 @@ class BondfireLivePublisherModule : Module() {
   }
 
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+  // Serializes streamer teardown so concurrent stop()/cancel()/auto-stop/
+  // OnDestroy callers can never double-tear-down the same StreamPack instance.
+  private val teardownLock = Any()
+  @Volatile
   private var streamer: SingleStreamer? = null
   // Flow collectors for the current streamer. Cancelled in cleanupStreamer so
   // a torn-down streamer can never emit stale events into a new session.
@@ -530,19 +534,35 @@ class BondfireLivePublisherModule : Module() {
   }
 
   private suspend fun cleanupStreamer() {
-    val s = streamer ?: return
-    isStoppingIntentionally = true
-    streamer = null
-    isMuted = false
-    // Next session must rebind its preview from scratch.
-    previewBound = false
+    // Atomically claim the active streamer. stop(), cancel(), the duration-cap
+    // auto-stop, start()'s pre-publish reset, and OnDestroy can all reach here —
+    // sometimes on different threads at the same moment (tapping Stop just as
+    // the duration cap fires, or a blur teardown racing a manual stop). Without
+    // this guard two callers each read the same non-null streamer and both call
+    // close()+release() on it: a double MediaCodec teardown that SIGSEGVs the
+    // whole process before stop telemetry can flush (the "crash on stop"
+    // repro). Whoever wins the lock nulls the field and tears down; everyone
+    // else sees null and returns.
+    val claimed = synchronized(teardownLock) {
+      val current = streamer ?: return
+      streamer = null
+      isStoppingIntentionally = true
+      isMuted = false
+      // Next session must rebind its preview from scratch.
+      previewBound = false
+      // Snapshot + clear collectors under the same lock so the loser of the
+      // race can't cancel jobs the winner is still using.
+      val jobs = collectorJobs.toList()
+      collectorJobs.clear()
+      current to jobs
+    }
+    val s = claimed.first
 
     // Cancel the flow collectors before tearing anything down. If release()
     // times out below, the old streamer's flows stay live in the background —
     // without this, a late emission after isStoppingIntentionally resets
     // would surface as a bogus error/drop on the next session.
-    collectorJobs.forEach { it.cancel() }
-    collectorJobs.clear()
+    claimed.second.forEach { it.cancel() }
 
     // On some devices, calling stopStream() triggers a native SIGSEGV inside
     // MediaCodec teardown — a signal-level crash that no Kotlin try/catch can
