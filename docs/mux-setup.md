@@ -25,6 +25,15 @@ MUX_LIVE_RECONNECT_SLATE_URL=https://<public-host>/mux-live-slate.png
 
 ### Reconnect slate (branded placeholder)
 
+> **Default: disabled.** `MUX_LIVE_RECONNECT_WINDOW_SECONDS` now defaults to `0`.
+> Our native publishers do not auto-reconnect a dropped RTMP session, so a
+> reconnect window never resumed a recording — it only let Mux splice a
+> "connection interrupted" slate into the recorded VOD after an ungraceful
+> disconnect (e.g. a client crash on stop). With a `0` window Mux finalizes the
+> asset at the last frame it received, so playback freezes on that frame instead
+> of ever showing the slate. The slate plumbing below only engages if you
+> explicitly set a positive `MUX_LIVE_RECONNECT_WINDOW_SECONDS`.
+
 When the RTMP encoder disconnects and the live stream has a positive
 `reconnect_window`, Mux can fill that interruption with a "slate" image. Without
 configuration it uses Mux's own generic placeholder, which can appear in the

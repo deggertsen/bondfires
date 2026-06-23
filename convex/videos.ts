@@ -112,7 +112,14 @@ const DEFAULT_MUX_UPLOAD_TIMEOUT_SECONDS = 60 * 60
 const MUX_READY_STATUSES = new Set(['ready'])
 const MUX_FAILED_STATUSES = new Set(['errored', 'cancelled', 'timed_out'])
 const MUX_LIVE_RTMPS_ENDPOINT = 'rtmps://global-live.mux.com:443/app'
-const DEFAULT_MUX_LIVE_RECONNECT_WINDOW_SECONDS = 30
+// Default 0: our native publishers do not auto-reconnect a dropped RTMP
+// session, so a reconnect window never resumed a recording — it only gave Mux a
+// gap to splice its "connection interrupted" slate into the recorded asset
+// (e.g. after an ungraceful disconnect or a client crash on stop). With a 0s
+// window Mux finalizes the asset at the last frame it received, which freezes on
+// that frame instead of ever showing the slate. Overridable via
+// MUX_LIVE_RECONNECT_WINDOW_SECONDS if real reconnect support is added later.
+const DEFAULT_MUX_LIVE_RECONNECT_WINDOW_SECONDS = 0
 const MUX_LIVE_RECONNECT_WINDOW_MAX_SECONDS = 30 * 60
 // Grace period past the tier recording limit before Mux force-terminates the
 // stream. The client auto-stops at the tier limit; this is the server-side
@@ -1813,8 +1820,11 @@ export const createLiveStream = action({
               latency_mode: config.liveLatencyMode,
               reconnect_window: reconnectWindow,
               max_continuous_duration: maxContinuousDuration,
-              // Replace Mux's default slate during reconnect-window interruptions
-              // when a public Bondfires slate image is configured.
+              // Slate plumbing only engages when a reconnect window is
+              // explicitly re-enabled (window defaults to 0, which suppresses any
+              // slate and freezes the asset on the last received frame). When a
+              // window is configured, replace Mux's default slate with the
+              // branded Bondfires image if one is set.
               ...(reconnectSlateUrl ? { reconnect_slate_url: reconnectSlateUrl } : {}),
               // Standard-latency streams don't insert slate media unless this is
               // enabled; all latency modes require reconnect_window > 0.
