@@ -179,6 +179,12 @@ function getMuxConfig() {
     videoQuality: process.env.MUX_VIDEO_QUALITY ?? 'basic',
     uploadCorsOrigin: process.env.MUX_UPLOAD_CORS_ORIGIN ?? '*',
     reconnectSlateUrl: readMuxSlateUrl(process.env.MUX_LIVE_RECONNECT_SLATE_URL),
+    reconnectWindowSeconds: readMuxSeconds(
+      process.env.MUX_LIVE_RECONNECT_WINDOW_SECONDS,
+      DEFAULT_MUX_LIVE_RECONNECT_WINDOW_SECONDS,
+      0,
+      MUX_LIVE_RECONNECT_WINDOW_MAX_SECONDS,
+    ),
   }
 }
 
@@ -1798,12 +1804,7 @@ export const createLiveStream = action({
         }
 
         const config = getMuxConfig()
-        const reconnectWindow = readMuxSeconds(
-          process.env.MUX_LIVE_RECONNECT_WINDOW_SECONDS,
-          DEFAULT_MUX_LIVE_RECONNECT_WINDOW_SECONDS,
-          0,
-          MUX_LIVE_RECONNECT_WINDOW_MAX_SECONDS,
-        )
+        const reconnectWindow = config.reconnectWindowSeconds
         const reconnectSlateUrl =
           reconnectWindow > 0 && config.reconnectSlateUrl ? config.reconnectSlateUrl : undefined
         const useSlateForStandardLatency =
@@ -2076,14 +2077,27 @@ export const endLiveStream = action({
           return { ended: false, completeSignaled: false, recordingStarted: false }
         }
 
+        // Finalize the recording. `completeSignaled` reports whether we believe
+        // Mux will finalize the recorded asset (explicitly or implicitly), not
+        // strictly that a /complete request was sent.
+        //
+        // With a reconnect window, Mux holds the stream open after our RTMP
+        // socket closes, so PUT /complete ends it immediately instead of waiting
+        // the window out. With no reconnect window (the default) Mux finalizes
+        // the asset the moment the client closes RTMP — which has already
+        // happened by the time this action runs — so an explicit /complete would
+        // only no-op against an already-idle stream. Skip the redundant call.
+        const completeConfig = getMuxConfig()
         let completeSignaled = true
-        try {
-          await muxRequest(`/live-streams/${activeSession.muxLiveStreamId}/complete`, {
-            method: 'PUT',
-          })
-        } catch (error) {
-          completeSignaled = false
-          console.warn('Failed to signal Mux live stream complete:', error)
+        if (completeConfig.reconnectWindowSeconds > 0) {
+          try {
+            await muxRequest(`/live-streams/${activeSession.muxLiveStreamId}/complete`, {
+              method: 'PUT',
+            })
+          } catch (error) {
+            completeSignaled = false
+            console.warn('Failed to signal Mux live stream complete:', error)
+          }
         }
 
         if (ingest.status === 'unknown') {

@@ -505,11 +505,11 @@ export function useLivePublisher(options: {
       livePublishActions.setStatus('ended')
     }
 
-    // Then ask Mux to finalize the recorded asset. Mux keeps the live stream in
-    // its reconnect window after our RTMP socket closes, so /complete can still
-    // finalize a stream that actually became active. If the stream never became
-    // active, the backend reports recordingStarted=false and the UI offers a
-    // retry instead of showing a fake success screen.
+    // Then have the backend finalize the recorded asset. Mux finalizes the VOD
+    // on its own once our RTMP socket closes (above); endLiveStream confirms the
+    // stream actually received media and marks the record processing. If the
+    // stream never became active, it reports recordingStarted=false and the UI
+    // offers a retry instead of showing a fake success screen.
     try {
       if (sessionId) {
         const result = await options.endLiveStream({
@@ -543,9 +543,9 @@ export function useLivePublisher(options: {
       throw publisherError
     }
 
-    // A failed /complete signal is non-fatal. The native publisher has already
+    // A backend error here is non-fatal. The native publisher has already
     // captured and flushed the recording to Mux, which finalizes the recorded
-    // asset via the reconnect window even when we never reach the backend; the
+    // asset on RTMP disconnect even when we never reach the backend; the
     // asset.ready webhook then promotes the record to 'ready'. Surface whether
     // the backend was notified instead of throwing — throwing here used to dump
     // an offline creator back to an idle camera as if the recording was lost.
