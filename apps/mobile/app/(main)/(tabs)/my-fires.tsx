@@ -64,6 +64,7 @@ function toBondfireRowProps(
   const isPinned = pinnedIds.includes(thread._id)
 
   return {
+    title: thread.title,
     creatorName: thread.creatorName ?? 'Anonymous',
     timestamp: thread.lastActivityAt,
     videoCount: thread.videoCount,

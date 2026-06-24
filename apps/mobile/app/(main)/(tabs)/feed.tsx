@@ -128,6 +128,7 @@ function toBondfireRowProps(
   const isPinned = pinnedIds.includes(bondfire._id)
 
   return {
+    title: bondfire.title,
     creatorName: bondfire.creatorName ?? 'Anonymous',
     timestamp: bondfire.createdAt,
     videoCount: bondfire.videoCount,

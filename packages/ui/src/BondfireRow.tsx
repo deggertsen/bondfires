@@ -13,6 +13,8 @@ export type BondfireParticipant = {
 }
 
 export type BondfireRowProps = {
+  /** Bondfire title (falls back to creatorName if absent) */
+  title?: string
   /** Bondfire creator display name */
   creatorName: string
   /** Timestamp for the time ago display */
@@ -77,6 +79,7 @@ function ParticipantStack({ participants }: { participants: BondfireParticipant[
 }
 
 export function BondfireRow({
+  title,
   creatorName,
   timestamp,
   videoCount,
@@ -93,6 +96,7 @@ export function BondfireRow({
   const timeAgo = getTimeAgo(timestamp)
   const responses = Math.max(0, videoCount - 1)
   const subtitle = isLive ? 'Live now' : `${timeAgo} · ${statusLabel}`
+  const displayTitle = title?.trim() || `${creatorName ?? 'Anonymous'}'s Bondfire`
 
   const row = (
     <Pressable onPress={onOpen}>
@@ -147,10 +151,10 @@ export function BondfireRow({
           <XStack alignItems="center" justifyContent="space-between" gap={10}>
             <YStack flex={1} gap={2}>
               <Text fontSize={16} fontWeight="900" numberOfLines={1}>
-                {creatorName ?? 'Anonymous'}
+                {displayTitle}
               </Text>
               <Text fontSize={12} color="$placeholderColor" numberOfLines={1}>
-                {subtitle}
+                {creatorName ? `${creatorName} · ${subtitle}` : subtitle}
               </Text>
             </YStack>
 

@@ -762,10 +762,10 @@ function BondfireRow({
 
         <YStack flex={1} gap={4}>
           <Text fontSize={16} fontWeight="900" numberOfLines={1}>
-            {bondfire.creatorName ?? 'Anonymous'}
+            {bondfire.title?.trim() || `${bondfire.creatorName ?? 'Anonymous'}'s Bondfire`}
           </Text>
           <Text fontSize={12} color={'$placeholderColor'}>
-            {bondfire.videoStatus === 'live' ? 'Live now' : getTimeAgo(bondfire.createdAt)}
+            {bondfire.creatorName ? `${bondfire.creatorName} · ` : ''}{bondfire.videoStatus === 'live' ? 'Live now' : getTimeAgo(bondfire.createdAt)}
           </Text>
         </YStack>
 
