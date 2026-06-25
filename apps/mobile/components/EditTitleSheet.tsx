@@ -2,7 +2,7 @@ import { getErrorMessage, telemetry, useAppThemeColors } from '@bondfires/app'
 import { Button, Text } from '@bondfires/ui'
 import { useMutation } from 'convex/react'
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, KeyboardAvoidingView, Platform, StatusBar, TextInput } from 'react-native'
+import { Alert, StatusBar, TextInput } from 'react-native'
 import { Sheet, XStack, YStack } from 'tamagui'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
@@ -90,6 +90,7 @@ export function EditTitleSheet({
       }}
       snapPointsMode="fit"
       dismissOnSnapToBottom
+      moveOnKeyboardChange
     >
       <Sheet.Overlay
         animation="quick"
@@ -103,10 +104,6 @@ export function EditTitleSheet({
         borderTopRightRadius={20}
         padding={24}
       >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
-        >
           <StatusBar barStyle={statusBarStyle} />
 
           <Sheet.Handle backgroundColor={'$borderColor'} marginBottom={16} />
@@ -181,7 +178,6 @@ export function EditTitleSheet({
               </Button>
             </XStack>
           </YStack>
-        </KeyboardAvoidingView>
       </Sheet.Frame>
     </Sheet>
   )
