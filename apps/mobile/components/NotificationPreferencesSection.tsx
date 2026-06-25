@@ -16,7 +16,7 @@ const CATEGORIES = [
   {
     key: 'recordingActivity',
     label: 'Camp activity',
-    description: 'New Bondfires in your camps',
+    description: 'New Bondfires and live streams in your camps',
   },
   {
     key: 'responses',

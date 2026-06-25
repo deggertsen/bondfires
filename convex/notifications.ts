@@ -134,9 +134,13 @@ export function resolveNotificationPrefs(
       }
     | undefined,
 ): NotificationPreferences {
+  const recordingActivity = prefs?.recordingActivity ?? true
+
   return {
-    recordingActivity: prefs?.recordingActivity ?? true,
-    responses: prefs?.responses ?? true,
+    recordingActivity,
+    // `responses` used to be folded into `recordingActivity`. Preserve an
+    // existing opt-out until the user explicitly sets the new split toggle.
+    responses: prefs?.responses ?? prefs?.recordingActivity ?? true,
     reminders: prefs?.reminders ?? true,
     invitesAndMembership: prefs?.invitesAndMembership ?? true,
     hearth: prefs?.hearth ?? true,
