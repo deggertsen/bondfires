@@ -113,6 +113,7 @@ export const getTokensForUser = query({
 
 export interface NotificationPreferences {
   recordingActivity: boolean
+  responses: boolean
   reminders: boolean
   invitesAndMembership: boolean
   hearth: boolean
@@ -125,6 +126,7 @@ export function resolveNotificationPrefs(
   prefs:
     | {
         recordingActivity?: boolean
+        responses?: boolean
         reminders?: boolean
         invitesAndMembership?: boolean
         hearth?: boolean
@@ -134,6 +136,7 @@ export function resolveNotificationPrefs(
 ): NotificationPreferences {
   return {
     recordingActivity: prefs?.recordingActivity ?? true,
+    responses: prefs?.responses ?? true,
     reminders: prefs?.reminders ?? true,
     invitesAndMembership: prefs?.invitesAndMembership ?? true,
     hearth: prefs?.hearth ?? true,
@@ -158,6 +161,7 @@ export const getPreferences = query({
 export const updatePreferences = mutation({
   args: {
     recordingActivity: v.optional(v.boolean()),
+    responses: v.optional(v.boolean()),
     reminders: v.optional(v.boolean()),
     invitesAndMembership: v.optional(v.boolean()),
     hearth: v.optional(v.boolean()),
@@ -187,6 +191,7 @@ export const updatePreferences = mutation({
         ...(args.recordingActivity !== undefined
           ? { recordingActivity: args.recordingActivity }
           : {}),
+        ...(args.responses !== undefined ? { responses: args.responses } : {}),
         ...(args.reminders !== undefined ? { reminders: args.reminders } : {}),
         ...(args.invitesAndMembership !== undefined
           ? { invitesAndMembership: args.invitesAndMembership }

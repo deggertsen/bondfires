@@ -16,12 +16,17 @@ const CATEGORIES = [
   {
     key: 'recordingActivity',
     label: 'Camp activity',
-    description: 'New Bondfires, responses, and live streams',
+    description: 'New Bondfires in your camps',
+  },
+  {
+    key: 'responses',
+    label: 'Responses',
+    description: "Responses to Bondfires you've participated in",
   },
   {
     key: 'hearth',
     label: 'Hearths',
-    description: 'Your private fires and who joins them',
+    description: 'Your private Bondfires and who joins them',
   },
   {
     key: 'invitesAndMembership',
