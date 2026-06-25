@@ -788,6 +788,7 @@ export default function CampsScreen() {
         onOpenChange={setIsCreatePrivateOpen}
         snapPoints={[48]}
         dismissOnSnapToBottom
+        moveOnKeyboardChange
       >
         <Sheet.Overlay backgroundColor="rgba(0,0,0,0.45)" />
         <Sheet.Frame padding={20} backgroundColor={'$backgroundPress'} gap={16}>
@@ -866,6 +867,7 @@ export default function CampsScreen() {
         onOpenChange={setIsRedeemInviteOpen}
         snapPoints={[34]}
         dismissOnSnapToBottom
+        moveOnKeyboardChange
       >
         <Sheet.Overlay backgroundColor="rgba(0,0,0,0.45)" />
         <Sheet.Frame padding={20} backgroundColor={'$backgroundPress'} gap={16}>

@@ -29,6 +29,7 @@ import { Alert, FlatList, Modal, Pressable, StatusBar, TextInput } from 'react-n
 import { Separator, Image as TamaguiImage, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
 import { EditTitleSheet, useEditTitleSheet } from '../../../components/EditTitleSheet'
 import { InviteSheet } from '../../../components/InviteSheet'
 import { getBondfireRightSwipeActions } from '../../../lib/bondfireSwipeActions'
@@ -1098,6 +1099,10 @@ export default function CampDetailScreen() {
         animationType="fade"
         onRequestClose={() => setBanReasonModalMember(null)}
       >
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior="padding"
+        >
         <YStack
           flex={1}
           backgroundColor="rgba(0,0,0,0.7)"
@@ -1162,6 +1167,7 @@ export default function CampDetailScreen() {
             </XStack>
           </YStack>
         </YStack>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Archive confirmation modal */}
@@ -1171,6 +1177,10 @@ export default function CampDetailScreen() {
         animationType="fade"
         onRequestClose={() => setIsArchiveModalOpen(false)}
       >
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior="padding"
+        >
         <YStack
           flex={1}
           backgroundColor="rgba(0,0,0,0.7)"
@@ -1239,6 +1249,7 @@ export default function CampDetailScreen() {
             </XStack>
           </YStack>
         </YStack>
+        </KeyboardAvoidingView>
       </Modal>
       {campId ? (
         <InviteSheet

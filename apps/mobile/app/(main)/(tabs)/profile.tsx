@@ -969,6 +969,7 @@ export default function ProfileScreen() {
         onOpenChange={(open: boolean) => state$.isEditSheetOpen.set(open)}
         snapPoints={[50]}
         dismissOnSnapToBottom
+        moveOnKeyboardChange
       >
         <Sheet.Overlay backgroundColor="rgba(0,0,0,0.6)" />
         <Sheet.Frame
