@@ -13,13 +13,20 @@ const RESPONSE_THROTTLE_MS = 60 * 60 * 1000
 // recipient disabled that category. 'account' (camp lifecycle) and the
 // debug test path always send.
 export const notificationCategory = v.union(
-  v.literal('recording'), // camp bondfires, responses, live
+  v.literal('recording'), // camp bondfires + live (new activity)
+  v.literal('responses'), // responses to bondfires you've participated in
   v.literal('reminder'), // daily digest + 72h nudge
   v.literal('membership'), // invites, access requests/approvals
   v.literal('hearth'), // Hearth bondfires, responses, joins
   v.literal('account'), // lifecycle warnings — always delivered
 )
-export type NotificationCategory = 'recording' | 'reminder' | 'membership' | 'hearth' | 'account'
+export type NotificationCategory =
+  | 'recording'
+  | 'responses'
+  | 'reminder'
+  | 'membership'
+  | 'hearth'
+  | 'account'
 
 /** Whether the user's preferences allow a push in this category. */
 export const isCategoryEnabledForUser = internalQuery({
@@ -34,6 +41,8 @@ export const isCategoryEnabledForUser = internalQuery({
     switch (args.category) {
       case 'recording':
         return prefs.recordingActivity
+      case 'responses':
+        return prefs.responses
       case 'reminder':
         return prefs.reminders
       case 'membership':
@@ -419,6 +428,9 @@ export const getResponseNotificationRecipientIds = internalQuery({
       )
     }
 
+    // Responses only notify people who have participated in *this* bondfire:
+    // the creator plus anyone who has already responded. Being in the camp is
+    // not enough — that's what the spark (Camp activity) notification is for.
     const participantIds = new Set<Id<'users'>>([bondfire.userId])
     const responseVideos = await ctx.db
       .query('bondfireVideos')
@@ -434,6 +446,7 @@ export const getResponseNotificationRecipientIds = internalQuery({
       return [...participantIds]
     }
 
+    // Camp bondfires: drop participants who have since left or muted the camp.
     const campId = bondfire.campId
     const memberships = await ctx.db
       .query('campMembers')
@@ -621,14 +634,26 @@ export const notifyBondfireResponse = internalAction({
       },
     )
 
+    const isHearth = !!bondfire.personalCampId
     const videoKey: string = args.bondfireVideoId ?? `${args.bondfireId}:resp:${args.responderId}`
+    // Throttle responses against prior *response* deliveries only. The spark
+    // and live notifications write to threadKey `bondfireId`; if responses
+    // shared that bucket, the spark push (sent at bondfire creation) would
+    // suppress every response push for the next hour — exactly when replies
+    // actually happen. A dedicated `:resp` namespace keeps the throttle scoped
+    // to responses without letting spark/live poison it.
+    //
+    // Camp/standalone responses are capped at one push per bondfire per hour.
+    // Hearths are intimate, rapid conversations, so every response notifies —
+    // the per-video dedupe (videoKey) still prevents a live-start push and the
+    // publish push for the same video from double-firing.
     const claimedIds: Array<Id<'users'>> = await ctx.runMutation(
       internal.sendNotification.claimDeliveries,
       {
         userIds: recipientIds,
         videoKey,
-        threadKey: args.bondfireId,
-        throttleMs: RESPONSE_THROTTLE_MS,
+        threadKey: `${args.bondfireId}:resp`,
+        throttleMs: isHearth ? undefined : RESPONSE_THROTTLE_MS,
       },
     )
 
@@ -648,7 +673,7 @@ export const notifyBondfireResponse = internalAction({
           userId,
           title: 'New response',
           body,
-          category: bondfire.personalCampId ? 'hearth' : 'recording',
+          category: bondfire.personalCampId ? 'hearth' : 'responses',
           data: {
             type: 'bondfire_response',
             bondfireId: args.bondfireId,

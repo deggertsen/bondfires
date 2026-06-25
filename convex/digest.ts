@@ -1,6 +1,6 @@
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
-import type { Id } from './_generated/dataModel'
+import type { Doc, Id } from './_generated/dataModel'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
 import { DEFAULT_DIGEST_WINDOW_HOUR, resolveNotificationPrefs } from './notifications'
 
@@ -41,6 +41,9 @@ interface DigestItem {
   bondfireId: Id<'bondfires'>
   creatorName: string | null
   title: string | null
+  // 'response' = a reply video in a thread you participate in; 'bondfire' = a
+  // new camp fire (the root video) surfaced to camp members.
+  kind: 'response' | 'bondfire'
 }
 
 interface PushUser {
@@ -198,6 +201,74 @@ export const collectDigestItems = internalQuery({
           bondfireId,
           creatorName: video.creatorName ?? null,
           title: bondfire.title ?? null,
+          kind: 'response',
+        })
+      }
+    }
+
+    // ── New camp bondfires for members ──
+    // Responses above are scoped to threads the user has joined. New camp
+    // fires, by contrast, should reach every active, non-muted member — the
+    // same audience as the spark push — so members are reminded of fresh
+    // bondfires even before anyone has responded. The root bondfire video
+    // lives in the `bondfires` table, which the response loop never scans.
+    const campMemberships = await ctx.db
+      .query('campMembers')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId).eq('status', 'active'))
+      .take(MAX_THREADS)
+
+    for (const membership of campMemberships) {
+      if (items.length >= MAX_ITEMS) break
+      if (membership.muted) continue
+
+      const campBondfires = await ctx.db
+        .query('bondfires')
+        .withIndex('by_camp', (q) =>
+          q.eq('campId', membership.campId).gte('createdAt', oldestAllowed),
+        )
+        .order('desc')
+        .take(MAX_THREADS)
+
+      for (const bondfire of campBondfires) {
+        if (items.length >= MAX_ITEMS) break
+        if (bondfire.userId === args.userId) continue
+        if (bondfire.videoStatus !== 'ready' && bondfire.videoStatus !== 'live') continue
+        if (bondfire.createdAt > newestAllowed || bondfire.createdAt < oldestAllowed) continue
+        // Only nudge about fires nobody has answered yet — the goal is to
+        // surface unanswered camp bondfires, not announce every new one.
+        // videoCount baselines at 1 (the root video); >1 means it has replies.
+        if (bondfire.videoCount > 1) continue
+
+        const readMarker = await ctx.db
+          .query('bondfireThreadReads')
+          .withIndex('by_user_bondfire', (q) =>
+            q.eq('userId', args.userId).eq('bondfireId', bondfire._id),
+          )
+          .first()
+        if (readMarker && readMarker.lastReadAt >= bondfire.createdAt) continue
+
+        const watched = await ctx.db
+          .query('watchEvents')
+          .withIndex('by_user_video', (q) =>
+            q.eq('userId', args.userId).eq('videoId', bondfire._id),
+          )
+          .first()
+        if (watched) continue
+
+        const alreadyDigested = await ctx.db
+          .query('notificationDeliveries')
+          .withIndex('by_video_user', (q) =>
+            q.eq('videoKey', `digest:${bondfire._id}`).eq('userId', args.userId),
+          )
+          .first()
+        if (alreadyDigested) continue
+
+        items.push({
+          videoId: bondfire._id,
+          bondfireId: bondfire._id,
+          creatorName: bondfire.creatorName ?? null,
+          title: bondfire.title ?? null,
+          kind: 'bondfire',
         })
       }
     }
@@ -238,8 +309,13 @@ export const collectNudgeItems = internalQuery({
         .first()
       if (alreadyNudged) continue
 
-      const video = await ctx.db.get(videoId as Id<'bondfireVideos'>)
-      if (!video) continue
+      // videoId references either a response (bondfireVideos) or, for new-camp
+      // -fire digests, a root bondfire. Both tables carry creatorName/createdAt.
+      const doc = (await ctx.db.get(videoId as Id<'bondfireVideos'>)) as
+        | Doc<'bondfireVideos'>
+        | Doc<'bondfires'>
+        | null
+      if (!doc) continue
 
       const watched = await ctx.db
         .query('watchEvents')
@@ -247,21 +323,37 @@ export const collectNudgeItems = internalQuery({
         .first()
       if (watched) continue
 
+      let parentBondfireId: Id<'bondfires'>
+      let title: string | null
+      let kind: 'response' | 'bondfire'
+      if ('bondfireId' in doc) {
+        parentBondfireId = doc.bondfireId
+        const parent = await ctx.db.get(parentBondfireId)
+        title = parent?.title ?? null
+        kind = 'response'
+      } else {
+        // New-camp-fire digest: drop it if the fire has since been answered —
+        // the nudge is for *unanswered* fires, matching the digest gate.
+        if (doc.videoCount > 1) continue
+        parentBondfireId = doc._id
+        title = doc.title ?? null
+        kind = 'bondfire'
+      }
+
       const readMarker = await ctx.db
         .query('bondfireThreadReads')
         .withIndex('by_user_bondfire', (q) =>
-          q.eq('userId', args.userId).eq('bondfireId', video.bondfireId),
+          q.eq('userId', args.userId).eq('bondfireId', parentBondfireId),
         )
         .first()
-      if (readMarker && readMarker.lastReadAt >= video.createdAt) continue
-
-      const bondfire = await ctx.db.get(video.bondfireId)
+      if (readMarker && readMarker.lastReadAt >= doc.createdAt) continue
 
       items.push({
         videoId,
-        bondfireId: video.bondfireId,
-        creatorName: video.creatorName ?? null,
-        title: bondfire?.title ?? null,
+        bondfireId: parentBondfireId,
+        creatorName: doc.creatorName ?? null,
+        title,
+        kind,
       })
     }
 
@@ -333,11 +425,18 @@ export const runDigestForUser = internalAction({
 
       if (claimedItems.length > 0) {
         const single = claimedItems.length === 1 ? claimedItems[0] : null
-        const body = single
-          ? single.title
+        let body: string
+        if (!single) {
+          body = `${claimedItems.length} new videos waiting in your Bondfires`
+        } else if (single.kind === 'bondfire') {
+          body = single.title
+            ? `${single.creatorName ?? 'Someone'} started "${single.title}"`
+            : `${single.creatorName ?? 'Someone'} started a new Bondfire`
+        } else {
+          body = single.title
             ? `${single.creatorName ?? 'Someone'} responded in "${single.title}"`
             : `${single.creatorName ?? 'Someone'} added a video to a Bondfire you're in`
-          : `${claimedItems.length} new videos waiting in your Bondfires`
+        }
 
         await ctx.runAction(internal.sendNotification.sendToUser, {
           userId: args.userId,

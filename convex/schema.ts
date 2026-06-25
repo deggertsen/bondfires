@@ -132,8 +132,10 @@ export default defineSchema({
     // Account-critical notifications (camp lifecycle) always send.
     notificationPrefs: v.optional(
       v.object({
-        // Camp bondfires, responses, live notifications
+        // New camp bondfires + live notifications
         recordingActivity: v.optional(v.boolean()),
+        // Responses to bondfires you've participated in
+        responses: v.optional(v.boolean()),
         // Daily digest + 72h nudge
         reminders: v.optional(v.boolean()),
         // Bondfire invites, access requests/approvals
