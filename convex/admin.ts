@@ -10,6 +10,7 @@ import type { Doc } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
+import { computeKindlingBalance } from './campKindling'
 
 const subscriptionTier = v.union(
   v.literal('free'),
@@ -24,6 +25,23 @@ function adminUserResult(user: Doc<'users'>) {
     email: user.email,
     name: user.name,
     forcedTier: user.forcedTier ?? null,
+  }
+}
+
+/**
+ * Extended admin user result including kindling balance.
+ */
+async function adminUserResultWithKindling(
+  ctx: QueryCtx | MutationCtx,
+  user: Doc<'users'>,
+) {
+  const kindlingBalance = await computeKindlingBalance(ctx, user._id)
+  return {
+    _id: user._id,
+    email: user.email,
+    name: user.name,
+    forcedTier: user.forcedTier ?? null,
+    kindlingBalance,
   }
 }
 
@@ -75,9 +93,12 @@ export const adminSearchUsers = query({
       matchesById.set(user._id, user)
     }
 
-    const matches = Array.from(matchesById.values()).slice(0, 20).map(adminUserResult)
+    const matches = Array.from(matchesById.values()).slice(0, 20)
+    const usersWithKindling = await Promise.all(
+      matches.map((user) => adminUserResultWithKindling(ctx, user)),
+    )
 
-    return { users: matches }
+    return { users: usersWithKindling }
   },
 })
 
@@ -142,6 +163,61 @@ export const adminSetForcedTier = mutation({
     }
 
     const updatedUser = await ctx.db.get(targetUser._id)
-    return updatedUser ? adminUserResult(updatedUser) : null
+    return updatedUser ? adminUserResultWithKindling(ctx, updatedUser) : null
+  },
+})
+
+/**
+ * Grant kindling to a user by email.
+ *
+ * Inserts N slot_credit ledger entries (each amount +1) with permanent
+ * validity (periodEnd = Infinity).  Works identically to a consumable IAP
+ * purchase credit but initiated by an admin.
+ */
+export const adminGrantKindling = mutation({
+  args: {
+    email: v.string(),
+    amount: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const { currentUserId, currentUser } = await requireAdmin(ctx)
+
+    if (!Number.isInteger(args.amount) || args.amount <= 0) {
+      throw new Error('Amount must be a positive integer')
+    }
+
+    const email = args.email.toLowerCase().trim()
+
+    const targetUser = await ctx.db
+      .query('users')
+      .withIndex('email', (q) => q.eq('email', email))
+      .first()
+
+    if (!targetUser) {
+      throw new Error(`No user found with email: ${email}`)
+    }
+
+    const now = Date.now()
+    const periodStart = now // Permanent credits, periodEnd = Infinity
+    const adminEmail = currentUser.email ?? 'unknown'
+
+    for (let i = 0; i < args.amount; i++) {
+      await ctx.db.insert('campSlotTransactions', {
+        userId: targetUser._id,
+        type: 'slot_credit',
+        amount: 1,
+        periodStart,
+        periodEnd: Number.POSITIVE_INFINITY,
+        metadata: {
+          adminGrant: true,
+          adminUserId: currentUserId,
+          adminEmail,
+        },
+        createdAt: now,
+      })
+    }
+
+    const updatedUser = await ctx.db.get(targetUser._id)
+    return updatedUser ? adminUserResultWithKindling(ctx, updatedUser) : null
   },
 })

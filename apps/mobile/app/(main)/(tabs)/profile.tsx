@@ -195,6 +195,7 @@ export default function ProfileScreen() {
   const updateProfilePhoto = useMutation(api.users.updateProfilePhoto)
   const deleteAccountMutation = useMutation(api.users.deleteAccount)
   const adminSetForcedTier = useMutation(api.admin.adminSetForcedTier)
+  const adminGrantKindling = useMutation(api.admin.adminGrantKindling)
   const closeCircle = useQuery(api.conversations.listCloseCircle) as CloseCircleEntry[] | undefined
 
   const { preferences, setAutoplayVideos, setNotificationsEnabled, setLivePublishEnabled } =
@@ -320,6 +321,14 @@ export default function ProfileScreen() {
       return result as AdminSearchResult | null
     },
     [adminSetForcedTier],
+  )
+
+  const handleAdminGrantKindling = useCallback(
+    async (email: string, amount: number): Promise<AdminSearchResult | null> => {
+      const result = await adminGrantKindling({ email, amount })
+      return result as AdminSearchResult | null
+    },
+    [],
   )
 
   const handleEditProfile = useCallback(() => {
@@ -679,6 +688,7 @@ export default function ProfileScreen() {
               isAdmin={currentUser.isAdmin}
               onSearch={handleAdminSearch}
               onSetTier={handleAdminSetTier}
+              onGrantKindling={handleAdminGrantKindling}
             />
           )}
 

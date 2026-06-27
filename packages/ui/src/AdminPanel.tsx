@@ -30,20 +30,24 @@ type AdminSearchResult = {
   email?: string
   name?: string
   forcedTier: SubscriptionTier | null
+  kindlingBalance?: number
 }
 
 type AdminPanelProps = {
   isAdmin: boolean
   onSearch: (emailQuery: string) => Promise<AdminSearchResult[]>
   onSetTier: (email: string, tier: SubscriptionTier | null) => Promise<AdminSearchResult | null>
+  onGrantKindling: (email: string, amount: number) => Promise<AdminSearchResult | null>
 }
 
-export function AdminPanel({ isAdmin, onSearch, onSetTier }: AdminPanelProps) {
+export function AdminPanel({ isAdmin, onSearch, onSetTier, onGrantKindling }: AdminPanelProps) {
   const [emailQuery, setEmailQuery] = useState('')
   const [searchResults, setSearchResults] = useState<AdminSearchResult[]>([])
   const [isSearching, setIsSearching] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
+  const [kindlingAmount, setKindlingAmount] = useState('')
+  const [grantingId, setGrantingId] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
 
   const handleSearch = useCallback(async () => {
@@ -73,7 +77,7 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier }: AdminPanelProps) {
             try {
               const updated = await onSetTier(email, tier)
               if (updated) {
-                setSearchResults((prev) => prev.map((u) => (u.email === email ? updated : u)))
+                setSearchResults((prev) => prev.map((u) => (u.email === email ? { ...u, ...updated } : u)))
               }
             } catch (err) {
               Alert.alert('Error', err instanceof Error ? err.message : 'Failed to update tier')
@@ -85,6 +89,41 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier }: AdminPanelProps) {
       ])
     },
     [onSetTier],
+  )
+
+  const handleGrantKindling = useCallback(
+    async (email: string) => {
+      const amount = parseInt(kindlingAmount, 10)
+      if (!Number.isInteger(amount) || amount <= 0) {
+        Alert.alert('Invalid Amount', 'Enter a positive number of kindling to grant.')
+        return
+      }
+      Alert.alert(
+        'Confirm Kindling Grant',
+        `Grant ${amount} kindling to ${email}?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Confirm',
+            onPress: async () => {
+              setGrantingId(email)
+              try {
+                const updated = await onGrantKindling(email, amount)
+                if (updated) {
+                  setSearchResults((prev) => prev.map((u) => (u.email === email ? { ...u, ...updated } : u)))
+                }
+                setKindlingAmount('')
+              } catch (err) {
+                Alert.alert('Error', err instanceof Error ? err.message : 'Failed to grant kindling')
+              } finally {
+                setGrantingId(null)
+              }
+            },
+          },
+        ],
+      )
+    },
+    [kindlingAmount, onGrantKindling],
   )
 
   if (!isAdmin) return null
@@ -169,6 +208,9 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier }: AdminPanelProps) {
                                 Current:{' '}
                                 {user.forcedTier ? TIER_LABELS[user.forcedTier] : 'Store default'}
                               </Text>
+                              <Text fontSize={12} color={'$placeholderColor'}>
+                                Kindling: {user.kindlingBalance ?? 0}
+                              </Text>
                             </YStack>
                           </XStack>
 
@@ -199,6 +241,32 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier }: AdminPanelProps) {
                               })}
                             </XStack>
                           </ScrollView>
+
+                          {/* Kindling Grant */}
+                          <XStack gap={6} alignItems="center">
+                            <Input
+                              flex={1}
+                              value={grantingId === userEmail ? kindlingAmount : ''}
+                              onChangeText={setKindlingAmount}
+                              placeholder="Kindling amount..."
+                              keyboardType="numeric"
+                              returnKeyType="done"
+                            />
+                            <Button
+                              variant="primary"
+                              size="$sm"
+                              disabled={grantingId === userEmail}
+                              onPress={() => handleGrantKindling(userEmail)}
+                            >
+                              {grantingId === userEmail ? (
+                                <Spinner size="small" color={'$color'} />
+                              ) : (
+                                <Text color={'$color'} fontSize={12}>
+                                  Grant
+                                </Text>
+                              )}
+                            </Button>
+                          </XStack>
                         </YStack>
                       </Card>
                     )
