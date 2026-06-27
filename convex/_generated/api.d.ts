@@ -40,6 +40,7 @@ import type * as notifications from "../notifications.js";
 import type * as personalBondfireAccess from "../personalBondfireAccess.js";
 import type * as personalBondfires from "../personalBondfires.js";
 import type * as personalCamps from "../personalCamps.js";
+import type * as presence from "../presence.js";
 import type * as publicConfig from "../publicConfig.js";
 import type * as reconciliation from "../reconciliation.js";
 import type * as reports from "../reports.js";
@@ -49,6 +50,7 @@ import type * as serverTelemetry from "../serverTelemetry.js";
 import type * as subscriptions from "../subscriptions.js";
 import type * as users from "../users.js";
 import type * as videoCountRepair from "../videoCountRepair.js";
+import type * as videoReactions from "../videoReactions.js";
 import type * as videos from "../videos.js";
 import type * as watchEvents from "../watchEvents.js";
 
@@ -91,6 +93,7 @@ declare const fullApi: ApiFromModules<{
   personalBondfireAccess: typeof personalBondfireAccess;
   personalBondfires: typeof personalBondfires;
   personalCamps: typeof personalCamps;
+  presence: typeof presence;
   publicConfig: typeof publicConfig;
   reconciliation: typeof reconciliation;
   reports: typeof reports;
@@ -100,6 +103,7 @@ declare const fullApi: ApiFromModules<{
   subscriptions: typeof subscriptions;
   users: typeof users;
   videoCountRepair: typeof videoCountRepair;
+  videoReactions: typeof videoReactions;
   videos: typeof videos;
   watchEvents: typeof watchEvents;
 }>;

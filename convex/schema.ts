@@ -752,4 +752,40 @@ export default defineSchema({
     .index('by_recipient', ['recipientId', 'createdAt'])
     .index('by_bondfire_recipient', ['bondfireId', 'recipientId'])
     .index('by_sender', ['senderId', 'createdAt']),
+
+  // Video Reactions — timestamped emoji reactions on VOD videos
+  videoReactions: defineTable({
+    // Video reference — exactly one must be set (enforced in mutation)
+    bondfireId: v.optional(v.id('bondfires')),
+    bondfireVideoId: v.optional(v.id('bondfireVideos')),
+
+    // Reactor info (denormalized for playback performance — no joins needed)
+    userId: v.id('users'),
+    userDisplayName: v.optional(v.string()),
+    userPhotoUrl: v.optional(v.string()),
+
+    // Reaction data
+    emoji: v.string(), // Unicode emoji character
+    timestampMs: v.number(), // Position in the video (ms from start)
+
+    // Timestamps
+    createdAt: v.number(),
+  })
+    .index('by_bondfire', ['bondfireId', 'timestampMs'])
+    .index('by_bondfire_video', ['bondfireVideoId', 'timestampMs'])
+    .index('by_user_video', ['userId', 'bondfireId', 'createdAt']),
+
+  // Presence — real-time viewer tracking
+  presence: defineTable({
+    videoType: v.union(v.literal('bondfire'), v.literal('response')),
+    videoId: v.string(), // ID of the specific video (bondfire or bondfireVideo)
+    userId: v.id('users'),
+    userName: v.string(), // denormalized for query efficiency
+    userPhotoUrl: v.optional(v.string()), // denormalized
+    lastHeartbeatAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_video', ['videoType', 'videoId'])
+    .index('by_video_user', ['videoType', 'videoId', 'userId'])
+    .index('by_heartbeat', ['lastHeartbeatAt']),
 })
