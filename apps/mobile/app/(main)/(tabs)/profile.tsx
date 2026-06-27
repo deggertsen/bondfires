@@ -977,13 +977,14 @@ export default function ProfileScreen() {
       <Sheet
         open={isEditSheetOpen}
         onOpenChange={(open: boolean) => state$.isEditSheetOpen.set(open)}
-        snapPoints={[50]}
+        snapPointsMode="fit"
         dismissOnSnapToBottom
         moveOnKeyboardChange
       >
         <Sheet.Overlay backgroundColor="rgba(0,0,0,0.6)" />
         <Sheet.Frame
           padding={20}
+          paddingBottom={48}
           backgroundColor={'$backgroundHover'}
           borderTopLeftRadius={24}
           borderTopRightRadius={24}
