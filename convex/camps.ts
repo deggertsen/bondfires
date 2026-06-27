@@ -1325,92 +1325,99 @@ export const redeemInvite = mutation({
   args: {
     code: v.string(),
   },
-  handler: async (ctx, args) => {
-    const user = await getCurrentUser(ctx)
-    const now = Date.now()
-    const normalizedCode = normalizeInviteCode(args.code)
-
-    const invite = await ctx.db
-      .query('inviteCodes')
-      .withIndex('by_code', (q) => q.eq('code', normalizedCode))
-      .first()
-
-    if (!invite) {
-      throwUserError('Invite not found')
-    }
-
-    if (invite.expiresAt !== undefined && invite.expiresAt <= now) {
-      throwUserError('Invite has expired')
-    }
-    if (invite.maxUses !== undefined && invite.uses >= invite.maxUses) {
-      throwUserError('Invite has already been used')
-    }
-    if (invite.parentType !== 'camp') {
-      throwUserError('Invite not found')
-    }
-
-    const camp = await ctx.db.get(invite.parentId as Id<'camps'>)
-    if (!camp) {
-      throwUserError('Camp not found')
-    }
-
-    if (!isCampVisibleStatus(camp.status)) {
-      throwUserError('Camp not found')
-    }
-
-    // Frozen and grace camps do not accept new members via invite.
-    if (camp.status === 'frozen' || camp.status === 'grace') {
-      throwUserError('This camp is not accepting new members right now.')
-    }
-
-    const existingMembership = await getMembership(ctx, user._id, camp._id)
-    if (existingMembership?.status === 'active') {
-      return {
-        membershipId: existingMembership._id,
-        campId: camp._id,
-      }
-    }
-
-    const userTier = await getEntitlementSubscriptionTier(ctx, user._id)
-    const eligibility = evaluateJoinRules(camp, user, userTier, existingMembership)
-
-    // Invite bypasses invite_only and private — re-check only hard blocks
-    if (
-      !eligibility.canJoin &&
-      eligibility.reason !== 'invite_only' &&
-      eligibility.reason !== 'private'
-    ) {
-      const messages: Record<string, string> = {
-        wrong_gender: 'This camp is limited to members who match its gender setting',
-        tier_too_low: 'Your subscription tier is too low to join this camp',
-        underage: 'You do not meet the age requirement for this camp',
-        banned: 'You cannot join this camp',
-        already_member: 'You are already a member of this camp',
-        already_pending: 'You already have a pending request for this camp',
-        rejected_cooldown:
-          'Your previous request was denied. You can try again after the cooldown period.',
-      }
-      throwUserError(messages[eligibility.reason] ?? 'You cannot join this camp')
-    }
-
-    const membershipId = await upsertMembership(ctx, {
-      userId: user._id,
-      campId: camp._id,
-      status: 'active',
-      role: 'member',
-    })
-
-    await ctx.db.patch(invite._id, {
-      uses: invite.uses + 1,
-    })
-    await refreshActiveMemberCount(ctx, camp._id)
-
-    return {
-      membershipId,
-      campId: camp._id,
-    }
-  },
+  handler: (ctx, args) =>
+    withUserFacingErrors(
+      'camps.redeemInvite',
+      'Something went wrong joining this camp. Please try again.',
+      () => redeemCampInviteHandler(ctx, args.code),
+    ),
 })
+
+async function redeemCampInviteHandler(ctx: MutationCtx, rawCode: string) {
+  const user = await getCurrentUser(ctx)
+  const now = Date.now()
+  const normalizedCode = normalizeInviteCode(rawCode)
+
+  const invite = await ctx.db
+    .query('inviteCodes')
+    .withIndex('by_code', (q) => q.eq('code', normalizedCode))
+    .first()
+
+  if (!invite) {
+    throwUserError('Invite not found')
+  }
+
+  if (invite.expiresAt !== undefined && invite.expiresAt <= now) {
+    throwUserError('Invite has expired')
+  }
+  if (invite.maxUses !== undefined && invite.uses >= invite.maxUses) {
+    throwUserError('Invite has already been used')
+  }
+  if (invite.parentType !== 'camp') {
+    throwUserError('Invite not found')
+  }
+
+  const camp = await ctx.db.get(invite.parentId as Id<'camps'>)
+  if (!camp) {
+    throwUserError('Camp not found')
+  }
+
+  if (!isCampVisibleStatus(camp.status)) {
+    throwUserError('Camp not found')
+  }
+
+  // Frozen and grace camps do not accept new members via invite.
+  if (camp.status === 'frozen' || camp.status === 'grace') {
+    throwUserError('This camp is not accepting new members right now.')
+  }
+
+  const existingMembership = await getMembership(ctx, user._id, camp._id)
+  if (existingMembership?.status === 'active') {
+    return {
+      membershipId: existingMembership._id,
+      campId: camp._id,
+    }
+  }
+
+  const userTier = await getEntitlementSubscriptionTier(ctx, user._id)
+  const eligibility = evaluateJoinRules(camp, user, userTier, existingMembership)
+
+  // Invite bypasses invite_only and private — re-check only hard blocks
+  if (
+    !eligibility.canJoin &&
+    eligibility.reason !== 'invite_only' &&
+    eligibility.reason !== 'private'
+  ) {
+    const messages: Record<string, string> = {
+      wrong_gender: 'This camp is limited to members who match its gender setting',
+      tier_too_low: 'Your subscription tier is too low to join this camp',
+      underage: 'You do not meet the age requirement for this camp',
+      banned: 'You cannot join this camp',
+      already_member: 'You are already a member of this camp',
+      already_pending: 'You already have a pending request for this camp',
+      rejected_cooldown:
+        'Your previous request was denied. You can try again after the cooldown period.',
+    }
+    throwUserError(messages[eligibility.reason] ?? 'You cannot join this camp')
+  }
+
+  const membershipId = await upsertMembership(ctx, {
+    userId: user._id,
+    campId: camp._id,
+    status: 'active',
+    role: 'member',
+  })
+
+  await ctx.db.patch(invite._id, {
+    uses: invite.uses + 1,
+  })
+  await refreshActiveMemberCount(ctx, camp._id)
+
+  return {
+    membershipId,
+    campId: camp._id,
+  }
+}
 
 export const setCampAccess = mutation({
   args: {

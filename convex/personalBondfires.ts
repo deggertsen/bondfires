@@ -9,7 +9,7 @@ import {
   getEntitlementSubscriptionTier,
   PAID_TIERS,
 } from './entitlements'
-import { throwUserError } from './errors'
+import { throwUserError, withUserFacingErrors } from './errors'
 import { generateAndInsertInviteCode, normalizeInviteCode } from './inviteCodes'
 import { canViewPersonalBondfire, getPersonalBondfireParticipant } from './personalBondfireAccess'
 
@@ -245,99 +245,106 @@ export const redeemInvite = mutation({
   args: {
     code: v.string(),
   },
-  handler: async (ctx, args) => {
-    const user = await getCurrentUser(ctx)
-    const now = Date.now()
-    const code = normalizeInviteCode(args.code)
+  handler: (ctx, args) =>
+    withUserFacingErrors(
+      'personalBondfires.redeemInvite',
+      'Something went wrong joining this fire. Please try again.',
+      () => redeemInviteHandler(ctx, args.code),
+    ),
+})
 
-    const unifiedInvite = await ctx.db
-      .query('inviteCodes')
-      .withIndex('by_code', (q) => q.eq('code', code))
-      .first()
+async function redeemInviteHandler(ctx: MutationCtx, rawCode: string) {
+  const user = await getCurrentUser(ctx)
+  const now = Date.now()
+  const code = normalizeInviteCode(rawCode)
 
-    if (!unifiedInvite) {
-      throwUserError('Invite not found.')
-    }
+  const unifiedInvite = await ctx.db
+    .query('inviteCodes')
+    .withIndex('by_code', (q) => q.eq('code', code))
+    .first()
 
-    if (unifiedInvite.expiresAt !== undefined && unifiedInvite.expiresAt <= now) {
-      throwUserError('This invite has expired.')
-    }
-    if (unifiedInvite.maxUses !== undefined && unifiedInvite.uses >= unifiedInvite.maxUses) {
-      throwUserError('This invite has already been used.')
-    }
-    if (unifiedInvite.parentType !== 'personal-bondfire') {
-      throwUserError('Invite not found.')
-    }
+  if (!unifiedInvite) {
+    throwUserError('Invite not found.')
+  }
 
-    const bondfireId = unifiedInvite.parentId as Id<'bondfires'>
+  if (unifiedInvite.expiresAt !== undefined && unifiedInvite.expiresAt <= now) {
+    throwUserError('This invite has expired.')
+  }
+  if (unifiedInvite.maxUses !== undefined && unifiedInvite.uses >= unifiedInvite.maxUses) {
+    throwUserError('This invite has already been used.')
+  }
+  if (unifiedInvite.parentType !== 'personal-bondfire') {
+    throwUserError('Invite not found.')
+  }
 
-    const bondfire = await ctx.db.get(bondfireId)
-    if (!bondfire) {
-      throwUserError('This fire has ended.')
-    }
+  const bondfireId = unifiedInvite.parentId as Id<'bondfires'>
 
-    if (!bondfire.personalCampId) {
-      throwUserError('This bondfire is not part of a hearth.')
-    }
+  const bondfire = await ctx.db.get(bondfireId)
+  if (!bondfire) {
+    throwUserError('This fire has ended.')
+  }
 
-    await assertPersonalCampActive(
-      ctx,
-      bondfire.personalCampId,
-      'The hearth is currently unavailable. The owner may have cancelled their subscription.',
-    )
+  if (!bondfire.personalCampId) {
+    throwUserError('This bondfire is not part of a hearth.')
+  }
 
-    // Check if user is already an active participant.
-    const existingParticipant = await getPersonalBondfireParticipant(ctx, {
+  await assertPersonalCampActive(
+    ctx,
+    bondfire.personalCampId,
+    'The hearth is currently unavailable. The owner may have cancelled their subscription.',
+  )
+
+  // Check if user is already an active participant.
+  const existingParticipant = await getPersonalBondfireParticipant(ctx, {
+    bondfireId: bondfire._id,
+    userId: user._id,
+  })
+
+  if (existingParticipant?.status === 'active') {
+    return { bondfireId: bondfire._id, alreadyJoined: true }
+  }
+
+  // Check participant cap based on owner's tier.
+  const owner = await ctx.db.get(bondfire.userId)
+  const ownerTier = owner ? await getEntitlementSubscriptionTier(ctx, owner._id) : 'free'
+  const cap = getParticipantCap(ownerTier)
+  const activeCount = await getActiveParticipantCount(ctx, bondfire._id)
+
+  if (activeCount >= cap) {
+    throwUserError('This fire is full.')
+  }
+
+  if (existingParticipant) {
+    await ctx.db.patch(existingParticipant._id, {
+      status: 'active',
+      joinedAt: now,
+      leftAt: undefined,
+      removedAt: undefined,
+      removedBy: undefined,
+      updatedAt: now,
+    })
+  } else {
+    await ctx.db.insert('personalBondfireParticipants', {
       bondfireId: bondfire._id,
       userId: user._id,
+      status: 'active',
+      joinedAt: now,
+      createdAt: now,
+      updatedAt: now,
     })
+  }
 
-    if (existingParticipant?.status === 'active') {
-      return { bondfireId: bondfire._id, alreadyJoined: true }
-    }
+  await ctx.db.patch(unifiedInvite._id, { uses: unifiedInvite.uses + 1 })
 
-    // Check participant cap based on owner's tier.
-    const owner = await ctx.db.get(bondfire.userId)
-    const ownerTier = owner ? await getEntitlementSubscriptionTier(ctx, owner._id) : 'free'
-    const cap = getParticipantCap(ownerTier)
-    const activeCount = await getActiveParticipantCount(ctx, bondfire._id)
+  // Let the Hearth bondfire's creator know someone joined.
+  await ctx.scheduler.runAfter(0, internal.sendNotification.notifyHearthJoin, {
+    bondfireId: bondfire._id,
+    joinerId: user._id,
+    joinerName: user.displayName ?? user.name ?? 'Someone',
+  })
 
-    if (activeCount >= cap) {
-      throwUserError('This fire is full.')
-    }
-
-    if (existingParticipant) {
-      await ctx.db.patch(existingParticipant._id, {
-        status: 'active',
-        joinedAt: now,
-        leftAt: undefined,
-        removedAt: undefined,
-        removedBy: undefined,
-        updatedAt: now,
-      })
-    } else {
-      await ctx.db.insert('personalBondfireParticipants', {
-        bondfireId: bondfire._id,
-        userId: user._id,
-        status: 'active',
-        joinedAt: now,
-        createdAt: now,
-        updatedAt: now,
-      })
-    }
-
-    await ctx.db.patch(unifiedInvite._id, { uses: unifiedInvite.uses + 1 })
-
-    // Let the Hearth bondfire's creator know someone joined.
-    await ctx.scheduler.runAfter(0, internal.sendNotification.notifyHearthJoin, {
-      bondfireId: bondfire._id,
-      joinerId: user._id,
-      joinerName: user.displayName ?? user.name ?? 'Someone',
-    })
-
-    return { bondfireId: bondfire._id, alreadyJoined: false }
-  },
-})
+  return { bondfireId: bondfire._id, alreadyJoined: false }
+}
 
 /**
  * Remove a participant from a personal bondfire.

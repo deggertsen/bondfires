@@ -1212,7 +1212,7 @@ export function LiveRecordScreen({
           </YStack>
           {liveRecordId && !respondTo ? (
             <InviteSheet
-              mode="bondfire"
+              mode={isPersonalCamp ? 'personal-bondfire' : 'bondfire'}
               id={liveRecordId as Id<'bondfires'>}
               open={showInviteSheet}
               onClose={() => state$.showInviteSheet.set(false)}
