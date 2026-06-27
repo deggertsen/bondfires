@@ -118,15 +118,28 @@ export function usePushNotifications(
   // Register token with backend
   const registerWithBackend = useCallback(
     async (token: string) => {
-      if (!registerTokenMutation) return
+      if (!registerTokenMutation) {
+        telemetry.breadcrumb('push:register:skip', {
+          reason: 'no_mutation_fn',
+        })
+        return
+      }
 
       // Backend registration requires an authenticated Convex session. If the
       // app is pre-login, the _layout auth observer will retry after sign-in.
       if (!isAuthenticatedRef.current) {
+        telemetry.breadcrumb('push:register:skip', {
+          reason: 'not_authenticated',
+        })
         return
       }
 
       try {
+        telemetry.breadcrumb('push:register:attempt', {
+          tokenPrefix: token.slice(0, 16),
+          platform: Platform.OS,
+          deviceId: Constants.deviceId ?? 'unknown',
+        })
         await registerTokenMutation({
           token,
           tokenType: 'expo',
@@ -136,11 +149,18 @@ export function usePushNotifications(
         })
         setIsRegistered(true)
         setError(null)
+        telemetry.breadcrumb('push:register:success', {
+          tokenPrefix: token.slice(0, 16),
+        })
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e)
         // Auth can still race with session establishment. Treat those failures
         // as retryable instead of surfacing them at all.
         if (message.includes('Not authenticated') || message.includes('Unauthorized')) {
+          telemetry.breadcrumb('push:register:skip', {
+            reason: 'auth_race',
+            error: message,
+          })
           return
         }
         // Backend token registration is background infrastructure that auto-
@@ -151,6 +171,7 @@ export function usePushNotifications(
         // not) so we keep the breadcrumb without spamming a stream of toasts.
         telemetry.warn('push:register', 'Failed to register token with backend', {
           error: message,
+          tokenPrefix: token.slice(0, 16),
         })
       }
     },
@@ -166,7 +187,11 @@ export function usePushNotifications(
     }
 
     try {
+      telemetry.breadcrumb('push:token:attempt', { projectId })
       const tokenData = await Notifications.getExpoPushTokenAsync({ projectId })
+      telemetry.breadcrumb('push:token:success', {
+        tokenPrefix: tokenData.data.slice(0, 16),
+      })
       return tokenData.data
     } catch (e) {
       // Handle Firebase auth errors gracefully (common in dev builds)
@@ -180,8 +205,14 @@ export function usePushNotifications(
       }
       // Emulators and devices without Google Play Services can't get push tokens
       if (errorMessage.includes('MISSING_INSTANCEID_SERVICE')) {
+        telemetry.breadcrumb('push:token:skip', {
+          reason: 'missing_instanceid_service',
+        })
         return null
       }
+      telemetry.error('push:token', 'Unexpected error getting Expo push token', {
+        error: errorMessage,
+      })
       throw e
     }
   }, [])
@@ -189,10 +220,12 @@ export function usePushNotifications(
   // Request notification permissions
   const requestPermissions = useCallback(async (): Promise<boolean> => {
     if (!isAuthenticatedRef.current) {
+      telemetry.breadcrumb('push:permissions:skip', { reason: 'not_authenticated' })
       return false
     }
 
     if (!Device.isDevice) {
+      telemetry.breadcrumb('push:permissions:skip', { reason: 'not_physical_device' })
       setError('Push notifications only work on physical devices')
       return false
     }
@@ -200,17 +233,21 @@ export function usePushNotifications(
     try {
       const { status: existingStatus } = await Notifications.getPermissionsAsync()
       let finalStatus = existingStatus
+      telemetry.breadcrumb('push:permissions:check', { existingStatus })
 
       if (existingStatus !== 'granted') {
         const { status } = await Notifications.requestPermissionsAsync()
         finalStatus = status
+        telemetry.breadcrumb('push:permissions:request', { requestedStatus: status })
       }
 
       if (finalStatus !== 'granted') {
+        telemetry.breadcrumb('push:permissions:denied', { finalStatus })
         setError('Push notification permissions denied')
         return false
       }
 
+      telemetry.breadcrumb('push:permissions:granted')
       await ensureAndroidNotificationChannel()
 
       // Get Expo push token
@@ -219,6 +256,7 @@ export function usePushNotifications(
         setStoredExpoPushToken(token)
         await registerWithBackend(token)
       } else {
+        telemetry.breadcrumb('push:permissions:skip', { reason: 'no_token_after_grant' })
         setError('Failed to get push notification token')
         return false
       }
@@ -229,6 +267,10 @@ export function usePushNotifications(
       const errorMessage = e instanceof Error ? e.message : String(e)
       // Emulators and non-Google Play Services devices — not actionable
       if (errorMessage.includes('MISSING_INSTANCEID_SERVICE')) {
+        telemetry.breadcrumb('push:permissions:skip', {
+          reason: 'missing_instanceid_service',
+          error: errorMessage,
+        })
         return false
       }
       telemetry.error('push:permissions', 'Error requesting push notification permissions', {
@@ -241,23 +283,41 @@ export function usePushNotifications(
 
   // Register the token only if OS permission is already granted — never prompts.
   const registerIfGranted = useCallback(async (): Promise<boolean> => {
-    if (!isAuthenticatedRef.current) return false
-    if (!Device.isDevice) return false
+    if (!isAuthenticatedRef.current) {
+      telemetry.breadcrumb('push:registerIfGranted:skip', { reason: 'not_authenticated' })
+      return false
+    }
+    if (!Device.isDevice) {
+      telemetry.breadcrumb('push:registerIfGranted:skip', { reason: 'not_physical_device' })
+      return false
+    }
 
     try {
       const { status } = await Notifications.getPermissionsAsync()
-      if (status !== 'granted') return false
+      if (status !== 'granted') {
+        telemetry.breadcrumb('push:registerIfGranted:skip', { reason: 'permission_not_granted', status })
+        return false
+      }
 
       await ensureAndroidNotificationChannel()
 
       const token = await getExpoPushToken()
-      if (!token) return false
+      if (!token) {
+        telemetry.breadcrumb('push:registerIfGranted:skip', { reason: 'no_token' })
+        return false
+      }
 
       setStoredExpoPushToken(token)
       await registerWithBackend(token)
+      telemetry.breadcrumb('push:registerIfGranted:success', {
+        tokenPrefix: token.slice(0, 16),
+      })
       return true
-    } catch {
-      // getExpoPushToken already logs helpful messages
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : String(e)
+      telemetry.warn('push:registerIfGranted', 'Unexpected error during silent registration', {
+        error: errorMessage,
+      })
       return false
     }
   }, [getExpoPushToken, registerWithBackend, setStoredExpoPushToken])
@@ -315,7 +375,10 @@ export function usePushNotifications(
       appStateRef.current = nextAppState
 
       if (cameToForeground) {
-        if (!isAuthenticatedRef.current) return
+        if (!isAuthenticatedRef.current) {
+          telemetry.breadcrumb('push:foreground:skip', { reason: 'not_authenticated' })
+          return
+        }
 
         // App came to foreground - verify token is still valid
         try {
@@ -324,6 +387,7 @@ export function usePushNotifications(
             // OS permission was revoked (e.g. via system settings) since last
             // foreground. Clear the local token so we don't keep sending to a
             // dead endpoint.
+            telemetry.breadcrumb('push:foreground:permission_revoked', { status })
             await handlePermissionRevoked()
             return
           }
@@ -332,11 +396,20 @@ export function usePushNotifications(
 
           const token = await getExpoPushToken()
           if (token && token !== expoPushTokenRef.current) {
+            telemetry.breadcrumb('push:foreground:token_changed', {
+              oldPrefix: expoPushTokenRef.current?.slice(0, 16),
+              newPrefix: token.slice(0, 16),
+            })
             setStoredExpoPushToken(token)
             await registerWithBackend(token)
+          } else if (!token) {
+            telemetry.breadcrumb('push:foreground:skip', { reason: 'no_token' })
           }
-        } catch {
-          // Silently handle - getExpoPushToken already logs helpful messages
+        } catch (e) {
+          const errorMessage = e instanceof Error ? e.message : String(e)
+          telemetry.warn('push:foreground', 'Error during foreground token refresh', {
+            error: errorMessage,
+          })
         }
       }
     }
@@ -376,10 +449,17 @@ export function usePushNotifications(
   // Check initial permission status on mount, but never prompt pre-login.
   useEffect(() => {
     const checkInitialStatus = async () => {
-      if (!Device.isDevice) return
-      if (!isAuthenticatedRef.current) return
+      if (!Device.isDevice) {
+        telemetry.breadcrumb('push:mount:skip', { reason: 'not_physical_device' })
+        return
+      }
+      if (!isAuthenticatedRef.current) {
+        telemetry.breadcrumb('push:mount:skip', { reason: 'not_authenticated' })
+        return
+      }
 
       const { status } = await Notifications.getPermissionsAsync()
+      telemetry.breadcrumb('push:mount:check', { permissionStatus: status })
       if (status === 'granted') {
         // Already have permission, get token
         try {
@@ -389,10 +469,17 @@ export function usePushNotifications(
           if (token) {
             setStoredExpoPushToken(token)
             await registerWithBackend(token)
+          } else {
+            telemetry.breadcrumb('push:mount:skip', { reason: 'no_token' })
           }
-        } catch {
-          // Silently handle - getExpoPushToken already logs helpful messages
+        } catch (e) {
+          const errorMessage = e instanceof Error ? e.message : String(e)
+          telemetry.warn('push:mount', 'Error during mount-time registration', {
+            error: errorMessage,
+          })
         }
+      } else {
+        telemetry.breadcrumb('push:mount:skip', { reason: 'permission_not_granted', status })
       }
     }
 

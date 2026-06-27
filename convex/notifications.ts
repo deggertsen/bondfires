@@ -20,6 +20,7 @@ export const registerDevice = mutation({
       // ConvexError (not a raw Error, which Convex masks as a 500 "Server Error"
       // and storms the client retry/telemetry path) so the client's retryable
       // "Not authenticated" filter matches and silently waits for the session.
+      console.warn('[push:registerDevice] rejected: not authenticated')
       throwUserError('Not authenticated')
     }
 
@@ -41,11 +42,16 @@ export const registerDevice = mutation({
         timezone: args.timezone ?? existing.timezone,
         updatedAt: now,
       })
+      console.log(`[push:registerDevice] updated existing token for user ${userId}`, {
+        tokenId: existing._id,
+        platform: args.platform,
+        deviceId: args.deviceId,
+      })
       return existing._id
     }
 
     // Create new token entry
-    return await ctx.db.insert('deviceTokens', {
+    const tokenId = await ctx.db.insert('deviceTokens', {
       userId,
       token: args.token,
       platform: args.platform,
@@ -55,6 +61,12 @@ export const registerDevice = mutation({
       createdAt: now,
       updatedAt: now,
     })
+    console.log(`[push:registerDevice] registered new token for user ${userId}`, {
+      tokenId,
+      platform: args.platform,
+      deviceId: args.deviceId,
+    })
+    return tokenId
   },
 })
 
@@ -93,6 +105,42 @@ export const getDevices = query({
       .query('deviceTokens')
       .withIndex('by_user', (q) => q.eq('userId', userId))
       .collect()
+  },
+})
+
+/** Diagnostic: count of device tokens for the current user (for push debugging). */
+export const getDeviceTokenCount = query({
+  args: {},
+  handler: async (ctx): Promise<{
+    count: number
+    tokens: {
+      platform: string
+      tokenType: string | undefined
+      deviceId: string | undefined
+      createdAt: number
+      updatedAt: number
+    }[]
+  }> => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      return { count: 0, tokens: [] }
+    }
+
+    const tokens = await ctx.db
+      .query('deviceTokens')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect()
+
+    return {
+      count: tokens.length,
+      tokens: tokens.map((t) => ({
+        platform: t.platform,
+        tokenType: t.tokenType,
+        deviceId: t.deviceId,
+        createdAt: t.createdAt,
+        updatedAt: t.updatedAt,
+      })),
+    }
   },
 })
 

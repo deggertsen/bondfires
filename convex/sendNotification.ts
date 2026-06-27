@@ -245,6 +245,10 @@ export const sendToUser = internalAction({
     })
 
     if (tokens.length === 0) {
+      console.log(`[push:sendToUser] no device tokens for user ${args.userId}`, {
+        category: args.category,
+        title: args.title,
+      })
       return { success: false, error: 'No device tokens found for user' }
     }
 
@@ -254,8 +258,18 @@ export const sendToUser = internalAction({
     )
 
     if (expoTokens.length === 0) {
+      console.log(`[push:sendToUser] no Expo push tokens for user ${args.userId}`, {
+        totalTokens: tokens.length,
+        tokenTypes: tokens.map((t) => ({ tokenType: t.tokenType, prefix: t.token.slice(0, 20) })),
+      })
       return { success: false, error: 'No Expo push tokens found for user' }
     }
+
+    console.log(`[push:sendToUser] sending to user ${args.userId}`, {
+      category: args.category,
+      title: args.title,
+      tokenCount: expoTokens.length,
+    })
 
     // Build messages for each token
     const messages: ExpoPushMessage[] = expoTokens.map((tokenDoc) => ({
@@ -282,6 +296,12 @@ export const sendToUser = internalAction({
 
       const successCount = results.filter((r) => r.success).length
       const failureCount = results.filter((r) => !r.success).length
+
+      console.log(`[push:sendToUser] delivery result for user ${args.userId}`, {
+        successCount,
+        failureCount,
+        errors: results.filter((r) => !r.success).map((r) => r.error),
+      })
 
       return {
         success: successCount > 0,

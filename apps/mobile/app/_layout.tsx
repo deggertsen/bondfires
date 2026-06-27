@@ -373,13 +373,18 @@ function AppContent() {
   }, [])
 
   useObserve(appStore$.preferences.notificationsEnabled, ({ value: notificationsEnabled }) => {
-    if (!appStore$.isAuthenticated.peek()) return
+    if (!appStore$.isAuthenticated.peek()) {
+      telemetry.breadcrumb('push:layout:notificationsEnabled:skip', { reason: 'not_authenticated' })
+      return
+    }
     if (notificationsEnabled) {
       // Silent: registers only when OS permission is already granted.
       // The OS dialog is triggered contextually (PushPrimerSheet) or from
       // the settings toggle, not here.
+      telemetry.breadcrumb('push:layout:notificationsEnabled:on', {})
       registerIfGrantedRef.current()
     } else {
+      telemetry.breadcrumb('push:layout:notificationsEnabled:off')
       unregisterRef.current()
     }
   })
@@ -388,7 +393,10 @@ function AppContent() {
   // are enabled and OS permission was already granted. Never prompt here.
   useObserve(appStore$.isAuthenticated, ({ value: isAuthenticated }) => {
     if (isAuthenticated && appStore$.preferences.notificationsEnabled.peek()) {
+      telemetry.breadcrumb('push:layout:signin', { notificationsEnabled: true })
       registerIfGrantedRef.current()
+    } else if (isAuthenticated) {
+      telemetry.breadcrumb('push:layout:signin', { notificationsEnabled: false })
     }
     if (isAuthenticated) {
       // The mount-time heartbeat may have fired pre-auth and no-opped.
