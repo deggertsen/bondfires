@@ -9,7 +9,7 @@ import {
   getEntitlementSubscriptionTier,
   PAID_TIERS,
 } from './entitlements'
-import { throwUserError } from './errors'
+import { throwUserError, withUserFacingErrors } from './errors'
 import { generateAndInsertInviteCode, normalizeInviteCode } from './inviteCodes'
 import { canViewPersonalBondfire, getPersonalBondfireParticipant } from './personalBondfireAccess'
 
@@ -245,10 +245,18 @@ export const redeemInvite = mutation({
   args: {
     code: v.string(),
   },
-  handler: async (ctx, args) => {
+  handler: (ctx, args) =>
+    withUserFacingErrors(
+      'personalBondfires.redeemInvite',
+      'Something went wrong joining this fire. Please try again.',
+      () => redeemInviteHandler(ctx, args.code),
+    ),
+})
+
+async function redeemInviteHandler(ctx: MutationCtx, rawCode: string) {
     const user = await getCurrentUser(ctx)
     const now = Date.now()
-    const code = normalizeInviteCode(args.code)
+    const code = normalizeInviteCode(rawCode)
 
     const unifiedInvite = await ctx.db
       .query('inviteCodes')
@@ -336,8 +344,7 @@ export const redeemInvite = mutation({
     })
 
     return { bondfireId: bondfire._id, alreadyJoined: false }
-  },
-})
+}
 
 /**
  * Remove a participant from a personal bondfire.

@@ -1325,10 +1325,18 @@ export const redeemInvite = mutation({
   args: {
     code: v.string(),
   },
-  handler: async (ctx, args) => {
+  handler: (ctx, args) =>
+    withUserFacingErrors(
+      'camps.redeemInvite',
+      'Something went wrong joining this camp. Please try again.',
+      () => redeemCampInviteHandler(ctx, args.code),
+    ),
+})
+
+async function redeemCampInviteHandler(ctx: MutationCtx, rawCode: string) {
     const user = await getCurrentUser(ctx)
     const now = Date.now()
-    const normalizedCode = normalizeInviteCode(args.code)
+    const normalizedCode = normalizeInviteCode(rawCode)
 
     const invite = await ctx.db
       .query('inviteCodes')
@@ -1409,8 +1417,7 @@ export const redeemInvite = mutation({
       membershipId,
       campId: camp._id,
     }
-  },
-})
+}
 
 export const setCampAccess = mutation({
   args: {
