@@ -5,6 +5,7 @@ import type { Doc, Id } from '../../../../../../convex/_generated/dataModel'
 export const { width: SCREEN_WIDTH } = Dimensions.get('window')
 export const SCRUB_SEEK_THROTTLE_MS = 100
 export const REACTION_PLAYBACK_WINDOW_MS = 150
+export const REACTION_THROTTLE_MS = 5000
 // Processing normally completes within a couple of minutes; past this it is
 // likely stuck (missed Mux webhook) and worth a telemetry warning.
 export const STUCK_PROCESSING_TELEMETRY_THRESHOLD_MS = 5 * 60 * 1000

@@ -393,14 +393,15 @@ export default function BondfireDetailScreen() {
 
       recordWatchEventOnce(target, 'complete', Math.round(positionMs), durationMs)
 
-      if (currentVideoIndex < videoUrls.length - 1) {
+      const lastVideoIndex = bondfireData.videos.length
+      if (currentVideoIndex < lastVideoIndex) {
         flatListRef.current?.scrollToIndex({
           index: currentVideoIndex + 1,
           animated: true,
         })
       }
     },
-    [bondfireData, currentVideoIndex, recordWatchEventOnce, videoUrls.length],
+    [bondfireData, currentVideoIndex, recordWatchEventOnce],
   )
 
   const handleScrubbingChange = useCallback(

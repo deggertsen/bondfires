@@ -3,7 +3,9 @@ import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
+import { getEntitlementSubscriptionTier, TIER_RANK } from './entitlements'
 import { throwUserError, withUserFacingErrors } from './errors'
+import { isFreeEmoji, isReactionEmoji } from './lib/emojis'
 import { rankRecentEmojis } from './lib/videoReactions'
 
 type VideoReference =
@@ -73,6 +75,17 @@ export const addReaction = mutation({
 
         if (args.timestampMs < 0) {
           throwUserError('Reaction timestamp must be non-negative')
+        }
+
+        if (!isReactionEmoji(args.emoji)) {
+          throwUserError('Unsupported reaction emoji')
+        }
+
+        if (!isFreeEmoji(args.emoji)) {
+          const tier = await getEntitlementSubscriptionTier(ctx, userId)
+          if (TIER_RANK[tier] < TIER_RANK.plus) {
+            throwUserError('This reaction requires a Plus subscription')
+          }
         }
 
         const [user] = await Promise.all([ctx.db.get(userId), assertVodVideoExists(ctx, args)])
@@ -151,6 +164,6 @@ export const getRecentEmojis = query({
       .order('desc')
       .collect()
 
-    return rankRecentEmojis(reactions)
+    return rankRecentEmojis(reactions.filter((reaction) => isReactionEmoji(reaction.emoji)))
   },
 })

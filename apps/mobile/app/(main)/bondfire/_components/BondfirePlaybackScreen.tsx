@@ -1,8 +1,9 @@
 import { Button, Text } from '@bondfires/ui'
+import { useObservable, useValue } from '@legendapp/state/react'
 import { ChevronLeft, ChevronRight, FileText, Flame, Settings } from '@tamagui/lucide-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { Stack, useRouter } from 'expo-router'
-import { type RefObject, useCallback, useRef, useState } from 'react'
+import { type RefObject, useCallback, useRef } from 'react'
 import type { StatusBarStyle, ViewToken } from 'react-native'
 import { FlatList, Pressable, StatusBar } from 'react-native'
 import { XStack, YStack } from 'tamagui'
@@ -60,9 +61,14 @@ export function BondfirePlaybackScreen({
   onScrollToIndexFailed: (info: ScrollToIndexFailedInfo) => void
 }) {
   const router = useRouter()
-  const [showSettings, setShowSettings] = useState(false)
-  const [showNotepad, setShowNotepad] = useState(false)
-  const [isInviteSheetOpen, setIsInviteSheetOpen] = useState(false)
+  const overlayState$ = useObservable({
+    showSettings: false,
+    showNotepad: false,
+    isInviteSheetOpen: false,
+  })
+  const showSettings = useValue(overlayState$.showSettings)
+  const showNotepad = useValue(overlayState$.showNotepad)
+  const isInviteSheetOpen = useValue(overlayState$.isInviteSheetOpen)
   const totalVideos = videoItems.length
   const processingResponseCount = bondfireData.processingResponses?.length ?? 0
   const viewabilityConfig = useRef({
@@ -136,7 +142,9 @@ export function BondfirePlaybackScreen({
             </YStack>
 
             <XStack gap={8}>
-              <Pressable onPress={() => setShowSettings((value) => !value)}>
+              <Pressable
+                onPress={() => overlayState$.showSettings.set(!overlayState$.showSettings.get())}
+              >
                 <YStack
                   width={40}
                   height={40}
@@ -148,7 +156,9 @@ export function BondfirePlaybackScreen({
                   <Settings size={22} color={OVERLAY_COLORS.textPrimary} />
                 </YStack>
               </Pressable>
-              <Pressable onPress={() => setShowNotepad((value) => !value)}>
+              <Pressable
+                onPress={() => overlayState$.showNotepad.set(!overlayState$.showNotepad.get())}
+              >
                 <YStack
                   width={40}
                   height={40}
@@ -244,7 +254,7 @@ export function BondfirePlaybackScreen({
                   variant="outline"
                   size="$lg"
                   flex={1}
-                  onPress={() => setIsInviteSheetOpen(true)}
+                  onPress={() => overlayState$.isInviteSheetOpen.set(true)}
                   borderColor={OVERLAY_COLORS.textPrimary}
                 >
                   <Text color={OVERLAY_COLORS.textPrimary} fontWeight="700">
@@ -287,14 +297,14 @@ export function BondfirePlaybackScreen({
           ))}
         </XStack>
 
-        {showSettings && <SettingsPopover onClose={() => setShowSettings(false)} />}
-        {showNotepad && <NotepadOverlay onClose={() => setShowNotepad(false)} />}
+        {showSettings && <SettingsPopover onClose={() => overlayState$.showSettings.set(false)} />}
+        {showNotepad && <NotepadOverlay onClose={() => overlayState$.showNotepad.set(false)} />}
 
         <InviteSheet
           mode="bondfire"
           id={bondfireId}
           open={isInviteSheetOpen}
-          onClose={() => setIsInviteSheetOpen(false)}
+          onClose={() => overlayState$.isInviteSheetOpen.set(false)}
         />
       </YStack>
     </>

@@ -23,6 +23,7 @@ import type { ActiveReaction } from '../../../../components/ViewerPresenceStack'
 import { VIDEO_OVERLAY_COLORS as OVERLAY_COLORS } from '../../../../components/videoOverlayColors'
 import {
   REACTION_PLAYBACK_WINDOW_MS,
+  REACTION_THROTTLE_MS,
   SCREEN_WIDTH,
   SCRUB_SEEK_THROTTLE_MS,
 } from '../_lib/bondfireDetailHelpers'
@@ -115,6 +116,11 @@ export function VideoPlayer({
         : { bondfireVideoId }
       : 'skip',
   )
+  const reactionsDataRef = useRef<typeof reactionsData>(reactionsData)
+
+  useEffect(() => {
+    reactionsDataRef.current = reactionsData
+  }, [reactionsData])
 
   const addReactionMutation = useMutation(api.videoReactions.addReaction)
   const targetUrl = shouldSuppressPlayback ? null : videoUrl
@@ -300,27 +306,41 @@ export function VideoPlayer({
               state$.isPlaying.set(playerPlaying)
             }
 
-            if (!isLive && reactionsData) {
+            const currentReactionsData = reactionsDataRef.current
+            if (!isLive && currentReactionsData) {
               const currentMs = player.currentTime * 1000
               const previousMs = state$.lastReactionPlaybackMs.get()
 
               if (previousMs !== null && currentMs + REACTION_PLAYBACK_WINDOW_MS < previousMs) {
-                syncReactionPlaybackAfterSeek({ positionMs: currentMs, reactionsData, state$ })
+                syncReactionPlaybackAfterSeek({
+                  positionMs: currentMs,
+                  reactionsData: currentReactionsData,
+                  state$,
+                })
                 return
               }
 
               const windowStart =
                 previousMs ?? Math.max(-1, currentMs - REACTION_PLAYBACK_WINDOW_MS)
               const crossedReactions: ActiveReaction[] = []
+              const activeReactions = state$.activeReactions.get()
               const triggeredReactionIds = { ...state$.triggeredReactionIds.get() }
 
-              for (const reaction of reactionsData) {
+              for (const reaction of currentReactionsData) {
                 if (
                   !triggeredReactionIds[reaction._id] &&
                   reaction.timestampMs > windowStart &&
                   reaction.timestampMs <= currentMs
                 ) {
                   triggeredReactionIds[reaction._id] = true
+                  const alreadyActive = activeReactions.some(
+                    (activeReaction) =>
+                      String(activeReaction.userId) === String(reaction.userId) &&
+                      activeReaction.emoji === reaction.emoji &&
+                      activeReaction.timestampMs === reaction.timestampMs,
+                  )
+                  if (alreadyActive) continue
+
                   crossedReactions.push({
                     id: reaction._id,
                     userId: reaction.userId,
@@ -354,7 +374,7 @@ export function VideoPlayer({
         clearInterval(progressInterval)
       }
     }
-  }, [player, onComplete, onProgress, state$, shouldTrackPlayback, isLive, reactionsData])
+  }, [player, onComplete, onProgress, state$, shouldTrackPlayback, isLive])
 
   useEffect(() => {
     const currentUrlValue = state$.currentUrl.get()
@@ -405,7 +425,7 @@ export function VideoPlayer({
   const handleEmojiSelect = useCallback(
     (emoji: string) => {
       const now = Date.now()
-      if (now - state$.lastReactionTime.get() < 5000) return false
+      if (now - state$.lastReactionTime.get() < REACTION_THROTTLE_MS) return false
       state$.lastReactionTime.set(now)
 
       const optimisticId = `optimistic-${now}-${Math.random()}`
@@ -486,7 +506,7 @@ export function VideoPlayer({
           player.currentTime = seekTime
           syncReactionPlaybackAfterSeek({
             positionMs: seekTime * 1000,
-            reactionsData,
+            reactionsData: reactionsDataRef.current,
             state$,
           })
         }
@@ -495,7 +515,7 @@ export function VideoPlayer({
         state$.userInitiatedPlay.set(true)
       }
     },
-    [player, reactionsData, state$],
+    [player, state$],
   )
 
   const canSeekProgress = Number.isFinite(player?.duration) && (player?.duration ?? 0) > 0

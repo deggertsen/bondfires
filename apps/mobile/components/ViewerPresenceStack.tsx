@@ -1,11 +1,10 @@
 import type { Viewer } from '@bondfires/app'
 import { Flame } from '@tamagui/lucide-icons'
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { Animated, ScrollView, type StyleProp, type ViewStyle } from 'react-native'
 import { AnimatePresence, Avatar, Text, YStack } from 'tamagui'
 import { VIDEO_OVERLAY_COLORS } from './videoOverlayColors'
 
-// PR 3: transient reaction type
 export interface ActiveReaction {
   id: string
   userId: string
@@ -52,23 +51,30 @@ export function ViewerPresenceStack({
   onReactionExpired,
   style,
 }: ViewerPresenceStackProps) {
-  const liveViewerUserIds = new Set(liveViewers.map((v) => String(v.userId)))
-  const transientReactions: ActiveReaction[] = []
-  const liveViewerReactionMap = new Map<string, ActiveReaction[]>()
+  const { liveViewerReactionMap, transientReactions, visibleCount } = useMemo(() => {
+    const liveViewerUserIds = new Set(liveViewers.map((v) => String(v.userId)))
+    const nextTransientReactions: ActiveReaction[] = []
+    const nextLiveViewerReactionMap = new Map<string, ActiveReaction[]>()
 
-  for (const reaction of activeReactions) {
-    const userId = String(reaction.userId)
-    if (!liveViewerUserIds.has(userId)) {
-      transientReactions.push(reaction)
-      continue
+    for (const reaction of activeReactions) {
+      const userId = String(reaction.userId)
+      if (!liveViewerUserIds.has(userId)) {
+        nextTransientReactions.push(reaction)
+        continue
+      }
+
+      const existing = nextLiveViewerReactionMap.get(userId) ?? []
+      existing.push(reaction)
+      nextLiveViewerReactionMap.set(userId, existing)
     }
 
-    const existing = liveViewerReactionMap.get(userId) ?? []
-    existing.push(reaction)
-    liveViewerReactionMap.set(userId, existing)
-  }
+    return {
+      liveViewerReactionMap: nextLiveViewerReactionMap,
+      transientReactions: nextTransientReactions,
+      visibleCount: liveViewers.length + nextTransientReactions.length,
+    }
+  }, [activeReactions, liveViewers])
 
-  const visibleCount = liveViewers.length + transientReactions.length
   if (visibleCount === 0) {
     return null
   }
