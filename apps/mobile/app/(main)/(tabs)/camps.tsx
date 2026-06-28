@@ -786,7 +786,7 @@ export default function CampsScreen() {
         modal
         open={isCreatePrivateOpen}
         onOpenChange={setIsCreatePrivateOpen}
-        snapPoints={[48]}
+        snapPointsMode="fit"
         dismissOnSnapToBottom
         moveOnKeyboardChange
       >
@@ -865,7 +865,7 @@ export default function CampsScreen() {
         modal
         open={isRedeemInviteOpen}
         onOpenChange={setIsRedeemInviteOpen}
-        snapPoints={[34]}
+        snapPointsMode="fit"
         dismissOnSnapToBottom
         moveOnKeyboardChange
       >
