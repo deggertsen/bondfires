@@ -14,8 +14,8 @@ import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused, useNavigation } from '@react-navigation/native'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Animated, AppState, type FlatList, InteractionManager, type ViewToken } from 'react-native'
+import { useCallback, useEffect, useRef } from 'react'
+import { Animated, AppState, type FlatList, InteractionManager } from 'react-native'
 import { api } from '../../../../../convex/_generated/api'
 import type { Id } from '../../../../../convex/_generated/dataModel'
 import { goBackOrReplace } from '../../../lib/navigation'
@@ -50,8 +50,6 @@ export default function BondfireDetailScreen() {
   const screenState$ = useObservable({
     currentVideoIndex: 0,
     videoUrls: [] as (string | null)[],
-    showSettings: false,
-    showNotepad: false,
     isAppActive: AppState.currentState === 'active',
     isScrubbing: false,
   })
@@ -59,8 +57,6 @@ export default function BondfireDetailScreen() {
 
   const currentVideoIndex = useValue(screenState$.currentVideoIndex)
   const videoUrls = useValue(screenState$.videoUrls)
-  const showSettings = useValue(screenState$.showSettings)
-  const showNotepad = useValue(screenState$.showNotepad)
   const isAppActive = useValue(screenState$.isAppActive)
   const isScrubbing = useValue(screenState$.isScrubbing)
   const currentUserId = useValue(appStore$.userId)
@@ -79,7 +75,6 @@ export default function BondfireDetailScreen() {
   const recordWatchEvent = useMutation(api.watchEvents.record)
   const incrementViews = useMutation(api.bondfires.incrementViews)
   const markThreadRead = useMutation(api.conversations.markThreadRead)
-  const [isInviteSheetOpen, setIsInviteSheetOpen] = useState(false)
   const setVideoUrls = useCallback(
     (urls: (string | null)[]) => {
       screenState$.videoUrls.set(urls)
@@ -371,23 +366,12 @@ export default function BondfireDetailScreen() {
     [bondfireData, currentVideoIndex, recordWatchEvent],
   )
 
-  const handleRespond = useCallback(() => {
-    if (bondfireData?.campStatus === 'archived') return
-    router.push(routes.createRespondTo(id))
-  }, [bondfireData?.campStatus, router, id])
-
-  const onViewableItemsChanged = useCallback(
-    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
-      if (viewableItems.length > 0 && viewableItems[0].index !== null) {
-        screenState$.currentVideoIndex.set(viewableItems[0].index)
-      }
+  const handleVideoIndexChange = useCallback(
+    (index: number) => {
+      screenState$.currentVideoIndex.set(index)
     },
     [screenState$],
   )
-
-  const viewabilityConfig = useRef({
-    itemVisiblePercentThreshold: 50,
-  }).current
 
   const handleScrollToIndexFailed = useCallback(
     ({ index, averageItemLength }: ScrollToIndexFailedInfo) => {
@@ -448,7 +432,6 @@ export default function BondfireDetailScreen() {
 
   const totalVideos = 1 + bondfireData.videos.length
   const initialVideoIndex = clampVideoIndex(getBondfireVideoIndex(bondfireId), totalVideos)
-  const processingResponseCount = bondfireData.processingResponses?.length ?? 0
   const videoItems = buildBondfireVideoItems(bondfireData, videoUrls)
 
   return (
@@ -457,31 +440,18 @@ export default function BondfireDetailScreen() {
       backgroundColor={colors.background}
       bondfireId={bondfireId}
       bondfireData={bondfireData}
-      campContext={campContext}
+      canInvite={campContext?.canInvite ?? false}
       videoItems={videoItems}
       currentVideoIndex={currentVideoIndex}
-      totalVideos={totalVideos}
-      processingResponseCount={processingResponseCount}
       isFocused={isFocused}
       isAppActive={isAppActive}
       isScrubbing={isScrubbing}
-      showSettings={showSettings}
-      showNotepad={showNotepad}
-      isInviteSheetOpen={isInviteSheetOpen}
       flatListRef={flatListRef}
       onBackPress={handleBackPress}
-      onToggleSettings={() => screenState$.showSettings.set(!screenState$.showSettings.get())}
-      onToggleNotepad={() => screenState$.showNotepad.set(!screenState$.showNotepad.get())}
-      onCloseSettings={() => screenState$.showSettings.set(false)}
-      onCloseNotepad={() => screenState$.showNotepad.set(false)}
-      onOpenInviteSheet={() => setIsInviteSheetOpen(true)}
-      onCloseInviteSheet={() => setIsInviteSheetOpen(false)}
-      onRespond={handleRespond}
       onVideoComplete={handleVideoComplete}
       onProgress={handleProgress}
       onScrubbingChange={handleScrubbingChange}
-      onViewableItemsChanged={onViewableItemsChanged}
-      viewabilityConfig={viewabilityConfig}
+      onVideoIndexChange={handleVideoIndexChange}
       initialVideoIndex={initialVideoIndex}
       onScrollToIndexFailed={handleScrollToIndexFailed}
     />

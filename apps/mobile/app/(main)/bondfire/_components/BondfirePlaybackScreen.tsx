@@ -1,8 +1,8 @@
 import { Button, Text } from '@bondfires/ui'
 import { ChevronLeft, ChevronRight, FileText, Flame, Settings } from '@tamagui/lucide-icons'
 import { LinearGradient } from 'expo-linear-gradient'
-import { Stack } from 'expo-router'
-import type { RefObject } from 'react'
+import { Stack, useRouter } from 'expo-router'
+import { type RefObject, useCallback, useRef, useState } from 'react'
 import type { StatusBarStyle, ViewToken } from 'react-native'
 import { FlatList, Pressable, StatusBar } from 'react-native'
 import { XStack, YStack } from 'tamagui'
@@ -11,6 +11,7 @@ import { InviteSheet } from '../../../../components/InviteSheet'
 import { NotepadOverlay } from '../../../../components/NotepadOverlay'
 import { SettingsPopover } from '../../../../components/SettingsPopover'
 import { VIDEO_OVERLAY_COLORS as OVERLAY_COLORS } from '../../../../components/videoOverlayColors'
+import { routes } from '../../../../lib/routes'
 import type {
   BondfireDetailData,
   BondfireVideoItem,
@@ -19,43 +20,23 @@ import type {
 import { SCREEN_WIDTH } from '../_lib/bondfireDetailHelpers'
 import { VideoPlayer } from './VideoPlayer'
 
-type CampContext =
-  | {
-      canInvite?: boolean
-    }
-  | null
-  | undefined
-
 export function BondfirePlaybackScreen({
   statusBarStyle,
   backgroundColor,
   bondfireId,
   bondfireData,
-  campContext,
+  canInvite,
   videoItems,
   currentVideoIndex,
-  totalVideos,
-  processingResponseCount,
   isFocused,
   isAppActive,
   isScrubbing,
-  showSettings,
-  showNotepad,
-  isInviteSheetOpen,
   flatListRef,
   onBackPress,
-  onToggleSettings,
-  onToggleNotepad,
-  onCloseSettings,
-  onCloseNotepad,
-  onOpenInviteSheet,
-  onCloseInviteSheet,
-  onRespond,
   onVideoComplete,
   onProgress,
   onScrubbingChange,
-  onViewableItemsChanged,
-  viewabilityConfig,
+  onVideoIndexChange,
   initialVideoIndex,
   onScrollToIndexFailed,
 }: {
@@ -63,34 +44,43 @@ export function BondfirePlaybackScreen({
   backgroundColor: string
   bondfireId: Id<'bondfires'>
   bondfireData: BondfireDetailData
-  campContext: CampContext
+  canInvite: boolean
   videoItems: BondfireVideoItem[]
   currentVideoIndex: number
-  totalVideos: number
-  processingResponseCount: number
   isFocused: boolean
   isAppActive: boolean
   isScrubbing: boolean
-  showSettings: boolean
-  showNotepad: boolean
-  isInviteSheetOpen: boolean
   flatListRef: RefObject<FlatList<BondfireVideoItem> | null>
   onBackPress: () => void
-  onToggleSettings: () => void
-  onToggleNotepad: () => void
-  onCloseSettings: () => void
-  onCloseNotepad: () => void
-  onOpenInviteSheet: () => void
-  onCloseInviteSheet: () => void
-  onRespond: () => void
   onVideoComplete: () => void
   onProgress: (progress: number) => void
   onScrubbingChange: (scrubbing: boolean) => void
-  onViewableItemsChanged: ({ viewableItems }: { viewableItems: ViewToken[] }) => void
-  viewabilityConfig: { itemVisiblePercentThreshold: number }
+  onVideoIndexChange: (index: number) => void
   initialVideoIndex: number
   onScrollToIndexFailed: (info: ScrollToIndexFailedInfo) => void
 }) {
+  const router = useRouter()
+  const [showSettings, setShowSettings] = useState(false)
+  const [showNotepad, setShowNotepad] = useState(false)
+  const [isInviteSheetOpen, setIsInviteSheetOpen] = useState(false)
+  const totalVideos = videoItems.length
+  const processingResponseCount = bondfireData.processingResponses?.length ?? 0
+  const viewabilityConfig = useRef({
+    itemVisiblePercentThreshold: 50,
+  }).current
+  const onViewableItemsChanged = useCallback(
+    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      if (viewableItems.length > 0 && viewableItems[0].index !== null) {
+        onVideoIndexChange(viewableItems[0].index)
+      }
+    },
+    [onVideoIndexChange],
+  )
+  const handleRespond = useCallback(() => {
+    if (bondfireData.campStatus === 'archived') return
+    router.push(routes.createRespondTo(bondfireId))
+  }, [bondfireData.campStatus, bondfireId, router])
+
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
@@ -146,7 +136,7 @@ export function BondfirePlaybackScreen({
             </YStack>
 
             <XStack gap={8}>
-              <Pressable onPress={onToggleSettings}>
+              <Pressable onPress={() => setShowSettings((value) => !value)}>
                 <YStack
                   width={40}
                   height={40}
@@ -158,7 +148,7 @@ export function BondfirePlaybackScreen({
                   <Settings size={22} color={OVERLAY_COLORS.textPrimary} />
                 </YStack>
               </Pressable>
-              <Pressable onPress={onToggleNotepad}>
+              <Pressable onPress={() => setShowNotepad((value) => !value)}>
                 <YStack
                   width={40}
                   height={40}
@@ -248,20 +238,20 @@ export function BondfirePlaybackScreen({
                 height: 120,
               }}
             />
-            {campContext?.canInvite ? (
+            {canInvite ? (
               <XStack gap={12}>
                 <Button
                   variant="outline"
                   size="$lg"
                   flex={1}
-                  onPress={onOpenInviteSheet}
+                  onPress={() => setIsInviteSheetOpen(true)}
                   borderColor={OVERLAY_COLORS.textPrimary}
                 >
                   <Text color={OVERLAY_COLORS.textPrimary} fontWeight="700">
                     Share Bondfire
                   </Text>
                 </Button>
-                <Button variant="primary" size="$lg" flex={1} onPress={onRespond}>
+                <Button variant="primary" size="$lg" flex={1} onPress={handleRespond}>
                   <Flame size={18} color={OVERLAY_COLORS.textPrimary} />
                   <Text color={OVERLAY_COLORS.textPrimary} fontWeight="700">
                     Respond
@@ -269,7 +259,7 @@ export function BondfirePlaybackScreen({
                 </Button>
               </XStack>
             ) : (
-              <Button variant="primary" size="$lg" onPress={onRespond}>
+              <Button variant="primary" size="$lg" onPress={handleRespond}>
                 <Flame size={20} color={OVERLAY_COLORS.textPrimary} />
                 <Text color={OVERLAY_COLORS.textPrimary}>Add Your Response</Text>
               </Button>
@@ -297,14 +287,14 @@ export function BondfirePlaybackScreen({
           ))}
         </XStack>
 
-        {showSettings && <SettingsPopover onClose={onCloseSettings} />}
-        {showNotepad && <NotepadOverlay onClose={onCloseNotepad} />}
+        {showSettings && <SettingsPopover onClose={() => setShowSettings(false)} />}
+        {showNotepad && <NotepadOverlay onClose={() => setShowNotepad(false)} />}
 
         <InviteSheet
           mode="bondfire"
           id={bondfireId}
           open={isInviteSheetOpen}
-          onClose={onCloseInviteSheet}
+          onClose={() => setIsInviteSheetOpen(false)}
         />
       </YStack>
     </>
