@@ -64,6 +64,7 @@ interface ExpoPushMessage {
   sound?: 'default' | null
   badge?: number
   channelId?: string
+  threadId?: string
   priority?: 'default' | 'normal' | 'high'
 }
 
@@ -87,6 +88,16 @@ interface DeviceToken {
 }
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send'
+
+/** Map notification category → Android channel ID. Must match the client-side
+ * mapping in usePushNotifications.ts. iOS uses threadId (below) for grouping. */
+const CATEGORY_TO_CHANNEL: Record<string, string> = {
+  recording: 'bondfires-recording',
+  responses: 'bondfires-responses',
+  hearth: 'bondfires-hearth',
+  membership: 'bondfires-membership',
+  reminder: 'bondfires-reminders',
+}
 
 function uniqueUserIds(userIds: Array<Id<'users'>>) {
   return [...new Set(userIds)]
@@ -271,6 +282,12 @@ export const sendToUser = internalAction({
       tokenCount: expoTokens.length,
     })
 
+    // Route to the Android notification channel matching the push category.
+    // Falls back to 'bondfires-default' for uncategorized/test pushes.
+    // iOS ignores channelId — it uses threadId for visual grouping instead.
+    const channelId = args.category ? CATEGORY_TO_CHANNEL[args.category] ?? 'bondfires-default' : 'bondfires-default'
+    const threadId = args.category ? `bondfires-${args.category}` : undefined
+
     // Build messages for each token
     const messages: ExpoPushMessage[] = expoTokens.map((tokenDoc) => ({
       to: tokenDoc.token,
@@ -279,7 +296,8 @@ export const sendToUser = internalAction({
       data: args.data as Record<string, unknown> | undefined,
       sound: 'default',
       priority: 'high',
-      channelId: 'bondfires-default',
+      channelId,
+      ...(threadId ? { threadId } : {}),
     }))
 
     try {

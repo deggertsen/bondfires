@@ -5,17 +5,118 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { AppState, type AppStateStatus, Platform } from 'react-native'
 import { telemetry } from '../services/telemetry'
 
-const ANDROID_NOTIFICATION_CHANNEL_ID = 'bondfires-default'
+const ANDROID_DEFAULT_CHANNEL_ID = 'bondfires-default'
+
+/**
+ * Android notification channels — 1:1 with in-app notification preference
+ * categories. Each channel lets the user control sound, importance, and
+ * visibility per category from Android system settings.
+ *
+ * Importance levels (set at creation; user can override in system settings):
+ * - high:    heads-up notification + sound
+ * - default: shows in shade + sound
+ * - low:     shows in shade, no sound
+ *
+ * Once a channel is created, its importance can't be changed programmatically.
+ * Only the user can change it via system settings. To "reset" a channel
+ * (e.g. after the user disabled it in OS settings then re-enabled in-app),
+ * we delete and recreate it.
+ */
+interface AndroidChannelDef {
+  channelId: string
+  name: string
+  description: string
+  importance: Notifications.AndroidImportance
+}
+
+const ANDROID_CATEGORY_CHANNELS: AndroidChannelDef[] = [
+  {
+    channelId: 'bondfires-recording',
+    name: 'Camp activity',
+    description: 'New Bondfires and live streams in your camps',
+    importance: Notifications.AndroidImportance.DEFAULT,
+  },
+  {
+    channelId: 'bondfires-responses',
+    name: 'Responses',
+    description: 'Responses to Bondfires you\'ve participated in',
+    importance: Notifications.AndroidImportance.HIGH,
+  },
+  {
+    channelId: 'bondfires-hearth',
+    name: 'Hearths',
+    description: 'Your private Bondfires and who joins them',
+    importance: Notifications.AndroidImportance.HIGH,
+  },
+  {
+    channelId: 'bondfires-membership',
+    name: 'Invites & membership',
+    description: 'Shared Bondfires, access requests, approvals',
+    importance: Notifications.AndroidImportance.DEFAULT,
+  },
+  {
+    channelId: 'bondfires-reminders',
+    name: 'Reminders',
+    description: 'Daily digest of videos waiting for you',
+    importance: Notifications.AndroidImportance.LOW,
+  },
+]
+
+/** All channel IDs including the legacy default. */
+const ALL_CHANNEL_IDS = [
+  ANDROID_DEFAULT_CHANNEL_ID,
+  ...ANDROID_CATEGORY_CHANNELS.map((c) => c.channelId),
+]
 
 async function ensureAndroidNotificationChannel() {
   if (Platform.OS !== 'android') return
 
-  await Notifications.setNotificationChannelAsync(ANDROID_NOTIFICATION_CHANNEL_ID, {
+  // Legacy default channel — kept as fallback for pushes without a category
+  // (e.g. test sends) and for old-client compatibility during rollout.
+  await Notifications.setNotificationChannelAsync(ANDROID_DEFAULT_CHANNEL_ID, {
     name: 'Bondfires',
     importance: Notifications.AndroidImportance.MAX,
     vibrationPattern: [0, 250, 250, 250],
     lightColor: '#FF6B35',
   })
+
+  // Category channels — 1:1 with in-app preference categories
+  for (const channel of ANDROID_CATEGORY_CHANNELS) {
+    await Notifications.setNotificationChannelAsync(channel.channelId, {
+      name: channel.name,
+      description: channel.description,
+      importance: channel.importance,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#FF6B35',
+    })
+  }
+}
+
+/** Delete and recreate a channel to reset its enabled state and defaults.
+ * Used when the user re-enables a category in-app after disabling it in
+ * Android system settings. */
+async function resetAndroidChannel(channelId: string) {
+  if (Platform.OS !== 'android') return
+
+  const def = ANDROID_CATEGORY_CHANNELS.find((c) => c.channelId === channelId)
+  if (!def) return
+
+  try {
+    await Notifications.deleteNotificationChannelAsync(channelId)
+    await Notifications.setNotificationChannelAsync(def.channelId, {
+      name: def.name,
+      description: def.description,
+      importance: def.importance,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#FF6B35',
+    })
+    telemetry.breadcrumb('push:channel:reset', { channelId })
+  } catch (e) {
+    telemetry.warn('push:channel:reset', 'Failed to reset Android channel', {
+      channelId,
+      error: e instanceof Error ? e.message : String(e),
+    })
+  }
 }
 
 // Configure how notifications are handled when app is in foreground
@@ -57,6 +158,17 @@ export interface UsePushNotificationsOptions {
   registerTokenMutation?: (params: TokenRegistrationParams) => Promise<void>
   // Convex mutation to unregister device token
   unregisterTokenMutation?: (params: TokenUnregistrationParams) => Promise<void>
+  // Convex mutation to update notification preferences (for Android channel sync)
+  updatePreferencesMutation?: (params: {
+    recordingActivity?: boolean
+    responses?: boolean
+    reminders?: boolean
+    invitesAndMembership?: boolean
+    hearth?: boolean
+    digestWindowHour?: number
+  }) => Promise<void>
+  // Convex query to get current notification preferences (for Android channel sync)
+  getPreferencesQuery?: () => { recordingActivity: boolean; responses: boolean; reminders: boolean; invitesAndMembership: boolean; hearth: boolean; digestWindowHour: number } | null | undefined
   // Called when a notification is received while app is in foreground
   onNotificationReceived?: (notification: Notifications.Notification) => void
   // Called when user taps on a notification
@@ -82,6 +194,21 @@ export interface UsePushNotificationsResult {
    */
   registerIfGranted: () => Promise<boolean>
   unregister: () => Promise<void>
+  /**
+   * Syncs in-app notification preferences with Android channel enabled states.
+   * Call on app foreground. Reads each category channel's importance — if the
+   * user disabled it in Android settings (importance === NONE), updates the
+   * in-app preference to false. Returns the set of categories that changed.
+   * Android only; no-op on iOS.
+   */
+  syncAndroidChannelPrefs: () => Promise<{ recordingActivity?: boolean; responses?: boolean; hearth?: boolean; invitesAndMembership?: boolean; reminders?: boolean }>
+  /**
+   * Resets an Android notification channel for a category that was disabled at
+   * the OS level. Deletes and recreates the channel so it's enabled again with
+   * our default importance. Call this when the in-app toggle goes off → on AND
+   * the corresponding Android channel is OS-disabled. Android only; no-op on iOS.
+   */
+  resetChannelForCategory: (categoryKey: string) => Promise<void>
 }
 
 export function usePushNotifications(
@@ -486,6 +613,140 @@ export function usePushNotifications(
     checkInitialStatus()
   }, [getExpoPushToken, registerWithBackend, setStoredExpoPushToken])
 
+  // ── Android channel ↔ in-app preference sync ──
+
+  /** Map in-app category keys to Android channel IDs. */
+  const CATEGORY_KEY_TO_CHANNEL: Record<string, string> = {
+    recordingActivity: 'bondfires-recording',
+    responses: 'bondfires-responses',
+    hearth: 'bondfires-hearth',
+    invitesAndMembership: 'bondfires-membership',
+    reminders: 'bondfires-reminders',
+  }
+
+
+  // Sync Android channel state → in-app preferences. Reads each channel's
+  // importance — if the user disabled it in Android settings (importance ===
+  // NONE), updates the in-app preference to false. Returns categories that changed.
+  const syncAndroidChannelPrefs = useCallback(async (): Promise<{
+    recordingActivity?: boolean
+    responses?: boolean
+    hearth?: boolean
+    invitesAndMembership?: boolean
+    reminders?: boolean
+  }> => {
+    if (Platform.OS !== 'android') return {}
+
+    const prefs = options.getPreferencesQuery?.()
+    if (!prefs) {
+      telemetry.breadcrumb('push:channel:sync:skip', { reason: 'no_prefs_query' })
+      return {}
+    }
+
+    const changes: Partial<{
+      recordingActivity: boolean
+      responses: boolean
+      hearth: boolean
+      invitesAndMembership: boolean
+      reminders: boolean
+    }> = {}
+    const updates: Partial<{
+      recordingActivity: boolean
+      responses: boolean
+      hearth: boolean
+      invitesAndMembership: boolean
+      reminders: boolean
+    }> = {}
+
+    type CategoryKey = 'recordingActivity' | 'responses' | 'hearth' | 'invitesAndMembership' | 'reminders'
+
+    for (const [categoryKey, channelId] of Object.entries(CATEGORY_KEY_TO_CHANNEL)) {
+      try {
+        const channel = await Notifications.getNotificationChannelAsync(channelId)
+        if (!channel) {
+          // Channel doesn't exist yet — nothing to sync
+          continue
+        }
+
+        const osDisabled = channel.importance === Notifications.AndroidImportance.NONE
+        const inAppEnabled = prefs[categoryKey as keyof typeof prefs]
+
+        if (osDisabled && inAppEnabled) {
+          // User disabled this channel in Android settings — sync in-app pref to off
+          telemetry.breadcrumb('push:channel:sync:disabled', {
+            channelId,
+            categoryKey,
+            importance: channel.importance,
+          })
+          changes[categoryKey as CategoryKey] = false
+          updates[categoryKey as CategoryKey] = false
+        }
+      } catch (e) {
+        telemetry.warn('push:channel:sync', 'Error checking channel state', {
+          channelId,
+          error: e instanceof Error ? e.message : String(e),
+        })
+      }
+    }
+
+    if (Object.keys(updates).length > 0 && options.updatePreferencesMutation) {
+      try {
+        await options.updatePreferencesMutation(updates as {
+          recordingActivity?: boolean
+          responses?: boolean
+          reminders?: boolean
+          invitesAndMembership?: boolean
+          hearth?: boolean
+          digestWindowHour?: number
+        })
+        telemetry.breadcrumb('push:channel:sync:applied', { updates })
+      } catch (e) {
+        telemetry.warn('push:channel:sync', 'Failed to update preferences from channel sync', {
+          error: e instanceof Error ? e.message : String(e),
+        })
+      }
+    }
+
+    return changes
+  }, [options])
+
+  // Reset (delete + recreate) an Android channel for a category that was
+  // disabled at the OS level. Used when the in-app toggle goes off → on.
+  const resetChannelForCategory = useCallback(async (categoryKey: string): Promise<void> => {
+    if (Platform.OS !== 'android') return
+
+    const channelId = CATEGORY_KEY_TO_CHANNEL[categoryKey]
+    if (!channelId) {
+      telemetry.breadcrumb('push:channel:reset:skip', { reason: 'unknown_category', categoryKey })
+      return
+    }
+
+    try {
+      const channel = await Notifications.getNotificationChannelAsync(channelId)
+      if (!channel) {
+        // Channel doesn't exist — create it via ensureAndroidNotificationChannel
+        await ensureAndroidNotificationChannel()
+        return
+      }
+
+      if (channel.importance === Notifications.AndroidImportance.NONE) {
+        // Channel is OS-disabled — delete and recreate to reset to enabled
+        await resetAndroidChannel(channelId)
+      } else {
+        telemetry.breadcrumb('push:channel:reset:skip', {
+          reason: 'channel_not_disabled',
+          channelId,
+          importance: channel.importance,
+        })
+      }
+    } catch (e) {
+      telemetry.warn('push:channel:reset', 'Error resetting channel', {
+        channelId,
+        error: e instanceof Error ? e.message : String(e),
+      })
+    }
+  }, [])
+
   return {
     expoPushToken,
     isRegistered,
@@ -493,5 +754,7 @@ export function usePushNotifications(
     requestPermissions,
     registerIfGranted,
     unregister,
+    syncAndroidChannelPrefs,
+    resetChannelForCategory,
   }
 }

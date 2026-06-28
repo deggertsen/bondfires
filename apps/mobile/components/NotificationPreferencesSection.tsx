@@ -3,6 +3,7 @@ import { useMutation, useQuery } from 'convex/react'
 import { Pressable } from 'react-native'
 import { Separator, Switch, XStack, YStack } from 'tamagui'
 import { api } from '../../../convex/_generated/api'
+import { resetChannelForCategory, telemetry } from '@bondfires/app'
 
 /**
  * Per-category push preference toggles + digest window picker, shown under
@@ -71,7 +72,19 @@ export function NotificationPreferencesSection() {
             size="$2"
             checked={prefs[category.key]}
             onCheckedChange={(checked: boolean) => {
+              const wasEnabled = prefs[category.key]
               updatePreferences({ [category.key]: checked })
+              if (checked && !wasEnabled) {
+                // Toggle went off → on: if the user previously disabled this
+                // category's Android channel in system settings, reset it
+                // (delete + recreate) so pushes can come through again.
+                telemetry.breadcrumb('push:settings:category:enable', { category: category.key })
+                resetChannelForCategory(category.key).catch(() => {
+                  // Best-effort — non-fatal if channel reset fails
+                })
+              } else if (!checked && wasEnabled) {
+                telemetry.breadcrumb('push:settings:category:disable', { category: category.key })
+              }
             }}
             backgroundColor={'$borderColor'}
           >

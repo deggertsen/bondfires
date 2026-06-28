@@ -1,0 +1,277 @@
+# Video Emoji Reactions
+
+**Author(s):** David (mavrick2424) + Forge
+**Date:** 2026-06-27
+**Status:** Draft
+**Complexity:** Large
+
+---
+
+# ONE-PAGER
+
+## Diagnosis
+
+Bondfires videos are a passive viewing experience today — you watch, maybe respond, but there's no lightweight way to react in the moment. Adding emoji reactions tied to specific timestamps creates social reward and engagement without the commitment of recording a response video.
+
+## Current Gaps
+
+- No lightweight engagement mechanism during video playback
+- Report button is the only interactive control on the right side, and it's rarely used
+- No social signal that others have watched and reacted to a video
+
+## Solution Summary
+
+Add an emoji reaction system to the video player. A button on the right side (replacing Report's current position; Report moves to left side above creator info) opens a floating 4x4 emoji grid with a side column for frequently-used emojis. Free users get 3 emojis (pray, heart, fire); paid users get the full set. Tapping an emoji saves a reaction at the current video timestamp with the user's avatar + emoji. During playback, all reactions animate at their recorded timestamps — the reactor's avatar appears on the left side with the emoji growing from it, then fades. Reactions stack vertically when concurrent. Delivery is optimistic (local animation fires immediately, Convex persist in background).
+
+## Not Doing (Out of Scope)
+
+- Live stream reactions (VOD only for v1; schema designed to support live later)
+- Feed-level reaction indicators (counts, emoji bubbles on thumbnails)
+- Server-side throttle enforcement (client-side only)
+- Custom emoji assets (using native Unicode emojis)
+- Reaction deletion or editing by users
+- Notification on reaction received
+- Phase 2 consideration: Real-time reaction delivery for live streams
+- Phase 2 consideration: Reaction summary on feed thumbnails
+
+---
+
+# VERIFICATION CONTRACT
+
+## Success Criteria
+
+### Must Have
+
+- [ ] **Emoji button replaces Report button position on right side controls**
+  - *Verify by:* Open video player, emoji button visible on right side where Report was. Report button is now on left side above creator info.
+- [ ] **Tapping emoji button opens a floating 4x4 grid with slightly transparent background**
+  - *Verify by:* Tap emoji button while watching a video. Grid appears near button location. Video is still visible through the transparent background. Grid does not dim or modal-block the video.
+- [ ] **Grid shows a right-side single column for frequently-used emojis**
+  - *Verify by:* When grid is open, a separate column is visible on the right side of the main 4x4 grid showing recently-used emojis.
+- [ ] **Free users see 3 emojis (pray, heart, fire) in the main grid; all other emojis are grayed out with a lock icon**
+  - *Verify by:* Log in as free-tier user, open emoji grid. Pray, heart, fire are fully colored and tappable. All other emojis are grayed with a lock overlay. Tapping a locked emoji shows an upgrade prompt.
+- [ ] **Free users' 3 emojis always appear in the recent column without tracking**
+  - *Verify by:* As a free user, the recent column always shows pray, heart, fire regardless of usage.
+- [ ] **Paid users see full emoji set, all tappable, with recent emojis tracked per-user**
+  - *Verify by:* As a paid user, all emojis are colored and tappable. Tap several emojis. Reopen grid — recently tapped emojis appear in the right column sorted by frequency.
+- [ ] **Tapping an available emoji saves a reaction at the current video timestamp**
+  - *Verify by:* Note current video time. Tap an emoji. Check Convex dashboard — a `videoReactions` record exists with the correct video reference, userId, emoji, and timestampMs matching the video position at tap time.
+- [ ] **Reaction animation: user's avatar appears on left side with emoji growing from it, then fades**
+  - *Verify by:* Tap an emoji while watching. Avatar image (user's photoUrl) appears on the left side of the video player. Emoji renders growing over the avatar. Both fade away after ~1-2 seconds.
+- [ ] **Optimistic local animation fires immediately on tap**
+  - *Verify by:* Tap emoji. Animation starts within 1 frame (no visible delay waiting for network). If network fails, no error toast is shown to user (silent failure, reaction just doesn't persist).
+- [ ] **Reactions replay at their recorded timestamp for all viewers**
+  - *Verify by:* User A reacts at 0:15. User B watches the same video. At 0:15, User A's avatar + emoji animate on the left side. User A watches the same video again — their own reaction replays at 0:15.
+- [ ] **Concurrent reactions (same or near-same timestamp) stack vertically in received order**
+  - *Verify by:* Multiple users react within ~500ms of each other. During playback, all reactions at that timestamp animate simultaneously, stacked vertically on the left side in creation order.
+- [ ] **Client-side throttle: max 1 reaction per 5 seconds per user**
+  - *Verify by:* Tap an emoji, then immediately tap another. Second tap is ignored (no animation, no save). Wait 5 seconds, tap again — works.
+- [ ] **Report button works from new left-side position**
+  - *Verify by:* Pause video. Tap Report button on left side. Report overlay opens as before. Submit a report — works as before.
+- [ ] **Reactions only render for VOD videos (not live)**
+  - *Verify by:* Open a live stream. Emoji button is not visible. (VOD-only for v1.)
+- [ ] **TypeScript compiles clean**
+  - *Verify by:* `npx tsc --noEmit` passes with zero errors
+- [ ] **Convex functions typecheck**
+  - *Verify by:* `npx convex dev --typecheck` passes
+
+### Nice to Have
+
+- [ ] **Haptic feedback on emoji tap**
+  - *Verify by:* Tap emoji on iOS — light haptic. On Android — subtle vibration.
+- [ ] **Reaction count badge on emoji button**
+  - *Verify by:* Emoji button shows a small count badge of total reactions on this video.
+
+## Verification Scenarios
+
+### Happy Path
+
+1. **Given** a paid user watching a VOD bondfire video, **when** they tap the emoji button, **then** a floating 4x4 grid opens with a transparent background showing the full emoji set and a recent-emojis column on the right.
+2. **Given** the emoji grid is open, **when** the user taps 🔥 at 0:12 in the video, **then** the grid closes, the user's avatar appears on the left side with 🔥 growing from it, the animation fades after ~1.5s, and a `videoReactions` record is saved with timestampMs matching 0:12.
+3. **Given** a different user watches the same video, **when** playback reaches 0:12, **then** the first user's avatar + 🔥 animation plays on the left side.
+4. **Given** the original reactor rewatches the same video, **when** playback reaches 0:12, **then** their own reaction replays.
+5. **Given** a free user opens the emoji grid, **when** they tap a locked emoji, **then** an upgrade prompt appears and no reaction is saved.
+6. **Given** a user taps an emoji, **when** they tap another within 5 seconds, **then** the second tap is ignored.
+
+### Edge Cases
+
+1. **Given** a video with 20+ reactions at the same timestamp, **when** playback reaches that point, **then** all reactions animate simultaneously stacked vertically. If the stack exceeds available vertical space, earlier (older) reactions are pushed off-screen (FIFO).
+2. **Given** a user with no profile photo (photoUrl is null), **when** they react, **then** a default avatar placeholder (Flame icon in branded circle, matching the creator avatar style) is used instead.
+3. **Given** the network is unavailable, **when** a user taps an emoji, **then** the optimistic animation plays locally but no reaction is persisted. No error is shown. The reaction does not replay on future viewings.
+4. **Given** a user is scrubbing (dragging the progress bar), **when** playback crosses a reaction timestamp during scrub, **then** reactions at that timestamp do not animate (skip animation during scrub, resume normal behavior when scrub ends).
+5. **Given** a live stream is playing, **when** the user views the player, **then** the emoji button is not shown.
+6. **Given** a user rapidly taps the emoji button, **when** the grid is already open, **then** it toggles closed (no multi-open).
+
+### Regression Checks
+
+- Report button functionality is unchanged (same overlay, same flow) — only position changed
+- Mute button still works from right side controls
+- Play/pause overlay still functions
+- Progress bar scrubbing still works
+- Video preloading (previous/current/next) still works
+- Creator info display is unchanged
+- `npx tsc --noEmit` passes
+- `npx convex dev --typecheck` passes
+- Existing Convex queries/mutations are unaffected
+
+## Automated Tests
+
+- **Convex mutation test:** Create reaction → verify record exists with correct fields → verify duplicate prevention logic
+- **Convex query test:** Insert N reactions at various timestamps → query by video → verify sorted by timestampMs ascending
+- **Validation commands:** `npx tsc --noEmit`, `npx convex dev --typecheck`
+
+---
+
+# IMPLEMENTATION CONTEXT
+
+## Required Reading
+
+- `apps/mobile/app/(main)/bondfire/[id].tsx` — VideoPlayer component (lines 118-810), right-side controls (lines 778-800), creator info (lines 762-776), progress tracking (lines 290-350). This is where the emoji button, grid, and animation integrate.
+- `apps/mobile/components/ReportButton.tsx` — Current Report button component being relocated
+- `apps/mobile/components/videoOverlayColors.ts` — Overlay color constants (use these for the emoji grid and animation styling)
+- `convex/schema.ts` — Schema file where `videoReactions` table will be added (after `reports` table, ~line 656+)
+- `convex/errors.ts` — `withUserFacingActionErrors` pattern for Convex mutations
+- `packages/app/src/store/subscription.store.ts` — `tierMeetsRequirement` function for tier gating
+- `packages/app/src/hooks/useSubscription.ts` — `useSubscription` hook for getting current user's tier
+- `packages/app/src/store/subscription.store.ts` — `subscriptionStore$.currentTier` for tier checks
+
+## Strategy & Constraints
+
+**General approach:** Two PRs — backend first (schema + Convex functions), then frontend (UI + animation). Backend PR must be reviewed and merged before frontend work begins.
+
+### Backend PR (Schema + Convex Functions)
+
+**New table:** `videoReactions` in `convex/schema.ts`
+
+```
+videoReactions: defineTable({
+  // Video reference — exactly one must be set (enforced in mutation)
+  bondfireId: v.optional(v.id('bondfires')),
+  bondfireVideoId: v.optional(v.id('bondfireVideos')),
+
+  // Reactor info (denormalized for playback performance — no joins needed)
+  userId: v.id('users'),
+  userDisplayName: v.optional(v.string()),
+  userPhotoUrl: v.optional(v.string()),
+
+  // Reaction data
+  emoji: v.string(),         // Unicode emoji character
+  timestampMs: v.number(),    // Position in the video (ms from start)
+
+  // Timestamps
+  createdAt: v.number(),
+})
+  // Primary query: get reactions for a bondfire ordered by time
+  .index('by_bondfire', ['bondfireId', 'timestampMs'])
+  // Query reactions for a response video
+  .index('by_bondfire_video', ['bondfireVideoId', 'timestampMs'])
+  // Prevent duplicate reactions (same user + same video + same emoji + same timestamp)
+  .index('by_user_video', ['userId', 'bondfireId', 'createdAt'])
+```
+
+**New file:** `convex/videoReactions.ts`
+
+Functions:
+- `addReaction(bondfireId?, bondfireVideoId?, emoji, timestampMs)` — mutation. Validates exactly one video reference is set. Denormalizes userDisplayName + userPhotoUrl from users table at creation time. Returns the created reaction or null on failure.
+- `getReactions(bondfireId?, bondfireVideoId?)` — query. Returns all reactions for a video sorted by timestampMs ascending. Uses the appropriate index based on which ID is provided.
+- `getRecentEmojis(userId)` — query. Returns the user's most frequently used emojis (aggregate from videoReactions by userId, group by emoji, count, sort desc, limit ~16). Free users don't need this (they always see the 3 free emojis).
+
+**Mutation validation:**
+- Exactly one of `bondfireId` / `bondfireVideoId` must be set
+- `emoji` must be a non-empty string (client validates it's in the allowed set)
+- `timestampMs` must be >= 0
+- Get user from `ctx.auth.getUserIdentity()` — denormalize `displayName` and `photoUrl` into the reaction record
+- No server-side throttle (client-side only per product decision)
+
+### Frontend PR (UI + Animation)
+
+**New files:**
+- `apps/mobile/components/EmojiReactionButton.tsx` — The trigger button (replaces Report button position on right side)
+- `apps/mobile/components/EmojiReactionGrid.tsx` — Floating 4x4 grid + recent column, transparent background, lock icons for free users
+- `apps/mobile/components/ReactionAnimation.tsx` — Avatar + emoji growing animation, renders on left side of video
+- `apps/mobile/components/ReactionPlayback.tsx` — Manages loading reactions from Convex and triggering animations at correct timestamps during playback
+- `apps/mobile/constants/emojis.ts` — `FREE_EMOJIS` (['🙏', '❤️', '🔥']), `ALL_EMOJIS` (4x4 = 16 emojis), and helper to check if an emoji is free-tier
+
+**Modified files:**
+- `apps/mobile/app/(main)/bondfire/[id].tsx` — Replace ReportButton on right side with EmojiReactionButton. Move ReportButton to left side above creator info. Integrate ReactionPlayback and ReactionAnimation components. Wire up emoji tap → optimistic animation → Convex mutation.
+
+**State management (Legend State):**
+- Local component state for the VideoPlayer: add `emojiGridOpen`, `recentEmojis` to the existing `state$` observable
+- A new observable for active reaction animations (list of {id, photoUrl, emoji, timestampMs} that are currently animating)
+
+**Animation approach:**
+- Use React Native `Animated` API (already imported in the file) — consistent with existing pendingPulse animation pattern
+- Avatar fades in on left side → emoji scales from 0.5x to 1.5x over 800ms → both fade out over 400ms
+- Total animation duration: ~1.5s
+- Concurrent reactions stack vertically: each reaction gets a vertical position offset based on its index in the concurrent batch
+
+**Playback integration:**
+- Load reactions via `useQuery(api.videoReactions.getReactions, { bondfireId })` or `{ bondfireVideoId }` when video becomes active
+- Monitor `player.currentTime` in the existing progress interval (lines 331-347) — when currentTime crosses a reaction's timestampMs, trigger the animation
+- Track which reactions have already animated this playback cycle to avoid re-triggering on slight time fluctuations
+- Skip animation triggers during scrubbing (check `isScrubbingRef.current`)
+
+**Tier gating:**
+- Import `useSubscription` hook, get `currentTier`
+- Use `tierMeetsRequirement(currentTier, 'plus')` to determine if user has paid access
+- Free users: main grid shows all emojis but non-free ones are grayed with lock overlay. Tapping a locked emoji calls `showPaywall()` from subscription store.
+- Recent column for free users: always shows the 3 free emojis (no tracking needed)
+- Recent column for paid users: fetched from `getRecentEmojis` query, updated on each new reaction
+
+**Optimistic animation:**
+- On emoji tap: immediately trigger local animation with current user's photoUrl + selected emoji
+- Fire Convex mutation in background (no await)
+- On failure: silent (no error toast, reaction just doesn't persist)
+- Add the optimistic reaction to a local "pending reactions" list so it animates immediately even before Convex confirms
+
+**Throttle implementation:**
+- `lastReactionTime` ref in VideoPlayer
+- On emoji tap: check `Date.now() - lastReactionTime.current < 5000` → if true, ignore tap
+- If false: proceed with reaction, update `lastReactionTime.current = Date.now()`
+
+**Patterns to follow:**
+- Follow existing overlay color pattern: use `VIDEO_OVERLAY_COLORS` from `videoOverlayColors.ts`
+- Follow existing pill button style: 44x44 with borderRadius 22, matching mute button and (former) report button
+- Follow Legend State patterns: `useObservable` for component state, `useValue` to read
+- Follow existing `useQuery` / `useMutation` patterns from the file for Convex integration
+- Follow `Animated.timing` pattern from existing `pendingPulse` animation (lines 895-905)
+
+**Anti-patterns (do NOT do these):**
+- DO NOT use React useState for complex animation state — use Legend State or refs
+- DO NOT create a new abstraction layer for the emoji picker — keep it as a focused component
+- DO NOT refactor the existing VideoPlayer component structure — add to it, don't restructure
+- DO NOT use Reanimated for the animation (the file uses RN Animated, stay consistent)
+- DO NOT add server-side throttle (client-side only per product decision)
+- DO NOT bloat the bondfires or bondfireVideos tables with embedded reactions — separate table
+- DO NOT join the users table during reaction playback — denormalized fields are the performance path
+
+**Key files for reference:**
+- `apps/mobile/app/(main)/bondfire/[id].tsx:778-800` — Right side controls (where emoji button goes, where Report was)
+- `apps/mobile/app/(main)/bondfire/[id].tsx:762-776` — Creator info (Report moves above this)
+- `apps/mobile/app/(main)/bondfire/[id].tsx:290-350` — Progress tracking (where reaction playback timing integrates)
+- `apps/mobile/app/(main)/bondfire/[id].tsx:895-905` — Existing Animated.timing pattern
+- `apps/mobile/components/ReportButton.tsx` — Pill button style reference
+- `apps/mobile/components/ReportOverlay.tsx` — Report overlay (unchanged, just repositioned trigger)
+- `packages/app/src/store/subscription.store.ts:358-362` — `tierMeetsRequirement` function
+
+## Complexity Budget
+
+**Target tier:** Large
+**Acceptable range:** 600-1500 net new production lines (excluding test code)
+
+No complexity cap — the priority is a complete, bug-free, performant implementation. If it needs more lines to be done right, that's fine.
+
+## Process
+
+- **PR 1 (Backend):** Schema + Convex functions. Review before proceeding to PR 2.
+- **PR 2 (Frontend):** UI + animation + playback integration. Targets `main` branch.
+- Agent implements autonomously through completion of each PR.
+- **Verification is the primary activity.** Walk through every scenario and Must Have criterion twice — once after building, once after tests.
+- If stuck, try to resolve independently first. Escalate only if truly blocked.
+- **Definition of done = all success criteria verified.**
+
+## Open Questions
+
+- [ ] What are the 16 emojis for the full 4x4 grid? (David to confirm the set — suggested: 🙏 ❤️ 🔥 😂 😮 👏 💪 🙌 💯 ✅ 👀 🎉 😢 😍 🤔 👍)
+- [ ] Should the emoji grid auto-close after selecting an emoji, or stay open for multiple quick reactions? (Suggested: auto-close after selection, reopen for next reaction — this naturally enforces the 5-second throttle visually)
+- [ ] For the "recent emojis" column for paid users — how many should be shown? The column height should match 4 rows, so 4 recent emojis? Or should the column be taller? (Suggested: 4 recent emojis to match grid height)

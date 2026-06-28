@@ -1,0 +1,252 @@
+# Viewer Presence Indicator
+
+**Author(s):** David (mavrick2424) + Forge
+**Date:** 2026-06-27
+**Status:** Draft
+**Complexity:** Medium
+
+---
+
+# ONE-PAGER
+
+## Diagnosis
+
+When a user records or watches a bondfire video, they have no signal that others are viewing alongside them. This misses a key community moment — knowing someone is there in real time adds social warmth and lets the recorder address their audience directly.
+
+## Current Gaps
+
+- No real-time presence system exists. `watchEvents` records one-shot analytics events (start, milestones, complete) but doesn't track who is actively viewing.
+- No UI element on the recording screen or playback screen shows concurrent viewers.
+- No heartbeat or presence mechanism exists in the Convex backend.
+
+## Solution Summary
+
+Add a lightweight presence system: viewers in the single-video thread view (`bondfire/[id].tsx`) send a heartbeat mutation every 30 seconds while the video is on-screen. A reactive Convex query pushes the current viewer list to all participants in real time. Both the recording screen (`LiveRecordScreen.tsx`) and the playback screen show a vertical avatar stack in the top-left, below the back button, with each viewer's photo and a "watching" label. The stack caps at 5 visible avatars and becomes scrollable beyond that.
+
+## Not Doing (Out of Scope)
+
+- Feed-level presence (`feed.tsx` does not participate)
+- Presence on the legacy recording path (`LegacyRecordScreen.tsx` — bug fixes only)
+- Showing yourself in the viewer list (always exclude current user)
+- Presence notifications or push alerts
+- Viewer counts or "X people watched" retrospective analytics (existing `watchEvents` covers that)
+- Phase 2 consideration: presence on the feed swipe view
+- Phase 2 consideration: "who's online" global indicator
+
+---
+
+# VERIFICATION CONTRACT
+
+## Success Criteria
+
+### Must Have
+
+- [ ] **Presence heartbeat fires while viewing a video in the thread view**
+  - *Verify by:* Open `bondfire/[id].tsx`, check Convex logs/dashboard for heartbeat mutations every ~30s with correct `videoType` + `videoId` + `userId`.
+- [ ] **Heartbeat stops when the user leaves the screen, backgrounds the app, or the video goes inactive**
+  - *Verify by:* Navigate away or background the app → no further heartbeat mutations fire. A `leaveViewing` mutation is called on unmount/blur.
+- [ ] **Avatar stack renders on the playback screen below the back button**
+  - *Verify by:* Open a bondfire thread with 2+ concurrent viewers → see avatars stacked vertically in the top-left, positioned below the "Campground" back button pill. Each avatar shows the viewer's profile photo with "watching" text below it.
+- [ ] **Avatar stack renders on the recording screen below the X button**
+  - *Verify by:* Start recording a live bondfire with a viewer watching → recorder sees the viewer's avatar in the top-left below the X/close button.
+- [ ] **Current user is excluded from the list**
+  - *Verify by:* Open your own bondfire thread → you do not see your own avatar in the viewer stack.
+- [ ] **Stack caps at 5 avatars and becomes scrollable**
+  - *Verify by:* Simulate 6+ concurrent viewers → only 5 avatars are visible, the stack scrolls vertically to reveal the rest.
+- [ ] **Empty state is invisible — no UI shown when no viewers are present**
+  - *Verify by:* Open a bondfire with no other viewers → the avatar stack area renders nothing, no empty-state placeholder.
+- [ ] **Presence is scoped to the specific video, not the bondfire thread**
+  - *Verify by:* User A watches the spark video, User B watches response #2 → User A only sees User B if they're both viewing the same video. Switching videos changes the presence list.
+- [ ] **Stale presence entries are cleaned up by a scheduled cron**
+  - *Verify by:* Close the app (no `leaveViewing` call) → after ~65s the viewer's presence row is pruned by the cleanup job and disappears from all clients via reactive query update.
+- [ ] **TypeScript compiles clean**
+  - *Verify by:* `npx tsc --noEmit` exits 0.
+- [ ] **Convex functions typecheck**
+  - *Verify by:* `npx convex dev --typecheck` exits 0.
+
+### Nice to Have
+
+- [ ] **Smooth fade-in/out animation when viewers join/leave**
+  - *Verify by:* A viewer joins → their avatar fades in over ~200ms. A viewer leaves → fades out.
+- [ ] **Avatar tap opens user's profile (if feasible given navigation constraints)**
+  - *Verify by:* Tap a viewer's avatar → navigates to their profile or shows a tooltip with their name.
+
+## Verification Scenarios
+
+### Happy Path
+
+1. **Given** David records a live bondfire, **when** Jake opens the bondfire thread and watches the live stream, **then** David sees Jake's avatar appear in the top-left of his recording screen within ~30s (next heartbeat cycle).
+2. **Given** Jake is watching a VOD bondfire thread, **when** David also opens the same thread, **then** Jake sees David's avatar appear in the top-left of the playback screen.
+3. **Given** 3 viewers are watching the same video, **when** each looks at the screen, **then** they each see the other 2 avatars stacked vertically (excluding themselves).
+
+### Edge Cases
+
+1. **Given** a viewer closes the app abruptly (no `leaveViewing` call), **when** 65 seconds pass, **then** the cleanup cron prunes their stale presence and they disappear from all clients.
+2. **Given** a viewer is watching response #3, **when** they swipe to response #4, **then** they leave response #3's presence and join response #4's presence. The presence list updates for both videos.
+3. **Given** 8 viewers are watching the same video, **then** only 5 avatars are visible at once and the stack is scrollable to see the remaining 3.
+4. **Given** the only viewer is the video owner, **then** no avatar stack is rendered (empty state is invisible).
+5. **Given** a viewer backgrounds the app, **then** heartbeats stop and a `leaveViewing` mutation fires. Their presence expires after the cleanup threshold.
+6. **Given** the recording screen is in the pre-connected phase (not yet live), **then** no viewer stack is shown (there's nothing to watch yet).
+
+### Regression Checks
+
+- Existing feed behavior unaffected — `feed.tsx` does not send heartbeats or show presence.
+- Existing `watchEvents` analytics still fire correctly and independently.
+- Recording screen performance is not impacted — the presence query is a single indexed lookup, the heartbeat is a 30s interval, and the avatar render count is capped.
+- Playback screen performance is not impacted — the presence query runs alongside existing `bondfires.getWithVideos` query without additional joins.
+- `npx tsc --noEmit` passes.
+- `npx convex dev --typecheck` passes.
+
+## Automated Tests
+
+- **Behavioral test:** N/A — manual testing on device for v1. Presence is a cross-client real-time feature that's difficult to unit test meaningfully.
+- **Validation commands:** `npx tsc --noEmit`, `npx convex dev --typecheck`
+
+---
+
+# IMPLEMENTATION CONTEXT
+
+## Required Reading
+
+- `convex/schema.ts` — full database schema; understand `watchEvents` and `liveSessions` tables for context
+- `convex/crons.ts` — existing cron registration pattern; add the new cleanup job here
+- `apps/mobile/app/(main)/bondfire/[id].tsx` — playback screen; the `VideoPlayer` component and `BondfireDetailScreen` are where presence hooks render. Header layout starts at ~line 1467 with the `ChevronLeft` back button pill.
+- `apps/mobile/components/create/LiveRecordScreen.tsx` — recording screen; header `XStack` starts at ~line 958 with the X close button at `paddingTop={60}, paddingHorizontal={20}`.
+- `.claude/CLAUDE.md` — Legend State v3 patterns and conventions
+- `apps/mobile/components/InviteSheet.tsx` — reference for `Avatar.Image` usage with `photoUrl`
+
+## Strategy & Constraints
+
+**General approach:** Add a `presence` table to Convex, a heartbeat mutation (upsert), a leave mutation, a reactive query returning denormalized viewer profiles, and a scheduled cleanup cron. Wire heartbeats into the playback screen (scoped to the active video) and the recording screen (scoped to the live bondfire). Render a vertical avatar stack in both screens, positioned top-left below the existing back/close buttons.
+
+**Patterns to follow:**
+- Follow existing Convex mutation/query patterns in `convex/bondfires.ts`, `convex/videos.ts`
+- Follow existing cron registration in `convex/crons.ts`
+- Use Legend State `useObservable` for any local state (e.g., heartbeat interval ref)
+- Use Tamagui `Avatar`, `YStack`, `Text` components — same as `InviteSheet.tsx` and `BondfireRow.tsx`
+- Use `useQuery`/`useMutation` from `convex/react` for reactive presence subscription
+
+**Anti-patterns (do NOT do these):**
+- DO NOT use React `useState` for heartbeat interval management — use `useRef`
+- DO NOT join the presence query to the `users` table — denormalize `name` and `photoUrl` into the presence row at heartbeat time so the query is a single-table indexed read
+- DO NOT add presence to `feed.tsx` or `LegacyRecordScreen.tsx`
+- DO NOT create new abstraction layers — keep presence logic in a single `convex/presence.ts` file and a single `usePresence` hook
+- DO NOT send heartbeats more frequently than 30s
+- DO NOT filter stale entries on the read path — the cleanup cron handles expiry
+
+**Key files for reference:**
+- `convex/schema.ts` — where to add the `presence` table definition
+- `convex/crons.ts` — where to register the cleanup cron
+- `apps/mobile/app/(main)/bondfire/[id].tsx` — where to add heartbeat + avatar stack on the playback side
+- `apps/mobile/components/create/LiveRecordScreen.tsx` — where to add the avatar stack on the recording side
+- `apps/mobile/components/InviteSheet.tsx` — `Avatar` usage reference
+
+**Schema design:**
+
+```typescript
+// convex/schema.ts — new table
+presence: defineTable({
+  videoType: v.union(v.literal('bondfire'), v.literal('response')),
+  videoId: v.string(), // ID of the specific video (bondfire or bondfireVideo)
+  userId: v.id('users'),
+  userName: v.string(),     // denormalized for query efficiency
+  photoUrl: v.optional(v.string()), // denormalized
+  lastHeartbeatAt: v.number(),
+  createdAt: v.number(),
+})
+  .index('by_video', ['videoType', 'videoId'])
+  .index('by_video_user', ['videoType', 'videoId', 'userId'])
+  .index('by_heartbeat', ['lastHeartbeatAt'])
+```
+
+**API design:**
+
+```typescript
+// convex/presence.ts
+heartbeat(videoType, videoId)     // mutation — upsert presence row with denormalized user data
+leaveViewing(videoType, videoId)  // mutation — delete presence row
+listViewers(videoType, videoId)   // query — return active viewers (lastHeartbeatAt > now - 65000), excluding no one (client excludes self)
+
+// Scheduled cleanup
+cleanupStalePresence()            // internal mutation — delete rows where lastHeartbeatAt < now - 65000
+```
+
+**Cron registration:**
+
+```typescript
+// convex/crons.ts — add:
+crons.interval('cleanup stale presence', { minutes: 1 }, internal.presence.cleanupStalePresence)
+```
+
+**Hook design:**
+
+```typescript
+// packages/app/src/hooks/usePresence.ts
+function usePresence(opts: {
+  videoType: 'bondfire' | 'response'
+  videoId: string | undefined
+  isActive: boolean    // is this video the one on screen?
+  isScreenFocused: boolean
+  isAppActive: boolean
+  currentUserId: string | undefined
+}): {
+  viewers: Viewer[]   // reactive list from useQuery, filtered to exclude self
+}
+```
+
+The hook manages:
+- A 30s heartbeat interval (via `setInterval` in a `useEffect` with proper cleanup)
+- `leaveViewing` mutation on unmount, blur, or when `isActive` becomes false
+- Reactive `useQuery(api.presence.listViewers, { videoType, videoId })` subscription
+- Client-side filter to exclude `currentUserId`
+
+**UI layout:**
+
+Playback screen (`bondfire/[id].tsx`):
+- New `YStack` positioned `absolute, top: 100, left: 16, zIndex: 99` (below the header `XStack` at `paddingTop={50}`)
+- Vertical `ScrollView` (or `FlatList` for virtualization if >5), `gap: 8`
+- Each item: `Avatar` (32px circular) with `photoUrl` + `Text` "watching" (10px, `OVERLAY_COLORS.textSecondary`)
+- Max height: 5 × ~52px = ~260px, then scrollable
+
+Recording screen (`LiveRecordScreen.tsx`):
+- New `YStack` positioned `absolute, top: 110, left: 20, zIndex: 50` (below the header `XStack` at `paddingTop={60}`)
+- Same avatar item layout, using `rgba(31, 32, 35, 0.7)` pill background for consistency
+- Only render when `liveStatus === 'live'` (viewers can only exist when stream is live)
+
+**Performance constraints:**
+- Heartbeat = 1 mutation every 30s per viewer (not per video — per *active* video)
+- Query = single-table indexed read, no joins, returns ~5-20 rows max
+- Cleanup = batch delete of stale rows every 60s
+- Avatar rendering = capped at 5 visible, ScrollView for overflow
+- No re-renders triggered by heartbeat itself (the mutation updates the row but the reactive query only re-runs if the result set changes)
+
+## Complexity Budget
+
+**Target tier:** Medium
+**Acceptable range:** 200-600 net new production lines
+
+Breakdown estimate:
+- `convex/schema.ts` — ~15 lines (new table)
+- `convex/presence.ts` — ~80 lines (heartbeat, leave, listViewers, cleanup)
+- `convex/crons.ts` — ~3 lines (cron registration)
+- `packages/app/src/hooks/usePresence.ts` — ~100 lines (hook with interval management)
+- Playback screen UI — ~60 lines (avatar stack component + integration)
+- Recording screen UI — ~50 lines (avatar stack component + integration)
+- Shared `ViewerStack` component — ~80 lines (reusable avatar stack)
+- Total: ~388 lines
+
+If implementation approaches the upper bound, stop and simplify.
+
+## Process
+
+- Agent implements autonomously through completion
+- **Verification is the primary activity.** Walk through every scenario and Must Have criterion twice — once after building, once after tests.
+- PR targets `main` branch
+- If stuck, try to resolve independently first. Escalate only if truly blocked.
+- **Definition of done = all success criteria verified.**
+
+## Open Questions
+
+- [ ] Should the "watching" label use the viewer's name instead (e.g., "Jake")? Decision: use "watching" for v1 — name may be redundant alongside the photo.
+- [ ] Should the avatar stack animate when viewers join/leave? Nice-to-have, not blocking.
+- [ ] Should tapping a viewer's avatar navigate to their profile? Nice-to-have, not blocking — depends on navigation constraints from within the video player screen.

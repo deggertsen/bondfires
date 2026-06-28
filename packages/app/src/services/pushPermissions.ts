@@ -11,11 +11,17 @@ import { telemetry } from './telemetry'
  * can trigger the dialog without instantiating a second notification hook.
  */
 type PermissionRequester = () => Promise<boolean>
+type ChannelResetter = (category: string) => Promise<void>
 
 let requester: PermissionRequester | null = null
+let channelResetter: ChannelResetter | null = null
 
 export function setPushPermissionRequester(fn: PermissionRequester | null) {
   requester = fn
+}
+
+export function setChannelResetter(fn: ChannelResetter | null) {
+  channelResetter = fn
 }
 
 /**
@@ -46,4 +52,12 @@ export async function isPushPermissionGranted(): Promise<boolean> {
     })
     return false
   }
+}
+
+/** Reset an Android notification channel for a category (delete + recreate).
+ * Used when the user re-enables a category in-app after disabling it in
+ * Android system settings. No-op on iOS. */
+export async function resetChannelForCategory(category: string): Promise<void> {
+  if (!channelResetter) return
+  await channelResetter(category)
 }
