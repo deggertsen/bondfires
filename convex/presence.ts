@@ -1,15 +1,11 @@
 import { v } from 'convex/values'
 import { internalMutation, mutation, query } from './_generated/server'
 import { auth } from './auth'
-import { withUserFacingErrors } from './errors'
-
-// A presence entry is considered stale if its last heartbeat is older than
-// this threshold. The cleanup cron uses this to prune abandoned rows, and
-// listViewers uses it to exclude stale entries from the active viewer list.
-const PRESENCE_STALE_MS = 65_000 // 65 seconds
+import { throwUserError, withUserFacingErrors } from './errors'
+import { presenceCutoff } from './lib/presence'
 
 /**
- * Heartbeat — upserts a presence row for the current user + video.
+ * Heartbeat: upserts a presence row for the current user + video.
  *
  * If a presence row already exists for (videoType, videoId, userId), its
  * lastHeartbeatAt is updated. Otherwise a new row is inserted with
@@ -27,10 +23,9 @@ export const heartbeat = mutation({
       async () => {
         const userId = await auth.getUserId(ctx)
         if (!userId) {
-          throw new Error('Not authenticated')
+          throwUserError('Not authenticated')
         }
 
-        // Look for an existing presence row for this user + video
         const existing = await ctx.db
           .query('presence')
           .withIndex('by_video_user', (q) =>
@@ -41,12 +36,10 @@ export const heartbeat = mutation({
         const now = Date.now()
 
         if (existing) {
-          // Update heartbeat timestamp on existing row
           await ctx.db.patch(existing._id, { lastHeartbeatAt: now })
           return existing._id
         }
 
-        // Denormalize user info for the new presence row
         const user = await ctx.db.get(userId)
         if (!user) {
           throw new Error('User not found')
@@ -68,7 +61,7 @@ export const heartbeat = mutation({
 })
 
 /**
- * Leave viewing — deletes the presence row for the current user + video.
+ * Leave viewing: deletes the presence row for the current user + video.
  * Called on unmount/blur when the user navigates away from the video.
  */
 export const leaveViewing = mutation({
@@ -77,40 +70,32 @@ export const leaveViewing = mutation({
     videoId: v.string(),
   },
   handler: (ctx, args) =>
-    withUserFacingErrors(
-      'presence.leaveViewing',
-      'Failed to leave viewing session.',
-      async () => {
-        const userId = await auth.getUserId(ctx)
-        if (!userId) {
-          throw new Error('Not authenticated')
-        }
+    withUserFacingErrors('presence.leaveViewing', 'Failed to leave viewing session.', async () => {
+      const userId = await auth.getUserId(ctx)
+      if (!userId) {
+        throwUserError('Not authenticated')
+      }
 
-        const existing = await ctx.db
-          .query('presence')
-          .withIndex('by_video_user', (q) =>
-            q.eq('videoType', args.videoType).eq('videoId', args.videoId).eq('userId', userId),
-          )
-          .first()
+      const existing = await ctx.db
+        .query('presence')
+        .withIndex('by_video_user', (q) =>
+          q.eq('videoType', args.videoType).eq('videoId', args.videoId).eq('userId', userId),
+        )
+        .first()
 
-        if (existing) {
-          await ctx.db.delete(existing._id)
-        }
+      if (existing) {
+        await ctx.db.delete(existing._id)
+      }
 
-        return null
-      },
-    ),
+      return null
+    }),
 })
 
 /**
  * List active viewers for a video.
  *
- * Returns all presence rows for the given video. Per spec, does NOT filter
- * stale entries on the read path — the cleanup cron (running every minute)
- * handles expiry. The client is responsible for excluding the current
- * user from the display list.
- *
- * Does NOT join the users table — uses denormalized userName + userPhotoUrl.
+ * Uses denormalized userName + userPhotoUrl, so the read path does not join
+ * the users table. The client excludes the current user from the display list.
  */
 export const listViewers = query({
   args: {
@@ -120,23 +105,22 @@ export const listViewers = query({
   handler: async (ctx, args) => {
     return await ctx.db
       .query('presence')
-      .withIndex('by_video', (q) =>
-        q.eq('videoType', args.videoType).eq('videoId', args.videoId),
-      )
+      .withIndex('by_video', (q) => q.eq('videoType', args.videoType).eq('videoId', args.videoId))
+      .filter((q) => q.gt(q.field('lastHeartbeatAt'), presenceCutoff(Date.now())))
       .collect()
   },
 })
 
 /**
- * Internal mutation — cleanup stale presence entries.
+ * Internal mutation: cleanup stale presence entries.
  *
  * Deletes all presence rows where lastHeartbeatAt is older than the stale
- * threshold. Runs every 1 minute via cron. Logs the number of rows cleaned up.
+ * threshold. Runs every 1 minute via cron.
  */
 export const cleanupStalePresence = internalMutation({
   args: {},
   handler: async (ctx) => {
-    const cutoff = Date.now() - PRESENCE_STALE_MS
+    const cutoff = presenceCutoff(Date.now())
 
     const stale = await ctx.db
       .query('presence')
@@ -146,10 +130,6 @@ export const cleanupStalePresence = internalMutation({
     for (const row of stale) {
       await ctx.db.delete(row._id)
     }
-
-    console.log(
-      `cleanupStalePresence: removed ${stale.length} stale presence entries`,
-    )
 
     return { cleanedUp: stale.length }
   },

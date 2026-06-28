@@ -773,7 +773,7 @@ export default defineSchema({
   })
     .index('by_bondfire', ['bondfireId', 'timestampMs'])
     .index('by_bondfire_video', ['bondfireVideoId', 'timestampMs'])
-    .index('by_user_video', ['userId', 'bondfireId', 'createdAt']),
+    .index('by_user_created', ['userId', 'createdAt']),
 
   // Presence — real-time viewer tracking
   presence: defineTable({

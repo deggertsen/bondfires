@@ -35,6 +35,8 @@ import type * as errors from "../errors.js";
 import type * as http from "../http.js";
 import type * as inviteCodes from "../inviteCodes.js";
 import type * as lib_liveIngest from "../lib/liveIngest.js";
+import type * as lib_presence from "../lib/presence.js";
+import type * as lib_videoReactions from "../lib/videoReactions.js";
 import type * as liveSessions from "../liveSessions.js";
 import type * as notifications from "../notifications.js";
 import type * as personalBondfireAccess from "../personalBondfireAccess.js";
@@ -88,6 +90,8 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   inviteCodes: typeof inviteCodes;
   "lib/liveIngest": typeof lib_liveIngest;
+  "lib/presence": typeof lib_presence;
+  "lib/videoReactions": typeof lib_videoReactions;
   liveSessions: typeof liveSessions;
   notifications: typeof notifications;
   personalBondfireAccess: typeof personalBondfireAccess;
