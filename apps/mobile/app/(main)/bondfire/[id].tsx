@@ -10,9 +10,11 @@ import {
   setFeedActiveBondfireId,
   setLastLocation,
   telemetry,
+  tierMeetsRequirement,
   useAppThemeColors,
   useMuxData,
   usePresence,
+  useSubscription,
 } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
@@ -50,12 +52,15 @@ import {
   type ViewToken,
 } from 'react-native'
 import { XStack, YStack } from 'tamagui'
+import type { ActiveReaction } from '../../../components/ViewerPresenceStack'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { InviteSheet } from '../../../components/InviteSheet'
 import { NotepadOverlay } from '../../../components/NotepadOverlay'
 import { ReportButton } from '../../../components/ReportButton'
 import { ReportOverlay } from '../../../components/ReportOverlay'
+import { EmojiReactionButton } from '../../../components/EmojiReactionButton'
+import { EmojiReactionGrid } from '../../../components/EmojiReactionGrid'
 import { SettingsPopover } from '../../../components/SettingsPopover'
 import { ViewerPresenceStack } from '../../../components/ViewerPresenceStack'
 import { VIDEO_OVERLAY_COLORS as OVERLAY_COLORS } from '../../../components/videoOverlayColors'
@@ -173,6 +178,36 @@ function VideoPlayer({
     currentUserId: currentUserId ?? undefined,
   })
 
+  // Subscription tier for emoji gating
+  const { currentTier } = useSubscription()
+  const isPaid = tierMeetsRequirement(currentTier, 'plus')
+
+  // Current user data for optimistic reaction animation
+  const currentUser = useQuery(api.users.current)
+
+  // Recent emojis (paid users only — free users use FREE_EMOJIS)
+  const recentEmojis = useQuery(
+    api.videoReactions.getRecentEmojis,
+    isPaid ? {} : 'skip',
+  )
+
+  // Load reactions for this video (VOD only, not live)
+  const reactionsData = useQuery(
+    api.videoReactions.getReactions,
+    !isLive && (bondfireId || bondfireVideoId)
+      ? isMainVideo
+        ? { bondfireId }
+        : { bondfireVideoId }
+      : 'skip',
+  )
+
+  // Active reactions currently animating
+  const activeReactionsRef = useRef<ActiveReaction[]>([])
+  const [activeReactionsList, setActiveReactionsList] = useState<ActiveReaction[]>([])
+  const lastReactionTime = useRef(0)
+  const triggeredReactionsRef = useRef<Set<string>>(new Set())
+  const addReactionMutation = useMutation(api.videoReactions.addReaction)
+
   // Determine URL based on foreground state.
   const getTargetUrl = useCallback(() => {
     if (shouldSuppressPlayback) {
@@ -194,6 +229,7 @@ function VideoPlayer({
     isLoading: true,
     userInitiatedPlay: false,
     hasEnded: false,
+    emojiGridOpen: false,
   })
 
   const showReport = useValue(state$.showReport)
@@ -202,6 +238,7 @@ function VideoPlayer({
   const duration = useValue(state$.duration)
   const isLoading = useValue(state$.isLoading)
   const hasEnded = useValue(state$.hasEnded)
+  const emojiGridOpen = useValue(state$.emojiGridOpen)
 
   const progressBarViewRef = useRef<View>(null)
   const progressBarRef = useRef<ProgressBarMetrics>({ width: 0, pageX: null })
@@ -338,6 +375,8 @@ function VideoPlayer({
     const endSubscription = player.addListener('playToEnd', () => {
       state$.hasEnded.set(true)
       state$.progress.set(1)
+      // Reset triggered reactions for replay/loop
+      triggeredReactionsRef.current = new Set()
       onComplete()
     })
 
@@ -352,6 +391,29 @@ function VideoPlayer({
         const currentProgress = player.currentTime / player.duration
         state$.progress.set(currentProgress)
         onProgress(currentProgress)
+
+        // Reaction playback: check if currentTime crosses any reaction timestampMs
+        if (!isLive && reactionsData) {
+          const currentMs = player.currentTime * 1000
+          for (const reaction of reactionsData) {
+            if (
+              !triggeredReactionsRef.current.has(reaction._id) &&
+              reaction.timestampMs <= currentMs
+            ) {
+              triggeredReactionsRef.current.add(reaction._id)
+              const active: ActiveReaction = {
+                id: reaction._id,
+                userId: reaction.userId,
+                userName: reaction.userDisplayName ?? '',
+                userPhotoUrl: reaction.userPhotoUrl,
+                emoji: reaction.emoji,
+                timestampMs: reaction.timestampMs,
+              }
+              activeReactionsRef.current = [...activeReactionsRef.current, active]
+              setActiveReactionsList(activeReactionsRef.current)
+            }
+          }
+        }
       }
     }, 100)
 
@@ -360,7 +422,7 @@ function VideoPlayer({
       endSubscription.remove()
       clearInterval(progressInterval)
     }
-  }, [player, onComplete, onProgress, state$])
+  }, [player, onComplete, onProgress, state$, isLive, reactionsData])
 
   // Update URL when source URL or foreground state changes.
   useEffect(() => {
@@ -408,6 +470,60 @@ function VideoPlayer({
     if (!player) return
     appActions.setVideoMuted(!isMuted)
   }, [player, isMuted])
+
+  // Handle emoji selection from the grid
+  const handleEmojiSelect = useCallback(
+    (emoji: string) => {
+      // Throttle: max 1 reaction per 5 seconds
+      if (Date.now() - lastReactionTime.current < 5000) return
+      lastReactionTime.current = Date.now()
+
+      // Close the emoji grid
+      state$.emojiGridOpen.set(false)
+
+      // Optimistic: add to activeReactions immediately
+      const optimisticId = `optimistic-${Date.now()}-${Math.random()}`
+      const currentMs = player?.currentTime ? player.currentTime * 1000 : 0
+      const reaction: ActiveReaction = {
+        id: optimisticId,
+        userId: currentUserId ?? '',
+        userName: currentUser?.displayName ?? currentUser?.name ?? '',
+        userPhotoUrl: currentUser?.photoUrl,
+        emoji,
+        timestampMs: currentMs,
+      }
+      activeReactionsRef.current = [...activeReactionsRef.current, reaction]
+      setActiveReactionsList(activeReactionsRef.current)
+
+      // Fire mutation in background (no await)
+      if (bondfireId || bondfireVideoId) {
+        addReactionMutation({
+          bondfireId: isMainVideo ? bondfireId : undefined,
+          bondfireVideoId: !isMainVideo ? bondfireVideoId : undefined,
+          emoji,
+          timestampMs: Math.floor(currentMs),
+        }).catch(() => {
+          // Silent failure - no error toast, reaction just doesn't persist
+        })
+      }
+    },
+    [
+      player,
+      currentUserId,
+      currentUser,
+      bondfireId,
+      bondfireVideoId,
+      isMainVideo,
+      addReactionMutation,
+      state$,
+    ],
+  )
+
+  // Remove expired reaction from active list
+  const handleReactionExpired = useCallback((id: string) => {
+    activeReactionsRef.current = activeReactionsRef.current.filter((r) => r.id !== id)
+    setActiveReactionsList([...activeReactionsRef.current])
+  }, [])
 
   const handleProgressBarLayout = useCallback((event: LayoutChangeEvent) => {
     const { width } = event.nativeEvent.layout
@@ -661,7 +777,12 @@ function VideoPlayer({
       )}
 
       {/* Viewer presence stack — left side, below the back button header */}
-      <ViewerPresenceStack liveViewers={viewers} style={{ top: 100, left: 16 }} />
+      <ViewerPresenceStack
+        liveViewers={viewers}
+        activeReactions={activeReactionsList}
+        onReactionExpired={handleReactionExpired}
+        style={{ top: 100, left: 16 }}
+      />
 
       {/* Play/Pause/Replay indicator */}
       {!isPlaying && !isLoading && (
@@ -789,10 +910,29 @@ function VideoPlayer({
         </XStack>
       </YStack>
 
+      {/* Report button — moved to left side, above creator info */}
+      {!isPlaying && !isLoading && (
+        <YStack position="absolute" left={20} bottom={200} zIndex={3}>
+          <ReportButton onPress={() => state$.showReport.set(true)} />
+        </YStack>
+      )}
+
       {/* Right side controls */}
       <YStack position="absolute" right={16} bottom={160} gap={16} alignItems="center" zIndex={3}>
-        {/* Report button - only show when paused */}
-        {!isPlaying && !isLoading && <ReportButton onPress={() => state$.showReport.set(true)} />}
+        {/* Emoji reaction button — VOD only, shown during play and pause */}
+        {!isLive && (
+          <YStack>
+            <EmojiReactionButton onPress={() => state$.emojiGridOpen.set(!emojiGridOpen)} />
+            {emojiGridOpen && (
+              <EmojiReactionGrid
+                isPaid={isPaid}
+                recentEmojis={recentEmojis ?? []}
+                onSelect={handleEmojiSelect}
+                onClose={() => state$.emojiGridOpen.set(false)}
+              />
+            )}
+          </YStack>
+        )}
         <Pressable onPress={toggleMute}>
           <YStack
             width={44}
