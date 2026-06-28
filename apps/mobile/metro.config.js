@@ -26,6 +26,13 @@ config.resolver.nodeModulesPaths = [
   path.resolve(workspaceRoot, 'node_modules'),
 ]
 
+// Expo Router's require.context scans all of app/; exclude test files so vitest
+// (and its vite dependency) never enter the Hermes bundle.
+config.resolver.blockList = [
+  ...(Array.isArray(config.resolver.blockList) ? config.resolver.blockList : []),
+  /\.test\.[jt]sx?$/,
+]
+
 // Use official Tamagui Metro plugin for proper monorepo handling
 module.exports = withTamagui(config, {
   components: ['tamagui'],

@@ -1,7 +1,10 @@
 import { observable } from '@legendapp/state'
 import { describe, expect, it } from 'vitest'
-import type { ActiveReaction } from '../../../../components/ViewerPresenceStack'
-import { syncReactionPlaybackAfterSeek, type VideoPlayerState } from './videoPlayerState'
+import type { ActiveReaction } from '../../components/ViewerPresenceStack'
+import {
+  syncReactionPlaybackAfterSeek,
+  type VideoPlayerState,
+} from '../../app/(main)/bondfire/_lib/videoPlayerState'
 
 function createVideoPlayerState() {
   return observable<VideoPlayerState>({

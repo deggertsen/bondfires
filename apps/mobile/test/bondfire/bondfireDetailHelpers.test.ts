@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { BondfireDetailData } from './bondfireDetailHelpers'
+import type { BondfireDetailData } from '../../app/(main)/bondfire/_lib/bondfireDetailHelpers'
 import {
   buildBondfireVideoItems,
   clampVideoIndex,
   formatTime,
   withLiveDvrStart,
-} from './bondfireDetailHelpers'
+} from '../../app/(main)/bondfire/_lib/bondfireDetailHelpers'
 
 vi.mock('react-native', () => ({
   Dimensions: {
