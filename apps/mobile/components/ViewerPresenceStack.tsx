@@ -1,7 +1,7 @@
-import { Flame } from '@tamagui/lucide-icons'
-import { ScrollView, type ViewStyle } from 'react-native'
-import { AnimatePresence, Avatar, Text, XStack, YStack } from 'tamagui'
 import type { Viewer } from '@bondfires/app'
+import { Flame } from '@tamagui/lucide-icons'
+import { ScrollView, type StyleProp, type ViewStyle } from 'react-native'
+import { AnimatePresence, Avatar, Text, YStack } from 'tamagui'
 import { VIDEO_OVERLAY_COLORS } from './videoOverlayColors'
 
 // PR 3 will add the transient reaction layer; this type is forward-compatible.
@@ -17,11 +17,13 @@ export interface ActiveReaction {
 export interface ViewerPresenceStackProps {
   liveViewers: Viewer[]
   activeReactions?: ActiveReaction[]
-  style?: ViewStyle
+  style?: StyleProp<ViewStyle>
 }
 
 const AVATAR_SIZE = 36
 const AVATAR_RADIUS = AVATAR_SIZE / 2
+const AVATAR_LABEL_HEIGHT = 12
+const AVATAR_CONTENT_GAP = 2
 const MAX_VISIBLE = 5
 
 /**
@@ -31,28 +33,22 @@ const MAX_VISIBLE = 5
  * PR 3 will add the transient reaction layer (activeReactions).
  *
  * Rendering rules:
- * - Empty state is invisible (no UI shown when no viewers and no reactions)
+ * - Empty state is invisible
  * - Avatars render vertically, top to bottom
  * - Adaptive spacing based on count
  * - Caps visible avatars at 5; scrollable beyond that
  * - Enter/exit via Tamagui AnimatePresence with "lazy" animation
  */
-export function ViewerPresenceStack({
-  liveViewers,
-  activeReactions,
-  style,
-}: ViewerPresenceStackProps) {
-  const hasReactions = activeReactions && activeReactions.length > 0
-  const totalCount = liveViewers.length + (hasReactions ? activeReactions!.length : 0)
-
-  // Empty state is invisible
-  if (totalCount === 0) {
+export function ViewerPresenceStack({ liveViewers, style }: ViewerPresenceStackProps) {
+  if (liveViewers.length === 0) {
     return null
   }
 
-  // Adaptive spacing
-  const gap = totalCount <= 2 ? 12 : totalCount <= 4 ? 6 : 0
-  const overlapMargin = totalCount >= 5 ? -4 : 0
+  const gap = liveViewers.length <= 2 ? 12 : liveViewers.length <= 4 ? 6 : 0
+  const overlapMargin = liveViewers.length >= 5 ? -4 : 0
+  const itemHeight = AVATAR_SIZE + AVATAR_CONTENT_GAP + AVATAR_LABEL_HEIGHT
+  const maxVisibleHeight =
+    MAX_VISIBLE * itemHeight + (MAX_VISIBLE - 1) * gap + (MAX_VISIBLE - 1) * overlapMargin
 
   return (
     <ScrollView
@@ -60,7 +56,7 @@ export function ViewerPresenceStack({
         {
           position: 'absolute',
           zIndex: 4,
-          pointerEvents: 'box-none',
+          maxHeight: maxVisibleHeight,
         },
         style,
       ]}
@@ -68,7 +64,7 @@ export function ViewerPresenceStack({
       contentContainerStyle={{ gap }}
     >
       <AnimatePresence>
-        {liveViewers.slice(0, MAX_VISIBLE).map((viewer) => (
+        {liveViewers.map((viewer) => (
           <YStack
             key={`live-${viewer._id}`}
             animation="lazy"
@@ -79,11 +75,9 @@ export function ViewerPresenceStack({
             marginBottom={overlapMargin}
           >
             <Avatar size={AVATAR_SIZE} borderRadius={AVATAR_RADIUS}>
-              {viewer.userPhotoUrl ? (
-                <Avatar.Image source={{ uri: viewer.userPhotoUrl }} />
-              ) : null}
-              <Avatar.Fallback backgroundColor="$primary">
-                <Flame size={18} color="$color" />
+              {viewer.userPhotoUrl ? <Avatar.Image source={{ uri: viewer.userPhotoUrl }} /> : null}
+              <Avatar.Fallback backgroundColor={VIDEO_OVERLAY_COLORS.pillBackground}>
+                <Flame size={18} color={VIDEO_OVERLAY_COLORS.textPrimary} />
               </Avatar.Fallback>
             </Avatar>
             <Text fontSize={9} color={VIDEO_OVERLAY_COLORS.textPrimary} fontWeight="500">
@@ -92,9 +86,6 @@ export function ViewerPresenceStack({
           </YStack>
         ))}
       </AnimatePresence>
-
-      {/* PR 3 will render activeReactions here with emoji overlay */}
-      {hasReactions ? null : null}
     </ScrollView>
   )
 }

@@ -54,10 +54,10 @@ import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { InviteSheet } from '../../../components/InviteSheet'
 import { NotepadOverlay } from '../../../components/NotepadOverlay'
-import { ViewerPresenceStack } from '../../../components/ViewerPresenceStack'
 import { ReportButton } from '../../../components/ReportButton'
 import { ReportOverlay } from '../../../components/ReportOverlay'
 import { SettingsPopover } from '../../../components/SettingsPopover'
+import { ViewerPresenceStack } from '../../../components/ViewerPresenceStack'
 import { VIDEO_OVERLAY_COLORS as OVERLAY_COLORS } from '../../../components/videoOverlayColors'
 import { goBackOrReplace } from '../../../lib/navigation'
 import { routes } from '../../../lib/routes'
@@ -164,7 +164,9 @@ function VideoPlayer({
   // Presence: heartbeat + viewer list subscription for this video
   const { viewers } = usePresence({
     videoType: isMainVideo ? 'bondfire' : 'response',
-    videoId: isMainVideo ? (bondfireId as string | undefined) : (bondfireVideoId as string | undefined),
+    videoId: isMainVideo
+      ? (bondfireId as string | undefined)
+      : (bondfireVideoId as string | undefined),
     isActive,
     isScreenFocused,
     isAppActive,
@@ -659,10 +661,7 @@ function VideoPlayer({
       )}
 
       {/* Viewer presence stack — left side, below the back button header */}
-      <ViewerPresenceStack
-        liveViewers={viewers}
-        style={{ top: 100, left: 16 }}
-      />
+      <ViewerPresenceStack liveViewers={viewers} style={{ top: 100, left: 16 }} />
 
       {/* Play/Pause/Replay indicator */}
       {!isPlaying && !isLoading && (

@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from 'convex/react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo } from 'react'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
 
@@ -45,82 +45,39 @@ export function usePresence({
 }: UsePresenceOptions): UsePresenceResult {
   const heartbeat = useMutation(api.presence.heartbeat)
   const leaveViewing = useMutation(api.presence.leaveViewing)
+  const shouldTrackPresence = isActive && isScreenFocused && isAppActive
 
-  // Subscribe to the viewer list only when videoId is defined.
   const rawViewers = useQuery(
     api.presence.listViewers,
-    videoId ? { videoType, videoId } : 'skip',
+    shouldTrackPresence && videoId ? { videoType, videoId } : 'skip',
   )
 
-  // Refs for cleanup
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const videoTypeRef = useRef(videoType)
-  const videoIdRef = useRef(videoId)
-
-  videoTypeRef.current = videoType
-  videoIdRef.current = videoId
-
-  // Clear interval helper
-  const clearHeartbeatInterval = () => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current)
-      intervalRef.current = null
-    }
-  }
-
-  // Main lifecycle effect: start/stop heartbeats based on conditions
   useEffect(() => {
-    const shouldBeat = isActive && isScreenFocused && isAppActive && !!videoId
-
-    if (shouldBeat) {
-      // Fire immediately — don't wait 30s for the first beat
-      heartbeat({ videoType, videoId: videoId! }).catch(() => {
-        // Silent: network errors will retry on next interval
-      })
-
-      intervalRef.current = setInterval(() => {
-        heartbeat({ videoType: videoTypeRef.current, videoId: videoIdRef.current! }).catch(() => {
-          // Silent: network errors will retry on next interval
-        })
-      }, HEARTBEAT_INTERVAL_MS)
-    } else {
-      clearHeartbeatInterval()
+    if (!shouldTrackPresence || !videoId) {
+      return
     }
 
-    return () => {
-      clearHeartbeatInterval()
-    }
-  }, [isActive, isScreenFocused, isAppActive, videoId, videoType, heartbeat])
-
-  // Leave viewing when conditions become false (but component still mounted)
-  useEffect(() => {
-    const wasActive = useRef(false)
-
-    const shouldBeActive = isActive && isScreenFocused && isAppActive && !!videoId
-
-    if (wasActive.current && !shouldBeActive && videoIdRef.current) {
-      leaveViewing({ videoType: videoTypeRef.current, videoId: videoIdRef.current }).catch(() => {
-        // Silent: best-effort cleanup
+    const session = { videoType, videoId }
+    const beat = () => {
+      heartbeat(session).catch(() => {
+        // Best effort: transient failures retry on the next heartbeat.
       })
     }
 
-    wasActive.current = shouldBeActive
-  }, [isActive, isScreenFocused, isAppActive, videoId, leaveViewing])
+    beat()
+    const intervalId = setInterval(beat, HEARTBEAT_INTERVAL_MS)
 
-  // On unmount: call leaveViewing
-  useEffect(() => {
     return () => {
-      if (videoIdRef.current) {
-        leaveViewing({ videoType: videoTypeRef.current, videoId: videoIdRef.current }).catch(() => {
-          // Silent: best-effort cleanup
-        })
-      }
+      clearInterval(intervalId)
+      leaveViewing(session).catch(() => {
+        // Best effort: stale rows are also removed by the server cleanup cron.
+      })
     }
-  }, [leaveViewing])
+  }, [heartbeat, leaveViewing, shouldTrackPresence, videoId, videoType])
 
-  // Filter out the current user from the viewer list
-  const viewers: Viewer[] = (rawViewers ?? []).filter(
-    (v: Viewer) => v.userId !== currentUserId,
+  const viewers = useMemo(
+    () => (rawViewers ?? []).filter((viewer) => viewer.userId !== currentUserId),
+    [currentUserId, rawViewers],
   )
 
   return { viewers }

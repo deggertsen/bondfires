@@ -1039,10 +1039,7 @@ export function LiveRecordScreen({
 
           {/* Viewer presence stack — below the X button, left side */}
           {liveStatus === 'live' && (
-            <ViewerPresenceStack
-              liveViewers={liveViewers}
-              style={{ top: 110, left: 20 }}
-            />
+            <ViewerPresenceStack liveViewers={liveViewers} style={{ top: 110, left: 20 }} />
           )}
 
           <YStack
