@@ -1,7 +1,13 @@
 import { v } from 'convex/values'
 import { api, internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
-import { action, internalAction, internalMutation, internalQuery } from './_generated/server'
+import {
+  type ActionCtx,
+  action,
+  internalAction,
+  internalMutation,
+  internalQuery,
+} from './_generated/server'
 import { isCampParticipableStatus } from './campLifecycle'
 import { resolveNotificationPrefs } from './notifications'
 
@@ -97,6 +103,29 @@ const CATEGORY_TO_CHANNEL: Record<string, string> = {
   hearth: 'bondfires-hearth',
   membership: 'bondfires-membership',
   reminder: 'bondfires-reminders',
+}
+
+async function recordPushSendEvent(
+  ctx: ActionCtx,
+  args: {
+    userId: Id<'users'>
+    level: 'breadcrumb' | 'info' | 'warn' | 'error'
+    event: string
+    message: string
+    data?: Record<string, unknown>
+  },
+) {
+  try {
+    await ctx.runMutation(internal.serverTelemetry.recordServerEvent, {
+      level: args.level,
+      event: args.event,
+      message: args.message,
+      userId: args.userId,
+      data: args.data,
+    })
+  } catch {
+    // Best-effort diagnostic telemetry must never block notification delivery.
+  }
 }
 
 function uniqueUserIds(userIds: Array<Id<'users'>>) {
@@ -256,9 +285,15 @@ export const sendToUser = internalAction({
     })
 
     if (tokens.length === 0) {
-      console.log(`[push:sendToUser] no device tokens for user ${args.userId}`, {
-        category: args.category,
-        title: args.title,
+      await recordPushSendEvent(ctx, {
+        userId: args.userId,
+        level: 'breadcrumb',
+        event: 'push:sendToUser:no_tokens',
+        message: 'No device tokens found for push recipient',
+        data: {
+          category: args.category ?? 'uncategorized',
+          title: args.title,
+        },
       })
       return { success: false, error: 'No device tokens found for user' }
     }
@@ -269,24 +304,43 @@ export const sendToUser = internalAction({
     )
 
     if (expoTokens.length === 0) {
-      console.log(`[push:sendToUser] no Expo push tokens for user ${args.userId}`, {
-        totalTokens: tokens.length,
-        tokenTypes: tokens.map((t) => ({ tokenType: t.tokenType, prefix: t.token.slice(0, 20) })),
+      await recordPushSendEvent(ctx, {
+        userId: args.userId,
+        level: 'breadcrumb',
+        event: 'push:sendToUser:no_expo_tokens',
+        message: 'No Expo push tokens found for recipient',
+        data: {
+          totalTokens: tokens.length,
+          tokenTypes: tokens.map((t) => ({
+            tokenType: t.tokenType ?? 'unknown',
+            prefix: t.token.slice(0, 20),
+          })),
+        },
       })
       return { success: false, error: 'No Expo push tokens found for user' }
     }
 
-    console.log(`[push:sendToUser] sending to user ${args.userId}`, {
-      category: args.category,
-      title: args.title,
-      tokenCount: expoTokens.length,
-    })
-
     // Route to the Android notification channel matching the push category.
     // Falls back to 'bondfires-default' for uncategorized/test pushes.
     // iOS ignores channelId — it uses threadId for visual grouping instead.
-    const channelId = args.category ? CATEGORY_TO_CHANNEL[args.category] ?? 'bondfires-default' : 'bondfires-default'
+    const channelId = args.category
+      ? (CATEGORY_TO_CHANNEL[args.category] ?? 'bondfires-default')
+      : 'bondfires-default'
     const threadId = args.category ? `bondfires-${args.category}` : undefined
+
+    await recordPushSendEvent(ctx, {
+      userId: args.userId,
+      level: 'breadcrumb',
+      event: 'push:sendToUser:attempt',
+      message: 'Sending Expo push notifications',
+      data: {
+        category: args.category ?? 'uncategorized',
+        title: args.title,
+        tokenCount: expoTokens.length,
+        channelId,
+        ...(threadId ? { threadId } : {}),
+      },
+    })
 
     // Build messages for each token
     const messages: ExpoPushMessage[] = expoTokens.map((tokenDoc) => ({
@@ -315,10 +369,19 @@ export const sendToUser = internalAction({
       const successCount = results.filter((r) => r.success).length
       const failureCount = results.filter((r) => !r.success).length
 
-      console.log(`[push:sendToUser] delivery result for user ${args.userId}`, {
-        successCount,
-        failureCount,
-        errors: results.filter((r) => !r.success).map((r) => r.error),
+      await recordPushSendEvent(ctx, {
+        userId: args.userId,
+        level: failureCount > 0 ? 'warn' : 'breadcrumb',
+        event: 'push:sendToUser:result',
+        message: 'Expo push delivery result received',
+        data: {
+          category: args.category ?? 'uncategorized',
+          successCount,
+          failureCount,
+          errors: results
+            .filter((r) => !r.success)
+            .map((r) => r.error ?? 'Unknown Expo push error'),
+        },
       })
 
       return {
@@ -329,6 +392,16 @@ export const sendToUser = internalAction({
       }
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : 'Unknown error sending notification'
+      await recordPushSendEvent(ctx, {
+        userId: args.userId,
+        level: 'error',
+        event: 'push:sendToUser:error',
+        message: errorMessage,
+        data: {
+          category: args.category ?? 'uncategorized',
+          title: args.title,
+        },
+      })
       console.error('Error sending Expo push notification:', errorMessage)
       return { success: false, error: errorMessage }
     }

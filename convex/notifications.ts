@@ -2,6 +2,7 @@ import { v } from 'convex/values'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
 import { throwUserError } from './errors'
+import { logServerEvent } from './serverTelemetry'
 
 // Register a device token for push notifications
 export const registerDevice = mutation({
@@ -42,10 +43,17 @@ export const registerDevice = mutation({
         timezone: args.timezone ?? existing.timezone,
         updatedAt: now,
       })
-      console.log(`[push:registerDevice] updated existing token for user ${userId}`, {
-        tokenId: existing._id,
-        platform: args.platform,
-        deviceId: args.deviceId,
+      await logServerEvent(ctx, {
+        level: 'breadcrumb',
+        event: 'push:registerDevice:updated',
+        message: 'Updated existing push device token',
+        userId,
+        data: {
+          tokenId: existing._id,
+          platform: args.platform,
+          tokenType: args.tokenType ?? 'expo',
+          deviceId: args.deviceId,
+        },
       })
       return existing._id
     }
@@ -61,10 +69,17 @@ export const registerDevice = mutation({
       createdAt: now,
       updatedAt: now,
     })
-    console.log(`[push:registerDevice] registered new token for user ${userId}`, {
-      tokenId,
-      platform: args.platform,
-      deviceId: args.deviceId,
+    await logServerEvent(ctx, {
+      level: 'breadcrumb',
+      event: 'push:registerDevice:created',
+      message: 'Registered new push device token',
+      userId,
+      data: {
+        tokenId,
+        platform: args.platform,
+        tokenType: args.tokenType ?? 'expo',
+        deviceId: args.deviceId,
+      },
     })
     return tokenId
   },
@@ -111,7 +126,9 @@ export const getDevices = query({
 /** Diagnostic: count of device tokens for the current user (for push debugging). */
 export const getDeviceTokenCount = query({
   args: {},
-  handler: async (ctx): Promise<{
+  handler: async (
+    ctx,
+  ): Promise<{
     count: number
     tokens: {
       platform: string

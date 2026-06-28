@@ -1,9 +1,9 @@
+import { resetChannelForCategory, telemetry } from '@bondfires/app'
 import { Text } from '@bondfires/ui'
 import { useMutation, useQuery } from 'convex/react'
 import { Pressable } from 'react-native'
 import { Separator, Switch, XStack, YStack } from 'tamagui'
 import { api } from '../../../convex/_generated/api'
-import { resetChannelForCategory, telemetry } from '@bondfires/app'
 
 /**
  * Per-category push preference toggles + digest window picker, shown under
