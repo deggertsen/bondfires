@@ -55,7 +55,6 @@ export default function CreateScreen() {
   // initializing to true permanently skipped the completion-reset effect when
   // this screen remounted while the recording store held stale state.
   const wasFocusedRef = useRef(false)
-  const didRouteFirstSparkRef = useRef(false)
   const personalCreateStartedAtRef = useRef<number | null>(null)
 
   // TEMPORARY mount/unmount diagnostic — remove after the camera-freeze /
@@ -202,53 +201,6 @@ export default function CreateScreen() {
   }, [camps, persistedCampId, respondTo])
 
   useEffect(() => {
-    if (
-      respondTo ||
-      campId ||
-      selectedCampId ||
-      persistedCampId ||
-      !currentUser ||
-      (currentUser.bondfireCount ?? 0) !== 0 ||
-      camps === undefined ||
-      didRouteFirstSparkRef.current
-    ) {
-      return
-    }
-
-    const gender =
-      currentUser.gender === 'female' ? 'women' : currentUser.gender === 'male' ? 'men' : null
-    const welcomeCamp =
-      (gender ? camps.find((camp) => camp.slug === ['welcome-fires', gender].join('-')) : null) ??
-      camps.find(
-        (camp) =>
-          camp.slug.startsWith('welcome-fires') &&
-          (camp.rules.access.gender?.value === currentUser.gender ||
-            camp.rules.access.gender?.value === 'any'),
-      )
-
-    if (!welcomeCamp) {
-      return
-    }
-
-    didRouteFirstSparkRef.current = true
-    joinCamp({ campId: welcomeCamp._id })
-      .then((result) => {
-        if (result.status === 'pending') {
-          return
-        }
-        state$.selectedCampId.set(welcomeCamp._id)
-        state$.tradeTag.set(null)
-        appActions.setCurrentCampId(welcomeCamp._id)
-      })
-      .catch((error) => {
-        didRouteFirstSparkRef.current = false
-        telemetry.error('create:route', 'Failed to route first spark to Welcome Fires', {
-          error: String(error),
-        })
-      })
-  }, [campId, camps, currentUser, joinCamp, persistedCampId, respondTo, selectedCampId, state$])
-
-  useEffect(() => {
     if (respondTo || !effectiveCampId) {
       state$.promptCampId.set(null)
       state$.promptDismissed.set(true)
@@ -263,14 +215,6 @@ export default function CreateScreen() {
       state$.promptCampId.set(effectiveCampId)
       state$.promptDismissed.set(false)
     }
-
-    const timeout = setTimeout(() => {
-      if (state$.promptCampId.get() === selectedCamp._id) {
-        state$.promptDismissed.set(true)
-      }
-    }, 3000)
-
-    return () => clearTimeout(timeout)
   }, [effectiveCampId, respondTo, selectedCamp, state$])
 
   // Cleanup on unmount. Reset the recording flow store so stale state can't
