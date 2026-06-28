@@ -577,7 +577,7 @@ export default function FeedScreen() {
       router.push(routes.createForCamp(activeCampId))
       return
     }
-    router.push(routes.create)
+    router.push(routes.createFresh())
   }, [activeCampId, canCreate, router, selectedCamp])
 
   const handleBrowseCamps = useCallback(() => {

@@ -36,7 +36,7 @@ export default function TabsLayout() {
       : true
 
   const openSparkTab = useCallback(() => {
-    router.push(routes.create)
+    router.push(routes.createFresh())
   }, [router])
 
   return (

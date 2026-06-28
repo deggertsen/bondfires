@@ -54,6 +54,13 @@ export const routes = {
   // tab, so it cleanly unmounts when the user navigates away.
   create: '/(main)/create',
 
+  // Generic Spark/create entry — no camp pre-selected. Use this for the bottom
+  // tab so stale search params from a prior visit cannot skip the camp picker.
+  createFresh: (): Href => ({
+    pathname: '/(main)/create',
+    params: {},
+  }),
+
   createRespondTo: (bondfireId: string): Href => ({
     pathname: '/(main)/create',
     params: { respondTo: bondfireId },

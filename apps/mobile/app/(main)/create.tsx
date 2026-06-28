@@ -200,6 +200,20 @@ export default function CreateScreen() {
     }
   }, [camps, persistedCampId, respondTo])
 
+  // Spark tab and other generic /create entry points carry no campId param. Clear
+  // any lingering in-screen camp selection from a prior visit so we always land
+  // on the camp picker instead of replaying the Welcome Fires prompt.
+  useEffect(() => {
+    if (!isFocused || respondTo || isPersonalCamp || campId) {
+      return
+    }
+
+    state$.selectedCampId.set(null)
+    state$.promptCampId.set(null)
+    state$.promptDismissed.set(true)
+    state$.tradeTag.set(null)
+  }, [campId, isFocused, isPersonalCamp, respondTo, state$])
+
   useEffect(() => {
     if (respondTo || !effectiveCampId) {
       state$.promptCampId.set(null)
