@@ -1,7 +1,7 @@
 import { v } from 'convex/values'
 import type { Doc } from './_generated/dataModel'
 import type { QueryCtx } from './_generated/server'
-import { query } from './_generated/server'
+import { query, mutation } from './_generated/server'
 import { auth } from './auth'
 import { type SubscriptionTier, TIER_RANK } from './entitlements'
 
@@ -261,9 +261,46 @@ export const getReconciliationHistory = query({
 })
 
 /**
- * Recent user signups, limited to the last N days (default 7), max 50 results.
- * Returns name, effective tier, and createdAt for each user.
+ * Restore admin-owned camps stuck in grace back to active status.
+ * Admin-owned camps are exempt from kindling consumption — this fixes
+ * camps that entered grace before the exemption was added.
  */
+export const restoreAdminGraceCamps = mutation({
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx)
+    const now = Date.now()
+    const allCamps = await ctx.db.query('camps').collect()
+    const graceCamps = allCamps.filter((c) => c.status === 'grace')
+
+    // Fetch owner docs to check admin status
+    const ownerIds = [...new Set(graceCamps.map((c) => c.ownerId).filter(Boolean))] as Doc<'users'>['_id'][]
+    const ownerDocs = await Promise.all(ownerIds.map((id) => ctx.db.get(id)))
+    const ownerIsAdmin = new Map<Doc<'users'>['_id'], boolean>()
+    for (const doc of ownerDocs) {
+      if (doc) {
+        ownerIsAdmin.set(doc._id, doc.isAdmin === true || doc.role === 'admin')
+      }
+    }
+
+    const restored: string[] = []
+    for (const camp of graceCamps) {
+      if (camp.ownerId && ownerIsAdmin.get(camp.ownerId) === true) {
+        await ctx.db.patch(camp._id, {
+          status: 'active',
+          gracePeriodStart: undefined,
+          gracePeriodEnd: undefined,
+          updatedAt: now,
+        })
+        restored.push(camp.name)
+      }
+    }
+
+    console.log(`Restored ${restored.length} admin-owned grace camps to active: ${restored.join(', ')}`)
+    return { restored, count: restored.length }
+  },
+})
+
 export const getRecentSignups = query({
   args: { days: v.optional(v.number()), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {

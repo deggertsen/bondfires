@@ -509,14 +509,31 @@ export const burnDailyCampKindling = internalMutation({
       .filter((q) => q.and(q.neq(q.field('access'), 'invite'), q.eq(q.field('status'), 'active')))
       .collect()
 
+    // Collect unique owner IDs and fetch their user docs to check admin status.
+    const ownerIds = [...new Set(activePublicCamps.map((c) => c.ownerId).filter(Boolean))] as Id<'users'>[]
+    const ownerDocs = await Promise.all(ownerIds.map((id) => ctx.db.get(id)))
+    const ownerIsAdmin = new Map<Id<'users'>, boolean>()
+    for (const doc of ownerDocs) {
+      if (doc) {
+        ownerIsAdmin.set(doc._id, doc.isAdmin === true || doc.role === 'admin')
+      }
+    }
+
     const dueCampsByOwner = new Map<Id<'users'>, Doc<'camps'>[]>()
     let burned = 0
     let graceEntered = 0
     let skipped = 0
+    let adminExempt = 0
 
     for (const camp of activePublicCamps) {
       if (!camp.ownerId) {
         skipped++
+        continue
+      }
+
+      // Admin-owned camps are exempt from kindling consumption.
+      if (ownerIsAdmin.get(camp.ownerId) === true) {
+        adminExempt++
         continue
       }
 
@@ -584,7 +601,7 @@ export const burnDailyCampKindling = internalMutation({
 
     // biome-ignore lint/suspicious/noConsole: cron job diagnostic logging
     console.log(
-      `Daily camp kindling burn: ${burned} burned, ${graceEntered} entered grace, ${skipped} skipped`,
+      `Daily camp kindling burn: ${burned} burned, ${graceEntered} entered grace, ${skipped} skipped, ${adminExempt} admin-exempt`,
     )
 
     return { burned, graceEntered, skipped }
