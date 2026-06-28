@@ -1,1245 +1,50 @@
 import {
-  appActions,
   appStore$,
   getBondfireVideoIndex,
   getLastLocation,
   hasViewedToday,
-  type MuxDataVideoMetadata,
   markViewed,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
   setLastLocation,
   telemetry,
-  tierMeetsRequirement,
   useAppThemeColors,
-  useMuxData,
-  usePresence,
-  useSubscription,
-  type Viewer,
 } from '@bondfires/app'
-import { Button, Spinner, Text } from '@bondfires/ui'
-import type { Observable } from '@legendapp/state'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused, useNavigation } from '@react-navigation/native'
-import {
-  ChevronLeft,
-  ChevronRight,
-  FileText,
-  Flame,
-  Play,
-  RotateCcw,
-  Settings,
-  Volume2,
-  VolumeX,
-} from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
-import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
-import { LinearGradient } from 'expo-linear-gradient'
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
-import { useVideoPlayer, VideoView } from 'expo-video'
-import {
-  type RefObject,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react'
-import {
-  Animated,
-  AppState,
-  Dimensions,
-  FlatList,
-  type FlatListProps,
-  InteractionManager,
-  type LayoutChangeEvent,
-  PanResponder,
-  type PanResponderInstance,
-  Platform,
-  Pressable,
-  StatusBar,
-  View,
-  type ViewToken,
-} from 'react-native'
-import { XStack, YStack } from 'tamagui'
+import { useLocalSearchParams, useRouter } from 'expo-router'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Animated, AppState, type FlatList, InteractionManager, type ViewToken } from 'react-native'
 import { api } from '../../../../../convex/_generated/api'
-import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
-import { EmojiReactionButton } from '../../../components/EmojiReactionButton'
-import { EmojiReactionGrid } from '../../../components/EmojiReactionGrid'
-import { InviteSheet } from '../../../components/InviteSheet'
-import { NotepadOverlay } from '../../../components/NotepadOverlay'
-import { ReportButton } from '../../../components/ReportButton'
-import { ReportOverlay } from '../../../components/ReportOverlay'
-import { SettingsPopover } from '../../../components/SettingsPopover'
-import type { ActiveReaction } from '../../../components/ViewerPresenceStack'
-import { ViewerPresenceStack } from '../../../components/ViewerPresenceStack'
-import { VIDEO_OVERLAY_COLORS as OVERLAY_COLORS } from '../../../components/videoOverlayColors'
+import type { Id } from '../../../../../convex/_generated/dataModel'
 import { goBackOrReplace } from '../../../lib/navigation'
 import { routes } from '../../../lib/routes'
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window')
-const SCRUB_SEEK_THROTTLE_MS = 100
-const REACTION_PLAYBACK_WINDOW_MS = 150
-// Processing normally completes within a couple of minutes; past this it is
-// likely stuck (missed Mux webhook) and worth a telemetry warning.
-const STUCK_PROCESSING_TELEMETRY_THRESHOLD_MS = 5 * 60 * 1000
-
-type PublicUser = {
-  _id: Id<'users'>
-  displayName?: string
-  name?: string
-  photoUrl?: string
-}
-
-type ThreadParticipant = {
-  user: PublicUser
-  latestAt: number
-  videoCount: number
-  isPinned: boolean
-}
-
-type BondfireDetailData = Doc<'bondfires'> & {
-  campStatus?: Doc<'camps'>['status']
-  campName?: string
-  videos: Doc<'bondfireVideos'>[]
-  processingResponses?: Array<{
-    _id: Id<'bondfireVideos'>
-    userId: Id<'users'>
-    creatorName?: string
-    createdAt: number
-  }>
-  participants?: ThreadParticipant[]
-}
-
-type ProgressBarMetrics = {
-  width: number
-  pageX: number | null
-}
-
-type PendingScrubSeek = {
-  locationX: number | null
-  timeout: ReturnType<typeof setTimeout> | null
-  lastSeekAt: number
-}
-
-type VideoPlayerState = {
-  showReport: boolean
-  currentUrl: string | null
-  progress: number
-  duration: number
-  isLoading: boolean
-  isPlaying: boolean
-  userInitiatedPlay: boolean
-  hasEnded: boolean
-  emojiGridOpen: boolean
-  activeReactions: ActiveReaction[]
-  triggeredReactionIds: Record<string, true>
-  lastReactionTime: number
-  lastReactionPlaybackMs: number | null
-}
-
-type VideoPlayerState$ = Observable<VideoPlayerState>
-
-type ScrollToIndexFailedInfo = Parameters<
-  NonNullable<FlatListProps<unknown>['onScrollToIndexFailed']>
->[0]
-
-function clampVideoIndex(index: number | null | undefined, totalVideos: number) {
-  if (totalVideos <= 0) return 0
-  if (index === null || index === undefined || !Number.isFinite(index)) return 0
-
-  return Math.max(0, Math.min(Math.floor(index), totalVideos - 1))
-}
-
-interface VideoPlayerProps {
-  // Exactly one of these must be provided
-  bondfireId?: Id<'bondfires'>
-  bondfireVideoId?: Id<'bondfireVideos'>
-  videoUrl: string | null
-  videoOwnerId: Id<'users'>
-  isActive: boolean
-  isScreenFocused: boolean
-  isAppActive: boolean
-  onComplete: () => void
-  onProgress: (progress: number) => void
-  /** Notifies the parent while the user is dragging the scrubber so the
-   * paging carousel can disable scrolling and not steal the gesture. */
-  onScrubbingChange?: (scrubbing: boolean) => void
-  creatorName: string
-  isMainVideo: boolean
-  responseIndex?: number
-  isLive?: boolean
-}
-
-function VideoPlayer({
-  bondfireId,
-  bondfireVideoId,
-  videoUrl,
-  videoOwnerId,
-  isActive,
-  isScreenFocused,
-  isAppActive,
-  onComplete,
-  onProgress,
-  onScrubbingChange,
-  creatorName,
-  isMainVideo,
-  responseIndex,
-  isLive = false,
-}: VideoPlayerProps) {
-  // Get the video ID for internal use (keep-awake tag, etc.)
-  const videoId = bondfireId || bondfireVideoId || ''
-  const autoplayVideos = useValue(appStore$.preferences.autoplayVideos)
-  const isMuted = useValue(appStore$.preferences.videoMuted)
-  const playbackSpeed = useValue(appStore$.preferences.playbackSpeed)
-  const currentUserId = useValue(appStore$.userId)
-  const shouldSuppressPlayback = isLive && currentUserId === videoOwnerId
-  const videoReactionKey = isMainVideo
-    ? `bondfire:${bondfireId ?? ''}`
-    : `response:${bondfireVideoId ?? ''}`
-
-  // Presence: heartbeat + viewer list subscription for this video
-  const { viewers } = usePresence({
-    videoType: isMainVideo ? 'bondfire' : 'response',
-    videoId: isMainVideo
-      ? (bondfireId as string | undefined)
-      : (bondfireVideoId as string | undefined),
-    isActive,
-    isScreenFocused,
-    isAppActive,
-    currentUserId: currentUserId ?? undefined,
-  })
-
-  // Subscription tier for emoji gating
-  const { currentTier } = useSubscription()
-  const isPaid = tierMeetsRequirement(currentTier, 'plus')
-  const shouldHandleVodReactions = !isLive && isActive && isScreenFocused && isAppActive
-  const shouldTrackPlayback = isActive && isScreenFocused && isAppActive && !shouldSuppressPlayback
-
-  // Current user data for optimistic reaction animation
-  const currentUser = useQuery(api.users.current, shouldHandleVodReactions ? {} : 'skip')
-
-  // Recent emojis (paid users only — free users use FREE_EMOJIS)
-  const recentEmojis = useQuery(
-    api.videoReactions.getRecentEmojis,
-    isPaid && shouldHandleVodReactions ? {} : 'skip',
-  )
-
-  // Load reactions only for the active VOD player; inactive cells do not need playback subscriptions.
-  const reactionsData = useQuery(
-    api.videoReactions.getReactions,
-    shouldHandleVodReactions && (bondfireId || bondfireVideoId)
-      ? isMainVideo
-        ? { bondfireId }
-        : { bondfireVideoId }
-      : 'skip',
-  )
-
-  const addReactionMutation = useMutation(api.videoReactions.addReaction)
-
-  // Determine URL based on foreground state.
-  const getTargetUrl = useCallback(() => {
-    if (shouldSuppressPlayback) {
-      return null
-    }
-
-    if (!isActive || !isScreenFocused || !isAppActive) {
-      return videoUrl
-    }
-
-    return videoUrl
-  }, [isActive, isScreenFocused, isAppActive, videoUrl, shouldSuppressPlayback])
-
-  const state$ = useObservable({
-    showReport: false,
-    currentUrl: getTargetUrl(),
-    progress: 0,
-    duration: 0,
-    isLoading: true,
-    isPlaying: false,
-    userInitiatedPlay: false,
-    hasEnded: false,
-    emojiGridOpen: false,
-    activeReactions: [] as ActiveReaction[],
-    triggeredReactionIds: {} as Record<string, true>,
-    lastReactionTime: 0,
-    lastReactionPlaybackMs: null as number | null,
-  })
-
-  const currentUrl = useValue(state$.currentUrl)
-  const isPlaying = useValue(state$.isPlaying)
-
-  const clearActiveReactions = useCallback(() => {
-    if (state$.activeReactions.get().length === 0) return
-    state$.activeReactions.set([])
-  }, [state$])
-
-  const syncReactionPlaybackAfterSeek = useCallback(
-    (positionMs: number) => {
-      const safePositionMs = Math.max(0, positionMs)
-      const triggeredReactionIds: Record<string, true> = {}
-      for (const reaction of reactionsData ?? []) {
-        if (reaction.timestampMs <= safePositionMs) {
-          triggeredReactionIds[reaction._id] = true
-        }
-      }
-
-      state$.lastReactionPlaybackMs.set(safePositionMs)
-      state$.triggeredReactionIds.set(triggeredReactionIds)
-      clearActiveReactions()
-    },
-    [clearActiveReactions, reactionsData, state$],
-  )
-
-  const resetReactionState = useCallback(() => {
-    state$.activeReactions.set([])
-    state$.triggeredReactionIds.set({})
-    state$.lastReactionPlaybackMs.set(null)
-    state$.lastReactionTime.set(0)
-    state$.emojiGridOpen.set(false)
-  }, [state$])
-
-  useEffect(() => {
-    if (videoReactionKey) {
-      resetReactionState()
-    }
-  }, [resetReactionState, videoReactionKey])
-
-  const progressBarViewRef = useRef<View>(null)
-  const progressBarRef = useRef<ProgressBarMetrics>({ width: 0, pageX: null })
-  const isScrubbingRef = useRef(false)
-  // Ref so the once-created PanResponder always sees the latest callback.
-  const onScrubbingChangeRef = useRef(onScrubbingChange)
-  onScrubbingChangeRef.current = onScrubbingChange
-  const pendingScrubSeekRef = useRef<PendingScrubSeek>({
-    locationX: null,
-    timeout: null,
-    lastSeekAt: 0,
-  })
-
-  const player = useVideoPlayer(currentUrl || '', (player) => {
-    player.loop = false
-    player.muted = isMuted
-    player.playbackRate = playbackSpeed
-    player.preservesPitch = true
-  })
-
-  // Extract MUX playback ID from the video URL for Data tracking
-  const muxPlaybackId = useMemo(() => {
-    if (!videoUrl) return null
-    const match = videoUrl.match(/stream\.mux\.com\/([^/?#]+)\.m3u8(?:[?#]|$)/)
-    return match ? match[1] : null
-  }, [videoUrl])
-
-  // MUX Data tracking (included free for MUX-hosted video)
-  const muxDataVideoMetadata: MuxDataVideoMetadata | null = useMemo(() => {
-    if (!muxPlaybackId) return null
-    return {
-      video_id: muxPlaybackId,
-      video_title: creatorName
-        ? isMainVideo
-          ? `${creatorName}'s Spark`
-          : `${creatorName}'s Response #${(responseIndex ?? 0) + 1}`
-        : undefined,
-      video_stream_type: isLive ? 'live' : 'on-demand',
-      video_series: bondfireId,
-      custom_1: creatorName,
-      custom_2: isMainVideo ? 'spark' : 'response',
-      custom_3: isMainVideo ? 'true' : 'false',
-    }
-  }, [muxPlaybackId, creatorName, isMainVideo, responseIndex, isLive, bondfireId])
-
-  useMuxData({
-    player,
-    sourceUrl: currentUrl,
-    videoMetadata: muxDataVideoMetadata,
-    viewerMetadata: useMemo(
-      () => ({ viewer_user_id: currentUserId ?? undefined }),
-      [currentUserId],
-    ),
-    isActive: isActive && isScreenFocused && isAppActive,
-  })
-
-  // Update playback speed only for the active, foreground player.
-  // This prevents rate changes from mutating all mounted players in the response chain.
-  // useEffect also reacts to the plain foreground props that gate this mutation.
-  useEffect(() => {
-    if (player && isActive && isScreenFocused && isAppActive) {
-      player.playbackRate = playbackSpeed
-    }
-  }, [player, isActive, isScreenFocused, isAppActive, playbackSpeed])
-
-  // Update mute state when preference changes.
-  useEffect(() => {
-    if (player) {
-      player.muted = isMuted
-    }
-  }, [player, isMuted])
-
-  // Play/pause based on isActive, screen focus, and app state
-  useEffect(() => {
-    if (!player) return
-
-    // Only play if video is active, screen is focused, AND app is in foreground
-    const shouldPlay = isActive && isScreenFocused && isAppActive && !shouldSuppressPlayback
-
-    if (shouldPlay) {
-      player.playbackRate = playbackSpeed
-      // Only auto-play if autoplay is enabled OR user has manually initiated play
-      if (autoplayVideos || state$.userInitiatedPlay.get()) {
-        player.play()
-      }
-    } else {
-      player.pause()
-      state$.isPlaying.set(false)
-      // Reset user-initiated play when video becomes inactive
-      if (!isActive) {
-        state$.userInitiatedPlay.set(false)
-      }
-    }
-  }, [
-    player,
-    isActive,
-    isScreenFocused,
-    isAppActive,
-    autoplayVideos,
-    playbackSpeed,
-    state$,
-    shouldSuppressPlayback,
-  ])
-
-  // Monitor playback status (external subscriptions - keep useEffect)
-  useEffect(() => {
-    if (!player) return
-
-    const statusSubscription = player.addListener('statusChange', (status) => {
-      if (status.status === 'readyToPlay') {
-        state$.isLoading.set(false)
-        // Get duration from player, not status event
-        if (player.duration) {
-          state$.duration.set(player.duration * 1000) // Convert to milliseconds
-        }
-      } else if (status.status === 'loading') {
-        state$.isLoading.set(true)
-      }
-
-      // Update progress when status changes to readyToPlay
-      if (status.status === 'readyToPlay') {
-        if (
-          shouldTrackPlayback &&
-          !isScrubbingRef.current &&
-          player.currentTime !== undefined &&
-          player.duration
-        ) {
-          const currentProgress = player.currentTime / player.duration
-          state$.progress.set(currentProgress)
-          onProgress(currentProgress)
-
-          if (player.currentTime >= player.duration - 0.1) {
-            onComplete()
-          }
-        }
-      }
-    })
-
-    // Listen for video end
-    const endSubscription = player.addListener('playToEnd', () => {
-      if (!shouldTrackPlayback) return
-
-      state$.hasEnded.set(true)
-      state$.progress.set(1)
-      state$.isPlaying.set(false)
-      // Reset triggered reactions for replay/loop
-      state$.triggeredReactionIds.set({})
-      state$.lastReactionPlaybackMs.set(null)
-      clearActiveReactions()
-      onComplete()
-    })
-
-    // Update progress periodically (interval-based)
-    const progressInterval = shouldTrackPlayback
-      ? setInterval(() => {
-          if (
-            !isScrubbingRef.current &&
-            player.status === 'readyToPlay' &&
-            player.currentTime !== undefined &&
-            player.duration
-          ) {
-            const currentProgress = player.currentTime / player.duration
-            state$.progress.set(currentProgress)
-            onProgress(currentProgress)
-
-            const playerPlaying = player.playing ?? false
-            if (state$.isPlaying.get() !== playerPlaying) {
-              state$.isPlaying.set(playerPlaying)
-            }
-
-            // Reaction playback: animate only timestamps crossed during normal playback.
-            if (!isLive && reactionsData) {
-              const currentMs = player.currentTime * 1000
-              const previousMs = state$.lastReactionPlaybackMs.get()
-
-              if (previousMs !== null && currentMs + REACTION_PLAYBACK_WINDOW_MS < previousMs) {
-                syncReactionPlaybackAfterSeek(currentMs)
-                return
-              }
-
-              const windowStart =
-                previousMs ?? Math.max(-1, currentMs - REACTION_PLAYBACK_WINDOW_MS)
-              const crossedReactions: ActiveReaction[] = []
-              const triggeredReactionIds = { ...state$.triggeredReactionIds.get() }
-
-              for (const reaction of reactionsData) {
-                if (
-                  !triggeredReactionIds[reaction._id] &&
-                  reaction.timestampMs > windowStart &&
-                  reaction.timestampMs <= currentMs
-                ) {
-                  triggeredReactionIds[reaction._id] = true
-                  crossedReactions.push({
-                    id: reaction._id,
-                    userId: reaction.userId,
-                    userName: reaction.userDisplayName ?? '',
-                    userPhotoUrl: reaction.userPhotoUrl,
-                    emoji: reaction.emoji,
-                    timestampMs: reaction.timestampMs,
-                    createdAt: reaction.createdAt,
-                  })
-                }
-              }
-
-              if (crossedReactions.length > 0) {
-                state$.triggeredReactionIds.set(triggeredReactionIds)
-                state$.activeReactions.set([
-                  ...state$.activeReactions.get(),
-                  ...crossedReactions.sort((a, b) => a.createdAt - b.createdAt),
-                ])
-              }
-
-              state$.lastReactionPlaybackMs.set(currentMs)
-            }
-          }
-        }, 100)
-      : null
-
-    return () => {
-      statusSubscription.remove()
-      endSubscription.remove()
-      if (progressInterval) {
-        clearInterval(progressInterval)
-      }
-    }
-  }, [
-    player,
-    onComplete,
-    onProgress,
-    state$,
-    shouldTrackPlayback,
-    isLive,
-    reactionsData,
-    clearActiveReactions,
-    syncReactionPlaybackAfterSeek,
-  ])
-
-  // Update URL when source URL or foreground state changes.
-  useEffect(() => {
-    const targetUrl = getTargetUrl()
-
-    const currentUrlValue = state$.currentUrl.get()
-    if (targetUrl && currentUrlValue !== targetUrl) {
-      state$.currentUrl.set(targetUrl)
-    }
-  }, [getTargetUrl, state$])
-
-  // Keep screen awake while video is playing
-  const keepAwakeTag = `video-playback-${videoId}`
-  useEffect(() => {
-    if (isScreenFocused && isAppActive && isActive && isPlaying) {
-      activateKeepAwakeAsync(keepAwakeTag)
-    } else {
-      deactivateKeepAwake(keepAwakeTag)
-    }
-
-    return () => {
-      deactivateKeepAwake(keepAwakeTag)
-    }
-  }, [isScreenFocused, isAppActive, isActive, isPlaying, keepAwakeTag])
-
-  const togglePlayPause = useCallback(() => {
-    if (!player) return
-
-    if (state$.hasEnded.get()) {
-      // Replay from beginning
-      state$.triggeredReactionIds.set({})
-      state$.lastReactionPlaybackMs.set(null)
-      clearActiveReactions()
-      player.replay()
-      state$.hasEnded.set(false)
-      state$.isPlaying.set(true)
-      state$.userInitiatedPlay.set(true)
-    } else if (player.playing) {
-      player.pause()
-      state$.isPlaying.set(false)
-    } else {
-      // User manually initiated play
-      state$.userInitiatedPlay.set(true)
-      player.play()
-      state$.isPlaying.set(true)
-    }
-  }, [clearActiveReactions, player, state$])
-
-  const toggleMute = useCallback(() => {
-    if (!player) return
-    appActions.setVideoMuted(!isMuted)
-  }, [player, isMuted])
-
-  // Handle emoji selection from the grid
-  const handleEmojiSelect = useCallback(
-    (emoji: string) => {
-      // Throttle: max 1 reaction per 5 seconds
-      const now = Date.now()
-      if (now - state$.lastReactionTime.get() < 5000) return false
-      state$.lastReactionTime.set(now)
-
-      // Optimistic: add to activeReactions immediately
-      const optimisticId = `optimistic-${now}-${Math.random()}`
-      const currentMs = player?.currentTime ? Math.floor(player.currentTime * 1000) : 0
-      const reaction: ActiveReaction = {
-        id: optimisticId,
-        userId: currentUserId ?? '',
-        userName: currentUser?.displayName ?? currentUser?.name ?? '',
-        userPhotoUrl: currentUser?.photoUrl,
-        emoji,
-        timestampMs: currentMs,
-        createdAt: now,
-      }
-      state$.activeReactions.set([...state$.activeReactions.get(), reaction])
-
-      // Fire mutation in background (no await)
-      if (bondfireId || bondfireVideoId) {
-        addReactionMutation({
-          bondfireId: isMainVideo ? bondfireId : undefined,
-          bondfireVideoId: !isMainVideo ? bondfireVideoId : undefined,
-          emoji,
-          timestampMs: currentMs,
-        })
-          .then((savedReaction) => {
-            if (savedReaction?._id) {
-              state$.triggeredReactionIds.set({
-                ...state$.triggeredReactionIds.get(),
-                [savedReaction._id]: true,
-              })
-            }
-          })
-          .catch(() => {
-            // Silent failure - no error toast, reaction just doesn't persist
-          })
-      }
-
-      return true
-    },
-    [
-      player,
-      currentUserId,
-      currentUser,
-      bondfireId,
-      bondfireVideoId,
-      isMainVideo,
-      addReactionMutation,
-      state$,
-    ],
-  )
-
-  // Remove expired reaction from active list
-  const handleReactionExpired = useCallback(
-    (id: string) => {
-      state$.activeReactions.set(state$.activeReactions.get().filter((r) => r.id !== id))
-    },
-    [state$],
-  )
-
-  const handleProgressBarLayout = useCallback((event: LayoutChangeEvent) => {
-    const { width } = event.nativeEvent.layout
-    progressBarRef.current.width = width
-    progressBarViewRef.current?.measure((_x, _y, measuredWidth, _height, pageX) => {
-      progressBarRef.current = { width: measuredWidth || width, pageX }
-    })
-  }, [])
-
-  const seekToProgressLocation = useCallback(
-    (locationX: number, shouldSeek = true) => {
-      if (!player) return
-
-      const videoDuration = player.duration
-      if (!Number.isFinite(videoDuration) || videoDuration <= 0) return
-
-      const { width } = progressBarRef.current
-
-      if (width > 0) {
-        const seekProgress = Math.max(0, Math.min(1, locationX / width))
-        const seekTime = seekProgress * videoDuration
-        if (shouldSeek) {
-          player.currentTime = seekTime
-          syncReactionPlaybackAfterSeek(seekTime * 1000)
-        }
-        state$.progress.set(seekProgress)
-        state$.hasEnded.set(false)
-        state$.userInitiatedPlay.set(true)
-      }
-    },
-    [player, state$, syncReactionPlaybackAfterSeek],
-  )
-
-  const canSeekProgress = Number.isFinite(player?.duration) && (player?.duration ?? 0) > 0
-  const canSeekProgressRef = useRef(canSeekProgress)
-  const seekToProgressLocationRef = useRef(seekToProgressLocation)
-
-  canSeekProgressRef.current = canSeekProgress
-  seekToProgressLocationRef.current = seekToProgressLocation
-
-  const clearPendingScrubSeek = useCallback(() => {
-    const pending = pendingScrubSeekRef.current
-    if (pending.timeout) {
-      clearTimeout(pending.timeout)
-      pending.timeout = null
-    }
-    pending.locationX = null
-  }, [])
-
-  const applyScrubSeekLocation = useCallback((locationX: number) => {
-    pendingScrubSeekRef.current.lastSeekAt = Date.now()
-    pendingScrubSeekRef.current.locationX = null
-    seekToProgressLocationRef.current(locationX, true)
-  }, [])
-
-  const getProgressLocationFromPageX = useCallback((pageX: number) => {
-    const barPageX = progressBarRef.current.pageX
-    if (barPageX === null) return null
-
-    return pageX - barPageX
-  }, [])
-
-  const seekToProgressPageX = useCallback(
-    (pageX: number, shouldSeek = true) => {
-      const locationX = getProgressLocationFromPageX(pageX)
-      if (locationX === null) return
-
-      seekToProgressLocationRef.current(locationX, shouldSeek)
-    },
-    [getProgressLocationFromPageX],
-  )
-
-  const scheduleScrubSeekPageX = useCallback(
-    (pageX: number) => {
-      const locationX = getProgressLocationFromPageX(pageX)
-      if (locationX === null) return
-
-      seekToProgressLocationRef.current(locationX, false)
-
-      const pending = pendingScrubSeekRef.current
-      pending.locationX = locationX
-
-      const elapsed = Date.now() - pending.lastSeekAt
-      const delay = SCRUB_SEEK_THROTTLE_MS - elapsed
-
-      if (delay <= 0) {
-        if (pending.timeout) {
-          clearTimeout(pending.timeout)
-          pending.timeout = null
-        }
-        applyScrubSeekLocation(locationX)
-        return
-      }
-
-      if (!pending.timeout) {
-        pending.timeout = setTimeout(() => {
-          pending.timeout = null
-          const pendingLocationX = pending.locationX
-          if (pendingLocationX !== null) {
-            applyScrubSeekLocation(pendingLocationX)
-          }
-        }, delay)
-      }
-    },
-    [applyScrubSeekLocation, getProgressLocationFromPageX],
-  )
-
-  const finishScrubSeekPageX = useCallback(
-    (pageX: number) => {
-      const locationX = getProgressLocationFromPageX(pageX)
-      clearPendingScrubSeek()
-      isScrubbingRef.current = false
-      onScrubbingChangeRef.current?.(false)
-
-      if (locationX !== null) {
-        applyScrubSeekLocation(locationX)
-      }
-    },
-    [applyScrubSeekLocation, clearPendingScrubSeek, getProgressLocationFromPageX],
-  )
-
-  const measureProgressBar = useCallback((onMeasured?: () => void) => {
-    progressBarViewRef.current?.measure((_x, _y, width, _height, pageX) => {
-      progressBarRef.current = { width: width || progressBarRef.current.width, pageX }
-      onMeasured?.()
-    })
-  }, [])
-
-  useLayoutEffect(() => {
-    measureProgressBar()
-  }, [measureProgressBar])
-
-  useEffect(() => {
-    return () => {
-      clearPendingScrubSeek()
-      // Never leave the carousel locked if this player unmounts mid-scrub.
-      onScrubbingChangeRef.current?.(false)
-    }
-  }, [clearPendingScrubSeek])
-
-  const progressBarPanResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => canSeekProgressRef.current,
-      onMoveShouldSetPanResponder: () => canSeekProgressRef.current,
-      // Don't yield the responder to the paging FlatList mid-scrub — without
-      // this (plus scrollEnabled={false} on the carousel while scrubbing) the
-      // native scroll view steals the drag and pages to the next response.
-      onPanResponderTerminationRequest: () => false,
-
-      onPanResponderGrant: (evt) => {
-        isScrubbingRef.current = true
-        onScrubbingChangeRef.current?.(true)
-        clearPendingScrubSeek()
-
-        const touchPageX = evt.nativeEvent.pageX
-        measureProgressBar(() => {
-          seekToProgressPageX(touchPageX, true)
-        })
-      },
-
-      onPanResponderMove: (_evt, gestureState) => {
-        scheduleScrubSeekPageX(gestureState.moveX)
-      },
-
-      onPanResponderRelease: (evt, gestureState) => {
-        const releasePageX = gestureState.moveX > 0 ? gestureState.moveX : evt.nativeEvent.pageX
-        finishScrubSeekPageX(releasePageX)
-      },
-
-      onPanResponderTerminate: (evt, gestureState) => {
-        const releasePageX = gestureState.moveX > 0 ? gestureState.moveX : evt.nativeEvent.pageX
-        finishScrubSeekPageX(releasePageX)
-      },
-    }),
-  ).current
-
-  if (shouldSuppressPlayback) {
-    return (
-      <YStack
-        flex={1}
-        width={SCREEN_WIDTH}
-        backgroundColor={'$background'}
-        alignItems="center"
-        justifyContent="center"
-        gap={14}
-      >
-        <YStack
-          backgroundColor={'$error'}
-          paddingHorizontal={16}
-          paddingVertical={8}
-          borderRadius={16}
-        >
-          <Text color={'$color'} fontWeight="900" fontSize={13}>
-            LIVE
-          </Text>
-        </YStack>
-        <Text color={'$color'} fontSize={22} fontWeight="900">
-          You are live
-        </Text>
-        <Text color={'$placeholderColor'} fontSize={14}>
-          Your replay will appear here after Mux finishes saving it.
-        </Text>
-      </YStack>
-    )
-  }
-
-  return (
-    <YStack flex={1} width={SCREEN_WIDTH} backgroundColor={'$background'}>
-      {currentUrl && player ? (
-        <VideoView
-          player={player}
-          style={{ flex: 1 }}
-          contentFit="cover"
-          nativeControls={false}
-          surfaceType={Platform.OS === 'android' ? 'textureView' : undefined}
-        />
-      ) : (
-        <YStack flex={1} alignItems="center" justifyContent="center">
-          <Spinner size="large" color={'$primary'} />
-        </YStack>
-      )}
-
-      {/* Touch overlay for play/pause/replay — positioned ABOVE VideoView so it receives taps first */}
-      <Pressable
-        onPress={togglePlayPause}
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          zIndex: 1,
-        }}
-      />
-
-      <LoadingOverlay state$={state$} currentUrl={currentUrl} />
-
-      {/* Viewer presence stack — left side, below the back button header */}
-      <ReactionPresenceLayer
-        state$={state$}
-        liveViewers={viewers}
-        onReactionExpired={handleReactionExpired}
-      />
-
-      <PlayPauseIndicator state$={state$} />
-
-      {/* Bottom gradient */}
-      <LinearGradient
-        colors={OVERLAY_COLORS.gradientBottom}
-        style={{
-          position: 'absolute',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          height: 180,
-          zIndex: 2,
-        }}
-        pointerEvents="none"
-      />
-
-      {isLive ? (
-        <YStack position="absolute" bottom={132} left={20} zIndex={3}>
-          <YStack
-            backgroundColor={'$error'}
-            paddingHorizontal={14}
-            paddingVertical={7}
-            borderRadius={16}
-          >
-            <Text color={'$color'} fontSize={12} fontWeight="900">
-              LIVE
-            </Text>
-          </YStack>
-        </YStack>
-      ) : null}
-
-      <VideoProgressBar
-        state$={state$}
-        progressBarViewRef={progressBarViewRef}
-        onLayout={handleProgressBarLayout}
-        panHandlers={progressBarPanResponder.panHandlers}
-      />
-
-      {/* Creator info */}
-      <YStack position="absolute" bottom={148} left={20} zIndex={3} pointerEvents="box-none">
-        <XStack alignItems="center" gap={12}>
-          <YStack
-            width={40}
-            height={40}
-            borderRadius={20}
-            backgroundColor={'$backgroundHover'}
-            alignItems="center"
-            justifyContent="center"
-            borderWidth={2}
-            borderColor={isMainVideo ? '$primary' : '$secondary'}
-          >
-            <Flame size={20} color={isMainVideo ? '$primary' : '$secondary'} />
-          </YStack>
-          <YStack>
-            <Text fontWeight="600" fontSize={15} color={OVERLAY_COLORS.textPrimary}>
-              {creatorName}
-            </Text>
-            <Text fontSize={12} color={OVERLAY_COLORS.textSecondary}>
-              {isMainVideo ? 'Spark' : `Response ${responseIndex}`}
-            </Text>
-          </YStack>
-        </XStack>
-      </YStack>
-
-      <PausedReportButton state$={state$} />
-
-      {/* Right side controls */}
-      <RightSideControls
-        state$={state$}
-        isLive={isLive}
-        isPaid={isPaid}
-        recentEmojis={recentEmojis ?? []}
-        isMuted={isMuted}
-        onEmojiSelect={handleEmojiSelect}
-        onToggleMute={toggleMute}
-      />
-
-      {/* Report Overlay — renders in a Modal, so no absolute wrapper needed */}
-      <ReportOverlayGate
-        state$={state$}
-        bondfireId={bondfireId}
-        bondfireVideoId={bondfireVideoId}
-        videoOwnerId={videoOwnerId}
-      />
-    </YStack>
-  )
-}
-
-function LoadingOverlay({
-  state$,
-  currentUrl,
-}: {
-  state$: VideoPlayerState$
-  currentUrl: string | null
-}) {
-  const isLoading = useValue(state$.isLoading)
-  if (!isLoading || !currentUrl) return null
-
-  return (
-    <YStack
-      position="absolute"
-      top={0}
-      left={0}
-      right={0}
-      bottom={0}
-      alignItems="center"
-      justifyContent="center"
-      backgroundColor={OVERLAY_COLORS.loadingBackground}
-      zIndex={2}
-      pointerEvents="none"
-    >
-      <Spinner size="large" color={'$primary'} />
-    </YStack>
-  )
-}
-
-function ReactionPresenceLayer({
-  state$,
-  liveViewers,
-  onReactionExpired,
-}: {
-  state$: VideoPlayerState$
-  liveViewers: Viewer[]
-  onReactionExpired: (id: string) => void
-}) {
-  const activeReactions = useValue(state$.activeReactions)
-
-  return (
-    <ViewerPresenceStack
-      liveViewers={liveViewers}
-      activeReactions={activeReactions}
-      onReactionExpired={onReactionExpired}
-      style={{ top: 100, left: 16 }}
-    />
-  )
-}
-
-function PlayPauseIndicator({ state$ }: { state$: VideoPlayerState$ }) {
-  const isPlaying = useValue(state$.isPlaying)
-  const isLoading = useValue(state$.isLoading)
-  const hasEnded = useValue(state$.hasEnded)
-
-  if (isPlaying || isLoading) return null
-
-  return (
-    <YStack
-      position="absolute"
-      top={0}
-      left={0}
-      right={0}
-      bottom={0}
-      alignItems="center"
-      justifyContent="center"
-      zIndex={2}
-      pointerEvents="none"
-    >
-      <YStack
-        width={80}
-        height={80}
-        borderRadius={40}
-        backgroundColor={OVERLAY_COLORS.playPauseBackground}
-        alignItems="center"
-        justifyContent="center"
-      >
-        {hasEnded ? (
-          <RotateCcw size={40} color={OVERLAY_COLORS.textPrimary} />
-        ) : (
-          <Play size={40} color={OVERLAY_COLORS.textPrimary} fill={OVERLAY_COLORS.textPrimary} />
-        )}
-      </YStack>
-    </YStack>
-  )
-}
-
-function VideoProgressBar({
-  state$,
-  progressBarViewRef,
-  onLayout,
-  panHandlers,
-}: {
-  state$: VideoPlayerState$
-  progressBarViewRef: RefObject<View | null>
-  onLayout: (event: LayoutChangeEvent) => void
-  panHandlers: PanResponderInstance['panHandlers']
-}) {
-  const progress = useValue(state$.progress)
-  const duration = useValue(state$.duration)
-  const progressPercent = `${progress * 100}%`
-
-  return (
-    <YStack position="absolute" bottom={100} left={20} right={20} zIndex={3}>
-      <View ref={progressBarViewRef} onLayout={onLayout} {...panHandlers}>
-        <YStack paddingVertical={10}>
-          <YStack height={4} backgroundColor={OVERLAY_COLORS.progressTrack} borderRadius={2}>
-            <YStack
-              height={4}
-              backgroundColor={'$primary'}
-              borderRadius={2}
-              width={progressPercent}
-            />
-            <YStack
-              position="absolute"
-              top={-4}
-              left={progressPercent}
-              marginLeft={-6}
-              width={12}
-              height={12}
-              borderRadius={6}
-              backgroundColor={'$primary'}
-            />
-          </YStack>
-        </YStack>
-      </View>
-      <XStack justifyContent="space-between" marginTop={4}>
-        <Text fontSize={12} color={OVERLAY_COLORS.textSecondary}>
-          {formatTime(progress * duration)}
-        </Text>
-        <Text fontSize={12} color={OVERLAY_COLORS.textSecondary}>
-          {formatTime(duration)}
-        </Text>
-      </XStack>
-    </YStack>
-  )
-}
-
-function PausedReportButton({ state$ }: { state$: VideoPlayerState$ }) {
-  const isPlaying = useValue(state$.isPlaying)
-  const isLoading = useValue(state$.isLoading)
-
-  if (isPlaying || isLoading) return null
-
-  return (
-    <YStack position="absolute" left={20} bottom={200} zIndex={3}>
-      <ReportButton onPress={() => state$.showReport.set(true)} />
-    </YStack>
-  )
-}
-
-function RightSideControls({
-  state$,
-  isLive,
-  isPaid,
-  recentEmojis,
-  isMuted,
-  onEmojiSelect,
-  onToggleMute,
-}: {
-  state$: VideoPlayerState$
-  isLive: boolean
-  isPaid: boolean
-  recentEmojis: string[]
-  isMuted: boolean
-  onEmojiSelect: (emoji: string) => boolean
-  onToggleMute: () => void
-}) {
-  const emojiGridOpen = useValue(state$.emojiGridOpen)
-
-  return (
-    <YStack position="absolute" right={16} bottom={160} gap={16} alignItems="center" zIndex={3}>
-      {!isLive && (
-        <YStack>
-          <EmojiReactionButton
-            onPress={() => state$.emojiGridOpen.set(!state$.emojiGridOpen.get())}
-          />
-          {emojiGridOpen && (
-            <EmojiReactionGrid
-              isPaid={isPaid}
-              recentEmojis={recentEmojis}
-              onSelect={onEmojiSelect}
-              onClose={() => state$.emojiGridOpen.set(false)}
-            />
-          )}
-        </YStack>
-      )}
-      <Pressable onPress={onToggleMute}>
-        <YStack
-          width={44}
-          height={44}
-          borderRadius={22}
-          backgroundColor={OVERLAY_COLORS.pillBackground}
-          alignItems="center"
-          justifyContent="center"
-        >
-          {isMuted ? (
-            <VolumeX size={22} color={OVERLAY_COLORS.textPrimary} />
-          ) : (
-            <Volume2 size={22} color={OVERLAY_COLORS.textPrimary} />
-          )}
-        </YStack>
-      </Pressable>
-    </YStack>
-  )
-}
-
-function ReportOverlayGate({
-  state$,
-  bondfireId,
-  bondfireVideoId,
-  videoOwnerId,
-}: {
-  state$: VideoPlayerState$
-  bondfireId?: Id<'bondfires'>
-  bondfireVideoId?: Id<'bondfireVideos'>
-  videoOwnerId: Id<'users'>
-}) {
-  const showReport = useValue(state$.showReport)
-
-  if (!showReport) return null
-
-  return (
-    <ReportOverlay
-      bondfireId={bondfireId}
-      bondfireVideoId={bondfireVideoId}
-      videoOwnerId={videoOwnerId}
-      onClose={() => state$.showReport.set(false)}
-    />
-  )
-}
-
-function formatTime(ms: number): string {
-  const seconds = Math.floor(ms / 1000)
-  const mins = Math.floor(seconds / 60)
-  const secs = seconds % 60
-  return `${mins}:${secs.toString().padStart(2, '0')}`
-}
-
-function withLiveDvrStart(url: string, isLive: boolean): string {
-  if (!isLive) return url
-  const separator = url.includes('?') ? '&' : '?'
-  return `${url}${separator}start=0`
-}
+import { BondfirePlaybackScreen } from './_components/BondfirePlaybackScreen'
+import {
+  BondfireErroredScreen,
+  BondfireLoadingScreen,
+  BondfirePendingScreen,
+  BondfireProcessingScreen,
+  BondfireUnavailableScreen,
+} from './_components/BondfireStatusScreens'
+import {
+  type BondfireDetailData,
+  type BondfireVideoItem,
+  buildBondfireVideoItems,
+  clampVideoIndex,
+  SCREEN_WIDTH,
+  type ScrollToIndexFailedInfo,
+  STUCK_PROCESSING_TELEMETRY_THRESHOLD_MS,
+} from './_lib/bondfireDetailHelpers'
+import { useBondfireVideoUrls } from './_lib/useBondfireVideoUrls'
 
 export default function BondfireDetailScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
   const { id } = useLocalSearchParams<{ id: string }>()
   const router = useRouter()
   const navigation = useNavigation()
-  const flatListRef = useRef<FlatList>(null)
+  const flatListRef = useRef<FlatList<BondfireVideoItem>>(null)
   const isFocused = useIsFocused()
 
   const screenState$ = useObservable({
@@ -1248,8 +53,6 @@ export default function BondfireDetailScreen() {
     showSettings: false,
     showNotepad: false,
     isAppActive: AppState.currentState === 'active',
-    // True while the user drags a video scrubber — the response carousel
-    // disables scrolling so the horizontal drag isn't stolen as a page swipe.
     isScrubbing: false,
   })
   const pendingPulse = useRef(new Animated.Value(0.55)).current
@@ -1267,39 +70,33 @@ export default function BondfireDetailScreen() {
     | BondfireDetailData
     | null
     | undefined
-  // Only resolve the unavailable reason when the detail query actually came back
-  // null — it tells us (and telemetry) whether the dead end is a deleted/broken
-  // video, an access filter, expiry, or a transient race.
   const unavailableReason = useQuery(
     api.bondfires.getUnavailableReason,
     bondfireData === null ? { bondfireId } : 'skip',
   )
-  const getVideoUrls = useAction(api.videos.getVideoUrls)
   const campContext = useQuery(api.bondfires.getWithCampContext, { id: bondfireId })
+  const getVideoUrls = useAction(api.videos.getVideoUrls)
   const recordWatchEvent = useMutation(api.watchEvents.record)
   const incrementViews = useMutation(api.bondfires.incrementViews)
   const markThreadRead = useMutation(api.conversations.markThreadRead)
   const [isInviteSheetOpen, setIsInviteSheetOpen] = useState(false)
-  const hasRedirectedToJoinGate = useRef(false)
+  const setVideoUrls = useCallback(
+    (urls: (string | null)[]) => {
+      screenState$.videoUrls.set(urls)
+    },
+    [screenState$],
+  )
 
-  // Redirect non-members to the full-screen camp join gate.
-  // Replaces the old dismissible bottom sheet — users can no longer
-  // dismiss and watch/respond without joining the camp first.
+  const hasRedirectedToJoinGate = useRef(false)
   useEffect(() => {
     if (hasRedirectedToJoinGate.current) return
     if (!campContext || !campContext.camp) return
-    // If the bondfire has no camp (personal), no gate needed.
     if (!campContext.bondfire?.campId) return
-    // If user is an active member, no gate needed.
     if (campContext.membership?.status === 'active') return
-    // User is not a member — redirect to join gate with the bondfire id
-    // as redirect target so we can bring them back after they join.
+
     hasRedirectedToJoinGate.current = true
     router.replace(routes.campJoinGate(campContext.bondfire.campId, bondfireId))
   }, [campContext, bondfireId, router])
-
-  // Note: no polling needed for pending/live/processing transitions —
-  // the Convex useQuery subscription pushes status changes automatically.
 
   useEffect(() => {
     if (bondfireData?.videoStatus !== 'pending') {
@@ -1333,8 +130,6 @@ export default function BondfireDetailScreen() {
   const restoreTargetRef = useRef<{ bondfireId: string; savedIndex: number } | null>(null)
   const restoredPositionKeyRef = useRef<string | null>(null)
 
-  // Telemetry: surface stuck/unavailable playback states so they can be
-  // correlated with the server-side Mux webhook + reconciliation logs.
   const loggedPlaybackStateRef = useRef<string | null>(null)
   useEffect(() => {
     if (bondfireData === undefined) return
@@ -1380,10 +175,6 @@ export default function BondfireDetailScreen() {
     log()
   }, [bondfireData, bondfireId, unavailableReason])
 
-  // When the detail query resolves to null, the bondfire is gone, expired, or no longer
-  // visible to this viewer. Never trap the user on the "isn't available" dead end: repair
-  // the persisted location so a cold start stops restoring this dead route, and if the
-  // screen was restored as the navigation root (no back stack), bounce to the feed.
   useEffect(() => {
     if (bondfireData !== null) return
     const last = getLastLocation()
@@ -1395,7 +186,6 @@ export default function BondfireDetailScreen() {
     }
   }, [bondfireData, bondfireId, router])
 
-  // Track app active state (external subscription - keep useEffect)
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (appState) => {
       screenState$.isAppActive.set(appState === 'active')
@@ -1438,73 +228,8 @@ export default function BondfireDetailScreen() {
     return clearScheduledRestoreScroll
   }, [clearScheduledRestoreScroll])
 
-  // Load video URLs when data is available
-  useEffect(() => {
-    if (!bondfireData) return
+  useBondfireVideoUrls({ bondfireData, getVideoUrls, setVideoUrls })
 
-    const loadUrls = async () => {
-      const mainPlaybackId =
-        bondfireData.videoStatus === 'live'
-          ? bondfireData.muxLivePlaybackId
-          : bondfireData.muxPlaybackId
-      if (!mainPlaybackId) {
-        telemetry.warn('video:urls:missing_playback_id', 'No playback ID for bondfire', {
-          bondfireId: bondfireData._id,
-          videoStatus: bondfireData.videoStatus,
-        })
-        return
-      }
-
-      try {
-        const mainUrl = await getVideoUrls({
-          muxPlaybackId: mainPlaybackId,
-          muxPlaybackPolicy: bondfireData.muxPlaybackPolicy,
-          bondfireId: bondfireData._id,
-        })
-
-        const playableResponses = bondfireData.videos.filter((v: Doc<'bondfireVideos'>) =>
-          v.videoStatus === 'live' ? !!v.muxLivePlaybackId : !!v.muxPlaybackId,
-        )
-        const responseUrls: Array<{ hdUrl: string }> = await Promise.all(
-          playableResponses.map((v) =>
-            getVideoUrls({
-              muxPlaybackId:
-                v.videoStatus === 'live'
-                  ? (v.muxLivePlaybackId as string)
-                  : (v.muxPlaybackId as string),
-              muxPlaybackPolicy: v.muxPlaybackPolicy,
-              bondfireVideoId: v._id,
-            }),
-          ),
-        )
-
-        screenState$.videoUrls.set([
-          withLiveDvrStart(mainUrl.hdUrl, bondfireData.videoStatus === 'live'),
-          ...responseUrls.map((r, index) =>
-            withLiveDvrStart(r.hdUrl, playableResponses[index]?.videoStatus === 'live'),
-          ),
-        ])
-
-        telemetry.info('video:urls:resolved', 'Video URLs resolved', {
-          bondfireId: bondfireData._id,
-          mainHasToken: mainUrl.hdUrl.includes('token='),
-          responseCount: responseUrls.length,
-          totalVideos: 1 + responseUrls.length,
-        })
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        telemetry.error('video:urls:failed', message, {
-          bondfireId: bondfireData._id,
-          muxPlaybackId: mainPlaybackId,
-          muxPlaybackPolicy: bondfireData.muxPlaybackPolicy,
-        })
-      }
-    }
-
-    loadUrls()
-  }, [bondfireData, getVideoUrls, screenState$])
-
-  // Track view count - only once per day per bondfire
   useEffect(() => {
     if (!bondfireId) return
     if (!bondfireData) return
@@ -1546,7 +271,6 @@ export default function BondfireDetailScreen() {
     })
   }, [bondfireData, bondfireId, currentUserId, markThreadRead])
 
-  // Restore last position within this conversation once the playable list exists.
   useEffect(() => {
     if (!bondfireData) return
 
@@ -1570,7 +294,6 @@ export default function BondfireDetailScreen() {
     scheduleRestoreScroll(clamped)
   }, [bondfireData, bondfireId, scheduleRestoreScroll, screenState$])
 
-  // Persist position as the user swipes through the conversation.
   useEffect(() => {
     if (!bondfireId) return
     const indexToPersist = currentVideoIndex
@@ -1606,7 +329,6 @@ export default function BondfireDetailScreen() {
       positionMs: 0,
     })
 
-    // Auto-advance to next video
     if (currentVideoIndex < videoUrls.length - 1) {
       flatListRef.current?.scrollToIndex({
         index: currentVideoIndex + 1,
@@ -1693,417 +415,75 @@ export default function BondfireDetailScreen() {
   )
 
   if (bondfireData === undefined) {
-    return (
-      <YStack flex={1} backgroundColor={'$background'} alignItems="center" justifyContent="center">
-        <Spinner size="large" color={'$primary'} />
-      </YStack>
-    )
+    return <BondfireLoadingScreen />
   }
 
-  // The query resolved to null: the bondfire is gone, expired, inaccessible,
-  // or its video errored during processing. Don't spin forever.
-  if (bondfireData === null) {
-    return (
-      <>
-        <Stack.Screen options={{ headerShown: false }} />
-        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
-        <YStack flex={1} backgroundColor={'$background'} paddingHorizontal={24}>
-          <Pressable onPress={handleBackPress}>
-            <XStack alignItems="center" gap={6} paddingTop={50} paddingBottom={12}>
-              <ChevronLeft size={22} color={'$color'} />
-              <Text color={'$color'} fontWeight="800">
-                Campground
-              </Text>
-            </XStack>
-          </Pressable>
+  const statusScreenProps = {
+    statusBarStyle,
+    backgroundColor: colors.background,
+    onBackPress: handleBackPress,
+  }
 
-          <YStack flex={1} alignItems="center" justifyContent="center" gap={16}>
-            <Flame size={44} color={'$placeholderColor'} />
-            <Text fontSize={22} fontWeight="900" textAlign="center">
-              This Bondfire isn't available
-            </Text>
-            <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
-              It may have expired, been removed, or its recording failed to process.
-            </Text>
-          </YStack>
-        </YStack>
-      </>
-    )
+  if (bondfireData === null) {
+    return <BondfireUnavailableScreen {...statusScreenProps} />
   }
 
   if (bondfireData.videoStatus === 'pending') {
-    const creatorName = bondfireData.creatorName ?? 'Someone'
-
     return (
-      <>
-        <Stack.Screen options={{ headerShown: false }} />
-        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
-        <YStack flex={1} backgroundColor={'$background'} paddingHorizontal={24}>
-          <Pressable onPress={handleBackPress}>
-            <XStack alignItems="center" gap={6} paddingTop={50} paddingBottom={12}>
-              <ChevronLeft size={22} color={'$color'} />
-              <Text color={'$color'} fontWeight="800">
-                Campground
-              </Text>
-            </XStack>
-          </Pressable>
-
-          <YStack flex={1} justifyContent="center" gap={22}>
-            <Animated.View style={{ opacity: pendingPulse }}>
-              <YStack
-                width={96}
-                height={96}
-                borderRadius={28}
-                backgroundColor={'$backgroundHover'}
-                borderWidth={1}
-                borderColor={'$primary'}
-                alignItems="center"
-                justifyContent="center"
-                alignSelf="center"
-              >
-                <Flame size={44} color={'$primary'} />
-              </YStack>
-            </Animated.View>
-
-            <YStack gap={8} alignItems="center">
-              <Text fontSize={24} fontWeight="900" textAlign="center">
-                {bondfireData.title ?? `${creatorName}'s Bondfire`}
-              </Text>
-              <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
-                {[creatorName, bondfireData.campName].filter(Boolean).join(' • ')}
-              </Text>
-            </YStack>
-
-            <Text fontSize={17} color={'$color'} textAlign="center" lineHeight={24}>
-              Waiting for {creatorName} to start recording...
-            </Text>
-          </YStack>
-        </YStack>
-      </>
+      <BondfirePendingScreen
+        {...statusScreenProps}
+        bondfireData={bondfireData}
+        pendingPulse={pendingPulse}
+      />
     )
   }
 
   if (bondfireData.videoStatus === 'processing') {
-    return (
-      <>
-        <Stack.Screen options={{ headerShown: false }} />
-        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
-        <YStack flex={1} backgroundColor={'$background'} paddingHorizontal={24}>
-          <Pressable onPress={handleBackPress}>
-            <XStack alignItems="center" gap={6} paddingTop={50} paddingBottom={12}>
-              <ChevronLeft size={22} color={'$color'} />
-              <Text color={'$color'} fontWeight="800">
-                Campground
-              </Text>
-            </XStack>
-          </Pressable>
-
-          <YStack flex={1} alignItems="center" justifyContent="center" gap={16}>
-            <Spinner size="large" color={'$primary'} />
-            <Text fontSize={22} fontWeight="900">
-              Processing...
-            </Text>
-            <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
-              The recording will play as soon as it is ready.
-            </Text>
-          </YStack>
-        </YStack>
-      </>
-    )
+    return <BondfireProcessingScreen {...statusScreenProps} />
   }
 
   if (bondfireData.videoStatus === 'errored') {
-    const creatorName = bondfireData.creatorName ?? 'Someone'
-
-    return (
-      <>
-        <Stack.Screen options={{ headerShown: false }} />
-        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
-        <YStack flex={1} backgroundColor={'$background'} paddingHorizontal={24}>
-          <Pressable onPress={handleBackPress}>
-            <XStack alignItems="center" gap={6} paddingTop={50} paddingBottom={12}>
-              <ChevronLeft size={22} color={'$color'} />
-              <Text color={'$color'} fontWeight="800">
-                Campground
-              </Text>
-            </XStack>
-          </Pressable>
-
-          <YStack flex={1} alignItems="center" justifyContent="center" gap={16}>
-            <Flame size={44} color={'$placeholderColor'} />
-            <Text fontSize={22} fontWeight="900" textAlign="center">
-              Recording failed
-            </Text>
-            <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
-              {creatorName}'s recording didn't process correctly. They can try again.
-            </Text>
-          </YStack>
-        </YStack>
-      </>
-    )
+    return <BondfireErroredScreen {...statusScreenProps} bondfireData={bondfireData} />
   }
 
   const totalVideos = 1 + bondfireData.videos.length
   const initialVideoIndex = clampVideoIndex(getBondfireVideoIndex(bondfireId), totalVideos)
-  // Responses that exist (and are included in the bondfire's response count)
-  // but aren't playable yet — surfaced in the header so the count and the
-  // swipe list never appear to disagree while Mux finishes processing.
   const processingResponseCount = bondfireData.processingResponses?.length ?? 0
-
-  // Build video items with metadata - using typed IDs for type safety
-  const videoItems = [
-    {
-      key: bondfireData._id,
-      bondfireId: bondfireData._id as Id<'bondfires'>,
-      bondfireVideoId: undefined as Id<'bondfireVideos'> | undefined,
-      url: videoUrls[0] ?? null,
-      videoOwnerId: bondfireData.userId,
-      creatorName: bondfireData.creatorName ?? 'Anonymous',
-      isMainVideo: true,
-      responseIndex: undefined as number | undefined,
-      isLive: bondfireData.videoStatus === 'live',
-    },
-    ...bondfireData.videos.map((v: Doc<'bondfireVideos'>, i: number) => ({
-      key: v._id,
-      bondfireId: undefined as Id<'bondfires'> | undefined,
-      bondfireVideoId: v._id as Id<'bondfireVideos'>,
-      url: videoUrls[i + 1] ?? null,
-      videoOwnerId: v.userId,
-      creatorName: v.creatorName ?? 'Anonymous',
-      isMainVideo: false,
-      responseIndex: i + 1,
-      isLive: v.videoStatus === 'live',
-    })),
-  ]
+  const videoItems = buildBondfireVideoItems(bondfireData, videoUrls)
 
   return (
-    <>
-      <Stack.Screen options={{ headerShown: false }} />
-      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
-
-      <YStack flex={1} backgroundColor={'$background'}>
-        {/* Header */}
-        <XStack
-          position="absolute"
-          top={0}
-          left={0}
-          right={0}
-          zIndex={100}
-          paddingTop={50}
-          paddingHorizontal={16}
-          paddingBottom={12}
-        >
-          <LinearGradient
-            colors={OVERLAY_COLORS.gradientTop}
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              height: 100,
-            }}
-          />
-          <XStack flex={1} justifyContent="space-between" alignItems="center">
-            <Pressable onPress={handleBackPress}>
-              <XStack
-                paddingHorizontal={12}
-                height={40}
-                borderRadius={20}
-                backgroundColor={OVERLAY_COLORS.pillBackground}
-                alignItems="center"
-                gap={6}
-              >
-                <ChevronLeft size={22} color={OVERLAY_COLORS.textPrimary} />
-                <Text fontSize={13} fontWeight="700" color={OVERLAY_COLORS.textPrimary}>
-                  Campground
-                </Text>
-              </XStack>
-            </Pressable>
-
-            <YStack alignItems="center">
-              <Text fontWeight="600" fontSize={16} color={OVERLAY_COLORS.textPrimary}>
-                {currentVideoIndex + 1} / {totalVideos}
-              </Text>
-              <Text fontSize={12} color={OVERLAY_COLORS.textSecondary}>
-                {processingResponseCount > 0
-                  ? `${processingResponseCount} ${processingResponseCount === 1 ? 'response' : 'responses'} processing…`
-                  : 'Swipe for responses'}
-              </Text>
-            </YStack>
-
-            <XStack gap={8}>
-              <Pressable
-                onPress={() => screenState$.showSettings.set(!screenState$.showSettings.get())}
-              >
-                <YStack
-                  width={40}
-                  height={40}
-                  borderRadius={20}
-                  backgroundColor={showSettings ? '$primary' : OVERLAY_COLORS.pillBackground}
-                  alignItems="center"
-                  justifyContent="center"
-                >
-                  <Settings size={22} color={OVERLAY_COLORS.textPrimary} />
-                </YStack>
-              </Pressable>
-              <Pressable
-                onPress={() => screenState$.showNotepad.set(!screenState$.showNotepad.get())}
-              >
-                <YStack
-                  width={40}
-                  height={40}
-                  borderRadius={20}
-                  backgroundColor={showNotepad ? '$primary' : OVERLAY_COLORS.pillBackground}
-                  alignItems="center"
-                  justifyContent="center"
-                >
-                  <FileText size={22} color={OVERLAY_COLORS.textPrimary} />
-                </YStack>
-              </Pressable>
-            </XStack>
-          </XStack>
-        </XStack>
-
-        {/* Horizontal swipe video carousel */}
-        <FlatList
-          key={bondfireId}
-          ref={flatListRef}
-          data={videoItems}
-          keyExtractor={(item) => item.key}
-          renderItem={({ item, index }) => (
-            <VideoPlayer
-              bondfireId={item.bondfireId}
-              bondfireVideoId={item.bondfireVideoId}
-              videoUrl={item.url}
-              videoOwnerId={item.videoOwnerId}
-              isActive={index === currentVideoIndex}
-              isScreenFocused={isFocused}
-              isAppActive={isAppActive}
-              onComplete={handleVideoComplete}
-              onProgress={handleProgress}
-              onScrubbingChange={handleScrubbingChange}
-              creatorName={item.creatorName}
-              isMainVideo={item.isMainVideo}
-              responseIndex={item.responseIndex}
-              isLive={item.isLive}
-            />
-          )}
-          horizontal
-          pagingEnabled
-          // Locked while a scrubber drag is active so the horizontal drag
-          // seeks the video instead of paging to the next/previous response.
-          scrollEnabled={!isScrubbing}
-          showsHorizontalScrollIndicator={false}
-          snapToInterval={SCREEN_WIDTH}
-          snapToAlignment="start"
-          decelerationRate="fast"
-          onViewableItemsChanged={onViewableItemsChanged}
-          viewabilityConfig={viewabilityConfig}
-          initialScrollIndex={initialVideoIndex}
-          getItemLayout={(_, index) => ({
-            length: SCREEN_WIDTH,
-            offset: SCREEN_WIDTH * index,
-            index,
-          })}
-          onScrollToIndexFailed={handleScrollToIndexFailed}
-        />
-
-        {/* Navigation hints */}
-        {currentVideoIndex < totalVideos - 1 && (
-          <YStack
-            position="absolute"
-            right={8}
-            top="50%"
-            marginTop={-20}
-            opacity={0.6}
-            pointerEvents="none"
-          >
-            <ChevronRight size={32} color={OVERLAY_COLORS.textPrimary} />
-          </YStack>
-        )}
-
-        {bondfireData.campStatus !== 'archived' ? (
-          <YStack
-            position="absolute"
-            bottom={0}
-            left={0}
-            right={0}
-            paddingHorizontal={20}
-            paddingBottom={28}
-            paddingTop={16}
-          >
-            <LinearGradient
-              colors={OVERLAY_COLORS.gradientBottomThin}
-              style={{
-                position: 'absolute',
-                bottom: 0,
-                left: 0,
-                right: 0,
-                height: 120,
-              }}
-            />
-            {campContext?.canInvite ? (
-              <XStack gap={12}>
-                <Button
-                  variant="outline"
-                  size="$lg"
-                  flex={1}
-                  onPress={() => setIsInviteSheetOpen(true)}
-                  borderColor={OVERLAY_COLORS.textPrimary}
-                >
-                  <Text color={OVERLAY_COLORS.textPrimary} fontWeight="700">
-                    Share Bondfire
-                  </Text>
-                </Button>
-                <Button variant="primary" size="$lg" flex={1} onPress={handleRespond}>
-                  <Flame size={18} color={OVERLAY_COLORS.textPrimary} />
-                  <Text color={OVERLAY_COLORS.textPrimary} fontWeight="700">
-                    Respond
-                  </Text>
-                </Button>
-              </XStack>
-            ) : (
-              <Button variant="primary" size="$lg" onPress={handleRespond}>
-                <Flame size={20} color={OVERLAY_COLORS.textPrimary} />
-                <Text color={OVERLAY_COLORS.textPrimary}>Add Your Response</Text>
-              </Button>
-            )}
-          </YStack>
-        ) : null}
-
-        {/* Video position dots */}
-        <XStack position="absolute" bottom={100} left={0} right={0} justifyContent="center" gap={8}>
-          {videoItems.map((item, i) => (
-            <Pressable
-              key={item.key}
-              onPress={() => {
-                flatListRef.current?.scrollToIndex({ index: i, animated: true })
-              }}
-            >
-              <YStack
-                width={i === currentVideoIndex ? 24 : 8}
-                height={8}
-                borderRadius={4}
-                backgroundColor={i === currentVideoIndex ? '$primary' : OVERLAY_COLORS.dotInactive}
-              />
-            </Pressable>
-          ))}
-        </XStack>
-
-        {/* Settings Popover */}
-        {showSettings && <SettingsPopover onClose={() => screenState$.showSettings.set(false)} />}
-
-        {/* Notepad Overlay */}
-        {showNotepad && <NotepadOverlay onClose={() => screenState$.showNotepad.set(false)} />}
-
-        {/* Invite Sheet */}
-        <InviteSheet
-          mode="bondfire"
-          id={bondfireId}
-          open={isInviteSheetOpen}
-          onClose={() => setIsInviteSheetOpen(false)}
-        />
-      </YStack>
-    </>
+    <BondfirePlaybackScreen
+      statusBarStyle={statusBarStyle}
+      backgroundColor={colors.background}
+      bondfireId={bondfireId}
+      bondfireData={bondfireData}
+      campContext={campContext}
+      videoItems={videoItems}
+      currentVideoIndex={currentVideoIndex}
+      totalVideos={totalVideos}
+      processingResponseCount={processingResponseCount}
+      isFocused={isFocused}
+      isAppActive={isAppActive}
+      isScrubbing={isScrubbing}
+      showSettings={showSettings}
+      showNotepad={showNotepad}
+      isInviteSheetOpen={isInviteSheetOpen}
+      flatListRef={flatListRef}
+      onBackPress={handleBackPress}
+      onToggleSettings={() => screenState$.showSettings.set(!screenState$.showSettings.get())}
+      onToggleNotepad={() => screenState$.showNotepad.set(!screenState$.showNotepad.get())}
+      onCloseSettings={() => screenState$.showSettings.set(false)}
+      onCloseNotepad={() => screenState$.showNotepad.set(false)}
+      onOpenInviteSheet={() => setIsInviteSheetOpen(true)}
+      onCloseInviteSheet={() => setIsInviteSheetOpen(false)}
+      onRespond={handleRespond}
+      onVideoComplete={handleVideoComplete}
+      onProgress={handleProgress}
+      onScrubbingChange={handleScrubbingChange}
+      onViewableItemsChanged={onViewableItemsChanged}
+      viewabilityConfig={viewabilityConfig}
+      initialVideoIndex={initialVideoIndex}
+      onScrollToIndexFailed={handleScrollToIndexFailed}
+    />
   )
 }
