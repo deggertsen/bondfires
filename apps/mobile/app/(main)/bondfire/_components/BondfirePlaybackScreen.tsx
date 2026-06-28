@@ -52,8 +52,8 @@ export function BondfirePlaybackScreen({
   isScrubbing: boolean
   flatListRef: RefObject<FlatList<BondfireVideoItem> | null>
   onBackPress: () => void
-  onVideoComplete: () => void
-  onProgress: (progress: number) => void
+  onVideoComplete: (positionMs?: number, durationMs?: number) => void
+  onProgress: (progress: number, positionMs: number, durationMs?: number) => void
   onScrubbingChange: (scrubbing: boolean) => void
   onVideoIndexChange: (index: number) => void
   initialVideoIndex: number

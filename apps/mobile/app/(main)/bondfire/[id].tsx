@@ -39,6 +39,39 @@ import {
 } from './_lib/bondfireDetailHelpers'
 import { useBondfireVideoUrls } from './_lib/useBondfireVideoUrls'
 
+type WatchEventType = 'milestone_25' | 'milestone_50' | 'milestone_75' | 'complete'
+
+type WatchTarget = {
+  videoType: 'bondfire' | 'response'
+  videoId: string
+}
+
+const WATCH_MILESTONES = [
+  { progress: 0.25, eventType: 'milestone_25' },
+  { progress: 0.5, eventType: 'milestone_50' },
+  { progress: 0.75, eventType: 'milestone_75' },
+] as const
+
+function getWatchTarget(
+  bondfireData: BondfireDetailData,
+  currentVideoIndex: number,
+): WatchTarget | null {
+  if (currentVideoIndex === 0) {
+    return {
+      videoType: 'bondfire',
+      videoId: bondfireData._id,
+    }
+  }
+
+  const video = bondfireData.videos[currentVideoIndex - 1]
+  if (!video) return null
+
+  return {
+    videoType: 'response',
+    videoId: video._id,
+  }
+}
+
 export default function BondfireDetailScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
   const { id } = useLocalSearchParams<{ id: string }>()
@@ -124,6 +157,7 @@ export default function BondfireDetailScreen() {
   const restoreRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const restoreTargetRef = useRef<{ bondfireId: string; savedIndex: number } | null>(null)
   const restoredPositionKeyRef = useRef<string | null>(null)
+  const recordedWatchEventsRef = useRef<Set<string>>(new Set())
 
   const loggedPlaybackStateRef = useRef<string | null>(null)
   useEffect(() => {
@@ -141,26 +175,39 @@ export default function BondfireDetailScreen() {
           videoStatus: unavailableReason?.videoStatus,
         })
     } else if (bondfireData.videoStatus === 'processing') {
-      const processingForMs = Date.now() - bondfireData.updatedAt
-      key = `${bondfireData._id}:processing`
+      key = `${bondfireData._id}:processing:stuck`
       const data = {
         bondfireId: bondfireData._id,
-        processingForMs,
         hasMuxAssetId: !!bondfireData.muxAssetId,
         hasMuxUploadId: !!bondfireData.muxUploadId,
         hasMuxLiveStreamId: !!bondfireData.muxLiveStreamId,
         muxAssetStatus: bondfireData.muxAssetStatus,
       }
-      log =
-        processingForMs > STUCK_PROCESSING_TELEMETRY_THRESHOLD_MS
-          ? () =>
-              telemetry.warn(
-                'video:detail:stuck_processing',
-                'Viewer hit a bondfire stuck in processing',
-                data,
-              )
-          : () =>
-              telemetry.info('video:detail:processing', 'Viewer hit a processing bondfire', data)
+
+      const logStuckProcessing = () => {
+        if (loggedPlaybackStateRef.current === key) return
+        loggedPlaybackStateRef.current = key
+        telemetry.warn(
+          'video:detail:stuck_processing',
+          'Viewer hit a bondfire stuck in processing',
+          {
+            ...data,
+            processingForMs: Date.now() - bondfireData.updatedAt,
+          },
+        )
+      }
+
+      const processingForMs = Date.now() - bondfireData.updatedAt
+      if (processingForMs >= STUCK_PROCESSING_TELEMETRY_THRESHOLD_MS) {
+        logStuckProcessing()
+        return
+      }
+
+      const timeout = setTimeout(
+        logStuckProcessing,
+        STUCK_PROCESSING_TELEMETRY_THRESHOLD_MS - processingForMs,
+      )
+      return () => clearTimeout(timeout)
     } else {
       return
     }
@@ -313,24 +360,48 @@ export default function BondfireDetailScreen() {
     goBackOrReplace(router, navigation, routes.feed)
   }, [navigation, router])
 
-  const handleVideoComplete = useCallback(() => {
-    if (!bondfireData) return
+  const recordWatchEventOnce = useCallback(
+    (target: WatchTarget, eventType: WatchEventType, positionMs: number, durationMs?: number) => {
+      const key = `${target.videoType}:${target.videoId}:${eventType}`
+      if (recordedWatchEventsRef.current.has(key)) return
 
-    recordWatchEvent({
-      videoType: currentVideoIndex === 0 ? 'bondfire' : 'response',
-      videoId:
-        currentVideoIndex === 0 ? bondfireData._id : bondfireData.videos[currentVideoIndex - 1]._id,
-      eventType: 'complete',
-      positionMs: 0,
-    })
-
-    if (currentVideoIndex < videoUrls.length - 1) {
-      flatListRef.current?.scrollToIndex({
-        index: currentVideoIndex + 1,
-        animated: true,
+      recordedWatchEventsRef.current.add(key)
+      recordWatchEvent({
+        videoType: target.videoType,
+        videoId: target.videoId,
+        eventType,
+        positionMs,
+        ...(durationMs !== undefined ? { durationMs: Math.round(durationMs) } : {}),
+      }).catch((error) => {
+        telemetry.warn('watch:event', 'Failed to record watch event', {
+          error: String(error),
+          eventType,
+          videoId: target.videoId,
+          videoType: target.videoType,
+        })
       })
-    }
-  }, [bondfireData, currentVideoIndex, videoUrls.length, recordWatchEvent])
+    },
+    [recordWatchEvent],
+  )
+
+  const handleVideoComplete = useCallback(
+    (positionMs = 0, durationMs?: number) => {
+      if (!bondfireData) return
+
+      const target = getWatchTarget(bondfireData, currentVideoIndex)
+      if (!target) return
+
+      recordWatchEventOnce(target, 'complete', Math.round(positionMs), durationMs)
+
+      if (currentVideoIndex < videoUrls.length - 1) {
+        flatListRef.current?.scrollToIndex({
+          index: currentVideoIndex + 1,
+          animated: true,
+        })
+      }
+    },
+    [bondfireData, currentVideoIndex, recordWatchEventOnce, videoUrls.length],
+  )
 
   const handleScrubbingChange = useCallback(
     (scrubbing: boolean) => {
@@ -340,30 +411,19 @@ export default function BondfireDetailScreen() {
   )
 
   const handleProgress = useCallback(
-    (progress: number) => {
+    (progress: number, positionMs: number, durationMs?: number) => {
       if (!bondfireData) return
 
-      const videoId =
-        currentVideoIndex === 0 ? bondfireData._id : bondfireData.videos[currentVideoIndex - 1]._id
-      const videoType = currentVideoIndex === 0 ? 'bondfire' : 'response'
+      const target = getWatchTarget(bondfireData, currentVideoIndex)
+      if (!target) return
 
-      const milestones = [0.25, 0.5, 0.75] as const
-      for (const milestone of milestones) {
-        if (progress >= milestone && progress < milestone + 0.05) {
-          const eventType = `milestone_${Math.round(milestone * 100)}` as
-            | 'milestone_25'
-            | 'milestone_50'
-            | 'milestone_75'
-          recordWatchEvent({
-            videoType,
-            videoId,
-            eventType,
-            positionMs: Math.round(progress * 1000),
-          })
+      for (const milestone of WATCH_MILESTONES) {
+        if (progress >= milestone.progress) {
+          recordWatchEventOnce(target, milestone.eventType, Math.round(positionMs), durationMs)
         }
       }
     },
-    [bondfireData, currentVideoIndex, recordWatchEvent],
+    [bondfireData, currentVideoIndex, recordWatchEventOnce],
   )
 
   const handleVideoIndexChange = useCallback(

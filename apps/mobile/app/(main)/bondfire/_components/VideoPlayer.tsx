@@ -51,8 +51,8 @@ export interface VideoPlayerProps {
   isActive: boolean
   isScreenFocused: boolean
   isAppActive: boolean
-  onComplete: () => void
-  onProgress: (progress: number) => void
+  onComplete: (positionMs?: number, durationMs?: number) => void
+  onProgress: (progress: number, positionMs: number, durationMs?: number) => void
   onScrubbingChange?: (scrubbing: boolean) => void
   creatorName: string
   isMainVideo: boolean
@@ -257,11 +257,13 @@ export function VideoPlayer({
           player.duration
         ) {
           const currentProgress = player.currentTime / player.duration
+          const positionMs = player.currentTime * 1000
+          const durationMs = player.duration * 1000
           state$.progress.set(currentProgress)
-          onProgress(currentProgress)
+          onProgress(currentProgress, positionMs, durationMs)
 
           if (player.currentTime >= player.duration - 0.1) {
-            onComplete()
+            onComplete(positionMs, durationMs)
           }
         }
       }
@@ -276,7 +278,7 @@ export function VideoPlayer({
       state$.triggeredReactionIds.set({})
       state$.lastReactionPlaybackMs.set(null)
       clearActiveReactions(state$)
-      onComplete()
+      onComplete(player.currentTime * 1000, player.duration ? player.duration * 1000 : undefined)
     })
 
     const progressInterval = shouldTrackPlayback
@@ -288,8 +290,10 @@ export function VideoPlayer({
             player.duration
           ) {
             const currentProgress = player.currentTime / player.duration
+            const positionMs = player.currentTime * 1000
+            const durationMs = player.duration * 1000
             state$.progress.set(currentProgress)
-            onProgress(currentProgress)
+            onProgress(currentProgress, positionMs, durationMs)
 
             const playerPlaying = player.playing ?? false
             if (state$.isPlaying.get() !== playerPlaying) {

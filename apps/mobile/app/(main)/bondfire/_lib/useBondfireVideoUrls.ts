@@ -1,5 +1,5 @@
 import { telemetry } from '@bondfires/app'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import type { Doc, Id } from '../../../../../../convex/_generated/dataModel'
 import type { BondfireDetailData } from './bondfireDetailHelpers'
 import { withLiveDvrStart } from './bondfireDetailHelpers'
@@ -11,6 +11,29 @@ type GetVideoUrls = (args: {
   bondfireVideoId?: Id<'bondfireVideos'>
 }) => Promise<{ hdUrl: string }>
 
+function getPlaybackIdForVideo(
+  video: Pick<BondfireDetailData, 'videoStatus' | 'muxLivePlaybackId' | 'muxPlaybackId'>,
+) {
+  return (video.videoStatus ?? 'ready') === 'live' ? video.muxLivePlaybackId : video.muxPlaybackId
+}
+
+function shouldLoadMainVideoUrls(bondfireData: BondfireDetailData) {
+  const status = bondfireData.videoStatus ?? 'ready'
+  return status === 'ready' || status === 'live'
+}
+
+function getVideoUrlSetKey(bondfireData: BondfireDetailData) {
+  return [
+    bondfireData._id,
+    bondfireData.videoStatus ?? 'ready',
+    getPlaybackIdForVideo(bondfireData) ?? '',
+    ...bondfireData.videos.map(
+      (video) =>
+        `${video._id}:${video.videoStatus ?? 'ready'}:${getPlaybackIdForVideo(video) ?? ''}`,
+    ),
+  ].join('|')
+}
+
 export function useBondfireVideoUrls({
   bondfireData,
   getVideoUrls,
@@ -20,14 +43,41 @@ export function useBondfireVideoUrls({
   getVideoUrls: GetVideoUrls
   setVideoUrls: (urls: (string | null)[]) => void
 }) {
+  const videoUrlSetKeyRef = useRef<string | null>(null)
+  const loadedVideoUrlSetKeyRef = useRef<string | null>(null)
+
   useEffect(() => {
-    if (!bondfireData) return
+    if (!bondfireData) {
+      if (videoUrlSetKeyRef.current !== null) {
+        videoUrlSetKeyRef.current = null
+        loadedVideoUrlSetKeyRef.current = null
+        setVideoUrls([])
+      }
+      return
+    }
+
+    let isCancelled = false
+    const videoUrlSetKey = getVideoUrlSetKey(bondfireData)
+    if (videoUrlSetKeyRef.current !== videoUrlSetKey) {
+      videoUrlSetKeyRef.current = videoUrlSetKey
+      loadedVideoUrlSetKeyRef.current = null
+      setVideoUrls(Array.from({ length: 1 + bondfireData.videos.length }, () => null))
+    }
+
+    if (!shouldLoadMainVideoUrls(bondfireData)) {
+      return () => {
+        isCancelled = true
+      }
+    }
+
+    if (loadedVideoUrlSetKeyRef.current === videoUrlSetKey) {
+      return () => {
+        isCancelled = true
+      }
+    }
 
     const loadUrls = async () => {
-      const mainPlaybackId =
-        bondfireData.videoStatus === 'live'
-          ? bondfireData.muxLivePlaybackId
-          : bondfireData.muxPlaybackId
+      const mainPlaybackId = getPlaybackIdForVideo(bondfireData)
       if (!mainPlaybackId) {
         telemetry.warn('video:urls:missing_playback_id', 'No playback ID for bondfire', {
           bondfireId: bondfireData._id,
@@ -59,20 +109,18 @@ export function useBondfireVideoUrls({
           ),
         )
 
+        if (isCancelled) return
+
         setVideoUrls([
           withLiveDvrStart(mainUrl.hdUrl, bondfireData.videoStatus === 'live'),
           ...responseUrls.map((responseUrl, index) =>
             withLiveDvrStart(responseUrl.hdUrl, playableResponses[index]?.videoStatus === 'live'),
           ),
         ])
-
-        telemetry.info('video:urls:resolved', 'Video URLs resolved', {
-          bondfireId: bondfireData._id,
-          mainHasToken: mainUrl.hdUrl.includes('token='),
-          responseCount: responseUrls.length,
-          totalVideos: 1 + responseUrls.length,
-        })
+        loadedVideoUrlSetKeyRef.current = videoUrlSetKey
       } catch (error) {
+        if (isCancelled) return
+
         const message = error instanceof Error ? error.message : String(error)
         telemetry.error('video:urls:failed', message, {
           bondfireId: bondfireData._id,
@@ -83,5 +131,9 @@ export function useBondfireVideoUrls({
     }
 
     loadUrls()
+
+    return () => {
+      isCancelled = true
+    }
   }, [bondfireData, getVideoUrls, setVideoUrls])
 }
