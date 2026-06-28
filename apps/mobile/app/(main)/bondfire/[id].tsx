@@ -52,16 +52,16 @@ import {
   type ViewToken,
 } from 'react-native'
 import { XStack, YStack } from 'tamagui'
-import type { ActiveReaction } from '../../../components/ViewerPresenceStack'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
+import { EmojiReactionButton } from '../../../components/EmojiReactionButton'
+import { EmojiReactionGrid } from '../../../components/EmojiReactionGrid'
 import { InviteSheet } from '../../../components/InviteSheet'
 import { NotepadOverlay } from '../../../components/NotepadOverlay'
 import { ReportButton } from '../../../components/ReportButton'
 import { ReportOverlay } from '../../../components/ReportOverlay'
-import { EmojiReactionButton } from '../../../components/EmojiReactionButton'
-import { EmojiReactionGrid } from '../../../components/EmojiReactionGrid'
 import { SettingsPopover } from '../../../components/SettingsPopover'
+import type { ActiveReaction } from '../../../components/ViewerPresenceStack'
 import { ViewerPresenceStack } from '../../../components/ViewerPresenceStack'
 import { VIDEO_OVERLAY_COLORS as OVERLAY_COLORS } from '../../../components/videoOverlayColors'
 import { goBackOrReplace } from '../../../lib/navigation'
@@ -69,6 +69,7 @@ import { routes } from '../../../lib/routes'
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window')
 const SCRUB_SEEK_THROTTLE_MS = 100
+const REACTION_PLAYBACK_WINDOW_MS = 150
 // Processing normally completes within a couple of minutes; past this it is
 // likely stuck (missed Mux webhook) and worth a telemetry warning.
 const STUCK_PROCESSING_TELEMETRY_THRESHOLD_MS = 5 * 60 * 1000
@@ -165,6 +166,9 @@ function VideoPlayer({
   const playbackSpeed = useValue(appStore$.preferences.playbackSpeed)
   const currentUserId = useValue(appStore$.userId)
   const shouldSuppressPlayback = isLive && currentUserId === videoOwnerId
+  const videoReactionKey = isMainVideo
+    ? `bondfire:${bondfireId ?? ''}`
+    : `response:${bondfireVideoId ?? ''}`
 
   // Presence: heartbeat + viewer list subscription for this video
   const { viewers } = usePresence({
@@ -186,10 +190,7 @@ function VideoPlayer({
   const currentUser = useQuery(api.users.current)
 
   // Recent emojis (paid users only — free users use FREE_EMOJIS)
-  const recentEmojis = useQuery(
-    api.videoReactions.getRecentEmojis,
-    isPaid ? {} : 'skip',
-  )
+  const recentEmojis = useQuery(api.videoReactions.getRecentEmojis, isPaid ? {} : 'skip')
 
   // Load reactions for this video (VOD only, not live)
   const reactionsData = useQuery(
@@ -206,6 +207,7 @@ function VideoPlayer({
   const [activeReactionsList, setActiveReactionsList] = useState<ActiveReaction[]>([])
   const lastReactionTime = useRef(0)
   const triggeredReactionsRef = useRef<Set<string>>(new Set())
+  const lastReactionPlaybackMsRef = useRef<number | null>(null)
   const addReactionMutation = useMutation(api.videoReactions.addReaction)
 
   // Determine URL based on foreground state.
@@ -239,6 +241,35 @@ function VideoPlayer({
   const isLoading = useValue(state$.isLoading)
   const hasEnded = useValue(state$.hasEnded)
   const emojiGridOpen = useValue(state$.emojiGridOpen)
+
+  const clearActiveReactions = useCallback(() => {
+    if (activeReactionsRef.current.length === 0) return
+    activeReactionsRef.current = []
+    setActiveReactionsList([])
+  }, [])
+
+  const syncReactionPlaybackAfterSeek = useCallback(
+    (positionMs: number) => {
+      const safePositionMs = Math.max(0, positionMs)
+      lastReactionPlaybackMsRef.current = safePositionMs
+      triggeredReactionsRef.current = new Set(
+        (reactionsData ?? [])
+          .filter((reaction) => reaction.timestampMs <= safePositionMs)
+          .map((reaction) => reaction._id),
+      )
+      clearActiveReactions()
+    },
+    [clearActiveReactions, reactionsData],
+  )
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Reaction playback state is keyed by the current video identity.
+  useEffect(() => {
+    activeReactionsRef.current = []
+    setActiveReactionsList([])
+    triggeredReactionsRef.current = new Set()
+    lastReactionPlaybackMsRef.current = null
+    state$.emojiGridOpen.set(false)
+  }, [state$, videoReactionKey])
 
   const progressBarViewRef = useRef<View>(null)
   const progressBarRef = useRef<ProgressBarMetrics>({ width: 0, pageX: null })
@@ -377,6 +408,8 @@ function VideoPlayer({
       state$.progress.set(1)
       // Reset triggered reactions for replay/loop
       triggeredReactionsRef.current = new Set()
+      lastReactionPlaybackMsRef.current = null
+      clearActiveReactions()
       onComplete()
     })
 
@@ -392,27 +425,47 @@ function VideoPlayer({
         state$.progress.set(currentProgress)
         onProgress(currentProgress)
 
-        // Reaction playback: check if currentTime crosses any reaction timestampMs
+        // Reaction playback: animate only timestamps crossed during normal playback.
         if (!isLive && reactionsData) {
           const currentMs = player.currentTime * 1000
+          const previousMs = lastReactionPlaybackMsRef.current
+
+          if (previousMs !== null && currentMs + REACTION_PLAYBACK_WINDOW_MS < previousMs) {
+            syncReactionPlaybackAfterSeek(currentMs)
+            return
+          }
+
+          const windowStart = previousMs ?? Math.max(-1, currentMs - REACTION_PLAYBACK_WINDOW_MS)
+          const crossedReactions: ActiveReaction[] = []
+
           for (const reaction of reactionsData) {
             if (
               !triggeredReactionsRef.current.has(reaction._id) &&
+              reaction.timestampMs > windowStart &&
               reaction.timestampMs <= currentMs
             ) {
               triggeredReactionsRef.current.add(reaction._id)
-              const active: ActiveReaction = {
+              crossedReactions.push({
                 id: reaction._id,
                 userId: reaction.userId,
                 userName: reaction.userDisplayName ?? '',
                 userPhotoUrl: reaction.userPhotoUrl,
                 emoji: reaction.emoji,
                 timestampMs: reaction.timestampMs,
-              }
-              activeReactionsRef.current = [...activeReactionsRef.current, active]
-              setActiveReactionsList(activeReactionsRef.current)
+                createdAt: reaction.createdAt,
+              })
             }
           }
+
+          if (crossedReactions.length > 0) {
+            activeReactionsRef.current = [
+              ...activeReactionsRef.current,
+              ...crossedReactions.sort((a, b) => a.createdAt - b.createdAt),
+            ]
+            setActiveReactionsList(activeReactionsRef.current)
+          }
+
+          lastReactionPlaybackMsRef.current = currentMs
         }
       }
     }, 100)
@@ -422,7 +475,16 @@ function VideoPlayer({
       endSubscription.remove()
       clearInterval(progressInterval)
     }
-  }, [player, onComplete, onProgress, state$, isLive, reactionsData])
+  }, [
+    player,
+    onComplete,
+    onProgress,
+    state$,
+    isLive,
+    reactionsData,
+    clearActiveReactions,
+    syncReactionPlaybackAfterSeek,
+  ])
 
   // Update URL when source URL or foreground state changes.
   useEffect(() => {
@@ -454,6 +516,9 @@ function VideoPlayer({
 
     if (state$.hasEnded.get()) {
       // Replay from beginning
+      triggeredReactionsRef.current = new Set()
+      lastReactionPlaybackMsRef.current = null
+      clearActiveReactions()
       player.replay()
       state$.hasEnded.set(false)
       state$.userInitiatedPlay.set(true)
@@ -464,7 +529,7 @@ function VideoPlayer({
       state$.userInitiatedPlay.set(true)
       player.play()
     }
-  }, [player, state$])
+  }, [clearActiveReactions, player, state$])
 
   const toggleMute = useCallback(() => {
     if (!player) return
@@ -475,15 +540,12 @@ function VideoPlayer({
   const handleEmojiSelect = useCallback(
     (emoji: string) => {
       // Throttle: max 1 reaction per 5 seconds
-      if (Date.now() - lastReactionTime.current < 5000) return
+      if (Date.now() - lastReactionTime.current < 5000) return false
       lastReactionTime.current = Date.now()
-
-      // Close the emoji grid
-      state$.emojiGridOpen.set(false)
 
       // Optimistic: add to activeReactions immediately
       const optimisticId = `optimistic-${Date.now()}-${Math.random()}`
-      const currentMs = player?.currentTime ? player.currentTime * 1000 : 0
+      const currentMs = player?.currentTime ? Math.floor(player.currentTime * 1000) : 0
       const reaction: ActiveReaction = {
         id: optimisticId,
         userId: currentUserId ?? '',
@@ -491,6 +553,7 @@ function VideoPlayer({
         userPhotoUrl: currentUser?.photoUrl,
         emoji,
         timestampMs: currentMs,
+        createdAt: Date.now(),
       }
       activeReactionsRef.current = [...activeReactionsRef.current, reaction]
       setActiveReactionsList(activeReactionsRef.current)
@@ -501,11 +564,19 @@ function VideoPlayer({
           bondfireId: isMainVideo ? bondfireId : undefined,
           bondfireVideoId: !isMainVideo ? bondfireVideoId : undefined,
           emoji,
-          timestampMs: Math.floor(currentMs),
-        }).catch(() => {
-          // Silent failure - no error toast, reaction just doesn't persist
+          timestampMs: currentMs,
         })
+          .then((savedReaction) => {
+            if (savedReaction?._id) {
+              triggeredReactionsRef.current.add(savedReaction._id)
+            }
+          })
+          .catch(() => {
+            // Silent failure - no error toast, reaction just doesn't persist
+          })
       }
+
+      return true
     },
     [
       player,
@@ -515,7 +586,6 @@ function VideoPlayer({
       bondfireVideoId,
       isMainVideo,
       addReactionMutation,
-      state$,
     ],
   )
 
@@ -547,13 +617,14 @@ function VideoPlayer({
         const seekTime = seekProgress * videoDuration
         if (shouldSeek) {
           player.currentTime = seekTime
+          syncReactionPlaybackAfterSeek(seekTime * 1000)
         }
         state$.progress.set(seekProgress)
         state$.hasEnded.set(false)
         state$.userInitiatedPlay.set(true)
       }
     },
-    [player, state$],
+    [player, state$, syncReactionPlaybackAfterSeek],
   )
 
   const canSeekProgress = Number.isFinite(player?.duration) && (player?.duration ?? 0) > 0

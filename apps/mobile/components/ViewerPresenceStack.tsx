@@ -13,6 +13,7 @@ export interface ActiveReaction {
   userPhotoUrl?: string
   emoji: string
   timestampMs: number
+  createdAt: number
 }
 
 export interface ViewerPresenceStackProps {
@@ -51,34 +52,32 @@ export function ViewerPresenceStack({
   onReactionExpired,
   style,
 }: ViewerPresenceStackProps) {
-  const totalCount = liveViewers.length + activeReactions.length
-  if (totalCount === 0) {
+  const liveViewerUserIds = new Set(liveViewers.map((v) => String(v.userId)))
+  const transientReactions: ActiveReaction[] = []
+  const liveViewerReactionMap = new Map<string, ActiveReaction[]>()
+
+  for (const reaction of activeReactions) {
+    const userId = String(reaction.userId)
+    if (!liveViewerUserIds.has(userId)) {
+      transientReactions.push(reaction)
+      continue
+    }
+
+    const existing = liveViewerReactionMap.get(userId) ?? []
+    existing.push(reaction)
+    liveViewerReactionMap.set(userId, existing)
+  }
+
+  const visibleCount = liveViewers.length + transientReactions.length
+  if (visibleCount === 0) {
     return null
   }
 
-  const gap = totalCount <= 2 ? 12 : totalCount <= 4 ? 6 : 0
-  const overlapMargin = totalCount >= 5 ? -4 : 0
+  const gap = visibleCount <= 2 ? 12 : visibleCount <= 4 ? 6 : 0
+  const overlapMargin = visibleCount >= 5 ? -4 : 0
   const itemHeight = AVATAR_SIZE + AVATAR_CONTENT_GAP + AVATAR_LABEL_HEIGHT
   const maxVisibleHeight =
     MAX_VISIBLE * itemHeight + (MAX_VISIBLE - 1) * gap + (MAX_VISIBLE - 1) * overlapMargin
-
-  // Build a set of live viewer userIds for matching
-  const liveViewerUserIds = new Set(liveViewers.map((v) => String(v.userId)))
-
-  // Reactions that DON'T match a live viewer — these get transient avatars
-  const transientReactions = activeReactions.filter(
-    (r) => !liveViewerUserIds.has(String(r.userId)),
-  )
-
-  // Reactions that DO match a live viewer — render emoji overlay on their existing avatar
-  const liveViewerReactionMap = new Map<string, ActiveReaction[]>()
-  for (const reaction of activeReactions) {
-    if (liveViewerUserIds.has(String(reaction.userId))) {
-      const existing = liveViewerReactionMap.get(reaction.userId) ?? []
-      existing.push(reaction)
-      liveViewerReactionMap.set(reaction.userId, existing)
-    }
-  }
 
   return (
     <ScrollView
@@ -96,7 +95,7 @@ export function ViewerPresenceStack({
       <AnimatePresence>
         {/* Live viewers first (on top) */}
         {liveViewers.map((viewer) => {
-          const viewerReactions = liveViewerReactionMap.get(viewer.userId) ?? []
+          const viewerReactions = liveViewerReactionMap.get(String(viewer.userId)) ?? []
           return (
             <YStack
               key={`live-${viewer._id}`}
@@ -120,8 +119,9 @@ export function ViewerPresenceStack({
                 {viewerReactions.map((reaction) => (
                   <AnimatedEmoji
                     key={reaction.id}
+                    reactionId={reaction.id}
                     emoji={reaction.emoji}
-                    onExpired={() => onReactionExpired?.(reaction.id)}
+                    onExpired={onReactionExpired}
                   />
                 ))}
               </YStack>
@@ -137,7 +137,8 @@ export function ViewerPresenceStack({
           <TransientReactionAvatar
             key={reaction.id}
             reaction={reaction}
-            onExpired={() => onReactionExpired?.(reaction.id)}
+            marginBottom={overlapMargin}
+            onExpired={onReactionExpired}
           />
         ))}
       </AnimatePresence>
@@ -151,10 +152,12 @@ export function ViewerPresenceStack({
  */
 function TransientReactionAvatar({
   reaction,
+  marginBottom,
   onExpired,
 }: {
   reaction: ActiveReaction
-  onExpired: () => void
+  marginBottom: number
+  onExpired?: (id: string) => void
 }) {
   return (
     <YStack
@@ -163,18 +166,16 @@ function TransientReactionAvatar({
       exitStyle={{ opacity: 0, scale: 0.8 }}
       alignItems="center"
       gap={2}
-      marginBottom={0}
+      marginBottom={marginBottom}
     >
       <YStack position="relative" alignItems="center" justifyContent="center">
         <Avatar size={AVATAR_SIZE} borderRadius={AVATAR_RADIUS}>
-          {reaction.userPhotoUrl ? (
-            <Avatar.Image source={{ uri: reaction.userPhotoUrl }} />
-          ) : null}
+          {reaction.userPhotoUrl ? <Avatar.Image source={{ uri: reaction.userPhotoUrl }} /> : null}
           <Avatar.Fallback backgroundColor={VIDEO_OVERLAY_COLORS.pillBackground}>
             <Flame size={18} color={VIDEO_OVERLAY_COLORS.textPrimary} />
           </Avatar.Fallback>
         </Avatar>
-        <AnimatedEmoji emoji={reaction.emoji} onExpired={onExpired} />
+        <AnimatedEmoji reactionId={reaction.id} emoji={reaction.emoji} onExpired={onExpired} />
       </YStack>
     </YStack>
   )
@@ -185,8 +186,18 @@ function TransientReactionAvatar({
  * After TOTAL_DURATION, calls onExpired to remove from active list.
  * Used on both live viewer avatars (when they react) and transient avatars.
  */
-function AnimatedEmoji({ emoji, onExpired }: { emoji: string; onExpired: () => void }) {
+function AnimatedEmoji({
+  reactionId,
+  emoji,
+  onExpired,
+}: {
+  reactionId: string
+  emoji: string
+  onExpired?: (id: string) => void
+}) {
   const scaleRef = useRef(new Animated.Value(0.5)).current
+  const onExpiredRef = useRef(onExpired)
+  onExpiredRef.current = onExpired
 
   useEffect(() => {
     Animated.timing(scaleRef, {
@@ -195,12 +206,14 @@ function AnimatedEmoji({ emoji, onExpired }: { emoji: string; onExpired: () => v
       useNativeDriver: true,
     }).start()
 
-    const timer = setTimeout(onExpired, TOTAL_DURATION)
+    const timer = setTimeout(() => {
+      onExpiredRef.current?.(reactionId)
+    }, TOTAL_DURATION)
     return () => {
       clearTimeout(timer)
       scaleRef.stopAnimation()
     }
-  }, [scaleRef, onExpired])
+  }, [reactionId, scaleRef])
 
   return (
     <Animated.View
