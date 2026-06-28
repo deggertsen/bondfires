@@ -79,6 +79,45 @@ export function CampPickerScreen({
       ) : (
         <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 32 }}>
           <YStack gap={10}>
+            {/* Personal Hearth — always at the top of the list */}
+            <Pressable onPress={handleOpenPersonalHearth}>
+              <YStack
+                padding={14}
+                borderRadius={16}
+                backgroundColor={'rgba(217, 119, 54, 0.07)'}
+                borderWidth={1}
+                borderColor={'$primary'}
+                borderStyle="dashed"
+                gap={8}
+              >
+                <XStack justifyContent="space-between" alignItems="center" gap={12}>
+                  <XStack alignItems="center" gap={10} flex={1}>
+                    <YStack
+                      width={36}
+                      height={36}
+                      borderRadius={18}
+                      backgroundColor={'rgba(217, 119, 54, 0.15)'}
+                      alignItems="center"
+                      justifyContent="center"
+                    >
+                      <Flame size={18} color={'$primary'} />
+                    </YStack>
+                    <YStack flex={1} gap={2}>
+                      <Text fontSize={16} fontWeight="900" color={'$primary'} numberOfLines={1}>
+                        {personalCampDoc?.name ?? 'My Hearth'}
+                      </Text>
+                      <Text fontSize={12} color={'$placeholderColor'} numberOfLines={1}>
+                        Your personal space
+                      </Text>
+                    </YStack>
+                  </XStack>
+                  <Sparkles size={16} color={'$primary'} />
+                </XStack>
+                <Text fontSize={14} color={'$color'} lineHeight={20}>
+                  Private sparks just for you. No camp rules, no audience — just your own fire.
+                </Text>
+              </YStack>
+            </Pressable>
             {sortedCamps.map((camp) => {
               const isActiveMember = camp.membership?.status === 'active'
               const isPending = camp.membership?.status === 'pending'
@@ -121,45 +160,7 @@ export function CampPickerScreen({
                 </Pressable>
               )
             })}
-            {/* Personal Hearth — visually distinct from camp cards */}
-            <Pressable onPress={handleOpenPersonalHearth}>
-              <YStack
-                padding={14}
-                borderRadius={16}
-                backgroundColor={'rgba(217, 119, 54, 0.07)'}
-                borderWidth={1}
-                borderColor={'$primary'}
-                borderStyle="dashed"
-                gap={8}
-              >
-                <XStack justifyContent="space-between" alignItems="center" gap={12}>
-                  <XStack alignItems="center" gap={10} flex={1}>
-                    <YStack
-                      width={36}
-                      height={36}
-                      borderRadius={18}
-                      backgroundColor={'rgba(217, 119, 54, 0.15)'}
-                      alignItems="center"
-                      justifyContent="center"
-                    >
-                      <Flame size={18} color={'$primary'} />
-                    </YStack>
-                    <YStack flex={1} gap={2}>
-                      <Text fontSize={16} fontWeight="900" color={'$primary'} numberOfLines={1}>
-                        {personalCampDoc?.name ?? 'My Hearth'}
-                      </Text>
-                      <Text fontSize={12} color={'$placeholderColor'} numberOfLines={1}>
-                        Your personal space
-                      </Text>
-                    </YStack>
-                  </XStack>
-                  <Sparkles size={16} color={'$primary'} />
-                </XStack>
-                <Text fontSize={14} color={'$color'} lineHeight={20}>
-                  Private sparks just for you. No camp rules, no audience — just your own fire.
-                </Text>
-              </YStack>
-            </Pressable>
+
           </YStack>
         </ScrollView>
       )}
