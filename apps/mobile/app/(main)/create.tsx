@@ -141,7 +141,7 @@ export default function CreateScreen() {
     ? undefined
     : isPersonalCamp
       ? undefined
-      : ((campId as Id<'camps'> | undefined) ?? selectedCampId ?? persistedCampId ?? undefined)
+      : ((campId as Id<'camps'> | undefined) ?? selectedCampId ?? undefined)
   const selectedCamp = useMemo(() => {
     if (!effectiveCampId || !camps) return null
     return camps.find((camp) => camp._id === effectiveCampId) ?? null
