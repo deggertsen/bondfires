@@ -15,7 +15,7 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { LinearGradient } from 'expo-linear-gradient'
 import { useVideoPlayer, VideoView } from 'expo-video'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
-import { type LayoutChangeEvent, PanResponder, Platform, Pressable, type View } from 'react-native'
+import { type LayoutChangeEvent, PanResponder, Pressable, type View } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../../../convex/_generated/api'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
@@ -43,6 +43,28 @@ import {
   RightSideControls,
   VideoProgressBar,
 } from './VideoPlayerOverlays'
+
+const PROGRESS_STATE_UPDATE_INTERVAL_MS = 250
+const PROGRESS_TIME_UPDATE_INTERVAL_SECONDS = PROGRESS_STATE_UPDATE_INTERVAL_MS / 1000
+
+function getFirstReactionAfter<T extends { timestampMs: number }>(
+  reactions: readonly T[],
+  timestampMs: number,
+) {
+  let low = 0
+  let high = reactions.length
+
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2)
+    if (reactions[mid].timestampMs <= timestampMs) {
+      low = mid + 1
+    } else {
+      high = mid
+    }
+  }
+
+  return low
+}
 
 export interface VideoPlayerProps {
   bondfireId?: Id<'bondfires'>
@@ -141,14 +163,24 @@ export function VideoPlayer({
     lastReactionPlaybackMs: null as number | null,
   })
 
+  const triggeredReactionIdsRef = useRef<Record<string, true>>({})
+  const lastReactionPlaybackMsRef = useRef<number | null>(null)
+  const lastProgressStateUpdateAtRef = useRef(0)
+
   const currentUrl = useValue(state$.currentUrl)
   const isPlaying = useValue(state$.isPlaying)
 
+  const resetLocalReactionState = useCallback(() => {
+    triggeredReactionIdsRef.current = {}
+    lastReactionPlaybackMsRef.current = null
+    resetReactionState(state$)
+  }, [state$])
+
   useEffect(() => {
     if (videoReactionKey) {
-      resetReactionState(state$)
+      resetLocalReactionState()
     }
-  }, [state$, videoReactionKey])
+  }, [resetLocalReactionState, videoReactionKey])
 
   const progressBarViewRef = useRef<View>(null)
   const progressBarRef = useRef<ProgressBarMetrics>({ width: 0, pageX: null })
@@ -166,6 +198,7 @@ export function VideoPlayer({
     player.muted = isMuted
     player.playbackRate = playbackSpeed
     player.preservesPitch = true
+    player.timeUpdateEventInterval = PROGRESS_TIME_UPDATE_INTERVAL_SECONDS
   })
 
   const muxPlaybackId = useMemo(() => {
@@ -202,9 +235,130 @@ export function VideoPlayer({
     isActive: isActive && isScreenFocused && isAppActive,
   })
 
+  const updatePlaybackProgress = useCallback(
+    ({
+      currentTime,
+      duration,
+      force = false,
+    }: {
+      currentTime: number
+      duration: number
+      force?: boolean
+    }) => {
+      const currentProgress = currentTime / duration
+      const positionMs = currentTime * 1000
+      const durationMs = duration * 1000
+      const now = Date.now()
+
+      if (
+        force ||
+        currentProgress >= 1 ||
+        now - lastProgressStateUpdateAtRef.current >= PROGRESS_STATE_UPDATE_INTERVAL_MS
+      ) {
+        lastProgressStateUpdateAtRef.current = now
+        state$.progress.set(currentProgress)
+        onProgress(currentProgress, positionMs, durationMs)
+      }
+
+      if (currentTime >= duration - 0.1) {
+        onComplete(positionMs, durationMs)
+      }
+    },
+    [onComplete, onProgress, state$],
+  )
+
+  const syncLocalReactionPlaybackAfterSeek = useCallback(
+    (positionMs: number) => {
+      syncReactionPlaybackAfterSeek({
+        positionMs,
+        reactionsData: reactionsDataRef.current,
+        state$,
+      })
+      lastReactionPlaybackMsRef.current = Math.max(0, positionMs)
+      triggeredReactionIdsRef.current = state$.triggeredReactionIds.get()
+    },
+    [state$],
+  )
+
+  const processTimedPlaybackUpdate = useCallback(
+    (currentTime: number, duration: number) => {
+      updatePlaybackProgress({ currentTime, duration })
+
+      const playerPlaying = player?.playing ?? false
+      if (state$.isPlaying.get() !== playerPlaying) {
+        state$.isPlaying.set(playerPlaying)
+      }
+
+      const currentReactionsData = reactionsDataRef.current
+      if (isLive || !currentReactionsData) return
+
+      const currentMs = currentTime * 1000
+      const previousMs = lastReactionPlaybackMsRef.current
+
+      if (previousMs !== null && currentMs + REACTION_PLAYBACK_WINDOW_MS < previousMs) {
+        syncLocalReactionPlaybackAfterSeek(currentMs)
+        return
+      }
+
+      const windowStart = previousMs ?? Math.max(-1, currentMs - REACTION_PLAYBACK_WINDOW_MS)
+      const crossedReactions: ActiveReaction[] = []
+      let activeReactions: ActiveReaction[] | null = null
+      let triggeredReactionIds = triggeredReactionIdsRef.current
+      let shouldCommitTriggeredReactionIds = false
+      const firstReactionIndex = getFirstReactionAfter(currentReactionsData, windowStart)
+
+      for (let i = firstReactionIndex; i < currentReactionsData.length; i += 1) {
+        const reaction = currentReactionsData[i]
+        if (reaction.timestampMs > currentMs) break
+
+        if (!triggeredReactionIds[reaction._id]) {
+          if (!shouldCommitTriggeredReactionIds) {
+            triggeredReactionIds = { ...triggeredReactionIds }
+            shouldCommitTriggeredReactionIds = true
+          }
+          triggeredReactionIds[reaction._id] = true
+          activeReactions ??= state$.activeReactions.get()
+          const alreadyActive = activeReactions.some(
+            (activeReaction) =>
+              String(activeReaction.userId) === String(reaction.userId) &&
+              activeReaction.emoji === reaction.emoji &&
+              activeReaction.timestampMs === reaction.timestampMs,
+          )
+          if (alreadyActive) continue
+
+          crossedReactions.push({
+            id: reaction._id,
+            userId: reaction.userId,
+            userName: reaction.userDisplayName ?? '',
+            userPhotoUrl: reaction.userPhotoUrl,
+            emoji: reaction.emoji,
+            timestampMs: reaction.timestampMs,
+            createdAt: reaction.createdAt,
+          })
+        }
+      }
+
+      if (shouldCommitTriggeredReactionIds) {
+        triggeredReactionIdsRef.current = triggeredReactionIds
+        state$.triggeredReactionIds.set(triggeredReactionIds)
+      }
+
+      if (crossedReactions.length > 0) {
+        state$.activeReactions.set([
+          ...state$.activeReactions.get(),
+          ...crossedReactions.sort((a, b) => a.createdAt - b.createdAt),
+        ])
+      }
+
+      lastReactionPlaybackMsRef.current = currentMs
+    },
+    [isLive, player, state$, syncLocalReactionPlaybackAfterSeek, updatePlaybackProgress],
+  )
+
   useEffect(() => {
     if (player && isActive && isScreenFocused && isAppActive) {
       player.playbackRate = playbackSpeed
+      player.timeUpdateEventInterval = PROGRESS_TIME_UPDATE_INTERVAL_SECONDS
     }
   }, [player, isActive, isScreenFocused, isAppActive, playbackSpeed])
 
@@ -262,15 +416,11 @@ export function VideoPlayer({
           player.currentTime !== undefined &&
           player.duration
         ) {
-          const currentProgress = player.currentTime / player.duration
-          const positionMs = player.currentTime * 1000
-          const durationMs = player.duration * 1000
-          state$.progress.set(currentProgress)
-          onProgress(currentProgress, positionMs, durationMs)
-
-          if (player.currentTime >= player.duration - 0.1) {
-            onComplete(positionMs, durationMs)
-          }
+          updatePlaybackProgress({
+            currentTime: player.currentTime,
+            duration: player.duration,
+            force: true,
+          })
         }
       }
     })
@@ -281,100 +431,45 @@ export function VideoPlayer({
       state$.hasEnded.set(true)
       state$.progress.set(1)
       state$.isPlaying.set(false)
-      state$.triggeredReactionIds.set({})
-      state$.lastReactionPlaybackMs.set(null)
+      triggeredReactionIdsRef.current = {}
+      lastReactionPlaybackMsRef.current = null
+      state$.triggeredReactionIds.set(triggeredReactionIdsRef.current)
+      state$.lastReactionPlaybackMs.set(lastReactionPlaybackMsRef.current)
       clearActiveReactions(state$)
       onComplete(player.currentTime * 1000, player.duration ? player.duration * 1000 : undefined)
     })
 
-    const progressInterval = shouldTrackPlayback
-      ? setInterval(() => {
-          if (
-            !isScrubbingRef.current &&
-            player.status === 'readyToPlay' &&
-            player.currentTime !== undefined &&
-            player.duration
-          ) {
-            const currentProgress = player.currentTime / player.duration
-            const positionMs = player.currentTime * 1000
-            const durationMs = player.duration * 1000
-            state$.progress.set(currentProgress)
-            onProgress(currentProgress, positionMs, durationMs)
+    const playingSubscription = player.addListener('playingChange', ({ isPlaying }) => {
+      state$.isPlaying.set(shouldTrackPlayback ? isPlaying : false)
+    })
 
-            const playerPlaying = player.playing ?? false
-            if (state$.isPlaying.get() !== playerPlaying) {
-              state$.isPlaying.set(playerPlaying)
-            }
+    const timeUpdateSubscription = player.addListener('timeUpdate', ({ currentTime }) => {
+      if (
+        !shouldTrackPlayback ||
+        isScrubbingRef.current ||
+        player.status !== 'readyToPlay' ||
+        !player.duration
+      ) {
+        return
+      }
 
-            const currentReactionsData = reactionsDataRef.current
-            if (!isLive && currentReactionsData) {
-              const currentMs = player.currentTime * 1000
-              const previousMs = state$.lastReactionPlaybackMs.get()
-
-              if (previousMs !== null && currentMs + REACTION_PLAYBACK_WINDOW_MS < previousMs) {
-                syncReactionPlaybackAfterSeek({
-                  positionMs: currentMs,
-                  reactionsData: currentReactionsData,
-                  state$,
-                })
-                return
-              }
-
-              const windowStart =
-                previousMs ?? Math.max(-1, currentMs - REACTION_PLAYBACK_WINDOW_MS)
-              const crossedReactions: ActiveReaction[] = []
-              const activeReactions = state$.activeReactions.get()
-              const triggeredReactionIds = { ...state$.triggeredReactionIds.get() }
-
-              for (const reaction of currentReactionsData) {
-                if (
-                  !triggeredReactionIds[reaction._id] &&
-                  reaction.timestampMs > windowStart &&
-                  reaction.timestampMs <= currentMs
-                ) {
-                  triggeredReactionIds[reaction._id] = true
-                  const alreadyActive = activeReactions.some(
-                    (activeReaction) =>
-                      String(activeReaction.userId) === String(reaction.userId) &&
-                      activeReaction.emoji === reaction.emoji &&
-                      activeReaction.timestampMs === reaction.timestampMs,
-                  )
-                  if (alreadyActive) continue
-
-                  crossedReactions.push({
-                    id: reaction._id,
-                    userId: reaction.userId,
-                    userName: reaction.userDisplayName ?? '',
-                    userPhotoUrl: reaction.userPhotoUrl,
-                    emoji: reaction.emoji,
-                    timestampMs: reaction.timestampMs,
-                    createdAt: reaction.createdAt,
-                  })
-                }
-              }
-
-              if (crossedReactions.length > 0) {
-                state$.triggeredReactionIds.set(triggeredReactionIds)
-                state$.activeReactions.set([
-                  ...state$.activeReactions.get(),
-                  ...crossedReactions.sort((a, b) => a.createdAt - b.createdAt),
-                ])
-              }
-
-              state$.lastReactionPlaybackMs.set(currentMs)
-            }
-          }
-        }, 100)
-      : null
+      processTimedPlaybackUpdate(currentTime, player.duration)
+    })
 
     return () => {
       statusSubscription.remove()
       endSubscription.remove()
-      if (progressInterval) {
-        clearInterval(progressInterval)
-      }
+      playingSubscription.remove()
+      timeUpdateSubscription.remove()
     }
-  }, [player, onComplete, onProgress, state$, shouldTrackPlayback, isLive])
+  }, [
+    player,
+    onComplete,
+    state$,
+    shouldTrackPlayback,
+    processTimedPlaybackUpdate,
+    updatePlaybackProgress,
+  ])
 
   useEffect(() => {
     const currentUrlValue = state$.currentUrl.get()
@@ -400,8 +495,10 @@ export function VideoPlayer({
     if (!player) return
 
     if (state$.hasEnded.get()) {
-      state$.triggeredReactionIds.set({})
-      state$.lastReactionPlaybackMs.set(null)
+      triggeredReactionIdsRef.current = {}
+      lastReactionPlaybackMsRef.current = null
+      state$.triggeredReactionIds.set(triggeredReactionIdsRef.current)
+      state$.lastReactionPlaybackMs.set(lastReactionPlaybackMsRef.current)
       clearActiveReactions(state$)
       player.replay()
       state$.hasEnded.set(false)
@@ -450,10 +547,11 @@ export function VideoPlayer({
         })
           .then((savedReaction) => {
             if (savedReaction?._id) {
-              state$.triggeredReactionIds.set({
-                ...state$.triggeredReactionIds.get(),
+              triggeredReactionIdsRef.current = {
+                ...triggeredReactionIdsRef.current,
                 [savedReaction._id]: true,
-              })
+              }
+              state$.triggeredReactionIds.set(triggeredReactionIdsRef.current)
             }
           })
           .catch(() => {
@@ -504,18 +602,14 @@ export function VideoPlayer({
         const seekTime = seekProgress * videoDuration
         if (shouldSeek) {
           player.currentTime = seekTime
-          syncReactionPlaybackAfterSeek({
-            positionMs: seekTime * 1000,
-            reactionsData: reactionsDataRef.current,
-            state$,
-          })
+          syncLocalReactionPlaybackAfterSeek(seekTime * 1000)
         }
         state$.progress.set(seekProgress)
         state$.hasEnded.set(false)
         state$.userInitiatedPlay.set(true)
       }
     },
-    [player, state$],
+    [player, state$, syncLocalReactionPlaybackAfterSeek],
   )
 
   const canSeekProgress = Number.isFinite(player?.duration) && (player?.duration ?? 0) > 0
@@ -695,7 +789,10 @@ export function VideoPlayer({
           style={{ flex: 1 }}
           contentFit="cover"
           nativeControls={false}
-          surfaceType={Platform.OS === 'android' ? 'textureView' : undefined}
+          allowsFullscreen={false}
+          fullscreenOptions={{ enable: false }}
+          allowsPictureInPicture={false}
+          startsPictureInPictureAutomatically={false}
         />
       ) : (
         <YStack flex={1} alignItems="center" justifyContent="center">

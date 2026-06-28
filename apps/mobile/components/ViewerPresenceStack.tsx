@@ -29,6 +29,9 @@ const AVATAR_CONTENT_GAP = 2
 const MAX_VISIBLE = 5
 const EMOJI_SCALE_DURATION = 800
 const TOTAL_DURATION = 1500
+const EMOJI_OVERFLOW_PADDING = 18
+const EMOJI_CONTAINER_SIZE = 34
+const EMOJI_FONT_SIZE = 20
 
 /**
  * Unified avatar stack for the video player's left side.
@@ -84,6 +87,7 @@ export function ViewerPresenceStack({
   const itemHeight = AVATAR_SIZE + AVATAR_CONTENT_GAP + AVATAR_LABEL_HEIGHT
   const maxVisibleHeight =
     MAX_VISIBLE * itemHeight + (MAX_VISIBLE - 1) * gap + (MAX_VISIBLE - 1) * overlapMargin
+  const stackOverflowPadding = activeReactions.length > 0 ? EMOJI_OVERFLOW_PADDING : 0
 
   return (
     <ScrollView
@@ -91,12 +95,20 @@ export function ViewerPresenceStack({
         {
           position: 'absolute',
           zIndex: 4,
-          maxHeight: maxVisibleHeight,
+          maxHeight: maxVisibleHeight + stackOverflowPadding,
+          marginTop: -stackOverflowPadding,
+          marginLeft: -stackOverflowPadding,
+          overflow: 'visible',
         },
         style,
       ]}
       showsVerticalScrollIndicator={false}
-      contentContainerStyle={{ gap }}
+      contentContainerStyle={{
+        gap,
+        paddingTop: stackOverflowPadding,
+        paddingLeft: stackOverflowPadding,
+        overflow: 'visible',
+      }}
     >
       <AnimatePresence>
         {/* Live viewers first (on top) */}
@@ -111,8 +123,14 @@ export function ViewerPresenceStack({
               alignItems="center"
               gap={2}
               marginBottom={overlapMargin}
+              overflow="visible"
             >
-              <YStack position="relative" alignItems="center" justifyContent="center">
+              <YStack
+                position="relative"
+                alignItems="center"
+                justifyContent="center"
+                overflow="visible"
+              >
                 <Avatar size={AVATAR_SIZE} borderRadius={AVATAR_RADIUS}>
                   {viewer.userPhotoUrl ? (
                     <Avatar.Image source={{ uri: viewer.userPhotoUrl }} />
@@ -173,8 +191,9 @@ function TransientReactionAvatar({
       alignItems="center"
       gap={2}
       marginBottom={marginBottom}
+      overflow="visible"
     >
-      <YStack position="relative" alignItems="center" justifyContent="center">
+      <YStack position="relative" alignItems="center" justifyContent="center" overflow="visible">
         <Avatar size={AVATAR_SIZE} borderRadius={AVATAR_RADIUS}>
           {reaction.userPhotoUrl ? <Avatar.Image source={{ uri: reaction.userPhotoUrl }} /> : null}
           <Avatar.Fallback backgroundColor={VIDEO_OVERLAY_COLORS.pillBackground}>
@@ -226,13 +245,18 @@ function AnimatedEmoji({
       pointerEvents="none"
       style={{
         position: 'absolute',
-        top: -10,
+        top: -18,
+        width: EMOJI_CONTAINER_SIZE,
+        height: EMOJI_CONTAINER_SIZE,
         alignItems: 'center',
         justifyContent: 'center',
+        overflow: 'visible',
         transform: [{ scale: scaleRef }],
       }}
     >
-      <Text fontSize={16}>{emoji}</Text>
+      <Text fontSize={EMOJI_FONT_SIZE} lineHeight={EMOJI_CONTAINER_SIZE}>
+        {emoji}
+      </Text>
     </Animated.View>
   )
 }
