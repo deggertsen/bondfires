@@ -26,7 +26,13 @@ import {
   SCREEN_WIDTH,
   SCRUB_SEEK_THROTTLE_MS,
 } from '../_lib/bondfireDetailHelpers'
-import type { PendingScrubSeek, ProgressBarMetrics } from '../_lib/videoPlayerState'
+import {
+  clearActiveReactions,
+  type PendingScrubSeek,
+  type ProgressBarMetrics,
+  resetReactionState,
+  syncReactionPlaybackAfterSeek,
+} from '../_lib/videoPlayerState'
 import {
   LoadingOverlay,
   PausedReportButton,
@@ -111,18 +117,11 @@ export function VideoPlayer({
   )
 
   const addReactionMutation = useMutation(api.videoReactions.addReaction)
-
-  const getTargetUrl = useCallback(() => {
-    if (shouldSuppressPlayback) {
-      return null
-    }
-
-    return videoUrl
-  }, [videoUrl, shouldSuppressPlayback])
+  const targetUrl = shouldSuppressPlayback ? null : videoUrl
 
   const state$ = useObservable({
     showReport: false,
-    currentUrl: getTargetUrl(),
+    currentUrl: targetUrl,
     progress: 0,
     duration: 0,
     isLoading: true,
@@ -139,41 +138,11 @@ export function VideoPlayer({
   const currentUrl = useValue(state$.currentUrl)
   const isPlaying = useValue(state$.isPlaying)
 
-  const clearActiveReactions = useCallback(() => {
-    if (state$.activeReactions.get().length === 0) return
-    state$.activeReactions.set([])
-  }, [state$])
-
-  const syncReactionPlaybackAfterSeek = useCallback(
-    (positionMs: number) => {
-      const safePositionMs = Math.max(0, positionMs)
-      const triggeredReactionIds: Record<string, true> = {}
-      for (const reaction of reactionsData ?? []) {
-        if (reaction.timestampMs <= safePositionMs) {
-          triggeredReactionIds[reaction._id] = true
-        }
-      }
-
-      state$.lastReactionPlaybackMs.set(safePositionMs)
-      state$.triggeredReactionIds.set(triggeredReactionIds)
-      clearActiveReactions()
-    },
-    [clearActiveReactions, reactionsData, state$],
-  )
-
-  const resetReactionState = useCallback(() => {
-    state$.activeReactions.set([])
-    state$.triggeredReactionIds.set({})
-    state$.lastReactionPlaybackMs.set(null)
-    state$.lastReactionTime.set(0)
-    state$.emojiGridOpen.set(false)
-  }, [state$])
-
   useEffect(() => {
     if (videoReactionKey) {
-      resetReactionState()
+      resetReactionState(state$)
     }
-  }, [resetReactionState, videoReactionKey])
+  }, [state$, videoReactionKey])
 
   const progressBarViewRef = useRef<View>(null)
   const progressBarRef = useRef<ProgressBarMetrics>({ width: 0, pageX: null })
@@ -306,7 +275,7 @@ export function VideoPlayer({
       state$.isPlaying.set(false)
       state$.triggeredReactionIds.set({})
       state$.lastReactionPlaybackMs.set(null)
-      clearActiveReactions()
+      clearActiveReactions(state$)
       onComplete()
     })
 
@@ -332,7 +301,7 @@ export function VideoPlayer({
               const previousMs = state$.lastReactionPlaybackMs.get()
 
               if (previousMs !== null && currentMs + REACTION_PLAYBACK_WINDOW_MS < previousMs) {
-                syncReactionPlaybackAfterSeek(currentMs)
+                syncReactionPlaybackAfterSeek({ positionMs: currentMs, reactionsData, state$ })
                 return
               }
 
@@ -381,26 +350,14 @@ export function VideoPlayer({
         clearInterval(progressInterval)
       }
     }
-  }, [
-    player,
-    onComplete,
-    onProgress,
-    state$,
-    shouldTrackPlayback,
-    isLive,
-    reactionsData,
-    clearActiveReactions,
-    syncReactionPlaybackAfterSeek,
-  ])
+  }, [player, onComplete, onProgress, state$, shouldTrackPlayback, isLive, reactionsData])
 
   useEffect(() => {
-    const targetUrl = getTargetUrl()
-
     const currentUrlValue = state$.currentUrl.get()
-    if (targetUrl && currentUrlValue !== targetUrl) {
+    if (currentUrlValue !== targetUrl) {
       state$.currentUrl.set(targetUrl)
     }
-  }, [getTargetUrl, state$])
+  }, [state$, targetUrl])
 
   const keepAwakeTag = `video-playback-${videoId}`
   useEffect(() => {
@@ -421,7 +378,7 @@ export function VideoPlayer({
     if (state$.hasEnded.get()) {
       state$.triggeredReactionIds.set({})
       state$.lastReactionPlaybackMs.set(null)
-      clearActiveReactions()
+      clearActiveReactions(state$)
       player.replay()
       state$.hasEnded.set(false)
       state$.isPlaying.set(true)
@@ -434,7 +391,7 @@ export function VideoPlayer({
       player.play()
       state$.isPlaying.set(true)
     }
-  }, [clearActiveReactions, player, state$])
+  }, [player, state$])
 
   const toggleMute = useCallback(() => {
     if (!player) return
@@ -523,14 +480,18 @@ export function VideoPlayer({
         const seekTime = seekProgress * videoDuration
         if (shouldSeek) {
           player.currentTime = seekTime
-          syncReactionPlaybackAfterSeek(seekTime * 1000)
+          syncReactionPlaybackAfterSeek({
+            positionMs: seekTime * 1000,
+            reactionsData,
+            state$,
+          })
         }
         state$.progress.set(seekProgress)
         state$.hasEnded.set(false)
         state$.userInitiatedPlay.set(true)
       }
     },
-    [player, state$, syncReactionPlaybackAfterSeek],
+    [player, reactionsData, state$],
   )
 
   const canSeekProgress = Number.isFinite(player?.duration) && (player?.duration ?? 0) > 0

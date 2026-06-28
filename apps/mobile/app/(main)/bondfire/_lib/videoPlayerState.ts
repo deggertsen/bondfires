@@ -29,3 +29,43 @@ export type VideoPlayerState = {
 }
 
 export type VideoPlayerState$ = Observable<VideoPlayerState>
+
+type ReactionPlaybackMarker = {
+  _id: string
+  timestampMs: number
+}
+
+export function clearActiveReactions(state$: VideoPlayerState$) {
+  if (state$.activeReactions.get().length === 0) return
+  state$.activeReactions.set([])
+}
+
+export function resetReactionState(state$: VideoPlayerState$) {
+  state$.activeReactions.set([])
+  state$.triggeredReactionIds.set({})
+  state$.lastReactionPlaybackMs.set(null)
+  state$.lastReactionTime.set(0)
+  state$.emojiGridOpen.set(false)
+}
+
+export function syncReactionPlaybackAfterSeek({
+  positionMs,
+  reactionsData,
+  state$,
+}: {
+  positionMs: number
+  reactionsData: readonly ReactionPlaybackMarker[] | undefined
+  state$: VideoPlayerState$
+}) {
+  const safePositionMs = Math.max(0, positionMs)
+  const triggeredReactionIds: Record<string, true> = {}
+  for (const reaction of reactionsData ?? []) {
+    if (reaction.timestampMs <= safePositionMs) {
+      triggeredReactionIds[reaction._id] = true
+    }
+  }
+
+  state$.lastReactionPlaybackMs.set(safePositionMs)
+  state$.triggeredReactionIds.set(triggeredReactionIds)
+  clearActiveReactions(state$)
+}
