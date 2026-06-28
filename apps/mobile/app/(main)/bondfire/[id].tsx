@@ -214,17 +214,22 @@ function VideoPlayer({
   // Subscription tier for emoji gating
   const { currentTier } = useSubscription()
   const isPaid = tierMeetsRequirement(currentTier, 'plus')
+  const shouldHandleVodReactions = !isLive && isActive && isScreenFocused && isAppActive
+  const shouldTrackPlayback = isActive && isScreenFocused && isAppActive && !shouldSuppressPlayback
 
   // Current user data for optimistic reaction animation
-  const currentUser = useQuery(api.users.current)
+  const currentUser = useQuery(api.users.current, shouldHandleVodReactions ? {} : 'skip')
 
   // Recent emojis (paid users only — free users use FREE_EMOJIS)
-  const recentEmojis = useQuery(api.videoReactions.getRecentEmojis, isPaid ? {} : 'skip')
+  const recentEmojis = useQuery(
+    api.videoReactions.getRecentEmojis,
+    isPaid && shouldHandleVodReactions ? {} : 'skip',
+  )
 
-  // Load reactions for this video (VOD only, not live)
+  // Load reactions only for the active VOD player; inactive cells do not need playback subscriptions.
   const reactionsData = useQuery(
     api.videoReactions.getReactions,
-    !isLive && (bondfireId || bondfireVideoId)
+    shouldHandleVodReactions && (bondfireId || bondfireVideoId)
       ? isMainVideo
         ? { bondfireId }
         : { bondfireVideoId }
@@ -287,14 +292,19 @@ function VideoPlayer({
     [clearActiveReactions, reactionsData, state$],
   )
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Reaction playback state is keyed by the current video identity.
-  useEffect(() => {
+  const resetReactionState = useCallback(() => {
     state$.activeReactions.set([])
     state$.triggeredReactionIds.set({})
     state$.lastReactionPlaybackMs.set(null)
     state$.lastReactionTime.set(0)
     state$.emojiGridOpen.set(false)
-  }, [state$, videoReactionKey])
+  }, [state$])
+
+  useEffect(() => {
+    if (videoReactionKey) {
+      resetReactionState()
+    }
+  }, [resetReactionState, videoReactionKey])
 
   const progressBarViewRef = useRef<View>(null)
   const progressBarRef = useRef<ProgressBarMetrics>({ width: 0, pageX: null })
@@ -416,7 +426,12 @@ function VideoPlayer({
 
       // Update progress when status changes to readyToPlay
       if (status.status === 'readyToPlay') {
-        if (!isScrubbingRef.current && player.currentTime !== undefined && player.duration) {
+        if (
+          shouldTrackPlayback &&
+          !isScrubbingRef.current &&
+          player.currentTime !== undefined &&
+          player.duration
+        ) {
           const currentProgress = player.currentTime / player.duration
           state$.progress.set(currentProgress)
           onProgress(currentProgress)
@@ -430,6 +445,8 @@ function VideoPlayer({
 
     // Listen for video end
     const endSubscription = player.addListener('playToEnd', () => {
+      if (!shouldTrackPlayback) return
+
       state$.hasEnded.set(true)
       state$.progress.set(1)
       state$.isPlaying.set(false)
@@ -441,78 +458,84 @@ function VideoPlayer({
     })
 
     // Update progress periodically (interval-based)
-    const progressInterval = setInterval(() => {
-      if (
-        !isScrubbingRef.current &&
-        player.status === 'readyToPlay' &&
-        player.currentTime !== undefined &&
-        player.duration
-      ) {
-        const currentProgress = player.currentTime / player.duration
-        state$.progress.set(currentProgress)
-        onProgress(currentProgress)
+    const progressInterval = shouldTrackPlayback
+      ? setInterval(() => {
+          if (
+            !isScrubbingRef.current &&
+            player.status === 'readyToPlay' &&
+            player.currentTime !== undefined &&
+            player.duration
+          ) {
+            const currentProgress = player.currentTime / player.duration
+            state$.progress.set(currentProgress)
+            onProgress(currentProgress)
 
-        const playerPlaying = player.playing ?? false
-        if (state$.isPlaying.get() !== playerPlaying) {
-          state$.isPlaying.set(playerPlaying)
-        }
+            const playerPlaying = player.playing ?? false
+            if (state$.isPlaying.get() !== playerPlaying) {
+              state$.isPlaying.set(playerPlaying)
+            }
 
-        // Reaction playback: animate only timestamps crossed during normal playback.
-        if (!isLive && reactionsData) {
-          const currentMs = player.currentTime * 1000
-          const previousMs = state$.lastReactionPlaybackMs.get()
+            // Reaction playback: animate only timestamps crossed during normal playback.
+            if (!isLive && reactionsData) {
+              const currentMs = player.currentTime * 1000
+              const previousMs = state$.lastReactionPlaybackMs.get()
 
-          if (previousMs !== null && currentMs + REACTION_PLAYBACK_WINDOW_MS < previousMs) {
-            syncReactionPlaybackAfterSeek(currentMs)
-            return
-          }
+              if (previousMs !== null && currentMs + REACTION_PLAYBACK_WINDOW_MS < previousMs) {
+                syncReactionPlaybackAfterSeek(currentMs)
+                return
+              }
 
-          const windowStart = previousMs ?? Math.max(-1, currentMs - REACTION_PLAYBACK_WINDOW_MS)
-          const crossedReactions: ActiveReaction[] = []
-          const triggeredReactionIds = { ...state$.triggeredReactionIds.get() }
+              const windowStart =
+                previousMs ?? Math.max(-1, currentMs - REACTION_PLAYBACK_WINDOW_MS)
+              const crossedReactions: ActiveReaction[] = []
+              const triggeredReactionIds = { ...state$.triggeredReactionIds.get() }
 
-          for (const reaction of reactionsData) {
-            if (
-              !triggeredReactionIds[reaction._id] &&
-              reaction.timestampMs > windowStart &&
-              reaction.timestampMs <= currentMs
-            ) {
-              triggeredReactionIds[reaction._id] = true
-              crossedReactions.push({
-                id: reaction._id,
-                userId: reaction.userId,
-                userName: reaction.userDisplayName ?? '',
-                userPhotoUrl: reaction.userPhotoUrl,
-                emoji: reaction.emoji,
-                timestampMs: reaction.timestampMs,
-                createdAt: reaction.createdAt,
-              })
+              for (const reaction of reactionsData) {
+                if (
+                  !triggeredReactionIds[reaction._id] &&
+                  reaction.timestampMs > windowStart &&
+                  reaction.timestampMs <= currentMs
+                ) {
+                  triggeredReactionIds[reaction._id] = true
+                  crossedReactions.push({
+                    id: reaction._id,
+                    userId: reaction.userId,
+                    userName: reaction.userDisplayName ?? '',
+                    userPhotoUrl: reaction.userPhotoUrl,
+                    emoji: reaction.emoji,
+                    timestampMs: reaction.timestampMs,
+                    createdAt: reaction.createdAt,
+                  })
+                }
+              }
+
+              if (crossedReactions.length > 0) {
+                state$.triggeredReactionIds.set(triggeredReactionIds)
+                state$.activeReactions.set([
+                  ...state$.activeReactions.get(),
+                  ...crossedReactions.sort((a, b) => a.createdAt - b.createdAt),
+                ])
+              }
+
+              state$.lastReactionPlaybackMs.set(currentMs)
             }
           }
-
-          if (crossedReactions.length > 0) {
-            state$.triggeredReactionIds.set(triggeredReactionIds)
-            state$.activeReactions.set([
-              ...state$.activeReactions.get(),
-              ...crossedReactions.sort((a, b) => a.createdAt - b.createdAt),
-            ])
-          }
-
-          state$.lastReactionPlaybackMs.set(currentMs)
-        }
-      }
-    }, 100)
+        }, 100)
+      : null
 
     return () => {
       statusSubscription.remove()
       endSubscription.remove()
-      clearInterval(progressInterval)
+      if (progressInterval) {
+        clearInterval(progressInterval)
+      }
     }
   }, [
     player,
     onComplete,
     onProgress,
     state$,
+    shouldTrackPlayback,
     isLive,
     reactionsData,
     clearActiveReactions,
