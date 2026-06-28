@@ -2,6 +2,7 @@ import { v } from 'convex/values'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
 import { throwUserError } from './errors'
+import { logServerEvent } from './serverTelemetry'
 
 // Register a device token for push notifications
 export const registerDevice = mutation({
@@ -20,6 +21,7 @@ export const registerDevice = mutation({
       // ConvexError (not a raw Error, which Convex masks as a 500 "Server Error"
       // and storms the client retry/telemetry path) so the client's retryable
       // "Not authenticated" filter matches and silently waits for the session.
+      console.warn('[push:registerDevice] rejected: not authenticated')
       throwUserError('Not authenticated')
     }
 
@@ -41,11 +43,23 @@ export const registerDevice = mutation({
         timezone: args.timezone ?? existing.timezone,
         updatedAt: now,
       })
+      await logServerEvent(ctx, {
+        level: 'breadcrumb',
+        event: 'push:registerDevice:updated',
+        message: 'Updated existing push device token',
+        userId,
+        data: {
+          tokenId: existing._id,
+          platform: args.platform,
+          tokenType: args.tokenType ?? 'expo',
+          deviceId: args.deviceId,
+        },
+      })
       return existing._id
     }
 
     // Create new token entry
-    return await ctx.db.insert('deviceTokens', {
+    const tokenId = await ctx.db.insert('deviceTokens', {
       userId,
       token: args.token,
       platform: args.platform,
@@ -55,6 +69,19 @@ export const registerDevice = mutation({
       createdAt: now,
       updatedAt: now,
     })
+    await logServerEvent(ctx, {
+      level: 'breadcrumb',
+      event: 'push:registerDevice:created',
+      message: 'Registered new push device token',
+      userId,
+      data: {
+        tokenId,
+        platform: args.platform,
+        tokenType: args.tokenType ?? 'expo',
+        deviceId: args.deviceId,
+      },
+    })
+    return tokenId
   },
 })
 
@@ -93,6 +120,44 @@ export const getDevices = query({
       .query('deviceTokens')
       .withIndex('by_user', (q) => q.eq('userId', userId))
       .collect()
+  },
+})
+
+/** Diagnostic: count of device tokens for the current user (for push debugging). */
+export const getDeviceTokenCount = query({
+  args: {},
+  handler: async (
+    ctx,
+  ): Promise<{
+    count: number
+    tokens: {
+      platform: string
+      tokenType: string | undefined
+      deviceId: string | undefined
+      createdAt: number
+      updatedAt: number
+    }[]
+  }> => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      return { count: 0, tokens: [] }
+    }
+
+    const tokens = await ctx.db
+      .query('deviceTokens')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect()
+
+    return {
+      count: tokens.length,
+      tokens: tokens.map((t) => ({
+        platform: t.platform,
+        tokenType: t.tokenType,
+        deviceId: t.deviceId,
+        createdAt: t.createdAt,
+        updatedAt: t.updatedAt,
+      })),
+    }
   },
 })
 

@@ -4,7 +4,7 @@ import '../polyfills/convex-react-native'
 import { useForceUpdate } from '@bondfires/app'
 import { Button, ForceUpdateModal, Text, ToastContainer } from '@bondfires/ui'
 import { ConvexAuthProvider } from '@convex-dev/auth/react'
-import { ConvexReactClient, useMutation } from 'convex/react'
+import { ConvexReactClient, useMutation, useQuery } from 'convex/react'
 import Constants from 'expo-constants'
 import { useFonts } from 'expo-font'
 import type * as Notifications from 'expo-notifications'
@@ -33,6 +33,7 @@ import {
   appStore$,
   appThemeColors,
   mmkvStorage,
+  setChannelResetter,
   setPushPermissionRequester,
   telemetry,
   toastActions,
@@ -254,6 +255,8 @@ function AppContent() {
   const isAuthenticated = useValue(appStore$.isAuthenticated)
   const registerDevice = useMutation(api.notifications.registerDevice)
   const unregisterDevice = useMutation(api.notifications.unregisterDevice)
+  const updateNotificationPreferences = useMutation(api.notifications.updatePreferences)
+  const notificationPrefs = useQuery(api.notifications.getPreferences)
   const recordActive = useMutation(api.users.recordActive)
 
   // App-open heartbeat — powers the 72h nudge kill switch (convex/digest.ts).
@@ -275,7 +278,15 @@ function AppContent() {
   useEffect(() => {
     sendHeartbeat()
     const subscription = RNAppState.addEventListener('change', (state: AppStateStatus) => {
-      if (state === 'active') sendHeartbeat()
+      if (state === 'active') {
+        sendHeartbeat()
+        // Sync Android channel state → in-app preferences on foreground.
+        // No-op on iOS; checks each channel's importance and updates prefs
+        // if the user disabled any in system settings.
+        syncAndroidChannelPrefsRef.current().catch(() => {
+          // Best-effort sync — non-fatal if it fails
+        })
+      }
     })
     return () => subscription.remove()
   }, [sendHeartbeat])
@@ -318,6 +329,8 @@ function AppContent() {
     requestPermissions,
     registerIfGranted,
     unregister,
+    syncAndroidChannelPrefs,
+    resetChannelForCategory,
   } = usePushNotifications({
     isAuthenticated,
     registerTokenMutation: async (params: {
@@ -338,6 +351,17 @@ function AppContent() {
     unregisterTokenMutation: async (params: { token: string }) => {
       await unregisterDevice({ token: params.token })
     },
+    updatePreferencesMutation: async (params: {
+      recordingActivity?: boolean
+      responses?: boolean
+      reminders?: boolean
+      invitesAndMembership?: boolean
+      hearth?: boolean
+      digestWindowHour?: number
+    }) => {
+      await updateNotificationPreferences(params)
+    },
+    getPreferencesQuery: () => notificationPrefs ?? undefined,
     onNotificationResponse: handleNotificationResponse,
     onNotificationReceived: (_notification) => {
       // Notification received in foreground - could show in-app alert here
@@ -361,6 +385,10 @@ function AppContent() {
   registerIfGrantedRef.current = registerIfGranted
   const unregisterRef = useRef(unregister)
   unregisterRef.current = unregister
+  const syncAndroidChannelPrefsRef = useRef(syncAndroidChannelPrefs)
+  syncAndroidChannelPrefsRef.current = syncAndroidChannelPrefs
+  const resetChannelForCategoryRef = useRef(resetChannelForCategory)
+  resetChannelForCategoryRef.current = resetChannelForCategory
   const handleNotificationResponseRef = useRef(handleNotificationResponse)
   handleNotificationResponseRef.current = handleNotificationResponse
 
@@ -372,14 +400,27 @@ function AppContent() {
     return () => setPushPermissionRequester(null)
   }, [])
 
+  // Expose the Android channel resetter to feature screens (settings toggle).
+  // When the user re-enables a category in-app that was disabled in Android
+  // system settings, this resets the channel (delete + recreate).
+  useEffect(() => {
+    setChannelResetter((category: string) => resetChannelForCategoryRef.current(category))
+    return () => setChannelResetter(null)
+  }, [])
+
   useObserve(appStore$.preferences.notificationsEnabled, ({ value: notificationsEnabled }) => {
-    if (!appStore$.isAuthenticated.peek()) return
+    if (!appStore$.isAuthenticated.peek()) {
+      telemetry.breadcrumb('push:layout:notificationsEnabled:skip', { reason: 'not_authenticated' })
+      return
+    }
     if (notificationsEnabled) {
       // Silent: registers only when OS permission is already granted.
       // The OS dialog is triggered contextually (PushPrimerSheet) or from
       // the settings toggle, not here.
+      telemetry.breadcrumb('push:layout:notificationsEnabled:on', {})
       registerIfGrantedRef.current()
     } else {
+      telemetry.breadcrumb('push:layout:notificationsEnabled:off')
       unregisterRef.current()
     }
   })
@@ -388,7 +429,10 @@ function AppContent() {
   // are enabled and OS permission was already granted. Never prompt here.
   useObserve(appStore$.isAuthenticated, ({ value: isAuthenticated }) => {
     if (isAuthenticated && appStore$.preferences.notificationsEnabled.peek()) {
+      telemetry.breadcrumb('push:layout:signin', { notificationsEnabled: true })
       registerIfGrantedRef.current()
+    } else if (isAuthenticated) {
+      telemetry.breadcrumb('push:layout:signin', { notificationsEnabled: false })
     }
     if (isAuthenticated) {
       // The mount-time heartbeat may have fired pre-auth and no-opped.

@@ -5,17 +5,141 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { AppState, type AppStateStatus, Platform } from 'react-native'
 import { telemetry } from '../services/telemetry'
 
-const ANDROID_NOTIFICATION_CHANNEL_ID = 'bondfires-default'
+const ANDROID_DEFAULT_CHANNEL_ID = 'bondfires-default'
+const ANDROID_NOTIFICATION_LIGHT_COLOR = '#FF6B35'
+
+/**
+ * Android notification channels — 1:1 with in-app notification preference
+ * categories. Each channel lets the user control sound, importance, and
+ * visibility per category from Android system settings.
+ *
+ * Importance levels (set at creation; user can override in system settings):
+ * - high:    heads-up notification + sound
+ * - default: shows in shade + sound
+ * - low:     shows in shade, no sound
+ *
+ * Once a channel is created, its importance can't be changed programmatically.
+ * Only the user can change it via system settings. To "reset" a channel
+ * (e.g. after the user disabled it in OS settings then re-enabled in-app),
+ * we delete and recreate it.
+ */
+interface AndroidChannelDef {
+  channelId: string
+  name: string
+  description: string
+  importance: Notifications.AndroidImportance
+}
+
+type NotificationCategoryKey =
+  | 'recordingActivity'
+  | 'responses'
+  | 'hearth'
+  | 'invitesAndMembership'
+  | 'reminders'
+
+type NotificationPreferenceUpdates = Partial<Record<NotificationCategoryKey, boolean>> & {
+  digestWindowHour?: number
+}
+
+interface NotificationPreferences {
+  recordingActivity: boolean
+  responses: boolean
+  reminders: boolean
+  invitesAndMembership: boolean
+  hearth: boolean
+  digestWindowHour: number
+}
+
+const ANDROID_CATEGORY_CHANNELS: AndroidChannelDef[] = [
+  {
+    channelId: 'bondfires-recording',
+    name: 'Camp activity',
+    description: 'New Bondfires and live streams in your camps',
+    importance: Notifications.AndroidImportance.DEFAULT,
+  },
+  {
+    channelId: 'bondfires-responses',
+    name: 'Responses',
+    description: "Responses to Bondfires you've participated in",
+    importance: Notifications.AndroidImportance.HIGH,
+  },
+  {
+    channelId: 'bondfires-hearth',
+    name: 'Hearths',
+    description: 'Your private Bondfires and who joins them',
+    importance: Notifications.AndroidImportance.HIGH,
+  },
+  {
+    channelId: 'bondfires-membership',
+    name: 'Invites & membership',
+    description: 'Shared Bondfires, access requests, approvals',
+    importance: Notifications.AndroidImportance.DEFAULT,
+  },
+  {
+    channelId: 'bondfires-reminders',
+    name: 'Reminders',
+    description: 'Daily digest of videos waiting for you',
+    importance: Notifications.AndroidImportance.LOW,
+  },
+]
+
+const CATEGORY_KEY_TO_CHANNEL: Record<NotificationCategoryKey, string> = {
+  recordingActivity: 'bondfires-recording',
+  responses: 'bondfires-responses',
+  hearth: 'bondfires-hearth',
+  invitesAndMembership: 'bondfires-membership',
+  reminders: 'bondfires-reminders',
+}
 
 async function ensureAndroidNotificationChannel() {
   if (Platform.OS !== 'android') return
 
-  await Notifications.setNotificationChannelAsync(ANDROID_NOTIFICATION_CHANNEL_ID, {
+  // Legacy default channel — kept as fallback for pushes without a category
+  // (e.g. test sends) and for old-client compatibility during rollout.
+  await Notifications.setNotificationChannelAsync(ANDROID_DEFAULT_CHANNEL_ID, {
     name: 'Bondfires',
     importance: Notifications.AndroidImportance.MAX,
     vibrationPattern: [0, 250, 250, 250],
-    lightColor: '#FF6B35',
+    lightColor: ANDROID_NOTIFICATION_LIGHT_COLOR,
   })
+
+  // Category channels — 1:1 with in-app preference categories
+  for (const channel of ANDROID_CATEGORY_CHANNELS) {
+    await Notifications.setNotificationChannelAsync(channel.channelId, {
+      name: channel.name,
+      description: channel.description,
+      importance: channel.importance,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: ANDROID_NOTIFICATION_LIGHT_COLOR,
+    })
+  }
+}
+
+/** Delete and recreate a channel to reset its enabled state and defaults.
+ * Used when the user re-enables a category in-app after disabling it in
+ * Android system settings. */
+async function resetAndroidChannel(channelId: string) {
+  if (Platform.OS !== 'android') return
+
+  const def = ANDROID_CATEGORY_CHANNELS.find((c) => c.channelId === channelId)
+  if (!def) return
+
+  try {
+    await Notifications.deleteNotificationChannelAsync(channelId)
+    await Notifications.setNotificationChannelAsync(def.channelId, {
+      name: def.name,
+      description: def.description,
+      importance: def.importance,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: ANDROID_NOTIFICATION_LIGHT_COLOR,
+    })
+    telemetry.breadcrumb('push:channel:reset', { channelId })
+  } catch (e) {
+    telemetry.warn('push:channel:reset', 'Failed to reset Android channel', {
+      channelId,
+      error: e instanceof Error ? e.message : String(e),
+    })
+  }
 }
 
 // Configure how notifications are handled when app is in foreground
@@ -57,6 +181,10 @@ export interface UsePushNotificationsOptions {
   registerTokenMutation?: (params: TokenRegistrationParams) => Promise<void>
   // Convex mutation to unregister device token
   unregisterTokenMutation?: (params: TokenUnregistrationParams) => Promise<void>
+  // Convex mutation to update notification preferences (for Android channel sync)
+  updatePreferencesMutation?: (params: NotificationPreferenceUpdates) => Promise<void>
+  // Convex query to get current notification preferences (for Android channel sync)
+  getPreferencesQuery?: () => NotificationPreferences | null | undefined
   // Called when a notification is received while app is in foreground
   onNotificationReceived?: (notification: Notifications.Notification) => void
   // Called when user taps on a notification
@@ -82,6 +210,21 @@ export interface UsePushNotificationsResult {
    */
   registerIfGranted: () => Promise<boolean>
   unregister: () => Promise<void>
+  /**
+   * Syncs in-app notification preferences with Android channel enabled states.
+   * Call on app foreground. Reads each category channel's importance — if the
+   * user disabled it in Android settings (importance === NONE), updates the
+   * in-app preference to false. Returns the set of categories that changed.
+   * Android only; no-op on iOS.
+   */
+  syncAndroidChannelPrefs: () => Promise<NotificationPreferenceUpdates>
+  /**
+   * Resets an Android notification channel for a category that was disabled at
+   * the OS level. Deletes and recreates the channel so it's enabled again with
+   * our default importance. Call this when the in-app toggle goes off → on AND
+   * the corresponding Android channel is OS-disabled. Android only; no-op on iOS.
+   */
+  resetChannelForCategory: (categoryKey: string) => Promise<void>
 }
 
 export function usePushNotifications(
@@ -91,6 +234,8 @@ export function usePushNotifications(
     isAuthenticated = true,
     registerTokenMutation,
     unregisterTokenMutation,
+    updatePreferencesMutation,
+    getPreferencesQuery,
     onNotificationReceived,
     onNotificationResponse,
     onPermissionRevoked,
@@ -118,15 +263,28 @@ export function usePushNotifications(
   // Register token with backend
   const registerWithBackend = useCallback(
     async (token: string) => {
-      if (!registerTokenMutation) return
+      if (!registerTokenMutation) {
+        telemetry.breadcrumb('push:register:skip', {
+          reason: 'no_mutation_fn',
+        })
+        return
+      }
 
       // Backend registration requires an authenticated Convex session. If the
       // app is pre-login, the _layout auth observer will retry after sign-in.
       if (!isAuthenticatedRef.current) {
+        telemetry.breadcrumb('push:register:skip', {
+          reason: 'not_authenticated',
+        })
         return
       }
 
       try {
+        telemetry.breadcrumb('push:register:attempt', {
+          tokenPrefix: token.slice(0, 16),
+          platform: Platform.OS,
+          deviceId: Constants.deviceId ?? 'unknown',
+        })
         await registerTokenMutation({
           token,
           tokenType: 'expo',
@@ -136,11 +294,18 @@ export function usePushNotifications(
         })
         setIsRegistered(true)
         setError(null)
+        telemetry.breadcrumb('push:register:success', {
+          tokenPrefix: token.slice(0, 16),
+        })
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e)
         // Auth can still race with session establishment. Treat those failures
         // as retryable instead of surfacing them at all.
         if (message.includes('Not authenticated') || message.includes('Unauthorized')) {
+          telemetry.breadcrumb('push:register:skip', {
+            reason: 'auth_race',
+            error: message,
+          })
           return
         }
         // Backend token registration is background infrastructure that auto-
@@ -151,6 +316,7 @@ export function usePushNotifications(
         // not) so we keep the breadcrumb without spamming a stream of toasts.
         telemetry.warn('push:register', 'Failed to register token with backend', {
           error: message,
+          tokenPrefix: token.slice(0, 16),
         })
       }
     },
@@ -166,7 +332,11 @@ export function usePushNotifications(
     }
 
     try {
+      telemetry.breadcrumb('push:token:attempt', { projectId })
       const tokenData = await Notifications.getExpoPushTokenAsync({ projectId })
+      telemetry.breadcrumb('push:token:success', {
+        tokenPrefix: tokenData.data.slice(0, 16),
+      })
       return tokenData.data
     } catch (e) {
       // Handle Firebase auth errors gracefully (common in dev builds)
@@ -180,8 +350,14 @@ export function usePushNotifications(
       }
       // Emulators and devices without Google Play Services can't get push tokens
       if (errorMessage.includes('MISSING_INSTANCEID_SERVICE')) {
+        telemetry.breadcrumb('push:token:skip', {
+          reason: 'missing_instanceid_service',
+        })
         return null
       }
+      telemetry.error('push:token', 'Unexpected error getting Expo push token', {
+        error: errorMessage,
+      })
       throw e
     }
   }, [])
@@ -189,10 +365,12 @@ export function usePushNotifications(
   // Request notification permissions
   const requestPermissions = useCallback(async (): Promise<boolean> => {
     if (!isAuthenticatedRef.current) {
+      telemetry.breadcrumb('push:permissions:skip', { reason: 'not_authenticated' })
       return false
     }
 
     if (!Device.isDevice) {
+      telemetry.breadcrumb('push:permissions:skip', { reason: 'not_physical_device' })
       setError('Push notifications only work on physical devices')
       return false
     }
@@ -200,17 +378,21 @@ export function usePushNotifications(
     try {
       const { status: existingStatus } = await Notifications.getPermissionsAsync()
       let finalStatus = existingStatus
+      telemetry.breadcrumb('push:permissions:check', { existingStatus })
 
       if (existingStatus !== 'granted') {
         const { status } = await Notifications.requestPermissionsAsync()
         finalStatus = status
+        telemetry.breadcrumb('push:permissions:request', { requestedStatus: status })
       }
 
       if (finalStatus !== 'granted') {
+        telemetry.breadcrumb('push:permissions:denied', { finalStatus })
         setError('Push notification permissions denied')
         return false
       }
 
+      telemetry.breadcrumb('push:permissions:granted')
       await ensureAndroidNotificationChannel()
 
       // Get Expo push token
@@ -219,6 +401,7 @@ export function usePushNotifications(
         setStoredExpoPushToken(token)
         await registerWithBackend(token)
       } else {
+        telemetry.breadcrumb('push:permissions:skip', { reason: 'no_token_after_grant' })
         setError('Failed to get push notification token')
         return false
       }
@@ -229,6 +412,10 @@ export function usePushNotifications(
       const errorMessage = e instanceof Error ? e.message : String(e)
       // Emulators and non-Google Play Services devices — not actionable
       if (errorMessage.includes('MISSING_INSTANCEID_SERVICE')) {
+        telemetry.breadcrumb('push:permissions:skip', {
+          reason: 'missing_instanceid_service',
+          error: errorMessage,
+        })
         return false
       }
       telemetry.error('push:permissions', 'Error requesting push notification permissions', {
@@ -241,23 +428,44 @@ export function usePushNotifications(
 
   // Register the token only if OS permission is already granted — never prompts.
   const registerIfGranted = useCallback(async (): Promise<boolean> => {
-    if (!isAuthenticatedRef.current) return false
-    if (!Device.isDevice) return false
+    if (!isAuthenticatedRef.current) {
+      telemetry.breadcrumb('push:registerIfGranted:skip', { reason: 'not_authenticated' })
+      return false
+    }
+    if (!Device.isDevice) {
+      telemetry.breadcrumb('push:registerIfGranted:skip', { reason: 'not_physical_device' })
+      return false
+    }
 
     try {
       const { status } = await Notifications.getPermissionsAsync()
-      if (status !== 'granted') return false
+      if (status !== 'granted') {
+        telemetry.breadcrumb('push:registerIfGranted:skip', {
+          reason: 'permission_not_granted',
+          status,
+        })
+        return false
+      }
 
       await ensureAndroidNotificationChannel()
 
       const token = await getExpoPushToken()
-      if (!token) return false
+      if (!token) {
+        telemetry.breadcrumb('push:registerIfGranted:skip', { reason: 'no_token' })
+        return false
+      }
 
       setStoredExpoPushToken(token)
       await registerWithBackend(token)
+      telemetry.breadcrumb('push:registerIfGranted:success', {
+        tokenPrefix: token.slice(0, 16),
+      })
       return true
-    } catch {
-      // getExpoPushToken already logs helpful messages
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : String(e)
+      telemetry.warn('push:registerIfGranted', 'Unexpected error during silent registration', {
+        error: errorMessage,
+      })
       return false
     }
   }, [getExpoPushToken, registerWithBackend, setStoredExpoPushToken])
@@ -315,7 +523,10 @@ export function usePushNotifications(
       appStateRef.current = nextAppState
 
       if (cameToForeground) {
-        if (!isAuthenticatedRef.current) return
+        if (!isAuthenticatedRef.current) {
+          telemetry.breadcrumb('push:foreground:skip', { reason: 'not_authenticated' })
+          return
+        }
 
         // App came to foreground - verify token is still valid
         try {
@@ -324,6 +535,7 @@ export function usePushNotifications(
             // OS permission was revoked (e.g. via system settings) since last
             // foreground. Clear the local token so we don't keep sending to a
             // dead endpoint.
+            telemetry.breadcrumb('push:foreground:permission_revoked', { status })
             await handlePermissionRevoked()
             return
           }
@@ -332,11 +544,20 @@ export function usePushNotifications(
 
           const token = await getExpoPushToken()
           if (token && token !== expoPushTokenRef.current) {
+            telemetry.breadcrumb('push:foreground:token_changed', {
+              oldPrefix: expoPushTokenRef.current?.slice(0, 16),
+              newPrefix: token.slice(0, 16),
+            })
             setStoredExpoPushToken(token)
             await registerWithBackend(token)
+          } else if (!token) {
+            telemetry.breadcrumb('push:foreground:skip', { reason: 'no_token' })
           }
-        } catch {
-          // Silently handle - getExpoPushToken already logs helpful messages
+        } catch (e) {
+          const errorMessage = e instanceof Error ? e.message : String(e)
+          telemetry.warn('push:foreground', 'Error during foreground token refresh', {
+            error: errorMessage,
+          })
         }
       }
     }
@@ -376,10 +597,17 @@ export function usePushNotifications(
   // Check initial permission status on mount, but never prompt pre-login.
   useEffect(() => {
     const checkInitialStatus = async () => {
-      if (!Device.isDevice) return
-      if (!isAuthenticatedRef.current) return
+      if (!Device.isDevice) {
+        telemetry.breadcrumb('push:mount:skip', { reason: 'not_physical_device' })
+        return
+      }
+      if (!isAuthenticatedRef.current) {
+        telemetry.breadcrumb('push:mount:skip', { reason: 'not_authenticated' })
+        return
+      }
 
       const { status } = await Notifications.getPermissionsAsync()
+      telemetry.breadcrumb('push:mount:check', { permissionStatus: status })
       if (status === 'granted') {
         // Already have permission, get token
         try {
@@ -389,15 +617,115 @@ export function usePushNotifications(
           if (token) {
             setStoredExpoPushToken(token)
             await registerWithBackend(token)
+          } else {
+            telemetry.breadcrumb('push:mount:skip', { reason: 'no_token' })
           }
-        } catch {
-          // Silently handle - getExpoPushToken already logs helpful messages
+        } catch (e) {
+          const errorMessage = e instanceof Error ? e.message : String(e)
+          telemetry.warn('push:mount', 'Error during mount-time registration', {
+            error: errorMessage,
+          })
         }
+      } else {
+        telemetry.breadcrumb('push:mount:skip', { reason: 'permission_not_granted', status })
       }
     }
 
     checkInitialStatus()
   }, [getExpoPushToken, registerWithBackend, setStoredExpoPushToken])
+
+  // Sync Android channel state → in-app preferences. Reads each channel's
+  // importance — if the user disabled it in Android settings (importance ===
+  // NONE), updates the in-app preference to false. Returns categories that changed.
+  const syncAndroidChannelPrefs = useCallback(async (): Promise<NotificationPreferenceUpdates> => {
+    if (Platform.OS !== 'android') return {}
+
+    const prefs = getPreferencesQuery?.()
+    if (!prefs) {
+      telemetry.breadcrumb('push:channel:sync:skip', { reason: 'no_prefs_query' })
+      return {}
+    }
+
+    const updates: NotificationPreferenceUpdates = {}
+
+    for (const [categoryKey, channelId] of Object.entries(CATEGORY_KEY_TO_CHANNEL)) {
+      try {
+        const channel = await Notifications.getNotificationChannelAsync(channelId)
+        if (!channel) {
+          // Channel doesn't exist yet — nothing to sync
+          continue
+        }
+
+        const osDisabled = channel.importance === Notifications.AndroidImportance.NONE
+        const inAppEnabled = prefs[categoryKey as keyof typeof prefs]
+
+        if (osDisabled && inAppEnabled) {
+          // User disabled this channel in Android settings — sync in-app pref to off
+          telemetry.breadcrumb('push:channel:sync:disabled', {
+            channelId,
+            categoryKey,
+            importance: channel.importance,
+          })
+          updates[categoryKey as NotificationCategoryKey] = false
+        }
+      } catch (e) {
+        telemetry.warn('push:channel:sync', 'Error checking channel state', {
+          channelId,
+          error: e instanceof Error ? e.message : String(e),
+        })
+      }
+    }
+
+    if (Object.keys(updates).length > 0 && updatePreferencesMutation) {
+      try {
+        await updatePreferencesMutation(updates)
+        telemetry.breadcrumb('push:channel:sync:applied', { updates })
+      } catch (e) {
+        telemetry.warn('push:channel:sync', 'Failed to update preferences from channel sync', {
+          error: e instanceof Error ? e.message : String(e),
+        })
+      }
+    }
+
+    return updates
+  }, [getPreferencesQuery, updatePreferencesMutation])
+
+  // Reset (delete + recreate) an Android channel for a category that was
+  // disabled at the OS level. Used when the in-app toggle goes off → on.
+  const resetChannelForCategory = useCallback(async (categoryKey: string): Promise<void> => {
+    if (Platform.OS !== 'android') return
+
+    const channelId = CATEGORY_KEY_TO_CHANNEL[categoryKey as NotificationCategoryKey]
+    if (!channelId) {
+      telemetry.breadcrumb('push:channel:reset:skip', { reason: 'unknown_category', categoryKey })
+      return
+    }
+
+    try {
+      const channel = await Notifications.getNotificationChannelAsync(channelId)
+      if (!channel) {
+        // Channel doesn't exist — create it via ensureAndroidNotificationChannel
+        await ensureAndroidNotificationChannel()
+        return
+      }
+
+      if (channel.importance === Notifications.AndroidImportance.NONE) {
+        // Channel is OS-disabled — delete and recreate to reset to enabled
+        await resetAndroidChannel(channelId)
+      } else {
+        telemetry.breadcrumb('push:channel:reset:skip', {
+          reason: 'channel_not_disabled',
+          channelId,
+          importance: channel.importance,
+        })
+      }
+    } catch (e) {
+      telemetry.warn('push:channel:reset', 'Error resetting channel', {
+        channelId,
+        error: e instanceof Error ? e.message : String(e),
+      })
+    }
+  }, [])
 
   return {
     expoPushToken,
@@ -406,5 +734,7 @@ export function usePushNotifications(
     requestPermissions,
     registerIfGranted,
     unregister,
+    syncAndroidChannelPrefs,
+    resetChannelForCategory,
   }
 }

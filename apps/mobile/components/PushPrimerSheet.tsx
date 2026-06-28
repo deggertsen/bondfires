@@ -48,8 +48,10 @@ export function PushPrimerSheet({ trigger }: PushPrimerSheetProps) {
   const handleYes = async () => {
     setOpen(false)
     appActions.recordPushPrimerAccepted()
+    telemetry.breadcrumb('push:primer:accepted')
     try {
-      await requestPushPermission()
+      const result = await requestPushPermission()
+      telemetry.breadcrumb('push:primer:result', { granted: result })
     } catch (e) {
       telemetry.warn('push:primer', 'Permission request from primer failed', {
         error: String(e),
@@ -60,6 +62,7 @@ export function PushPrimerSheet({ trigger }: PushPrimerSheetProps) {
   const handleNotNow = () => {
     setOpen(false)
     appActions.recordPushPrimerDeclined()
+    telemetry.breadcrumb('push:primer:declined')
   }
 
   return (

@@ -813,6 +813,7 @@ export default function ProfileScreen() {
                     checked={preferences.notificationsEnabled}
                     onCheckedChange={(enabled: boolean) => {
                       setNotificationsEnabled(enabled)
+                      telemetry.breadcrumb('push:settings:toggle', { enabled })
                       if (enabled) {
                         // Explicit user intent — OK to fire the OS
                         // permission dialog if it hasn't been asked yet.

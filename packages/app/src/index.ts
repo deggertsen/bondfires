@@ -11,6 +11,8 @@ export * from './services/backgroundUpload'
 export {
   isPushPermissionGranted,
   requestPushPermission,
+  resetChannelForCategory,
+  setChannelResetter,
   setPushPermissionRequester,
 } from './services/pushPermissions'
 export type { LogEntry, LogLevel, TelemetryLogger } from './services/telemetry'
