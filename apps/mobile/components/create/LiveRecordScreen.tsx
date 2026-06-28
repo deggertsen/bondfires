@@ -13,6 +13,7 @@ import {
   telemetry,
   useAppThemeColors,
   useLivePublisher,
+  usePresence,
 } from '@bondfires/app'
 import { Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
@@ -28,6 +29,7 @@ import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
 import { BondfireLivePublisher, LivePublisherView } from '../../modules/bondfire-live-publisher'
 import { InviteSheet } from '../InviteSheet'
+import { ViewerPresenceStack } from '../ViewerPresenceStack'
 import { type CampWithMembership, formatRecordingClock, type TradeTag } from './shared'
 
 const keepAwakeTag = 'create-recording'
@@ -112,6 +114,16 @@ export function LiveRecordScreen({
   const previewExpired = useValue(recordingStore$.previewExpired)
   const liveStatus = useValue(livePublishStore$.status)
   const liveRecordId = useValue(livePublishStore$.recordId)
+
+  // Presence: track viewers watching the live bondfire being recorded
+  const { viewers: liveViewers } = usePresence({
+    videoType: 'bondfire',
+    videoId: liveRecordId ?? undefined,
+    isActive: liveStatus === 'live',
+    isScreenFocused: isFocused,
+    isAppActive: isAppActive,
+    currentUserId: currentUser?._id,
+  })
 
   const createLiveStream = useAction(api.videos.createLiveStream)
   const endLiveStream = useAction(api.videos.endLiveStream)
@@ -1024,6 +1036,14 @@ export function LiveRecordScreen({
               </YStack>
             </Pressable>
           </XStack>
+
+          {/* Viewer presence stack — below the X button, left side */}
+          {liveStatus === 'live' && (
+            <ViewerPresenceStack
+              liveViewers={liveViewers}
+              style={{ top: 110, left: 20 }}
+            />
+          )}
 
           <YStack
             position="absolute"

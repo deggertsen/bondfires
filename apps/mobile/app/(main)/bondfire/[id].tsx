@@ -12,6 +12,7 @@ import {
   telemetry,
   useAppThemeColors,
   useMuxData,
+  usePresence,
 } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
@@ -53,6 +54,7 @@ import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { InviteSheet } from '../../../components/InviteSheet'
 import { NotepadOverlay } from '../../../components/NotepadOverlay'
+import { ViewerPresenceStack } from '../../../components/ViewerPresenceStack'
 import { ReportButton } from '../../../components/ReportButton'
 import { ReportOverlay } from '../../../components/ReportOverlay'
 import { SettingsPopover } from '../../../components/SettingsPopover'
@@ -158,6 +160,16 @@ function VideoPlayer({
   const playbackSpeed = useValue(appStore$.preferences.playbackSpeed)
   const currentUserId = useValue(appStore$.userId)
   const shouldSuppressPlayback = isLive && currentUserId === videoOwnerId
+
+  // Presence: heartbeat + viewer list subscription for this video
+  const { viewers } = usePresence({
+    videoType: isMainVideo ? 'bondfire' : 'response',
+    videoId: isMainVideo ? (bondfireId as string | undefined) : (bondfireVideoId as string | undefined),
+    isActive,
+    isScreenFocused,
+    isAppActive,
+    currentUserId: currentUserId ?? undefined,
+  })
 
   // Determine URL based on foreground state.
   const getTargetUrl = useCallback(() => {
@@ -645,6 +657,12 @@ function VideoPlayer({
           <Spinner size="large" color={'$primary'} />
         </YStack>
       )}
+
+      {/* Viewer presence stack — left side, below the back button header */}
+      <ViewerPresenceStack
+        liveViewers={viewers}
+        style={{ top: 100, left: 16 }}
+      />
 
       {/* Play/Pause/Replay indicator */}
       {!isPlaying && !isLoading && (
