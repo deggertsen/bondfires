@@ -3,6 +3,7 @@ import UIKit
 import HaishinKit
 import AVFoundation
 import Foundation
+import Network
 
 struct LivePublisherStartOptions: Record {
   @Field var rtmpsUrl: String = ""
@@ -205,6 +206,15 @@ final class LivePublisher {
   /// drop mid-recording is completely silent on iOS — the UI stays on "REC"
   /// with a frozen pipeline. Android gets the same signal from isOpenFlow.
   private var connectionMonitorTask: Task<Void, Never>?
+  /// Monitors network path changes (WiFi → cellular, total loss) while
+  /// publishing. When the network drops entirely the RTMP socket dies during
+  /// active encoding, causing a native crash that bypasses the JS error
+  /// handler. The path monitor lets us emit `.endpointClosed` so JS can
+  /// finalize the partial recording gracefully, and emit `.reconnecting`
+  /// when the interface changes so JS can save the recording instead of
+  /// attempting a mid-encode RTMP re-establish.
+  private var pathMonitor: NWPathMonitor?
+  private var lastInterfaceType: NWInterface.InterfaceType?
   private var captureObservers: [NSObjectProtocol] = []
 
   /// MTHKView registered as a mixer output — HaishinKit 2.x preview approach
@@ -357,6 +367,7 @@ final class LivePublisher {
 
     emitStatusChange(.live)
     startConnectionMonitor()
+    startNetworkMonitor()
   }
 
   // MARK: - Health monitoring
@@ -379,6 +390,41 @@ final class LivePublisher {
         }
       }
     }
+  }
+
+  /// Start an `NWPathMonitor` to detect network path changes while publishing.
+  /// On total loss: emit `.endpointClosed` so JS finalizes the partial
+  /// recording. On interface change (WiFi → cellular): emit `.reconnecting`
+  /// so JS saves the recording instead of crashing mid-encode.
+  private func startNetworkMonitor() {
+    stopNetworkMonitor()
+    let monitor = NWPathMonitor()
+    monitor.pathUpdateHandler = { [weak self] path in
+      guard let self else { return }
+      guard self.session != nil, !self.isStopping else { return }
+      if path.status != .satisfied {
+        // Network lost entirely — treat like an endpoint close so JS saves
+        // whatever was captured.
+        self.emitStatusChange(.endpointClosed)
+      } else if path.status == .satisfied {
+        let currentType = path.availableInterfaces.first?.type
+        if let prev = self.lastInterfaceType, let curr = currentType, prev != curr {
+          // Interface changed (e.g. WiFi → cellular) — emit reconnecting so
+          // JS finalizes the partial recording. Re-establishing RTMP
+          // mid-encode is too risky and can crash the encoder.
+          self.emitStatusChange(.reconnecting)
+        }
+        self.lastInterfaceType = currentType
+      }
+    }
+    monitor.start(queue: DispatchQueue.main)
+    pathMonitor = monitor
+  }
+
+  private func stopNetworkMonitor() {
+    pathMonitor?.cancel()
+    pathMonitor = nil
+    lastInterfaceType = nil
   }
 
   /// Surface capture-session interruptions (phone call, Slide Over, thermal
@@ -465,6 +511,7 @@ final class LivePublisher {
     isStopping = true
     connectionMonitorTask?.cancel()
     connectionMonitorTask = nil
+    stopNetworkMonitor()
     removeCaptureObservers()
     do {
       try await session?.close()
@@ -482,6 +529,10 @@ final class LivePublisher {
     currentOptions = nil
     isCaptureRunning = false
     isStopping = false
+  }
+
+  deinit {
+    stopNetworkMonitor()
   }
 
   // MARK: - Swap Camera
