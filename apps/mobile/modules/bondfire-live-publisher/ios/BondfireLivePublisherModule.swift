@@ -206,15 +206,13 @@ final class LivePublisher {
   /// drop mid-recording is completely silent on iOS — the UI stays on "REC"
   /// with a frozen pipeline. Android gets the same signal from isOpenFlow.
   private var connectionMonitorTask: Task<Void, Never>?
-  /// Monitors network path changes (WiFi → cellular, total loss) while
-  /// publishing. When the network drops entirely the RTMP socket dies during
-  /// active encoding, causing a native crash that bypasses the JS error
-  /// handler. The path monitor lets us emit `.endpointClosed` so JS can
-  /// finalize the partial recording gracefully, and emit `.reconnecting`
-  /// when the interface changes so JS can save the recording instead of
-  /// attempting a mid-encode RTMP re-establish.
+  /// Monitors network path changes while publishing. When the network drops
+  /// entirely, or the active interface changes under the RTMP socket, the
+  /// safest recovery is the existing `.endpointClosed` terminal path so JS can
+  /// finalize the partial recording before the encoder crashes.
   private var pathMonitor: NWPathMonitor?
-  private var lastInterfaceType: NWInterface.InterfaceType?
+  private var lastActiveInterfaceTypes: [NWInterface.InterfaceType]?
+  private var networkFailureEmitted = false
   private var captureObservers: [NSObjectProtocol] = []
 
   /// MTHKView registered as a mixer output — HaishinKit 2.x preview approach
@@ -393,28 +391,36 @@ final class LivePublisher {
   }
 
   /// Start an `NWPathMonitor` to detect network path changes while publishing.
-  /// On total loss: emit `.endpointClosed` so JS finalizes the partial
-  /// recording. On interface change (WiFi → cellular): emit `.reconnecting`
-  /// so JS saves the recording instead of crashing mid-encode.
+  /// On total loss or active interface change, emit `.endpointClosed` once so
+  /// JS finalizes the partial recording instead of attempting a risky RTMP
+  /// reconnect mid-encode.
   private func startNetworkMonitor() {
     stopNetworkMonitor()
+    networkFailureEmitted = false
     let monitor = NWPathMonitor()
     monitor.pathUpdateHandler = { [weak self] path in
-      guard let self else { return }
-      guard self.session != nil, !self.isStopping else { return }
-      if path.status != .satisfied {
-        // Network lost entirely — treat like an endpoint close so JS saves
-        // whatever was captured.
-        self.emitStatusChange(.endpointClosed)
-      } else if path.status == .satisfied {
-        let currentType = path.availableInterfaces.first?.type
-        if let prev = self.lastInterfaceType, let curr = currentType, prev != curr {
-          // Interface changed (e.g. WiFi → cellular) — emit reconnecting so
-          // JS finalizes the partial recording. Re-establishing RTMP
-          // mid-encode is too risky and can crash the encoder.
-          self.emitStatusChange(.reconnecting)
+      Task { @MainActor [weak self] in
+        guard let self else { return }
+        guard self.session != nil, !self.isStopping, !self.networkFailureEmitted else {
+          return
         }
-        self.lastInterfaceType = currentType
+
+        guard path.status == .satisfied else {
+          self.emitNetworkFailure()
+          return
+        }
+
+        let currentTypes = self.activeInterfaceTypes(for: path)
+        guard !currentTypes.isEmpty else {
+          return
+        }
+
+        if let previousTypes = self.lastActiveInterfaceTypes, previousTypes != currentTypes {
+          self.emitNetworkFailure()
+          return
+        }
+
+        self.lastActiveInterfaceTypes = currentTypes
       }
     }
     monitor.start(queue: DispatchQueue.main)
@@ -424,7 +430,20 @@ final class LivePublisher {
   private func stopNetworkMonitor() {
     pathMonitor?.cancel()
     pathMonitor = nil
-    lastInterfaceType = nil
+    lastActiveInterfaceTypes = nil
+    networkFailureEmitted = false
+  }
+
+  private func activeInterfaceTypes(for path: NWPath) -> [NWInterface.InterfaceType] {
+    [.wifi, .cellular, .wiredEthernet, .loopback, .other].filter { path.usesInterfaceType($0) }
+  }
+
+  private func emitNetworkFailure() {
+    guard !networkFailureEmitted else {
+      return
+    }
+    networkFailureEmitted = true
+    emitStatusChange(.endpointClosed)
   }
 
   /// Surface capture-session interruptions (phone call, Slide Over, thermal

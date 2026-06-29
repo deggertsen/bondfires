@@ -22,9 +22,9 @@ import { Flame, SwitchCamera, X } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import type { FunctionReturnType } from 'convex/server'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
+import * as Network from 'expo-network'
 import { type MutableRefObject, useCallback, useEffect, useRef } from 'react'
 import { Alert, AppState, Linking, Pressable, StatusBar } from 'react-native'
-import * as Network from 'expo-network'
 import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
@@ -308,7 +308,6 @@ export function LiveRecordScreen({
       'errored',
       'stream_stopped_unexpectedly',
       'endpoint_closed',
-      'reconnecting',
     ]
     if (
       preConnectInFlightRef.current ||
@@ -851,15 +850,11 @@ export function LiveRecordScreen({
 
   // If the connection dies or the encoder unexpectedly stops mid-recording,
   // finalize the partial recording instead of leaving the UI stuck on REC.
-  // Also handle `reconnecting` (fired by the native NWPathMonitor when the
-  // network interface changes, e.g. WiFi → cellular) the same way — save the
-  // partial recording instead of attempting a mid-encode RTMP re-establish.
   useEffect(() => {
     const isDead =
       liveStatus === 'errored' ||
       liveStatus === 'stream_stopped_unexpectedly' ||
-      liveStatus === 'endpoint_closed' ||
-      liveStatus === 'reconnecting'
+      liveStatus === 'endpoint_closed'
 
     if (phase !== 'recording' || !isDead) {
       return
@@ -892,60 +887,42 @@ export function LiveRecordScreen({
 
     // For a later drop, don't show an alert — the status transition is visible
     // in the UI and the completed upload will show whatever was captured.
-    // For `reconnecting` (network interface change), log a telemetry breadcrumb
-    // so we can track how often this saves a recording vs. a crash.
-    if (liveStatus === 'reconnecting') {
-      telemetry.info(
-        'live:network_swap_finalize',
-        'Network interface changed during recording — finalizing partial recording',
-        {
-          durationMs,
-          sessionId: livePublishStore$.sessionId.peek(),
-          recordId: livePublishStore$.recordId.peek(),
-        },
-      )
-    }
     void stopLiveRecording()
   }, [liveStatus, phase, stopLiveRecording, livePublisher, cancelLiveRecording])
 
   // Network connectivity listener — logs telemetry breadcrumbs during active
   // recording. The native NWPathMonitor handles the actual finalize (emitting
-  // `.endpointClosed` or `.reconnecting`), so this listener is observational
-  // only and does not duplicate the stop logic.
+  // `.endpointClosed`), so this listener is observational only and does not
+  // duplicate the stop logic.
   useEffect(() => {
-    if (phase !== 'recording') {
+    if (phase !== 'recording' || !livePublisher.hasProvisionedIngest()) {
       return
     }
 
-    let wasConnected = true
+    let wasOnline = true
     const subscription = Network.addNetworkStateListener((state) => {
-      if (!state.isConnected && wasConnected) {
-        telemetry.info(
-          'live:network_dropped',
-          'Network dropped during live recording',
-          {
-            sessionId: livePublishStore$.sessionId.peek(),
-            recordId: livePublishStore$.recordId.peek(),
-          },
-        )
-        wasConnected = false
-      } else if (state.isConnected && !wasConnected) {
-        telemetry.info(
-          'live:network_restored',
-          'Network restored during live recording',
-          {
-            sessionId: livePublishStore$.sessionId.peek(),
-            recordId: livePublishStore$.recordId.peek(),
-          },
-        )
-        wasConnected = true
+      const isOffline = state.isConnected === false || state.isInternetReachable === false
+      const isOnline = state.isConnected === true && state.isInternetReachable !== false
+
+      if (isOffline && wasOnline) {
+        telemetry.info('live:network_dropped', 'Network dropped during live recording', {
+          sessionId: livePublishStore$.sessionId.peek(),
+          recordId: livePublishStore$.recordId.peek(),
+        })
+        wasOnline = false
+      } else if (isOnline && !wasOnline) {
+        telemetry.info('live:network_restored', 'Network restored during live recording', {
+          sessionId: livePublishStore$.sessionId.peek(),
+          recordId: livePublishStore$.recordId.peek(),
+        })
+        wasOnline = true
       }
     })
 
     return () => {
       subscription.remove()
     }
-  }, [phase])
+  }, [phase, livePublisher])
 
   const cancelLiveRecordingRef = useRef(cancelLiveRecording)
   useEffect(() => {
@@ -1025,32 +1002,6 @@ export function LiveRecordScreen({
       {shouldRenderCamera ? (
         <>
           <LivePublisherView style={{ flex: 1 }} />
-
-          {/* Network-changed banner — shown briefly when the native NWPathMonitor
-              detects an interface swap (WiFi → cellular) during active recording.
-              Non-blocking: the dead-status useEffect already calls stopLiveRecording()
-              to finalize the partial recording. */}
-          {isLiveRecording && liveStatus === 'reconnecting' && (
-            <YStack
-              position="absolute"
-              top={120}
-              left={0}
-              right={0}
-              alignItems="center"
-              pointerEvents="none"
-            >
-              <YStack
-                paddingHorizontal={16}
-                paddingVertical={8}
-                borderRadius={16}
-                backgroundColor="rgba(31, 32, 35, 0.85)"
-              >
-                <Text color={'$color'} fontSize={14} fontWeight="700">
-                  Network changed — saving your recording...
-                </Text>
-              </YStack>
-            </YStack>
-          )}
 
           <XStack
             position="absolute"
