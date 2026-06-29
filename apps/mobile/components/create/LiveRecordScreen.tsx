@@ -854,8 +854,7 @@ export function LiveRecordScreen({
     const isDead =
       liveStatus === 'errored' ||
       liveStatus === 'stream_stopped_unexpectedly' ||
-      liveStatus === 'endpoint_closed' ||
-      liveStatus === 'reconnecting'
+      liveStatus === 'endpoint_closed'
 
     if (phase !== 'recording' || !isDead) {
       return
@@ -888,13 +887,9 @@ export function LiveRecordScreen({
 
     // For a later drop, don't show an alert — the status transition is visible
     // in the UI and the completed upload will show whatever was captured.
-    // For `reconnecting` (network interface change) or `endpoint_closed` (total
-    // network loss detected by the native ConnectivityManager/NWPathMonitor),
-    // log a telemetry breadcrumb so we can track how often this saves a recording
-    // vs. a crash.
-    if (liveStatus === 'reconnecting' || liveStatus === 'endpoint_closed') {
+    if (liveStatus === 'endpoint_closed') {
       telemetry.info(
-        'live:network_swap_finalize',
+        'live:network_finalize',
         'Network changed during recording — finalizing partial recording',
         {
           reason: liveStatus,
@@ -1020,11 +1015,7 @@ export function LiveRecordScreen({
         <>
           <LivePublisherView style={{ flex: 1 }} />
 
-          {/* Network-changed banner — shown briefly when the native layer
-              detects a network swap (WiFi → cellular) or total network loss
-              during active recording. Non-blocking: the dead-status useEffect
-              already calls stopLiveRecording() to finalize the partial recording. */}
-          {isLiveRecording && (liveStatus === 'reconnecting' || liveStatus === 'endpoint_closed') && (
+          {isLiveRecording && liveStatus === 'endpoint_closed' && (
             <YStack
               position="absolute"
               top={120}
@@ -1039,7 +1030,7 @@ export function LiveRecordScreen({
                 borderRadius={16}
                 backgroundColor="rgba(31, 32, 35, 0.85)"
               >
-                <Text color={'$color'} fontSize={14} fontWeight="700">
+                <Text color="white" fontSize={14} fontWeight="700">
                   Network changed — saving your recording...
                 </Text>
               </YStack>
