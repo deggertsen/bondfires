@@ -22,6 +22,7 @@ import { Flame, SwitchCamera, X } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import type { FunctionReturnType } from 'convex/server'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
+import * as Network from 'expo-network'
 import { type MutableRefObject, useCallback, useEffect, useRef } from 'react'
 import { Alert, AppState, Linking, Pressable, StatusBar } from 'react-native'
 import { XStack, YStack } from 'tamagui'
@@ -886,8 +887,54 @@ export function LiveRecordScreen({
 
     // For a later drop, don't show an alert — the status transition is visible
     // in the UI and the completed upload will show whatever was captured.
+    if (liveStatus === 'endpoint_closed') {
+      telemetry.info(
+        'live:network_finalize',
+        'Network changed during recording — finalizing partial recording',
+        {
+          reason: liveStatus,
+          durationMs,
+          sessionId: livePublishStore$.sessionId.peek(),
+          recordId: livePublishStore$.recordId.peek(),
+        },
+      )
+    }
     void stopLiveRecording()
   }, [liveStatus, phase, stopLiveRecording, livePublisher, cancelLiveRecording])
+
+  // Network connectivity listener — logs telemetry breadcrumbs during active
+  // recording. The native NWPathMonitor handles the actual finalize (emitting
+  // `.endpointClosed`), so this listener is observational only and does not
+  // duplicate the stop logic.
+  useEffect(() => {
+    if (phase !== 'recording' || !livePublisher.hasProvisionedIngest()) {
+      return
+    }
+
+    let wasOnline = true
+    const subscription = Network.addNetworkStateListener((state) => {
+      const isOffline = state.isConnected === false || state.isInternetReachable === false
+      const isOnline = state.isConnected === true && state.isInternetReachable !== false
+
+      if (isOffline && wasOnline) {
+        telemetry.info('live:network_dropped', 'Network dropped during live recording', {
+          sessionId: livePublishStore$.sessionId.peek(),
+          recordId: livePublishStore$.recordId.peek(),
+        })
+        wasOnline = false
+      } else if (isOnline && !wasOnline) {
+        telemetry.info('live:network_restored', 'Network restored during live recording', {
+          sessionId: livePublishStore$.sessionId.peek(),
+          recordId: livePublishStore$.recordId.peek(),
+        })
+        wasOnline = true
+      }
+    })
+
+    return () => {
+      subscription.remove()
+    }
+  }, [phase, livePublisher])
 
   const cancelLiveRecordingRef = useRef(cancelLiveRecording)
   useEffect(() => {
@@ -967,6 +1014,28 @@ export function LiveRecordScreen({
       {shouldRenderCamera ? (
         <>
           <LivePublisherView style={{ flex: 1 }} />
+
+          {isLiveRecording && liveStatus === 'endpoint_closed' && (
+            <YStack
+              position="absolute"
+              top={120}
+              left={0}
+              right={0}
+              alignItems="center"
+              pointerEvents="none"
+            >
+              <YStack
+                paddingHorizontal={16}
+                paddingVertical={8}
+                borderRadius={16}
+                backgroundColor="rgba(31, 32, 35, 0.85)"
+              >
+                <Text color="white" fontSize={14} fontWeight="700">
+                  Network changed — saving your recording...
+                </Text>
+              </YStack>
+            </YStack>
+          )}
 
           <XStack
             position="absolute"

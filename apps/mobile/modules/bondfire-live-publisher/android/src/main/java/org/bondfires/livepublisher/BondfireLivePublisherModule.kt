@@ -7,6 +7,9 @@ import android.hardware.camera2.CameraManager
 import android.media.AudioFormat
 import android.media.MediaCodecList
 import android.media.MediaFormat
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.util.Log
 import android.util.Size
 import expo.modules.kotlin.exception.CodedException
@@ -90,6 +93,19 @@ class BondfireLivePublisherModule : Module() {
   private var currentFacing: String = "front"
   @Volatile
   private var isStoppingIntentionally = false
+
+  // Guards against duplicate ENDPOINT_CLOSED emissions. The default network
+  // callback can fire before the RTMP socket dies, giving us a head start on
+  // graceful teardown. isOpenFlow may then report the same socket drop
+  // reactively, so only the first signal path should emit.
+  @Volatile
+  private var networkDropHandled = false
+
+  // The ConnectivityManager.NetworkCallback registered when streaming starts
+  // and unregistered during teardown.
+  private var networkCallback: ConnectivityManager.NetworkCallback? = null
+  private val networkStateLock = Any()
+  private var lastNetworkTransportTypes: Set<Int>? = null
 
   // Guards against binding the camera/video source to the preview before the
   // SurfaceView has a real (non-zero) size. Binding at 0x0 makes CameraX open
@@ -196,6 +212,11 @@ class BondfireLivePublisherModule : Module() {
         sendStatus(PublisherStatus.CONNECTING)
         activeStreamer.startStream(rtmpsUrl)
         // startStream blocks until successful connection or throws
+        synchronized(networkStateLock) {
+          networkDropHandled = false
+          lastNetworkTransportTypes = null
+        }
+        registerNetworkCallback()
         sendStatus(PublisherStatus.LIVE)
       } catch (e: Exception) {
         Log.e(TAG, "Failed to start stream", e)
@@ -317,9 +338,16 @@ class BondfireLivePublisherModule : Module() {
         val closed = wasOpen && !isOpen
         wasOpen = isOpen
         if (closed && !isStoppingIntentionally && streamer === newStreamer) {
-          sendEvent(
-            "statusChange", mapOf("status" to PublisherStatus.ENDPOINT_CLOSED.wire)
-          )
+          // The ConnectivityManager NetworkCallback may have already fired
+          // ENDPOINT_CLOSED on onLost (before the socket actually died).
+          // Skip the duplicate emission if we already handled the drop.
+          if (networkDropHandled) {
+            Log.i(TAG, "isOpenFlow closed, but networkDropHandled already true — skipping duplicate ENDPOINT_CLOSED")
+          } else {
+            sendEvent(
+              "statusChange", mapOf("status" to PublisherStatus.ENDPOINT_CLOSED.wire)
+            )
+          }
         }
       }
     }
@@ -529,6 +557,107 @@ class BondfireLivePublisherModule : Module() {
     bindPreviewIfReady()
   }
 
+  /**
+   * Register a ConnectivityManager.NetworkCallback to proactively detect
+   * default network loss or active transport changes during streaming.
+   */
+  private fun registerNetworkCallback() {
+    val context = appContext.reactContext ?: return
+    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+      ?: return
+
+    val callback = object : ConnectivityManager.NetworkCallback() {
+      override fun onLost(network: Network) {
+        emitNetworkDrop("default network lost")
+      }
+
+      override fun onAvailable(network: Network) {
+        Log.i(TAG, "NetworkCallback.onAvailable — default network available")
+      }
+
+      override fun onCapabilitiesChanged(
+        network: Network,
+        capabilities: NetworkCapabilities
+      ) {
+        val currentTypes = activeTransportTypes(capabilities)
+        if (currentTypes.isEmpty()) {
+          return
+        }
+
+        val transportChanged = synchronized(networkStateLock) {
+          val previousTypes = lastNetworkTransportTypes
+          lastNetworkTransportTypes = currentTypes
+          previousTypes != null && previousTypes != currentTypes
+        }
+
+        if (transportChanged) {
+          emitNetworkDrop("default network transport changed")
+        }
+      }
+    }
+
+    cm.registerDefaultNetworkCallback(callback)
+    networkCallback = callback
+    Log.i(TAG, "registerNetworkCallback: default network callback registered")
+  }
+
+  /**
+   * Unregister the ConnectivityManager.NetworkCallback if active.
+   * Called during streamer teardown.
+   */
+  private fun unregisterNetworkCallback() {
+    val callback = networkCallback ?: return
+    networkCallback = null
+    synchronized(networkStateLock) {
+      lastNetworkTransportTypes = null
+    }
+    val context = appContext.reactContext ?: return
+    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+    if (cm != null) {
+      try {
+        cm.unregisterNetworkCallback(callback)
+        Log.i(TAG, "unregisterNetworkCallback: callback unregistered")
+      } catch (e: Exception) {
+        Log.w(TAG, "unregisterNetworkCallback: failed to unregister", e)
+      }
+    }
+  }
+
+  private fun activeTransportTypes(capabilities: NetworkCapabilities): Set<Int> =
+    listOf(
+      NetworkCapabilities.TRANSPORT_WIFI,
+      NetworkCapabilities.TRANSPORT_CELLULAR,
+      NetworkCapabilities.TRANSPORT_ETHERNET,
+      NetworkCapabilities.TRANSPORT_VPN,
+      NetworkCapabilities.TRANSPORT_BLUETOOTH,
+      NetworkCapabilities.TRANSPORT_LOWPAN,
+    ).filter { capabilities.hasTransport(it) }.toSet()
+
+  private fun emitNetworkDrop(reason: String) {
+    val shouldEmit = synchronized(networkStateLock) {
+      if (networkDropHandled || isStoppingIntentionally || streamer == null) {
+        false
+      } else {
+        networkDropHandled = true
+        true
+      }
+    }
+
+    if (!shouldEmit) {
+      Log.i(TAG, "emitNetworkDrop: skipping $reason (already handled or stopping)")
+      return
+    }
+
+    scope.launch {
+      if (isStoppingIntentionally || streamer == null) {
+        Log.i(TAG, "emitNetworkDrop: skipping $reason (stopped before event dispatch)")
+        return@launch
+      }
+      Log.i(TAG, "emitNetworkDrop: $reason — emitting ENDPOINT_CLOSED")
+      sendEvent("statusChange", mapOf("status" to PublisherStatus.ENDPOINT_CLOSED.wire))
+    }
+  }
+
   private fun sendStatus(status: PublisherStatus) {
     sendEvent("statusChange", mapOf("status" to status.wire))
   }
@@ -563,6 +692,10 @@ class BondfireLivePublisherModule : Module() {
     // without this, a late emission after isStoppingIntentionally resets
     // would surface as a bogus error/drop on the next session.
     claimed.second.forEach { it.cancel() }
+
+    // Unregister the proactive network callback — the streamer is being torn
+    // down, so we no longer need to watch for network swaps.
+    unregisterNetworkCallback()
 
     // On some devices, calling stopStream() triggers a native SIGSEGV inside
     // MediaCodec teardown — a signal-level crash that no Kotlin try/catch can
