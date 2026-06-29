@@ -104,6 +104,7 @@ class BondfireLivePublisherModule : Module() {
   // The ConnectivityManager.NetworkCallback registered when streaming starts
   // and unregistered during teardown.
   private var networkCallback: ConnectivityManager.NetworkCallback? = null
+  private val networkStateLock = Any()
   private var lastNetworkTransportTypes: Set<Int>? = null
 
   // Guards against binding the camera/video source to the preview before the
@@ -211,8 +212,10 @@ class BondfireLivePublisherModule : Module() {
         sendStatus(PublisherStatus.CONNECTING)
         activeStreamer.startStream(rtmpsUrl)
         // startStream blocks until successful connection or throws
-        networkDropHandled = false
-        lastNetworkTransportTypes = null
+        synchronized(networkStateLock) {
+          networkDropHandled = false
+          lastNetworkTransportTypes = null
+        }
         registerNetworkCallback()
         sendStatus(PublisherStatus.LIVE)
       } catch (e: Exception) {
@@ -576,17 +579,19 @@ class BondfireLivePublisherModule : Module() {
         network: Network,
         capabilities: NetworkCapabilities
       ) {
-        scope.launch {
-          val currentTypes = activeTransportTypes(capabilities)
-          if (currentTypes.isEmpty()) {
-            return@launch
-          }
+        val currentTypes = activeTransportTypes(capabilities)
+        if (currentTypes.isEmpty()) {
+          return
+        }
+
+        val transportChanged = synchronized(networkStateLock) {
           val previousTypes = lastNetworkTransportTypes
-          if (previousTypes != null && previousTypes != currentTypes) {
-            emitNetworkDrop("default network transport changed")
-            return@launch
-          }
           lastNetworkTransportTypes = currentTypes
+          previousTypes != null && previousTypes != currentTypes
+        }
+
+        if (transportChanged) {
+          emitNetworkDrop("default network transport changed")
         }
       }
     }
@@ -603,7 +608,9 @@ class BondfireLivePublisherModule : Module() {
   private fun unregisterNetworkCallback() {
     val callback = networkCallback ?: return
     networkCallback = null
-    lastNetworkTransportTypes = null
+    synchronized(networkStateLock) {
+      lastNetworkTransportTypes = null
+    }
     val context = appContext.reactContext ?: return
     val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
     if (cm != null) {
@@ -627,12 +634,25 @@ class BondfireLivePublisherModule : Module() {
     ).filter { capabilities.hasTransport(it) }.toSet()
 
   private fun emitNetworkDrop(reason: String) {
-    scope.launch {
+    val shouldEmit = synchronized(networkStateLock) {
       if (networkDropHandled || isStoppingIntentionally || streamer == null) {
-        Log.i(TAG, "emitNetworkDrop: skipping $reason (already handled or stopping)")
+        false
+      } else {
+        networkDropHandled = true
+        true
+      }
+    }
+
+    if (!shouldEmit) {
+      Log.i(TAG, "emitNetworkDrop: skipping $reason (already handled or stopping)")
+      return
+    }
+
+    scope.launch {
+      if (isStoppingIntentionally || streamer == null) {
+        Log.i(TAG, "emitNetworkDrop: skipping $reason (stopped before event dispatch)")
         return@launch
       }
-      networkDropHandled = true
       Log.i(TAG, "emitNetworkDrop: $reason — emitting ENDPOINT_CLOSED")
       sendEvent("statusChange", mapOf("status" to PublisherStatus.ENDPOINT_CLOSED.wire))
     }
