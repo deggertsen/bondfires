@@ -1,5 +1,11 @@
-import { subscriptionActions, telemetry, useAppThemeColors } from '@bondfires/app'
+import {
+  subscriptionActions,
+  telemetry,
+  useAppThemeColors,
+  useRecordingResourceLock,
+} from '@bondfires/app'
 import { BondfireRow, type BondfireRowProps, Button, Spinner, Text } from '@bondfires/ui'
+import { useIsFocused } from '@react-navigation/native'
 import { ArrowLeft, Flame, Lock, Plus } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
@@ -28,6 +34,9 @@ export default function PersonalCampScreen() {
   const { statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const navigation = useNavigation()
+  const isFocused = useIsFocused()
+  const recordingResourceLocked = useRecordingResourceLock()
+  const shouldRunBackgroundWork = isFocused && !recordingResourceLocked
   const { newFire, createdAfter } = useLocalSearchParams<{
     newFire?: string
     createdAfter?: string
@@ -35,10 +44,13 @@ export default function PersonalCampScreen() {
   const [inviteFireId, setInviteFireId] = useState<Id<'bondfires'> | null>(null)
   const handledInviteRouteRef = useRef<string | null>(null)
 
-  const personalCamp = useQuery(api.personalCamps.getMyPersonalCamp, {})
+  const personalCamp = useQuery(
+    api.personalCamps.getMyPersonalCamp,
+    shouldRunBackgroundWork ? {} : 'skip',
+  )
   const bondfires = useQuery(
     api.personalBondfires.listMyPersonalBondfires,
-    personalCamp ? {} : 'skip',
+    shouldRunBackgroundWork && personalCamp ? {} : 'skip',
   )
 
   // Thumbnail loading (same pattern as feed)
@@ -47,7 +59,7 @@ export default function PersonalCampScreen() {
   const loadingThumbsRef = useRef<Set<string>>(new Set())
 
   // Auth user for pin state
-  const currentUser = useQuery(api.users.current, {})
+  const currentUser = useQuery(api.users.current, shouldRunBackgroundWork ? {} : 'skip')
   const pinnedIds = useMemo(
     () => (currentUser?.pinnedBondfireIds ?? []) as string[],
     [currentUser?.pinnedBondfireIds],
@@ -96,6 +108,7 @@ export default function PersonalCampScreen() {
   // Lazy-load thumbnails
   const ensureThumbnailUrl = useCallback(
     async (bondfire: BondfireData) => {
+      if (!shouldRunBackgroundWork) return
       if (!bondfire.muxPlaybackId) return
       if (thumbnailUrls[bondfire._id] !== undefined) return
       if (loadingThumbsRef.current.has(bondfire._id)) return
@@ -118,21 +131,21 @@ export default function PersonalCampScreen() {
         loadingThumbsRef.current.delete(bondfire._id)
       }
     },
-    [getThumbnailUrl, thumbnailUrls],
+    [getThumbnailUrl, shouldRunBackgroundWork, thumbnailUrls],
   )
 
   // Preload first 10 thumbnails
   useEffect(() => {
-    if (!enrichedBondfires) return
+    if (!shouldRunBackgroundWork || !enrichedBondfires) return
     for (const bondfire of enrichedBondfires.slice(0, 10)) {
       ensureThumbnailUrl(bondfire)
     }
-  }, [enrichedBondfires, ensureThumbnailUrl])
+  }, [enrichedBondfires, ensureThumbnailUrl, shouldRunBackgroundWork])
 
   // Preload thumbnails for visible items
   const handleViewableChanged = useCallback(
     ({ viewableItems }: { viewableItems: { index: number | null }[] }) => {
-      if (!enrichedBondfires) return
+      if (!shouldRunBackgroundWork || !enrichedBondfires) return
       const indices = viewableItems
         .map((v) => v.index)
         .filter((i): i is number => typeof i === 'number' && i >= 0)
@@ -144,7 +157,7 @@ export default function PersonalCampScreen() {
         ensureThumbnailUrl(enrichedBondfires[i])
       }
     },
-    [enrichedBondfires, ensureThumbnailUrl],
+    [enrichedBondfires, ensureThumbnailUrl, shouldRunBackgroundWork],
   )
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 10 }).current
 

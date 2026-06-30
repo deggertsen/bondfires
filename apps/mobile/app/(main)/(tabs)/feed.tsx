@@ -13,10 +13,12 @@ import {
   subscriptionStore$,
   telemetry,
   useAppThemeColors,
+  useRecordingResourceLock,
   useSubscription,
 } from '@bondfires/app'
 import { BondfireRow, type BondfireRowProps, Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
+import { useIsFocused } from '@react-navigation/native'
 import { Flame, Search, X } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
@@ -275,18 +277,20 @@ function LoadingFeed() {
 
 function FeedSubscription({
   selectedCampId,
+  enabled,
   onResolved,
 }: {
   selectedCampId: Doc<'camps'>['_id'] | null | undefined
+  enabled: boolean
   onResolved: (bondfires: BondfireData[]) => void
 }) {
   const allBondfires = useQuery(
     api.bondfires.listFeed,
-    selectedCampId === null ? { limit: 50 } : 'skip',
+    enabled && selectedCampId === null ? { limit: 50 } : 'skip',
   )
   const campBondfires = useQuery(
     api.bondfires.listByCamp,
-    selectedCampId ? { campId: selectedCampId, limit: 50 } : 'skip',
+    enabled && selectedCampId ? { campId: selectedCampId, limit: 50 } : 'skip',
   )
   const bondfires =
     selectedCampId === undefined ? undefined : selectedCampId ? campBondfires : allBondfires
@@ -304,6 +308,9 @@ export default function FeedScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const insets = useSafeAreaInsets()
+  const isFocused = useIsFocused()
+  const recordingResourceLocked = useRecordingResourceLock()
+  const shouldRunBackgroundWork = isFocused && !recordingResourceLocked
   const getThumbnailUrl = useAction(api.videos.getThumbnailUrl)
   const { canCreate } = useSubscription()
   const subscriptionResolved = useValue(subscriptionStore$.subscriptionResolved)
@@ -319,9 +326,10 @@ export default function FeedScreen() {
   const [bondfires, setBondfires] = useState<BondfireData[] | undefined>(undefined)
   const currentUserId = useValue(appStore$.userId)
   const currentCampId = useValue(appStore$.currentCampId)
-  const joinedCamps = useQuery(api.camps.listMine, currentUserId ? {} : 'skip') as
-    | JoinedCamp[]
-    | undefined
+  const joinedCamps = useQuery(
+    api.camps.listMine,
+    shouldRunBackgroundWork && currentUserId ? {} : 'skip',
+  ) as JoinedCamp[] | undefined
   const feedCamps = useMemo(
     () => (joinedCamps ?? []).filter((camp) => camp.status !== 'archived'),
     [joinedCamps],
@@ -335,7 +343,10 @@ export default function FeedScreen() {
   }`
 
   // Authenticated user data for private pin state.
-  const currentUser = useQuery(api.users.current, currentUserId ? {} : 'skip')
+  const currentUser = useQuery(
+    api.users.current,
+    shouldRunBackgroundWork && currentUserId ? {} : 'skip',
+  )
   const pinnedIds = useMemo(
     () => (currentUser?.pinnedBondfireIds ?? []) as string[],
     [currentUser?.pinnedBondfireIds],
@@ -495,6 +506,7 @@ export default function FeedScreen() {
 
   const ensureThumbnailUrl = useCallback(
     async (bondfire: BondfireData) => {
+      if (!shouldRunBackgroundWork) return
       if (!bondfire.muxPlaybackId) return
       // Already resolved (including null = previously failed)
       if (state$.thumbnailUrls[bondfire._id].get() !== undefined) return
@@ -529,15 +541,15 @@ export default function FeedScreen() {
         loadingThumbsRef.current.delete(bondfire._id)
       }
     },
-    [getThumbnailUrl, state$],
+    [getThumbnailUrl, shouldRunBackgroundWork, state$],
   )
 
   useEffect(() => {
-    if (!filtered) return
+    if (!shouldRunBackgroundWork || !filtered) return
     for (const bondfire of filtered.slice(0, 10)) {
       ensureThumbnailUrl(bondfire)
     }
-  }, [filtered, ensureThumbnailUrl])
+  }, [filtered, ensureThumbnailUrl, shouldRunBackgroundWork])
 
   const handleBondfirePress = useCallback(
     (bondfireId: string) => {
@@ -676,6 +688,7 @@ export default function FeedScreen() {
   const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
       const items = filteredRef.current
+      if (!shouldRunBackgroundWork) return
       if (items.length === 0) return
 
       const indices = viewableItems
@@ -701,7 +714,7 @@ export default function FeedScreen() {
         ensureThumbnailUrl(items[i])
       }
     },
-    [ensureThumbnailUrl],
+    [ensureThumbnailUrl, shouldRunBackgroundWork],
   )
 
   useEffect(() => {
@@ -724,6 +737,7 @@ export default function FeedScreen() {
       <YStack flex={1}>
         <FeedSubscription
           key={feedSubscriptionKey}
+          enabled={shouldRunBackgroundWork}
           selectedCampId={activeCampId}
           onResolved={handleBondfiresResolved}
         />
@@ -736,6 +750,7 @@ export default function FeedScreen() {
     <YStack flex={1} backgroundColor={'$background'}>
       <FeedSubscription
         key={feedSubscriptionKey}
+        enabled={shouldRunBackgroundWork}
         selectedCampId={activeCampId}
         onResolved={handleBondfiresResolved}
       />
