@@ -877,19 +877,19 @@ export function VideoPlayer({
               {creatorName}
             </Text>
             <Text fontSize={12} color={OVERLAY_COLORS.textSecondary}>
-              {isMainVideo
-                ? 'Spark'
-                : createdAt
-                  ? new Date(createdAt).toLocaleDateString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                      year: 'numeric',
-                    }) +
-                    ' at ' +
-                    new Date(createdAt).toLocaleTimeString('en-US', {
-                      hour: 'numeric',
-                      minute: '2-digit',
-                    })
+              {createdAt
+                ? new Date(createdAt).toLocaleDateString('en-US', {
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                  }) +
+                  ' at ' +
+                  new Date(createdAt).toLocaleTimeString('en-US', {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                  })
+                : isMainVideo
+                  ? 'Spark'
                   : `Response ${responseIndex}`}
             </Text>
           </YStack>
