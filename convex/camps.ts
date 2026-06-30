@@ -221,8 +221,13 @@ function variantSlug(baseSlug: string, gender: Exclude<CampGender, 'any'>) {
   return [baseSlug, gender === 'male' ? 'men' : 'women'].join('-')
 }
 
+// Camps that stay gendered (men's / women's variants)
+const GENDERED_CAMP_SLUGS = ['signal-fires', 'the-raise', 'the-pursuit', 'the-castle', 'the-tempering'] as const
+
 function getLaunchCampSeeds(): CampSeed[] {
-  const genderedCamps = BASE_LAUNCH_CAMPS.flatMap((camp) =>
+  const genderedCamps = BASE_LAUNCH_CAMPS.filter((camp) =>
+    GENDERED_CAMP_SLUGS.includes(camp.slug as (typeof GENDERED_CAMP_SLUGS)[number]),
+  ).flatMap((camp) =>
     (['male', 'female'] as const).map((gender) => ({
       ...camp,
       slug: variantSlug(camp.slug, gender),
@@ -230,14 +235,14 @@ function getLaunchCampSeeds(): CampSeed[] {
       gender,
     })),
   )
-  const mixedWelcomeCamp = BASE_LAUNCH_CAMPS.filter((camp) => camp.slug === 'welcome-fires').map(
-    (camp) => ({
-      ...camp,
-      gender: 'any' as const,
-    }),
-  )
+  const mixedCamps = BASE_LAUNCH_CAMPS.filter((camp) =>
+    !GENDERED_CAMP_SLUGS.includes(camp.slug as (typeof GENDERED_CAMP_SLUGS)[number]),
+  ).map((camp) => ({
+    ...camp,
+    gender: 'any' as const,
+  }))
 
-  return [...mixedWelcomeCamp, ...genderedCamps]
+  return [...mixedCamps, ...genderedCamps]
 }
 
 function getArenaSeed(): CampSeed {
@@ -767,7 +772,11 @@ async function ensureCamp(
     rules: {
       access: {
         gender: { value: seed.gender, visibilityMode: 'hide' as const },
-        allowedTiers: { value: [...ALL_TIERS], visibilityMode: 'gate' as const },
+        // Welcome Fires is open to all tiers; all other launch camps require a paid tier
+        allowedTiers: {
+          value: seed.welcomeBroadcast ? [...ALL_TIERS] : [...PAID_TIERS],
+          visibilityMode: 'gate' as const,
+        },
       },
       participation: {
         maxDurationMs: 30 * 60 * 1000,
