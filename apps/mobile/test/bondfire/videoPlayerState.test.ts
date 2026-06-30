@@ -1,15 +1,15 @@
 import { observable } from '@legendapp/state'
 import { describe, expect, it } from 'vitest'
-import type { ActiveReaction } from '../../components/ViewerPresenceStack'
 import {
+  shouldLoadVideoSource,
   syncReactionPlaybackAfterSeek,
   type VideoPlayerState,
 } from '../../app/(main)/bondfire/_lib/videoPlayerState'
+import type { ActiveReaction } from '../../components/ViewerPresenceStack'
 
 function createVideoPlayerState() {
   return observable<VideoPlayerState>({
     showReport: false,
-    currentUrl: null,
     progress: 0,
     duration: 0,
     isLoading: false,
@@ -66,5 +66,42 @@ describe('videoPlayerState', () => {
 
     expect(state$.lastReactionPlaybackMs.get()).toBe(0)
     expect(state$.triggeredReactionIds.get()).toEqual({ 'reaction-at-start': true })
+  })
+
+  it('loads a video source only for the active focused player', () => {
+    expect(
+      shouldLoadVideoSource({
+        videoUrl: 'https://stream.mux.com/test.m3u8',
+        isActive: true,
+        isScreenFocused: true,
+        isAppActive: true,
+        shouldSuppressPlayback: false,
+      }),
+    ).toBe(true)
+
+    expect(
+      shouldLoadVideoSource({
+        videoUrl: 'https://stream.mux.com/test.m3u8',
+        isActive: false,
+        isScreenFocused: true,
+        isAppActive: true,
+        shouldSuppressPlayback: false,
+      }),
+    ).toBe(false)
+  })
+
+  it('drops the source when playback is backgrounded or suppressed', () => {
+    const base = {
+      videoUrl: 'https://stream.mux.com/test.m3u8',
+      isActive: true,
+      isScreenFocused: true,
+      isAppActive: true,
+      shouldSuppressPlayback: false,
+    }
+
+    expect(shouldLoadVideoSource({ ...base, isScreenFocused: false })).toBe(false)
+    expect(shouldLoadVideoSource({ ...base, isAppActive: false })).toBe(false)
+    expect(shouldLoadVideoSource({ ...base, shouldSuppressPlayback: true })).toBe(false)
+    expect(shouldLoadVideoSource({ ...base, videoUrl: null })).toBe(false)
   })
 })

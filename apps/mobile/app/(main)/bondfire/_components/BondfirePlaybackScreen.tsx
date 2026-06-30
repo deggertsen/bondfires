@@ -3,7 +3,7 @@ import { useObservable, useValue } from '@legendapp/state/react'
 import { ChevronLeft, ChevronRight, FileText, Flame, Settings } from '@tamagui/lucide-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { Stack, useRouter } from 'expo-router'
-import { type RefObject, useCallback, useRef } from 'react'
+import { type RefObject, useCallback, useEffect, useRef } from 'react'
 import type { StatusBarStyle, ViewToken } from 'react-native'
 import { FlatList, Pressable, StatusBar } from 'react-native'
 import { XStack, YStack } from 'tamagui'
@@ -65,10 +65,12 @@ export function BondfirePlaybackScreen({
     showSettings: false,
     showNotepad: false,
     isInviteSheetOpen: false,
+    suppressPlayback: false,
   })
   const showSettings = useValue(overlayState$.showSettings)
   const showNotepad = useValue(overlayState$.showNotepad)
   const isInviteSheetOpen = useValue(overlayState$.isInviteSheetOpen)
+  const suppressPlayback = useValue(overlayState$.suppressPlayback)
   const totalVideos = videoItems.length
   const processingResponseCount = bondfireData.processingResponses?.length ?? 0
   const viewabilityConfig = useRef({
@@ -84,8 +86,15 @@ export function BondfirePlaybackScreen({
   )
   const handleRespond = useCallback(() => {
     if (bondfireData.campStatus === 'archived') return
+    overlayState$.suppressPlayback.set(true)
     router.push(routes.createRespondTo(bondfireId))
-  }, [bondfireData.campStatus, bondfireId, router])
+  }, [bondfireData.campStatus, bondfireId, overlayState$, router])
+
+  useEffect(() => {
+    if (isFocused) {
+      overlayState$.suppressPlayback.set(false)
+    }
+  }, [isFocused, overlayState$])
 
   return (
     <>
@@ -186,7 +195,7 @@ export function BondfirePlaybackScreen({
               videoUrl={item.url}
               videoOwnerId={item.videoOwnerId}
               isActive={index === currentVideoIndex}
-              isScreenFocused={isFocused}
+              isScreenFocused={isFocused && !suppressPlayback}
               isAppActive={isAppActive}
               onComplete={onVideoComplete}
               onProgress={onProgress}
