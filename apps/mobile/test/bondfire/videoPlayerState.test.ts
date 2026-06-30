@@ -10,7 +10,6 @@ import type { ActiveReaction } from '../../components/ViewerPresenceStack'
 function createVideoPlayerState() {
   return observable<VideoPlayerState>({
     showReport: false,
-    currentUrl: null,
     progress: 0,
     duration: 0,
     isLoading: false,

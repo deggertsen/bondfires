@@ -14,7 +14,6 @@ export type PendingScrubSeek = {
 
 export type VideoPlayerState = {
   showReport: boolean
-  currentUrl: string | null
   progress: number
   duration: number
   isLoading: boolean

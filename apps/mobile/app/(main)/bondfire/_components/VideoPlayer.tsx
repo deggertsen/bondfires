@@ -146,7 +146,7 @@ export function VideoPlayer({
   }, [reactionsData])
 
   const addReactionMutation = useMutation(api.videoReactions.addReaction)
-  const targetUrl = shouldLoadVideoSource({
+  const currentUrl = shouldLoadVideoSource({
     videoUrl,
     isActive,
     isScreenFocused,
@@ -158,7 +158,6 @@ export function VideoPlayer({
 
   const state$ = useObservable({
     showReport: false,
-    currentUrl: targetUrl,
     progress: 0,
     duration: 0,
     isLoading: true,
@@ -176,7 +175,6 @@ export function VideoPlayer({
   const lastReactionPlaybackMsRef = useRef<number | null>(null)
   const lastProgressStateUpdateAtRef = useRef(0)
 
-  const currentUrl = useValue(state$.currentUrl)
   const isPlaying = useValue(state$.isPlaying)
 
   const resetLocalReactionState = useCallback(() => {
@@ -202,7 +200,7 @@ export function VideoPlayer({
     lastSeekAt: 0,
   })
 
-  const player = useVideoPlayer(currentUrl || '', (player) => {
+  const player = useVideoPlayer(currentUrl, (player) => {
     player.loop = false
     player.muted = isMuted
     player.playbackRate = playbackSpeed
@@ -479,13 +477,6 @@ export function VideoPlayer({
     processTimedPlaybackUpdate,
     updatePlaybackProgress,
   ])
-
-  useEffect(() => {
-    const currentUrlValue = state$.currentUrl.get()
-    if (currentUrlValue !== targetUrl) {
-      state$.currentUrl.set(targetUrl)
-    }
-  }, [state$, targetUrl])
 
   const keepAwakeTag = `video-playback-${videoId}`
   useEffect(() => {
