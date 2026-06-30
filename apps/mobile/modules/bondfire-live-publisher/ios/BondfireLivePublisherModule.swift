@@ -598,10 +598,6 @@ final class LivePublisher {
     isStopping = false
   }
 
-  deinit {
-    stopNetworkMonitor()
-  }
-
   // MARK: - Swap Camera
 
   /// Throws on failure instead of emitting an `error` event. The error event
