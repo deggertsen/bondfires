@@ -87,9 +87,9 @@ export const routes = {
   // --- Main stack ---
   personalCamp: '/(main)/personal-camp',
 
-  bondfire: (id: string): Href => ({
+  bondfire: (id: string, videoId?: string): Href => ({
     pathname: '/(main)/bondfire/[id]',
-    params: { id },
+    params: { id, ...(videoId ? { videoId } : {}) },
   }),
 
   camp: (id: string): Href => ({

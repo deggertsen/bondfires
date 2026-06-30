@@ -74,7 +74,7 @@ function getWatchTarget(
 
 export default function BondfireDetailScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
-  const { id } = useLocalSearchParams<{ id: string }>()
+  const { id, videoId: deepLinkVideoId } = useLocalSearchParams<{ id: string; videoId?: string }>()
   const router = useRouter()
   const navigation = useNavigation()
   const flatListRef = useRef<FlatList<BondfireVideoItem>>(null)
@@ -317,9 +317,17 @@ export default function BondfireDetailScreen() {
     if (!bondfireData) return
 
     if (restoreTargetRef.current?.bondfireId !== bondfireId) {
+      // Deep-linked from a push notification: target the specific response video
+      // instead of the last-saved scroll position.
+      const deepLinkIdx = deepLinkVideoId
+        ? (() => {
+            const idx = bondfireData.videos.findIndex((v) => v._id === deepLinkVideoId)
+            return idx >= 0 ? idx + 1 : null
+          })()
+        : null
       restoreTargetRef.current = {
         bondfireId,
-        savedIndex: getBondfireVideoIndex(bondfireId) ?? 0,
+        savedIndex: deepLinkIdx ?? getBondfireVideoIndex(bondfireId) ?? 0,
       }
       restoredPositionKeyRef.current = null
     }
@@ -334,7 +342,7 @@ export default function BondfireDetailScreen() {
 
     screenState$.currentVideoIndex.set(clamped)
     scheduleRestoreScroll(clamped)
-  }, [bondfireData, bondfireId, scheduleRestoreScroll, screenState$])
+  }, [bondfireData, bondfireId, deepLinkVideoId, scheduleRestoreScroll, screenState$])
 
   useEffect(() => {
     if (!bondfireId) return
@@ -492,7 +500,17 @@ export default function BondfireDetailScreen() {
   }
 
   const totalVideos = 1 + bondfireData.videos.length
-  const initialVideoIndex = clampVideoIndex(getBondfireVideoIndex(bondfireId), totalVideos)
+  // Deep-linked from a push notification: find the FlatList index for the
+  // specific response video. Falls back to the persisted scroll position.
+  const deepLinkIndex = (() => {
+    if (!deepLinkVideoId) return null
+    const idx = bondfireData.videos.findIndex((v) => v._id === deepLinkVideoId)
+    return idx >= 0 ? idx + 1 : null // +1 because index 0 is the main bondfire video
+  })()
+  const initialVideoIndex = clampVideoIndex(
+    deepLinkIndex ?? getBondfireVideoIndex(bondfireId) ?? 0,
+    totalVideos,
+  )
   const videoItems = buildBondfireVideoItems(bondfireData, videoUrls)
 
   return (

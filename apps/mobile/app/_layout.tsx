@@ -311,7 +311,7 @@ function AppContent() {
       // Navigate based on notification type. Notification payloads are untrusted,
       // so resolve `screen` against an allowlist instead of casting it to a route.
       if (data?.bondfireId) {
-        router.push(routes.bondfire(String(data.bondfireId)))
+        router.push(routes.bondfire(String(data.bondfireId), data?.bondfireVideoId ? String(data.bondfireVideoId) : undefined))
       } else if (typeof data?.screen === 'string') {
         const target = resolveExternalRoute(data.screen)
         if (target) router.push(target)
