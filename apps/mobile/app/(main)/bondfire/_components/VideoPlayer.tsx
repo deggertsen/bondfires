@@ -82,6 +82,7 @@ export interface VideoPlayerProps {
   isMainVideo: boolean
   responseIndex?: number
   isLive?: boolean
+  createdAt?: number
 }
 
 export function VideoPlayer({
@@ -99,6 +100,7 @@ export function VideoPlayer({
   isMainVideo,
   responseIndex,
   isLive = false,
+  createdAt,
 }: VideoPlayerProps) {
   const videoId = bondfireId || bondfireVideoId || ''
   const autoplayVideos = useValue(appStore$.preferences.autoplayVideos)
@@ -875,7 +877,20 @@ export function VideoPlayer({
               {creatorName}
             </Text>
             <Text fontSize={12} color={OVERLAY_COLORS.textSecondary}>
-              {isMainVideo ? 'Spark' : `Response ${responseIndex}`}
+              {isMainVideo
+                ? 'Spark'
+                : createdAt
+                  ? new Date(createdAt).toLocaleDateString('en-US', {
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric',
+                    }) +
+                    ' at ' +
+                    new Date(createdAt).toLocaleTimeString('en-US', {
+                      hour: 'numeric',
+                      minute: '2-digit',
+                    })
+                  : `Response ${responseIndex}`}
             </Text>
           </YStack>
         </XStack>
