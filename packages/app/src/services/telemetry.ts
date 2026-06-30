@@ -397,16 +397,25 @@ export class TelemetryLogger {
     try {
       const raw = this.storage.getString(LAST_CRASH_KEY)
       if (!raw) return
-      const parsed = JSON.parse(raw) as { event: string; data?: Record<string, unknown>; writtenAt: number }
+      const parsed = JSON.parse(raw) as unknown
+      if (!isRecord(parsed) || typeof parsed.event !== 'string') {
+        this.storage.remove(LAST_CRASH_KEY)
+        return
+      }
+
       // Only flush if it's recent (within the last 10 minutes). Older entries
       // are likely from a previous session that exited cleanly but didn't
       // clear the breadcrumb.
-      const ageMs = Date.now() - (parsed.writtenAt ?? 0)
+      const writtenAt = typeof parsed.writtenAt === 'number' ? parsed.writtenAt : 0
+      const ageMs = Date.now() - writtenAt
       if (ageMs < 10 * 60 * 1000) {
-        this.enqueue('breadcrumb', 'crash:last_breadcrumb', parsed.event, {
-          ...(parsed.data ?? {}),
-          ageMs,
-        }, { echo: false })
+        const data = isRecord(parsed.data)
+          ? { ...parsed.data, ageMs }
+          : { data: parsed.data, ageMs }
+        this.enqueue('breadcrumb', 'crash:last_breadcrumb', parsed.event, data, { echo: false })
+        // The replayed crash breadcrumb should survive even if the relaunched
+        // app dies again before the debounce timer or network flush runs.
+        this.persistNow()
       }
       this.storage.remove(LAST_CRASH_KEY)
       this._lastCrashBreadcrumb = null

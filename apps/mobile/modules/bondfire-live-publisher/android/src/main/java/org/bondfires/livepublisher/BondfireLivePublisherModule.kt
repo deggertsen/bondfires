@@ -11,6 +11,7 @@ import android.media.MediaFormat
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.os.Build
 import android.os.PowerManager
 import android.util.Log
 import android.util.Size
@@ -108,6 +109,7 @@ class BondfireLivePublisherModule : Module() {
   private var networkCallback: ConnectivityManager.NetworkCallback? = null
   private val networkStateLock = Any()
   private var lastNetworkTransportTypes: Set<Int>? = null
+  private var trimMemoryObserver: ComponentCallbacks2? = null
 
   // Guards against binding the camera/video source to the preview before the
   // SurfaceView has a real (non-zero) size. Binding at 0x0 makes CameraX open
@@ -132,6 +134,7 @@ class BondfireLivePublisherModule : Module() {
 
     OnDestroy {
       BondfireLivePublisherModule.currentInstance = null
+      uninstallTrimMemoryObserver()
       scope.launch {
         cleanupStreamer()
       }
@@ -265,17 +268,20 @@ class BondfireLivePublisherModule : Module() {
     AsyncFunction("getThermalState") {
       val context = appContext.reactContext
       val powerManager = context?.getSystemService(Context.POWER_SERVICE) as? PowerManager
-      val status = powerManager?.currentThermalStatus
-      val level = status?.ordinal ?: -1
+      val level = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        powerManager?.currentThermalStatus ?: -1
+      } else {
+        -1
+      }
       val levelName = when (level) {
-        0 ->"nominal"
-        1 ->"light"
-        2 ->"moderate"
-        3 ->"severe"
-        4 ->"critical"
-        5 ->"emergency"
-        6 ->"shutdown"
-        else ->"unknown"
+        PowerManager.THERMAL_STATUS_NONE -> "nominal"
+        PowerManager.THERMAL_STATUS_LIGHT -> "light"
+        PowerManager.THERMAL_STATUS_MODERATE -> "moderate"
+        PowerManager.THERMAL_STATUS_SEVERE -> "severe"
+        PowerManager.THERMAL_STATUS_CRITICAL -> "critical"
+        PowerManager.THERMAL_STATUS_EMERGENCY -> "emergency"
+        PowerManager.THERMAL_STATUS_SHUTDOWN -> "shutdown"
+        else -> "unknown"
       }
       mapOf("level" to level, "levelName" to levelName)
     }
@@ -780,8 +786,9 @@ class BondfireLivePublisherModule : Module() {
   /// error events with code 'memory_warning'. The JS hook catches these and
   /// logs 'live:memory_warning' telemetry without failing the recording.
   private fun installTrimMemoryObserver() {
+    if (trimMemoryObserver != null) return
     val context = appContext.reactContext ?: return
-    context.registerComponentCallbacks(object : ComponentCallbacks2 {
+    val observer = object : ComponentCallbacks2 {
       override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {}
       override fun onLowMemory() {
         sendEvent("error", mapOf(
@@ -797,7 +804,15 @@ class BondfireLivePublisherModule : Module() {
           ))
         }
       }
-    })
+    }
+    context.registerComponentCallbacks(observer)
+    trimMemoryObserver = observer
+  }
+
+  private fun uninstallTrimMemoryObserver() {
+    val observer = trimMemoryObserver ?: return
+    trimMemoryObserver = null
+    appContext.reactContext?.unregisterComponentCallbacks(observer)
   }
 }
 

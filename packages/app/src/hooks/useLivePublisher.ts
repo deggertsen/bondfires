@@ -150,10 +150,14 @@ export function useLivePublisher(options: {
       // Memory warnings come through as error events with code 'memory_warning'.
       // These are telemetry-only — we do NOT want to fail the recording.
       if (error.code === 'memory_warning') {
+        const status = livePublishStore$.status.peek()
+        if (status === 'idle') return
+
         telemetry.warn('live:memory_warning', 'Memory pressure during recording', {
           message: error.message,
           sessionId: livePublishStore$.sessionId.peek(),
-          status: livePublishStore$.status.peek(),
+          recordId: livePublishStore$.recordId.peek(),
+          status,
         })
         return
       }
@@ -413,6 +417,11 @@ export function useLivePublisher(options: {
       }
 
       try {
+        telemetry.setCrashBreadcrumb('live:starting', {
+          sessionId: livePublishStore$.sessionId.peek(),
+          recordId: livePublishStore$.recordId.peek(),
+          status: livePublishStore$.status.peek(),
+        })
         await options.publisher.start({
           rtmpsUrl: ingest.rtmpsUrl,
           streamKey: ingest.streamKey,
@@ -425,7 +434,7 @@ export function useLivePublisher(options: {
         telemetry.setCrashBreadcrumb('live:recording', {
           sessionId: livePublishStore$.sessionId.peek(),
           recordId: livePublishStore$.recordId.peek(),
-          status: 'connecting',
+          status: livePublishStore$.status.peek(),
         })
         telemetry.info('live:start_success', 'Live publisher connected', {
           sessionId: livePublishStore$.sessionId.peek(),
@@ -488,6 +497,11 @@ export function useLivePublisher(options: {
           playbackId: liveStream.playbackId,
         })
 
+        telemetry.setCrashBreadcrumb('live:starting', {
+          sessionId: liveStream.liveSessionId,
+          recordId: liveStream.recordId,
+          status: livePublishStore$.status.peek(),
+        })
         await options.publisher.start({
           rtmpsUrl: liveStream.ingest.rtmpsUrl,
           streamKey: liveStream.ingest.streamKey,
@@ -500,7 +514,7 @@ export function useLivePublisher(options: {
         telemetry.setCrashBreadcrumb('live:recording', {
           sessionId: liveStream.liveSessionId,
           recordId: liveStream.recordId,
-          status: 'connecting',
+          status: livePublishStore$.status.peek(),
         })
         telemetry.info('live:start_success', 'Live publisher started successfully', {
           sessionId: liveStream.liveSessionId,
@@ -545,6 +559,7 @@ export function useLivePublisher(options: {
 
     let completeSignaled: boolean | undefined
     let recordingStarted = true
+    const startedAt = livePublishStore$.startedAt.peek()
 
     // Crash context snapshot — write a breadcrumb right before the risky
     // native stop, where the Android double-teardown SIGSEGV can occur.
@@ -552,9 +567,7 @@ export function useLivePublisher(options: {
       sessionId,
       recordId: livePublishStore$.recordId.peek(),
       status: 'stopping',
-      durationMs: livePublishStore$.startedAt.peek()
-        ? Date.now() - livePublishStore$.startedAt.peek()!
-        : undefined,
+      durationMs: startedAt ? Date.now() - startedAt : undefined,
     })
 
     // Close native RTMP first. Waiting on the backend while StreamPack keeps

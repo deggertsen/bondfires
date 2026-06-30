@@ -31,6 +31,7 @@ public class BondfireLivePublisherModule: Module {
 
     OnDestroy {
       BondfireLivePublisherModule.currentInstance = nil
+      self.uninstallMemoryWarningObserver()
       let publisher = self.publisher
       Task { @MainActor in
         await publisher?.stopWithoutEvent()
@@ -135,21 +136,26 @@ public class BondfireLivePublisherModule: Module {
   fileprivate var publisher: LivePublisher?
   private var memoryWarningObserver: NSObjectProtocol?
 
-  /// Listen for iOS memory pressure notifications and forward them to JS via
-  /// DeviceEventEmitter so the recording screen can log telemetry breadcrumbs.
+  /// Listen for iOS memory pressure notifications and forward them to JS as
+  /// telemetry-only native error events.
   private func installMemoryWarningObserver() {
+    guard memoryWarningObserver == nil else { return }
     memoryWarningObserver = NotificationCenter.default.addObserver(
       forName: UIApplication.didReceiveMemoryWarningNotification,
       object: nil,
       queue: .main
-    ) { _ in
-      // Send to JS via the module's event system. We use a custom event name
-      // that the JS side listens for via DeviceEventEmitter.
-      self.sendEvent("error", [
+    ) { [weak self] _ in
+      self?.sendEvent("error", [
         "code": "memory_warning",
         "message": "iOS did receive memory warning",
       ])
     }
+  }
+
+  private func uninstallMemoryWarningObserver() {
+    guard let observer = memoryWarningObserver else { return }
+    NotificationCenter.default.removeObserver(observer)
+    memoryWarningObserver = nil
   }
 
   @MainActor
