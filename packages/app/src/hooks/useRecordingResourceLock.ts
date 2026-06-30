@@ -16,3 +16,9 @@ export function useRecordingResourceLock() {
 
   return isRecordingResourceLocked({ recordingPhase, liveStatus })
 }
+
+export function useCanRunRecordingBackgroundWork(isFocused: boolean) {
+  const recordingResourceLocked = useRecordingResourceLock()
+
+  return isFocused && !recordingResourceLocked
+}

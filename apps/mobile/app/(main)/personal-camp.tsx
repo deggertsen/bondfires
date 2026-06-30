@@ -2,7 +2,7 @@ import {
   subscriptionActions,
   telemetry,
   useAppThemeColors,
-  useRecordingResourceLock,
+  useCanRunRecordingBackgroundWork,
 } from '@bondfires/app'
 import { BondfireRow, type BondfireRowProps, Button, Spinner, Text } from '@bondfires/ui'
 import { useIsFocused } from '@react-navigation/native'
@@ -35,8 +35,7 @@ export default function PersonalCampScreen() {
   const router = useRouter()
   const navigation = useNavigation()
   const isFocused = useIsFocused()
-  const recordingResourceLocked = useRecordingResourceLock()
-  const shouldRunBackgroundWork = isFocused && !recordingResourceLocked
+  const shouldRunBackgroundWork = useCanRunRecordingBackgroundWork(isFocused)
   const { newFire, createdAfter } = useLocalSearchParams<{
     newFire?: string
     createdAfter?: string

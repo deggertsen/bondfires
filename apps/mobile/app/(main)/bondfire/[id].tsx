@@ -9,7 +9,7 @@ import {
   setLastLocation,
   telemetry,
   useAppThemeColors,
-  useRecordingResourceLock,
+  useCanRunRecordingBackgroundWork,
 } from '@bondfires/app'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused, useNavigation } from '@react-navigation/native'
@@ -82,8 +82,7 @@ export default function BondfireDetailScreen() {
   const navigation = useNavigation()
   const flatListRef = useRef<FlatList<BondfireVideoItem>>(null)
   const isFocused = useIsFocused()
-  const recordingResourceLocked = useRecordingResourceLock()
-  const shouldRunBackgroundWork = isFocused && !recordingResourceLocked
+  const shouldRunBackgroundWork = useCanRunRecordingBackgroundWork(isFocused)
 
   const screenState$ = useObservable({
     currentVideoIndex: 0,

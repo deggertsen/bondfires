@@ -6,7 +6,7 @@ import {
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
   useAppThemeColors,
-  useRecordingResourceLock,
+  useCanRunRecordingBackgroundWork,
   useSubscription,
 } from '@bondfires/app'
 import { Button, Spinner, type SwipeAction, SwipeableRow, Text } from '@bondfires/ui'
@@ -799,8 +799,7 @@ export default function CampDetailScreen() {
   const { canCreate } = useSubscription()
   const navigation = useNavigation()
   const isFocused = useIsFocused()
-  const recordingResourceLocked = useRecordingResourceLock()
-  const shouldRunBackgroundWork = isFocused && !recordingResourceLocked
+  const shouldRunBackgroundWork = useCanRunRecordingBackgroundWork(isFocused)
   const { id } = useLocalSearchParams<{ id?: string }>()
   const campId = id as Id<'camps'> | undefined
   const camp = useQuery(api.camps.get, shouldRunBackgroundWork && campId ? { campId } : 'skip')

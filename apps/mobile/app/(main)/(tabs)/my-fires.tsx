@@ -6,8 +6,8 @@ import {
   setFeedActiveBondfireId,
   telemetry,
   useAppThemeColors,
+  useCanRunRecordingBackgroundWork,
   useCurrentUserId,
-  useRecordingResourceLock,
 } from '@bondfires/app'
 import { BondfireRow, type BondfireRowProps, Button, Spinner, Text } from '@bondfires/ui'
 import { useIsFocused } from '@react-navigation/native'
@@ -100,8 +100,7 @@ export default function MyFiresScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const isFocused = useIsFocused()
-  const recordingResourceLocked = useRecordingResourceLock()
-  const shouldRunBackgroundWork = isFocused && !recordingResourceLocked
+  const shouldRunBackgroundWork = useCanRunRecordingBackgroundWork(isFocused)
   const [refreshKey, setRefreshKey] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [pinnedFirst, setPinnedFirst] = useState(false)

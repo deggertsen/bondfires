@@ -13,7 +13,7 @@ import {
   subscriptionStore$,
   telemetry,
   useAppThemeColors,
-  useRecordingResourceLock,
+  useCanRunRecordingBackgroundWork,
   useSubscription,
 } from '@bondfires/app'
 import { BondfireRow, type BondfireRowProps, Button, Input, Spinner, Text } from '@bondfires/ui'
@@ -309,8 +309,7 @@ export default function FeedScreen() {
   const router = useRouter()
   const insets = useSafeAreaInsets()
   const isFocused = useIsFocused()
-  const recordingResourceLocked = useRecordingResourceLock()
-  const shouldRunBackgroundWork = isFocused && !recordingResourceLocked
+  const shouldRunBackgroundWork = useCanRunRecordingBackgroundWork(isFocused)
   const getThumbnailUrl = useAction(api.videos.getThumbnailUrl)
   const { canCreate } = useSubscription()
   const subscriptionResolved = useValue(subscriptionStore$.subscriptionResolved)
