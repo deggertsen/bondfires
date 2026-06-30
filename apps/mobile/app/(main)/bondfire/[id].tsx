@@ -33,6 +33,7 @@ import {
   type BondfireVideoItem,
   buildBondfireVideoItems,
   clampVideoIndex,
+  getResponseVideoScrollIndex,
   SCREEN_WIDTH,
   type ScrollToIndexFailedInfo,
   STUCK_PROCESSING_TELEMETRY_THRESHOLD_MS,
@@ -74,7 +75,8 @@ function getWatchTarget(
 
 export default function BondfireDetailScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
-  const { id, videoId: deepLinkVideoId } = useLocalSearchParams<{ id: string; videoId?: string }>()
+  const { id, videoId } = useLocalSearchParams<{ id: string; videoId?: string | string[] }>()
+  const deepLinkVideoId = typeof videoId === 'string' ? videoId : undefined
   const router = useRouter()
   const navigation = useNavigation()
   const flatListRef = useRef<FlatList<BondfireVideoItem>>(null)
@@ -155,7 +157,7 @@ export default function BondfireDetailScreen() {
     typeof InteractionManager.runAfterInteractions
   > | null>(null)
   const restoreRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const restoreTargetRef = useRef<{ bondfireId: string; savedIndex: number } | null>(null)
+  const restoreTargetRef = useRef<{ key: string; savedIndex: number } | null>(null)
   const restoredPositionKeyRef = useRef<string | null>(null)
   const recordedWatchEventsRef = useRef<Set<string>>(new Set())
 
@@ -316,18 +318,15 @@ export default function BondfireDetailScreen() {
   useEffect(() => {
     if (!bondfireData) return
 
-    if (restoreTargetRef.current?.bondfireId !== bondfireId) {
-      // Deep-linked from a push notification: target the specific response video
-      // instead of the last-saved scroll position.
-      const deepLinkIdx = deepLinkVideoId
-        ? (() => {
-            const idx = bondfireData.videos.findIndex((v) => v._id === deepLinkVideoId)
-            return idx >= 0 ? idx + 1 : null
-          })()
-        : null
+    const deepLinkIndex = getResponseVideoScrollIndex(bondfireData, deepLinkVideoId)
+    const restoreTargetKey = deepLinkVideoId
+      ? `${bondfireId}:${deepLinkVideoId}:${deepLinkIndex ?? 'pending'}`
+      : `${bondfireId}:saved`
+
+    if (restoreTargetRef.current?.key !== restoreTargetKey) {
       restoreTargetRef.current = {
-        bondfireId,
-        savedIndex: deepLinkIdx ?? getBondfireVideoIndex(bondfireId) ?? 0,
+        key: restoreTargetKey,
+        savedIndex: deepLinkIndex ?? getBondfireVideoIndex(bondfireId) ?? 0,
       }
       restoredPositionKeyRef.current = null
     }
@@ -500,15 +499,10 @@ export default function BondfireDetailScreen() {
   }
 
   const totalVideos = 1 + bondfireData.videos.length
-  // Deep-linked from a push notification: find the FlatList index for the
-  // specific response video. Falls back to the persisted scroll position.
-  const deepLinkIndex = (() => {
-    if (!deepLinkVideoId) return null
-    const idx = bondfireData.videos.findIndex((v) => v._id === deepLinkVideoId)
-    return idx >= 0 ? idx + 1 : null // +1 because index 0 is the main bondfire video
-  })()
   const initialVideoIndex = clampVideoIndex(
-    deepLinkIndex ?? getBondfireVideoIndex(bondfireId) ?? 0,
+    getResponseVideoScrollIndex(bondfireData, deepLinkVideoId) ??
+      getBondfireVideoIndex(bondfireId) ??
+      0,
     totalVideos,
   )
   const videoItems = buildBondfireVideoItems(bondfireData, videoUrls)
