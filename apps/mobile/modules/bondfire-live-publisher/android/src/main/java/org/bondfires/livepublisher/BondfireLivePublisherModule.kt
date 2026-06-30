@@ -2,6 +2,7 @@ package org.bondfires.livepublisher
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.content.ComponentCallbacks2
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioFormat
@@ -10,6 +11,7 @@ import android.media.MediaFormat
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.os.PowerManager
 import android.util.Log
 import android.util.Size
 import expo.modules.kotlin.exception.CodedException
@@ -125,6 +127,7 @@ class BondfireLivePublisherModule : Module() {
 
     OnCreate {
       BondfireLivePublisherModule.currentInstance = this@BondfireLivePublisherModule
+      installTrimMemoryObserver()
     }
 
     OnDestroy {
@@ -255,6 +258,26 @@ class BondfireLivePublisherModule : Module() {
         "rttMs" to 0,
         "droppedFrames" to 0,
       )
+    }
+
+    // Thermal state — polled from JS during recording.
+    // Returns the current PowerManager thermal status.
+    AsyncFunction("getThermalState") {
+      val context = appContext.reactContext
+      val powerManager = context?.getSystemService(Context.POWER_SERVICE) as? PowerManager
+      val status = powerManager?.currentThermalStatus
+      val level = status?.ordinal ?: -1
+      val levelName = when (level) {
+        0 ->"nominal"
+        1 ->"light"
+        2 ->"moderate"
+        3 ->"severe"
+        4 ->"critical"
+        5 ->"emergency"
+        6 ->"shutdown"
+        else ->"unknown"
+      }
+      mapOf("level" to level, "levelName" to levelName)
     }
 
     View(BondfireLivePublisherView::class) {}
@@ -751,6 +774,30 @@ class BondfireLivePublisherModule : Module() {
     } catch (e: Exception) {
       Log.w(TAG, "Unexpected error during streamer cleanup", e)
     }
+  }
+
+  /// Listen for Android memory pressure (onTrimMemory) and forward to JS as
+  /// error events with code 'memory_warning'. The JS hook catches these and
+  /// logs 'live:memory_warning' telemetry without failing the recording.
+  private fun installTrimMemoryObserver() {
+    val context = appContext.reactContext ?: return
+    context.registerComponentCallbacks(object : ComponentCallbacks2 {
+      override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {}
+      override fun onLowMemory() {
+        sendEvent("error", mapOf(
+          "code" to "memory_warning",
+          "message" to "Android onLowMemory"
+        ))
+      }
+      override fun onTrimMemory(level: Int) {
+        if (level >= 15) {
+          sendEvent("error", mapOf(
+            "code" to "memory_warning",
+            "message" to "Android onTrimMemory level=$level"
+          ))
+        }
+      }
+    })
   }
 }
 

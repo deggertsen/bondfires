@@ -56,6 +56,7 @@ interface NativeLivePublisher {
   swapCamera(): Promise<void>
   setMuted(muted: boolean): Promise<void>
   getStats(): Promise<LivePublisherStats>
+  getThermalState?(): Promise<{ level: number; levelName: string }>
 }
 
 function loadNativeModule(): NativeLivePublisher {
@@ -144,6 +145,10 @@ export const BondfireLivePublisher = {
 
   getStats() {
     return nativeModule?.getStats() ?? unavailablePromise()
+  },
+
+  getThermalState() {
+    return nativeModule?.getThermalState?.() ?? Promise.resolve({ level: -1, levelName: 'unknown' })
   },
 
   addListener,

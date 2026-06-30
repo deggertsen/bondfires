@@ -41,6 +41,7 @@ export interface LivePublisherNativeModule {
   swapCamera(): Promise<void>
   setMuted(muted: boolean): Promise<void>
   getStats(): Promise<LivePublisherStats>
+  getThermalState?(): Promise<{ level: number; levelName: string }>
   addListener(event: 'statusChange', cb: (status: string) => void): LivePublisherSubscription
   addListener(
     event: 'error',
@@ -146,6 +147,17 @@ export function useLivePublisher(options: {
       }
     })
     const errorSub = options.publisher.addListener('error', (error) => {
+      // Memory warnings come through as error events with code 'memory_warning'.
+      // These are telemetry-only — we do NOT want to fail the recording.
+      if (error.code === 'memory_warning') {
+        telemetry.warn('live:memory_warning', 'Memory pressure during recording', {
+          message: error.message,
+          sessionId: livePublishStore$.sessionId.peek(),
+          status: livePublishStore$.status.peek(),
+        })
+        return
+      }
+
       // Suppress errors that fire during/after teardown. The native streaming
       // libraries (StreamPack/HaishinKit) can emit internal errors as the
       // encoder, camera, and RTMP connection are being torn down — these are
@@ -201,6 +213,10 @@ export function useLivePublisher(options: {
     sawThroughputRef.current = false
     zeroThroughputSamplesRef.current = 0
 
+    // Periodic stats breadcrumb counter — emit a stats snapshot every 30s
+    // (6 stats samples at 5s interval) for crash timeline reconstruction.
+    let statsBreadcrumbCounter = 0
+
     statsIntervalRef.current = setInterval(() => {
       options.publisher
         .getStats()
@@ -209,6 +225,34 @@ export function useLivePublisher(options: {
             bitrateBps: stats.bitrateBps,
             droppedFrames: stats.droppedFrames,
           })
+
+          // Periodic breadcrumb — every ~30s, log a stats snapshot for crash
+          // timeline reconstruction. Keeps Convex load modest (2/min during
+          // recording) while giving us a timeline if the app crashes.
+          statsBreadcrumbCounter++
+          if (statsBreadcrumbCounter % 6 === 0) {
+            const sessionId = livePublishStore$.sessionId.peek()
+            const recordId = livePublishStore$.recordId.peek()
+            const startedAt = livePublishStore$.startedAt.peek()
+            telemetry.breadcrumb('live:stats_sample', {
+              sessionId,
+              recordId,
+              bitrateBps: stats.bitrateBps,
+              droppedFrames: stats.droppedFrames,
+              currentFps: stats.currentFps,
+              rttMs: stats.rttMs,
+              elapsedMs: startedAt ? Date.now() - startedAt : undefined,
+            })
+            // Update crash-survivable breadcrumb with current state
+            telemetry.setCrashBreadcrumb('live:recording', {
+              sessionId,
+              recordId,
+              status: livePublishStore$.status.peek(),
+              bitrateBps: stats.bitrateBps,
+              droppedFrames: stats.droppedFrames,
+              elapsedMs: startedAt ? Date.now() - startedAt : undefined,
+            })
+          }
 
           // Frozen-encoder watchdog: the connection poll catches dropped
           // sockets, but an encoder that stalls while the socket stays open
@@ -378,6 +422,11 @@ export function useLivePublisher(options: {
           initialCamera: args.initialCamera ?? 'front',
         })
         startStatsSampling()
+        telemetry.setCrashBreadcrumb('live:recording', {
+          sessionId: livePublishStore$.sessionId.peek(),
+          recordId: livePublishStore$.recordId.peek(),
+          status: 'connecting',
+        })
         telemetry.info('live:start_success', 'Live publisher connected', {
           sessionId: livePublishStore$.sessionId.peek(),
           recordId: livePublishStore$.recordId.peek(),
@@ -448,6 +497,11 @@ export function useLivePublisher(options: {
           initialCamera: args.initialCamera ?? 'front',
         })
         startStatsSampling()
+        telemetry.setCrashBreadcrumb('live:recording', {
+          sessionId: liveStream.liveSessionId,
+          recordId: liveStream.recordId,
+          status: 'connecting',
+        })
         telemetry.info('live:start_success', 'Live publisher started successfully', {
           sessionId: liveStream.liveSessionId,
           recordId: liveStream.recordId,
@@ -492,6 +546,17 @@ export function useLivePublisher(options: {
     let completeSignaled: boolean | undefined
     let recordingStarted = true
 
+    // Crash context snapshot — write a breadcrumb right before the risky
+    // native stop, where the Android double-teardown SIGSEGV can occur.
+    telemetry.setCrashBreadcrumb('live:stopping', {
+      sessionId,
+      recordId: livePublishStore$.recordId.peek(),
+      status: 'stopping',
+      durationMs: livePublishStore$.startedAt.peek()
+        ? Date.now() - livePublishStore$.startedAt.peek()!
+        : undefined,
+    })
+
     // Close native RTMP first. Waiting on the backend while StreamPack keeps
     // writing packets can crash in komuxer/DirectByteBuffer on Android; the
     // native publisher must leave the hot path as soon as the creator taps stop.
@@ -532,6 +597,10 @@ export function useLivePublisher(options: {
       backendError: backendError ? String(backendError) : undefined,
     })
 
+    // Clear the crash breadcrumb — stop completed (even if with errors), so
+    // a subsequent app launch shouldn't report a crash-in-progress.
+    telemetry.clearCrashBreadcrumb()
+
     if (publisherError) {
       if (backendError) {
         telemetry.warn(
@@ -561,6 +630,12 @@ export function useLivePublisher(options: {
     let publisherError: unknown
     let backendError: unknown
 
+    telemetry.setCrashBreadcrumb('live:cancelling', {
+      sessionId,
+      recordId: livePublishStore$.recordId.peek(),
+      status: 'stopping',
+    })
+
     try {
       await options.publisher.stop()
     } catch (error) {
@@ -584,6 +659,8 @@ export function useLivePublisher(options: {
       reason: 'user_cancelled',
       publisherError: publisherError ? String(publisherError) : undefined,
     })
+
+    telemetry.clearCrashBreadcrumb()
 
     if (publisherError) {
       if (backendError) {
@@ -613,6 +690,7 @@ export function useLivePublisher(options: {
     swapCamera,
     hasProvisionedIngest,
     stats$: livePublishStore$,
+    getThermalState: options.publisher.getThermalState,
   }
 }
 
