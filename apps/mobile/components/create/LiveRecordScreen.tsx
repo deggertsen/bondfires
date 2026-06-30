@@ -24,7 +24,7 @@ import type { FunctionReturnType } from 'convex/server'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import * as Network from 'expo-network'
 import { type MutableRefObject, useCallback, useEffect, useRef } from 'react'
-import { Alert, AppState, Linking, Pressable, StatusBar } from 'react-native'
+import { Alert, AppState, Linking, Platform, Pressable, StatusBar } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
@@ -236,16 +236,33 @@ export function LiveRecordScreen({
     }
   }, [])
 
-  // Track app active state (external subscription - keep useEffect)
+  // Track app active state (external subscription - keep useEffect).
+  // Also logs lifecycle breadcrumbs during recording so we can reconstruct
+  // what happened before a crash.
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (appState) => {
       state$.isAppActive.set(appState === 'active')
+
+      // Log lifecycle breadcrumbs during active recording
+      if (phase === 'recording' || liveStatus === 'connecting' || liveStatus === 'reconnecting') {
+        const stateMap: Record<string, string> = {
+          active: 'active',
+          background: 'background',
+          inactive: 'inactive',
+        }
+        telemetry.breadcrumb('live:app_state', {
+          state: stateMap[appState] ?? appState,
+          phase,
+          liveStatus,
+          sessionId: livePublishStore$.sessionId.peek(),
+        })
+      }
     })
 
     return () => {
       subscription.remove()
     }
-  }, [state$])
+  }, [state$, phase, liveStatus])
 
   // Sync isFocused from hook to observable
   useEffect(() => {
@@ -273,6 +290,41 @@ export function LiveRecordScreen({
       deactivateKeepAwake(keepAwakeTag)
     }
   }, [phase, liveStatus, isFocused, isAppActive])
+
+  // Thermal state listener — RTMP encoding + camera generates significant heat.
+  // iOS: ProcessInfo.thermalState polled via native module's getThermalState.
+  // Android: PowerManager thermal status polled via native module.
+  useEffect(() => {
+    if (phase !== 'recording') return
+
+    let interval: ReturnType<typeof setInterval> | null = null
+    let lastLevel = -1
+
+    const checkThermal = async () => {
+      try {
+        const thermalState = await livePublisher.getThermalState?.()
+        if (thermalState && thermalState.level !== lastLevel) {
+          lastLevel = thermalState.level
+          telemetry.breadcrumb('live:thermal', {
+            level: thermalState.level,
+            levelName: thermalState.levelName,
+            platform: Platform.OS,
+            sessionId: livePublishStore$.sessionId.peek(),
+          })
+        }
+      } catch {
+        // Best-effort thermal polling — native module might not support it
+      }
+    }
+
+    // Poll every 15s during recording — thermal changes are gradual
+    interval = setInterval(checkThermal, 15_000)
+    checkThermal() // Check immediately
+
+    return () => {
+      if (interval) clearInterval(interval)
+    }
+  }, [phase, livePublisher.getThermalState])
 
   const startLivePreConnect = useCallback(async () => {
     const currentRecordingState = recordingStore$.phase.get()

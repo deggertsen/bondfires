@@ -26,10 +26,12 @@ public class BondfireLivePublisherModule: Module {
 
     OnCreate {
       BondfireLivePublisherModule.currentInstance = self
+      self.installMemoryWarningObserver()
     }
 
     OnDestroy {
       BondfireLivePublisherModule.currentInstance = nil
+      self.uninstallMemoryWarningObserver()
       let publisher = self.publisher
       Task { @MainActor in
         await publisher?.stopWithoutEvent()
@@ -103,12 +105,58 @@ public class BondfireLivePublisherModule: Module {
       ]
     }
 
+    // Thermal state — polled from JS during recording. Returns the current
+    // ProcessInfo.thermalState level so we can log it as a telemetry breadcrumb.
+    AsyncFunction("getThermalState") { () -> [String: Any] in
+      let state = ProcessInfo.processInfo.thermalState
+      let levelName: String
+      switch state {
+      case .nominal: levelName = "nominal"
+      case .fair: levelName = "fair"
+      case .serious: levelName = "serious"
+      case .critical: levelName = "critical"
+      @unknown default: levelName = "unknown"
+      }
+      let level: Int
+      switch state {
+      case .nominal: level = 0
+      case .fair: level = 1
+      case .serious: level = 2
+      case .critical: level = 3
+      @unknown default: level = -1
+      }
+      return ["level": level, "levelName": levelName]
+    }
+
     View(BondfireLivePublisherView.self) {}
   }
 
   // MARK: - Publisher lifecycle
 
   fileprivate var publisher: LivePublisher?
+  private var memoryWarningObserver: NSObjectProtocol?
+
+  /// Listen for iOS memory pressure notifications and forward them to JS as
+  /// telemetry-only native error events.
+  private func installMemoryWarningObserver() {
+    guard memoryWarningObserver == nil else { return }
+    memoryWarningObserver = NotificationCenter.default.addObserver(
+      forName: UIApplication.didReceiveMemoryWarningNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      self?.sendEvent("error", [
+        "code": "memory_warning",
+        "message": "iOS did receive memory warning",
+      ])
+    }
+  }
+
+  private func uninstallMemoryWarningObserver() {
+    guard let observer = memoryWarningObserver else { return }
+    NotificationCenter.default.removeObserver(observer)
+    memoryWarningObserver = nil
+  }
 
   @MainActor
   private func ensurePublisher() throws -> LivePublisher {

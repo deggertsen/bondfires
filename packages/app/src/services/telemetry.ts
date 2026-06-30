@@ -69,6 +69,7 @@ const TELEMETRY_BATCH_SIZE = 20
 const PERSIST_DEBOUNCE_MS = 1000
 const STORAGE_ID = 'bondfires-telemetry'
 const STORAGE_KEY = 'queue'
+const LAST_CRASH_KEY = 'last-crash-breadcrumb'
 
 function serializeForConvex(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') {
@@ -246,6 +247,11 @@ export class TelemetryLogger {
   // Toast callback — set after toast store is available
   private _onErrorToast: ((message: string, referenceId: string) => void) | null = null
 
+  // Crash-survivable breadcrumb: written synchronously to MMKV so it survives
+  // a native process kill (SIGSEGV/OOM). On next launch, loadPersisted()
+  // flushes it as a breadcrumb so we know what the app was doing when it died.
+  private _lastCrashBreadcrumb: Record<string, unknown> | null = null
+
   constructor() {
     this.sessionId = generateSessionId()
     this.platform = Platform.OS as 'ios' | 'android'
@@ -287,6 +293,7 @@ export class TelemetryLogger {
     // before they flushed, or flushes failed during the auth gap) so they get
     // another delivery attempt.
     this.loadPersisted()
+    this.flushLastCrashBreadcrumb()
     // Drain whatever we just restored (plus anything queued during startup)
     // promptly rather than waiting a full flush interval.
     void this.sendBatch()
@@ -343,6 +350,82 @@ export class TelemetryLogger {
 
   info(event: string, message: string, data?: unknown): void {
     this.enqueue('info', event, message, data)
+  }
+
+  // -----------------------------------------------------------------------
+  // Crash-survivable breadcrumb
+  // -----------------------------------------------------------------------
+
+  /**
+   * Write a crash-survivable breadcrumb to MMKV. Unlike normal telemetry
+   * entries (which go through the in-memory queue + batch flush), this is
+   * written synchronously to disk so it survives a native SIGSEGV or OOM
+   * kill. On the next app launch, init() calls flushLastCrashBreadcrumb()
+   * which emits it as a `crash:last_breadcrumb` entry and clears the key.
+   *
+   * Use this to record what the app was doing during high-risk operations
+   * (e.g. mid-recording state) so that if the process is killed, we know
+   * exactly what was happening.
+   */
+  setCrashBreadcrumb(event: string, data?: unknown): void {
+    if (!this.storage) return
+    try {
+      this._lastCrashBreadcrumb = {
+        event,
+        data: serializeForConvex(data),
+        writtenAt: Date.now(),
+      }
+      this.storage.set(LAST_CRASH_KEY, JSON.stringify(this._lastCrashBreadcrumb))
+    } catch {
+      // Best-effort — never let telemetry crash the caller.
+    }
+  }
+
+  /** Clear the crash breadcrumb (call after a graceful stop). */
+  clearCrashBreadcrumb(): void {
+    if (!this.storage) return
+    try {
+      this.storage.remove(LAST_CRASH_KEY)
+      this._lastCrashBreadcrumb = null
+    } catch {
+      // ignore
+    }
+  }
+
+  private flushLastCrashBreadcrumb(): void {
+    if (!this.storage) return
+    try {
+      const raw = this.storage.getString(LAST_CRASH_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as unknown
+      if (!isRecord(parsed) || typeof parsed.event !== 'string') {
+        this.storage.remove(LAST_CRASH_KEY)
+        return
+      }
+
+      // Only flush if it's recent (within the last 10 minutes). Older entries
+      // are likely from a previous session that exited cleanly but didn't
+      // clear the breadcrumb.
+      const writtenAt = typeof parsed.writtenAt === 'number' ? parsed.writtenAt : 0
+      const ageMs = Date.now() - writtenAt
+      if (ageMs < 10 * 60 * 1000) {
+        const data = isRecord(parsed.data)
+          ? { ...parsed.data, ageMs }
+          : { data: parsed.data, ageMs }
+        this.enqueue('breadcrumb', 'crash:last_breadcrumb', parsed.event, data, { echo: false })
+        // The replayed crash breadcrumb should survive even if the relaunched
+        // app dies again before the debounce timer or network flush runs.
+        this.persistNow()
+      }
+      this.storage.remove(LAST_CRASH_KEY)
+      this._lastCrashBreadcrumb = null
+    } catch {
+      try {
+        this.storage.remove(LAST_CRASH_KEY)
+      } catch {
+        // ignore
+      }
+    }
   }
 
   // -----------------------------------------------------------------------
