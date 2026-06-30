@@ -204,6 +204,7 @@ export function BondfirePlaybackScreen({
               isMainVideo={item.isMainVideo}
               responseIndex={item.responseIndex}
               isLive={item.isLive}
+              createdAt={item.createdAt}
             />
           )}
           horizontal

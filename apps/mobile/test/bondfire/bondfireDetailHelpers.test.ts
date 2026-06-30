@@ -56,12 +56,14 @@ describe('bondfireDetailHelpers', () => {
   it('builds playback items from a bondfire and its playable responses', () => {
     const bondfireData = {
       _id: 'bondfire-1',
+      _creationTime: 1700000000000,
       userId: 'user-1',
       creatorName: 'Ada',
       videoStatus: 'live',
       videos: [
         {
           _id: 'response-1',
+          _creationTime: 1700000060000,
           userId: 'user-2',
           creatorName: 'Grace',
           videoStatus: 'ready',
@@ -80,6 +82,7 @@ describe('bondfireDetailHelpers', () => {
         isMainVideo: true,
         responseIndex: undefined,
         isLive: true,
+        createdAt: 1700000000000,
       },
       {
         key: 'response-1',
@@ -91,6 +94,7 @@ describe('bondfireDetailHelpers', () => {
         isMainVideo: false,
         responseIndex: 1,
         isLive: false,
+        createdAt: 1700000060000,
       },
     ])
   })
