@@ -1,5 +1,6 @@
 export * from './authRedirect'
 export * from './errorUtils'
 export * from './navigationPersistence'
+export * from './recordingResourceLock'
 export * from './storage'
 export * from './videoProcessing'

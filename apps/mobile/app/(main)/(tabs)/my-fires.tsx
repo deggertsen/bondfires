@@ -6,9 +6,11 @@ import {
   setFeedActiveBondfireId,
   telemetry,
   useAppThemeColors,
+  useCanRunRecordingBackgroundWork,
   useCurrentUserId,
 } from '@bondfires/app'
 import { BondfireRow, type BondfireRowProps, Button, Spinner, Text } from '@bondfires/ui'
+import { useIsFocused } from '@react-navigation/native'
 import { Flame, Pin } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
@@ -97,12 +99,15 @@ function toBondfireRowProps(
 export default function MyFiresScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
+  const isFocused = useIsFocused()
+  const shouldRunBackgroundWork = useCanRunRecordingBackgroundWork(isFocused)
   const [refreshKey, setRefreshKey] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [pinnedFirst, setPinnedFirst] = useState(false)
-  const threads = useQuery(api.conversations.listMyFires, { limit: 80, pinnedFirst }) as
-    | MyFire[]
-    | undefined
+  const threads = useQuery(
+    api.conversations.listMyFires,
+    shouldRunBackgroundWork ? { limit: 80, pinnedFirst } : 'skip',
+  ) as MyFire[] | undefined
   const getThumbnailUrl = useAction(api.videos.getThumbnailUrl)
 
   // Swipe action mutations
@@ -144,6 +149,7 @@ export default function MyFiresScreen() {
 
   const ensureThumbnailUrl = useCallback(
     async (thread: MyFire) => {
+      if (!shouldRunBackgroundWork) return
       if (!thread.muxPlaybackId) return
       if (thumbnailUrls[thread._id] !== undefined) return
       if (loadingThumbsRef.current.has(thread._id)) return
@@ -166,15 +172,15 @@ export default function MyFiresScreen() {
         loadingThumbsRef.current.delete(thread._id)
       }
     },
-    [getThumbnailUrl, thumbnailUrls],
+    [getThumbnailUrl, shouldRunBackgroundWork, thumbnailUrls],
   )
 
   useEffect(() => {
-    if (!threads) return
+    if (!shouldRunBackgroundWork || !threads) return
     for (const thread of threads.slice(0, 10)) {
       ensureThumbnailUrl(thread)
     }
-  }, [ensureThumbnailUrl, threads])
+  }, [ensureThumbnailUrl, shouldRunBackgroundWork, threads])
 
   const unreadCount = useMemo(
     () => threads?.filter((thread) => thread.unread).length ?? 0,

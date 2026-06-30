@@ -6,9 +6,11 @@ import {
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
   useAppThemeColors,
+  useCanRunRecordingBackgroundWork,
   useSubscription,
 } from '@bondfires/app'
 import { Button, Spinner, type SwipeAction, SwipeableRow, Text } from '@bondfires/ui'
+import { useIsFocused } from '@react-navigation/native'
 import {
   ArrowLeft,
   Ban,
@@ -26,10 +28,10 @@ import { useMutation, useQuery } from 'convex/react'
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useState } from 'react'
 import { Alert, FlatList, Modal, Pressable, StatusBar, TextInput } from 'react-native'
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
 import { Separator, Image as TamaguiImage, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
 import { EditTitleSheet, useEditTitleSheet } from '../../../components/EditTitleSheet'
 import { InviteSheet } from '../../../components/InviteSheet'
 import { getBondfireRightSwipeActions } from '../../../lib/bondfireSwipeActions'
@@ -796,10 +798,15 @@ export default function CampDetailScreen() {
   const router = useRouter()
   const { canCreate } = useSubscription()
   const navigation = useNavigation()
+  const isFocused = useIsFocused()
+  const shouldRunBackgroundWork = useCanRunRecordingBackgroundWork(isFocused)
   const { id } = useLocalSearchParams<{ id?: string }>()
   const campId = id as Id<'camps'> | undefined
-  const camp = useQuery(api.camps.get, campId ? { campId } : 'skip')
-  const bondfires = useQuery(api.bondfires.listByCamp, campId ? { campId, limit: 50 } : 'skip')
+  const camp = useQuery(api.camps.get, shouldRunBackgroundWork && campId ? { campId } : 'skip')
+  const bondfires = useQuery(
+    api.bondfires.listByCamp,
+    shouldRunBackgroundWork && campId ? { campId, limit: 50 } : 'skip',
+  )
   const canReviewAccessRequests =
     camp?.membership?.status === 'active' && camp.membership.role === 'owner'
   const isManager =
@@ -809,15 +816,17 @@ export default function CampDetailScreen() {
   const pendingRequests: PendingRequest[] =
     useQuery(
       api.camps.getPendingRequests,
-      campId && canReviewAccessRequests && camp?.status === 'active' ? { campId } : 'skip',
+      shouldRunBackgroundWork && campId && canReviewAccessRequests && camp?.status === 'active'
+        ? { campId }
+        : 'skip',
     ) ?? []
   const members: CampMember[] | undefined = useQuery(
     api.camps.listCampMembers,
-    campId && isManager ? { campId } : 'skip',
+    shouldRunBackgroundWork && campId && isManager ? { campId } : 'skip',
   )
   const bannedMembers: BannedMember[] | undefined = useQuery(
     api.camps.getBannedMembers,
-    campId && isManager ? { campId } : 'skip',
+    shouldRunBackgroundWork && campId && isManager ? { campId } : 'skip',
   )
   const joinCamp = useMutation(api.camps.join)
   const requestJoinCamp = useMutation(api.camps.requestJoin)

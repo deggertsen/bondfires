@@ -2,6 +2,7 @@ import {
   appActions,
   appStore$,
   cancelProcessing,
+  isRecordingResourceLocked,
   livePublishActions,
   livePublishStore$,
   recordingActions,
@@ -9,6 +10,7 @@ import {
   resumePendingUploads,
   telemetry,
   useAppThemeColors,
+  useRecordingResourceLock,
   useSubscription,
 } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
@@ -103,6 +105,7 @@ export default function CreateScreen() {
   const isLivePublisherAvailable = useValue(recordingStore$.isLivePublisherAvailable)
   const livePublishEnabled = useValue(appStore$.preferences.livePublishEnabled)
   const currentCampId = useValue(appStore$.currentCampId)
+  const recordingResourceLocked = useRecordingResourceLock()
   const shouldUseLivePublish = livePublishEnabled && isLivePublisherAvailable
   const liveRecordId = useValue(livePublishStore$.recordId)
 
@@ -428,7 +431,13 @@ export default function CreateScreen() {
   const schedulePendingUploads = useCallback(() => {
     clearUploadStartTimeout()
     uploadStartTimeoutRef.current = setTimeout(() => {
-      if (state$.isFocused.get()) {
+      if (
+        state$.isFocused.get() ||
+        isRecordingResourceLocked({
+          recordingPhase: recordingStore$.phase.peek(),
+          liveStatus: livePublishStore$.status.peek(),
+        })
+      ) {
         return
       }
 
@@ -442,10 +451,15 @@ export default function CreateScreen() {
   // legacy camera-teardown-on-blur effect, whose teardown half now lives in
   // LegacyRecordScreen; scheduling stays here because uploads are shared.)
   //
-  // Drain regardless of the live gate. Fallback uploads can exist even when the
-  // live path is currently available, and leaving them scheduled-only makes
-  // stale "Queued..." profile tasks linger indefinitely. No-op when empty.
+  // Drain fallback uploads when the create screen is safely out of the way.
+  // During live pre-connect/recording/stopping, keep the encoder path isolated
+  // and let queued profile tasks resume once the resource lock clears.
   useEffect(() => {
+    if (recordingResourceLocked) {
+      clearUploadStartTimeout()
+      return
+    }
+
     if (!isFocused || !isAppActive) {
       if (!isFocused) {
         schedulePendingUploads()
@@ -453,7 +467,13 @@ export default function CreateScreen() {
     } else {
       clearUploadStartTimeout()
     }
-  }, [clearUploadStartTimeout, isAppActive, isFocused, schedulePendingUploads])
+  }, [
+    clearUploadStartTimeout,
+    isAppActive,
+    isFocused,
+    recordingResourceLocked,
+    schedulePendingUploads,
+  ])
 
   const handleCampConfirmed = useCallback(
     (selectedId: Id<'camps'>) => {
