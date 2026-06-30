@@ -4,6 +4,7 @@ import {
   buildBondfireVideoItems,
   clampVideoIndex,
   formatTime,
+  getResponseVideoScrollIndex,
   withLiveDvrStart,
 } from '../../app/(main)/bondfire/_lib/bondfireDetailHelpers'
 
@@ -27,6 +28,17 @@ describe('bondfireDetailHelpers', () => {
     expect(formatTime(0)).toBe('0:00')
     expect(formatTime(61_000)).toBe('1:01')
     expect(formatTime(10 * 60 * 1000 + 9_000)).toBe('10:09')
+  })
+
+  it('resolves a response video id to its playback scroll index', () => {
+    const bondfireData = {
+      videos: [{ _id: 'response-1' }, { _id: 'response-2' }],
+    } as unknown as BondfireDetailData
+
+    expect(getResponseVideoScrollIndex(bondfireData, 'response-1')).toBe(1)
+    expect(getResponseVideoScrollIndex(bondfireData, 'response-2')).toBe(2)
+    expect(getResponseVideoScrollIndex(bondfireData, 'missing-response')).toBeNull()
+    expect(getResponseVideoScrollIndex(bondfireData, undefined)).toBeNull()
   })
 
   it('adds live DVR start without dropping existing query params', () => {

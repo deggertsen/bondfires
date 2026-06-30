@@ -60,6 +60,18 @@ export function clampVideoIndex(index: number | null | undefined, totalVideos: n
   return Math.max(0, Math.min(Math.floor(index), totalVideos - 1))
 }
 
+export function getResponseVideoScrollIndex(
+  bondfireData: BondfireDetailData,
+  responseVideoId: string | null | undefined,
+) {
+  if (!responseVideoId) return null
+
+  const responseIndex = bondfireData.videos.findIndex((video) => video._id === responseVideoId)
+  if (responseIndex < 0) return null
+
+  return responseIndex + 1
+}
+
 export function formatTime(ms: number): string {
   const seconds = Math.floor(ms / 1000)
   const mins = Math.floor(seconds / 60)

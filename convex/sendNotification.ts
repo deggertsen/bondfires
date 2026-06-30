@@ -788,6 +788,7 @@ export const notifyBondfireResponse = internalAction({
           data: {
             type: 'bondfire_response',
             bondfireId: args.bondfireId,
+            ...(args.bondfireVideoId ? { bondfireVideoId: args.bondfireVideoId } : {}),
             campId: bondfire.campId,
           },
         }),
