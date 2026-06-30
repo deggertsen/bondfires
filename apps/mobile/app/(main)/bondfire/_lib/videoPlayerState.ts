@@ -30,6 +30,22 @@ export type VideoPlayerState = {
 
 export type VideoPlayerState$ = Observable<VideoPlayerState>
 
+export function shouldLoadVideoSource({
+  videoUrl,
+  isActive,
+  isScreenFocused,
+  isAppActive,
+  shouldSuppressPlayback,
+}: {
+  videoUrl: string | null
+  isActive: boolean
+  isScreenFocused: boolean
+  isAppActive: boolean
+  shouldSuppressPlayback: boolean
+}) {
+  return !!videoUrl && isActive && isScreenFocused && isAppActive && !shouldSuppressPlayback
+}
+
 type ReactionPlaybackMarker = {
   _id: string
   timestampMs: number

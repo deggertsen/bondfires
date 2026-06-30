@@ -32,6 +32,7 @@ import {
   type PendingScrubSeek,
   type ProgressBarMetrics,
   resetReactionState,
+  shouldLoadVideoSource,
   syncReactionPlaybackAfterSeek,
 } from '../_lib/videoPlayerState'
 import {
@@ -145,7 +146,15 @@ export function VideoPlayer({
   }, [reactionsData])
 
   const addReactionMutation = useMutation(api.videoReactions.addReaction)
-  const targetUrl = shouldSuppressPlayback ? null : videoUrl
+  const targetUrl = shouldLoadVideoSource({
+    videoUrl,
+    isActive,
+    isScreenFocused,
+    isAppActive,
+    shouldSuppressPlayback,
+  })
+    ? videoUrl
+    : null
 
   const state$ = useObservable({
     showReport: false,
