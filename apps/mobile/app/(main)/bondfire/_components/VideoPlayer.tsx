@@ -789,7 +789,6 @@ export function VideoPlayer({
           style={{ flex: 1 }}
           contentFit="cover"
           nativeControls={false}
-          allowsFullscreen={false}
           fullscreenOptions={{ enable: false }}
           allowsPictureInPicture={false}
           startsPictureInPictureAutomatically={false}
