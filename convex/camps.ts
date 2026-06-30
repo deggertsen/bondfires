@@ -245,20 +245,6 @@ function getLaunchCampSeeds(): CampSeed[] {
   return [...mixedCamps, ...genderedCamps]
 }
 
-function getArenaSeed(): CampSeed {
-  return {
-    slug: 'the-arena',
-    name: 'The Arena',
-    theme: 'Legacy',
-    purpose: 'Holding camp for existing bondfires created before camps launched.',
-    icon: 'circle',
-    color: '#64748B',
-    defaultPrompt: 'What is worth bringing to the circle today?',
-    gender: 'any',
-    advisoryGuidelines: ['Use the current Bondfires community guidelines.'],
-  }
-}
-
 async function getCurrentUser(ctx: QueryCtx | MutationCtx) {
   const userId = await auth.getUserId(ctx)
   if (!userId) {
@@ -1468,17 +1454,12 @@ export const seedLaunchCamps = mutation({
       }
     }
 
-    const arenaId = await ensureCamp(ctx, getArenaSeed(), {
-      isLaunchCamp: false,
-      ownerId: user._id,
-    })
     const launchCampIds = []
     for (const seed of getLaunchCampSeeds()) {
       launchCampIds.push(await ensureCamp(ctx, seed, { isLaunchCamp: true, ownerId: user._id }))
     }
 
     return {
-      arenaId,
       launchCampIds,
       launchCampCount: launchCampIds.length,
     }
@@ -1542,10 +1523,6 @@ export const resetAndReseed = mutation({
     }
 
     // Re-seed
-    const arenaId = await ensureCamp(ctx, getArenaSeed(), {
-      isLaunchCamp: false,
-      ownerId: user._id,
-    })
     const launchCampIds = []
     for (const seed of getLaunchCampSeeds()) {
       launchCampIds.push(await ensureCamp(ctx, seed, { isLaunchCamp: true, ownerId: user._id }))
@@ -1553,7 +1530,6 @@ export const resetAndReseed = mutation({
 
     return {
       deletedCamps: allCamps.length,
-      arenaId,
       launchCampIds,
       launchCampCount: launchCampIds.length,
     }
@@ -1607,10 +1583,6 @@ export const resetAndReseedAdmin = internalMutation({
     const ownerId = adminUser?._id ?? (await ctx.db.query('users').first())?._id
     if (!ownerId) throw new Error('No users found to assign as camp owner')
 
-    const arenaId = await ensureCamp(ctx, getArenaSeed(), {
-      isLaunchCamp: false,
-      ownerId,
-    })
     const launchCampIds = []
     for (const seed of getLaunchCampSeeds()) {
       launchCampIds.push(await ensureCamp(ctx, seed, { isLaunchCamp: true, ownerId }))
@@ -1618,57 +1590,8 @@ export const resetAndReseedAdmin = internalMutation({
 
     return {
       deletedCamps: allCamps.length,
-      arenaId,
       launchCampIds,
       launchCampCount: launchCampIds.length,
-    }
-  },
-})
-
-export const assignArenaToUnassignedBondfires = mutation({
-  args: {
-    limit: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    const user = await getCurrentUser(ctx)
-    if (!isAdmin(user)) {
-      throw new Error('Only admins can run this migration')
-    }
-
-    const arena = await findCampBySlug(ctx, 'the-arena')
-    if (!arena) {
-      throw new Error('Seed camps before assigning legacy bondfires')
-    }
-
-    const limit = args.limit ?? 100
-    const bondfires = await ctx.db.query('bondfires').take(limit)
-    let updated = 0
-
-    for (const bondfire of bondfires) {
-      if (bondfire.campId) {
-        continue
-      }
-
-      await ctx.db.patch(bondfire._id, {
-        campId: arena._id,
-        updatedAt: Date.now(),
-      })
-      updated += 1
-    }
-
-    const arenaBondfires = await ctx.db
-      .query('bondfires')
-      .withIndex('by_camp', (q) => q.eq('campId', arena._id))
-      .collect()
-
-    await ctx.db.patch(arena._id, {
-      bondfireCount: arenaBondfires.length,
-      updatedAt: Date.now(),
-    })
-
-    return {
-      updated,
-      remainingMayExist: bondfires.length === limit,
     }
   },
 })
