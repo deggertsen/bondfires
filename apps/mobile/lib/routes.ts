@@ -144,6 +144,19 @@ export function personalBondfirePath(bondfireId: string, code: string): string {
   return `/(main)/personal-bondfire/${bondfireId}/${code}`
 }
 
+export function campPath(campId: string): string {
+  return `/(main)/camp/${encodeURIComponent(campId)}`
+}
+
+export function createForCampPath(campId: string): string {
+  return `/(main)/create?campId=${encodeURIComponent(campId)}`
+}
+
+export function campJoinGatePath(campId: string, redirect?: string): string {
+  const path = `${campPath(campId)}/join`
+  return redirect ? `${path}?redirect=${encodeURIComponent(redirect)}` : path
+}
+
 /**
  * Resolve a post-auth `redirectTo` value into a typed navigation target.
  *
@@ -154,10 +167,7 @@ export function resolveAuthRedirect(redirectTo: string | string[] | undefined): 
   const invite = parsePersonalBondfireInvite(redirectTo)
   if (invite) return routes.personalBondfire(invite.bondfireId, invite.code)
   if (typeof redirectTo === 'string') {
-    const personalMatch = /^\/invite\/([^/?#]+)$/.exec(redirectTo)
-    if (personalMatch) return routes.externalInvite(personalMatch[1])
-    const campMatch = /^\/invite\/camp\/([^/?#]+)$/.exec(redirectTo)
-    if (campMatch) return routes.externalCampInvite(campMatch[1])
+    return resolveExternalRoute(redirectTo) ?? routes.feed
   }
   return routes.feed
 }
@@ -178,6 +188,8 @@ const EXTERNAL_STATIC_ROUTES: Record<string, Href> = {
 
 const EXTERNAL_BONDFIRE_ROUTE = /^\/\(main\)\/bondfire\/([^/?#]+)$/
 const EXTERNAL_CAMP_ROUTE = /^\/\(main\)\/camp\/([^/?#]+)$/
+const EXTERNAL_CAMP_JOIN_ROUTE = /^\/\(main\)\/camp\/([^/?#]+)\/join(?:\?redirect=([^#]+))?$/
+const EXTERNAL_CREATE_FOR_CAMP_ROUTE = /^\/\(main\)\/create\?campId=([^&#]+)$/
 
 const EXTERNAL_INVITE_ROUTE = /^\/invite\/([^/?#]+)$/
 const EXTERNAL_CAMP_INVITE_ROUTE = /^\/invite\/camp\/([^/?#]+)$/
@@ -194,16 +206,27 @@ export function resolveExternalRoute(path: string | null | undefined): Href | nu
   if (!path) return null
 
   const bondfireMatch = EXTERNAL_BONDFIRE_ROUTE.exec(path)
-  if (bondfireMatch) return routes.bondfire(bondfireMatch[1])
+  if (bondfireMatch) return routes.bondfire(decodeURIComponent(bondfireMatch[1]))
+
+  const campJoinMatch = EXTERNAL_CAMP_JOIN_ROUTE.exec(path)
+  if (campJoinMatch) {
+    return routes.campJoinGate(
+      decodeURIComponent(campJoinMatch[1]),
+      campJoinMatch[2] ? decodeURIComponent(campJoinMatch[2]) : undefined,
+    )
+  }
 
   const campMatch = EXTERNAL_CAMP_ROUTE.exec(path)
-  if (campMatch) return routes.camp(campMatch[1])
+  if (campMatch) return routes.camp(decodeURIComponent(campMatch[1]))
+
+  const createForCampMatch = EXTERNAL_CREATE_FOR_CAMP_ROUTE.exec(path)
+  if (createForCampMatch) return routes.createForCamp(decodeURIComponent(createForCampMatch[1]))
 
   const inviteMatch = EXTERNAL_INVITE_ROUTE.exec(path)
-  if (inviteMatch) return routes.externalInvite(inviteMatch[1])
+  if (inviteMatch) return routes.externalInvite(decodeURIComponent(inviteMatch[1]))
 
   const campInviteMatch = EXTERNAL_CAMP_INVITE_ROUTE.exec(path)
-  if (campInviteMatch) return routes.externalCampInvite(campInviteMatch[1])
+  if (campInviteMatch) return routes.externalCampInvite(decodeURIComponent(campInviteMatch[1]))
 
   return EXTERNAL_STATIC_ROUTES[path] ?? null
 }

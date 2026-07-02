@@ -1,4 +1,4 @@
-import { parseError, useAppThemeColors } from '@bondfires/app'
+import { parseError, useAppThemeColors, useAuth } from '@bondfires/app'
 import { Spinner, Text } from '@bondfires/ui'
 import { Flame, Sparkles } from '@tamagui/lucide-icons'
 import type { FunctionReturnType } from 'convex/server'
@@ -8,7 +8,8 @@ import { Alert, Pressable, ScrollView, StatusBar } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 import type { api } from '../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../convex/_generated/dataModel'
-import { routes } from '../../lib/routes'
+import { isAuthSessionErrorMessage, redirectToCampJoinLogin } from '../../lib/campJoinAuth'
+import { createForCampPath, routes } from '../../lib/routes'
 import type { CampWithMembership } from './shared'
 
 interface CampPickerScreenProps {
@@ -31,10 +32,15 @@ export function CampPickerScreen({
   onCampConfirmed,
 }: CampPickerScreenProps) {
   const { colors, statusBarStyle } = useAppThemeColors()
+  const { isAuthenticated } = useAuth()
   const router = useRouter()
 
   const handleSelectCamp = useCallback(
     async (camp: CampWithMembership) => {
+      if (!isAuthenticated) {
+        redirectToCampJoinLogin(router, camp._id, createForCampPath(camp._id))
+        return
+      }
       try {
         if (camp.membership?.status !== 'active') {
           const result = await joinCamp({ campId: camp._id })
@@ -49,11 +55,15 @@ export function CampPickerScreen({
         onCampConfirmed(camp._id)
         router.replace(routes.createForCamp(camp._id))
       } catch (error) {
-        const message = parseError(error).message
-        Alert.alert('Camp Unavailable', message)
+        const info = parseError(error)
+        if (isAuthSessionErrorMessage(info.message)) {
+          redirectToCampJoinLogin(router, camp._id, createForCampPath(camp._id))
+          return
+        }
+        Alert.alert('Camp Unavailable', info.message)
       }
     },
-    [joinCamp, onCampConfirmed, router],
+    [joinCamp, onCampConfirmed, router, isAuthenticated],
   )
 
   const handleOpenPersonalHearth = useCallback(() => {
@@ -160,7 +170,6 @@ export function CampPickerScreen({
                 </Pressable>
               )
             })}
-
           </YStack>
         </ScrollView>
       )}

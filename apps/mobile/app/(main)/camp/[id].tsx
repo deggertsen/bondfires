@@ -6,6 +6,7 @@ import {
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
   useAppThemeColors,
+  useAuth,
   useCanRunRecordingBackgroundWork,
   useSubscription,
 } from '@bondfires/app'
@@ -35,6 +36,7 @@ import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { EditTitleSheet, useEditTitleSheet } from '../../../components/EditTitleSheet'
 import { InviteSheet } from '../../../components/InviteSheet'
 import { getBondfireRightSwipeActions } from '../../../lib/bondfireSwipeActions'
+import { isAuthSessionErrorMessage, redirectToCampJoinLogin } from '../../../lib/campJoinAuth'
 import { goBackOrReplace } from '../../../lib/navigation'
 import { routes } from '../../../lib/routes'
 import { OwnerCampSections } from './OwnerCampSections'
@@ -768,7 +770,8 @@ function BondfireRow({
             {bondfire.title?.trim() || `${bondfire.creatorName ?? 'Anonymous'}'s Bondfire`}
           </Text>
           <Text fontSize={12} color={'$placeholderColor'}>
-            {bondfire.creatorName ? `${bondfire.creatorName} · ` : ''}{bondfire.videoStatus === 'live' ? 'Live now' : getTimeAgo(bondfire.createdAt)}
+            {bondfire.creatorName ? `${bondfire.creatorName} · ` : ''}
+            {bondfire.videoStatus === 'live' ? 'Live now' : getTimeAgo(bondfire.createdAt)}
           </Text>
         </YStack>
 
@@ -830,6 +833,7 @@ export default function CampDetailScreen() {
   )
   const joinCamp = useMutation(api.camps.join)
   const requestJoinCamp = useMutation(api.camps.requestJoin)
+  const { isAuthenticated } = useAuth()
   const muteCamp = useMutation(api.camps.muteCamp)
   const approveAccess = useMutation(api.camps.approveAccessRequest)
   const rejectAccess = useMutation(api.camps.rejectAccessRequest)
@@ -846,6 +850,10 @@ export default function CampDetailScreen() {
 
   const handleJoin = useCallback(async () => {
     if (!campId) return
+    if (!isAuthenticated) {
+      redirectToCampJoinLogin(router, campId)
+      return
+    }
     try {
       const result =
         camp?.access === 'approval' ? await requestJoinCamp({ campId }) : await joinCamp({ campId })
@@ -855,10 +863,14 @@ export default function CampDetailScreen() {
       }
       appActions.setCurrentCampId(campId)
     } catch (error) {
-      const message = parseError(error).message
-      Alert.alert('Camp Unavailable', message)
+      const info = parseError(error)
+      if (isAuthSessionErrorMessage(info.message)) {
+        redirectToCampJoinLogin(router, campId)
+        return
+      }
+      Alert.alert('Camp Unavailable', info.message)
     }
-  }, [camp, campId, joinCamp, requestJoinCamp])
+  }, [camp, campId, joinCamp, requestJoinCamp, isAuthenticated, router])
 
   const handleMute = useCallback(async () => {
     if (!camp || !campId || !camp.membership) return
@@ -1108,74 +1120,71 @@ export default function CampDetailScreen() {
         animationType="fade"
         onRequestClose={() => setBanReasonModalMember(null)}
       >
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior="padding"
-        >
-        <YStack
-          flex={1}
-          backgroundColor="rgba(0,0,0,0.7)"
-          alignItems="center"
-          justifyContent="center"
-          padding={24}
-        >
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
           <YStack
-            backgroundColor={'$backgroundPress'}
-            borderRadius={16}
-            padding={20}
-            gap={16}
-            width="100%"
-            maxWidth={400}
+            flex={1}
+            backgroundColor="rgba(0,0,0,0.7)"
+            alignItems="center"
+            justifyContent="center"
+            padding={24}
           >
-            <YStack gap={4}>
-              <Text fontSize={18} fontWeight="900">
-                Ban Member
-              </Text>
-              <Text fontSize={14} color={'$placeholderColor'}>
-                {banReasonModalMember
-                  ? `Ban ${banReasonModalMember.displayName || banReasonModalMember.name || 'this member'} from this camp?`
-                  : ''}
-              </Text>
+            <YStack
+              backgroundColor={'$backgroundPress'}
+              borderRadius={16}
+              padding={20}
+              gap={16}
+              width="100%"
+              maxWidth={400}
+            >
+              <YStack gap={4}>
+                <Text fontSize={18} fontWeight="900">
+                  Ban Member
+                </Text>
+                <Text fontSize={14} color={'$placeholderColor'}>
+                  {banReasonModalMember
+                    ? `Ban ${banReasonModalMember.displayName || banReasonModalMember.name || 'this member'} from this camp?`
+                    : ''}
+                </Text>
+              </YStack>
+
+              <TextInput
+                style={{
+                  backgroundColor: colors.backgroundHover,
+                  borderWidth: 1,
+                  borderColor: colors.borderColor,
+                  borderRadius: 10,
+                  paddingHorizontal: 14,
+                  paddingVertical: 12,
+                  color: colors.color,
+                  fontSize: 15,
+                }}
+                placeholder="Reason (optional)"
+                placeholderTextColor={colors.placeholderColor}
+                value={banReason}
+                onChangeText={setBanReason}
+                maxLength={500}
+                multiline
+              />
+
+              <XStack gap={10}>
+                <Button
+                  variant="outline"
+                  flex={1}
+                  size="$lg"
+                  onPress={() => setBanReasonModalMember(null)}
+                >
+                  <Text color={'$color'} fontWeight="900">
+                    Cancel
+                  </Text>
+                </Button>
+                <Button variant="primary" flex={1} size="$lg" onPress={handleConfirmBan}>
+                  <Text color={'$color'} fontWeight="900">
+                    Ban
+                  </Text>
+                </Button>
+              </XStack>
             </YStack>
-
-            <TextInput
-              style={{
-                backgroundColor: colors.backgroundHover,
-                borderWidth: 1,
-                borderColor: colors.borderColor,
-                borderRadius: 10,
-                paddingHorizontal: 14,
-                paddingVertical: 12,
-                color: colors.color,
-                fontSize: 15,
-              }}
-              placeholder="Reason (optional)"
-              placeholderTextColor={colors.placeholderColor}
-              value={banReason}
-              onChangeText={setBanReason}
-              maxLength={500}
-              multiline
-            />
-
-            <XStack gap={10}>
-              <Button
-                variant="outline"
-                flex={1}
-                size="$lg"
-                onPress={() => setBanReasonModalMember(null)}
-              >
-                <Text color={'$color'} fontWeight="900">
-                  Cancel
-                </Text>
-              </Button>
-              <Button variant="primary" flex={1} size="$lg" onPress={handleConfirmBan}>
-                <Text color={'$color'} fontWeight="900">
-                  Ban
-                </Text>
-              </Button>
-            </XStack>
           </YStack>
-        </YStack>
         </KeyboardAvoidingView>
       </Modal>
 
@@ -1186,78 +1195,75 @@ export default function CampDetailScreen() {
         animationType="fade"
         onRequestClose={() => setIsArchiveModalOpen(false)}
       >
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior="padding"
-        >
-        <YStack
-          flex={1}
-          backgroundColor="rgba(0,0,0,0.7)"
-          alignItems="center"
-          justifyContent="center"
-          padding={24}
-        >
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
           <YStack
-            backgroundColor={'$backgroundPress'}
-            borderRadius={16}
-            padding={20}
-            gap={16}
-            width="100%"
-            maxWidth={400}
+            flex={1}
+            backgroundColor="rgba(0,0,0,0.7)"
+            alignItems="center"
+            justifyContent="center"
+            padding={24}
           >
-            <YStack gap={4}>
-              <Text fontSize={18} fontWeight="900">
-                Archive Camp
-              </Text>
-              <Text fontSize={14} color={'$placeholderColor'} lineHeight={20}>
-                Archiving this camp will make it read-only for all members. After 30 days, all
-                content will be permanently deleted. This cannot be undone.
-              </Text>
+            <YStack
+              backgroundColor={'$backgroundPress'}
+              borderRadius={16}
+              padding={20}
+              gap={16}
+              width="100%"
+              maxWidth={400}
+            >
+              <YStack gap={4}>
+                <Text fontSize={18} fontWeight="900">
+                  Archive Camp
+                </Text>
+                <Text fontSize={14} color={'$placeholderColor'} lineHeight={20}>
+                  Archiving this camp will make it read-only for all members. After 30 days, all
+                  content will be permanently deleted. This cannot be undone.
+                </Text>
+              </YStack>
+
+              <TextInput
+                style={{
+                  backgroundColor: colors.backgroundHover,
+                  borderWidth: 1,
+                  borderColor: colors.borderColor,
+                  borderRadius: 10,
+                  paddingHorizontal: 14,
+                  paddingVertical: 12,
+                  color: colors.color,
+                  fontSize: 15,
+                }}
+                placeholder='Type "Archive Camp" to confirm'
+                placeholderTextColor={colors.placeholderColor}
+                value={archiveConfirmText}
+                onChangeText={setArchiveConfirmText}
+                autoCapitalize="none"
+              />
+
+              <XStack gap={10}>
+                <Button
+                  variant="outline"
+                  flex={1}
+                  size="$lg"
+                  onPress={() => setIsArchiveModalOpen(false)}
+                >
+                  <Text color={'$color'} fontWeight="900">
+                    Cancel
+                  </Text>
+                </Button>
+                <Button
+                  variant="primary"
+                  flex={1}
+                  size="$lg"
+                  disabled={archiveConfirmText.trim() !== 'Archive Camp'}
+                  onPress={handleConfirmArchive}
+                >
+                  <Text color={'$color'} fontWeight="900">
+                    Archive
+                  </Text>
+                </Button>
+              </XStack>
             </YStack>
-
-            <TextInput
-              style={{
-                backgroundColor: colors.backgroundHover,
-                borderWidth: 1,
-                borderColor: colors.borderColor,
-                borderRadius: 10,
-                paddingHorizontal: 14,
-                paddingVertical: 12,
-                color: colors.color,
-                fontSize: 15,
-              }}
-              placeholder='Type "Archive Camp" to confirm'
-              placeholderTextColor={colors.placeholderColor}
-              value={archiveConfirmText}
-              onChangeText={setArchiveConfirmText}
-              autoCapitalize="none"
-            />
-
-            <XStack gap={10}>
-              <Button
-                variant="outline"
-                flex={1}
-                size="$lg"
-                onPress={() => setIsArchiveModalOpen(false)}
-              >
-                <Text color={'$color'} fontWeight="900">
-                  Cancel
-                </Text>
-              </Button>
-              <Button
-                variant="primary"
-                flex={1}
-                size="$lg"
-                disabled={archiveConfirmText.trim() !== 'Archive Camp'}
-                onPress={handleConfirmArchive}
-              >
-                <Text color={'$color'} fontWeight="900">
-                  Archive
-                </Text>
-              </Button>
-            </XStack>
           </YStack>
-        </YStack>
         </KeyboardAvoidingView>
       </Modal>
       {campId ? (

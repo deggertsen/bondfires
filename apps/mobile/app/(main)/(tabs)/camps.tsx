@@ -1,4 +1,4 @@
-import { freeUpgradeActions, parseError, useAppThemeColors } from '@bondfires/app'
+import { freeUpgradeActions, parseError, useAppThemeColors, useAuth } from '@bondfires/app'
 import { Button, CampCardStatusBanner, Input, Spinner, Text } from '@bondfires/ui'
 import {
   ChevronDown,
@@ -17,6 +17,7 @@ import { Alert, FlatList, Pressable, RefreshControl, StatusBar } from 'react-nat
 import { Image, Separator, Sheet, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc } from '../../../../../convex/_generated/dataModel'
+import { isAuthSessionErrorMessage, redirectToCampJoinLogin } from '../../../lib/campJoinAuth'
 import { routes } from '../../../lib/routes'
 
 type CampWithMembership = Doc<'camps'> & {
@@ -397,6 +398,7 @@ export default function CampsScreen() {
   )
   const joinCamp = useMutation(api.camps.join)
   const requestJoinCamp = useMutation(api.camps.requestJoin)
+  const { isAuthenticated } = useAuth()
   const createPrivateCamp = useMutation(api.camps.createPrivateCamp)
   const redeemInvite = useMutation(api.camps.redeemInvite)
   const [query, setQuery] = useState('')
@@ -500,6 +502,10 @@ export default function CampsScreen() {
 
   const handleJoin = useCallback(
     async (camp: CampWithMembership) => {
+      if (!isAuthenticated) {
+        redirectToCampJoinLogin(router, camp._id)
+        return
+      }
       try {
         const result =
           camp.access === 'approval'
@@ -509,11 +515,15 @@ export default function CampsScreen() {
           Alert.alert('Request Sent', 'Your camp membership request is pending approval.')
         }
       } catch (error) {
-        const message = parseError(error).message
-        Alert.alert('Camp Unavailable', message)
+        const info = parseError(error)
+        if (isAuthSessionErrorMessage(info.message)) {
+          redirectToCampJoinLogin(router, camp._id)
+          return
+        }
+        Alert.alert('Camp Unavailable', info.message)
       }
     },
-    [joinCamp, requestJoinCamp],
+    [joinCamp, requestJoinCamp, isAuthenticated, router],
   )
 
   const handleCreatePrivateCamp = useCallback(async () => {

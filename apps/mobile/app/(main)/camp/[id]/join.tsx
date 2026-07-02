@@ -1,3 +1,4 @@
+import { parseError, useAuth } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
 import { ArrowLeft, Flame, Lock } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
@@ -7,7 +8,8 @@ import { Alert, Pressable, ScrollView } from 'react-native'
 import { Image as TamaguiImage, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../../convex/_generated/api'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
-import { routes } from '../../../../lib/routes'
+import { isAuthSessionErrorMessage, redirectToCampJoinLogin } from '../../../../lib/campJoinAuth'
+import { resolveExternalRoute, routes } from '../../../../lib/routes'
 
 /**
  * Full-screen camp join gate.
@@ -54,12 +56,17 @@ export default function CampJoinGateScreen() {
   const camp = useQuery(api.camps.get, { campId })
   const joinCamp = useMutation(api.camps.join)
   const requestJoin = useMutation(api.camps.requestJoin)
+  const { isAuthenticated } = useAuth()
   const [joining, setJoining] = useState(false)
 
   const isApprovalCamp = camp?.access === 'approval'
   const isInviteCamp = camp?.access === 'invite'
 
   const handleJoin = async () => {
+    if (!isAuthenticated) {
+      redirectToCampJoinLogin(router, campId, redirect)
+      return
+    }
     setJoining(true)
     try {
       if (isApprovalCamp) {
@@ -73,15 +80,18 @@ export default function CampJoinGateScreen() {
         await joinCamp({ campId })
         // After joining, navigate to where they were trying to go.
         if (redirect) {
-          // redirect is a bondfire id — navigate to that bondfire.
-          router.replace(routes.bondfire(redirect))
+          router.replace(resolveExternalRoute(redirect) ?? routes.bondfire(redirect))
         } else {
           router.replace(routes.camp(campId))
         }
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Something went wrong'
-      Alert.alert('Could not join', message)
+      const info = parseError(error)
+      if (isAuthSessionErrorMessage(info.message)) {
+        redirectToCampJoinLogin(router, campId, redirect)
+        return
+      }
+      Alert.alert('Could not join', info.message)
     } finally {
       setJoining(false)
     }
