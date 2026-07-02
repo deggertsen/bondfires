@@ -3,12 +3,12 @@ import { Spinner } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
 import { AlertTriangle, RefreshCw } from '@tamagui/lucide-icons'
 import { useQuery } from 'convex/react'
-import { Redirect } from 'expo-router'
+import { Redirect, useLocalSearchParams } from 'expo-router'
 import { useEffect, useRef, useState } from 'react'
 import { Pressable } from 'react-native'
 import { Text, YStack } from 'tamagui'
 import { api } from '../../../convex/_generated/api'
-import { routes } from '../lib/routes'
+import { resolveAuthRedirect, routes } from '../lib/routes'
 
 /** Threshold (ms) after which an unresolved query is considered "slow". */
 const SLOW_QUERY_THRESHOLD_MS = 3000
@@ -21,6 +21,7 @@ const LOADING_TIMEOUT_MS = 15_000
 
 export default function SplashScreen() {
   const hasSeenOnboarding = useValue(appStore$.hasSeenOnboarding)
+  const { redirectTo } = useLocalSearchParams<{ redirectTo?: string }>()
   // Use Convex Auth's actual session state instead of app store
   const currentUser = useQuery(api.users.current)
 
@@ -144,11 +145,15 @@ export default function SplashScreen() {
       return <Redirect href={routes.onboarding} />
     }
     telemetry.breadcrumb('route:auth', { screen: 'login' })
-    return <Redirect href={routes.login()} />
+    return <Redirect href={routes.login(redirectTo)} />
   }
 
   // User is authenticated, go to main app
   telemetry.breadcrumb('route:main')
+  if (redirectTo) {
+    return <Redirect href={resolveAuthRedirect(redirectTo)} />
+  }
+
   const lastLocation = getLastLocation()
   if (lastLocation?.type === 'bondfire' && lastLocation.bondfireId) {
     return <Redirect href={routes.bondfire(lastLocation.bondfireId)} />

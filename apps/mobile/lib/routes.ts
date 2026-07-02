@@ -25,6 +25,9 @@ import type { Href } from 'expo-router'
  * for callers.
  */
 export const routes = {
+  splash: (redirectTo?: string): Href =>
+    redirectTo ? { pathname: '/', params: { redirectTo } } : '/',
+
   // --- Auth ---
   onboarding: '/(auth)/onboarding',
   signup: '/(auth)/signup',

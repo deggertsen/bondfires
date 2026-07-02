@@ -1,4 +1,4 @@
-import { telemetry, useAppThemeColors } from '@bondfires/app'
+import { appActions, telemetry, useAppThemeColors } from '@bondfires/app'
 import { Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
@@ -49,27 +49,32 @@ export default function LoginScreen() {
   // Clean up the fallback timer if the screen unmounts mid-login.
   useEffect(() => clearNavFallback, [clearNavFallback])
 
+  const completePostSignInNavigation = useCallback(
+    (user: Exclude<typeof currentUser, undefined>) => {
+      if (!pendingNavRef.current) return
+
+      pendingNavRef.current = false
+      clearNavFallback()
+      form$.isLoading.set(false)
+
+      const currentEmail = form$.email.peek()
+      if (user && user.emailVerified === false) {
+        router.replace(routes.verifyEmail({ email: currentEmail, redirectTo }))
+      } else if (user) {
+        appActions.setAuth(user._id)
+        router.replace(resolveAuthRedirect(redirectTo))
+      } else {
+        router.replace(routes.splash(redirectTo))
+      }
+    },
+    [redirectTo, router, form$, clearNavFallback],
+  )
+
   // React to auth completion — fires when currentUser resolves after signIn.
   useEffect(() => {
     if (!pendingNavRef.current || currentUser === undefined) return
-
-    pendingNavRef.current = false
-    clearNavFallback()
-    form$.isLoading.set(false)
-
-    const currentEmail = form$.email.peek()
-    if (currentUser && currentUser.emailVerified === false) {
-      router.replace(routes.verifyEmail({ email: currentEmail, redirectTo }))
-    } else if (currentUser) {
-      // Verified user — proceed into the app
-      router.replace(resolveAuthRedirect(redirectTo))
-    } else {
-      // currentUser is null — session not reflected on Convex side.
-      // Route through the splash gate so auth state re-resolves properly
-      // instead of entering the app with no valid session.
-      router.replace('/')
-    }
-  }, [currentUser, redirectTo, router, form$, clearNavFallback])
+    completePostSignInNavigation(currentUser)
+  }, [currentUser, completePostSignInNavigation])
 
   const handleLogin = async () => {
     const currentEmail = form$.email.get()
@@ -127,10 +132,15 @@ export default function LoginScreen() {
 
       // Set pending navigation — the effect above will react when currentUser resolves.
       pendingNavRef.current = true
+      if (currentUser) {
+        completePostSignInNavigation(currentUser)
+        return
+      }
+
       // currentUser resolves over the Convex WebSocket, which can be slow or flaky to
       // (re)connect on React Native. signIn already succeeded, so never trap the user on
-      // the spinner: if the session query hasn't resolved shortly, proceed into the app
-      // anyway and let the main entry gate re-resolve auth state.
+      // the spinner: if the session query hasn't resolved shortly, route through the
+      // splash gate and let it re-resolve auth state.
       const POST_SIGN_IN_NAV_TIMEOUT_MS = 6_000
       clearNavFallback()
       navFallbackRef.current = setTimeout(() => {
@@ -142,7 +152,7 @@ export default function LoginScreen() {
           'auth:navFallback',
           'currentUser slow to resolve after signIn; navigating via splash gate',
         )
-        router.replace('/')
+        router.replace(routes.splash(redirectTo))
       }, POST_SIGN_IN_NAV_TIMEOUT_MS)
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err)
