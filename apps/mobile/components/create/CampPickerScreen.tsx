@@ -1,4 +1,4 @@
-import { parseError, useAppThemeColors } from '@bondfires/app'
+import { parseError, useAppThemeColors, useAuth } from '@bondfires/app'
 import { Spinner, Text } from '@bondfires/ui'
 import { Flame, Sparkles } from '@tamagui/lucide-icons'
 import type { FunctionReturnType } from 'convex/server'
@@ -31,10 +31,22 @@ export function CampPickerScreen({
   onCampConfirmed,
 }: CampPickerScreenProps) {
   const { colors, statusBarStyle } = useAppThemeColors()
+  const { isAuthenticated } = useAuth()
   const router = useRouter()
 
   const handleSelectCamp = useCallback(
     async (camp: CampWithMembership) => {
+      if (!isAuthenticated) {
+        Alert.alert(
+          'Sign In Required',
+          'Please sign in to join a camp.',
+          [
+            { text: 'Sign In', onPress: () => router.replace(routes.login()) },
+            { text: 'Cancel', style: 'cancel' },
+          ],
+        )
+        return
+      }
       try {
         if (camp.membership?.status !== 'active') {
           const result = await joinCamp({ campId: camp._id })
@@ -49,11 +61,22 @@ export function CampPickerScreen({
         onCampConfirmed(camp._id)
         router.replace(routes.createForCamp(camp._id))
       } catch (error) {
-        const message = parseError(error).message
-        Alert.alert('Camp Unavailable', message)
+        const info = parseError(error)
+        if (info.message.toLowerCase().includes('not authenticated')) {
+          Alert.alert(
+            'Session Expired',
+            'Your session has expired. Please sign in again.',
+            [
+              { text: 'Sign In', onPress: () => router.replace(routes.login()) },
+              { text: 'Cancel', style: 'cancel' },
+            ],
+          )
+          return
+        }
+        Alert.alert('Camp Unavailable', info.message)
       }
     },
-    [joinCamp, onCampConfirmed, router],
+    [joinCamp, onCampConfirmed, router, isAuthenticated],
   )
 
   const handleOpenPersonalHearth = useCallback(() => {

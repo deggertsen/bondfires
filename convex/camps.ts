@@ -681,7 +681,14 @@ async function joinCamp(
   campId: Id<'camps'>,
   options?: { requireApprovalAccess?: boolean },
 ) {
-  const user = await getCurrentUser(ctx)
+  const userId = await auth.getUserId(ctx)
+  if (!userId) {
+    throwUserError('Your session has expired. Please sign in again to join this camp.')
+  }
+  const user = await ctx.db.get(userId)
+  if (!user) {
+    throwUserError('User not found')
+  }
   const camp = await ctx.db.get(campId)
   if (!camp || !isCampVisibleStatus(camp.status)) {
     throwUserError('Camp not found')

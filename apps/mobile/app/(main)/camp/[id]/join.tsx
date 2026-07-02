@@ -1,3 +1,4 @@
+import { useAuth } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
 import { ArrowLeft, Flame, Lock } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
@@ -54,12 +55,24 @@ export default function CampJoinGateScreen() {
   const camp = useQuery(api.camps.get, { campId })
   const joinCamp = useMutation(api.camps.join)
   const requestJoin = useMutation(api.camps.requestJoin)
+  const { isAuthenticated } = useAuth()
   const [joining, setJoining] = useState(false)
 
   const isApprovalCamp = camp?.access === 'approval'
   const isInviteCamp = camp?.access === 'invite'
 
   const handleJoin = async () => {
+    if (!isAuthenticated) {
+      Alert.alert(
+        'Sign In Required',
+        'Please sign in to join a camp.',
+        [
+          { text: 'Sign In', onPress: () => router.replace(routes.login()) },
+          { text: 'Cancel', style: 'cancel' },
+        ],
+      )
+      return
+    }
     setJoining(true)
     try {
       if (isApprovalCamp) {
@@ -81,6 +94,17 @@ export default function CampJoinGateScreen() {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Something went wrong'
+      if (message.toLowerCase().includes('not authenticated')) {
+        Alert.alert(
+          'Session Expired',
+          'Your session has expired. Please sign in again.',
+          [
+            { text: 'Sign In', onPress: () => router.replace(routes.login()) },
+            { text: 'Cancel', style: 'cancel' },
+          ],
+        )
+        return
+      }
       Alert.alert('Could not join', message)
     } finally {
       setJoining(false)
