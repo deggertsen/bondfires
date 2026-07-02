@@ -60,11 +60,14 @@ export default function LoginScreen() {
     const currentEmail = form$.email.peek()
     if (currentUser && currentUser.emailVerified === false) {
       router.replace(routes.verifyEmail({ email: currentEmail, redirectTo }))
-    } else {
-      // currentUser is the signed-in (verified) user. A null here means the session
-      // query hasn't reflected auth yet, but signIn already succeeded — proceed into
-      // the app and let the main entry gate re-resolve auth state instead of waiting.
+    } else if (currentUser) {
+      // Verified user — proceed into the app
       router.replace(resolveAuthRedirect(redirectTo))
+    } else {
+      // currentUser is null — session not reflected on Convex side.
+      // Route through the splash gate so auth state re-resolves properly
+      // instead of entering the app with no valid session.
+      router.replace('/')
     }
   }, [currentUser, redirectTo, router, form$, clearNavFallback])
 
@@ -137,9 +140,9 @@ export default function LoginScreen() {
         form$.isLoading.set(false)
         telemetry.warn(
           'auth:navFallback',
-          'currentUser slow to resolve after signIn; navigating anyway',
+          'currentUser slow to resolve after signIn; navigating via splash gate',
         )
-        router.replace(resolveAuthRedirect(redirectTo))
+        router.replace('/')
       }, POST_SIGN_IN_NAV_TIMEOUT_MS)
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err)
