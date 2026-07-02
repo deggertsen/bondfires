@@ -17,6 +17,7 @@ import { Alert, FlatList, Pressable, RefreshControl, StatusBar } from 'react-nat
 import { Image, Separator, Sheet, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc } from '../../../../../convex/_generated/dataModel'
+import { isAuthSessionErrorMessage, redirectToCampJoinLogin } from '../../../lib/campJoinAuth'
 import { routes } from '../../../lib/routes'
 
 type CampWithMembership = Doc<'camps'> & {
@@ -502,14 +503,7 @@ export default function CampsScreen() {
   const handleJoin = useCallback(
     async (camp: CampWithMembership) => {
       if (!isAuthenticated) {
-        Alert.alert(
-          'Sign In Required',
-          'Please sign in to join a camp.',
-          [
-            { text: 'Sign In', onPress: () => router.replace(routes.login()) },
-            { text: 'Cancel', style: 'cancel' },
-          ],
-        )
+        redirectToCampJoinLogin(router, camp._id)
         return
       }
       try {
@@ -522,15 +516,8 @@ export default function CampsScreen() {
         }
       } catch (error) {
         const info = parseError(error)
-        if (info.message.toLowerCase().includes('not authenticated')) {
-          Alert.alert(
-            'Session Expired',
-            'Your session has expired. Please sign in again.',
-            [
-              { text: 'Sign In', onPress: () => router.replace(routes.login()) },
-              { text: 'Cancel', style: 'cancel' },
-            ],
-          )
+        if (isAuthSessionErrorMessage(info.message)) {
+          redirectToCampJoinLogin(router, camp._id)
           return
         }
         Alert.alert('Camp Unavailable', info.message)

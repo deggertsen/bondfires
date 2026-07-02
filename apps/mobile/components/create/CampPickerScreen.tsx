@@ -8,7 +8,8 @@ import { Alert, Pressable, ScrollView, StatusBar } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 import type { api } from '../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../convex/_generated/dataModel'
-import { routes } from '../../lib/routes'
+import { isAuthSessionErrorMessage, redirectToCampJoinLogin } from '../../lib/campJoinAuth'
+import { createForCampPath, routes } from '../../lib/routes'
 import type { CampWithMembership } from './shared'
 
 interface CampPickerScreenProps {
@@ -37,14 +38,7 @@ export function CampPickerScreen({
   const handleSelectCamp = useCallback(
     async (camp: CampWithMembership) => {
       if (!isAuthenticated) {
-        Alert.alert(
-          'Sign In Required',
-          'Please sign in to join a camp.',
-          [
-            { text: 'Sign In', onPress: () => router.replace(routes.login()) },
-            { text: 'Cancel', style: 'cancel' },
-          ],
-        )
+        redirectToCampJoinLogin(router, camp._id, createForCampPath(camp._id))
         return
       }
       try {
@@ -62,15 +56,8 @@ export function CampPickerScreen({
         router.replace(routes.createForCamp(camp._id))
       } catch (error) {
         const info = parseError(error)
-        if (info.message.toLowerCase().includes('not authenticated')) {
-          Alert.alert(
-            'Session Expired',
-            'Your session has expired. Please sign in again.',
-            [
-              { text: 'Sign In', onPress: () => router.replace(routes.login()) },
-              { text: 'Cancel', style: 'cancel' },
-            ],
-          )
+        if (isAuthSessionErrorMessage(info.message)) {
+          redirectToCampJoinLogin(router, camp._id, createForCampPath(camp._id))
           return
         }
         Alert.alert('Camp Unavailable', info.message)
@@ -183,7 +170,6 @@ export function CampPickerScreen({
                 </Pressable>
               )
             })}
-
           </YStack>
         </ScrollView>
       )}
