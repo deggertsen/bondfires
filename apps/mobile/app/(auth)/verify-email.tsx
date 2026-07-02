@@ -1,13 +1,19 @@
-import { getAuthErrorMessage, useAppThemeColors } from '@bondfires/app'
+import { appActions, getAuthErrorMessage, telemetry, useAppThemeColors } from '@bondfires/app'
 import { Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { CheckCircle, Mail } from '@tamagui/lucide-icons'
+import { useQuery } from 'convex/react'
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { YStack } from 'tamagui'
-import { resolveAuthRedirect } from '../../lib/routes'
+import { api } from '../../../../convex/_generated/api'
+import { resolveAuthRedirect, routes } from '../../lib/routes'
+
+/** Fallback timeout (ms) — if currentUser is slow to resolve after signIn,
+ * navigate to the splash gate anyway and let it re-resolve auth. */
+const POST_VERIFY_NAV_TIMEOUT_MS = 6_000
 
 export default function VerifyEmailScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
@@ -15,11 +21,54 @@ export default function VerifyEmailScreen() {
   const { signIn } = useAuthActions()
   const params = useLocalSearchParams<{ email?: string; redirectTo?: string }>()
 
+  // Watch Convex auth state — mirrors the pattern in login.tsx
+  const currentUser = useQuery(api.users.current)
+
   const [code, setCode] = useState('')
   const [isVerifying, setIsVerifying] = useState(false)
   const [isResending, setIsResending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+
+  // Navigation refs — same pattern as login.tsx to avoid effect dependency loops
+  const pendingNavRef = useRef(false)
+  const navFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const clearNavFallback = useCallback(() => {
+    if (navFallbackRef.current) {
+      clearTimeout(navFallbackRef.current)
+      navFallbackRef.current = null
+    }
+  }, [])
+
+  // Clean up the fallback timer if the screen unmounts mid-verification.
+  useEffect(() => clearNavFallback, [clearNavFallback])
+
+  const completePostVerifyNavigation = useCallback(
+    (user: Exclude<typeof currentUser, undefined>) => {
+      if (!pendingNavRef.current) return
+
+      pendingNavRef.current = false
+      clearNavFallback()
+
+      if (user) {
+        // Session confirmed — sync local auth state and navigate into the app.
+        appActions.setAuth(user._id)
+        telemetry.breadcrumb('auth:verifySuccess', { hasUser: true })
+        router.replace(resolveAuthRedirect(params.redirectTo))
+      } else {
+        telemetry.warn('auth:verifyNull', 'currentUser resolved null after verification')
+        router.replace(routes.splash(params.redirectTo))
+      }
+    },
+    [params.redirectTo, router, clearNavFallback],
+  )
+
+  // React to auth completion — fires when currentUser resolves after signIn.
+  useEffect(() => {
+    if (!pendingNavRef.current || currentUser === undefined) return
+    completePostVerifyNavigation(currentUser)
+  }, [currentUser, completePostVerifyNavigation])
 
   const handleVerify = async () => {
     if (!code || code.length < 6) {
@@ -38,7 +87,27 @@ export default function VerifyEmailScreen() {
         flow: 'email-verification',
       })
       setSuccess(true)
-      router.replace(resolveAuthRedirect(params.redirectTo))
+
+      // Set pending navigation — the effect above will react when currentUser resolves.
+      pendingNavRef.current = true
+      if (currentUser) {
+        completePostVerifyNavigation(currentUser)
+        return
+      }
+
+      // Fallback: if currentUser is slow to resolve over the Convex WebSocket,
+      // navigate to the splash gate anyway so the user isn't stuck on a spinner.
+      clearNavFallback()
+      navFallbackRef.current = setTimeout(() => {
+        if (!pendingNavRef.current) return
+        pendingNavRef.current = false
+        navFallbackRef.current = null
+        telemetry.warn(
+          'auth:navFallback',
+          'currentUser slow to resolve after verification; navigating via splash gate',
+        )
+        router.replace(routes.splash(params.redirectTo))
+      }, POST_VERIFY_NAV_TIMEOUT_MS)
     } catch (error) {
       setError(getAuthErrorMessage(error))
     } finally {
