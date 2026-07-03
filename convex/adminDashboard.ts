@@ -1,7 +1,7 @@
 import { v } from 'convex/values'
 import type { Doc } from './_generated/dataModel'
 import type { QueryCtx } from './_generated/server'
-import { query, mutation } from './_generated/server'
+import { mutation, query } from './_generated/server'
 import { auth } from './auth'
 import { type SubscriptionTier, TIER_RANK } from './entitlements'
 
@@ -274,7 +274,9 @@ export const restoreAdminGraceCamps = mutation({
     const graceCamps = allCamps.filter((c) => c.status === 'grace')
 
     // Fetch owner docs to check admin status
-    const ownerIds = [...new Set(graceCamps.map((c) => c.ownerId).filter(Boolean))] as Doc<'users'>['_id'][]
+    const ownerIds = [
+      ...new Set(graceCamps.map((c) => c.ownerId).filter(Boolean)),
+    ] as Doc<'users'>['_id'][]
     const ownerDocs = await Promise.all(ownerIds.map((id) => ctx.db.get(id)))
     const ownerIsAdmin = new Map<Doc<'users'>['_id'], boolean>()
     for (const doc of ownerDocs) {
@@ -296,7 +298,6 @@ export const restoreAdminGraceCamps = mutation({
       }
     }
 
-    console.log(`Restored ${restored.length} admin-owned grace camps to active: ${restored.join(', ')}`)
     return { restored, count: restored.length }
   },
 })

@@ -4,6 +4,7 @@ import type { Doc, Id } from './_generated/dataModel'
 import { internalAction, mutation, query } from './_generated/server'
 import { auth } from './auth'
 import { buildViewerVisibilityContext, isCampContentVisibleToViewer } from './bondfireVisibility'
+import { createDirectInviteHandler } from './inviteClaims'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -120,88 +121,7 @@ export const sendBondfireInvite = mutation({
     bondfireId: v.id('bondfires'),
     recipientId: v.id('users'),
   },
-  handler: async (ctx, args) => {
-    const userId = await auth.getUserId(ctx)
-    if (!userId) throw new Error('You must be logged in')
-
-    const bondfire = await ctx.db.get(args.bondfireId)
-    if (!bondfire) throw new Error('Bondfire not found')
-
-    // Verify sender has permission to invite for this bondfire's camp
-    const sender = await ctx.db.get(userId)
-    if (!sender) throw new Error('User not found')
-
-    const senderName = sender.displayName ?? sender.name ?? 'Someone'
-
-    // Check if sender is the bondfire creator or has camp invite permission
-    const isCreator = bondfire.userId === userId
-    let hasCampPermission = false
-
-    if (bondfire.campId) {
-      const campId = bondfire.campId
-      const membership = await ctx.db
-        .query('campMembers')
-        .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', campId))
-        .unique()
-
-      // Allow invite if user is owner, moderator, or the camp is public (all members can invite)
-      if (membership) {
-        const camp = await ctx.db.get(campId)
-        hasCampPermission =
-          membership.role === 'owner' ||
-          membership.role === 'moderator' ||
-          (camp?.access === 'open' && membership.status === 'active')
-      }
-    }
-
-    if (!isCreator && !hasCampPermission) {
-      throw new Error('You do not have permission to invite people to this bondfire')
-    }
-
-    // Prevent self-invite
-    if (args.recipientId === userId) {
-      throw new Error('You cannot invite yourself')
-    }
-
-    // Don't create a duplicate invite if one already exists (idempotent)
-    const existingInvite = await ctx.db
-      .query('bondfireInvites')
-      .withIndex('by_bondfire_recipient', (q) =>
-        q.eq('bondfireId', args.bondfireId).eq('recipientId', args.recipientId),
-      )
-      .unique()
-
-    if (existingInvite) {
-      // Still send the notification again even if the invite exists
-      await ctx.scheduler.runAfter(0, internal.bondfireInvites.sendBondfireInviteNotification, {
-        bondfireId: args.bondfireId,
-        recipientId: args.recipientId,
-        senderName,
-        bondfireCreatorName: bondfire.creatorName ?? 'Someone',
-        campId: bondfire.campId,
-      })
-      return existingInvite._id
-    }
-
-    const inviteId = await ctx.db.insert('bondfireInvites', {
-      bondfireId: args.bondfireId,
-      senderId: userId,
-      recipientId: args.recipientId,
-      createdAt: Date.now(),
-      seen: false,
-    })
-
-    // Send push notification to recipient
-    await ctx.scheduler.runAfter(0, internal.bondfireInvites.sendBondfireInviteNotification, {
-      bondfireId: args.bondfireId,
-      recipientId: args.recipientId,
-      senderName,
-      bondfireCreatorName: bondfire.creatorName ?? 'Someone',
-      campId: bondfire.campId,
-    })
-
-    return inviteId
-  },
+  handler: async (ctx, args) => await createDirectInviteHandler(ctx, args),
 })
 
 // ── Internal Notification Action ────────────────────────────────────────────

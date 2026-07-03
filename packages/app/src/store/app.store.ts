@@ -30,6 +30,10 @@ export interface AppState {
   // Camp context
   currentCampId: string | null
 
+  // Install/deep-link attribution for invite codes captured before auth.
+  pendingInviteCode: string | null
+  hasCompletedInviteCheck: boolean
+
   // Bumped when we need a one-time fix to already-persisted state. See the
   // migration block below. Absent on installs that predate this field, which
   // read as 0 and get migrated.
@@ -60,6 +64,8 @@ const defaultState: AppState = {
   isAuthenticated: false,
   userId: null,
   currentCampId: null,
+  pendingInviteCode: null,
+  hasCompletedInviteCheck: false,
   migrationVersion: 0,
   pushPrimer: {
     lastShownAt: null,
@@ -147,6 +153,14 @@ export const appActions = {
 
   setCurrentCampId: (campId: string | null) => {
     appStore$.currentCampId.set(campId)
+  },
+
+  setPendingInviteCode: (code: string | null) => {
+    appStore$.pendingInviteCode.set(code)
+  },
+
+  completeInviteCheck: () => {
+    appStore$.hasCompletedInviteCheck.set(true)
   },
 
   logout: () => {

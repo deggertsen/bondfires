@@ -115,6 +115,7 @@ export default function BondfireDetailScreen() {
   const recordWatchEvent = useMutation(api.watchEvents.record)
   const incrementViews = useMutation(api.bondfires.incrementViews)
   const markThreadRead = useMutation(api.conversations.markThreadRead)
+  const markInviteSeen = useMutation(api.inviteClaims.markInviteSeen)
   const setVideoUrls = useCallback(
     (urls: (string | null)[]) => {
       screenState$.videoUrls.set(urls)
@@ -128,6 +129,7 @@ export default function BondfireDetailScreen() {
     if (!campContext || !campContext.camp) return
     if (!campContext.bondfire?.campId) return
     if (campContext.membership?.status === 'active') return
+    if (campContext.hasInviteClaim) return
 
     hasRedirectedToJoinGate.current = true
     router.replace(routes.campJoinGate(campContext.bondfire.campId, bondfireId))
@@ -278,6 +280,16 @@ export default function BondfireDetailScreen() {
   }, [clearScheduledRestoreScroll])
 
   useBondfireVideoUrls({ bondfireData, getVideoUrls, setVideoUrls })
+
+  useEffect(() => {
+    if (!bondfireId || !currentUserId) return
+
+    markInviteSeen({ bondfireId }).catch((error) => {
+      telemetry.warn('bondfire:inviteSeen', 'Failed to mark Bondfire invite seen', {
+        error: String(error),
+      })
+    })
+  }, [bondfireId, currentUserId, markInviteSeen])
 
   useEffect(() => {
     if (!bondfireId) return

@@ -10,7 +10,11 @@ import {
   PAID_TIERS,
 } from './entitlements'
 import { throwUserError, withUserFacingErrors } from './errors'
-import { generateAndInsertInviteCode, normalizeInviteCode } from './inviteCodes'
+import {
+  findReusableInviteCode,
+  generateAndInsertInviteCode,
+  normalizeInviteCode,
+} from './inviteCodes'
 import { canViewPersonalBondfire, getPersonalBondfireParticipant } from './personalBondfireAccess'
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -220,13 +224,18 @@ export const createInvite = mutation({
       throwUserError('This fire is full.')
     }
 
-    // Delegate to the unified invite code system
-    const result = await generateAndInsertInviteCode(ctx, {
-      parentType: 'personal-bondfire',
-      parentId: args.bondfireId,
-      createdBy: user._id,
-      expiresInDays: 7,
-    })
+    const result =
+      (await findReusableInviteCode(ctx, {
+        parentType: 'personal-bondfire',
+        parentId: args.bondfireId,
+        createdBy: user._id,
+      })) ??
+      (await generateAndInsertInviteCode(ctx, {
+        parentType: 'personal-bondfire',
+        parentId: args.bondfireId,
+        createdBy: user._id,
+        expiresInDays: 7,
+      }))
 
     return {
       code: result.code,
@@ -253,7 +262,7 @@ export const redeemInvite = mutation({
     ),
 })
 
-async function redeemInviteHandler(ctx: MutationCtx, rawCode: string) {
+export async function redeemInviteHandler(ctx: MutationCtx, rawCode: string) {
   const user = await getCurrentUser(ctx)
   const now = Date.now()
   const code = normalizeInviteCode(rawCode)

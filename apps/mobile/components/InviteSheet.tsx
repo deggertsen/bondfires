@@ -35,6 +35,7 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
   const hasRequestedCodeRef = useRef(false)
 
   const createCampInvite = useMutation(api.camps.createInvite)
+  const createBondfireInvite = useMutation(api.inviteClaims.createBondfireInviteCode)
   const createPersonalInvite = useMutation(api.personalBondfires.createInvite)
 
   useEffect(() => {
@@ -61,7 +62,7 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
     // isGeneratingCode(true). The re-run's cleanup flipped `cancelled` to true
     // and orphaned the in-flight mutation before it resolved — leaving the
     // sheet stuck on "Generating invite..." forever.
-    if (!open || mode === 'bondfire' || hasRequestedCodeRef.current) {
+    if (!open || hasRequestedCodeRef.current) {
       return
     }
 
@@ -70,9 +71,11 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
     setIsGeneratingCode(true)
 
     const createInvite =
-      mode === 'camp'
-        ? createCampInvite({ campId: id as Id<'camps'> })
-        : createPersonalInvite({ bondfireId: id as Id<'bondfires'> })
+      mode === 'bondfire'
+        ? createBondfireInvite({ bondfireId: id as Id<'bondfires'> })
+        : mode === 'camp'
+          ? createCampInvite({ campId: id as Id<'camps'> })
+          : createPersonalInvite({ bondfireId: id as Id<'bondfires'> })
 
     createInvite
       .then((result) => {
@@ -94,13 +97,13 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
     return () => {
       cancelled = true
     }
-  }, [open, mode, id, createCampInvite, createPersonalInvite])
+  }, [open, mode, id, createBondfireInvite, createCampInvite, createPersonalInvite])
 
   // ── In-app contacts ──────────────────────────────────────────────────
 
   const contacts =
     useQuery(api.bondfireInvites.listInvitableContacts, mode === 'bondfire' ? {} : 'skip') ?? []
-  const sendInvite = useMutation(api.bondfireInvites.sendBondfireInvite)
+  const sendInvite = useMutation(api.inviteClaims.createDirectInvite)
 
   const handleSendInvite = useCallback(
     async (recipientId: Id<'users'>) => {
@@ -117,12 +120,7 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
 
   // ── Link sharing ─────────────────────────────────────────────────────
 
-  const shareUrl =
-    mode === 'bondfire'
-      ? `${INVITE_BASE_URL}/${id}`
-      : code
-        ? `${INVITE_BASE_URL}${mode === 'camp' ? '/camp' : ''}/${code}`
-        : null
+  const shareUrl = code ? `${INVITE_BASE_URL}/${code}` : null
 
   const handleCopyLink = useCallback(async () => {
     if (!shareUrl) return
@@ -301,7 +299,7 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
           </YStack>
 
           {/* ── Invite Code Fallback ────────────────────────────────── */}
-          {mode !== 'bondfire' && code && (
+          {code && (
             <YStack alignItems="center" gap={4} paddingTop={4}>
               <Text
                 fontSize={11}

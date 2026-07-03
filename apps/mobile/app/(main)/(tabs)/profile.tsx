@@ -328,7 +328,7 @@ export default function ProfileScreen() {
       const result = await adminGrantKindling({ email, amount })
       return result as AdminSearchResult | null
     },
-    [],
+    [adminGrantKindling],
   )
 
   const handleEditProfile = useCallback(() => {

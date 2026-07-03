@@ -16,7 +16,11 @@ import {
   TIER_RANK,
 } from './entitlements'
 import { throwUserError, withUserFacingErrors } from './errors'
-import { generateAndInsertInviteCode, normalizeInviteCode } from './inviteCodes'
+import {
+  findReusableInviteCode,
+  generateAndInsertInviteCode,
+  normalizeInviteCode,
+} from './inviteCodes'
 
 type CampAccess = 'open' | 'approval' | 'invite'
 type CampGender = 'male' | 'female' | 'any'
@@ -222,7 +226,13 @@ function variantSlug(baseSlug: string, gender: Exclude<CampGender, 'any'>) {
 }
 
 // Camps that stay gendered (men's / women's variants)
-const GENDERED_CAMP_SLUGS = ['signal-fires', 'the-raise', 'the-pursuit', 'the-castle', 'the-tempering'] as const
+const GENDERED_CAMP_SLUGS = [
+  'signal-fires',
+  'the-raise',
+  'the-pursuit',
+  'the-castle',
+  'the-tempering',
+] as const
 
 function getLaunchCampSeeds(): CampSeed[] {
   const genderedCamps = BASE_LAUNCH_CAMPS.filter((camp) =>
@@ -235,8 +245,8 @@ function getLaunchCampSeeds(): CampSeed[] {
       gender,
     })),
   )
-  const mixedCamps = BASE_LAUNCH_CAMPS.filter((camp) =>
-    !GENDERED_CAMP_SLUGS.includes(camp.slug as (typeof GENDERED_CAMP_SLUGS)[number]),
+  const mixedCamps = BASE_LAUNCH_CAMPS.filter(
+    (camp) => !GENDERED_CAMP_SLUGS.includes(camp.slug as (typeof GENDERED_CAMP_SLUGS)[number]),
   ).map((camp) => ({
     ...camp,
     gender: 'any' as const,
@@ -1306,15 +1316,27 @@ export const createInvite = mutation({
 
     const user = await assertCanManageCamp(ctx, camp)
 
-    // Use the unified invite codes system
-    const result = await generateAndInsertInviteCode(ctx, {
-      parentType: 'camp',
-      parentId: camp._id,
-      createdBy: user._id,
-      code: args.code,
-      expiresAt: args.expiresAt,
-      maxUses: args.maxUses,
-    })
+    const canReuseExistingInvite =
+      args.code === undefined && args.expiresAt === undefined && args.maxUses === undefined
+    const result = canReuseExistingInvite
+      ? ((await findReusableInviteCode(ctx, {
+          parentType: 'camp',
+          parentId: camp._id,
+          createdBy: user._id,
+        })) ??
+        (await generateAndInsertInviteCode(ctx, {
+          parentType: 'camp',
+          parentId: camp._id,
+          createdBy: user._id,
+        })))
+      : await generateAndInsertInviteCode(ctx, {
+          parentType: 'camp',
+          parentId: camp._id,
+          createdBy: user._id,
+          code: args.code,
+          expiresAt: args.expiresAt,
+          maxUses: args.maxUses,
+        })
 
     return {
       inviteId: null, // inviteCodes entries are keyed by code, not numeric ID
@@ -1335,7 +1357,7 @@ export const redeemInvite = mutation({
     ),
 })
 
-async function redeemCampInviteHandler(ctx: MutationCtx, rawCode: string) {
+export async function redeemCampInviteHandler(ctx: MutationCtx, rawCode: string) {
   const user = await getCurrentUser(ctx)
   const now = Date.now()
   const normalizedCode = normalizeInviteCode(rawCode)

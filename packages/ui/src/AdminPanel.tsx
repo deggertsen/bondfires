@@ -77,7 +77,9 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier, onGrantKindling }: Ad
             try {
               const updated = await onSetTier(email, tier)
               if (updated) {
-                setSearchResults((prev) => prev.map((u) => (u.email === email ? { ...u, ...updated } : u)))
+                setSearchResults((prev) =>
+                  prev.map((u) => (u.email === email ? { ...u, ...updated } : u)),
+                )
               }
             } catch (err) {
               Alert.alert('Error', err instanceof Error ? err.message : 'Failed to update tier')
@@ -98,30 +100,28 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier, onGrantKindling }: Ad
         Alert.alert('Invalid Amount', 'Enter a positive number of kindling to grant.')
         return
       }
-      Alert.alert(
-        'Confirm Kindling Grant',
-        `Grant ${amount} kindling to ${email}?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Confirm',
-            onPress: async () => {
-              setGrantingId(email)
-              try {
-                const updated = await onGrantKindling(email, amount)
-                if (updated) {
-                  setSearchResults((prev) => prev.map((u) => (u.email === email ? { ...u, ...updated } : u)))
-                }
-                setKindlingAmount('')
-              } catch (err) {
-                Alert.alert('Error', err instanceof Error ? err.message : 'Failed to grant kindling')
-              } finally {
-                setGrantingId(null)
+      Alert.alert('Confirm Kindling Grant', `Grant ${amount} kindling to ${email}?`, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm',
+          onPress: async () => {
+            setGrantingId(email)
+            try {
+              const updated = await onGrantKindling(email, amount)
+              if (updated) {
+                setSearchResults((prev) =>
+                  prev.map((u) => (u.email === email ? { ...u, ...updated } : u)),
+                )
               }
-            },
+              setKindlingAmount('')
+            } catch (err) {
+              Alert.alert('Error', err instanceof Error ? err.message : 'Failed to grant kindling')
+            } finally {
+              setGrantingId(null)
+            }
           },
-        ],
-      )
+        },
+      ])
     },
     [kindlingAmount, onGrantKindling],
   )

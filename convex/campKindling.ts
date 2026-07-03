@@ -510,7 +510,9 @@ export const burnDailyCampKindling = internalMutation({
       .collect()
 
     // Collect unique owner IDs and fetch their user docs to check admin status.
-    const ownerIds = [...new Set(activePublicCamps.map((c) => c.ownerId).filter(Boolean))] as Id<'users'>[]
+    const ownerIds = [
+      ...new Set(activePublicCamps.map((c) => c.ownerId).filter(Boolean)),
+    ] as Id<'users'>[]
     const ownerDocs = await Promise.all(ownerIds.map((id) => ctx.db.get(id)))
     const ownerIsAdmin = new Map<Id<'users'>, boolean>()
     for (const doc of ownerDocs) {

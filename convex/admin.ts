@@ -19,22 +19,10 @@ const subscriptionTier = v.union(
   v.literal('pro'),
 )
 
-function adminUserResult(user: Doc<'users'>) {
-  return {
-    _id: user._id,
-    email: user.email,
-    name: user.name,
-    forcedTier: user.forcedTier ?? null,
-  }
-}
-
 /**
  * Extended admin user result including kindling balance.
  */
-async function adminUserResultWithKindling(
-  ctx: QueryCtx | MutationCtx,
-  user: Doc<'users'>,
-) {
+async function adminUserResultWithKindling(ctx: QueryCtx | MutationCtx, user: Doc<'users'>) {
   const kindlingBalance = await computeKindlingBalance(ctx, user._id)
   return {
     _id: user._id,

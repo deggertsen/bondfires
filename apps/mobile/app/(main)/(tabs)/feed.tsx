@@ -8,14 +8,13 @@ import {
   getFeedActiveBondfireId,
   getLastLocation,
   hasViewedToday,
-  livePublishStore$,
-  recordingStore$,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
   subscriptionStore$,
   telemetry,
   useAppThemeColors,
   useCanRunRecordingBackgroundWork,
+  useLoadingTimeoutTelemetry,
   useSubscription,
 } from '@bondfires/app'
 import { BondfireRow, type BondfireRowProps, Button, Input, Spinner, Text } from '@bondfires/ui'
@@ -49,13 +48,11 @@ type BondfireData = Doc<'bondfires'> & {
   isLive?: boolean
   livePlaybackId?: string
   campLabel?: string
+  badge?: 'sparked' | 'invited' | null
 }
 type JoinedCamp = Doc<'camps'> & { membership: Doc<'campMembers'> }
 
 type ViewMode = 'discover' | 'recent' | 'active' | 'unseen'
-
-const SLOW_LOAD_THRESHOLD_MS = 5_000
-const LOADING_TIMEOUT_MS = 15_000
 
 function ModePill({
   label,
@@ -143,6 +140,7 @@ function toBondfireRowProps(
     thumbnailUrl,
     isLive: bondfire.videoStatus === 'live' || !!bondfire.isLive,
     statusLabel: hasViewedToday(bondfire._id) ? 'Viewed' : 'New',
+    badge: bondfire.badge,
     participants: [], // Feed doesn't load participants yet — empty for now
     actions: getBondfireSwipeActions({
       isOwner,
@@ -412,44 +410,18 @@ export default function FeedScreen() {
   const didRestoreScrollRef = useRef(false)
   const persistActiveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const loadStartedAtRef = useRef(Date.now())
-  const slowLoadLoggedRef = useRef(false)
-  const loadingTimeoutLoggedRef = useRef(false)
-  const loadingTelemetryContextRef = useRef({
-    shouldRunBackgroundWork,
-    hasCurrentUserId: !!currentUserId,
-    activeCampId: activeCampId ?? null,
-    activeCampResolving: activeCampId === undefined,
-    recordingPhase: recordingStore$.phase.peek(),
-    liveStatus: livePublishStore$.status.peek(),
-  })
-  const [timedOut, setTimedOut] = useState(false)
-
-  useEffect(() => {
-    loadingTelemetryContextRef.current = {
+  const { timedOut, resetLoadTracking } = useLoadingTimeoutTelemetry({
+    eventName: 'feed',
+    label: 'Feed',
+    isLoading: bondfires === undefined,
+    loadedCount: bondfires?.length,
+    context: {
       shouldRunBackgroundWork,
       hasCurrentUserId: !!currentUserId,
       activeCampId: activeCampId ?? null,
       activeCampResolving: activeCampId === undefined,
-      recordingPhase: recordingStore$.phase.peek(),
-      liveStatus: livePublishStore$.status.peek(),
-    }
-  }, [activeCampId, currentUserId, shouldRunBackgroundWork])
-
-  const getLoadingTelemetryContext = useCallback(
-    (elapsedMs: number) => ({
-      elapsedMs,
-      ...loadingTelemetryContextRef.current,
-    }),
-    [],
-  )
-
-  const resetLoadTracking = useCallback(() => {
-    loadStartedAtRef.current = Date.now()
-    slowLoadLoggedRef.current = false
-    loadingTimeoutLoggedRef.current = false
-    setTimedOut(false)
-  }, [])
+    },
+  })
 
   const stopRefreshing = useCallback(() => {
     if (refreshTimeoutRef.current) {
@@ -482,67 +454,6 @@ export default function FeedScreen() {
     },
     [stopRefreshing],
   )
-
-  useEffect(() => {
-    if (bondfires !== undefined) {
-      return
-    }
-
-    const timer = setTimeout(() => {
-      if (slowLoadLoggedRef.current) {
-        return
-      }
-
-      slowLoadLoggedRef.current = true
-      const elapsedMs = Date.now() - loadStartedAtRef.current
-      telemetry.warn('feed:slow-load', 'Feed still loading after 5 seconds', {
-        ...getLoadingTelemetryContext(elapsedMs),
-      })
-    }, SLOW_LOAD_THRESHOLD_MS)
-
-    return () => clearTimeout(timer)
-  }, [bondfires, getLoadingTelemetryContext])
-
-  useEffect(() => {
-    if (bondfires !== undefined) {
-      return
-    }
-
-    const timer = setTimeout(() => {
-      if (loadingTimeoutLoggedRef.current) {
-        return
-      }
-
-      loadingTimeoutLoggedRef.current = true
-      const elapsedMs = Date.now() - loadStartedAtRef.current
-      telemetry.error('feed:loading-timeout', 'Feed loading timed out', {
-        ...getLoadingTelemetryContext(elapsedMs),
-      })
-      setTimedOut(true)
-    }, LOADING_TIMEOUT_MS)
-
-    return () => clearTimeout(timer)
-  }, [bondfires, getLoadingTelemetryContext])
-
-  useEffect(() => {
-    if (bondfires === undefined) {
-      return
-    }
-
-    const elapsedMs = Date.now() - loadStartedAtRef.current
-    if (slowLoadLoggedRef.current) {
-      telemetry.info('feed:recovered', 'Feed recovered after slow load', {
-        ...getLoadingTelemetryContext(elapsedMs),
-      })
-    }
-
-    telemetry.breadcrumb('feed:loaded', {
-      elapsedMs,
-      count: bondfires.length,
-    })
-
-    resetLoadTracking()
-  }, [bondfires, getLoadingTelemetryContext, resetLoadTracking])
 
   const handleRetry = useCallback(() => {
     telemetry.breadcrumb('feed:retry')

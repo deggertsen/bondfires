@@ -9,8 +9,8 @@ import { Check, Share } from '@tamagui/lucide-icons'
 import { useMutation } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useRef, useState } from 'react'
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
 import { StatusBar, TextInput } from 'react-native'
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
 import { XStack, YStack } from 'tamagui'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
@@ -113,10 +113,7 @@ export function CompletionScreen({
 
   return (
     <>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior="padding"
-      >
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
         <YStack
           flex={1}
           backgroundColor={'$background'}

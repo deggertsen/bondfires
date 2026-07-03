@@ -1,4 +1,4 @@
-import type { Id } from './_generated/dataModel'
+import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx } from './_generated/server'
 import { internalMutation } from './_generated/server'
 import { throwUserError } from './errors'
@@ -87,6 +87,8 @@ const DEFAULT_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 /** Parent types for invite codes. */
 type InviteParentType = 'bondfire' | 'personal-bondfire' | 'camp'
 
+export type ReusableInviteCode = Pick<Doc<'inviteCodes'>, '_id' | 'code' | 'expiresAt'>
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function makeInviteCode(seed: string): string {
@@ -107,6 +109,33 @@ function makeInviteCode(seed: string): string {
 
 export function normalizeInviteCode(code: string): string {
   return code.trim().toLowerCase().replace(/\s+/g, '-').replace(/-+/g, '-')
+}
+
+export async function findReusableInviteCode(
+  ctx: MutationCtx,
+  args: {
+    parentType: InviteParentType
+    parentId: string
+    createdBy: Id<'users'>
+  },
+): Promise<ReusableInviteCode | null> {
+  const now = Date.now()
+  const inviteCodes = await ctx.db
+    .query('inviteCodes')
+    .withIndex('by_parent', (q) =>
+      q.eq('parentType', args.parentType).eq('parentId', args.parentId),
+    )
+    .order('desc')
+    .take(50)
+
+  return (
+    inviteCodes.find(
+      (inviteCode) =>
+        inviteCode.createdBy === args.createdBy &&
+        (inviteCode.expiresAt === undefined || inviteCode.expiresAt > now) &&
+        (inviteCode.maxUses === undefined || inviteCode.uses < inviteCode.maxUses),
+    ) ?? null
+  )
 }
 
 // ── Internal Helpers ───────────────────────────────────────────────────────

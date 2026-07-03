@@ -2,14 +2,13 @@ import {
   appActions,
   getBondfireVideoIndex,
   getErrorMessage,
-  livePublishStore$,
-  recordingStore$,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
   telemetry,
   useAppThemeColors,
   useCanRunRecordingBackgroundWork,
   useCurrentUserId,
+  useLoadingTimeoutTelemetry,
 } from '@bondfires/app'
 import { BondfireRow, type BondfireRowProps, Button, Spinner, Text } from '@bondfires/ui'
 import { useIsFocused } from '@react-navigation/native'
@@ -49,10 +48,15 @@ type MyFire = Doc<'bondfires'> & {
   lastActivityAt: number
   unread: boolean
   participants: ThreadParticipant[]
+  badge?: 'sparked' | 'invited' | null
 }
 
-const SLOW_LOAD_THRESHOLD_MS = 5_000
-const LOADING_TIMEOUT_MS = 15_000
+type InviteRow = {
+  claim: Doc<'inviteClaims'>
+  bondfire: Doc<'bondfires'> | null
+  camp: Doc<'camps'> | null
+  sender: PublicUser | null
+}
 
 function MyFiresSubscription({
   enabled,
@@ -147,6 +151,7 @@ function toBondfireRowProps(
     thumbnailUrl,
     isLive: thread.videoStatus === 'live',
     statusLabel: thread.unread ? 'New' : 'Viewed',
+    badge: thread.badge,
     participants: thread.participants.map((participant) => ({
       userId: participant.user._id,
       displayName: participant.user.displayName ?? participant.user.name,
@@ -169,6 +174,39 @@ function toBondfireRowProps(
   }
 }
 
+function toInvitedBondfireRowProps(
+  thread: MyFire,
+  thumbnailUrl: string | null,
+  onOpen: () => void,
+  onRespond: () => void,
+  onDismiss: () => void,
+): BondfireRowProps {
+  return {
+    title: thread.title,
+    creatorName: thread.creatorName ?? 'Anonymous',
+    timestamp: thread.lastActivityAt,
+    videoCount: thread.videoCount,
+    campLabel: thread.camp?.name,
+    thumbnailUrl,
+    isLive: thread.videoStatus === 'live',
+    statusLabel: 'Invited',
+    badge: 'invited',
+    participants: [],
+    actions: [
+      {
+        key: 'dismiss',
+        label: 'Dismiss',
+        color: '$placeholderColor',
+        backgroundColor: '$backgroundHover',
+        onPress: onDismiss,
+      },
+    ],
+    rightActions: [],
+    onOpen,
+    onRespond,
+  }
+}
+
 export default function MyFiresScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
@@ -179,6 +217,10 @@ export default function MyFiresScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [pinnedFirst, setPinnedFirst] = useState(false)
   const [threads, setThreads] = useState<MyFire[] | undefined>(undefined)
+  const invitedRows = useQuery(
+    api.inviteClaims.listUnseenInvites,
+    shouldRunBackgroundWork ? {} : 'skip',
+  ) as InviteRow[] | undefined
   const getThumbnailUrl = useAction(api.videos.getThumbnailUrl)
 
   // Swipe action mutations
@@ -186,115 +228,47 @@ export default function MyFiresScreen() {
   const pinBondfire = useMutation(api.bondfires.pinBondfire)
   const unpinBondfire = useMutation(api.bondfires.unpinBondfire)
   const reportBondfire = useMutation(api.reports.submit)
+  const dismissInvite = useMutation(api.inviteClaims.dismissInvite)
 
   const pinnedIds = useMemo(
     () => (currentUser?.pinnedBondfireIds ?? []) as string[],
     [currentUser?.pinnedBondfireIds],
   )
+  const invitedThreads = useMemo<MyFire[]>(
+    () =>
+      (invitedRows ?? []).flatMap((row) => {
+        if (!row.bondfire) return []
+        return [
+          {
+            ...row.bondfire,
+            camp: row.camp,
+            lastActivityAt: row.claim.createdAt,
+            unread: true,
+            participants: [],
+            badge: 'invited' as const,
+          },
+        ]
+      }),
+    [invitedRows],
+  )
 
   const isLoading = threads === undefined || isUserLoading
-  const loadStartedAtRef = useRef(Date.now())
-  const slowLoadLoggedRef = useRef(false)
-  const loadingTimeoutLoggedRef = useRef(false)
-  const loadingTelemetryContextRef = useRef({
-    shouldRunBackgroundWork,
-    hasCurrentUserId: !!currentUserId,
-    isUserLoading,
-    recordingPhase: recordingStore$.phase.peek(),
-    liveStatus: livePublishStore$.status.peek(),
-  })
-  const [timedOut, setTimedOut] = useState(false)
-
-  useEffect(() => {
-    loadingTelemetryContextRef.current = {
+  const { timedOut, resetLoadTracking } = useLoadingTimeoutTelemetry({
+    eventName: 'myFires',
+    label: 'My Fires',
+    isLoading,
+    loadedCount: threads?.length,
+    context: {
       shouldRunBackgroundWork,
       hasCurrentUserId: !!currentUserId,
       isUserLoading,
-      recordingPhase: recordingStore$.phase.peek(),
-      liveStatus: livePublishStore$.status.peek(),
-    }
-  }, [currentUserId, isUserLoading, shouldRunBackgroundWork])
-
-  const getLoadingTelemetryContext = useCallback(
-    (elapsedMs: number) => ({
-      elapsedMs,
-      ...loadingTelemetryContextRef.current,
-    }),
-    [],
-  )
-
-  const resetLoadTracking = useCallback(() => {
-    loadStartedAtRef.current = Date.now()
-    slowLoadLoggedRef.current = false
-    loadingTimeoutLoggedRef.current = false
-    setTimedOut(false)
-  }, [])
+    },
+  })
 
   const handleThreadsResolved = useCallback((nextThreads: MyFire[]) => {
     setThreads(nextThreads)
     setIsRefreshing(false)
   }, [])
-
-  useEffect(() => {
-    if (!isLoading) {
-      return
-    }
-
-    const timer = setTimeout(() => {
-      if (slowLoadLoggedRef.current) {
-        return
-      }
-
-      slowLoadLoggedRef.current = true
-      const elapsedMs = Date.now() - loadStartedAtRef.current
-      telemetry.warn('myFires:slow-load', 'My Fires still loading after 5 seconds', {
-        ...getLoadingTelemetryContext(elapsedMs),
-      })
-    }, SLOW_LOAD_THRESHOLD_MS)
-
-    return () => clearTimeout(timer)
-  }, [getLoadingTelemetryContext, isLoading])
-
-  useEffect(() => {
-    if (!isLoading) {
-      return
-    }
-
-    const timer = setTimeout(() => {
-      if (loadingTimeoutLoggedRef.current) {
-        return
-      }
-
-      loadingTimeoutLoggedRef.current = true
-      const elapsedMs = Date.now() - loadStartedAtRef.current
-      telemetry.error('myFires:loading-timeout', 'My Fires loading timed out', {
-        ...getLoadingTelemetryContext(elapsedMs),
-      })
-      setTimedOut(true)
-    }, LOADING_TIMEOUT_MS)
-
-    return () => clearTimeout(timer)
-  }, [getLoadingTelemetryContext, isLoading])
-
-  useEffect(() => {
-    if (isLoading || threads === undefined) {
-      return
-    }
-
-    const elapsedMs = Date.now() - loadStartedAtRef.current
-    if (slowLoadLoggedRef.current) {
-      telemetry.info('myFires:recovered', 'My Fires recovered after slow load', {
-        ...getLoadingTelemetryContext(elapsedMs),
-      })
-    }
-
-    telemetry.breadcrumb('myFires:loaded', {
-      elapsedMs,
-      count: threads.length,
-    })
-
-    resetLoadTracking()
-  }, [getLoadingTelemetryContext, isLoading, resetLoadTracking, threads])
 
   const handleRetry = useCallback(() => {
     telemetry.breadcrumb('myFires:retry')
@@ -358,10 +332,10 @@ export default function MyFiresScreen() {
 
   useEffect(() => {
     if (!shouldRunBackgroundWork || !threads) return
-    for (const thread of threads.slice(0, 10)) {
+    for (const thread of [...invitedThreads, ...threads].slice(0, 10)) {
       ensureThumbnailUrl(thread)
     }
-  }, [ensureThumbnailUrl, shouldRunBackgroundWork, threads])
+  }, [ensureThumbnailUrl, invitedThreads, shouldRunBackgroundWork, threads])
 
   const unreadCount = useMemo(
     () => threads?.filter((thread) => thread.unread).length ?? 0,
@@ -445,6 +419,17 @@ export default function MyFiresScreen() {
       }
     },
     [unpinBondfire],
+  )
+
+  const handleDismissInvite = useCallback(
+    async (claimId: Id<'inviteClaims'>) => {
+      try {
+        await dismissInvite({ claimId })
+      } catch (error) {
+        Alert.alert('Error', getErrorMessage(error))
+      }
+    },
+    [dismissInvite],
   )
 
   const handleReport = useCallback(
@@ -531,6 +516,32 @@ export default function MyFiresScreen() {
         )}
         ListHeaderComponent={
           <YStack paddingTop={62} paddingHorizontal={16} paddingBottom={14} gap={10}>
+            {invitedThreads.length > 0 ? (
+              <YStack gap={8} marginBottom={10}>
+                <Text fontSize={13} color={'$placeholderColor'} fontWeight="900">
+                  Invited
+                </Text>
+                {invitedThreads.map((item) => {
+                  const row = invitedRows?.find((invite) => invite.bondfire?._id === item._id)
+                  if (!row) return null
+
+                  const props = toInvitedBondfireRowProps(
+                    item,
+                    thumbnailUrls[item._id] ?? null,
+                    () => handleOpen(item._id),
+                    () => handleRespond(item._id),
+                    () => handleDismissInvite(row.claim._id),
+                  )
+
+                  return (
+                    <YStack key={row.claim._id}>
+                      <BondfireRow {...props} />
+                      <Separator borderColor={'$borderColor'} opacity={0.6} />
+                    </YStack>
+                  )
+                })}
+              </YStack>
+            ) : null}
             <XStack alignItems="center" justifyContent="space-between">
               <YStack gap={2}>
                 <Text fontSize={28} fontWeight="900">
@@ -553,25 +564,27 @@ export default function MyFiresScreen() {
           </YStack>
         }
         ListEmptyComponent={
-          <YStack flex={1} alignItems="center" justifyContent="center" paddingHorizontal={40}>
-            <Flame size={58} color={'$primary'} />
-            <Text fontSize={22} fontWeight="900" marginTop={18} textAlign="center">
-              No active fires yet
-            </Text>
-            <Text fontSize={15} color={'$placeholderColor'} textAlign="center" marginTop={8}>
-              Respond to a fire in the feed and the conversation shows up here.
-            </Text>
-            <Button
-              variant="primary"
-              size="$lg"
-              marginTop={24}
-              onPress={() => router.push(routes.feed)}
-            >
-              <Text color={'$color'} fontWeight="900">
-                Browse Feed
+          invitedThreads.length > 0 ? null : (
+            <YStack flex={1} alignItems="center" justifyContent="center" paddingHorizontal={40}>
+              <Flame size={58} color={'$primary'} />
+              <Text fontSize={22} fontWeight="900" marginTop={18} textAlign="center">
+                No active fires yet
               </Text>
-            </Button>
-          </YStack>
+              <Text fontSize={15} color={'$placeholderColor'} textAlign="center" marginTop={8}>
+                Respond to a fire in the feed and the conversation shows up here.
+              </Text>
+              <Button
+                variant="primary"
+                size="$lg"
+                marginTop={24}
+                onPress={() => router.push(routes.feed)}
+              >
+                <Text color={'$color'} fontWeight="900">
+                  Browse Feed
+                </Text>
+              </Button>
+            </YStack>
+          )
         }
       />
 
