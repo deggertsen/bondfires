@@ -95,6 +95,21 @@ function normalizeInviteCodeCandidate(value: string | null | undefined) {
   return code && INVITE_CODE_REGEX.test(code) ? code : null
 }
 
+function getInviteCodeFromInstallReferrer(referrer: string) {
+  const directCode = normalizeInviteCodeCandidate(new URLSearchParams(referrer).get('invite'))
+  if (directCode) {
+    return directCode
+  }
+
+  try {
+    return normalizeInviteCodeCandidate(
+      new URLSearchParams(decodeURIComponent(referrer)).get('invite'),
+    )
+  } catch {
+    return null
+  }
+}
+
 async function readAndroidInstallReferrerInviteCode() {
   const nativeModules: Record<string, InstallReferrerNativeModule | undefined> = NativeModules
   const installReferrerModule =
@@ -108,8 +123,7 @@ async function readAndroidInstallReferrerInviteCode() {
     return null
   }
 
-  const params = new URLSearchParams(referrer)
-  return normalizeInviteCodeCandidate(params.get('invite'))
+  return getInviteCodeFromInstallReferrer(referrer)
 }
 
 async function readFirstLaunchInviteCode() {
@@ -371,6 +385,12 @@ function AppContent() {
 
     let cancelled = false
     redeemInviteCode({ code: pendingInviteCode })
+      .then((result) => {
+        if (cancelled) return
+        router.replace(
+          result.type === 'camp' ? routes.camp(result.campId) : routes.bondfire(result.bondfireId),
+        )
+      })
       .catch((error) => {
         telemetry.warn('invite:pendingRedeem', String(error), { code: pendingInviteCode })
       })
@@ -383,7 +403,7 @@ function AppContent() {
     return () => {
       cancelled = true
     }
-  }, [isAuthenticated, pendingInviteCode, redeemInviteCode])
+  }, [isAuthenticated, pendingInviteCode, redeemInviteCode, router])
 
   // Force-update check: compares current version against remote minAppVersion.
   // On Android with flexible priority, downloads in background via Play Core.

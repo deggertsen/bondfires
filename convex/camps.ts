@@ -16,7 +16,11 @@ import {
   TIER_RANK,
 } from './entitlements'
 import { throwUserError, withUserFacingErrors } from './errors'
-import { generateAndInsertInviteCode, normalizeInviteCode } from './inviteCodes'
+import {
+  findReusableInviteCode,
+  generateAndInsertInviteCode,
+  normalizeInviteCode,
+} from './inviteCodes'
 
 type CampAccess = 'open' | 'approval' | 'invite'
 type CampGender = 'male' | 'female' | 'any'
@@ -1312,15 +1316,27 @@ export const createInvite = mutation({
 
     const user = await assertCanManageCamp(ctx, camp)
 
-    // Use the unified invite codes system
-    const result = await generateAndInsertInviteCode(ctx, {
-      parentType: 'camp',
-      parentId: camp._id,
-      createdBy: user._id,
-      code: args.code,
-      expiresAt: args.expiresAt,
-      maxUses: args.maxUses,
-    })
+    const canReuseExistingInvite =
+      args.code === undefined && args.expiresAt === undefined && args.maxUses === undefined
+    const result = canReuseExistingInvite
+      ? ((await findReusableInviteCode(ctx, {
+          parentType: 'camp',
+          parentId: camp._id,
+          createdBy: user._id,
+        })) ??
+        (await generateAndInsertInviteCode(ctx, {
+          parentType: 'camp',
+          parentId: camp._id,
+          createdBy: user._id,
+        })))
+      : await generateAndInsertInviteCode(ctx, {
+          parentType: 'camp',
+          parentId: camp._id,
+          createdBy: user._id,
+          code: args.code,
+          expiresAt: args.expiresAt,
+          maxUses: args.maxUses,
+        })
 
     return {
       inviteId: null, // inviteCodes entries are keyed by code, not numeric ID

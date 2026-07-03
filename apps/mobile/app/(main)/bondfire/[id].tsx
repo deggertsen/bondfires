@@ -129,6 +129,7 @@ export default function BondfireDetailScreen() {
     if (!campContext || !campContext.camp) return
     if (!campContext.bondfire?.campId) return
     if (campContext.membership?.status === 'active') return
+    if (campContext.hasInviteClaim) return
 
     hasRedirectedToJoinGate.current = true
     router.replace(routes.campJoinGate(campContext.bondfire.campId, bondfireId))

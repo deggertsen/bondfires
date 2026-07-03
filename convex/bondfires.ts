@@ -327,6 +327,7 @@ export const getWithCampContext = query({
         bondfire,
         camp: null,
         membership: null,
+        hasInviteClaim: false,
         canInvite: bondfire.userId === (await auth.getUserId(ctx)),
       }
     }
@@ -336,12 +337,21 @@ export const getWithCampContext = query({
     const userId = (await auth.getUserId(ctx)) ?? undefined
 
     let membership = null
+    let hasInviteClaim = false
     if (userId) {
       const m = await ctx.db
         .query('campMembers')
         .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', campId))
         .unique()
       membership = m
+
+      const inviteClaim = await ctx.db
+        .query('inviteClaims')
+        .withIndex('by_bondfire_claimer', (q) =>
+          q.eq('bondfireId', bondfire._id).eq('claimerId', userId),
+        )
+        .first()
+      hasInviteClaim = inviteClaim !== null
     }
 
     const isCreator = bondfire.userId === userId
@@ -351,7 +361,7 @@ export const getWithCampContext = query({
 
     const canInvite = isCreator || isOwnerOrMod || (isPublicCamp && isActiveMember)
 
-    return { bondfire, camp, membership, canInvite }
+    return { bondfire, camp, membership, hasInviteClaim, canInvite }
   },
 })
 

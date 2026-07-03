@@ -6,7 +6,11 @@ import { internalAction, internalMutation, mutation, query } from './_generated/
 import { auth } from './auth'
 import { redeemCampInviteHandler } from './camps'
 import { throwUserError, withUserFacingErrors } from './errors'
-import { generateAndInsertInviteCode, normalizeInviteCode } from './inviteCodes'
+import {
+  findReusableInviteCode,
+  generateAndInsertInviteCode,
+  normalizeInviteCode,
+} from './inviteCodes'
 import { redeemInviteHandler as redeemPersonalBondfireInviteHandler } from './personalBondfires'
 
 type InviteClaimSource = 'direct' | 'code' | 'camp'
@@ -223,12 +227,18 @@ export const createBondfireInviteCode = mutation({
     }
     const sender = await assertCanInviteToBondfire(ctx, bondfire)
 
-    const result = await generateAndInsertInviteCode(ctx, {
-      parentType: 'bondfire',
-      parentId: args.bondfireId,
-      createdBy: sender._id,
-      expiresInDays: 7,
-    })
+    const result =
+      (await findReusableInviteCode(ctx, {
+        parentType: 'bondfire',
+        parentId: args.bondfireId,
+        createdBy: sender._id,
+      })) ??
+      (await generateAndInsertInviteCode(ctx, {
+        parentType: 'bondfire',
+        parentId: args.bondfireId,
+        createdBy: sender._id,
+        expiresInDays: 7,
+      }))
 
     return {
       code: result.code,

@@ -19,6 +19,7 @@ export type ViewerVisibilityContext = {
   user: Doc<'users'> | null
   tier: SubscriptionTier
   memberCampIds: Set<Id<'camps'>>
+  claimedBondfireIds: Set<Id<'bondfires'>>
   /**
    * Camps already requested during this query, keyed by id. Stores promises
    * so concurrent visibility checks (Promise.all over a feed) dedupe too.
@@ -36,16 +37,21 @@ export async function buildViewerVisibilityContext(
       user: null,
       tier: 'free',
       memberCampIds: new Set(),
+      claimedBondfireIds: new Set(),
       campCache: new Map(),
     }
   }
 
-  const [user, tier, memberships] = await Promise.all([
+  const [user, tier, memberships, inviteClaims] = await Promise.all([
     ctx.db.get(userId),
     getEntitlementSubscriptionTier(ctx, userId),
     ctx.db
       .query('campMembers')
       .withIndex('by_user', (q) => q.eq('userId', userId).eq('status', 'active'))
+      .collect(),
+    ctx.db
+      .query('inviteClaims')
+      .withIndex('by_claimer', (q) => q.eq('claimerId', userId))
       .collect(),
   ])
 
@@ -54,6 +60,11 @@ export async function buildViewerVisibilityContext(
     user,
     tier,
     memberCampIds: new Set(memberships.map((membership) => membership.campId)),
+    claimedBondfireIds: new Set(
+      inviteClaims
+        .map((claim) => claim.bondfireId)
+        .filter((bondfireId): bondfireId is Id<'bondfires'> => bondfireId !== undefined),
+    ),
     campCache: new Map(),
   }
 }
@@ -115,6 +126,7 @@ export function isCampContentVisibleToViewer(
  * - Expired bondfires (private camp retention) are never visible.
  * - Personal camp bondfires delegate to canViewPersonalBondfire.
  * - Campless bondfires are public.
+ * - Claimed camp bondfire invites grant direct visibility to that bondfire.
  * - Camp bondfires follow isCampContentVisibleToViewer.
  */
 export async function isBondfireVisibleToViewer(
@@ -131,6 +143,10 @@ export async function isBondfireVisibleToViewer(
   }
 
   if (!bondfire.campId) {
+    return true
+  }
+
+  if (viewer.claimedBondfireIds.has(bondfire._id)) {
     return true
   }
 
