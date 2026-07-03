@@ -19,7 +19,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import { type AppStateStatus, AppState as RNAppState } from 'react-native'
+import { type AppStateStatus, NativeModules, Platform, AppState as RNAppState } from 'react-native'
 import { KeyboardProvider } from 'react-native-keyboard-controller'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { AnimatePresence, TamaguiProvider, Theme, YStack } from 'tamagui'
@@ -42,6 +42,7 @@ import {
   usePushNotifications,
 } from '@bondfires/app'
 import { useObserve, useValue } from '@legendapp/state/react'
+import * as Clipboard from 'expo-clipboard'
 import { api } from '../../../convex/_generated/api'
 import { resolveExternalRoute, routes } from '../lib/routes'
 
@@ -81,6 +82,62 @@ if (convexUrl.endsWith('/')) {
 const convex = new ConvexReactClient(convexUrl, {
   unsavedChangesWarning: false,
 })
+
+const INVITE_CODE_REGEX = /^[a-z]+-[a-z]+-[a-z]+$/
+
+type InstallReferrerNativeModule = {
+  getInstallReferrer?: () => Promise<string>
+  getReferrer?: () => Promise<string>
+}
+
+function normalizeInviteCodeCandidate(value: string | null | undefined) {
+  const code = value?.trim().toLowerCase()
+  return code && INVITE_CODE_REGEX.test(code) ? code : null
+}
+
+function getInviteCodeFromInstallReferrer(referrer: string) {
+  const directCode = normalizeInviteCodeCandidate(new URLSearchParams(referrer).get('invite'))
+  if (directCode) {
+    return directCode
+  }
+
+  try {
+    return normalizeInviteCodeCandidate(
+      new URLSearchParams(decodeURIComponent(referrer)).get('invite'),
+    )
+  } catch {
+    return null
+  }
+}
+
+async function readAndroidInstallReferrerInviteCode() {
+  const nativeModules: Record<string, InstallReferrerNativeModule | undefined> = NativeModules
+  const installReferrerModule =
+    nativeModules.ExpoInstallReferrer ??
+    nativeModules.InstallReferrer ??
+    nativeModules.RNInstallReferrer
+  const referrer =
+    (await installReferrerModule?.getInstallReferrer?.()) ??
+    (await installReferrerModule?.getReferrer?.())
+  if (!referrer) {
+    return null
+  }
+
+  return getInviteCodeFromInstallReferrer(referrer)
+}
+
+async function readFirstLaunchInviteCode() {
+  if (Platform.OS === 'android') {
+    return await readAndroidInstallReferrerInviteCode()
+  }
+
+  if (Platform.OS === 'ios') {
+    const clipboardValue = await Clipboard.getStringAsync()
+    return normalizeInviteCodeCandidate(clipboardValue)
+  }
+
+  return null
+}
 
 // Monitor Convex WebSocket connection state for debugging
 convex.subscribeToConnectionState((state) => {
@@ -253,11 +310,14 @@ function AppContent() {
   const router = useRouter()
   const toasts = useValue(toastStore$.toasts)
   const isAuthenticated = useValue(appStore$.isAuthenticated)
+  const hasCompletedInviteCheck = useValue(appStore$.hasCompletedInviteCheck)
+  const pendingInviteCode = useValue(appStore$.pendingInviteCode)
   const registerDevice = useMutation(api.notifications.registerDevice)
   const unregisterDevice = useMutation(api.notifications.unregisterDevice)
   const updateNotificationPreferences = useMutation(api.notifications.updatePreferences)
   const notificationPrefs = useQuery(api.notifications.getPreferences)
   const recordActive = useMutation(api.users.recordActive)
+  const redeemInviteCode = useMutation(api.inviteClaims.redeemInviteCode)
 
   // App-open heartbeat — powers the 72h nudge kill switch (convex/digest.ts).
   // Throttled so foreground flapping doesn't spam mutations.
@@ -290,6 +350,60 @@ function AppContent() {
     })
     return () => subscription.remove()
   }, [sendHeartbeat])
+
+  useEffect(() => {
+    if (hasCompletedInviteCheck) {
+      return
+    }
+
+    let cancelled = false
+    readFirstLaunchInviteCode()
+      .then((inviteCode) => {
+        if (cancelled) return
+        if (inviteCode) {
+          appActions.setPendingInviteCode(inviteCode)
+        }
+      })
+      .catch((error) => {
+        telemetry.warn('invite:firstLaunchAttribution', String(error))
+      })
+      .finally(() => {
+        if (!cancelled) {
+          appActions.completeInviteCheck()
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [hasCompletedInviteCheck])
+
+  useEffect(() => {
+    if (!isAuthenticated || !pendingInviteCode) {
+      return
+    }
+
+    let cancelled = false
+    redeemInviteCode({ code: pendingInviteCode })
+      .then((result) => {
+        if (cancelled) return
+        router.replace(
+          result.type === 'camp' ? routes.camp(result.campId) : routes.bondfire(result.bondfireId),
+        )
+      })
+      .catch((error) => {
+        telemetry.warn('invite:pendingRedeem', String(error), { code: pendingInviteCode })
+      })
+      .finally(() => {
+        if (!cancelled && appStore$.pendingInviteCode.peek() === pendingInviteCode) {
+          appActions.setPendingInviteCode(null)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isAuthenticated, pendingInviteCode, redeemInviteCode, router])
 
   // Force-update check: compares current version against remote minAppVersion.
   // On Android with flexible priority, downloads in background via Play Core.

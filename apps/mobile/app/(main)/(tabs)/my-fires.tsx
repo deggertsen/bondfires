@@ -47,6 +47,14 @@ type MyFire = Doc<'bondfires'> & {
   lastActivityAt: number
   unread: boolean
   participants: ThreadParticipant[]
+  badge?: 'sparked' | 'invited' | null
+}
+
+type InviteRow = {
+  claim: Doc<'inviteClaims'>
+  bondfire: Doc<'bondfires'> | null
+  camp: Doc<'camps'> | null
+  sender: PublicUser | null
 }
 
 function toBondfireRowProps(
@@ -74,6 +82,7 @@ function toBondfireRowProps(
     thumbnailUrl,
     isLive: thread.videoStatus === 'live',
     statusLabel: thread.unread ? 'New' : 'Viewed',
+    badge: thread.badge,
     participants: thread.participants.map((participant) => ({
       userId: participant.user._id,
       displayName: participant.user.displayName ?? participant.user.name,
@@ -96,6 +105,39 @@ function toBondfireRowProps(
   }
 }
 
+function toInvitedBondfireRowProps(
+  thread: MyFire,
+  thumbnailUrl: string | null,
+  onOpen: () => void,
+  onRespond: () => void,
+  onDismiss: () => void,
+): BondfireRowProps {
+  return {
+    title: thread.title,
+    creatorName: thread.creatorName ?? 'Anonymous',
+    timestamp: thread.lastActivityAt,
+    videoCount: thread.videoCount,
+    campLabel: thread.camp?.name,
+    thumbnailUrl,
+    isLive: thread.videoStatus === 'live',
+    statusLabel: 'Invited',
+    badge: 'invited',
+    participants: [],
+    actions: [
+      {
+        key: 'dismiss',
+        label: 'Dismiss',
+        color: '$placeholderColor',
+        backgroundColor: '$backgroundHover',
+        onPress: onDismiss,
+      },
+    ],
+    rightActions: [],
+    onOpen,
+    onRespond,
+  }
+}
+
 export default function MyFiresScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
@@ -108,6 +150,10 @@ export default function MyFiresScreen() {
     api.conversations.listMyFires,
     shouldRunBackgroundWork ? { limit: 80, pinnedFirst } : 'skip',
   ) as MyFire[] | undefined
+  const invitedRows = useQuery(
+    api.inviteClaims.listUnseenInvites,
+    shouldRunBackgroundWork ? {} : 'skip',
+  ) as InviteRow[] | undefined
   const getThumbnailUrl = useAction(api.videos.getThumbnailUrl)
 
   // Swipe action mutations
@@ -115,11 +161,29 @@ export default function MyFiresScreen() {
   const pinBondfire = useMutation(api.bondfires.pinBondfire)
   const unpinBondfire = useMutation(api.bondfires.unpinBondfire)
   const reportBondfire = useMutation(api.reports.submit)
+  const dismissInvite = useMutation(api.inviteClaims.dismissInvite)
   const { userId: currentUserId, isLoading: isUserLoading, currentUser } = useCurrentUserId()
 
   const pinnedIds = useMemo(
     () => (currentUser?.pinnedBondfireIds ?? []) as string[],
     [currentUser?.pinnedBondfireIds],
+  )
+  const invitedThreads = useMemo<MyFire[]>(
+    () =>
+      (invitedRows ?? []).flatMap((row) => {
+        if (!row.bondfire) return []
+        return [
+          {
+            ...row.bondfire,
+            camp: row.camp,
+            lastActivityAt: row.claim.createdAt,
+            unread: true,
+            participants: [],
+            badge: 'invited' as const,
+          },
+        ]
+      }),
+    [invitedRows],
   )
 
   useEffect(() => {
@@ -177,10 +241,10 @@ export default function MyFiresScreen() {
 
   useEffect(() => {
     if (!shouldRunBackgroundWork || !threads) return
-    for (const thread of threads.slice(0, 10)) {
+    for (const thread of [...invitedThreads, ...threads].slice(0, 10)) {
       ensureThumbnailUrl(thread)
     }
-  }, [ensureThumbnailUrl, shouldRunBackgroundWork, threads])
+  }, [ensureThumbnailUrl, invitedThreads, shouldRunBackgroundWork, threads])
 
   const unreadCount = useMemo(
     () => threads?.filter((thread) => thread.unread).length ?? 0,
@@ -258,6 +322,17 @@ export default function MyFiresScreen() {
     [unpinBondfire],
   )
 
+  const handleDismissInvite = useCallback(
+    async (claimId: Id<'inviteClaims'>) => {
+      try {
+        await dismissInvite({ claimId })
+      } catch (error) {
+        Alert.alert('Error', getErrorMessage(error))
+      }
+    },
+    [dismissInvite],
+  )
+
   const handleReport = useCallback(
     (bondfireId: string, videoOwnerId: string) => {
       Alert.alert('Report Content', 'What category best describes the issue?', [
@@ -332,6 +407,32 @@ export default function MyFiresScreen() {
         )}
         ListHeaderComponent={
           <YStack paddingTop={62} paddingHorizontal={16} paddingBottom={14} gap={10}>
+            {invitedThreads.length > 0 ? (
+              <YStack gap={8} marginBottom={10}>
+                <Text fontSize={13} color={'$placeholderColor'} fontWeight="900">
+                  Invited
+                </Text>
+                {invitedThreads.map((item) => {
+                  const row = invitedRows?.find((invite) => invite.bondfire?._id === item._id)
+                  if (!row) return null
+
+                  const props = toInvitedBondfireRowProps(
+                    item,
+                    thumbnailUrls[item._id] ?? null,
+                    () => handleOpen(item._id),
+                    () => handleRespond(item._id),
+                    () => handleDismissInvite(row.claim._id),
+                  )
+
+                  return (
+                    <YStack key={row.claim._id}>
+                      <BondfireRow {...props} />
+                      <Separator borderColor={'$borderColor'} opacity={0.6} />
+                    </YStack>
+                  )
+                })}
+              </YStack>
+            ) : null}
             <XStack alignItems="center" justifyContent="space-between">
               <YStack gap={2}>
                 <Text fontSize={28} fontWeight="900">
@@ -354,25 +455,27 @@ export default function MyFiresScreen() {
           </YStack>
         }
         ListEmptyComponent={
-          <YStack flex={1} alignItems="center" justifyContent="center" paddingHorizontal={40}>
-            <Flame size={58} color={'$primary'} />
-            <Text fontSize={22} fontWeight="900" marginTop={18} textAlign="center">
-              No active fires yet
-            </Text>
-            <Text fontSize={15} color={'$placeholderColor'} textAlign="center" marginTop={8}>
-              Respond to a fire in the feed and the conversation shows up here.
-            </Text>
-            <Button
-              variant="primary"
-              size="$lg"
-              marginTop={24}
-              onPress={() => router.push(routes.feed)}
-            >
-              <Text color={'$color'} fontWeight="900">
-                Browse Feed
+          invitedThreads.length > 0 ? null : (
+            <YStack flex={1} alignItems="center" justifyContent="center" paddingHorizontal={40}>
+              <Flame size={58} color={'$primary'} />
+              <Text fontSize={22} fontWeight="900" marginTop={18} textAlign="center">
+                No active fires yet
               </Text>
-            </Button>
-          </YStack>
+              <Text fontSize={15} color={'$placeholderColor'} textAlign="center" marginTop={8}>
+                Respond to a fire in the feed and the conversation shows up here.
+              </Text>
+              <Button
+                variant="primary"
+                size="$lg"
+                marginTop={24}
+                onPress={() => router.push(routes.feed)}
+              >
+                <Text color={'$color'} fontWeight="900">
+                  Browse Feed
+                </Text>
+              </Button>
+            </YStack>
+          )
         }
       />
 

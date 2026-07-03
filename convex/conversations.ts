@@ -9,6 +9,7 @@ import {
   type ViewerVisibilityContext,
 } from './bondfireVisibility'
 import { throwUserError } from './errors'
+import { addInviteBadgesToBondfires, type BondfireBadge } from './inviteBadges'
 
 type ThreadParticipant = {
   user: PublicUser
@@ -22,6 +23,7 @@ type ThreadSummary = Doc<'bondfires'> & {
   lastActivityAt: number
   unread: boolean
   participants: ThreadParticipant[]
+  badge: BondfireBadge | null
 }
 
 type PublicUser = {
@@ -190,6 +192,7 @@ async function buildThreadSummary(
     lastActivityAt,
     unread,
     participants: participants.sort((a, b) => b.latestAt - a.latestAt),
+    badge: null,
   }
 }
 
@@ -322,7 +325,7 @@ export const listMyFires = query({
       threads.sort((a, b) => b.lastActivityAt - a.lastActivityAt)
     }
 
-    return threads.slice(0, limit)
+    return await addInviteBadgesToBondfires(ctx, userId, threads.slice(0, limit))
   },
 })
 

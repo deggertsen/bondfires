@@ -350,6 +350,14 @@ export const deleteExpiredBondfireRecords = internalMutation({
         }
       }
 
+      const bondfireInviteCodes = await ctx.db
+        .query('inviteCodes')
+        .withIndex('by_parent', (q) => q.eq('parentType', 'bondfire').eq('parentId', bondfireId))
+        .collect()
+      for (const inviteCode of bondfireInviteCodes) {
+        await ctx.db.delete(inviteCode._id)
+      }
+
       const threadReads = await ctx.db
         .query('bondfireThreadReads')
         .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfireId))
@@ -364,6 +372,14 @@ export const deleteExpiredBondfireRecords = internalMutation({
         .collect()
       for (const invite of bondfireInvites) {
         await ctx.db.delete(invite._id)
+      }
+
+      const inviteClaims = await ctx.db
+        .query('inviteClaims')
+        .withIndex('by_bondfire_claimer', (q) => q.eq('bondfireId', bondfireId))
+        .collect()
+      for (const claim of inviteClaims) {
+        await ctx.db.delete(claim._id)
       }
 
       await deleteWatchEventsForVideo(ctx, bondfireId)

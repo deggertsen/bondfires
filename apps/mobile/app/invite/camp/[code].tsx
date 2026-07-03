@@ -9,7 +9,7 @@ import { routes } from '../../../lib/routes'
 export default function CampInviteScreen() {
   const { code } = useLocalSearchParams<{ code: string | string[] }>()
   const isAuthenticated = useValue(appStore$.isAuthenticated)
-  const redeemInvite = useMutation(api.camps.redeemInvite)
+  const redeemInvite = useMutation(api.inviteClaims.redeemInviteCode)
 
   return (
     <InviteRedemptionScreen
@@ -18,11 +18,13 @@ export default function CampInviteScreen() {
       loginHref={routes.loginWithCampInvite}
       redeemInvite={async (inviteCode) => {
         const result = await redeemInvite({ code: inviteCode })
-        return routes.camp(result.campId)
+        return result.type === 'camp'
+          ? routes.camp(result.campId)
+          : routes.bondfire(result.bondfireId)
       }}
-      loadingText="Joining camp..."
-      successText="Taking you to the camp now."
-      fallbackErrorText="Something went wrong. The invite may have expired or the camp is full."
+      loadingText="Redeeming invite..."
+      successText="Taking you there now."
+      fallbackErrorText="Something went wrong. The invite may have expired."
     />
   )
 }

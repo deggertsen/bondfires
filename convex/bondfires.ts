@@ -16,8 +16,9 @@ import {
   assertVideoDurationWithinTierLimit,
   getPrivateCampExpiresAt,
 } from './entitlements'
-import { canViewPersonalBondfire } from './personalBondfireAccess'
 import { throwUserError } from './errors'
+import { addInviteBadgesToBondfires } from './inviteBadges'
+import { canViewPersonalBondfire } from './personalBondfireAccess'
 
 type ExpiredPrivateCampVideoCleanupResult = {
   expiredBondfires?: number
@@ -230,6 +231,7 @@ export const listFeed = query({
   },
   handler: async (ctx, args) => {
     const limit = args.limit ?? 20
+    const userId = await auth.getUserId(ctx)
 
     // Query bondfires ordered by video_count ascending (prioritize newer/smaller)
     const bondfires = await ctx.db
@@ -250,7 +252,7 @@ export const listFeed = query({
       }),
     )
 
-    return withCampLabels
+    return await addInviteBadgesToBondfires(ctx, userId, withCampLabels)
   },
 })
 
@@ -280,7 +282,11 @@ export const listByCamp = query({
 
     const filtered = bondfires.filter(isPlayableVideoRecord).slice(0, limit)
 
-    return filtered.map((bondfire) => ({ ...withLiveFlags(bondfire), campLabel: camp.name }))
+    return await addInviteBadgesToBondfires(
+      ctx,
+      userId,
+      filtered.map((bondfire) => ({ ...withLiveFlags(bondfire), campLabel: camp.name })),
+    )
   },
 })
 
@@ -321,6 +327,7 @@ export const getWithCampContext = query({
         bondfire,
         camp: null,
         membership: null,
+        hasInviteClaim: false,
         canInvite: bondfire.userId === (await auth.getUserId(ctx)),
       }
     }
@@ -330,12 +337,21 @@ export const getWithCampContext = query({
     const userId = (await auth.getUserId(ctx)) ?? undefined
 
     let membership = null
+    let hasInviteClaim = false
     if (userId) {
       const m = await ctx.db
         .query('campMembers')
         .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', campId))
         .unique()
       membership = m
+
+      const inviteClaim = await ctx.db
+        .query('inviteClaims')
+        .withIndex('by_bondfire_claimer', (q) =>
+          q.eq('bondfireId', bondfire._id).eq('claimerId', userId),
+        )
+        .first()
+      hasInviteClaim = inviteClaim !== null
     }
 
     const isCreator = bondfire.userId === userId
@@ -345,7 +361,7 @@ export const getWithCampContext = query({
 
     const canInvite = isCreator || isOwnerOrMod || (isPublicCamp && isActiveMember)
 
-    return { bondfire, camp, membership, canInvite }
+    return { bondfire, camp, membership, hasInviteClaim, canInvite }
   },
 })
 
@@ -866,6 +882,22 @@ export const deleteBondfire = mutation({
       for (const inv of invites) {
         await ctx.db.delete(inv._id)
       }
+    }
+
+    const bondfireInviteCodes = await ctx.db
+      .query('inviteCodes')
+      .withIndex('by_parent', (q) => q.eq('parentType', 'bondfire').eq('parentId', args.bondfireId))
+      .collect()
+    for (const inviteCode of bondfireInviteCodes) {
+      await ctx.db.delete(inviteCode._id)
+    }
+
+    const inviteClaims = await ctx.db
+      .query('inviteClaims')
+      .withIndex('by_bondfire_claimer', (q) => q.eq('bondfireId', args.bondfireId))
+      .collect()
+    for (const claim of inviteClaims) {
+      await ctx.db.delete(claim._id)
     }
 
     // Clean up watch events.
