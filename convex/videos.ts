@@ -649,13 +649,14 @@ async function assertUserCanParticipateInCamp(
 
   assertDurationWithinCampRules(camp, args.durationMs)
 
+  const allowedTiers = camp.rules?.access?.allowedTiers?.value
   if (
     args.operation === 'spark' &&
-    camp.rules?.access.allowedTiers?.value &&
-    camp.rules.access.allowedTiers.value.length > 0
+    allowedTiers &&
+    allowedTiers.length > 0
   ) {
     const tier = await getEntitlementSubscriptionTier(ctx, args.userId)
-    if (!camp.rules.access.allowedTiers.value.includes(tier)) {
+    if (!allowedTiers.includes(tier)) {
       throwUserError('Your membership tier cannot spark in this camp')
     }
   }

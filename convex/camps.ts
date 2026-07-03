@@ -585,7 +585,7 @@ function lockedReason(camp: Doc<'camps'>, userTier: SubscriptionTier): string | 
 
 function isInviteOnlyCamp(camp: Doc<'camps'>): boolean {
   // Legacy camps without rules are never invite-only at the rule level.
-  return camp.access === 'invite' || camp.rules?.access.inviteOnly?.value === true
+  return camp.access === 'invite' || camp.rules?.access?.inviteOnly?.value === true
 }
 
 /** Resolve camp display name — invite-only camps use nameOverride or ownerDisplayName. */

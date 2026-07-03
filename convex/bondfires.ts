@@ -17,6 +17,7 @@ import {
   getPrivateCampExpiresAt,
 } from './entitlements'
 import { canViewPersonalBondfire } from './personalBondfireAccess'
+import { throwUserError } from './errors'
 
 type ExpiredPrivateCampVideoCleanupResult = {
   expiredBondfires?: number
@@ -499,30 +500,30 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const userId = await auth.getUserId(ctx)
     if (!userId) {
-      throw new Error('Not authenticated')
+      throwUserError('Not authenticated')
     }
 
     const user = await ctx.db.get(userId)
     const now = Date.now()
     if (!user) {
-      throw new Error('User not found')
+      throwUserError('User not found')
     }
 
     if (!args.muxAssetId || !args.muxPlaybackId) {
       if (args.videoStatus !== 'pending') {
-        throw new Error('Mux asset ID and playback ID are required for Mux videos')
+        throwUserError('Mux asset ID and playback ID are required for Mux videos')
       }
       // Pending bondfires don't require Mux asset IDs yet; fall through.
     }
 
     if (!args.campId) {
-      throw new Error('Choose a camp before sparking a Bondfire')
+      throwUserError('Choose a camp before sparking a Bondfire')
     }
     const campId = args.campId
 
     const camp = await ctx.db.get(campId)
     if (!camp || !isCampParticipableStatus(camp.status)) {
-      throw new Error('Camp not found')
+      throwUserError('Camp not found')
     }
 
     const membership = await ctx.db
@@ -530,24 +531,24 @@ export const create = mutation({
       .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', campId))
       .first()
     if (membership?.status !== 'active') {
-      throw new Error('Join this camp before sparking here')
+      throwUserError('Join this camp before sparking here')
     }
 
     if (camp.access === 'invite' && camp.ownerId !== userId) {
-      throw new Error('Only the private camp owner can spark here')
+      throwUserError('Only the private camp owner can spark here')
     }
 
-    const campGender = camp.rules?.access.gender?.value
+    const campGender = camp.rules?.access?.gender?.value
     if (campGender && campGender !== 'any' && user.gender !== campGender) {
-      throw new Error('This camp is limited to members who match its gender setting')
+      throwUserError('This camp is limited to members who match its gender setting')
     }
 
     if (
-      camp.rules?.participation.maxDurationMs &&
+      camp.rules?.participation?.maxDurationMs &&
       args.durationMs &&
       args.durationMs > camp.rules.participation.maxDurationMs
     ) {
-      throw new Error('This recording is longer than the camp allows')
+      throwUserError('This recording is longer than the camp allows')
     }
 
     // Enforce tier-based video duration limit.
@@ -555,21 +556,22 @@ export const create = mutation({
 
     // Enforce tier-based Bondfire creation permission (Free cannot create).
     const tier = await assertCanCreateBondfire(ctx, userId)
-    if (camp.rules?.access.allowedTiers?.value && camp.rules.access.allowedTiers.value.length > 0) {
-      if (!camp.rules.access.allowedTiers.value.includes(tier)) {
-        throw new Error('Your membership tier cannot spark in this camp')
+    const allowedTiers = camp.rules?.access?.allowedTiers?.value
+    if (allowedTiers && allowedTiers.length > 0) {
+      if (!allowedTiers.includes(tier)) {
+        throwUserError('Your membership tier cannot spark in this camp')
       }
     }
 
-    if (camp.rules?.advisory.requiresTradeTags) {
+    if (camp.rules?.advisory?.requiresTradeTags) {
       const tags = args.tags ?? []
       if (!tags.includes('need') && !tags.includes('offer')) {
-        throw new Error('The Trading Post requires a need or offer tag')
+        throwUserError('The Trading Post requires a need or offer tag')
       }
     }
 
     if (camp.access === 'invite' && args.muxPlaybackPolicy !== 'signed') {
-      throw new Error('Private camp videos must use signed Mux playback')
+      throwUserError('Private camp videos must use signed Mux playback')
     }
 
     const bondfireId = await ctx.db.insert('bondfires', {

@@ -30,7 +30,8 @@ export async function withUserFacingErrors<T>(
     if (error instanceof ConvexError) {
       throw error
     }
-    console.error(`[${context}] unexpected error:`, error)
+    const errorDetail = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+    console.error(`[${context}] unexpected error:`, errorDetail, error instanceof Error ? error.stack : '')
     throw new ConvexError(fallbackMessage)
   }
 }
