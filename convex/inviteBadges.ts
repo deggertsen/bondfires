@@ -51,7 +51,7 @@ export async function addInviteBadgesToBondfires<T extends BadgeableBondfire>(
   return bondfires.map((bondfire) => {
     const badge: BondfireBadge | null = invitedBondfireIds.has(bondfire._id)
       ? 'invited'
-      : bondfire.campId && activeCampIds.has(bondfire.campId) && bondfire.videoCount <= 1
+      : bondfire.campId && activeCampIds.has(bondfire.campId) && bondfire.videoCount === 0
         ? 'sparked'
         : null
 
