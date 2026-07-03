@@ -8,6 +8,8 @@ import {
   getFeedActiveBondfireId,
   getLastLocation,
   hasViewedToday,
+  livePublishStore$,
+  recordingStore$,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
   subscriptionStore$,
@@ -19,7 +21,7 @@ import {
 import { BondfireRow, type BondfireRowProps, Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
-import { Flame, Search, X } from '@tamagui/lucide-icons'
+import { AlertTriangle, Flame, RefreshCw, Search, X } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -51,6 +53,9 @@ type BondfireData = Doc<'bondfires'> & {
 type JoinedCamp = Doc<'camps'> & { membership: Doc<'campMembers'> }
 
 type ViewMode = 'discover' | 'recent' | 'active' | 'unseen'
+
+const SLOW_LOAD_THRESHOLD_MS = 5_000
+const LOADING_TIMEOUT_MS = 15_000
 
 function ModePill({
   label,
@@ -275,6 +280,43 @@ function LoadingFeed() {
   )
 }
 
+function FeedRetry({ onRetry }: { onRetry: () => void }) {
+  return (
+    <YStack
+      flex={1}
+      alignItems="center"
+      justifyContent="center"
+      backgroundColor={'$background'}
+      padding="$6"
+      gap="$4"
+    >
+      <AlertTriangle size={48} color={'$primary'} />
+      <Text fontSize="$6" fontWeight="700" color={'$placeholderColor'} textAlign="center">
+        Connection Issue
+      </Text>
+      <Text fontSize="$4" color={'$placeholderColor'} opacity={0.7} textAlign="center">
+        We're having trouble loading the feed. Check your internet connection and try again.
+      </Text>
+      <Pressable onPress={onRetry}>
+        <YStack
+          flexDirection="row"
+          alignItems="center"
+          gap="$2"
+          backgroundColor={'$primary'}
+          paddingHorizontal="$5"
+          paddingVertical="$3"
+          borderRadius="$4"
+        >
+          <RefreshCw size={18} color={'$background'} />
+          <Text fontSize="$4" fontWeight="600" color={'$background'}>
+            Try Again
+          </Text>
+        </YStack>
+      </Pressable>
+    </YStack>
+  )
+}
+
 function FeedSubscription({
   selectedCampId,
   enabled,
@@ -370,6 +412,44 @@ export default function FeedScreen() {
   const didRestoreScrollRef = useRef(false)
   const persistActiveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const loadStartedAtRef = useRef(Date.now())
+  const slowLoadLoggedRef = useRef(false)
+  const loadingTimeoutLoggedRef = useRef(false)
+  const loadingTelemetryContextRef = useRef({
+    shouldRunBackgroundWork,
+    hasCurrentUserId: !!currentUserId,
+    activeCampId: activeCampId ?? null,
+    activeCampResolving: activeCampId === undefined,
+    recordingPhase: recordingStore$.phase.peek(),
+    liveStatus: livePublishStore$.status.peek(),
+  })
+  const [timedOut, setTimedOut] = useState(false)
+
+  useEffect(() => {
+    loadingTelemetryContextRef.current = {
+      shouldRunBackgroundWork,
+      hasCurrentUserId: !!currentUserId,
+      activeCampId: activeCampId ?? null,
+      activeCampResolving: activeCampId === undefined,
+      recordingPhase: recordingStore$.phase.peek(),
+      liveStatus: livePublishStore$.status.peek(),
+    }
+  }, [activeCampId, currentUserId, shouldRunBackgroundWork])
+
+  const getLoadingTelemetryContext = useCallback(
+    (elapsedMs: number) => ({
+      elapsedMs,
+      ...loadingTelemetryContextRef.current,
+    }),
+    [],
+  )
+
+  const resetLoadTracking = useCallback(() => {
+    loadStartedAtRef.current = Date.now()
+    slowLoadLoggedRef.current = false
+    loadingTimeoutLoggedRef.current = false
+    setTimedOut(false)
+  }, [])
 
   const stopRefreshing = useCallback(() => {
     if (refreshTimeoutRef.current) {
@@ -380,6 +460,7 @@ export default function FeedScreen() {
   }, [])
 
   const handleRefresh = useCallback(() => {
+    resetLoadTracking()
     state$.thumbnailUrls.set({})
     loadingThumbsRef.current = new Set()
     setIsRefreshing(true)
@@ -392,7 +473,7 @@ export default function FeedScreen() {
       refreshTimeoutRef.current = null
       setIsRefreshing(false)
     }, 5000)
-  }, [state$])
+  }, [resetLoadTracking, state$])
 
   const handleBondfiresResolved = useCallback(
     (nextBondfires: BondfireData[]) => {
@@ -403,17 +484,86 @@ export default function FeedScreen() {
   )
 
   useEffect(() => {
+    if (bondfires !== undefined) {
+      return
+    }
+
+    const timer = setTimeout(() => {
+      if (slowLoadLoggedRef.current) {
+        return
+      }
+
+      slowLoadLoggedRef.current = true
+      const elapsedMs = Date.now() - loadStartedAtRef.current
+      telemetry.warn('feed:slow-load', 'Feed still loading after 5 seconds', {
+        ...getLoadingTelemetryContext(elapsedMs),
+      })
+    }, SLOW_LOAD_THRESHOLD_MS)
+
+    return () => clearTimeout(timer)
+  }, [bondfires, getLoadingTelemetryContext])
+
+  useEffect(() => {
+    if (bondfires !== undefined) {
+      return
+    }
+
+    const timer = setTimeout(() => {
+      if (loadingTimeoutLoggedRef.current) {
+        return
+      }
+
+      loadingTimeoutLoggedRef.current = true
+      const elapsedMs = Date.now() - loadStartedAtRef.current
+      telemetry.error('feed:loading-timeout', 'Feed loading timed out', {
+        ...getLoadingTelemetryContext(elapsedMs),
+      })
+      setTimedOut(true)
+    }, LOADING_TIMEOUT_MS)
+
+    return () => clearTimeout(timer)
+  }, [bondfires, getLoadingTelemetryContext])
+
+  useEffect(() => {
+    if (bondfires === undefined) {
+      return
+    }
+
+    const elapsedMs = Date.now() - loadStartedAtRef.current
+    if (slowLoadLoggedRef.current) {
+      telemetry.info('feed:recovered', 'Feed recovered after slow load', {
+        ...getLoadingTelemetryContext(elapsedMs),
+      })
+    }
+
+    telemetry.breadcrumb('feed:loaded', {
+      elapsedMs,
+      count: bondfires.length,
+    })
+
+    resetLoadTracking()
+  }, [bondfires, getLoadingTelemetryContext, resetLoadTracking])
+
+  const handleRetry = useCallback(() => {
+    telemetry.breadcrumb('feed:retry')
+    resetLoadTracking()
+    setBondfires(undefined)
+    setRefreshKey((current) => current + 1)
+  }, [resetLoadTracking])
+
+  useEffect(() => {
     if (!selectedCampId || joinedCamps === undefined) {
       return
     }
 
     if (!feedCamps.some((camp) => camp._id === selectedCampId)) {
+      resetLoadTracking()
       setBondfires(undefined)
       state$.thumbnailUrls.set({})
       loadingThumbsRef.current = new Set()
       appActions.setCurrentCampId(null)
     }
-  }, [feedCamps, joinedCamps, selectedCampId, state$])
+  }, [feedCamps, joinedCamps, resetLoadTracking, selectedCampId, state$])
 
   const filtered = useMemo(() => {
     if (!bondfires) return bondfires
@@ -597,13 +747,14 @@ export default function FeedScreen() {
 
   const handleSelectCamp = useCallback(
     (campId: string | null) => {
+      resetLoadTracking()
       setBondfires(undefined)
       state$.thumbnailUrls.set({})
       loadingThumbsRef.current = new Set()
       appActions.setCurrentCampId(campId)
       listRef.current?.scrollToOffset({ offset: 0, animated: true })
     },
-    [state$],
+    [resetLoadTracking, state$],
   )
 
   // ── Swipe action handlers ───────────────────────────────────────
@@ -740,7 +891,7 @@ export default function FeedScreen() {
           selectedCampId={activeCampId}
           onResolved={handleBondfiresResolved}
         />
-        <LoadingFeed />
+        {timedOut ? <FeedRetry onRetry={handleRetry} /> : <LoadingFeed />}
       </YStack>
     )
   }
