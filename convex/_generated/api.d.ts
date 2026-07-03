@@ -33,6 +33,8 @@ import type * as email from "../email.js";
 import type * as entitlements from "../entitlements.js";
 import type * as errors from "../errors.js";
 import type * as http from "../http.js";
+import type * as inviteBadges from "../inviteBadges.js";
+import type * as inviteClaims from "../inviteClaims.js";
 import type * as inviteCodes from "../inviteCodes.js";
 import type * as lib_emojis from "../lib/emojis.js";
 import type * as lib_liveIngest from "../lib/liveIngest.js";
@@ -89,6 +91,8 @@ declare const fullApi: ApiFromModules<{
   entitlements: typeof entitlements;
   errors: typeof errors;
   http: typeof http;
+  inviteBadges: typeof inviteBadges;
+  inviteClaims: typeof inviteClaims;
   inviteCodes: typeof inviteCodes;
   "lib/emojis": typeof lib_emojis;
   "lib/liveIngest": typeof lib_liveIngest;

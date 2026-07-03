@@ -249,6 +249,35 @@ export default defineSchema({
     .index('by_created_by', ['createdBy', 'createdAt'])
     .index('by_expires_at', ['expiresAt']),
 
+  inviteClaims: defineTable({
+    inviteCodeId: v.optional(v.id('inviteCodes')),
+    bondfireId: v.optional(v.id('bondfires')),
+    campId: v.optional(v.id('camps')),
+    senderId: v.id('users'),
+    claimerId: v.id('users'),
+    source: v.union(v.literal('direct'), v.literal('code'), v.literal('camp')),
+    seen: v.boolean(),
+    dismissed: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index('by_claimer', ['claimerId', 'createdAt'])
+    .index('by_claimer_unseen', ['claimerId', 'seen', 'dismissed'])
+    .index('by_bondfire_claimer', ['bondfireId', 'claimerId'])
+    .index('by_camp_claimer', ['campId', 'claimerId'])
+    .index('by_invite_code', ['inviteCodeId', 'claimerId']),
+
+  notifications: defineTable({
+    userId: v.id('users'),
+    type: v.string(),
+    title: v.string(),
+    body: v.string(),
+    data: v.any(),
+    read: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId', 'createdAt'])
+    .index('by_user_unread', ['userId', 'read', 'createdAt']),
+
   // Store subscription state. Client sync only records pending receipts; entitlement helpers
   // count active/trialing rows after server-side store validation marks them verified.
   subscriptions: defineTable({

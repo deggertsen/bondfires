@@ -253,7 +253,7 @@ export const redeemInvite = mutation({
     ),
 })
 
-async function redeemInviteHandler(ctx: MutationCtx, rawCode: string) {
+export async function redeemInviteHandler(ctx: MutationCtx, rawCode: string) {
   const user = await getCurrentUser(ctx)
   const now = Date.now()
   const code = normalizeInviteCode(rawCode)

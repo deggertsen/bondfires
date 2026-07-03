@@ -47,6 +47,7 @@ type BondfireData = Doc<'bondfires'> & {
   isLive?: boolean
   livePlaybackId?: string
   campLabel?: string
+  badge?: 'sparked' | 'invited' | null
 }
 type JoinedCamp = Doc<'camps'> & { membership: Doc<'campMembers'> }
 
@@ -138,6 +139,7 @@ function toBondfireRowProps(
     thumbnailUrl,
     isLive: bondfire.videoStatus === 'live' || !!bondfire.isLive,
     statusLabel: hasViewedToday(bondfire._id) ? 'Viewed' : 'New',
+    badge: bondfire.badge,
     participants: [], // Feed doesn't load participants yet — empty for now
     actions: getBondfireSwipeActions({
       isOwner,
