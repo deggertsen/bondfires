@@ -14,12 +14,13 @@ import {
   telemetry,
   useAppThemeColors,
   useCanRunRecordingBackgroundWork,
+  useLoadingTimeoutTelemetry,
   useSubscription,
 } from '@bondfires/app'
 import { BondfireRow, type BondfireRowProps, Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
-import { Flame, Search, X } from '@tamagui/lucide-icons'
+import { AlertTriangle, Flame, RefreshCw, Search, X } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -277,6 +278,43 @@ function LoadingFeed() {
   )
 }
 
+function FeedRetry({ onRetry }: { onRetry: () => void }) {
+  return (
+    <YStack
+      flex={1}
+      alignItems="center"
+      justifyContent="center"
+      backgroundColor={'$background'}
+      padding="$6"
+      gap="$4"
+    >
+      <AlertTriangle size={48} color={'$primary'} />
+      <Text fontSize="$6" fontWeight="700" color={'$placeholderColor'} textAlign="center">
+        Connection Issue
+      </Text>
+      <Text fontSize="$4" color={'$placeholderColor'} opacity={0.7} textAlign="center">
+        We're having trouble loading the feed. Check your internet connection and try again.
+      </Text>
+      <Pressable onPress={onRetry}>
+        <YStack
+          flexDirection="row"
+          alignItems="center"
+          gap="$2"
+          backgroundColor={'$primary'}
+          paddingHorizontal="$5"
+          paddingVertical="$3"
+          borderRadius="$4"
+        >
+          <RefreshCw size={18} color={'$background'} />
+          <Text fontSize="$4" fontWeight="600" color={'$background'}>
+            Try Again
+          </Text>
+        </YStack>
+      </Pressable>
+    </YStack>
+  )
+}
+
 function FeedSubscription({
   selectedCampId,
   enabled,
@@ -372,6 +410,18 @@ export default function FeedScreen() {
   const didRestoreScrollRef = useRef(false)
   const persistActiveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const { timedOut, resetLoadTracking } = useLoadingTimeoutTelemetry({
+    eventName: 'feed',
+    label: 'Feed',
+    isLoading: bondfires === undefined,
+    loadedCount: bondfires?.length,
+    context: {
+      shouldRunBackgroundWork,
+      hasCurrentUserId: !!currentUserId,
+      activeCampId: activeCampId ?? null,
+      activeCampResolving: activeCampId === undefined,
+    },
+  })
 
   const stopRefreshing = useCallback(() => {
     if (refreshTimeoutRef.current) {
@@ -382,6 +432,7 @@ export default function FeedScreen() {
   }, [])
 
   const handleRefresh = useCallback(() => {
+    resetLoadTracking()
     state$.thumbnailUrls.set({})
     loadingThumbsRef.current = new Set()
     setIsRefreshing(true)
@@ -394,7 +445,7 @@ export default function FeedScreen() {
       refreshTimeoutRef.current = null
       setIsRefreshing(false)
     }, 5000)
-  }, [state$])
+  }, [resetLoadTracking, state$])
 
   const handleBondfiresResolved = useCallback(
     (nextBondfires: BondfireData[]) => {
@@ -404,18 +455,26 @@ export default function FeedScreen() {
     [stopRefreshing],
   )
 
+  const handleRetry = useCallback(() => {
+    telemetry.breadcrumb('feed:retry')
+    resetLoadTracking()
+    setBondfires(undefined)
+    setRefreshKey((current) => current + 1)
+  }, [resetLoadTracking])
+
   useEffect(() => {
     if (!selectedCampId || joinedCamps === undefined) {
       return
     }
 
     if (!feedCamps.some((camp) => camp._id === selectedCampId)) {
+      resetLoadTracking()
       setBondfires(undefined)
       state$.thumbnailUrls.set({})
       loadingThumbsRef.current = new Set()
       appActions.setCurrentCampId(null)
     }
-  }, [feedCamps, joinedCamps, selectedCampId, state$])
+  }, [feedCamps, joinedCamps, resetLoadTracking, selectedCampId, state$])
 
   const filtered = useMemo(() => {
     if (!bondfires) return bondfires
@@ -599,13 +658,14 @@ export default function FeedScreen() {
 
   const handleSelectCamp = useCallback(
     (campId: string | null) => {
+      resetLoadTracking()
       setBondfires(undefined)
       state$.thumbnailUrls.set({})
       loadingThumbsRef.current = new Set()
       appActions.setCurrentCampId(campId)
       listRef.current?.scrollToOffset({ offset: 0, animated: true })
     },
-    [state$],
+    [resetLoadTracking, state$],
   )
 
   // ── Swipe action handlers ───────────────────────────────────────
@@ -742,7 +802,7 @@ export default function FeedScreen() {
           selectedCampId={activeCampId}
           onResolved={handleBondfiresResolved}
         />
-        <LoadingFeed />
+        {timedOut ? <FeedRetry onRetry={handleRetry} /> : <LoadingFeed />}
       </YStack>
     )
   }

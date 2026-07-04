@@ -3,8 +3,8 @@ import { Button, Text, XStack, YStack } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
 import { Trash2 } from '@tamagui/lucide-icons'
 import { useEffect, useRef } from 'react'
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
 import { Pressable, StyleSheet, TextInput } from 'react-native'
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
 import { VIDEO_OVERLAY_COLORS } from './videoOverlayColors'
 
 interface NotepadOverlayProps {
@@ -40,11 +40,7 @@ export function NotepadOverlay({ onClose }: NotepadOverlayProps) {
 
   return (
     <Pressable style={StyleSheet.absoluteFill} onPress={onClose}>
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior="padding"
-        keyboardVerticalOffset={0}
-      >
+      <KeyboardAvoidingView style={styles.container} behavior="padding" keyboardVerticalOffset={0}>
         <YStack
           flex={1}
           backgroundColor={overlayBg}

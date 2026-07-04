@@ -104,80 +104,80 @@ export function EditTitleSheet({
         borderTopRightRadius={20}
         padding={24}
       >
-          <StatusBar barStyle={statusBarStyle} />
+        <StatusBar barStyle={statusBarStyle} />
 
-          <Sheet.Handle backgroundColor={'$borderColor'} marginBottom={16} />
+        <Sheet.Handle backgroundColor={'$borderColor'} marginBottom={16} />
 
-          <YStack gap={16}>
-            <Text fontSize={20} fontWeight="900" textAlign="center">
-              Edit Title
-            </Text>
+        <YStack gap={16}>
+          <Text fontSize={20} fontWeight="900" textAlign="center">
+            Edit Title
+          </Text>
 
-            <YStack gap={6}>
-              <TextInput
-                value={editedTitle}
-                onChangeText={(text) => setEditedTitle(text)}
-                placeholder={
-                  creatorName ? `${creatorName}'s Bondfire` : 'Give your Bondfire a title...'
-                }
-                placeholderTextColor={colors.placeholderColor}
-                style={{
-                  backgroundColor: colors.backgroundHover,
-                  color: colors.color,
-                  fontSize: 16,
-                  fontWeight: '600',
-                  paddingHorizontal: 16,
-                  paddingVertical: 14,
-                  borderRadius: 12,
-                  borderWidth: 1,
-                  borderColor: colors.borderColor,
-                }}
-                maxLength={MAX_TITLE_LENGTH}
-                returnKeyType="done"
-                autoFocus={true}
-                onSubmitEditing={() => {
-                  void handleSave()
-                }}
-              />
-              <XStack justifyContent="space-between" alignItems="center">
-                <Text fontSize={11} color={'$placeholderColor'}>
-                  {creatorName
-                    ? `Empty resets to "${creatorName}'s Bondfire"`
-                    : 'Empty resets to "My Bondfire"'}
-                </Text>
-                <Text fontSize={11} color={'$placeholderColor'}>
-                  {editedTitle.length}/{MAX_TITLE_LENGTH}
-                </Text>
-              </XStack>
-            </YStack>
-
-            <XStack gap={12} marginTop={4}>
-              <Button
-                variant="outline"
-                size="$lg"
-                flex={1}
-                onPress={handleCancel}
-                disabled={isSaving}
-              >
-                <Text color={'$color'} fontWeight="700">
-                  Cancel
-                </Text>
-              </Button>
-              <Button
-                variant="primary"
-                size="$lg"
-                flex={1}
-                onPress={() => {
-                  void handleSave()
-                }}
-                disabled={isSaving}
-              >
-                <Text color={'$color'} fontWeight="700">
-                  {isSaving ? 'Saving...' : 'Save'}
-                </Text>
-              </Button>
+          <YStack gap={6}>
+            <TextInput
+              value={editedTitle}
+              onChangeText={(text) => setEditedTitle(text)}
+              placeholder={
+                creatorName ? `${creatorName}'s Bondfire` : 'Give your Bondfire a title...'
+              }
+              placeholderTextColor={colors.placeholderColor}
+              style={{
+                backgroundColor: colors.backgroundHover,
+                color: colors.color,
+                fontSize: 16,
+                fontWeight: '600',
+                paddingHorizontal: 16,
+                paddingVertical: 14,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: colors.borderColor,
+              }}
+              maxLength={MAX_TITLE_LENGTH}
+              returnKeyType="done"
+              autoFocus={true}
+              onSubmitEditing={() => {
+                void handleSave()
+              }}
+            />
+            <XStack justifyContent="space-between" alignItems="center">
+              <Text fontSize={11} color={'$placeholderColor'}>
+                {creatorName
+                  ? `Empty resets to "${creatorName}'s Bondfire"`
+                  : 'Empty resets to "My Bondfire"'}
+              </Text>
+              <Text fontSize={11} color={'$placeholderColor'}>
+                {editedTitle.length}/{MAX_TITLE_LENGTH}
+              </Text>
             </XStack>
           </YStack>
+
+          <XStack gap={12} marginTop={4}>
+            <Button
+              variant="outline"
+              size="$lg"
+              flex={1}
+              onPress={handleCancel}
+              disabled={isSaving}
+            >
+              <Text color={'$color'} fontWeight="700">
+                Cancel
+              </Text>
+            </Button>
+            <Button
+              variant="primary"
+              size="$lg"
+              flex={1}
+              onPress={() => {
+                void handleSave()
+              }}
+              disabled={isSaving}
+            >
+              <Text color={'$color'} fontWeight="700">
+                {isSaving ? 'Saving...' : 'Save'}
+              </Text>
+            </Button>
+          </XStack>
+        </YStack>
       </Sheet.Frame>
     </Sheet>
   )

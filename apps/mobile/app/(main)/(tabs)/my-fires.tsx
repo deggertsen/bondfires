@@ -8,10 +8,11 @@ import {
   useAppThemeColors,
   useCanRunRecordingBackgroundWork,
   useCurrentUserId,
+  useLoadingTimeoutTelemetry,
 } from '@bondfires/app'
 import { BondfireRow, type BondfireRowProps, Button, Spinner, Text } from '@bondfires/ui'
 import { useIsFocused } from '@react-navigation/native'
-import { Flame, Pin } from '@tamagui/lucide-icons'
+import { AlertTriangle, Flame, Pin, RefreshCw } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -55,6 +56,74 @@ type InviteRow = {
   bondfire: Doc<'bondfires'> | null
   camp: Doc<'camps'> | null
   sender: PublicUser | null
+}
+
+function MyFiresSubscription({
+  enabled,
+  pinnedFirst,
+  onResolved,
+}: {
+  enabled: boolean
+  pinnedFirst: boolean
+  onResolved: (threads: MyFire[]) => void
+}) {
+  const threads = useQuery(
+    api.conversations.listMyFires,
+    enabled ? { limit: 80, pinnedFirst } : 'skip',
+  ) as MyFire[] | undefined
+
+  useEffect(() => {
+    if (threads !== undefined) {
+      onResolved(threads)
+    }
+  }, [onResolved, threads])
+
+  return null
+}
+
+function LoadingMyFires() {
+  return (
+    <YStack flex={1} alignItems="center" justifyContent="center">
+      <Spinner size="large" color={'$primary'} />
+    </YStack>
+  )
+}
+
+function MyFiresRetry({ onRetry }: { onRetry: () => void }) {
+  return (
+    <YStack
+      flex={1}
+      alignItems="center"
+      justifyContent="center"
+      backgroundColor={'$background'}
+      padding="$6"
+      gap="$4"
+    >
+      <AlertTriangle size={48} color={'$primary'} />
+      <Text fontSize="$6" fontWeight="700" color={'$placeholderColor'} textAlign="center">
+        Connection Issue
+      </Text>
+      <Text fontSize="$4" color={'$placeholderColor'} opacity={0.7} textAlign="center">
+        We're having trouble loading your fires. Check your internet connection and try again.
+      </Text>
+      <Pressable onPress={onRetry}>
+        <YStack
+          flexDirection="row"
+          alignItems="center"
+          gap="$2"
+          backgroundColor={'$primary'}
+          paddingHorizontal="$5"
+          paddingVertical="$3"
+          borderRadius="$4"
+        >
+          <RefreshCw size={18} color={'$background'} />
+          <Text fontSize="$4" fontWeight="600" color={'$background'}>
+            Try Again
+          </Text>
+        </YStack>
+      </Pressable>
+    </YStack>
+  )
 }
 
 function toBondfireRowProps(
@@ -143,13 +212,11 @@ export default function MyFiresScreen() {
   const router = useRouter()
   const isFocused = useIsFocused()
   const shouldRunBackgroundWork = useCanRunRecordingBackgroundWork(isFocused)
+  const { userId: currentUserId, isLoading: isUserLoading, currentUser } = useCurrentUserId()
   const [refreshKey, setRefreshKey] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [pinnedFirst, setPinnedFirst] = useState(false)
-  const threads = useQuery(
-    api.conversations.listMyFires,
-    shouldRunBackgroundWork ? { limit: 80, pinnedFirst } : 'skip',
-  ) as MyFire[] | undefined
+  const [threads, setThreads] = useState<MyFire[] | undefined>(undefined)
   const invitedRows = useQuery(
     api.inviteClaims.listUnseenInvites,
     shouldRunBackgroundWork ? {} : 'skip',
@@ -162,7 +229,6 @@ export default function MyFiresScreen() {
   const unpinBondfire = useMutation(api.bondfires.unpinBondfire)
   const reportBondfire = useMutation(api.reports.submit)
   const dismissInvite = useMutation(api.inviteClaims.dismissInvite)
-  const { userId: currentUserId, isLoading: isUserLoading, currentUser } = useCurrentUserId()
 
   const pinnedIds = useMemo(
     () => (currentUser?.pinnedBondfireIds ?? []) as string[],
@@ -185,6 +251,31 @@ export default function MyFiresScreen() {
       }),
     [invitedRows],
   )
+
+  const isLoading = threads === undefined || isUserLoading
+  const { timedOut, resetLoadTracking } = useLoadingTimeoutTelemetry({
+    eventName: 'myFires',
+    label: 'My Fires',
+    isLoading,
+    loadedCount: threads?.length,
+    context: {
+      shouldRunBackgroundWork,
+      hasCurrentUserId: !!currentUserId,
+      isUserLoading,
+    },
+  })
+
+  const handleThreadsResolved = useCallback((nextThreads: MyFire[]) => {
+    setThreads(nextThreads)
+    setIsRefreshing(false)
+  }, [])
+
+  const handleRetry = useCallback(() => {
+    telemetry.breadcrumb('myFires:retry')
+    resetLoadTracking()
+    setThreads(undefined)
+    setRefreshKey((current) => current + 1)
+  }, [resetLoadTracking])
 
   useEffect(() => {
     if (!threads || isUserLoading || !currentUserId) {
@@ -252,12 +343,20 @@ export default function MyFiresScreen() {
   )
 
   const handleRefresh = useCallback(() => {
+    resetLoadTracking()
     setThumbnailUrls({})
     loadingThumbsRef.current = new Set()
     setIsRefreshing(true)
     setRefreshKey((current) => current + 1)
     setTimeout(() => setIsRefreshing(false), 800)
-  }, [])
+  }, [resetLoadTracking])
+
+  const handleTogglePinnedFirst = useCallback(() => {
+    resetLoadTracking()
+    setThreads(undefined)
+    setPinnedFirst((prev) => !prev)
+    setRefreshKey((current) => current + 1)
+  }, [resetLoadTracking])
 
   const handleOpen = useCallback(
     (bondfireId: string) => {
@@ -359,19 +458,29 @@ export default function MyFiresScreen() {
     [reportBondfire],
   )
 
-  if (threads === undefined || isUserLoading) {
+  if (isLoading) {
     return (
       <YStack flex={1} backgroundColor={'$background'}>
+        <MyFiresSubscription
+          key={refreshKey}
+          enabled={shouldRunBackgroundWork}
+          pinnedFirst={pinnedFirst}
+          onResolved={handleThreadsResolved}
+        />
         <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
-        <YStack flex={1} alignItems="center" justifyContent="center">
-          <Spinner size="large" color={'$primary'} />
-        </YStack>
+        {timedOut ? <MyFiresRetry onRetry={handleRetry} /> : <LoadingMyFires />}
       </YStack>
     )
   }
 
   return (
     <YStack flex={1} backgroundColor={'$background'}>
+      <MyFiresSubscription
+        key={refreshKey}
+        enabled={shouldRunBackgroundWork}
+        pinnedFirst={pinnedFirst}
+        onResolved={handleThreadsResolved}
+      />
       <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
       <FlatList
         key={refreshKey}
@@ -444,7 +553,7 @@ export default function MyFiresScreen() {
                     : 'All caught up'}
                 </Text>
               </YStack>
-              <Pressable onPress={() => setPinnedFirst((prev) => !prev)} hitSlop={12}>
+              <Pressable onPress={handleTogglePinnedFirst} hitSlop={12}>
                 <Pin
                   size={22}
                   color={pinnedFirst ? '$primary' : '$placeholderColor'}

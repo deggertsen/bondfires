@@ -1,8 +1,8 @@
 import { useObservable, useValue } from '@legendapp/state/react'
 import { X } from '@tamagui/lucide-icons'
 import { useMutation } from 'convex/react'
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
 import { Modal, Pressable, StyleSheet } from 'react-native'
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
 import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import { CategoryStep } from './CategoryStep'
@@ -147,10 +147,7 @@ export function ReportOverlay({
   return (
     <Modal transparent visible animationType="slide" onRequestClose={onClose}>
       <Pressable style={StyleSheet.absoluteFill} onPress={onClose}>
-        <KeyboardAvoidingView
-          style={styles.container}
-          behavior="padding"
-        >
+        <KeyboardAvoidingView style={styles.container} behavior="padding">
           <YStack flex={1} justifyContent="flex-end">
             <Pressable onPress={(e) => e.stopPropagation()}>
               <YStack
