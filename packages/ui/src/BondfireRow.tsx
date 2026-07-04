@@ -1,4 +1,4 @@
-import { Flame, Mail, MessageCircle, User } from '@tamagui/lucide-icons'
+import { Flame, MessageCircle, User } from '@tamagui/lucide-icons'
 import { Image } from 'expo-image'
 import { Pressable } from 'react-native'
 import { Avatar, XStack, YStack } from 'tamagui'
@@ -30,7 +30,7 @@ export type BondfireRowProps = {
   /** Status label displayed after the timestamp, e.g. "Viewed" or "New" */
   statusLabel: string
   /** Optional priority badge computed by the backend */
-  badge?: 'sparked' | 'invited' | null
+  badge?: 'sparked' | 'invited' | 'kindled' | null
   /** Participant avatars to show */
   participants: BondfireParticipant[]
   /** Swipe actions revealed by swiping LEFT (destructive / admin) */
@@ -80,28 +80,45 @@ function ParticipantStack({ participants }: { participants: BondfireParticipant[
   )
 }
 
-function BondfireBadge({ badge }: { badge: NonNullable<BondfireRowProps['badge']> }) {
-  const isInvited = badge === 'invited'
-  const Icon = isInvited ? Mail : Flame
-  const label = isInvited ? 'Invited' : 'Sparked'
-  const color = isInvited ? '$secondary' : '$primary'
+function getRibbonConfig(badge: NonNullable<BondfireRowProps['badge']>) {
+  switch (badge) {
+    case 'invited':
+      return { label: 'Invited', bgColor: '$secondary' as const }
+    case 'sparked':
+      return { label: 'Sparked', bgColor: '$primary' as const }
+    case 'kindled':
+      return { label: 'Kindled', bgColor: '$warning' as const }
+  }
+}
+
+/**
+ * Status banner across the bottom of the video thumbnail — like a "LIVE"
+ * lower-third. Clipped by the thumbnail's rounded corners.
+ */
+function BondfireRibbon({ badge }: { badge: NonNullable<BondfireRowProps['badge']> }) {
+  const config = getRibbonConfig(badge)
 
   return (
-    <XStack
-      alignItems="center"
-      gap={4}
-      paddingHorizontal={8}
+    <YStack
+      position="absolute"
+      left={0}
+      right={0}
+      bottom={0}
       paddingVertical={3}
-      borderRadius={8}
-      backgroundColor="$backgroundHover"
-      borderWidth={1}
-      borderColor={color}
+      backgroundColor={config.bgColor}
+      alignItems="center"
+      zIndex={10}
     >
-      <Icon size={12} color={color} />
-      <Text fontSize={11} fontWeight="900" color={color} numberOfLines={1}>
-        {label}
+      <Text
+        fontSize={9}
+        fontWeight="900"
+        color="$background"
+        textTransform="uppercase"
+        letterSpacing={0.8}
+      >
+        {config.label}
       </Text>
-    </XStack>
+    </YStack>
   )
 }
 
@@ -172,6 +189,7 @@ export function BondfireRow({
               </Text>
             </YStack>
           )}
+          {badge ? <BondfireRibbon badge={badge} /> : null}
         </YStack>
 
         {/* Content */}
@@ -194,7 +212,6 @@ export function BondfireRow({
           </XStack>
 
           <XStack alignItems="center" gap={14}>
-            {badge ? <BondfireBadge badge={badge} /> : null}
             {participants.length > 0 ? <ParticipantStack participants={participants} /> : null}
             <XStack alignItems="center" gap={6}>
               <MessageCircle size={16} color="$placeholderColor" />
