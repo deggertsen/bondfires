@@ -48,7 +48,7 @@ type MyFire = Doc<'bondfires'> & {
   lastActivityAt: number
   unread: boolean
   participants: ThreadParticipant[]
-  badge?: 'sparked' | 'invited' | null
+  badge?: 'sparked' | 'invited' | 'kindled' | null
 }
 
 type InviteRow = {

@@ -1,9 +1,16 @@
 import type { Doc, Id } from './_generated/dataModel'
 import type { QueryCtx } from './_generated/server'
 
-export type BondfireBadge = 'sparked' | 'invited'
+export type BondfireBadge = 'sparked' | 'invited' | 'kindled'
 
-type BadgeableBondfire = Pick<Doc<'bondfires'>, '_id' | 'campId' | 'videoCount'>
+type BadgeableBondfire = Pick<Doc<'bondfires'>, '_id' | 'campId' | 'videoCount'> & {
+  /**
+   * Whether the viewer has unseen activity in this bondfire (computed for My Fires
+   * thread summaries). When true and the viewer wasn't just invited, the bondfire
+   * is badged 'kindled' — the fire is growing with responses they haven't watched.
+   */
+  unread?: boolean
+}
 
 export async function addInviteBadgesToBondfires<T extends BadgeableBondfire>(
   ctx: QueryCtx,
@@ -51,9 +58,11 @@ export async function addInviteBadgesToBondfires<T extends BadgeableBondfire>(
   return bondfires.map((bondfire) => {
     const badge: BondfireBadge | null = invitedBondfireIds.has(bondfire._id)
       ? 'invited'
-      : bondfire.campId && activeCampIds.has(bondfire.campId) && bondfire.videoCount === 0
-        ? 'sparked'
-        : null
+      : bondfire.unread === true
+        ? 'kindled'
+        : bondfire.campId && activeCampIds.has(bondfire.campId) && bondfire.videoCount === 0
+          ? 'sparked'
+          : null
 
     return { ...bondfire, badge }
   })

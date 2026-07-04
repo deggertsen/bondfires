@@ -48,7 +48,7 @@ type BondfireData = Doc<'bondfires'> & {
   isLive?: boolean
   livePlaybackId?: string
   campLabel?: string
-  badge?: 'sparked' | 'invited' | null
+  badge?: 'sparked' | 'invited' | 'kindled' | null
 }
 type JoinedCamp = Doc<'camps'> & { membership: Doc<'campMembers'> }
 
