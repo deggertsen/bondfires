@@ -48,6 +48,8 @@ export type CameraFacing = 'front' | 'back'
 
 export interface RecordingState {
   phase: RecordingPhase
+  /** Timestamp for the current non-idle phase, used by the watchdog. */
+  phaseStartedAt: number | null
   /** Which camera the user wants. The publisher/camera owns the real state. */
   facing: CameraFacing
   /** Mid-recording camera swap target (legacy segment path). */
@@ -72,6 +74,7 @@ export interface RecordingState {
 
 const defaultRecordingState: RecordingState = {
   phase: 'idle',
+  phaseStartedAt: null,
   facing: 'front',
   pendingFacing: null,
   cameraResetCounter: 0,
@@ -106,6 +109,7 @@ export const recordingActions = {
     }
 
     recordingStore$.phase.set(phase)
+    recordingStore$.phaseStartedAt.set(phase === 'idle' ? null : Date.now())
   },
 
   /**
@@ -114,6 +118,7 @@ export const recordingActions = {
    */
   resetFlow: (reason?: string) => {
     recordingActions.setPhase('idle', reason)
+    recordingStore$.phaseStartedAt.set(null)
     recordingStore$.pendingFacing.set(null)
     recordingStore$.recordingDuration.set(0)
     recordingStore$.videoUri.set(null)
