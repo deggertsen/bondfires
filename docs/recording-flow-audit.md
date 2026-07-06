@@ -74,7 +74,7 @@ On iOS, an RTMP drop, an `AVCaptureSession` interruption, or a runtime error fro
 
 ### Remaining freeze risks (not fixed here)
 
-- No frame-level watchdog: if the encoder stalls while the RTMP socket stays open, neither platform notices. Real `getStats()` (HaishinKit `currentFPS` / StreamPack bitrate) + a JS-side "no frames for N seconds" check would cover it.
+- ~~No frame-level watchdog: if the encoder stalls while the RTMP socket stays open, neither platform notices. Real `getStats()` (HaishinKit `currentFPS` / StreamPack bitrate) + a JS-side "no frames for N seconds" check would cover it.~~ **Fixed July 2026**: Android `getStats()` now measures real throughput via `TrafficStats` TX-byte deltas (StreamPack 3.x exposes no byte counters), both platforms tag real measurements with `statsSupported`, and the JS watchdog (`packages/app/src/utils/liveStallDetector.ts`) detects both mid-stream stalls and the never-produced-a-frame mode that 24h of production telemetry showed to be the dominant failure. When a recording dies having never sent Mux a frame, the UI now cancels for a clean retry instead of finalizing a zero-byte partial.
 - `swapCamera` failure leaves JS `facing` state flipped even when the native swap failed (`create.tsx` `toggleLiveFacing`).
 
 ## Architecture audit: why this system grows bugs

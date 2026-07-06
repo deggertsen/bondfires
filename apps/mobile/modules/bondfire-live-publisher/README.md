@@ -31,7 +31,23 @@ code must be added in all three places.** JS rejects unknown statuses with a
 | Stream stopped | JS zero-throughput watchdog (via real getStats) | `isStreamingFlow` |
 | Connection dropped | `Session.isConnected` poll (3s) | `isOpenFlow` |
 | Intentional-stop suppression | `isStopping` | `isStoppingIntentionally` |
-| Real throughput stats | ✅ (`RTMPStream.info`) | ❌ (returns zeros — watchdog stays disarmed) |
+| Real throughput stats | ✅ (`RTMPStream.info`) | ✅ (`TrafficStats` UID TX-byte deltas) |
+
+`getStats()` marks real measurements with `statsSupported: 1`; the JS stall
+watchdog ignores samples without it, so builds that can't measure (or
+Android's first baseline-establishing poll) can never false-positive. The
+watchdog detects both an encoder that stalls after healthy throughput and a
+pipeline that never delivers a first frame (the dominant camera-freeze mode
+found in the July 2026 telemetry investigation).
+
+False-positive guards, because Android's measurement is app-wide rather than
+per-stream: iOS uses exact-zero semantics (a genuinely low-bitrate stream is
+healthy); Android reports samples unmeasurable while the per-UID counter has
+never advanced in the session (stale/broken OEM counters) and the JS side
+ignores Android samples while a queue upload is in flight (foreign traffic
+would otherwise mask a frozen pipeline). The destructive never-started cancel
+in LiveRecordScreen is additionally capped at 60s — beyond that the stop path
+relies on Mux's authoritative `recordingStarted` flag.
 
 ### Error events (`error`)
 

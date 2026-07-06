@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useRef } from 'react'
+import { AppState, Platform } from 'react-native'
 import { telemetry } from '../services/telemetry'
 import { livePublishActions, livePublishStore$ } from '../store/livePublish.store'
 import { isNativePublisherStatus } from '../store/livePublisherContract'
+import { uploadQueueStore$ } from '../store/uploadQueue.store'
+import {
+  createStallDetector,
+  IOS_STALL_BITRATE_FLOOR_BPS,
+  STALL_BITRATE_FLOOR_BPS,
+  STATS_SAMPLE_INTERVAL_MS,
+  type StallDetector,
+} from '../utils/liveStallDetector'
 
 export interface LivePublisherStartOptions {
   rtmpsUrl: string
@@ -14,12 +23,22 @@ export interface LivePublisherStartOptions {
   initialCamera?: 'front' | 'back'
 }
 
+// Keep in sync with LivePublisherStats in
+// apps/mobile/modules/bondfire-live-publisher/index.ts and the getStats
+// payloads in the Swift/Kotlin modules (livePublisherZeroStats / STATS_ZEROS).
 export interface LivePublisherStats {
   bitrateBps: number
   rttMs: number
   droppedFrames: number
   /** Encoder output FPS (iOS only for now; 0 where unsupported). */
   currentFps?: number
+  /**
+   * 1 when bitrateBps is a real measurement (HaishinKit stream info on iOS,
+   * TrafficStats TX delta on Android), 0/absent when it's a hard zero from a
+   * platform or build that can't measure — those samples must not feed the
+   * stall watchdog.
+   */
+  statsSupported?: number
 }
 
 export interface LivePublisherSubscription {
@@ -143,6 +162,8 @@ export function useLivePublisher(options: {
           sessionId: livePublishStore$.sessionId.peek(),
           recordId: livePublishStore$.recordId.peek(),
           durationMs: startedAt ? Date.now() - startedAt : undefined,
+          lastBitrateBps: livePublishStore$.bitrateBps.peek(),
+          everHadThroughput: livePublishStore$.everHadThroughput.peek(),
         })
       }
     })
@@ -203,25 +224,59 @@ export function useLivePublisher(options: {
     }
   }, [options.publisher, stopStatsSampling])
 
-  // Stall watchdog state. Only armed after at least one nonzero throughput
-  // sample, so platforms whose getStats returns hard zeros (no real stats)
-  // can never false-positive.
-  const sawThroughputRef = useRef(false)
-  const zeroThroughputSamplesRef = useRef(0)
-  const STALL_SAMPLE_LIMIT = 3 // 3 × 5s sampling = ~15s of silence
+  // Stall watchdog. Samples carrying statsSupported=1 are real measurements
+  // (HaishinKit stream info on iOS, TrafficStats TX deltas on Android);
+  // anything else is ignored so builds without real stats can never
+  // false-positive. Detects both an encoder that stalls after healthy
+  // throughput AND a pipeline that never produces a frame at all — production
+  // telemetry shows the latter is the dominant camera-freeze failure mode.
+  //
+  // iOS measures the actual stream, so exact-zero semantics apply; Android
+  // measures app-wide TX, so the 64kbps floor filters ambient traffic.
+  const stallDetectorRef = useRef<StallDetector | null>(null)
 
   const startStatsSampling = useCallback(() => {
     if (statsIntervalRef.current) {
       clearInterval(statsIntervalRef.current)
     }
-    sawThroughputRef.current = false
-    zeroThroughputSamplesRef.current = 0
+    if (!stallDetectorRef.current) {
+      stallDetectorRef.current = createStallDetector(
+        Platform.OS === 'android' ? STALL_BITRATE_FLOOR_BPS : IOS_STALL_BITRATE_FLOOR_BPS,
+      )
+    }
+    const detector = stallDetectorRef.current
+    detector.reset()
+    livePublishActions.resetThroughput()
+
+    // Prime the throughput baseline (Android's TrafficStats measurement needs
+    // a first reading to diff against). Without this the first 5s tick is an
+    // unmeasurable baseline and never-started detection slips from 20s to 25s
+    // — inside Mux's idle-disconnect window.
+    void options.publisher.getStats().catch(() => {})
 
     // Periodic stats breadcrumb counter — emit a stats snapshot every 30s
     // (6 stats samples at 5s interval) for crash timeline reconstruction.
     let statsBreadcrumbCounter = 0
 
     statsIntervalRef.current = setInterval(() => {
+      // Ownership gate: when two create-screen copies are mounted (Spark tab +
+      // pushed route), a stale instance whose session was replaced must not
+      // write stats, arm the watchdog, or fail the active instance's session.
+      const ingest = ingestRef.current
+      if (!ingest || ingest.sessionId !== livePublishStore$.sessionId.peek()) {
+        detector.idle()
+        return
+      }
+
+      // Recording can't run in the background (both platforms suspend the
+      // camera), and LiveRecordScreen owns backgrounding with its own grace
+      // timer — a backgrounded tick must not read the paused encoder's zero
+      // throughput as a stall.
+      if (AppState.currentState !== 'active') {
+        detector.idle()
+        return
+      }
+
       options.publisher
         .getStats()
         .then((stats) => {
@@ -230,11 +285,14 @@ export function useLivePublisher(options: {
             droppedFrames: stats.droppedFrames,
           })
 
-          // Periodic breadcrumb — every ~30s, log a stats snapshot for crash
-          // timeline reconstruction. Keeps Convex load modest (2/min during
-          // recording) while giving us a timeline if the app crashes.
+          // Periodic breadcrumb — the first sample (5s in) then every ~30s,
+          // logging a stats snapshot for crash timeline reconstruction. The
+          // early first sample matters: most observed start-failures die
+          // within 6–27s, before a 30s-only cadence would capture anything.
+          // Keeps Convex load modest (2/min during recording) while giving us
+          // a timeline if the app crashes.
           statsBreadcrumbCounter++
-          if (statsBreadcrumbCounter % 6 === 0) {
+          if (statsBreadcrumbCounter === 1 || statsBreadcrumbCounter % 6 === 0) {
             const sessionId = livePublishStore$.sessionId.peek()
             const recordId = livePublishStore$.recordId.peek()
             const startedAt = livePublishStore$.startedAt.peek()
@@ -245,6 +303,7 @@ export function useLivePublisher(options: {
               droppedFrames: stats.droppedFrames,
               currentFps: stats.currentFps,
               rttMs: stats.rttMs,
+              statsSupported: stats.statsSupported,
               elapsedMs: startedAt ? Date.now() - startedAt : undefined,
             })
             // Update crash-survivable breadcrumb with current state
@@ -259,33 +318,40 @@ export function useLivePublisher(options: {
           }
 
           // Frozen-encoder watchdog: the connection poll catches dropped
-          // sockets, but an encoder that stalls while the socket stays open
-          // produces zero bytes with no error event. Treat sustained zero
-          // throughput (after proven-live throughput) as an unexpected stop —
-          // the UI then finalizes the partial recording instead of sitting
-          // on a frozen REC screen.
+          // sockets, but a pipeline that produces zero bytes while the socket
+          // stays open emits no error event. Sustained ~zero throughput while
+          // 'live' — whether the encoder stalled mid-stream or never delivered
+          // a first frame — becomes an unexpected stop, so the UI recovers
+          // instead of sitting on a frozen REC screen until Mux disconnects.
           if (livePublishStore$.status.peek() !== 'live') {
-            zeroThroughputSamplesRef.current = 0
+            detector.idle()
             return
           }
 
-          if (stats.bitrateBps > 0) {
-            sawThroughputRef.current = true
-            zeroThroughputSamplesRef.current = 0
-            return
-          }
+          // Android's TrafficStats measurement is app-wide: a concurrent
+          // queue upload (record → upload → record again) reads as stream
+          // throughput and would both mask a frozen pipeline and wrongly mark
+          // everHadThroughput. Treat those samples as unmeasurable — the
+          // duration heuristic and stop-time Mux truth still cover recovery.
+          const uploadActive =
+            Platform.OS === 'android' &&
+            uploadQueueStore$.tasks
+              .peek()
+              .some((t) => t.status === 'uploading' || t.status === 'processing')
 
-          if (!sawThroughputRef.current) {
-            return
+          const verdict = detector.sample({
+            bitrateBps: stats.bitrateBps,
+            statsSupported: stats.statsSupported === 1 && !uploadActive,
+          })
+          if (verdict.measured) {
+            livePublishActions.noteThroughputSample(verdict.sawThroughput)
           }
-
-          zeroThroughputSamplesRef.current += 1
-          if (zeroThroughputSamplesRef.current >= STALL_SAMPLE_LIMIT) {
-            zeroThroughputSamplesRef.current = 0
+          if (verdict.stalled) {
             telemetry.error('live:stall', 'Zero throughput while live — treating as stalled', {
               sessionId: livePublishStore$.sessionId.peek(),
               recordId: livePublishStore$.recordId.peek(),
-              samples: STALL_SAMPLE_LIMIT,
+              samples: verdict.samples,
+              neverStarted: verdict.neverStarted,
             })
             livePublishActions.setStatus('stream_stopped_unexpectedly')
           }
@@ -295,7 +361,7 @@ export function useLivePublisher(options: {
             error: String(error),
           })
         })
-    }, 5000)
+    }, STATS_SAMPLE_INTERVAL_MS)
   }, [options.publisher])
 
   /**

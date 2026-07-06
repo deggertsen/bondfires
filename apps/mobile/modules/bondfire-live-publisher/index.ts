@@ -25,10 +25,17 @@ export interface LivePublisherPreviewOptions {
   initialCamera?: 'front' | 'back'
 }
 
+// Keep in sync with LivePublisherStats in
+// packages/app/src/hooks/useLivePublisher.ts and the getStats payloads in the
+// Swift/Kotlin modules (livePublisherZeroStats / STATS_ZEROS).
 export interface LivePublisherStats {
   bitrateBps: number
   rttMs: number
   droppedFrames: number
+  /** Encoder output FPS (iOS only for now; 0 where unsupported). */
+  currentFps?: number
+  /** 1 when bitrateBps is a real measurement, 0 when it's a hard zero. */
+  statsSupported?: number
 }
 
 export interface LivePublisherViewProps extends ViewProps {}

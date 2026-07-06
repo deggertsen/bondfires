@@ -11,8 +11,10 @@ import android.media.MediaFormat
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.TrafficStats
 import android.os.Build
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import android.util.Size
 import expo.modules.kotlin.exception.CodedException
@@ -78,6 +80,15 @@ class BondfireLivePublisherModule : Module() {
   companion object {
     private const val TAG = "BondfireLivePublisher"
 
+    // statsSupported=0 zeros: the JS stall watchdog ignores these samples.
+    private val STATS_ZEROS = mapOf(
+      "bitrateBps" to 0,
+      "rttMs" to 0,
+      "droppedFrames" to 0,
+      "currentFps" to 0,
+      "statsSupported" to 0,
+    )
+
     @Volatile
     var currentInstance: BondfireLivePublisherModule? = null
       private set
@@ -110,6 +121,19 @@ class BondfireLivePublisherModule : Module() {
   private val networkStateLock = Any()
   private var lastNetworkTransportTypes: Set<Int>? = null
   private var trimMemoryObserver: ComponentCallbacks2? = null
+
+  // Baseline for the TrafficStats-delta throughput measurement in getStats().
+  // StreamPack 3.x exposes no byte counters (RtmpEndpoint.getMetrics() throws
+  // NotImplementedError), so we measure the app's own TX bytes between polls —
+  // during a live publish the RTMP stream dominates app traffic by orders of
+  // magnitude, which is exactly the signal the JS stall watchdog needs.
+  // txCounterAdvanced guards against stale per-UID counters on buggy devices:
+  // until the counter has moved at least once this session, samples are
+  // reported unmeasurable (statsSupported=0) rather than as real zeros.
+  private val statsLock = Any()
+  private var lastTxBytes = -1L
+  private var lastTxAtMs = 0L
+  private var txCounterAdvanced = false
 
   // Guards against binding the camera/video source to the preview before the
   // SurfaceView has a real (non-zero) size. Binding at 0x0 makes CameraX open
@@ -256,11 +280,53 @@ class BondfireLivePublisherModule : Module() {
     }
 
     AsyncFunction("getStats") {
-      mapOf(
-        "bitrateBps" to 0,
-        "rttMs" to 0,
-        "droppedFrames" to 0,
-      )
+      if (streamer == null) {
+        synchronized(statsLock) {
+          lastTxBytes = -1L
+          txCounterAdvanced = false
+        }
+        return@AsyncFunction STATS_ZEROS
+      }
+
+      synchronized(statsLock) {
+        // The counter read happens inside the lock so the read + baseline
+        // commit is atomic — overlapping polls could otherwise commit an
+        // older reading over a newer baseline and emit a spurious
+        // measured-zero sample. The binder read is sub-millisecond.
+        val txBytes = TrafficStats.getUidTxBytes(android.os.Process.myUid())
+        if (txBytes < 0) {
+          // TrafficStats.UNSUPPORTED on this device — report an unmeasurable
+          // zero so the JS stall watchdog ignores the sample.
+          return@AsyncFunction STATS_ZEROS
+        }
+
+        val now = SystemClock.elapsedRealtime()
+        val prevBytes = lastTxBytes
+        val prevAt = lastTxAtMs
+        lastTxBytes = txBytes
+        lastTxAtMs = now
+        if (prevBytes < 0 || now <= prevAt) {
+          // First poll of this session establishes the baseline; there is no
+          // interval to measure yet.
+          STATS_ZEROS
+        } else {
+          if (txBytes != prevBytes) {
+            txCounterAdvanced = true
+          }
+          // A per-UID counter that has never moved this session is stale or
+          // broken (this app always produces some TX — telemetry flushes,
+          // the Convex websocket — even with a frozen encoder). Report such
+          // samples unmeasurable so a broken counter can never fail a
+          // healthy recording.
+          val supported = if (txCounterAdvanced) 1 else 0
+          val bitrateBps = ((txBytes - prevBytes) * 8_000L / (now - prevAt))
+            .coerceIn(0L, Int.MAX_VALUE.toLong())
+          STATS_ZEROS + mapOf(
+            "bitrateBps" to bitrateBps.toInt(),
+            "statsSupported" to supported,
+          )
+        }
+      }
     }
 
     // Thermal state — polled from JS during recording.
@@ -299,6 +365,13 @@ class BondfireLivePublisherModule : Module() {
       ?: throw LivePublisherException("No React context available")
 
     val cameraId = findCameraIdForFacing(currentFacing)
+
+    // Drop any TX-bytes baseline left over from a previous session so the new
+    // session's first getStats() re-establishes it over a fresh interval.
+    synchronized(statsLock) {
+      lastTxBytes = -1L
+      txCounterAdvanced = false
+    }
 
     // Query camera for a supported output resolution to avoid stretching frames.
     val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
