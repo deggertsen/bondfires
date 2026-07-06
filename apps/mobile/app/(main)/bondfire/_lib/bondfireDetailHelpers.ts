@@ -27,7 +27,8 @@ export type ThreadParticipant = {
 export type BondfireDetailData = Doc<'bondfires'> & {
   campStatus?: Doc<'camps'>['status']
   campName?: string
-  videos: Doc<'bondfireVideos'>[]
+  watchedByViewer?: boolean
+  videos: (Doc<'bondfireVideos'> & { watchedByViewer?: boolean })[]
   processingResponses?: Array<{
     _id: Id<'bondfireVideos'>
     userId: Id<'users'>
@@ -80,10 +81,22 @@ export function formatTime(ms: number): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
-export function withLiveDvrStart(url: string, isLive: boolean): string {
-  if (!isLive) return url
-  const separator = url.includes('?') ? '&' : '?'
-  return `${url}${separator}start=0`
+export { withLiveDvrStart } from './bondfireVideoUrlPlan'
+
+/**
+ * Where a bondfire opens: the first video the viewer has not watched yet, so
+ * swiping forward walks through everything new. Falls back to the last video
+ * when the whole thread has been seen. The viewer's own videos count as
+ * watched (watchedByViewer is computed server-side in getWithVideos). A
+ * missing flag counts as unwatched. Deep links override this at the call site.
+ */
+export function getInitialVideoIndex(bondfireData: BondfireDetailData): number {
+  const watched = [
+    bondfireData.watchedByViewer ?? false,
+    ...bondfireData.videos.map((video) => video.watchedByViewer ?? false),
+  ]
+  const firstUnwatched = watched.indexOf(false)
+  return firstUnwatched === -1 ? watched.length - 1 : firstUnwatched
 }
 
 export function buildBondfireVideoItems(

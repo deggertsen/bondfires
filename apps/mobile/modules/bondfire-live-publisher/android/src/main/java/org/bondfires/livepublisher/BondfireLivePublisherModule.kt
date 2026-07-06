@@ -5,9 +5,13 @@ import android.content.pm.PackageManager
 import android.content.ComponentCallbacks2
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.MediaCodecList
 import android.media.MediaFormat
+import android.media.MediaRecorder
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -105,6 +109,19 @@ class BondfireLivePublisherModule : Module() {
   private val collectorJobs = mutableListOf<Job>()
   private var isMuted = false
   private var currentFacing: String = "front"
+  // Which mic this session records from ("wired" | "bluetooth" | "builtin").
+  // Reported in getStats() so live:stats_sample telemetry carries the route.
+  @Volatile
+  private var audioRouteName = "builtin"
+  // Bluetooth mics require claiming the communication device (or legacy SCO);
+  // teardown must undo whichever was engaged or the whole device stays routed
+  // to the headset after the session ends.
+  private var communicationDeviceSet = false
+  private var legacyScoStarted = false
+  // Watches for the routed headset disappearing mid-session so audioRouteName
+  // stays truthful (the framework reroutes capture to the built-in mic on its
+  // own; only the telemetry label needs correcting).
+  private var audioDeviceCallback: AudioDeviceCallback? = null
   @Volatile
   private var isStoppingIntentionally = false
 
@@ -289,6 +306,9 @@ class BondfireLivePublisherModule : Module() {
       }
 
       synchronized(statsLock) {
+        // In-session samples carry the mic route so live:stats_sample
+        // telemetry can verify headset routing in prod.
+        val sessionZeros = STATS_ZEROS + mapOf("audioRoute" to audioRouteName)
         // The counter read happens inside the lock so the read + baseline
         // commit is atomic — overlapping polls could otherwise commit an
         // older reading over a newer baseline and emit a spurious
@@ -297,7 +317,7 @@ class BondfireLivePublisherModule : Module() {
         if (txBytes < 0) {
           // TrafficStats.UNSUPPORTED on this device — report an unmeasurable
           // zero so the JS stall watchdog ignores the sample.
-          return@AsyncFunction STATS_ZEROS
+          return@AsyncFunction sessionZeros
         }
 
         val now = SystemClock.elapsedRealtime()
@@ -308,7 +328,7 @@ class BondfireLivePublisherModule : Module() {
         if (prevBytes < 0 || now <= prevAt) {
           // First poll of this session establishes the baseline; there is no
           // interval to measure yet.
-          STATS_ZEROS
+          sessionZeros
         } else {
           if (txBytes != prevBytes) {
             txCounterAdvanced = true
@@ -321,7 +341,7 @@ class BondfireLivePublisherModule : Module() {
           val supported = if (txCounterAdvanced) 1 else 0
           val bitrateBps = ((txBytes - prevBytes) * 8_000L / (now - prevAt))
             .coerceIn(0L, Int.MAX_VALUE.toLong())
-          STATS_ZEROS + mapOf(
+          sessionZeros + mapOf(
             "bitrateBps" to bitrateBps.toInt(),
             "statsSupported" to supported,
           )
@@ -378,11 +398,24 @@ class BondfireLivePublisherModule : Module() {
     val resolution = getBestCameraResolution(cameraManager, cameraId, 0, 0)
     Log.i(TAG, "Using camera output resolution ${resolution.width}x${resolution.height}")
 
+    // Route the mic to a connected headset when one is present. StreamPack's
+    // default audio source is CAMCORDER, which Android pins to the built-in
+    // camcorder mics — with it, a connected headset mic is never used.
+    val audioRouting = selectAudioInputRouting(context)
+    audioRouteName = audioRouting.routeName
+    Log.i(TAG, "Audio input routing: ${audioRouting.routeName} (audioSource=${audioRouting.audioSource})")
+    audioRouting.headsetDevice?.let { device ->
+      if (audioRouting.requiresCommunicationDevice) {
+        applyBluetoothMicRouting(context, device)
+      }
+      registerHeadsetDisconnectCallback(context, device)
+    }
+
     // Create camera + microphone streamer
     val newStreamer = cameraSingleStreamer(
       context,
       cameraId = cameraId,
-      audioSourceFactory = MicrophoneSourceFactory(),
+      audioSourceFactory = MicrophoneSourceFactory(audioRouting.audioSource),
       endpointFactory = RtmpEndpointFactory(),
     )
     streamer = newStreamer
@@ -494,6 +527,120 @@ class BondfireLivePublisherModule : Module() {
 
     // Ensure unmuted at start
     isMuted = false
+  }
+
+  private data class AudioInputRouting(
+    val audioSource: Int,
+    val headsetDevice: AudioDeviceInfo?,
+    val requiresCommunicationDevice: Boolean,
+    val routeName: String,
+  )
+
+  /**
+   * Chooses the mic routing for this session from the connected input devices.
+   * Wired/USB headset mics only need a routable audio source (DEFAULT follows
+   * the platform's input routing; CAMCORDER does not). Bluetooth mics (LE
+   * audio or classic SCO) additionally need to be claimed as the communication
+   * device and captured with VOICE_COMMUNICATION for the routing to apply.
+   */
+  private fun selectAudioInputRouting(context: Context): AudioInputRouting {
+    val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+      ?: return AudioInputRouting(MediaRecorder.AudioSource.CAMCORDER, null, false, "builtin")
+    val inputs = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
+
+    fun firstInput(vararg types: Int): AudioDeviceInfo? {
+      for (type in types) {
+        inputs.firstOrNull { it.type == type }?.let { return it }
+      }
+      return null
+    }
+
+    val wired = firstInput(
+      AudioDeviceInfo.TYPE_WIRED_HEADSET,
+      AudioDeviceInfo.TYPE_USB_HEADSET,
+      AudioDeviceInfo.TYPE_USB_DEVICE,
+    )
+    if (wired != null) {
+      return AudioInputRouting(MediaRecorder.AudioSource.DEFAULT, wired, false, "wired")
+    }
+
+    // TYPE_BLE_HEADSET only appears in results on API 31+ devices.
+    val bluetooth = firstInput(
+      AudioDeviceInfo.TYPE_BLE_HEADSET,
+      AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+    )
+    if (bluetooth != null) {
+      return AudioInputRouting(
+        MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+        bluetooth,
+        true,
+        "bluetooth",
+      )
+    }
+
+    return AudioInputRouting(MediaRecorder.AudioSource.CAMCORDER, null, false, "builtin")
+  }
+
+  /**
+   * Keeps audioRouteName truthful when the routed headset disappears
+   * mid-session. The framework already reroutes the active AudioRecord to the
+   * built-in mic on its own (and clears the communication device claim for
+   * Bluetooth) — the only job here is telemetry accuracy: stats samples must
+   * stop claiming a headset that is no longer attached.
+   */
+  private fun registerHeadsetDisconnectCallback(context: Context, device: AudioDeviceInfo) {
+    val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+    val callback = object : AudioDeviceCallback() {
+      override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
+        if (audioRouteName != "builtin" && removedDevices.any { it.id == device.id }) {
+          Log.i(
+            TAG,
+            "Headset mic (type=${device.type}) disconnected mid-session; capture falls back to the built-in mic",
+          )
+          audioRouteName = "builtin"
+        }
+      }
+    }
+    // null handler: callbacks post to the main looper.
+    audioManager.registerAudioDeviceCallback(callback, null)
+    audioDeviceCallback = callback
+  }
+
+  private fun applyBluetoothMicRouting(context: Context, device: AudioDeviceInfo) {
+    val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      communicationDeviceSet = audioManager.setCommunicationDevice(device)
+      if (!communicationDeviceSet) {
+        Log.w(TAG, "setCommunicationDevice(type=${device.type}) rejected — capturing from built-in mic")
+        audioRouteName = "builtin"
+      }
+    } else {
+      @Suppress("DEPRECATION")
+      audioManager.startBluetoothSco()
+      @Suppress("DEPRECATION")
+      audioManager.isBluetoothScoOn = true
+      legacyScoStarted = true
+    }
+  }
+
+  private fun releaseHeadsetMicRouting() {
+    val audioManager =
+      appContext.reactContext?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+    audioDeviceCallback?.let { audioManager.unregisterAudioDeviceCallback(it) }
+    audioDeviceCallback = null
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      if (communicationDeviceSet) {
+        audioManager.clearCommunicationDevice()
+        communicationDeviceSet = false
+      }
+    } else if (legacyScoStarted) {
+      @Suppress("DEPRECATION")
+      audioManager.stopBluetoothSco()
+      @Suppress("DEPRECATION")
+      audioManager.isBluetoothScoOn = false
+      legacyScoStarted = false
+    }
+    audioRouteName = "builtin"
   }
 
   private fun buildRtmpsUrl(rtmpsUrl: String, streamKey: String): String {
@@ -765,6 +912,12 @@ class BondfireLivePublisherModule : Module() {
   }
 
   private suspend fun cleanupStreamer() {
+    // Release the headset mic routing (Bluetooth claim + disconnect callback)
+    // before the streamer-claim early return: a createStreamer that claimed
+    // the communication device and then threw leaves streamer null, and the
+    // claim must not outlive the session.
+    releaseHeadsetMicRouting()
+
     // Atomically claim the active streamer. stop(), cancel(), the duration-cap
     // auto-stop, start()'s pre-publish reset, and OnDestroy can all reach here —
     // sometimes on different threads at the same moment (tapping Stop just as

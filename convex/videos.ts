@@ -2484,104 +2484,133 @@ export const disableStaleLiveStreams = internalAction({
 })
 
 // Generate URLs for Mux playback.
-export const getVideoUrls = action({
-  args: {
-    muxPlaybackId: v.string(),
-    muxPlaybackPolicy: v.optional(v.union(v.literal('public'), v.literal('signed'))),
-    bondfireId: v.optional(v.id('bondfires')),
-    bondfireVideoId: v.optional(v.id('bondfireVideos')),
-  },
-  handler: async (ctx, args) => {
-    let playbackPolicy = args.muxPlaybackPolicy ?? 'public'
-    try {
-      if (args.bondfireId || args.bondfireVideoId || playbackPolicy === 'signed') {
-        const userId = (await auth.getUserId(ctx)) ?? undefined
+const videoUrlRequestArgs = {
+  muxPlaybackId: v.string(),
+  muxPlaybackPolicy: v.optional(v.union(v.literal('public'), v.literal('signed'))),
+  bondfireId: v.optional(v.id('bondfires')),
+  bondfireVideoId: v.optional(v.id('bondfireVideos')),
+}
 
-        const access = await ctx.runQuery(internal.videos.validatePlaybackAccess, {
-          userId,
+type VideoUrlRequest = {
+  muxPlaybackId: string
+  muxPlaybackPolicy?: 'public' | 'signed'
+  bondfireId?: Id<'bondfires'>
+  bondfireVideoId?: Id<'bondfireVideos'>
+}
+
+// Never throws: access-validation and signing failures fall back to a public
+// URL (Mux serves it or 403s), so one bad video cannot reject a whole
+// getVideoUrlsBatch call.
+async function resolvePlaybackUrls(ctx: ActionCtx, args: VideoUrlRequest) {
+  let playbackPolicy = args.muxPlaybackPolicy ?? 'public'
+  try {
+    if (args.bondfireId || args.bondfireVideoId || playbackPolicy === 'signed') {
+      const userId = (await auth.getUserId(ctx)) ?? undefined
+
+      const access = await ctx.runQuery(internal.videos.validatePlaybackAccess, {
+        userId,
+        muxPlaybackId: args.muxPlaybackId,
+        bondfireId: args.bondfireId,
+        bondfireVideoId: args.bondfireVideoId,
+      })
+      playbackPolicy = access.playbackPolicy
+    }
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    const stack = e instanceof Error ? e.stack : undefined
+    // If access validation fails (camp deleted, user booted, expired),
+    // fall back to a public URL. Mux will serve it or 403, but the
+    // app won't crash with a Server Error.
+    try {
+      await ctx.runMutation(internal.clientLogs.createInternal, {
+        level: 'warn',
+        event: 'video:get_urls:access_validation_failed',
+        message,
+        data: {
           muxPlaybackId: args.muxPlaybackId,
           bondfireId: args.bondfireId,
           bondfireVideoId: args.bondfireVideoId,
-        })
-        playbackPolicy = access.playbackPolicy
+          stack,
+        },
+        platform: 'server',
+        createdAt: Date.now(),
+      })
+    } catch {
+      // Best effort — don't fail the video URL request over logging
+    }
+    return {
+      hdUrl: getMuxPlaybackUrl(args.muxPlaybackId),
+      thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
+      expiresIn: 0,
+    }
+  }
+
+  if (playbackPolicy === 'signed') {
+    try {
+      const token = await signMuxPlaybackToken(args.muxPlaybackId, 'v')
+      const thumbnailToken = await signMuxPlaybackToken(args.muxPlaybackId, 't')
+
+      return {
+        hdUrl: withMuxToken(getMuxPlaybackUrl(args.muxPlaybackId), token),
+        thumbnailUrl: withMuxToken(getMuxThumbnailUrl(args.muxPlaybackId), thumbnailToken),
+        expiresIn: SIGNED_PLAYBACK_URL_TTL_SECONDS,
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
       const stack = e instanceof Error ? e.stack : undefined
-      // If access validation fails (camp deleted, user booted, expired),
-      // fall back to a public URL. Mux will serve it or 403, but the
-      // app won't crash with a Server Error.
+      // Signed URL generation failed (missing signing key, bad key format,
+      // etc.). Fall back to public URL so the video player isn't broken.
       try {
         await ctx.runMutation(internal.clientLogs.createInternal, {
-          level: 'warn',
-          event: 'video:get_urls:access_validation_failed',
+          level: 'error',
+          event: 'video:get_urls:signing_failed',
           message,
           data: {
             muxPlaybackId: args.muxPlaybackId,
             bondfireId: args.bondfireId,
             bondfireVideoId: args.bondfireVideoId,
+            playbackPolicy,
             stack,
           },
           platform: 'server',
           createdAt: Date.now(),
         })
       } catch {
-        // Best effort — don't fail the video URL request over logging
+        // Best effort
       }
       return {
         hdUrl: getMuxPlaybackUrl(args.muxPlaybackId),
-
         thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
         expiresIn: 0,
       }
     }
+  }
 
-    if (playbackPolicy === 'signed') {
-      try {
-        const token = await signMuxPlaybackToken(args.muxPlaybackId, 'v')
-        const thumbnailToken = await signMuxPlaybackToken(args.muxPlaybackId, 't')
+  return {
+    hdUrl: getMuxPlaybackUrl(args.muxPlaybackId),
+    thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
+    expiresIn: 0,
+  }
+}
 
-        return {
-          hdUrl: withMuxToken(getMuxPlaybackUrl(args.muxPlaybackId), token),
-          thumbnailUrl: withMuxToken(getMuxThumbnailUrl(args.muxPlaybackId), thumbnailToken),
-          expiresIn: SIGNED_PLAYBACK_URL_TTL_SECONDS,
-        }
-      } catch (e) {
-        const message = e instanceof Error ? e.message : String(e)
-        const stack = e instanceof Error ? e.stack : undefined
-        // Signed URL generation failed (missing signing key, bad key format,
-        // etc.). Fall back to public URL so the video player isn't broken.
-        try {
-          await ctx.runMutation(internal.clientLogs.createInternal, {
-            level: 'error',
-            event: 'video:get_urls:signing_failed',
-            message,
-            data: {
-              muxPlaybackId: args.muxPlaybackId,
-              bondfireId: args.bondfireId,
-              bondfireVideoId: args.bondfireVideoId,
-              playbackPolicy,
-              stack,
-            },
-            platform: 'server',
-            createdAt: Date.now(),
-          })
-        } catch {
-          // Best effort
-        }
-        return {
-          hdUrl: getMuxPlaybackUrl(args.muxPlaybackId),
-          thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
-          expiresIn: 0,
-        }
-      }
+export const getVideoUrls = action({
+  args: videoUrlRequestArgs,
+  handler: async (ctx, args) => resolvePlaybackUrls(ctx, args),
+})
+
+const MAX_VIDEO_URL_BATCH = 100
+
+// One round trip for a whole bondfire's worth of playback URLs. The client
+// used to issue one getVideoUrls call per video, so opening a bondfire waited
+// on the slowest of N websocket round trips. Items resolve in parallel and
+// fail independently (per-item public-URL fallback).
+export const getVideoUrlsBatch = action({
+  args: { items: v.array(v.object(videoUrlRequestArgs)) },
+  handler: async (ctx, { items }) => {
+    if (items.length > MAX_VIDEO_URL_BATCH) {
+      throw new Error(`getVideoUrlsBatch supports at most ${MAX_VIDEO_URL_BATCH} items`)
     }
-
-    return {
-      hdUrl: getMuxPlaybackUrl(args.muxPlaybackId),
-      thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
-      expiresIn: 0,
-    }
+    return Promise.all(items.map((item) => resolvePlaybackUrls(ctx, item)))
   },
 })
 

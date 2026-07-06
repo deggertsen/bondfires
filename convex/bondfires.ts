@@ -398,7 +398,30 @@ export const getWithVideos = query({
       .order('asc')
       .collect()
 
-    const readyVideos = videos.filter(isPlayableVideoRecord).map(withLiveFlags)
+    // Watched flags drive the initial scroll position (first unwatched video).
+    // The viewer's own videos always count as watched.
+    const viewerId = await auth.getUserId(ctx)
+    const hasWatchEvent = async (videoId: string) => {
+      if (!viewerId) return false
+      const event = await ctx.db
+        .query('watchEvents')
+        .withIndex('by_user_video', (q) => q.eq('userId', viewerId).eq('videoId', videoId))
+        .first()
+      return event !== null
+    }
+
+    const playableVideos = videos.filter(isPlayableVideoRecord)
+    const [mainWatched, ...videosWatched] = await Promise.all([
+      bondfire.userId === viewerId ? true : hasWatchEvent(bondfire._id),
+      ...playableVideos.map((video) =>
+        video.userId === viewerId ? true : hasWatchEvent(video._id),
+      ),
+    ])
+
+    const readyVideos = playableVideos.map((video, index) => ({
+      ...withLiveFlags(video),
+      watchedByViewer: videosWatched[index],
+    }))
 
     // Lightweight projection only — no Mux IDs leak for unfinished videos.
     const processingResponses = videos.filter(isProcessingVideoRecord).map((video) => ({
@@ -410,6 +433,7 @@ export const getWithVideos = query({
 
     return {
       ...withLiveFlags(bondfire),
+      watchedByViewer: mainWatched,
       campStatus: camp?.status,
       campName: camp?.name,
       videos: readyVideos,
