@@ -22,3 +22,7 @@ export function useCanRunRecordingBackgroundWork(isFocused: boolean) {
 
   return isFocused && !recordingResourceLocked
 }
+
+export function useCanLoadTabData(isFocused: boolean) {
+  return isFocused
+}

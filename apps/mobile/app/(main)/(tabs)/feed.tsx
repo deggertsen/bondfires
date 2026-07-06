@@ -13,6 +13,7 @@ import {
   subscriptionStore$,
   telemetry,
   useAppThemeColors,
+  useCanLoadTabData,
   useCanRunRecordingBackgroundWork,
   useLoadingTimeoutTelemetry,
   useSubscription,
@@ -349,6 +350,7 @@ export default function FeedScreen() {
   const router = useRouter()
   const insets = useSafeAreaInsets()
   const isFocused = useIsFocused()
+  const canLoadTabData = useCanLoadTabData(isFocused)
   const shouldRunBackgroundWork = useCanRunRecordingBackgroundWork(isFocused)
   const getThumbnailUrl = useAction(api.videos.getThumbnailUrl)
   const { canCreate } = useSubscription()
@@ -365,10 +367,9 @@ export default function FeedScreen() {
   const [bondfires, setBondfires] = useState<BondfireData[] | undefined>(undefined)
   const currentUserId = useValue(appStore$.userId)
   const currentCampId = useValue(appStore$.currentCampId)
-  const joinedCamps = useQuery(
-    api.camps.listMine,
-    shouldRunBackgroundWork && currentUserId ? {} : 'skip',
-  ) as JoinedCamp[] | undefined
+  const joinedCamps = useQuery(api.camps.listMine, canLoadTabData && currentUserId ? {} : 'skip') as
+    | JoinedCamp[]
+    | undefined
   const feedCamps = useMemo(
     () => (joinedCamps ?? []).filter((camp) => camp.status !== 'archived'),
     [joinedCamps],
@@ -382,10 +383,7 @@ export default function FeedScreen() {
   }`
 
   // Authenticated user data for private pin state.
-  const currentUser = useQuery(
-    api.users.current,
-    shouldRunBackgroundWork && currentUserId ? {} : 'skip',
-  )
+  const currentUser = useQuery(api.users.current, canLoadTabData && currentUserId ? {} : 'skip')
   const pinnedIds = useMemo(
     () => (currentUser?.pinnedBondfireIds ?? []) as string[],
     [currentUser?.pinnedBondfireIds],
@@ -416,6 +414,7 @@ export default function FeedScreen() {
     isLoading: bondfires === undefined,
     loadedCount: bondfires?.length,
     context: {
+      canLoadTabData,
       shouldRunBackgroundWork,
       hasCurrentUserId: !!currentUserId,
       activeCampId: activeCampId ?? null,
@@ -798,7 +797,7 @@ export default function FeedScreen() {
       <YStack flex={1}>
         <FeedSubscription
           key={feedSubscriptionKey}
-          enabled={shouldRunBackgroundWork}
+          enabled={canLoadTabData}
           selectedCampId={activeCampId}
           onResolved={handleBondfiresResolved}
         />
@@ -811,7 +810,7 @@ export default function FeedScreen() {
     <YStack flex={1} backgroundColor={'$background'}>
       <FeedSubscription
         key={feedSubscriptionKey}
-        enabled={shouldRunBackgroundWork}
+        enabled={canLoadTabData}
         selectedCampId={activeCampId}
         onResolved={handleBondfiresResolved}
       />

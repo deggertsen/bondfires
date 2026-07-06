@@ -1,4 +1,5 @@
 import { observable } from '@legendapp/state'
+import { useEffect } from 'react'
 import { telemetry } from '../services/telemetry'
 
 // ── Recording flow state machine ─────────────────────────────────────────────
@@ -31,6 +32,13 @@ export type RecordingPhase =
   | 'uploading'
   | 'completion'
 
+const RECORDING_WATCHDOG_CHECK_INTERVAL_MS = 30_000
+const RECORDING_WATCHDOG_PHASE_LIMIT_MS: Partial<Record<RecordingPhase, number>> = {
+  pre_connected: 60_000,
+  recording: 10 * 60_000,
+  stopping: 60_000,
+}
+
 const VALID_TRANSITIONS: Record<RecordingPhase, readonly RecordingPhase[]> = {
   idle: ['pre_connected', 'recording'],
   // recording: record tap. idle: cancel / lost focus / preview expired.
@@ -48,6 +56,8 @@ export type CameraFacing = 'front' | 'back'
 
 export interface RecordingState {
   phase: RecordingPhase
+  /** Epoch ms when the current non-idle phase began. */
+  phaseStartedAt: number | null
   /** Which camera the user wants. The publisher/camera owns the real state. */
   facing: CameraFacing
   /** Mid-recording camera swap target (legacy segment path). */
@@ -72,6 +82,7 @@ export interface RecordingState {
 
 const defaultRecordingState: RecordingState = {
   phase: 'idle',
+  phaseStartedAt: null,
   facing: 'front',
   pendingFacing: null,
   cameraResetCounter: 0,
@@ -106,6 +117,7 @@ export const recordingActions = {
     }
 
     recordingStore$.phase.set(phase)
+    recordingStore$.phaseStartedAt.set(phase === 'idle' ? null : Date.now())
   },
 
   /**
@@ -114,6 +126,7 @@ export const recordingActions = {
    */
   resetFlow: (reason?: string) => {
     recordingActions.setPhase('idle', reason)
+    recordingStore$.phaseStartedAt.set(null)
     recordingStore$.pendingFacing.set(null)
     recordingStore$.recordingDuration.set(0)
     recordingStore$.videoUri.set(null)
@@ -129,4 +142,37 @@ export const recordingActions = {
       isLivePublisherAvailable: recordingStore$.isLivePublisherAvailable.peek(),
     })
   },
+}
+
+export function useRecordingWatchdog() {
+  useEffect(() => {
+    const checkRecordingPhase = () => {
+      const currentPhase = recordingStore$.phase.peek()
+      const currentPhaseStartedAt = recordingStore$.phaseStartedAt.peek()
+      const phaseLimitMs = RECORDING_WATCHDOG_PHASE_LIMIT_MS[currentPhase]
+
+      if (!phaseLimitMs || currentPhaseStartedAt === null) {
+        return
+      }
+
+      const elapsedMs = Date.now() - currentPhaseStartedAt
+      if (elapsedMs <= phaseLimitMs) {
+        return
+      }
+
+      telemetry.warn('recording:watchdog-reset', 'Recording watchdog reset a stuck phase', {
+        phase: currentPhase,
+        elapsedMs,
+        phaseLimitMs,
+      })
+      recordingActions.resetFlow(`watchdog reset stuck ${currentPhase}`)
+    }
+
+    checkRecordingPhase()
+    const interval = setInterval(checkRecordingPhase, RECORDING_WATCHDOG_CHECK_INTERVAL_MS)
+
+    return () => {
+      clearInterval(interval)
+    }
+  }, [])
 }

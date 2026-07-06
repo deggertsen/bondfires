@@ -4,6 +4,7 @@ import {
   subscriptionStore$,
   tierMeetsRequirement,
   useAppThemeColors,
+  useRecordingWatchdog,
   useSubscription,
 } from '@bondfires/app'
 import { useValue } from '@legendapp/state/react'
@@ -17,6 +18,7 @@ export default function TabsLayout() {
   const insets = useSafeAreaInsets()
   const { colors } = useAppThemeColors()
   const router = useRouter()
+  useRecordingWatchdog()
 
   // Reactive source of truth for whether the user can spark (Plus+). Reading
   // `useSubscription` here keeps the tab count live: a mid-session upgrade or
