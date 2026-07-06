@@ -49,6 +49,27 @@ would otherwise mask a frozen pipeline). The destructive never-started cancel
 in LiveRecordScreen is additionally capped at 60s — beyond that the stop path
 relies on Mux's authoritative `recordingStarted` flag.
 
+### Microphone routing
+
+iOS routes headset mics through the shared `AVAudioSession`
+(`.allowBluetooth` + `.playAndRecord`), so wired and Bluetooth headsets work
+without extra code. Android requires explicit routing: StreamPack's default
+audio source is `CAMCORDER`, which is pinned to the built-in camcorder mics
+and ignores connected headsets. At streamer creation the module picks a route
+from the connected input devices:
+
+| Route | Audio source | Extra routing |
+|---|---|---|
+| Wired / USB headset | `DEFAULT` (follows platform input routing) | none |
+| Bluetooth (LE audio or SCO) | `VOICE_COMMUNICATION` | `setCommunicationDevice` (API 31+) / legacy SCO |
+| None connected | `CAMCORDER` (built-in) | none |
+
+The Bluetooth claim is released in `cleanupStreamer`. The chosen route is
+reported as `audioRoute` in `getStats()` payloads, so `live:stats_sample`
+telemetry shows which mic a session recorded from. Headsets connected
+mid-session do not take over until the next session (route is chosen at
+creation time).
+
 ### Error events (`error`)
 
 `{ code, message }`. Known codes are listed in

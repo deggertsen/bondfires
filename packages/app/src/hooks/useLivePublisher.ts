@@ -39,6 +39,8 @@ export interface LivePublisherStats {
    * stall watchdog.
    */
   statsSupported?: number
+  /** Mic route for the session: 'wired' | 'bluetooth' | 'builtin' (Android only for now). */
+  audioRoute?: string
 }
 
 export interface LivePublisherSubscription {
@@ -304,6 +306,7 @@ export function useLivePublisher(options: {
               currentFps: stats.currentFps,
               rttMs: stats.rttMs,
               statsSupported: stats.statsSupported,
+              audioRoute: stats.audioRoute,
               elapsedMs: startedAt ? Date.now() - startedAt : undefined,
             })
             // Update crash-survivable breadcrumb with current state
