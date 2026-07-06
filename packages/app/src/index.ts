@@ -6,7 +6,6 @@ export * from './data/completionMessages'
 export * from './features'
 // Hooks
 export * from './hooks'
-export { useCanLoadTabData } from './hooks/useRecordingResourceLock'
 // Services
 export * from './services/backgroundUpload'
 export {
