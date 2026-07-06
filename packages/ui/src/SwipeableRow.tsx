@@ -1,14 +1,10 @@
-import { useCallback, useMemo, useRef } from 'react'
-import {
-  Animated,
-  type GestureResponderEvent,
-  PanResponder,
-  type PanResponderGestureState,
-  Pressable,
-  type StyleProp,
-  type ViewStyle,
-} from 'react-native'
-import { XStack, YStack } from 'tamagui'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Pressable, type StyleProp, StyleSheet, type ViewStyle } from 'react-native'
+import ReanimatedSwipeable, {
+  type SwipeableMethods,
+} from 'react-native-gesture-handler/ReanimatedSwipeable'
+import Animated, { type SharedValue, useAnimatedStyle } from 'react-native-reanimated'
+import { YStack } from 'tamagui'
 import { Text } from './Text'
 
 export type SwipeAction = {
@@ -34,13 +30,90 @@ type Props = {
   style?: StyleProp<ViewStyle>
 }
 
+// At most one row may be open at a time (iOS Mail behavior). Opening a row
+// closes the previous one; lists close the open row when scrolling starts.
+let openRow: SwipeableMethods | null = null
+
+/**
+ * Close the currently open SwipeableRow, if any. Wire this to a list's
+ * `onScrollBeginDrag` so scrolling dismisses the revealed actions.
+ */
+export function closeOpenSwipeableRow() {
+  openRow?.close()
+  openRow = null
+}
+
+function ActionPanel({
+  actions,
+  width,
+  side,
+  progress,
+  onActionDone,
+}: {
+  actions: SwipeAction[]
+  width: number
+  /** Which edge the panel sits on — controls the parallax slide direction */
+  side: 'left' | 'right'
+  progress: SharedValue<number>
+  onActionDone: () => void
+}) {
+  // Buttons trail the row slightly as it slides, instead of sitting statically.
+  const parallax = useAnimatedStyle(() => {
+    const remaining = 1 - Math.min(progress.value, 1)
+    return {
+      transform: [{ translateX: remaining * width * 0.4 * (side === 'right' ? 1 : -1) }],
+    }
+  })
+
+  return (
+    <Animated.View style={[{ width, flexDirection: 'row' }, parallax]}>
+      {actions.map((action) => (
+        <Pressable
+          key={action.key}
+          onPress={() => {
+            action.onPress()
+            onActionDone()
+          }}
+          style={({ pressed }) => ({
+            flex: 1,
+            opacity: pressed ? 0.8 : 1,
+          })}
+        >
+          <YStack
+            flex={1}
+            alignItems="center"
+            justifyContent="center"
+            backgroundColor={action.backgroundColor ?? '$backgroundHover'}
+            paddingHorizontal={8}
+          >
+            <Text
+              fontSize={12}
+              fontWeight="800"
+              color={action.color ?? '$color'}
+              textAlign="center"
+            >
+              {action.label}
+            </Text>
+          </YStack>
+        </Pressable>
+      ))}
+    </Animated.View>
+  )
+}
+
 /**
  * A swipeable row that reveals action buttons when swiped.
  *
  * - Swipe LEFT to reveal `actions` (e.g. Delete, Pin, Report)
  * - Swipe RIGHT to reveal `rightActions` (e.g. Edit)
  *
- * Uses React Native's PanResponder + Animated — no extra deps.
+ * Built on react-native-gesture-handler's ReanimatedSwipeable. The pan
+ * gesture runs natively, so it wins the race against the enclosing
+ * scroll view on iOS — a JS PanResponder gets its touches cancelled by
+ * UIScrollView before it can claim horizontal swipes.
+ *
+ * While a row is open, tapping it closes it instead of triggering the
+ * row's own press handler.
  */
 export function SwipeableRow({
   children,
@@ -53,154 +126,101 @@ export function SwipeableRow({
 }: Props) {
   const leftPanelWidth = actionWidth ?? actions.length * 72
   const rightPanelWidth = rightActionWidth ?? (rightActions?.length ?? 0) * 72
-  const translateX = useRef(new Animated.Value(0)).current
-  const currentOffset = useRef(0)
-
-  const clampTranslateX = useCallback(
-    (value: number) => Math.max(-leftPanelWidth, Math.min(rightPanelWidth, value)),
-    [leftPanelWidth, rightPanelWidth],
-  )
-
-  const snapTo = useCallback(
-    (toValue: number) => {
-      currentOffset.current = toValue
-      Animated.spring(translateX, {
-        toValue,
-        useNativeDriver: true,
-        tension: 60,
-        friction: 10,
-      }).start()
-    },
-    [translateX],
-  )
+  const swipeableRef = useRef<SwipeableMethods>(null)
+  const [isOpen, setIsOpen] = useState(false)
 
   const close = useCallback(() => {
-    snapTo(0)
-  }, [snapTo])
+    swipeableRef.current?.close()
+  }, [])
 
-  const panResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onMoveShouldSetPanResponder: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
-          // Only capture horizontal swipes (not vertical scrolls)
-          return (
-            (leftPanelWidth > 0 || rightPanelWidth > 0) &&
-            Math.abs(gs.dx) > 10 &&
-            Math.abs(gs.dx) > Math.abs(gs.dy) * 1.5
-          )
-        },
-        onPanResponderMove: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
-          const next = clampTranslateX(currentOffset.current + gs.dx)
-          translateX.setValue(next)
-        },
-        onPanResponderRelease: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
-          const dragged = clampTranslateX(currentOffset.current + gs.dx)
+  const handleOpenStartDrag = useCallback(() => {
+    // Close any other open row as soon as this one starts revealing.
+    if (openRow && openRow !== swipeableRef.current) {
+      openRow.close()
+      openRow = null
+    }
+  }, [])
 
-          // Left-swipe snap: open if dragged past threshold
-          const leftThreshold = -leftPanelWidth * openThreshold
-          if (dragged < leftThreshold) {
-            snapTo(-leftPanelWidth)
-            return
-          }
+  const handleWillOpen = useCallback(() => {
+    if (openRow && openRow !== swipeableRef.current) {
+      openRow.close()
+    }
+    openRow = swipeableRef.current
+    setIsOpen(true)
+  }, [])
 
-          // Right-swipe snap: open if dragged past threshold
-          const rightThreshold = rightPanelWidth * openThreshold
-          if (dragged > rightThreshold) {
-            snapTo(rightPanelWidth)
-            return
-          }
+  const handleWillClose = useCallback(() => {
+    if (openRow === swipeableRef.current) {
+      openRow = null
+    }
+    setIsOpen(false)
+  }, [])
 
-          snapTo(0)
-        },
-        onPanResponderTerminate: close,
-        onPanResponderTerminationRequest: () => true,
-      }),
-    [clampTranslateX, leftPanelWidth, rightPanelWidth, close, openThreshold, snapTo, translateX],
-  )
+  // FlatList recycling can unmount a row while it is open — drop the stale
+  // registry entry so closeOpenSwipeableRow() doesn't call into a dead ref.
+  useEffect(() => {
+    return () => {
+      if (openRow === swipeableRef.current) {
+        openRow = null
+      }
+    }
+  }, [])
+
+  // ReanimatedSwipeable naming is inverted from ours: its "right actions"
+  // are the ones revealed by swiping left, and vice versa.
+  const renderRightActions =
+    leftPanelWidth > 0
+      ? (progress: SharedValue<number>) => (
+          <ActionPanel
+            actions={actions}
+            width={leftPanelWidth}
+            side="right"
+            progress={progress}
+            onActionDone={close}
+          />
+        )
+      : undefined
+  const renderLeftActions =
+    rightPanelWidth > 0 && rightActions
+      ? (progress: SharedValue<number>) => (
+          <ActionPanel
+            actions={rightActions}
+            width={rightPanelWidth}
+            side="left"
+            progress={progress}
+            onActionDone={close}
+          />
+        )
+      : undefined
+
+  if (!renderRightActions && !renderLeftActions) {
+    return <YStack style={style}>{children}</YStack>
+  }
 
   return (
-    <YStack style={style}>
-      {/* Left action buttons — revealed when swiping left (negative translateX) */}
-      {leftPanelWidth > 0 && (
-        <XStack position="absolute" right={0} top={0} bottom={0} width={leftPanelWidth}>
-          {actions.map((action) => (
-            <Pressable
-              key={action.key}
-              onPress={() => {
-                action.onPress()
-                close()
-              }}
-              style={({ pressed }) => ({
-                flex: 1,
-                opacity: pressed ? 0.8 : 1,
-              })}
-            >
-              <YStack
-                flex={1}
-                alignItems="center"
-                justifyContent="center"
-                backgroundColor={action.backgroundColor ?? '$backgroundHover'}
-                paddingHorizontal={8}
-              >
-                <Text
-                  fontSize={12}
-                  fontWeight="800"
-                  color={action.color ?? '$color'}
-                  textAlign="center"
-                >
-                  {action.label}
-                </Text>
-              </YStack>
-            </Pressable>
-          ))}
-        </XStack>
+    <ReanimatedSwipeable
+      ref={swipeableRef}
+      friction={1}
+      overshootLeft={false}
+      overshootRight={false}
+      leftThreshold={rightPanelWidth * openThreshold}
+      rightThreshold={leftPanelWidth * openThreshold}
+      renderLeftActions={renderLeftActions}
+      renderRightActions={renderRightActions}
+      onSwipeableOpenStartDrag={handleOpenStartDrag}
+      onSwipeableWillOpen={handleWillOpen}
+      onSwipeableWillClose={handleWillClose}
+      containerStyle={style}
+    >
+      {children}
+      {isOpen && (
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={close}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+        />
       )}
-
-      {/* Right action buttons — revealed when swiping right (positive translateX) */}
-      {rightPanelWidth > 0 && rightActions && (
-        <XStack position="absolute" left={0} top={0} bottom={0} width={rightPanelWidth}>
-          {rightActions.map((action) => (
-            <Pressable
-              key={action.key}
-              onPress={() => {
-                action.onPress()
-                close()
-              }}
-              style={({ pressed }) => ({
-                flex: 1,
-                opacity: pressed ? 0.8 : 1,
-              })}
-            >
-              <YStack
-                flex={1}
-                alignItems="center"
-                justifyContent="center"
-                backgroundColor={action.backgroundColor ?? '$backgroundHover'}
-                paddingHorizontal={8}
-              >
-                <Text
-                  fontSize={12}
-                  fontWeight="800"
-                  color={action.color ?? '$color'}
-                  textAlign="center"
-                >
-                  {action.label}
-                </Text>
-              </YStack>
-            </Pressable>
-          ))}
-        </XStack>
-      )}
-
-      {/* Foreground content — slides to reveal actions on either side */}
-      <Animated.View
-        style={{
-          transform: [{ translateX }],
-        }}
-        {...panResponder.panHandlers}
-      >
-        {children}
-      </Animated.View>
-    </YStack>
+    </ReanimatedSwipeable>
   )
 }
