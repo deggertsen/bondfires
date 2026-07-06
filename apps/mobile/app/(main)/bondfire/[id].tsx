@@ -1,6 +1,5 @@
 import {
   appStore$,
-  getBondfireVideoIndex,
   getLastLocation,
   hasViewedToday,
   markViewed,
@@ -34,6 +33,7 @@ import {
   type BondfireVideoItem,
   buildBondfireVideoItems,
   clampVideoIndex,
+  getInitialVideoIndex,
   getResponseVideoScrollIndex,
   SCREEN_WIDTH,
   type ScrollToIndexFailedInfo,
@@ -343,7 +343,7 @@ export default function BondfireDetailScreen() {
     if (restoreTargetRef.current?.key !== restoreTargetKey) {
       restoreTargetRef.current = {
         key: restoreTargetKey,
-        savedIndex: deepLinkIndex ?? getBondfireVideoIndex(bondfireId) ?? 0,
+        savedIndex: deepLinkIndex ?? getInitialVideoIndex(bondfireData),
       }
       restoredPositionKeyRef.current = null
     }
@@ -518,8 +518,7 @@ export default function BondfireDetailScreen() {
   const totalVideos = 1 + bondfireData.videos.length
   const initialVideoIndex = clampVideoIndex(
     getResponseVideoScrollIndex(bondfireData, deepLinkVideoId) ??
-      getBondfireVideoIndex(bondfireId) ??
-      0,
+      getInitialVideoIndex(bondfireData),
     totalVideos,
   )
   const videoItems = buildBondfireVideoItems(bondfireData, videoUrls)

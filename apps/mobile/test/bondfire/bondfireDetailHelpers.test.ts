@@ -4,6 +4,7 @@ import {
   buildBondfireVideoItems,
   clampVideoIndex,
   formatTime,
+  getInitialVideoIndex,
   getResponseVideoScrollIndex,
   withLiveDvrStart,
 } from '../../app/(main)/bondfire/_lib/bondfireDetailHelpers'
@@ -39,6 +40,55 @@ describe('bondfireDetailHelpers', () => {
     expect(getResponseVideoScrollIndex(bondfireData, 'response-2')).toBe(2)
     expect(getResponseVideoScrollIndex(bondfireData, 'missing-response')).toBeNull()
     expect(getResponseVideoScrollIndex(bondfireData, undefined)).toBeNull()
+  })
+
+  it('opens at the first unwatched video', () => {
+    const bondfireData = {
+      watchedByViewer: true,
+      videos: [
+        { _id: 'r1', watchedByViewer: true },
+        { _id: 'r2', watchedByViewer: false },
+        { _id: 'r3', watchedByViewer: false },
+      ],
+    } as unknown as BondfireDetailData
+
+    expect(getInitialVideoIndex(bondfireData)).toBe(2)
+  })
+
+  it('opens at the main video when nothing has been watched', () => {
+    const bondfireData = {
+      watchedByViewer: false,
+      videos: [{ _id: 'r1', watchedByViewer: false }],
+    } as unknown as BondfireDetailData
+
+    expect(getInitialVideoIndex(bondfireData)).toBe(0)
+  })
+
+  it('opens at the last video when everything has been watched', () => {
+    const bondfireData = {
+      watchedByViewer: true,
+      videos: [
+        { _id: 'r1', watchedByViewer: true },
+        { _id: 'r2', watchedByViewer: true },
+      ],
+    } as unknown as BondfireDetailData
+
+    expect(getInitialVideoIndex(bondfireData)).toBe(2)
+
+    const noResponses = {
+      watchedByViewer: true,
+      videos: [],
+    } as unknown as BondfireDetailData
+    expect(getInitialVideoIndex(noResponses)).toBe(0)
+  })
+
+  it('treats a missing watched flag as unwatched', () => {
+    const bondfireData = {
+      watchedByViewer: true,
+      videos: [{ _id: 'r1', watchedByViewer: true }, { _id: 'r2' }],
+    } as unknown as BondfireDetailData
+
+    expect(getInitialVideoIndex(bondfireData)).toBe(2)
   })
 
   it('adds live DVR start without dropping existing query params', () => {
