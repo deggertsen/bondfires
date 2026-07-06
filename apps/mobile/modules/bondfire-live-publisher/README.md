@@ -66,9 +66,12 @@ from the connected input devices:
 
 The Bluetooth claim is released in `cleanupStreamer`. The chosen route is
 reported as `audioRoute` in `getStats()` payloads, so `live:stats_sample`
-telemetry shows which mic a session recorded from. Headsets connected
-mid-session do not take over until the next session (route is chosen at
-creation time).
+telemetry shows which mic a session recorded from. If the headset
+disconnects mid-session the framework reroutes capture to the built-in mic
+on its own (with a brief audio gap) and an `AudioDeviceCallback` flips
+`audioRoute` to `builtin` so later stats samples stay truthful. Headsets
+connected mid-session do not take over until the next session (route is
+chosen at creation time).
 
 ### Error events (`error`)
 
