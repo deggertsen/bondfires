@@ -20,6 +20,7 @@ import {
   useState,
 } from 'react'
 import { type AppStateStatus, NativeModules, Platform, AppState as RNAppState } from 'react-native'
+import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { KeyboardProvider } from 'react-native-keyboard-controller'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { AnimatePresence, TamaguiProvider, Theme, YStack } from 'tamagui'
@@ -638,14 +639,16 @@ export default function RootLayout() {
   }
 
   return (
-    <ConvexAuthProvider client={convex} storage={mmkvStorage}>
-      <SafeAreaProvider>
-        <KeyboardProvider>
-          <LayoutErrorBoundary>
-            <AppContent />
-          </LayoutErrorBoundary>
-        </KeyboardProvider>
-      </SafeAreaProvider>
-    </ConvexAuthProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ConvexAuthProvider client={convex} storage={mmkvStorage}>
+        <SafeAreaProvider>
+          <KeyboardProvider>
+            <LayoutErrorBoundary>
+              <AppContent />
+            </LayoutErrorBoundary>
+          </KeyboardProvider>
+        </SafeAreaProvider>
+      </ConvexAuthProvider>
+    </GestureHandlerRootView>
   )
 }

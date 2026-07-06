@@ -1,13 +1,8 @@
-import { useCallback, useMemo, useRef } from 'react'
-import {
-  Animated,
-  type GestureResponderEvent,
-  PanResponder,
-  type PanResponderGestureState,
-  Pressable,
-  type StyleProp,
-  type ViewStyle,
-} from 'react-native'
+import { useCallback, useRef } from 'react'
+import { Pressable, type StyleProp, type ViewStyle } from 'react-native'
+import ReanimatedSwipeable, {
+  type SwipeableMethods,
+} from 'react-native-gesture-handler/ReanimatedSwipeable'
 import { XStack, YStack } from 'tamagui'
 import { Text } from './Text'
 
@@ -34,13 +29,61 @@ type Props = {
   style?: StyleProp<ViewStyle>
 }
 
+function ActionPanel({
+  actions,
+  width,
+  onActionDone,
+}: {
+  actions: SwipeAction[]
+  width: number
+  onActionDone: () => void
+}) {
+  return (
+    <XStack width={width}>
+      {actions.map((action) => (
+        <Pressable
+          key={action.key}
+          onPress={() => {
+            action.onPress()
+            onActionDone()
+          }}
+          style={({ pressed }) => ({
+            flex: 1,
+            opacity: pressed ? 0.8 : 1,
+          })}
+        >
+          <YStack
+            flex={1}
+            alignItems="center"
+            justifyContent="center"
+            backgroundColor={action.backgroundColor ?? '$backgroundHover'}
+            paddingHorizontal={8}
+          >
+            <Text
+              fontSize={12}
+              fontWeight="800"
+              color={action.color ?? '$color'}
+              textAlign="center"
+            >
+              {action.label}
+            </Text>
+          </YStack>
+        </Pressable>
+      ))}
+    </XStack>
+  )
+}
+
 /**
  * A swipeable row that reveals action buttons when swiped.
  *
  * - Swipe LEFT to reveal `actions` (e.g. Delete, Pin, Report)
  * - Swipe RIGHT to reveal `rightActions` (e.g. Edit)
  *
- * Uses React Native's PanResponder + Animated — no extra deps.
+ * Built on react-native-gesture-handler's ReanimatedSwipeable. The pan
+ * gesture runs natively, so it wins the race against the enclosing
+ * scroll view on iOS — a JS PanResponder gets its touches cancelled by
+ * UIScrollView before it can claim horizontal swipes.
  */
 export function SwipeableRow({
   children,
@@ -53,154 +96,40 @@ export function SwipeableRow({
 }: Props) {
   const leftPanelWidth = actionWidth ?? actions.length * 72
   const rightPanelWidth = rightActionWidth ?? (rightActions?.length ?? 0) * 72
-  const translateX = useRef(new Animated.Value(0)).current
-  const currentOffset = useRef(0)
-
-  const clampTranslateX = useCallback(
-    (value: number) => Math.max(-leftPanelWidth, Math.min(rightPanelWidth, value)),
-    [leftPanelWidth, rightPanelWidth],
-  )
-
-  const snapTo = useCallback(
-    (toValue: number) => {
-      currentOffset.current = toValue
-      Animated.spring(translateX, {
-        toValue,
-        useNativeDriver: true,
-        tension: 60,
-        friction: 10,
-      }).start()
-    },
-    [translateX],
-  )
+  const swipeableRef = useRef<SwipeableMethods>(null)
 
   const close = useCallback(() => {
-    snapTo(0)
-  }, [snapTo])
+    swipeableRef.current?.close()
+  }, [])
 
-  const panResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onMoveShouldSetPanResponder: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
-          // Only capture horizontal swipes (not vertical scrolls)
-          return (
-            (leftPanelWidth > 0 || rightPanelWidth > 0) &&
-            Math.abs(gs.dx) > 10 &&
-            Math.abs(gs.dx) > Math.abs(gs.dy) * 1.5
-          )
-        },
-        onPanResponderMove: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
-          const next = clampTranslateX(currentOffset.current + gs.dx)
-          translateX.setValue(next)
-        },
-        onPanResponderRelease: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
-          const dragged = clampTranslateX(currentOffset.current + gs.dx)
+  // ReanimatedSwipeable naming is inverted from ours: its "right actions"
+  // are the ones revealed by swiping left, and vice versa.
+  const renderRightActions =
+    leftPanelWidth > 0
+      ? () => <ActionPanel actions={actions} width={leftPanelWidth} onActionDone={close} />
+      : undefined
+  const renderLeftActions =
+    rightPanelWidth > 0 && rightActions
+      ? () => <ActionPanel actions={rightActions} width={rightPanelWidth} onActionDone={close} />
+      : undefined
 
-          // Left-swipe snap: open if dragged past threshold
-          const leftThreshold = -leftPanelWidth * openThreshold
-          if (dragged < leftThreshold) {
-            snapTo(-leftPanelWidth)
-            return
-          }
-
-          // Right-swipe snap: open if dragged past threshold
-          const rightThreshold = rightPanelWidth * openThreshold
-          if (dragged > rightThreshold) {
-            snapTo(rightPanelWidth)
-            return
-          }
-
-          snapTo(0)
-        },
-        onPanResponderTerminate: close,
-        onPanResponderTerminationRequest: () => true,
-      }),
-    [clampTranslateX, leftPanelWidth, rightPanelWidth, close, openThreshold, snapTo, translateX],
-  )
+  if (!renderRightActions && !renderLeftActions) {
+    return <YStack style={style}>{children}</YStack>
+  }
 
   return (
-    <YStack style={style}>
-      {/* Left action buttons — revealed when swiping left (negative translateX) */}
-      {leftPanelWidth > 0 && (
-        <XStack position="absolute" right={0} top={0} bottom={0} width={leftPanelWidth}>
-          {actions.map((action) => (
-            <Pressable
-              key={action.key}
-              onPress={() => {
-                action.onPress()
-                close()
-              }}
-              style={({ pressed }) => ({
-                flex: 1,
-                opacity: pressed ? 0.8 : 1,
-              })}
-            >
-              <YStack
-                flex={1}
-                alignItems="center"
-                justifyContent="center"
-                backgroundColor={action.backgroundColor ?? '$backgroundHover'}
-                paddingHorizontal={8}
-              >
-                <Text
-                  fontSize={12}
-                  fontWeight="800"
-                  color={action.color ?? '$color'}
-                  textAlign="center"
-                >
-                  {action.label}
-                </Text>
-              </YStack>
-            </Pressable>
-          ))}
-        </XStack>
-      )}
-
-      {/* Right action buttons — revealed when swiping right (positive translateX) */}
-      {rightPanelWidth > 0 && rightActions && (
-        <XStack position="absolute" left={0} top={0} bottom={0} width={rightPanelWidth}>
-          {rightActions.map((action) => (
-            <Pressable
-              key={action.key}
-              onPress={() => {
-                action.onPress()
-                close()
-              }}
-              style={({ pressed }) => ({
-                flex: 1,
-                opacity: pressed ? 0.8 : 1,
-              })}
-            >
-              <YStack
-                flex={1}
-                alignItems="center"
-                justifyContent="center"
-                backgroundColor={action.backgroundColor ?? '$backgroundHover'}
-                paddingHorizontal={8}
-              >
-                <Text
-                  fontSize={12}
-                  fontWeight="800"
-                  color={action.color ?? '$color'}
-                  textAlign="center"
-                >
-                  {action.label}
-                </Text>
-              </YStack>
-            </Pressable>
-          ))}
-        </XStack>
-      )}
-
-      {/* Foreground content — slides to reveal actions on either side */}
-      <Animated.View
-        style={{
-          transform: [{ translateX }],
-        }}
-        {...panResponder.panHandlers}
-      >
-        {children}
-      </Animated.View>
-    </YStack>
+    <ReanimatedSwipeable
+      ref={swipeableRef}
+      friction={1}
+      overshootLeft={false}
+      overshootRight={false}
+      leftThreshold={rightPanelWidth * openThreshold}
+      rightThreshold={leftPanelWidth * openThreshold}
+      renderLeftActions={renderLeftActions}
+      renderRightActions={renderRightActions}
+      containerStyle={style}
+    >
+      {children}
+    </ReanimatedSwipeable>
   )
 }
