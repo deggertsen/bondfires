@@ -548,8 +548,12 @@ class BondfireLivePublisherModule : Module() {
       ?: return AudioInputRouting(MediaRecorder.AudioSource.CAMCORDER, null, false, "builtin")
     val inputs = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
 
-    fun firstInput(vararg types: Int): AudioDeviceInfo? =
-      types.firstNotNullOfOrNull { type -> inputs.firstOrNull { it.type == type } }
+    fun firstInput(vararg types: Int): AudioDeviceInfo? {
+      for (type in types) {
+        inputs.firstOrNull { it.type == type }?.let { return it }
+      }
+      return null
+    }
 
     val wired = firstInput(
       AudioDeviceInfo.TYPE_WIRED_HEADSET,
