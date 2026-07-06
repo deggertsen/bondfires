@@ -3,6 +3,7 @@ import {
   EXTRA_CAMP_ADD_ON_DEFINITION,
   subscriptionStore$,
   TIER_DEFINITIONS,
+  useRecordingWatchdog,
   useSubscription,
 } from '@bondfires/app'
 import { SubscriptionPaywall } from '@bondfires/ui'
@@ -115,6 +116,8 @@ function GlobalPaywall() {
 }
 
 export default function MainLayout() {
+  useRecordingWatchdog()
+
   return (
     <>
       <Stack screenOptions={{ headerShown: false }}>

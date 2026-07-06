@@ -1,5 +1,4 @@
 import { observable } from '@legendapp/state'
-import { useEffect } from 'react'
 import { telemetry } from '../services/telemetry'
 
 // ── Recording flow state machine ─────────────────────────────────────────────
@@ -32,13 +31,6 @@ export type RecordingPhase =
   | 'uploading'
   | 'completion'
 
-const RECORDING_WATCHDOG_CHECK_INTERVAL_MS = 30_000
-const RECORDING_WATCHDOG_PHASE_LIMIT_MS: Partial<Record<RecordingPhase, number>> = {
-  pre_connected: 60_000,
-  recording: 10 * 60_000,
-  stopping: 60_000,
-}
-
 const VALID_TRANSITIONS: Record<RecordingPhase, readonly RecordingPhase[]> = {
   idle: ['pre_connected', 'recording'],
   // recording: record tap. idle: cancel / lost focus / preview expired.
@@ -56,7 +48,7 @@ export type CameraFacing = 'front' | 'back'
 
 export interface RecordingState {
   phase: RecordingPhase
-  /** Epoch ms when the current non-idle phase began. */
+  /** Timestamp for the current non-idle phase, used by the watchdog. */
   phaseStartedAt: number | null
   /** Which camera the user wants. The publisher/camera owns the real state. */
   facing: CameraFacing
@@ -142,37 +134,4 @@ export const recordingActions = {
       isLivePublisherAvailable: recordingStore$.isLivePublisherAvailable.peek(),
     })
   },
-}
-
-export function useRecordingWatchdog() {
-  useEffect(() => {
-    const checkRecordingPhase = () => {
-      const currentPhase = recordingStore$.phase.peek()
-      const currentPhaseStartedAt = recordingStore$.phaseStartedAt.peek()
-      const phaseLimitMs = RECORDING_WATCHDOG_PHASE_LIMIT_MS[currentPhase]
-
-      if (!phaseLimitMs || currentPhaseStartedAt === null) {
-        return
-      }
-
-      const elapsedMs = Date.now() - currentPhaseStartedAt
-      if (elapsedMs <= phaseLimitMs) {
-        return
-      }
-
-      telemetry.warn('recording:watchdog-reset', 'Recording watchdog reset a stuck phase', {
-        phase: currentPhase,
-        elapsedMs,
-        phaseLimitMs,
-      })
-      recordingActions.resetFlow(`watchdog reset stuck ${currentPhase}`)
-    }
-
-    checkRecordingPhase()
-    const interval = setInterval(checkRecordingPhase, RECORDING_WATCHDOG_CHECK_INTERVAL_MS)
-
-    return () => {
-      clearInterval(interval)
-    }
-  }, [])
 }

@@ -17,12 +17,16 @@ export function useRecordingResourceLock() {
   return isRecordingResourceLocked({ recordingPhase, liveStatus })
 }
 
+/**
+ * Query subscriptions for the currently focused tab should not be blocked by
+ * camera/encoder resource locks. A focused tab needs data to render.
+ */
+export function useCanLoadTabData(isFocused: boolean) {
+  return isFocused
+}
+
 export function useCanRunRecordingBackgroundWork(isFocused: boolean) {
   const recordingResourceLocked = useRecordingResourceLock()
 
   return isFocused && !recordingResourceLocked
-}
-
-export function useCanLoadTabData(isFocused: boolean) {
-  return isFocused
 }
