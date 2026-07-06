@@ -4,6 +4,9 @@ import {
   buildVideoUrlTargets,
   missingUrlRequests,
   shouldLoadMainVideoUrls,
+  URL_PREFETCH_AHEAD,
+  URL_PREFETCH_BEHIND,
+  urlPrefetchWindow,
   urlsFromCache,
 } from '../../app/(main)/bondfire/_lib/bondfireVideoUrlPlan'
 
@@ -155,5 +158,51 @@ describe('missingUrlRequests', () => {
     const missing = missingUrlRequests(targets, cache, inFlight)
 
     expect(missing.map((entry) => entry.request.muxPlaybackId)).toEqual(['main-playback'])
+  })
+
+  it('fetches only targets inside the prefetch window', () => {
+    const bondfire = makeBondfire({
+      videos: Array.from({ length: 20 }, (_, i) =>
+        makeResponse({ _id: `resp${i + 1}`, muxPlaybackId: `resp${i + 1}-playback` }),
+      ),
+    })
+    const targets = buildVideoUrlTargets(bondfire)
+
+    const missing = missingUrlRequests(
+      targets,
+      new Map(),
+      undefined,
+      urlPrefetchWindow(10, targets.length),
+    )
+
+    expect(missing.map((entry) => entry.request.muxPlaybackId)).toEqual([
+      'resp8-playback',
+      'resp9-playback',
+      'resp10-playback',
+      'resp11-playback',
+      'resp12-playback',
+      'resp13-playback',
+      'resp14-playback',
+    ])
+  })
+})
+
+describe('urlPrefetchWindow', () => {
+  it('spans URL_PREFETCH_BEHIND behind through URL_PREFETCH_AHEAD ahead', () => {
+    expect(urlPrefetchWindow(10, 100)).toEqual({
+      start: 10 - URL_PREFETCH_BEHIND,
+      end: 10 + URL_PREFETCH_AHEAD,
+    })
+  })
+
+  it('clamps at both ends of the list', () => {
+    expect(urlPrefetchWindow(0, 100)).toEqual({ start: 0, end: URL_PREFETCH_AHEAD })
+    expect(urlPrefetchWindow(99, 100)).toEqual({ start: 99 - URL_PREFETCH_BEHIND, end: 99 })
+    expect(urlPrefetchWindow(0, 2)).toEqual({ start: 0, end: 1 })
+  })
+
+  it('tolerates an out-of-range index', () => {
+    expect(urlPrefetchWindow(50, 3)).toEqual({ start: 0, end: 2 })
+    expect(urlPrefetchWindow(-1, 3)).toEqual({ start: 0, end: 2 })
   })
 })

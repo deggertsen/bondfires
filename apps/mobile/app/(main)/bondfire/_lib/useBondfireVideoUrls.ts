@@ -5,6 +5,7 @@ import {
   buildVideoUrlTargets,
   missingUrlRequests,
   shouldLoadMainVideoUrls,
+  urlPrefetchWindow,
   urlsFromCache,
   type VideoUrlRequest,
   type VideoUrlTarget,
@@ -14,10 +15,12 @@ type GetVideoUrlsBatch = (args: { items: VideoUrlRequest[] }) => Promise<{ hdUrl
 
 export function useBondfireVideoUrls({
   bondfireData,
+  currentVideoIndex,
   getVideoUrlsBatch,
   setVideoUrls,
 }: {
   bondfireData: BondfireDetailData | null | undefined
+  currentVideoIndex: number
   getVideoUrlsBatch: GetVideoUrlsBatch
   setVideoUrls: (urls: (string | null)[]) => void
 }) {
@@ -27,6 +30,7 @@ export function useBondfireVideoUrls({
   const cacheRef = useRef<Map<string, string>>(new Map())
   const inFlightRef = useRef<Set<string>>(new Set())
   const latestTargetsRef = useRef<VideoUrlTarget[]>([])
+  const warnedMissingPlaybackIdRef = useRef<string | null>(null)
   const disposedRef = useRef(false)
 
   useEffect(() => {
@@ -49,14 +53,20 @@ export function useBondfireVideoUrls({
 
     if (!shouldLoadMainVideoUrls(bondfireData)) return
 
-    if (targets[0]?.cacheKey === null) {
+    if (targets[0]?.cacheKey === null && warnedMissingPlaybackIdRef.current !== bondfireData._id) {
+      warnedMissingPlaybackIdRef.current = bondfireData._id
       telemetry.warn('video:urls:missing_playback_id', 'No playback ID for bondfire', {
         bondfireId: bondfireData._id,
         videoStatus: bondfireData.videoStatus,
       })
     }
 
-    const missing = missingUrlRequests(targets, cacheRef.current, inFlightRef.current)
+    const missing = missingUrlRequests(
+      targets,
+      cacheRef.current,
+      inFlightRef.current,
+      urlPrefetchWindow(currentVideoIndex, targets.length),
+    )
     if (missing.length === 0) return
 
     for (const entry of missing) inFlightRef.current.add(entry.cacheKey)
@@ -82,5 +92,5 @@ export function useBondfireVideoUrls({
       .finally(() => {
         for (const entry of missing) inFlightRef.current.delete(entry.cacheKey)
       })
-  }, [bondfireData, getVideoUrlsBatch, setVideoUrls])
+  }, [bondfireData, currentVideoIndex, getVideoUrlsBatch, setVideoUrls])
 }

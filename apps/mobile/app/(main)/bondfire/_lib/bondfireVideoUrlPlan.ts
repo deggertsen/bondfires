@@ -92,19 +92,39 @@ export function urlsFromCache(
   })
 }
 
+// Only URLs near the current position are fetched — video *content* already
+// loads only for the active video, but a 100-response thread should not pay
+// for 100 access checks and signed tokens either. The window extends as the
+// user swipes; previously fetched URLs stay cached.
+export const URL_PREFETCH_BEHIND = 2
+export const URL_PREFETCH_AHEAD = 4
+
+export function urlPrefetchWindow(
+  currentIndex: number,
+  targetCount: number,
+): { start: number; end: number } {
+  const clampedIndex = Math.min(Math.max(currentIndex, 0), Math.max(targetCount - 1, 0))
+  return {
+    start: Math.max(0, clampedIndex - URL_PREFETCH_BEHIND),
+    end: Math.min(targetCount - 1, clampedIndex + URL_PREFETCH_AHEAD),
+  }
+}
+
 export function missingUrlRequests(
   targets: readonly VideoUrlTarget[],
   cache: ReadonlyMap<string, string>,
   inFlight?: ReadonlySet<string>,
+  window?: { start: number; end: number },
 ): { cacheKey: string; request: VideoUrlRequest }[] {
   const seen = new Set<string>()
   const missing: { cacheKey: string; request: VideoUrlRequest }[] = []
-  for (const target of targets) {
-    if (!target.cacheKey || !target.request) continue
+  targets.forEach((target, index) => {
+    if (window && (index < window.start || index > window.end)) return
+    if (!target.cacheKey || !target.request) return
     if (cache.has(target.cacheKey) || inFlight?.has(target.cacheKey) || seen.has(target.cacheKey))
-      continue
+      return
     seen.add(target.cacheKey)
     missing.push({ cacheKey: target.cacheKey, request: target.request })
-  }
+  })
   return missing
 }

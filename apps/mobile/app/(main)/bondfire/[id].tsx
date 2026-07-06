@@ -279,7 +279,7 @@ export default function BondfireDetailScreen() {
     return clearScheduledRestoreScroll
   }, [clearScheduledRestoreScroll])
 
-  useBondfireVideoUrls({ bondfireData, getVideoUrlsBatch, setVideoUrls })
+  useBondfireVideoUrls({ bondfireData, currentVideoIndex, getVideoUrlsBatch, setVideoUrls })
 
   useEffect(() => {
     if (!bondfireId || !currentUserId) return
