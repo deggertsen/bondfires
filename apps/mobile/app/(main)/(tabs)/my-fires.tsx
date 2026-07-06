@@ -6,6 +6,7 @@ import {
   setFeedActiveBondfireId,
   telemetry,
   useAppThemeColors,
+  useCanLoadTabData,
   useCanRunRecordingBackgroundWork,
   useCurrentUserId,
   useLoadingTimeoutTelemetry,
@@ -211,16 +212,16 @@ export default function MyFiresScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const isFocused = useIsFocused()
+  const canLoadTabData = useCanLoadTabData(isFocused)
   const shouldRunBackgroundWork = useCanRunRecordingBackgroundWork(isFocused)
   const { userId: currentUserId, isLoading: isUserLoading, currentUser } = useCurrentUserId()
   const [refreshKey, setRefreshKey] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [pinnedFirst, setPinnedFirst] = useState(false)
   const [threads, setThreads] = useState<MyFire[] | undefined>(undefined)
-  const invitedRows = useQuery(
-    api.inviteClaims.listUnseenInvites,
-    shouldRunBackgroundWork ? {} : 'skip',
-  ) as InviteRow[] | undefined
+  const invitedRows = useQuery(api.inviteClaims.listUnseenInvites, canLoadTabData ? {} : 'skip') as
+    | InviteRow[]
+    | undefined
   const getThumbnailUrl = useAction(api.videos.getThumbnailUrl)
 
   // Swipe action mutations
@@ -259,6 +260,7 @@ export default function MyFiresScreen() {
     isLoading,
     loadedCount: threads?.length,
     context: {
+      canLoadTabData,
       shouldRunBackgroundWork,
       hasCurrentUserId: !!currentUserId,
       isUserLoading,
@@ -463,7 +465,7 @@ export default function MyFiresScreen() {
       <YStack flex={1} backgroundColor={'$background'}>
         <MyFiresSubscription
           key={refreshKey}
-          enabled={shouldRunBackgroundWork}
+          enabled={canLoadTabData}
           pinnedFirst={pinnedFirst}
           onResolved={handleThreadsResolved}
         />
@@ -477,7 +479,7 @@ export default function MyFiresScreen() {
     <YStack flex={1} backgroundColor={'$background'}>
       <MyFiresSubscription
         key={refreshKey}
-        enabled={shouldRunBackgroundWork}
+        enabled={canLoadTabData}
         pinnedFirst={pinnedFirst}
         onResolved={handleThreadsResolved}
       />
