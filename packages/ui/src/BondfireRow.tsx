@@ -143,8 +143,21 @@ export function BondfireRow({
   const subtitle = isLive ? 'Live now' : `${timeAgo} · ${statusLabel}`
   const displayTitle = title?.trim() || `${creatorName ?? 'Anonymous'}'s Bondfire`
 
+  // Swipe-to-reveal is invisible to screen readers — expose the same actions
+  // through the accessibility actions menu (VoiceOver rotor / TalkBack).
+  const allSwipeActions = [...(rightActions ?? []), ...actions]
+
   const row = (
-    <Pressable onPress={onOpen}>
+    <Pressable
+      onPress={onOpen}
+      accessibilityActions={allSwipeActions.map((action) => ({
+        name: action.key,
+        label: action.label,
+      }))}
+      onAccessibilityAction={(event) => {
+        allSwipeActions.find((action) => action.key === event.nativeEvent.actionName)?.onPress()
+      }}
+    >
       <XStack
         paddingHorizontal={16}
         paddingVertical={12}

@@ -4,7 +4,14 @@ import {
   useAppThemeColors,
   useCanRunRecordingBackgroundWork,
 } from '@bondfires/app'
-import { BondfireRow, type BondfireRowProps, Button, Spinner, Text } from '@bondfires/ui'
+import {
+  BondfireRow,
+  type BondfireRowProps,
+  Button,
+  closeOpenSwipeableRow,
+  Spinner,
+  Text,
+} from '@bondfires/ui'
 import { useIsFocused } from '@react-navigation/native'
 import { ArrowLeft, Flame, Lock, Plus } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
@@ -501,6 +508,7 @@ export default function PersonalCampScreen() {
         <FlatList
           data={enrichedBondfires}
           keyExtractor={(item) => item._id}
+          onScrollBeginDrag={closeOpenSwipeableRow}
           ItemSeparatorComponent={() => (
             <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
           )}

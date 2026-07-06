@@ -10,7 +10,14 @@ import {
   useCurrentUserId,
   useLoadingTimeoutTelemetry,
 } from '@bondfires/app'
-import { BondfireRow, type BondfireRowProps, Button, Spinner, Text } from '@bondfires/ui'
+import {
+  BondfireRow,
+  type BondfireRowProps,
+  Button,
+  closeOpenSwipeableRow,
+  Spinner,
+  Text,
+} from '@bondfires/ui'
 import { useIsFocused } from '@react-navigation/native'
 import { AlertTriangle, Flame, Pin, RefreshCw } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
@@ -487,6 +494,7 @@ export default function MyFiresScreen() {
         data={threads}
         extraData={listExtraData}
         keyExtractor={(item) => item._id}
+        onScrollBeginDrag={closeOpenSwipeableRow}
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}

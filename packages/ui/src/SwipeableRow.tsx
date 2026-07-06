@@ -1,9 +1,10 @@
-import { useCallback, useRef } from 'react'
-import { Pressable, type StyleProp, type ViewStyle } from 'react-native'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Pressable, type StyleProp, StyleSheet, type ViewStyle } from 'react-native'
 import ReanimatedSwipeable, {
   type SwipeableMethods,
 } from 'react-native-gesture-handler/ReanimatedSwipeable'
-import { XStack, YStack } from 'tamagui'
+import Animated, { type SharedValue, useAnimatedStyle } from 'react-native-reanimated'
+import { YStack } from 'tamagui'
 import { Text } from './Text'
 
 export type SwipeAction = {
@@ -29,17 +30,43 @@ type Props = {
   style?: StyleProp<ViewStyle>
 }
 
+// At most one row may be open at a time (iOS Mail behavior). Opening a row
+// closes the previous one; lists close the open row when scrolling starts.
+let openRow: SwipeableMethods | null = null
+
+/**
+ * Close the currently open SwipeableRow, if any. Wire this to a list's
+ * `onScrollBeginDrag` so scrolling dismisses the revealed actions.
+ */
+export function closeOpenSwipeableRow() {
+  openRow?.close()
+  openRow = null
+}
+
 function ActionPanel({
   actions,
   width,
+  side,
+  progress,
   onActionDone,
 }: {
   actions: SwipeAction[]
   width: number
+  /** Which edge the panel sits on — controls the parallax slide direction */
+  side: 'left' | 'right'
+  progress: SharedValue<number>
   onActionDone: () => void
 }) {
+  // Buttons trail the row slightly as it slides, instead of sitting statically.
+  const parallax = useAnimatedStyle(() => {
+    const remaining = 1 - Math.min(progress.value, 1)
+    return {
+      transform: [{ translateX: remaining * width * 0.4 * (side === 'right' ? 1 : -1) }],
+    }
+  })
+
   return (
-    <XStack width={width}>
+    <Animated.View style={[{ width, flexDirection: 'row' }, parallax]}>
       {actions.map((action) => (
         <Pressable
           key={action.key}
@@ -70,7 +97,7 @@ function ActionPanel({
           </YStack>
         </Pressable>
       ))}
-    </XStack>
+    </Animated.View>
   )
 }
 
@@ -84,6 +111,9 @@ function ActionPanel({
  * gesture runs natively, so it wins the race against the enclosing
  * scroll view on iOS — a JS PanResponder gets its touches cancelled by
  * UIScrollView before it can claim horizontal swipes.
+ *
+ * While a row is open, tapping it closes it instead of triggering the
+ * row's own press handler.
  */
 export function SwipeableRow({
   children,
@@ -97,20 +127,70 @@ export function SwipeableRow({
   const leftPanelWidth = actionWidth ?? actions.length * 72
   const rightPanelWidth = rightActionWidth ?? (rightActions?.length ?? 0) * 72
   const swipeableRef = useRef<SwipeableMethods>(null)
+  const [isOpen, setIsOpen] = useState(false)
 
   const close = useCallback(() => {
     swipeableRef.current?.close()
+  }, [])
+
+  const handleOpenStartDrag = useCallback(() => {
+    // Close any other open row as soon as this one starts revealing.
+    if (openRow && openRow !== swipeableRef.current) {
+      openRow.close()
+      openRow = null
+    }
+  }, [])
+
+  const handleWillOpen = useCallback(() => {
+    if (openRow && openRow !== swipeableRef.current) {
+      openRow.close()
+    }
+    openRow = swipeableRef.current
+    setIsOpen(true)
+  }, [])
+
+  const handleWillClose = useCallback(() => {
+    if (openRow === swipeableRef.current) {
+      openRow = null
+    }
+    setIsOpen(false)
+  }, [])
+
+  // FlatList recycling can unmount a row while it is open — drop the stale
+  // registry entry so closeOpenSwipeableRow() doesn't call into a dead ref.
+  useEffect(() => {
+    return () => {
+      if (openRow === swipeableRef.current) {
+        openRow = null
+      }
+    }
   }, [])
 
   // ReanimatedSwipeable naming is inverted from ours: its "right actions"
   // are the ones revealed by swiping left, and vice versa.
   const renderRightActions =
     leftPanelWidth > 0
-      ? () => <ActionPanel actions={actions} width={leftPanelWidth} onActionDone={close} />
+      ? (progress: SharedValue<number>) => (
+          <ActionPanel
+            actions={actions}
+            width={leftPanelWidth}
+            side="right"
+            progress={progress}
+            onActionDone={close}
+          />
+        )
       : undefined
   const renderLeftActions =
     rightPanelWidth > 0 && rightActions
-      ? () => <ActionPanel actions={rightActions} width={rightPanelWidth} onActionDone={close} />
+      ? (progress: SharedValue<number>) => (
+          <ActionPanel
+            actions={rightActions}
+            width={rightPanelWidth}
+            side="left"
+            progress={progress}
+            onActionDone={close}
+          />
+        )
       : undefined
 
   if (!renderRightActions && !renderLeftActions) {
@@ -127,9 +207,20 @@ export function SwipeableRow({
       rightThreshold={leftPanelWidth * openThreshold}
       renderLeftActions={renderLeftActions}
       renderRightActions={renderRightActions}
+      onSwipeableOpenStartDrag={handleOpenStartDrag}
+      onSwipeableWillOpen={handleWillOpen}
+      onSwipeableWillClose={handleWillClose}
       containerStyle={style}
     >
       {children}
+      {isOpen && (
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={close}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+        />
+      )}
     </ReanimatedSwipeable>
   )
 }

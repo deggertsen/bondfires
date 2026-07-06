@@ -17,7 +17,15 @@ import {
   useLoadingTimeoutTelemetry,
   useSubscription,
 } from '@bondfires/app'
-import { BondfireRow, type BondfireRowProps, Button, Input, Spinner, Text } from '@bondfires/ui'
+import {
+  BondfireRow,
+  type BondfireRowProps,
+  Button,
+  closeOpenSwipeableRow,
+  Input,
+  Spinner,
+  Text,
+} from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
 import { AlertTriangle, Flame, RefreshCw, Search, X } from '@tamagui/lucide-icons'
@@ -824,6 +832,7 @@ export default function FeedScreen() {
         data={filtered ?? []}
         extraData={listExtraData}
         keyExtractor={(item) => item._id}
+        onScrollBeginDrag={closeOpenSwipeableRow}
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}

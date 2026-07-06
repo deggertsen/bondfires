@@ -10,7 +10,14 @@ import {
   useCanRunRecordingBackgroundWork,
   useSubscription,
 } from '@bondfires/app'
-import { Button, Spinner, type SwipeAction, SwipeableRow, Text } from '@bondfires/ui'
+import {
+  Button,
+  closeOpenSwipeableRow,
+  Spinner,
+  type SwipeAction,
+  SwipeableRow,
+  Text,
+} from '@bondfires/ui'
 import { useIsFocused } from '@react-navigation/native'
 import {
   ArrowLeft,
@@ -749,8 +756,21 @@ function BondfireRow({
 }) {
   const responses = Math.max(0, bondfire.videoCount - 1)
 
+  // Swipe-to-reveal is invisible to screen readers — expose the same actions
+  // through the accessibility actions menu (VoiceOver rotor / TalkBack).
+  const swipeActions = rightActions ?? []
+
   const row = (
-    <Pressable onPress={onOpen}>
+    <Pressable
+      onPress={onOpen}
+      accessibilityActions={swipeActions.map((action) => ({
+        name: action.key,
+        label: action.label,
+      }))}
+      onAccessibilityAction={(event) => {
+        swipeActions.find((action) => action.key === event.nativeEvent.actionName)?.onPress()
+      }}
+    >
       <XStack paddingHorizontal={16} paddingVertical={13} gap={12} alignItems="center">
         <YStack
           width={50}
@@ -1057,6 +1077,7 @@ export default function CampDetailScreen() {
       <FlatList
         data={bondfires ?? []}
         keyExtractor={(item) => item._id}
+        onScrollBeginDrag={closeOpenSwipeableRow}
         renderItem={({ item }) => {
           const isBondfireOwner = item.userId === camp.membership?.userId
           return (
