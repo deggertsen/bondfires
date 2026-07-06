@@ -35,6 +35,12 @@ import { type CampWithMembership, formatRecordingClock, type TradeTag } from './
 
 const keepAwakeTag = 'create-recording'
 const EARLY_LIVE_DROP_MS = 8_000
+// Upper bound for the never-started cancel path. Cancelling deletes the
+// session + record row, so a wrong verdict destroys real footage — cap the
+// blast radius: every observed never-started failure dies within ~31s (Mux's
+// idle disconnect), so past 60s we finalize instead and let stop()'s
+// authoritative recordingStarted flag (Mux server truth) decide the UX.
+const NEVER_STARTED_CANCEL_MAX_MS = 60_000
 const LIVE_CAMERA_SWAP_TIMEOUT_MS = 5_000
 const LIVE_CAMERA_SWAP_TIMEOUT_MESSAGE =
   'Could not switch cameras while recording. Please finish your recording and try switching before starting your next one.'
@@ -927,8 +933,13 @@ export function LiveRecordScreen({
     // the pipeline never sent Mux a frame regardless of how long the REC
     // screen sat there. Finalizing would upload nothing and leave an errored
     // asset + stale session for the reaper, so cancel and let the user retry
-    // (production telemetry shows immediate retries succeed).
-    const neverStarted = livePublishStore$.everHadThroughput.peek() === false
+    // (production telemetry shows immediate retries succeed). Bounded by
+    // NEVER_STARTED_CANCEL_MAX_MS because cancel is destructive — see the
+    // constant's comment.
+    const neverStarted =
+      livePublishStore$.everHadThroughput.peek() === false &&
+      durationMs !== undefined &&
+      durationMs < NEVER_STARTED_CANCEL_MAX_MS
     if ((durationMs !== undefined && durationMs < EARLY_LIVE_DROP_MS) || neverStarted) {
       telemetry.warn('live:early_drop', 'Live stream dropped before sufficient video data', {
         reason: liveStatus,

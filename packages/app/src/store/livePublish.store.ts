@@ -107,6 +107,13 @@ export const livePublishActions = {
     }
   },
 
+  // Called when stats sampling (re)starts, alongside the detector's own
+  // reset, so a retried connect on the same provisioned session can never
+  // inherit the previous attempt's throughput history.
+  resetThroughput: () => {
+    livePublishStore$.everHadThroughput.set(null)
+  },
+
   fail: (error: unknown) => {
     livePublishStore$.status.set('errored')
     livePublishStore$.errorMessage.set(error instanceof Error ? error.message : String(error))

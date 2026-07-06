@@ -5,6 +5,17 @@ import AVFoundation
 import Foundation
 import Network
 
+/// statsSupported=0 zeros: the JS stall watchdog ignores these samples.
+/// Single source for the stats payload shape — keep key set in sync with the
+/// measured branch in LivePublisher.getStats() and the Kotlin STATS_ZEROS.
+private let livePublisherZeroStats: [String: Int] = [
+  "bitrateBps": 0,
+  "rttMs": 0,
+  "droppedFrames": 0,
+  "currentFps": 0,
+  "statsSupported": 0,
+]
+
 struct LivePublisherStartOptions: Record {
   @Field var rtmpsUrl: String = ""
   @Field var streamKey: String = ""
@@ -98,13 +109,7 @@ public class BondfireLivePublisherModule: Module {
       if let publisher = self.publisher {
         return await publisher.getStats()
       }
-      return [
-        "bitrateBps": 0,
-        "rttMs": 0,
-        "droppedFrames": 0,
-        "currentFps": 0,
-        "statsSupported": 0,
-      ]
+      return livePublisherZeroStats
     }
 
     // Thermal state — polled from JS during recording. Returns the current
@@ -643,31 +648,22 @@ final class LivePublisher {
   func getStats() async -> [String: Int] {
     // statsSupported=0 zeros are ignored by the JS stall watchdog;
     // statsSupported=1 marks bitrateBps as a real measurement.
-    let zeros = [
-      "bitrateBps": 0,
-      "rttMs": 0,
-      "droppedFrames": 0,
-      "currentFps": 0,
-      "statsSupported": 0,
-    ]
     guard let session else {
-      return zeros
+      return livePublisherZeroStats
     }
     // `Session.stream` is actor-isolated, so the access must be awaited
     // (mirrors the awaited stream access in start()).
     guard let rtmpStream = await session.stream as? RTMPStream else {
-      return zeros
+      return livePublisherZeroStats
     }
 
     let info = await rtmpStream.info
     let fps = await rtmpStream.currentFPS
-    return [
-      "bitrateBps": info.currentBytesPerSecond * 8,
-      "rttMs": 0,
-      "droppedFrames": 0,
-      "currentFps": Int(fps),
-      "statsSupported": 1,
-    ]
+    var stats = livePublisherZeroStats
+    stats["bitrateBps"] = info.currentBytesPerSecond * 8
+    stats["currentFps"] = Int(fps)
+    stats["statsSupported"] = 1
+    return stats
   }
 
   // MARK: - Audio Session

@@ -40,6 +40,15 @@ watchdog detects both an encoder that stalls after healthy throughput and a
 pipeline that never delivers a first frame (the dominant camera-freeze mode
 found in the July 2026 telemetry investigation).
 
+False-positive guards, because Android's measurement is app-wide rather than
+per-stream: iOS uses exact-zero semantics (a genuinely low-bitrate stream is
+healthy); Android reports samples unmeasurable while the per-UID counter has
+never advanced in the session (stale/broken OEM counters) and the JS side
+ignores Android samples while a queue upload is in flight (foreign traffic
+would otherwise mask a frozen pipeline). The destructive never-started cancel
+in LiveRecordScreen is additionally capped at 60s — beyond that the stop path
+relies on Mux's authoritative `recordingStarted` flag.
+
 ### Error events (`error`)
 
 `{ code, message }`. Known codes are listed in
