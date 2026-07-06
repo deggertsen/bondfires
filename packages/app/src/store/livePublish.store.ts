@@ -17,6 +17,14 @@ export interface LivePublishState {
   droppedFrames: number
   networkQuality: 'good' | 'fair' | 'poor' | 'unknown'
   errorMessage: string | null
+  /**
+   * Whether any measured stats sample showed real media throughput this
+   * session. null until a measurable sample arrives (platform without real
+   * stats, or none taken yet). When a recording dies with this === false,
+   * nothing ever reached Mux — the UI should cancel instead of finalizing a
+   * zero-byte partial that Mux will error out anyway.
+   */
+  everHadThroughput: boolean | null
 }
 
 const defaultLivePublishState: LivePublishState = {
@@ -30,6 +38,7 @@ const defaultLivePublishState: LivePublishState = {
   droppedFrames: 0,
   networkQuality: 'unknown',
   errorMessage: null,
+  everHadThroughput: null,
 }
 
 export const livePublishStore$ = observable<LivePublishState>(defaultLivePublishState)
@@ -88,6 +97,14 @@ export const livePublishActions = {
     livePublishStore$.bitrateBps.set(stats.bitrateBps)
     livePublishStore$.droppedFrames.set(stats.droppedFrames)
     livePublishStore$.networkQuality.set(classifyNetworkQuality(stats))
+  },
+
+  noteThroughputSample: (hadThroughput: boolean) => {
+    if (hadThroughput) {
+      livePublishStore$.everHadThroughput.set(true)
+    } else if (livePublishStore$.everHadThroughput.peek() === null) {
+      livePublishStore$.everHadThroughput.set(false)
+    }
   },
 
   fail: (error: unknown) => {

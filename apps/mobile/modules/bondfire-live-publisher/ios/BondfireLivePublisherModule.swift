@@ -102,6 +102,8 @@ public class BondfireLivePublisherModule: Module {
         "bitrateBps": 0,
         "rttMs": 0,
         "droppedFrames": 0,
+        "currentFps": 0,
+        "statsSupported": 0,
       ]
     }
 
@@ -639,11 +641,14 @@ final class LivePublisher {
   /// them. The JS stall watchdog uses bitrateBps==0 (after having seen
   /// nonzero) to detect a frozen encoder that the connection poll misses.
   func getStats() async -> [String: Int] {
+    // statsSupported=0 zeros are ignored by the JS stall watchdog;
+    // statsSupported=1 marks bitrateBps as a real measurement.
     let zeros = [
       "bitrateBps": 0,
       "rttMs": 0,
       "droppedFrames": 0,
       "currentFps": 0,
+      "statsSupported": 0,
     ]
     guard let session else {
       return zeros
@@ -661,6 +666,7 @@ final class LivePublisher {
       "rttMs": 0,
       "droppedFrames": 0,
       "currentFps": Int(fps),
+      "statsSupported": 1,
     ]
   }
 

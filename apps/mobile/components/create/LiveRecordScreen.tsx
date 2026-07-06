@@ -923,10 +923,17 @@ export function LiveRecordScreen({
 
     const startedAt = livePublishStore$.startedAt.peek()
     const durationMs = startedAt ? Date.now() - startedAt : undefined
-    if (durationMs !== undefined && durationMs < EARLY_LIVE_DROP_MS) {
+    // everHadThroughput === false means every measured stats sample was ~zero:
+    // the pipeline never sent Mux a frame regardless of how long the REC
+    // screen sat there. Finalizing would upload nothing and leave an errored
+    // asset + stale session for the reaper, so cancel and let the user retry
+    // (production telemetry shows immediate retries succeed).
+    const neverStarted = livePublishStore$.everHadThroughput.peek() === false
+    if ((durationMs !== undefined && durationMs < EARLY_LIVE_DROP_MS) || neverStarted) {
       telemetry.warn('live:early_drop', 'Live stream dropped before sufficient video data', {
         reason: liveStatus,
         durationMs,
+        neverStarted,
         sessionId: livePublishStore$.sessionId.peek(),
         recordId: livePublishStore$.recordId.peek(),
       })

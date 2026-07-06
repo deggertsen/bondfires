@@ -31,7 +31,14 @@ code must be added in all three places.** JS rejects unknown statuses with a
 | Stream stopped | JS zero-throughput watchdog (via real getStats) | `isStreamingFlow` |
 | Connection dropped | `Session.isConnected` poll (3s) | `isOpenFlow` |
 | Intentional-stop suppression | `isStopping` | `isStoppingIntentionally` |
-| Real throughput stats | ✅ (`RTMPStream.info`) | ❌ (returns zeros — watchdog stays disarmed) |
+| Real throughput stats | ✅ (`RTMPStream.info`) | ✅ (`TrafficStats` UID TX-byte deltas) |
+
+`getStats()` marks real measurements with `statsSupported: 1`; the JS stall
+watchdog ignores samples without it, so builds that can't measure (or
+Android's first baseline-establishing poll) can never false-positive. The
+watchdog detects both an encoder that stalls after healthy throughput and a
+pipeline that never delivers a first frame (the dominant camera-freeze mode
+found in the July 2026 telemetry investigation).
 
 ### Error events (`error`)
 
