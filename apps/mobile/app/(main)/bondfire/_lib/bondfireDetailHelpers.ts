@@ -80,11 +80,7 @@ export function formatTime(ms: number): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
-export function withLiveDvrStart(url: string, isLive: boolean): string {
-  if (!isLive) return url
-  const separator = url.includes('?') ? '&' : '?'
-  return `${url}${separator}start=0`
-}
+export { withLiveDvrStart } from './bondfireVideoUrlPlan'
 
 export function buildBondfireVideoItems(
   bondfireData: BondfireDetailData,

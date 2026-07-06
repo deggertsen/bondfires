@@ -111,7 +111,7 @@ export default function BondfireDetailScreen() {
     api.bondfires.getWithCampContext,
     shouldRunBackgroundWork ? { id: bondfireId } : 'skip',
   )
-  const getVideoUrls = useAction(api.videos.getVideoUrls)
+  const getVideoUrlsBatch = useAction(api.videos.getVideoUrlsBatch)
   const recordWatchEvent = useMutation(api.watchEvents.record)
   const incrementViews = useMutation(api.bondfires.incrementViews)
   const markThreadRead = useMutation(api.conversations.markThreadRead)
@@ -279,7 +279,7 @@ export default function BondfireDetailScreen() {
     return clearScheduledRestoreScroll
   }, [clearScheduledRestoreScroll])
 
-  useBondfireVideoUrls({ bondfireData, getVideoUrls, setVideoUrls })
+  useBondfireVideoUrls({ bondfireData, getVideoUrlsBatch, setVideoUrls })
 
   useEffect(() => {
     if (!bondfireId || !currentUserId) return

@@ -1,139 +1,86 @@
 import { telemetry } from '@bondfires/app'
 import { useEffect, useRef } from 'react'
-import type { Doc, Id } from '../../../../../../convex/_generated/dataModel'
 import type { BondfireDetailData } from './bondfireDetailHelpers'
-import { withLiveDvrStart } from './bondfireDetailHelpers'
+import {
+  buildVideoUrlTargets,
+  missingUrlRequests,
+  shouldLoadMainVideoUrls,
+  urlsFromCache,
+  type VideoUrlRequest,
+  type VideoUrlTarget,
+} from './bondfireVideoUrlPlan'
 
-type GetVideoUrls = (args: {
-  muxPlaybackId: string
-  muxPlaybackPolicy?: Doc<'bondfires'>['muxPlaybackPolicy']
-  bondfireId?: Id<'bondfires'>
-  bondfireVideoId?: Id<'bondfireVideos'>
-}) => Promise<{ hdUrl: string }>
-
-function getPlaybackIdForVideo(
-  video: Pick<BondfireDetailData, 'videoStatus' | 'muxLivePlaybackId' | 'muxPlaybackId'>,
-) {
-  return (video.videoStatus ?? 'ready') === 'live' ? video.muxLivePlaybackId : video.muxPlaybackId
-}
-
-function shouldLoadMainVideoUrls(bondfireData: BondfireDetailData) {
-  const status = bondfireData.videoStatus ?? 'ready'
-  return status === 'ready' || status === 'live'
-}
-
-function getVideoUrlSetKey(bondfireData: BondfireDetailData) {
-  return [
-    bondfireData._id,
-    bondfireData.videoStatus ?? 'ready',
-    getPlaybackIdForVideo(bondfireData) ?? '',
-    ...bondfireData.videos.map(
-      (video) =>
-        `${video._id}:${video.videoStatus ?? 'ready'}:${getPlaybackIdForVideo(video) ?? ''}`,
-    ),
-  ].join('|')
-}
+type GetVideoUrlsBatch = (args: { items: VideoUrlRequest[] }) => Promise<{ hdUrl: string }[]>
 
 export function useBondfireVideoUrls({
   bondfireData,
-  getVideoUrls,
+  getVideoUrlsBatch,
   setVideoUrls,
 }: {
   bondfireData: BondfireDetailData | null | undefined
-  getVideoUrls: GetVideoUrls
+  getVideoUrlsBatch: GetVideoUrlsBatch
   setVideoUrls: (urls: (string | null)[]) => void
 }) {
-  const videoUrlSetKeyRef = useRef<string | null>(null)
-  const loadedVideoUrlSetKeyRef = useRef<string | null>(null)
+  // URLs live for the whole screen visit (signed tokens last 12h). Keyed per
+  // video identity so a status change on one video (new response, live ending)
+  // refetches only that video instead of blanking the whole set mid-playback.
+  const cacheRef = useRef<Map<string, string>>(new Map())
+  const inFlightRef = useRef<Set<string>>(new Set())
+  const latestTargetsRef = useRef<VideoUrlTarget[]>([])
+  const disposedRef = useRef(false)
+
+  useEffect(() => {
+    disposedRef.current = false
+    return () => {
+      disposedRef.current = true
+    }
+  }, [])
 
   useEffect(() => {
     if (!bondfireData) {
-      if (videoUrlSetKeyRef.current !== null) {
-        videoUrlSetKeyRef.current = null
-        loadedVideoUrlSetKeyRef.current = null
-        setVideoUrls([])
-      }
+      latestTargetsRef.current = []
+      setVideoUrls([])
       return
     }
 
-    let isCancelled = false
-    const videoUrlSetKey = getVideoUrlSetKey(bondfireData)
-    if (videoUrlSetKeyRef.current !== videoUrlSetKey) {
-      videoUrlSetKeyRef.current = videoUrlSetKey
-      loadedVideoUrlSetKeyRef.current = null
-      setVideoUrls(Array.from({ length: 1 + bondfireData.videos.length }, () => null))
+    const targets = buildVideoUrlTargets(bondfireData)
+    latestTargetsRef.current = targets
+    setVideoUrls(urlsFromCache(targets, cacheRef.current))
+
+    if (!shouldLoadMainVideoUrls(bondfireData)) return
+
+    if (targets[0]?.cacheKey === null) {
+      telemetry.warn('video:urls:missing_playback_id', 'No playback ID for bondfire', {
+        bondfireId: bondfireData._id,
+        videoStatus: bondfireData.videoStatus,
+      })
     }
 
-    if (!shouldLoadMainVideoUrls(bondfireData)) {
-      return () => {
-        isCancelled = true
-      }
-    }
+    const missing = missingUrlRequests(targets, cacheRef.current, inFlightRef.current)
+    if (missing.length === 0) return
 
-    if (loadedVideoUrlSetKeyRef.current === videoUrlSetKey) {
-      return () => {
-        isCancelled = true
-      }
-    }
-
-    const loadUrls = async () => {
-      const mainPlaybackId = getPlaybackIdForVideo(bondfireData)
-      if (!mainPlaybackId) {
-        telemetry.warn('video:urls:missing_playback_id', 'No playback ID for bondfire', {
-          bondfireId: bondfireData._id,
-          videoStatus: bondfireData.videoStatus,
+    for (const entry of missing) inFlightRef.current.add(entry.cacheKey)
+    getVideoUrlsBatch({ items: missing.map((entry) => entry.request) })
+      .then((results) => {
+        missing.forEach((entry, index) => {
+          const url = results[index]?.hdUrl
+          if (url) cacheRef.current.set(entry.cacheKey, url)
         })
-        return
-      }
-
-      try {
-        const mainUrl = await getVideoUrls({
-          muxPlaybackId: mainPlaybackId,
-          muxPlaybackPolicy: bondfireData.muxPlaybackPolicy,
-          bondfireId: bondfireData._id,
-        })
-
-        const playableResponses = bondfireData.videos.filter((video) =>
-          video.videoStatus === 'live' ? !!video.muxLivePlaybackId : !!video.muxPlaybackId,
-        )
-        const responseUrls = await Promise.all(
-          playableResponses.map((video) =>
-            getVideoUrls({
-              muxPlaybackId:
-                video.videoStatus === 'live'
-                  ? (video.muxLivePlaybackId as string)
-                  : (video.muxPlaybackId as string),
-              muxPlaybackPolicy: video.muxPlaybackPolicy,
-              bondfireVideoId: video._id,
-            }),
-          ),
-        )
-
-        if (isCancelled) return
-
-        setVideoUrls([
-          withLiveDvrStart(mainUrl.hdUrl, bondfireData.videoStatus === 'live'),
-          ...responseUrls.map((responseUrl, index) =>
-            withLiveDvrStart(responseUrl.hdUrl, playableResponses[index]?.videoStatus === 'live'),
-          ),
-        ])
-        loadedVideoUrlSetKeyRef.current = videoUrlSetKey
-      } catch (error) {
-        if (isCancelled) return
-
+        if (disposedRef.current) return
+        // Resolve against the latest targets, not this effect run's: a newer
+        // run may have already replaced them (and skipped these in-flight
+        // keys), and its own batch won't re-deliver these URLs.
+        setVideoUrls(urlsFromCache(latestTargetsRef.current, cacheRef.current))
+      })
+      .catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error)
         telemetry.error('video:urls:failed', message, {
           bondfireId: bondfireData._id,
-          muxPlaybackId: mainPlaybackId,
-          muxPlaybackPolicy: bondfireData.muxPlaybackPolicy,
+          requestedCount: missing.length,
         })
-      }
-    }
-
-    loadUrls()
-
-    return () => {
-      isCancelled = true
-    }
-  }, [bondfireData, getVideoUrls, setVideoUrls])
+      })
+      .finally(() => {
+        for (const entry of missing) inFlightRef.current.delete(entry.cacheKey)
+      })
+  }, [bondfireData, getVideoUrlsBatch, setVideoUrls])
 }
