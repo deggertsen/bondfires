@@ -793,6 +793,7 @@ export function LegacyRecordScreen({
     <YStack flex={1} backgroundColor={'$background'}>
       <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
       {shouldRenderCamera ? (
+        <>
         <CameraView
           key={`${cameraResetCounter}-${facing}`}
           ref={cameraRef}
@@ -835,6 +836,16 @@ export function LegacyRecordScreen({
             })
             Alert.alert('Camera Error', message)
           }}
+        />
+
+        {/* Overlay UI — CameraView does not support children */}
+        <YStack
+          position="absolute"
+          top={0}
+          left={0}
+          right={0}
+          bottom={0}
+          pointerEvents="box-none"
         >
           {/* Header */}
           <XStack
@@ -996,7 +1007,8 @@ export function LegacyRecordScreen({
               </Button>
             )}
           </YStack>
-        </CameraView>
+        </YStack>
+        </>
       ) : (
         <YStack flex={1} />
       )}
