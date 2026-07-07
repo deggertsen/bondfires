@@ -14,7 +14,7 @@ Use `agent-device` for local mobile QA on machines that have Xcode and/or Androi
 
 - [agent-device docs](https://agent-device.dev/)
 - [agent-device GitHub](https://github.com/callstackincubator/agent-device)
-- Repository root `AGENTS.md` for stack and dev commands
+- Repository root `AGENTS.md` for stack, dev commands, and the **Test Account** login
 
 ## Preconditions
 
@@ -86,7 +86,8 @@ agent-device ensure-simulator --platform ios --device "iPhone 16" --boot
 agent-device open Bondfires --platform ios --device "iPhone 16" --session bondfires-ios --relaunch
 agent-device snapshot -i -c --session bondfires-ios
 agent-device press @e3 --session bondfires-ios
-agent-device fill @e7 "test@example.com" --session bondfires-ios
+agent-device fill @e7 "demavrick24@hotmail.com" --session bondfires-ios
+# password: see AGENTS.md → Test Account
 agent-device wait @e9 5000 --session bondfires-ios
 agent-device diff snapshot -i -c --session bondfires-ios
 agent-device screenshot /tmp/bondfires-ios.png --session bondfires-ios
