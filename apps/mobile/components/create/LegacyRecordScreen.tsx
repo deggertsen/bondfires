@@ -794,220 +794,223 @@ export function LegacyRecordScreen({
       <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
       {shouldRenderCamera ? (
         <>
-        <CameraView
-          key={`${cameraResetCounter}-${facing}`}
-          ref={cameraRef}
-          style={{ flex: 1 }}
-          facing={facing}
-          mode="video"
-          onCameraReady={() => {
-            recordingStore$.isCameraReady.set(true)
-            recordingStore$.cameraMountError.set(null)
-
-            if (recordingStore$.phase.get() !== 'recording' || hasActiveSegmentRef.current) {
-              return
-            }
-
-            const targetFacing = recordingStore$.pendingFacing.get()
-            const sessionId = recordingSessionRef.current
-
-            if (targetFacing && targetFacing !== recordingStore$.facing.get()) {
-              recordingStore$.isCameraReady.set(false)
+          <CameraView
+            key={`${cameraResetCounter}-${facing}`}
+            ref={cameraRef}
+            style={{ flex: 1 }}
+            facing={facing}
+            mode="video"
+            onCameraReady={() => {
+              recordingStore$.isCameraReady.set(true)
               recordingStore$.cameraMountError.set(null)
-              recordingStore$.facing.set(targetFacing)
-              return
-            }
 
-            if (targetFacing === recordingStore$.facing.get()) {
-              recordingStore$.pendingFacing.set(null)
-            }
+              if (recordingStore$.phase.get() !== 'recording' || hasActiveSegmentRef.current) {
+                return
+              }
 
-            if (!isStartingRecordingRef.current) {
-              void startSegmentRecording(sessionId)
-            }
-          }}
-          onMountError={(event) => {
-            const message = event?.message ?? 'Unknown camera mount error'
-            recordingStore$.cameraMountError.set(message)
-            recordingStore$.isCameraReady.set(false)
-            telemetry.error('create:camera', 'Camera mount error', {
-              platform: Platform.OS,
-              message,
-            })
-            Alert.alert('Camera Error', message)
-          }}
-        />
+              const targetFacing = recordingStore$.pendingFacing.get()
+              const sessionId = recordingSessionRef.current
 
-        {/* Overlay UI — CameraView does not support children */}
-        <YStack
-          position="absolute"
-          top={0}
-          left={0}
-          right={0}
-          bottom={0}
-          pointerEvents="box-none"
-        >
-          {/* Header */}
-          <XStack
-            paddingTop={60}
-            paddingHorizontal={20}
-            justifyContent="space-between"
-            alignItems="center"
+              if (targetFacing && targetFacing !== recordingStore$.facing.get()) {
+                recordingStore$.isCameraReady.set(false)
+                recordingStore$.cameraMountError.set(null)
+                recordingStore$.facing.set(targetFacing)
+                return
+              }
+
+              if (targetFacing === recordingStore$.facing.get()) {
+                recordingStore$.pendingFacing.set(null)
+              }
+
+              if (!isStartingRecordingRef.current) {
+                void startSegmentRecording(sessionId)
+              }
+            }}
+            onMountError={(event) => {
+              const message = event?.message ?? 'Unknown camera mount error'
+              recordingStore$.cameraMountError.set(message)
+              recordingStore$.isCameraReady.set(false)
+              telemetry.error('create:camera', 'Camera mount error', {
+                platform: Platform.OS,
+                message,
+              })
+              Alert.alert('Camera Error', message)
+            }}
+          />
+
+          {/* Overlay UI — CameraView does not support children */}
+          <YStack
+            position="absolute"
+            top={0}
+            left={0}
+            right={0}
+            bottom={0}
+            pointerEvents="box-none"
           >
-            <Pressable onPress={onBack}>
-              <YStack
-                width={40}
-                height={40}
-                borderRadius={20}
-                backgroundColor="rgba(31, 32, 35, 0.7)"
-                alignItems="center"
-                justifyContent="center"
-              >
-                <X size={24} color={'$color'} />
-              </YStack>
-            </Pressable>
-
-            {phase === 'recording' && (
-              <YStack
-                backgroundColor={showRecordingLimitCountdown ? '$warning' : '$error'}
-                paddingHorizontal={16}
-                paddingVertical={6}
-                borderRadius={16}
-              >
-                <Text color={'$color'} fontWeight="700" fontSize={14}>
-                  {isSwitchingCamera ? 'Switching...' : recordingTimerLabel}
-                </Text>
-              </YStack>
-            )}
-
-            <Pressable onPress={toggleFacing} disabled={phase === 'stopping' || isSwitchingCamera}>
-              <YStack
-                width={40}
-                height={40}
-                borderRadius={20}
-                backgroundColor="rgba(31, 32, 35, 0.7)"
-                alignItems="center"
-                justifyContent="center"
-                opacity={phase === 'stopping' || isSwitchingCamera ? 0.5 : 1}
-              >
-                {isSwitchingCamera ? (
-                  <Spinner size="small" color={'$color'} />
-                ) : (
-                  <SwitchCamera size={22} color={'$color'} />
-                )}
-              </YStack>
-            </Pressable>
-          </XStack>
-
-          {/* Title */}
-          <YStack flex={1} justifyContent="center" alignItems="center">
-            {phase === 'idle' && (
-              <YStack alignItems="center" gap={12}>
-                <XStack alignItems="center" gap={8}>
-                  <Flame size={28} color={'$primary'} />
-                  <Text color={'$color'} fontSize={22} fontWeight="700">
-                    {respondTo ? 'Add Your Response' : (selectedCamp?.name ?? 'Spark a Bondfire')}
-                  </Text>
-                </XStack>
-                <Text color={'$placeholderColor'} fontSize={14}>
-                  Tap to start recording
-                </Text>
-              </YStack>
-            )}
-
-            {phase === 'stopping' && (
-              <YStack alignItems="center" gap={12}>
-                <Spinner size="large" color={'$color'} />
-                <Text color={'$color'} fontSize={18} fontWeight="700">
-                  Finishing recording
-                </Text>
-                <Text color={'$placeholderColor'} fontSize={14}>
-                  Please wait a moment...
-                </Text>
-              </YStack>
-            )}
-
-            {isSwitchingCamera && (
-              <YStack alignItems="center" gap={12}>
-                <Spinner size="large" color={'$color'} />
-                <Text color={'$color'} fontSize={18} fontWeight="700">
-                  Switching camera
-                </Text>
-                <Text color={'$placeholderColor'} fontSize={14}>
-                  Recording will continue automatically.
-                </Text>
-              </YStack>
-            )}
-          </YStack>
-
-          {/* Record button */}
-          <YStack paddingBottom={40} alignItems="center">
-            <Pressable
-              disabled={(!isCameraReady && phase !== 'recording') || phase === 'stopping'}
-              onPress={() => {
-                if (phase === 'recording') {
-                  stopRecording()
-                  return
-                }
-
-                if (phase === 'idle') {
-                  startRecording()
-                }
-              }}
+            {/* Header */}
+            <XStack
+              paddingTop={60}
+              paddingHorizontal={20}
+              justifyContent="space-between"
+              alignItems="center"
             >
-              <YStack
-                width={80}
-                height={80}
-                borderRadius={40}
-                borderWidth={4}
-                borderColor={'$color'}
-                alignItems="center"
-                justifyContent="center"
-                backgroundColor={
-                  phase === 'recording' || phase === 'stopping' ? '$error' : 'transparent'
-                }
-                opacity={
-                  !isCameraReady && phase !== 'recording' ? 0.5 : phase === 'stopping' ? 0.7 : 1
-                }
+              <Pressable onPress={onBack}>
+                <YStack
+                  width={40}
+                  height={40}
+                  borderRadius={20}
+                  backgroundColor="rgba(31, 32, 35, 0.7)"
+                  alignItems="center"
+                  justifyContent="center"
+                >
+                  <X size={24} color={'$color'} />
+                </YStack>
+              </Pressable>
+
+              {phase === 'recording' && (
+                <YStack
+                  backgroundColor={showRecordingLimitCountdown ? '$warning' : '$error'}
+                  paddingHorizontal={16}
+                  paddingVertical={6}
+                  borderRadius={16}
+                >
+                  <Text color={'$color'} fontWeight="700" fontSize={14}>
+                    {isSwitchingCamera ? 'Switching...' : recordingTimerLabel}
+                  </Text>
+                </YStack>
+              )}
+
+              <Pressable
+                onPress={toggleFacing}
+                disabled={phase === 'stopping' || isSwitchingCamera}
               >
-                {phase === 'stopping' ? (
-                  <Spinner size="small" color={'$color'} />
-                ) : (
-                  <YStack
-                    width={phase === 'recording' ? 30 : 60}
-                    height={phase === 'recording' ? 30 : 60}
-                    borderRadius={phase === 'recording' ? 6 : 30}
-                    backgroundColor={phase === 'recording' ? '$color' : '$primary'}
-                  />
-                )}
-              </YStack>
-            </Pressable>
+                <YStack
+                  width={40}
+                  height={40}
+                  borderRadius={20}
+                  backgroundColor="rgba(31, 32, 35, 0.7)"
+                  alignItems="center"
+                  justifyContent="center"
+                  opacity={phase === 'stopping' || isSwitchingCamera ? 0.5 : 1}
+                >
+                  {isSwitchingCamera ? (
+                    <Spinner size="small" color={'$color'} />
+                  ) : (
+                    <SwitchCamera size={22} color={'$color'} />
+                  )}
+                </YStack>
+              </Pressable>
+            </XStack>
 
-            <Text color={'$placeholderColor'} fontSize={13} marginTop={12}>
-              {phase === 'stopping'
-                ? 'Stopping recording...'
-                : phase === 'recording'
-                  ? isSwitchingCamera
-                    ? 'Switching cameras...'
-                    : showRecordingLimitCountdown && autoStopStatusLabel
-                      ? autoStopStatusLabel
-                      : 'Tap to stop'
-                  : maxRecordingLabel
-                    ? maxRecordingLabel
-                    : cameraMountError
-                      ? 'Camera failed to initialize'
-                      : isCameraReady
-                        ? 'Tap to record'
-                        : 'Initializing camera...'}
-            </Text>
+            {/* Title */}
+            <YStack flex={1} justifyContent="center" alignItems="center">
+              {phase === 'idle' && (
+                <YStack alignItems="center" gap={12}>
+                  <XStack alignItems="center" gap={8}>
+                    <Flame size={28} color={'$primary'} />
+                    <Text color={'$color'} fontSize={22} fontWeight="700">
+                      {respondTo ? 'Add Your Response' : (selectedCamp?.name ?? 'Spark a Bondfire')}
+                    </Text>
+                  </XStack>
+                  <Text color={'$placeholderColor'} fontSize={14}>
+                    Tap to start recording
+                  </Text>
+                </YStack>
+              )}
 
-            {cameraMountError && phase === 'idle' && (
-              <Button variant="ghost" size="$sm" marginTop={12} onPress={resetCameraPreview}>
-                Retry Camera
-              </Button>
-            )}
+              {phase === 'stopping' && (
+                <YStack alignItems="center" gap={12}>
+                  <Spinner size="large" color={'$color'} />
+                  <Text color={'$color'} fontSize={18} fontWeight="700">
+                    Finishing recording
+                  </Text>
+                  <Text color={'$placeholderColor'} fontSize={14}>
+                    Please wait a moment...
+                  </Text>
+                </YStack>
+              )}
+
+              {isSwitchingCamera && (
+                <YStack alignItems="center" gap={12}>
+                  <Spinner size="large" color={'$color'} />
+                  <Text color={'$color'} fontSize={18} fontWeight="700">
+                    Switching camera
+                  </Text>
+                  <Text color={'$placeholderColor'} fontSize={14}>
+                    Recording will continue automatically.
+                  </Text>
+                </YStack>
+              )}
+            </YStack>
+
+            {/* Record button */}
+            <YStack paddingBottom={40} alignItems="center">
+              <Pressable
+                disabled={(!isCameraReady && phase !== 'recording') || phase === 'stopping'}
+                onPress={() => {
+                  if (phase === 'recording') {
+                    stopRecording()
+                    return
+                  }
+
+                  if (phase === 'idle') {
+                    startRecording()
+                  }
+                }}
+              >
+                <YStack
+                  width={80}
+                  height={80}
+                  borderRadius={40}
+                  borderWidth={4}
+                  borderColor={'$color'}
+                  alignItems="center"
+                  justifyContent="center"
+                  backgroundColor={
+                    phase === 'recording' || phase === 'stopping' ? '$error' : 'transparent'
+                  }
+                  opacity={
+                    !isCameraReady && phase !== 'recording' ? 0.5 : phase === 'stopping' ? 0.7 : 1
+                  }
+                >
+                  {phase === 'stopping' ? (
+                    <Spinner size="small" color={'$color'} />
+                  ) : (
+                    <YStack
+                      width={phase === 'recording' ? 30 : 60}
+                      height={phase === 'recording' ? 30 : 60}
+                      borderRadius={phase === 'recording' ? 6 : 30}
+                      backgroundColor={phase === 'recording' ? '$color' : '$primary'}
+                    />
+                  )}
+                </YStack>
+              </Pressable>
+
+              <Text color={'$placeholderColor'} fontSize={13} marginTop={12}>
+                {phase === 'stopping'
+                  ? 'Stopping recording...'
+                  : phase === 'recording'
+                    ? isSwitchingCamera
+                      ? 'Switching cameras...'
+                      : showRecordingLimitCountdown && autoStopStatusLabel
+                        ? autoStopStatusLabel
+                        : 'Tap to stop'
+                    : maxRecordingLabel
+                      ? maxRecordingLabel
+                      : cameraMountError
+                        ? 'Camera failed to initialize'
+                        : isCameraReady
+                          ? 'Tap to record'
+                          : 'Initializing camera...'}
+              </Text>
+
+              {cameraMountError && phase === 'idle' && (
+                <Button variant="ghost" size="$sm" marginTop={12} onPress={resetCameraPreview}>
+                  Retry Camera
+                </Button>
+              )}
+            </YStack>
           </YStack>
-        </YStack>
         </>
       ) : (
         <YStack flex={1} />
