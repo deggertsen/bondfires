@@ -614,7 +614,9 @@ export default defineSchema({
     eventId: v.string(),
     eventType: v.string(),
     createdAt: v.number(),
-  }).index('by_event_id', ['eventId']),
+  })
+    .index('by_event_id', ['eventId'])
+    .index('by_created_at', ['createdAt']),
 
   // Watch Events - video analytics
   watchEvents: defineTable({

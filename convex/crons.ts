@@ -59,6 +59,15 @@ crons.daily(
 // Runs daily at 12:00 UTC.
 crons.daily('purge old client logs', { hourUTC: 12, minuteUTC: 0 }, internal.clientLogs.purgeOld)
 
+// Purge muxWebhookEvents older than 30 days.
+// These rows are only used for near-term webhook dedup; safe to delete after 30d.
+// Runs daily at 12:15 UTC, between client log purge and invite code cleanup.
+crons.daily(
+  'purge old mux webhook events',
+  { hourUTC: 12, minuteUTC: 15 },
+  internal.videos.purgeOldWebhookEvents,
+)
+
 // Cleanup expired invite codes.
 // Runs daily at 12:30 UTC, after log purge.
 crons.daily(

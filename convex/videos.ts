@@ -4213,3 +4213,30 @@ export const reconcileStuckMuxVideos = internalAction({
     return summary
   },
 })
+
+/**
+ * Purge muxWebhookEvents older than 30 days.
+ *
+ * These rows exist only for idempotency (dedup of Mux webhook deliveries).
+ * Mux does not re-deliver webhooks after 30 days, so older rows are safe
+ * to delete. Batched at 500 per run to stay within Convex mutation limits.
+ */
+export const purgeOldWebhookEvents = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
+    let deleted = 0
+
+    const oldEvents = await ctx.db
+      .query('muxWebhookEvents')
+      .withIndex('by_created_at', (q) => q.lt('createdAt', cutoff))
+      .take(500)
+
+    for (const event of oldEvents) {
+      await ctx.db.delete(event._id)
+      deleted++
+    }
+
+    return { deleted, cutoff }
+  },
+})
