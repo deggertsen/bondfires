@@ -279,6 +279,10 @@ class BondfireLivePublisherModule : Module() {
     }
 
     AsyncFunction("stop") Coroutine { ->
+      // Set the guard before sendStatus so flow collectors don't race with
+      // the ENDED event and emit spurious stream_stopped_unexpectedly signals
+      // between sendStatus and cleanupStreamer() claiming the lock.
+      isStoppingIntentionally = true
       sendStatus(PublisherStatus.ENDED)
       cleanupStreamer()
     }
@@ -957,24 +961,15 @@ class BondfireLivePublisherModule : Module() {
     // survive. The app dies, Mux never sees an RTMP disconnect, and the stream
     // runs until server-side timeout.
     //
-    // We skip stopStream() entirely and go directly to close() + release()
-    // with a generous timeout on a background thread. If the encoder is hung,
-    // the timeout cancels the coroutine and we accept a small resource leak in
-    // exchange for keeping the app alive.
-    Log.i(TAG, "cleanupStreamer: beginning teardown (no stopStream)")
+    // Skip close() entirely — in StreamPack 3.x, close() still calls
+    // MediaCodec.stop() on the encoder, which triggers a native SIGSEGV
+    // on some devices (Pixel/Tensor). release() frees all codec resources
+    // without the synchronous codec stop. Mux sees an abrupt socket drop
+    // instead of a graceful RTMP disconnect, but it finalizes the VOD on
+    // disconnect regardless, and the JS-side endLiveStream call handles
+    // backend finalization.
+    Log.i(TAG, "cleanupStreamer: beginning teardown (release only, skipping close)")
     runBlockingWithTimeout(5000) {
-      try {
-        // close() sends an RTMP disconnect and tears down the encoder;
-        // it's equivalent to stopStream+close but without the synchronous
-        // MediaCodec.stop() that triggers the SIGSEGV on affected devices.
-        s.close()
-        Log.i(TAG, "cleanupStreamer: close() completed")
-      } catch (e: Exception) {
-        Log.w(TAG, "Error closing streamer (encoder may have already crashed)", e)
-      }
-
-      delay(200)
-
       try {
         s.release()
         Log.i(TAG, "cleanupStreamer: release() completed")
