@@ -2,7 +2,7 @@ import { appActions, appStore$, getLastLocation, telemetry } from '@bondfires/ap
 import { Spinner } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
 import { AlertTriangle, RefreshCw } from '@tamagui/lucide-icons'
-import { useQuery } from 'convex/react'
+import { useConvex, useConvexConnectionState, useQuery } from 'convex/react'
 import { Redirect, useLocalSearchParams } from 'expo-router'
 import { useEffect, useRef, useState } from 'react'
 import { Pressable } from 'react-native'
@@ -19,11 +19,37 @@ const SLOW_QUERY_THRESHOLD_MS = 3000
  */
 const LOADING_TIMEOUT_MS = 15_000
 
+/**
+ * Force the Convex WebSocket to reconnect by calling the internal
+ * WebSocketManager.closeAndReconnect(). This handles both:
+ * - socket stuck in "connecting" (e.g. DNS/TCP hanging)
+ * - socket in "disconnected" waiting on backoff timer
+ *
+ * The TS types mark webSocketManager as private, but it's accessible
+ * at runtime. This is a known workaround pattern for Convex RN apps.
+ */
+function forceConvexReconnect(convex: ReturnType<typeof useConvex>) {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sync = (convex as any).sync ?? (convex as any).cachedSync
+    const wsm = sync?.webSocketManager
+    if (wsm && typeof wsm.closeAndReconnect === 'function') {
+      wsm.closeAndReconnect('client')
+      return true
+    }
+  } catch (e) {
+    telemetry.warn('loading:reconnect', `Failed to force reconnect: ${String(e)}`)
+  }
+  return false
+}
+
 export default function SplashScreen() {
   const hasSeenOnboarding = useValue(appStore$.hasSeenOnboarding)
   const { redirectTo } = useLocalSearchParams<{ redirectTo?: string }>()
   // Use Convex Auth's actual session state instead of app store
   const currentUser = useQuery(api.users.current)
+  const convex = useConvex()
+  const connectionState = useConvexConnectionState()
 
   // Slow-query detection: if `currentUser` stays undefined for >3s, log a warning
   const queryStartTime = useRef(Date.now())
@@ -57,12 +83,24 @@ export default function SplashScreen() {
         if (!slowQueryLogged.current) {
           slowQueryLogged.current = true
           const elapsed = Date.now() - queryStartTime.current
-          telemetry.warn('query:slow', 'users.current not resolved', { elapsedMs: elapsed })
+          telemetry.warn('query:slow', 'users.current not resolved', {
+            elapsedMs: elapsed,
+            isWebSocketConnected: connectionState.isWebSocketConnected,
+            hasEverConnected: connectionState.hasEverConnected,
+          })
+
+          // Early nudge: if the WebSocket hasn't connected yet after 3s,
+          // try to force a reconnect. This catches the case where the socket
+          // is stuck in "connecting" and the user would otherwise wait the
+          // full 15s timeout.
+          if (!connectionState.isWebSocketConnected) {
+            forceConvexReconnect(convex)
+          }
         }
       }, SLOW_QUERY_THRESHOLD_MS)
       return () => clearTimeout(timer)
     }
-  }, [currentUser])
+  }, [currentUser, connectionState, convex])
 
   // Hard timeout effect — separate from the slow-query timer
   useEffect(() => {
@@ -73,12 +111,31 @@ export default function SplashScreen() {
 
     const timer = setTimeout(() => {
       const elapsed = Date.now() - queryStartTime.current
-      telemetry.error('loading:timeout', 'Loading screen timed out', { elapsedMs: elapsed })
+      const wsConnected = connectionState.isWebSocketConnected
+      const hasEverConnected = connectionState.hasEverConnected
+
+      telemetry.error('loading:timeout', 'Loading screen timed out', {
+        elapsedMs: elapsed,
+        isWebSocketConnected: wsConnected,
+        hasEverConnected,
+        connectionCount: connectionState.connectionCount,
+        connectionRetries: connectionState.connectionRetries,
+      })
+
+      // Auto-attempt a reconnect before showing the retry screen.
+      // If the socket is stuck in "connecting" or dead on a backoff timer,
+      // this forces it to close and reconnect immediately. If the network
+      // is truly down, the reconnect will fail and we fall through to the
+      // retry UI — no harm done.
+      if (!wsConnected) {
+        forceConvexReconnect(convex)
+      }
+
       setTimedOut(true)
     }, LOADING_TIMEOUT_MS)
 
     return () => clearTimeout(timer)
-  }, [currentUser])
+  }, [currentUser, connectionState, convex])
 
   // Show loading state while checking auth (currentUser is undefined while loading)
   if (currentUser === undefined) {
@@ -102,7 +159,14 @@ export default function SplashScreen() {
           </Text>
           <Pressable
             onPress={() => {
-              telemetry.breadcrumb('loading:retry')
+              telemetry.breadcrumb('loading:retry', {
+                wsConnected: connectionState.isWebSocketConnected,
+                hasEverConnected: connectionState.hasEverConnected,
+              })
+              // Force the Convex WebSocket to reconnect — without this,
+              // the retry just resets timers but the underlying socket
+              // is still dead, so it times out again.
+              forceConvexReconnect(convex)
               setTimedOut(false)
               queryStartTime.current = Date.now()
               slowQueryLogged.current = false
