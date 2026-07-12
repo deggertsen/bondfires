@@ -63,6 +63,7 @@ export interface LivePublisherNativeModule {
   setMuted(muted: boolean): Promise<void>
   getStats(): Promise<LivePublisherStats>
   getThermalState?(): Promise<{ level: number; levelName: string }>
+  setVideoQuality?(videoBitrate: number, fps: number): Promise<void>
   addListener(event: 'statusChange', cb: (status: string) => void): LivePublisherSubscription
   addListener(
     event: 'error',
@@ -762,6 +763,13 @@ export function useLivePublisher(options: {
     await options.publisher.swapCamera()
   }, [options.publisher])
 
+  const setVideoQuality = useCallback(
+    async (videoBitrate: number, fps: number) => {
+      await options.publisher.setVideoQuality?.(videoBitrate, fps)
+    },
+    [options.publisher],
+  )
+
   return {
     preview,
     provision,
@@ -771,6 +779,7 @@ export function useLivePublisher(options: {
     cancel,
     swapCamera,
     hasProvisionedIngest,
+    setVideoQuality,
     stats$: livePublishStore$,
     getThermalState: options.publisher.getThermalState,
   }

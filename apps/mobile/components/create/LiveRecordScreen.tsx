@@ -110,10 +110,12 @@ export function LiveRecordScreen({
     isAppActive: AppState.currentState === 'active',
     isFocused: isFocused,
     showInviteSheet: false,
+    thermalWarning: false,
   })
 
   const isAppActive = useValue(state$.isAppActive)
   const showInviteSheet = useValue(state$.showInviteSheet)
+  const thermalWarning = useValue(state$.thermalWarning)
   const phase = useValue(recordingStore$.phase)
   const recordingDuration = useValue(recordingStore$.recordingDuration)
   const progressStage = useValue(recordingStore$.progressStage)
@@ -297,40 +299,84 @@ export function LiveRecordScreen({
     }
   }, [phase, liveStatus, isFocused, isAppActive])
 
-  // Thermal state listener — RTMP encoding + camera generates significant heat.
-  // iOS: ProcessInfo.thermalState polled via native module's getThermalState.
-  // Android: PowerManager thermal status polled via native module.
+  // Thermal mitigation — RTMP encoding + camera generates significant heat.
+  // Polls thermal state every 10s and reacts by reducing bitrate/FPS before
+  // the OS kills the app. The native modules also have a safety-net auto-stop
+  // at critical level, but JS mitigation fires first to give a graceful stop.
   useEffect(() => {
-    if (phase !== 'recording') return
+    if (phase !== 'recording' || liveStatus !== 'live') return
 
     let interval: ReturnType<typeof setInterval> | null = null
     let lastLevel = -1
+    let thermalStopping = false
 
     const checkThermal = async () => {
+      if (thermalStopping) return
       try {
         const thermalState = await livePublisher.getThermalState?.()
-        if (thermalState && thermalState.level !== lastLevel) {
-          lastLevel = thermalState.level
-          telemetry.breadcrumb('live:thermal', {
-            level: thermalState.level,
-            levelName: thermalState.levelName,
-            platform: Platform.OS,
-            sessionId: livePublishStore$.sessionId.peek(),
-          })
+        if (!thermalState || thermalState.level === lastLevel) return
+        lastLevel = thermalState.level
+
+        telemetry.breadcrumb('live:thermal', {
+          level: thermalState.level,
+          levelName: thermalState.levelName,
+          platform: Platform.OS,
+          sessionId: livePublishStore$.sessionId.peek(),
+        })
+
+        // Thermal mitigation ladder
+        if (thermalState.level >= 3) {
+          // critical or above — graceful auto-stop to save the recording
+          thermalStopping = true
+          telemetry.warn(
+            'live:thermal_auto_stop',
+            'Thermal level critical — auto-stopping to save recording',
+            {
+              level: thermalState.level,
+              levelName: thermalState.levelName,
+              sessionId: livePublishStore$.sessionId.peek(),
+              recordId: livePublishStore$.recordId.peek(),
+            },
+          )
+          state$.thermalWarning.set(false)
+          void stopLiveRecording()
+        } else if (thermalState.level === 2) {
+          // serious — reduce to 800 Kbps @ 15 FPS + show warning
+          await livePublisher.setVideoQuality?.(800_000, 15)
+          state$.thermalWarning.set(true)
+          telemetry.info(
+            'live:thermal_mitigation',
+            'Reducing quality due to thermal pressure',
+            { level: thermalState.level, bitrate: 800_000, fps: 15 },
+          )
+        } else if (thermalState.level === 1) {
+          // fair — reduce to 1.5 Mbps @ 24 FPS
+          await livePublisher.setVideoQuality?.(1_500_000, 24)
+          state$.thermalWarning.set(false)
+          telemetry.info(
+            'live:thermal_mitigation',
+            'Reducing quality due to thermal pressure',
+            { level: thermalState.level, bitrate: 1_500_000, fps: 24 },
+          )
+        } else if (thermalState.level === 0) {
+          // nominal — restore defaults
+          await livePublisher.setVideoQuality?.(2_500_000, 30)
+          state$.thermalWarning.set(false)
         }
       } catch {
         // Best-effort thermal polling — native module might not support it
       }
     }
 
-    // Poll every 15s during recording — thermal changes are gradual
-    interval = setInterval(checkThermal, 15_000)
+    // Poll every 10s — faster than before so mitigation kicks in promptly
+    interval = setInterval(checkThermal, 10_000)
     checkThermal() // Check immediately
 
     return () => {
       if (interval) clearInterval(interval)
+      state$.thermalWarning.set(false)
     }
-  }, [phase, livePublisher.getThermalState])
+  }, [phase, liveStatus, livePublisher.setVideoQuality, livePublisher.getThermalState, stopLiveRecording, state$])
 
   const startLivePreConnect = useCallback(async () => {
     const currentRecordingState = recordingStore$.phase.get()
@@ -1306,6 +1352,25 @@ export function LiveRecordScreen({
               </YStack>
             )}
           </YStack>
+
+          {thermalWarning && (
+            <XStack
+              position="absolute"
+              top={60}
+              left={20}
+              right={20}
+              justifyContent="center"
+              backgroundColor="rgba(180, 100, 0, 0.85)"
+              borderRadius={12}
+              paddingVertical={8}
+              paddingHorizontal={16}
+              zIndex={10}
+            >
+              <Text color="white" fontSize={13} fontWeight="600">
+                Device getting warm — reducing quality to protect your recording
+              </Text>
+            </XStack>
+          )}
 
           <YStack position="absolute" left={0} right={0} bottom={40} alignItems="center">
             {(isPreConnected || isLiveRecording) && liveRecordId && !respondTo ? (
