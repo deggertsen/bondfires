@@ -1011,6 +1011,11 @@ export function LiveRecordScreen({
     cancelLiveRecordingRef.current = cancelLiveRecording
   }, [cancelLiveRecording])
 
+  const stopLiveRecordingRef = useRef(stopLiveRecording)
+  useEffect(() => {
+    stopLiveRecordingRef.current = stopLiveRecording
+  }, [stopLiveRecording])
+
   // Track session ownership in a ref so the mount-scoped unmount cleanup below
   // (which captures nothing reactively) can tell whether THIS instance owns the
   // live session at teardown time.
@@ -1034,6 +1039,25 @@ export function LiveRecordScreen({
         return
       }
       if (currentRecordingState === 'idle' && livePublishStore$.recordId.get()) {
+        // Phase idle with a live session still provisioned means something
+        // reset the flow out from under an active session (a watchdog reset,
+        // a store bug). If the stream ever carried video, cancel would
+        // server-side delete real footage — finalize instead so Mux saves
+        // the VOD and the user keeps their recording. Cancel remains correct
+        // for never-started sessions (nothing to save).
+        if (livePublishStore$.everHadThroughput.get() === true) {
+          telemetry.warn(
+            'live:orphan_finalize',
+            'Idle phase with a live session that had throughput — finalizing instead of cancelling',
+            {
+              sessionId: livePublishStore$.sessionId.get(),
+              recordId: livePublishStore$.recordId.get(),
+              liveStatus: livePublishStore$.status.get(),
+            },
+          )
+          void stopLiveRecordingRef.current()
+          return
+        }
         void cancelLiveRecordingRef.current()
       }
     }
