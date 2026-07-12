@@ -3,6 +3,8 @@ import {
   freeUpgradeActions,
   getDefaultBondfireTitle,
   getUserFacingErrorMessage,
+  LIVE_DEFAULT_VIDEO_BITRATE,
+  LIVE_DEFAULT_VIDEO_FPS,
   type LivePublishStatus,
   livePublishActions,
   livePublishStore$,
@@ -34,6 +36,19 @@ import { ViewerPresenceStack } from '../ViewerPresenceStack'
 import { type CampWithMembership, formatRecordingClock, type TradeTag } from './shared'
 
 const keepAwakeTag = 'create-recording'
+// Thermal mitigation ladder, indexed by normalized thermal level (0–2 across
+// both platforms; see getThermalState). Level 3 (critical) auto-stops instead.
+// Android applies only the bitrate — an fps change there would force a
+// MediaCodec reconfigure mid-stream.
+const THERMAL_QUALITY_LADDER = [
+  { bitrate: LIVE_DEFAULT_VIDEO_BITRATE, fps: LIVE_DEFAULT_VIDEO_FPS }, // nominal
+  { bitrate: 1_500_000, fps: 24 }, // fair / moderate
+  { bitrate: 800_000, fps: 15 }, // serious / severe
+] as const
+const THERMAL_POLL_INTERVAL_MS = 10_000
+// Consecutive cooler polls required before stepping quality back up, so an
+// oscillating thermal level doesn't flap the encoder settings.
+const THERMAL_STEP_UP_POLLS = 3
 const EARLY_LIVE_DROP_MS = 8_000
 // Upper bound for the never-started cancel path. Cancelling deletes the
 // session + record row, so a wrong verdict destroys real footage — cap the
@@ -103,6 +118,13 @@ export function LiveRecordScreen({
   // ownership so blur/unmount can still release the camera.
   const ownsPreviewRef = useRef(false)
   const cancelInFlightRef = useRef<Promise<void> | null>(null)
+  // Thermal mitigation state (see the thermal effect below). Refs so effect
+  // re-runs don't re-fire telemetry or re-apply encoder settings; reset when
+  // the phase leaves 'recording'.
+  const thermalLastLevelRef = useRef(-1)
+  const thermalAppliedLevelRef = useRef(0)
+  const thermalCoolPollsRef = useRef(0)
+  const thermalStoppingRef = useRef(false)
   const liveTerminalRecoveryFiredRef = useRef(false)
   const liveCameraSwapInFlightRef = useRef(false)
 
@@ -298,85 +320,6 @@ export function LiveRecordScreen({
       deactivateKeepAwake(keepAwakeTag)
     }
   }, [phase, liveStatus, isFocused, isAppActive])
-
-  // Thermal mitigation — RTMP encoding + camera generates significant heat.
-  // Polls thermal state every 10s and reacts by reducing bitrate/FPS before
-  // the OS kills the app. The native modules also have a safety-net auto-stop
-  // at critical level, but JS mitigation fires first to give a graceful stop.
-  useEffect(() => {
-    if (phase !== 'recording' || liveStatus !== 'live') return
-
-    let interval: ReturnType<typeof setInterval> | null = null
-    let lastLevel = -1
-    let thermalStopping = false
-
-    const checkThermal = async () => {
-      if (thermalStopping) return
-      try {
-        const thermalState = await livePublisher.getThermalState?.()
-        if (!thermalState || thermalState.level === lastLevel) return
-        lastLevel = thermalState.level
-
-        telemetry.breadcrumb('live:thermal', {
-          level: thermalState.level,
-          levelName: thermalState.levelName,
-          platform: Platform.OS,
-          sessionId: livePublishStore$.sessionId.peek(),
-        })
-
-        // Thermal mitigation ladder
-        if (thermalState.level >= 3) {
-          // critical or above — graceful auto-stop to save the recording
-          thermalStopping = true
-          telemetry.warn(
-            'live:thermal_auto_stop',
-            'Thermal level critical — auto-stopping to save recording',
-            {
-              level: thermalState.level,
-              levelName: thermalState.levelName,
-              sessionId: livePublishStore$.sessionId.peek(),
-              recordId: livePublishStore$.recordId.peek(),
-            },
-          )
-          state$.thermalWarning.set(false)
-          void stopLiveRecording()
-        } else if (thermalState.level === 2) {
-          // serious — reduce to 800 Kbps @ 15 FPS + show warning
-          await livePublisher.setVideoQuality?.(800_000, 15)
-          state$.thermalWarning.set(true)
-          telemetry.info(
-            'live:thermal_mitigation',
-            'Reducing quality due to thermal pressure',
-            { level: thermalState.level, bitrate: 800_000, fps: 15 },
-          )
-        } else if (thermalState.level === 1) {
-          // fair — reduce to 1.5 Mbps @ 24 FPS
-          await livePublisher.setVideoQuality?.(1_500_000, 24)
-          state$.thermalWarning.set(false)
-          telemetry.info(
-            'live:thermal_mitigation',
-            'Reducing quality due to thermal pressure',
-            { level: thermalState.level, bitrate: 1_500_000, fps: 24 },
-          )
-        } else if (thermalState.level === 0) {
-          // nominal — restore defaults
-          await livePublisher.setVideoQuality?.(2_500_000, 30)
-          state$.thermalWarning.set(false)
-        }
-      } catch {
-        // Best-effort thermal polling — native module might not support it
-      }
-    }
-
-    // Poll every 10s — faster than before so mitigation kicks in promptly
-    interval = setInterval(checkThermal, 10_000)
-    checkThermal() // Check immediately
-
-    return () => {
-      if (interval) clearInterval(interval)
-      state$.thermalWarning.set(false)
-    }
-  }, [phase, liveStatus, livePublisher.setVideoQuality, livePublisher.getThermalState, stopLiveRecording, state$])
 
   const startLivePreConnect = useCallback(async () => {
     const currentRecordingState = recordingStore$.phase.get()
@@ -616,6 +559,104 @@ export function LiveRecordScreen({
       state$.showInviteSheet.set(false)
     }
   }, [livePublisher, liveStatus, logRecordingError, respondTo, state$])
+
+  // Thermal mitigation — RTMP encoding + camera generates significant heat.
+  // Polls thermal state every 10s and reacts by reducing encoder load before
+  // the OS kills the app. The native modules also have a safety-net auto-stop
+  // at critical level, but JS mitigation fires first to give a graceful stop.
+  // State lives in refs because the effect's deps include callbacks whose
+  // identity changes with liveStatus — a re-run must not re-fire telemetry or
+  // re-apply encoder settings mid-recording.
+  useEffect(() => {
+    if (phase !== 'recording') {
+      thermalLastLevelRef.current = -1
+      thermalAppliedLevelRef.current = 0
+      thermalCoolPollsRef.current = 0
+      thermalStoppingRef.current = false
+      state$.thermalWarning.set(false)
+      return
+    }
+
+    const applyQuality = async (level: number) => {
+      const target = THERMAL_QUALITY_LADDER[level]
+      if (!target) return
+      await livePublisher.setVideoQuality(target.bitrate, target.fps)
+      thermalAppliedLevelRef.current = level
+      state$.thermalWarning.set(level >= 2)
+      telemetry.info('live:thermal_mitigation', 'Adjusting quality for thermal state', {
+        level,
+        bitrate: target.bitrate,
+        fps: target.fps,
+      })
+    }
+
+    const checkThermal = async () => {
+      if (thermalStoppingRef.current) return
+      try {
+        const thermalState = await livePublisher.getThermalState?.()
+        if (!thermalState) return
+        const { level } = thermalState
+
+        if (level !== thermalLastLevelRef.current) {
+          thermalLastLevelRef.current = level
+          telemetry.breadcrumb('live:thermal', {
+            level,
+            levelName: thermalState.levelName,
+            rawLevel: thermalState.rawLevel,
+            platform: Platform.OS,
+            sessionId: livePublishStore$.sessionId.peek(),
+          })
+        }
+
+        // Unknown/unsupported on this device — telemetry only, no mitigation.
+        if (level < 0) return
+
+        if (level >= 3) {
+          // critical — graceful auto-stop to save the recording
+          thermalStoppingRef.current = true
+          telemetry.warn(
+            'live:thermal_auto_stop',
+            'Thermal level critical — auto-stopping to save recording',
+            {
+              level,
+              levelName: thermalState.levelName,
+              sessionId: livePublishStore$.sessionId.peek(),
+              recordId: livePublishStore$.recordId.peek(),
+            },
+          )
+          state$.thermalWarning.set(false)
+          void stopLiveRecording()
+          return
+        }
+
+        const applied = thermalAppliedLevelRef.current
+        if (level > applied) {
+          // Heating up — step quality down immediately.
+          thermalCoolPollsRef.current = 0
+          await applyQuality(level)
+        } else if (level < applied) {
+          // Cooling — step back up only after sustained cooler readings so an
+          // oscillating thermal level doesn't flap the encoder settings.
+          thermalCoolPollsRef.current += 1
+          if (thermalCoolPollsRef.current >= THERMAL_STEP_UP_POLLS) {
+            thermalCoolPollsRef.current = 0
+            await applyQuality(level)
+          }
+        } else {
+          thermalCoolPollsRef.current = 0
+        }
+      } catch {
+        // Best-effort thermal polling — native module might not support it
+      }
+    }
+
+    const interval = setInterval(checkThermal, THERMAL_POLL_INTERVAL_MS)
+    checkThermal() // Check immediately
+
+    return () => {
+      clearInterval(interval)
+    }
+  }, [phase, livePublisher.setVideoQuality, livePublisher.getThermalState, stopLiveRecording, state$])
 
   // Auto-stop at the recording duration cap.
   // NOTE: the pre-refactor create screen routed this through the legacy

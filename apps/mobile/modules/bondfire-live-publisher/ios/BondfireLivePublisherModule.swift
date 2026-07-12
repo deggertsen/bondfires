@@ -190,6 +190,7 @@ public class BondfireLivePublisherModule: Module {
       guard let self else { return }
       let state = ProcessInfo.processInfo.thermalState
       if state == .critical {
+        self.uninstallThermalStateObserver()
         let publisher = self.publisher
         self.publisher = nil
         Task { @MainActor in

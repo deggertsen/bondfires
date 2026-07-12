@@ -307,18 +307,17 @@ class BondfireLivePublisherModule : Module() {
     AsyncFunction("setVideoQuality") Coroutine { videoBitrate: Int, fps: Int ->
       val s = streamer ?: return@Coroutine
       try {
-        val currentConfig = s.videoConfig
-        val updatedConfig = VideoCodecConfig(
-          mimeType = currentConfig.mimeType,
-          startBitrate = videoBitrate,
-          resolution = currentConfig.resolution,
-          fps = fps,
-          gopDurationInS = currentConfig.gopDurationInS,
-        )
-        s.setVideoConfig(updatedConfig)
-        Log.i(TAG, "setVideoQuality: updated to ${videoBitrate}bps @ ${fps}fps")
+        // Dynamic bitrate through the encoder — the same path StreamPack's
+        // own bitrate regulator uses. Deliberately NOT setVideoConfig(): a
+        // full config swap mid-stream reconfigures MediaCodec, which risks
+        // the teardown SIGSEGV class of crashes (see the stop() comments)
+        // and a visible stream glitch. The fps parameter is ignored on
+        // Android for the same reason — bitrate is the meaningful thermal
+        // lever anyway.
+        s.videoEncoder?.bitrate = videoBitrate
+        Log.i(TAG, "setVideoQuality: video bitrate set to ${videoBitrate}bps (fps=$fps ignored on Android)")
       } catch (e: Exception) {
-        Log.w(TAG, "setVideoQuality: failed to update video config", e)
+        Log.w(TAG, "setVideoQuality: failed to update video bitrate", e)
       }
     }
 
@@ -376,16 +375,21 @@ class BondfireLivePublisherModule : Module() {
     }
 
     // Thermal state — polled from JS during recording.
-    // Returns the current PowerManager thermal status.
+    // `level` is normalized to the shared 0–3 scale the JS mitigation ladder
+    // uses (matching iOS nominal/fair/serious/critical). Raw PowerManager
+    // statuses run 0–6 and SEVERE(3) is sustainable on many devices, so only
+    // CRITICAL and above map to 3 (auto-stop); LIGHT is near-universal during
+    // camera use and maps to 0 (no mitigation). `rawLevel` keeps the
+    // unnormalized status for telemetry.
     AsyncFunction("getThermalState") {
       val context = appContext.reactContext
       val powerManager = context?.getSystemService(Context.POWER_SERVICE) as? PowerManager
-      val level = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      val status = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
         powerManager?.currentThermalStatus ?: -1
       } else {
         -1
       }
-      val levelName = when (level) {
+      val levelName = when (status) {
         PowerManager.THERMAL_STATUS_NONE -> "nominal"
         PowerManager.THERMAL_STATUS_LIGHT -> "light"
         PowerManager.THERMAL_STATUS_MODERATE -> "moderate"
@@ -395,7 +399,14 @@ class BondfireLivePublisherModule : Module() {
         PowerManager.THERMAL_STATUS_SHUTDOWN -> "shutdown"
         else -> "unknown"
       }
-      mapOf("level" to level, "levelName" to levelName)
+      val level = when {
+        status < 0 -> -1
+        status <= PowerManager.THERMAL_STATUS_LIGHT -> 0
+        status == PowerManager.THERMAL_STATUS_MODERATE -> 1
+        status == PowerManager.THERMAL_STATUS_SEVERE -> 2
+        else -> 3
+      }
+      mapOf("level" to level, "levelName" to levelName, "rawLevel" to status)
     }
 
     View(BondfireLivePublisherView::class) {}
