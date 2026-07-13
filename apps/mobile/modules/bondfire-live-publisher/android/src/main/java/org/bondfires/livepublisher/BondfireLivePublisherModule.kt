@@ -18,6 +18,7 @@ import android.net.NetworkCapabilities
 import android.net.TrafficStats
 import android.os.Build
 import android.os.PowerManager
+import android.os.PowerManager.OnThermalStatusChangedListener
 import android.os.SystemClock
 import android.util.Log
 import android.util.Size
@@ -138,6 +139,7 @@ class BondfireLivePublisherModule : Module() {
   private val networkStateLock = Any()
   private var lastNetworkTransportTypes: Set<Int>? = null
   private var trimMemoryObserver: ComponentCallbacks2? = null
+  private var thermalStatusListener: OnThermalStatusChangedListener? = null
 
   // Baseline for the TrafficStats-delta throughput measurement in getStats().
   // StreamPack 3.x exposes no byte counters (RtmpEndpoint.getMetrics() throws
@@ -176,6 +178,7 @@ class BondfireLivePublisherModule : Module() {
     OnDestroy {
       BondfireLivePublisherModule.currentInstance = null
       uninstallTrimMemoryObserver()
+      uninstallThermalStatusListener()
       scope.launch {
         cleanupStreamer()
       }
@@ -264,6 +267,7 @@ class BondfireLivePublisherModule : Module() {
           lastNetworkTransportTypes = null
         }
         registerNetworkCallback()
+        installThermalStatusListener()
         sendStatus(PublisherStatus.LIVE)
       } catch (e: Exception) {
         Log.e(TAG, "Failed to start stream", e)
@@ -298,6 +302,23 @@ class BondfireLivePublisherModule : Module() {
       val s = streamer ?: return@Coroutine
       isMuted = muted
       s.audioInput?.isMuted = muted
+    }
+
+    AsyncFunction("setVideoQuality") Coroutine { videoBitrate: Int, fps: Int ->
+      val s = streamer ?: return@Coroutine
+      try {
+        // Dynamic bitrate through the encoder — the same path StreamPack's
+        // own bitrate regulator uses. Deliberately NOT setVideoConfig(): a
+        // full config swap mid-stream reconfigures MediaCodec, which risks
+        // the teardown SIGSEGV class of crashes (see the stop() comments)
+        // and a visible stream glitch. The fps parameter is ignored on
+        // Android for the same reason — bitrate is the meaningful thermal
+        // lever anyway.
+        s.videoEncoder?.bitrate = videoBitrate
+        Log.i(TAG, "setVideoQuality: video bitrate set to ${videoBitrate}bps (fps=$fps ignored on Android)")
+      } catch (e: Exception) {
+        Log.w(TAG, "setVideoQuality: failed to update video bitrate", e)
+      }
     }
 
     AsyncFunction("getStats") {
@@ -354,16 +375,21 @@ class BondfireLivePublisherModule : Module() {
     }
 
     // Thermal state — polled from JS during recording.
-    // Returns the current PowerManager thermal status.
+    // `level` is normalized to the shared 0–3 scale the JS mitigation ladder
+    // uses (matching iOS nominal/fair/serious/critical). Raw PowerManager
+    // statuses run 0–6 and SEVERE(3) is sustainable on many devices, so only
+    // CRITICAL and above map to 3 (auto-stop); LIGHT is near-universal during
+    // camera use and maps to 0 (no mitigation). `rawLevel` keeps the
+    // unnormalized status for telemetry.
     AsyncFunction("getThermalState") {
       val context = appContext.reactContext
       val powerManager = context?.getSystemService(Context.POWER_SERVICE) as? PowerManager
-      val level = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      val status = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
         powerManager?.currentThermalStatus ?: -1
       } else {
         -1
       }
-      val levelName = when (level) {
+      val levelName = when (status) {
         PowerManager.THERMAL_STATUS_NONE -> "nominal"
         PowerManager.THERMAL_STATUS_LIGHT -> "light"
         PowerManager.THERMAL_STATUS_MODERATE -> "moderate"
@@ -373,7 +399,14 @@ class BondfireLivePublisherModule : Module() {
         PowerManager.THERMAL_STATUS_SHUTDOWN -> "shutdown"
         else -> "unknown"
       }
-      mapOf("level" to level, "levelName" to levelName)
+      val level = when {
+        status < 0 -> -1
+        status <= PowerManager.THERMAL_STATUS_LIGHT -> 0
+        status == PowerManager.THERMAL_STATUS_MODERATE -> 1
+        status == PowerManager.THERMAL_STATUS_SEVERE -> 2
+        else -> 3
+      }
+      mapOf("level" to level, "levelName" to levelName, "rawLevel" to status)
     }
 
     View(BondfireLivePublisherView::class) {}
@@ -956,6 +989,9 @@ class BondfireLivePublisherModule : Module() {
     // down, so we no longer need to watch for network swaps.
     unregisterNetworkCallback()
 
+    // Unregister the thermal safety net listener — it's tied to this streamer.
+    uninstallThermalStatusListener()
+
     // On some devices, calling stopStream() triggers a native SIGSEGV inside
     // MediaCodec teardown — a signal-level crash that no Kotlin try/catch can
     // survive. The app dies, Mux never sees an RTMP disconnect, and the stream
@@ -1034,6 +1070,48 @@ class BondfireLivePublisherModule : Module() {
     val observer = trimMemoryObserver ?: return
     trimMemoryObserver = null
     appContext.reactContext?.unregisterComponentCallbacks(observer)
+  }
+
+  /**
+   * Native thermal auto-stop safety net. JS handles mitigation first (reducing
+   * bitrate/FPS as thermal escalates), but if JS is frozen or the app is about
+   * to be killed by the OS, this listener fires `stop()` at
+   * THERMAL_STATUS_CRITICAL or above to save the recording before the process dies.
+   */
+  private fun installThermalStatusListener() {
+    if (thermalStatusListener != null) return
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+    val context = appContext.reactContext ?: return
+    val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
+    val listener = OnThermalStatusChangedListener { status ->
+      if (status >= PowerManager.THERMAL_STATUS_CRITICAL && !isStoppingIntentionally && streamer != null) {
+        Log.w(TAG, "Thermal status $status — native auto-stop safety net firing")
+        scope.launch {
+          if (isStoppingIntentionally || streamer == null) return@launch
+          isStoppingIntentionally = true
+          sendStatus(PublisherStatus.ENDED)
+          cleanupStreamer()
+        }
+      }
+    }
+    powerManager.addThermalStatusListener(listener)
+    thermalStatusListener = listener
+    Log.i(TAG, "installThermalStatusListener: thermal status listener registered")
+  }
+
+  private fun uninstallThermalStatusListener() {
+    val listener = thermalStatusListener ?: return
+    thermalStatusListener = null
+    val context = appContext.reactContext ?: return
+    val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+    if (powerManager != null) {
+      try {
+        powerManager.removeThermalStatusListener(listener)
+        Log.i(TAG, "uninstallThermalStatusListener: thermal status listener unregistered")
+      } catch (e: Exception) {
+        Log.w(TAG, "uninstallThermalStatusListener: failed to unregister", e)
+      }
+    }
   }
 }
 

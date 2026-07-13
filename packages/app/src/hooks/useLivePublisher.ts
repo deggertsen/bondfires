@@ -12,6 +12,15 @@ import {
   type StallDetector,
 } from '../utils/liveStallDetector'
 
+/**
+ * Default encoder settings. Keep in sync with the native option defaults
+ * (LivePublisherStartOptions in BondfireLivePublisherModule.kt / .swift).
+ * The thermal mitigation ladder in LiveRecordScreen restores these when the
+ * device cools back down.
+ */
+export const LIVE_DEFAULT_VIDEO_BITRATE = 2_500_000
+export const LIVE_DEFAULT_VIDEO_FPS = 30
+
 export interface LivePublisherStartOptions {
   rtmpsUrl: string
   streamKey: string
@@ -62,7 +71,14 @@ export interface LivePublisherNativeModule {
   swapCamera(): Promise<void>
   setMuted(muted: boolean): Promise<void>
   getStats(): Promise<LivePublisherStats>
-  getThermalState?(): Promise<{ level: number; levelName: string }>
+  /**
+   * `level` is the normalized 0–3 mitigation scale shared across platforms
+   * (nominal/fair/serious/critical). `rawLevel` (Android only) preserves the
+   * unnormalized PowerManager status (0–6) for telemetry.
+   */
+  getThermalState?(): Promise<{ level: number; levelName: string; rawLevel?: number }>
+  /** fps is applied on iOS only; Android adjusts bitrate dynamically and keeps fps fixed. */
+  setVideoQuality?(videoBitrate: number, fps: number): Promise<void>
   addListener(event: 'statusChange', cb: (status: string) => void): LivePublisherSubscription
   addListener(
     event: 'error',
@@ -374,8 +390,8 @@ export function useLivePublisher(options: {
   const preview = useCallback(
     async (args: { initialCamera?: 'front' | 'back' } = {}) => {
       await options.publisher.startPreview({
-        fps: 30,
-        videoBitrate: 2_500_000,
+        fps: LIVE_DEFAULT_VIDEO_FPS,
+        videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
         audioBitrate: 128_000,
         initialCamera: args.initialCamera ?? 'front',
       })
@@ -494,8 +510,8 @@ export function useLivePublisher(options: {
         await options.publisher.start({
           rtmpsUrl: ingest.rtmpsUrl,
           streamKey: ingest.streamKey,
-          fps: 30,
-          videoBitrate: 2_500_000,
+          fps: LIVE_DEFAULT_VIDEO_FPS,
+          videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
           audioBitrate: 128_000,
           initialCamera: args.initialCamera ?? 'front',
         })
@@ -574,8 +590,8 @@ export function useLivePublisher(options: {
         await options.publisher.start({
           rtmpsUrl: liveStream.ingest.rtmpsUrl,
           streamKey: liveStream.ingest.streamKey,
-          fps: 30,
-          videoBitrate: 2_500_000,
+          fps: LIVE_DEFAULT_VIDEO_FPS,
+          videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
           audioBitrate: 128_000,
           initialCamera: args.initialCamera ?? 'front',
         })
@@ -762,6 +778,13 @@ export function useLivePublisher(options: {
     await options.publisher.swapCamera()
   }, [options.publisher])
 
+  const setVideoQuality = useCallback(
+    async (videoBitrate: number, fps: number) => {
+      await options.publisher.setVideoQuality?.(videoBitrate, fps)
+    },
+    [options.publisher],
+  )
+
   return {
     preview,
     provision,
@@ -771,6 +794,7 @@ export function useLivePublisher(options: {
     cancel,
     swapCamera,
     hasProvisionedIngest,
+    setVideoQuality,
     stats$: livePublishStore$,
     getThermalState: options.publisher.getThermalState,
   }

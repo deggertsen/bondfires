@@ -43,6 +43,7 @@ public class BondfireLivePublisherModule: Module {
     OnDestroy {
       BondfireLivePublisherModule.currentInstance = nil
       self.uninstallMemoryWarningObserver()
+      self.uninstallThermalStateObserver()
       let publisher = self.publisher
       Task { @MainActor in
         await publisher?.stopWithoutEvent()
@@ -86,9 +87,11 @@ public class BondfireLivePublisherModule: Module {
       await MainActor.run { BondfireLivePublisherView.current?.attachPreviewIfAvailable() }
       await MainActor.run { self.sendEvent("statusChange", ["status": PublisherStatus.connecting.rawValue]) }
       try await publisher.start(options: options)
+      self.installThermalStateObserver()
     }
 
     AsyncFunction("stop") {
+      self.uninstallThermalStateObserver()
       let publisher = self.publisher
       self.publisher = nil
       await publisher?.stop()
@@ -103,6 +106,13 @@ public class BondfireLivePublisherModule: Module {
 
     AsyncFunction("setMuted") { (muted: Bool) in
       await self.publisher?.setMuted(muted)
+    }
+
+    AsyncFunction("setVideoQuality") { (videoBitrate: Int, fps: Int) in
+      guard let publisher = self.publisher else { return }
+      await MainActor.run {
+        publisher.updateVideoQuality(videoBitrate: videoBitrate, fps: fps)
+      }
     }
 
     AsyncFunction("getStats") { () -> [String: Int] in
@@ -142,6 +152,7 @@ public class BondfireLivePublisherModule: Module {
 
   fileprivate var publisher: LivePublisher?
   private var memoryWarningObserver: NSObjectProtocol?
+  private var thermalStateObserver: NSObjectProtocol?
 
   /// Listen for iOS memory pressure notifications and forward them to JS as
   /// telemetry-only native error events.
@@ -163,6 +174,36 @@ public class BondfireLivePublisherModule: Module {
     guard let observer = memoryWarningObserver else { return }
     NotificationCenter.default.removeObserver(observer)
     memoryWarningObserver = nil
+  }
+
+  /// Native thermal auto-stop safety net. JS handles mitigation first (reducing
+  /// bitrate/FPS as thermal escalates), but if JS is frozen or the app is about
+  /// to be killed by the OS, this observer fires `stop()` at `.critical` to save
+  /// the recording before the process dies.
+  private func installThermalStateObserver() {
+    guard thermalStateObserver == nil else { return }
+    thermalStateObserver = NotificationCenter.default.addObserver(
+      forName: ProcessInfo.thermalStateDidChangeNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      guard let self else { return }
+      let state = ProcessInfo.processInfo.thermalState
+      if state == .critical {
+        self.uninstallThermalStateObserver()
+        let publisher = self.publisher
+        self.publisher = nil
+        Task { @MainActor in
+          await publisher?.stop()
+        }
+      }
+    }
+  }
+
+  private func uninstallThermalStateObserver() {
+    guard let observer = thermalStateObserver else { return }
+    NotificationCenter.default.removeObserver(observer)
+    thermalStateObserver = nil
   }
 
   @MainActor
@@ -636,6 +677,23 @@ final class LivePublisher {
     var audioSettings = await mixer.audioMixerSettings
     audioSettings.isMuted = muted
     await mixer.setAudioMixerSettings(audioSettings)
+  }
+
+  // MARK: - Thermal Mitigation
+
+  /// Update video encoder bitrate and frame rate without reconnecting. Called
+  /// from `setVideoQuality` AsyncFunction when the JS thermal mitigation ladder
+  /// reacts to rising device temperatures.
+  func updateVideoQuality(videoBitrate: Int, fps: Int) {
+    guard let session = session else { return }
+    Task { @MainActor in
+      var videoSettings = await session.stream.videoSettings
+      videoSettings.bitRate = videoBitrate
+      await session.stream.setVideoSettings(videoSettings)
+      let maxFps = UIScreen.main.maximumFramesPerSecond
+      let captureFps = min(Float64(fps), Float64(maxFps > 0 ? maxFps : 30))
+      await mixer.setFrameRate(captureFps)
+    }
   }
 
   // MARK: - Stats
