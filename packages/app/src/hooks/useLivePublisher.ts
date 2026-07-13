@@ -422,6 +422,7 @@ export function useLivePublisher(options: {
 
       livePublishActions.beginCreate()
       let provisionedSessionId: string | null = null
+      const provisionStartedAt = Date.now()
       try {
         const liveStream = await options.createLiveStream({
           isResponse: !!args.respondToBondfireId,
@@ -440,6 +441,11 @@ export function useLivePublisher(options: {
           recordId: liveStream.recordId,
           liveStreamId: liveStream.liveStreamId,
           playbackId: liveStream.playbackId,
+        })
+        telemetry.info('live:provision_success', 'Live stream provisioned', {
+          sessionId: liveStream.liveSessionId,
+          recordId: liveStream.recordId,
+          provisionMs: Date.now() - provisionStartedAt,
         })
 
         return liveStream
@@ -501,6 +507,7 @@ export function useLivePublisher(options: {
         throw new Error('No provisioned live stream to connect')
       }
 
+      const connectStartedAt = Date.now()
       try {
         telemetry.setCrashBreadcrumb('live:starting', {
           sessionId: livePublishStore$.sessionId.peek(),
@@ -521,9 +528,14 @@ export function useLivePublisher(options: {
           recordId: livePublishStore$.recordId.peek(),
           status: livePublishStore$.status.peek(),
         })
+        const connectMs = Date.now() - connectStartedAt
         telemetry.info('live:start_success', 'Live publisher connected', {
           sessionId: livePublishStore$.sessionId.peek(),
           recordId: livePublishStore$.recordId.peek(),
+          // Pre-provisioned path: no provision leg at tap time.
+          connectMs,
+          totalMs: connectMs,
+          preProvisioned: true,
         })
       } catch (error) {
         // Keep the provisioned session intact so the user can retry the tap;
@@ -562,6 +574,7 @@ export function useLivePublisher(options: {
 
       livePublishActions.beginCreate()
       let provisionedSessionId: string | null = null
+      const startRequestedAt = Date.now()
       try {
         const liveStream = await options.createLiveStream({
           isResponse: !!args.respondToBondfireId,
@@ -572,6 +585,7 @@ export function useLivePublisher(options: {
           title: args.title,
           pending: args.pending,
         })
+        const provisionMs = Date.now() - startRequestedAt
         provisionedSessionId = liveStream.liveSessionId
         ingestRef.current = { ...liveStream.ingest, sessionId: liveStream.liveSessionId }
 
@@ -587,6 +601,7 @@ export function useLivePublisher(options: {
           recordId: liveStream.recordId,
           status: livePublishStore$.status.peek(),
         })
+        const connectStartedAt = Date.now()
         await options.publisher.start({
           rtmpsUrl: liveStream.ingest.rtmpsUrl,
           streamKey: liveStream.ingest.streamKey,
@@ -605,6 +620,12 @@ export function useLivePublisher(options: {
           sessionId: liveStream.liveSessionId,
           recordId: liveStream.recordId,
           playbackId: liveStream.playbackId,
+          // Stage split for the tap→recording latency audit: provision is the
+          // Convex action + Mux API leg, connect is the native RTMPS leg.
+          provisionMs,
+          connectMs: Date.now() - connectStartedAt,
+          totalMs: Date.now() - startRequestedAt,
+          preProvisioned: false,
         })
       } catch (error) {
         const errObj = error instanceof Error ? error : new Error(String(error))
@@ -723,6 +744,45 @@ export function useLivePublisher(options: {
     }
   }, [options, stopStatsSampling])
 
+  /**
+   * Release a provisioned-but-unconnected session WITHOUT touching the native
+   * publisher — the camera preview stays up. Used when an eagerly provisioned
+   * session goes stale (its camp/tags/title no longer match what the user is
+   * about to record) and must be replaced before re-provisioning; the
+   * server-side cancel deletes the pending record + Mux stream. Returns false
+   * when cancellation fails so callers do not provision a replacement while
+   * the server still considers the old session active.
+   */
+  const discardProvision = useCallback(
+    async (reason: string) => {
+      const sessionId = livePublishStore$.sessionId.peek()
+      const ownsSession =
+        ingestRef.current !== null &&
+        sessionId !== null &&
+        ingestRef.current.sessionId === sessionId
+      if (!ownsSession || !sessionId) {
+        return true
+      }
+      try {
+        await options.cancelLiveStream({ liveSessionId: sessionId, reason })
+      } catch (error) {
+        // The stale-session cron sweeps anything we fail to cancel here.
+        telemetry.warn('live:cancel', 'Failed to discard provisioned live session', {
+          sessionId,
+          reason,
+          error: String(error),
+        })
+        return false
+      }
+      ingestRef.current = null
+      if (livePublishStore$.sessionId.peek() === sessionId) {
+        livePublishActions.reset()
+      }
+      return true
+    },
+    [options.cancelLiveStream],
+  )
+
   const cancel = useCallback(async () => {
     const sessionId = livePublishStore$.sessionId.get()
     let publisherError: unknown
@@ -792,6 +852,7 @@ export function useLivePublisher(options: {
     start,
     stop,
     cancel,
+    discardProvision,
     swapCamera,
     hasProvisionedIngest,
     setVideoQuality,

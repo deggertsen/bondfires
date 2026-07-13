@@ -1758,22 +1758,23 @@ export const createLiveStream = action({
           throwUserError('Not authenticated')
         }
 
-        let playbackPolicy: PlaybackPolicy
-        if (args.isResponse) {
-          if (!args.bondfireId) {
-            throwUserError('A bondfire ID is required when creating a live response')
-          }
+        const resolvePlaybackPolicy = async (): Promise<PlaybackPolicy> => {
+          if (args.isResponse) {
+            if (!args.bondfireId) {
+              throwUserError('A bondfire ID is required when creating a live response')
+            }
 
-          const policy = await ctx.runQuery(internal.videos.getMuxPlaybackPolicyForNewRecord, {
-            userId,
-            isResponse: args.isResponse,
-            bondfireId: args.bondfireId,
-          })
-          playbackPolicy = policy.playbackPolicy
-        } else if (args.personalCamp) {
-          await ctx.runQuery(internal.videos.validatePersonalCreateForUser, { userId })
-          playbackPolicy = 'signed'
-        } else {
+            const policy = await ctx.runQuery(internal.videos.getMuxPlaybackPolicyForNewRecord, {
+              userId,
+              isResponse: args.isResponse,
+              bondfireId: args.bondfireId,
+            })
+            return policy.playbackPolicy
+          }
+          if (args.personalCamp) {
+            await ctx.runQuery(internal.videos.validatePersonalCreateForUser, { userId })
+            return 'signed'
+          }
           if (!args.campId) {
             throwUserError('Choose a camp before sparking a Bondfire')
           }
@@ -1784,16 +1785,21 @@ export const createLiveStream = action({
             campId: args.campId,
             tags: args.tags,
           })
-          playbackPolicy = policy.playbackPolicy
+          return policy.playbackPolicy
         }
 
-        // Refuse to provision a billable Mux live stream while the user already
-        // has one in flight. The cron will sweep abandoned sessions, but this
-        // prevents a runaway loop from creating an unbounded number of them.
-        const existingActive: Doc<'liveSessions'> | null = await ctx.runQuery(
-          internal.videos.getActiveMuxLiveSessionForUser,
-          { userId },
-        )
+        // The three pre-flight reads are independent — run them concurrently.
+        // This action sits on the record-tap critical path, so every serial
+        // round-trip here is user-visible latency before recording starts.
+        const [playbackPolicy, existingActive, maxContinuousDuration] = await Promise.all([
+          resolvePlaybackPolicy(),
+          // Refuse to provision a billable Mux live stream while the user
+          // already has one in flight. The cron will sweep abandoned sessions,
+          // but this prevents a runaway loop from creating an unbounded number
+          // of them.
+          ctx.runQuery(internal.videos.getActiveMuxLiveSessionForUser, { userId }),
+          ctx.runQuery(internal.videos.getLiveMaxContinuousDurationSeconds, { userId }),
+        ])
         if (existingActive) {
           throwUserError(
             'You already have an active live stream. End it before starting a new one.',
@@ -1806,10 +1812,6 @@ export const createLiveStream = action({
           reconnectWindow > 0 && config.reconnectSlateUrl ? config.reconnectSlateUrl : undefined
         const useSlateForStandardLatency =
           config.liveLatencyMode === 'standard' && reconnectWindow > 0
-        const maxContinuousDuration: number = await ctx.runQuery(
-          internal.videos.getLiveMaxContinuousDurationSeconds,
-          { userId },
-        )
         const data = parseMuxData(
           await muxRequest('/live-streams', {
             method: 'POST',
