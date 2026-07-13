@@ -217,6 +217,12 @@ export function LiveRecordScreen({
         liveSessionId: args.liveSessionId as Id<'liveSessions'>,
       }),
   })
+  // useLivePublisher intentionally exposes imperative methods, but its return
+  // object is recreated as callback dependencies change. Keep the latest
+  // instance in a ref so eager-provision scheduling is driven only by the
+  // values that define a stream, not by unrelated renders/status updates.
+  const livePublisherRef = useRef(livePublisher)
+  livePublisherRef.current = livePublisher
 
   // Clean up any orphaned live sessions from a previous crash so Mux billing
   // stops immediately and the bondfire transitions out of 'live' status. The
@@ -457,19 +463,18 @@ export function LiveRecordScreen({
     state$,
   ])
 
-  const buildLiveProvisionArgs = useCallback(
-    () => ({
-      respondToBondfireId: respondTo,
-      campId: effectiveCampId,
-      personalCamp: !respondTo && isPersonalCamp ? true : undefined,
-      tags: selectedCampTags,
-      title: !respondTo
-        ? getDefaultBondfireTitle(currentUser, selectedCamp?.name) || undefined
-        : undefined,
-    }),
-    [currentUser, effectiveCampId, isPersonalCamp, respondTo, selectedCamp, selectedCampTags],
-  )
-  const provisionArgsKey = JSON.stringify(buildLiveProvisionArgs())
+  const liveProvisionArgs = {
+    respondToBondfireId: respondTo,
+    campId: effectiveCampId,
+    personalCamp: !respondTo && isPersonalCamp ? true : undefined,
+    tags: selectedCampTags,
+    title: !respondTo
+      ? getDefaultBondfireTitle(currentUser, selectedCamp?.name) || undefined
+      : undefined,
+  }
+  const liveProvisionArgsRef = useRef(liveProvisionArgs)
+  liveProvisionArgsRef.current = liveProvisionArgs
+  const provisionArgsKey = JSON.stringify(liveProvisionArgs)
 
   // Eagerly provision the Mux stream while the user frames the shot, so the
   // record tap only has to open the RTMP connection (the provision leg —
@@ -483,27 +488,33 @@ export function LiveRecordScreen({
     if (phase !== 'pre_connected' || !isFocused || !isAppActive) {
       return
     }
-    if (livePublisher.hasProvisionedIngest() && provisionedArgsKeyRef.current === provisionArgsKey) {
+    if (
+      livePublisherRef.current.hasProvisionedIngest() &&
+      provisionedArgsKeyRef.current === provisionArgsKey
+    ) {
       return
     }
     const attempt = ++provisionAttemptRef.current
-    const args = buildLiveProvisionArgs()
+    const args = liveProvisionArgsRef.current
+    const argsKey = provisionArgsKey
     const chain = (provisionInFlightRef.current ?? Promise.resolve())
       .catch(() => {})
       .then(async () => {
         if (attempt !== provisionAttemptRef.current) return
         if (recordingStore$.phase.peek() !== 'pre_connected') return
+        const publisher = livePublisherRef.current
         // Replace a session provisioned under different camp/tags/title.
-        if (livePublisher.hasProvisionedIngest()) {
+        if (publisher.hasProvisionedIngest()) {
+          const discarded = await publisher.discardProvision('provision_args_changed')
+          if (!discarded) return
           provisionedArgsKeyRef.current = null
           provisionedRecordTypeRef.current = null
-          await livePublisher.discardProvision('provision_args_changed')
         }
         if (attempt !== provisionAttemptRef.current) return
         if (recordingStore$.phase.peek() !== 'pre_connected') return
         try {
-          const liveStream = await livePublisher.provision({ ...args, pending: true })
-          provisionedArgsKeyRef.current = provisionArgsKey
+          const liveStream = await livePublisherRef.current.provision({ ...args, pending: true })
+          provisionedArgsKeyRef.current = argsKey
           provisionedRecordTypeRef.current = liveStream.recordType
           // The user left pre-connect while the provision round-trip was in
           // flight (blur/unmount cancel ran before there was a session to
@@ -511,7 +522,7 @@ export function LiveRecordScreen({
           if (recordingStore$.phase.peek() !== 'pre_connected') {
             provisionedArgsKeyRef.current = null
             provisionedRecordTypeRef.current = null
-            await livePublisher.discardProvision('preconnect_abandoned')
+            await livePublisherRef.current.discardProvision('preconnect_abandoned')
           }
         } catch (error) {
           // Best-effort: the record tap falls back to the full
@@ -527,7 +538,7 @@ export function LiveRecordScreen({
         }
       })
     provisionInFlightRef.current = chain
-  }, [phase, isFocused, isAppActive, provisionArgsKey, buildLiveProvisionArgs, livePublisher])
+  }, [phase, isFocused, isAppActive, provisionArgsKey])
 
   const startLiveRecording = useCallback(async () => {
     if (recordingStore$.phase.get() !== 'pre_connected') {
@@ -567,15 +578,17 @@ export function LiveRecordScreen({
         await provisionInFlightRef.current.catch(() => {})
       }
 
-      const expectedArgsKey = JSON.stringify(buildLiveProvisionArgs())
+      const publisher = livePublisherRef.current
+      const expectedArgs = liveProvisionArgsRef.current
+      const expectedArgsKey = JSON.stringify(expectedArgs)
       const canUseProvisioned =
-        livePublisher.hasProvisionedIngest() && provisionedArgsKeyRef.current === expectedArgsKey
+        publisher.hasProvisionedIngest() && provisionedArgsKeyRef.current === expectedArgsKey
 
       try {
         if (canUseProvisioned) {
           // Fast path: the stream was provisioned during framing, so the tap
           // only opens the RTMP connection.
-          await livePublisher.connect({ initialCamera })
+          await publisher.connect({ initialCamera })
           // Flip the pending record live for immediate feed visibility. Fire
           // and forget — the live_stream.active webhook is the authoritative
           // backstop for both record types.
@@ -594,12 +607,15 @@ export function LiveRecordScreen({
           // Fallback: eager provisioning failed, was reaped, or its args went
           // stale between framing and tap. Release any mismatched session first
           // so createLiveStream's concurrent-session guard doesn't refuse.
-          if (livePublisher.hasProvisionedIngest()) {
-            await livePublisher.discardProvision('stale_at_record_tap')
+          if (publisher.hasProvisionedIngest()) {
+            const discarded = await publisher.discardProvision('stale_at_record_tap')
+            if (!discarded) {
+              throw new Error('Could not replace the outdated live session')
+            }
           }
           provisionedArgsKeyRef.current = null
           provisionedRecordTypeRef.current = null
-          await livePublisher.start({ ...buildLiveProvisionArgs(), initialCamera })
+          await publisher.start({ ...expectedArgs, initialCamera })
         }
         ownsPreviewRef.current = false
       } catch (error) {
@@ -614,7 +630,7 @@ export function LiveRecordScreen({
     } finally {
       state$.isTapStarting.set(false)
     }
-  }, [buildLiveProvisionArgs, livePublisher, logRecordingError, markBondfireLive, state$])
+  }, [logRecordingError, markBondfireLive, state$])
 
   const stopLiveRecording = useCallback(async () => {
     const currentRecordingState = recordingStore$.phase.get()
@@ -770,7 +786,13 @@ export function LiveRecordScreen({
     return () => {
       clearInterval(interval)
     }
-  }, [phase, livePublisher.setVideoQuality, livePublisher.getThermalState, stopLiveRecording, state$])
+  }, [
+    phase,
+    livePublisher.setVideoQuality,
+    livePublisher.getThermalState,
+    stopLiveRecording,
+    state$,
+  ])
 
   // Auto-stop at the recording duration cap.
   // NOTE: the pre-refactor create screen routed this through the legacy
