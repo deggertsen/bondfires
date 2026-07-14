@@ -53,6 +53,8 @@ export type BondfireVideoItem = {
   responseIndex?: number
   isLive: boolean
   createdAt: number
+  watchedByViewer: boolean
+  durationMs?: number
 }
 
 export function clampVideoIndex(index: number | null | undefined, totalVideos: number) {
@@ -115,6 +117,8 @@ export function buildBondfireVideoItems(
       responseIndex: undefined,
       isLive: bondfireData.videoStatus === 'live',
       createdAt: bondfireData._creationTime,
+      watchedByViewer: bondfireData.watchedByViewer ?? false,
+      durationMs: bondfireData.durationMs,
     },
     ...bondfireData.videos.map((video, index) => ({
       key: video._id,
@@ -127,6 +131,8 @@ export function buildBondfireVideoItems(
       responseIndex: index + 1,
       isLive: video.videoStatus === 'live',
       createdAt: video._creationTime,
+      watchedByViewer: video.watchedByViewer ?? false,
+      durationMs: video.durationMs,
     })),
   ]
 }
