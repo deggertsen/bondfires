@@ -9,14 +9,13 @@ import {
 } from '@bondfires/app'
 import { Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { Flame } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { LinearGradient } from 'expo-linear-gradient'
 import { useVideoPlayer, VideoView } from 'expo-video'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { type LayoutChangeEvent, PanResponder, Pressable, type View } from 'react-native'
-import { XStack, YStack } from 'tamagui'
+import { YStack } from 'tamagui'
 import { api } from '../../../../../../convex/_generated/api'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
 import type { ActiveReaction } from '../../../../components/ViewerPresenceStack'
@@ -82,7 +81,6 @@ export interface VideoPlayerProps {
   isMainVideo: boolean
   responseIndex?: number
   isLive?: boolean
-  createdAt?: number
 }
 
 export function VideoPlayer({
@@ -100,7 +98,6 @@ export function VideoPlayer({
   isMainVideo,
   responseIndex,
   isLive = false,
-  createdAt,
 }: VideoPlayerProps) {
   const videoId = bondfireId || bondfireVideoId || ''
   const autoplayVideos = useValue(appStore$.preferences.autoplayVideos)
@@ -857,44 +854,6 @@ export function VideoPlayer({
         onLayout={handleProgressBarLayout}
         panHandlers={progressBarPanResponder.panHandlers}
       />
-
-      <YStack position="absolute" bottom={148} left={20} zIndex={3} pointerEvents="box-none">
-        <XStack alignItems="center" gap={12}>
-          <YStack
-            width={40}
-            height={40}
-            borderRadius={20}
-            backgroundColor={'$backgroundHover'}
-            alignItems="center"
-            justifyContent="center"
-            borderWidth={2}
-            borderColor={isMainVideo ? '$primary' : '$secondary'}
-          >
-            <Flame size={20} color={isMainVideo ? '$primary' : '$secondary'} />
-          </YStack>
-          <YStack>
-            <Text fontWeight="600" fontSize={15} color={OVERLAY_COLORS.textPrimary}>
-              {creatorName}
-            </Text>
-            <Text fontSize={12} color={OVERLAY_COLORS.textSecondary}>
-              {createdAt
-                ? new Date(createdAt).toLocaleDateString('en-US', {
-                    month: 'short',
-                    day: 'numeric',
-                    year: 'numeric',
-                  }) +
-                  ' at ' +
-                  new Date(createdAt).toLocaleTimeString('en-US', {
-                    hour: 'numeric',
-                    minute: '2-digit',
-                  })
-                : isMainVideo
-                  ? 'Spark'
-                  : `Response ${responseIndex}`}
-            </Text>
-          </YStack>
-        </XStack>
-      </YStack>
 
       <PausedReportButton state$={state$} />
 

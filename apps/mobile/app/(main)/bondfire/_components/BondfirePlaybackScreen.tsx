@@ -1,6 +1,6 @@
-import { Button, Text } from '@bondfires/ui'
+import { Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { ChevronLeft, ChevronRight, FileText, Flame, Settings } from '@tamagui/lucide-icons'
+import { ChevronLeft, ChevronRight, FileText, Settings } from '@tamagui/lucide-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { Stack, useRouter } from 'expo-router'
 import { type RefObject, useCallback, useEffect, useRef } from 'react'
@@ -19,6 +19,7 @@ import type {
   ScrollToIndexFailedInfo,
 } from '../_lib/bondfireDetailHelpers'
 import { SCREEN_WIDTH } from '../_lib/bondfireDetailHelpers'
+import { ThreadBrowser } from './ThreadBrowser'
 import { VideoPlayer } from './VideoPlayer'
 
 export function BondfirePlaybackScreen({
@@ -139,17 +140,6 @@ export function BondfirePlaybackScreen({
               </XStack>
             </Pressable>
 
-            <YStack alignItems="center">
-              <Text fontWeight="600" fontSize={16} color={OVERLAY_COLORS.textPrimary}>
-                {currentVideoIndex + 1} / {totalVideos}
-              </Text>
-              <Text fontSize={12} color={OVERLAY_COLORS.textSecondary}>
-                {processingResponseCount > 0
-                  ? `${processingResponseCount} ${processingResponseCount === 1 ? 'response' : 'responses'} processing...`
-                  : 'Swipe for responses'}
-              </Text>
-            </YStack>
-
             <XStack gap={8}>
               <Pressable
                 onPress={() => overlayState$.showSettings.set(!overlayState$.showSettings.get())}
@@ -204,7 +194,6 @@ export function BondfirePlaybackScreen({
               isMainVideo={item.isMainVideo}
               responseIndex={item.responseIndex}
               isLive={item.isLive}
-              createdAt={item.createdAt}
             />
           )}
           horizontal
@@ -238,74 +227,20 @@ export function BondfirePlaybackScreen({
           </YStack>
         )}
 
-        {bondfireData.campStatus !== 'archived' ? (
-          <YStack
-            position="absolute"
-            bottom={0}
-            left={0}
-            right={0}
-            paddingHorizontal={20}
-            paddingBottom={28}
-            paddingTop={16}
-          >
-            <LinearGradient
-              colors={OVERLAY_COLORS.gradientBottomThin}
-              style={{
-                position: 'absolute',
-                bottom: 0,
-                left: 0,
-                right: 0,
-                height: 120,
-              }}
-            />
-            {canInvite ? (
-              <XStack gap={12}>
-                <Button
-                  variant="outline"
-                  size="$lg"
-                  flex={1}
-                  onPress={() => overlayState$.isInviteSheetOpen.set(true)}
-                  borderColor={OVERLAY_COLORS.textPrimary}
-                >
-                  <Text color={OVERLAY_COLORS.textPrimary} fontWeight="700">
-                    Share Bondfire
-                  </Text>
-                </Button>
-                <Button variant="primary" size="$lg" flex={1} onPress={handleRespond}>
-                  <Flame size={18} color={OVERLAY_COLORS.textPrimary} />
-                  <Text color={OVERLAY_COLORS.textPrimary} fontWeight="700">
-                    Respond
-                  </Text>
-                </Button>
-              </XStack>
-            ) : (
-              <Button variant="primary" size="$lg" onPress={handleRespond}>
-                <Flame size={20} color={OVERLAY_COLORS.textPrimary} />
-                <Text color={OVERLAY_COLORS.textPrimary}>Add Your Response</Text>
-              </Button>
-            )}
-          </YStack>
-        ) : null}
-
-        <XStack position="absolute" bottom={100} left={0} right={0} justifyContent="center" gap={8}>
-          {videoItems.map((item, index) => (
-            <Pressable
-              key={item.key}
-              onPress={() => {
-                flatListRef.current?.scrollToIndex({ index, animated: true })
-              }}
-            >
-              <YStack
-                width={index === currentVideoIndex ? 24 : 8}
-                height={8}
-                borderRadius={4}
-                backgroundColor={
-                  index === currentVideoIndex ? '$primary' : OVERLAY_COLORS.dotInactive
-                }
-              />
-            </Pressable>
-          ))}
-        </XStack>
+        <ThreadBrowser
+          title={bondfireData.title ?? `${bondfireData.creatorName ?? 'Anonymous'}'s Bondfire`}
+          videoItems={videoItems}
+          currentVideoIndex={currentVideoIndex}
+          participants={bondfireData.participants}
+          processingCount={processingResponseCount}
+          canRespond={bondfireData.campStatus !== 'archived'}
+          canShare={canInvite}
+          onSelectVideo={(index) => {
+            flatListRef.current?.scrollToIndex({ index, animated: true })
+          }}
+          onRespond={handleRespond}
+          onShare={() => overlayState$.isInviteSheetOpen.set(true)}
+        />
 
         {showSettings && <SettingsPopover onClose={() => overlayState$.showSettings.set(false)} />}
         {showNotepad && <NotepadOverlay onClose={() => overlayState$.showNotepad.set(false)} />}

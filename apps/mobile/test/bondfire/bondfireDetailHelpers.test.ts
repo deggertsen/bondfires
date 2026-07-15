@@ -110,6 +110,8 @@ describe('bondfireDetailHelpers', () => {
       userId: 'user-1',
       creatorName: 'Ada',
       videoStatus: 'live',
+      watchedByViewer: true,
+      durationMs: 62_000,
       videos: [
         {
           _id: 'response-1',
@@ -133,6 +135,8 @@ describe('bondfireDetailHelpers', () => {
         responseIndex: undefined,
         isLive: true,
         createdAt: 1700000000000,
+        watchedByViewer: true,
+        durationMs: 62_000,
       },
       {
         key: 'response-1',
@@ -145,6 +149,8 @@ describe('bondfireDetailHelpers', () => {
         responseIndex: 1,
         isLive: false,
         createdAt: 1700000060000,
+        watchedByViewer: false,
+        durationMs: undefined,
       },
     ])
   })

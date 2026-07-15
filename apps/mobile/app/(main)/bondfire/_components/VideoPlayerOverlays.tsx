@@ -161,7 +161,7 @@ export function PausedReportButton({ state$ }: { state$: VideoPlayerState$ }) {
   if (isPlaying || isLoading) return null
 
   return (
-    <YStack position="absolute" left={20} bottom={200} zIndex={3}>
+    <YStack position="absolute" left={16} bottom={160} zIndex={3}>
       <ReportButton onPress={() => state$.showReport.set(true)} />
     </YStack>
   )
