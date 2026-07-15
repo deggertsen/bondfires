@@ -15,7 +15,11 @@ function videoLabel(item: BondfireVideoItem) {
 }
 
 function formatShortDate(ms: number) {
-  return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  const date = new Date(ms)
+  return `${date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  })}, ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
 }
 
 function formatTimestamp(ms: number) {
