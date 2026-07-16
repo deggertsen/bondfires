@@ -51,14 +51,20 @@ import {
   getBondfireSwipeActions,
   getSwipeReportComment,
 } from '../../../lib/bondfireSwipeActions'
+import {
+  type BondfireThumbnailFields,
+  getBondfireThumbnailPlayback,
+  getCachedBondfireThumbnail,
+} from '../../../lib/bondfireThumbnails'
 import { routes } from '../../../lib/routes'
 
-type BondfireData = Doc<'bondfires'> & {
-  isLive?: boolean
-  livePlaybackId?: string
-  campLabel?: string
-  badge?: 'sparked' | 'invited' | 'kindled' | null
-}
+type BondfireData = Doc<'bondfires'> &
+  BondfireThumbnailFields & {
+    isLive?: boolean
+    livePlaybackId?: string
+    campLabel?: string
+    badge?: 'sparked' | 'invited' | 'kindled' | null
+  }
 type JoinedCamp = Doc<'camps'> & { membership: Doc<'campMembers'> }
 
 type ViewMode = 'discover' | 'recent' | 'active' | 'unseen'
@@ -574,38 +580,40 @@ export default function FeedScreen() {
   const ensureThumbnailUrl = useCallback(
     async (bondfire: BondfireData) => {
       if (!shouldRunBackgroundWork) return
-      if (!bondfire.muxPlaybackId) return
+      const playback = getBondfireThumbnailPlayback(bondfire)
+      if (!playback) return
       // Already resolved (including null = previously failed)
-      if (state$.thumbnailUrls[bondfire._id].get() !== undefined) return
-      if (loadingThumbsRef.current.has(bondfire._id)) return
+      if (state$.thumbnailUrls[playback.cacheKey].get() !== undefined) return
+      if (loadingThumbsRef.current.has(playback.cacheKey)) return
 
-      loadingThumbsRef.current.add(bondfire._id)
+      loadingThumbsRef.current.add(playback.cacheKey)
       try {
         const { thumbnailUrl } = await getThumbnailUrl({
-          muxPlaybackId: bondfire.muxPlaybackId,
-          muxPlaybackPolicy: bondfire.muxPlaybackPolicy,
-          bondfireId: bondfire._id,
+          muxPlaybackId: playback.muxPlaybackId,
+          muxPlaybackPolicy: playback.muxPlaybackPolicy,
+          bondfireId: playback.bondfireVideoId ? undefined : bondfire._id,
+          bondfireVideoId: playback.bondfireVideoId,
         })
-        state$.thumbnailUrls[bondfire._id].set(thumbnailUrl)
+        state$.thumbnailUrls[playback.cacheKey].set(thumbnailUrl)
         telemetry.breadcrumb('feed:thumbnail:loaded', {
           bondfireId: bondfire._id,
           hasToken: thumbnailUrl.includes('token='),
         })
       } catch (error) {
         // Mark as null so we don't retry this bondfire repeatedly
-        state$.thumbnailUrls[bondfire._id].set(null)
+        state$.thumbnailUrls[playback.cacheKey].set(null)
         // Use warn instead of error — thumbnails are cosmetic, and error
         // toasts to users for non-breaking failures.
         telemetry.warn('feed:thumbnail', 'Failed to load thumbnail URL', {
           bondfireId: bondfire._id,
-          playbackPolicy: bondfire.muxPlaybackPolicy,
+          playbackPolicy: playback.muxPlaybackPolicy,
           hasCampId: !!bondfire.campId,
           hasPersonalCampId: !!bondfire.personalCampId,
           videoStatus: bondfire.videoStatus,
           error: String(error),
         })
       } finally {
-        loadingThumbsRef.current.delete(bondfire._id)
+        loadingThumbsRef.current.delete(playback.cacheKey)
       }
     },
     [getThumbnailUrl, shouldRunBackgroundWork, state$],
@@ -692,7 +700,6 @@ export default function FeedScreen() {
                 await deleteBondfire({ bondfireId: bondfireId as Id<'bondfires'> })
                 // Remove from local state immediately for responsive UI
                 setBondfires((prev) => prev?.filter((b) => b._id !== bondfireId))
-                state$.thumbnailUrls[bondfireId]?.set(null)
               } catch (error) {
                 Alert.alert('Error', 'Failed to delete bondfire. Please try again.')
                 telemetry.error('feed:deleteBondfire', String(error))
@@ -702,7 +709,7 @@ export default function FeedScreen() {
         ],
       )
     },
-    [deleteBondfire, state$],
+    [deleteBondfire],
   )
 
   const handlePin = useCallback(
@@ -850,7 +857,7 @@ export default function FeedScreen() {
         renderItem={({ item }) => {
           const props = toBondfireRowProps(
             item,
-            thumbnailUrls[item._id] ?? null,
+            getCachedBondfireThumbnail(item, thumbnailUrls),
             currentUserId,
             pinnedIds,
             () => handleBondfirePress(item._id),

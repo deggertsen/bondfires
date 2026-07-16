@@ -19,6 +19,17 @@ const SLOW_QUERY_THRESHOLD_MS = 3000
  */
 const LOADING_TIMEOUT_MS = 15_000
 
+type ReconnectableWebSocketManager = {
+  socketState?: () => unknown
+  tryReconnectImmediately?: () => void
+  closeAndReconnect?: (reason: string) => void
+}
+
+type ConvexInternalSync = {
+  sync?: { webSocketManager?: ReconnectableWebSocketManager }
+  cachedSync?: { webSocketManager?: ReconnectableWebSocketManager }
+}
+
 /**
  * Force the Convex WebSocket to reconnect. The two internal WebSocketManager
  * methods are complementary and each no-ops outside its own socket state:
@@ -34,8 +45,8 @@ const LOADING_TIMEOUT_MS = 15_000
  */
 function forceConvexReconnect(convex: ReturnType<typeof useConvex>) {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sync = (convex as any).sync ?? (convex as any).cachedSync
+    const internalConvex = convex as unknown as ConvexInternalSync
+    const sync = internalConvex.sync ?? internalConvex.cachedSync
     const wsm = sync?.webSocketManager
     if (!wsm) {
       telemetry.warn('loading:reconnect', 'Convex webSocketManager not found', {

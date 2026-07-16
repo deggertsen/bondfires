@@ -18,6 +18,7 @@ import {
 } from './entitlements'
 import { throwUserError } from './errors'
 import { addInviteBadgesToBondfires } from './inviteBadges'
+import { getLatestResponsePlayback } from './lib/latestResponsePlayback'
 import { canViewPersonalBondfire } from './personalBondfireAccess'
 
 type ExpiredPrivateCampVideoCleanupResult = {
@@ -247,8 +248,17 @@ export const listFeed = query({
 
     const withCampLabels = await Promise.all(
       visibleBondfires.slice(0, limit).map(async (bondfire) => {
-        const campLabel = await resolveCampLabel(ctx, bondfire)
-        return { ...withLiveFlags(bondfire), campLabel }
+        const [campLabel, latestResponse] = await Promise.all([
+          resolveCampLabel(ctx, bondfire),
+          getLatestResponsePlayback(ctx, bondfire._id),
+        ])
+        return {
+          ...withLiveFlags(bondfire),
+          campLabel,
+          latestResponseBondfireVideoId: latestResponse?.bondfireVideoId,
+          latestResponseMuxPlaybackId: latestResponse?.muxPlaybackId,
+          latestResponseMuxPlaybackPolicy: latestResponse?.muxPlaybackPolicy,
+        }
       }),
     )
 
@@ -282,11 +292,20 @@ export const listByCamp = query({
 
     const filtered = bondfires.filter(isPlayableVideoRecord).slice(0, limit)
 
-    return await addInviteBadgesToBondfires(
-      ctx,
-      userId,
-      filtered.map((bondfire) => ({ ...withLiveFlags(bondfire), campLabel: camp.name })),
+    const withCampLabels = await Promise.all(
+      filtered.map(async (bondfire) => {
+        const latestResponse = await getLatestResponsePlayback(ctx, bondfire._id)
+        return {
+          ...withLiveFlags(bondfire),
+          campLabel: camp.name,
+          latestResponseBondfireVideoId: latestResponse?.bondfireVideoId,
+          latestResponseMuxPlaybackId: latestResponse?.muxPlaybackId,
+          latestResponseMuxPlaybackPolicy: latestResponse?.muxPlaybackPolicy,
+        }
+      }),
     )
+
+    return await addInviteBadgesToBondfires(ctx, userId, withCampLabels)
   },
 })
 

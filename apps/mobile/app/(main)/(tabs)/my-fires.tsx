@@ -35,6 +35,11 @@ import {
   getBondfireSwipeActions,
   getSwipeReportComment,
 } from '../../../lib/bondfireSwipeActions'
+import {
+  type BondfireThumbnailFields,
+  getBondfireThumbnailPlayback,
+  getCachedBondfireThumbnail,
+} from '../../../lib/bondfireThumbnails'
 import { routes } from '../../../lib/routes'
 
 type ThreadParticipant = {
@@ -51,17 +56,18 @@ type PublicUser = {
   photoUrl?: string
 }
 
-type MyFire = Doc<'bondfires'> & {
-  camp: Doc<'camps'> | null
-  lastActivityAt: number
-  unread: boolean
-  participants: ThreadParticipant[]
-  badge?: 'sparked' | 'invited' | 'kindled' | null
-}
+type MyFire = Doc<'bondfires'> &
+  BondfireThumbnailFields & {
+    camp: Doc<'camps'> | null
+    lastActivityAt: number
+    unread: boolean
+    participants: ThreadParticipant[]
+    badge?: 'sparked' | 'invited' | 'kindled' | null
+  }
 
 type InviteRow = {
   claim: Doc<'inviteClaims'>
-  bondfire: Doc<'bondfires'> | null
+  bondfire: (Doc<'bondfires'> & BondfireThumbnailFields) | null
   camp: Doc<'camps'> | null
   sender: PublicUser | null
 }
@@ -314,26 +320,30 @@ export default function MyFiresScreen() {
   const ensureThumbnailUrl = useCallback(
     async (thread: MyFire) => {
       if (!shouldRunBackgroundWork) return
-      if (!thread.muxPlaybackId) return
-      if (thumbnailUrls[thread._id] !== undefined) return
-      if (loadingThumbsRef.current.has(thread._id)) return
+      const playback = getBondfireThumbnailPlayback(thread)
+      if (!playback) return
+      if (thumbnailUrls[playback.cacheKey] !== undefined) return
+      if (loadingThumbsRef.current.has(playback.cacheKey)) return
 
-      loadingThumbsRef.current.add(thread._id)
+      loadingThumbsRef.current.add(playback.cacheKey)
       try {
         const { thumbnailUrl } = await getThumbnailUrl({
-          muxPlaybackId: thread.muxPlaybackId,
-          muxPlaybackPolicy: thread.muxPlaybackPolicy,
-          bondfireId: thread._id,
+          muxPlaybackId: playback.muxPlaybackId,
+          muxPlaybackPolicy: playback.muxPlaybackPolicy,
+          bondfireId: playback.bondfireVideoId ? undefined : thread._id,
+          bondfireVideoId: playback.bondfireVideoId,
         })
         setThumbnailUrls((prev) =>
-          prev[thread._id] === undefined ? { ...prev, [thread._id]: thumbnailUrl } : prev,
+          prev[playback.cacheKey] === undefined
+            ? { ...prev, [playback.cacheKey]: thumbnailUrl }
+            : prev,
         )
       } catch {
         setThumbnailUrls((prev) =>
-          prev[thread._id] === undefined ? { ...prev, [thread._id]: null } : prev,
+          prev[playback.cacheKey] === undefined ? { ...prev, [playback.cacheKey]: null } : prev,
         )
       } finally {
-        loadingThumbsRef.current.delete(thread._id)
+        loadingThumbsRef.current.delete(playback.cacheKey)
       }
     },
     [getThumbnailUrl, shouldRunBackgroundWork, thumbnailUrls],
@@ -508,7 +518,7 @@ export default function MyFiresScreen() {
         renderItem={({ item }) => {
           const props = toBondfireRowProps(
             item,
-            thumbnailUrls[item._id] ?? null,
+            getCachedBondfireThumbnail(item, thumbnailUrls),
             currentUserId,
             pinnedIds,
             () => handleOpen(item._id),
@@ -537,7 +547,7 @@ export default function MyFiresScreen() {
 
                   const props = toInvitedBondfireRowProps(
                     item,
-                    thumbnailUrls[item._id] ?? null,
+                    getCachedBondfireThumbnail(item, thumbnailUrls),
                     () => handleOpen(item._id),
                     () => handleRespond(item._id),
                     () => handleDismissInvite(row.claim._id),
