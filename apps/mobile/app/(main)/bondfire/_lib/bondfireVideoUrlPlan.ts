@@ -14,6 +14,13 @@ export type VideoUrlRequest = {
   bondfireVideoId?: Id<'bondfireVideos'>
 }
 
+/** Resolved per-video playback URLs: the HLS stream plus, when the video has
+ * a generated caption track, its WebVTT URL (same signed token). */
+export type VideoPlaybackUrls = {
+  url: string
+  captionsUrl?: string
+}
+
 /**
  * One entry per screen position: index 0 is the main video, index i+1 is
  * bondfireData.videos[i]. Positions stay aligned even when a video in the
@@ -83,12 +90,12 @@ export function buildVideoUrlTargets(bondfireData: BondfireDetailData): VideoUrl
 
 export function urlsFromCache(
   targets: readonly VideoUrlTarget[],
-  cache: ReadonlyMap<string, string>,
-): (string | null)[] {
+  cache: ReadonlyMap<string, VideoPlaybackUrls>,
+): (VideoPlaybackUrls | null)[] {
   return targets.map((target) => {
     if (!target.cacheKey) return null
-    const url = cache.get(target.cacheKey)
-    return url ? withLiveDvrStart(url, target.isLive) : null
+    const cached = cache.get(target.cacheKey)
+    return cached ? { ...cached, url: withLiveDvrStart(cached.url, target.isLive) } : null
   })
 }
 
@@ -112,7 +119,7 @@ export function urlPrefetchWindow(
 
 export function missingUrlRequests(
   targets: readonly VideoUrlTarget[],
-  cache: ReadonlyMap<string, string>,
+  cache: ReadonlyMap<string, VideoPlaybackUrls>,
   inFlight?: ReadonlySet<string>,
   window?: { start: number; end: number },
 ): { cacheKey: string; request: VideoUrlRequest }[] {

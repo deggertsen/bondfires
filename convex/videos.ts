@@ -106,6 +106,7 @@ interface MuxLiveStreamResult {
 }
 
 const MUX_API_BASE_URL = 'https://api.mux.com/video/v1'
+const GENERATED_SUBTITLES_SETTINGS = { language_code: 'en', name: 'English (generated)' }
 const MUX_UPLOAD_TIMEOUT_MIN_SECONDS = 60
 const MUX_UPLOAD_TIMEOUT_MAX_SECONDS = 7 * 24 * 60 * 60
 const DEFAULT_MUX_UPLOAD_TIMEOUT_SECONDS = 60 * 60
@@ -350,6 +351,10 @@ function getMuxPlaybackUrl(playbackId: string): string {
 
 function getMuxThumbnailUrl(playbackId: string): string {
   return `https://image.mux.com/${playbackId}/thumbnail.jpg`
+}
+
+function getMuxCaptionsUrl(playbackId: string, trackId: string): string {
+  return `https://stream.mux.com/${playbackId}/text/${trackId}.vtt`
 }
 
 function getMuxPreviewUrl(playbackId: string): string {
@@ -849,6 +854,126 @@ async function deleteMuxLiveStream(liveStreamId: string): Promise<'deleted' | 'm
   return 'deleted'
 }
 
+/**
+ * Ensure an asset ends up with a caption track feeding the AI pipeline
+ * (ai.ts). Checks the asset's tracks and takes exactly one step:
+ * - a READY generated text track → schedule processVideoTranscript directly.
+ *   This is the deterministic recovery for a track.ready webhook that arrived
+ *   before the record had its playback ID, or was missed entirely.
+ * - a text track still preparing → nothing; its track.ready webhook drives.
+ * - no text track → POST generate-subtitles, but only when requestIfMissing.
+ *   Direct uploads request captions at asset creation and the pending track
+ *   may not be listed yet at the asset.ready instant — POSTing then would
+ *   create a duplicate caption track. Live recordings (which cannot request
+ *   at creation) and manual backfill pass requestIfMissing: true.
+ */
+export const requestGeneratedSubtitles = internalAction({
+  args: {
+    muxAssetId: v.string(),
+    table: v.union(v.literal('bondfires'), v.literal('bondfireVideos')),
+    recordId: v.union(v.id('bondfires'), v.id('bondfireVideos')),
+    requestIfMissing: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const response = await muxRequestOptional(`/assets/${args.muxAssetId}`)
+    if (!response) {
+      return { action: 'asset_not_found' }
+    }
+
+    const asset = readObject(response.data, 'Mux asset')
+    const tracks = Array.isArray(asset.tracks)
+      ? asset.tracks.map((track) => readObject(track, 'Mux asset track'))
+      : []
+
+    const readyTextTrack = tracks.find((track) => track.type === 'text' && track.status === 'ready')
+    if (readyTextTrack) {
+      await ctx.scheduler.runAfter(0, internal.ai.processVideoTranscript, {
+        table: args.table,
+        recordId: args.recordId,
+        muxAssetId: args.muxAssetId,
+        muxTrackId: readString(readyTextTrack.id, 'Mux text track id'),
+        languageCode: readOptionalString(readyTextTrack.language_code),
+      })
+      return { action: 'scheduled_processing' }
+    }
+    if (tracks.some((track) => track.type === 'text')) {
+      return { action: 'text_track_preparing' }
+    }
+    if (!args.requestIfMissing) {
+      return { action: 'skipped_request' }
+    }
+
+    const audioTrack = tracks.find((track) => track.type === 'audio')
+    if (!audioTrack) {
+      return { action: 'no_audio_track' }
+    }
+
+    const audioTrackId = readString(audioTrack.id, 'Mux audio track id')
+    await muxRequest(`/assets/${args.muxAssetId}/tracks/${audioTrackId}/generate-subtitles`, {
+      method: 'POST',
+      body: JSON.stringify({ generated_subtitles: [GENERATED_SUBTITLES_SETTINGS] }),
+    })
+    return { action: 'requested' }
+  },
+})
+
+/**
+ * Backfill AI insights for ready videos that predate the pipeline (or whose
+ * processing failed). Records with a stored transcript go straight to
+ * summarization; the rest go through requestGeneratedSubtitles, which either
+ * processes an existing caption track or requests one (its track.ready
+ * webhook then drives the normal flow). Run manually:
+ *   npx convex run videos:backfillVideoInsights '{"limit": 25}'
+ * Work is staggered a second apart to be gentle on Mux and LLM rate limits.
+ */
+export const backfillVideoInsights = internalAction({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const candidates = await ctx.runQuery(internal.ai.listRecordsMissingInsights, {
+      limit: args.limit,
+    })
+
+    const results: Array<{ recordId: string; action: string }> = []
+    for (const [index, candidate] of candidates.entries()) {
+      if (candidate.hasTranscript) {
+        await ctx.scheduler.runAfter(index * 1_000, internal.ai.processVideoTranscript, {
+          table: candidate.table,
+          recordId: candidate.recordId,
+          muxAssetId: candidate.muxAssetId,
+        })
+        results.push({ recordId: candidate.recordId, action: 'summarize_stored_transcript' })
+      } else {
+        await ctx.scheduler.runAfter(index * 1_000, internal.videos.requestGeneratedSubtitles, {
+          muxAssetId: candidate.muxAssetId,
+          table: candidate.table,
+          recordId: candidate.recordId,
+          requestIfMissing: true,
+        })
+        results.push({ recordId: candidate.recordId, action: 'ensure_subtitles' })
+      }
+    }
+    return results
+  },
+})
+
+/**
+ * URL for a text track's plain-text transcript on stream.mux.com, signed when
+ * the playback policy requires it. Transcript fetching lives in ai.ts; the
+ * signing machinery is private to this module.
+ */
+export async function buildMuxTranscriptUrl(args: {
+  playbackId: string
+  trackId: string
+  playbackPolicy?: PlaybackPolicy
+}): Promise<string> {
+  const url = `https://stream.mux.com/${args.playbackId}/text/${args.trackId}.txt`
+  if (args.playbackPolicy !== 'signed') {
+    return url
+  }
+
+  return withMuxToken(url, await signMuxPlaybackToken(args.playbackId, 'v'))
+}
+
 export function classifyDisableMuxLiveStreamStatus(
   httpStatus: number,
 ): DisableMuxLiveStreamOutcome {
@@ -1063,6 +1188,19 @@ async function markRecordReady(
   }
 
   const wasReady = (record.document.videoStatus ?? 'ready') === 'ready'
+  if (!wasReady) {
+    // Ensure the asset ends up with a caption track feeding the AI pipeline.
+    // Covers every path to 'ready' (webhook, poller, reconciler). Only live
+    // recordings may POST generate-subtitles here — direct uploads requested
+    // captions at asset creation, and their pending track may not be visible
+    // yet, so a POST would duplicate it.
+    await ctx.scheduler.runAfter(0, internal.videos.requestGeneratedSubtitles, {
+      muxAssetId: args.assetId,
+      table: record.table,
+      recordId: record.document._id,
+      requestIfMissing: record.document.liveSessionId !== undefined,
+    })
+  }
   const patch = {
     videoStatus: 'ready' as const,
     muxAssetStatus: args.assetStatus ?? 'ready',
@@ -1436,6 +1574,11 @@ export const createMuxDirectUpload = action({
       new_asset_settings: {
         playback_policies: [playbackPolicy],
         video_quality: config.videoQuality,
+        // Auto-generated captions: viewers get CC, and the track.ready webhook
+        // feeds the transcript → summary/tags pipeline in ai.ts. Included in
+        // standard Mux encoding charges. Live recordings can't request this at
+        // creation; markRecordReady covers them via requestGeneratedSubtitles.
+        inputs: [{ generated_subtitles: [GENERATED_SUBTITLES_SETTINGS] }],
         passthrough: JSON.stringify({
           userId,
           isResponse: args.isResponse,
@@ -2502,8 +2645,10 @@ type VideoUrlRequest = {
 
 // Never throws: access-validation and signing failures fall back to a public
 // URL (Mux serves it or 403s), so one bad video cannot reject a whole
-// getVideoUrlsBatch call.
-async function resolvePlaybackUrls(ctx: ActionCtx, args: VideoUrlRequest) {
+// getVideoUrlsBatch call. captionTrackId (the asset's generated-subtitle
+// track) adds a captionsUrl to the result; captions are cosmetic, so the
+// fallback paths simply omit it.
+async function resolvePlaybackUrls(ctx: ActionCtx, args: VideoUrlRequest, captionTrackId?: string) {
   let playbackPolicy = args.muxPlaybackPolicy ?? 'public'
   try {
     if (args.bondfireId || args.bondfireVideoId || playbackPolicy === 'signed') {
@@ -2555,6 +2700,10 @@ async function resolvePlaybackUrls(ctx: ActionCtx, args: VideoUrlRequest) {
       return {
         hdUrl: withMuxToken(getMuxPlaybackUrl(args.muxPlaybackId), token),
         thumbnailUrl: withMuxToken(getMuxThumbnailUrl(args.muxPlaybackId), thumbnailToken),
+        // Text tracks accept the same aud:'v' playback token as the stream.
+        captionsUrl: captionTrackId
+          ? withMuxToken(getMuxCaptionsUrl(args.muxPlaybackId, captionTrackId), token)
+          : undefined,
         expiresIn: SIGNED_PLAYBACK_URL_TTL_SECONDS,
       }
     } catch (e) {
@@ -2591,13 +2740,35 @@ async function resolvePlaybackUrls(ctx: ActionCtx, args: VideoUrlRequest) {
   return {
     hdUrl: getMuxPlaybackUrl(args.muxPlaybackId),
     thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
+    captionsUrl: captionTrackId ? getMuxCaptionsUrl(args.muxPlaybackId, captionTrackId) : undefined,
     expiresIn: 0,
+  }
+}
+
+async function lookupCaptionTrackIds(
+  ctx: ActionCtx,
+  items: VideoUrlRequest[],
+): Promise<(string | null)[]> {
+  try {
+    return await ctx.runQuery(internal.ai.getCaptionTrackIds, {
+      items: items.map((item) => ({
+        muxPlaybackId: item.muxPlaybackId,
+        bondfireId: item.bondfireId,
+        bondfireVideoId: item.bondfireVideoId,
+      })),
+    })
+  } catch {
+    // Captions are cosmetic — never fail a playback URL request over them.
+    return items.map(() => null)
   }
 }
 
 export const getVideoUrls = action({
   args: videoUrlRequestArgs,
-  handler: async (ctx, args) => resolvePlaybackUrls(ctx, args),
+  handler: async (ctx, args) => {
+    const [captionTrackId] = await lookupCaptionTrackIds(ctx, [args])
+    return resolvePlaybackUrls(ctx, args, captionTrackId ?? undefined)
+  },
 })
 
 const MAX_VIDEO_URL_BATCH = 100
@@ -2612,7 +2783,12 @@ export const getVideoUrlsBatch = action({
     if (items.length > MAX_VIDEO_URL_BATCH) {
       throw new Error(`getVideoUrlsBatch supports at most ${MAX_VIDEO_URL_BATCH} items`)
     }
-    return Promise.all(items.map((item) => resolvePlaybackUrls(ctx, item)))
+    const captionTrackIds = await lookupCaptionTrackIds(ctx, items)
+    return Promise.all(
+      items.map((item, index) =>
+        resolvePlaybackUrls(ctx, item, captionTrackIds[index] ?? undefined),
+      ),
+    )
   },
 })
 
@@ -3688,6 +3864,7 @@ export const handleMuxWebhookEvent = internalMutation({
     eventId: v.string(),
     eventType: v.string(),
     dataJson: v.string(),
+    objectJson: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const existingEvent = await ctx.db
@@ -3706,6 +3883,43 @@ export const handleMuxWebhookEvent = internalMutation({
     })
 
     const data = readObject(JSON.parse(args.dataJson), 'Mux webhook data')
+
+    if (args.eventType === 'video.asset.track.ready') {
+      // `data` is the track object here, so `data.id` is the TRACK id — the
+      // generic asset-id extraction below must not run for this event. The
+      // parent asset id arrives as data.asset_id or the event's object.id.
+      const eventObject = args.objectJson
+        ? readObject(JSON.parse(args.objectJson), 'Mux webhook object')
+        : {}
+      const trackAssetId = readOptionalString(data.asset_id) ?? readOptionalString(eventObject.id)
+      const trackId = readOptionalString(data.id)
+      const textSource = readOptionalString(data.text_source)
+      if (readOptionalString(data.type) !== 'text' || !textSource?.startsWith('generated')) {
+        // Only auto-generated caption tracks feed the AI pipeline.
+        return { handled: false }
+      }
+
+      const record = trackAssetId ? await findMuxRecord(ctx, { assetId: trackAssetId }) : null
+      if (!record || !trackAssetId || !trackId) {
+        await logServerEvent(ctx, {
+          level: 'warn',
+          event: 'video:webhook:unmatched',
+          message: 'Mux asset.track.ready webhook matched no bondfire record',
+          data: { eventType: args.eventType, assetId: trackAssetId, trackId },
+        })
+        return { handled: false }
+      }
+
+      await ctx.scheduler.runAfter(0, internal.ai.processVideoTranscript, {
+        table: record.table,
+        recordId: record.document._id,
+        muxAssetId: trackAssetId,
+        muxTrackId: trackId,
+        languageCode: readOptionalString(data.language_code),
+      })
+      return { handled: true }
+    }
+
     // `data.id` is only an upload ID for video.upload.* events. For
     // video.asset.* events it is the asset ID and must not be used as one.
     const uploadId =

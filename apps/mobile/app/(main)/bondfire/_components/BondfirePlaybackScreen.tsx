@@ -183,6 +183,7 @@ export function BondfirePlaybackScreen({
               bondfireId={item.bondfireId}
               bondfireVideoId={item.bondfireVideoId}
               videoUrl={item.url}
+              captionsUrl={item.captionsUrl}
               videoOwnerId={item.videoOwnerId}
               isActive={index === currentVideoIndex}
               isScreenFocused={isFocused && !suppressPlayback}
@@ -228,7 +229,13 @@ export function BondfirePlaybackScreen({
         )}
 
         <ThreadBrowser
-          title={bondfireData.title ?? `${bondfireData.creatorName ?? 'Anonymous'}'s Bondfire`}
+          title={
+            // || not ??: an empty-string user title must fall through, matching
+            // the Boolean(title) gate the backend uses for aiTitle generation.
+            bondfireData.title ||
+            bondfireData.aiTitle ||
+            `${bondfireData.creatorName ?? 'Anonymous'}'s Bondfire`
+          }
           videoItems={videoItems}
           currentVideoIndex={currentVideoIndex}
           participants={bondfireData.participants}

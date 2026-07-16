@@ -103,6 +103,39 @@ export function PlayPauseIndicator({ state$ }: { state$: VideoPlayerState$ }) {
   )
 }
 
+/**
+ * Closed captions, rendered just above the scrub bar (whose container is
+ * anchored at bottom:100 and grows ~48px upward). Text comes from
+ * state$.captionText, kept in sync by VideoPlayer's timeUpdate listener.
+ */
+export function CaptionOverlay({ state$ }: { state$: VideoPlayerState$ }) {
+  const captionText = useValue(state$.captionText)
+  if (!captionText) return null
+
+  return (
+    <YStack
+      position="absolute"
+      bottom={152}
+      left={30}
+      right={30}
+      zIndex={3}
+      alignItems="center"
+      pointerEvents="none"
+    >
+      <YStack
+        backgroundColor="rgba(0,0,0,0.65)"
+        paddingHorizontal={10}
+        paddingVertical={5}
+        borderRadius={6}
+      >
+        <Text fontSize={14} color={OVERLAY_COLORS.textPrimary} textAlign="center">
+          {captionText}
+        </Text>
+      </YStack>
+    </YStack>
+  )
+}
+
 export function VideoProgressBar({
   state$,
   progressBarViewRef,

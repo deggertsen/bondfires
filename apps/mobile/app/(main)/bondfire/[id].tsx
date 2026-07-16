@@ -39,6 +39,7 @@ import {
   type ScrollToIndexFailedInfo,
   STUCK_PROCESSING_TELEMETRY_THRESHOLD_MS,
 } from './_lib/bondfireDetailHelpers'
+import type { VideoPlaybackUrls } from './_lib/bondfireVideoUrlPlan'
 import { useBondfireVideoUrls } from './_lib/useBondfireVideoUrls'
 
 type WatchEventType = 'milestone_25' | 'milestone_50' | 'milestone_75' | 'complete'
@@ -86,7 +87,7 @@ export default function BondfireDetailScreen() {
 
   const screenState$ = useObservable({
     currentVideoIndex: 0,
-    videoUrls: [] as (string | null)[],
+    videoUrls: [] as (VideoPlaybackUrls | null)[],
     isAppActive: AppState.currentState === 'active',
     isScrubbing: false,
   })
@@ -117,7 +118,7 @@ export default function BondfireDetailScreen() {
   const markThreadRead = useMutation(api.conversations.markThreadRead)
   const markInviteSeen = useMutation(api.inviteClaims.markInviteSeen)
   const setVideoUrls = useCallback(
-    (urls: (string | null)[]) => {
+    (urls: (VideoPlaybackUrls | null)[]) => {
       screenState$.videoUrls.set(urls)
     },
     [screenState$],

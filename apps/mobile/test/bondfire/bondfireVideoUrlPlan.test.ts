@@ -94,9 +94,24 @@ describe('urlsFromCache', () => {
       videos: [makeResponse({ _id: 'resp1' }), makeResponse({ _id: 'resp2' })],
     })
     const targets = buildVideoUrlTargets(bondfire)
-    const cache = new Map([[targets[0].cacheKey as string, 'https://stream.mux.com/main.m3u8']])
+    const cache = new Map([
+      [
+        targets[0].cacheKey as string,
+        {
+          url: 'https://stream.mux.com/main.m3u8',
+          captionsUrl: 'https://stream.mux.com/main/text/track.vtt',
+        },
+      ],
+    ])
 
-    expect(urlsFromCache(targets, cache)).toEqual(['https://stream.mux.com/main.m3u8', null, null])
+    expect(urlsFromCache(targets, cache)).toEqual([
+      {
+        url: 'https://stream.mux.com/main.m3u8',
+        captionsUrl: 'https://stream.mux.com/main/text/track.vtt',
+      },
+      null,
+      null,
+    ])
   })
 
   it('preserves other videos when one video changes status (no blanking)', () => {
@@ -108,7 +123,7 @@ describe('urlsFromCache', () => {
     })
     const beforeTargets = buildVideoUrlTargets(before)
     const cache = new Map(
-      beforeTargets.map((target, index) => [target.cacheKey as string, `url-${index}`]),
+      beforeTargets.map((target, index) => [target.cacheKey as string, { url: `url-${index}` }]),
     )
 
     // resp2's live stream ends: its playback id changes, everything else stays
@@ -120,7 +135,7 @@ describe('urlsFromCache', () => {
     })
     const afterTargets = buildVideoUrlTargets(after)
 
-    expect(urlsFromCache(afterTargets, cache)).toEqual(['url-0', 'url-1', null])
+    expect(urlsFromCache(afterTargets, cache)).toEqual([{ url: 'url-0' }, { url: 'url-1' }, null])
     const missing = missingUrlRequests(afterTargets, cache)
     expect(missing).toHaveLength(1)
     expect(missing[0].request.muxPlaybackId).toBe('resp2-vod')
@@ -133,11 +148,11 @@ describe('urlsFromCache', () => {
     })
     const targets = buildVideoUrlTargets(bondfire)
     const cache = new Map([
-      [targets[0].cacheKey as string, 'https://stream.mux.com/main-live.m3u8?token=abc'],
+      [targets[0].cacheKey as string, { url: 'https://stream.mux.com/main-live.m3u8?token=abc' }],
     ])
 
     expect(urlsFromCache(targets, cache)).toEqual([
-      'https://stream.mux.com/main-live.m3u8?token=abc&start=0',
+      { url: 'https://stream.mux.com/main-live.m3u8?token=abc&start=0' },
     ])
   })
 })
@@ -152,7 +167,7 @@ describe('missingUrlRequests', () => {
       ],
     })
     const targets = buildVideoUrlTargets(bondfire)
-    const cache = new Map([[targets[1].cacheKey as string, 'cached-url']])
+    const cache = new Map([[targets[1].cacheKey as string, { url: 'cached-url' }]])
     const inFlight = new Set([targets[2].cacheKey as string])
 
     const missing = missingUrlRequests(targets, cache, inFlight)
