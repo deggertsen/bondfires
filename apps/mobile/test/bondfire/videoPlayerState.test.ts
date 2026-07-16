@@ -12,6 +12,7 @@ function createVideoPlayerState() {
     showReport: false,
     progress: 0,
     duration: 0,
+    captionText: '',
     isLoading: false,
     isPlaying: false,
     userInitiatedPlay: false,

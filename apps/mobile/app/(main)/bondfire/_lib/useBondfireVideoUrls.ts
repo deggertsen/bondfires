@@ -7,11 +7,14 @@ import {
   shouldLoadMainVideoUrls,
   urlPrefetchWindow,
   urlsFromCache,
+  type VideoPlaybackUrls,
   type VideoUrlRequest,
   type VideoUrlTarget,
 } from './bondfireVideoUrlPlan'
 
-type GetVideoUrlsBatch = (args: { items: VideoUrlRequest[] }) => Promise<{ hdUrl: string }[]>
+type GetVideoUrlsBatch = (args: {
+  items: VideoUrlRequest[]
+}) => Promise<{ hdUrl: string; captionsUrl?: string }[]>
 
 export function useBondfireVideoUrls({
   bondfireData,
@@ -22,12 +25,12 @@ export function useBondfireVideoUrls({
   bondfireData: BondfireDetailData | null | undefined
   currentVideoIndex: number
   getVideoUrlsBatch: GetVideoUrlsBatch
-  setVideoUrls: (urls: (string | null)[]) => void
+  setVideoUrls: (urls: (VideoPlaybackUrls | null)[]) => void
 }) {
   // URLs live for the whole screen visit (signed tokens last 12h). Keyed per
   // video identity so a status change on one video (new response, live ending)
   // refetches only that video instead of blanking the whole set mid-playback.
-  const cacheRef = useRef<Map<string, string>>(new Map())
+  const cacheRef = useRef<Map<string, VideoPlaybackUrls>>(new Map())
   const inFlightRef = useRef<Set<string>>(new Set())
   const latestTargetsRef = useRef<VideoUrlTarget[]>([])
   const warnedMissingPlaybackIdRef = useRef<string | null>(null)
@@ -73,8 +76,13 @@ export function useBondfireVideoUrls({
     getVideoUrlsBatch({ items: missing.map((entry) => entry.request) })
       .then((results) => {
         missing.forEach((entry, index) => {
-          const url = results[index]?.hdUrl
-          if (url) cacheRef.current.set(entry.cacheKey, url)
+          const result = results[index]
+          if (result?.hdUrl) {
+            cacheRef.current.set(entry.cacheKey, {
+              url: result.hdUrl,
+              captionsUrl: result.captionsUrl,
+            })
+          }
         })
         if (disposedRef.current) return
         // Resolve against the latest targets, not this effect run's: a newer

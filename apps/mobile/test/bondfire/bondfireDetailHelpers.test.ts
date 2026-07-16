@@ -123,12 +123,18 @@ describe('bondfireDetailHelpers', () => {
       ],
     } as unknown as BondfireDetailData
 
-    expect(buildBondfireVideoItems(bondfireData, ['main-url', 'response-url'])).toEqual([
+    expect(
+      buildBondfireVideoItems(bondfireData, [
+        { url: 'main-url', captionsUrl: 'main-captions-url' },
+        { url: 'response-url' },
+      ]),
+    ).toEqual([
       {
         key: 'bondfire-1',
         bondfireId: 'bondfire-1',
         bondfireVideoId: undefined,
         url: 'main-url',
+        captionsUrl: 'main-captions-url',
         videoOwnerId: 'user-1',
         creatorName: 'Ada',
         isMainVideo: true,

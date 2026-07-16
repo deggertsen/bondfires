@@ -16,6 +16,7 @@ export type VideoPlayerState = {
   showReport: boolean
   progress: number
   duration: number
+  captionText: string
   isLoading: boolean
   isPlaying: boolean
   userInitiatedPlay: boolean

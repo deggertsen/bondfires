@@ -2,6 +2,7 @@ import {
   appActions,
   appStore$,
   type MuxDataVideoMetadata,
+  telemetry,
   tierMeetsRequirement,
   useMuxData,
   usePresence,
@@ -26,6 +27,7 @@ import {
   SCREEN_WIDTH,
   SCRUB_SEEK_THROTTLE_MS,
 } from '../_lib/bondfireDetailHelpers'
+import { type CaptionCue, fetchCaptionCues, findCaptionText } from '../_lib/videoCaptions'
 import {
   clearActiveReactions,
   type PendingScrubSeek,
@@ -35,6 +37,7 @@ import {
   syncReactionPlaybackAfterSeek,
 } from '../_lib/videoPlayerState'
 import {
+  CaptionOverlay,
   LoadingOverlay,
   PausedReportButton,
   PlayPauseIndicator,
@@ -70,6 +73,7 @@ export interface VideoPlayerProps {
   bondfireId?: Id<'bondfires'>
   bondfireVideoId?: Id<'bondfireVideos'>
   videoUrl: string | null
+  captionsUrl?: string
   videoOwnerId: Id<'users'>
   isActive: boolean
   isScreenFocused: boolean
@@ -87,6 +91,7 @@ export function VideoPlayer({
   bondfireId,
   bondfireVideoId,
   videoUrl,
+  captionsUrl,
   videoOwnerId,
   isActive,
   isScreenFocused,
@@ -159,6 +164,7 @@ export function VideoPlayer({
     showReport: false,
     progress: 0,
     duration: 0,
+    captionText: '',
     isLoading: true,
     isPlaying: false,
     userInitiatedPlay: false,
@@ -206,6 +212,49 @@ export function VideoPlayer({
     player.preservesPitch = true
     player.timeUpdateEventInterval = PROGRESS_TIME_UPDATE_INTERVAL_SECONDS
   })
+
+  // Caption cues, fetched lazily when captions are on and this video has a
+  // caption track. Cue matching happens in the timeUpdate listener below.
+  const captionsEnabled = useValue(appStore$.preferences.captionsEnabled)
+  const captionCuesRef = useRef<CaptionCue[] | null>(null)
+
+  const syncCaptionText = useCallback(
+    (positionMs: number) => {
+      const cues = captionCuesRef.current
+      const captionText = cues?.length ? findCaptionText(cues, positionMs) : ''
+      if (state$.captionText.peek() !== captionText) {
+        state$.captionText.set(captionText)
+      }
+    },
+    [state$],
+  )
+
+  useEffect(() => {
+    captionCuesRef.current = null
+    state$.captionText.set('')
+    if (!captionsEnabled || !captionsUrl || !shouldTrackPlayback) return
+
+    let cancelled = false
+    fetchCaptionCues(captionsUrl)
+      .then((cues) => {
+        if (cancelled) return
+        captionCuesRef.current = cues
+        // A paused player will not emit another timeUpdate just because the
+        // caption file finished loading or captions were toggled on.
+        syncCaptionText(player.currentTime * 1000)
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return
+        telemetry.warn(
+          'video:captions:fetch_failed',
+          error instanceof Error ? error.message : String(error),
+          { videoId },
+        )
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [captionsEnabled, captionsUrl, player, shouldTrackPlayback, state$, syncCaptionText, videoId])
 
   const muxPlaybackId = useMemo(() => {
     if (!videoUrl) return null
@@ -460,6 +509,8 @@ export function VideoPlayer({
       }
 
       processTimedPlaybackUpdate(currentTime, player.duration)
+
+      syncCaptionText(currentTime * 1000)
     })
 
     return () => {
@@ -474,6 +525,7 @@ export function VideoPlayer({
     state$,
     shouldTrackPlayback,
     processTimedPlaybackUpdate,
+    syncCaptionText,
     updatePlaybackProgress,
   ])
 
@@ -602,13 +654,14 @@ export function VideoPlayer({
         if (shouldSeek) {
           player.currentTime = seekTime
           syncLocalReactionPlaybackAfterSeek(seekTime * 1000)
+          syncCaptionText(seekTime * 1000)
         }
         state$.progress.set(seekProgress)
         state$.hasEnded.set(false)
         state$.userInitiatedPlay.set(true)
       }
     },
-    [player, state$, syncLocalReactionPlaybackAfterSeek],
+    [player, state$, syncCaptionText, syncLocalReactionPlaybackAfterSeek],
   )
 
   const canSeekProgress = Number.isFinite(player?.duration) && (player?.duration ?? 0) > 0
@@ -847,6 +900,8 @@ export function VideoPlayer({
           </YStack>
         </YStack>
       ) : null}
+
+      <CaptionOverlay state$={state$} />
 
       <VideoProgressBar
         state$={state$}

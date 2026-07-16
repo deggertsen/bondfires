@@ -183,6 +183,7 @@ export function BondfirePlaybackScreen({
               bondfireId={item.bondfireId}
               bondfireVideoId={item.bondfireVideoId}
               videoUrl={item.url}
+              captionsUrl={item.captionsUrl}
               videoOwnerId={item.videoOwnerId}
               isActive={index === currentVideoIndex}
               isScreenFocused={isFocused && !suppressPlayback}

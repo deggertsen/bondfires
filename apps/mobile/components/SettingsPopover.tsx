@@ -1,7 +1,7 @@
 import { appActions, appStore$ } from '@bondfires/app'
 import { useValue } from '@legendapp/state/react'
 import { Pressable, StyleSheet } from 'react-native'
-import { Slider, Text, XStack, YStack } from 'tamagui'
+import { Slider, Switch, Text, XStack, YStack } from 'tamagui'
 import { VIDEO_OVERLAY_COLORS } from './videoOverlayColors'
 
 interface SettingsPopoverProps {
@@ -10,6 +10,7 @@ interface SettingsPopoverProps {
 
 export function SettingsPopover({ onClose }: SettingsPopoverProps) {
   const playbackSpeed = useValue(appStore$.preferences.playbackSpeed)
+  const captionsEnabled = useValue(appStore$.preferences.captionsEnabled)
 
   const handleSpeedChange = (value: number) => {
     // Round to nearest 0.25 increment (1.0, 1.25, 1.5, 1.75, 2.0)
@@ -27,7 +28,7 @@ export function SettingsPopover({ onClose }: SettingsPopoverProps) {
         position="absolute"
         top={94}
         right={16}
-        width={200}
+        width={300}
         padding={16}
         backgroundColor={VIDEO_OVERLAY_COLORS.popoverBackground}
         borderRadius={8}
@@ -61,6 +62,20 @@ export function SettingsPopover({ onClose }: SettingsPopoverProps) {
           <Text fontSize={14} color={VIDEO_OVERLAY_COLORS.textPrimary} minWidth={40}>
             {playbackSpeed.toFixed(2)}x
           </Text>
+        </XStack>
+        <XStack alignItems="center" justifyContent="space-between" marginTop={16}>
+          <Text fontSize={14} fontWeight="600" color={VIDEO_OVERLAY_COLORS.textPrimary}>
+            Captions
+          </Text>
+          <Switch
+            accessibilityLabel="Captions"
+            checked={captionsEnabled}
+            onCheckedChange={(checked) => appActions.setCaptionsEnabled(checked === true)}
+            size="$2"
+            backgroundColor={captionsEnabled ? '$primary' : VIDEO_OVERLAY_COLORS.progressTrack}
+          >
+            <Switch.Thumb animation="quick" backgroundColor={VIDEO_OVERLAY_COLORS.textPrimary} />
+          </Switch>
         </XStack>
       </YStack>
     </>
