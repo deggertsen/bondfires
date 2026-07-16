@@ -353,6 +353,10 @@ function getMuxThumbnailUrl(playbackId: string): string {
   return `https://image.mux.com/${playbackId}/thumbnail.jpg`
 }
 
+function getMuxCaptionsUrl(playbackId: string, trackId: string): string {
+  return `https://stream.mux.com/${playbackId}/text/${trackId}.vtt`
+}
+
 function getMuxPreviewUrl(playbackId: string): string {
   return `https://image.mux.com/${playbackId}/animated.gif`
 }
@@ -2641,8 +2645,10 @@ type VideoUrlRequest = {
 
 // Never throws: access-validation and signing failures fall back to a public
 // URL (Mux serves it or 403s), so one bad video cannot reject a whole
-// getVideoUrlsBatch call.
-async function resolvePlaybackUrls(ctx: ActionCtx, args: VideoUrlRequest) {
+// getVideoUrlsBatch call. captionTrackId (the asset's generated-subtitle
+// track) adds a captionsUrl to the result; captions are cosmetic, so the
+// fallback paths simply omit it.
+async function resolvePlaybackUrls(ctx: ActionCtx, args: VideoUrlRequest, captionTrackId?: string) {
   let playbackPolicy = args.muxPlaybackPolicy ?? 'public'
   try {
     if (args.bondfireId || args.bondfireVideoId || playbackPolicy === 'signed') {
@@ -2694,6 +2700,10 @@ async function resolvePlaybackUrls(ctx: ActionCtx, args: VideoUrlRequest) {
       return {
         hdUrl: withMuxToken(getMuxPlaybackUrl(args.muxPlaybackId), token),
         thumbnailUrl: withMuxToken(getMuxThumbnailUrl(args.muxPlaybackId), thumbnailToken),
+        // Text tracks accept the same aud:'v' playback token as the stream.
+        captionsUrl: captionTrackId
+          ? withMuxToken(getMuxCaptionsUrl(args.muxPlaybackId, captionTrackId), token)
+          : undefined,
         expiresIn: SIGNED_PLAYBACK_URL_TTL_SECONDS,
       }
     } catch (e) {
@@ -2730,13 +2740,35 @@ async function resolvePlaybackUrls(ctx: ActionCtx, args: VideoUrlRequest) {
   return {
     hdUrl: getMuxPlaybackUrl(args.muxPlaybackId),
     thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
+    captionsUrl: captionTrackId ? getMuxCaptionsUrl(args.muxPlaybackId, captionTrackId) : undefined,
     expiresIn: 0,
+  }
+}
+
+async function lookupCaptionTrackIds(
+  ctx: ActionCtx,
+  items: VideoUrlRequest[],
+): Promise<(string | null)[]> {
+  try {
+    return await ctx.runQuery(internal.ai.getCaptionTrackIds, {
+      items: items.map((item) => ({
+        muxPlaybackId: item.muxPlaybackId,
+        bondfireId: item.bondfireId,
+        bondfireVideoId: item.bondfireVideoId,
+      })),
+    })
+  } catch {
+    // Captions are cosmetic — never fail a playback URL request over them.
+    return items.map(() => null)
   }
 }
 
 export const getVideoUrls = action({
   args: videoUrlRequestArgs,
-  handler: async (ctx, args) => resolvePlaybackUrls(ctx, args),
+  handler: async (ctx, args) => {
+    const [captionTrackId] = await lookupCaptionTrackIds(ctx, [args])
+    return resolvePlaybackUrls(ctx, args, captionTrackId ?? undefined)
+  },
 })
 
 const MAX_VIDEO_URL_BATCH = 100
@@ -2751,7 +2783,12 @@ export const getVideoUrlsBatch = action({
     if (items.length > MAX_VIDEO_URL_BATCH) {
       throw new Error(`getVideoUrlsBatch supports at most ${MAX_VIDEO_URL_BATCH} items`)
     }
-    return Promise.all(items.map((item) => resolvePlaybackUrls(ctx, item)))
+    const captionTrackIds = await lookupCaptionTrackIds(ctx, items)
+    return Promise.all(
+      items.map((item, index) =>
+        resolvePlaybackUrls(ctx, item, captionTrackIds[index] ?? undefined),
+      ),
+    )
   },
 })
 

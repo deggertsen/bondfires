@@ -1,6 +1,7 @@
 import type { FlatListProps } from 'react-native'
 import { Dimensions } from 'react-native'
 import type { Doc, Id } from '../../../../../../convex/_generated/dataModel'
+import type { VideoPlaybackUrls } from './bondfireVideoUrlPlan'
 
 export const { width: SCREEN_WIDTH } = Dimensions.get('window')
 export const SCRUB_SEEK_THROTTLE_MS = 100
@@ -57,6 +58,7 @@ export type BondfireVideoItem = {
   durationMs?: number
   summary?: string
   aiTags?: string[]
+  captionsUrl?: string
 }
 
 export function clampVideoIndex(index: number | null | undefined, totalVideos: number) {
@@ -105,14 +107,14 @@ export function getInitialVideoIndex(bondfireData: BondfireDetailData): number {
 
 export function buildBondfireVideoItems(
   bondfireData: BondfireDetailData,
-  videoUrls: (string | null)[],
+  videoUrls: (VideoPlaybackUrls | null)[],
 ): BondfireVideoItem[] {
   return [
     {
       key: bondfireData._id,
       bondfireId: bondfireData._id,
       bondfireVideoId: undefined,
-      url: videoUrls[0] ?? null,
+      url: videoUrls[0]?.url ?? null,
       videoOwnerId: bondfireData.userId,
       creatorName: bondfireData.creatorName ?? 'Anonymous',
       isMainVideo: true,
@@ -123,12 +125,13 @@ export function buildBondfireVideoItems(
       durationMs: bondfireData.durationMs,
       summary: bondfireData.summary,
       aiTags: bondfireData.aiTags,
+      captionsUrl: videoUrls[0]?.captionsUrl,
     },
     ...bondfireData.videos.map((video, index) => ({
       key: video._id,
       bondfireId: undefined,
       bondfireVideoId: video._id,
-      url: videoUrls[index + 1] ?? null,
+      url: videoUrls[index + 1]?.url ?? null,
       videoOwnerId: video.userId,
       creatorName: video.creatorName ?? 'Anonymous',
       isMainVideo: false,
@@ -139,6 +142,7 @@ export function buildBondfireVideoItems(
       durationMs: video.durationMs,
       summary: video.summary,
       aiTags: video.aiTags,
+      captionsUrl: videoUrls[index + 1]?.captionsUrl,
     })),
   ]
 }

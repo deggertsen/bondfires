@@ -249,6 +249,44 @@ async function findTranscriptRow(ctx: QueryCtx, table: RecordTable, id: RecordId
         .first()
 }
 
+/**
+ * Caption (generated-subtitle) track ids for a batch of video records, in
+ * request order; null when the record has no transcript row yet or its
+ * playback id doesn't match (e.g. a live stream's playback id — the caption
+ * track belongs to the recorded asset, not the live stream). Feeds captionsUrl
+ * in getVideoUrlsBatch (videos.ts).
+ */
+export const getCaptionTrackIds = internalQuery({
+  args: {
+    items: v.array(
+      v.object({
+        muxPlaybackId: v.string(),
+        bondfireId: v.optional(v.id('bondfires')),
+        bondfireVideoId: v.optional(v.id('bondfireVideos')),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    return Promise.all(
+      args.items.map(async (item): Promise<string | null> => {
+        const record = item.bondfireId
+          ? await ctx.db.get(item.bondfireId)
+          : item.bondfireVideoId
+            ? await ctx.db.get(item.bondfireVideoId)
+            : null
+        if (!record || record.muxPlaybackId !== item.muxPlaybackId) {
+          return null
+        }
+
+        const row = item.bondfireId
+          ? await findTranscriptRow(ctx, 'bondfires', item.bondfireId)
+          : await findTranscriptRow(ctx, 'bondfireVideos', item.bondfireVideoId as RecordId)
+        return row?.muxTrackId ?? null
+      }),
+    )
+  },
+})
+
 export const getStoredTranscript = internalQuery({
   args: { table: recordTable, recordId },
   handler: async (ctx, args) => {

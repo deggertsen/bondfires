@@ -2,6 +2,7 @@ import {
   appActions,
   appStore$,
   type MuxDataVideoMetadata,
+  telemetry,
   tierMeetsRequirement,
   useMuxData,
   usePresence,
@@ -26,6 +27,7 @@ import {
   SCREEN_WIDTH,
   SCRUB_SEEK_THROTTLE_MS,
 } from '../_lib/bondfireDetailHelpers'
+import { type CaptionCue, fetchCaptionCues, findCaptionText } from '../_lib/videoCaptions'
 import {
   clearActiveReactions,
   type PendingScrubSeek,
@@ -35,6 +37,7 @@ import {
   syncReactionPlaybackAfterSeek,
 } from '../_lib/videoPlayerState'
 import {
+  CaptionOverlay,
   LoadingOverlay,
   PausedReportButton,
   PlayPauseIndicator,
@@ -70,6 +73,7 @@ export interface VideoPlayerProps {
   bondfireId?: Id<'bondfires'>
   bondfireVideoId?: Id<'bondfireVideos'>
   videoUrl: string | null
+  captionsUrl?: string
   videoOwnerId: Id<'users'>
   isActive: boolean
   isScreenFocused: boolean
@@ -87,6 +91,7 @@ export function VideoPlayer({
   bondfireId,
   bondfireVideoId,
   videoUrl,
+  captionsUrl,
   videoOwnerId,
   isActive,
   isScreenFocused,
@@ -159,6 +164,7 @@ export function VideoPlayer({
     showReport: false,
     progress: 0,
     duration: 0,
+    captionText: '',
     isLoading: true,
     isPlaying: false,
     userInitiatedPlay: false,
@@ -206,6 +212,33 @@ export function VideoPlayer({
     player.preservesPitch = true
     player.timeUpdateEventInterval = PROGRESS_TIME_UPDATE_INTERVAL_SECONDS
   })
+
+  // Caption cues, fetched lazily when captions are on and this video has a
+  // caption track. Cue matching happens in the timeUpdate listener below.
+  const captionsEnabled = useValue(appStore$.preferences.captionsEnabled)
+  const captionCuesRef = useRef<CaptionCue[] | null>(null)
+
+  useEffect(() => {
+    captionCuesRef.current = null
+    state$.captionText.set('')
+    if (!captionsEnabled || !captionsUrl) return
+
+    let cancelled = false
+    fetchCaptionCues(captionsUrl)
+      .then((cues) => {
+        if (!cancelled) captionCuesRef.current = cues
+      })
+      .catch((error: unknown) => {
+        telemetry.warn(
+          'video:captions:fetch_failed',
+          error instanceof Error ? error.message : String(error),
+          { videoId },
+        )
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [captionsEnabled, captionsUrl, state$, videoId])
 
   const muxPlaybackId = useMemo(() => {
     if (!videoUrl) return null
@@ -460,6 +493,14 @@ export function VideoPlayer({
       }
 
       processTimedPlaybackUpdate(currentTime, player.duration)
+
+      const cues = captionCuesRef.current
+      if (cues && cues.length > 0) {
+        const captionText = findCaptionText(cues, currentTime * 1000)
+        if (state$.captionText.peek() !== captionText) {
+          state$.captionText.set(captionText)
+        }
+      }
     })
 
     return () => {
@@ -847,6 +888,8 @@ export function VideoPlayer({
           </YStack>
         </YStack>
       ) : null}
+
+      <CaptionOverlay state$={state$} />
 
       <VideoProgressBar
         state$={state$}
