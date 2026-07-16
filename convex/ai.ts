@@ -23,6 +23,10 @@ import { buildMuxTranscriptUrl } from './videos'
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 const DEFAULT_OPENROUTER_MODEL = 'z-ai/glm-4.5-air'
 const OPENROUTER_TIMEOUT_MS = 60_000
+const TRANSCRIPT_FETCH_TIMEOUT_MS = 15_000
+// Page size for the orphaned-transcript sweep: rows carry multi-KB caption
+// text, so each page stays far below Convex's per-transaction read limits.
+const SWEEP_PAGE_SIZE = 100
 // Mux serves the transcript from its CDN; right after track.ready it can 404
 // briefly, so failed fetches reschedule instead of dying.
 const TRANSCRIPT_FETCH_MAX_ATTEMPTS = 5
@@ -54,17 +58,39 @@ function getOpenRouterConfig() {
   return { apiKey, model: process.env.OPENROUTER_MODEL ?? DEFAULT_OPENROUTER_MODEL }
 }
 
+/**
+ * A hung fetch in a Convex action surfaces to the client as an opaque timeout
+ * (see the MUX_REQUEST_TIMEOUT_MS rationale in videos.ts). The error message
+ * strips the query string so signed playback tokens never land in logs.
+ */
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`Request timed out after ${timeoutMs}ms: ${url.split('?')[0]}`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function callOpenRouterJson(
   prompt: string,
   maxTokens: number,
 ): Promise<Record<string, unknown>> {
   const { apiKey, model } = getOpenRouterConfig()
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), OPENROUTER_TIMEOUT_MS)
-  try {
-    const response = await fetch(OPENROUTER_URL, {
+  const response = await fetchWithTimeout(
+    OPENROUTER_URL,
+    {
       method: 'POST',
-      signal: controller.signal,
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
@@ -80,30 +106,24 @@ async function callOpenRouterJson(
         reasoning: { enabled: false },
         response_format: { type: 'json_object' },
       }),
-    })
+    },
+    OPENROUTER_TIMEOUT_MS,
+  )
 
-    if (!response.ok) {
-      const message = await response.text()
-      throw new Error(`OpenRouter request failed: ${response.status} ${message}`)
-    }
-
-    const body = (await response.json()) as {
-      choices?: Array<{ message?: { content?: unknown } }>
-    }
-    const content = body.choices?.[0]?.message?.content
-    if (typeof content !== 'string') {
-      throw new Error('OpenRouter response had no message content')
-    }
-
-    return extractJsonObject(content)
-  } catch (error) {
-    if (controller.signal.aborted) {
-      throw new Error(`OpenRouter request timed out after ${OPENROUTER_TIMEOUT_MS}ms`)
-    }
-    throw error
-  } finally {
-    clearTimeout(timer)
+  if (!response.ok) {
+    const message = await response.text()
+    throw new Error(`OpenRouter request failed: ${response.status} ${message}`)
   }
+
+  const body = (await response.json()) as {
+    choices?: Array<{ message?: { content?: unknown } }>
+  }
+  const content = body.choices?.[0]?.message?.content
+  if (typeof content !== 'string') {
+    throw new Error('OpenRouter response had no message content')
+  }
+
+  return extractJsonObject(content)
 }
 
 /**
@@ -341,11 +361,14 @@ export const getThreadDigest = internalQuery({
  * crons — keeps deleted videos' transcript text from outliving them.
  */
 export const sweepOrphanedTranscripts = internalMutation({
-  args: {},
-  handler: async (ctx) => {
-    const rows = await ctx.db.query('videoTranscripts').collect()
+  args: { cursor: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const page = await ctx.db
+      .query('videoTranscripts')
+      .paginate({ cursor: args.cursor ?? null, numItems: SWEEP_PAGE_SIZE })
+
     let deleted = 0
-    for (const row of rows) {
+    for (const row of page.page) {
       const parentId = row.bondfireId ?? row.bondfireVideoId
       const parent = parentId ? await ctx.db.get(parentId) : null
       if (!parent) {
@@ -353,7 +376,13 @@ export const sweepOrphanedTranscripts = internalMutation({
         deleted++
       }
     }
-    return { scanned: rows.length, deleted }
+
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.ai.sweepOrphanedTranscripts, {
+        cursor: page.continueCursor,
+      })
+    }
+    return { scanned: page.page.length, deleted, done: page.isDone }
   },
 })
 
@@ -383,7 +412,11 @@ export const listRecordsMissingInsights = internalQuery({
     const candidates = [
       ...bondfires.map((doc) => ({ table: 'bondfires' as const, doc })),
       ...responses.map((doc) => ({ table: 'bondfireVideos' as const, doc })),
-    ].filter(({ doc }) => doc.summary === undefined && doc.muxAssetId !== undefined)
+    ]
+      .filter(({ doc }) => doc.summary === undefined && doc.muxAssetId !== undefined)
+      // Oldest first, both tables interleaved — otherwise a big bondfires
+      // backlog would starve response videos of every `limit` slot.
+      .sort((a, b) => a.doc._creationTime - b.doc._creationTime)
 
     const results: Array<{
       table: RecordTable
@@ -428,6 +461,25 @@ export const processVideoTranscript = internalAction({
     if (!record) {
       return { processed: false, reason: 'record_not_found' }
     }
+    // Both the track.ready webhook and markRecordReady's re-drive can schedule
+    // this for the same video; the second arrival is a no-op.
+    if (record.summary !== undefined) {
+      return { processed: false, reason: 'already_summarized' }
+    }
+
+    // Reschedules this action with attempt+1; null once attempts are spent.
+    const retryLater = async (reason: string) => {
+      const attempt = args.attempt ?? 0
+      if (attempt + 1 >= TRANSCRIPT_FETCH_MAX_ATTEMPTS) {
+        return null
+      }
+      await ctx.scheduler.runAfter(
+        TRANSCRIPT_FETCH_RETRY_DELAY_MS,
+        internal.ai.processVideoTranscript,
+        { ...args, attempt: attempt + 1 },
+      )
+      return { processed: false, reason }
+    }
 
     let transcript = (
       await ctx.runQuery(internal.ai.getStoredTranscript, {
@@ -436,27 +488,30 @@ export const processVideoTranscript = internalAction({
       })
     )?.text
 
+    // A stored-but-empty transcript (from an early fetch of a still-empty
+    // caption file) must not satisfy the lookup or it would block re-fetching
+    // forever.
+    if (transcript !== undefined && transcript.length < MIN_TRANSCRIPT_CHARS && args.muxTrackId) {
+      transcript = undefined
+    }
+
     if (transcript === undefined) {
       if (!record.muxPlaybackId && args.muxTrackId) {
         // track.ready can race ahead of asset.ready, in which case the record
         // has a muxAssetId (patched at upload.asset_created) but no playback
-        // ID yet. Retry on the same cadence as CDN propagation.
-        const attempt = args.attempt ?? 0
-        if (attempt + 1 < TRANSCRIPT_FETCH_MAX_ATTEMPTS) {
-          await ctx.scheduler.runAfter(
-            TRANSCRIPT_FETCH_RETRY_DELAY_MS,
-            internal.ai.processVideoTranscript,
-            { ...args, attempt: attempt + 1 },
-          )
-          return { processed: false, reason: 'awaiting_playback_id' }
-        }
+        // ID yet. markRecordReady's requestGeneratedSubtitles re-drive also
+        // covers this deterministically; the retry is belt and suspenders.
+        const retried = await retryLater('awaiting_playback_id')
+        if (retried) return retried
       }
 
       if (!record.muxPlaybackId || !args.muxTrackId) {
-        console.error('ai:transcript:missing_playback_or_track', {
-          table: args.table,
-          recordId: args.recordId,
-          muxAssetId: args.muxAssetId,
+        await ctx.runMutation(internal.serverTelemetry.recordServerEvent, {
+          level: 'warn',
+          event: 'ai:transcript:missing_playback_or_track',
+          message:
+            'AI insights skipped: no playback ID or caption track to fetch a transcript with',
+          data: { table: args.table, recordId: args.recordId, muxAssetId: args.muxAssetId },
         })
         return { processed: false, reason: 'missing_playback_or_track' }
       }
@@ -466,23 +521,24 @@ export const processVideoTranscript = internalAction({
         trackId: args.muxTrackId,
         playbackPolicy: record.muxPlaybackPolicy,
       })
-      const response = await fetch(url)
-      if (!response.ok) {
-        const attempt = args.attempt ?? 0
-        if (attempt + 1 < TRANSCRIPT_FETCH_MAX_ATTEMPTS) {
-          await ctx.scheduler.runAfter(
-            TRANSCRIPT_FETCH_RETRY_DELAY_MS,
-            internal.ai.processVideoTranscript,
-            { ...args, attempt: attempt + 1 },
+      const response = await fetchWithTimeout(url, {}, TRANSCRIPT_FETCH_TIMEOUT_MS)
+      const body = response.ok ? (await response.text()).trim().slice(0, MAX_TRANSCRIPT_CHARS) : ''
+
+      // Right after track.ready the CDN can 404 — or 200 with an empty body.
+      // Neither may be persisted: a saved empty transcript would be reused on
+      // every later attempt and the video would never get its summary.
+      if (!response.ok || body.length < MIN_TRANSCRIPT_CHARS) {
+        const retried = await retryLater('transcript_fetch_retrying')
+        if (retried) return retried
+        if (!response.ok) {
+          throw new Error(
+            `Transcript fetch failed after ${TRANSCRIPT_FETCH_MAX_ATTEMPTS} attempts: ${response.status} ${url.split('?')[0]}`,
           )
-          return { processed: false, reason: 'transcript_fetch_retrying' }
         }
-        throw new Error(
-          `Transcript fetch failed after ${TRANSCRIPT_FETCH_MAX_ATTEMPTS} attempts: ${response.status} ${url}`,
-        )
+        return { processed: false, reason: 'transcript_too_short' }
       }
 
-      transcript = (await response.text()).trim().slice(0, MAX_TRANSCRIPT_CHARS)
+      transcript = body
       await ctx.runMutation(internal.ai.saveTranscript, {
         table: args.table,
         recordId: args.recordId,

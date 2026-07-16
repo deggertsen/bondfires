@@ -229,8 +229,10 @@ export function BondfirePlaybackScreen({
 
         <ThreadBrowser
           title={
-            bondfireData.title ??
-            bondfireData.aiTitle ??
+            // || not ??: an empty-string user title must fall through, matching
+            // the Boolean(title) gate the backend uses for aiTitle generation.
+            bondfireData.title ||
+            bondfireData.aiTitle ||
             `${bondfireData.creatorName ?? 'Anonymous'}'s Bondfire`
           }
           videoItems={videoItems}

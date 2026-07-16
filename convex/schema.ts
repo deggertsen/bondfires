@@ -581,8 +581,7 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index('by_bondfire', ['bondfireId'])
-    .index('by_bondfire_video', ['bondfireVideoId'])
-    .index('by_mux_asset', ['muxAssetId']),
+    .index('by_bondfire_video', ['bondfireVideoId']),
 
   // Per-user read markers for ongoing Bondfire conversations.
   bondfireThreadReads: defineTable({

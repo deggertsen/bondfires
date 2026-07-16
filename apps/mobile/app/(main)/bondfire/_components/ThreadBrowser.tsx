@@ -119,7 +119,7 @@ function ThreadBrowserRow({
       <XStack alignItems="center" gap={10} height={rowHeight} paddingHorizontal={8}>
         <CreatorAvatar name={item.creatorName} photoUrl={photoUrl} size={30} />
         <YStack flex={1} minWidth={0} justifyContent="center">
-          <XStack alignItems="center" gap={6}>
+          <XStack alignItems="center" gap={6} minWidth={0}>
             {item.isMainVideo ? <Flame size={11} color={'$primary'} /> : null}
             <Text fontSize={13} fontWeight="600" numberOfLines={1} flexShrink={1}>
               {item.creatorName}

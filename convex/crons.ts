@@ -124,6 +124,7 @@ crons.daily(
   'sweep orphaned video transcripts',
   { hourUTC: 15, minuteUTC: 30 },
   internal.ai.sweepOrphanedTranscripts,
+  {},
 )
 
 // Send daily unwatched-activity digests (and 72h nudges) to users whose
