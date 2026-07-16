@@ -116,8 +116,11 @@ export function CaptionOverlay({ state$ }: { state$: VideoPlayerState$ }) {
     <YStack
       position="absolute"
       bottom={152}
-      left={30}
-      right={30}
+      // 76px insets keep captions clear of the round side controls (44px wide,
+      // inset 16px): the mute/emoji stack on the right and the paused report
+      // button on the left both sit within 60px of their edge.
+      left={76}
+      right={76}
       zIndex={3}
       alignItems="center"
       pointerEvents="none"
