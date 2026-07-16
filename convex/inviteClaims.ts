@@ -11,6 +11,7 @@ import {
   generateAndInsertInviteCode,
   normalizeInviteCode,
 } from './inviteCodes'
+import { getLatestResponsePlayback } from './lib/latestResponsePlayback'
 import { redeemInviteHandler as redeemPersonalBondfireInviteHandler } from './personalBondfires'
 
 type InviteClaimSource = 'direct' | 'code' | 'camp'
@@ -420,15 +421,25 @@ export const listUnseenInvites = query({
 
     const rows = await Promise.all(
       claims.map(async (claim) => {
-        const [bondfire, camp, sender] = await Promise.all([
+        const [bondfire, camp, sender, latestResponse] = await Promise.all([
           claim.bondfireId ? ctx.db.get(claim.bondfireId) : Promise.resolve(null),
           claim.campId ? ctx.db.get(claim.campId) : Promise.resolve(null),
           ctx.db.get(claim.senderId),
+          claim.bondfireId
+            ? getLatestResponsePlayback(ctx, claim.bondfireId)
+            : Promise.resolve(null),
         ])
 
         return {
           claim,
-          bondfire,
+          bondfire: bondfire
+            ? {
+                ...bondfire,
+                latestResponseBondfireVideoId: latestResponse?.bondfireVideoId,
+                latestResponseMuxPlaybackId: latestResponse?.muxPlaybackId,
+                latestResponseMuxPlaybackPolicy: latestResponse?.muxPlaybackPolicy,
+              }
+            : null,
           camp,
           sender: sender
             ? {

@@ -10,6 +10,7 @@ import {
 } from './bondfireVisibility'
 import { throwUserError } from './errors'
 import { addInviteBadgesToBondfires, type BondfireBadge } from './inviteBadges'
+import { getPlayableVideoPlayback, type VideoPlaybackReference } from './lib/latestResponsePlayback'
 
 type ThreadParticipant = {
   user: PublicUser
@@ -24,6 +25,9 @@ type ThreadSummary = Doc<'bondfires'> & {
   unread: boolean
   participants: ThreadParticipant[]
   badge: BondfireBadge | null
+  latestResponseBondfireVideoId?: Id<'bondfireVideos'>
+  latestResponseMuxPlaybackId?: string
+  latestResponseMuxPlaybackPolicy?: 'public' | 'signed'
 }
 
 type PublicUser = {
@@ -86,7 +90,12 @@ async function getParticipantMap(
     ? await responseQuery.take(args.responseLimit)
     : await responseQuery.collect()
 
-  for (const response of responses.filter(isPlayableVideoRecord)) {
+  let latestResponsePlayback: VideoPlaybackReference | null = null
+  for (const response of responses) {
+    const playback = getPlayableVideoPlayback(response)
+    if (!playback) continue
+    latestResponsePlayback ??= playback
+
     const current = participants.get(response.userId)
     participants.set(response.userId, {
       latestAt: Math.max(current?.latestAt ?? 0, response.createdAt),
@@ -94,7 +103,7 @@ async function getParticipantMap(
     })
   }
 
-  return participants
+  return { participants, latestResponsePlayback }
 }
 
 async function getParticipantThreadIds(ctx: QueryCtx, userId: Id<'users'>, candidateLimit: number) {
@@ -148,9 +157,13 @@ async function buildThreadSummary(
     pinnedUserIds: Set<Id<'users'>>
   },
 ): Promise<ThreadSummary | null> {
-  const participantMap = await getParticipantMap(ctx, args.bondfire, {
-    responseLimit: THREAD_RESPONSE_SUMMARY_LIMIT,
-  })
+  const { participants: participantMap, latestResponsePlayback } = await getParticipantMap(
+    ctx,
+    args.bondfire,
+    {
+      responseLimit: THREAD_RESPONSE_SUMMARY_LIMIT,
+    },
+  )
   const participantUsers = await Promise.all(
     [...participantMap.keys()].map((userId) => ctx.db.get(userId)),
   )
@@ -193,6 +206,9 @@ async function buildThreadSummary(
     unread,
     participants: participants.sort((a, b) => b.latestAt - a.latestAt),
     badge: null,
+    latestResponseBondfireVideoId: latestResponsePlayback?.bondfireVideoId,
+    latestResponseMuxPlaybackId: latestResponsePlayback?.muxPlaybackId,
+    latestResponseMuxPlaybackPolicy: latestResponsePlayback?.muxPlaybackPolicy,
   }
 }
 
@@ -405,7 +421,7 @@ export const markThreadRead = mutation({
       throwUserError('Bondfire not found')
     }
 
-    const participantMap = await getParticipantMap(ctx, bondfire)
+    const { participants: participantMap } = await getParticipantMap(ctx, bondfire)
     if (!participantMap.has(userId)) {
       throwUserError('Only thread participants can mark this Bondfire read')
     }
