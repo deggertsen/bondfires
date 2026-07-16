@@ -281,7 +281,12 @@ export const getCaptionTrackIds = internalQuery({
         const row = item.bondfireId
           ? await findTranscriptRow(ctx, 'bondfires', item.bondfireId)
           : await findTranscriptRow(ctx, 'bondfireVideos', item.bondfireVideoId as RecordId)
-        return row?.muxTrackId ?? null
+        // A record can be repointed at a replacement Mux asset. Never pair its
+        // current playback id with a caption track left over from the old asset.
+        if (!row || row.muxAssetId !== record.muxAssetId) {
+          return null
+        }
+        return row.muxTrackId ?? null
       }),
     )
   },

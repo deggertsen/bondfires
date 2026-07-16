@@ -101,7 +101,7 @@ syncObservable(appStore$, {
 // Must run AFTER persistence has loaded, or the loaded MMKV blob would clobber
 // whatever the migration set. `syncState(...).isPersistLoaded` resolves
 // synchronously for the MMKV plugin, so this normally fires on the same tick.
-const CURRENT_MIGRATION_VERSION = 1
+const CURRENT_MIGRATION_VERSION = 2
 
 when(syncState(appStore$).isPersistLoaded, () => {
   const persistedVersion = appStore$.migrationVersion.peek() ?? 0
@@ -119,6 +119,13 @@ when(syncState(appStore$).isPersistLoaded, () => {
   // migration never runs again.
   if (persistedVersion < 1) {
     appStore$.preferences.livePublishEnabled.set(true)
+  }
+
+  // v2 — captions were introduced as an on-by-default preference. Persisted
+  // preference objects from existing installs predate the key, so seed it
+  // explicitly after hydration instead of relying on the in-code default.
+  if (persistedVersion < 2) {
+    appStore$.preferences.captionsEnabled.set(true)
   }
 
   appStore$.migrationVersion.set(CURRENT_MIGRATION_VERSION)

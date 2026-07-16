@@ -218,17 +218,33 @@ export function VideoPlayer({
   const captionsEnabled = useValue(appStore$.preferences.captionsEnabled)
   const captionCuesRef = useRef<CaptionCue[] | null>(null)
 
+  const syncCaptionText = useCallback(
+    (positionMs: number) => {
+      const cues = captionCuesRef.current
+      const captionText = cues?.length ? findCaptionText(cues, positionMs) : ''
+      if (state$.captionText.peek() !== captionText) {
+        state$.captionText.set(captionText)
+      }
+    },
+    [state$],
+  )
+
   useEffect(() => {
     captionCuesRef.current = null
     state$.captionText.set('')
-    if (!captionsEnabled || !captionsUrl) return
+    if (!captionsEnabled || !captionsUrl || !shouldTrackPlayback) return
 
     let cancelled = false
     fetchCaptionCues(captionsUrl)
       .then((cues) => {
-        if (!cancelled) captionCuesRef.current = cues
+        if (cancelled) return
+        captionCuesRef.current = cues
+        // A paused player will not emit another timeUpdate just because the
+        // caption file finished loading or captions were toggled on.
+        syncCaptionText(player.currentTime * 1000)
       })
       .catch((error: unknown) => {
+        if (cancelled) return
         telemetry.warn(
           'video:captions:fetch_failed',
           error instanceof Error ? error.message : String(error),
@@ -238,7 +254,7 @@ export function VideoPlayer({
     return () => {
       cancelled = true
     }
-  }, [captionsEnabled, captionsUrl, state$, videoId])
+  }, [captionsEnabled, captionsUrl, player, shouldTrackPlayback, state$, syncCaptionText, videoId])
 
   const muxPlaybackId = useMemo(() => {
     if (!videoUrl) return null
@@ -494,13 +510,7 @@ export function VideoPlayer({
 
       processTimedPlaybackUpdate(currentTime, player.duration)
 
-      const cues = captionCuesRef.current
-      if (cues && cues.length > 0) {
-        const captionText = findCaptionText(cues, currentTime * 1000)
-        if (state$.captionText.peek() !== captionText) {
-          state$.captionText.set(captionText)
-        }
-      }
+      syncCaptionText(currentTime * 1000)
     })
 
     return () => {
@@ -515,6 +525,7 @@ export function VideoPlayer({
     state$,
     shouldTrackPlayback,
     processTimedPlaybackUpdate,
+    syncCaptionText,
     updatePlaybackProgress,
   ])
 
@@ -643,13 +654,14 @@ export function VideoPlayer({
         if (shouldSeek) {
           player.currentTime = seekTime
           syncLocalReactionPlaybackAfterSeek(seekTime * 1000)
+          syncCaptionText(seekTime * 1000)
         }
         state$.progress.set(seekProgress)
         state$.hasEnded.set(false)
         state$.userInitiatedPlay.set(true)
       }
     },
-    [player, state$, syncLocalReactionPlaybackAfterSeek],
+    [player, state$, syncCaptionText, syncLocalReactionPlaybackAfterSeek],
   )
 
   const canSeekProgress = Number.isFinite(player?.duration) && (player?.duration ?? 0) > 0

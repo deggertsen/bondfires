@@ -68,6 +68,7 @@ export function SettingsPopover({ onClose }: SettingsPopoverProps) {
             Captions
           </Text>
           <Switch
+            accessibilityLabel="Captions"
             checked={captionsEnabled}
             onCheckedChange={(checked) => appActions.setCaptionsEnabled(checked === true)}
             size="$2"
