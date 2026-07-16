@@ -102,6 +102,14 @@ MUX_UPLOAD_CORS_ORIGIN=*
 MUX_VIDEO_QUALITY=basic
 MUX_LIVE_RECONNECT_WINDOW_SECONDS=30
 MUX_LIVE_RECONNECT_SLATE_URL=https://bondfires.app/images/mux-live-slate.png
+
+# AI thread insights (convex/ai.ts): per-video summaries/tags + thread titles
+# from Mux auto-generated captions. When unset, transcripts still store but
+# summary generation fails (logged); recover after setting the key with
+# `npx convex run videos:backfillVideoInsights`. OPENROUTER_MODEL is optional
+# (default z-ai/glm-4.5-air).
+OPENROUTER_API_KEY=your-openrouter-api-key
+OPENROUTER_MODEL=z-ai/glm-4.5-air
 ```
 
 Configure the Mux webhook endpoint to point at the Convex HTTP action path

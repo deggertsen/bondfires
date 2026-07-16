@@ -472,6 +472,13 @@ export default defineSchema({
     metadata: v.optional(v.any()), // Extensible JSON metadata
     expiresAt: v.optional(v.number()),
 
+    // AI-generated content (see ai.ts). Kept separate from user-set title/tags
+    // so regeneration never clobbers what a user typed. Full transcripts live
+    // in videoTranscripts, not here — these fields ride along in feed queries.
+    summary: v.optional(v.string()),
+    aiTags: v.optional(v.array(v.string())),
+    aiTitle: v.optional(v.string()),
+
     // Stats
     videoCount: v.number(), // Total videos including responses (for feed ordering)
     viewCount: v.optional(v.number()),
@@ -536,6 +543,10 @@ export default defineSchema({
     metadata: v.optional(v.any()),
     expiresAt: v.optional(v.number()),
 
+    // AI-generated content (see ai.ts)
+    summary: v.optional(v.string()),
+    aiTags: v.optional(v.array(v.string())),
+
     // Set when this response was counted into bondfire.videoCount and
     // user.responseCount (see responseCounts.ts). Single source of truth for
     // idempotent count/uncount across webhooks, reapers, and cancels.
@@ -554,6 +565,24 @@ export default defineSchema({
     .index('by_live_stream', ['muxLiveStreamId'])
     // Reconciliation: find records stuck in a non-terminal video status
     .index('by_video_status', ['videoStatus', 'createdAt']),
+
+  // Full video transcripts from Mux auto-generated captions. A separate table
+  // (rather than a field on bondfires/bondfireVideos) so multi-KB transcript
+  // text never ships with feed/detail queries that spread whole video docs.
+  // Exactly one of bondfireId/bondfireVideoId is set, matching which table the
+  // transcribed video lives in.
+  videoTranscripts: defineTable({
+    bondfireId: v.optional(v.id('bondfires')),
+    bondfireVideoId: v.optional(v.id('bondfireVideos')),
+    muxAssetId: v.string(),
+    muxTrackId: v.optional(v.string()),
+    languageCode: v.optional(v.string()),
+    text: v.string(),
+    createdAt: v.number(),
+  })
+    .index('by_bondfire', ['bondfireId'])
+    .index('by_bondfire_video', ['bondfireVideoId'])
+    .index('by_mux_asset', ['muxAssetId']),
 
   // Per-user read markers for ongoing Bondfire conversations.
   bondfireThreadReads: defineTable({

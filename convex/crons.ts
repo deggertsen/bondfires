@@ -116,6 +116,16 @@ crons.daily(
   internal.bondfireRetention.enforceBondfireRetention,
 )
 
+// Delete video transcripts whose parent bondfire/response was deleted by any
+// of the deletion cascades (retention, failure cleanup, user deletes, camp
+// cleanup). Runs at 15:30 UTC, right after retention so its orphans are swept
+// the same day.
+crons.daily(
+  'sweep orphaned video transcripts',
+  { hourUTC: 15, minuteUTC: 30 },
+  internal.ai.sweepOrphanedTranscripts,
+)
+
 // Send daily unwatched-activity digests (and 72h nudges) to users whose
 // local digest window (~5pm) just opened. Runs hourly so every timezone
 // gets local-evening delivery; idempotent via notificationDeliveries.

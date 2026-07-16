@@ -95,6 +95,7 @@ http.route({
       id?: unknown
       type?: unknown
       data?: unknown
+      object?: unknown
     }
 
     if (typeof event.id !== 'string' || typeof event.type !== 'string') {
@@ -105,6 +106,9 @@ http.route({
       eventId: event.id,
       eventType: event.type,
       dataJson: JSON.stringify(event.data ?? {}),
+      // For video.asset.track.* events, `data` is the track and the parent
+      // asset id only appears here.
+      objectJson: JSON.stringify(event.object ?? {}),
     })
 
     return new Response('ok', { status: 200 })

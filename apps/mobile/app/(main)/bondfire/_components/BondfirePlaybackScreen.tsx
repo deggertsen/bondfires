@@ -228,7 +228,11 @@ export function BondfirePlaybackScreen({
         )}
 
         <ThreadBrowser
-          title={bondfireData.title ?? `${bondfireData.creatorName ?? 'Anonymous'}'s Bondfire`}
+          title={
+            bondfireData.title ??
+            bondfireData.aiTitle ??
+            `${bondfireData.creatorName ?? 'Anonymous'}'s Bondfire`
+          }
           videoItems={videoItems}
           currentVideoIndex={currentVideoIndex}
           participants={bondfireData.participants}
