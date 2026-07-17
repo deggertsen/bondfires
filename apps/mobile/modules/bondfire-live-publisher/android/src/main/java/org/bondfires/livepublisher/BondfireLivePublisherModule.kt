@@ -305,19 +305,30 @@ class BondfireLivePublisherModule : Module() {
     }
 
     AsyncFunction("setVideoQuality") Coroutine { videoBitrate: Int, fps: Int ->
-      val s = streamer ?: return@Coroutine
+      val s = streamer ?: throw LivePublisherException("No active publisher to update")
       try {
         // Dynamic bitrate through the encoder — the same path StreamPack's
         // own bitrate regulator uses. Deliberately NOT setVideoConfig(): a
         // full config swap mid-stream reconfigures MediaCodec, which risks
-        // the teardown SIGSEGV class of crashes (see the stop() comments)
-        // and a visible stream glitch. The fps parameter is ignored on
-        // Android for the same reason — bitrate is the meaningful thermal
-        // lever anyway.
-        s.videoEncoder?.bitrate = videoBitrate
-        Log.i(TAG, "setVideoQuality: video bitrate set to ${videoBitrate}bps (fps=$fps ignored on Android)")
+        // the teardown SIGSEGV class of crashes (see the stop() comments).
+        val encoder = s.videoEncoder
+          ?: throw LivePublisherException("No active video encoder to update")
+        encoder.bitrate = videoBitrate
+        val configuredVideoBitrate = encoder.bitrate
+        val configuredFps = s.videoConfigFlow.value?.fps
+          ?: throw LivePublisherException("No active video configuration to inspect")
+        Log.i(
+          TAG,
+          "setVideoQuality: configured ${configuredVideoBitrate}bps (fps=$fps ignored on Android)",
+        )
+        mapOf(
+          "configuredVideoBitrate" to configuredVideoBitrate,
+          "configuredFps" to configuredFps,
+          "fpsChangeSupported" to false,
+        )
       } catch (e: Exception) {
         Log.w(TAG, "setVideoQuality: failed to update video bitrate", e)
+        throw LivePublisherException("Failed to update video quality: ${e.message}")
       }
     }
 

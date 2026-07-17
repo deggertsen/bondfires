@@ -40,6 +40,14 @@ export interface LivePublisherStats {
   audioRoute?: string
 }
 
+export interface LivePublisherVideoQualityResult {
+  /** Native-side configuration after the update completed. */
+  configuredVideoBitrate: number
+  configuredFps: number
+  /** Android currently keeps the encoder/camera FPS fixed during a live stream. */
+  fpsChangeSupported: boolean
+}
+
 export interface LivePublisherViewProps extends ViewProps {}
 
 // Keep in sync with NATIVE_PUBLISHER_STATUSES in
@@ -64,6 +72,7 @@ interface NativeLivePublisher {
   stop(): Promise<void>
   swapCamera(): Promise<void>
   setMuted(muted: boolean): Promise<void>
+  setVideoQuality(videoBitrate: number, fps: number): Promise<LivePublisherVideoQualityResult>
   getStats(): Promise<LivePublisherStats>
   getThermalState?(): Promise<{ level: number; levelName: string }>
 }
@@ -150,6 +159,10 @@ export const BondfireLivePublisher = {
 
   setMuted(muted: boolean) {
     return nativeModule?.setMuted(muted) ?? unavailablePromise()
+  },
+
+  setVideoQuality(videoBitrate: number, fps: number) {
+    return nativeModule?.setVideoQuality?.(videoBitrate, fps) ?? unavailablePromise()
   },
 
   getStats() {
