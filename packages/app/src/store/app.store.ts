@@ -27,6 +27,13 @@ export interface AppState {
   // Auth state (managed by Convex, but cached locally)
   isAuthenticated: boolean
   userId: string | null
+  // isAuthReady is true only after a Convex query (users.current) has
+  // resolved with a valid user, proving the server-side auth session is
+  // established and mutations are safe to fire. This is NOT the same as
+  // isAuthenticated — isAuthenticated means "we know who the user is"
+  // (flipped immediately for routing), while isAuthReady means "the server
+  // knows too and downstream mutations won't fail with Not authenticated".
+  isAuthReady: boolean
 
   // Camp context
   currentCampId: string | null
@@ -67,6 +74,7 @@ const defaultState: AppState = {
   },
   isAuthenticated: false,
   userId: null,
+  isAuthReady: false,
   currentCampId: null,
   pendingInviteCode: null,
   hasCompletedInviteCheck: false,
@@ -164,6 +172,17 @@ export const appActions = {
   setAuth: (userId: string | null) => {
     appStore$.isAuthenticated.set(!!userId)
     appStore$.userId.set(userId)
+    // When clearing auth (userId === null), also clear isAuthReady.
+    // When setting auth (userId !== null), do NOT set isAuthReady here —
+    // the caller (splash gate, login screen) must set it separately after
+    // confirming the Convex server session is established.
+    if (!userId) {
+      appStore$.isAuthReady.set(false)
+    }
+  },
+
+  setAuthReady: (ready: boolean) => {
+    appStore$.isAuthReady.set(ready)
   },
 
   setCurrentCampId: (campId: string | null) => {
@@ -180,6 +199,7 @@ export const appActions = {
 
   logout: () => {
     appStore$.isAuthenticated.set(false)
+    appStore$.isAuthReady.set(false)
     appStore$.userId.set(null)
     appStore$.currentCampId.set(null)
   },

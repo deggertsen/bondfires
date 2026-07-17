@@ -310,7 +310,7 @@ function AppContent() {
   const { themeName } = useAppTheme()
   const router = useRouter()
   const toasts = useValue(toastStore$.toasts)
-  const isAuthenticated = useValue(appStore$.isAuthenticated)
+  const isAuthReady = useValue(appStore$.isAuthReady)
   const hasCompletedInviteCheck = useValue(appStore$.hasCompletedInviteCheck)
   const pendingInviteCode = useValue(appStore$.pendingInviteCode)
   const registerDevice = useMutation(api.notifications.registerDevice)
@@ -326,7 +326,7 @@ function AppContent() {
   const recordActiveRef = useRef(recordActive)
   recordActiveRef.current = recordActive
   const sendHeartbeat = useCallback(() => {
-    if (!appStore$.isAuthenticated.peek()) return
+    if (!appStore$.isAuthReady.peek()) return
     const now = Date.now()
     if (now - lastHeartbeatRef.current < 30 * 60 * 1000) return
     lastHeartbeatRef.current = now
@@ -380,7 +380,7 @@ function AppContent() {
   }, [hasCompletedInviteCheck])
 
   useEffect(() => {
-    if (!isAuthenticated || !pendingInviteCode) {
+    if (!isAuthReady || !pendingInviteCode) {
       return
     }
 
@@ -404,7 +404,7 @@ function AppContent() {
     return () => {
       cancelled = true
     }
-  }, [isAuthenticated, pendingInviteCode, redeemInviteCode, router])
+  }, [isAuthReady, pendingInviteCode, redeemInviteCode, router])
 
   // Force-update check: compares current version against remote minAppVersion.
   // On Android with flexible priority, downloads in background via Play Core.
@@ -448,7 +448,9 @@ function AppContent() {
     syncAndroidChannelPrefs,
     resetChannelForCategory,
   } = usePushNotifications({
-    isAuthenticated,
+    // Gate on isAuthReady, not isAuthenticated — the server auth session must
+    // be established before we attempt any token registration mutations.
+    isAuthenticated: isAuthReady,
     registerTokenMutation: async (params: {
       token: string
       tokenType: string
@@ -525,8 +527,8 @@ function AppContent() {
   }, [])
 
   useObserve(appStore$.preferences.notificationsEnabled, ({ value: notificationsEnabled }) => {
-    if (!appStore$.isAuthenticated.peek()) {
-      telemetry.breadcrumb('push:layout:notificationsEnabled:skip', { reason: 'not_authenticated' })
+    if (!appStore$.isAuthReady.peek()) {
+      telemetry.breadcrumb('push:layout:notificationsEnabled:skip', { reason: 'not_auth_ready' })
       return
     }
     if (notificationsEnabled) {
@@ -541,16 +543,19 @@ function AppContent() {
     }
   })
 
-  // When the user signs in, register the device silently if notifications
-  // are enabled and OS permission was already granted. Never prompt here.
-  useObserve(appStore$.isAuthenticated, ({ value: isAuthenticated }) => {
-    if (isAuthenticated && appStore$.preferences.notificationsEnabled.peek()) {
-      telemetry.breadcrumb('push:layout:signin', { notificationsEnabled: true })
+  // When the server auth session is established (isAuthReady), register the
+  // device silently if notifications are enabled and OS permission was already
+  // granted. Never prompt here. This fires AFTER isAuthenticated is set — the
+  // UI may have already navigated to the feed, but background infrastructure
+  // waits for the all-clear from the server.
+  useObserve(appStore$.isAuthReady, ({ value: isAuthReady }) => {
+    if (isAuthReady && appStore$.preferences.notificationsEnabled.peek()) {
+      telemetry.breadcrumb('push:layout:authReady', { notificationsEnabled: true })
       registerIfGrantedRef.current()
-    } else if (isAuthenticated) {
-      telemetry.breadcrumb('push:layout:signin', { notificationsEnabled: false })
+    } else if (isAuthReady) {
+      telemetry.breadcrumb('push:layout:authReady', { notificationsEnabled: false })
     }
-    if (isAuthenticated) {
+    if (isAuthReady) {
       // The mount-time heartbeat may have fired pre-auth and no-opped.
       sendHeartbeat()
     }

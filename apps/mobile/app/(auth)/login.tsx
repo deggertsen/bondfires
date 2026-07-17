@@ -62,6 +62,7 @@ export default function LoginScreen() {
         router.replace(routes.verifyEmail({ email: currentEmail, redirectTo }))
       } else if (user) {
         appActions.setAuth(user._id)
+        appActions.setAuthReady(true)
         router.replace(resolveAuthRedirect(redirectTo))
       } else {
         router.replace(routes.splash(redirectTo))
