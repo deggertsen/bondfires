@@ -29,6 +29,7 @@ import { CompletionScreen } from '../../components/CompletionScreen'
 import { CampPickerScreen } from '../../components/create/CampPickerScreen'
 import { LegacyRecordScreen } from '../../components/create/LegacyRecordScreen'
 import { LiveRecordScreen } from '../../components/create/LiveRecordScreen'
+import { PreRecordingInviteScreen } from '../../components/create/PreRecordingInviteScreen'
 import type { TradeTag } from '../../components/create/shared'
 import { goBackOrReplace } from '../../lib/navigation'
 import { routes } from '../../lib/routes'
@@ -108,6 +109,12 @@ export default function CreateScreen() {
   const recordingResourceLocked = useRecordingResourceLock()
   const shouldUseLivePublish = livePublishEnabled && isLivePublisherAvailable
   const liveRecordId = useValue(livePublishStore$.recordId)
+  const draftBondfireId$ = useObservable<string | null>(null)
+  const draftBondfireId = useValue(draftBondfireId$)
+  // "Skip — record without inviting" on the pre-recording invite screen:
+  // record the old way (bondfire created at recording time, no draft).
+  const inviteSkipped$ = useObservable(false)
+  const inviteSkipped = useValue(inviteSkipped$)
 
   // Invariant: on the live create flow (not a response), the bondfire row is
   // provisioned the moment recording starts (livePublisher.start), so reaching
@@ -138,6 +145,10 @@ export default function CreateScreen() {
   const subscription = useQuery(api.subscriptions.current, {})
   const currentUser = useQuery(api.users.current)
   const personalCampDoc = useQuery(api.personalCamps.getMyPersonalCamp, {})
+  const existingDraft = useQuery(
+    api.personalBondfires.getMyDraftBondfire,
+    isPersonalCamp ? {} : 'skip',
+  )
   const joinCamp = useMutation(api.camps.join)
   const persistedCampId = currentCampId as Id<'camps'> | null
   const effectiveCampId = respondTo
@@ -420,6 +431,7 @@ export default function CreateScreen() {
           campId: args.campId as Id<'camps'> | undefined,
           personalCamp: args.personalCamp,
           tags: args.tags,
+          draftBondfireId: args.draftBondfireId as Id<'bondfires'> | undefined,
         })
       },
       getMuxUploadStatus: async (args) => {
@@ -740,6 +752,47 @@ export default function CreateScreen() {
     )
   }
 
+  // Pre-recording invite screen for Hearth (personal camp) bondfires.
+  // Shown before the recording screen so the audience is established first.
+  if (isPersonalCamp && !respondTo && !draftBondfireId && !inviteSkipped) {
+    // Resolve the one-draft-at-a-time state before exposing Skip. Otherwise a
+    // fast tap during the query's initial undefined state can bypass an
+    // existing audience and orphan that draft until cleanup.
+    if (existingDraft === undefined) {
+      return (
+        <YStack
+          flex={1}
+          backgroundColor={'$background'}
+          alignItems="center"
+          justifyContent="center"
+          gap={14}
+        >
+          <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+          <Spinner size="large" color={'$primary'} />
+          <Text color={'$placeholderColor'}>Loading your Hearth...</Text>
+        </YStack>
+      )
+    }
+
+    return (
+      <PreRecordingInviteScreen
+        existingDraft={existingDraft}
+        onContinue={(bondfireId, _title) => {
+          draftBondfireId$.set(bondfireId)
+        }}
+        onSkip={() => {
+          inviteSkipped$.set(true)
+        }}
+        onCancel={() => {
+          if (router.canDismiss()) {
+            router.dismissAll()
+          }
+          router.replace(routes.feed)
+        }}
+      />
+    )
+  }
+
   if (shouldUseLivePublish) {
     return (
       <LiveRecordScreen
@@ -758,6 +811,7 @@ export default function CreateScreen() {
         onBack={handleBack}
         logRecordingError={logRecordingError}
         personalCreateStartedAtRef={personalCreateStartedAtRef}
+        draftBondfireId={draftBondfireId ?? undefined}
       />
     )
   }
@@ -779,6 +833,7 @@ export default function CreateScreen() {
       logRecordingError={logRecordingError}
       personalCreateStartedAtRef={personalCreateStartedAtRef}
       clearUploadStartTimeout={clearUploadStartTimeout}
+      draftBondfireId={draftBondfireId ?? undefined}
     />
   )
 }

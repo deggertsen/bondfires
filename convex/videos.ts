@@ -11,7 +11,13 @@ import {
   query,
 } from './_generated/server'
 import { auth } from './auth'
-import { type BondfireFailureReason, handleFailedBondfire } from './bondfireFailureCleanup'
+import {
+  type BondfireFailureReason,
+  handleFailedBondfire,
+  isDraftBornPersonalBondfire,
+  purgeBondfireConvexRecords,
+  revertBondfireToDraft,
+} from './bondfireFailureCleanup'
 import {
   isCampParticipableStatus,
   isCampReadableStatus,
@@ -1312,7 +1318,7 @@ async function markRecordErrored(
         durationMs: args.durationMs,
         source: 'markRecordErrored',
       })
-      if (result.deleted && result.muxAssetIds.length > 0) {
+      if ((result.deleted || result.reverted) && result.muxAssetIds.length > 0) {
         await ctx.scheduler.runAfter(
           0,
           internal.bondfireFailureCleanup.deleteFailedBondfireMuxAssets,
@@ -1382,7 +1388,7 @@ async function patchLinkedLiveRecord(
   // reap (leaving the session wedged forever), so check existence first.
   if (liveSession.bondfireVideoId) {
     const video = await ctx.db.get(liveSession.bondfireVideoId)
-    if (video) {
+    if (video?.liveSessionId === liveSession._id) {
       await ctx.db.patch(liveSession.bondfireVideoId, patch)
     }
     return
@@ -1390,7 +1396,7 @@ async function patchLinkedLiveRecord(
 
   if (liveSession.bondfireId) {
     const bondfire = await ctx.db.get(liveSession.bondfireId)
-    if (bondfire) {
+    if (bondfire?.liveSessionId === liveSession._id) {
       await ctx.db.patch(liveSession.bondfireId, {
         ...patch,
         updatedAt: Date.now(),
@@ -1404,10 +1410,12 @@ async function getLinkedLiveRecord(
   liveSession: Doc<'liveSessions'>,
 ): Promise<Doc<'bondfires'> | Doc<'bondfireVideos'> | null> {
   if (liveSession.bondfireVideoId) {
-    return await ctx.db.get(liveSession.bondfireVideoId)
+    const video = await ctx.db.get(liveSession.bondfireVideoId)
+    return video?.liveSessionId === liveSession._id ? video : null
   }
   if (liveSession.bondfireId) {
-    return await ctx.db.get(liveSession.bondfireId)
+    const bondfire = await ctx.db.get(liveSession.bondfireId)
+    return bondfire?.liveSessionId === liveSession._id ? bondfire : null
   }
   return null
 }
@@ -1478,14 +1486,16 @@ async function markLinkedLiveRecordErrored(ctx: MutationCtx, liveSession: Doc<'l
   // thread/uncount logic above, so only act on sparks here.
   if (liveSession.bondfireId && !liveSession.bondfireVideoId) {
     const spark = await ctx.db.get(liveSession.bondfireId)
-    if (spark) {
+    // A draft-born Hearth reuses its bondfire row after a failed attempt. A
+    // delayed error from the old Mux session must not revert the newer one.
+    if (spark?.liveSessionId === liveSession._id) {
       const result = await handleFailedBondfire(ctx, spark, 'live_never_watchable', {
         liveSessionId: liveSession._id,
         liveSessionStatus: liveSession.status,
         liveSessionErrorMessage: liveSession.errorMessage,
         source: 'markLinkedLiveRecordErrored',
       })
-      if (result.deleted && result.muxAssetIds.length > 0) {
+      if ((result.deleted || result.reverted) && result.muxAssetIds.length > 0) {
         await ctx.scheduler.runAfter(
           0,
           internal.bondfireFailureCleanup.deleteFailedBondfireMuxAssets,
@@ -1520,6 +1530,7 @@ export const createMuxDirectUpload = action({
     durationMs: v.optional(v.number()),
     width: v.optional(v.number()),
     height: v.optional(v.number()),
+    draftBondfireId: v.optional(v.id('bondfires')),
   },
   handler: async (ctx, args): Promise<MuxDirectUploadResult> => {
     const userId = await auth.getUserId(ctx)
@@ -1616,6 +1627,7 @@ export const createMuxDirectUpload = action({
       durationMs: args.durationMs,
       width: args.width,
       height: args.height,
+      draftBondfireId: args.draftBondfireId,
     })
 
     return {
@@ -1889,6 +1901,7 @@ export const createLiveStream = action({
     height: v.optional(v.number()),
     title: v.optional(v.string()),
     pending: v.optional(v.boolean()),
+    draftBondfireId: v.optional(v.id('bondfires')),
   },
   handler: (ctx, args): Promise<MuxLiveStreamResult> =>
     withUserFacingActionErrors(
@@ -2012,6 +2025,7 @@ export const createLiveStream = action({
             height: args.height,
             title: args.title,
             pending: args.pending,
+            draftBondfireId: args.draftBondfireId,
           })
         } catch (error) {
           try {
@@ -2457,16 +2471,9 @@ export const markLinkedRecordProcessing = internalMutation({
       muxAssetStatus: 'processing',
     }
 
-    if (liveSession.bondfireVideoId) {
-      await ctx.db.patch(liveSession.bondfireVideoId, patch)
-    }
-
-    if (liveSession.bondfireId) {
-      await ctx.db.patch(liveSession.bondfireId, {
-        ...patch,
-        updatedAt: Date.now(),
-      })
-    }
+    const linkedRecord = await getLinkedLiveRecord(ctx, liveSession)
+    if (!linkedRecord) return { updated: false }
+    await patchLinkedLiveRecord(ctx, liveSession, patch)
 
     return { updated: true }
   },
@@ -3150,6 +3157,7 @@ export const createPendingMuxVideo = internalMutation({
     durationMs: v.optional(v.number()),
     width: v.optional(v.number()),
     height: v.optional(v.number()),
+    draftBondfireId: v.optional(v.id('bondfires')),
   },
   handler: async (ctx, args) => {
     const now = Date.now()
@@ -3198,6 +3206,52 @@ export const createPendingMuxVideo = internalMutation({
     if (args.personalCamp) {
       if (args.playbackPolicy === 'public') {
         throw new Error('Personal fire videos must use signed playback.')
+      }
+
+      // When a draft bondfire exists (pre-recording invite flow), activate it
+      // instead of creating a new row. Same entitlement gate as fresh creation
+      // — the subscription may have lapsed (or the recording may exceed the
+      // tier's duration limit) since the draft was created.
+      if (args.draftBondfireId) {
+        const draft = await ctx.db.get(args.draftBondfireId)
+        if (!draft) {
+          throwUserError('Draft bondfire not found')
+        }
+        if (draft.userId !== args.userId) {
+          throwUserError('Only the draft owner can activate it.')
+        }
+        if (draft.status !== 'draft') {
+          throwUserError('This bondfire is no longer a draft.')
+        }
+        await assertCanCreatePersonalBondfire(ctx, {
+          userId: args.userId,
+          durationMs: args.durationMs,
+        })
+
+        // draftExpiresAt is intentionally kept: it marks the row as draft-born
+        // so cancel/error paths can revert it to 'draft' (see
+        // bondfireFailureCleanup.revertBondfireToDraft). Only `status` gates
+        // the cleanup cron.
+        await ctx.db.patch(args.draftBondfireId, {
+          status: 'live',
+          videoStatus: 'waiting_for_upload',
+          muxUploadId: args.uploadId,
+          muxPlaybackPolicy: args.playbackPolicy ?? 'signed',
+          muxAssetStatus: 'waiting_for_upload',
+          durationMs: args.durationMs,
+          width: args.width,
+          height: args.height,
+          tags: args.tags,
+          updatedAt: now,
+        })
+
+        // Drafts don't count toward bondfireCount until they hold a recording.
+        await ctx.db.patch(args.userId, {
+          bondfireCount: (user?.bondfireCount ?? 0) + 1,
+          updatedAt: now,
+        })
+
+        return { recordId: args.draftBondfireId, recordType: 'bondfire' as const }
       }
 
       const personalCamp = await assertCanCreatePersonalBondfire(ctx, {
@@ -3458,6 +3512,7 @@ export const createLinkedMuxLiveSession = internalMutation({
     height: v.optional(v.number()),
     title: v.optional(v.string()),
     pending: v.optional(v.boolean()), // If true, create bondfire in 'pending' status
+    draftBondfireId: v.optional(v.id('bondfires')), // Pre-existing draft to activate
   },
   handler: async (ctx, args) => {
     const now = Date.now()
@@ -3556,8 +3611,68 @@ export const createLinkedMuxLiveSession = internalMutation({
     }
 
     if (args.personalCamp) {
-      const personalCamp = await assertCanCreatePersonalBondfire(ctx, { userId: args.userId })
       const initialStatus = args.pending ? 'pending' : 'live'
+
+      // When a draft bondfire exists (pre-recording invite flow), activate it
+      // instead of creating a new row. The draft already has participants and
+      // invite codes; we just attach the Mux live stream fields and flip
+      // status to 'live'.
+      if (args.draftBondfireId) {
+        const draft = await ctx.db.get(args.draftBondfireId)
+        if (!draft) {
+          throwUserError('Draft bondfire not found')
+        }
+        if (draft.userId !== args.userId) {
+          throwUserError('Only the draft owner can activate it.')
+        }
+        if (draft.status !== 'draft') {
+          throwUserError('This bondfire is no longer a draft.')
+        }
+        // Same entitlement gate as fresh creation — the subscription may have
+        // lapsed (or the hearth frozen) since the draft was created.
+        await assertCanCreatePersonalBondfire(ctx, { userId: args.userId })
+
+        // draftExpiresAt is intentionally kept: it marks the row as draft-born
+        // so cancel/error paths can revert it to 'draft' (see
+        // bondfireFailureCleanup.revertBondfireToDraft). Only `status` gates
+        // the cleanup cron.
+        await ctx.db.patch(args.draftBondfireId, {
+          status: 'live',
+          liveSessionId,
+          videoStatus: initialStatus,
+          muxLiveStreamId: args.liveStreamId,
+          muxLivePlaybackId: args.playbackId,
+          muxPlaybackPolicy: args.playbackPolicy,
+          muxAssetStatus: initialStatus,
+          width: args.width,
+          height: args.height,
+          // The invite-screen title wins; fall back to the client's default
+          // title only when the draft never got one.
+          ...(draft.title ? {} : { title: args.title }),
+          updatedAt: now,
+        })
+
+        // Drafts don't count toward bondfireCount until they hold a recording.
+        if (user) {
+          await ctx.db.patch(args.userId, {
+            bondfireCount: (user.bondfireCount ?? 0) + 1,
+            updatedAt: now,
+          })
+        }
+
+        await ctx.db.patch(liveSessionId, {
+          bondfireId: args.draftBondfireId,
+          updatedAt: now,
+        })
+
+        return {
+          liveSessionId,
+          recordId: args.draftBondfireId,
+          recordType: 'bondfire' as const,
+        }
+      }
+
+      const personalCamp = await assertCanCreatePersonalBondfire(ctx, { userId: args.userId })
       const recordId = await ctx.db.insert('bondfires', {
         userId: args.userId,
         creatorName: user?.displayName ?? user?.name,
@@ -3764,8 +3879,34 @@ export const cancelMuxLiveSessionRecord = internalMutation({
     if (liveSession.bondfireId && !liveSession.bondfireVideoId) {
       // Tolerate retried cancels — the row may already be gone.
       const bondfire = await ctx.db.get(liveSession.bondfireId)
-      if (bondfire) {
-        await ctx.db.delete(liveSession.bondfireId)
+      if (bondfire?.liveSessionId === liveSession._id) {
+        if (isDraftBornPersonalBondfire(bondfire)) {
+          // Invite-first Hearth flow: the audience was assembled before the
+          // recording, so a cancelled attempt reverts the row to `draft`
+          // (participants and invite links intact) instead of destroying it.
+          const { muxAssetIds } = await revertBondfireToDraft(ctx, bondfire)
+          if (muxAssetIds.length > 0) {
+            await ctx.scheduler.runAfter(
+              0,
+              internal.bondfireFailureCleanup.deleteFailedBondfireMuxAssets,
+              { assetIds: muxAssetIds },
+            )
+          }
+        } else {
+          // Full cascade so participants, invite codes, claims, and counters
+          // don't orphan; keep this live session row — it's patched with the
+          // cancel forensics below.
+          const { muxAssetIds } = await purgeBondfireConvexRecords(ctx, bondfire, {
+            preserveLiveSessionId: liveSession._id,
+          })
+          if (muxAssetIds.length > 0) {
+            await ctx.scheduler.runAfter(
+              0,
+              internal.bondfireFailureCleanup.deleteFailedBondfireMuxAssets,
+              { assetIds: muxAssetIds },
+            )
+          }
+        }
       }
     }
 
@@ -4121,11 +4262,14 @@ export const handleMuxWebhookEvent = internalMutation({
             }
           } else if (liveSession.bondfireId) {
             // New live bondfire (camp or Hearth)
-            await ctx.scheduler.runAfter(0, internal.sendNotification.notifyBondfireLive, {
-              bondfireId: liveSession.bondfireId,
-              creatorId: liveSession.userId,
-              creatorName,
-            })
+            const bondfire = await ctx.db.get(liveSession.bondfireId)
+            if (bondfire?.liveSessionId === liveSession._id) {
+              await ctx.scheduler.runAfter(0, internal.sendNotification.notifyBondfireLive, {
+                bondfireId: liveSession.bondfireId,
+                creatorId: liveSession.userId,
+                creatorName,
+              })
+            }
           }
         }
       } else if (args.eventType === 'video.live_stream.disconnected') {

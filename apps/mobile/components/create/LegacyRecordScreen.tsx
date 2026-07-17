@@ -58,6 +58,12 @@ interface LegacyRecordScreenProps {
   personalCreateStartedAtRef: MutableRefObject<number | null>
   /** Owned by the create router alongside the pending-upload scheduling. */
   clearUploadStartTimeout: () => void
+  /**
+   * Pre-existing draft bondfire to activate (Hearth pre-recording invite flow).
+   * When set, the background upload attaches to this row instead of creating
+   * a new bondfire on recording completion.
+   */
+  draftBondfireId?: string
 }
 
 export function LegacyRecordScreen({
@@ -76,6 +82,7 @@ export function LegacyRecordScreen({
   logRecordingError,
   personalCreateStartedAtRef,
   clearUploadStartTimeout,
+  draftBondfireId,
 }: LegacyRecordScreenProps) {
   const { colors, statusBarStyle } = useAppThemeColors()
   const isFocused = useIsFocused()
@@ -300,6 +307,7 @@ export function LegacyRecordScreen({
             personalCamp: isPersonalCamp || undefined,
             tags: selectedCampTags,
             isResponse: !!respondTo,
+            draftBondfireId: isPersonalCamp ? draftBondfireId : undefined,
             createMuxDirectUpload: async (args) => {
               return await createMuxDirectUpload({
                 ...args,
@@ -307,6 +315,7 @@ export function LegacyRecordScreen({
                 campId: args.campId as Id<'camps'> | undefined,
                 personalCamp: args.personalCamp,
                 tags: args.tags,
+                draftBondfireId: args.draftBondfireId as Id<'bondfires'> | undefined,
               })
             },
             getMuxUploadStatus: async (args) => {
@@ -351,6 +360,7 @@ export function LegacyRecordScreen({
       convex,
       isPersonalCamp,
       personalCreateStartedAtRef,
+      draftBondfireId,
     ],
   )
 

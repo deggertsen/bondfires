@@ -1439,3 +1439,36 @@ export const sendReclaimWarnings = internalAction({
     return { warned: campIds.length }
   },
 })
+
+// ── Hearth Invite Email ──
+
+/** Email an invite code to someone who doesn't have a Bondfires account yet.
+ * Called from personalBondfires.sendDraftInvites when an email address doesn't
+ * match an existing user (existing users get a direct invite + push instead). */
+export const sendHearthInviteEmail = internalAction({
+  args: {
+    to: v.string(),
+    inviterName: v.string(),
+    bondfireTitle: v.optional(v.string()),
+    code: v.string(),
+  },
+  handler: async (_ctx, args): Promise<{ success: boolean; error?: string }> => {
+    const safeInviterName = escapeHtml(args.inviterName)
+    const safeTitle = args.bondfireTitle ? escapeHtml(args.bondfireTitle) : undefined
+
+    const titleLine = safeTitle
+      ? `<strong>${safeInviterName}</strong> invited you to join "${safeTitle}" on Bondfires.`
+      : `<strong>${safeInviterName}</strong> invited you to join their Bondfire.`
+
+    return await sendResendEmail({
+      to: args.to,
+      subject: "You're invited to join a Bondfire",
+      heading: 'You have an invitation',
+      bodyHtml: `${titleLine} Pull up a log — the fire's going.`,
+      ctaLabel: 'Join the Bondfire',
+      ctaUrl: `https://bondfires.org/invite/${args.code}`,
+      footer:
+        "This email was sent because someone invited you to join a Bondfire. If you don't recognize the sender, you can safely ignore this email.",
+    })
+  },
+})

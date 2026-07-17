@@ -291,7 +291,7 @@ export default function PersonalCampScreen() {
         campLabel: bondfire.campLabel,
         thumbnailUrl: thumbnailUrls[bondfire._id] ?? null,
         isLive: bondfire.videoStatus === 'live',
-        statusLabel: '',
+        statusLabel: bondfire.status === 'draft' ? 'Draft — not recorded yet' : '',
         participants: [],
         actions: getBondfireSwipeActions({
           isOwner,

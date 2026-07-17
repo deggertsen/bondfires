@@ -78,6 +78,12 @@ interface LiveRecordScreenProps {
   logRecordingError: (error: unknown) => void
   /** Owned by the create router — the completion screen reads it for routing. */
   personalCreateStartedAtRef: MutableRefObject<number | null>
+  /**
+   * Pre-existing draft bondfire to activate (Hearth pre-recording invite flow).
+   * When set, the live session attaches to this row instead of creating a new
+   * bondfire on recording completion.
+   */
+  draftBondfireId?: string
 }
 
 export function LiveRecordScreen({
@@ -96,6 +102,7 @@ export function LiveRecordScreen({
   onBack,
   logRecordingError,
   personalCreateStartedAtRef,
+  draftBondfireId,
 }: LiveRecordScreenProps) {
   const { statusBarStyle } = useAppThemeColors()
   const isFocused = useIsFocused()
@@ -206,6 +213,7 @@ export function LiveRecordScreen({
         tags: args.tags,
         title: args.title,
         pending: args.pending,
+        draftBondfireId: draftBondfireId as Id<'bondfires'> | undefined,
       }),
     endLiveStream: async (args) =>
       await endLiveStream({
@@ -472,6 +480,7 @@ export function LiveRecordScreen({
     title: !respondTo
       ? getDefaultBondfireTitle(currentUser, selectedCamp?.name) || undefined
       : undefined,
+    draftBondfireId: !respondTo && isPersonalCamp ? draftBondfireId : undefined,
   }
   const liveProvisionArgsRef = useRef(liveProvisionArgs)
   liveProvisionArgsRef.current = liveProvisionArgs

@@ -132,6 +132,14 @@ crons.daily(
 // gets local-evening delivery; idempotent via notificationDeliveries.
 crons.hourly('send digest reminders', { minuteUTC: 10 }, internal.digest.runHourlySweep)
 
+// Delete Hearth draft bondfires whose 24h recording window lapsed without a
+// recording. Invalidates invite codes and claims so shared links stop working.
+crons.hourly(
+  'cleanup expired draft bondfires',
+  { minuteUTC: 30 },
+  internal.personalBondfires.cleanupExpiredDrafts,
+)
+
 // Final push + email warning to owners of frozen/inactive camps whose
 // reclaim deadline is within 3 days. Idempotent via notificationDeliveries.
 crons.daily(
