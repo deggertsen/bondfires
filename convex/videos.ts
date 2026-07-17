@@ -11,7 +11,13 @@ import {
   query,
 } from './_generated/server'
 import { auth } from './auth'
-import { type BondfireFailureReason, handleFailedBondfire } from './bondfireFailureCleanup'
+import {
+  type BondfireFailureReason,
+  handleFailedBondfire,
+  isDraftBornPersonalBondfire,
+  purgeBondfireConvexRecords,
+  revertBondfireToDraft,
+} from './bondfireFailureCleanup'
 import {
   isCampParticipableStatus,
   isCampReadableStatus,
@@ -1312,7 +1318,7 @@ async function markRecordErrored(
         durationMs: args.durationMs,
         source: 'markRecordErrored',
       })
-      if (result.deleted && result.muxAssetIds.length > 0) {
+      if ((result.deleted || result.reverted) && result.muxAssetIds.length > 0) {
         await ctx.scheduler.runAfter(
           0,
           internal.bondfireFailureCleanup.deleteFailedBondfireMuxAssets,
@@ -1485,7 +1491,7 @@ async function markLinkedLiveRecordErrored(ctx: MutationCtx, liveSession: Doc<'l
         liveSessionErrorMessage: liveSession.errorMessage,
         source: 'markLinkedLiveRecordErrored',
       })
-      if (result.deleted && result.muxAssetIds.length > 0) {
+      if ((result.deleted || result.reverted) && result.muxAssetIds.length > 0) {
         await ctx.scheduler.runAfter(
           0,
           internal.bondfireFailureCleanup.deleteFailedBondfireMuxAssets,
@@ -3206,7 +3212,9 @@ export const createPendingMuxVideo = internalMutation({
       }
 
       // When a draft bondfire exists (pre-recording invite flow), activate it
-      // instead of creating a new row.
+      // instead of creating a new row. Same entitlement gate as fresh creation
+      // — the subscription may have lapsed (or the recording may exceed the
+      // tier's duration limit) since the draft was created.
       if (args.draftBondfireId) {
         const draft = await ctx.db.get(args.draftBondfireId)
         if (!draft) {
@@ -3218,10 +3226,17 @@ export const createPendingMuxVideo = internalMutation({
         if (draft.status !== 'draft') {
           throwUserError('This bondfire is no longer a draft.')
         }
+        await assertCanCreatePersonalBondfire(ctx, {
+          userId: args.userId,
+          durationMs: args.durationMs,
+        })
 
+        // draftExpiresAt is intentionally kept: it marks the row as draft-born
+        // so cancel/error paths can revert it to 'draft' (see
+        // bondfireFailureCleanup.revertBondfireToDraft). Only `status` gates
+        // the cleanup cron.
         await ctx.db.patch(args.draftBondfireId, {
           status: 'live',
-          draftExpiresAt: undefined,
           videoStatus: 'waiting_for_upload',
           muxUploadId: args.uploadId,
           muxPlaybackPolicy: args.playbackPolicy ?? 'signed',
@@ -3230,6 +3245,12 @@ export const createPendingMuxVideo = internalMutation({
           width: args.width,
           height: args.height,
           tags: args.tags,
+          updatedAt: now,
+        })
+
+        // Drafts don't count toward bondfireCount until they hold a recording.
+        await ctx.db.patch(args.userId, {
+          bondfireCount: (user?.bondfireCount ?? 0) + 1,
           updatedAt: now,
         })
 
@@ -3610,10 +3631,16 @@ export const createLinkedMuxLiveSession = internalMutation({
         if (draft.status !== 'draft') {
           throwUserError('This bondfire is no longer a draft.')
         }
+        // Same entitlement gate as fresh creation — the subscription may have
+        // lapsed (or the hearth frozen) since the draft was created.
+        await assertCanCreatePersonalBondfire(ctx, { userId: args.userId })
 
+        // draftExpiresAt is intentionally kept: it marks the row as draft-born
+        // so cancel/error paths can revert it to 'draft' (see
+        // bondfireFailureCleanup.revertBondfireToDraft). Only `status` gates
+        // the cleanup cron.
         await ctx.db.patch(args.draftBondfireId, {
           status: 'live',
-          draftExpiresAt: undefined,
           liveSessionId,
           videoStatus: initialStatus,
           muxLiveStreamId: args.liveStreamId,
@@ -3622,8 +3649,19 @@ export const createLinkedMuxLiveSession = internalMutation({
           muxAssetStatus: initialStatus,
           width: args.width,
           height: args.height,
+          // The invite-screen title wins; fall back to the client's default
+          // title only when the draft never got one.
+          ...(draft.title ? {} : { title: args.title }),
           updatedAt: now,
         })
+
+        // Drafts don't count toward bondfireCount until they hold a recording.
+        if (user) {
+          await ctx.db.patch(args.userId, {
+            bondfireCount: (user.bondfireCount ?? 0) + 1,
+            updatedAt: now,
+          })
+        }
 
         await ctx.db.patch(liveSessionId, {
           bondfireId: args.draftBondfireId,
@@ -3845,7 +3883,33 @@ export const cancelMuxLiveSessionRecord = internalMutation({
       // Tolerate retried cancels — the row may already be gone.
       const bondfire = await ctx.db.get(liveSession.bondfireId)
       if (bondfire) {
-        await ctx.db.delete(liveSession.bondfireId)
+        if (isDraftBornPersonalBondfire(bondfire)) {
+          // Invite-first Hearth flow: the audience was assembled before the
+          // recording, so a cancelled attempt reverts the row to `draft`
+          // (participants and invite links intact) instead of destroying it.
+          const { muxAssetIds } = await revertBondfireToDraft(ctx, bondfire)
+          if (muxAssetIds.length > 0) {
+            await ctx.scheduler.runAfter(
+              0,
+              internal.bondfireFailureCleanup.deleteFailedBondfireMuxAssets,
+              { assetIds: muxAssetIds },
+            )
+          }
+        } else {
+          // Full cascade so participants, invite codes, claims, and counters
+          // don't orphan; keep this live session row — it's patched with the
+          // cancel forensics below.
+          const { muxAssetIds } = await purgeBondfireConvexRecords(ctx, bondfire, {
+            preserveLiveSessionId: liveSession._id,
+          })
+          if (muxAssetIds.length > 0) {
+            await ctx.scheduler.runAfter(
+              0,
+              internal.bondfireFailureCleanup.deleteFailedBondfireMuxAssets,
+              { assetIds: muxAssetIds },
+            )
+          }
+        }
       }
     }
 

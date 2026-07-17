@@ -34,6 +34,11 @@ const DRAFT_BONDFIRE_TTL_MS = 24 * 60 * 60 * 1000
 /** Same cap as CompletionScreen's title editor. */
 const MAX_TITLE_LENGTH = 80
 
+/** Upper bound on email invites per send — mirrors MAX_EMAIL_INVITES in
+ * PreRecordingInviteScreen. Keeps one mutation call from fanning out an
+ * unbounded number of Resend emails. */
+const MAX_EMAIL_INVITES = 10
+
 /** Recent Connections: interactions within this window count. */
 const RECENT_CONNECTION_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
 const RECENT_CONNECTIONS_LIMIT = 20
@@ -172,13 +177,8 @@ async function deleteDraftBondfireCascade(ctx: MutationCtx, bondfire: Doc<'bondf
 
   await ctx.db.delete(bondfire._id)
 
-  const owner = await ctx.db.get(bondfire.userId)
-  if (owner) {
-    await ctx.db.patch(owner._id, {
-      bondfireCount: Math.max(0, (owner.bondfireCount ?? 1) - 1),
-      updatedAt: Date.now(),
-    })
-  }
+  // No bondfireCount decrement: drafts were never counted (the count is added
+  // at activation, when a recording attaches — see videos.ts).
 }
 
 // ── Mutations ──────────────────────────────────────────────────────────────
@@ -317,6 +317,13 @@ export const createDraftBondfire = mutation({
 
         const existingDraft = await findDraftBondfireForUser(ctx, user._id)
         if (existingDraft) {
+          // Keep the resumed draft's title in sync with what the screen shows,
+          // whether or not the user also sends invites (which is the only
+          // other place the title gets persisted).
+          const title = normalizeTitle(args.title)
+          if (title && title !== existingDraft.title) {
+            await ctx.db.patch(existingDraft._id, { title, updatedAt: now })
+          }
           const existingCode = await ensureDraftInviteCode(ctx, existingDraft._id, user._id)
           return { bondfireId: existingDraft._id, inviteCode: existingCode.code, resumed: true }
         }
@@ -349,10 +356,10 @@ export const createDraftBondfire = mutation({
           updatedAt: now,
         })
 
-        await ctx.db.patch(user._id, {
-          bondfireCount: (user.bondfireCount ?? 0) + 1,
-          updatedAt: now,
-        })
+        // bondfireCount deliberately not incremented here — drafts hold no
+        // recording, and the recount paths only count playable records. The
+        // activation paths in videos.ts add the count when the recording
+        // attaches.
 
         const code = await ensureDraftInviteCode(ctx, bondfireId, user._id)
         return { bondfireId, inviteCode: code.code, resumed: false }
@@ -381,9 +388,16 @@ export const sendDraftInvites = mutation({
         const user = await getCurrentUser(ctx)
         const now = Date.now()
 
+        if (args.emails.length > MAX_EMAIL_INVITES) {
+          throwUserError(`You can invite up to ${MAX_EMAIL_INVITES} people by email at a time.`)
+        }
+
         const bondfire = await getPersonalBondfireOrThrow(ctx, args.bondfireId)
         if (bondfire.userId !== user._id) {
           throwUserError('Only the bondfire owner can send invites.')
+        }
+        if (bondfire.status !== 'draft') {
+          throwUserError('This bondfire is no longer a draft.')
         }
         await assertPersonalCampActive(
           ctx,
@@ -482,11 +496,9 @@ export const sendDraftInvites = mutation({
           })
         }
 
-        return {
-          invited: toAdd.length,
-          emailed: newUserEmails.length,
-          inviteCode: code.code,
-        }
+        // Deliberately no invited/emailed breakdown: for a single submitted
+        // email those counts would reveal whether an account exists for it.
+        return { inviteCode: code.code }
       },
     ),
 })
@@ -515,63 +527,9 @@ export const discardDraftBondfire = mutation({
 })
 
 /**
- * Transition a draft bondfire to `live` once recording completes. Called from
- * the live-publish flow (`createLinkedMuxLiveSession`) when a draftBondfireId
- * was passed through, attaching the Mux asset / playback fields and clearing
- * the draft expiry. Validates the bondfire is still in draft status and owned
- * by the current user.
- */
-export const activateDraftBondfire = mutation({
-  args: {
-    bondfireId: v.id('bondfires'),
-    muxAssetId: v.optional(v.string()),
-    muxPlaybackId: v.optional(v.string()),
-    muxPlaybackPolicy: v.optional(v.union(v.literal('public'), v.literal('signed'))),
-    durationMs: v.optional(v.number()),
-    width: v.optional(v.number()),
-    height: v.optional(v.number()),
-  },
-  handler: (ctx, args) =>
-    withUserFacingErrors(
-      'personalBondfires.activateDraftBondfire',
-      'Something went wrong publishing your Bondfire. Please try again.',
-      async () => {
-        const user = await getCurrentUser(ctx)
-        const now = Date.now()
-
-        const bondfire = await ctx.db.get(args.bondfireId)
-        if (!bondfire) {
-          throwUserError('Bondfire not found')
-        }
-        if (bondfire.userId !== user._id) {
-          throwUserError('Only the bondfire owner can activate it.')
-        }
-        if (bondfire.status !== 'draft') {
-          throwUserError('This bondfire is no longer a draft.')
-        }
-
-        await ctx.db.patch(args.bondfireId, {
-          status: 'live',
-          draftExpiresAt: undefined,
-          muxAssetId: args.muxAssetId,
-          muxPlaybackId: args.muxPlaybackId,
-          muxPlaybackPolicy: args.muxPlaybackPolicy ?? 'signed',
-          durationMs: args.durationMs,
-          width: args.width,
-          height: args.height,
-          videoStatus: 'ready',
-          muxAssetStatus: 'ready',
-          updatedAt: now,
-        })
-
-        return { bondfireId: args.bondfireId }
-      },
-    ),
-})
-
-/**
  * Hourly cron: delete draft bondfires whose 24h recording window lapsed,
- * invalidating their invite codes and claims.
+ * invalidating their invite codes and claims. Draft activation happens inline
+ * in videos.ts (`createPendingMuxVideo` / `createLinkedMuxLiveSession`).
  */
 export const cleanupExpiredDrafts = internalMutation({
   args: {},
@@ -584,6 +542,12 @@ export const cleanupExpiredDrafts = internalMutation({
 
     for (const bondfire of expired) {
       await deleteDraftBondfireCascade(ctx, bondfire)
+    }
+
+    // A backlog larger than one batch drains via immediate re-runs instead of
+    // silently waiting for the next hourly tick.
+    if (expired.length === DRAFT_CLEANUP_BATCH_SIZE) {
+      await ctx.scheduler.runAfter(0, internal.personalBondfires.cleanupExpiredDrafts, {})
     }
 
     return { deleted: expired.length }
@@ -704,12 +668,9 @@ export async function redeemInviteHandler(ctx: MutationCtx, rawCode: string) {
     throwUserError('This bondfire is not part of a hearth.')
   }
 
-  // Draft bondfires only admit their directly-invited audience — a shared
-  // link goes live together with the recording.
-  if (bondfire.status === 'draft') {
-    throwUserError("This bondfire hasn't been published yet.")
-  }
-
+  // Draft bondfires are joinable: an invitee lands on the "waiting to start
+  // recording" screen (videoStatus 'pending') and is already in the audience
+  // when the owner goes live — same experience as a directly-invited user.
   await assertPersonalCampActive(
     ctx,
     bondfire.personalCampId,
@@ -960,9 +921,6 @@ export const checkInvite = query({
     }
     if (!bondfire.personalCampId) {
       return { valid: false, reason: 'invalid' as const }
-    }
-    if (bondfire.status === 'draft') {
-      return { valid: false, reason: 'not_ready' as const }
     }
     const personalCamp = await ctx.db.get(bondfire.personalCampId)
     if (!personalCamp || personalCamp.status !== 'active') {

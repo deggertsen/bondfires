@@ -1,11 +1,13 @@
-import { telemetry, useAppThemeColors } from '@bondfires/app'
+import { subscriptionActions, telemetry, useAppThemeColors } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
-import { observable } from '@legendapp/state'
-import { Check, Link, Plus, X } from '@tamagui/lucide-icons'
+import { useObservable, useValue } from '@legendapp/state/react'
+import { Check, Copy, Link, Plus, Share, X } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
-import { useCallback, useMemo, useState } from 'react'
-import { Alert, Pressable, ScrollView, StatusBar, TextInput } from 'react-native'
+import * as Clipboard from 'expo-clipboard'
+import { useCallback, useMemo } from 'react'
+import { Alert, Pressable, Share as RNShare, ScrollView, StatusBar, TextInput } from 'react-native'
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Avatar, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
@@ -13,27 +15,24 @@ import type { Id } from '../../../../convex/_generated/dataModel'
 const MAX_TITLE_LENGTH = 80
 const CLOSE_CIRCLE_DISPLAY_LIMIT = 8
 const RECENT_CONNECTIONS_DISPLAY_LIMIT = 20
+/** Mirrors MAX_EMAIL_INVITES in convex/personalBondfires.ts. */
+const MAX_EMAIL_INVITES = 10
+/** Same base URL as InviteSheet — both domains are app-linked in app.json. */
+const INVITE_BASE_URL = 'https://bondfires.app/invite'
 
-// Local Legend State for the invite screen — kept out of the global appStore$
-// because it's a transient form and we don't want stale form data to bleed
-// into a later create flow.
 interface InviteFormState {
   selectedRecipientIds: Id<'users'>[]
   emails: string[]
   title: string
   titleTouched: boolean
   emailInput: string
+  /** Set once a share link has been created — the draft now exists server-side. */
+  shareInfo: { bondfireId: string; code: string } | null
+  copied: boolean
+  isSubmitting: boolean
+  isDiscarding: boolean
+  isCreatingLink: boolean
 }
-
-const initialState: InviteFormState = {
-  selectedRecipientIds: [],
-  emails: [],
-  title: '',
-  titleTouched: false,
-  emailInput: '',
-}
-
-const formStore$ = observable<InviteFormState>(initialState)
 
 function isValidEmail(value: string): boolean {
   // Pragmatic regex — not RFC-perfect, but catches obvious typos and rejects
@@ -60,6 +59,22 @@ function buildAutoTitle(
   return `Hey ${names[0] ?? ''} & friends`
 }
 
+/** Cap errors thrown by sendDraftInvites — see getParticipantCap tiers. */
+function isCapError(message: string): boolean {
+  return /upgrade to premium|this fire is full/i.test(message)
+}
+
+function showUpgradeAlert() {
+  Alert.alert(
+    'Invite limit reached',
+    'Your current membership limits how many people can join a Hearth bondfire. Upgrade to invite more.',
+    [
+      { text: 'Not now', style: 'cancel' },
+      { text: 'Upgrade', onPress: () => subscriptionActions.showPaywall() },
+    ],
+  )
+}
+
 export interface ExistingDraft {
   _id: string
   title?: string
@@ -68,6 +83,8 @@ export interface ExistingDraft {
 interface PreRecordingInviteScreenProps {
   onContinue: (bondfireId: string, title: string) => void
   onCancel: () => void
+  /** Record without setting up an audience first (pre-invite behavior). */
+  onSkip: () => void
   existingDraft?: ExistingDraft | null
 }
 
@@ -79,10 +96,10 @@ interface PreRecordingInviteScreenProps {
  *      from the last 30 days) for one-tap in-app invites.
  *   2. Email invites — emails that match an existing account become a direct
  *      invite; the rest get the code via Resend.
- *   3. Auto-generated title from the selected recipients; user can override
+ *   3. A share link, created on demand (creating it creates the draft, so
+ *      the link people receive is the one that goes live with the recording).
+ *   4. Auto-generated title from the selected recipients; user can override
  *      and the auto-fill stops the moment they touch the field.
- *   4. "A share link will be generated when you continue." — the actual
- *      invite code is created on Continue, so we don't show a stale link.
  *
  * If the user already has a draft (e.g. they backed out of recording and
  * came back), we show a Continue/Discard prompt at the top so they can
@@ -91,10 +108,26 @@ interface PreRecordingInviteScreenProps {
 export function PreRecordingInviteScreen({
   onContinue,
   onCancel,
+  onSkip,
   existingDraft,
 }: PreRecordingInviteScreenProps) {
   const { colors, statusBarStyle } = useAppThemeColors()
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const insets = useSafeAreaInsets()
+
+  // Transient form state, scoped to this mount so a cancel-and-reopen always
+  // starts clean (a module-level store would leak state across visits).
+  const form$ = useObservable<InviteFormState>({
+    selectedRecipientIds: [],
+    emails: [],
+    title: '',
+    titleTouched: false,
+    emailInput: '',
+    shareInfo: null,
+    copied: false,
+    isSubmitting: false,
+    isDiscarding: false,
+    isCreatingLink: false,
+  })
 
   // Only fetch invite candidates for Hearth — the screen is never shown for
   // camp or respondTo flows.
@@ -107,16 +140,23 @@ export function PreRecordingInviteScreen({
     () => (candidates?.recentConnections ?? []).slice(0, RECENT_CONNECTIONS_DISPLAY_LIMIT),
     [candidates?.recentConnections],
   )
+  const participantCap = candidates?.participantCap
 
   const createDraft = useMutation(api.personalBondfires.createDraftBondfire)
   const sendInvites = useMutation(api.personalBondfires.sendDraftInvites)
   const discardDraft = useMutation(api.personalBondfires.discardDraftBondfire)
 
-  const selectedRecipientIds = formStore$.selectedRecipientIds.get()
-  const emails = formStore$.emails.get()
-  const title = formStore$.title.get()
-  const titleTouched = formStore$.titleTouched.get()
-  const emailInput = formStore$.emailInput.get()
+  const selectedRecipientIds = useValue(form$.selectedRecipientIds)
+  const emails = useValue(form$.emails)
+  const title = useValue(form$.title)
+  const titleTouched = useValue(form$.titleTouched)
+  const emailInput = useValue(form$.emailInput)
+  const shareInfo = useValue(form$.shareInfo)
+  const copied = useValue(form$.copied)
+  const isSubmitting = useValue(form$.isSubmitting)
+  const isDiscarding = useValue(form$.isDiscarding)
+  const isCreatingLink = useValue(form$.isCreatingLink)
+  const isBusy = isSubmitting || isDiscarding || isCreatingLink
 
   // Combined candidate set used for both selection and auto-title.
   const allCandidates = useMemo(
@@ -133,70 +173,96 @@ export function PreRecordingInviteScreen({
   const displayTitle = titleTouched ? title : autoTitle
 
   const canContinue =
-    !isSubmitting &&
-    ((displayTitle.trim().length > 0 && displayTitle.length <= MAX_TITLE_LENGTH) ||
+    !isBusy &&
+    (displayTitle.trim().length > 0 ||
       selectedRecipientIds.length > 0 ||
-      emails.length > 0)
+      emails.length > 0 ||
+      shareInfo !== null)
 
-  const toggleRecipient = useCallback((id: Id<'users'>) => {
-    const current = formStore$.selectedRecipientIds.get()
-    if (current.includes(id)) {
-      formStore$.selectedRecipientIds.set(current.filter((entry) => entry !== id))
-    } else {
-      formStore$.selectedRecipientIds.set([...current, id])
-    }
-  }, [])
+  // Once a draft exists (share link created, or one carried over from a prior
+  // visit), skipping would record into a *different* bondfire and orphan the
+  // draft people may already have joined — so hide the escape hatch.
+  const canSkip = !isBusy && shareInfo === null && !existingDraft
+
+  // The resume/discard prompt is for drafts left over from a *previous* visit.
+  // Creating a share link creates a draft server-side, which echoes back into
+  // the reactive existingDraft query — don't prompt about our own draft.
+  const showResumeBanner = Boolean(existingDraft) && shareInfo === null
+
+  const toggleRecipient = useCallback(
+    (id: Id<'users'>) => {
+      const current = form$.selectedRecipientIds.get()
+      if (current.includes(id)) {
+        form$.selectedRecipientIds.set(current.filter((entry) => entry !== id))
+        return
+      }
+      // The owner occupies one slot, so cap - 1 people can be invited. The cap
+      // stays out of the UI until the user actually runs into it.
+      if (participantCap !== undefined && current.length + 1 > participantCap - 1) {
+        showUpgradeAlert()
+        return
+      }
+      form$.selectedRecipientIds.set([...current, id])
+    },
+    [form$, participantCap],
+  )
 
   const addEmail = useCallback(() => {
-    const candidate = emailInput.trim()
+    const candidate = form$.emailInput.get().trim()
     if (!candidate) return
     if (!isValidEmail(candidate)) {
       Alert.alert('Invalid Email', 'Please enter a valid email address.')
       return
     }
     const lower = candidate.toLowerCase()
-    const current = formStore$.emails.get()
+    const current = form$.emails.get()
     if (current.includes(lower)) {
-      formStore$.emailInput.set('')
+      form$.emailInput.set('')
       return
     }
-    formStore$.emails.set([...current, lower])
-    formStore$.emailInput.set('')
-  }, [emailInput])
-
-  const removeEmail = useCallback((target: string) => {
-    formStore$.emails.set(formStore$.emails.get().filter((entry) => entry !== target))
-  }, [])
-
-  const handleTitleChange = useCallback((text: string) => {
-    const truncated = text.slice(0, MAX_TITLE_LENGTH)
-    formStore$.title.set(truncated)
-    if (!formStore$.titleTouched.get()) {
-      formStore$.titleTouched.set(true)
+    if (current.length >= MAX_EMAIL_INVITES) {
+      Alert.alert(
+        'Email limit reached',
+        `You can invite up to ${MAX_EMAIL_INVITES} people by email per bondfire.`,
+      )
+      return
     }
-  }, [])
+    form$.emails.set([...current, lower])
+    form$.emailInput.set('')
+  }, [form$])
 
-  const handleContinue = useCallback(async () => {
-    if (!canContinue || isSubmitting) return
-    setIsSubmitting(true)
+  const removeEmail = useCallback(
+    (target: string) => {
+      form$.emails.set(form$.emails.get().filter((entry) => entry !== target))
+    },
+    [form$],
+  )
+
+  const handleTitleChange = useCallback(
+    (text: string) => {
+      form$.title.set(text.slice(0, MAX_TITLE_LENGTH))
+      if (!form$.titleTouched.get()) {
+        form$.titleTouched.set(true)
+      }
+    },
+    [form$],
+  )
+
+  const handleCreateShareLink = useCallback(async () => {
+    if (form$.isCreatingLink.get() || form$.shareInfo.get()) return
+    form$.isCreatingLink.set(true)
     try {
-      const trimmedTitle = displayTitle.trim()
+      const trimmedTitle = (
+        form$.titleTouched.get()
+          ? form$.title.get()
+          : buildAutoTitle(allCandidates, form$.selectedRecipientIds.get())
+      ).trim()
       const result = await createDraft({
         ...(trimmedTitle.length > 0 ? { title: trimmedTitle } : {}),
       })
-      if (selectedRecipientIds.length > 0 || emails.length > 0) {
-        await sendInvites({
-          bondfireId: result.bondfireId,
-          recipientIds: selectedRecipientIds,
-          emails,
-          ...(trimmedTitle.length > 0 ? { title: trimmedTitle } : {}),
-        })
-      }
-      // Reset form before navigating so a back→re-enter starts clean.
-      formStore$.set(initialState)
-      onContinue(result.bondfireId, trimmedTitle)
+      form$.shareInfo.set({ bondfireId: result.bondfireId, code: result.inviteCode })
     } catch (error) {
-      telemetry.error('create:invite_submit', 'Failed to create Hearth draft', {
+      telemetry.error('create:share_link', 'Failed to create draft for share link', {
         error: String(error),
       })
       Alert.alert(
@@ -204,37 +270,113 @@ export function PreRecordingInviteScreen({
         error instanceof Error ? error.message : 'Please try again.',
       )
     } finally {
-      setIsSubmitting(false)
+      form$.isCreatingLink.set(false)
     }
-  }, [
-    canContinue,
-    createDraft,
-    displayTitle,
-    emails,
-    isSubmitting,
-    onContinue,
-    selectedRecipientIds,
-    sendInvites,
-  ])
+  }, [allCandidates, createDraft, form$])
+
+  const handleCopyLink = useCallback(async () => {
+    const info = form$.shareInfo.get()
+    if (!info) return
+    try {
+      await Clipboard.setStringAsync(`${INVITE_BASE_URL}/${info.code}`)
+      form$.copied.set(true)
+      setTimeout(() => form$.copied.set(false), 2000)
+    } catch (error) {
+      Alert.alert('Copy Failed', error instanceof Error ? error.message : String(error))
+    }
+  }, [form$])
+
+  const handleShareSheet = useCallback(async () => {
+    const info = form$.shareInfo.get()
+    if (!info) return
+    const shareUrl = `${INVITE_BASE_URL}/${info.code}`
+    try {
+      await RNShare.share({
+        message: `Join my Bondfire!\n\n${shareUrl}`,
+        url: shareUrl,
+      })
+    } catch {
+      // User cancelled
+    }
+  }, [form$])
+
+  const handleContinue = useCallback(async () => {
+    if (form$.isSubmitting.get()) return
+    form$.isSubmitting.set(true)
+    try {
+      const recipientIds = form$.selectedRecipientIds.get()
+      const emailList = form$.emails.get()
+      const trimmedTitle = (
+        form$.titleTouched.get() ? form$.title.get() : buildAutoTitle(allCandidates, recipientIds)
+      ).trim()
+      // Idempotent: returns the existing draft when one exists (e.g. the share
+      // link above already created it, or the user is resuming).
+      const result = await createDraft({
+        ...(trimmedTitle.length > 0 ? { title: trimmedTitle } : {}),
+      })
+      if (recipientIds.length > 0 || emailList.length > 0) {
+        await sendInvites({
+          bondfireId: result.bondfireId,
+          recipientIds,
+          emails: emailList,
+          ...(trimmedTitle.length > 0 ? { title: trimmedTitle } : {}),
+        })
+      }
+      onContinue(result.bondfireId, trimmedTitle)
+    } catch (error) {
+      telemetry.error('create:invite_submit', 'Failed to create Hearth draft', {
+        error: String(error),
+      })
+      const message = error instanceof Error ? error.message : 'Please try again.'
+      if (isCapError(message)) {
+        showUpgradeAlert()
+      } else {
+        Alert.alert('Something went wrong', message)
+      }
+    } finally {
+      form$.isSubmitting.set(false)
+    }
+  }, [allCandidates, createDraft, form$, onContinue, sendInvites])
 
   const handleResumeDraft = useCallback(() => {
     if (!existingDraft) return
-    // We don't reset the form here — the resume uses the existing draft
-    // server-side, and the parent will navigate to recording.
     onContinue(existingDraft._id, existingDraft.title ?? '')
   }, [existingDraft, onContinue])
 
-  const handleDiscardDraft = useCallback(async () => {
-    if (!existingDraft) return
-    try {
-      await discardDraft({ bondfireId: existingDraft._id as Id<'bondfires'> })
-    } catch (error) {
-      // Non-fatal: the cron will clean it up within 24h.
-      telemetry.warn('create:discard_draft', 'Failed to discard existing draft', {
-        error: String(error),
-      })
-    }
-  }, [discardDraft, existingDraft])
+  const handleDiscardDraft = useCallback(() => {
+    if (!existingDraft || form$.isDiscarding.get()) return
+    Alert.alert(
+      'Discard this draft?',
+      'Anyone you already invited will lose access, and any shared links will stop working.',
+      [
+        { text: 'Keep it', style: 'cancel' },
+        {
+          text: 'Discard',
+          style: 'destructive',
+          onPress: async () => {
+            form$.isDiscarding.set(true)
+            try {
+              await discardDraft({ bondfireId: existingDraft._id as Id<'bondfires'> })
+              // The draft this session's share link pointed at is gone too.
+              form$.shareInfo.set(null)
+            } catch (error) {
+              telemetry.warn('create:discard_draft', 'Failed to discard existing draft', {
+                error: String(error),
+              })
+              Alert.alert(
+                'Discard failed',
+                error instanceof Error ? error.message : 'Please try again.',
+              )
+            } finally {
+              form$.isDiscarding.set(false)
+            }
+          },
+        },
+      ],
+    )
+  }, [discardDraft, existingDraft, form$])
+
+  const shareUrl = shareInfo ? `${INVITE_BASE_URL}/${shareInfo.code}` : null
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
@@ -246,7 +388,8 @@ export function PreRecordingInviteScreen({
           alignItems="center"
           justifyContent="space-between"
           paddingHorizontal={16}
-          paddingVertical={12}
+          paddingTop={insets.top + 8}
+          paddingBottom={12}
         >
           <Text fontSize={20} fontWeight="800" color={'$color'}>
             New Hearth Bondfire
@@ -262,10 +405,10 @@ export function PreRecordingInviteScreen({
         </XStack>
 
         <ScrollView
-          contentContainerStyle={{ paddingBottom: 140 }}
+          contentContainerStyle={{ paddingBottom: 180 }}
           keyboardShouldPersistTaps="handled"
         >
-          {existingDraft && (
+          {showResumeBanner && existingDraft && (
             <YStack
               marginHorizontal={16}
               marginBottom={16}
@@ -289,7 +432,7 @@ export function PreRecordingInviteScreen({
                   variant="primary"
                   size="$md"
                   onPress={handleResumeDraft}
-                  disabled={isSubmitting}
+                  disabled={isBusy}
                 >
                   <Text color={'$color'} fontWeight="700">
                     Continue
@@ -300,7 +443,8 @@ export function PreRecordingInviteScreen({
                   variant="outline"
                   size="$md"
                   onPress={handleDiscardDraft}
-                  disabled={isSubmitting}
+                  disabled={isBusy}
+                  icon={isDiscarding ? <Spinner size="small" color={'$color'} /> : undefined}
                 >
                   <Text color={'$color'} fontWeight="700">
                     Discard
@@ -362,7 +506,7 @@ export function PreRecordingInviteScreen({
               <XStack gap={8} alignItems="center">
                 <TextInput
                   value={emailInput}
-                  onChangeText={(text) => formStore$.emailInput.set(text)}
+                  onChangeText={(text) => form$.emailInput.set(text)}
                   onSubmitEditing={addEmail}
                   placeholder="friend@example.com"
                   placeholderTextColor={colors.placeholderColor}
@@ -403,23 +547,78 @@ export function PreRecordingInviteScreen({
             </YStack>
           </InviteSection>
 
-          {/* Share link placeholder */}
-          <InviteSection title="Or share with anyone" caption="">
-            <YStack paddingHorizontal={16} gap={8}>
-              <XStack
-                alignItems="center"
-                gap={10}
-                padding={12}
-                borderRadius={12}
-                borderWidth={1}
-                borderColor={'$borderColor'}
-                backgroundColor={'$backgroundHover'}
-              >
-                <Link size={18} color={'$placeholderColor'} />
-                <Text color={'$placeholderColor'} fontSize={13} flex={1}>
-                  A share link will be generated when you continue.
-                </Text>
-              </XStack>
+          {/* Share link */}
+          <InviteSection
+            title="Or share with anyone"
+            caption="Anyone with the link can join — they'll be there when you start."
+          >
+            <YStack paddingHorizontal={16} gap={10}>
+              {shareUrl ? (
+                <>
+                  <XStack
+                    alignItems="center"
+                    gap={10}
+                    padding={12}
+                    borderRadius={12}
+                    borderWidth={1}
+                    borderColor={'$borderColor'}
+                    backgroundColor={'$backgroundHover'}
+                  >
+                    <Link size={18} color={'$placeholderColor'} />
+                    <Text color={'$color'} fontSize={13} flex={1} numberOfLines={1}>
+                      {shareUrl}
+                    </Text>
+                  </XStack>
+                  <XStack gap={10}>
+                    <Button
+                      flex={1}
+                      variant="primary"
+                      size="$md"
+                      onPress={handleCopyLink}
+                      icon={
+                        copied ? (
+                          <Check size={16} color={'$color'} />
+                        ) : (
+                          <Copy size={16} color={'$color'} />
+                        )
+                      }
+                    >
+                      <Text color={'$color'} fontWeight="700">
+                        {copied ? 'Copied' : 'Copy'}
+                      </Text>
+                    </Button>
+                    <Button
+                      flex={1}
+                      variant="outline"
+                      size="$md"
+                      onPress={handleShareSheet}
+                      icon={<Share size={16} color={'$color'} />}
+                    >
+                      <Text color={'$color'} fontWeight="700">
+                        Share
+                      </Text>
+                    </Button>
+                  </XStack>
+                </>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="$md"
+                  onPress={handleCreateShareLink}
+                  disabled={isBusy}
+                  icon={
+                    isCreatingLink ? (
+                      <Spinner size="small" color={'$color'} />
+                    ) : (
+                      <Link size={16} color={'$color'} />
+                    )
+                  }
+                >
+                  <Text color={'$color'} fontWeight="700">
+                    {isCreatingLink ? 'Creating link…' : 'Create share link'}
+                  </Text>
+                </Button>
+              )}
             </YStack>
           </InviteSection>
 
@@ -456,10 +655,11 @@ export function PreRecordingInviteScreen({
         <YStack
           paddingHorizontal={16}
           paddingTop={12}
-          paddingBottom={24}
+          paddingBottom={Math.max(insets.bottom, 12) + 8}
           backgroundColor={'$background'}
           borderTopWidth={1}
           borderTopColor={'$borderColor'}
+          gap={10}
         >
           <Button
             variant="primary"
@@ -478,6 +678,18 @@ export function PreRecordingInviteScreen({
               {isSubmitting ? 'Setting up…' : 'Continue to record'}
             </Text>
           </Button>
+          {canSkip && (
+            <Pressable
+              onPress={onSkip}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Skip inviting and record now"
+            >
+              <Text color={'$placeholderColor'} fontSize={13} fontWeight="600" textAlign="center">
+                Skip — record without inviting
+              </Text>
+            </Pressable>
+          )}
         </YStack>
       </YStack>
     </KeyboardAvoidingView>
@@ -524,7 +736,12 @@ function CandidateAvatar({
   const displayName = candidate.displayName ?? candidate.name ?? 'Friend'
   const initial = displayName.trim().charAt(0).toUpperCase() || '?'
   return (
-    <Pressable onPress={onToggle} accessibilityRole="button" accessibilityLabel={displayName}>
+    <Pressable
+      onPress={onToggle}
+      accessibilityRole="button"
+      accessibilityLabel={displayName}
+      accessibilityState={{ selected }}
+    >
       <YStack alignItems="center" gap={6} width={68}>
         <YStack
           width={60}
@@ -535,17 +752,19 @@ function CandidateAvatar({
           alignItems="center"
           justifyContent="center"
           backgroundColor={'$backgroundHover'}
-          overflow="hidden"
         >
-          {candidate.photoUrl ? (
-            <Avatar circular size={60}>
-              <Avatar.Image src={candidate.photoUrl} />
-            </Avatar>
-          ) : (
-            <Text color={'$color'} fontWeight="700" fontSize={20}>
-              {initial}
-            </Text>
-          )}
+          <Avatar circular size={selected ? 54 : 60}>
+            {candidate.photoUrl ? <Avatar.Image source={{ uri: candidate.photoUrl }} /> : null}
+            <Avatar.Fallback
+              backgroundColor={'$backgroundHover'}
+              alignItems="center"
+              justifyContent="center"
+            >
+              <Text color={'$color'} fontWeight="700" fontSize={20}>
+                {initial}
+              </Text>
+            </Avatar.Fallback>
+          </Avatar>
           {selected && (
             <YStack
               position="absolute"

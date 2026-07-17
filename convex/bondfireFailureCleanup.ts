@@ -129,10 +129,14 @@ async function deleteWatchEventsForVideo(ctx: MutationCtx, videoId: string) {
  * Mirrors the per-bondfire cascade in `bondfireRetention.deleteExpiredBondfireRecords`.
  * Returns the Mux asset IDs that the caller should delete from Mux (HTTP, so it
  * must happen in an action, not here).
+ *
+ * `preserveLiveSessionId` keeps that one live session row alive so the caller
+ * can still stamp its cancel/end forensics on it afterwards.
  */
-async function purgeBondfireConvexRecords(
+export async function purgeBondfireConvexRecords(
   ctx: MutationCtx,
   bondfire: Doc<'bondfires'>,
+  options?: { preserveLiveSessionId?: Id<'liveSessions'> },
 ): Promise<{ muxAssetIds: string[] }> {
   const bondfireId = bondfire._id
   const muxAssetIds = new Set<string>()
@@ -227,7 +231,7 @@ async function purgeBondfireConvexRecords(
     await ctx.db.delete(report._id)
   }
 
-  if (bondfire.liveSessionId) {
+  if (bondfire.liveSessionId && bondfire.liveSessionId !== options?.preserveLiveSessionId) {
     const liveSession = await ctx.db.get(bondfire.liveSessionId)
     if (liveSession) await ctx.db.delete(bondfire.liveSessionId)
   }
@@ -300,11 +304,71 @@ function isPlayableVideoRecord(record: {
 }
 
 /**
+ * A Hearth bondfire born from the pre-recording invite flow. `draftExpiresAt`
+ * is intentionally kept after activation so failure/cancel paths can identify
+ * these rows and revert them instead of destroying the invited audience.
+ */
+export function isDraftBornPersonalBondfire(bondfire: Doc<'bondfires'>): boolean {
+  return Boolean(bondfire.personalCampId) && bondfire.draftExpiresAt !== undefined
+}
+
+/**
+ * Put a draft-born Hearth bondfire back into `draft` after a failed or
+ * cancelled recording attempt: strip every video/live field so it's pristine,
+ * keep the participants and invite codes (the whole point of the invite-first
+ * flow), and give back the `bondfireCount` that activation added. The original
+ * `draftExpiresAt` still stands, so an abandoned draft is cleaned up on the
+ * original 24h schedule.
+ *
+ * Returns any Mux asset IDs that were attached, so the caller can schedule
+ * their deletion (HTTP, so it must happen in an action).
+ */
+export async function revertBondfireToDraft(
+  ctx: MutationCtx,
+  bondfire: Doc<'bondfires'>,
+): Promise<{ muxAssetIds: string[] }> {
+  const muxAssetIds = bondfire.muxAssetId ? [bondfire.muxAssetId] : []
+
+  await ctx.db.patch(bondfire._id, {
+    status: 'draft',
+    videoStatus: 'pending',
+    liveSessionId: undefined,
+    muxUploadId: undefined,
+    muxAssetId: undefined,
+    muxAssetStatus: undefined,
+    muxPlaybackId: undefined,
+    muxLiveStreamId: undefined,
+    muxLivePlaybackId: undefined,
+    durationMs: undefined,
+    width: undefined,
+    height: undefined,
+    updatedAt: Date.now(),
+  })
+
+  if (bondfire.status !== 'draft') {
+    const owner = await ctx.db.get(bondfire.userId)
+    if (owner) {
+      await ctx.db.patch(owner._id, {
+        bondfireCount: Math.max(0, (owner.bondfireCount ?? 1) - 1),
+        updatedAt: Date.now(),
+      })
+    }
+  }
+
+  return { muxAssetIds }
+}
+
+/**
  * Handle a bondfire (spark) whose video has terminally failed or been abandoned.
  *
- * ALWAYS writes a forensic record first. Then, only when
- * `HARD_DELETE_FAILED_BONDFIRES` is enabled, cascade-deletes the bondfire and
- * returns the Mux asset IDs the caller must delete from Mux (in an action).
+ * ALWAYS writes a forensic record first. A draft-born Hearth bondfire is then
+ * reverted to `draft` (regardless of the hard-delete flag — reverting is a
+ * recovery, not a deletion) so its invited audience survives and the owner can
+ * retry recording. Otherwise, only when `HARD_DELETE_FAILED_BONDFIRES` is
+ * enabled, cascade-deletes the bondfire.
+ *
+ * Returns the Mux asset IDs the caller must delete from Mux (in an action)
+ * whenever `deleted` or `reverted` is true.
  *
  * No-ops for non-spark records — only bondfire (spark) failures orphan a
  * reachable detail route; response failures are handled by their own paths.
@@ -314,15 +378,20 @@ export async function handleFailedBondfire(
   bondfire: Doc<'bondfires'>,
   reason: BondfireFailureReason,
   detail?: Record<string, unknown>,
-): Promise<{ deleted: boolean; muxAssetIds: string[] }> {
+): Promise<{ deleted: boolean; reverted: boolean; muxAssetIds: string[] }> {
   await recordBondfireFailure(ctx, bondfire, reason, detail)
 
+  if (isDraftBornPersonalBondfire(bondfire)) {
+    const { muxAssetIds } = await revertBondfireToDraft(ctx, bondfire)
+    return { deleted: false, reverted: true, muxAssetIds }
+  }
+
   if (!HARD_DELETE_FAILED_BONDFIRES) {
-    return { deleted: false, muxAssetIds: [] }
+    return { deleted: false, reverted: false, muxAssetIds: [] }
   }
 
   const { muxAssetIds } = await purgeBondfireConvexRecords(ctx, bondfire)
-  return { deleted: true, muxAssetIds }
+  return { deleted: true, reverted: false, muxAssetIds }
 }
 
 const MUX_API_BASE_URL = 'https://api.mux.com/video/v1'

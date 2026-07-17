@@ -111,6 +111,10 @@ export default function CreateScreen() {
   const liveRecordId = useValue(livePublishStore$.recordId)
   const draftBondfireId$ = useObservable<string | null>(null)
   const draftBondfireId = useValue(draftBondfireId$)
+  // "Skip — record without inviting" on the pre-recording invite screen:
+  // record the old way (bondfire created at recording time, no draft).
+  const inviteSkipped$ = useObservable(false)
+  const inviteSkipped = useValue(inviteSkipped$)
 
   // Invariant: on the live create flow (not a response), the bondfire row is
   // provisioned the moment recording starts (livePublisher.start), so reaching
@@ -750,12 +754,15 @@ export default function CreateScreen() {
 
   // Pre-recording invite screen for Hearth (personal camp) bondfires.
   // Shown before the recording screen so the audience is established first.
-  if (isPersonalCamp && !respondTo && !draftBondfireId) {
+  if (isPersonalCamp && !respondTo && !draftBondfireId && !inviteSkipped) {
     return (
       <PreRecordingInviteScreen
         existingDraft={existingDraft ?? null}
         onContinue={(bondfireId, _title) => {
           draftBondfireId$.set(bondfireId)
+        }}
+        onSkip={() => {
+          inviteSkipped$.set(true)
         }}
         onCancel={() => {
           if (router.canDismiss()) {

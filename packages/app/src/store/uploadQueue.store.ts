@@ -9,6 +9,8 @@ export interface UploadTask {
   personalCamp?: boolean
   tags?: string[]
   isResponse: boolean
+  /** Pre-existing Hearth draft to activate instead of creating a new bondfire. */
+  draftBondfireId?: string
   status: 'pending' | 'processing' | 'uploading' | 'completed' | 'failed'
   progress?: number // 0-100 progress for current upload lifecycle
   stage?: string // Human-readable stage text for UI (processing/uploading/retry/etc)

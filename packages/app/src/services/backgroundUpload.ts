@@ -283,6 +283,7 @@ export async function startBackgroundUpload(
     personalCamp: options.personalCamp,
     tags: options.tags,
     isResponse: options.isResponse,
+    draftBondfireId: options.draftBondfireId,
     status: 'pending',
     progress: 0,
     stage: 'Queued',
@@ -377,6 +378,7 @@ async function processUploadTask(taskId: string, options: BackgroundUploadOption
         durationMs: processed.metadata.durationMs,
         width: processed.metadata.width,
         height: processed.metadata.height,
+        draftBondfireId: task.draftBondfireId,
       })
 
       uploadQueueActions.updateTask(taskId, {
@@ -504,6 +506,7 @@ export async function resumePendingUploads(
       personalCamp: task.personalCamp,
       tags: task.tags,
       isResponse: task.isResponse,
+      draftBondfireId: task.draftBondfireId,
     }
 
     // Resume processing
