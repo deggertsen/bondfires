@@ -4,7 +4,7 @@ import '../polyfills/convex-react-native'
 import { useForceUpdate } from '@bondfires/app'
 import { Button, ForceUpdateModal, Text, ToastContainer } from '@bondfires/ui'
 import { ConvexAuthProvider } from '@convex-dev/auth/react'
-import { ConvexReactClient, useMutation, useQuery } from 'convex/react'
+import { ConvexReactClient, useConvexAuth, useMutation, useQuery } from 'convex/react'
 import Constants from 'expo-constants'
 import { useFonts } from 'expo-font'
 import type * as Notifications from 'expo-notifications'
@@ -310,7 +310,11 @@ function AppContent() {
   const { themeName } = useAppTheme()
   const router = useRouter()
   const toasts = useValue(toastStore$.toasts)
-  const isAuthenticated = useValue(appStore$.isAuthenticated)
+  // Unlike the persisted app store, Convex only reports authenticated after
+  // the server has confirmed the current token. Use that as the mutation gate.
+  const { isAuthenticated: isServerAuthenticated } = useConvexAuth()
+  const serverAuthRef = useRef(isServerAuthenticated)
+  serverAuthRef.current = isServerAuthenticated
   const hasCompletedInviteCheck = useValue(appStore$.hasCompletedInviteCheck)
   const pendingInviteCode = useValue(appStore$.pendingInviteCode)
   const registerDevice = useMutation(api.notifications.registerDevice)
@@ -326,7 +330,7 @@ function AppContent() {
   const recordActiveRef = useRef(recordActive)
   recordActiveRef.current = recordActive
   const sendHeartbeat = useCallback(() => {
-    if (!appStore$.isAuthenticated.peek()) return
+    if (!serverAuthRef.current) return
     const now = Date.now()
     if (now - lastHeartbeatRef.current < 30 * 60 * 1000) return
     lastHeartbeatRef.current = now
@@ -344,9 +348,11 @@ function AppContent() {
         // Sync Android channel state → in-app preferences on foreground.
         // No-op on iOS; checks each channel's importance and updates prefs
         // if the user disabled any in system settings.
-        syncAndroidChannelPrefsRef.current().catch(() => {
-          // Best-effort sync — non-fatal if it fails
-        })
+        if (serverAuthRef.current) {
+          syncAndroidChannelPrefsRef.current().catch(() => {
+            // Best-effort sync — non-fatal if it fails
+          })
+        }
       }
     })
     return () => subscription.remove()
@@ -380,7 +386,7 @@ function AppContent() {
   }, [hasCompletedInviteCheck])
 
   useEffect(() => {
-    if (!isAuthenticated || !pendingInviteCode) {
+    if (!isServerAuthenticated || !pendingInviteCode) {
       return
     }
 
@@ -404,7 +410,7 @@ function AppContent() {
     return () => {
       cancelled = true
     }
-  }, [isAuthenticated, pendingInviteCode, redeemInviteCode, router])
+  }, [isServerAuthenticated, pendingInviteCode, redeemInviteCode, router])
 
   // Force-update check: compares current version against remote minAppVersion.
   // On Android with flexible priority, downloads in background via Play Core.
@@ -448,7 +454,8 @@ function AppContent() {
     syncAndroidChannelPrefs,
     resetChannelForCategory,
   } = usePushNotifications({
-    isAuthenticated,
+    // Use Convex's server-confirmed auth state, not the persisted routing state.
+    isAuthenticated: isServerAuthenticated,
     registerTokenMutation: async (params: {
       token: string
       tokenType: string
@@ -525,8 +532,10 @@ function AppContent() {
   }, [])
 
   useObserve(appStore$.preferences.notificationsEnabled, ({ value: notificationsEnabled }) => {
-    if (!appStore$.isAuthenticated.peek()) {
-      telemetry.breadcrumb('push:layout:notificationsEnabled:skip', { reason: 'not_authenticated' })
+    if (!serverAuthRef.current) {
+      telemetry.breadcrumb('push:layout:notificationsEnabled:skip', {
+        reason: 'server_auth_not_ready',
+      })
       return
     }
     if (notificationsEnabled) {
@@ -541,20 +550,18 @@ function AppContent() {
     }
   })
 
-  // When the user signs in, register the device silently if notifications
-  // are enabled and OS permission was already granted. Never prompt here.
-  useObserve(appStore$.isAuthenticated, ({ value: isAuthenticated }) => {
-    if (isAuthenticated && appStore$.preferences.notificationsEnabled.peek()) {
-      telemetry.breadcrumb('push:layout:signin', { notificationsEnabled: true })
+  // Retry background setup when Convex confirms the server-side session. The
+  // mount-time attempts may have run while auth was still loading and no-opped.
+  useEffect(() => {
+    if (!isServerAuthenticated) return
+
+    const notificationsEnabled = appStore$.preferences.notificationsEnabled.peek()
+    telemetry.breadcrumb('push:layout:serverAuthReady', { notificationsEnabled })
+    if (notificationsEnabled) {
       registerIfGrantedRef.current()
-    } else if (isAuthenticated) {
-      telemetry.breadcrumb('push:layout:signin', { notificationsEnabled: false })
     }
-    if (isAuthenticated) {
-      // The mount-time heartbeat may have fired pre-auth and no-opped.
-      sendHeartbeat()
-    }
-  })
+    sendHeartbeat()
+  }, [isServerAuthenticated, sendHeartbeat])
 
   useEffect(() => {
     if (pushError) {
