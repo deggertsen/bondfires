@@ -2,7 +2,7 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
-import { mutation, query } from './_generated/server'
+import { internalMutation, mutation, query } from './_generated/server'
 import { auth } from './auth'
 import {
   assertVideoDurationWithinTierLimit,
@@ -10,6 +10,7 @@ import {
   PAID_TIERS,
 } from './entitlements'
 import { throwUserError, withUserFacingErrors } from './errors'
+import { createDirectInviteHandler } from './inviteClaims'
 import {
   findReusableInviteCode,
   generateAndInsertInviteCode,
@@ -26,6 +27,21 @@ function getParticipantCap(tier: string): number {
   }
   return 2
 }
+
+/** Drafts with no recording are cleaned up after this long. */
+const DRAFT_BONDFIRE_TTL_MS = 24 * 60 * 60 * 1000
+
+/** Same cap as CompletionScreen's title editor. */
+const MAX_TITLE_LENGTH = 80
+
+/** Recent Connections: interactions within this window count. */
+const RECENT_CONNECTION_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
+const RECENT_CONNECTIONS_LIMIT = 20
+const RECENT_CONNECTION_BONDFIRE_SCAN_LIMIT = 25
+const CLOSE_CIRCLE_LIMIT = 8
+
+/** Batch size per cleanup cron run. */
+const DRAFT_CLEANUP_BATCH_SIZE = 50
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -83,6 +99,86 @@ async function assertPersonalCampActive(
   }
 
   return personalCamp
+}
+
+async function findDraftBondfireForUser(ctx: QueryCtx | MutationCtx, userId: Id<'users'>) {
+  return await ctx.db
+    .query('bondfires')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .filter((q) => q.eq(q.field('status'), 'draft'))
+    .first()
+}
+
+async function ensureDraftInviteCode(
+  ctx: MutationCtx,
+  bondfireId: Id<'bondfires'>,
+  userId: Id<'users'>,
+) {
+  return (
+    (await findReusableInviteCode(ctx, {
+      parentType: 'personal-bondfire',
+      parentId: bondfireId,
+      createdBy: userId,
+    })) ??
+    (await generateAndInsertInviteCode(ctx, {
+      parentType: 'personal-bondfire',
+      parentId: bondfireId,
+      createdBy: userId,
+      expiresInDays: 7,
+    }))
+  )
+}
+
+function normalizeTitle(title: string | undefined): string | undefined {
+  const trimmed = title?.trim().slice(0, MAX_TITLE_LENGTH)
+  return trimmed || undefined
+}
+
+/**
+ * Delete a draft bondfire and everything hanging off it: participants,
+ * invite codes (invalidating outstanding links), invite claims, and any
+ * live session left by an interrupted recording attempt.
+ */
+async function deleteDraftBondfireCascade(ctx: MutationCtx, bondfire: Doc<'bondfires'>) {
+  const participants = await ctx.db
+    .query('personalBondfireParticipants')
+    .withIndex('by_bondfire_status', (q) => q.eq('bondfireId', bondfire._id))
+    .collect()
+  for (const participant of participants) {
+    await ctx.db.delete(participant._id)
+  }
+
+  const invites = await ctx.db
+    .query('inviteCodes')
+    .withIndex('by_parent', (q) =>
+      q.eq('parentType', 'personal-bondfire').eq('parentId', bondfire._id),
+    )
+    .collect()
+  for (const invite of invites) {
+    await ctx.db.delete(invite._id)
+  }
+
+  const claims = await ctx.db
+    .query('inviteClaims')
+    .withIndex('by_bondfire_claimer', (q) => q.eq('bondfireId', bondfire._id))
+    .collect()
+  for (const claim of claims) {
+    await ctx.db.delete(claim._id)
+  }
+
+  if (bondfire.liveSessionId) {
+    await ctx.db.delete(bondfire.liveSessionId)
+  }
+
+  await ctx.db.delete(bondfire._id)
+
+  const owner = await ctx.db.get(bondfire.userId)
+  if (owner) {
+    await ctx.db.patch(owner._id, {
+      bondfireCount: Math.max(0, (owner.bondfireCount ?? 1) - 1),
+      updatedAt: Date.now(),
+    })
+  }
 }
 
 // ── Mutations ──────────────────────────────────────────────────────────────
@@ -180,6 +276,317 @@ export const createBondfire = mutation({
     })
 
     return bondfireId
+  },
+})
+
+// ── Pre-recording draft flow ───────────────────────────────────────────────
+
+/**
+ * Create a Hearth bondfire in `draft` status from the pre-recording invite
+ * screen: no video fields yet, an invite code up front, and a 24h cleanup
+ * deadline. One draft at a time — if the user already has one, it is returned
+ * instead (so a double-tap or a lazy share-link creation can't fork the flow).
+ */
+export const createDraftBondfire = mutation({
+  args: {
+    title: v.optional(v.string()),
+  },
+  handler: (ctx, args) =>
+    withUserFacingErrors(
+      'personalBondfires.createDraftBondfire',
+      'Something went wrong setting up your Bondfire. Please try again.',
+      async () => {
+        const user = await getCurrentUser(ctx)
+        const now = Date.now()
+
+        const tier = await getEntitlementSubscriptionTier(ctx, user._id)
+        if (!PAID_TIERS.includes(tier)) {
+          throwUserError('A Hearth requires a Plus, Premium, or Pro subscription.')
+        }
+
+        const personalCamp = await ctx.db
+          .query('personalCamps')
+          .withIndex('by_owner', (q) => q.eq('ownerId', user._id))
+          .first()
+        if (!personalCamp) {
+          throwUserError('Hearth not found. Subscribe to Plus, Premium, or Pro to create one.')
+        }
+        if (personalCamp.status !== 'active') {
+          throwUserError('Your hearth is currently frozen. Please re-subscribe to reactivate it.')
+        }
+
+        const existingDraft = await findDraftBondfireForUser(ctx, user._id)
+        if (existingDraft) {
+          const existingCode = await ensureDraftInviteCode(ctx, existingDraft._id, user._id)
+          return { bondfireId: existingDraft._id, inviteCode: existingCode.code, resumed: true }
+        }
+
+        const bondfireId = await ctx.db.insert('bondfires', {
+          userId: user._id,
+          creatorName: user.displayName ?? user.name,
+          personalCampId: personalCamp._id,
+          title: normalizeTitle(args.title),
+          frozen: false,
+          status: 'draft',
+          draftExpiresAt: now + DRAFT_BONDFIRE_TTL_MS,
+          // 'pending' drives the existing "waiting to start recording" detail
+          // screen for invited participants, and is never swept by the stuck-
+          // record reconciler (it only scans processing/waiting_for_upload).
+          videoStatus: 'pending',
+          muxPlaybackPolicy: 'signed',
+          videoCount: 1,
+          viewCount: 0,
+          createdAt: now,
+          updatedAt: now,
+        })
+
+        await ctx.db.insert('personalBondfireParticipants', {
+          bondfireId,
+          userId: user._id,
+          status: 'active',
+          joinedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        })
+
+        await ctx.db.patch(user._id, {
+          bondfireCount: (user.bondfireCount ?? 0) + 1,
+          updatedAt: now,
+        })
+
+        const code = await ensureDraftInviteCode(ctx, bondfireId, user._id)
+        return { bondfireId, inviteCode: code.code, resumed: false }
+      },
+    ),
+})
+
+/**
+ * Fire the audience selection for a draft bondfire: in-app recipients (and
+ * emails that match existing accounts) become active participants and get a
+ * direct invite + push; unknown emails get an invite-code email via Resend.
+ * Also persists the final title from the pre-recording screen.
+ */
+export const sendDraftInvites = mutation({
+  args: {
+    bondfireId: v.id('bondfires'),
+    recipientIds: v.array(v.id('users')),
+    emails: v.array(v.string()),
+    title: v.optional(v.string()),
+  },
+  handler: (ctx, args) =>
+    withUserFacingErrors(
+      'personalBondfires.sendDraftInvites',
+      'Something went wrong sending your invites. Please try again.',
+      async () => {
+        const user = await getCurrentUser(ctx)
+        const now = Date.now()
+
+        const bondfire = await getPersonalBondfireOrThrow(ctx, args.bondfireId)
+        if (bondfire.userId !== user._id) {
+          throwUserError('Only the bondfire owner can send invites.')
+        }
+        await assertPersonalCampActive(
+          ctx,
+          bondfire.personalCampId,
+          'Your hearth is currently frozen. Please re-subscribe to reactivate it.',
+        )
+
+        const title = normalizeTitle(args.title)
+        if (title && title !== bondfire.title) {
+          await ctx.db.patch(args.bondfireId, { title, updatedAt: now })
+        }
+
+        // Emails that match an existing account get a direct invite instead
+        // of an email; the rest get the invite code via Resend.
+        const recipientIds = new Set<Id<'users'>>(args.recipientIds)
+        recipientIds.delete(user._id)
+        const newUserEmails: string[] = []
+        for (const rawEmail of args.emails) {
+          const email = rawEmail.trim().toLowerCase()
+          if (!email) continue
+          const existingUser = await ctx.db
+            .query('users')
+            .withIndex('email', (q) => q.eq('email', email))
+            .first()
+          if (existingUser) {
+            if (existingUser._id !== user._id) {
+              recipientIds.add(existingUser._id)
+            }
+          } else if (!newUserEmails.includes(email)) {
+            newUserEmails.push(email)
+          }
+        }
+
+        // Everyone invited in-app becomes an active participant now, so the
+        // audience exists before the recording does. Enforce the tier cap
+        // across current actives plus everyone being added.
+        const tier = await getEntitlementSubscriptionTier(ctx, user._id)
+        if (!PAID_TIERS.includes(tier)) {
+          throwUserError('A Hearth requires a Plus, Premium, or Pro subscription.')
+        }
+        const cap = getParticipantCap(tier)
+        const activeCount = await getActiveParticipantCount(ctx, args.bondfireId)
+        const toAdd: Array<{
+          recipientId: Id<'users'>
+          participant: Doc<'personalBondfireParticipants'> | null
+        }> = []
+        for (const recipientId of recipientIds) {
+          const participant = await getPersonalBondfireParticipant(ctx, {
+            bondfireId: args.bondfireId,
+            userId: recipientId,
+          })
+          if (participant?.status !== 'active') {
+            toAdd.push({ recipientId, participant })
+          }
+        }
+        if (activeCount + toAdd.length > cap) {
+          if (tier === 'plus') {
+            throwUserError('Upgrade to Premium or Pro to invite more people to your Hearth.')
+          }
+          throwUserError('This fire is full.')
+        }
+
+        for (const { recipientId, participant } of toAdd) {
+          if (participant) {
+            await ctx.db.patch(participant._id, {
+              status: 'active',
+              joinedAt: now,
+              leftAt: undefined,
+              removedAt: undefined,
+              removedBy: undefined,
+              updatedAt: now,
+            })
+          } else {
+            await ctx.db.insert('personalBondfireParticipants', {
+              bondfireId: args.bondfireId,
+              userId: recipientId,
+              status: 'active',
+              joinedAt: now,
+              createdAt: now,
+              updatedAt: now,
+            })
+          }
+          await createDirectInviteHandler(ctx, {
+            bondfireId: args.bondfireId,
+            recipientId,
+          })
+        }
+
+        const code = await ensureDraftInviteCode(ctx, args.bondfireId, user._id)
+        for (const email of newUserEmails) {
+          await ctx.scheduler.runAfter(0, internal.sendNotification.sendHearthInviteEmail, {
+            to: email,
+            inviterName: user.displayName ?? user.name ?? 'Someone',
+            bondfireTitle: title ?? bondfire.title,
+            code: code.code,
+          })
+        }
+
+        return {
+          invited: toAdd.length,
+          emailed: newUserEmails.length,
+          inviteCode: code.code,
+        }
+      },
+    ),
+})
+
+/**
+ * Discard a draft bondfire (the "Discard" side of the resume prompt).
+ * Invalidates its invite codes and claims.
+ */
+export const discardDraftBondfire = mutation({
+  args: {
+    bondfireId: v.id('bondfires'),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUser(ctx)
+
+    const bondfire = await ctx.db.get(args.bondfireId)
+    if (!bondfire || bondfire.userId !== user._id) {
+      throwUserError('Bondfire not found')
+    }
+    if (bondfire.status !== 'draft') {
+      throwUserError('This bondfire is no longer a draft.')
+    }
+
+    await deleteDraftBondfireCascade(ctx, bondfire)
+  },
+})
+
+/**
+ * Transition a draft bondfire to `live` once recording completes. Called from
+ * the live-publish flow (`createLinkedMuxLiveSession`) when a draftBondfireId
+ * was passed through, attaching the Mux asset / playback fields and clearing
+ * the draft expiry. Validates the bondfire is still in draft status and owned
+ * by the current user.
+ */
+export const activateDraftBondfire = mutation({
+  args: {
+    bondfireId: v.id('bondfires'),
+    muxAssetId: v.optional(v.string()),
+    muxPlaybackId: v.optional(v.string()),
+    muxPlaybackPolicy: v.optional(v.union(v.literal('public'), v.literal('signed'))),
+    durationMs: v.optional(v.number()),
+    width: v.optional(v.number()),
+    height: v.optional(v.number()),
+  },
+  handler: (ctx, args) =>
+    withUserFacingErrors(
+      'personalBondfires.activateDraftBondfire',
+      'Something went wrong publishing your Bondfire. Please try again.',
+      async () => {
+        const user = await getCurrentUser(ctx)
+        const now = Date.now()
+
+        const bondfire = await ctx.db.get(args.bondfireId)
+        if (!bondfire) {
+          throwUserError('Bondfire not found')
+        }
+        if (bondfire.userId !== user._id) {
+          throwUserError('Only the bondfire owner can activate it.')
+        }
+        if (bondfire.status !== 'draft') {
+          throwUserError('This bondfire is no longer a draft.')
+        }
+
+        await ctx.db.patch(args.bondfireId, {
+          status: 'live',
+          draftExpiresAt: undefined,
+          muxAssetId: args.muxAssetId,
+          muxPlaybackId: args.muxPlaybackId,
+          muxPlaybackPolicy: args.muxPlaybackPolicy ?? 'signed',
+          durationMs: args.durationMs,
+          width: args.width,
+          height: args.height,
+          videoStatus: 'ready',
+          muxAssetStatus: 'ready',
+          updatedAt: now,
+        })
+
+        return { bondfireId: args.bondfireId }
+      },
+    ),
+})
+
+/**
+ * Hourly cron: delete draft bondfires whose 24h recording window lapsed,
+ * invalidating their invite codes and claims.
+ */
+export const cleanupExpiredDrafts = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now()
+    const expired = await ctx.db
+      .query('bondfires')
+      .withIndex('by_status', (q) => q.eq('status', 'draft').lte('draftExpiresAt', now))
+      .take(DRAFT_CLEANUP_BATCH_SIZE)
+
+    for (const bondfire of expired) {
+      await deleteDraftBondfireCascade(ctx, bondfire)
+    }
+
+    return { deleted: expired.length }
   },
 })
 
@@ -295,6 +702,12 @@ export async function redeemInviteHandler(ctx: MutationCtx, rawCode: string) {
 
   if (!bondfire.personalCampId) {
     throwUserError('This bondfire is not part of a hearth.')
+  }
+
+  // Draft bondfires only admit their directly-invited audience — a shared
+  // link goes live together with the recording.
+  if (bondfire.status === 'draft') {
+    throwUserError("This bondfire hasn't been published yet.")
   }
 
   await assertPersonalCampActive(
@@ -548,6 +961,9 @@ export const checkInvite = query({
     if (!bondfire.personalCampId) {
       return { valid: false, reason: 'invalid' as const }
     }
+    if (bondfire.status === 'draft') {
+      return { valid: false, reason: 'not_ready' as const }
+    }
     const personalCamp = await ctx.db.get(bondfire.personalCampId)
     if (!personalCamp || personalCamp.status !== 'active') {
       return { valid: false, reason: 'frozen' as const }
@@ -562,6 +978,140 @@ export const checkInvite = query({
       creatorName: bondfire.creatorName,
       participantCount: activeCount,
       cap,
+    }
+  },
+})
+
+/**
+ * The current user's in-progress draft bondfire, if any. Drives the
+ * resume/discard prompt on the create screen.
+ */
+export const getMyDraftBondfire = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      return null
+    }
+
+    const draft = await findDraftBondfireForUser(ctx, userId)
+    if (!draft) {
+      return null
+    }
+
+    return {
+      _id: draft._id,
+      title: draft.title,
+      createdAt: draft.createdAt,
+      draftExpiresAt: draft.draftExpiresAt,
+      participantCount: await getActiveParticipantCount(ctx, draft._id),
+    }
+  },
+})
+
+type InviteCandidate = {
+  _id: Id<'users'>
+  displayName?: string
+  name?: string
+  photoUrl?: string
+}
+
+function toInviteCandidate(user: Doc<'users'>): InviteCandidate {
+  return {
+    _id: user._id,
+    displayName: user.displayName,
+    name: user.name,
+    photoUrl: user.photoUrl,
+  }
+}
+
+/**
+ * People the user can invite from the pre-recording screen: their Close
+ * Circle pins plus Recent Connections — anyone they shared a Hearth bondfire
+ * with (participants and responders, either direction) in the last 30 days,
+ * newest interaction first, capped at 20.
+ */
+export const getInviteCandidates = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      return { closeCircle: [], recentConnections: [], participantCap: 2 }
+    }
+
+    const tier = await getEntitlementSubscriptionTier(ctx, userId)
+    const participantCap = getParticipantCap(tier)
+
+    const pins = await ctx.db
+      .query('closeCirclePins')
+      .withIndex('by_owner', (q) => q.eq('ownerId', userId))
+      .take(CLOSE_CIRCLE_LIMIT)
+    const closeCircleUsers = (
+      await Promise.all(pins.map((pin) => ctx.db.get(pin.pinnedUserId)))
+    ).filter((user): user is Doc<'users'> => user !== null)
+    const closeCircleIds = new Set(closeCircleUsers.map((user) => user._id))
+
+    const cutoff = Date.now() - RECENT_CONNECTION_WINDOW_MS
+    const latestByUser = new Map<Id<'users'>, number>()
+    const bump = (candidateId: Id<'users'>, timestamp: number) => {
+      if (candidateId === userId || timestamp < cutoff) {
+        return
+      }
+      latestByUser.set(candidateId, Math.max(latestByUser.get(candidateId) ?? 0, timestamp))
+    }
+
+    // People in the user's own recent bondfires: participants + responders.
+    const myBondfires = await ctx.db
+      .query('bondfires')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .order('desc')
+      .take(RECENT_CONNECTION_BONDFIRE_SCAN_LIMIT)
+    for (const bondfire of myBondfires) {
+      const participants = await ctx.db
+        .query('personalBondfireParticipants')
+        .withIndex('by_bondfire_status', (q) =>
+          q.eq('bondfireId', bondfire._id).eq('status', 'active'),
+        )
+        .collect()
+      for (const participant of participants) {
+        bump(participant.userId, participant.joinedAt)
+      }
+
+      const responses = await ctx.db
+        .query('bondfireVideos')
+        .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
+        .collect()
+      for (const response of responses) {
+        bump(response.userId, response.createdAt)
+      }
+    }
+
+    // Creators of bondfires the user recently responded to.
+    const myResponses = await ctx.db
+      .query('bondfireVideos')
+      .withIndex('by_user', (q) => q.eq('userId', userId).gte('createdAt', cutoff))
+      .order('desc')
+      .take(50)
+    for (const response of myResponses) {
+      const bondfire = await ctx.db.get(response.bondfireId)
+      if (bondfire) {
+        bump(bondfire.userId, response.createdAt)
+      }
+    }
+
+    const recentIds = [...latestByUser.entries()]
+      .filter(([candidateId]) => !closeCircleIds.has(candidateId))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, RECENT_CONNECTIONS_LIMIT)
+      .map(([candidateId]) => candidateId)
+    const recentUsers = (
+      await Promise.all(recentIds.map((candidateId) => ctx.db.get(candidateId)))
+    ).filter((user): user is Doc<'users'> => user !== null)
+
+    return {
+      closeCircle: closeCircleUsers.map(toInviteCandidate),
+      recentConnections: recentUsers.map(toInviteCandidate),
+      participantCap,
     }
   },
 })

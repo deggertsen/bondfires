@@ -439,6 +439,15 @@ export default defineSchema({
     title: v.optional(v.string()),
     frozen: v.optional(v.boolean()),
 
+    // Pre-recording draft lifecycle (Hearth invite-first flow). 'draft' =
+    // created from the pre-recording invite screen, no recording yet; 'live' =
+    // recording started/attached. undefined = legacy rows, implicitly live.
+    status: v.optional(v.union(v.literal('draft'), v.literal('live'))),
+    // 24h cleanup deadline set at draft creation. Intentionally kept after
+    // activation (only status gates the cleanup cron) so cancel/error paths
+    // can revert to 'draft' without recomputing it.
+    draftExpiresAt: v.optional(v.number()),
+
     // Video storage
     videoStatus: v.optional(
       v.union(
@@ -500,7 +509,9 @@ export default defineSchema({
     .index('by_mux_asset', ['muxAssetId'])
     .index('by_live_stream', ['muxLiveStreamId'])
     // Reconciliation: find records stuck in a non-terminal video status
-    .index('by_video_status', ['videoStatus', 'updatedAt']),
+    .index('by_video_status', ['videoStatus', 'updatedAt'])
+    // Draft cleanup cron: expired drafts ordered by deadline
+    .index('by_status', ['status', 'draftExpiresAt']),
 
   // Bondfire Videos - response videos to bondfires
   bondfireVideos: defineTable({

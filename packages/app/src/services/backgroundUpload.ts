@@ -58,6 +58,7 @@ export interface BackgroundUploadOptions {
   personalCamp?: boolean
   tags?: string[]
   isResponse: boolean
+  draftBondfireId?: string
   createMuxDirectUpload: (args: {
     filename: string
     contentType: string
@@ -69,6 +70,7 @@ export interface BackgroundUploadOptions {
     durationMs?: number
     width?: number
     height?: number
+    draftBondfireId?: string
   }) => Promise<MuxDirectUpload>
   getMuxUploadStatus: (args: { uploadId: string }) => Promise<MuxUploadStatus>
   callbacks?: BackgroundUploadCallbacks

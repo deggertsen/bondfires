@@ -119,6 +119,7 @@ export function useLivePublisher(options: {
     height?: number
     title?: string
     pending?: boolean
+    draftBondfireId?: string
   }) => Promise<CreateLiveStreamResult>
   endLiveStream: (args: { liveSessionId: string; reason?: string }) => Promise<unknown>
   cancelLiveStream: (args: { liveSessionId: string; reason?: string }) => Promise<unknown>
@@ -412,12 +413,14 @@ export function useLivePublisher(options: {
         tags?: string[]
         title?: string
         pending?: boolean
+        draftBondfireId?: string
       } = {},
     ) => {
       telemetry.info('live:provision', 'Live stream provisioning requested', {
         isResponse: !!args.respondToBondfireId,
         hasCampId: !!args.campId,
         isPersonalCamp: !!args.personalCamp,
+        hasDraftBondfireId: !!args.draftBondfireId,
       })
 
       livePublishActions.beginCreate()
@@ -432,6 +435,7 @@ export function useLivePublisher(options: {
           tags: args.tags,
           title: args.title,
           pending: args.pending,
+          draftBondfireId: args.draftBondfireId,
         })
         provisionedSessionId = liveStream.liveSessionId
 
@@ -563,6 +567,7 @@ export function useLivePublisher(options: {
         initialCamera?: 'front' | 'back'
         title?: string
         pending?: boolean
+        draftBondfireId?: string
       } = {},
     ) => {
       telemetry.info('live:start', 'Live publisher start requested', {
@@ -570,6 +575,7 @@ export function useLivePublisher(options: {
         isResponse: !!args.respondToBondfireId,
         hasCampId: !!args.campId,
         isPersonalCamp: !!args.personalCamp,
+        hasDraftBondfireId: !!args.draftBondfireId,
       })
 
       livePublishActions.beginCreate()
@@ -584,6 +590,7 @@ export function useLivePublisher(options: {
           tags: args.tags,
           title: args.title,
           pending: args.pending,
+          draftBondfireId: args.draftBondfireId,
         })
         const provisionMs = Date.now() - startRequestedAt
         provisionedSessionId = liveStream.liveSessionId
