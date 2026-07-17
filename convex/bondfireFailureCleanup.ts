@@ -328,6 +328,20 @@ export async function revertBondfireToDraft(
   bondfire: Doc<'bondfires'>,
 ): Promise<{ muxAssetIds: string[] }> {
   const muxAssetIds = bondfire.muxAssetId ? [bondfire.muxAssetId] : []
+  const now = Date.now()
+
+  // The row is intentionally reusable for another recording attempt. Unlink
+  // the old session in both directions so a delayed active/idle/error webhook
+  // cannot mutate that later attempt through its stale bondfireId.
+  if (bondfire.liveSessionId) {
+    const liveSession = await ctx.db.get(bondfire.liveSessionId)
+    if (liveSession?.bondfireId === bondfire._id) {
+      await ctx.db.patch(liveSession._id, {
+        bondfireId: undefined,
+        updatedAt: now,
+      })
+    }
+  }
 
   await ctx.db.patch(bondfire._id, {
     status: 'draft',
@@ -342,7 +356,7 @@ export async function revertBondfireToDraft(
     durationMs: undefined,
     width: undefined,
     height: undefined,
-    updatedAt: Date.now(),
+    updatedAt: now,
   })
 
   if (bondfire.status !== 'draft') {
@@ -350,7 +364,7 @@ export async function revertBondfireToDraft(
     if (owner) {
       await ctx.db.patch(owner._id, {
         bondfireCount: Math.max(0, (owner.bondfireCount ?? 1) - 1),
-        updatedAt: Date.now(),
+        updatedAt: now,
       })
     }
   }

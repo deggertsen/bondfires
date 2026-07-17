@@ -1388,7 +1388,7 @@ async function patchLinkedLiveRecord(
   // reap (leaving the session wedged forever), so check existence first.
   if (liveSession.bondfireVideoId) {
     const video = await ctx.db.get(liveSession.bondfireVideoId)
-    if (video) {
+    if (video?.liveSessionId === liveSession._id) {
       await ctx.db.patch(liveSession.bondfireVideoId, patch)
     }
     return
@@ -1396,7 +1396,7 @@ async function patchLinkedLiveRecord(
 
   if (liveSession.bondfireId) {
     const bondfire = await ctx.db.get(liveSession.bondfireId)
-    if (bondfire) {
+    if (bondfire?.liveSessionId === liveSession._id) {
       await ctx.db.patch(liveSession.bondfireId, {
         ...patch,
         updatedAt: Date.now(),
@@ -1410,10 +1410,12 @@ async function getLinkedLiveRecord(
   liveSession: Doc<'liveSessions'>,
 ): Promise<Doc<'bondfires'> | Doc<'bondfireVideos'> | null> {
   if (liveSession.bondfireVideoId) {
-    return await ctx.db.get(liveSession.bondfireVideoId)
+    const video = await ctx.db.get(liveSession.bondfireVideoId)
+    return video?.liveSessionId === liveSession._id ? video : null
   }
   if (liveSession.bondfireId) {
-    return await ctx.db.get(liveSession.bondfireId)
+    const bondfire = await ctx.db.get(liveSession.bondfireId)
+    return bondfire?.liveSessionId === liveSession._id ? bondfire : null
   }
   return null
 }
@@ -1484,7 +1486,9 @@ async function markLinkedLiveRecordErrored(ctx: MutationCtx, liveSession: Doc<'l
   // thread/uncount logic above, so only act on sparks here.
   if (liveSession.bondfireId && !liveSession.bondfireVideoId) {
     const spark = await ctx.db.get(liveSession.bondfireId)
-    if (spark) {
+    // A draft-born Hearth reuses its bondfire row after a failed attempt. A
+    // delayed error from the old Mux session must not revert the newer one.
+    if (spark?.liveSessionId === liveSession._id) {
       const result = await handleFailedBondfire(ctx, spark, 'live_never_watchable', {
         liveSessionId: liveSession._id,
         liveSessionStatus: liveSession.status,
@@ -2467,16 +2471,9 @@ export const markLinkedRecordProcessing = internalMutation({
       muxAssetStatus: 'processing',
     }
 
-    if (liveSession.bondfireVideoId) {
-      await ctx.db.patch(liveSession.bondfireVideoId, patch)
-    }
-
-    if (liveSession.bondfireId) {
-      await ctx.db.patch(liveSession.bondfireId, {
-        ...patch,
-        updatedAt: Date.now(),
-      })
-    }
+    const linkedRecord = await getLinkedLiveRecord(ctx, liveSession)
+    if (!linkedRecord) return { updated: false }
+    await patchLinkedLiveRecord(ctx, liveSession, patch)
 
     return { updated: true }
   },
@@ -3882,7 +3879,7 @@ export const cancelMuxLiveSessionRecord = internalMutation({
     if (liveSession.bondfireId && !liveSession.bondfireVideoId) {
       // Tolerate retried cancels — the row may already be gone.
       const bondfire = await ctx.db.get(liveSession.bondfireId)
-      if (bondfire) {
+      if (bondfire?.liveSessionId === liveSession._id) {
         if (isDraftBornPersonalBondfire(bondfire)) {
           // Invite-first Hearth flow: the audience was assembled before the
           // recording, so a cancelled attempt reverts the row to `draft`
@@ -4265,11 +4262,14 @@ export const handleMuxWebhookEvent = internalMutation({
             }
           } else if (liveSession.bondfireId) {
             // New live bondfire (camp or Hearth)
-            await ctx.scheduler.runAfter(0, internal.sendNotification.notifyBondfireLive, {
-              bondfireId: liveSession.bondfireId,
-              creatorId: liveSession.userId,
-              creatorName,
-            })
+            const bondfire = await ctx.db.get(liveSession.bondfireId)
+            if (bondfire?.liveSessionId === liveSession._id) {
+              await ctx.scheduler.runAfter(0, internal.sendNotification.notifyBondfireLive, {
+                bondfireId: liveSession.bondfireId,
+                creatorId: liveSession.userId,
+                creatorName,
+              })
+            }
           }
         }
       } else if (args.eventType === 'video.live_stream.disconnected') {

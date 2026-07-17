@@ -11,12 +11,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Avatar, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
+import {
+  buildAutoTitle,
+  isValidInviteEmail,
+  MAX_EMAIL_INVITES,
+  MAX_TITLE_LENGTH,
+} from './preRecordingInvite'
 
-const MAX_TITLE_LENGTH = 80
 const CLOSE_CIRCLE_DISPLAY_LIMIT = 8
 const RECENT_CONNECTIONS_DISPLAY_LIMIT = 20
-/** Mirrors MAX_EMAIL_INVITES in convex/personalBondfires.ts. */
-const MAX_EMAIL_INVITES = 10
 /** Same base URL as InviteSheet — both domains are app-linked in app.json. */
 const INVITE_BASE_URL = 'https://bondfires.app/invite'
 
@@ -32,31 +35,6 @@ interface InviteFormState {
   isSubmitting: boolean
   isDiscarding: boolean
   isCreatingLink: boolean
-}
-
-function isValidEmail(value: string): boolean {
-  // Pragmatic regex — not RFC-perfect, but catches obvious typos and rejects
-  // whitespace, missing @, missing TLD, etc. The mutation does a stricter
-  // check before any DB or send work happens.
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
-}
-
-function buildAutoTitle(
-  candidates: ReadonlyArray<{
-    _id: Id<'users'>
-    displayName?: string
-    name?: string
-  }>,
-  selectedIds: ReadonlyArray<Id<'users'>>,
-): string {
-  const names = candidates
-    .filter((candidate) => selectedIds.includes(candidate._id))
-    .map((candidate) => candidate.displayName?.split(' ')[0] ?? candidate.name?.split(' ')[0] ?? '')
-    .filter((name) => name.length > 0)
-  if (names.length === 0) return ''
-  if (names.length === 1) return `Hey ${names[0] ?? ''}`
-  if (names.length === 2) return `Hey ${names[0] ?? ''} & ${names[1] ?? ''}`
-  return `Hey ${names[0] ?? ''} & friends`
 }
 
 /** Cap errors thrown by sendDraftInvites — see getParticipantCap tiers. */
@@ -167,8 +145,8 @@ export function PreRecordingInviteScreen({
   // Auto-title: only when the user hasn't touched the field AND we have
   // something useful to show.
   const autoTitle = useMemo(
-    () => buildAutoTitle(allCandidates, selectedRecipientIds),
-    [allCandidates, selectedRecipientIds],
+    () => buildAutoTitle(allCandidates, selectedRecipientIds, emails),
+    [allCandidates, emails, selectedRecipientIds],
   )
   const displayTitle = titleTouched ? title : autoTitle
 
@@ -210,7 +188,7 @@ export function PreRecordingInviteScreen({
   const addEmail = useCallback(() => {
     const candidate = form$.emailInput.get().trim()
     if (!candidate) return
-    if (!isValidEmail(candidate)) {
+    if (!isValidInviteEmail(candidate)) {
       Alert.alert('Invalid Email', 'Please enter a valid email address.')
       return
     }
@@ -255,7 +233,7 @@ export function PreRecordingInviteScreen({
       const trimmedTitle = (
         form$.titleTouched.get()
           ? form$.title.get()
-          : buildAutoTitle(allCandidates, form$.selectedRecipientIds.get())
+          : buildAutoTitle(allCandidates, form$.selectedRecipientIds.get(), form$.emails.get())
       ).trim()
       const result = await createDraft({
         ...(trimmedTitle.length > 0 ? { title: trimmedTitle } : {}),
@@ -307,7 +285,9 @@ export function PreRecordingInviteScreen({
       const recipientIds = form$.selectedRecipientIds.get()
       const emailList = form$.emails.get()
       const trimmedTitle = (
-        form$.titleTouched.get() ? form$.title.get() : buildAutoTitle(allCandidates, recipientIds)
+        form$.titleTouched.get()
+          ? form$.title.get()
+          : buildAutoTitle(allCandidates, recipientIds, emailList)
       ).trim()
       // Idempotent: returns the existing draft when one exists (e.g. the share
       // link above already created it, or the user is resuming).
@@ -513,6 +493,7 @@ export function PreRecordingInviteScreen({
                   keyboardType="email-address"
                   autoCapitalize="none"
                   autoCorrect={false}
+                  maxLength={254}
                   returnKeyType="done"
                   style={{
                     flex: 1,

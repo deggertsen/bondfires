@@ -43,6 +43,7 @@ const MAX_EMAIL_INVITES = 10
 const RECENT_CONNECTION_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
 const RECENT_CONNECTIONS_LIMIT = 20
 const RECENT_CONNECTION_BONDFIRE_SCAN_LIMIT = 25
+const RECENT_CONNECTION_PARTICIPATION_SCAN_LIMIT = 25
 const CLOSE_CIRCLE_LIMIT = 8
 
 /** Batch size per cleanup cron run. */
@@ -137,6 +138,18 @@ async function ensureDraftInviteCode(
 function normalizeTitle(title: string | undefined): string | undefined {
   const trimmed = title?.trim().slice(0, MAX_TITLE_LENGTH)
   return trimmed || undefined
+}
+
+function isDraftExpired(draft: Pick<Doc<'bondfires'>, 'draftExpiresAt'>, now: number): boolean {
+  return draft.draftExpiresAt === undefined || draft.draftExpiresAt <= now
+}
+
+function normalizeInviteEmail(rawEmail: string): string {
+  const email = rawEmail.trim().toLowerCase()
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throwUserError('Enter a valid email address.')
+  }
+  return email
 }
 
 /**
@@ -316,7 +329,11 @@ export const createDraftBondfire = mutation({
         }
 
         const existingDraft = await findDraftBondfireForUser(ctx, user._id)
-        if (existingDraft) {
+        if (existingDraft && isDraftExpired(existingDraft, now)) {
+          // The hourly cleanup can lag the exact deadline. Do not revive a
+          // stale draft that may be swept while the owner is recording.
+          await deleteDraftBondfireCascade(ctx, existingDraft)
+        } else if (existingDraft) {
           // Keep the resumed draft's title in sync with what the screen shows,
           // whether or not the user also sends invites (which is the only
           // other place the title gets persisted).
@@ -416,8 +433,7 @@ export const sendDraftInvites = mutation({
         recipientIds.delete(user._id)
         const newUserEmails: string[] = []
         for (const rawEmail of args.emails) {
-          const email = rawEmail.trim().toLowerCase()
-          if (!email) continue
+          const email = normalizeInviteEmail(rawEmail)
           const existingUser = await ctx.db
             .query('users')
             .withIndex('email', (q) => q.eq('email', email))
@@ -953,7 +969,7 @@ export const getMyDraftBondfire = query({
     }
 
     const draft = await findDraftBondfireForUser(ctx, userId)
-    if (!draft) {
+    if (!draft || isDraftExpired(draft, Date.now())) {
       return null
     }
 
@@ -1041,6 +1057,32 @@ export const getInviteCandidates = query({
         .collect()
       for (const response of responses) {
         bump(response.userId, response.createdAt)
+      }
+    }
+
+    // Owners and co-participants from Hearth bondfires the user joined. The
+    // original owner-only scan above covers invitations sent by this user;
+    // this reverse lookup is what makes "recent connections" bidirectional.
+    const myParticipations = await ctx.db
+      .query('personalBondfireParticipants')
+      .withIndex('by_user', (q) => q.eq('userId', userId).gte('joinedAt', cutoff))
+      .order('desc')
+      .take(RECENT_CONNECTION_PARTICIPATION_SCAN_LIMIT)
+    for (const participation of myParticipations) {
+      const bondfire = await ctx.db.get(participation.bondfireId)
+      if (!bondfire) continue
+
+      bump(bondfire.userId, participation.joinedAt)
+      if (participation.status !== 'active') continue
+
+      const coParticipants = await ctx.db
+        .query('personalBondfireParticipants')
+        .withIndex('by_bondfire_status', (q) =>
+          q.eq('bondfireId', bondfire._id).eq('status', 'active'),
+        )
+        .collect()
+      for (const coParticipant of coParticipants) {
+        bump(coParticipant.userId, Math.max(participation.joinedAt, coParticipant.joinedAt))
       }
     }
 

@@ -755,9 +755,28 @@ export default function CreateScreen() {
   // Pre-recording invite screen for Hearth (personal camp) bondfires.
   // Shown before the recording screen so the audience is established first.
   if (isPersonalCamp && !respondTo && !draftBondfireId && !inviteSkipped) {
+    // Resolve the one-draft-at-a-time state before exposing Skip. Otherwise a
+    // fast tap during the query's initial undefined state can bypass an
+    // existing audience and orphan that draft until cleanup.
+    if (existingDraft === undefined) {
+      return (
+        <YStack
+          flex={1}
+          backgroundColor={'$background'}
+          alignItems="center"
+          justifyContent="center"
+          gap={14}
+        >
+          <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+          <Spinner size="large" color={'$primary'} />
+          <Text color={'$placeholderColor'}>Loading your Hearth...</Text>
+        </YStack>
+      )
+    }
+
     return (
       <PreRecordingInviteScreen
-        existingDraft={existingDraft ?? null}
+        existingDraft={existingDraft}
         onContinue={(bondfireId, _title) => {
           draftBondfireId$.set(bondfireId)
         }}
