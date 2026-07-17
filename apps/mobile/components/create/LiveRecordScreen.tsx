@@ -38,8 +38,7 @@ import { type CampWithMembership, formatRecordingClock, type TradeTag } from './
 const keepAwakeTag = 'create-recording'
 // Thermal mitigation ladder, indexed by normalized thermal level (0–2 across
 // both platforms; see getThermalState). Level 3 (critical) auto-stops instead.
-// Android applies only the bitrate — an fps change there would force a
-// MediaCodec reconfigure mid-stream.
+// Android applies FPS at the Camera2 source so MediaCodec can remain running.
 const THERMAL_QUALITY_LADDER = [
   { bitrate: LIVE_DEFAULT_VIDEO_BITRATE, fps: LIVE_DEFAULT_VIDEO_FPS }, // nominal
   { bitrate: 1_500_000, fps: 24 }, // fair / moderate
@@ -134,6 +133,7 @@ export function LiveRecordScreen({
   const thermalAppliedLevelRef = useRef(0)
   const thermalCoolPollsRef = useRef(0)
   const thermalStoppingRef = useRef(false)
+  const thermalCheckInFlightRef = useRef(false)
   const liveTerminalRecoveryFiredRef = useRef(false)
   const liveCameraSwapInFlightRef = useRef(false)
 
@@ -703,6 +703,7 @@ export function LiveRecordScreen({
       thermalAppliedLevelRef.current = 0
       thermalCoolPollsRef.current = 0
       thermalStoppingRef.current = false
+      thermalCheckInFlightRef.current = false
       state$.thermalWarning.set(false)
       return
     }
@@ -710,18 +711,22 @@ export function LiveRecordScreen({
     const applyQuality = async (level: number) => {
       const target = THERMAL_QUALITY_LADDER[level]
       if (!target) return
-      await livePublisher.setVideoQuality(target.bitrate, target.fps)
+      const applied = await livePublisher.setVideoQuality(target.bitrate, target.fps)
       thermalAppliedLevelRef.current = level
       state$.thermalWarning.set(level >= 2)
       telemetry.info('live:thermal_mitigation', 'Adjusting quality for thermal state', {
         level,
         bitrate: target.bitrate,
         fps: target.fps,
+        appliedVideoBitrate: applied.appliedVideoBitrate,
+        appliedFps: applied.appliedFps,
+        fpsApplied: applied.fpsApplied,
       })
     }
 
     const checkThermal = async () => {
-      if (thermalStoppingRef.current) return
+      if (thermalStoppingRef.current || thermalCheckInFlightRef.current) return
+      thermalCheckInFlightRef.current = true
       try {
         const thermalState = await livePublisher.getThermalState?.()
         if (!thermalState) return
@@ -775,8 +780,18 @@ export function LiveRecordScreen({
         } else {
           thermalCoolPollsRef.current = 0
         }
-      } catch {
-        // Best-effort thermal polling — native module might not support it
+      } catch (error) {
+        // A missing/stale native build or rejected encoder update must be
+        // visible in telemetry; otherwise a failed mitigation looks identical
+        // to a successful one until the device reaches critical.
+        telemetry.warn('live:thermal_mitigation_failed', 'Failed to apply thermal mitigation', {
+          error: String(error),
+          level: thermalLastLevelRef.current,
+          platform: Platform.OS,
+          sessionId: livePublishStore$.sessionId.peek(),
+        })
+      } finally {
+        thermalCheckInFlightRef.current = false
       }
     }
 
