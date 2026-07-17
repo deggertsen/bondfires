@@ -38,6 +38,7 @@ import type * as inviteBadges from "../inviteBadges.js";
 import type * as inviteClaims from "../inviteClaims.js";
 import type * as inviteCodes from "../inviteCodes.js";
 import type * as lib_emojis from "../lib/emojis.js";
+import type * as lib_latestResponsePlayback from "../lib/latestResponsePlayback.js";
 import type * as lib_liveIngest from "../lib/liveIngest.js";
 import type * as lib_presence from "../lib/presence.js";
 import type * as lib_videoReactions from "../lib/videoReactions.js";
@@ -97,6 +98,7 @@ declare const fullApi: ApiFromModules<{
   inviteClaims: typeof inviteClaims;
   inviteCodes: typeof inviteCodes;
   "lib/emojis": typeof lib_emojis;
+  "lib/latestResponsePlayback": typeof lib_latestResponsePlayback;
   "lib/liveIngest": typeof lib_liveIngest;
   "lib/presence": typeof lib_presence;
   "lib/videoReactions": typeof lib_videoReactions;
