@@ -4,7 +4,16 @@ import { auth } from './auth'
 import { throwUserError } from './errors'
 import { logServerEvent } from './serverTelemetry'
 
-// Register a device token for push notifications
+// Register a device token for push notifications.
+//
+// This mutation is background infrastructure called from mount, foreground,
+// and sign-in flows. It must NOT throw when the Convex auth session hasn't
+// resolved yet — the client-side `isAuthenticated` ref can be true while the
+// server-side session is still establishing, and throwing a ConvexError here
+// causes the Convex client library to log `console.error` before the user's
+// catch block runs, which telemetry captures as a `console:error` event.
+// Instead, return `null` so the client treats it as a no-op and retries on
+// the next lifecycle event.
 export const registerDevice = mutation({
   args: {
     token: v.string(),
@@ -17,12 +26,11 @@ export const registerDevice = mutation({
   handler: async (ctx, args) => {
     const userId = await auth.getUserId(ctx)
     if (!userId) {
-      // Background token registration races the auth session on sign-in. Throw a
-      // ConvexError (not a raw Error, which Convex masks as a 500 "Server Error"
-      // and storms the client retry/telemetry path) so the client's retryable
-      // "Not authenticated" filter matches and silently waits for the session.
-      console.warn('[push:registerDevice] rejected: not authenticated')
-      throwUserError('Not authenticated')
+      // Auth session hasn't resolved yet. Return null instead of throwing so
+      // the Convex client library doesn't log a console.error (which telemetry
+      // captures as a `console:error` event and storms the error dashboard).
+      // The client retries on the next lifecycle event (foreground, sign-in).
+      return null
     }
 
     const now = Date.now()

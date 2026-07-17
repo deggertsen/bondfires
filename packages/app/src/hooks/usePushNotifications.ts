@@ -177,8 +177,9 @@ interface TokenUnregistrationParams {
 export interface UsePushNotificationsOptions {
   // Whether backend token registration is allowed. This should be false before auth resolves.
   isAuthenticated?: boolean
-  // Convex mutation to register device token
-  registerTokenMutation?: (params: TokenRegistrationParams) => Promise<void>
+  // Convex mutation to register device token. Returns the token ID on
+  // success, or null when the server auth session hasn't resolved yet.
+  registerTokenMutation?: (params: TokenRegistrationParams) => Promise<unknown>
   // Convex mutation to unregister device token
   unregisterTokenMutation?: (params: TokenUnregistrationParams) => Promise<void>
   // Convex mutation to update notification preferences (for Android channel sync)
@@ -255,6 +256,15 @@ export function usePushNotifications(
   const onPermissionRevokedRef = useRef(onPermissionRevoked)
   onPermissionRevokedRef.current = onPermissionRevoked
 
+  // Debounce: prevent rapid re-registration from multiple lifecycle paths
+  // (mount, foreground, sign-in observer, notificationsEnabled observer).
+  // All of these can fire in quick succession during sign-in, causing
+  // redundant mutation calls. The minimum interval between attempts ensures
+  // only one registration per ~30s window actually hits the backend.
+  const lastRegisterAttemptRef = useRef(0)
+  const lastRegisteredTokenRef = useRef<string | null>(null)
+  const MIN_REGISTER_INTERVAL_MS = 30_000
+
   const setStoredExpoPushToken = useCallback((token: string | null) => {
     expoPushTokenRef.current = token
     setExpoPushToken(token)
@@ -279,19 +289,45 @@ export function usePushNotifications(
         return
       }
 
+      // Debounce: skip if we already registered this exact token recently.
+      // Multiple lifecycle paths (mount, foreground, sign-in, pref observer)
+      // can all fire within seconds of each other during sign-in.
+      const now = Date.now()
+      if (
+        lastRegisteredTokenRef.current === token &&
+        now - lastRegisterAttemptRef.current < MIN_REGISTER_INTERVAL_MS
+      ) {
+        telemetry.breadcrumb('push:register:debounced', {
+          tokenPrefix: token.slice(0, 16),
+          msSinceLast: now - lastRegisterAttemptRef.current,
+        })
+        return
+      }
+      lastRegisterAttemptRef.current = now
+      lastRegisteredTokenRef.current = token
+
       try {
         telemetry.breadcrumb('push:register:attempt', {
           tokenPrefix: token.slice(0, 16),
           platform: Platform.OS,
           deviceId: Constants.deviceId ?? 'unknown',
         })
-        await registerTokenMutation({
+        const result = await registerTokenMutation({
           token,
           tokenType: 'expo',
           platform: Platform.OS,
           deviceId: Constants.deviceId ?? 'unknown',
           timezone: getDeviceTimezone(),
         })
+        // Server returns null when the auth session hasn't resolved yet.
+        // This is expected during the sign-in auth race — treat as a no-op
+        // and let the next lifecycle event retry.
+        if (result === null) {
+          telemetry.breadcrumb('push:register:skip', {
+            reason: 'server_auth_not_resolved',
+          })
+          return
+        }
         setIsRegistered(true)
         setError(null)
         telemetry.breadcrumb('push:register:success', {

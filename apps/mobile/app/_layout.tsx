@@ -456,7 +456,7 @@ function AppContent() {
       deviceId: string
       timezone?: string
     }) => {
-      await registerDevice({
+      return await registerDevice({
         token: params.token,
         platform: params.platform as 'ios' | 'android',
         tokenType: params.tokenType as 'expo' | 'fcm',
