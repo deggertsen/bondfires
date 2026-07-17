@@ -19,8 +19,6 @@ export interface LivePublisherStartOptions {
 }
 
 export interface LivePublisherPreviewOptions {
-  width?: number
-  height?: number
   fps?: number
   videoBitrate?: number
   audioBitrate?: number
@@ -34,7 +32,7 @@ export interface LivePublisherStats {
   bitrateBps: number
   rttMs: number
   droppedFrames: number
-  /** Encoder output FPS on iOS; applied camera FPS ceiling on Android. */
+  /** Encoder output FPS (iOS only for now; 0 where unsupported). */
   currentFps?: number
   /** 1 when bitrateBps is a real measurement, 0 when it's a hard zero. */
   statsSupported?: number
@@ -42,12 +40,12 @@ export interface LivePublisherStats {
   audioRoute?: string
 }
 
-export interface LivePublisherVideoQuality {
-  /** Values read back from the active native encoder/capture pipeline. */
-  appliedVideoBitrate: number
-  appliedFps: number
-  /** Whether the platform applied the requested capture FPS. */
-  fpsApplied: boolean
+export interface LivePublisherVideoQualityResult {
+  /** Native-side configuration after the update completed. */
+  configuredVideoBitrate: number
+  configuredFps: number
+  /** Android currently keeps the encoder/camera FPS fixed during a live stream. */
+  fpsChangeSupported: boolean
 }
 
 export interface LivePublisherViewProps extends ViewProps {}
@@ -74,7 +72,7 @@ interface NativeLivePublisher {
   stop(): Promise<void>
   swapCamera(): Promise<void>
   setMuted(muted: boolean): Promise<void>
-  setVideoQuality(videoBitrate: number, fps: number): Promise<LivePublisherVideoQuality>
+  setVideoQuality(videoBitrate: number, fps: number): Promise<LivePublisherVideoQualityResult>
   getStats(): Promise<LivePublisherStats>
   getThermalState?(): Promise<{ level: number; levelName: string }>
 }

@@ -14,8 +14,8 @@ logs described requested values, not native encoder state.
 | `LiveRecordScreen` | Awaited the hook and logged requested values | Logs values acknowledged by native code and logs rejected updates |
 | `useLivePublisher` | Optional-call to `publisher.setVideoQuality` | Required call with a typed native acknowledgement |
 | Expo module wrapper | Did not declare or export `setVideoQuality` | Forwards the call to the Expo native module; a stale build rejects instead of silently succeeding |
-| iOS | Native implementation existed, but returned before its nested task completed | Awaits the live HaishinKit/VideoToolbox update and reads bitrate/FPS back before resolving |
-| Android | Native implementation changed MediaCodec bitrate but ignored FPS | Reads MediaCodec bitrate back and updates Camera2 FPS through the live `CameraSource` configuration path |
+| iOS | Native implementation existed, but returned before its nested task completed | Awaits both HaishinKit configuration calls before resolving |
+| Android | Native implementation changed MediaCodec bitrate but swallowed failures | Rejects missing/failed updates and reports that FPS remains fixed |
 
 The missing Expo wrapper method was the immediate root cause: the production
 JS call used optional chaining, so neither native implementation was invoked.
@@ -29,37 +29,25 @@ JS call used optional chaining, so neither native implementation was invoked.
 compression session; the library applies it directly to the running
 `VTCompressionSession`. `mixer.setFrameRate` updates the attached
 `AVCaptureDevice` frame durations. The Expo promise now resolves only after
-both actor calls finish and returns the settings read back from the stream and
-mixer.
-
-The encoder is H.264 Baseline 3.1 with frame reordering disabled. Level 3.1 is
-appropriate for 720p30. VideoToolbox is the hardware-accelerated path on the
-supported iOS devices.
+both actor calls finish and returns the resulting HaishinKit configuration.
+HaishinKit does not propagate a failed VideoToolbox option update, so this is a
+native configuration acknowledgement rather than a hardware measurement.
 
 ### Android (StreamPack 3.1.2)
 
 `videoEncoder.bitrate` is StreamPack's dynamic MediaCodec bitrate API; the
-value is read back from the encoder after assignment. Replacing `VideoConfig`
-would reconfigure the encoder mid-stream, so the thermal path avoids it and selects
-the best supported Camera2 FPS range at or below the requested ceiling and
-applies it to the active source's repeating capture request while the existing
-MediaCodec remains alive. The acknowledgement reports `fpsApplied: false` if a
-device exposes only a higher range.
+configured value is returned after assignment. Replacing `VideoConfig` would
+reconfigure the encoder mid-stream, so the thermal path deliberately keeps FPS
+fixed and reports `fpsChangeSupported: false`. StreamPack does not expose a
+reliable live MediaCodec read-back, so this is also a configuration
+acknowledgement rather than a hardware measurement.
 
 ## Other thermal load
 
-The original pipeline could do full-HD encode-sized work:
-
-- iOS derived the encode size from the camera's active sensor format and did
-  not explicitly pin the capture preset.
-- Android dropped the JS width/height options and selected the largest camera
-  output up to 1920×1080.
-
 Bitrate reduction alone does not reduce camera, scaling, preview, or per-frame
-encoder work. 1080p contains 2.25 times as many pixels as 720p. This change
-uses 720×1280 as the live default, requests the iOS 720p capture preset, caps
-the iOS encode size, and makes Android honor the requested camera/encoder
-ceiling.
+encoder work. Resolution and preview changes could reduce those costs, but
+they also change capture behavior and need physical-device quality and
+stability testing. They are intentionally left out of this root-cause fix.
 
 The iOS preview is rendered by a Metal-backed `MTHKView`; Android also feeds a
 preview surface through StreamPack. The HaishinKit mixer is in passthrough
@@ -79,14 +67,15 @@ cannot overlap.
 
 1. Run a 15-minute physical-device A/B test on the same iPhone model, initial
    battery level, network, brightness, and ambient temperature.
-2. Confirm `live:thermal_mitigation` includes `appliedVideoBitrate`,
-   `appliedFps`, and `fpsApplied`; any stale native build will instead emit
-   `live:thermal_mitigation_failed`.
+2. Confirm `live:thermal_mitigation` includes `configuredVideoBitrate`,
+   `configuredFps`, and `fpsChangeSupported`; any stale native build will
+   instead emit `live:thermal_mitigation_failed`.
 3. Capture an Xcode Energy Log/System Trace and compare Camera, GPU,
-   VideoToolbox, CPU, and radio utilization at 720p30, 720p24, and 720p15.
-4. If 720p30 still reaches serious quickly, start live sessions at 24 fps. If
-   the preview remains a material GPU consumer, test hiding or lowering the
-   preview refresh rate after recording begins while leaving capture active.
+   VideoToolbox, CPU, and radio utilization at the current resolution across
+   30, 24, and 15 fps.
+4. If the current resolution still reaches serious quickly, test a separately
+   scoped 720p capture/encode change. If the preview remains a material GPU
+   consumer, test hiding or lowering its refresh rate while recording.
 5. Consider emitting fair/serious thermal transitions from native observers
    to remove the current 0–10 second polling latency. The 10-second poll itself
    is not a meaningful heat source.

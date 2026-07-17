@@ -20,8 +20,6 @@ import {
  */
 export const LIVE_DEFAULT_VIDEO_BITRATE = 2_500_000
 export const LIVE_DEFAULT_VIDEO_FPS = 30
-export const LIVE_DEFAULT_VIDEO_WIDTH = 720
-export const LIVE_DEFAULT_VIDEO_HEIGHT = 1280
 
 export interface LivePublisherStartOptions {
   rtmpsUrl: string
@@ -41,7 +39,7 @@ export interface LivePublisherStats {
   bitrateBps: number
   rttMs: number
   droppedFrames: number
-  /** Encoder output FPS on iOS; applied camera FPS ceiling on Android. */
+  /** Encoder output FPS (iOS only for now; 0 where unsupported). */
   currentFps?: number
   /**
    * 1 when bitrateBps is a real measurement (HaishinKit stream info on iOS,
@@ -54,10 +52,10 @@ export interface LivePublisherStats {
   audioRoute?: string
 }
 
-export interface LivePublisherVideoQuality {
-  appliedVideoBitrate: number
-  appliedFps: number
-  fpsApplied: boolean
+export interface LivePublisherVideoQualityResult {
+  configuredVideoBitrate: number
+  configuredFps: number
+  fpsChangeSupported: boolean
 }
 
 export interface LivePublisherSubscription {
@@ -65,8 +63,6 @@ export interface LivePublisherSubscription {
 }
 
 export interface LivePublisherPreviewOptions {
-  width?: number
-  height?: number
   fps?: number
   videoBitrate?: number
   audioBitrate?: number
@@ -87,8 +83,8 @@ export interface LivePublisherNativeModule {
    * unnormalized PowerManager status (0–6) for telemetry.
    */
   getThermalState?(): Promise<{ level: number; levelName: string; rawLevel?: number }>
-  /** Returns values acknowledged by the active native encoder/capture pipeline. */
-  setVideoQuality(videoBitrate: number, fps: number): Promise<LivePublisherVideoQuality>
+  /** Resolves after native configuration completes; rejects when it cannot be updated. */
+  setVideoQuality(videoBitrate: number, fps: number): Promise<LivePublisherVideoQualityResult>
   addListener(event: 'statusChange', cb: (status: string) => void): LivePublisherSubscription
   addListener(
     event: 'error',
@@ -400,8 +396,6 @@ export function useLivePublisher(options: {
   const preview = useCallback(
     async (args: { initialCamera?: 'front' | 'back' } = {}) => {
       await options.publisher.startPreview({
-        width: LIVE_DEFAULT_VIDEO_WIDTH,
-        height: LIVE_DEFAULT_VIDEO_HEIGHT,
         fps: LIVE_DEFAULT_VIDEO_FPS,
         videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
         audioBitrate: 128_000,
@@ -529,8 +523,6 @@ export function useLivePublisher(options: {
         await options.publisher.start({
           rtmpsUrl: ingest.rtmpsUrl,
           streamKey: ingest.streamKey,
-          width: LIVE_DEFAULT_VIDEO_WIDTH,
-          height: LIVE_DEFAULT_VIDEO_HEIGHT,
           fps: LIVE_DEFAULT_VIDEO_FPS,
           videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
           audioBitrate: 128_000,
@@ -619,8 +611,6 @@ export function useLivePublisher(options: {
         await options.publisher.start({
           rtmpsUrl: liveStream.ingest.rtmpsUrl,
           streamKey: liveStream.ingest.streamKey,
-          width: LIVE_DEFAULT_VIDEO_WIDTH,
-          height: LIVE_DEFAULT_VIDEO_HEIGHT,
           fps: LIVE_DEFAULT_VIDEO_FPS,
           videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
           audioBitrate: 128_000,

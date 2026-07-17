@@ -38,7 +38,8 @@ import { type CampWithMembership, formatRecordingClock, type TradeTag } from './
 const keepAwakeTag = 'create-recording'
 // Thermal mitigation ladder, indexed by normalized thermal level (0–2 across
 // both platforms; see getThermalState). Level 3 (critical) auto-stops instead.
-// Android applies FPS at the Camera2 source so MediaCodec can remain running.
+// Android applies only the bitrate — an fps change there would force a
+// MediaCodec reconfigure mid-stream.
 const THERMAL_QUALITY_LADDER = [
   { bitrate: LIVE_DEFAULT_VIDEO_BITRATE, fps: LIVE_DEFAULT_VIDEO_FPS }, // nominal
   { bitrate: 1_500_000, fps: 24 }, // fair / moderate
@@ -711,16 +712,16 @@ export function LiveRecordScreen({
     const applyQuality = async (level: number) => {
       const target = THERMAL_QUALITY_LADDER[level]
       if (!target) return
-      const applied = await livePublisher.setVideoQuality(target.bitrate, target.fps)
+      const configured = await livePublisher.setVideoQuality(target.bitrate, target.fps)
       thermalAppliedLevelRef.current = level
       state$.thermalWarning.set(level >= 2)
       telemetry.info('live:thermal_mitigation', 'Adjusting quality for thermal state', {
         level,
         bitrate: target.bitrate,
         fps: target.fps,
-        appliedVideoBitrate: applied.appliedVideoBitrate,
-        appliedFps: applied.appliedFps,
-        fpsApplied: applied.fpsApplied,
+        configuredVideoBitrate: configured.configuredVideoBitrate,
+        configuredFps: configured.configuredFps,
+        fpsChangeSupported: configured.fpsChangeSupported,
       })
     }
 

@@ -5,12 +5,10 @@ import android.content.pm.PackageManager
 import android.content.ComponentCallbacks2
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
-import android.hardware.camera2.CaptureRequest
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
-import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.media.MediaRecorder
@@ -23,7 +21,6 @@ import android.os.PowerManager
 import android.os.PowerManager.OnThermalStatusChangedListener
 import android.os.SystemClock
 import android.util.Log
-import android.util.Range
 import android.util.Size
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.functions.Coroutine
@@ -36,7 +33,6 @@ import io.github.thibaultbee.streampack.core.elements.encoders.AudioCodecConfig
 import io.github.thibaultbee.streampack.core.elements.encoders.VideoCodecConfig
 import io.github.thibaultbee.streampack.core.elements.sources.audio.audiorecord.MicrophoneSourceFactory
 import io.github.thibaultbee.streampack.core.elements.sources.video.camera.CameraSourceFactory
-import io.github.thibaultbee.streampack.core.elements.sources.video.camera.ICameraSource
 import io.github.thibaultbee.streampack.core.interfaces.startStream
 import io.github.thibaultbee.streampack.core.streamers.single.SingleStreamer
 import io.github.thibaultbee.streampack.core.streamers.single.cameraSingleStreamer
@@ -55,8 +51,8 @@ import kotlinx.coroutines.withTimeout
 class LivePublisherStartOptions : Record {
   @Field val rtmpsUrl: String = ""
   @Field val streamKey: String = ""
-  @Field val width: Int = 720
-  @Field val height: Int = 1280
+  @Field val width: Int = 0
+  @Field val height: Int = 0
   @Field val fps: Int = 30
   @Field val videoBitrate: Int = 2_500_000
   @Field val audioBitrate: Int = 128_000
@@ -64,8 +60,6 @@ class LivePublisherStartOptions : Record {
 }
 
 class LivePublisherPreviewOptions : Record {
-  @Field val width: Int = 720
-  @Field val height: Int = 1280
   @Field val fps: Int = 30
   @Field val videoBitrate: Int = 2_500_000
   @Field val audioBitrate: Int = 128_000
@@ -116,8 +110,6 @@ class BondfireLivePublisherModule : Module() {
   private val collectorJobs = mutableListOf<Job>()
   private var isMuted = false
   private var currentFacing: String = "front"
-  @Volatile
-  private var currentVideoFps = 30
   // Which mic this session records from ("wired" | "bluetooth" | "builtin").
   // Reported in getStats() so live:stats_sample telemetry carries the route.
   @Volatile
@@ -241,8 +233,6 @@ class BondfireLivePublisherModule : Module() {
       }
       currentFacing = options.initialCamera
       createStreamer(
-        width = options.width,
-        height = options.height,
         fps = options.fps,
         videoBitrate = options.videoBitrate,
         audioBitrate = options.audioBitrate,
@@ -260,8 +250,6 @@ class BondfireLivePublisherModule : Module() {
       cleanupStreamer()
       currentFacing = options.initialCamera
       createStreamer(
-        width = options.width,
-        height = options.height,
         fps = options.fps,
         videoBitrate = options.videoBitrate,
         audioBitrate = options.audioBitrate,
@@ -326,30 +314,17 @@ class BondfireLivePublisherModule : Module() {
         val encoder = s.videoEncoder
           ?: throw LivePublisherException("No active video encoder to update")
         encoder.bitrate = videoBitrate
-        val appliedVideoBitrate = encoder.bitrate
-
-        // Use StreamPack's public CameraSettings API to change Camera2's live
-        // repeating request. This lowers frames delivered to the still-running
-        // MediaCodec without replacing or restarting the encoder.
-        val cameraSource = s.videoInput?.sourceFlow?.value as? ICameraSource
-          ?: throw LivePublisherException("No active camera source to update")
-        val availableFpsRanges = cameraSource.settings.characteristics.get(
-          CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES
-        ).orEmpty().toList()
-        val targetFpsRange = chooseThermalFpsRange(availableFpsRanges, fps)
-          ?: throw LivePublisherException("Camera exposes no FPS ranges")
-        cameraSource.settings.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, targetFpsRange)
-        cameraSource.settings.applyRepeatingSessionSync()
-        currentVideoFps = targetFpsRange.upper
-        val fpsApplied = currentVideoFps <= fps
+        val configuredVideoBitrate = encoder.bitrate
+        val configuredFps = s.videoConfigFlow.value?.fps
+          ?: throw LivePublisherException("No active video configuration to inspect")
         Log.i(
           TAG,
-          "setVideoQuality: applied ${appliedVideoBitrate}bps, camera range=$targetFpsRange (requested=${fps}fps)",
+          "setVideoQuality: configured ${configuredVideoBitrate}bps (fps=$fps ignored on Android)",
         )
         mapOf(
-          "appliedVideoBitrate" to appliedVideoBitrate,
-          "appliedFps" to currentVideoFps,
-          "fpsApplied" to fpsApplied,
+          "configuredVideoBitrate" to configuredVideoBitrate,
+          "configuredFps" to configuredFps,
+          "fpsChangeSupported" to false,
         )
       } catch (e: Exception) {
         Log.w(TAG, "setVideoQuality: failed to update video bitrate", e)
@@ -369,10 +344,7 @@ class BondfireLivePublisherModule : Module() {
       synchronized(statsLock) {
         // In-session samples carry the mic route so live:stats_sample
         // telemetry can verify headset routing in prod.
-        val sessionZeros = STATS_ZEROS + mapOf(
-          "audioRoute" to audioRouteName,
-          "currentFps" to currentVideoFps,
-        )
+        val sessionZeros = STATS_ZEROS + mapOf("audioRoute" to audioRouteName)
         // The counter read happens inside the lock so the read + baseline
         // commit is atomic — overlapping polls could otherwise commit an
         // older reading over a newer baseline and emit a spurious
@@ -456,13 +428,7 @@ class BondfireLivePublisherModule : Module() {
    * This powers the camera preview but does NOT open any network connection —
    * streaming only begins when startStream() is called in start().
    */
-  private suspend fun createStreamer(
-    width: Int,
-    height: Int,
-    fps: Int,
-    videoBitrate: Int,
-    audioBitrate: Int,
-  ) {
+  private suspend fun createStreamer(fps: Int, videoBitrate: Int, audioBitrate: Int) {
     val context = appContext.reactContext
       ?: throw LivePublisherException("No React context available")
 
@@ -477,9 +443,8 @@ class BondfireLivePublisherModule : Module() {
 
     // Query camera for a supported output resolution to avoid stretching frames.
     val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-    val resolution = getBestCameraResolution(cameraManager, cameraId, width, height)
+    val resolution = getBestCameraResolution(cameraManager, cameraId, 0, 0)
     Log.i(TAG, "Using camera output resolution ${resolution.width}x${resolution.height}")
-    currentVideoFps = fps
 
     // Route the mic to a connected headset when one is present. StreamPack's
     // default audio source is CAMCORDER, which Android pins to the built-in
@@ -581,12 +546,24 @@ class BondfireLivePublisherModule : Module() {
     newStreamer.setAudioConfig(audioConfig)
 
     // Configure video
-    val videoConfig = makeVideoCodecConfig(videoBitrate, resolution, fps)
+    val videoConfig = VideoCodecConfig(
+      mimeType = MediaFormat.MIMETYPE_VIDEO_AVC,
+      startBitrate = videoBitrate,
+      resolution = resolution,
+      fps = fps,
+      gopDurationInS = 2.0f,
+    )
     try {
       newStreamer.setVideoConfig(videoConfig)
     } catch (e: Exception) {
-      Log.w(TAG, "Video config with ${resolution.width}x${resolution.height} failed, falling back to 1280x720", e)
-      val fallbackConfig = makeVideoCodecConfig(videoBitrate, Size(1280, 720), fps)
+      Log.w(TAG, "Video config with ${resolution.width}x${resolution.height} failed, falling back to 720x1280", e)
+      val fallbackConfig = VideoCodecConfig(
+        mimeType = MediaFormat.MIMETYPE_VIDEO_AVC,
+        startBitrate = videoBitrate,
+        resolution = Size(720, 1280),
+        fps = fps,
+        gopDurationInS = 2.0f,
+      )
       newStreamer.setVideoConfig(fallbackConfig)
     }
 
@@ -599,21 +576,6 @@ class BondfireLivePublisherModule : Module() {
     // Ensure unmuted at start
     isMuted = false
   }
-
-  private fun makeVideoCodecConfig(videoBitrate: Int, resolution: Size, fps: Int) =
-    VideoCodecConfig(
-      mimeType = MediaFormat.MIMETYPE_VIDEO_AVC,
-      startBitrate = videoBitrate,
-      resolution = resolution,
-      fps = fps,
-      gopDurationInS = 2.0f,
-      // StreamPack otherwise prefers AVC High profile. Baseline 3.1 is enough
-      // for 720p30 and avoids B-frame/profile complexity in the live pipeline.
-      profileLevelColorBuilder = {
-        profile = MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline
-        level = MediaCodecInfo.CodecProfileLevel.AVCLevel31
-      },
-    )
 
   private data class AudioInputRouting(
     val audioSource: Int,
@@ -796,17 +758,9 @@ class BondfireLivePublisherModule : Module() {
         Math.abs(aspectRatio - requestedAspectRatio) < aspectRatioTolerance
       }
       val candidateSizes = if (matchedSizes.isNotEmpty()) matchedSizes else usableSizes
-      // Honor the requested live-stream ceiling. Previously width/height were
-      // dropped before this helper, so it always selected the largest camera
-      // format up to 1080p even though 720p is sufficient at 2.5 Mbps.
-      val requestedPixels =
-        if (desiredWidth > 0 && desiredHeight > 0) {
-          desiredWidth.toLong() * desiredHeight.toLong()
-        } else {
-          1920L * 1080L
-        }
+      val fullHdPixels = 1920L * 1080L
       val cappedSizes = candidateSizes.filter { size ->
-        size.width.toLong() * size.height.toLong() <= requestedPixels
+        size.width.toLong() * size.height.toLong() <= fullHdPixels
       }
       val preferredSizes = if (cappedSizes.isNotEmpty()) cappedSizes else candidateSizes
 
@@ -846,23 +800,11 @@ class BondfireLivePublisherModule : Module() {
     return longEdge / shortEdge
   }
 
-  /**
-   * Prefer the highest fixed/variable Camera2 range whose ceiling is at or
-   * below the requested thermal limit. If an OEM exposes only higher ranges,
-   * use its lowest ceiling and report fpsApplied=false to JS telemetry.
-   */
-  private fun chooseThermalFpsRange(ranges: List<Range<Int>>, requestedFps: Int): Range<Int>? {
-    return ranges
-      .filter { it.upper <= requestedFps }
-      .maxWithOrNull(compareBy<Range<Int>> { it.upper }.thenBy { it.lower })
-      ?: ranges.minWithOrNull(compareBy<Range<Int>> { it.upper }.thenByDescending { it.lower })
-  }
-
   private fun fallbackCameraResolution(width: Int, height: Int): Size {
     return if (width > 0 && height > 0) {
-      Size(maxOf(width, height), minOf(width, height))
+      Size(width, height)
     } else {
-      Size(1280, 720)
+      Size(1920, 1080)
     }
   }
 

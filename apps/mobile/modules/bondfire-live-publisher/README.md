@@ -58,29 +58,29 @@ the Expo module wrapper in `index.ts` → the native module. Keep
 `setVideoQuality` required in the TypeScript publisher contract; making it
 optional can turn a missing wrapper method into a successful no-op.
 
-Both native implementations return `appliedVideoBitrate`, `appliedFps`, and
-`fpsApplied` only after the native update finishes (including encoder bitrate
-read-back). Those values are included in `live:thermal_mitigation`, so
-production telemetry proves the native call ran instead of recording only
-JS's requested values.
+Both native implementations return `configuredVideoBitrate`, `configuredFps`,
+and `fpsChangeSupported` only after the native update finishes. Those values
+are included in `live:thermal_mitigation`, so production telemetry proves the
+native bridge call completed instead of recording only JS's requested values.
+They are configuration acknowledgements, not hardware measurements: neither
+HaishinKit nor StreamPack exposes a reliable live encoder read-back API.
 
-- iOS: HaishinKit 2.0.9 applies a bitrate-only `VideoCodecSettings` change to
-  the running `VTCompressionSession`. `MediaMixer.setFrameRate` updates the
-  capture-device frame durations. The stream is explicitly 720p H.264
-  Baseline 3.1 with frame reordering disabled and hardware encoding enabled.
-- Android: `videoEncoder.bitrate` calls MediaCodec's dynamic bitrate parameter;
-  the closest supported Camera2 FPS ceiling is applied to the active
-  `CameraSource` without replacing the running MediaCodec. Camera/encoder
-  resolution is capped at 720p rather than selecting the largest supported
-  format up to 1080p.
+- iOS: HaishinKit applies the bitrate change to the running
+  `VTCompressionSession` and `MediaMixer.setFrameRate` updates capture-device
+  frame durations. Both calls are awaited before resolving.
+- Android: `videoEncoder.bitrate` uses MediaCodec's dynamic bitrate parameter.
+  FPS remains fixed because replacing the video configuration mid-stream
+  reconfigures MediaCodec and risks a visible glitch or native crash;
+  `fpsChangeSupported` is therefore `false`.
 
 The other sustained heat sources are the camera sensor/ISP, the preview render
 surface (Metal on iOS, StreamPack's surface pipeline on Android), the lit
 keep-awake display, microphone capture, and Wi-Fi/cellular transmission.
 Reducing FPS lowers camera, preview, and encoder work together; reducing
-resolution lowers ISP, scaling/GPU, and encoder work. The 3-second iOS
-connection check, 5-second stats sample, 10-second thermal check, 1-second UI
-clock, and 2-minute backend heartbeat are low-frequency bookkeeping and should
+resolution would lower ISP, scaling/GPU, and encoder work, but requires its own
+physical-device validation. The 3-second iOS connection check, 5-second stats
+sample, 10-second thermal check, 1-second UI clock, and 2-minute backend
+heartbeat are low-frequency bookkeeping and should
 not materially affect thermals. Do not relax the health checks without device
 energy traces showing they are significant; display brightness and cellular
 uplink quality are more likely remaining contributors.

@@ -4,7 +4,6 @@ import HaishinKit
 import AVFoundation
 import Foundation
 import Network
-import VideoToolbox
 
 /// statsSupported=0 zeros: the JS stall watchdog ignores these samples.
 /// Single source for the stats payload shape — keep key set in sync with the
@@ -20,8 +19,8 @@ private let livePublisherZeroStats: [String: Int] = [
 struct LivePublisherStartOptions: Record {
   @Field var rtmpsUrl: String = ""
   @Field var streamKey: String = ""
-  @Field var width: Int = 720
-  @Field var height: Int = 1280
+  @Field var width: Int = 0
+  @Field var height: Int = 0
   @Field var fps: Int = 30
   @Field var videoBitrate: Int = 2_500_000
   @Field var audioBitrate: Int = 128_000
@@ -343,17 +342,6 @@ final class LivePublisher {
     setupAudioSession()
     addCaptureObservers()
 
-    // Keep capture and encode at 720p for the normal live path. The camera's
-    // active sensor format can be larger than the session output; previously
-    // that size was also handed to VideoToolbox, causing an unnecessary
-    // upscale even after the thermal ladder reduced bitrate.
-    if options.width > 0,
-       options.height > 0,
-       min(options.width, options.height) <= 720,
-       max(options.width, options.height) <= 1280 {
-      await mixer.setSessionPreset(.hd1280x720)
-    }
-
     await mixer.addOutput(previewView)
 
     guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position) else {
@@ -454,17 +442,9 @@ final class LivePublisher {
     // portrait orientation so HaishinKit's default .trim scaling doesn't
     // center-crop a portrait frame into a landscape target, which makes the
     // recording look zoomed in even though the preview is correct.
-    videoSettings.videoSize = resolveEncodingVideoSize(
-      captureSize: captureSize,
-      requestedWidth: options.width,
-      requestedHeight: options.height
-    )
-    // Baseline 3.1 is sufficient for 720p30, disables frame reordering, and
-    // avoids spending encoder work on Main/High-profile tools that a social
-    // live stream at 2.5 Mbps does not need.
-    videoSettings.profileLevel = kVTProfileLevel_H264_Baseline_3_1 as String
-    videoSettings.allowFrameReordering = false
-    videoSettings.isHardwareEncoderEnabled = true
+    let shortSide = Int(min(captureSize.width, captureSize.height))
+    let longSide = Int(max(captureSize.width, captureSize.height))
+    videoSettings.videoSize = CGSize(width: shortSide, height: longSide)
     await newSession.stream.setVideoSettings(videoSettings)
 
     var audioSettings = await newSession.stream.audioSettings
@@ -631,24 +611,6 @@ final class LivePublisher {
     return CMVideoDimensions(width: 1920, height: 1080)
   }
 
-  private func resolveEncodingVideoSize(
-    captureSize: CMVideoDimensions,
-    requestedWidth: Int,
-    requestedHeight: Int
-  ) -> CGSize {
-    let captureShortSide = Int(min(captureSize.width, captureSize.height))
-    let captureLongSide = Int(max(captureSize.width, captureSize.height))
-
-    guard requestedWidth > 0, requestedHeight > 0 else {
-      return CGSize(width: captureShortSide, height: captureLongSide)
-    }
-
-    return CGSize(
-      width: min(captureShortSide, min(requestedWidth, requestedHeight)),
-      height: min(captureLongSide, max(requestedWidth, requestedHeight))
-    )
-  }
-
   // MARK: - Stop
 
   func stop() async {
@@ -735,25 +697,15 @@ final class LivePublisher {
     let captureFps = min(Float64(fps), Float64(maxFps > 0 ? maxFps : 30))
     await mixer.setFrameRate(captureFps)
 
-    // Read the actor-isolated settings back before resolving the Expo promise.
-    // HaishinKit 2.0.9 applies bitrate-only changes directly to the live
-    // VTCompressionSession; mixer.setFrameRate updates AVCaptureDevice's frame
-    // durations. Returning these values lets JS telemetry prove the bridge ran.
-    let appliedSettings = await session.stream.videoSettings
+    // Resolving only after both awaits is the native acknowledgement that the
+    // bridge call completed. These are configured values, not hardware
+    // measurements: HaishinKit does not surface VideoToolbox option failures.
+    let configuredSettings = await session.stream.videoSettings
     let configuredFps = await mixer.frameRate
-    let camera = AVCaptureDevice.default(
-      .builtInWideAngleCamera,
-      for: .video,
-      position: currentCameraPosition
-    )
-    let frameDuration = camera?.activeVideoMinFrameDuration ?? .invalid
-    let actualFps = frameDuration.isValid && frameDuration.seconds > 0
-      ? Int((1.0 / frameDuration.seconds).rounded())
-      : Int(configuredFps)
     return [
-      "appliedVideoBitrate": appliedSettings.bitRate,
-      "appliedFps": actualFps,
-      "fpsApplied": abs(actualFps - Int(captureFps)) <= 1,
+      "configuredVideoBitrate": configuredSettings.bitRate,
+      "configuredFps": Int(configuredFps.rounded()),
+      "fpsChangeSupported": true,
     ]
   }
 
