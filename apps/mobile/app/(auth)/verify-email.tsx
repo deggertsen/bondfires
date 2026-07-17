@@ -54,7 +54,6 @@ export default function VerifyEmailScreen() {
       if (user) {
         // Session confirmed — sync local auth state and navigate into the app.
         appActions.setAuth(user._id)
-        appActions.setAuthReady(true)
         telemetry.breadcrumb('auth:verifySuccess', { hasUser: true })
         router.replace(resolveAuthRedirect(params.redirectTo))
       } else {

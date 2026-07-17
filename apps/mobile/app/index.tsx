@@ -95,7 +95,6 @@ export default function SplashScreen() {
 
       if (currentUser) {
         appActions.setAuth(currentUser._id)
-        appActions.setAuthReady(true)
         telemetry.setUserId(currentUser._id)
       } else {
         appActions.logout()
