@@ -52,6 +52,12 @@ export interface LivePublisherStats {
   audioRoute?: string
 }
 
+export interface LivePublisherVideoQualityResult {
+  configuredVideoBitrate: number
+  configuredFps: number
+  fpsChangeSupported: boolean
+}
+
 export interface LivePublisherSubscription {
   remove: () => void
 }
@@ -77,8 +83,8 @@ export interface LivePublisherNativeModule {
    * unnormalized PowerManager status (0–6) for telemetry.
    */
   getThermalState?(): Promise<{ level: number; levelName: string; rawLevel?: number }>
-  /** fps is applied on iOS only; Android adjusts bitrate dynamically and keeps fps fixed. */
-  setVideoQuality?(videoBitrate: number, fps: number): Promise<void>
+  /** Resolves after native configuration completes; rejects when it cannot be updated. */
+  setVideoQuality(videoBitrate: number, fps: number): Promise<LivePublisherVideoQualityResult>
   addListener(event: 'statusChange', cb: (status: string) => void): LivePublisherSubscription
   addListener(
     event: 'error',
@@ -840,7 +846,7 @@ export function useLivePublisher(options: {
 
   const setVideoQuality = useCallback(
     async (videoBitrate: number, fps: number) => {
-      await options.publisher.setVideoQuality?.(videoBitrate, fps)
+      return await options.publisher.setVideoQuality(videoBitrate, fps)
     },
     [options.publisher],
   )

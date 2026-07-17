@@ -49,6 +49,42 @@ would otherwise mask a frozen pipeline). The destructive never-started cancel
 in LiveRecordScreen is additionally capped at 60s — beyond that the stop path
 relies on Mux's authoritative `recordingStarted` flag.
 
+### Thermal mitigation contract
+
+`LiveRecordScreen` polls the native thermal state every 10 seconds and applies
+the shared 30 fps / 2.5 Mbps → 24 fps / 1.5 Mbps → 15 fps / 800 Kbps ladder.
+The call must travel through all four layers: screen → `useLivePublisher` →
+the Expo module wrapper in `index.ts` → the native module. Keep
+`setVideoQuality` required in the TypeScript publisher contract; making it
+optional can turn a missing wrapper method into a successful no-op.
+
+Both native implementations return `configuredVideoBitrate`, `configuredFps`,
+and `fpsChangeSupported` only after the native update finishes. Those values
+are included in `live:thermal_mitigation`, so production telemetry proves the
+native bridge call completed instead of recording only JS's requested values.
+They are configuration acknowledgements, not hardware measurements: neither
+HaishinKit nor StreamPack exposes a reliable live encoder read-back API.
+
+- iOS: HaishinKit applies the bitrate change to the running
+  `VTCompressionSession` and `MediaMixer.setFrameRate` updates capture-device
+  frame durations. Both calls are awaited before resolving.
+- Android: `videoEncoder.bitrate` uses MediaCodec's dynamic bitrate parameter.
+  FPS remains fixed because replacing the video configuration mid-stream
+  reconfigures MediaCodec and risks a visible glitch or native crash;
+  `fpsChangeSupported` is therefore `false`.
+
+The other sustained heat sources are the camera sensor/ISP, the preview render
+surface (Metal on iOS, StreamPack's surface pipeline on Android), the lit
+keep-awake display, microphone capture, and Wi-Fi/cellular transmission.
+Reducing FPS lowers camera, preview, and encoder work together; reducing
+resolution would lower ISP, scaling/GPU, and encoder work, but requires its own
+physical-device validation. The 3-second iOS connection check, 5-second stats
+sample, 10-second thermal check, 1-second UI clock, and 2-minute backend
+heartbeat are low-frequency bookkeeping and should
+not materially affect thermals. Do not relax the health checks without device
+energy traces showing they are significant; display brightness and cellular
+uplink quality are more likely remaining contributors.
+
 ### Microphone routing
 
 iOS routes headset mics through the shared `AVAudioSession`

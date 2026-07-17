@@ -109,10 +109,10 @@ public class BondfireLivePublisherModule: Module {
     }
 
     AsyncFunction("setVideoQuality") { (videoBitrate: Int, fps: Int) in
-      guard let publisher = self.publisher else { return }
-      await MainActor.run {
-        publisher.updateVideoQuality(videoBitrate: videoBitrate, fps: fps)
+      guard let publisher = self.publisher else {
+        throw LivePublisherException(message: "No active publisher to update")
       }
+      return try await publisher.updateVideoQuality(videoBitrate: videoBitrate, fps: fps)
     }
 
     AsyncFunction("getStats") { () -> [String: Int] in
@@ -684,16 +684,29 @@ final class LivePublisher {
   /// Update video encoder bitrate and frame rate without reconnecting. Called
   /// from `setVideoQuality` AsyncFunction when the JS thermal mitigation ladder
   /// reacts to rising device temperatures.
-  func updateVideoQuality(videoBitrate: Int, fps: Int) {
-    guard let session = session else { return }
-    Task { @MainActor in
-      var videoSettings = await session.stream.videoSettings
-      videoSettings.bitRate = videoBitrate
-      await session.stream.setVideoSettings(videoSettings)
-      let maxFps = UIScreen.main.maximumFramesPerSecond
-      let captureFps = min(Float64(fps), Float64(maxFps > 0 ? maxFps : 30))
-      await mixer.setFrameRate(captureFps)
+  func updateVideoQuality(videoBitrate: Int, fps: Int) async throws -> [String: Any] {
+    guard let session = session else {
+      throw LivePublisherException(message: "No active RTMP session to update")
     }
+
+    var videoSettings = await session.stream.videoSettings
+    videoSettings.bitRate = videoBitrate
+    await session.stream.setVideoSettings(videoSettings)
+
+    let maxFps = UIScreen.main.maximumFramesPerSecond
+    let captureFps = min(Float64(fps), Float64(maxFps > 0 ? maxFps : 30))
+    await mixer.setFrameRate(captureFps)
+
+    // Resolving only after both awaits is the native acknowledgement that the
+    // bridge call completed. These are configured values, not hardware
+    // measurements: HaishinKit does not surface VideoToolbox option failures.
+    let configuredSettings = await session.stream.videoSettings
+    let configuredFps = await mixer.frameRate
+    return [
+      "configuredVideoBitrate": configuredSettings.bitRate,
+      "configuredFps": Int(configuredFps.rounded()),
+      "fpsChangeSupported": true,
+    ]
   }
 
   // MARK: - Stats
