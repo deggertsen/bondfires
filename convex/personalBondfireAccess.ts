@@ -1,12 +1,12 @@
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
-import { getEntitlementSubscriptionTier } from './entitlements'
+import { getEntitlementSubscriptionTier, PAID_TIERS, type SubscriptionTier } from './entitlements'
 import { throwUserError } from './errors'
 
 type ConvexCtx = QueryCtx | MutationCtx
 
 /** Plus: sparker + 1. Premium/Pro: sparker + 7. */
-function getParticipantCap(tier: string): number {
+export function getPersonalBondfireParticipantCap(tier: SubscriptionTier): number {
   if (tier === 'premium' || tier === 'pro') {
     return 8
   }
@@ -28,7 +28,7 @@ export async function getPersonalBondfireParticipant(
     .first()
 }
 
-async function getActiveParticipantCount(
+export async function getActivePersonalBondfireParticipantCount(
   ctx: ConvexCtx,
   bondfireId: Id<'bondfires'>,
 ): Promise<number> {
@@ -50,10 +50,22 @@ export async function ensureActivePersonalBondfireParticipant(
   args: {
     bondfire: Doc<'bondfires'>
     userId: Id<'users'>
+    errorAudience: 'owner' | 'invitee'
   },
 ): Promise<{ added: boolean }> {
   if (!args.bondfire.personalCampId) {
     return { added: false }
+  }
+
+  const [personalCamp, ownerTier] = await Promise.all([
+    ctx.db.get(args.bondfire.personalCampId),
+    getEntitlementSubscriptionTier(ctx, args.bondfire.userId),
+  ])
+  if (!personalCamp || personalCamp.status !== 'active' || !PAID_TIERS.includes(ownerTier)) {
+    if (args.errorAudience === 'owner') {
+      throwUserError('Your hearth is currently unavailable.')
+    }
+    throwUserError('This fire is unavailable.')
   }
 
   const existing = await getPersonalBondfireParticipant(ctx, {
@@ -69,11 +81,10 @@ export async function ensureActivePersonalBondfireParticipant(
   const now = Date.now()
   await ctx.db.patch(args.bondfire._id, { updatedAt: now })
 
-  const ownerTiers = await getEntitlementSubscriptionTier(ctx, args.bondfire.userId)
-  const cap = getParticipantCap(ownerTiers)
-  const activeCount = await getActiveParticipantCount(ctx, args.bondfire._id)
+  const cap = getPersonalBondfireParticipantCap(ownerTier)
+  const activeCount = await getActivePersonalBondfireParticipantCount(ctx, args.bondfire._id)
   if (activeCount >= cap) {
-    if (ownerTiers === 'plus') {
+    if (args.errorAudience === 'owner' && ownerTier === 'plus') {
       throwUserError('Upgrade to Premium or Pro to invite more people to your Hearth.')
     }
     throwUserError('This fire is full.')

@@ -16,6 +16,7 @@ import {
   TIER_RANK,
 } from './entitlements'
 import { throwUserError, withUserFacingErrors } from './errors'
+import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 import {
   findReusableInviteCode,
   generateAndInsertInviteCode,
@@ -1526,6 +1527,7 @@ export const resetAndReseed = mutation({
         for (const video of videos) {
           await ctx.db.delete(video._id)
         }
+        await deleteBondfireInviteArtifacts(ctx, bondfire._id)
         await ctx.db.delete(bondfire._id)
       }
 
@@ -1586,6 +1588,7 @@ export const resetAndReseedAdmin = internalMutation({
         for (const video of videos) {
           await ctx.db.delete(video._id)
         }
+        await deleteBondfireInviteArtifacts(ctx, bondfire._id)
         await ctx.db.delete(bondfire._id)
       }
       const memberships = await ctx.db

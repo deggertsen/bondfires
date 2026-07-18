@@ -34,6 +34,7 @@ import type * as email from "../email.js";
 import type * as entitlements from "../entitlements.js";
 import type * as errors from "../errors.js";
 import type * as http from "../http.js";
+import type * as inviteArtifacts from "../inviteArtifacts.js";
 import type * as inviteBadges from "../inviteBadges.js";
 import type * as inviteClaims from "../inviteClaims.js";
 import type * as inviteCodes from "../inviteCodes.js";
@@ -94,6 +95,7 @@ declare const fullApi: ApiFromModules<{
   entitlements: typeof entitlements;
   errors: typeof errors;
   http: typeof http;
+  inviteArtifacts: typeof inviteArtifacts;
   inviteBadges: typeof inviteBadges;
   inviteClaims: typeof inviteClaims;
   inviteCodes: typeof inviteCodes;

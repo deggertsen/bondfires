@@ -3,6 +3,7 @@ import type { Doc } from './_generated/dataModel'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
 import { throwUserError } from './errors'
+import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 import { uncountResponse } from './responseCounts'
 
 /**
@@ -312,16 +313,7 @@ export const deleteAccount = mutation({
         await ctx.db.delete(participant._id)
       }
 
-      const personalInvites = await ctx.db
-        .query('inviteCodes')
-        .withIndex('by_parent', (q) =>
-          q.eq('parentType', 'personal-bondfire').eq('parentId', bondfire._id),
-        )
-        .collect()
-
-      for (const invite of personalInvites) {
-        await ctx.db.delete(invite._id)
-      }
+      await deleteBondfireInviteArtifacts(ctx, bondfire._id)
 
       if (bondfire.liveSessionId) {
         await ctx.db.delete(bondfire.liveSessionId)

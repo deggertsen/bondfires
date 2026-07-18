@@ -2,7 +2,13 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
-import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server'
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from './_generated/server'
 import { auth } from './auth'
 import { redeemCampInviteHandler } from './camps'
 import { throwUserError, withUserFacingErrors } from './errors'
@@ -70,6 +76,7 @@ async function createInviteNotification(
   ctx: MutationCtx,
   args: {
     userId: Id<'users'>
+    bondfireId?: Id<'bondfires'>
     title: string
     body: string
     data: Record<string, unknown>
@@ -77,6 +84,7 @@ async function createInviteNotification(
 ) {
   return await ctx.db.insert('notifications', {
     userId: args.userId,
+    bondfireId: args.bondfireId,
     type: 'invite',
     title: args.title,
     body: args.body,
@@ -155,43 +163,6 @@ async function upsertInviteClaim(
   return { claimId, created: true }
 }
 
-/** Drop invite claims and matching in-app invite notifications for a bondfire. */
-export async function deleteInviteArtifactsForBondfire(
-  ctx: MutationCtx,
-  bondfireId: Id<'bondfires'>,
-) {
-  const claims = await ctx.db
-    .query('inviteClaims')
-    .withIndex('by_bondfire_claimer', (q) => q.eq('bondfireId', bondfireId))
-    .collect()
-
-  for (const claim of claims) {
-    await deleteInviteNotificationsForUserBondfire(ctx, claim.claimerId, bondfireId)
-    await ctx.db.delete(claim._id)
-  }
-}
-
-async function deleteInviteNotificationsForUserBondfire(
-  ctx: MutationCtx,
-  userId: Id<'users'>,
-  bondfireId: Id<'bondfires'>,
-) {
-  // Notifications are indexed by user only — scan a recent window per claimer.
-  const recent = await ctx.db
-    .query('notifications')
-    .withIndex('by_user', (q) => q.eq('userId', userId))
-    .order('desc')
-    .take(100)
-
-  for (const notification of recent) {
-    if (notification.type !== 'invite') continue
-    const data = notification.data as { bondfireId?: string } | null
-    if (data?.bondfireId === bondfireId) {
-      await ctx.db.delete(notification._id)
-    }
-  }
-}
-
 async function createDirectInviteCore(ctx: MutationCtx, args: DirectInviteArgs) {
   const bondfire = await ctx.db.get(args.bondfireId)
   if (!bondfire) {
@@ -214,6 +185,7 @@ async function createDirectInviteCore(ctx: MutationCtx, args: DirectInviteArgs) 
     await ensureActivePersonalBondfireParticipant(ctx, {
       bondfire,
       userId: args.recipientId,
+      errorAudience: 'owner',
     })
   }
 
@@ -229,6 +201,7 @@ async function createDirectInviteCore(ctx: MutationCtx, args: DirectInviteArgs) 
 
   await createInviteNotification(ctx, {
     userId: args.recipientId,
+    bondfireId: args.bondfireId,
     title,
     body,
     data: {
@@ -368,6 +341,7 @@ async function redeemInviteCodeHandler(ctx: MutationCtx, rawCode: string) {
     if (created) {
       await createInviteNotification(ctx, {
         userId: user._id,
+        bondfireId: result.bondfireId,
         title: 'Fire invite accepted',
         body: 'You joined a shared fire.',
         data: { claimId, bondfireId: result.bondfireId, source: 'code' },
@@ -388,6 +362,7 @@ async function redeemInviteCodeHandler(ctx: MutationCtx, rawCode: string) {
     await ensureActivePersonalBondfireParticipant(ctx, {
       bondfire,
       userId: user._id,
+      errorAudience: 'invitee',
     })
   }
 
@@ -404,6 +379,7 @@ async function redeemInviteCodeHandler(ctx: MutationCtx, rawCode: string) {
     await ctx.db.patch(invite._id, { uses: invite.uses + 1 })
     await createInviteNotification(ctx, {
       userId: user._id,
+      bondfireId,
       title: 'Bondfire invite accepted',
       body: `"${bondfire.creatorName ?? 'Someone'}" is ready to watch.`,
       data: {
@@ -639,6 +615,17 @@ export const isDirectInvitePushValid = internalQuery({
       )
       .first()
 
-    return !!claim && claim.dismissed !== true
+    if (!claim || claim.dismissed === true) {
+      return false
+    }
+
+    if (bondfire.personalCampId) {
+      return await canViewPersonalBondfire(ctx, {
+        bondfire,
+        userId: args.recipientId,
+      })
+    }
+
+    return true
   },
 })
