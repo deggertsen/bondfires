@@ -1,8 +1,17 @@
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
+import { getEntitlementSubscriptionTier } from './entitlements'
 import { throwUserError } from './errors'
 
 type ConvexCtx = QueryCtx | MutationCtx
+
+/** Plus: sparker + 1. Premium/Pro: sparker + 7. */
+function getParticipantCap(tier: string): number {
+  if (tier === 'premium' || tier === 'pro') {
+    return 8
+  }
+  return 2
+}
 
 export async function getPersonalBondfireParticipant(
   ctx: ConvexCtx,
@@ -17,6 +26,76 @@ export async function getPersonalBondfireParticipant(
       q.eq('bondfireId', args.bondfireId).eq('userId', args.userId),
     )
     .first()
+}
+
+async function getActiveParticipantCount(
+  ctx: ConvexCtx,
+  bondfireId: Id<'bondfires'>,
+): Promise<number> {
+  const participants = await ctx.db
+    .query('personalBondfireParticipants')
+    .withIndex('by_bondfire_status', (q) => q.eq('bondfireId', bondfireId).eq('status', 'active'))
+    .collect()
+
+  return participants.length
+}
+
+/**
+ * Hearth visibility is participant-gated — an invite claim alone is not enough
+ * to open the bondfire detail screen. Direct invites must land the recipient
+ * in `personalBondfireParticipants` or they hit "This Bondfire isn't available".
+ */
+export async function ensureActivePersonalBondfireParticipant(
+  ctx: MutationCtx,
+  args: {
+    bondfire: Doc<'bondfires'>
+    userId: Id<'users'>
+  },
+): Promise<{ added: boolean }> {
+  if (!args.bondfire.personalCampId) {
+    return { added: false }
+  }
+
+  const existing = await getPersonalBondfireParticipant(ctx, {
+    bondfireId: args.bondfire._id,
+    userId: args.userId,
+  })
+  if (existing?.status === 'active') {
+    return { added: false }
+  }
+
+  const ownerTiers = await getEntitlementSubscriptionTier(ctx, args.bondfire.userId)
+  const cap = getParticipantCap(ownerTiers)
+  const activeCount = await getActiveParticipantCount(ctx, args.bondfire._id)
+  if (activeCount >= cap) {
+    if (ownerTiers === 'plus') {
+      throwUserError('Upgrade to Premium or Pro to invite more people to your Hearth.')
+    }
+    throwUserError('This fire is full.')
+  }
+
+  const now = Date.now()
+  if (existing) {
+    await ctx.db.patch(existing._id, {
+      status: 'active',
+      joinedAt: now,
+      leftAt: undefined,
+      removedAt: undefined,
+      removedBy: undefined,
+      updatedAt: now,
+    })
+  } else {
+    await ctx.db.insert('personalBondfireParticipants', {
+      bondfireId: args.bondfire._id,
+      userId: args.userId,
+      status: 'active',
+      joinedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    })
+  }
+
+  return { added: true }
 }
 
 export async function isActivePersonalBondfireParticipant(

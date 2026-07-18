@@ -283,14 +283,14 @@ export default function BondfireDetailScreen() {
   useBondfireVideoUrls({ bondfireData, currentVideoIndex, getVideoUrlsBatch, setVideoUrls })
 
   useEffect(() => {
-    if (!bondfireId || !currentUserId) return
+    if (!bondfireId || !currentUserId || !bondfireData) return
 
     markInviteSeen({ bondfireId }).catch((error) => {
       telemetry.warn('bondfire:inviteSeen', 'Failed to mark Bondfire invite seen', {
         error: String(error),
       })
     })
-  }, [bondfireId, currentUserId, markInviteSeen])
+  }, [bondfireId, bondfireData, currentUserId, markInviteSeen])
 
   useEffect(() => {
     if (!bondfireId) return

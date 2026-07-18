@@ -536,8 +536,27 @@ export default function MyFiresScreen() {
         )}
         ListHeaderComponent={
           <YStack paddingTop={62} paddingHorizontal={16} paddingBottom={14} gap={10}>
+            <XStack alignItems="center" justifyContent="space-between">
+              <YStack gap={2}>
+                <Text fontSize={28} fontWeight="900">
+                  My Fires
+                </Text>
+                <Text fontSize={13} color={'$placeholderColor'}>
+                  {unreadCount > 0
+                    ? `${unreadCount} unread ${unreadCount === 1 ? 'thread' : 'threads'}`
+                    : 'All caught up'}
+                </Text>
+              </YStack>
+              <Pressable onPress={handleTogglePinnedFirst} hitSlop={12}>
+                <Pin
+                  size={22}
+                  color={pinnedFirst ? '$primary' : '$placeholderColor'}
+                  fill={pinnedFirst ? '$primary' : 'transparent'}
+                />
+              </Pressable>
+            </XStack>
             {invitedThreads.length > 0 ? (
-              <YStack gap={8} marginBottom={10}>
+              <YStack gap={8} marginTop={4}>
                 <Text fontSize={13} color={'$placeholderColor'} fontWeight="900">
                   Invited
                 </Text>
@@ -562,25 +581,6 @@ export default function MyFiresScreen() {
                 })}
               </YStack>
             ) : null}
-            <XStack alignItems="center" justifyContent="space-between">
-              <YStack gap={2}>
-                <Text fontSize={28} fontWeight="900">
-                  My Fires
-                </Text>
-                <Text fontSize={13} color={'$placeholderColor'}>
-                  {unreadCount > 0
-                    ? `${unreadCount} unread ${unreadCount === 1 ? 'thread' : 'threads'}`
-                    : 'All caught up'}
-                </Text>
-              </YStack>
-              <Pressable onPress={handleTogglePinnedFirst} hitSlop={12}>
-                <Pin
-                  size={22}
-                  color={pinnedFirst ? '$primary' : '$placeholderColor'}
-                  fill={pinnedFirst ? '$primary' : 'transparent'}
-                />
-              </Pressable>
-            </XStack>
           </YStack>
         }
         ListEmptyComponent={
