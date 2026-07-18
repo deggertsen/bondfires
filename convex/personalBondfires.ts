@@ -10,23 +10,22 @@ import {
   PAID_TIERS,
 } from './entitlements'
 import { throwUserError, withUserFacingErrors } from './errors'
+import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 import { createDirectInviteHandler } from './inviteClaims'
 import {
   findReusableInviteCode,
   generateAndInsertInviteCode,
   normalizeInviteCode,
 } from './inviteCodes'
-import { canViewPersonalBondfire, getPersonalBondfireParticipant } from './personalBondfireAccess'
+import {
+  canViewPersonalBondfire,
+  ensureActivePersonalBondfireParticipant,
+  getActivePersonalBondfireParticipantCount,
+  getPersonalBondfireParticipant,
+  getPersonalBondfireParticipantCap,
+} from './personalBondfireAccess'
 
 // ── Constants ──────────────────────────────────────────────────────────────
-
-/** Plus users get 2 participants (sparker + 1), Premium/Pro get 8. */
-function getParticipantCap(tier: string): number {
-  if (tier === 'premium' || tier === 'pro') {
-    return 8
-  }
-  return 2
-}
 
 /** Drafts with no recording are cleaned up after this long. */
 const DRAFT_BONDFIRE_TTL_MS = 24 * 60 * 60 * 1000
@@ -63,18 +62,6 @@ async function getCurrentUser(ctx: QueryCtx | MutationCtx) {
   }
 
   return user
-}
-
-async function getActiveParticipantCount(
-  ctx: QueryCtx | MutationCtx,
-  bondfireId: Id<'bondfires'>,
-): Promise<number> {
-  const participants = await ctx.db
-    .query('personalBondfireParticipants')
-    .withIndex('by_bondfire_status', (q) => q.eq('bondfireId', bondfireId).eq('status', 'active'))
-    .collect()
-
-  return participants.length
 }
 
 async function getPersonalBondfireOrThrow(
@@ -166,23 +153,7 @@ async function deleteDraftBondfireCascade(ctx: MutationCtx, bondfire: Doc<'bondf
     await ctx.db.delete(participant._id)
   }
 
-  const invites = await ctx.db
-    .query('inviteCodes')
-    .withIndex('by_parent', (q) =>
-      q.eq('parentType', 'personal-bondfire').eq('parentId', bondfire._id),
-    )
-    .collect()
-  for (const invite of invites) {
-    await ctx.db.delete(invite._id)
-  }
-
-  const claims = await ctx.db
-    .query('inviteClaims')
-    .withIndex('by_bondfire_claimer', (q) => q.eq('bondfireId', bondfire._id))
-    .collect()
-  for (const claim of claims) {
-    await ctx.db.delete(claim._id)
-  }
+  await deleteBondfireInviteArtifacts(ctx, bondfire._id)
 
   if (bondfire.liveSessionId) {
     await ctx.db.delete(bondfire.liveSessionId)
@@ -454,8 +425,10 @@ export const sendDraftInvites = mutation({
         if (!PAID_TIERS.includes(tier)) {
           throwUserError('A Hearth requires a Plus, Premium, or Pro subscription.')
         }
-        const cap = getParticipantCap(tier)
-        const activeCount = await getActiveParticipantCount(ctx, args.bondfireId)
+        const cap = getPersonalBondfireParticipantCap(tier)
+        // Serialize concurrent invite mutations on the bondfire row.
+        await ctx.db.patch(args.bondfireId, { updatedAt: now })
+        const activeCount = await getActivePersonalBondfireParticipantCount(ctx, args.bondfireId)
         const toAdd: Array<{
           recipientId: Id<'users'>
           participant: Doc<'personalBondfireParticipants'> | null
@@ -597,12 +570,12 @@ export const createInvite = mutation({
     )
 
     // Check participant cap.
-    const activeCount = await getActiveParticipantCount(ctx, args.bondfireId)
+    const activeCount = await getActivePersonalBondfireParticipantCount(ctx, args.bondfireId)
     const tier = await getEntitlementSubscriptionTier(ctx, user._id)
     if (!PAID_TIERS.includes(tier)) {
       throwUserError('A Hearth requires a Plus, Premium, or Pro subscription.')
     }
-    const cap = getParticipantCap(tier)
+    const cap = getPersonalBondfireParticipantCap(tier)
 
     if (activeCount >= cap) {
       if (tier === 'plus') {
@@ -693,44 +666,13 @@ export async function redeemInviteHandler(ctx: MutationCtx, rawCode: string) {
     'The hearth is currently unavailable. The owner may have cancelled their subscription.',
   )
 
-  // Check if user is already an active participant.
-  const existingParticipant = await getPersonalBondfireParticipant(ctx, {
-    bondfireId: bondfire._id,
+  const participant = await ensureActivePersonalBondfireParticipant(ctx, {
+    bondfire,
     userId: user._id,
+    errorAudience: 'invitee',
   })
-
-  if (existingParticipant?.status === 'active') {
+  if (!participant.added) {
     return { bondfireId: bondfire._id, alreadyJoined: true }
-  }
-
-  // Check participant cap based on owner's tier.
-  const owner = await ctx.db.get(bondfire.userId)
-  const ownerTier = owner ? await getEntitlementSubscriptionTier(ctx, owner._id) : 'free'
-  const cap = getParticipantCap(ownerTier)
-  const activeCount = await getActiveParticipantCount(ctx, bondfire._id)
-
-  if (activeCount >= cap) {
-    throwUserError('This fire is full.')
-  }
-
-  if (existingParticipant) {
-    await ctx.db.patch(existingParticipant._id, {
-      status: 'active',
-      joinedAt: now,
-      leftAt: undefined,
-      removedAt: undefined,
-      removedBy: undefined,
-      updatedAt: now,
-    })
-  } else {
-    await ctx.db.insert('personalBondfireParticipants', {
-      bondfireId: bondfire._id,
-      userId: user._id,
-      status: 'active',
-      joinedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    })
   }
 
   await ctx.db.patch(unifiedInvite._id, { uses: unifiedInvite.uses + 1 })
@@ -857,17 +799,7 @@ export const deleteBondfire = mutation({
       await ctx.db.delete(p._id)
     }
 
-    // Delete all invites.
-    const invites = await ctx.db
-      .query('inviteCodes')
-      .withIndex('by_parent', (q) =>
-        q.eq('parentType', 'personal-bondfire').eq('parentId', args.bondfireId),
-      )
-      .collect()
-
-    for (const inv of invites) {
-      await ctx.db.delete(inv._id)
-    }
+    await deleteBondfireInviteArtifacts(ctx, args.bondfireId)
 
     // Delete response videos and their live sessions.
     const responses = await ctx.db
@@ -942,10 +874,10 @@ export const checkInvite = query({
     if (!personalCamp || personalCamp.status !== 'active') {
       return { valid: false, reason: 'frozen' as const }
     }
-    const activeCount = await getActiveParticipantCount(ctx, bondfire._id)
+    const activeCount = await getActivePersonalBondfireParticipantCount(ctx, bondfire._id)
     const owner = await ctx.db.get(bondfire.userId)
     const ownerTier = owner ? await getEntitlementSubscriptionTier(ctx, owner._id) : 'free'
-    const cap = getParticipantCap(ownerTier)
+    const cap = getPersonalBondfireParticipantCap(ownerTier)
     return {
       valid: true,
       bondfireId: bondfire._id,
@@ -978,7 +910,7 @@ export const getMyDraftBondfire = query({
       title: draft.title,
       createdAt: draft.createdAt,
       draftExpiresAt: draft.draftExpiresAt,
-      participantCount: await getActiveParticipantCount(ctx, draft._id),
+      participantCount: await getActivePersonalBondfireParticipantCount(ctx, draft._id),
     }
   },
 })
@@ -1014,7 +946,7 @@ export const getInviteCandidates = query({
     }
 
     const tier = await getEntitlementSubscriptionTier(ctx, userId)
-    const participantCap = getParticipantCap(tier)
+    const participantCap = getPersonalBondfireParticipantCap(tier)
 
     const pins = await ctx.db
       .query('closeCirclePins')
@@ -1145,7 +1077,7 @@ export const listMyPersonalBondfires = query({
     return await Promise.all(
       bondfires.map(async (bondfire) => ({
         ...bondfire,
-        participantCount: await getActiveParticipantCount(ctx, bondfire._id),
+        participantCount: await getActivePersonalBondfireParticipantCount(ctx, bondfire._id),
       })),
     )
   },

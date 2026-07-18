@@ -253,7 +253,7 @@ export function BondfirePlaybackScreen({
         {showNotepad && <NotepadOverlay onClose={() => overlayState$.showNotepad.set(false)} />}
 
         <InviteSheet
-          mode="bondfire"
+          mode={bondfireData.personalCampId ? 'personal-bondfire' : 'bondfire'}
           id={bondfireId}
           open={isInviteSheetOpen}
           onClose={() => overlayState$.isInviteSheetOpen.set(false)}

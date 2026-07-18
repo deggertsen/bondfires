@@ -33,6 +33,7 @@ import {
   type SubscriptionTier,
   TIER_RANK,
 } from './entitlements'
+import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 
 const MUX_API_BASE_URL = 'https://api.mux.com/video/v1'
 
@@ -338,24 +339,6 @@ export const deleteExpiredBondfireRecords = internalMutation({
         for (const participant of participants) {
           await ctx.db.delete(participant._id)
         }
-
-        const invites = await ctx.db
-          .query('inviteCodes')
-          .withIndex('by_parent', (q) =>
-            q.eq('parentType', 'personal-bondfire').eq('parentId', bondfireId),
-          )
-          .collect()
-        for (const invite of invites) {
-          await ctx.db.delete(invite._id)
-        }
-      }
-
-      const bondfireInviteCodes = await ctx.db
-        .query('inviteCodes')
-        .withIndex('by_parent', (q) => q.eq('parentType', 'bondfire').eq('parentId', bondfireId))
-        .collect()
-      for (const inviteCode of bondfireInviteCodes) {
-        await ctx.db.delete(inviteCode._id)
       }
 
       const threadReads = await ctx.db
@@ -366,21 +349,7 @@ export const deleteExpiredBondfireRecords = internalMutation({
         await ctx.db.delete(read._id)
       }
 
-      const bondfireInvites = await ctx.db
-        .query('bondfireInvites')
-        .withIndex('by_bondfire_recipient', (q) => q.eq('bondfireId', bondfireId))
-        .collect()
-      for (const invite of bondfireInvites) {
-        await ctx.db.delete(invite._id)
-      }
-
-      const inviteClaims = await ctx.db
-        .query('inviteClaims')
-        .withIndex('by_bondfire_claimer', (q) => q.eq('bondfireId', bondfireId))
-        .collect()
-      for (const claim of inviteClaims) {
-        await ctx.db.delete(claim._id)
-      }
+      await deleteBondfireInviteArtifacts(ctx, bondfireId)
 
       await deleteWatchEventsForVideo(ctx, bondfireId)
 

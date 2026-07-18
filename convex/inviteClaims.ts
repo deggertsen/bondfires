@@ -2,7 +2,13 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
-import { internalAction, internalMutation, mutation, query } from './_generated/server'
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from './_generated/server'
 import { auth } from './auth'
 import { redeemCampInviteHandler } from './camps'
 import { throwUserError, withUserFacingErrors } from './errors'
@@ -12,6 +18,10 @@ import {
   normalizeInviteCode,
 } from './inviteCodes'
 import { getLatestResponsePlayback } from './lib/latestResponsePlayback'
+import {
+  canViewPersonalBondfire,
+  ensureActivePersonalBondfireParticipant,
+} from './personalBondfireAccess'
 import { redeemInviteHandler as redeemPersonalBondfireInviteHandler } from './personalBondfires'
 
 type InviteClaimSource = 'direct' | 'code' | 'camp'
@@ -66,6 +76,7 @@ async function createInviteNotification(
   ctx: MutationCtx,
   args: {
     userId: Id<'users'>
+    bondfireId?: Id<'bondfires'>
     title: string
     body: string
     data: Record<string, unknown>
@@ -73,6 +84,7 @@ async function createInviteNotification(
 ) {
   return await ctx.db.insert('notifications', {
     userId: args.userId,
+    bondfireId: args.bondfireId,
     type: 'invite',
     title: args.title,
     body: args.body,
@@ -167,6 +179,16 @@ async function createDirectInviteCore(ctx: MutationCtx, args: DirectInviteArgs) 
     throwUserError('Recipient not found')
   }
 
+  // Hearth fires gate playback on personalBondfireParticipants. A claim +
+  // notification without this row sends invitees to "isn't available".
+  if (bondfire.personalCampId) {
+    await ensureActivePersonalBondfireParticipant(ctx, {
+      bondfire,
+      userId: args.recipientId,
+      errorAudience: 'owner',
+    })
+  }
+
   const senderName = sender.displayName ?? sender.name ?? 'Someone'
   const title = `${senderName} shared a bondfire with you`
   const body = `"${bondfire.creatorName ?? 'Someone'}" - tap to watch`
@@ -179,6 +201,7 @@ async function createDirectInviteCore(ctx: MutationCtx, args: DirectInviteArgs) 
 
   await createInviteNotification(ctx, {
     userId: args.recipientId,
+    bondfireId: args.bondfireId,
     title,
     body,
     data: {
@@ -228,14 +251,19 @@ export const createBondfireInviteCode = mutation({
     }
     const sender = await assertCanInviteToBondfire(ctx, bondfire)
 
+    // Hearth fires must use personal-bondfire codes — redeeming a plain
+    // 'bondfire' code only creates a claim and leaves the invitee unable to
+    // open the fire (participant-gated visibility).
+    const parentType = bondfire.personalCampId ? 'personal-bondfire' : 'bondfire'
+
     const result =
       (await findReusableInviteCode(ctx, {
-        parentType: 'bondfire',
+        parentType,
         parentId: args.bondfireId,
         createdBy: sender._id,
       })) ??
       (await generateAndInsertInviteCode(ctx, {
-        parentType: 'bondfire',
+        parentType,
         parentId: args.bondfireId,
         createdBy: sender._id,
         expiresInDays: 7,
@@ -313,6 +341,7 @@ async function redeemInviteCodeHandler(ctx: MutationCtx, rawCode: string) {
     if (created) {
       await createInviteNotification(ctx, {
         userId: user._id,
+        bondfireId: result.bondfireId,
         title: 'Fire invite accepted',
         body: 'You joined a shared fire.',
         data: { claimId, bondfireId: result.bondfireId, source: 'code' },
@@ -325,6 +354,16 @@ async function redeemInviteCodeHandler(ctx: MutationCtx, rawCode: string) {
   const bondfire = await ctx.db.get(bondfireId)
   if (!bondfire) {
     throwUserError('Bondfire not found')
+  }
+
+  // Legacy / mis-typed hearth codes (parentType 'bondfire' on a personal
+  // fire) still need a participant row or the invitee hits "isn't available".
+  if (bondfire.personalCampId) {
+    await ensureActivePersonalBondfireParticipant(ctx, {
+      bondfire,
+      userId: user._id,
+      errorAudience: 'invitee',
+    })
   }
 
   const { claimId, created } = await upsertInviteClaim(ctx, {
@@ -340,6 +379,7 @@ async function redeemInviteCodeHandler(ctx: MutationCtx, rawCode: string) {
     await ctx.db.patch(invite._id, { uses: invite.uses + 1 })
     await createInviteNotification(ctx, {
       userId: user._id,
+      bondfireId,
       title: 'Bondfire invite accepted',
       body: `"${bondfire.creatorName ?? 'Someone'}" is ready to watch.`,
       data: {
@@ -453,7 +493,25 @@ export const listUnseenInvites = query({
       }),
     )
 
-    return rows.filter((row) => row.bondfire || row.camp)
+    return (
+      await Promise.all(
+        rows.map(async (row) => {
+          if (!row.bondfire) {
+            return row.camp ? row : null
+          }
+          // Don't surface hearth invites the viewer can't open yet (claim
+          // without participant → "isn't available" dead end).
+          if (row.bondfire.personalCampId) {
+            const canView = await canViewPersonalBondfire(ctx, {
+              bondfire: row.bondfire,
+              userId,
+            })
+            if (!canView) return null
+          }
+          return row
+        }),
+      )
+    ).filter((row): row is NonNullable<typeof row> => row !== null)
   },
 })
 
@@ -514,6 +572,16 @@ export const sendDirectInviteNotification = internalAction({
     campId: v.optional(v.id('camps')),
   },
   handler: async (ctx, args) => {
+    // Draft discard / bondfire delete can race a runAfter(0) push. Skip if the
+    // fire or invite claim is already gone so we don't send a dead deep link.
+    const stillValid = await ctx.runQuery(internal.inviteClaims.isDirectInvitePushValid, {
+      bondfireId: args.bondfireId,
+      recipientId: args.recipientId,
+    })
+    if (!stillValid) {
+      return
+    }
+
     await ctx.runAction(internal.sendNotification.sendToUser, {
       userId: args.recipientId,
       title: `${args.senderName} shared a bondfire with you`,
@@ -526,5 +594,38 @@ export const sendDirectInviteNotification = internalAction({
         campId: args.campId,
       },
     })
+  },
+})
+
+export const isDirectInvitePushValid = internalQuery({
+  args: {
+    bondfireId: v.id('bondfires'),
+    recipientId: v.id('users'),
+  },
+  handler: async (ctx, args) => {
+    const bondfire = await ctx.db.get(args.bondfireId)
+    if (!bondfire) {
+      return false
+    }
+
+    const claim = await ctx.db
+      .query('inviteClaims')
+      .withIndex('by_bondfire_claimer', (q) =>
+        q.eq('bondfireId', args.bondfireId).eq('claimerId', args.recipientId),
+      )
+      .first()
+
+    if (!claim || claim.dismissed === true) {
+      return false
+    }
+
+    if (bondfire.personalCampId) {
+      return await canViewPersonalBondfire(ctx, {
+        bondfire,
+        userId: args.recipientId,
+      })
+    }
+
+    return true
   },
 })

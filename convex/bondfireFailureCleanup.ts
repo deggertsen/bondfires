@@ -18,6 +18,7 @@
 import { v } from 'convex/values'
 import type { Doc, Id } from './_generated/dataModel'
 import { internalAction, type MutationCtx } from './_generated/server'
+import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 
 export type BondfireFailureReason =
   /** Mux marked the asset errored (rejected/processing failure). */
@@ -177,24 +178,6 @@ export async function purgeBondfireConvexRecords(
     for (const participant of participants) {
       await ctx.db.delete(participant._id)
     }
-
-    const invites = await ctx.db
-      .query('inviteCodes')
-      .withIndex('by_parent', (q) =>
-        q.eq('parentType', 'personal-bondfire').eq('parentId', bondfireId),
-      )
-      .collect()
-    for (const invite of invites) {
-      await ctx.db.delete(invite._id)
-    }
-  }
-
-  const bondfireInviteCodes = await ctx.db
-    .query('inviteCodes')
-    .withIndex('by_parent', (q) => q.eq('parentType', 'bondfire').eq('parentId', bondfireId))
-    .collect()
-  for (const inviteCode of bondfireInviteCodes) {
-    await ctx.db.delete(inviteCode._id)
   }
 
   const threadReads = await ctx.db
@@ -205,21 +188,7 @@ export async function purgeBondfireConvexRecords(
     await ctx.db.delete(read._id)
   }
 
-  const bondfireInvites = await ctx.db
-    .query('bondfireInvites')
-    .withIndex('by_bondfire_recipient', (q) => q.eq('bondfireId', bondfireId))
-    .collect()
-  for (const invite of bondfireInvites) {
-    await ctx.db.delete(invite._id)
-  }
-
-  const inviteClaims = await ctx.db
-    .query('inviteClaims')
-    .withIndex('by_bondfire_claimer', (q) => q.eq('bondfireId', bondfireId))
-    .collect()
-  for (const claim of inviteClaims) {
-    await ctx.db.delete(claim._id)
-  }
+  await deleteBondfireInviteArtifacts(ctx, bondfireId)
 
   await deleteWatchEventsForVideo(ctx, bondfireId)
 

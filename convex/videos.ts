@@ -33,6 +33,7 @@ import {
   PRO_MAX_VIDEO_DURATION_MS,
 } from './entitlements'
 import { throwUserError, withUserFacingActionErrors } from './errors'
+import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 import { classifyMuxIngest, type IngestEvidence, localIngestSource } from './lib/liveIngest'
 import {
   assertCanRespondToPersonalBondfire,
@@ -1801,6 +1802,7 @@ export const deleteExpiredPrivateCampVideoRecords = internalMutation({
         deletedResponses += 1
       }
 
+      await deleteBondfireInviteArtifacts(ctx, bondfire._id)
       await ctx.db.delete(bondfire._id)
       deletedBondfires += 1
     }
@@ -3383,6 +3385,7 @@ export const deleteLegacyVideoOnDemandContent = internalMutation({
         await ctx.db.delete(response._id)
       }
 
+      await deleteBondfireInviteArtifacts(ctx, bondfire._id)
       await ctx.db.delete(bondfire._id)
     }
 
