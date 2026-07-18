@@ -135,6 +135,7 @@ export function LiveRecordScreen({
   const thermalCoolPollsRef = useRef(0)
   const thermalStoppingRef = useRef(false)
   const thermalCheckInFlightRef = useRef(false)
+  const thermalWarningTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const liveTerminalRecoveryFiredRef = useRef(false)
   const liveCameraSwapInFlightRef = useRef(false)
 
@@ -705,6 +706,10 @@ export function LiveRecordScreen({
       thermalCoolPollsRef.current = 0
       thermalStoppingRef.current = false
       thermalCheckInFlightRef.current = false
+      if (thermalWarningTimeoutRef.current) {
+        clearTimeout(thermalWarningTimeoutRef.current)
+        thermalWarningTimeoutRef.current = null
+      }
       state$.thermalWarning.set(false)
       return
     }
@@ -714,7 +719,24 @@ export function LiveRecordScreen({
       if (!target) return
       const configured = await livePublisher.setVideoQuality(target.bitrate, target.fps)
       thermalAppliedLevelRef.current = level
-      state$.thermalWarning.set(level >= 2)
+      // Level 2 warning auto-dismisses after 5s; level 3 auto-stops and
+      // clears the warning anyway, so only show the persistent banner at 2.
+      if (level >= 2) {
+        if (thermalWarningTimeoutRef.current) clearTimeout(thermalWarningTimeoutRef.current)
+        state$.thermalWarning.set(true)
+        if (level === 2) {
+          thermalWarningTimeoutRef.current = setTimeout(() => {
+            thermalWarningTimeoutRef.current = null
+            state$.thermalWarning.set(false)
+          }, 5_000)
+        }
+      } else {
+        if (thermalWarningTimeoutRef.current) {
+          clearTimeout(thermalWarningTimeoutRef.current)
+          thermalWarningTimeoutRef.current = null
+        }
+        state$.thermalWarning.set(false)
+      }
       telemetry.info('live:thermal_mitigation', 'Adjusting quality for thermal state', {
         level,
         bitrate: target.bitrate,
@@ -760,6 +782,10 @@ export function LiveRecordScreen({
               recordId: livePublishStore$.recordId.peek(),
             },
           )
+          if (thermalWarningTimeoutRef.current) {
+            clearTimeout(thermalWarningTimeoutRef.current)
+            thermalWarningTimeoutRef.current = null
+          }
           state$.thermalWarning.set(false)
           void stopLiveRecording()
           return
@@ -801,6 +827,10 @@ export function LiveRecordScreen({
 
     return () => {
       clearInterval(interval)
+      if (thermalWarningTimeoutRef.current) {
+        clearTimeout(thermalWarningTimeoutRef.current)
+        thermalWarningTimeoutRef.current = null
+      }
     }
   }, [
     phase,
