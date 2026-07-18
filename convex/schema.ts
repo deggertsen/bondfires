@@ -268,6 +268,7 @@ export default defineSchema({
 
   notifications: defineTable({
     userId: v.id('users'),
+    bondfireId: v.optional(v.id('bondfires')),
     type: v.string(),
     title: v.string(),
     body: v.string(),
@@ -276,7 +277,8 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index('by_user', ['userId', 'createdAt'])
-    .index('by_user_unread', ['userId', 'read', 'createdAt']),
+    .index('by_user_unread', ['userId', 'read', 'createdAt'])
+    .index('by_bondfire', ['bondfireId', 'createdAt']),
 
   // Store subscription state. Client sync only records pending receipts; entitlement helpers
   // count active/trialing rows after server-side store validation marks them verified.

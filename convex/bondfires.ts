@@ -17,6 +17,7 @@ import {
   getPrivateCampExpiresAt,
 } from './entitlements'
 import { throwUserError } from './errors'
+import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 import { addInviteBadgesToBondfires } from './inviteBadges'
 import { getLatestResponsePlayback } from './lib/latestResponsePlayback'
 import { canViewPersonalBondfire } from './personalBondfireAccess'
@@ -915,33 +916,9 @@ export const deleteBondfire = mutation({
       for (const p of participants) {
         await ctx.db.delete(p._id)
       }
-
-      const invites = await ctx.db
-        .query('inviteCodes')
-        .withIndex('by_parent', (q) =>
-          q.eq('parentType', 'personal-bondfire').eq('parentId', args.bondfireId),
-        )
-        .collect()
-      for (const inv of invites) {
-        await ctx.db.delete(inv._id)
-      }
     }
 
-    const bondfireInviteCodes = await ctx.db
-      .query('inviteCodes')
-      .withIndex('by_parent', (q) => q.eq('parentType', 'bondfire').eq('parentId', args.bondfireId))
-      .collect()
-    for (const inviteCode of bondfireInviteCodes) {
-      await ctx.db.delete(inviteCode._id)
-    }
-
-    const inviteClaims = await ctx.db
-      .query('inviteClaims')
-      .withIndex('by_bondfire_claimer', (q) => q.eq('bondfireId', args.bondfireId))
-      .collect()
-    for (const claim of inviteClaims) {
-      await ctx.db.delete(claim._id)
-    }
+    await deleteBondfireInviteArtifacts(ctx, args.bondfireId)
 
     // Clean up watch events.
     await deleteWatchEventsForVideo(ctx, args.bondfireId)

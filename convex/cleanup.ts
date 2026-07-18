@@ -1,6 +1,7 @@
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
+import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 
 const ARCHIVE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 
@@ -63,6 +64,7 @@ export const deleteArchivedCampData = internalMutation({
           await ctx.db.delete(bondfire.liveSessionId)
         }
 
+        await deleteBondfireInviteArtifacts(ctx, bondfire._id)
         await ctx.db.delete(bondfire._id)
         bondfiresInCamp += 1
       }
