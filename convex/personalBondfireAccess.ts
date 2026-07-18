@@ -64,6 +64,11 @@ export async function ensureActivePersonalBondfireParticipant(
     return { added: false }
   }
 
+  // Touch the bondfire row first so concurrent invite mutations conflict and
+  // retry instead of both reading the same under-cap count.
+  const now = Date.now()
+  await ctx.db.patch(args.bondfire._id, { updatedAt: now })
+
   const ownerTiers = await getEntitlementSubscriptionTier(ctx, args.bondfire.userId)
   const cap = getParticipantCap(ownerTiers)
   const activeCount = await getActiveParticipantCount(ctx, args.bondfire._id)
@@ -74,7 +79,6 @@ export async function ensureActivePersonalBondfireParticipant(
     throwUserError('This fire is full.')
   }
 
-  const now = Date.now()
   if (existing) {
     await ctx.db.patch(existing._id, {
       status: 'active',

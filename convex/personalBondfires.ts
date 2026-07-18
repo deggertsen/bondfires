@@ -10,7 +10,7 @@ import {
   PAID_TIERS,
 } from './entitlements'
 import { throwUserError, withUserFacingErrors } from './errors'
-import { createDirectInviteHandler } from './inviteClaims'
+import { createDirectInviteHandler, deleteInviteArtifactsForBondfire } from './inviteClaims'
 import {
   findReusableInviteCode,
   generateAndInsertInviteCode,
@@ -176,13 +176,17 @@ async function deleteDraftBondfireCascade(ctx: MutationCtx, bondfire: Doc<'bondf
     await ctx.db.delete(invite._id)
   }
 
-  const claims = await ctx.db
-    .query('inviteClaims')
-    .withIndex('by_bondfire_claimer', (q) => q.eq('bondfireId', bondfire._id))
+  // Also clear any mis-typed plain bondfire codes minted before the hearth
+  // share-path fix, then claims + in-app invite notifications.
+  const legacyCodes = await ctx.db
+    .query('inviteCodes')
+    .withIndex('by_parent', (q) => q.eq('parentType', 'bondfire').eq('parentId', bondfire._id))
     .collect()
-  for (const claim of claims) {
-    await ctx.db.delete(claim._id)
+  for (const invite of legacyCodes) {
+    await ctx.db.delete(invite._id)
   }
+
+  await deleteInviteArtifactsForBondfire(ctx, bondfire._id)
 
   if (bondfire.liveSessionId) {
     await ctx.db.delete(bondfire.liveSessionId)
@@ -455,6 +459,8 @@ export const sendDraftInvites = mutation({
           throwUserError('A Hearth requires a Plus, Premium, or Pro subscription.')
         }
         const cap = getParticipantCap(tier)
+        // Serialize concurrent invite mutations on the bondfire row.
+        await ctx.db.patch(args.bondfireId, { updatedAt: now })
         const activeCount = await getActiveParticipantCount(ctx, args.bondfireId)
         const toAdd: Array<{
           recipientId: Id<'users'>
@@ -868,6 +874,18 @@ export const deleteBondfire = mutation({
     for (const inv of invites) {
       await ctx.db.delete(inv._id)
     }
+
+    const legacyCodes = await ctx.db
+      .query('inviteCodes')
+      .withIndex('by_parent', (q) =>
+        q.eq('parentType', 'bondfire').eq('parentId', args.bondfireId),
+      )
+      .collect()
+    for (const inv of legacyCodes) {
+      await ctx.db.delete(inv._id)
+    }
+
+    await deleteInviteArtifactsForBondfire(ctx, args.bondfireId)
 
     // Delete response videos and their live sessions.
     const responses = await ctx.db

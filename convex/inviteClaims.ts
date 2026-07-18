@@ -2,7 +2,7 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
-import { internalAction, internalMutation, mutation, query } from './_generated/server'
+import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server'
 import { auth } from './auth'
 import { redeemCampInviteHandler } from './camps'
 import { throwUserError, withUserFacingErrors } from './errors'
@@ -153,6 +153,43 @@ async function upsertInviteClaim(
   })
 
   return { claimId, created: true }
+}
+
+/** Drop invite claims and matching in-app invite notifications for a bondfire. */
+export async function deleteInviteArtifactsForBondfire(
+  ctx: MutationCtx,
+  bondfireId: Id<'bondfires'>,
+) {
+  const claims = await ctx.db
+    .query('inviteClaims')
+    .withIndex('by_bondfire_claimer', (q) => q.eq('bondfireId', bondfireId))
+    .collect()
+
+  for (const claim of claims) {
+    await deleteInviteNotificationsForUserBondfire(ctx, claim.claimerId, bondfireId)
+    await ctx.db.delete(claim._id)
+  }
+}
+
+async function deleteInviteNotificationsForUserBondfire(
+  ctx: MutationCtx,
+  userId: Id<'users'>,
+  bondfireId: Id<'bondfires'>,
+) {
+  // Notifications are indexed by user only — scan a recent window per claimer.
+  const recent = await ctx.db
+    .query('notifications')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .order('desc')
+    .take(100)
+
+  for (const notification of recent) {
+    if (notification.type !== 'invite') continue
+    const data = notification.data as { bondfireId?: string } | null
+    if (data?.bondfireId === bondfireId) {
+      await ctx.db.delete(notification._id)
+    }
+  }
 }
 
 async function createDirectInviteCore(ctx: MutationCtx, args: DirectInviteArgs) {
@@ -559,6 +596,16 @@ export const sendDirectInviteNotification = internalAction({
     campId: v.optional(v.id('camps')),
   },
   handler: async (ctx, args) => {
+    // Draft discard / bondfire delete can race a runAfter(0) push. Skip if the
+    // fire or invite claim is already gone so we don't send a dead deep link.
+    const stillValid = await ctx.runQuery(internal.inviteClaims.isDirectInvitePushValid, {
+      bondfireId: args.bondfireId,
+      recipientId: args.recipientId,
+    })
+    if (!stillValid) {
+      return
+    }
+
     await ctx.runAction(internal.sendNotification.sendToUser, {
       userId: args.recipientId,
       title: `${args.senderName} shared a bondfire with you`,
@@ -571,5 +618,27 @@ export const sendDirectInviteNotification = internalAction({
         campId: args.campId,
       },
     })
+  },
+})
+
+export const isDirectInvitePushValid = internalQuery({
+  args: {
+    bondfireId: v.id('bondfires'),
+    recipientId: v.id('users'),
+  },
+  handler: async (ctx, args) => {
+    const bondfire = await ctx.db.get(args.bondfireId)
+    if (!bondfire) {
+      return false
+    }
+
+    const claim = await ctx.db
+      .query('inviteClaims')
+      .withIndex('by_bondfire_claimer', (q) =>
+        q.eq('bondfireId', args.bondfireId).eq('claimerId', args.recipientId),
+      )
+      .first()
+
+    return !!claim && claim.dismissed !== true
   },
 })

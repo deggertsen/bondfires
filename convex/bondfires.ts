@@ -18,6 +18,7 @@ import {
 } from './entitlements'
 import { throwUserError } from './errors'
 import { addInviteBadgesToBondfires } from './inviteBadges'
+import { deleteInviteArtifactsForBondfire } from './inviteClaims'
 import { getLatestResponsePlayback } from './lib/latestResponsePlayback'
 import { canViewPersonalBondfire } from './personalBondfireAccess'
 
@@ -935,13 +936,7 @@ export const deleteBondfire = mutation({
       await ctx.db.delete(inviteCode._id)
     }
 
-    const inviteClaims = await ctx.db
-      .query('inviteClaims')
-      .withIndex('by_bondfire_claimer', (q) => q.eq('bondfireId', args.bondfireId))
-      .collect()
-    for (const claim of inviteClaims) {
-      await ctx.db.delete(claim._id)
-    }
+    await deleteInviteArtifactsForBondfire(ctx, args.bondfireId)
 
     // Clean up watch events.
     await deleteWatchEventsForVideo(ctx, args.bondfireId)
