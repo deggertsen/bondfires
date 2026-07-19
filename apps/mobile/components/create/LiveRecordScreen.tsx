@@ -8,6 +8,8 @@ import {
   type LivePublishStatus,
   livePublishActions,
   livePublishStore$,
+  type NetworkQuality,
+  NETWORK_QUALITY_LADDER,
   parseError,
   recordingActions,
   recordingStore$,
@@ -49,6 +51,11 @@ const THERMAL_POLL_INTERVAL_MS = 10_000
 // Consecutive cooler polls required before stepping quality back up, so an
 // oscillating thermal level doesn't flap the encoder settings.
 const THERMAL_STEP_UP_POLLS = 3
+// Network-adaptive bitrate: consecutive healthy samples required before
+// stepping the bitrate back up after a network downgrade. At the 10s stats
+// cadence this is ~30s of sustained good throughput — long enough to rule
+// out a brief blip but short enough to recover quality promptly.
+const NETWORK_STEP_UP_SAMPLES = 3
 const EARLY_LIVE_DROP_MS = 8_000
 // Upper bound for the never-started cancel path. Cancelling deletes the
 // session + record row, so a wrong verdict destroys real footage — cap the
@@ -142,6 +149,13 @@ export function LiveRecordScreen({
   const thermalCoolPollsRef = useRef(0)
   const thermalStoppingRef = useRef(false)
   const thermalCheckInFlightRef = useRef(false)
+  // Network-adaptive bitrate state (mirrors the thermal ladder pattern).
+  // Tracks the current network quality level and counts consecutive
+  // healthy samples before stepping bitrate back up.
+  const networkQualityLevelRef = useRef<NetworkQuality>('strong')
+  const networkAppliedBitrateRef = useRef(LIVE_DEFAULT_VIDEO_BITRATE)
+  const networkHealthySamplesRef = useRef(0)
+  const networkAdaptInFlightRef = useRef(false)
   const liveTerminalRecoveryFiredRef = useRef(false)
   const liveCameraSwapInFlightRef = useRef(false)
 
@@ -857,6 +871,139 @@ export function LiveRecordScreen({
     stopLiveRecording,
     state$,
   ])
+
+  // Network-adaptive bitrate — mirrors the thermal ladder pattern. Listens
+  // for network state changes during recording (WiFi → cellular, connectivity
+  // loss, etc.) and adjusts the encoder bitrate in real time. Steps down
+  // immediately on degradation; steps back up after NETWORK_STEP_UP_SAMPLES
+  // consecutive healthy samples to avoid flapping.
+  //
+  // The thermal ladder and this effect both call setVideoQuality — whichever
+  // wants the lower bitrate wins (the native publisher applies the most
+  // recent call, so both effects should converge on conservative values).
+  useEffect(() => {
+    if (phase !== 'recording') {
+      networkQualityLevelRef.current = 'strong'
+      networkAppliedBitrateRef.current = LIVE_DEFAULT_VIDEO_BITRATE
+      networkHealthySamplesRef.current = 0
+      networkAdaptInFlightRef.current = false
+      return
+    }
+
+    // Map network state to a quality level and target bitrate.
+    const assessFromState = (netState: Network.NetworkState): NetworkQuality => {
+      if (netState.isConnected === false || netState.isInternetReachable === false) {
+        return 'weak'
+      }
+      if (
+        netState.type === Network.NetworkStateType.WIFI ||
+        netState.type === Network.NetworkStateType.ETHERNET
+      ) {
+        return 'strong'
+      }
+      // Cellular or unknown — treat as cellular.
+      return 'cellular'
+    }
+
+    const applyNetworkQuality = async (quality: NetworkQuality, trigger: string) => {
+      if (networkAdaptInFlightRef.current) return
+      networkAdaptInFlightRef.current = true
+      try {
+        const targetBitrate = NETWORK_QUALITY_LADDER[quality]
+        if (targetBitrate === networkAppliedBitrateRef.current) return
+
+        const configured = await livePublisher.setVideoQuality(targetBitrate, LIVE_DEFAULT_VIDEO_FPS)
+        networkAppliedBitrateRef.current = targetBitrate
+        networkQualityLevelRef.current = quality
+        networkHealthySamplesRef.current = 0
+
+        telemetry.info('live:network_adapt', 'Adapting bitrate for network conditions', {
+          quality,
+          bitrate: targetBitrate,
+          trigger,
+          configuredVideoBitrate: configured.configuredVideoBitrate,
+          configuredFps: configured.configuredFps,
+          sessionId: livePublishStore$.sessionId.peek(),
+          recordId: livePublishStore$.recordId.peek(),
+        })
+      } catch (error) {
+        telemetry.warn('live:network_adapt_failed', 'Failed to adapt bitrate for network', {
+          error: String(error),
+          quality,
+          trigger,
+          sessionId: livePublishStore$.sessionId.peek(),
+        })
+      } finally {
+        networkAdaptInFlightRef.current = false
+      }
+    }
+
+    // Listener fires on real network changes (WiFi ↔ cellular, connectivity
+    // loss, etc.) — this is the primary signal for mid-recording adaptation.
+    const subscription = Network.addNetworkStateListener((event) => {
+      const quality = assessFromState(event)
+      const current = networkQualityLevelRef.current
+
+      if (quality === current) return
+
+      if (quality === 'weak') {
+        // Immediate step down to the floor.
+        void applyNetworkQuality('weak', 'listener:degraded')
+      } else if (quality === 'cellular' && current === 'strong') {
+        // WiFi → cellular: step down immediately.
+        void applyNetworkQuality('cellular', 'listener:wifi_to_cellular')
+      } else if (quality === 'strong' && current !== 'strong') {
+        // Cellular/weak → WiFi: don't step up immediately — wait for
+        // sustained good throughput via the stats check below. The
+        // healthy sample counter handles this.
+        networkHealthySamplesRef.current = 0
+      }
+    })
+
+    // Also poll the stall detector's throughput via the stats subscription.
+    // The stats hook already samples bitrate every 5s; we piggyback on the
+    // existing livePublishStore$ bitrate to count healthy samples for
+    // step-up decisions. This runs on the same 10s cadence as thermal.
+    const checkNetworkRecovery = async () => {
+      if (networkAdaptInFlightRef.current) return
+      if (networkQualityLevelRef.current === 'strong') {
+        networkHealthySamplesRef.current = 0
+        return
+      }
+
+      // Check if the stream has been healthy at the current bitrate.
+      const currentBitrate = livePublishStore$.bitrateBps.peek()
+      const STALL_FLOOR = 64_000
+      if (currentBitrate >= STALL_FLOOR) {
+        networkHealthySamplesRef.current += 1
+        if (networkHealthySamplesRef.current >= NETWORK_STEP_UP_SAMPLES) {
+          // Sustained good throughput — check if the network type also
+          // improved. If still cellular, we could step up within the
+          // cellular tier (e.g., weak → cellular), but since we only have
+          // two cellular tiers (cellular/weak), step up from weak to
+          // cellular if currently at weak.
+          const netState = await Network.getNetworkStateAsync().catch(() => null)
+          if (!netState) return
+          const quality = assessFromState(netState)
+
+          if (quality === 'strong') {
+            await applyNetworkQuality('strong', 'recovery:sustained')
+          } else if (quality === 'cellular' && networkQualityLevelRef.current === 'weak') {
+            await applyNetworkQuality('cellular', 'recovery:weak_to_cellular')
+          }
+        }
+      } else {
+        networkHealthySamplesRef.current = 0
+      }
+    }
+
+    const interval = setInterval(checkNetworkRecovery, THERMAL_POLL_INTERVAL_MS)
+
+    return () => {
+      subscription.remove()
+      clearInterval(interval)
+    }
+  }, [phase, livePublisher.setVideoQuality])
 
   // Auto-stop at the recording duration cap.
   // NOTE: the pre-refactor create screen routed this through the legacy
