@@ -18,7 +18,7 @@ import type {
   BondfireVideoItem,
   ScrollToIndexFailedInfo,
 } from '../_lib/bondfireDetailHelpers'
-import { SCREEN_WIDTH } from '../_lib/bondfireDetailHelpers'
+import { SCREEN_WIDTH, shouldOfferResponseAfterPlayback } from '../_lib/bondfireDetailHelpers'
 import { ThreadBrowser } from './ThreadBrowser'
 import { VideoPlayer } from './VideoPlayer'
 
@@ -73,6 +73,7 @@ export function BondfirePlaybackScreen({
   const isInviteSheetOpen = useValue(overlayState$.isInviteSheetOpen)
   const suppressPlayback = useValue(overlayState$.suppressPlayback)
   const totalVideos = videoItems.length
+  const canRespond = bondfireData.campStatus !== 'archived'
   const processingResponseCount = bondfireData.processingResponses?.length ?? 0
   const viewabilityConfig = useRef({
     itemVisiblePercentThreshold: 50,
@@ -195,6 +196,15 @@ export function BondfirePlaybackScreen({
               isMainVideo={item.isMainVideo}
               responseIndex={item.responseIndex}
               isLive={item.isLive}
+              onRespondAfterPlayback={
+                shouldOfferResponseAfterPlayback({
+                  videoIndex: index,
+                  totalVideos,
+                  canRespond,
+                })
+                  ? handleRespond
+                  : undefined
+              }
             />
           )}
           horizontal
@@ -240,7 +250,7 @@ export function BondfirePlaybackScreen({
           currentVideoIndex={currentVideoIndex}
           participants={bondfireData.participants}
           processingCount={processingResponseCount}
-          canRespond={bondfireData.campStatus !== 'archived'}
+          canRespond={canRespond}
           canShare={canInvite}
           onSelectVideo={(index) => {
             flatListRef.current?.scrollToIndex({ index, animated: true })

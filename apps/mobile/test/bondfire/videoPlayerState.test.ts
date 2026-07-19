@@ -2,6 +2,7 @@ import { observable } from '@legendapp/state'
 import { describe, expect, it } from 'vitest'
 import {
   shouldLoadVideoSource,
+  shouldShowRespondCTA,
   syncReactionPlaybackAfterSeek,
   type VideoPlayerState,
 } from '../../app/(main)/bondfire/_lib/videoPlayerState'
@@ -104,5 +105,14 @@ describe('videoPlayerState', () => {
     expect(shouldLoadVideoSource({ ...base, isAppActive: false })).toBe(false)
     expect(shouldLoadVideoSource({ ...base, shouldSuppressPlayback: true })).toBe(false)
     expect(shouldLoadVideoSource({ ...base, videoUrl: null })).toBe(false)
+  })
+
+  it('shows the response CTA only in the settled ended state', () => {
+    expect(shouldShowRespondCTA({ hasEnded: true, isPlaying: false, isLoading: false })).toBe(true)
+    expect(shouldShowRespondCTA({ hasEnded: false, isPlaying: false, isLoading: false })).toBe(
+      false,
+    )
+    expect(shouldShowRespondCTA({ hasEnded: true, isPlaying: true, isLoading: false })).toBe(false)
+    expect(shouldShowRespondCTA({ hasEnded: true, isPlaying: false, isLoading: true })).toBe(false)
   })
 })
