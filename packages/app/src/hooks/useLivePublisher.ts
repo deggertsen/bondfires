@@ -3,7 +3,13 @@ import { AppState, Platform } from 'react-native'
 import { telemetry } from '../services/telemetry'
 import { livePublishActions, livePublishStore$ } from '../store/livePublish.store'
 import { isNativePublisherStatus } from '../store/livePublisherContract'
+import { recordingStore$ } from '../store/recording.store'
 import { uploadQueueStore$ } from '../store/uploadQueue.store'
+import {
+  assessNetworkQuality,
+  NETWORK_QUALITY_LADDER,
+  type NetworkQuality,
+} from '../utils/networkQuality'
 import {
   createStallDetector,
   IOS_STALL_BITRATE_FLOOR_BPS,
@@ -137,6 +143,11 @@ export function useLivePublisher(options: {
   // copy of the create screen — correctly reports that it no longer owns the
   // live session and stays out of the active instance's way.
   const ingestRef = useRef<{ rtmpsUrl: string; streamKey: string; sessionId: string } | null>(null)
+  // Network quality assessed at recording start. Used as the initial bitrate
+  // for the RTMP publisher and for auto-reconnect attempts. The thermal ladder
+  // can still step down further on top of this.
+  const networkBitrateRef = useRef<number>(LIVE_DEFAULT_VIDEO_BITRATE)
+  const networkQualityRef = useRef<NetworkQuality>('strong')
 
   const stopStatsSampling = useCallback(() => {
     if (statsIntervalRef.current) {
@@ -144,6 +155,13 @@ export function useLivePublisher(options: {
       statsIntervalRef.current = null
     }
   }, [])
+
+  // Track unexpected drop count for auto-reconnect decision. If the stream
+  // keeps dropping after a reconnect attempt, we stop trying and surface the
+  // error — repeated drops likely indicate a network or device issue that
+  // won't be solved by more reconnects.
+  const dropCountRef = useRef(0)
+  const MAX_AUTO_RECONNECT_DROPS = 2
 
   useEffect(() => {
     const statusSub = options.publisher.addListener('statusChange', (rawStatus) => {
@@ -182,6 +200,10 @@ export function useLivePublisher(options: {
       // toast — the UI already handles the status transition silently.
       if (status === 'stream_stopped_unexpectedly' || status === 'endpoint_closed') {
         const startedAt = livePublishStore$.startedAt.peek()
+        const ingest = ingestRef.current
+        dropCountRef.current += 1
+        const dropCount = dropCountRef.current
+
         telemetry.info('live:unexpected_drop', 'Live stream stopped unexpectedly', {
           reason: status,
           sessionId: livePublishStore$.sessionId.peek(),
@@ -189,7 +211,82 @@ export function useLivePublisher(options: {
           durationMs: startedAt ? Date.now() - startedAt : undefined,
           lastBitrateBps: livePublishStore$.bitrateBps.peek(),
           everHadThroughput: livePublishStore$.everHadThroughput.peek(),
+          dropCount,
         })
+
+        // Auto-reconnect: if the stream dropped unexpectedly and we still
+        // own the ingest credentials, attempt to re-establish the RTMP
+        // connection. This handles transient network blips and Mux-side
+        // endpoint rotations without making the user tap anything. After
+        // MAX_AUTO_RECONNECT_DROPS consecutive drops, stop trying —
+        // repeated drops indicate a persistent issue (bad network, device
+        // thermal throttling killing the encoder, etc.) and the user
+        // needs to manually intervene.
+        if (
+          dropCount <= MAX_AUTO_RECONNECT_DROPS &&
+          ingest &&
+          ingest.sessionId === livePublishStore$.sessionId.peek() &&
+          AppState.currentState === 'active'
+        ) {
+          telemetry.info('live:auto_reconnect', 'Attempting automatic reconnect after drop', {
+            sessionId: livePublishStore$.sessionId.peek(),
+            recordId: livePublishStore$.recordId.peek(),
+            dropCount,
+            reason: status,
+          })
+
+          // Re-arm the crash breadcrumb and attempt to restart the publisher
+          // with the same ingest credentials.
+          telemetry.setCrashBreadcrumb('live:reconnecting', {
+            sessionId: livePublishStore$.sessionId.peek(),
+            recordId: livePublishStore$.recordId.peek(),
+            status: 'reconnecting',
+            dropCount,
+          })
+
+          options.publisher
+            .start({
+              rtmpsUrl: ingest.rtmpsUrl,
+              streamKey: ingest.streamKey,
+              fps: LIVE_DEFAULT_VIDEO_FPS,
+              videoBitrate: networkBitrateRef.current,
+              audioBitrate: 128_000,
+              initialCamera: recordingStore$.facing.peek() === 'back' ? 'back' : 'front',
+            })
+            .then(() => {
+              // Reconnect succeeded — restart stats sampling and reset drop
+              // counter only if we get throughput again (the stall detector
+              // will confirm). Keep the counter for now so a second drop
+              // within the same session still increments.
+              startStatsSampling()
+              telemetry.info('live:auto_reconnect_success', 'Automatic reconnect succeeded', {
+                sessionId: livePublishStore$.sessionId.peek(),
+                recordId: livePublishStore$.recordId.peek(),
+                dropCount,
+              })
+              telemetry.setCrashBreadcrumb('live:recording', {
+                sessionId: livePublishStore$.sessionId.peek(),
+                recordId: livePublishStore$.recordId.peek(),
+                status: livePublishStore$.status.peek(),
+              })
+            })
+            .catch((reconnectError) => {
+              telemetry.error('live:auto_reconnect_failed', 'Automatic reconnect failed', {
+                sessionId: livePublishStore$.sessionId.peek(),
+                recordId: livePublishStore$.recordId.peek(),
+                dropCount,
+                error: String(reconnectError),
+              })
+              // The status is already set to the dropped state by
+              // livePublishActions.setStatus above, so the UI will show
+              // the appropriate error/retry screen.
+            })
+        }
+      }
+
+      // Reset drop counter when we transition to a healthy live state.
+      if (status === 'live') {
+        dropCountRef.current = 0
       }
     })
     const errorSub = options.publisher.addListener('error', (error) => {
@@ -396,9 +493,15 @@ export function useLivePublisher(options: {
    */
   const preview = useCallback(
     async (args: { initialCamera?: 'front' | 'back' } = {}) => {
+      // Assess network quality during preview so the bitrate is ready when
+      // the user taps record — avoids a delay between tap and RTMP connect.
+      const assessment = await assessNetworkQuality()
+      networkBitrateRef.current = assessment.bitrate
+      networkQualityRef.current = assessment.quality
+
       await options.publisher.startPreview({
         fps: LIVE_DEFAULT_VIDEO_FPS,
-        videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
+        videoBitrate: assessment.bitrate,
         audioBitrate: 128_000,
         initialCamera: args.initialCamera ?? 'front',
       })
@@ -517,6 +620,20 @@ export function useLivePublisher(options: {
         throw new Error('No provisioned live stream to connect')
       }
 
+      // Assess network quality before opening the RTMP connection.
+      // This picks a conservative bitrate for cellular to avoid the
+      // stream-drops we're seeing on weak cellular (July 2026 telemetry).
+      const assessment = await assessNetworkQuality()
+      networkBitrateRef.current = assessment.bitrate
+      networkQualityRef.current = assessment.quality
+      telemetry.info('live:network_assessment', 'Network quality assessed before connect', {
+        quality: assessment.quality,
+        bitrate: assessment.bitrate,
+        type: assessment.type,
+        isConnected: assessment.isConnected,
+        isInternetReachable: assessment.isInternetReachable,
+      })
+
       const connectStartedAt = Date.now()
       try {
         telemetry.setCrashBreadcrumb('live:starting', {
@@ -528,7 +645,7 @@ export function useLivePublisher(options: {
           rtmpsUrl: ingest.rtmpsUrl,
           streamKey: ingest.streamKey,
           fps: LIVE_DEFAULT_VIDEO_FPS,
-          videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
+          videoBitrate: networkBitrateRef.current,
           audioBitrate: 128_000,
           initialCamera: args.initialCamera ?? 'front',
         })
@@ -609,6 +726,18 @@ export function useLivePublisher(options: {
           playbackId: liveStream.playbackId,
         })
 
+        // Assess network quality before opening the RTMP connection.
+        const assessment = await assessNetworkQuality()
+        networkBitrateRef.current = assessment.bitrate
+        networkQualityRef.current = assessment.quality
+        telemetry.info('live:network_assessment', 'Network quality assessed before start', {
+          quality: assessment.quality,
+          bitrate: assessment.bitrate,
+          type: assessment.type,
+          isConnected: assessment.isConnected,
+          isInternetReachable: assessment.isInternetReachable,
+        })
+
         telemetry.setCrashBreadcrumb('live:starting', {
           sessionId: liveStream.liveSessionId,
           recordId: liveStream.recordId,
@@ -619,7 +748,7 @@ export function useLivePublisher(options: {
           rtmpsUrl: liveStream.ingest.rtmpsUrl,
           streamKey: liveStream.ingest.streamKey,
           fps: LIVE_DEFAULT_VIDEO_FPS,
-          videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
+          videoBitrate: networkBitrateRef.current,
           audioBitrate: 128_000,
           initialCamera: args.initialCamera ?? 'front',
         })
@@ -871,6 +1000,9 @@ export function useLivePublisher(options: {
     setVideoQuality,
     stats$: livePublishStore$,
     getThermalState: options.publisher.getThermalState,
+    /** Current network quality assessment — 'strong' | 'cellular' | 'weak'.
+     * Updated at preview time and again at recording start. */
+    networkQuality: networkQualityRef,
   }
 }
 

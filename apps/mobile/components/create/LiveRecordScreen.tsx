@@ -155,12 +155,16 @@ export function LiveRecordScreen({
     // Drives the busy UI and blocks double-taps — liveStatus alone can't,
     // because 'creating' now also means a background eager provision.
     isTapStarting: false,
+    // Pre-recording network warning: shown when the user is on cellular
+    // before they tap record. Dismissed once recording starts.
+    showCellularWarning: false,
   })
 
   const isAppActive = useValue(state$.isAppActive)
   const showInviteSheet = useValue(state$.showInviteSheet)
   const isTapStarting = useValue(state$.isTapStarting)
   const thermalWarning = useValue(state$.thermalWarning)
+  const showCellularWarning = useValue(state$.showCellularWarning)
   const phase = useValue(recordingStore$.phase)
   const recordingDuration = useValue(recordingStore$.recordingDuration)
   const progressStage = useValue(recordingStore$.progressStage)
@@ -494,6 +498,41 @@ export function LiveRecordScreen({
   // the authoritative backstop). Abandoned sessions are released by the
   // existing blur/unmount/expiry cancel paths, the post-provision check
   // below, and ultimately the server's 5-minute pending cap + stale sweep.
+
+  // Pre-recording network check: when the camera preview arms, check if the
+  // user is on cellular. If so, show a warning that recording may be less
+  // reliable. The warning is dismissible and doesn't block recording —
+  // it's informational, not a gate. On WiFi or Ethernet, the warning is
+  // cleared automatically.
+  useEffect(() => {
+    if (phase !== 'pre_connected') {
+      state$.showCellularWarning.set(false)
+      return
+    }
+
+    let cancelled = false
+    Network.getNetworkStateAsync().then((netState) => {
+      if (cancelled) return
+      const isCellular =
+        netState.type === Network.NetworkStateType.CELLULAR &&
+        netState.isConnected !== false &&
+        netState.isInternetReachable !== false
+      state$.showCellularWarning.set(isCellular)
+      if (isCellular) {
+        telemetry.info('live:cellular_warning', 'User is on cellular — showing pre-recording warning', {
+          isConnected: netState.isConnected,
+          isInternetReachable: netState.isInternetReachable,
+        })
+      }
+    }).catch(() => {
+      // Can't read network state — don't show the warning.
+      if (!cancelled) state$.showCellularWarning.set(false)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [phase])
   useEffect(() => {
     if (phase !== 'pre_connected' || !isFocused || !isAppActive) {
       return
@@ -1601,6 +1640,25 @@ export function LiveRecordScreen({
             >
               <Text color="white" fontSize={13} fontWeight="600">
                 Device getting warm — reducing quality to protect your recording
+              </Text>
+            </XStack>
+          )}
+
+          {showCellularWarning && !thermalWarning && (
+            <XStack
+              position="absolute"
+              top={60}
+              left={20}
+              right={20}
+              justifyContent="center"
+              backgroundColor="rgba(0, 100, 200, 0.85)"
+              borderRadius={12}
+              paddingVertical={8}
+              paddingHorizontal={16}
+              zIndex={10}
+            >
+              <Text color="white" fontSize={13} fontWeight="600">
+                You're on cellular — recording may be less stable on weak signal
               </Text>
             </XStack>
           )}
