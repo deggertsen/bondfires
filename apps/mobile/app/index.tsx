@@ -83,6 +83,12 @@ export default function SplashScreen() {
 
   // Hard timeout: if still loading after 15s, show retry UI
   const [timedOut, setTimedOut] = useState(false)
+  // Track how many times the user has tapped "Try Again" — included in
+  // telemetry so we can distinguish a one-off network blip from a persistent
+  // connection failure. State (rather than a ref) also re-arms both diagnostic
+  // timers after a retry; otherwise their unchanged dependencies leave the
+  // loading spinner running forever if the retry also fails.
+  const [retryCount, setRetryCount] = useState(0)
 
   useEffect(() => {
     if (currentUser !== undefined) {
@@ -117,6 +123,7 @@ export default function SplashScreen() {
             elapsedMs: elapsed,
             isWebSocketConnected: connectionState.isWebSocketConnected,
             hasEverConnected: connectionState.hasEverConnected,
+            retryCount,
           })
 
           // Early nudge: if the WebSocket hasn't connected yet after 3s,
@@ -130,7 +137,7 @@ export default function SplashScreen() {
       }, SLOW_QUERY_THRESHOLD_MS)
       return () => clearTimeout(timer)
     }
-  }, [currentUser, convex])
+  }, [currentUser, convex, retryCount])
 
   // Hard timeout effect — separate from the slow-query timer
   useEffect(() => {
@@ -151,6 +158,7 @@ export default function SplashScreen() {
         hasEverConnected: connectionState.hasEverConnected,
         connectionCount: connectionState.connectionCount,
         connectionRetries: connectionState.connectionRetries,
+        retryCount,
       })
 
       // Auto-attempt a reconnect before showing the retry screen.
@@ -166,7 +174,7 @@ export default function SplashScreen() {
     }, LOADING_TIMEOUT_MS)
 
     return () => clearTimeout(timer)
-  }, [currentUser, convex])
+  }, [currentUser, convex, retryCount])
 
   // Show loading state while checking auth (currentUser is undefined while loading)
   if (currentUser === undefined) {
@@ -191,9 +199,11 @@ export default function SplashScreen() {
           <Pressable
             onPress={() => {
               const connectionState = convex.connectionState()
+              const nextRetryCount = retryCount + 1
               telemetry.breadcrumb('loading:retry', {
                 wsConnected: connectionState.isWebSocketConnected,
                 hasEverConnected: connectionState.hasEverConnected,
+                retryCount: nextRetryCount,
               })
               // Force the Convex WebSocket to reconnect — without this,
               // the retry just resets timers but the underlying socket
@@ -202,6 +212,7 @@ export default function SplashScreen() {
               setTimedOut(false)
               queryStartTime.current = Date.now()
               slowQueryLogged.current = false
+              setRetryCount(nextRetryCount)
             }}
           >
             <YStack
