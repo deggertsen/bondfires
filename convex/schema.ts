@@ -806,6 +806,15 @@ export default defineSchema({
     sessionId: v.optional(v.string()),
     retention: v.optional(v.union(v.literal('standard'), v.literal('forensic'))),
     createdAt: v.number(),
+    device: v.optional(
+      v.object({
+        modelName: v.optional(v.string()),
+        osVersion: v.optional(v.string()),
+        osName: v.optional(v.string()),
+        manufacturer: v.optional(v.string()),
+        brand: v.optional(v.string()),
+      }),
+    ),
   })
     .index('by_log_user', ['userId', 'createdAt'])
     .index('by_log_level', ['level', 'createdAt'])

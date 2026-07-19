@@ -7,6 +7,7 @@
  */
 
 import Constants from 'expo-constants'
+import * as Device from 'expo-device'
 import { Platform } from 'react-native'
 import { createMMKV, type MMKV } from 'react-native-mmkv'
 
@@ -29,6 +30,14 @@ const ErrorUtils = (globalThis as Record<string, unknown>)?.ErrorUtils as
 
 export type LogLevel = 'error' | 'warn' | 'info' | 'breadcrumb'
 
+export interface DeviceInfo {
+  modelName?: string
+  osVersion?: string
+  osName?: string
+  manufacturer?: string
+  brand?: string
+}
+
 export interface LogEntry {
   level: LogLevel
   event: string
@@ -39,6 +48,8 @@ export interface LogEntry {
   sessionId?: string
   createdAt: number
   userId?: string
+  /** Device info captured at startup; included on every entry for crash triage. */
+  device?: DeviceInfo
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +176,25 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined
 }
 
+function normalizeDeviceInfo(value: unknown): DeviceInfo | undefined {
+  if (!isRecord(value)) return undefined
+
+  const device: DeviceInfo = {}
+  const modelName = optionalString(value.modelName)
+  const osVersion = optionalString(value.osVersion)
+  const osName = optionalString(value.osName)
+  const manufacturer = optionalString(value.manufacturer)
+  const brand = optionalString(value.brand)
+
+  if (modelName !== undefined) device.modelName = modelName
+  if (osVersion !== undefined) device.osVersion = osVersion
+  if (osName !== undefined) device.osName = osName
+  if (manufacturer !== undefined) device.manufacturer = manufacturer
+  if (brand !== undefined) device.brand = brand
+
+  return Object.keys(device).length > 0 ? device : undefined
+}
+
 function normalizePersistedEntry(value: unknown): LogEntry | null {
   if (!isRecord(value)) return null
 
@@ -184,6 +214,7 @@ function normalizePersistedEntry(value: unknown): LogEntry | null {
     sessionId: optionalString(value.sessionId),
     createdAt,
     userId: optionalString(value.userId),
+    device: normalizeDeviceInfo(value.device),
   }
 }
 
@@ -233,6 +264,7 @@ export class TelemetryLogger {
   private sessionId: string
   private platform: 'ios' | 'android'
   private appVersion: string | undefined
+  private deviceInfo: DeviceInfo | undefined
   private userId: string | null = null
   private isInitialized = false
   private flushTimer: ReturnType<typeof setTimeout> | null = null
@@ -263,6 +295,17 @@ export class TelemetryLogger {
     } catch {
       this.appVersion = undefined
     }
+
+    // Capture device info once at startup — included on every log entry so
+    // crash reports always include the device model and OS version without
+    // relying on the client to pass it per-call.
+    this.deviceInfo = normalizeDeviceInfo({
+      modelName: Device.modelName,
+      osVersion: Device.osVersion,
+      osName: Device.osName,
+      manufacturer: Device.manufacturer,
+      brand: Device.brand,
+    })
 
     try {
       this.storage = createMMKV({ id: STORAGE_ID })
@@ -467,6 +510,7 @@ export class TelemetryLogger {
       sessionId: this.sessionId,
       createdAt: Date.now(),
       userId: this.userId ?? undefined,
+      device: this.deviceInfo,
     })
 
     this.schedulePersist()
