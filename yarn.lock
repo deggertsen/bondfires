@@ -1234,6 +1234,7 @@ __metadata:
     expo-iap: "*"
     expo-in-app-updates: "*"
     expo-linking: "*"
+    expo-network: "*"
     expo-notifications: "*"
     react: "*"
     react-native: "*"

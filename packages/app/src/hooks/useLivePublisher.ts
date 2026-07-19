@@ -11,6 +11,7 @@ import {
   STATS_SAMPLE_INTERVAL_MS,
   type StallDetector,
 } from '../utils/liveStallDetector'
+import { assessNetworkQuality, type NetworkQuality } from '../utils/networkQuality'
 
 /**
  * Default encoder settings. Keep in sync with the native option defaults
@@ -137,6 +138,9 @@ export function useLivePublisher(options: {
   // copy of the create screen — correctly reports that it no longer owns the
   // live session and stays out of the active instance's way.
   const ingestRef = useRef<{ rtmpsUrl: string; streamKey: string; sessionId: string } | null>(null)
+  // Exposed so thermal recovery cannot raise encoder quality above the network
+  // tier selected when the RTMP connection opened.
+  const networkQualityRef = useRef<NetworkQuality>('strong')
 
   const stopStatsSampling = useCallback(() => {
     if (statsIntervalRef.current) {
@@ -517,6 +521,19 @@ export function useLivePublisher(options: {
         throw new Error('No provisioned live stream to connect')
       }
 
+      // Assess network quality before opening the RTMP connection.
+      // This picks a conservative bitrate for cellular to avoid the
+      // stream-drops we're seeing on weak cellular (July 2026 telemetry).
+      const assessment = await assessNetworkQuality()
+      networkQualityRef.current = assessment.quality
+      telemetry.info('live:network_assessment', 'Network quality assessed before connect', {
+        quality: assessment.quality,
+        bitrate: assessment.bitrate,
+        type: assessment.type,
+        isConnected: assessment.isConnected,
+        isInternetReachable: assessment.isInternetReachable,
+      })
+
       const connectStartedAt = Date.now()
       try {
         telemetry.setCrashBreadcrumb('live:starting', {
@@ -528,7 +545,7 @@ export function useLivePublisher(options: {
           rtmpsUrl: ingest.rtmpsUrl,
           streamKey: ingest.streamKey,
           fps: LIVE_DEFAULT_VIDEO_FPS,
-          videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
+          videoBitrate: assessment.bitrate,
           audioBitrate: 128_000,
           initialCamera: args.initialCamera ?? 'front',
         })
@@ -609,6 +626,17 @@ export function useLivePublisher(options: {
           playbackId: liveStream.playbackId,
         })
 
+        // Assess network quality before opening the RTMP connection.
+        const assessment = await assessNetworkQuality()
+        networkQualityRef.current = assessment.quality
+        telemetry.info('live:network_assessment', 'Network quality assessed before start', {
+          quality: assessment.quality,
+          bitrate: assessment.bitrate,
+          type: assessment.type,
+          isConnected: assessment.isConnected,
+          isInternetReachable: assessment.isInternetReachable,
+        })
+
         telemetry.setCrashBreadcrumb('live:starting', {
           sessionId: liveStream.liveSessionId,
           recordId: liveStream.recordId,
@@ -619,7 +647,7 @@ export function useLivePublisher(options: {
           rtmpsUrl: liveStream.ingest.rtmpsUrl,
           streamKey: liveStream.ingest.streamKey,
           fps: LIVE_DEFAULT_VIDEO_FPS,
-          videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
+          videoBitrate: assessment.bitrate,
           audioBitrate: 128_000,
           initialCamera: args.initialCamera ?? 'front',
         })
@@ -871,6 +899,8 @@ export function useLivePublisher(options: {
     setVideoQuality,
     stats$: livePublishStore$,
     getThermalState: options.publisher.getThermalState,
+    /** Network tier selected immediately before the current recording started. */
+    networkQuality: networkQualityRef,
   }
 }
 
