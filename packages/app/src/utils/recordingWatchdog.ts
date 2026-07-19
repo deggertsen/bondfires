@@ -1,10 +1,21 @@
 import type { RecordingPhase } from '../store/recording.store'
 
 export const RECORDING_WATCHDOG_INTERVAL_MS = 30_000
+export const MAX_CONSECUTIVE_PRE_CONNECT_RESETS = 3
 
 const RECORDING_WATCHDOG_PHASE_TIMEOUT_MS: Partial<Record<RecordingPhase, number>> = {
-  pre_connected: 60_000,
+  // Camera preview should start in 2-3s. 30s is a generous upper bound that
+  // avoids false positives on slow devices while not leaving the user stuck
+  // on "Preparing camera..." for a full minute.
+  pre_connected: 30_000,
   stopping: 60_000,
+}
+
+export function getNextPreConnectResetCount(
+  currentCount: number,
+  resetPhase: RecordingPhase,
+): number {
+  return resetPhase === 'pre_connected' ? currentCount + 1 : 0
 }
 
 /**

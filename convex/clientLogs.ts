@@ -43,6 +43,7 @@ function logEntry(doc: Doc<'clientLogs'>) {
     sessionId: doc.sessionId,
     retention: doc.retention,
     createdAt: doc.createdAt,
+    device: doc.device,
   }
 }
 
@@ -55,6 +56,16 @@ function logEntry(doc: Doc<'clientLogs'>) {
  * Accepts an optional userId — the mutation also attaches the authenticated
  * user if available and no explicit userId was provided.
  */
+const DEVICE_INFO = v.optional(
+  v.object({
+    modelName: v.optional(v.string()),
+    osVersion: v.optional(v.string()),
+    osName: v.optional(v.string()),
+    manufacturer: v.optional(v.string()),
+    brand: v.optional(v.string()),
+  }),
+)
+
 export const create = mutation({
   args: {
     level: v.union(
@@ -71,6 +82,7 @@ export const create = mutation({
     sessionId: v.optional(v.string()),
     createdAt: v.number(),
     userId: v.optional(v.id('users')),
+    device: DEVICE_INFO,
   },
   handler: async (ctx, args) => {
     const resolvedUserId = args.userId ?? (await getCurrentUserId(ctx))
@@ -86,6 +98,7 @@ export const create = mutation({
       sessionId: args.sessionId,
       retention: 'standard',
       createdAt: args.createdAt,
+      device: args.device,
     })
   },
 })
@@ -113,6 +126,7 @@ export const createBatch = mutation({
         sessionId: v.optional(v.string()),
         createdAt: v.number(),
         userId: v.optional(v.id('users')),
+        device: DEVICE_INFO,
       }),
     ),
   },
@@ -137,6 +151,7 @@ export const createBatch = mutation({
         sessionId: entry.sessionId,
         retention: 'standard',
         createdAt: entry.createdAt,
+        device: entry.device,
       })
       ids.push(id)
     }
@@ -295,6 +310,7 @@ export const createInternal = internalMutation({
     platform: v.union(v.literal('ios'), v.literal('android'), v.literal('server')),
     createdAt: v.number(),
     userId: v.optional(v.id('users')),
+    device: DEVICE_INFO,
   },
   handler: async (ctx, args) => {
     return await ctx.db.insert('clientLogs', {
@@ -308,6 +324,7 @@ export const createInternal = internalMutation({
       sessionId: undefined,
       retention: 'standard',
       createdAt: args.createdAt,
+      device: args.device,
     })
   },
 })
@@ -373,6 +390,7 @@ export const _debugTriage = internalQuery({
       sessionId: doc.sessionId,
       userId: doc.userId,
       data: doc.data,
+      device: doc.device,
     }))
   },
 })

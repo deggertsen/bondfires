@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { RecordingPhase } from '../../../../packages/app/src/store/recording.store'
 import {
+  getNextPreConnectResetCount,
   getRecordingWatchdogReset,
+  MAX_CONSECUTIVE_PRE_CONNECT_RESETS,
   RECORDING_NO_PROGRESS_TIMEOUT_MS,
 } from '../../../../packages/app/src/utils/recordingWatchdog'
 
@@ -27,7 +29,7 @@ describe('recording watchdog', () => {
         ...base,
         phase: 'pre_connected',
         phaseStartedAt: 0,
-        now: 60_000,
+        now: 30_000,
       }),
     ).toBeNull()
   })
@@ -38,12 +40,12 @@ describe('recording watchdog', () => {
         ...base,
         phase: 'pre_connected',
         phaseStartedAt: 1_000,
-        now: 62_000,
+        now: 32_000,
       }),
     ).toEqual({
       phase: 'pre_connected',
-      elapsedMs: 61_000,
-      timeoutMs: 60_000,
+      elapsedMs: 31_000,
+      timeoutMs: 30_000,
     })
 
     expect(
@@ -58,6 +60,16 @@ describe('recording watchdog', () => {
       elapsedMs: 60_001,
       timeoutMs: 60_000,
     })
+  })
+
+  it('counts consecutive pre-connect resets and clears the streak for other phases', () => {
+    let count = 0
+    for (let attempt = 0; attempt < MAX_CONSECUTIVE_PRE_CONNECT_RESETS; attempt++) {
+      count = getNextPreConnectResetCount(count, 'pre_connected')
+    }
+
+    expect(count).toBe(MAX_CONSECUTIVE_PRE_CONNECT_RESETS)
+    expect(getNextPreConnectResetCount(count, 'stopping')).toBe(0)
   })
 
   it('ignores tracked phases without a start timestamp', () => {
