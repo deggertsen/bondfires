@@ -6,6 +6,7 @@ import {
   formatTime,
   getInitialVideoIndex,
   getResponseVideoScrollIndex,
+  shouldOfferResponseAfterPlayback,
   withLiveDvrStart,
 } from '../../app/(main)/bondfire/_lib/bondfireDetailHelpers'
 
@@ -29,6 +30,18 @@ describe('bondfireDetailHelpers', () => {
     expect(formatTime(0)).toBe('0:00')
     expect(formatTime(61_000)).toBe('1:01')
     expect(formatTime(10 * 60 * 1000 + 9_000)).toBe('10:09')
+  })
+
+  it('offers a response only after the final video in an active camp', () => {
+    expect(
+      shouldOfferResponseAfterPlayback({ videoIndex: 2, totalVideos: 3, canRespond: true }),
+    ).toBe(true)
+    expect(
+      shouldOfferResponseAfterPlayback({ videoIndex: 1, totalVideos: 3, canRespond: true }),
+    ).toBe(false)
+    expect(
+      shouldOfferResponseAfterPlayback({ videoIndex: 2, totalVideos: 3, canRespond: false }),
+    ).toBe(false)
   })
 
   it('resolves a response video id to its playback scroll index', () => {

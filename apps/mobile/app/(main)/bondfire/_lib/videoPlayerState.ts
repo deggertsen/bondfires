@@ -46,6 +46,14 @@ export function shouldLoadVideoSource({
   return !!videoUrl && isActive && isScreenFocused && isAppActive && !shouldSuppressPlayback
 }
 
+export function shouldShowRespondCTA({
+  hasEnded,
+  isPlaying,
+  isLoading,
+}: Pick<VideoPlayerState, 'hasEnded' | 'isPlaying' | 'isLoading'>) {
+  return hasEnded && !isPlaying && !isLoading
+}
+
 type ReactionPlaybackMarker = {
   _id: string
   timestampMs: number

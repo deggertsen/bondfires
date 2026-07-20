@@ -68,6 +68,18 @@ export function clampVideoIndex(index: number | null | undefined, totalVideos: n
   return Math.max(0, Math.min(Math.floor(index), totalVideos - 1))
 }
 
+export function shouldOfferResponseAfterPlayback({
+  videoIndex,
+  totalVideos,
+  canRespond,
+}: {
+  videoIndex: number
+  totalVideos: number
+  canRespond: boolean
+}) {
+  return canRespond && totalVideos > 0 && videoIndex === totalVideos - 1
+}
+
 export function getResponseVideoScrollIndex(
   bondfireData: BondfireDetailData,
   responseVideoId: string | null | undefined,
