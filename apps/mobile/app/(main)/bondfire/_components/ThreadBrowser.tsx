@@ -3,6 +3,7 @@ import { useObservable, useValue } from '@legendapp/state/react'
 import { Check, ChevronUp, Flame, Share2 } from '@tamagui/lucide-icons'
 import { useEffect, useMemo, useRef } from 'react'
 import { FlatList, Pressable } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Avatar, Sheet, XStack, YStack } from 'tamagui'
 import { VIDEO_OVERLAY_COLORS as OVERLAY_COLORS } from '../../../../components/videoOverlayColors'
 import type { BondfireVideoItem, ThreadParticipant } from '../_lib/bondfireDetailHelpers'
@@ -187,6 +188,7 @@ export function ThreadBrowser({
   const state$ = useObservable({ open: false })
   const open = useValue(state$.open)
   const listRef = useRef<FlatList<BondfireVideoItem>>(null)
+  const insets = useSafeAreaInsets()
 
   const photoByUserId = useMemo(() => {
     const map = new Map<string, string | undefined>()
@@ -226,7 +228,7 @@ export function ThreadBrowser({
       {!open && (
         <Pressable
           onPress={() => state$.open.set(true)}
-          style={{ position: 'absolute', bottom: 28, left: 12, right: 12, zIndex: 50 }}
+          style={{ position: 'absolute', bottom: 28 + insets.bottom, left: 12, right: 12, zIndex: 50 }}
         >
           <XStack
             alignItems="center"
@@ -334,7 +336,7 @@ export function ThreadBrowser({
             contentContainerStyle={{ paddingHorizontal: 10, paddingBottom: 8 }}
           />
           {canRespond || canShare ? (
-            <XStack gap={10} paddingHorizontal={14} paddingTop={8} paddingBottom={20}>
+            <XStack gap={10} paddingHorizontal={14} paddingTop={8} paddingBottom={20 + insets.bottom}>
               {canRespond ? (
                 <Button variant="primary" size="$lg" flex={1} onPress={onRespond}>
                   <Flame size={18} color={OVERLAY_COLORS.textPrimary} />

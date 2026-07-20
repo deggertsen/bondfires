@@ -5,6 +5,7 @@ import { Flame, Play, RotateCcw, Volume2, VolumeX } from '@tamagui/lucide-icons'
 import type { RefObject } from 'react'
 import type { LayoutChangeEvent, PanResponderInstance } from 'react-native'
 import { Pressable, View } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { XStack, YStack } from 'tamagui'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
 import { EmojiReactionButton } from '../../../../components/EmojiReactionButton'
@@ -110,12 +111,13 @@ export function PlayPauseIndicator({ state$ }: { state$: VideoPlayerState$ }) {
  */
 export function CaptionOverlay({ state$ }: { state$: VideoPlayerState$ }) {
   const captionText = useValue(state$.captionText)
+  const insets = useSafeAreaInsets()
   if (!captionText) return null
 
   return (
     <YStack
       position="absolute"
-      bottom={152}
+      bottom={152 + insets.bottom}
       // 76px insets keep captions clear of the round side controls (44px wide,
       // inset 16px): the mute/emoji stack on the right and the paused report
       // button on the left both sit within 60px of their edge.
@@ -153,9 +155,10 @@ export function VideoProgressBar({
   const progress = useValue(state$.progress)
   const duration = useValue(state$.duration)
   const progressPercent = `${progress * 100}%`
+  const insets = useSafeAreaInsets()
 
   return (
-    <YStack position="absolute" bottom={100} left={20} right={20} zIndex={3}>
+    <YStack position="absolute" bottom={100 + insets.bottom} left={20} right={20} zIndex={3}>
       <View ref={progressBarViewRef} onLayout={onLayout} {...panHandlers}>
         <YStack paddingVertical={10}>
           <YStack height={4} backgroundColor={OVERLAY_COLORS.progressTrack} borderRadius={2}>
@@ -193,11 +196,12 @@ export function VideoProgressBar({
 export function PausedReportButton({ state$ }: { state$: VideoPlayerState$ }) {
   const isPlaying = useValue(state$.isPlaying)
   const isLoading = useValue(state$.isLoading)
+  const insets = useSafeAreaInsets()
 
   if (isPlaying || isLoading) return null
 
   return (
-    <YStack position="absolute" left={16} bottom={160} zIndex={3}>
+    <YStack position="absolute" left={16} bottom={160 + insets.bottom} zIndex={3}>
       <ReportButton onPress={() => state$.showReport.set(true)} />
     </YStack>
   )
@@ -221,9 +225,10 @@ export function RightSideControls({
   onToggleMute: () => void
 }) {
   const emojiGridOpen = useValue(state$.emojiGridOpen)
+  const insets = useSafeAreaInsets()
 
   return (
-    <YStack position="absolute" right={16} bottom={160} gap={16} alignItems="center" zIndex={3}>
+    <YStack position="absolute" right={16} bottom={160 + insets.bottom} gap={16} alignItems="center" zIndex={3}>
       {!isLive && (
         <YStack>
           <EmojiReactionButton

@@ -6,6 +6,7 @@ import { Stack, useRouter } from 'expo-router'
 import { type RefObject, useCallback, useEffect, useRef } from 'react'
 import type { StatusBarStyle, ViewToken } from 'react-native'
 import { FlatList, Pressable, StatusBar } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { XStack, YStack } from 'tamagui'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
 import { InviteSheet } from '../../../../components/InviteSheet'
@@ -62,6 +63,7 @@ export function BondfirePlaybackScreen({
   onScrollToIndexFailed: (info: ScrollToIndexFailedInfo) => void
 }) {
   const router = useRouter()
+  const insets = useSafeAreaInsets()
   const overlayState$ = useObservable({
     showSettings: false,
     showNotepad: false,
@@ -110,7 +112,7 @@ export function BondfirePlaybackScreen({
           left={0}
           right={0}
           zIndex={100}
-          paddingTop={50}
+          paddingTop={insets.top + 10}
           paddingHorizontal={16}
           paddingBottom={12}
         >
