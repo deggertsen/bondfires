@@ -1,7 +1,7 @@
 import type { Viewer } from '@bondfires/app'
-import { Spinner, Text } from '@bondfires/ui'
+import { Button, Spinner, Text } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
-import { Play, RotateCcw, Volume2, VolumeX } from '@tamagui/lucide-icons'
+import { Flame, Play, RotateCcw, Volume2, VolumeX } from '@tamagui/lucide-icons'
 import type { RefObject } from 'react'
 import type { LayoutChangeEvent, PanResponderInstance } from 'react-native'
 import { Pressable, View } from 'react-native'
@@ -15,7 +15,7 @@ import type { ActiveReaction } from '../../../../components/ViewerPresenceStack'
 import { ViewerPresenceStack } from '../../../../components/ViewerPresenceStack'
 import { VIDEO_OVERLAY_COLORS as OVERLAY_COLORS } from '../../../../components/videoOverlayColors'
 import { formatTime } from '../_lib/bondfireDetailHelpers'
-import type { VideoPlayerState$ } from '../_lib/videoPlayerState'
+import { shouldShowRespondCTA, type VideoPlayerState$ } from '../_lib/videoPlayerState'
 
 export function LoadingOverlay({
   state$,
@@ -255,6 +255,52 @@ export function RightSideControls({
           )}
         </YStack>
       </Pressable>
+    </YStack>
+  )
+}
+
+export function RespondCTAOverlay({
+  state$,
+  onRespond,
+}: {
+  state$: VideoPlayerState$
+  onRespond: () => void
+}) {
+  const hasEnded = useValue(state$.hasEnded)
+  const isPlaying = useValue(state$.isPlaying)
+  const isLoading = useValue(state$.isLoading)
+
+  if (!shouldShowRespondCTA({ hasEnded, isPlaying, isLoading })) return null
+
+  return (
+    <YStack
+      position="absolute"
+      top="50%"
+      left={0}
+      right={0}
+      marginTop={60}
+      alignItems="center"
+      zIndex={4}
+      animation="quick"
+      enterStyle={{ opacity: 0, scale: 0.9 }}
+    >
+      <Button
+        variant="primary"
+        size="$lg"
+        onPress={onRespond}
+        accessibilityLabel="Respond to this Bondfire"
+        borderRadius={28}
+        shadowColor="rgba(0,0,0,0.4)"
+        shadowOffset={{ width: 0, height: 4 }}
+        shadowOpacity={0.5}
+        shadowRadius={12}
+        elevation={8}
+      >
+        <Flame size={22} color={OVERLAY_COLORS.textPrimary} />
+        <Text fontSize={16} fontWeight="800" color={OVERLAY_COLORS.textPrimary}>
+          Respond to this Bondfire
+        </Text>
+      </Button>
     </YStack>
   )
 }

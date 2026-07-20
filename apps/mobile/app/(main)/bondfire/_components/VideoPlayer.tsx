@@ -43,6 +43,7 @@ import {
   PlayPauseIndicator,
   ReactionPresenceLayer,
   ReportOverlayGate,
+  RespondCTAOverlay,
   RightSideControls,
   VideoProgressBar,
 } from './VideoPlayerOverlays'
@@ -85,6 +86,7 @@ export interface VideoPlayerProps {
   isMainVideo: boolean
   responseIndex?: number
   isLive?: boolean
+  onRespondAfterPlayback?: () => void
 }
 
 export function VideoPlayer({
@@ -103,6 +105,7 @@ export function VideoPlayer({
   isMainVideo,
   responseIndex,
   isLive = false,
+  onRespondAfterPlayback,
 }: VideoPlayerProps) {
   const videoId = bondfireId || bondfireVideoId || ''
   const autoplayVideos = useValue(appStore$.preferences.autoplayVideos)
@@ -928,6 +931,10 @@ export function VideoPlayer({
         bondfireVideoId={bondfireVideoId}
         videoOwnerId={videoOwnerId}
       />
+
+      {onRespondAfterPlayback ? (
+        <RespondCTAOverlay state$={state$} onRespond={onRespondAfterPlayback} />
+      ) : null}
     </YStack>
   )
 }
