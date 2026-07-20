@@ -1,34 +1,38 @@
 /**
- * Network quality detection for adaptive live streaming bitrate.
+ * Transport snapshot helpers for live-recording telemetry.
  *
- * RTMP live streaming over weak cellular is the dominant cause of stream
- * drops on Android (telemetry, July 2026). expo-network doesn't expose
- * signal strength, but `type: CELLULAR` + `isInternetReachable` is enough
- * to make a conservative pre-flight decision: explicit loss of connectivity
- * uses the floor, while cellular and unknown transports use a reduced bitrate
- * to give the encoder more headroom against bandwidth fluctuations.
+ * Encoder bitrate is NOT selected from transport type. Wi‑Fi vs cellular is a
+ * weak prior and does not reflect uplink capacity — see liveBitratePolicy.ts
+ * for the OBS-style adaptive bitrate controller that uses measured throughput.
  */
 
 import * as Network from 'expo-network'
-import { type NetworkAssessment, toNetworkAssessment } from './networkQualityPolicy'
 
-export * from './networkQualityPolicy'
+export interface NetworkStateSnapshot {
+  type?: string
+  isConnected?: boolean
+  isInternetReachable?: boolean
+}
 
 /**
- * Assess the current network quality for live streaming. Call before
- * starting a recording to pick the right initial bitrate.
+ * Read the current transport for breadcrumbs only (never for bitrate tiers).
  */
-export async function assessNetworkQuality(): Promise<NetworkAssessment> {
-  let state: Network.NetworkState
+export async function assessNetworkTransport(): Promise<NetworkStateSnapshot> {
   try {
-    state = await Network.getNetworkStateAsync()
+    const state = await Network.getNetworkStateAsync()
+    return {
+      type: state.type,
+      isConnected: state.isConnected,
+      isInternetReachable: state.isInternetReachable,
+    }
   } catch {
-    return toNetworkAssessment({
+    return {
       type: undefined,
       isConnected: undefined,
       isInternetReachable: undefined,
-    })
+    }
   }
-
-  return toNetworkAssessment(state)
 }
+
+/** @deprecated Use assessNetworkTransport — bitrate is no longer derived here. */
+export const assessNetworkQuality = assessNetworkTransport

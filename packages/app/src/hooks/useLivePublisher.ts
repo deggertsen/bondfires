@@ -5,13 +5,18 @@ import { livePublishActions, livePublishStore$ } from '../store/livePublish.stor
 import { isNativePublisherStatus } from '../store/livePublisherContract'
 import { uploadQueueStore$ } from '../store/uploadQueue.store'
 import {
+  composeLiveVideoBitrate,
+  createNetworkBitrateController,
+  type NetworkBitrateController,
+} from '../utils/liveBitratePolicy'
+import {
   createStallDetector,
   IOS_STALL_BITRATE_FLOOR_BPS,
   STALL_BITRATE_FLOOR_BPS,
   STATS_SAMPLE_INTERVAL_MS,
   type StallDetector,
 } from '../utils/liveStallDetector'
-import { assessNetworkQuality, type NetworkQuality } from '../utils/networkQuality'
+import { assessNetworkTransport } from '../utils/networkQuality'
 
 /**
  * Default encoder settings. Keep in sync with the native option defaults
@@ -138,9 +143,72 @@ export function useLivePublisher(options: {
   // copy of the create screen — correctly reports that it no longer owns the
   // live session and stays out of the active instance's way.
   const ingestRef = useRef<{ rtmpsUrl: string; streamKey: string; sessionId: string } | null>(null)
-  // Exposed so thermal recovery cannot raise encoder quality above the network
-  // tier selected when the RTMP connection opened.
-  const networkQualityRef = useRef<NetworkQuality>('strong')
+  // Network ABR ceiling (OBS-style). Thermal mitigation in LiveRecordScreen
+  // registers its own ceiling via setThermalCeiling; encoder bitrate is always
+  // min(network, thermal).
+  const networkAbrRef = useRef<NetworkBitrateController | null>(null)
+  const networkBitrateCapRef = useRef(LIVE_DEFAULT_VIDEO_BITRATE)
+  const thermalCeilingRef = useRef({
+    bitrate: LIVE_DEFAULT_VIDEO_BITRATE,
+    fps: LIVE_DEFAULT_VIDEO_FPS,
+  })
+  const qualityApplyInFlightRef = useRef(false)
+
+  const resetNetworkAbr = useCallback(() => {
+    if (!networkAbrRef.current) {
+      networkAbrRef.current = createNetworkBitrateController()
+    }
+    networkAbrRef.current.reset()
+    networkBitrateCapRef.current = networkAbrRef.current.bitrate()
+    thermalCeilingRef.current = {
+      bitrate: LIVE_DEFAULT_VIDEO_BITRATE,
+      fps: LIVE_DEFAULT_VIDEO_FPS,
+    }
+  }, [])
+
+  const applyComposedVideoQuality = useCallback(
+    async (reason: string) => {
+      if (qualityApplyInFlightRef.current) return
+      const ingest = ingestRef.current
+      if (!ingest || ingest.sessionId !== livePublishStore$.sessionId.peek()) return
+      if (livePublishStore$.status.peek() !== 'live') return
+
+      qualityApplyInFlightRef.current = true
+      try {
+        const bitrate = composeLiveVideoBitrate(
+          networkBitrateCapRef.current,
+          thermalCeilingRef.current.bitrate,
+        )
+        const fps = thermalCeilingRef.current.fps
+        const configured = await options.publisher.setVideoQuality(bitrate, fps)
+        telemetry.info('live:quality_apply', 'Applied composed live video quality', {
+          reason,
+          networkBitrateCap: networkBitrateCapRef.current,
+          thermalBitrateCap: thermalCeilingRef.current.bitrate,
+          thermalFps: fps,
+          bitrate,
+          configuredVideoBitrate: configured.configuredVideoBitrate,
+          configuredFps: configured.configuredFps,
+          fpsChangeSupported: configured.fpsChangeSupported,
+          sessionId: livePublishStore$.sessionId.peek(),
+          recordId: livePublishStore$.recordId.peek(),
+        })
+      } catch (error) {
+        telemetry.warn('live:quality_apply_failed', 'Failed to apply composed live video quality', {
+          reason,
+          error: String(error),
+          sessionId: livePublishStore$.sessionId.peek(),
+        })
+      } finally {
+        qualityApplyInFlightRef.current = false
+      }
+    },
+    [options.publisher],
+  )
+
+  const setThermalCeiling = useCallback((bitrate: number, fps: number) => {
+    thermalCeilingRef.current = { bitrate, fps }
+  }, [])
 
   const stopStatsSampling = useCallback(() => {
     if (statsIntervalRef.current) {
@@ -276,6 +344,7 @@ export function useLivePublisher(options: {
     const detector = stallDetectorRef.current
     detector.reset()
     livePublishActions.resetThroughput()
+    resetNetworkAbr()
 
     // Prime the throughput baseline (Android's TrafficStats measurement needs
     // a first reading to diff against). Without this the first 5s tick is an
@@ -334,6 +403,8 @@ export function useLivePublisher(options: {
               rttMs: stats.rttMs,
               statsSupported: stats.statsSupported,
               audioRoute: stats.audioRoute,
+              networkBitrateCap: networkBitrateCapRef.current,
+              networkAbrTier: networkAbrRef.current?.tier() ?? 0,
               elapsedMs: startedAt ? Date.now() - startedAt : undefined,
             })
             // Update crash-survivable breadcrumb with current state
@@ -369,9 +440,11 @@ export function useLivePublisher(options: {
               .peek()
               .some((t) => t.status === 'uploading' || t.status === 'processing')
 
+          const statsSupported = stats.statsSupported === 1 && !uploadActive
+
           const verdict = detector.sample({
             bitrateBps: stats.bitrateBps,
-            statsSupported: stats.statsSupported === 1 && !uploadActive,
+            statsSupported,
           })
           if (verdict.measured) {
             livePublishActions.noteThroughputSample(verdict.sawThroughput)
@@ -384,6 +457,31 @@ export function useLivePublisher(options: {
               neverStarted: verdict.neverStarted,
             })
             livePublishActions.setStatus('stream_stopped_unexpectedly')
+            return
+          }
+
+          // Publisher ABR (OBS Dynamic Bitrate pattern): adapt from measured
+          // upload vs encoder target. Transport type is never consulted.
+          if (!networkAbrRef.current) {
+            networkAbrRef.current = createNetworkBitrateController()
+          }
+          const abrDecision = networkAbrRef.current.sample({
+            bitrateBps: stats.bitrateBps,
+            statsSupported,
+          })
+          if (abrDecision.action !== 'hold') {
+            networkBitrateCapRef.current = abrDecision.bitrate
+            telemetry.info('live:network_abr', 'Network adaptive bitrate tier changed', {
+              action: abrDecision.action,
+              tier: abrDecision.tier,
+              fromTier: abrDecision.fromTier,
+              bitrate: abrDecision.bitrate,
+              achievedBps: abrDecision.achievedBps,
+              expectedBps: abrDecision.expectedBps,
+              sessionId: livePublishStore$.sessionId.peek(),
+              recordId: livePublishStore$.recordId.peek(),
+            })
+            void applyComposedVideoQuality(`network_${abrDecision.action}`)
           }
         })
         .catch((error) => {
@@ -392,7 +490,7 @@ export function useLivePublisher(options: {
           })
         })
     }, STATS_SAMPLE_INTERVAL_MS)
-  }, [options.publisher])
+  }, [applyComposedVideoQuality, options.publisher, resetNetworkAbr])
 
   /**
    * Start the native camera preview only. No live stream is provisioned and
@@ -521,17 +619,14 @@ export function useLivePublisher(options: {
         throw new Error('No provisioned live stream to connect')
       }
 
-      // Assess network quality before opening the RTMP connection.
-      // This picks a conservative bitrate for cellular to avoid the
-      // stream-drops we're seeing on weak cellular (July 2026 telemetry).
-      const assessment = await assessNetworkQuality()
-      networkQualityRef.current = assessment.quality
-      telemetry.info('live:network_assessment', 'Network quality assessed before connect', {
-        quality: assessment.quality,
-        bitrate: assessment.bitrate,
-        type: assessment.type,
-        isConnected: assessment.isConnected,
-        isInternetReachable: assessment.isInternetReachable,
+      // Transport snapshot is telemetry only — encoder starts at the ceiling
+      // and ABR adapts from measured throughput (see liveBitratePolicy).
+      const transport = await assessNetworkTransport()
+      telemetry.info('live:network_transport', 'Network transport before connect', {
+        type: transport.type,
+        isConnected: transport.isConnected,
+        isInternetReachable: transport.isInternetReachable,
+        initialVideoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
       })
 
       const connectStartedAt = Date.now()
@@ -545,7 +640,7 @@ export function useLivePublisher(options: {
           rtmpsUrl: ingest.rtmpsUrl,
           streamKey: ingest.streamKey,
           fps: LIVE_DEFAULT_VIDEO_FPS,
-          videoBitrate: assessment.bitrate,
+          videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
           audioBitrate: 128_000,
           initialCamera: args.initialCamera ?? 'front',
         })
@@ -626,15 +721,14 @@ export function useLivePublisher(options: {
           playbackId: liveStream.playbackId,
         })
 
-        // Assess network quality before opening the RTMP connection.
-        const assessment = await assessNetworkQuality()
-        networkQualityRef.current = assessment.quality
-        telemetry.info('live:network_assessment', 'Network quality assessed before start', {
-          quality: assessment.quality,
-          bitrate: assessment.bitrate,
-          type: assessment.type,
-          isConnected: assessment.isConnected,
-          isInternetReachable: assessment.isInternetReachable,
+        // Transport snapshot is telemetry only — encoder starts at the ceiling
+        // and ABR adapts from measured throughput (see liveBitratePolicy).
+        const transport = await assessNetworkTransport()
+        telemetry.info('live:network_transport', 'Network transport before start', {
+          type: transport.type,
+          isConnected: transport.isConnected,
+          isInternetReachable: transport.isInternetReachable,
+          initialVideoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
         })
 
         telemetry.setCrashBreadcrumb('live:starting', {
@@ -647,7 +741,7 @@ export function useLivePublisher(options: {
           rtmpsUrl: liveStream.ingest.rtmpsUrl,
           streamKey: liveStream.ingest.streamKey,
           fps: LIVE_DEFAULT_VIDEO_FPS,
-          videoBitrate: assessment.bitrate,
+          videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
           audioBitrate: 128_000,
           initialCamera: args.initialCamera ?? 'front',
         })
@@ -897,10 +991,11 @@ export function useLivePublisher(options: {
     swapCamera,
     hasProvisionedIngest,
     setVideoQuality,
+    setThermalCeiling,
     stats$: livePublishStore$,
     getThermalState: options.publisher.getThermalState,
-    /** Network tier selected immediately before the current recording started. */
-    networkQuality: networkQualityRef,
+    /** Current network ABR video bitrate ceiling (adapts while live). */
+    networkBitrateCap: networkBitrateCapRef,
   }
 }
 

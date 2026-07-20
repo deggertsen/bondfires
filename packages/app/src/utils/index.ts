@@ -1,5 +1,6 @@
 export * from './authRedirect'
 export * from './errorUtils'
+export * from './liveBitratePolicy'
 export * from './navigationPersistence'
 export * from './networkQuality'
 export * from './recordingResourceLock'

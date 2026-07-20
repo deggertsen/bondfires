@@ -1,6 +1,6 @@
 import {
   buildErrorReportMailto,
-  constrainVideoBitrate,
+  composeLiveVideoBitrate,
   freeUpgradeActions,
   getDefaultBondfireTitle,
   getUserFacingErrorMessage,
@@ -156,16 +156,12 @@ export function LiveRecordScreen({
     // Drives the busy UI and blocks double-taps — liveStatus alone can't,
     // because 'creating' now also means a background eager provision.
     isTapStarting: false,
-    // Pre-recording network warning: shown when the user is on cellular
-    // before they tap record. Dismissed once recording starts.
-    showCellularWarning: false,
   })
 
   const isAppActive = useValue(state$.isAppActive)
   const showInviteSheet = useValue(state$.showInviteSheet)
   const isTapStarting = useValue(state$.isTapStarting)
   const thermalWarning = useValue(state$.thermalWarning)
-  const showCellularWarning = useValue(state$.showCellularWarning)
   const phase = useValue(recordingStore$.phase)
   const recordingDuration = useValue(recordingStore$.recordingDuration)
   const progressStage = useValue(recordingStore$.progressStage)
@@ -237,7 +233,7 @@ export function LiveRecordScreen({
   // values that define a stream, not by unrelated renders/status updates.
   const livePublisherRef = useRef(livePublisher)
   livePublisherRef.current = livePublisher
-  const liveNetworkQualityRef = livePublisher.networkQuality
+  const liveNetworkBitrateCapRef = livePublisher.networkBitrateCap
 
   // Clean up any orphaned live sessions from a previous crash so Mux billing
   // stops immediately and the bondfire transitions out of 'live' status. The
@@ -501,47 +497,6 @@ export function LiveRecordScreen({
   // existing blur/unmount/expiry cancel paths, the post-provision check
   // below, and ultimately the server's 5-minute pending cap + stale sweep.
 
-  // Keep the non-blocking warning in sync while the user frames the shot, so
-  // switching between WiFi and cellular before tapping record cannot leave
-  // stale guidance on screen.
-  useEffect(() => {
-    if (phase !== 'pre_connected') {
-      state$.showCellularWarning.set(false)
-      return
-    }
-
-    let cancelled = false
-    let wasCellular = false
-    const updateWarning = (netState: Network.NetworkState) => {
-      if (cancelled) return
-      const isCellular =
-        netState.type === Network.NetworkStateType.CELLULAR &&
-        netState.isConnected !== false &&
-        netState.isInternetReachable !== false
-      state$.showCellularWarning.set(isCellular)
-      if (isCellular && !wasCellular) {
-        telemetry.info(
-          'live:cellular_warning',
-          'User is on cellular — showing pre-recording warning',
-          {
-            isConnected: netState.isConnected,
-            isInternetReachable: netState.isInternetReachable,
-          },
-        )
-      }
-      wasCellular = isCellular
-    }
-
-    const subscription = Network.addNetworkStateListener(updateWarning)
-    void Network.getNetworkStateAsync()
-      .then(updateWarning)
-      .catch(() => {})
-
-    return () => {
-      cancelled = true
-      subscription.remove()
-    }
-  }, [phase, state$.showCellularWarning.set])
   useEffect(() => {
     if (phase !== 'pre_connected' || !isFocused || !isAppActive) {
       return
@@ -769,14 +724,16 @@ export function LiveRecordScreen({
     const applyQuality = async (level: number) => {
       const target = THERMAL_QUALITY_LADDER[level]
       if (!target) return
-      const bitrate = constrainVideoBitrate(target.bitrate, liveNetworkQualityRef.current)
+      // Register thermal ceiling so network ABR applies compose correctly.
+      livePublisher.setThermalCeiling(target.bitrate, target.fps)
+      const bitrate = composeLiveVideoBitrate(liveNetworkBitrateCapRef.current, target.bitrate)
       const configured = await livePublisher.setVideoQuality(bitrate, target.fps)
       thermalAppliedLevelRef.current = level
       state$.thermalWarning.set(level >= 2)
       telemetry.info('live:thermal_mitigation', 'Adjusting quality for thermal state', {
         level,
         bitrate,
-        networkQuality: liveNetworkQualityRef.current,
+        networkBitrateCap: liveNetworkBitrateCapRef.current,
         fps: target.fps,
         configuredVideoBitrate: configured.configuredVideoBitrate,
         configuredFps: configured.configuredFps,
@@ -864,8 +821,9 @@ export function LiveRecordScreen({
   }, [
     phase,
     livePublisher.setVideoQuality,
+    livePublisher.setThermalCeiling,
     livePublisher.getThermalState,
-    liveNetworkQualityRef,
+    liveNetworkBitrateCapRef,
     stopLiveRecording,
     state$,
   ])
@@ -1652,27 +1610,6 @@ export function LiveRecordScreen({
             >
               <Text color="white" fontSize={13} fontWeight="600">
                 Device getting warm — reducing quality to protect your recording
-              </Text>
-            </XStack>
-          )}
-
-          {showCellularWarning && !thermalWarning && (
-            <XStack
-              position="absolute"
-              top={112}
-              left={20}
-              right={20}
-              justifyContent="center"
-              alignItems="center"
-              backgroundColor="rgba(0, 100, 200, 0.85)"
-              borderRadius={12}
-              paddingVertical={8}
-              paddingHorizontal={16}
-              pointerEvents="none"
-              zIndex={10}
-            >
-              <Text color="white" fontSize={13} fontWeight="600" textAlign="center">
-                You're on cellular — recording may be less stable on weak signal
               </Text>
             </XStack>
           )}
