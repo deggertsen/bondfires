@@ -1,6 +1,5 @@
 import {
   buildErrorReportMailto,
-  composeLiveVideoBitrate,
   freeUpgradeActions,
   getDefaultBondfireTitle,
   getUserFacingErrorMessage,
@@ -233,7 +232,6 @@ export function LiveRecordScreen({
   // values that define a stream, not by unrelated renders/status updates.
   const livePublisherRef = useRef(livePublisher)
   livePublisherRef.current = livePublisher
-  const liveNetworkBitrateCapRef = livePublisher.networkBitrateCap
 
   // Clean up any orphaned live sessions from a previous crash so Mux billing
   // stops immediately and the bondfire transitions out of 'live' status. The
@@ -724,16 +722,15 @@ export function LiveRecordScreen({
     const applyQuality = async (level: number) => {
       const target = THERMAL_QUALITY_LADDER[level]
       if (!target) return
-      // Register thermal ceiling so network ABR applies compose correctly.
-      livePublisher.setThermalCeiling(target.bitrate, target.fps)
-      const bitrate = composeLiveVideoBitrate(liveNetworkBitrateCapRef.current, target.bitrate)
-      const configured = await livePublisher.setVideoQuality(bitrate, target.fps)
+      // The publisher composes this thermal ceiling with the current network
+      // ceiling and coalesces concurrent updates before touching the encoder.
+      const configured = await livePublisher.setThermalQuality(target.bitrate, target.fps)
+      if (!configured) return
       thermalAppliedLevelRef.current = level
       state$.thermalWarning.set(level >= 2)
       telemetry.info('live:thermal_mitigation', 'Adjusting quality for thermal state', {
         level,
-        bitrate,
-        networkBitrateCap: liveNetworkBitrateCapRef.current,
+        thermalBitrateCap: target.bitrate,
         fps: target.fps,
         configuredVideoBitrate: configured.configuredVideoBitrate,
         configuredFps: configured.configuredFps,
@@ -820,10 +817,8 @@ export function LiveRecordScreen({
     }
   }, [
     phase,
-    livePublisher.setVideoQuality,
-    livePublisher.setThermalCeiling,
+    livePublisher.setThermalQuality,
     livePublisher.getThermalState,
-    liveNetworkBitrateCapRef,
     stopLiveRecording,
     state$,
   ])

@@ -50,6 +50,16 @@ export interface NetworkBitrateSample {
   bitrateBps: number
   /** False when the platform cannot measure real throughput — ignored. */
   statsSupported: boolean
+  /**
+   * Video bitrate currently configured on the encoder. Defaults to the
+   * controller's network tier when no independent ceiling is active.
+   */
+  targetVideoBitrateBps?: number
+  /**
+   * Highest video bitrate an up-probe may request. A thermal ceiling can keep
+   * ABR from "recovering" to a tier the encoder cannot actually probe yet.
+   */
+  recoveryCeilingBps?: number
 }
 
 export type NetworkBitrateDecision =
@@ -87,6 +97,18 @@ function clampTier(tier: number): LiveVideoBitrateTier {
   return tier as LiveVideoBitrateTier
 }
 
+function nextTierBelow(
+  tier: LiveVideoBitrateTier,
+  targetVideoBitrateBps: number,
+): LiveVideoBitrateTier | null {
+  for (let nextTier = tier + 1; nextTier < LIVE_VIDEO_BITRATE_LADDER.length; nextTier++) {
+    if (LIVE_VIDEO_BITRATE_LADDER[nextTier] < targetVideoBitrateBps) {
+      return nextTier as LiveVideoBitrateTier
+    }
+  }
+  return null
+}
+
 /** Effective encoder bitrate after composing network + thermal ceilings. */
 export function composeLiveVideoBitrate(
   networkBitrateCap: number,
@@ -102,8 +124,6 @@ export function createNetworkBitrateController(
   let badSamples = 0
   let goodSamples = 0
   let holdSamplesRemaining = 0
-
-  const expectedBps = () => ladderBitrate(tier) + audioBitrateBps
 
   return {
     reset(initialTier: LiveVideoBitrateTier = 0) {
@@ -121,12 +141,17 @@ export function createNetworkBitrateController(
       return tier
     },
 
-    sample({ bitrateBps, statsSupported }): NetworkBitrateDecision {
+    sample({
+      bitrateBps,
+      statsSupported,
+      targetVideoBitrateBps = ladderBitrate(tier),
+      recoveryCeilingBps = Number.POSITIVE_INFINITY,
+    }): NetworkBitrateDecision {
       if (!statsSupported) {
         return { action: 'hold', tier, bitrate: ladderBitrate(tier) }
       }
 
-      const expected = expectedBps()
+      const expected = targetVideoBitrateBps + audioBitrateBps
       const congested = bitrateBps < expected * ABR_DOWN_RATIO
       const healthy = bitrateBps >= expected * ABR_UP_RATIO
       const inPostCutHold = holdSamplesRemaining > 0
@@ -137,9 +162,12 @@ export function createNetworkBitrateController(
       if (congested) {
         goodSamples = 0
         badSamples += 1
-        if (badSamples >= ABR_DOWN_SAMPLE_LIMIT && tier < LIVE_VIDEO_BITRATE_LADDER.length - 1) {
+        const nextTier = nextTierBelow(tier, targetVideoBitrateBps)
+        if (badSamples >= ABR_DOWN_SAMPLE_LIMIT && nextTier !== null) {
           const fromTier = tier
-          tier = clampTier(tier + 1)
+          // If another constraint already lowered the encoder below one or
+          // more network tiers, skip those no-op tiers and make a real cut.
+          tier = nextTier
           badSamples = 0
           goodSamples = 0
           holdSamplesRemaining = ABR_POST_CUT_HOLD_SAMPLES
@@ -157,16 +185,20 @@ export function createNetworkBitrateController(
 
       if (healthy) {
         badSamples = 0
+        const recoveryTier = clampTier(tier - 1)
+        const canProbeHigher = tier > 0 && ladderBitrate(recoveryTier) <= recoveryCeilingBps
         // Suppress up-probes during the post-cut hold so we don't immediately
-        // climb back into congestion (OBS / RTMP ABR hysteresis).
-        if (inPostCutHold || tier === 0) {
+        // climb back into congestion. Also wait while another ceiling would
+        // hide the probe; healthy throughput at 800kbps cannot prove that a
+        // 1.5Mbps tier is sustainable.
+        if (inPostCutHold || !canProbeHigher) {
           goodSamples = 0
           return { action: 'hold', tier, bitrate: ladderBitrate(tier) }
         }
         goodSamples += 1
         if (goodSamples >= ABR_UP_SAMPLE_LIMIT) {
           const fromTier = tier
-          tier = clampTier(tier - 1)
+          tier = recoveryTier
           goodSamples = 0
           badSamples = 0
           return {

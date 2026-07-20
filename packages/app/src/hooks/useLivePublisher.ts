@@ -16,7 +16,7 @@ import {
   STATS_SAMPLE_INTERVAL_MS,
   type StallDetector,
 } from '../utils/liveStallDetector'
-import { assessNetworkTransport } from '../utils/networkQuality'
+import { assessNetworkTransport } from '../utils/networkTransport'
 
 /**
  * Default encoder settings. Keep in sync with the native option defaults
@@ -143,16 +143,25 @@ export function useLivePublisher(options: {
   // copy of the create screen — correctly reports that it no longer owns the
   // live session and stays out of the active instance's way.
   const ingestRef = useRef<{ rtmpsUrl: string; streamKey: string; sessionId: string } | null>(null)
-  // Network ABR ceiling (OBS-style). Thermal mitigation in LiveRecordScreen
-  // registers its own ceiling via setThermalCeiling; encoder bitrate is always
-  // min(network, thermal).
+  // Network ABR ceiling (OBS-style). Thermal mitigation registers its own
+  // ceiling through setThermalQuality; encoder bitrate is always min(network,
+  // thermal).
   const networkAbrRef = useRef<NetworkBitrateController | null>(null)
   const networkBitrateCapRef = useRef(LIVE_DEFAULT_VIDEO_BITRATE)
   const thermalCeilingRef = useRef({
     bitrate: LIVE_DEFAULT_VIDEO_BITRATE,
     fps: LIVE_DEFAULT_VIDEO_FPS,
   })
-  const qualityApplyInFlightRef = useRef(false)
+  // All network and thermal changes flow through one coalescing apply loop.
+  // Refs track the native target that was actually acknowledged so ABR never
+  // mistakes a thermal reduction for network congestion.
+  const qualityApplyTailRef = useRef<Promise<void>>(Promise.resolve())
+  const qualityReasonRef = useRef('initial')
+  const lastRequestedQualityRef = useRef({
+    bitrate: LIVE_DEFAULT_VIDEO_BITRATE,
+    fps: LIVE_DEFAULT_VIDEO_FPS,
+  })
+  const lastConfiguredQualityRef = useRef<LivePublisherVideoQualityResult | null>(null)
 
   const resetNetworkAbr = useCallback(() => {
     if (!networkAbrRef.current) {
@@ -164,51 +173,87 @@ export function useLivePublisher(options: {
       bitrate: LIVE_DEFAULT_VIDEO_BITRATE,
       fps: LIVE_DEFAULT_VIDEO_FPS,
     }
+    lastRequestedQualityRef.current = {
+      bitrate: LIVE_DEFAULT_VIDEO_BITRATE,
+      fps: LIVE_DEFAULT_VIDEO_FPS,
+    }
+    lastConfiguredQualityRef.current = null
   }, [])
 
   const applyComposedVideoQuality = useCallback(
-    async (reason: string) => {
-      if (qualityApplyInFlightRef.current) return
-      const ingest = ingestRef.current
-      if (!ingest || ingest.sessionId !== livePublishStore$.sessionId.peek()) return
-      if (livePublishStore$.status.peek() !== 'live') return
+    (reason: string): Promise<LivePublisherVideoQualityResult | undefined> => {
+      qualityReasonRef.current = reason
+      const applyPromise = qualityApplyTailRef.current.then(async () => {
+        const ingest = ingestRef.current
+        const status = livePublishStore$.status.peek()
+        if (
+          !ingest ||
+          ingest.sessionId !== livePublishStore$.sessionId.peek() ||
+          (status !== 'live' && status !== 'reconnecting')
+        ) {
+          return undefined
+        }
 
-      qualityApplyInFlightRef.current = true
-      try {
-        const bitrate = composeLiveVideoBitrate(
-          networkBitrateCapRef.current,
-          thermalCeilingRef.current.bitrate,
-        )
-        const fps = thermalCeilingRef.current.fps
-        const configured = await options.publisher.setVideoQuality(bitrate, fps)
-        telemetry.info('live:quality_apply', 'Applied composed live video quality', {
-          reason,
-          networkBitrateCap: networkBitrateCapRef.current,
-          thermalBitrateCap: thermalCeilingRef.current.bitrate,
-          thermalFps: fps,
-          bitrate,
-          configuredVideoBitrate: configured.configuredVideoBitrate,
-          configuredFps: configured.configuredFps,
-          fpsChangeSupported: configured.fpsChangeSupported,
-          sessionId: livePublishStore$.sessionId.peek(),
-          recordId: livePublishStore$.recordId.peek(),
-        })
-      } catch (error) {
-        telemetry.warn('live:quality_apply_failed', 'Failed to apply composed live video quality', {
-          reason,
-          error: String(error),
-          sessionId: livePublishStore$.sessionId.peek(),
-        })
-      } finally {
-        qualityApplyInFlightRef.current = false
-      }
+        const networkBitrateCap = networkBitrateCapRef.current
+        const thermalCeiling = thermalCeilingRef.current
+        const bitrate = composeLiveVideoBitrate(networkBitrateCap, thermalCeiling.bitrate)
+        const reasonForApply = qualityReasonRef.current
+        const lastRequested = lastRequestedQualityRef.current
+        if (lastRequested.bitrate === bitrate && lastRequested.fps === thermalCeiling.fps) {
+          return lastConfiguredQualityRef.current ?? undefined
+        }
+
+        try {
+          const configured = await options.publisher.setVideoQuality(bitrate, thermalCeiling.fps)
+          lastRequestedQualityRef.current = { bitrate, fps: thermalCeiling.fps }
+          lastConfiguredQualityRef.current = configured
+          telemetry.info('live:quality_apply', 'Applied composed live video quality', {
+            reason: reasonForApply,
+            networkBitrateCap,
+            thermalBitrateCap: thermalCeiling.bitrate,
+            thermalFps: thermalCeiling.fps,
+            bitrate,
+            configuredVideoBitrate: configured.configuredVideoBitrate,
+            configuredFps: configured.configuredFps,
+            fpsChangeSupported: configured.fpsChangeSupported,
+            sessionId: livePublishStore$.sessionId.peek(),
+            recordId: livePublishStore$.recordId.peek(),
+          })
+          return configured
+        } catch (error) {
+          telemetry.warn(
+            'live:quality_apply_failed',
+            'Failed to apply composed live video quality',
+            {
+              reason: reasonForApply,
+              bitrate,
+              fps: thermalCeiling.fps,
+              error: String(error),
+              sessionId: livePublishStore$.sessionId.peek(),
+            },
+          )
+          return undefined
+        }
+      })
+
+      // Every request runs after the previous native call and reads the latest
+      // ceilings when it starts. Redundant requests then collapse to a no-op.
+      qualityApplyTailRef.current = applyPromise.then(
+        () => undefined,
+        () => undefined,
+      )
+      return applyPromise
     },
     [options.publisher],
   )
 
-  const setThermalCeiling = useCallback((bitrate: number, fps: number) => {
-    thermalCeilingRef.current = { bitrate, fps }
-  }, [])
+  const setThermalQuality = useCallback(
+    (bitrate: number, fps: number) => {
+      thermalCeilingRef.current = { bitrate, fps }
+      return applyComposedVideoQuality('thermal')
+    },
+    [applyComposedVideoQuality],
+  )
 
   const stopStatsSampling = useCallback(() => {
     if (statsIntervalRef.current) {
@@ -468,6 +513,10 @@ export function useLivePublisher(options: {
           const abrDecision = networkAbrRef.current.sample({
             bitrateBps: stats.bitrateBps,
             statsSupported,
+            targetVideoBitrateBps:
+              lastConfiguredQualityRef.current?.configuredVideoBitrate ??
+              lastRequestedQualityRef.current.bitrate,
+            recoveryCeilingBps: thermalCeilingRef.current.bitrate,
           })
           if (abrDecision.action !== 'hold') {
             networkBitrateCapRef.current = abrDecision.bitrate
@@ -482,6 +531,20 @@ export function useLivePublisher(options: {
               recordId: livePublishStore$.recordId.peek(),
             })
             void applyComposedVideoQuality(`network_${abrDecision.action}`)
+          } else {
+            const desiredBitrate = composeLiveVideoBitrate(
+              networkBitrateCapRef.current,
+              thermalCeilingRef.current.bitrate,
+            )
+            const lastRequested = lastRequestedQualityRef.current
+            if (
+              lastRequested.bitrate !== desiredBitrate ||
+              lastRequested.fps !== thermalCeilingRef.current.fps
+            ) {
+              // A failed native update remains pending and is retried on the
+              // next stats tick even if the ABR tier itself did not change.
+              void applyComposedVideoQuality('quality_reconcile')
+            }
           }
         })
         .catch((error) => {
@@ -973,13 +1036,6 @@ export function useLivePublisher(options: {
     await options.publisher.swapCamera()
   }, [options.publisher])
 
-  const setVideoQuality = useCallback(
-    async (videoBitrate: number, fps: number) => {
-      return await options.publisher.setVideoQuality(videoBitrate, fps)
-    },
-    [options.publisher],
-  )
-
   return {
     preview,
     provision,
@@ -990,12 +1046,9 @@ export function useLivePublisher(options: {
     discardProvision,
     swapCamera,
     hasProvisionedIngest,
-    setVideoQuality,
-    setThermalCeiling,
+    setThermalQuality,
     stats$: livePublishStore$,
     getThermalState: options.publisher.getThermalState,
-    /** Current network ABR video bitrate ceiling (adapts while live). */
-    networkBitrateCap: networkBitrateCapRef,
   }
 }
 

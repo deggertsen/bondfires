@@ -125,6 +125,65 @@ describe('liveBitratePolicy', () => {
     expect(controller.tier()).toBe(0)
   })
 
+  it('judges congestion against the bitrate actually configured by thermal mitigation', () => {
+    const controller = createNetworkBitrateController()
+    const thermalTarget = 800_000
+    const healthyAtThermalTarget = supported((thermalTarget + LIVE_AUDIO_BITRATE_BPS) * 0.95)
+
+    for (let i = 0; i < ABR_DOWN_SAMPLE_LIMIT + 2; i++) {
+      expect(
+        controller.sample({
+          ...healthyAtThermalTarget,
+          targetVideoBitrateBps: thermalTarget,
+          recoveryCeilingBps: thermalTarget,
+        }).action,
+      ).toBe('hold')
+    }
+    expect(controller.tier()).toBe(0)
+  })
+
+  it('skips network tiers that cannot lower a thermally constrained encoder', () => {
+    const controller = createNetworkBitrateController()
+    const thermalTarget = 800_000
+    const congested = supported((thermalTarget + LIVE_AUDIO_BITRATE_BPS) * 0.5)
+
+    controller.sample({
+      ...congested,
+      targetVideoBitrateBps: thermalTarget,
+      recoveryCeilingBps: thermalTarget,
+    })
+    expect(
+      controller.sample({
+        ...congested,
+        targetVideoBitrateBps: thermalTarget,
+        recoveryCeilingBps: thermalTarget,
+      }),
+    ).toMatchObject({
+      action: 'step_down',
+      tier: 3,
+      bitrate: LIVE_VIDEO_BITRATE_LADDER[3],
+      fromTier: 0,
+    })
+  })
+
+  it('does not recover into a tier hidden by the thermal ceiling', () => {
+    const controller = createNetworkBitrateController()
+    controller.reset(2)
+    const thermalTarget = 800_000
+    const healthy = supported((thermalTarget + LIVE_AUDIO_BITRATE_BPS) * 0.95)
+
+    for (let i = 0; i < ABR_UP_SAMPLE_LIMIT + 2; i++) {
+      expect(
+        controller.sample({
+          ...healthy,
+          targetVideoBitrateBps: thermalTarget,
+          recoveryCeilingBps: thermalTarget,
+        }).action,
+      ).toBe('hold')
+    }
+    expect(controller.tier()).toBe(2)
+  })
+
   it('composes network and thermal ceilings with min()', () => {
     expect(composeLiveVideoBitrate(2_500_000, 800_000)).toBe(800_000)
     expect(composeLiveVideoBitrate(600_000, 1_500_000)).toBe(600_000)
