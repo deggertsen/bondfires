@@ -24,21 +24,11 @@ const storeVerificationStatus = v.union(
   v.literal('failed'),
   v.literal('refunded'),
 )
+// Stage 2 of the gender repair (PR #182): the stage-1 widened validator is
+// gone — admin:backfillUserGender ran against prod on 2026-07-22 and verified
+// every row valid ({ fixed: 0, remainingMayExist: false }), so the strict
+// validator is safe to enforce again.
 const userGender = v.union(v.literal('male'), v.literal('female'), v.literal('other'))
-// STAGE 1 of the gender repair (PR #182). Convex validates EXISTING documents
-// against the schema at deploy time, so a deploy that only ships the strict
-// validator can never reach a prod state already containing legacy bad
-// gender rows — it fails before backfillUserGender becomes available.
-// Widened to ANY string (not just the enum): the pre-repair auth code wrote
-// `(params.gender as string) ?? null`, so arbitrary strings are exactly as
-// possible in legacy rows as null is, and an enum-or-null validator would
-// still refuse to deploy against them. The backfill normalizes everything.
-// Rollout:
-//   1. Deploy this (widened schema + backfill).
-//   2. Run admin:backfillUserGender (paginated) until remainingMayExist is
-//      false; re-run and confirm every page reports { fixed: 0 }.
-//   3. Follow-up deploy: switch users.gender back to `userGender`.
-const userGenderStage1 = v.optional(v.union(v.string(), v.null()))
 const campAccessVisibilityMode = v.union(v.literal('hide'), v.literal('gate'))
 const adminAuditTargetType = v.union(
   v.literal('camp'),
@@ -109,7 +99,7 @@ export default defineSchema({
     displayName: v.optional(v.string()),
     photoUrl: v.optional(v.string()),
     photoStorageId: v.optional(v.id('_storage')),
-    gender: userGenderStage1,
+    gender: userGender,
     birthDate: v.optional(v.string()), // ISO date string (YYYY-MM-DD), private
 
     // Stats (denormalized for performance)

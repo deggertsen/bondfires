@@ -61,10 +61,6 @@ type CloseCircleEntry = {
   privateCampThreads: Array<Doc<'bondfires'> & { lastActivityAt: number }>
 }
 type Gender = 'male' | 'female' | 'other'
-
-function isGender(value: string | null | undefined): value is Gender {
-  return value === 'male' || value === 'female' || value === 'other'
-}
 type CurrentUserData = {
   _id: Id<'users'>
   email?: string
@@ -72,10 +68,7 @@ type CurrentUserData = {
   name?: string
   displayName?: string
   photoUrl?: string
-  // Widened while the stage-1 gender schema migration is live (legacy rows
-  // may carry null / missing / arbitrary-string gender until the backfill
-  // runs — see PR #182). Narrow through isGender() before using as Gender.
-  gender?: string | null
+  gender: Gender
   age?: number
   bondfireCount: number
   responseCount: number
@@ -340,7 +333,7 @@ export default function ProfileScreen() {
 
   const handleEditProfile = useCallback(() => {
     state$.editName.set(currentUser?.displayName ?? currentUser?.name ?? '')
-    state$.editGender.set(isGender(currentUser?.gender) ? currentUser.gender : null)
+    state$.editGender.set(currentUser?.gender ?? null)
     state$.isEditSheetOpen.set(true)
   }, [currentUser, state$])
 
