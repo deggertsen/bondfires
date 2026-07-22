@@ -88,9 +88,13 @@ export async function sweepLocalBackups(options: LocalBackupSweepOptions): Promi
       if (!info.exists || info.isDirectory) {
         continue
       }
-      const liveSessionId = fileName.slice(0, -'.mp4'.length)
-      // expo-file-system reports modificationTime in seconds.
-      const modifiedAtMs = (info.modificationTime ?? 0) * 1000
+      // Android rolls a reconnect's pre-drop leg to <sessionId>.partN.mp4;
+      // strip the suffix so parts share their session's retention/ready fate.
+      const liveSessionId = fileName.slice(0, -'.mp4'.length).replace(/\.part\d+$/, '')
+      // expo-file-system reports modificationTime in seconds. A missing
+      // timestamp must mean "keep" (treat as new), never "expired" — a 0
+      // fallback would delete a file we merely failed to stat.
+      const modifiedAtMs = info.modificationTime != null ? info.modificationTime * 1000 : Date.now()
       const sizeBytes = info.size
 
       if (isBackupExpired({ modifiedAtMs, nowMs: Date.now() })) {

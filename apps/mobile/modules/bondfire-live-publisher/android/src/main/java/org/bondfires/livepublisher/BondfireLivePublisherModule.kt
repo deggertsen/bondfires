@@ -272,10 +272,10 @@ class BondfireLivePublisherModule : Module() {
       cleanupStreamer()
       currentFacing = options.initialCamera
       // Local backup (never fails the stream: a null file just means the
-      // backup is off for this session). Note the reconnect path re-enters
-      // start() after a full teardown, so the pre-drop backup segment is
-      // replaced — MediaMuxer cannot append, and the pre-drop leg already
-      // reached Mux; covering the new leg is what matters.
+      // backup is off for this session). The reconnect path re-enters start()
+      // after a full teardown; the finalized pre-drop segment is rolled aside
+      // by prepareBackupFile — it may be the only good copy of that footage —
+      // and the new leg records to a fresh file of the same name.
       val backupFile = prepareBackupFile(options.localBackupFileName)
       createStreamer(
         fps = options.fps,
@@ -501,11 +501,23 @@ class BondfireLivePublisherModule : Module() {
         throw IOException("Could not create ${directory.absolutePath}")
       }
       val file = File(directory, fileName)
-      // A stale file with this name belongs to a dead arm attempt or the
-      // pre-drop leg of a reconnect (MediaMuxer cannot append); the launch
-      // sweep owns finished sessions.
-      if (file.exists() && !file.delete()) {
-        throw IOException("Could not replace stale backup file ${file.absolutePath}")
+      // A file with this name is either a dead arm attempt or the pre-drop
+      // leg of a reconnect. The pre-drop leg may hold the ONLY good copy of
+      // that footage — an ABR collapse drops the connection precisely because
+      // little of it reached Mux — and MediaMuxer cannot append, so roll it
+      // aside as <base>.partN.mp4 instead of deleting. The launch sweep
+      // applies the same retention/ready rules to rolled parts.
+      if (file.exists()) {
+        val base = fileName.removeSuffix(".mp4")
+        var part = 1
+        var rolled = File(directory, "$base.part$part.mp4")
+        while (rolled.exists() && part < 100) {
+          part += 1
+          rolled = File(directory, "$base.part$part.mp4")
+        }
+        if (!file.renameTo(rolled)) {
+          throw IOException("Could not roll aside existing backup file ${file.absolutePath}")
+        }
       }
       file
     } catch (e: Exception) {
