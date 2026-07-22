@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   computeReconnectDeadlineMs,
   getReconnectAttemptDelayMs,
+  getReconnectAttemptTimeoutMs,
+  RECONNECT_ATTEMPT_TIMEOUT_MS,
   RECONNECT_SAFETY_MARGIN_MS,
   shouldAttemptLiveReconnect,
 } from '../../../../packages/app/src/utils/liveReconnectPolicy'
@@ -55,6 +57,22 @@ describe('computeReconnectDeadlineMs', () => {
   it('never returns a deadline in the past for tiny windows', () => {
     expect(computeReconnectDeadlineMs(5, 1_000_000)).toBe(1_000_000)
     expect(computeReconnectDeadlineMs(0, 1_000_000)).toBe(1_000_000)
+  })
+})
+
+describe('getReconnectAttemptTimeoutMs', () => {
+  it('caps an attempt at the per-attempt timeout when budget is plentiful', () => {
+    expect(getReconnectAttemptTimeoutMs(1_000_000 + 40_000, 1_000_000)).toBe(
+      RECONNECT_ATTEMPT_TIMEOUT_MS,
+    )
+  })
+
+  it('shrinks the attempt so it can never outlive the loop deadline', () => {
+    expect(getReconnectAttemptTimeoutMs(1_000_000 + 4_000, 1_000_000)).toBe(4_000)
+  })
+
+  it('never returns a negative budget', () => {
+    expect(getReconnectAttemptTimeoutMs(1_000_000, 1_000_000 + 1)).toBe(0)
   })
 })
 

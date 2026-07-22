@@ -153,6 +153,9 @@ export function useLivePublisher(options: {
     reconnectWindowSeconds?: number
     sessionId: string
   } | null>(null)
+  // Monotonic id per reconnect() call so a late-resolving native start from a
+  // superseded or abandoned attempt can never run success bookkeeping.
+  const reconnectGenerationRef = useRef(0)
   // Network ABR ceiling (OBS-style). Thermal mitigation registers its own
   // ceiling through setThermalQuality; encoder bitrate is always min(network,
   // thermal).
@@ -311,6 +314,30 @@ export function useLivePublisher(options: {
       // the loop's business, reported through the reconnect() promise.
       if (livePublishStore$.status.peek() === 'reconnecting') {
         if (status !== 'live' && status !== 'ended') {
+          return
+        }
+      }
+
+      // A timed-out or abandoned reconnect attempt can complete natively
+      // AFTER the session reached a terminal state (user stop, cancel,
+      // give-up finalize). Its 'live' must not resurrect the store — and the
+      // zombie connection it represents must be closed, or Mux keeps
+      // receiving media for a recording the app considers finished.
+      if (status === 'live') {
+        const currentStatus = livePublishStore$.status.peek()
+        const isTerminal =
+          currentStatus === 'stopping' ||
+          currentStatus === 'ended' ||
+          currentStatus === 'idle' ||
+          currentStatus === 'errored' ||
+          currentStatus === 'endpoint_closed' ||
+          currentStatus === 'stream_stopped_unexpectedly'
+        if (isTerminal) {
+          telemetry.warn('live:stale_live_event', 'Native live event after terminal state', {
+            statusAtEvent: currentStatus,
+            sessionId: livePublishStore$.sessionId.peek(),
+          })
+          void options.publisher.stop().catch(() => {})
           return
         }
       }
@@ -803,9 +830,22 @@ export function useLivePublisher(options: {
   const reconnect = useCallback(
     async (args: { initialCamera?: 'front' | 'back' } = {}) => {
       const ingest = ingestRef.current
-      if (!ingest || ingest.sessionId !== livePublishStore$.sessionId.peek()) {
+      const sessionId = livePublishStore$.sessionId.peek()
+      if (!ingest || ingest.sessionId !== sessionId) {
         throw new Error('No provisioned live stream to reconnect')
       }
+
+      // Native start() can resolve long after the loop that issued it moved
+      // on (timed-out attempt) or after the user tapped Stop. The generation
+      // token and the post-resolve re-checks below make sure only the attempt
+      // that still owns the session does success bookkeeping — anything else
+      // is a zombie connection to tear down or ignore.
+      const generation = ++reconnectGenerationRef.current
+      // The device is just as hot after the drop as before it: preserve the
+      // thermal ceiling across startStatsSampling's ABR reset, because the
+      // screen's applied-level bookkeeping will not re-fire on an unchanged
+      // thermal reading.
+      const thermalCeilingBeforeDrop = thermalCeilingRef.current
 
       const attemptStartedAt = Date.now()
       await options.publisher.start({
@@ -816,10 +856,37 @@ export function useLivePublisher(options: {
         audioBitrate: 128_000,
         initialCamera: args.initialCamera ?? 'front',
       })
+
+      if (reconnectGenerationRef.current !== generation) {
+        // A newer attempt superseded this one while native start was in
+        // flight; its own start() already replaced this session natively.
+        return
+      }
+      if (
+        livePublishStore$.status.peek() !== 'reconnecting' ||
+        livePublishStore$.sessionId.peek() !== sessionId
+      ) {
+        // Stop, cancel, or give-up won the race — the store owns the terminal
+        // state and this late connection is a zombie. Close it.
+        telemetry.warn('live:reconnect_stale', 'Reconnect completed after the session moved on', {
+          sessionId,
+          statusNow: livePublishStore$.status.peek(),
+        })
+        void options.publisher.stop().catch(() => {})
+        return
+      }
+
       // Native start() reset the encoder to the default ladder top; the ABR
       // refs reset alongside so JS and native agree (resetNetworkAbr inside).
       // Throughput history survives: this is still the same recording.
       startStatsSampling({ preserveThroughputHistory: true })
+      thermalCeilingRef.current = thermalCeilingBeforeDrop
+      if (
+        thermalCeilingBeforeDrop.bitrate < LIVE_DEFAULT_VIDEO_BITRATE ||
+        thermalCeilingBeforeDrop.fps < LIVE_DEFAULT_VIDEO_FPS
+      ) {
+        void applyComposedVideoQuality('reconnect_thermal_restore')
+      }
       telemetry.info('live:reconnect_success', 'Live publisher reconnected after drop', {
         sessionId: livePublishStore$.sessionId.peek(),
         recordId: livePublishStore$.recordId.peek(),
@@ -831,7 +898,7 @@ export function useLivePublisher(options: {
         status: livePublishStore$.status.peek(),
       })
     },
-    [options.publisher, startStatsSampling],
+    [options.publisher, startStatsSampling, applyComposedVideoQuality],
   )
 
   const start = useCallback(

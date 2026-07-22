@@ -4,6 +4,7 @@ import {
   freeUpgradeActions,
   getDefaultBondfireTitle,
   getReconnectAttemptDelayMs,
+  getReconnectAttemptTimeoutMs,
   getUserFacingErrorMessage,
   LIVE_DEFAULT_VIDEO_BITRATE,
   LIVE_DEFAULT_VIDEO_FPS,
@@ -1313,15 +1314,32 @@ export function LiveRecordScreen({
             return
           }
           attempt += 1
+          // Bound the attempt itself: native start() can block far past the
+          // Mux window (dead-route TCP timeout), and an unbounded await here
+          // would keep the loop from ever reaching its give-up path. A
+          // raced-out native start that completes later is handled inside
+          // reconnect() (generation + post-resolve state checks tear down or
+          // adopt the late connection safely).
+          const attemptTimeoutMs = getReconnectAttemptTimeoutMs(deadline, Date.now())
+          let attemptTimer: ReturnType<typeof setTimeout> | null = null
           try {
             telemetry.info('live:reconnect_attempt', 'Attempting live stream reconnect', {
               sessionId,
               attempt,
+              attemptTimeoutMs,
               remainingMs: deadline - Date.now(),
             })
-            await livePublisher.reconnect({
-              initialCamera: recordingStore$.facing.peek() === 'back' ? 'back' : 'front',
-            })
+            await Promise.race([
+              livePublisher.reconnect({
+                initialCamera: recordingStore$.facing.peek() === 'back' ? 'back' : 'front',
+              }),
+              new Promise<never>((_, reject) => {
+                attemptTimer = setTimeout(
+                  () => reject(new Error('Reconnect attempt timed out')),
+                  attemptTimeoutMs,
+                )
+              }),
+            ])
             return // success — native emitted 'live' and stats sampling restarted
           } catch (error) {
             telemetry.warn('live:reconnect_attempt_failed', 'Reconnect attempt failed', {
@@ -1329,6 +1347,10 @@ export function LiveRecordScreen({
               attempt,
               error: String(error),
             })
+          } finally {
+            if (attemptTimer) {
+              clearTimeout(attemptTimer)
+            }
           }
         }
       } finally {

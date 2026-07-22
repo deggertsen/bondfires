@@ -19,6 +19,22 @@ export const RECONNECT_SAFETY_MARGIN_MS = 10_000
 const MAX_ATTEMPT_DELAY_MS = 8_000
 
 /**
+ * Hard cap on a single reconnect attempt. Native start() can block far past
+ * the Mux window (a dead route's TCP timeout); an unbounded await would keep
+ * the loop from ever reaching its give-up path while Mux finalizes
+ * independently and the UI sits on "Reconnecting..." forever.
+ */
+export const RECONNECT_ATTEMPT_TIMEOUT_MS = 15_000
+
+/**
+ * Budget for the next attempt: the per-attempt cap, shrunk so the attempt
+ * can never outlive the loop's overall deadline.
+ */
+export function getReconnectAttemptTimeoutMs(deadlineMs: number, now: number): number {
+  return Math.max(0, Math.min(RECONNECT_ATTEMPT_TIMEOUT_MS, deadlineMs - now))
+}
+
+/**
  * Deadline (epoch ms) for the whole reconnect flow. Zero/negative budget
  * means reconnect is effectively disabled — callers should skip the loop.
  */
