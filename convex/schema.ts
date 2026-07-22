@@ -24,10 +24,6 @@ const storeVerificationStatus = v.union(
   v.literal('failed'),
   v.literal('refunded'),
 )
-// Stage 2 of the gender repair (PR #182): the stage-1 widened validator is
-// gone — admin:backfillUserGender ran against prod on 2026-07-22 and verified
-// every row valid ({ fixed: 0, remainingMayExist: false }), so the strict
-// validator is safe to enforce again.
 const userGender = v.union(v.literal('male'), v.literal('female'), v.literal('other'))
 const campAccessVisibilityMode = v.union(v.literal('hide'), v.literal('gate'))
 const adminAuditTargetType = v.union(

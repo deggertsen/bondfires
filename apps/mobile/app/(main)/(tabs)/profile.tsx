@@ -60,7 +60,7 @@ type CloseCircleEntry = {
   sharedThreads: Array<Doc<'bondfires'> & { lastActivityAt: number }>
   privateCampThreads: Array<Doc<'bondfires'> & { lastActivityAt: number }>
 }
-type Gender = 'male' | 'female' | 'other'
+type Gender = Doc<'users'>['gender']
 type CurrentUserData = {
   _id: Id<'users'>
   email?: string
@@ -582,7 +582,7 @@ export default function ProfileScreen() {
                   {currentUser.email}
                 </Text>
                 <Text color={'$placeholderColor'} fontSize={12} textTransform="capitalize">
-                  {currentUser.gender ?? 'Gender not set'}
+                  {currentUser.gender}
                 </Text>
               </YStack>
 
