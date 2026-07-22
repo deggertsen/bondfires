@@ -20,6 +20,17 @@ export const LOCAL_BACKUP_MIN_FREE_DISK_BYTES = 500 * 1024 * 1024
  */
 export const LOCAL_BACKUP_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 
+/**
+ * Rollout flag for local backup recording. Default off; set
+ * EXPO_PUBLIC_LOCAL_BACKUP_RECORDING=1 at build time to enable (same
+ * process.env pattern as EXPO_PUBLIC_MUX_DATA_ENV_KEY in useMuxData).
+ */
+export function isLocalBackupFlagEnabled(): boolean {
+  return (
+    (process.env as Record<string, string | undefined>).EXPO_PUBLIC_LOCAL_BACKUP_RECORDING === '1'
+  )
+}
+
 export type LocalBackupSkipReason = 'flag_disabled' | 'low_disk' | 'disk_unknown'
 
 export interface LocalBackupArmDecision {

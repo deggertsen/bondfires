@@ -39,9 +39,10 @@ describe('shouldArmLocalBackup', () => {
       arm: false,
       reason: 'disk_unknown',
     })
-    expect(
-      shouldArmLocalBackup({ flagEnabled: true, freeDiskBytes: Number.NaN }),
-    ).toEqual({ arm: false, reason: 'disk_unknown' })
+    expect(shouldArmLocalBackup({ flagEnabled: true, freeDiskBytes: Number.NaN })).toEqual({
+      arm: false,
+      reason: 'disk_unknown',
+    })
   })
 })
 
@@ -50,9 +51,9 @@ describe('isBackupExpired', () => {
 
   it('keeps files within the retention window', () => {
     expect(isBackupExpired({ modifiedAtMs, nowMs: modifiedAtMs })).toBe(false)
-    expect(
-      isBackupExpired({ modifiedAtMs, nowMs: modifiedAtMs + LOCAL_BACKUP_RETENTION_MS }),
-    ).toBe(false)
+    expect(isBackupExpired({ modifiedAtMs, nowMs: modifiedAtMs + LOCAL_BACKUP_RETENTION_MS })).toBe(
+      false,
+    )
   })
 
   it('expires files older than the retention window', () => {

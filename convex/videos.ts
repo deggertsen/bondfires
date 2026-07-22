@@ -2482,6 +2482,32 @@ export const getLinkedLiveRecordVideoStatus = internalQuery({
   },
 })
 
+/**
+ * Public, auth-gated status lookup for the caller's own live session. Used by
+ * the local-backup launch sweep (packages/app/src/services/localBackupSweep.ts)
+ * to decide whether an on-device backup MP4 is still worth keeping: a 'ready'
+ * videoStatus means the live asset resolved and the backup can be deleted.
+ * Returns a null status when the session or its linked record is missing (or
+ * belongs to another user) so the client keeps the file conservatively.
+ */
+export const getLiveSessionRecordStatus = query({
+  args: {
+    liveSessionId: v.id('liveSessions'),
+  },
+  handler: async (ctx, args): Promise<{ videoStatus: string | null }> => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      return { videoStatus: null }
+    }
+    const liveSession = await ctx.db.get(args.liveSessionId)
+    if (!liveSession || liveSession.userId !== userId) {
+      return { videoStatus: null }
+    }
+    const record = await getLinkedLiveRecord(ctx, liveSession)
+    return { videoStatus: record?.videoStatus ?? null }
+  },
+})
+
 // ── New mutation: mark linked record as processing after stream ends ──
 
 export const markLinkedRecordProcessing = internalMutation({

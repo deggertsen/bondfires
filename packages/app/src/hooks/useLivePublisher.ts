@@ -1,5 +1,7 @@
+import { deleteAsync, getFreeDiskStorageAsync, getInfoAsync } from 'expo-file-system/legacy'
 import { useCallback, useEffect, useRef } from 'react'
 import { AppState, Platform } from 'react-native'
+import { getLocalBackupFileUri } from '../services/localBackupSweep'
 import { telemetry } from '../services/telemetry'
 import { livePublishActions, livePublishStore$ } from '../store/livePublish.store'
 import { isNativePublisherStatus } from '../store/livePublisherContract'
@@ -16,6 +18,7 @@ import {
   STATS_SAMPLE_INTERVAL_MS,
   type StallDetector,
 } from '../utils/liveStallDetector'
+import { isLocalBackupFlagEnabled, shouldArmLocalBackup } from '../utils/localBackupPolicy'
 import { assessNetworkTransport } from '../utils/networkTransport'
 
 /**
@@ -36,6 +39,12 @@ export interface LivePublisherStartOptions {
   videoBitrate?: number
   audioBitrate?: number
   initialCamera?: 'front' | 'back'
+  /**
+   * Non-empty arms the native local MP4 backup recorder, writing the session
+   * to <documents>/recordings/<localBackupFileName> alongside the RTMP
+   * stream. Empty/absent disables the backup (the default).
+   */
+  localBackupFileName?: string
 }
 
 // Keep in sync with LivePublisherStats in
@@ -156,6 +165,12 @@ export function useLivePublisher(options: {
   // Monotonic id per reconnect() call so a late-resolving native start from a
   // superseded or abandoned attempt can never run success bookkeeping.
   const reconnectGenerationRef = useRef(0)
+  // Local backup recording (Phase 1, docs/plans/local-backup-recording.md).
+  // Set once the native publisher confirmed a start with a backup file name;
+  // stop() stats the finalized file and cancel() deletes it. Session-tagged so
+  // a stale instance can never touch another session's backup — orphaned
+  // files are owned by the launch sweep (localBackupSweep.ts).
+  const localBackupRef = useRef<{ sessionId: string; fileName: string } | null>(null)
   // Network ABR ceiling (OBS-style). Thermal mitigation registers its own
   // ceiling through setThermalQuality; encoder bitrate is always min(network,
   // thermal).
@@ -275,6 +290,51 @@ export function useLivePublisher(options: {
     }
   }, [])
 
+  /**
+   * Decide whether the upcoming native start() should arm the local MP4
+   * backup for this session. Returns the file name to pass ('' disables) and
+   * the measured free disk for the backup:armed telemetry. Never throws.
+   */
+  const resolveLocalBackup = useCallback(
+    async (sessionId: string): Promise<{ fileName: string; freeDiskBytes: number | null }> => {
+      const flagEnabled = isLocalBackupFlagEnabled()
+      let freeDiskBytes: number | null = null
+      if (flagEnabled) {
+        try {
+          freeDiskBytes = await getFreeDiskStorageAsync()
+        } catch {
+          freeDiskBytes = null
+        }
+      }
+      const decision = shouldArmLocalBackup({ flagEnabled, freeDiskBytes })
+      if (!decision.arm) {
+        telemetry.info('backup:skipped', 'Local backup not armed', {
+          reason: decision.reason,
+          freeDiskBytes,
+          sessionId,
+        })
+        return { fileName: '', freeDiskBytes }
+      }
+      return { fileName: `${sessionId}.mp4`, freeDiskBytes }
+    },
+    [],
+  )
+
+  /** Bookkeeping + telemetry after a native start() that requested a backup. */
+  const noteLocalBackupArmed = useCallback(
+    (sessionId: string, fileName: string, freeDiskBytes: number | null) => {
+      if (!fileName) {
+        return
+      }
+      localBackupRef.current = { sessionId, fileName }
+      telemetry.info('backup:armed', 'Local backup recording armed', {
+        sessionId,
+        freeDiskBytes,
+      })
+    },
+    [],
+  )
+
   useEffect(() => {
     const statusSub = options.publisher.addListener('statusChange', (rawStatus) => {
       // Native emits { status: "..." } from sendStatus helper, but could
@@ -370,6 +430,18 @@ export function useLivePublisher(options: {
           sessionId: livePublishStore$.sessionId.peek(),
           recordId: livePublishStore$.recordId.peek(),
           status,
+        })
+        return
+      }
+
+      // Local backup recorder failures are telemetry-only in every state —
+      // the backup must never fail the stream it exists to protect.
+      if (error.code === 'backup_failed') {
+        telemetry.warn('backup:write_failed', 'Local backup recording failed', {
+          message: error.message,
+          sessionId: livePublishStore$.sessionId.peek(),
+          recordId: livePublishStore$.recordId.peek(),
+          status: livePublishStore$.status.peek(),
         })
         return
       }
@@ -762,6 +834,8 @@ export function useLivePublisher(options: {
         initialVideoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
       })
 
+      const localBackup = await resolveLocalBackup(ingest.sessionId)
+
       const connectStartedAt = Date.now()
       try {
         telemetry.setCrashBreadcrumb('live:starting', {
@@ -776,7 +850,9 @@ export function useLivePublisher(options: {
           videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
           audioBitrate: 128_000,
           initialCamera: args.initialCamera ?? 'front',
+          localBackupFileName: localBackup.fileName,
         })
+        noteLocalBackupArmed(ingest.sessionId, localBackup.fileName, localBackup.freeDiskBytes)
         startStatsSampling()
         telemetry.setCrashBreadcrumb('live:recording', {
           sessionId: livePublishStore$.sessionId.peek(),
@@ -805,7 +881,7 @@ export function useLivePublisher(options: {
         throw error
       }
     },
-    [options.publisher, startStatsSampling],
+    [options.publisher, startStatsSampling, resolveLocalBackup, noteLocalBackupArmed],
   )
 
   /**
@@ -847,6 +923,14 @@ export function useLivePublisher(options: {
       // thermal reading.
       const thermalCeilingBeforeDrop = thermalCeilingRef.current
 
+      // Reuse the backup armed at connect time — no fresh disk check mid-drop.
+      // iOS's mixer-attached recorder survives the session rebuild untouched;
+      // Android tears the whole pipeline down and re-arms against the same
+      // file (the pre-drop leg already reached Mux, so covering the new leg is
+      // what matters). Never arm a backup here that connect() didn't arm.
+      const localBackupFileName =
+        localBackupRef.current?.sessionId === sessionId ? localBackupRef.current.fileName : ''
+
       const attemptStartedAt = Date.now()
       await options.publisher.start({
         rtmpsUrl: ingest.rtmpsUrl,
@@ -855,6 +939,7 @@ export function useLivePublisher(options: {
         videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
         audioBitrate: 128_000,
         initialCamera: args.initialCamera ?? 'front',
+        localBackupFileName,
       })
 
       if (reconnectGenerationRef.current !== generation) {
@@ -963,6 +1048,8 @@ export function useLivePublisher(options: {
           initialVideoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
         })
 
+        const localBackup = await resolveLocalBackup(liveStream.liveSessionId)
+
         telemetry.setCrashBreadcrumb('live:starting', {
           sessionId: liveStream.liveSessionId,
           recordId: liveStream.recordId,
@@ -976,7 +1063,13 @@ export function useLivePublisher(options: {
           videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
           audioBitrate: 128_000,
           initialCamera: args.initialCamera ?? 'front',
+          localBackupFileName: localBackup.fileName,
         })
+        noteLocalBackupArmed(
+          liveStream.liveSessionId,
+          localBackup.fileName,
+          localBackup.freeDiskBytes,
+        )
         startStatsSampling()
         telemetry.setCrashBreadcrumb('live:recording', {
           sessionId: liveStream.liveSessionId,
@@ -1021,7 +1114,7 @@ export function useLivePublisher(options: {
         throw error
       }
     },
-    [options, startStatsSampling],
+    [options, startStatsSampling, resolveLocalBackup, noteLocalBackupArmed],
   )
 
   const stop = useCallback(async (): Promise<LivePublisherStopResult> => {
@@ -1054,6 +1147,30 @@ export function useLivePublisher(options: {
       stopStatsSampling()
       ingestRef.current = null
       livePublishActions.setStatus('ended')
+    }
+
+    // Native stop finalized the local backup file (when one was armed) —
+    // record its final size for the finalized-vs-asset_errored correlation
+    // that decides Phase 2. The file itself is kept until the live asset
+    // reaches 'ready' (launch sweep) so failed assets stay recoverable.
+    const localBackup = localBackupRef.current
+    if (localBackup && localBackup.sessionId === sessionId) {
+      localBackupRef.current = null
+      try {
+        const fileUri = getLocalBackupFileUri(localBackup.fileName)
+        const info = fileUri ? await getInfoAsync(fileUri) : null
+        telemetry.info('backup:finalized', 'Local backup recording finalized', {
+          sessionId,
+          sizeBytes: info?.exists && !info.isDirectory ? info.size : 0,
+          exists: info?.exists ?? false,
+          durationHintMs: startedAt ? Date.now() - startedAt : undefined,
+        })
+      } catch (error) {
+        telemetry.warn('backup:write_failed', 'Failed to stat finalized local backup', {
+          sessionId,
+          error: String(error),
+        })
+      }
     }
 
     // Then have the backend finalize the recorded asset. Mux finalizes the VOD
@@ -1165,6 +1282,29 @@ export function useLivePublisher(options: {
       await options.publisher.stop()
     } catch (error) {
       publisherError = error
+    }
+
+    // A cancelled recording is footage the user chose to discard — delete the
+    // local backup instead of letting the sweep age it out.
+    const localBackup = localBackupRef.current
+    if (localBackup && localBackup.sessionId === sessionId) {
+      localBackupRef.current = null
+      try {
+        const fileUri = getLocalBackupFileUri(localBackup.fileName)
+        if (fileUri) {
+          await deleteAsync(fileUri, { idempotent: true })
+        }
+        telemetry.info('backup:discarded', 'Local backup deleted after cancel', {
+          sessionId,
+          reason: 'cancelled',
+        })
+      } catch (error) {
+        // Best effort — the retention sweep deletes anything left behind.
+        telemetry.warn('backup:discard_failed', 'Failed to delete cancelled local backup', {
+          sessionId,
+          error: String(error),
+        })
+      }
     }
 
     try {
