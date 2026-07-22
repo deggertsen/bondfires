@@ -395,6 +395,19 @@ final class LivePublisher {
     }
     currentOptions = options
 
+    // Reconnect path: a previous session (dropped by a network switch) may
+    // still be wired into the mixer. Detach and close it before building the
+    // replacement — otherwise the encoder keeps feeding the dead stream and
+    // the mixer holds a growing list of orphaned outputs.
+    if let oldSession = self.session {
+      connectionMonitorTask?.cancel()
+      connectionMonitorTask = nil
+      stopNetworkMonitor()
+      await mixer.removeOutput(oldSession.stream)
+      try? await oldSession.close()
+      self.session = nil
+    }
+
     let urlString: String
     if options.rtmpsUrl.hasSuffix("/") {
       urlString = options.rtmpsUrl + options.streamKey

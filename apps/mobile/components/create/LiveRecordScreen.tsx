@@ -1,7 +1,9 @@
 import {
   buildErrorReportMailto,
+  computeReconnectDeadlineMs,
   freeUpgradeActions,
   getDefaultBondfireTitle,
+  getReconnectAttemptDelayMs,
   getUserFacingErrorMessage,
   LIVE_DEFAULT_VIDEO_BITRATE,
   LIVE_DEFAULT_VIDEO_FPS,
@@ -11,6 +13,7 @@ import {
   parseError,
   recordingActions,
   recordingStore$,
+  shouldAttemptLiveReconnect,
   shouldShowReportIssue,
   telemetry,
   useAppThemeColors,
@@ -1158,8 +1161,85 @@ export function LiveRecordScreen({
     return () => clearTimeout(timeout)
   }, [cancelLiveRecording, phase, livePublisher])
 
-  // If the connection dies or the encoder unexpectedly stops mid-recording,
-  // finalize the partial recording instead of leaving the UI stuck on REC.
+  // Terminal-transport recovery, shared by the immediate path below and the
+  // reconnect loop's give-up fallback. Cancels never-started/early drops
+  // (nothing at Mux worth keeping), finalizes everything else.
+  const finalizeDeadLiveStream = useCallback(
+    (deadStatus: LivePublishStatus) => {
+      if (liveTerminalRecoveryFiredRef.current) {
+        return
+      }
+      liveTerminalRecoveryFiredRef.current = true
+
+      const startedAt = livePublishStore$.startedAt.peek()
+      const durationMs = startedAt ? Date.now() - startedAt : undefined
+      // everHadThroughput === false means every measured stats sample was ~zero:
+      // the pipeline never sent Mux a frame regardless of how long the REC
+      // screen sat there. Finalizing would upload nothing and leave an errored
+      // asset + stale session for the reaper, so cancel and let the user retry
+      // (production telemetry shows immediate retries succeed). Bounded by
+      // NEVER_STARTED_CANCEL_MAX_MS because cancel is destructive — see the
+      // constant's comment.
+      const neverStarted =
+        livePublishStore$.everHadThroughput.peek() === false &&
+        durationMs !== undefined &&
+        durationMs < NEVER_STARTED_CANCEL_MAX_MS
+      if ((durationMs !== undefined && durationMs < EARLY_LIVE_DROP_MS) || neverStarted) {
+        telemetry.warn('live:early_drop', 'Live stream dropped before sufficient video data', {
+          reason: deadStatus,
+          durationMs,
+          neverStarted,
+          sessionId: livePublishStore$.sessionId.peek(),
+          recordId: livePublishStore$.recordId.peek(),
+        })
+        recordingStore$.preConnectFailed.set(true)
+        recordingStore$.previewExpired.set(false)
+        recordingStore$.progressStage.set("Recording didn't start")
+        void cancelLiveRecording()
+        return
+      }
+
+      // For a later drop, don't show an alert — the status transition is visible
+      // in the UI and the completed upload will show whatever was captured.
+      if (deadStatus === 'endpoint_closed') {
+        telemetry.info(
+          'live:network_finalize',
+          'Network changed during recording — finalizing partial recording',
+          {
+            reason: deadStatus,
+            durationMs,
+            sessionId: livePublishStore$.sessionId.peek(),
+            recordId: livePublishStore$.recordId.peek(),
+          },
+        )
+      }
+      void stopLiveRecording()
+    },
+    [cancelLiveRecording, stopLiveRecording],
+  )
+
+  const finalizeDeadLiveStreamRef = useRef(finalizeDeadLiveStream)
+  useEffect(() => {
+    finalizeDeadLiveStreamRef.current = finalizeDeadLiveStream
+  }, [finalizeDeadLiveStream])
+
+  // The reconnect loop outlives the effect that starts it (setting status to
+  // 'reconnecting' re-runs the effect immediately), so it self-terminates on
+  // store-state changes and this unmount flag instead of effect cleanup.
+  const reconnectLoopActiveRef = useRef(false)
+  const screenUnmountedRef = useRef(false)
+  useEffect(
+    () => () => {
+      screenUnmountedRef.current = true
+    },
+    [],
+  )
+
+  // If the connection dies or the encoder unexpectedly stops mid-recording:
+  // a socket-level drop (network switch) is reconnected in place while Mux's
+  // reconnect window holds the stream open; anything else — or a failed /
+  // expired reconnect — finalizes the partial recording instead of leaving
+  // the UI stuck on REC.
   useEffect(() => {
     const isDead =
       liveStatus === 'errored' ||
@@ -1172,57 +1252,90 @@ export function LiveRecordScreen({
     if (liveTerminalRecoveryFiredRef.current) {
       return
     }
-    // Ownership gate (see hasProvisionedIngest): only the session owner finalizes.
+    // Ownership gate (see hasProvisionedIngest): only the session owner recovers.
     if (!livePublisher.hasProvisionedIngest()) {
       return
     }
 
-    liveTerminalRecoveryFiredRef.current = true
-
-    const startedAt = livePublishStore$.startedAt.peek()
-    const durationMs = startedAt ? Date.now() - startedAt : undefined
-    // everHadThroughput === false means every measured stats sample was ~zero:
-    // the pipeline never sent Mux a frame regardless of how long the REC
-    // screen sat there. Finalizing would upload nothing and leave an errored
-    // asset + stale session for the reaper, so cancel and let the user retry
-    // (production telemetry shows immediate retries succeed). Bounded by
-    // NEVER_STARTED_CANCEL_MAX_MS because cancel is destructive — see the
-    // constant's comment.
-    const neverStarted =
-      livePublishStore$.everHadThroughput.peek() === false &&
-      durationMs !== undefined &&
-      durationMs < NEVER_STARTED_CANCEL_MAX_MS
-    if ((durationMs !== undefined && durationMs < EARLY_LIVE_DROP_MS) || neverStarted) {
-      telemetry.warn('live:early_drop', 'Live stream dropped before sufficient video data', {
-        reason: liveStatus,
-        durationMs,
-        neverStarted,
-        sessionId: livePublishStore$.sessionId.peek(),
-        recordId: livePublishStore$.recordId.peek(),
+    const reconnectWindowSeconds = livePublisher.getReconnectWindowSeconds()
+    const canReconnect =
+      !reconnectLoopActiveRef.current &&
+      shouldAttemptLiveReconnect({
+        liveStatus,
+        phase,
+        reconnectWindowSeconds,
+        everHadThroughput: livePublishStore$.everHadThroughput.peek(),
       })
-      recordingStore$.preConnectFailed.set(true)
-      recordingStore$.previewExpired.set(false)
-      recordingStore$.progressStage.set("Recording didn't start")
-      void cancelLiveRecording()
+
+    if (!canReconnect) {
+      finalizeDeadLiveStream(liveStatus)
       return
     }
 
-    // For a later drop, don't show an alert — the status transition is visible
-    // in the UI and the completed upload will show whatever was captured.
-    if (liveStatus === 'endpoint_closed') {
-      telemetry.info(
-        'live:network_finalize',
-        'Network changed during recording — finalizing partial recording',
-        {
-          reason: liveStatus,
-          durationMs,
-          sessionId: livePublishStore$.sessionId.peek(),
-          recordId: livePublishStore$.recordId.peek(),
-        },
-      )
-    }
-    void stopLiveRecording()
-  }, [liveStatus, phase, stopLiveRecording, livePublisher, cancelLiveRecording])
+    reconnectLoopActiveRef.current = true
+    const sessionId = livePublishStore$.sessionId.peek()
+    const deadline = computeReconnectDeadlineMs(reconnectWindowSeconds, Date.now())
+    livePublishActions.setStatus('reconnecting')
+    telemetry.info('live:reconnect_start', 'Live stream dropped — attempting in-place reconnect', {
+      sessionId,
+      recordId: livePublishStore$.recordId.peek(),
+      reconnectWindowSeconds,
+      budgetMs: deadline - Date.now(),
+    })
+
+    void (async () => {
+      let attempt = 0
+      try {
+        while (true) {
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, getReconnectAttemptDelayMs(attempt))
+          })
+          // Subordinate to the store: a user stop/cancel (status left
+          // 'reconnecting'), a flow reset, or unmount ends the loop silently.
+          if (
+            screenUnmountedRef.current ||
+            livePublishStore$.status.peek() !== 'reconnecting' ||
+            livePublishStore$.sessionId.peek() !== sessionId ||
+            recordingStore$.phase.peek() !== 'recording'
+          ) {
+            return
+          }
+          if (Date.now() > deadline) {
+            telemetry.warn('live:reconnect_giveup', 'Reconnect window exhausted — finalizing', {
+              sessionId,
+              attempts: attempt,
+              reconnectWindowSeconds,
+            })
+            // Restore the truthful transport state before finalizing so
+            // downstream consumers never see a phantom 'reconnecting'.
+            livePublishActions.setStatus('endpoint_closed')
+            finalizeDeadLiveStreamRef.current('endpoint_closed')
+            return
+          }
+          attempt += 1
+          try {
+            telemetry.info('live:reconnect_attempt', 'Attempting live stream reconnect', {
+              sessionId,
+              attempt,
+              remainingMs: deadline - Date.now(),
+            })
+            await livePublisher.reconnect({
+              initialCamera: recordingStore$.facing.peek() === 'back' ? 'back' : 'front',
+            })
+            return // success — native emitted 'live' and stats sampling restarted
+          } catch (error) {
+            telemetry.warn('live:reconnect_attempt_failed', 'Reconnect attempt failed', {
+              sessionId,
+              attempt,
+              error: String(error),
+            })
+          }
+        }
+      } finally {
+        reconnectLoopActiveRef.current = false
+      }
+    })()
+  }, [liveStatus, phase, livePublisher, finalizeDeadLiveStream])
 
   // Network connectivity listener — logs telemetry breadcrumbs during active
   // recording. The native NWPathMonitor handles the actual finalize (emitting
@@ -1368,27 +1481,30 @@ export function LiveRecordScreen({
         <>
           <LivePublisherView style={{ flex: 1 }} />
 
-          {isLiveRecording && liveStatus === 'endpoint_closed' && (
-            <YStack
-              position="absolute"
-              top={120}
-              left={0}
-              right={0}
-              alignItems="center"
-              pointerEvents="none"
-            >
+          {isLiveRecording &&
+            (liveStatus === 'endpoint_closed' || liveStatus === 'reconnecting') && (
               <YStack
-                paddingHorizontal={16}
-                paddingVertical={8}
-                borderRadius={16}
-                backgroundColor="rgba(31, 32, 35, 0.85)"
+                position="absolute"
+                top={120}
+                left={0}
+                right={0}
+                alignItems="center"
+                pointerEvents="none"
               >
-                <Text color="white" fontSize={14} fontWeight="700">
-                  Network changed — saving your recording...
-                </Text>
+                <YStack
+                  paddingHorizontal={16}
+                  paddingVertical={8}
+                  borderRadius={16}
+                  backgroundColor="rgba(31, 32, 35, 0.85)"
+                >
+                  <Text color="white" fontSize={14} fontWeight="700">
+                    {liveStatus === 'reconnecting'
+                      ? 'Connection interrupted — reconnecting...'
+                      : 'Network changed — saving your recording...'}
+                  </Text>
+                </YStack>
               </YStack>
-            </YStack>
-          )}
+            )}
 
           <XStack
             position="absolute"
