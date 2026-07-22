@@ -25,6 +25,15 @@ const storeVerificationStatus = v.union(
   v.literal('refunded'),
 )
 const userGender = v.union(v.literal('male'), v.literal('female'), v.literal('other'))
+// STAGE 1 of the gender repair (PR #182). Convex validates EXISTING documents
+// against the schema at deploy time, so a deploy that only ships the strict
+// validator can never reach a prod state already containing legacy null /
+// missing gender rows — it fails before backfillUserGender becomes available.
+// This temporarily widened validator lets stage 1 deploy anywhere. Rollout:
+//   1. Deploy this (widened schema + backfill).
+//   2. Run admin:backfillUserGender; re-run and confirm { fixed: 0 }.
+//   3. Follow-up deploy: switch users.gender back to `userGender`.
+const userGenderStage1 = v.optional(v.union(userGender, v.null()))
 const campAccessVisibilityMode = v.union(v.literal('hide'), v.literal('gate'))
 const adminAuditTargetType = v.union(
   v.literal('camp'),
@@ -95,7 +104,7 @@ export default defineSchema({
     displayName: v.optional(v.string()),
     photoUrl: v.optional(v.string()),
     photoStorageId: v.optional(v.id('_storage')),
-    gender: userGender,
+    gender: userGenderStage1,
     birthDate: v.optional(v.string()), // ISO date string (YYYY-MM-DD), private
 
     // Stats (denormalized for performance)

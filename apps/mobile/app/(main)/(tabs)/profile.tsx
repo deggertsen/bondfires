@@ -68,7 +68,9 @@ type CurrentUserData = {
   name?: string
   displayName?: string
   photoUrl?: string
-  gender: Gender
+  // Nullable while the stage-1 gender schema migration is live (legacy rows
+  // may carry null/missing gender until the backfill runs — see PR #182).
+  gender?: Gender | null
   age?: number
   bondfireCount: number
   responseCount: number

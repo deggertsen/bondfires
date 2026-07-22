@@ -521,7 +521,9 @@ function evaluateJoinRules(
   // Use computeVisibility for access rule checks
   const visibility = computeVisibility(
     {
-      gender: user.gender,
+      // Stage-1 gender schema accepts null (see schema.ts); access checks
+      // treat null the same as unset.
+      gender: user.gender ?? undefined,
       tier: userTier,
       birthDate: user.birthDate,
     },
@@ -564,7 +566,9 @@ function computeSortRank(
 
   const visibility = computeVisibility(
     {
-      gender: user.gender,
+      // Stage-1 gender schema accepts null (see schema.ts); access checks
+      // treat null the same as unset.
+      gender: user.gender ?? undefined,
       tier: userTier,
       birthDate: user.birthDate,
     },
@@ -875,7 +879,7 @@ export const list = query({
         }
         const visibility = computeVisibility(
           {
-            gender: user.gender,
+            gender: user.gender ?? undefined,
             tier: userTier,
             birthDate: user.birthDate,
           },
