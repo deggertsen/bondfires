@@ -16,6 +16,12 @@ export interface LivePublisherStartOptions {
   videoBitrate?: number
   audioBitrate?: number
   initialCamera?: 'front' | 'back'
+  /**
+   * Non-empty arms the native local MP4 backup recorder, writing the session
+   * to <documents>/recordings/<localBackupFileName> alongside the RTMP
+   * stream. Empty/absent disables the backup (the default).
+   */
+  localBackupFileName?: string
 }
 
 export interface LivePublisherPreviewOptions {

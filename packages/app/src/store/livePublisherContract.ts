@@ -39,6 +39,9 @@ export const NATIVE_PUBLISHER_ERROR_CODES = [
   // shared
   'camera_not_found',
   'connection_failed',
+  // Local backup recorder failure (arm/write/finalize). Telemetry-only, like
+  // memory_warning: the backup must never fail the stream it protects.
+  'backup_failed',
   // iOS
   'attachCamera_failed',
   'attachAudio_failed',
