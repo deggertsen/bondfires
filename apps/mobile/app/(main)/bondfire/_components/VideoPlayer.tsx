@@ -40,6 +40,7 @@ import {
   CaptionOverlay,
   LoadingOverlay,
   PausedReportButton,
+  PlaybackErrorOverlay,
   PlayPauseIndicator,
   ReactionPresenceLayer,
   ReportOverlayGate,
@@ -169,6 +170,7 @@ export function VideoPlayer({
     duration: 0,
     captionText: '',
     isLoading: true,
+    hasError: false,
     isPlaying: false,
     userInitiatedPlay: false,
     hasEnded: false,
@@ -215,6 +217,73 @@ export function VideoPlayer({
     player.preservesPitch = true
     player.timeUpdateEventInterval = PROGRESS_TIME_UPDATE_INTERVAL_SECONDS
   })
+
+  // Fatal-error recovery: bounded automatic reloads before surfacing the
+  // retry overlay. Reset whenever the source changes — a new URL is a new
+  // playback attempt with a fresh budget.
+  const errorRetryRef = useRef({ count: 0, timer: null as ReturnType<typeof setTimeout> | null })
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: currentUrl is the reset trigger, not read inside
+  useEffect(() => {
+    errorRetryRef.current.count = 0
+    userPausedRef.current = false
+    state$.hasError.set(false)
+    return () => {
+      if (errorRetryRef.current.timer) {
+        clearTimeout(errorRetryRef.current.timer)
+        errorRetryRef.current.timer = null
+      }
+    }
+  }, [currentUrl, state$])
+
+  // replaceAsync only swaps the source — expo-video does not resume playback
+  // on its own, and none of the autoplay effect's dependencies change on a
+  // retry, so a recovered player would sit paused behind a vanished overlay.
+  // Mirror the autoplay effect's predicate after the source lands.
+  //
+  // The gates are read through a per-render ref, NOT closure props: the
+  // helper runs after an async replaceAsync resolves, by which time the user
+  // may have backgrounded the app or swiped away — a stale closure would
+  // start audio on a page that should be paused.
+  const playbackGateRef = useRef({ isActive, isScreenFocused, isAppActive })
+  playbackGateRef.current = { isActive, isScreenFocused, isAppActive }
+  // Deliberate user pause — auto-recovery must never play over it.
+  const userPausedRef = useRef(false)
+
+  const resumePlaybackAfterRecovery = useCallback(() => {
+    if (!player) return
+    const gate = playbackGateRef.current
+    if (
+      gate.isActive &&
+      gate.isScreenFocused &&
+      gate.isAppActive &&
+      !shouldSuppressPlayback &&
+      !userPausedRef.current &&
+      (appStore$.preferences.autoplayVideos.peek() || state$.userInitiatedPlay.peek())
+    ) {
+      player.play()
+    }
+  }, [player, shouldSuppressPlayback, state$])
+
+  const retryPlayback = useCallback(() => {
+    if (!player || !currentUrl) return
+    telemetry.info('video:playback_retry', 'User retried video after playback failure', {
+      videoId,
+      isLive,
+    })
+    errorRetryRef.current.count = 0
+    state$.hasError.set(false)
+    state$.isLoading.set(true)
+    // Tapping "Try Again" is explicit play intent.
+    state$.userInitiatedPlay.set(true)
+    userPausedRef.current = false
+    player
+      .replaceAsync(currentUrl)
+      .then(() => resumePlaybackAfterRecovery())
+      .catch(() => {
+        // Failure surfaces through the statusChange 'error' path.
+      })
+  }, [player, currentUrl, state$, videoId, isLive, resumePlaybackAfterRecovery])
 
   // Caption cues, fetched lazily when captions are on and this video has a
   // caption track. Cue matching happens in the timeUpdate listener below.
@@ -460,11 +529,51 @@ export function VideoPlayer({
     const statusSubscription = player.addListener('statusChange', (status) => {
       if (status.status === 'readyToPlay') {
         state$.isLoading.set(false)
+        state$.hasError.set(false)
+        errorRetryRef.current.count = 0
+        // The player self-recovered — a still-pending auto-retry would force
+        // a pointless reload that interrupts playback mid-watch.
+        if (errorRetryRef.current.timer) {
+          clearTimeout(errorRetryRef.current.timer)
+          errorRetryRef.current.timer = null
+        }
         if (player.duration) {
           state$.duration.set(player.duration * 1000)
         }
       } else if (status.status === 'loading') {
         state$.isLoading.set(true)
+      } else if (status.status === 'error') {
+        // Weak-cellular HLS loads fail transiently all the time; previously
+        // this status was ignored and the user stared at an infinite spinner.
+        state$.isLoading.set(false)
+        const errorMessage = status.error?.message ?? 'unknown'
+        telemetry.error('video:playback_error', 'Video player reported a playback error', {
+          videoId,
+          isLive,
+          error: errorMessage,
+          retryCount: errorRetryRef.current.count,
+          positionMs: Math.round((player.currentTime ?? 0) * 1000),
+        })
+        if (currentUrl && errorRetryRef.current.count < 2) {
+          errorRetryRef.current.count += 1
+          const delayMs = 2_000 * errorRetryRef.current.count
+          // A rapid second error must not orphan the previous timer — the
+          // single-slot ref is the only handle cleanup paths can clear.
+          if (errorRetryRef.current.timer) {
+            clearTimeout(errorRetryRef.current.timer)
+          }
+          errorRetryRef.current.timer = setTimeout(() => {
+            state$.isLoading.set(true)
+            // Preserve the pre-error play intent: a silent auto-recovery
+            // mid-watch should resume, not leave the player paused.
+            player
+              .replaceAsync(currentUrl)
+              .then(() => resumePlaybackAfterRecovery())
+              .catch(() => {})
+          }, delayMs)
+        } else {
+          state$.hasError.set(true)
+        }
       }
 
       if (status.status === 'readyToPlay') {
@@ -530,6 +639,10 @@ export function VideoPlayer({
     processTimedPlaybackUpdate,
     syncCaptionText,
     updatePlaybackProgress,
+    currentUrl,
+    videoId,
+    isLive,
+    resumePlaybackAfterRecovery,
   ])
 
   const keepAwakeTag = `video-playback-${videoId}`
@@ -545,6 +658,65 @@ export function VideoPlayer({
     }
   }, [isScreenFocused, isAppActive, isActive, isPlaying, keepAwakeTag])
 
+  // Buffering-stall watchdog. Warn once after 15s of continuous loading so
+  // stalls show up in telemetry, and give up into the retry overlay after
+  // 45s instead of spinning forever.
+  const isLoadingValue = useValue(state$.isLoading)
+  useEffect(() => {
+    if (!isActive || !isScreenFocused || !isAppActive || !currentUrl || !isLoadingValue) {
+      return
+    }
+
+    const stallWarnTimer = setTimeout(() => {
+      telemetry.warn('video:playback_stall', 'Video stuck buffering', {
+        videoId,
+        isLive,
+        stalledForMs: 15_000,
+        positionMs: Math.round((player?.currentTime ?? 0) * 1000),
+      })
+    }, 15_000)
+
+    const giveUpTimer = setTimeout(() => {
+      telemetry.error('video:playback_stall_timeout', 'Video buffering timed out', {
+        videoId,
+        isLive,
+        stalledForMs: 45_000,
+        positionMs: Math.round((player?.currentTime ?? 0) * 1000),
+      })
+      state$.isLoading.set(false)
+      state$.hasError.set(true)
+    }, 45_000)
+
+    return () => {
+      clearTimeout(stallWarnTimer)
+      clearTimeout(giveUpTimer)
+    }
+  }, [
+    isActive,
+    isScreenFocused,
+    isAppActive,
+    currentUrl,
+    isLoadingValue,
+    player,
+    state$,
+    videoId,
+    isLive,
+  ])
+
+  // Crash-survivable breadcrumb: if the app dies (OOM, native AVPlayer crash)
+  // while a video is actively playing, the next launch reports
+  // crash:last_breadcrumb with this context. Recording has had the same
+  // protection since the camera-freeze fix; playback crashes were invisible.
+  useEffect(() => {
+    if (isActive && isScreenFocused && isAppActive && isPlaying) {
+      telemetry.setCrashBreadcrumb('video:watching', { videoId, isLive })
+      return () => {
+        telemetry.clearCrashBreadcrumb()
+      }
+    }
+    return undefined
+  }, [isActive, isScreenFocused, isAppActive, isPlaying, videoId, isLive])
+
   const togglePlayPause = useCallback(() => {
     if (!player) return
 
@@ -558,11 +730,15 @@ export function VideoPlayer({
       state$.hasEnded.set(false)
       state$.isPlaying.set(true)
       state$.userInitiatedPlay.set(true)
+      userPausedRef.current = false
     } else if (player.playing) {
       player.pause()
       state$.isPlaying.set(false)
+      // Deliberate pause — error auto-recovery must not resume over it.
+      userPausedRef.current = true
     } else {
       state$.userInitiatedPlay.set(true)
+      userPausedRef.current = false
       player.play()
       state$.isPlaying.set(true)
     }
@@ -867,6 +1043,8 @@ export function VideoPlayer({
       />
 
       <LoadingOverlay state$={state$} currentUrl={currentUrl} />
+
+      <PlaybackErrorOverlay state$={state$} onRetry={retryPlayback} />
 
       <ReactionPresenceLayer
         state$={state$}

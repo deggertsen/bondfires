@@ -1,6 +1,6 @@
 import { v } from 'convex/values'
 import type { Doc } from './_generated/dataModel'
-import { mutation, query } from './_generated/server'
+import { internalMutation, mutation, query } from './_generated/server'
 import { auth } from './auth'
 import { throwUserError } from './errors'
 import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
@@ -166,7 +166,12 @@ export const setThemePreference = mutation({
   },
 })
 
-export const backfillMissingGender = mutation({
+// Superseded by admin.backfillUserGender (which also repairs null/invalid
+// values, not just missing ones, and defaults to the neutral 'other' —
+// this one's old 'male' default materially changed gendered-camp access).
+// internalMutation: this was a public, auth-check-free mutation; dashboard
+// and CLI runs are the only intended callers and both can invoke internals.
+export const backfillMissingGender = internalMutation({
   args: {
     limit: v.optional(v.number()),
   },
@@ -181,7 +186,7 @@ export const backfillMissingGender = mutation({
       }
 
       await ctx.db.patch(user._id, {
-        gender: 'male',
+        gender: 'other',
         updatedAt: Date.now(),
       })
       updated += 1

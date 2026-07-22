@@ -114,6 +114,11 @@ export function LiveRecordScreen({
   const preConnectInFlightRef = useRef(false)
   // Sessions this mount already dispatched a crash_recovery cancel for.
   const sweptSessionIdsRef = useRef<Set<string>>(new Set())
+  // Monotonic id per arm attempt. The preview-timeout late-recovery handler
+  // captures the generation it belongs to and acts only if no newer arm has
+  // started since — an in-flight-ref check alone would let a stale handler
+  // cancel a newer arm that already finished (ref back to false).
+  const previewArmGenerationRef = useRef(0)
   const backgroundCancelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Debounce timer for tearing down a provisioned-but-unstarted session when
   // the screen loses focus. useIsFocused() can flap during navigation
@@ -435,15 +440,82 @@ export function LiveRecordScreen({
 
       // Camera preview only — nothing is published or recorded until the
       // user taps record and the RTMP connection opens.
-      await livePublisher.preview({
+      // A hung native camera start would otherwise leave preConnectInFlightRef
+      // set forever (the finally below never runs), which the arm guard reads
+      // as "arm in progress" — permanently blocking every retry until app
+      // restart while the user stares at "Preparing camera...".
+      const PREVIEW_TIMEOUT_MS = 25_000
+      const armGeneration = ++previewArmGenerationRef.current
+      const previewPromise = livePublisher.preview({
         initialCamera: recordingStore$.facing.get() === 'back' ? 'back' : 'front',
       })
+      let previewTimedOut = false
+      let previewTimer: ReturnType<typeof setTimeout> | undefined
+
+      // Registered BEFORE the race: a timeout rejection jumps straight to the
+      // outer catch, so any registration after the await is unreachable in
+      // exactly the case it exists for. If the native start finishes after we
+      // already gave up, the camera would run with no owner (battery/thermal
+      // drain, and the wedged session can break the next arm attempt) — tear
+      // it down, but only if no newer arm has started since (generation
+      // check; the newer arm owns the camera now).
+      void previewPromise.then(
+        () => {
+          // Focus gate: cancel() acts on the GLOBAL native camera and the
+          // GLOBAL publish session, but the generation ref is per screen
+          // instance. A blurred instance (Spark tab keeps one mounted under a
+          // pushed create route) must never tear down state the focused
+          // instance may now own — its stale native preview is reaped by the
+          // focused instance's own arm/self-heal or the server sweep.
+          if (
+            previewTimedOut &&
+            previewArmGenerationRef.current === armGeneration &&
+            state$.isFocused.get() &&
+            state$.isAppActive.get()
+          ) {
+            telemetry.warn(
+              'live:preview_late_recovery',
+              'Preview started after timeout; tearing down unowned camera session',
+            )
+            livePublisher.cancel().catch(() => {})
+          }
+        },
+        () => {},
+      )
+
+      try {
+        await Promise.race([
+          previewPromise,
+          new Promise<never>((_, reject) => {
+            previewTimer = setTimeout(() => {
+              previewTimedOut = true
+              telemetry.error('live:preview_timeout', 'Camera preview did not start in time', {
+                timeoutMs: PREVIEW_TIMEOUT_MS,
+              })
+              reject(new Error('Camera preview timed out'))
+            }, PREVIEW_TIMEOUT_MS)
+          }),
+        ])
+      } finally {
+        clearTimeout(previewTimer)
+      }
 
       ownsPreviewRef.current = true
       recordingActions.setPhase('pre_connected', 'live pre-connect succeeded')
       state$.showInviteSheet.set(false)
     } catch (error) {
       logRecordingError(error)
+      // A blurred instance's failure (e.g. its hung preview hitting the 25s
+      // timeout after the user navigated away) must not wipe the GLOBAL
+      // publish store — the focused instance may have armed its own session
+      // in the meantime — and must not alert over an unrelated screen. Its
+      // orphaned provision, if any, is reaped by the server's stale sweep.
+      if (!state$.isFocused.get() || !state$.isAppActive.get()) {
+        telemetry.warn('live:preconnect', 'Pre-connect failed after blur; skipping teardown', {
+          error: String(error),
+        })
+        return
+      }
       livePublishActions.reset()
       recordingActions.setPhase('idle', 'live pre-connect failed')
       recordingStore$.preConnectFailed.set(true)
