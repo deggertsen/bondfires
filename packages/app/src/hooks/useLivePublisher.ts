@@ -862,15 +862,21 @@ export function useLivePublisher(options: {
         // flight; its own start() already replaced this session natively.
         return
       }
-      if (
-        livePublishStore$.status.peek() !== 'reconnecting' ||
-        livePublishStore$.sessionId.peek() !== sessionId
-      ) {
+      // The native 'live' event is emitted inside start() and reaches the JS
+      // status listener BEFORE this await continuation runs, so on the happy
+      // path the listener has usually ALREADY advanced the store from
+      // 'reconnecting' to 'live'. With the generation check above proving no
+      // newer attempt exists, 'live' here can only mean THIS attempt
+      // succeeded — it must be treated as success, never as staleness
+      // (misreading it tears down the connection we just established).
+      const statusAfterStart = livePublishStore$.status.peek()
+      const attemptSucceeded = statusAfterStart === 'reconnecting' || statusAfterStart === 'live'
+      if (!attemptSucceeded || livePublishStore$.sessionId.peek() !== sessionId) {
         // Stop, cancel, or give-up won the race — the store owns the terminal
         // state and this late connection is a zombie. Close it.
         telemetry.warn('live:reconnect_stale', 'Reconnect completed after the session moved on', {
           sessionId,
-          statusNow: livePublishStore$.status.peek(),
+          statusNow: statusAfterStart,
         })
         void options.publisher.stop().catch(() => {})
         return

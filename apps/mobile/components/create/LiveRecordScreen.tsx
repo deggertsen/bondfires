@@ -112,6 +112,8 @@ export function LiveRecordScreen({
   const isFocused = useIsFocused()
 
   const preConnectInFlightRef = useRef(false)
+  // Sessions this mount already dispatched a crash_recovery cancel for.
+  const sweptSessionIdsRef = useRef<Set<string>>(new Set())
   const backgroundCancelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Debounce timer for tearing down a provisioned-but-unstarted session when
   // the screen loses focus. useIsFocused() can flap during navigation
@@ -253,9 +255,17 @@ export function LiveRecordScreen({
 
     // Don't clean up sessions that are currently being used by this screen.
     const currentSessionId = livePublishStore$.sessionId.peek()
-    const orphaned = activeSessions.filter((s) => s._id !== currentSessionId)
+    // The reactive query can re-emit before a just-cancelled session leaves
+    // the active set; without dedup the same session gets concurrent
+    // crash_recovery cancels (duplicate finalize mutations + doubled Mux VOD
+    // polling). One dispatch per session per mount is enough — the server
+    // side is idempotent, this just stops the wasted duplicate work.
+    const orphaned = activeSessions.filter(
+      (s) => s._id !== currentSessionId && !sweptSessionIdsRef.current.has(s._id),
+    )
 
     for (const session of orphaned) {
+      sweptSessionIdsRef.current.add(session._id)
       telemetry.warn('live:orphan', 'Cleaning up orphaned live session from previous crash', {
         sessionId: session._id,
         status: session.status,
@@ -937,12 +947,22 @@ export function LiveRecordScreen({
 
   const toggleLiveFacing = useCallback(() => {
     const currentRecordingState = recordingStore$.phase.get()
+    // During a reconnect the native pipeline is being torn down and rebuilt;
+    // a concurrent mixer/streamer mutation races that rebuild (and the swap
+    // would apply to a session about to be replaced). The facing preference
+    // is already read fresh by the next reconnect attempt.
+    if (liveStatus === 'reconnecting') {
+      telemetry.info('live:swap_camera_skipped', 'Camera swap ignored during reconnect', {
+        phase: currentRecordingState,
+        liveStatus,
+      })
+      return
+    }
     if (
       currentRecordingState === 'pre_connected' ||
       currentRecordingState === 'recording' ||
       liveStatus === 'connecting' ||
-      liveStatus === 'live' ||
-      liveStatus === 'reconnecting'
+      liveStatus === 'live'
     ) {
       // The native publisher owns the camera during preview and recording.
       // Only flip the tracked facing once the native swap actually succeeds,
@@ -1293,12 +1313,22 @@ export function LiveRecordScreen({
           })
           // Subordinate to the store: a user stop/cancel (status left
           // 'reconnecting'), a flow reset, or unmount ends the loop silently.
+          const statusNow = livePublishStore$.status.peek()
+          const ownsSession = livePublishStore$.sessionId.peek() === sessionId
           if (
             screenUnmountedRef.current ||
-            livePublishStore$.status.peek() !== 'reconnecting' ||
-            livePublishStore$.sessionId.peek() !== sessionId ||
+            statusNow !== 'reconnecting' ||
+            !ownsSession ||
             recordingStore$.phase.peek() !== 'recording'
           ) {
+            // Unmount or an external flow reset can abandon the loop while
+            // the store still says 'reconnecting'. Leave a truthful terminal
+            // transport state behind — a phantom 'reconnecting' isn't in the
+            // arm recovery's recovered-statuses set and would wedge the next
+            // mount on "Preparing camera...".
+            if (statusNow === 'reconnecting' && ownsSession) {
+              livePublishActions.setStatus('endpoint_closed')
+            }
             return
           }
           if (Date.now() > deadline) {

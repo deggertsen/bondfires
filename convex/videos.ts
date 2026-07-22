@@ -2180,6 +2180,27 @@ export const endLiveStream = action({
           liveSession.status === 'ended' ||
           liveSession.status === 'errored'
         ) {
+          // With a reconnect window, 'ending' usually means the disconnected
+          // webhook landed while nobody signalled /complete — e.g. the
+          // reconnect loop gave up ~50s after a drop and its finalize reaches
+          // this early return. Without the signal Mux waits out the remaining
+          // window before finalizing the asset and the record lingers 'live'
+          // to viewers. /complete is idempotent, so fire it best-effort and
+          // schedule the fast VOD poll before answering from persisted state.
+          if (liveSession.status === 'ending' && getMuxConfig().reconnectWindowSeconds > 0) {
+            try {
+              await muxRequest(`/live-streams/${liveSession.muxLiveStreamId}/complete`, {
+                method: 'PUT',
+              })
+            } catch (error) {
+              console.warn('Failed to signal Mux complete for ending session:', error)
+            }
+            await ctx.scheduler.runAfter(0, internal.videos.pollRecordedVodAsset, {
+              userId,
+              liveSessionId: args.liveSessionId,
+            })
+          }
+
           await ctx.runMutation(internal.serverTelemetry.recordServerEvent, {
             level: 'breadcrumb',
             event: 'live:end_already_finalized',
