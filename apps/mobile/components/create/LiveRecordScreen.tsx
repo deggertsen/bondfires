@@ -421,9 +421,21 @@ export function LiveRecordScreen({
 
       // Camera preview only — nothing is published or recorded until the
       // user taps record and the RTMP connection opens.
-      await livePublisher.preview({
-        initialCamera: recordingStore$.facing.get() === 'back' ? 'back' : 'front',
-      })
+      // Race with a timeout slightly under the watchdog's 30s pre_connected
+      // limit so a hung camera start surfaces as a recoverable error instead
+      // of looping the watchdog 3x and giving up.
+      const PREVIEW_TIMEOUT_MS = 25_000
+      await Promise.race([
+        livePublisher.preview({
+          initialCamera: recordingStore$.facing.get() === 'back' ? 'back' : 'front',
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('Camera preview timed out')),
+            PREVIEW_TIMEOUT_MS,
+          ),
+        ),
+      ])
 
       ownsPreviewRef.current = true
       recordingActions.setPhase('pre_connected', 'live pre-connect succeeded')
