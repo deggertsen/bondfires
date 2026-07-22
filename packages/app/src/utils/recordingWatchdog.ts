@@ -13,7 +13,12 @@ export const MAX_CONSECUTIVE_PRE_CONNECT_RESETS = 3
  * The live screen's own preview-expiry effect cancels an idle preview at 4
  * minutes WITH full native + server teardown, so this watchdog timeout only
  * needs to catch a pre_connected phase orphaned by a screen that died without
- * cleanup. 5 minutes keeps it strictly behind the screen's own expiry.
+ * cleanup. 5 minutes keeps it behind the screen's own expiry in the
+ * foreground. (After a background→resume where more than 5 minutes of wall
+ * time passed, both timers are overdue and fire in nondeterministic order —
+ * if this one wins, the store resets without native teardown and the
+ * eagerly-provisioned session falls to the server's stale sweep. Acceptable:
+ * the pre-#181 30s timeout lost that race every time.)
  */
 export const PRE_CONNECT_WATCHDOG_TIMEOUT_MS = 300_000
 
