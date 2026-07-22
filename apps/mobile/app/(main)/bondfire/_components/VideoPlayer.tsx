@@ -226,6 +226,7 @@ export function VideoPlayer({
   // biome-ignore lint/correctness/useExhaustiveDependencies: currentUrl is the reset trigger, not read inside
   useEffect(() => {
     errorRetryRef.current.count = 0
+    userPausedRef.current = false
     state$.hasError.set(false)
     return () => {
       if (errorRetryRef.current.timer) {
@@ -239,26 +240,30 @@ export function VideoPlayer({
   // on its own, and none of the autoplay effect's dependencies change on a
   // retry, so a recovered player would sit paused behind a vanished overlay.
   // Mirror the autoplay effect's predicate after the source lands.
+  //
+  // The gates are read through a per-render ref, NOT closure props: the
+  // helper runs after an async replaceAsync resolves, by which time the user
+  // may have backgrounded the app or swiped away — a stale closure would
+  // start audio on a page that should be paused.
+  const playbackGateRef = useRef({ isActive, isScreenFocused, isAppActive })
+  playbackGateRef.current = { isActive, isScreenFocused, isAppActive }
+  // Deliberate user pause — auto-recovery must never play over it.
+  const userPausedRef = useRef(false)
+
   const resumePlaybackAfterRecovery = useCallback(() => {
     if (!player) return
+    const gate = playbackGateRef.current
     if (
-      isActive &&
-      isScreenFocused &&
-      isAppActive &&
+      gate.isActive &&
+      gate.isScreenFocused &&
+      gate.isAppActive &&
       !shouldSuppressPlayback &&
-      (autoplayVideos || state$.userInitiatedPlay.peek())
+      !userPausedRef.current &&
+      (appStore$.preferences.autoplayVideos.peek() || state$.userInitiatedPlay.peek())
     ) {
       player.play()
     }
-  }, [
-    player,
-    isActive,
-    isScreenFocused,
-    isAppActive,
-    shouldSuppressPlayback,
-    autoplayVideos,
-    state$,
-  ])
+  }, [player, shouldSuppressPlayback, state$])
 
   const retryPlayback = useCallback(() => {
     if (!player || !currentUrl) return
@@ -271,6 +276,7 @@ export function VideoPlayer({
     state$.isLoading.set(true)
     // Tapping "Try Again" is explicit play intent.
     state$.userInitiatedPlay.set(true)
+    userPausedRef.current = false
     player
       .replaceAsync(currentUrl)
       .then(() => resumePlaybackAfterRecovery())
@@ -525,6 +531,12 @@ export function VideoPlayer({
         state$.isLoading.set(false)
         state$.hasError.set(false)
         errorRetryRef.current.count = 0
+        // The player self-recovered — a still-pending auto-retry would force
+        // a pointless reload that interrupts playback mid-watch.
+        if (errorRetryRef.current.timer) {
+          clearTimeout(errorRetryRef.current.timer)
+          errorRetryRef.current.timer = null
+        }
         if (player.duration) {
           state$.duration.set(player.duration * 1000)
         }
@@ -545,6 +557,11 @@ export function VideoPlayer({
         if (currentUrl && errorRetryRef.current.count < 2) {
           errorRetryRef.current.count += 1
           const delayMs = 2_000 * errorRetryRef.current.count
+          // A rapid second error must not orphan the previous timer — the
+          // single-slot ref is the only handle cleanup paths can clear.
+          if (errorRetryRef.current.timer) {
+            clearTimeout(errorRetryRef.current.timer)
+          }
           errorRetryRef.current.timer = setTimeout(() => {
             state$.isLoading.set(true)
             // Preserve the pre-error play intent: a silent auto-recovery
@@ -713,11 +730,15 @@ export function VideoPlayer({
       state$.hasEnded.set(false)
       state$.isPlaying.set(true)
       state$.userInitiatedPlay.set(true)
+      userPausedRef.current = false
     } else if (player.playing) {
       player.pause()
       state$.isPlaying.set(false)
+      // Deliberate pause — error auto-recovery must not resume over it.
+      userPausedRef.current = true
     } else {
       state$.userInitiatedPlay.set(true)
+      userPausedRef.current = false
       player.play()
       state$.isPlaying.set(true)
     }

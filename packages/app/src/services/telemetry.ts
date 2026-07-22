@@ -652,12 +652,18 @@ export class TelemetryLogger {
 
   private installRejectionTracker(): void {
     if (!HermesInternal?.enablePromiseRejectionTracker) return
+    // Hermes supports a single tracker; installing ours in dev would replace
+    // React Native's LogBox rejection warnings. Dev doesn't need telemetry.
+    if (typeof __DEV__ !== 'undefined' && __DEV__) return
 
     HermesInternal.enablePromiseRejectionTracker({
       allRejections: true,
       onUnhandled: (id, error) => {
         const err = error instanceof Error ? error : new Error(String(error))
-        this.error('error:unhandled_rejection', err.message ?? 'Unhandled promise rejection', {
+        // enqueue directly, NOT this.error(): error() fires the user-facing
+        // toast, and rejections are frequent background noise (network blips,
+        // .catch attached a tick late) — telemetry-only, never a toast.
+        this.enqueue('error', 'error:unhandled_rejection', err.message ?? 'Unhandled rejection', {
           stack: err.stack,
           rejectionId: id,
         })

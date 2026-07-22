@@ -2476,6 +2476,13 @@ export const markLinkedRecordProcessing = internalMutation({
 
     const linkedRecord = await getLinkedLiveRecord(ctx, liveSession)
     if (!linkedRecord) return { updated: false }
+    // A lagging caller (e.g. a crash-recovery sweep whose session snapshot
+    // predates the idle/asset.ready webhooks) must never demote a recording
+    // that already resolved — that would flicker a playable video back to
+    // "Processing..." for viewers.
+    if (hasResolvedRecordedAsset(linkedRecord)) {
+      return { updated: false }
+    }
     await patchLinkedLiveRecord(ctx, liveSession, patch)
 
     return { updated: true }
@@ -2511,10 +2518,12 @@ export const cancelLiveStream = action({
         }
 
         // A crash-recovery sweep must never destroy footage Mux may already
-        // hold. With reconnect window 0, Mux finalizes the recorded asset the
-        // moment the crashed client's RTMP socket drops — so a session that
-        // progressed (went live / started ingesting / produced an asset) is a
-        // real partial recording, and cancel-deleting it is the recording-loss
+        // hold. Whatever the reconnect window, Mux preserves ingested media
+        // after the crashed client's RTMP socket drops (window 0: finalized
+        // immediately; window > 0: held resumable, finalized when the window
+        // closes or /complete is signalled) — so a session that progressed
+        // (went live / started ingesting / produced an asset) is a real
+        // partial recording, and cancel-deleting it is the recording-loss
         // bug. Finalize it like a normal stop instead: demote the linked
         // record to processing and let the VOD poller, webhooks, and the
         // stuck-record reconciler settle it against Mux's source of truth.
@@ -2550,6 +2559,20 @@ export const cancelLiveStream = action({
                 ageMs: Date.now() - liveSession.createdAt,
               },
             })
+            // A crashed client can never resume its own session (the new
+            // launch has no ingest credentials), so when a reconnect window
+            // is configured, close it now: without /complete Mux would hold
+            // the stream open for the full window before finalizing the
+            // asset, leaving the record in limbo that much longer.
+            if (getMuxConfig().reconnectWindowSeconds > 0) {
+              try {
+                await muxRequest(`/live-streams/${liveSession.muxLiveStreamId}/complete`, {
+                  method: 'PUT',
+                })
+              } catch (error) {
+                console.warn('Failed to signal Mux complete during crash recovery:', error)
+              }
+            }
             await ctx.runMutation(internal.videos.markMuxLiveSessionEnding, {
               userId,
               liveSessionId: args.liveSessionId,
@@ -3900,6 +3923,18 @@ export const markMuxLiveSessionEnding = internalMutation({
     const liveSession = await ctx.db.get(args.liveSessionId)
     if (!liveSession || liveSession.userId !== args.userId) {
       throwUserError('Live session not found')
+    }
+
+    // Actions read the session, then mutate later — the idle/errored webhook
+    // can land in between (e.g. a crash-recovery sweep racing Mux's own
+    // finalization). Never revert a session that already reached a terminal
+    // state; the webhook pipeline owns it from there.
+    if (
+      liveSession.status === 'ending' ||
+      liveSession.status === 'ended' ||
+      liveSession.status === 'errored'
+    ) {
+      return { ended: liveSession.status !== 'errored' }
     }
 
     const now = Date.now()
