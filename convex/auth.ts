@@ -165,12 +165,18 @@ const PasswordWithVerification = Password({
 
     const firstName = (params.firstName as string) ?? (params.name as string) ?? null
     const lastName = (params.lastName as string) ?? null
+    // Schema only allows these literals; any other client-supplied value would
+    // fail document validation and break signup entirely.
+    const gender =
+      params.gender === 'male' || params.gender === 'female' || params.gender === 'other'
+        ? params.gender
+        : 'other'
     const profile = {
       name: firstName && lastName ? `${firstName} ${lastName}` : (firstName ?? 'User'),
       firstName: firstName,
       lastName: lastName,
       email: params.email as string,
-      gender: (params.gender as 'male' | 'female' | 'other') ?? 'other',
+      gender,
     }
     if (birthDate) {
       ;(profile as Record<string, unknown>).birthDate = birthDate
