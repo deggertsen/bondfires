@@ -3,11 +3,27 @@ import type { RecordingPhase } from '../store/recording.store'
 export const RECORDING_WATCHDOG_INTERVAL_MS = 30_000
 export const MAX_CONSECUTIVE_PRE_CONNECT_RESETS = 3
 
+/**
+ * pre_connected is a RESTING state, not a transient one: the phase is entered
+ * only after the camera preview has already started, and it lasts until the
+ * user taps record — legitimately minutes while they frame their shot.
+ * (Prod telemetry showed the previous 30s timeout resetting healthy previews
+ * out from under users who simply hadn't tapped record yet.)
+ *
+ * The live screen's own preview-expiry effect cancels an idle preview at 4
+ * minutes WITH full native + server teardown, so this watchdog timeout only
+ * needs to catch a pre_connected phase orphaned by a screen that died without
+ * cleanup. 5 minutes keeps it behind the screen's own expiry in the
+ * foreground. (After a background→resume where more than 5 minutes of wall
+ * time passed, both timers are overdue and fire in nondeterministic order —
+ * if this one wins, the store resets without native teardown and the
+ * eagerly-provisioned session falls to the server's stale sweep. Acceptable:
+ * the pre-#181 30s timeout lost that race every time.)
+ */
+export const PRE_CONNECT_WATCHDOG_TIMEOUT_MS = 300_000
+
 const RECORDING_WATCHDOG_PHASE_TIMEOUT_MS: Partial<Record<RecordingPhase, number>> = {
-  // Camera preview should start in 2-3s. 30s is a generous upper bound that
-  // avoids false positives on slow devices while not leaving the user stuck
-  // on "Preparing camera..." for a full minute.
-  pre_connected: 30_000,
+  pre_connected: PRE_CONNECT_WATCHDOG_TIMEOUT_MS,
   stopping: 60_000,
 }
 
