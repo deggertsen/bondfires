@@ -216,6 +216,14 @@ export function BondfirePlaybackScreen({
           snapToInterval={SCREEN_WIDTH}
           snapToAlignment="start"
           decelerationRate="fast"
+          // Every mounted item creates a native video player (even with a
+          // null source). The RN default windowSize of 21 keeps players alive
+          // for ~10 pages each side, which piles up native allocations on
+          // long threads and raises iOS OOM-kill risk — cap to the current
+          // page plus one neighbor per side.
+          windowSize={3}
+          initialNumToRender={1}
+          maxToRenderPerBatch={2}
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={viewabilityConfig}
           initialScrollIndex={initialVideoIndex}

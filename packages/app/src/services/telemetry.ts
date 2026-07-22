@@ -8,7 +8,7 @@
 
 import Constants from 'expo-constants'
 import * as Device from 'expo-device'
-import { Platform } from 'react-native'
+import { AppState, Platform } from 'react-native'
 import { createMMKV, type MMKV } from 'react-native-mmkv'
 
 // ---------------------------------------------------------------------------
@@ -21,6 +21,18 @@ const ErrorUtils = (globalThis as Record<string, unknown>)?.ErrorUtils as
   | {
       getGlobalHandler: () => ((error: Error, isFatal?: boolean) => void) | undefined
       setGlobalHandler: (handler: (error: Error, isFatal?: boolean) => void) => void
+    }
+  | undefined
+
+// Hermes exposes a promise-rejection tracker; without it, rejected promises
+// that never get a .catch are completely invisible in production.
+const HermesInternal = (globalThis as Record<string, unknown>)?.HermesInternal as
+  | {
+      enablePromiseRejectionTracker?: (options: {
+        allRejections: boolean
+        onUnhandled: (id: number, error: unknown) => void
+        onHandled?: (id: number) => void
+      }) => void
     }
   | undefined
 
@@ -343,6 +355,8 @@ export class TelemetryLogger {
 
     this.startFlushTimer()
     this.installGlobalErrorHandler()
+    this.installRejectionTracker()
+    this.installMemoryWarningListener()
     this.installConsoleOverrides()
   }
 
@@ -629,6 +643,54 @@ export class TelemetryLogger {
       if (originalHandler) {
         originalHandler(error, isFatal)
       }
+    })
+  }
+
+  // -----------------------------------------------------------------------
+  // Unhandled promise rejections
+  // -----------------------------------------------------------------------
+
+  private installRejectionTracker(): void {
+    if (!HermesInternal?.enablePromiseRejectionTracker) return
+    // Hermes supports a single tracker; installing ours in dev would replace
+    // React Native's LogBox rejection warnings. Dev doesn't need telemetry.
+    if (typeof __DEV__ !== 'undefined' && __DEV__) return
+
+    HermesInternal.enablePromiseRejectionTracker({
+      allRejections: true,
+      onUnhandled: (id, error) => {
+        const err = error instanceof Error ? error : new Error(String(error))
+        // enqueue directly, NOT this.error(): error() fires the user-facing
+        // toast, and rejections are frequent background noise (network blips,
+        // .catch attached a tick late) — telemetry-only, never a toast.
+        this.enqueue('error', 'error:unhandled_rejection', err.message ?? 'Unhandled rejection', {
+          stack: err.stack,
+          rejectionId: id,
+        })
+      },
+      // A rejection handled late (e.g. .catch attached on a later tick) is
+      // normal control flow — record it so the paired onUnhandled entry can
+      // be discounted during triage.
+      onHandled: (id) => {
+        this.breadcrumb('error:rejection_handled_late', { rejectionId: id })
+      },
+    })
+  }
+
+  // -----------------------------------------------------------------------
+  // Memory pressure
+  // -----------------------------------------------------------------------
+
+  private installMemoryWarningListener(): void {
+    // iOS delivers memory warnings shortly before the OS kills the app; a
+    // warning followed by an abrupt session end is the OOM signature. The
+    // live-publisher module has its own native listener, but this one covers
+    // the whole app — most importantly video playback.
+    AppState.addEventListener('memoryWarning', () => {
+      this.warn('app:memory_warning', 'OS reported memory pressure')
+      // Flush immediately: if the app is OOM-killed moments later, the
+      // warning would otherwise die in the queue with it.
+      void this.flush()
     })
   }
 
