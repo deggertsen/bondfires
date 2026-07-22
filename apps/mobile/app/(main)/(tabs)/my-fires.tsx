@@ -25,7 +25,7 @@ import { useAction, useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, FlatList, Pressable, RefreshControl, StatusBar } from 'react-native'
-import { Separator, XStack, YStack } from 'tamagui'
+import { Separator, useTheme, variableToString, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { EditTitleSheet, useEditTitleSheet } from '../../../components/EditTitleSheet'
@@ -223,6 +223,8 @@ function toInvitedBondfireRowProps(
 
 export default function MyFiresScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
+  const theme = useTheme()
+  const primaryColor = variableToString(theme.primary)
   const router = useRouter()
   const isFocused = useIsFocused()
   const canLoadTabData = useCanLoadTabData(isFocused)
@@ -551,7 +553,7 @@ export default function MyFiresScreen() {
                 <Pin
                   size={22}
                   color={pinnedFirst ? '$primary' : '$placeholderColor'}
-                  fill={pinnedFirst ? '$primary' : 'transparent'}
+                  fill={pinnedFirst ? primaryColor : 'transparent'}
                 />
               </Pressable>
             </XStack>
