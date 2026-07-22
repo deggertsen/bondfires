@@ -421,21 +421,48 @@ export function LiveRecordScreen({
 
       // Camera preview only — nothing is published or recorded until the
       // user taps record and the RTMP connection opens.
-      // Race with a timeout slightly under the watchdog's 30s pre_connected
-      // limit so a hung camera start surfaces as a recoverable error instead
-      // of looping the watchdog 3x and giving up.
+      // A hung native camera start would otherwise leave preConnectInFlightRef
+      // set forever (the finally below never runs), which the arm guard reads
+      // as "arm in progress" — permanently blocking every retry until app
+      // restart while the user stares at "Preparing camera...".
       const PREVIEW_TIMEOUT_MS = 25_000
-      await Promise.race([
-        livePublisher.preview({
-          initialCamera: recordingStore$.facing.get() === 'back' ? 'back' : 'front',
-        }),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error('Camera preview timed out')),
-            PREVIEW_TIMEOUT_MS,
-          ),
-        ),
-      ])
+      const previewPromise = livePublisher.preview({
+        initialCamera: recordingStore$.facing.get() === 'back' ? 'back' : 'front',
+      })
+      let previewTimedOut = false
+      let previewTimer: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([
+          previewPromise,
+          new Promise<never>((_, reject) => {
+            previewTimer = setTimeout(() => {
+              previewTimedOut = true
+              telemetry.error('live:preview_timeout', 'Camera preview did not start in time', {
+                timeoutMs: PREVIEW_TIMEOUT_MS,
+              })
+              reject(new Error('Camera preview timed out'))
+            }, PREVIEW_TIMEOUT_MS)
+          }),
+        ])
+      } finally {
+        clearTimeout(previewTimer)
+      }
+      // If the native start finishes after we already gave up, the camera
+      // would run with no owner (battery/thermal drain, and the wedged
+      // session can break the next arm attempt). Tear it down unless a newer
+      // arm has taken ownership in the meantime.
+      void previewPromise.then(
+        () => {
+          if (previewTimedOut && !preConnectInFlightRef.current) {
+            telemetry.warn(
+              'live:preview_late_recovery',
+              'Preview started after timeout; tearing down unowned camera session',
+            )
+            livePublisher.cancel().catch(() => {})
+          }
+        },
+        () => {},
+      )
 
       ownsPreviewRef.current = true
       recordingActions.setPhase('pre_connected', 'live pre-connect succeeded')

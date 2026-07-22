@@ -4,6 +4,7 @@ import {
   getNextPreConnectResetCount,
   getRecordingWatchdogReset,
   MAX_CONSECUTIVE_PRE_CONNECT_RESETS,
+  PRE_CONNECT_WATCHDOG_TIMEOUT_MS,
   RECORDING_NO_PROGRESS_TIMEOUT_MS,
 } from '../../../../packages/app/src/utils/recordingWatchdog'
 
@@ -29,7 +30,21 @@ describe('recording watchdog', () => {
         ...base,
         phase: 'pre_connected',
         phaseStartedAt: 0,
-        now: 30_000,
+        now: PRE_CONNECT_WATCHDOG_TIMEOUT_MS,
+      }),
+    ).toBeNull()
+  })
+
+  it('does not reset a healthy preview the user is still framing', () => {
+    // A user lingering on the camera preview for a couple of minutes before
+    // tapping record is normal behavior, not a stuck phase. The screen's own
+    // 4-minute preview-expiry effect owns the healthy-path teardown.
+    expect(
+      getRecordingWatchdogReset({
+        ...base,
+        phase: 'pre_connected',
+        phaseStartedAt: 0,
+        now: 150_000,
       }),
     ).toBeNull()
   })
@@ -40,12 +55,12 @@ describe('recording watchdog', () => {
         ...base,
         phase: 'pre_connected',
         phaseStartedAt: 1_000,
-        now: 32_000,
+        now: PRE_CONNECT_WATCHDOG_TIMEOUT_MS + 2_000,
       }),
     ).toEqual({
       phase: 'pre_connected',
-      elapsedMs: 31_000,
-      timeoutMs: 30_000,
+      elapsedMs: PRE_CONNECT_WATCHDOG_TIMEOUT_MS + 1_000,
+      timeoutMs: PRE_CONNECT_WATCHDOG_TIMEOUT_MS,
     })
 
     expect(
