@@ -483,7 +483,7 @@ export default function MyFiresScreen() {
     return (
       <YStack flex={1} backgroundColor={'$background'}>
         <MyFiresSubscription
-          key={refreshKey}
+          key={`subscription-${refreshKey}`}
           enabled={canLoadTabData}
           pinnedFirst={pinnedFirst}
           onResolved={handleThreadsResolved}
@@ -497,14 +497,14 @@ export default function MyFiresScreen() {
   return (
     <YStack flex={1} backgroundColor={'$background'}>
       <MyFiresSubscription
-        key={refreshKey}
+        key={`subscription-${refreshKey}`}
         enabled={canLoadTabData}
         pinnedFirst={pinnedFirst}
         onResolved={handleThreadsResolved}
       />
       <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
       <FlatList
-        key={refreshKey}
+        key={`list-${refreshKey}`}
         data={threads}
         extraData={listExtraData}
         keyExtractor={(item) => item._id}
