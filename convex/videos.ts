@@ -2520,12 +2520,25 @@ export const cancelLiveStream = action({
         // stuck-record reconciler settle it against Mux's source of truth.
         if (args.reason === 'crash_recovery') {
           const { hadAsset, hadProgressed } = assessLiveSessionProgress(liveSession)
-          if (hadProgressed) {
+          // Local evidence lags Mux: 'starting' (or even 'created') only means
+          // the live_stream.active webhook hasn't been processed yet — real
+          // media may already have reached Mux. Before anything destructive,
+          // ask Mux directly; only an authoritative "never received media"
+          // permits deletion. Ambiguous or unreachable answers preserve the
+          // record and let the reconciler settle it against Mux later.
+          let preserveSource: string | null = hadProgressed ? 'local' : null
+          if (!preserveSource) {
+            const ingest = await classifyMuxLiveStreamIngest(liveSession.muxLiveStreamId)
+            if (ingest.status !== 'empty') {
+              preserveSource = ingest.source
+            }
+          }
+          if (preserveSource) {
             await ctx.runMutation(internal.serverTelemetry.recordServerEvent, {
               level: 'warn',
               event: 'live:orphan_finalized',
               message:
-                'Crash-recovery sweep found a progressed live session; finalizing instead of deleting',
+                'Crash-recovery sweep found a possibly-progressed live session; finalizing instead of deleting',
               userId,
               retention: 'forensic',
               data: {
@@ -2533,6 +2546,7 @@ export const cancelLiveStream = action({
                 statusBefore: liveSession.status,
                 hadStarted: Boolean(liveSession.startedAt),
                 hadAsset,
+                preserveSource,
                 ageMs: Date.now() - liveSession.createdAt,
               },
             })

@@ -235,6 +235,31 @@ export function VideoPlayer({
     }
   }, [currentUrl, state$])
 
+  // replaceAsync only swaps the source — expo-video does not resume playback
+  // on its own, and none of the autoplay effect's dependencies change on a
+  // retry, so a recovered player would sit paused behind a vanished overlay.
+  // Mirror the autoplay effect's predicate after the source lands.
+  const resumePlaybackAfterRecovery = useCallback(() => {
+    if (!player) return
+    if (
+      isActive &&
+      isScreenFocused &&
+      isAppActive &&
+      !shouldSuppressPlayback &&
+      (autoplayVideos || state$.userInitiatedPlay.peek())
+    ) {
+      player.play()
+    }
+  }, [
+    player,
+    isActive,
+    isScreenFocused,
+    isAppActive,
+    shouldSuppressPlayback,
+    autoplayVideos,
+    state$,
+  ])
+
   const retryPlayback = useCallback(() => {
     if (!player || !currentUrl) return
     telemetry.info('video:playback_retry', 'User retried video after playback failure', {
@@ -244,10 +269,15 @@ export function VideoPlayer({
     errorRetryRef.current.count = 0
     state$.hasError.set(false)
     state$.isLoading.set(true)
-    player.replaceAsync(currentUrl).catch(() => {
-      // Failure surfaces through the statusChange 'error' path.
-    })
-  }, [player, currentUrl, state$, videoId, isLive])
+    // Tapping "Try Again" is explicit play intent.
+    state$.userInitiatedPlay.set(true)
+    player
+      .replaceAsync(currentUrl)
+      .then(() => resumePlaybackAfterRecovery())
+      .catch(() => {
+        // Failure surfaces through the statusChange 'error' path.
+      })
+  }, [player, currentUrl, state$, videoId, isLive, resumePlaybackAfterRecovery])
 
   // Caption cues, fetched lazily when captions are on and this video has a
   // caption track. Cue matching happens in the timeUpdate listener below.
@@ -517,7 +547,12 @@ export function VideoPlayer({
           const delayMs = 2_000 * errorRetryRef.current.count
           errorRetryRef.current.timer = setTimeout(() => {
             state$.isLoading.set(true)
-            player.replaceAsync(currentUrl).catch(() => {})
+            // Preserve the pre-error play intent: a silent auto-recovery
+            // mid-watch should resume, not leave the player paused.
+            player
+              .replaceAsync(currentUrl)
+              .then(() => resumePlaybackAfterRecovery())
+              .catch(() => {})
           }, delayMs)
         } else {
           state$.hasError.set(true)
@@ -590,6 +625,7 @@ export function VideoPlayer({
     currentUrl,
     videoId,
     isLive,
+    resumePlaybackAfterRecovery,
   ])
 
   const keepAwakeTag = `video-playback-${videoId}`
