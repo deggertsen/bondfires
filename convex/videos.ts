@@ -35,6 +35,7 @@ import {
 import { throwUserError, withUserFacingActionErrors } from './errors'
 import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 import { classifyMuxIngest, type IngestEvidence, localIngestSource } from './lib/liveIngest'
+import { assessLiveSessionProgress } from './liveSessionProgress'
 import {
   assertCanRespondToPersonalBondfire,
   canViewPersonalBondfire,
@@ -2509,6 +2510,48 @@ export const cancelLiveStream = action({
           throwUserError('Live session not found')
         }
 
+        // A crash-recovery sweep must never destroy footage Mux may already
+        // hold. With reconnect window 0, Mux finalizes the recorded asset the
+        // moment the crashed client's RTMP socket drops — so a session that
+        // progressed (went live / started ingesting / produced an asset) is a
+        // real partial recording, and cancel-deleting it is the recording-loss
+        // bug. Finalize it like a normal stop instead: demote the linked
+        // record to processing and let the VOD poller, webhooks, and the
+        // stuck-record reconciler settle it against Mux's source of truth.
+        if (args.reason === 'crash_recovery') {
+          const { hadAsset, hadProgressed } = assessLiveSessionProgress(liveSession)
+          if (hadProgressed) {
+            await ctx.runMutation(internal.serverTelemetry.recordServerEvent, {
+              level: 'warn',
+              event: 'live:orphan_finalized',
+              message:
+                'Crash-recovery sweep found a progressed live session; finalizing instead of deleting',
+              userId,
+              retention: 'forensic',
+              data: {
+                liveSessionId: args.liveSessionId,
+                statusBefore: liveSession.status,
+                hadStarted: Boolean(liveSession.startedAt),
+                hadAsset,
+                ageMs: Date.now() - liveSession.createdAt,
+              },
+            })
+            await ctx.runMutation(internal.videos.markMuxLiveSessionEnding, {
+              userId,
+              liveSessionId: args.liveSessionId,
+              reason: args.reason,
+            })
+            await ctx.runMutation(internal.videos.markLinkedRecordProcessing, {
+              liveSessionId: args.liveSessionId,
+            })
+            await ctx.scheduler.runAfter(0, internal.videos.pollRecordedVodAsset, {
+              userId,
+              liveSessionId: args.liveSessionId,
+            })
+            return { cancelled: false }
+          }
+        }
+
         try {
           await deleteMuxLiveStream(liveSession.muxLiveStreamId)
         } catch (error) {
@@ -3919,16 +3962,7 @@ export const cancelMuxLiveSessionRecord = internalMutation({
     // a progressed session are exactly the recording-loss class of bug, so we
     // surface them as errors in triage; benign cancels of never-started sessions
     // are just breadcrumbs.
-    const hadAsset = Boolean(
-      liveSession.muxRecordedAssetId ??
-        liveSession.muxActiveAssetId ??
-        liveSession.muxRecentAssetId,
-    )
-    const hadProgressed =
-      liveSession.status === 'live' ||
-      liveSession.status === 'ending' ||
-      Boolean(liveSession.startedAt) ||
-      hadAsset
+    const { hadAsset, hadProgressed } = assessLiveSessionProgress(liveSession)
     await logServerEvent(ctx, {
       level: hadProgressed ? 'error' : 'breadcrumb',
       event: 'live:session:cancelled',

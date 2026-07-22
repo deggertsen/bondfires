@@ -46,6 +46,40 @@ export function LoadingOverlay({
   )
 }
 
+export function PlaybackErrorOverlay({
+  state$,
+  onRetry,
+}: {
+  state$: VideoPlayerState$
+  onRetry: () => void
+}) {
+  const hasError = useValue(state$.hasError)
+  if (!hasError) return null
+
+  return (
+    <YStack
+      position="absolute"
+      top={0}
+      left={0}
+      right={0}
+      bottom={0}
+      alignItems="center"
+      justifyContent="center"
+      backgroundColor={OVERLAY_COLORS.loadingBackground}
+      zIndex={3}
+      gap="$3"
+      paddingHorizontal={32}
+    >
+      <Text color={OVERLAY_COLORS.textPrimary} fontSize={15} textAlign="center">
+        This video couldn't be played. Check your connection and try again.
+      </Text>
+      <Button size="$3" icon={RotateCcw} onPress={onRetry}>
+        Try Again
+      </Button>
+    </YStack>
+  )
+}
+
 export function ReactionPresenceLayer({
   state$,
   liveViewers,
@@ -228,7 +262,14 @@ export function RightSideControls({
   const insets = useSafeAreaInsets()
 
   return (
-    <YStack position="absolute" right={16} bottom={160 + insets.bottom} gap={16} alignItems="center" zIndex={3}>
+    <YStack
+      position="absolute"
+      right={16}
+      bottom={160 + insets.bottom}
+      gap={16}
+      alignItems="center"
+      zIndex={3}
+    >
       {!isLive && (
         <YStack>
           <EmojiReactionButton
