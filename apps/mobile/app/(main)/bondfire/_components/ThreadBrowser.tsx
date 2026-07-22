@@ -228,7 +228,13 @@ export function ThreadBrowser({
       {!open && (
         <Pressable
           onPress={() => state$.open.set(true)}
-          style={{ position: 'absolute', bottom: 28 + insets.bottom, left: 12, right: 12, zIndex: 50 }}
+          style={{
+            position: 'absolute',
+            bottom: 28 + insets.bottom,
+            left: 12,
+            right: 12,
+            zIndex: 50,
+          }}
         >
           <XStack
             alignItems="center"
@@ -336,7 +342,12 @@ export function ThreadBrowser({
             contentContainerStyle={{ paddingHorizontal: 10, paddingBottom: 8 }}
           />
           {canRespond || canShare ? (
-            <XStack gap={10} paddingHorizontal={14} paddingTop={8} paddingBottom={20 + insets.bottom}>
+            <XStack
+              gap={10}
+              paddingHorizontal={14}
+              paddingTop={8}
+              paddingBottom={20 + insets.bottom}
+            >
               {canRespond ? (
                 <Button variant="primary" size="$lg" flex={1} onPress={onRespond}>
                   <Flame size={18} color={OVERLAY_COLORS.textPrimary} />

@@ -8,7 +8,7 @@
 import { v } from 'convex/values'
 import type { Doc } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
-import { internalMutation, mutation, query } from './_generated/server'
+import { mutation, query } from './_generated/server'
 import { auth } from './auth'
 import { computeKindlingBalance } from './campKindling'
 
@@ -207,40 +207,5 @@ export const adminGrantKindling = mutation({
 
     const updatedUser = await ctx.db.get(targetUser._id)
     return updatedUser ? adminUserResultWithKindling(ctx, updatedUser) : null
-  },
-})
-
-/** One-time backfill: fix existing users with null/invalid gender values. */
-export const backfillUserGender = internalMutation({
-  args: {
-    // Paginated: an unbounded .collect() + whole-table patch in one
-    // transaction blows Convex's per-function read/write limits on a
-    // production-sized users table, which would leave the migration unable
-    // to complete (and the schema unable to re-tighten). Run repeatedly
-    // until remainingMayExist is false and fixed is 0.
-    limit: v.optional(v.number()),
-    cursor: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const limit = Math.min(args.limit ?? 500, 1000)
-    const page = await ctx.db
-      .query('users')
-      .paginate({ numItems: limit, cursor: args.cursor ?? null })
-    let fixed = 0
-    for (const user of page.page) {
-      if (
-        !user.gender ||
-        (user.gender !== 'male' && user.gender !== 'female' && user.gender !== 'other')
-      ) {
-        await ctx.db.patch(user._id, { gender: 'other' })
-        fixed++
-      }
-    }
-    return {
-      scanned: page.page.length,
-      fixed,
-      remainingMayExist: !page.isDone,
-      cursor: page.continueCursor,
-    }
   },
 })
