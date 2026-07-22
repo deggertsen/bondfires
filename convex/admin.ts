@@ -8,7 +8,7 @@
 import { v } from 'convex/values'
 import type { Doc } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
-import { mutation, query } from './_generated/server'
+import { internalMutation, mutation, query } from './_generated/server'
 import { auth } from './auth'
 import { computeKindlingBalance } from './campKindling'
 
@@ -207,5 +207,23 @@ export const adminGrantKindling = mutation({
 
     const updatedUser = await ctx.db.get(targetUser._id)
     return updatedUser ? adminUserResultWithKindling(ctx, updatedUser) : null
+  },
+})
+
+/** One-time backfill: fix existing users with null/invalid gender values. */
+export const backfillUserGender = internalMutation({
+  handler: async (ctx) => {
+    const users = await ctx.db.query('users').collect()
+    let fixed = 0
+    for (const user of users) {
+      if (
+        !user.gender ||
+        (user.gender !== 'male' && user.gender !== 'female' && user.gender !== 'other')
+      ) {
+        await ctx.db.patch(user._id, { gender: 'other' })
+        fixed++
+      }
+    }
+    return { total: users.length, fixed }
   },
 })

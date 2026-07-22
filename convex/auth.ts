@@ -170,7 +170,7 @@ const PasswordWithVerification = Password({
       firstName: firstName,
       lastName: lastName,
       email: params.email as string,
-      gender: (params.gender as string) ?? null,
+      gender: (params.gender as 'male' | 'female' | 'other') ?? 'other',
     }
     if (birthDate) {
       ;(profile as Record<string, unknown>).birthDate = birthDate
