@@ -105,6 +105,11 @@ export interface CreateLiveStreamResult {
   ingest: {
     rtmpsUrl: string
     streamKey: string
+    /**
+     * How long Mux keeps the stream resumable after a socket drop. Absent or
+     * 0 (older servers / reconnect disabled) means a drop is final.
+     */
+    reconnectWindowSeconds?: number
   }
   recordId: string
   recordType: 'bondfire' | 'response'
@@ -142,7 +147,15 @@ export function useLivePublisher(options: {
   // stale instance — one whose session was cancelled/replaced by another mounted
   // copy of the create screen — correctly reports that it no longer owns the
   // live session and stays out of the active instance's way.
-  const ingestRef = useRef<{ rtmpsUrl: string; streamKey: string; sessionId: string } | null>(null)
+  const ingestRef = useRef<{
+    rtmpsUrl: string
+    streamKey: string
+    reconnectWindowSeconds?: number
+    sessionId: string
+  } | null>(null)
+  // Monotonic id per reconnect() call so a late-resolving native start from a
+  // superseded or abandoned attempt can never run success bookkeeping.
+  const reconnectGenerationRef = useRef(0)
   // Network ABR ceiling (OBS-style). Thermal mitigation registers its own
   // ceiling through setThermalQuality; encoder bitrate is always min(network,
   // thermal).
@@ -293,6 +306,42 @@ export function useLivePublisher(options: {
         }
       }
 
+      // While the JS reconnect loop owns the transport (status 'reconnecting'),
+      // native start() attempts emit their own lifecycle noise — 'connecting'
+      // on Android, 'errored' on a failed attempt, plus drop echoes from the
+      // torn-down session. Only 'live' (attempt succeeded) and 'ended' (a
+      // user stop completed mid-loop) may move the store; everything else is
+      // the loop's business, reported through the reconnect() promise.
+      if (livePublishStore$.status.peek() === 'reconnecting') {
+        if (status !== 'live' && status !== 'ended') {
+          return
+        }
+      }
+
+      // A timed-out or abandoned reconnect attempt can complete natively
+      // AFTER the session reached a terminal state (user stop, cancel,
+      // give-up finalize). Its 'live' must not resurrect the store — and the
+      // zombie connection it represents must be closed, or Mux keeps
+      // receiving media for a recording the app considers finished.
+      if (status === 'live') {
+        const currentStatus = livePublishStore$.status.peek()
+        const isTerminal =
+          currentStatus === 'stopping' ||
+          currentStatus === 'ended' ||
+          currentStatus === 'idle' ||
+          currentStatus === 'errored' ||
+          currentStatus === 'endpoint_closed' ||
+          currentStatus === 'stream_stopped_unexpectedly'
+        if (isTerminal) {
+          telemetry.warn('live:stale_live_event', 'Native live event after terminal state', {
+            statusAtEvent: currentStatus,
+            sessionId: livePublishStore$.sessionId.peek(),
+          })
+          void options.publisher.stop().catch(() => {})
+          return
+        }
+      }
+
       livePublishActions.setStatus(status)
 
       // Log unexpected drops to telemetry for diagnosis. No user-facing
@@ -321,6 +370,18 @@ export function useLivePublisher(options: {
           sessionId: livePublishStore$.sessionId.peek(),
           recordId: livePublishStore$.recordId.peek(),
           status,
+        })
+        return
+      }
+
+      // A failed reconnect attempt surfaces through the reconnect() promise;
+      // the native error event during the loop is expected noise and must not
+      // fail the session the loop is trying to save.
+      if (livePublishStore$.status.peek() === 'reconnecting') {
+        telemetry.warn('live:reconnect_error', 'Native error during reconnect attempt', {
+          code: error.code,
+          message: error.message,
+          sessionId: livePublishStore$.sessionId.peek(),
         })
         return
       }
@@ -377,183 +438,192 @@ export function useLivePublisher(options: {
   // measures app-wide TX, so the 64kbps floor filters ambient traffic.
   const stallDetectorRef = useRef<StallDetector | null>(null)
 
-  const startStatsSampling = useCallback(() => {
-    if (statsIntervalRef.current) {
-      clearInterval(statsIntervalRef.current)
-    }
-    if (!stallDetectorRef.current) {
-      stallDetectorRef.current = createStallDetector(
-        Platform.OS === 'android' ? STALL_BITRATE_FLOOR_BPS : IOS_STALL_BITRATE_FLOOR_BPS,
-      )
-    }
-    const detector = stallDetectorRef.current
-    detector.reset()
-    livePublishActions.resetThroughput()
-    resetNetworkAbr()
-
-    // Prime the throughput baseline (Android's TrafficStats measurement needs
-    // a first reading to diff against). Without this the first 5s tick is an
-    // unmeasurable baseline and never-started detection slips from 20s to 25s
-    // — inside Mux's idle-disconnect window.
-    void options.publisher.getStats().catch(() => {})
-
-    // Periodic stats breadcrumb counter — emit a stats snapshot every 30s
-    // (6 stats samples at 5s interval) for crash timeline reconstruction.
-    let statsBreadcrumbCounter = 0
-
-    statsIntervalRef.current = setInterval(() => {
-      // Ownership gate: when two create-screen copies are mounted (Spark tab +
-      // pushed route), a stale instance whose session was replaced must not
-      // write stats, arm the watchdog, or fail the active instance's session.
-      const ingest = ingestRef.current
-      if (!ingest || ingest.sessionId !== livePublishStore$.sessionId.peek()) {
-        detector.idle()
-        return
+  const startStatsSampling = useCallback(
+    (opts?: { preserveThroughputHistory?: boolean }) => {
+      if (statsIntervalRef.current) {
+        clearInterval(statsIntervalRef.current)
       }
-
-      // Recording can't run in the background (both platforms suspend the
-      // camera), and LiveRecordScreen owns backgrounding with its own grace
-      // timer — a backgrounded tick must not read the paused encoder's zero
-      // throughput as a stall.
-      if (AppState.currentState !== 'active') {
-        detector.idle()
-        return
+      if (!stallDetectorRef.current) {
+        stallDetectorRef.current = createStallDetector(
+          Platform.OS === 'android' ? STALL_BITRATE_FLOOR_BPS : IOS_STALL_BITRATE_FLOOR_BPS,
+        )
       }
+      const detector = stallDetectorRef.current
+      detector.reset()
+      // A reconnect resumes the SAME session — its footage already reached Mux.
+      // Clearing everHadThroughput there would make a follow-up drop look like
+      // a never-started session, and the never-started path cancel-DELETES the
+      // recording. Only a fresh connect starts from a clean history.
+      if (!opts?.preserveThroughputHistory) {
+        livePublishActions.resetThroughput()
+      }
+      resetNetworkAbr()
 
-      options.publisher
-        .getStats()
-        .then((stats) => {
-          livePublishActions.setStats({
-            bitrateBps: stats.bitrateBps,
-            droppedFrames: stats.droppedFrames,
-          })
+      // Prime the throughput baseline (Android's TrafficStats measurement needs
+      // a first reading to diff against). Without this the first 5s tick is an
+      // unmeasurable baseline and never-started detection slips from 20s to 25s
+      // — inside Mux's idle-disconnect window.
+      void options.publisher.getStats().catch(() => {})
 
-          // Periodic breadcrumb — the first sample (5s in) then every ~30s,
-          // logging a stats snapshot for crash timeline reconstruction. The
-          // early first sample matters: most observed start-failures die
-          // within 6–27s, before a 30s-only cadence would capture anything.
-          // Keeps Convex load modest (2/min during recording) while giving us
-          // a timeline if the app crashes.
-          statsBreadcrumbCounter++
-          if (statsBreadcrumbCounter === 1 || statsBreadcrumbCounter % 6 === 0) {
-            const sessionId = livePublishStore$.sessionId.peek()
-            const recordId = livePublishStore$.recordId.peek()
-            const startedAt = livePublishStore$.startedAt.peek()
-            telemetry.breadcrumb('live:stats_sample', {
-              sessionId,
-              recordId,
+      // Periodic stats breadcrumb counter — emit a stats snapshot every 30s
+      // (6 stats samples at 5s interval) for crash timeline reconstruction.
+      let statsBreadcrumbCounter = 0
+
+      statsIntervalRef.current = setInterval(() => {
+        // Ownership gate: when two create-screen copies are mounted (Spark tab +
+        // pushed route), a stale instance whose session was replaced must not
+        // write stats, arm the watchdog, or fail the active instance's session.
+        const ingest = ingestRef.current
+        if (!ingest || ingest.sessionId !== livePublishStore$.sessionId.peek()) {
+          detector.idle()
+          return
+        }
+
+        // Recording can't run in the background (both platforms suspend the
+        // camera), and LiveRecordScreen owns backgrounding with its own grace
+        // timer — a backgrounded tick must not read the paused encoder's zero
+        // throughput as a stall.
+        if (AppState.currentState !== 'active') {
+          detector.idle()
+          return
+        }
+
+        options.publisher
+          .getStats()
+          .then((stats) => {
+            livePublishActions.setStats({
               bitrateBps: stats.bitrateBps,
               droppedFrames: stats.droppedFrames,
-              currentFps: stats.currentFps,
-              rttMs: stats.rttMs,
-              statsSupported: stats.statsSupported,
-              audioRoute: stats.audioRoute,
-              networkBitrateCap: networkBitrateCapRef.current,
-              networkAbrTier: networkAbrRef.current?.tier() ?? 0,
-              elapsedMs: startedAt ? Date.now() - startedAt : undefined,
             })
-            // Update crash-survivable breadcrumb with current state
-            telemetry.setCrashBreadcrumb('live:recording', {
-              sessionId,
-              recordId,
-              status: livePublishStore$.status.peek(),
-              bitrateBps: stats.bitrateBps,
-              droppedFrames: stats.droppedFrames,
-              elapsedMs: startedAt ? Date.now() - startedAt : undefined,
-            })
-          }
 
-          // Frozen-encoder watchdog: the connection poll catches dropped
-          // sockets, but a pipeline that produces zero bytes while the socket
-          // stays open emits no error event. Sustained ~zero throughput while
-          // 'live' — whether the encoder stalled mid-stream or never delivered
-          // a first frame — becomes an unexpected stop, so the UI recovers
-          // instead of sitting on a frozen REC screen until Mux disconnects.
-          if (livePublishStore$.status.peek() !== 'live') {
-            detector.idle()
-            return
-          }
-
-          // Android's TrafficStats measurement is app-wide: a concurrent
-          // queue upload (record → upload → record again) reads as stream
-          // throughput and would both mask a frozen pipeline and wrongly mark
-          // everHadThroughput. Treat those samples as unmeasurable — the
-          // duration heuristic and stop-time Mux truth still cover recovery.
-          const uploadActive =
-            Platform.OS === 'android' &&
-            uploadQueueStore$.tasks
-              .peek()
-              .some((t) => t.status === 'uploading' || t.status === 'processing')
-
-          const statsSupported = stats.statsSupported === 1 && !uploadActive
-
-          const verdict = detector.sample({
-            bitrateBps: stats.bitrateBps,
-            statsSupported,
-          })
-          if (verdict.measured) {
-            livePublishActions.noteThroughputSample(verdict.sawThroughput)
-          }
-          if (verdict.stalled) {
-            telemetry.error('live:stall', 'Zero throughput while live — treating as stalled', {
-              sessionId: livePublishStore$.sessionId.peek(),
-              recordId: livePublishStore$.recordId.peek(),
-              samples: verdict.samples,
-              neverStarted: verdict.neverStarted,
-            })
-            livePublishActions.setStatus('stream_stopped_unexpectedly')
-            return
-          }
-
-          // Publisher ABR (OBS Dynamic Bitrate pattern): adapt from measured
-          // upload vs encoder target. Transport type is never consulted.
-          if (!networkAbrRef.current) {
-            networkAbrRef.current = createNetworkBitrateController()
-          }
-          const abrDecision = networkAbrRef.current.sample({
-            bitrateBps: stats.bitrateBps,
-            statsSupported,
-            targetVideoBitrateBps:
-              lastConfiguredQualityRef.current?.configuredVideoBitrate ??
-              lastRequestedQualityRef.current.bitrate,
-            recoveryCeilingBps: thermalCeilingRef.current.bitrate,
-          })
-          if (abrDecision.action !== 'hold') {
-            networkBitrateCapRef.current = abrDecision.bitrate
-            telemetry.info('live:network_abr', 'Network adaptive bitrate tier changed', {
-              action: abrDecision.action,
-              tier: abrDecision.tier,
-              fromTier: abrDecision.fromTier,
-              bitrate: abrDecision.bitrate,
-              achievedBps: abrDecision.achievedBps,
-              expectedBps: abrDecision.expectedBps,
-              sessionId: livePublishStore$.sessionId.peek(),
-              recordId: livePublishStore$.recordId.peek(),
-            })
-            void applyComposedVideoQuality(`network_${abrDecision.action}`)
-          } else {
-            const desiredBitrate = composeLiveVideoBitrate(
-              networkBitrateCapRef.current,
-              thermalCeilingRef.current.bitrate,
-            )
-            const lastRequested = lastRequestedQualityRef.current
-            if (
-              lastRequested.bitrate !== desiredBitrate ||
-              lastRequested.fps !== thermalCeilingRef.current.fps
-            ) {
-              // A failed native update remains pending and is retried on the
-              // next stats tick even if the ABR tier itself did not change.
-              void applyComposedVideoQuality('quality_reconcile')
+            // Periodic breadcrumb — the first sample (5s in) then every ~30s,
+            // logging a stats snapshot for crash timeline reconstruction. The
+            // early first sample matters: most observed start-failures die
+            // within 6–27s, before a 30s-only cadence would capture anything.
+            // Keeps Convex load modest (2/min during recording) while giving us
+            // a timeline if the app crashes.
+            statsBreadcrumbCounter++
+            if (statsBreadcrumbCounter === 1 || statsBreadcrumbCounter % 6 === 0) {
+              const sessionId = livePublishStore$.sessionId.peek()
+              const recordId = livePublishStore$.recordId.peek()
+              const startedAt = livePublishStore$.startedAt.peek()
+              telemetry.breadcrumb('live:stats_sample', {
+                sessionId,
+                recordId,
+                bitrateBps: stats.bitrateBps,
+                droppedFrames: stats.droppedFrames,
+                currentFps: stats.currentFps,
+                rttMs: stats.rttMs,
+                statsSupported: stats.statsSupported,
+                audioRoute: stats.audioRoute,
+                networkBitrateCap: networkBitrateCapRef.current,
+                networkAbrTier: networkAbrRef.current?.tier() ?? 0,
+                elapsedMs: startedAt ? Date.now() - startedAt : undefined,
+              })
+              // Update crash-survivable breadcrumb with current state
+              telemetry.setCrashBreadcrumb('live:recording', {
+                sessionId,
+                recordId,
+                status: livePublishStore$.status.peek(),
+                bitrateBps: stats.bitrateBps,
+                droppedFrames: stats.droppedFrames,
+                elapsedMs: startedAt ? Date.now() - startedAt : undefined,
+              })
             }
-          }
-        })
-        .catch((error) => {
-          telemetry.warn('live:stats', 'Failed to sample live publisher stats', {
-            error: String(error),
+
+            // Frozen-encoder watchdog: the connection poll catches dropped
+            // sockets, but a pipeline that produces zero bytes while the socket
+            // stays open emits no error event. Sustained ~zero throughput while
+            // 'live' — whether the encoder stalled mid-stream or never delivered
+            // a first frame — becomes an unexpected stop, so the UI recovers
+            // instead of sitting on a frozen REC screen until Mux disconnects.
+            if (livePublishStore$.status.peek() !== 'live') {
+              detector.idle()
+              return
+            }
+
+            // Android's TrafficStats measurement is app-wide: a concurrent
+            // queue upload (record → upload → record again) reads as stream
+            // throughput and would both mask a frozen pipeline and wrongly mark
+            // everHadThroughput. Treat those samples as unmeasurable — the
+            // duration heuristic and stop-time Mux truth still cover recovery.
+            const uploadActive =
+              Platform.OS === 'android' &&
+              uploadQueueStore$.tasks
+                .peek()
+                .some((t) => t.status === 'uploading' || t.status === 'processing')
+
+            const statsSupported = stats.statsSupported === 1 && !uploadActive
+
+            const verdict = detector.sample({
+              bitrateBps: stats.bitrateBps,
+              statsSupported,
+            })
+            if (verdict.measured) {
+              livePublishActions.noteThroughputSample(verdict.sawThroughput)
+            }
+            if (verdict.stalled) {
+              telemetry.error('live:stall', 'Zero throughput while live — treating as stalled', {
+                sessionId: livePublishStore$.sessionId.peek(),
+                recordId: livePublishStore$.recordId.peek(),
+                samples: verdict.samples,
+                neverStarted: verdict.neverStarted,
+              })
+              livePublishActions.setStatus('stream_stopped_unexpectedly')
+              return
+            }
+
+            // Publisher ABR (OBS Dynamic Bitrate pattern): adapt from measured
+            // upload vs encoder target. Transport type is never consulted.
+            if (!networkAbrRef.current) {
+              networkAbrRef.current = createNetworkBitrateController()
+            }
+            const abrDecision = networkAbrRef.current.sample({
+              bitrateBps: stats.bitrateBps,
+              statsSupported,
+              targetVideoBitrateBps:
+                lastConfiguredQualityRef.current?.configuredVideoBitrate ??
+                lastRequestedQualityRef.current.bitrate,
+              recoveryCeilingBps: thermalCeilingRef.current.bitrate,
+            })
+            if (abrDecision.action !== 'hold') {
+              networkBitrateCapRef.current = abrDecision.bitrate
+              telemetry.info('live:network_abr', 'Network adaptive bitrate tier changed', {
+                action: abrDecision.action,
+                tier: abrDecision.tier,
+                fromTier: abrDecision.fromTier,
+                bitrate: abrDecision.bitrate,
+                achievedBps: abrDecision.achievedBps,
+                expectedBps: abrDecision.expectedBps,
+                sessionId: livePublishStore$.sessionId.peek(),
+                recordId: livePublishStore$.recordId.peek(),
+              })
+              void applyComposedVideoQuality(`network_${abrDecision.action}`)
+            } else {
+              const desiredBitrate = composeLiveVideoBitrate(
+                networkBitrateCapRef.current,
+                thermalCeilingRef.current.bitrate,
+              )
+              const lastRequested = lastRequestedQualityRef.current
+              if (
+                lastRequested.bitrate !== desiredBitrate ||
+                lastRequested.fps !== thermalCeilingRef.current.fps
+              ) {
+                // A failed native update remains pending and is retried on the
+                // next stats tick even if the ABR tier itself did not change.
+                void applyComposedVideoQuality('quality_reconcile')
+              }
+            }
           })
-        })
-    }, STATS_SAMPLE_INTERVAL_MS)
-  }, [applyComposedVideoQuality, options.publisher, resetNetworkAbr])
+          .catch((error) => {
+            telemetry.warn('live:stats', 'Failed to sample live publisher stats', {
+              error: String(error),
+            })
+          })
+      }, STATS_SAMPLE_INTERVAL_MS)
+    },
+    [applyComposedVideoQuality, options.publisher, resetNetworkAbr],
+  )
 
   /**
    * Start the native camera preview only. No live stream is provisioned and
@@ -736,6 +806,105 @@ export function useLivePublisher(options: {
       }
     },
     [options.publisher, startStatsSampling],
+  )
+
+  /**
+   * Mux's reconnect window for the currently provisioned session (0 when no
+   * session is owned, or when the server has reconnect disabled).
+   */
+  const getReconnectWindowSeconds = useCallback(() => {
+    const ingest = ingestRef.current
+    if (!ingest || ingest.sessionId !== livePublishStore$.sessionId.peek()) {
+      return 0
+    }
+    return ingest.reconnectWindowSeconds ?? 0
+  }, [])
+
+  /**
+   * Re-open the RTMP connection for the SAME provisioned session after a
+   * transport drop. Native start() rebuilds the publish pipeline against the
+   * unchanged stream key, so Mux resumes the same asset — valid only while
+   * the reconnect window is open. Throws on a failed attempt; the caller owns
+   * retry pacing and the give-up fallback.
+   */
+  const reconnect = useCallback(
+    async (args: { initialCamera?: 'front' | 'back' } = {}) => {
+      const ingest = ingestRef.current
+      const sessionId = livePublishStore$.sessionId.peek()
+      if (!ingest || ingest.sessionId !== sessionId) {
+        throw new Error('No provisioned live stream to reconnect')
+      }
+
+      // Native start() can resolve long after the loop that issued it moved
+      // on (timed-out attempt) or after the user tapped Stop. The generation
+      // token and the post-resolve re-checks below make sure only the attempt
+      // that still owns the session does success bookkeeping — anything else
+      // is a zombie connection to tear down or ignore.
+      const generation = ++reconnectGenerationRef.current
+      // The device is just as hot after the drop as before it: preserve the
+      // thermal ceiling across startStatsSampling's ABR reset, because the
+      // screen's applied-level bookkeeping will not re-fire on an unchanged
+      // thermal reading.
+      const thermalCeilingBeforeDrop = thermalCeilingRef.current
+
+      const attemptStartedAt = Date.now()
+      await options.publisher.start({
+        rtmpsUrl: ingest.rtmpsUrl,
+        streamKey: ingest.streamKey,
+        fps: LIVE_DEFAULT_VIDEO_FPS,
+        videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
+        audioBitrate: 128_000,
+        initialCamera: args.initialCamera ?? 'front',
+      })
+
+      if (reconnectGenerationRef.current !== generation) {
+        // A newer attempt superseded this one while native start was in
+        // flight; its own start() already replaced this session natively.
+        return
+      }
+      // The native 'live' event is emitted inside start() and reaches the JS
+      // status listener BEFORE this await continuation runs, so on the happy
+      // path the listener has usually ALREADY advanced the store from
+      // 'reconnecting' to 'live'. With the generation check above proving no
+      // newer attempt exists, 'live' here can only mean THIS attempt
+      // succeeded — it must be treated as success, never as staleness
+      // (misreading it tears down the connection we just established).
+      const statusAfterStart = livePublishStore$.status.peek()
+      const attemptSucceeded = statusAfterStart === 'reconnecting' || statusAfterStart === 'live'
+      if (!attemptSucceeded || livePublishStore$.sessionId.peek() !== sessionId) {
+        // Stop, cancel, or give-up won the race — the store owns the terminal
+        // state and this late connection is a zombie. Close it.
+        telemetry.warn('live:reconnect_stale', 'Reconnect completed after the session moved on', {
+          sessionId,
+          statusNow: statusAfterStart,
+        })
+        void options.publisher.stop().catch(() => {})
+        return
+      }
+
+      // Native start() reset the encoder to the default ladder top; the ABR
+      // refs reset alongside so JS and native agree (resetNetworkAbr inside).
+      // Throughput history survives: this is still the same recording.
+      startStatsSampling({ preserveThroughputHistory: true })
+      thermalCeilingRef.current = thermalCeilingBeforeDrop
+      if (
+        thermalCeilingBeforeDrop.bitrate < LIVE_DEFAULT_VIDEO_BITRATE ||
+        thermalCeilingBeforeDrop.fps < LIVE_DEFAULT_VIDEO_FPS
+      ) {
+        void applyComposedVideoQuality('reconnect_thermal_restore')
+      }
+      telemetry.info('live:reconnect_success', 'Live publisher reconnected after drop', {
+        sessionId: livePublishStore$.sessionId.peek(),
+        recordId: livePublishStore$.recordId.peek(),
+        reconnectMs: Date.now() - attemptStartedAt,
+      })
+      telemetry.setCrashBreadcrumb('live:recording', {
+        sessionId: livePublishStore$.sessionId.peek(),
+        recordId: livePublishStore$.recordId.peek(),
+        status: livePublishStore$.status.peek(),
+      })
+    },
+    [options.publisher, startStatsSampling, applyComposedVideoQuality],
   )
 
   const start = useCallback(
@@ -1040,6 +1209,8 @@ export function useLivePublisher(options: {
     preview,
     provision,
     connect,
+    reconnect,
+    getReconnectWindowSeconds,
     start,
     stop,
     cancel,

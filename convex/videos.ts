@@ -121,14 +121,15 @@ const DEFAULT_MUX_UPLOAD_TIMEOUT_SECONDS = 60 * 60
 const MUX_READY_STATUSES = new Set(['ready'])
 const MUX_FAILED_STATUSES = new Set(['errored', 'cancelled', 'timed_out'])
 const MUX_LIVE_RTMPS_ENDPOINT = 'rtmps://global-live.mux.com:443/app'
-// Default 0: our native publishers do not auto-reconnect a dropped RTMP
-// session, so a reconnect window never resumed a recording — it only gave Mux a
-// gap to splice its "connection interrupted" slate into the recorded asset
-// (e.g. after an ungraceful disconnect or a client crash on stop). With a 0s
-// window Mux finalizes the asset at the last frame it received, which freezes on
-// that frame instead of ever showing the slate. Overridable via
-// MUX_LIVE_RECONNECT_WINDOW_SECONDS if real reconnect support is added later.
-const DEFAULT_MUX_LIVE_RECONNECT_WINDOW_SECONDS = 0
+// The client now reconnects a dropped RTMP session in place (network switch
+// mid-recording re-opens the socket against the same stream key), so Mux must
+// hold the stream open long enough for that to land. 60s covers a WiFi ↔
+// cellular handoff with margin; the client budgets its retry loop from the
+// value returned by createLiveStream and gives up before the window closes.
+// Graceful stops are unaffected: endLiveStream signals /complete when the
+// window is nonzero, so Mux finalizes immediately instead of waiting it out.
+// Overridable via MUX_LIVE_RECONNECT_WINDOW_SECONDS (0 disables reconnect).
+const DEFAULT_MUX_LIVE_RECONNECT_WINDOW_SECONDS = 60
 const MUX_LIVE_RECONNECT_WINDOW_MAX_SECONDS = 30 * 60
 // Grace period past the tier recording limit before Mux force-terminates the
 // stream. The client auto-stops at the tier limit; this is the server-side
@@ -2049,6 +2050,9 @@ export const createLiveStream = action({
           ingest: {
             rtmpsUrl: MUX_LIVE_RTMPS_ENDPOINT,
             streamKey,
+            // How long Mux keeps this stream resumable after a socket drop.
+            // The client's reconnect loop budgets its retries from this.
+            reconnectWindowSeconds: reconnectWindow,
           },
           playbackUrl:
             playbackPolicy === 'public' && playbackId ? getMuxPlaybackUrl(playbackId) : undefined,
@@ -2177,6 +2181,27 @@ export const endLiveStream = action({
           liveSession.status === 'ended' ||
           liveSession.status === 'errored'
         ) {
+          // With a reconnect window, 'ending' usually means the disconnected
+          // webhook landed while nobody signalled /complete — e.g. the
+          // reconnect loop gave up ~50s after a drop and its finalize reaches
+          // this early return. Without the signal Mux waits out the remaining
+          // window before finalizing the asset and the record lingers 'live'
+          // to viewers. /complete is idempotent, so fire it best-effort and
+          // schedule the fast VOD poll before answering from persisted state.
+          if (liveSession.status === 'ending' && getMuxConfig().reconnectWindowSeconds > 0) {
+            try {
+              await muxRequest(`/live-streams/${liveSession.muxLiveStreamId}/complete`, {
+                method: 'PUT',
+              })
+            } catch (error) {
+              console.warn('Failed to signal Mux complete for ending session:', error)
+            }
+            await ctx.scheduler.runAfter(0, internal.videos.pollRecordedVodAsset, {
+              userId,
+              liveSessionId: args.liveSessionId,
+            })
+          }
+
           await ctx.runMutation(internal.serverTelemetry.recordServerEvent, {
             level: 'breadcrumb',
             event: 'live:end_already_finalized',
