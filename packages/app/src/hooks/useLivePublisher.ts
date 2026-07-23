@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef } from 'react'
 import { AppState, Platform } from 'react-native'
 import { telemetry } from '../services/telemetry'
 import { livePublishActions, livePublishStore$ } from '../store/livePublish.store'
-import { isNativePublisherStatus } from '../store/livePublisherContract'
+import { isNativePublisherStatus, type NativePublisherError } from '../store/livePublisherContract'
 import { uploadQueueStore$ } from '../store/uploadQueue.store'
-import { interruptionReasonLabel, parseInterruptionReason } from '../utils/captureInterruption'
+import { interruptionReasonLabel } from '../utils/captureInterruption'
 import {
   composeLiveVideoBitrate,
   createNetworkBitrateController,
@@ -93,10 +93,7 @@ export interface LivePublisherNativeModule {
   /** Resolves after native configuration completes; rejects when it cannot be updated. */
   setVideoQuality(videoBitrate: number, fps: number): Promise<LivePublisherVideoQualityResult>
   addListener(event: 'statusChange', cb: (status: string) => void): LivePublisherSubscription
-  addListener(
-    event: 'error',
-    cb: (error: { code: string; message: string }) => void,
-  ): LivePublisherSubscription
+  addListener(event: 'error', cb: (error: NativePublisherError) => void): LivePublisherSubscription
 }
 
 export interface CreateLiveStreamResult {
@@ -157,9 +154,13 @@ export function useLivePublisher(options: {
   // Monotonic id per reconnect() call so a late-resolving native start from a
   // superseded or abandoned attempt can never run success bookkeeping.
   const reconnectGenerationRef = useRef(0)
-  // When a publishing-time capture interruption was last observed, so the
-  // paired interruptionEnded event can report how long it lasted.
-  const captureInterruptionStartedAtRef = useRef<number | null>(null)
+  // Preserve the interrupted recording's identity until the paired native end
+  // event arrives. That event can outlive publisher teardown and must not be
+  // attributed to a newer store session.
+  const captureInterruptionContextRef = useRef<{
+    sessionId: string | null
+    recordId: string | null
+  } | null>(null)
   // Network ABR ceiling (OBS-style). Thermal mitigation registers its own
   // ceiling through setThermalQuality; encoder bitrate is always min(network,
   // thermal).
@@ -382,24 +383,33 @@ export function useLivePublisher(options: {
       // Telemetry-split from the generic crash path so triage can count these
       // distinctly and see the reason. Still finalizes (falls through to the
       // fail path below) — Phase 1 keeps today's save-the-partial behavior —
-      // but stamps interruptionReason so the record screen can explain the
-      // stop, and records the start time so interruptionEnded can measure it.
+      // but stamps captureInterruption so the record screen can explain the
+      // stop. Native records monotonic timing for the paired end event.
       if (error.code === 'capture_interrupted') {
         const status = livePublishStore$.status.peek()
-        if (status === 'idle' || status === 'ended' || status === 'stopping') {
+        if (
+          status === 'idle' ||
+          status === 'ended' ||
+          status === 'stopping' ||
+          status === 'errored' ||
+          status === 'endpoint_closed' ||
+          status === 'stream_stopped_unexpectedly'
+        ) {
           return
         }
-        const reason = parseInterruptionReason(error.message)
-        captureInterruptionStartedAtRef.current = Date.now()
-        livePublishStore$.interruptionReason.set(reason)
+        const reason = typeof error.reason === 'number' ? error.reason : null
+        const sessionId = livePublishStore$.sessionId.peek()
+        const recordId = livePublishStore$.recordId.peek()
+        captureInterruptionContextRef.current = { sessionId, recordId }
+        livePublishStore$.captureInterruption.set({ reason })
         const startedAt = livePublishStore$.startedAt.peek()
         telemetry.warn('live:capture_interrupted', 'Camera capture interrupted during recording', {
           reason,
           reasonLabel: interruptionReasonLabel(reason),
           durationMs: startedAt ? Date.now() - startedAt : undefined,
           everHadThroughput: livePublishStore$.everHadThroughput.peek(),
-          sessionId: livePublishStore$.sessionId.peek(),
-          recordId: livePublishStore$.recordId.peek(),
+          sessionId,
+          recordId,
         })
         livePublishActions.fail(new Error(error.message))
         return
@@ -411,13 +421,13 @@ export function useLivePublisher(options: {
       // resume-in-place is worth building. Handled before the teardown
       // suppression below because by now the status is usually 'errored'.
       if (error.code === 'capture_interruption_ended') {
-        const startedAt = captureInterruptionStartedAtRef.current
-        captureInterruptionStartedAtRef.current = null
+        const context = captureInterruptionContextRef.current
+        captureInterruptionContextRef.current = null
         telemetry.info('live:capture_interruption_ended', 'Camera capture interruption ended', {
-          reason: parseInterruptionReason(error.message),
-          elapsedMs: startedAt != null ? Date.now() - startedAt : undefined,
-          sessionId: livePublishStore$.sessionId.peek(),
-          recordId: livePublishStore$.recordId.peek(),
+          reason: typeof error.reason === 'number' ? error.reason : null,
+          elapsedMs: typeof error.elapsedMs === 'number' ? error.elapsedMs : undefined,
+          sessionId: context?.sessionId,
+          recordId: context?.recordId,
         })
         return
       }

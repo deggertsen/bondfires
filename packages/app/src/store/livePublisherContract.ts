@@ -62,4 +62,8 @@ export interface NativePublisherError {
   /** One of NATIVE_PUBLISHER_ERROR_CODES, or a new code not yet in the contract. */
   code: string
   message: string
+  /** iOS AVCaptureSession interruption reason, when available. */
+  reason?: number
+  /** Monotonic interruption duration reported by native iOS. */
+  elapsedMs?: number
 }

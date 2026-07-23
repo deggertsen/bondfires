@@ -1,9 +1,8 @@
 /**
  * iOS AVCaptureSession interruption reasons (the raw values Apple emits in
- * AVCaptureSessionInterruptionReasonKey). The native module forwards these in
- * the `capture_interrupted` / `capture_interruption_ended` event messages as
- * "(reason: N)"; this module keeps the parsing and human labels in one tested
- * place instead of scattering magic numbers through the hook and the UI.
+ * AVCaptureSessionInterruptionReasonKey). The native module forwards the raw
+ * value as structured event data; this module keeps the human labels in one
+ * tested place instead of scattering magic numbers through the UI.
  *
  * @see https://developer.apple.com/documentation/avfoundation/avcapturesession/interruptionreason
  */
@@ -15,16 +14,8 @@ export const CAPTURE_INTERRUPTION_REASONS = {
   videoDeviceNotAvailableDueToSystemPressure: 5,
 } as const
 
-/** Extract the integer reason from a native interruption event message. */
-export function parseInterruptionReason(message: string | undefined): number | null {
-  if (!message) return null
-  const match = /reason:\s*(\d+)/i.exec(message)
-  return match ? Number.parseInt(match[1], 10) : null
-}
-
 /**
- * User-facing explanation of why a recording was interrupted. Deliberately
- * plain and reassuring — every path pairs it with "Your video was saved."
+ * User-facing explanation of why a recording was interrupted.
  */
 export function interruptionReasonLabel(reason: number | null): string {
   switch (reason) {

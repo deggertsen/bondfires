@@ -111,7 +111,8 @@ chosen at creation time).
 
 ### Error events (`error`)
 
-`{ code, message }`. Known codes are listed in
+`{ code, message, reason?, elapsedMs? }`. The optional numeric fields carry
+structured iOS capture-interruption context. Known codes are listed in
 `NATIVE_PUBLISHER_ERROR_CODES`; emitting a new code works (JS treats the
 event itself as the signal) but add it to the contract for telemetry
 greppability.
