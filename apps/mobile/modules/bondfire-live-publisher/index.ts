@@ -16,6 +16,17 @@ export interface LivePublisherStartOptions {
   videoBitrate?: number
   audioBitrate?: number
   initialCamera?: 'front' | 'back'
+  /**
+   * Non-empty arms the native local MP4 backup recorder, writing the session
+   * to <documents>/recordings/<localBackupFileName> alongside the RTMP
+   * stream. Empty/absent disables the backup (the default).
+   */
+  localBackupFileName?: string
+}
+
+export interface LivePublisherStartResult {
+  /** True only when native confirmed that the local file sink is recording. */
+  localBackupArmed: boolean
 }
 
 export interface LivePublisherPreviewOptions {
@@ -62,13 +73,21 @@ type Status =
   | 'stream_stopped_unexpectedly'
   | 'endpoint_closed'
 type StatusEvent = Status | { status?: Status }
+type ErrorEvent = {
+  code: string
+  message: string
+  /** iOS AVCaptureSession interruption reason, when available. */
+  reason?: number
+  /** Monotonic interruption duration reported by native iOS. */
+  elapsedMs?: number
+}
 type EventSubscription = { remove: () => void }
 
 interface NativeLivePublisher {
   isAvailable?: () => Promise<boolean>
   getCameraCount?: () => Promise<number>
   startPreview?: (options: LivePublisherPreviewOptions) => Promise<void>
-  start(options: LivePublisherStartOptions): Promise<void>
+  start(options: LivePublisherStartOptions): Promise<LivePublisherStartResult>
   stop(): Promise<void>
   swapCamera(): Promise<void>
   setMuted(muted: boolean): Promise<void>
@@ -106,12 +125,12 @@ export const LivePublisherView = loadView()
 
 type AddListener = {
   (event: 'statusChange', cb: (status: Status) => void): EventSubscription
-  (event: 'error', cb: (error: { code: string; message: string }) => void): EventSubscription
+  (event: 'error', cb: (error: ErrorEvent) => void): EventSubscription
 }
 
 const addListener: AddListener = (
   event: 'statusChange' | 'error',
-  cb: ((status: Status) => void) | ((error: { code: string; message: string }) => void),
+  cb: ((status: Status) => void) | ((error: ErrorEvent) => void),
 ): EventSubscription => {
   if (!emitter) {
     return { remove: () => {} }

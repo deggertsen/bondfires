@@ -6,6 +6,7 @@ import {
   getReconnectAttemptDelayMs,
   getReconnectAttemptTimeoutMs,
   getUserFacingErrorMessage,
+  interruptionReasonLabel,
   LIVE_DEFAULT_VIDEO_BITRATE,
   LIVE_DEFAULT_VIDEO_FPS,
   type LivePublishStatus,
@@ -765,6 +766,7 @@ export function LiveRecordScreen({
       recordingStore$.videoUri.set('live')
       state$.showInviteSheet.set(false)
 
+      const captureInterruption = livePublishStore$.captureInterruption.peek()
       if (result.backendNotified === false) {
         // Stopped while offline / the backend was unreachable, so we couldn't
         // confirm the finalize from here. Mux still finalizes the recording it
@@ -772,7 +774,18 @@ export function LiveRecordScreen({
         // creator doesn't think the recording vanished.
         Alert.alert(
           'Saving your Bondfire',
-          "You're offline, so this didn't finalize right away. Your recording will finish processing once you're back online.",
+          captureInterruption
+            ? `It stopped because ${interruptionReasonLabel(captureInterruption.reason)}. You're offline, so it didn't finalize right away. Your recording will finish processing once you're back online.`
+            : "You're offline, so this didn't finalize right away. Your recording will finish processing once you're back online.",
+        )
+      } else if (captureInterruption) {
+        // Only promise the footage was saved after the backend confirms Mux
+        // received media. This avoids a reassuring alert followed by the
+        // contradictory "Recording didn't start" path above.
+        Alert.alert(
+          'Recording stopped',
+          `Your video was saved. It stopped because ${interruptionReasonLabel(captureInterruption.reason)}.`,
+          [{ text: 'OK', style: 'default' }],
         )
       }
     } catch (error) {
@@ -1306,6 +1319,7 @@ export function LiveRecordScreen({
           },
         )
       }
+
       void stopLiveRecording()
     },
     [cancelLiveRecording, stopLiveRecording],

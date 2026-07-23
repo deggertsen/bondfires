@@ -3,6 +3,7 @@ import {
   EXTRA_CAMP_ADD_ON_DEFINITION,
   subscriptionStore$,
   TIER_DEFINITIONS,
+  useLocalBackupSweep,
   useRecordingWatchdog,
   useSubscription,
 } from '@bondfires/app'
@@ -117,6 +118,9 @@ function GlobalPaywall() {
 
 export default function MainLayout() {
   useRecordingWatchdog()
+  // One-shot launch sweep for orphaned local backup recordings (gated on the
+  // recording resource lock, same as upload resume).
+  useLocalBackupSweep()
 
   return (
     <>

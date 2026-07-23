@@ -25,6 +25,8 @@ export interface LivePublishState {
    * zero-byte partial that Mux will error out anyway.
    */
   everHadThroughput: boolean | null
+  /** Details when an iOS capture interruption stopped this recording. */
+  captureInterruption: { reason: number | null } | null
 }
 
 const defaultLivePublishState: LivePublishState = {
@@ -39,6 +41,7 @@ const defaultLivePublishState: LivePublishState = {
   networkQuality: 'unknown',
   errorMessage: null,
   everHadThroughput: null,
+  captureInterruption: null,
 }
 
 export const livePublishStore$ = observable<LivePublishState>(defaultLivePublishState)
