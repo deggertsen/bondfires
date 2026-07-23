@@ -1,4 +1,5 @@
 export * from './authRedirect'
+export * from './captureInterruption'
 export * from './errorUtils'
 export * from './liveBitratePolicy'
 export * from './liveReconnectPolicy'

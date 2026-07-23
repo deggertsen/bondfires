@@ -7,8 +7,9 @@ import {
 } from '../services/localBackupSweep'
 import { telemetry } from '../services/telemetry'
 import { livePublishActions, livePublishStore$ } from '../store/livePublish.store'
-import { isNativePublisherStatus } from '../store/livePublisherContract'
+import { isNativePublisherStatus, type NativePublisherError } from '../store/livePublisherContract'
 import { uploadQueueStore$ } from '../store/uploadQueue.store'
+import { interruptionReasonLabel } from '../utils/captureInterruption'
 import {
   composeLiveVideoBitrate,
   createNetworkBitrateController,
@@ -109,10 +110,7 @@ export interface LivePublisherNativeModule {
   /** Resolves after native configuration completes; rejects when it cannot be updated. */
   setVideoQuality(videoBitrate: number, fps: number): Promise<LivePublisherVideoQualityResult>
   addListener(event: 'statusChange', cb: (status: string) => void): LivePublisherSubscription
-  addListener(
-    event: 'error',
-    cb: (error: { code: string; message: string }) => void,
-  ): LivePublisherSubscription
+  addListener(event: 'error', cb: (error: NativePublisherError) => void): LivePublisherSubscription
 }
 
 export interface CreateLiveStreamResult {
@@ -179,6 +177,13 @@ export function useLivePublisher(options: {
   // a stale instance can never touch another session's backup — orphaned
   // files are owned by the launch sweep (localBackupSweep.ts).
   const localBackupRef = useRef<{ sessionId: string; fileName: string } | null>(null)
+  // Preserve the interrupted recording's identity until the paired native end
+  // event arrives. That event can outlive publisher teardown and must not be
+  // attributed to a newer store session.
+  const captureInterruptionContextRef = useRef<{
+    sessionId: string | null
+    recordId: string | null
+  } | null>(null)
   // Network ABR ceiling (OBS-style). Thermal mitigation registers its own
   // ceiling through setThermalQuality; encoder bitrate is always min(network,
   // thermal).
@@ -450,6 +455,59 @@ export function useLivePublisher(options: {
           sessionId: livePublishStore$.sessionId.peek(),
           recordId: livePublishStore$.recordId.peek(),
           status: livePublishStore$.status.peek(),
+        })
+        return
+      }
+
+      // Capture interruption (a call, Siri, another app taking the camera/mic).
+      // Telemetry-split from the generic crash path so triage can count these
+      // distinctly and see the reason. Still finalizes (falls through to the
+      // fail path below) — Phase 1 keeps today's save-the-partial behavior —
+      // but stamps captureInterruption so the record screen can explain the
+      // stop. Native records monotonic timing for the paired end event.
+      if (error.code === 'capture_interrupted') {
+        const status = livePublishStore$.status.peek()
+        if (
+          status === 'idle' ||
+          status === 'ended' ||
+          status === 'stopping' ||
+          status === 'errored' ||
+          status === 'endpoint_closed' ||
+          status === 'stream_stopped_unexpectedly'
+        ) {
+          return
+        }
+        const reason = typeof error.reason === 'number' ? error.reason : null
+        const sessionId = livePublishStore$.sessionId.peek()
+        const recordId = livePublishStore$.recordId.peek()
+        captureInterruptionContextRef.current = { sessionId, recordId }
+        livePublishStore$.captureInterruption.set({ reason })
+        const startedAt = livePublishStore$.startedAt.peek()
+        telemetry.warn('live:capture_interrupted', 'Camera capture interrupted during recording', {
+          reason,
+          reasonLabel: interruptionReasonLabel(reason),
+          durationMs: startedAt ? Date.now() - startedAt : undefined,
+          everHadThroughput: livePublishStore$.everHadThroughput.peek(),
+          sessionId,
+          recordId,
+        })
+        livePublishActions.fail(new Error(error.message))
+        return
+      }
+
+      // interruptionEnded — telemetry only, never fails. Its timing tells us
+      // whether the interruption that stopped a recording was transient
+      // (Siri/notification) or long (a call), which decides whether
+      // resume-in-place is worth building. Handled before the teardown
+      // suppression below because by now the status is usually 'errored'.
+      if (error.code === 'capture_interruption_ended') {
+        const context = captureInterruptionContextRef.current
+        captureInterruptionContextRef.current = null
+        telemetry.info('live:capture_interruption_ended', 'Camera capture interruption ended', {
+          reason: typeof error.reason === 'number' ? error.reason : null,
+          elapsedMs: typeof error.elapsedMs === 'number' ? error.elapsedMs : undefined,
+          sessionId: context?.sessionId,
+          recordId: context?.recordId,
         })
         return
       }
