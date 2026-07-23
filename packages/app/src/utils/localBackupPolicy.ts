@@ -81,7 +81,7 @@ export function parseLocalBackupFileName(fileName: string): LocalBackupFileIdent
   const partMatch = /^(.+)\.part(\d+)\.mp4$/.exec(fileName)
   if (partMatch) {
     const part = Number(partMatch[2])
-    if (part < 1) {
+    if (!Number.isSafeInteger(part) || part < 1) {
       return null
     }
     return {

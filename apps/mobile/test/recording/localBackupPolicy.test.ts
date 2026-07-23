@@ -79,6 +79,7 @@ describe('parseLocalBackupFileName', () => {
   it('rejects unrelated or invalid segment files', () => {
     expect(parseLocalBackupFileName('notes.txt')).toBeNull()
     expect(parseLocalBackupFileName('session_123.part0.mp4')).toBeNull()
+    expect(parseLocalBackupFileName(`session_123.part${'9'.repeat(400)}.mp4`)).toBeNull()
     expect(parseLocalBackupFileName('.mp4')).toBeNull()
   })
 })
