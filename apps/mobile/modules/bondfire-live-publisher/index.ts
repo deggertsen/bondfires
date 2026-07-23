@@ -62,6 +62,14 @@ type Status =
   | 'stream_stopped_unexpectedly'
   | 'endpoint_closed'
 type StatusEvent = Status | { status?: Status }
+type ErrorEvent = {
+  code: string
+  message: string
+  /** iOS AVCaptureSession interruption reason, when available. */
+  reason?: number
+  /** Monotonic interruption duration reported by native iOS. */
+  elapsedMs?: number
+}
 type EventSubscription = { remove: () => void }
 
 interface NativeLivePublisher {
@@ -106,12 +114,12 @@ export const LivePublisherView = loadView()
 
 type AddListener = {
   (event: 'statusChange', cb: (status: Status) => void): EventSubscription
-  (event: 'error', cb: (error: { code: string; message: string }) => void): EventSubscription
+  (event: 'error', cb: (error: ErrorEvent) => void): EventSubscription
 }
 
 const addListener: AddListener = (
   event: 'statusChange' | 'error',
-  cb: ((status: Status) => void) | ((error: { code: string; message: string }) => void),
+  cb: ((status: Status) => void) | ((error: ErrorEvent) => void),
 ): EventSubscription => {
   if (!emitter) {
     return { remove: () => {} }

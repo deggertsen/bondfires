@@ -38,11 +38,13 @@ public class BondfireLivePublisherModule: Module {
     OnCreate {
       BondfireLivePublisherModule.currentInstance = self
       self.installMemoryWarningObserver()
+      self.installAudioInterruptionObserver()
     }
 
     OnDestroy {
       BondfireLivePublisherModule.currentInstance = nil
       self.uninstallMemoryWarningObserver()
+      self.uninstallAudioInterruptionObserver()
       self.uninstallThermalStateObserver()
       let publisher = self.publisher
       Task { @MainActor in
@@ -152,7 +154,9 @@ public class BondfireLivePublisherModule: Module {
 
   fileprivate var publisher: LivePublisher?
   private var memoryWarningObserver: NSObjectProtocol?
+  private var audioInterruptionObserver: NSObjectProtocol?
   private var thermalStateObserver: NSObjectProtocol?
+  private var pendingCaptureInterruption: (reason: Int?, startedAt: TimeInterval)?
 
   /// Listen for iOS memory pressure notifications and forward them to JS as
   /// telemetry-only native error events.
@@ -174,6 +178,58 @@ public class BondfireLivePublisherModule: Module {
     guard let observer = memoryWarningObserver else { return }
     NotificationCenter.default.removeObserver(observer)
     memoryWarningObserver = nil
+  }
+
+  /// Keep listening after the live publisher is torn down so an audio capture
+  /// interruption (a call, Siri, another app taking the mic) can still report
+  /// when it ended. The capture-session observer belongs to LivePublisher and
+  /// is intentionally removed during stop(), but the app-level audio session
+  /// survives that teardown.
+  private func installAudioInterruptionObserver() {
+    guard audioInterruptionObserver == nil else { return }
+    audioInterruptionObserver = NotificationCenter.default.addObserver(
+      forName: AVAudioSession.interruptionNotification,
+      object: AVAudioSession.sharedInstance(),
+      queue: .main
+    ) { [weak self] notification in
+      guard let self,
+            let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+            AVAudioSession.InterruptionType(rawValue: rawType) == .ended,
+            self.pendingCaptureInterruption?.reason == 2 else {
+        return
+      }
+      self.finishCaptureInterruption()
+    }
+  }
+
+  private func uninstallAudioInterruptionObserver() {
+    guard let observer = audioInterruptionObserver else { return }
+    NotificationCenter.default.removeObserver(observer)
+    audioInterruptionObserver = nil
+    pendingCaptureInterruption = nil
+  }
+
+  private func beginCaptureInterruption(reason: Int?) {
+    pendingCaptureInterruption = (
+      reason: reason,
+      startedAt: ProcessInfo.processInfo.systemUptime
+    )
+  }
+
+  private func finishCaptureInterruption() {
+    guard let interruption = pendingCaptureInterruption else { return }
+    pendingCaptureInterruption = nil
+    var payload: [String: Any] = [
+      "code": "capture_interruption_ended",
+      "message": "Camera capture interruption ended",
+      "elapsedMs": Int(
+        max(0, ProcessInfo.processInfo.systemUptime - interruption.startedAt) * 1_000
+      ),
+    ]
+    if let reason = interruption.reason {
+      payload["reason"] = reason
+    }
+    sendEvent("error", payload)
   }
 
   /// Native thermal auto-stop safety net. JS handles mitigation first (reducing
@@ -221,6 +277,18 @@ public class BondfireLivePublisherModule: Module {
           "code": code,
           "message": message,
         ])
+      case .captureInterrupted(let reason, let message):
+        self.beginCaptureInterruption(reason: reason)
+        var payload: [String: Any] = [
+          "code": "capture_interrupted",
+          "message": message,
+        ]
+        if let reason {
+          payload["reason"] = reason
+        }
+        self.sendEvent("error", payload)
+      case .captureInterruptionEnded:
+        self.finishCaptureInterruption()
       }
     })
     self.publisher = publisher
@@ -279,6 +347,8 @@ enum PublisherStatus: String {
 enum LivePublisherEvent {
   case statusChange(String)
   case error(String, String)
+  case captureInterrupted(Int?, String)
+  case captureInterruptionEnded
 }
 
 // MARK: - Live Publisher
@@ -310,6 +380,7 @@ final class LivePublisher {
   private var lastActiveInterfaceTypes: [NWInterface.InterfaceType]?
   private var networkFailureEmitted = false
   private var captureObservers: [NSObjectProtocol] = []
+  private var publishingCaptureInterruptionPending = false
 
   /// MTHKView registered as a mixer output — HaishinKit 2.x preview approach
   private lazy var previewView: MTHKView = {
@@ -576,10 +647,28 @@ final class LivePublisher {
         // when the interruption ends; only a publishing pipeline needs to
         // fail fast so the partial recording gets finalized.
         guard self.session != nil else { return }
-        self.emitError(
-          "capture_interrupted",
-          "Camera capture was interrupted (reason: \(reasonValue.map(String.init) ?? "unknown"))"
-        )
+        guard !self.publishingCaptureInterruptionPending else { return }
+        self.publishingCaptureInterruptionPending = true
+        self.eventHandler(.captureInterrupted(
+          reasonValue,
+          "Camera capture was interrupted"
+        ))
+      }
+    })
+
+    // This is the direct signal for camera/background/system-pressure
+    // interruptions that end before teardown. Audio interruptions also have
+    // an app-level AVAudioSession observer in the module so their end event is
+    // not lost when stop() removes these capture observers.
+    captureObservers.append(center.addObserver(
+      forName: AVCaptureSession.interruptionEndedNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor [weak self] in
+        guard let self, self.publishingCaptureInterruptionPending else { return }
+        self.publishingCaptureInterruptionPending = false
+        self.eventHandler(.captureInterruptionEnded)
       }
     })
 
@@ -605,6 +694,7 @@ final class LivePublisher {
       NotificationCenter.default.removeObserver(observer)
     }
     captureObservers = []
+    publishingCaptureInterruptionPending = false
   }
 
   private func resolveCameraVideoSize(
