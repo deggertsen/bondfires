@@ -65,3 +65,34 @@ export function shouldArmLocalBackup(args: {
 export function isBackupExpired(args: { modifiedAtMs: number; nowMs: number }): boolean {
   return args.nowMs - args.modifiedAtMs > LOCAL_BACKUP_RETENTION_MS
 }
+
+export interface LocalBackupFileIdentity {
+  liveSessionId: string
+  /** Null for the primary file; positive for Android reconnect segments. */
+  part: number | null
+}
+
+/**
+ * Parse the native backup naming contract:
+ * - <liveSessionId>.mp4
+ * - <liveSessionId>.partN.mp4 (Android reconnect segments)
+ */
+export function parseLocalBackupFileName(fileName: string): LocalBackupFileIdentity | null {
+  const partMatch = /^(.+)\.part(\d+)\.mp4$/.exec(fileName)
+  if (partMatch) {
+    const part = Number(partMatch[2])
+    if (part < 1) {
+      return null
+    }
+    return {
+      liveSessionId: partMatch[1],
+      part,
+    }
+  }
+
+  const primaryMatch = /^(.+)\.mp4$/.exec(fileName)
+  if (!primaryMatch) {
+    return null
+  }
+  return { liveSessionId: primaryMatch[1], part: null }
+}

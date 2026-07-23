@@ -4,7 +4,7 @@ import {
   getInfoAsync,
   readDirectoryAsync,
 } from 'expo-file-system/legacy'
-import { isBackupExpired } from '../utils/localBackupPolicy'
+import { isBackupExpired, parseLocalBackupFileName } from '../utils/localBackupPolicy'
 import { telemetry } from './telemetry'
 
 /**
@@ -12,11 +12,12 @@ import { telemetry } from './telemetry'
  * docs/plans/local-backup-recording.md).
  *
  * The native publisher writes a parallel MP4 backup of each live recording to
- * <documents>/recordings/<liveSessionId>.mp4. The happy path deletes it at
- * stop/cancel time; this sweep is the backstop for everything else (crashes,
- * kills, failed deletes): expired files are removed, files whose live asset
- * resolved to 'ready' are removed, and everything else is kept for Phase 2's
- * recovery upload.
+ * <documents>/recordings/<liveSessionId>.mp4. User cancellation deletes it
+ * immediately; successful recordings stay until this sweep confirms that the
+ * live asset is ready. The sweep also handles crashes, kills, and failed
+ * deletes: expired files are removed, files whose live asset resolved to
+ * 'ready' are removed, and everything else is kept for Phase 2's recovery
+ * upload.
  */
 
 /**
@@ -43,6 +44,71 @@ export function getLocalBackupDirectoryUri(): string | null {
 export function getLocalBackupFileUri(fileName: string): string | null {
   const directoryUri = getLocalBackupDirectoryUri()
   return directoryUri ? `${directoryUri}${fileName}` : null
+}
+
+async function getLocalBackupFileNamesForSession(liveSessionId: string): Promise<string[]> {
+  const directoryUri = getLocalBackupDirectoryUri()
+  if (!directoryUri) {
+    return []
+  }
+  const directoryInfo = await getInfoAsync(directoryUri)
+  if (!directoryInfo.exists || !directoryInfo.isDirectory) {
+    return []
+  }
+  const fileNames = await readDirectoryAsync(directoryUri)
+  return fileNames.filter(
+    (fileName) => parseLocalBackupFileName(fileName)?.liveSessionId === liveSessionId,
+  )
+}
+
+export interface LocalBackupSessionStats {
+  exists: boolean
+  fileCount: number
+  sizeBytes: number
+}
+
+/** Aggregate the primary backup and every Android reconnect segment. */
+export async function getLocalBackupSessionStats(
+  liveSessionId: string,
+): Promise<LocalBackupSessionStats> {
+  const directoryUri = getLocalBackupDirectoryUri()
+  if (!directoryUri) {
+    return { exists: false, fileCount: 0, sizeBytes: 0 }
+  }
+  const fileNames = await getLocalBackupFileNamesForSession(liveSessionId)
+  let fileCount = 0
+  let sizeBytes = 0
+  for (const fileName of fileNames) {
+    const info = await getInfoAsync(`${directoryUri}${fileName}`)
+    if (info.exists && !info.isDirectory) {
+      fileCount += 1
+      sizeBytes += info.size ?? 0
+    }
+  }
+  return { exists: fileCount > 0, fileCount, sizeBytes }
+}
+
+/** Delete the primary backup and every Android reconnect segment. */
+export async function deleteLocalBackupsForSession(liveSessionId: string): Promise<number> {
+  const directoryUri = getLocalBackupDirectoryUri()
+  if (!directoryUri) {
+    return 0
+  }
+  const fileNames = await getLocalBackupFileNamesForSession(liveSessionId)
+  let deletedCount = 0
+  let firstError: unknown
+  for (const fileName of fileNames) {
+    try {
+      await deleteAsync(`${directoryUri}${fileName}`, { idempotent: true })
+      deletedCount += 1
+    } catch (error) {
+      firstError ??= error
+    }
+  }
+  if (firstError) {
+    throw firstError
+  }
+  return deletedCount
 }
 
 export interface LocalBackupSweepOptions {
@@ -80,7 +146,8 @@ export async function sweepLocalBackups(options: LocalBackupSweepOptions): Promi
 
   for (const fileName of fileNames) {
     try {
-      if (!fileName.endsWith('.mp4')) {
+      const identity = parseLocalBackupFileName(fileName)
+      if (!identity) {
         continue
       }
       const fileUri = `${directoryUri}${fileName}`
@@ -88,9 +155,7 @@ export async function sweepLocalBackups(options: LocalBackupSweepOptions): Promi
       if (!info.exists || info.isDirectory) {
         continue
       }
-      // Android rolls a reconnect's pre-drop leg to <sessionId>.partN.mp4;
-      // strip the suffix so parts share their session's retention/ready fate.
-      const liveSessionId = fileName.slice(0, -'.mp4'.length).replace(/\.part\d+$/, '')
+      const { liveSessionId } = identity
       // expo-file-system reports modificationTime in seconds. A missing
       // timestamp must mean "keep" (treat as new), never "expired" — a 0
       // fallback would delete a file we merely failed to stat.

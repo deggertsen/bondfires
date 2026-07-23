@@ -24,6 +24,11 @@ export interface LivePublisherStartOptions {
   localBackupFileName?: string
 }
 
+export interface LivePublisherStartResult {
+  /** True only when native confirmed that the local file sink is recording. */
+  localBackupArmed: boolean
+}
+
 export interface LivePublisherPreviewOptions {
   fps?: number
   videoBitrate?: number
@@ -74,7 +79,7 @@ interface NativeLivePublisher {
   isAvailable?: () => Promise<boolean>
   getCameraCount?: () => Promise<number>
   startPreview?: (options: LivePublisherPreviewOptions) => Promise<void>
-  start(options: LivePublisherStartOptions): Promise<void>
+  start(options: LivePublisherStartOptions): Promise<LivePublisherStartResult>
   stop(): Promise<void>
   swapCamera(): Promise<void>
   setMuted(muted: boolean): Promise<void>

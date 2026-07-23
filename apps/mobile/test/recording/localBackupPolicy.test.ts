@@ -3,6 +3,7 @@ import {
   isBackupExpired,
   LOCAL_BACKUP_MIN_FREE_DISK_BYTES,
   LOCAL_BACKUP_RETENTION_MS,
+  parseLocalBackupFileName,
   shouldArmLocalBackup,
 } from '../../../../packages/app/src/utils/localBackupPolicy'
 
@@ -60,5 +61,24 @@ describe('isBackupExpired', () => {
     expect(
       isBackupExpired({ modifiedAtMs, nowMs: modifiedAtMs + LOCAL_BACKUP_RETENTION_MS + 1 }),
     ).toBe(true)
+  })
+})
+
+describe('parseLocalBackupFileName', () => {
+  it('parses primary and Android reconnect-segment files', () => {
+    expect(parseLocalBackupFileName('session_123.mp4')).toEqual({
+      liveSessionId: 'session_123',
+      part: null,
+    })
+    expect(parseLocalBackupFileName('session_123.part2.mp4')).toEqual({
+      liveSessionId: 'session_123',
+      part: 2,
+    })
+  })
+
+  it('rejects unrelated or invalid segment files', () => {
+    expect(parseLocalBackupFileName('notes.txt')).toBeNull()
+    expect(parseLocalBackupFileName('session_123.part0.mp4')).toBeNull()
+    expect(parseLocalBackupFileName('.mp4')).toBeNull()
   })
 })

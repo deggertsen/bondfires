@@ -90,8 +90,9 @@ public class BondfireLivePublisherModule: Module {
       let publisher = try await MainActor.run { try self.ensurePublisher() }
       await MainActor.run { BondfireLivePublisherView.current?.attachPreviewIfAvailable() }
       await MainActor.run { self.sendEvent("statusChange", ["status": PublisherStatus.connecting.rawValue]) }
-      try await publisher.start(options: options)
+      let localBackupArmed = try await publisher.start(options: options)
       self.installThermalStateObserver()
+      return ["localBackupArmed": localBackupArmed]
     }
 
     AsyncFunction("stop") {
@@ -397,7 +398,7 @@ final class LivePublisher {
 
   // MARK: - Start
 
-  func start(options: LivePublisherStartOptions) async throws {
+  func start(options: LivePublisherStartOptions) async throws -> Bool {
     // Reuse the running capture pipeline when startPreview() already ran.
     if !isCaptureRunning {
       try await startPreview(options: options)
@@ -427,7 +428,7 @@ final class LivePublisher {
     guard let url = URL(string: urlString) else {
       emitError("invalid_url", "Could not parse RTMPS URL: \(urlString)")
       emitStatusChange(.errored)
-      return
+      throw LivePublisherException(message: "Could not parse RTMPS URL")
     }
 
     // HaishinKit 2.x resolves a URL scheme to a Session via factories that
@@ -485,13 +486,16 @@ final class LivePublisher {
     // connect (user retries from 'ready') never leaves an orphaned recorder
     // running. On the reconnect path the recorder is usually already
     // recording and armBackupRecorder leaves it untouched.
-    if !options.localBackupFileName.isEmpty {
+    let localBackupArmed = if options.localBackupFileName.isEmpty {
+      false
+    } else {
       await armBackupRecorder(fileName: options.localBackupFileName)
     }
 
     emitStatusChange(.live)
     startConnectionMonitor()
     startNetworkMonitor()
+    return localBackupArmed
   }
 
   // MARK: - Local backup recording
@@ -514,15 +518,17 @@ final class LivePublisher {
   /// Failures must never break the stream: everything is wrapped and surfaced
   /// as a telemetry-only `backup_failed` error event (same pattern as
   /// `memory_warning` — see useLivePublisher's error listener).
-  private func armBackupRecorder(fileName: String) async {
+  private func armBackupRecorder(fileName: String) async -> Bool {
     if let recorder = backupRecorder, await recorder.isRecording {
-      return
+      return true
     }
+    var attemptedFileURL: URL?
     do {
       let directory = Self.backupRecordingsDirectory()
       // HKStreamRecorder does not create directories itself.
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
       let fileURL = directory.appendingPathComponent(fileName)
+      attemptedFileURL = fileURL
       // A stale file with this name belongs to a dead arm attempt (the launch
       // sweep owns finished sessions); startRecording throws
       // fileAlreadyExists otherwise.
@@ -538,12 +544,17 @@ final class LivePublisher {
       // recorder instance is a no-op.
       await mixer.addOutput(recorder)
       try await recorder.startRecording(fileURL)
+      return true
     } catch {
       if let recorder = backupRecorder {
         backupRecorder = nil
         await mixer.removeOutput(recorder)
       }
+      if let attemptedFileURL {
+        try? FileManager.default.removeItem(at: attemptedFileURL)
+      }
       emitError("backup_failed", "Failed to arm local backup recording: \(error.localizedDescription)")
+      return false
     }
   }
 

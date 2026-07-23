@@ -1,7 +1,10 @@
-import { deleteAsync, getFreeDiskStorageAsync, getInfoAsync } from 'expo-file-system/legacy'
+import { getFreeDiskStorageAsync } from 'expo-file-system/legacy'
 import { useCallback, useEffect, useRef } from 'react'
 import { AppState, Platform } from 'react-native'
-import { getLocalBackupFileUri } from '../services/localBackupSweep'
+import {
+  deleteLocalBackupsForSession,
+  getLocalBackupSessionStats,
+} from '../services/localBackupSweep'
 import { telemetry } from '../services/telemetry'
 import { livePublishActions, livePublishStore$ } from '../store/livePublish.store'
 import { isNativePublisherStatus } from '../store/livePublisherContract'
@@ -47,6 +50,11 @@ export interface LivePublisherStartOptions {
   localBackupFileName?: string
 }
 
+export interface LivePublisherStartResult {
+  /** True only when native confirmed that the local file sink is recording. */
+  localBackupArmed: boolean
+}
+
 // Keep in sync with LivePublisherStats in
 // apps/mobile/modules/bondfire-live-publisher/index.ts and the getStats
 // payloads in the Swift/Kotlin modules (livePublisherZeroStats / STATS_ZEROS).
@@ -87,7 +95,7 @@ export interface LivePublisherPreviewOptions {
 export interface LivePublisherNativeModule {
   isAvailable?: () => Promise<boolean>
   startPreview(options: LivePublisherPreviewOptions): Promise<void>
-  start(options: LivePublisherStartOptions): Promise<void>
+  start(options: LivePublisherStartOptions): Promise<LivePublisherStartResult>
   stop(): Promise<void>
   swapCamera(): Promise<void>
   setMuted(muted: boolean): Promise<void>
@@ -320,7 +328,7 @@ export function useLivePublisher(options: {
     [],
   )
 
-  /** Bookkeeping + telemetry after a native start() that requested a backup. */
+  /** Bookkeeping + telemetry after native confirms the file sink is recording. */
   const noteLocalBackupArmed = useCallback(
     (sessionId: string, fileName: string, freeDiskBytes: number | null) => {
       if (!fileName) {
@@ -843,7 +851,7 @@ export function useLivePublisher(options: {
           recordId: livePublishStore$.recordId.peek(),
           status: livePublishStore$.status.peek(),
         })
-        await options.publisher.start({
+        const startResult = await options.publisher.start({
           rtmpsUrl: ingest.rtmpsUrl,
           streamKey: ingest.streamKey,
           fps: LIVE_DEFAULT_VIDEO_FPS,
@@ -852,7 +860,11 @@ export function useLivePublisher(options: {
           initialCamera: args.initialCamera ?? 'front',
           localBackupFileName: localBackup.fileName,
         })
-        noteLocalBackupArmed(ingest.sessionId, localBackup.fileName, localBackup.freeDiskBytes)
+        noteLocalBackupArmed(
+          ingest.sessionId,
+          startResult?.localBackupArmed ? localBackup.fileName : '',
+          localBackup.freeDiskBytes,
+        )
         startStatsSampling()
         telemetry.setCrashBreadcrumb('live:recording', {
           sessionId: livePublishStore$.sessionId.peek(),
@@ -1056,7 +1068,7 @@ export function useLivePublisher(options: {
           status: livePublishStore$.status.peek(),
         })
         const connectStartedAt = Date.now()
-        await options.publisher.start({
+        const startResult = await options.publisher.start({
           rtmpsUrl: liveStream.ingest.rtmpsUrl,
           streamKey: liveStream.ingest.streamKey,
           fps: LIVE_DEFAULT_VIDEO_FPS,
@@ -1067,7 +1079,7 @@ export function useLivePublisher(options: {
         })
         noteLocalBackupArmed(
           liveStream.liveSessionId,
-          localBackup.fileName,
+          startResult?.localBackupArmed ? localBackup.fileName : '',
           localBackup.freeDiskBytes,
         )
         startStatsSampling()
@@ -1157,12 +1169,12 @@ export function useLivePublisher(options: {
     if (localBackup && localBackup.sessionId === sessionId) {
       localBackupRef.current = null
       try {
-        const fileUri = getLocalBackupFileUri(localBackup.fileName)
-        const info = fileUri ? await getInfoAsync(fileUri) : null
+        const stats = await getLocalBackupSessionStats(sessionId)
         telemetry.info('backup:finalized', 'Local backup recording finalized', {
           sessionId,
-          sizeBytes: info?.exists && !info.isDirectory ? info.size : 0,
-          exists: info?.exists ?? false,
+          sizeBytes: stats.sizeBytes,
+          exists: stats.exists,
+          fileCount: stats.fileCount,
           durationHintMs: startedAt ? Date.now() - startedAt : undefined,
         })
       } catch (error) {
@@ -1290,13 +1302,11 @@ export function useLivePublisher(options: {
     if (localBackup && localBackup.sessionId === sessionId) {
       localBackupRef.current = null
       try {
-        const fileUri = getLocalBackupFileUri(localBackup.fileName)
-        if (fileUri) {
-          await deleteAsync(fileUri, { idempotent: true })
-        }
+        const fileCount = await deleteLocalBackupsForSession(sessionId)
         telemetry.info('backup:discarded', 'Local backup deleted after cancel', {
           sessionId,
           reason: 'cancelled',
+          fileCount,
         })
       } catch (error) {
         // Best effort — the retention sweep deletes anything left behind.

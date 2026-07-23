@@ -288,6 +288,7 @@ class BondfireLivePublisherModule : Module() {
 
       // Connect and start streaming
       try {
+        var localBackupArmed = false
         sendStatus(PublisherStatus.CONNECTING)
         val combinedEndpoint =
           if (backupFile != null) activeStreamer.endpoint as? CombineEndpoint else null
@@ -311,7 +312,11 @@ class BondfireLivePublisherModule : Module() {
           }
           // A failed backup sink is telemetry-only — the stream is healthy.
           val muxerOpen = combinedEndpoint.endpoints.getOrNull(1)?.isOpenFlow?.value == true
+          localBackupArmed = muxerOpen
           if (!muxerOpen) {
+            if (backupFile.exists() && !backupFile.delete()) {
+              Log.w(TAG, "Could not delete file left by failed backup sink")
+            }
             sendEvent(
               "error", mapOf(
                 "code" to "backup_failed",
@@ -330,8 +335,30 @@ class BondfireLivePublisherModule : Module() {
         registerNetworkCallback()
         installThermalStatusListener()
         sendStatus(PublisherStatus.LIVE)
+        mapOf("localBackupArmed" to localBackupArmed)
       } catch (e: Exception) {
         Log.e(TAG, "Failed to start stream", e)
+        // CombineEndpoint can leave the file sink running even when RTMP
+        // failed to open. Finalize and discard only this failed connection
+        // attempt; any rolled .partN files from earlier live legs remain.
+        if (backupFile != null) {
+          cleanupStreamer()
+          try {
+            if (backupFile.exists() && !backupFile.delete()) {
+              throw IOException("Could not delete failed backup ${backupFile.absolutePath}")
+            }
+          } catch (backupError: Exception) {
+            Log.w(TAG, "Failed to discard backup after stream start failure", backupError)
+            sendEvent(
+              "error", mapOf(
+                "code" to "backup_failed",
+                "message" to (
+                  backupError.message ?: "Failed to discard backup after stream start failure"
+                )
+              )
+            )
+          }
+        }
         sendEvent(
           "error", mapOf(
             "code" to "start_stream_failed",
