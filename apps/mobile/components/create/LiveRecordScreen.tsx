@@ -6,6 +6,7 @@ import {
   getReconnectAttemptDelayMs,
   getReconnectAttemptTimeoutMs,
   getUserFacingErrorMessage,
+  interruptionReasonLabel,
   LIVE_DEFAULT_VIDEO_BITRATE,
   LIVE_DEFAULT_VIDEO_FPS,
   type LivePublishStatus,
@@ -1304,6 +1305,19 @@ export function LiveRecordScreen({
             sessionId: livePublishStore$.sessionId.peek(),
             recordId: livePublishStore$.recordId.peek(),
           },
+        )
+      }
+
+      // A capture interruption (a call, Siri, another app grabbing the mic or
+      // camera) stops the recording abruptly. The footage so far is still
+      // saved, so tell the user exactly that instead of leaving them guessing
+      // why "REC" vanished.
+      const interruptionReason = livePublishStore$.interruptionReason.peek()
+      if (interruptionReason !== null) {
+        Alert.alert(
+          'Recording stopped',
+          `Your video was saved. It stopped because ${interruptionReasonLabel(interruptionReason)}.`,
+          [{ text: 'OK', style: 'default' }],
         )
       }
       void stopLiveRecording()

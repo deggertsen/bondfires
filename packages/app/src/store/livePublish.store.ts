@@ -25,6 +25,14 @@ export interface LivePublishState {
    * zero-byte partial that Mux will error out anyway.
    */
   everHadThroughput: boolean | null
+  /**
+   * iOS AVCaptureSession interruption reason when a capture interruption
+   * (a call, another app taking the mic/camera) is what stopped the
+   * recording — null otherwise. The record screen reads this to explain the
+   * stop instead of showing a generic end. Cleared by every session reset
+   * because it lives on defaultLivePublishState.
+   */
+  interruptionReason: number | null
 }
 
 const defaultLivePublishState: LivePublishState = {
@@ -39,6 +47,7 @@ const defaultLivePublishState: LivePublishState = {
   networkQuality: 'unknown',
   errorMessage: null,
   everHadThroughput: null,
+  interruptionReason: null,
 }
 
 export const livePublishStore$ = observable<LivePublishState>(defaultLivePublishState)

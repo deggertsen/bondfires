@@ -310,6 +310,11 @@ final class LivePublisher {
   private var lastActiveInterfaceTypes: [NWInterface.InterfaceType]?
   private var networkFailureEmitted = false
   private var captureObservers: [NSObjectProtocol] = []
+  // Set when a publishing-time capture interruption is emitted, cleared when
+  // the matching interruptionEnded fires (or on teardown). Diagnostic only —
+  // it lets us report whether the interruption that stopped a recording was
+  // transient (Siri, a notification) or long (a phone call).
+  private var lastInterruptionReason: Int?
 
   /// MTHKView registered as a mixer output — HaishinKit 2.x preview approach
   private lazy var previewView: MTHKView = {
@@ -576,9 +581,32 @@ final class LivePublisher {
         // when the interruption ends; only a publishing pipeline needs to
         // fail fast so the partial recording gets finalized.
         guard self.session != nil else { return }
+        self.lastInterruptionReason = reasonValue
         self.emitError(
           "capture_interrupted",
           "Camera capture was interrupted (reason: \(reasonValue.map(String.init) ?? "unknown"))"
+        )
+      }
+    })
+
+    // interruptionEnded fires when the interrupting client (a call, Siri, a
+    // notification, another app) releases the camera/mic. We do NOT resume
+    // here — the recording has already been finalized — but reporting it tells
+    // us how long the interruption lasted, which is the data that decides
+    // whether building resume-in-place is worthwhile. The async gap between
+    // our fail() and native teardown is usually enough for a short
+    // (transient) interruption's end to land before this observer is removed.
+    captureObservers.append(center.addObserver(
+      forName: AVCaptureSession.interruptionEndedNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor [weak self] in
+        guard let self, let reason = self.lastInterruptionReason else { return }
+        self.lastInterruptionReason = nil
+        self.emitError(
+          "capture_interruption_ended",
+          "Camera capture interruption ended (reason: \(reason))"
         )
       }
     })
@@ -605,6 +633,7 @@ final class LivePublisher {
       NotificationCenter.default.removeObserver(observer)
     }
     captureObservers = []
+    lastInterruptionReason = nil
   }
 
   private func resolveCameraVideoSize(
