@@ -16,6 +16,17 @@ export interface LivePublisherStartOptions {
   videoBitrate?: number
   audioBitrate?: number
   initialCamera?: 'front' | 'back'
+  /**
+   * Non-empty arms the native local MP4 backup recorder, writing the session
+   * to <documents>/recordings/<localBackupFileName> alongside the RTMP
+   * stream. Empty/absent disables the backup (the default).
+   */
+  localBackupFileName?: string
+}
+
+export interface LivePublisherStartResult {
+  /** True only when native confirmed that the local file sink is recording. */
+  localBackupArmed: boolean
 }
 
 export interface LivePublisherPreviewOptions {
@@ -76,7 +87,7 @@ interface NativeLivePublisher {
   isAvailable?: () => Promise<boolean>
   getCameraCount?: () => Promise<number>
   startPreview?: (options: LivePublisherPreviewOptions) => Promise<void>
-  start(options: LivePublisherStartOptions): Promise<void>
+  start(options: LivePublisherStartOptions): Promise<LivePublisherStartResult>
   stop(): Promise<void>
   swapCamera(): Promise<void>
   setMuted(muted: boolean): Promise<void>

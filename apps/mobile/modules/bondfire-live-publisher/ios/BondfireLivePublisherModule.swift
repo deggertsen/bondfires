@@ -25,6 +25,10 @@ struct LivePublisherStartOptions: Record {
   @Field var videoBitrate: Int = 2_500_000
   @Field var audioBitrate: Int = 128_000
   @Field var initialCamera: String = "front"
+  /// Non-empty arms the local MP4 backup recorder: the mixer output is also
+  /// written to Documents/recordings/<localBackupFileName> for crash/network
+  /// failure recovery. Empty (default) disables the backup entirely.
+  @Field var localBackupFileName: String = ""
 }
 
 public class BondfireLivePublisherModule: Module {
@@ -88,8 +92,9 @@ public class BondfireLivePublisherModule: Module {
       let publisher = try await MainActor.run { try self.ensurePublisher() }
       await MainActor.run { BondfireLivePublisherView.current?.attachPreviewIfAvailable() }
       await MainActor.run { self.sendEvent("statusChange", ["status": PublisherStatus.connecting.rawValue]) }
-      try await publisher.start(options: options)
+      let localBackupArmed = try await publisher.start(options: options)
       self.installThermalStateObserver()
+      return ["localBackupArmed": localBackupArmed]
     }
 
     AsyncFunction("stop") {
@@ -380,6 +385,11 @@ final class LivePublisher {
   private var lastActiveInterfaceTypes: [NWInterface.InterfaceType]?
   private var networkFailureEmitted = false
   private var captureObservers: [NSObjectProtocol] = []
+  /// Local MP4 backup recorder (Phase 1, docs/plans/local-backup-recording.md).
+  /// Mixer-attached, so it records independently of any RTMP session and keeps
+  /// writing through the reconnect path's session rebuilds. Never touches the
+  /// stream: every failure is telemetry-only (`backup_failed`).
+  private var backupRecorder: HKStreamRecorder?
   private var publishingCaptureInterruptionPending = false
 
   /// MTHKView registered as a mixer output — HaishinKit 2.x preview approach
@@ -459,7 +469,7 @@ final class LivePublisher {
 
   // MARK: - Start
 
-  func start(options: LivePublisherStartOptions) async throws {
+  func start(options: LivePublisherStartOptions) async throws -> Bool {
     // Reuse the running capture pipeline when startPreview() already ran.
     if !isCaptureRunning {
       try await startPreview(options: options)
@@ -489,7 +499,7 @@ final class LivePublisher {
     guard let url = URL(string: urlString) else {
       emitError("invalid_url", "Could not parse RTMPS URL: \(urlString)")
       emitStatusChange(.errored)
-      return
+      throw LivePublisherException(message: "Could not parse RTMPS URL")
     }
 
     // HaishinKit 2.x resolves a URL scheme to a Session via factories that
@@ -543,9 +553,95 @@ final class LivePublisher {
       throw LivePublisherException(message: "RTMP connection failed: \(error.localizedDescription)")
     }
 
+    // Arm the local backup only after the RTMP connect succeeded, so a failed
+    // connect (user retries from 'ready') never leaves an orphaned recorder
+    // running. On the reconnect path the recorder is usually already
+    // recording and armBackupRecorder leaves it untouched.
+    let localBackupArmed = if options.localBackupFileName.isEmpty {
+      false
+    } else {
+      await armBackupRecorder(fileName: options.localBackupFileName)
+    }
+
     emitStatusChange(.live)
     startConnectionMonitor()
     startNetworkMonitor()
+    return localBackupArmed
+  }
+
+  // MARK: - Local backup recording
+
+  /// Documents/recordings/ — must stay in sync with the JS path
+  /// (expo-file-system `documentDirectory` + 'recordings/') used by
+  /// useLivePublisher and localBackupSweep.
+  private static func backupRecordingsDirectory() -> URL {
+    FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+      .appendingPathComponent("recordings", isDirectory: true)
+  }
+
+  /// Start the crash-survivable local MP4 backup for this session.
+  ///
+  /// Reconnect interaction: start() is re-entered by the reconnect path, which
+  /// detaches and closes the RTMP session — but the recorder is attached to
+  /// the MediaMixer, not the session, so it must survive that rebuild. If it
+  /// is already recording we leave it exactly as is: no re-arm, no restart.
+  ///
+  /// Failures must never break the stream: everything is wrapped and surfaced
+  /// as a telemetry-only `backup_failed` error event (same pattern as
+  /// `memory_warning` — see useLivePublisher's error listener).
+  private func armBackupRecorder(fileName: String) async -> Bool {
+    if let recorder = backupRecorder, await recorder.isRecording {
+      return true
+    }
+    var attemptedFileURL: URL?
+    do {
+      let directory = Self.backupRecordingsDirectory()
+      // HKStreamRecorder does not create directories itself.
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      let fileURL = directory.appendingPathComponent(fileName)
+      attemptedFileURL = fileURL
+      // A stale file with this name belongs to a dead arm attempt (the launch
+      // sweep owns finished sessions); startRecording throws
+      // fileAlreadyExists otherwise.
+      if FileManager.default.fileExists(atPath: fileURL.path) {
+        try FileManager.default.removeItem(at: fileURL)
+      }
+      let recorder = backupRecorder ?? HKStreamRecorder()
+      backupRecorder = recorder
+      // Fragmented writing (>=10s) keeps the file playable after a hard kill
+      // mid-recording — the whole point of the backup.
+      await recorder.setMovieFragmentInterval(10)
+      // addOutput is identity-guarded in MediaMixer, so re-adding a reused
+      // recorder instance is a no-op.
+      await mixer.addOutput(recorder)
+      try await recorder.startRecording(fileURL)
+      return true
+    } catch {
+      if let recorder = backupRecorder {
+        backupRecorder = nil
+        await mixer.removeOutput(recorder)
+      }
+      if let attemptedFileURL {
+        try? FileManager.default.removeItem(at: attemptedFileURL)
+      }
+      emitError("backup_failed", "Failed to arm local backup recording: \(error.localizedDescription)")
+      return false
+    }
+  }
+
+  /// Detach and finalize the backup recorder. Only stop()/cleanup() may call
+  /// this — the reconnect path must leave the recorder running.
+  private func stopBackupRecorder() async {
+    guard let recorder = backupRecorder else { return }
+    backupRecorder = nil
+    await mixer.removeOutput(recorder)
+    do {
+      _ = try await recorder.stopRecording()
+    } catch {
+      // invalidState when arming never completed; otherwise the fragmented
+      // file is already crash-consistent on disk. Telemetry-only.
+      emitError("backup_failed", "Failed to finalize local backup recording: \(error.localizedDescription)")
+    }
   }
 
   // MARK: - Health monitoring
@@ -731,6 +827,9 @@ final class LivePublisher {
     connectionMonitorTask = nil
     stopNetworkMonitor()
     removeCaptureObservers()
+    // Finalize the backup file while the mixer is still running so the last
+    // fragment lands before capture tears down.
+    await stopBackupRecorder()
     do {
       try await session?.close()
     } catch {
