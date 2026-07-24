@@ -188,6 +188,8 @@ function getMuxConfig() {
     liveLatencyMode: readLiveLatencyMode(process.env.MUX_LIVE_LATENCY_MODE),
     videoQuality: process.env.MUX_VIDEO_QUALITY ?? 'basic',
     uploadCorsOrigin: process.env.MUX_UPLOAD_CORS_ORIGIN ?? '*',
+    reconnectSlateUrl:
+      readMuxSlateUrl(process.env.MUX_LIVE_RECONNECT_SLATE_URL) ?? DEFAULT_MUX_RECONNECT_SLATE_URL,
     reconnectWindowSeconds: readMuxSeconds(
       process.env.MUX_LIVE_RECONNECT_WINDOW_SECONDS,
       DEFAULT_MUX_LIVE_RECONNECT_WINDOW_SECONDS,
@@ -195,6 +197,35 @@ function getMuxConfig() {
       MUX_LIVE_RECONNECT_WINDOW_MAX_SECONDS,
     ),
   }
+}
+
+// Low/reduced-latency streams insert slate during reconnect gaps
+// UNCONDITIONALLY (use_slate_for_standard_latency only governs standard
+// latency), so a slate URL must always be available or Mux substitutes its
+// own default slate. The env var overrides; this branded image is the hard
+// fallback so the Mux default is structurally unreachable.
+const DEFAULT_MUX_RECONNECT_SLATE_URL = 'https://bondfires.org/images/connection-interrupted.jpg'
+
+// Public image that Mux uses as slate media during reconnect-window
+// interruptions on latency modes where slate is mandatory.
+function readMuxSlateUrl(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  if (!trimmed) {
+    return undefined
+  }
+
+  let url: URL
+  try {
+    url = new URL(trimmed)
+  } catch {
+    throw new Error('MUX_LIVE_RECONNECT_SLATE_URL must be an absolute HTTP(S) URL.')
+  }
+
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw new Error('MUX_LIVE_RECONNECT_SLATE_URL must use http or https.')
+  }
+
+  return url.toString()
 }
 
 function readPlaybackPolicy(value: string | undefined): PlaybackPolicy {
@@ -1953,16 +1984,20 @@ export const createLiveStream = action({
               latency_mode: config.liveLatencyMode,
               reconnect_window: reconnectWindow,
               max_continuous_duration: maxContinuousDuration,
-              // Deliberately NO slate (no reconnect_slate_url, and
-              // use_slate_for_standard_latency stays at Mux's default false).
-              // With slate enabled, every reconnect gap — and the trailing
-              // window of any stream that dies without /complete — bakes a
-              // full-screen placeholder into the recorded asset forever and
-              // shows it to live viewers. Without slate, live players hold
-              // the last received frame during the gap (our player overlays
-              // its own spinner/reconnecting UI) and the recording gets the
-              // gap cut instead of placeholder frames. Product call 2026-07:
-              // freeze-frame over slate.
+              // Slate policy (product call 2026-07): freeze-frame where Mux
+              // allows it, branded slate where it doesn't, Mux's default
+              // slate NEVER.
+              // - standard latency: use_slate_for_standard_latency stays at
+              //   Mux's default false → no slate at all. Live players hold
+              //   the last received frame during a gap (our player overlays
+              //   its own spinner) and the recording gets the gap cut
+              //   instead of placeholder frames baked in forever.
+              // - low/reduced latency (current prod default): Mux inserts
+              //   slate during reconnect gaps unconditionally, so the only
+              //   control we have is WHICH image — always send the branded
+              //   URL (hard code fallback, see DEFAULT_MUX_RECONNECT_SLATE_URL)
+              //   so the Mux default can never appear.
+              ...(reconnectWindow > 0 ? { reconnect_slate_url: config.reconnectSlateUrl } : {}),
               passthrough: JSON.stringify({
                 userId,
                 isResponse: args.isResponse,
