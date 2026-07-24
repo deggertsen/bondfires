@@ -659,8 +659,12 @@ export function VideoPlayer({
   }, [isScreenFocused, isAppActive, isActive, isPlaying, keepAwakeTag])
 
   // Buffering-stall watchdog. Warn once after 15s of continuous loading so
-  // stalls show up in telemetry, and give up into the retry overlay after
-  // 45s instead of spinning forever.
+  // stalls show up in telemetry, and give up into the retry overlay instead
+  // of spinning forever. Live streams get a longer give-up: a creator-side
+  // network switch legitimately gaps the stream for up to the full 60s Mux
+  // reconnect window (viewers hold the last frame — no slate, by design),
+  // and showing "couldn't play" mid-gap would break a recoverable watch.
+  const stallGiveUpMs = isLive ? 75_000 : 45_000
   const isLoadingValue = useValue(state$.isLoading)
   useEffect(() => {
     if (!isActive || !isScreenFocused || !isAppActive || !currentUrl || !isLoadingValue) {
@@ -680,12 +684,12 @@ export function VideoPlayer({
       telemetry.error('video:playback_stall_timeout', 'Video buffering timed out', {
         videoId,
         isLive,
-        stalledForMs: 45_000,
+        stalledForMs: stallGiveUpMs,
         positionMs: Math.round((player?.currentTime ?? 0) * 1000),
       })
       state$.isLoading.set(false)
       state$.hasError.set(true)
-    }, 45_000)
+    }, stallGiveUpMs)
 
     return () => {
       clearTimeout(stallWarnTimer)
@@ -701,6 +705,7 @@ export function VideoPlayer({
     state$,
     videoId,
     isLive,
+    stallGiveUpMs,
   ])
 
   // Crash-survivable breadcrumb: if the app dies (OOM, native AVPlayer crash)
