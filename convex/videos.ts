@@ -237,7 +237,14 @@ function getConfiguredPlaybackPolicy(): PlaybackPolicy {
 }
 
 function readLiveLatencyMode(value: string | undefined): LiveLatencyMode {
-  return value === 'standard' || value === 'reduced' || value === 'low' ? value : 'low'
+  // Default 'standard' (product call 2026-07): recording/playback stability
+  // beats live-viewing latency for Bondfires, and standard latency is the
+  // ONLY mode where Mux never inserts slate during reconnect gaps — live
+  // viewers hold the last frame and recordings get the gap cut. Glass-to-
+  // glass live latency rises to ~15-30s (within the ≤30s tolerance in
+  // docs/plans/mux-live-streaming.md). Set MUX_LIVE_LATENCY_MODE=low to
+  // restore low latency, which reintroduces mandatory (branded) slate.
+  return value === 'standard' || value === 'reduced' || value === 'low' ? value : 'standard'
 }
 
 function readMuxSeconds(
@@ -1992,7 +1999,7 @@ export const createLiveStream = action({
               //   the last received frame during a gap (our player overlays
               //   its own spinner) and the recording gets the gap cut
               //   instead of placeholder frames baked in forever.
-              // - low/reduced latency (current prod default): Mux inserts
+              // - low/reduced latency (opt-in via MUX_LIVE_LATENCY_MODE): Mux inserts
               //   slate during reconnect gaps unconditionally, so the only
               //   control we have is WHICH image — always send the branded
               //   URL (hard code fallback, see DEFAULT_MUX_RECONNECT_SLATE_URL)
