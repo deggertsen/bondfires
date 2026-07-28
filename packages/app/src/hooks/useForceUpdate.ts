@@ -12,6 +12,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Platform } from 'react-native'
 import { api } from '../../../../convex/_generated/api'
 import { telemetry } from '../services/telemetry'
+import {
+  chooseAndroidUpdateType,
+  isAppUpdateRequired,
+  type UpdatePriority,
+} from '../utils/forceUpdatePolicy'
+
+export type { UpdatePriority } from '../utils/forceUpdatePolicy'
 
 // ---------------------------------------------------------------------------
 // Guarded native module access
@@ -102,8 +109,6 @@ const ExpoInAppUpdates = {
 // Types
 // ---------------------------------------------------------------------------
 
-export type UpdatePriority = 'flexible' | 'immediate'
-
 export interface ForceUpdateState {
   /** True while checking the remote config. */
   loading: boolean
@@ -139,19 +144,6 @@ function getUpdatePriority(value: string | null | undefined): UpdatePriority {
   return value === 'flexible' ? 'flexible' : 'immediate'
 }
 
-function compareVersions(a: string, b: string): number {
-  const aParts = a.split('.').map(Number)
-  const bParts = b.split('.').map(Number)
-
-  for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
-    const aVal = aParts[i] ?? 0
-    const bVal = bParts[i] ?? 0
-    if (aVal < bVal) return -1
-    if (aVal > bVal) return 1
-  }
-  return 0
-}
-
 function getStoreUrl(): string {
   if (Platform.OS === 'android') return PLAY_STORE_URL
   return APP_STORE_URL
@@ -159,39 +151,6 @@ function getStoreUrl(): string {
 
 async function openPlatformStore(): Promise<void> {
   await Linking.openURL(getStoreUrl())
-}
-
-function storeVersionCanSatisfyRequiredVersion(
-  storeVersion: string | undefined,
-  minRequiredVersion: string,
-): boolean {
-  if (Platform.OS !== 'ios') return true
-  if (!storeVersion) return false
-  return compareVersions(storeVersion, minRequiredVersion) >= 0
-}
-
-function canDownloadAndroidUpdate(
-  result: Awaited<ReturnType<typeof ExpoInAppUpdates.checkForUpdate>>,
-) {
-  return !!(result.updateAvailable && (result.flexibleAllowed || result.immediateAllowed))
-}
-
-async function canDownloadRequiredUpdate(minRequiredVersion: string): Promise<boolean> {
-  try {
-    const result = await ExpoInAppUpdates.checkForUpdate()
-
-    if (!result.updateAvailable) return false
-    if (!storeVersionCanSatisfyRequiredVersion(result.storeVersion, minRequiredVersion))
-      return false
-
-    if (Platform.OS === 'android') {
-      return canDownloadAndroidUpdate(result)
-    }
-
-    return true
-  } catch (_err) {
-    return false
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -212,7 +171,12 @@ export function useForceUpdate(): ForceUpdateState & InAppUpdateActions {
   const autoStartAttemptedRef = useRef(false)
 
   // ----------------------------------------------------------
-  // Step 1: Check Convex remote config and verify a downloadable update exists
+  // Step 1: Check Convex remote config for minimum required version
+  //
+  // The Convex config is the source of truth for whether an update is
+  // required. The native in-app updates module is only used for
+  // *delivering* the update (Android flexible downloads), not for
+  // *deciding* whether one is needed.
   // ----------------------------------------------------------
   useEffect(() => {
     if (updateConfig === undefined) return
@@ -230,58 +194,21 @@ export function useForceUpdate(): ForceUpdateState & InAppUpdateActions {
       return
     }
 
-    let cancelled = false
-    const currentVersion = Constants.expoConfig?.version ?? '0.0.0'
     const { minAppVersion } = updateConfig
     const updatePriority = getUpdatePriority(updateConfig.updatePriority)
-    const belowRequiredVersion =
-      !!minAppVersion && compareVersions(currentVersion, minAppVersion) < 0
+    const updateRequired = isAppUpdateRequired(Constants.expoConfig?.version, minAppVersion)
 
-    if (!belowRequiredVersion || !minAppVersion) {
-      autoStartAttemptedRef.current = false
-      setState((s) => ({
-        ...s,
-        loading: false,
-        updateRequired: false,
-        downloading: false,
-        updateReady: false,
-        minRequiredVersion: minAppVersion,
-        updatePriority,
-      }))
-      return
-    }
+    autoStartAttemptedRef.current = false
 
     setState((s) => ({
       ...s,
-      loading: true,
-      updateRequired: false,
+      loading: false,
+      updateRequired,
       downloading: false,
       updateReady: false,
       minRequiredVersion: minAppVersion,
       updatePriority,
     }))
-
-    canDownloadRequiredUpdate(minAppVersion).then((canDownload) => {
-      if (cancelled) return
-
-      if (!canDownload) {
-        autoStartAttemptedRef.current = false
-      }
-
-      setState((s) => ({
-        ...s,
-        loading: false,
-        updateRequired: canDownload,
-        downloading: canDownload ? s.downloading : false,
-        updateReady: canDownload ? s.updateReady : false,
-        minRequiredVersion: minAppVersion,
-        updatePriority,
-      }))
-    })
-
-    return () => {
-      cancelled = true
-    }
   }, [updateConfig])
 
   // ----------------------------------------------------------
@@ -334,84 +261,32 @@ export function useForceUpdate(): ForceUpdateState & InAppUpdateActions {
 
   const startUpdate = useCallback(async () => {
     if (Platform.OS === 'android') {
+      // Try native in-app update first; fall back to Play Store redirect.
       try {
         const result = await ExpoInAppUpdates.checkForUpdate()
+        const updateType = chooseAndroidUpdateType(state.updatePriority ?? 'immediate', result)
 
-        if (!result.updateAvailable || !canDownloadAndroidUpdate(result)) {
-          setState((s) => ({
-            ...s,
-            updateRequired: false,
-            downloading: false,
-            updateReady: false,
-          }))
-          return
-        }
+        if (updateType) {
+          const isFlexible = updateType === 'flexible'
+          if (isFlexible) setState((s) => ({ ...s, downloading: true }))
 
-        if (state.updatePriority === 'flexible' && result.flexibleAllowed) {
-          setState((s) => ({ ...s, downloading: true }))
-          const started = await ExpoInAppUpdates.startUpdate(false)
+          const started = await ExpoInAppUpdates.startUpdate(updateType === 'immediate')
           if (started) return
-          setState((s) => ({ ...s, downloading: false }))
-        }
 
-        if (result.immediateAllowed) {
-          const started = await ExpoInAppUpdates.startUpdate(true)
-          if (started) return
+          if (isFlexible) setState((s) => ({ ...s, downloading: false }))
         }
-
-        if (result.flexibleAllowed) {
-          setState((s) => ({ ...s, downloading: true }))
-          const started = await ExpoInAppUpdates.startUpdate(false)
-          if (started) return
-          setState((s) => ({ ...s, downloading: false }))
-        }
-
-        setState((s) => ({
-          ...s,
-          updateRequired: false,
-          downloading: false,
-          updateReady: false,
-        }))
       } catch (_err) {
-        setState((s) => ({
-          ...s,
-          updateRequired: false,
-          downloading: false,
-          updateReady: false,
-        }))
+        // Native module failed; fall through to store redirect.
       }
+
+      // Fallback: open Play Store
+      await openPlatformStore()
       return
     }
 
-    try {
-      const result = await ExpoInAppUpdates.checkForUpdate()
-      if (
-        !result.updateAvailable ||
-        !state.minRequiredVersion ||
-        !storeVersionCanSatisfyRequiredVersion(result.storeVersion, state.minRequiredVersion)
-      ) {
-        setState((s) => ({
-          ...s,
-          updateRequired: false,
-          downloading: false,
-          updateReady: false,
-        }))
-        return
-      }
-
-      const started = await ExpoInAppUpdates.startUpdate()
-      if (!started) {
-        await openPlatformStore()
-      }
-    } catch (_err) {
-      setState((s) => ({
-        ...s,
-        updateRequired: false,
-        downloading: false,
-        updateReady: false,
-      }))
-    }
-  }, [state.minRequiredVersion, state.updatePriority])
+    // iOS: no native in-app updates, just open the App Store.
+    await openPlatformStore()
+  }, [state.updatePriority])
 
   // ----------------------------------------------------------
   // Step 3: Automatically start Android flexible updates once
