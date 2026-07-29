@@ -166,6 +166,15 @@ async function loadSubscriptionProducts(showExtraCampAddon: boolean) {
     }),
   ])
 
+  // If the subscription products fetch failed, surface it so the caller
+  // can mark the fetch as failed (instead of silently showing an empty paywall).
+  if (subsProducts.status === 'rejected') {
+    telemetry.warn('iap:fetch', 'Failed to fetch subscription products', {
+      error: serializeIapError(subsProducts.reason),
+    })
+    throw subsProducts.reason
+  }
+
   const subsList = subsProducts.status === 'fulfilled' ? subsProducts.value : []
   const inappList = inappProducts.status === 'fulfilled' ? inappProducts.value : []
 
@@ -294,8 +303,14 @@ function subscribeToPurchaseUpdates(
 
   if (!purchaseErrorSub) {
     purchaseErrorSub = purchaseErrorListener((error) => {
-      telemetry.warn('iap:error', 'IAP purchase error', { error: serializeIapError(error) })
       const errMsg = error?.message ?? error?.debugMessage ?? 'Purchase failed. Please try again.'
+      // User-cancelled purchases are not errors — don't surface them as failures
+      // or pollute telemetry with them.
+      if (isUserCancelledPurchase(error, errMsg)) {
+        subscriptionActions.completePurchase(false)
+        return
+      }
+      telemetry.warn('iap:error', 'IAP purchase error', { error: serializeIapError(error) })
       subscriptionActions.failPurchase(errMsg)
     })
   }
@@ -343,6 +358,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
   const productPrices = useValue(subscriptionStore$.productPrices)
   const productOfferTokens = useValue(subscriptionStore$.productOfferTokens)
   const productsLoaded = useValue(subscriptionStore$.productsLoaded)
+  const productFetchFailed = useValue(subscriptionStore$.productFetchFailed)
 
   // Sync Convex state → local store
   useEffect(() => {
@@ -374,10 +390,16 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
           return await verifyStorePurchase(getStorePurchaseVerifyArgs(purchase))
         })
         await loadSubscriptionProducts(showExtraCampAddon)
+        if (mounted) {
+          subscriptionActions.setProductFetchFailed(false)
+        }
       } catch (err) {
         telemetry.warn('iap:init', 'Failed to initialize IAP', { error: serializeIapError(err) })
         if (mounted) {
+          // Mark products as loaded so the paywall doesn't hang, but flag
+          // the fetch as failed so the UI can show a retry option.
           subscriptionActions.setProductsLoaded(true)
+          subscriptionActions.setProductFetchFailed(true)
         }
       }
     }
@@ -401,6 +423,18 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
     if (!initializeIap || !productsLoaded) return
     void loadSubscriptionProducts(showExtraCampAddon)
   }, [initializeIap, productsLoaded, showExtraCampAddon])
+
+  const retryProductFetch = useCallback(async () => {
+    if (!initializeIap) return
+    try {
+      await ensureIapConnection()
+      await loadSubscriptionProducts(showExtraCampAddon)
+      subscriptionActions.setProductFetchFailed(false)
+    } catch (err) {
+      telemetry.warn('iap:retry', 'Product fetch retry failed', { error: serializeIapError(err) })
+      subscriptionActions.setProductFetchFailed(true)
+    }
+  }, [initializeIap, showExtraCampAddon])
 
   const requestStorePurchase = useCallback(async (productId: string) => {
     try {
@@ -574,6 +608,8 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
     productPrices,
     productOfferTokens,
     productsLoaded,
+    productFetchFailed,
+    retryProductFetch,
     showExtraCampAddon,
     canCreate: tierMeetsRequirement(currentTier, CREATE_REQUIRED_TIER),
     purchase,

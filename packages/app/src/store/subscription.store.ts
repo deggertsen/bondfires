@@ -201,6 +201,8 @@ export interface SubscriptionState {
   currentTier: SubscriptionTier
   /** Whether the store products have been fetched. */
   productsLoaded: boolean
+  /** Whether the last product fetch failed and should be retried. */
+  productFetchFailed: boolean
   /** Map of productId → localized price string (e.g. "$4.99"). */
   productPrices: Record<string, string>
   /** Map of productId → Android subscription offer token required for purchase. */
@@ -230,6 +232,7 @@ export interface SubscriptionState {
 export const subscriptionStore$ = observable<SubscriptionState>({
   currentTier: 'free',
   productsLoaded: false,
+  productFetchFailed: false,
   productPrices: {},
   productOfferTokens: {},
   isPurchasing: false,
@@ -289,6 +292,10 @@ export const subscriptionActions = {
 
   setProductsLoaded(loaded: boolean) {
     subscriptionStore$.productsLoaded.set(loaded)
+  },
+
+  setProductFetchFailed(failed: boolean) {
+    subscriptionStore$.productFetchFailed.set(failed)
   },
 
   startPurchase(tier: SubscriptionTier, productId?: string) {
