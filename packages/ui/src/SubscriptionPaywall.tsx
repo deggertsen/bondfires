@@ -34,6 +34,7 @@ interface SubscriptionPaywallProps {
   lastError: string | null
   productFetchFailed?: boolean
   onRetryProductFetch?: () => void
+  isRetryingProductFetch?: boolean
 }
 
 export function SubscriptionPaywall({
@@ -52,6 +53,7 @@ export function SubscriptionPaywall({
   lastError,
   productFetchFailed,
   onRetryProductFetch,
+  isRetryingProductFetch = false,
 }: SubscriptionPaywallProps) {
   const [selectedPeriods, setSelectedPeriods] = useState<
     Partial<Record<SubscriptionTier, BillingPeriod>>
@@ -125,10 +127,17 @@ export function SubscriptionPaywall({
 
         {/* Product fetch failure — offer retry */}
         {productFetchFailed && onRetryProductFetch ? (
-          <Card backgroundColor={'$error'} padding={12} borderRadius={12} marginBottom={16}>
+          <Card
+            backgroundColor={'$backgroundPress'}
+            borderColor={'$error'}
+            borderWidth={1}
+            padding={12}
+            borderRadius={12}
+            marginBottom={16}
+          >
             <XStack alignItems="center" justifyContent="space-between">
               <YStack flex={1} paddingRight={12}>
-                <Text color={'$color'} fontSize={13} fontWeight="600">
+                <Text color={'$error'} fontSize={13} fontWeight="600">
                   Couldn't load pricing
                 </Text>
                 <Text color={'$placeholderColor'} fontSize={12} marginTop={2}>
@@ -138,11 +147,13 @@ export function SubscriptionPaywall({
               <Button
                 variant="outline"
                 size="$sm"
-                borderColor={'$color'}
+                borderColor={'$error'}
                 onPress={onRetryProductFetch}
+                disabled={isRetryingProductFetch}
               >
-                <Text color={'$color'} fontSize={13} fontWeight="600">
-                  Retry
+                {isRetryingProductFetch ? <Spinner size="small" color={'$error'} /> : null}
+                <Text color={'$error'} fontSize={13} fontWeight="600">
+                  {isRetryingProductFetch ? 'Retrying…' : 'Retry'}
                 </Text>
               </Button>
             </XStack>

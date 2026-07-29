@@ -26,6 +26,7 @@ function GlobalPaywall() {
     productsLoaded,
     productFetchFailed,
     retryProductFetch,
+    isRetryingProductFetch,
     purchase,
     purchaseExtraCamp,
     restore,
@@ -116,6 +117,7 @@ function GlobalPaywall() {
       lastError={lastError}
       productFetchFailed={productFetchFailed}
       onRetryProductFetch={retryProductFetch}
+      isRetryingProductFetch={isRetryingProductFetch}
     />
   )
 }

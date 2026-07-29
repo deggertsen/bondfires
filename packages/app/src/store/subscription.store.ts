@@ -288,14 +288,13 @@ export const subscriptionActions = {
     subscriptionStore$.productPrices.set(prices)
     subscriptionStore$.productOfferTokens.set(offerTokens)
     subscriptionStore$.productsLoaded.set(true)
+    subscriptionStore$.productFetchFailed.set(false)
   },
 
-  setProductsLoaded(loaded: boolean) {
-    subscriptionStore$.productsLoaded.set(loaded)
-  },
-
-  setProductFetchFailed(failed: boolean) {
-    subscriptionStore$.productFetchFailed.set(failed)
+  failProductFetch() {
+    // A failed attempt still makes the paywall render so it can offer retry.
+    subscriptionStore$.productsLoaded.set(true)
+    subscriptionStore$.productFetchFailed.set(true)
   },
 
   startPurchase(tier: SubscriptionTier, productId?: string) {
