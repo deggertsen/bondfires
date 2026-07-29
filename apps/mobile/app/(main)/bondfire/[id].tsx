@@ -8,7 +8,7 @@ import {
   setLastLocation,
   telemetry,
   useAppThemeColors,
-  useCanRunRecordingBackgroundWork,
+  useCanLoadTabData,
 } from '@bondfires/app'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused, useNavigation } from '@react-navigation/native'
@@ -83,7 +83,7 @@ export default function BondfireDetailScreen() {
   const navigation = useNavigation()
   const flatListRef = useRef<FlatList<BondfireVideoItem>>(null)
   const isFocused = useIsFocused()
-  const shouldRunBackgroundWork = useCanRunRecordingBackgroundWork(isFocused)
+  const canLoadScreenData = useCanLoadTabData(isFocused)
 
   const screenState$ = useObservable({
     currentVideoIndex: 0,
@@ -102,15 +102,15 @@ export default function BondfireDetailScreen() {
   const bondfireId = id as Id<'bondfires'>
   const bondfireData = useQuery(
     api.bondfires.getWithVideos,
-    shouldRunBackgroundWork ? { bondfireId } : 'skip',
+    canLoadScreenData ? { bondfireId } : 'skip',
   ) as BondfireDetailData | null | undefined
   const unavailableReason = useQuery(
     api.bondfires.getUnavailableReason,
-    shouldRunBackgroundWork && bondfireData === null ? { bondfireId } : 'skip',
+    canLoadScreenData && bondfireData === null ? { bondfireId } : 'skip',
   )
   const campContext = useQuery(
     api.bondfires.getWithCampContext,
-    shouldRunBackgroundWork ? { id: bondfireId } : 'skip',
+    canLoadScreenData ? { id: bondfireId } : 'skip',
   )
   const getVideoUrlsBatch = useAction(api.videos.getVideoUrlsBatch)
   const recordWatchEvent = useMutation(api.watchEvents.record)
