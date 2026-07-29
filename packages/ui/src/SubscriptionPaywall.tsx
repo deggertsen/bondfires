@@ -32,6 +32,9 @@ interface SubscriptionPaywallProps {
   purchasingTier: SubscriptionTier | null
   purchasingProductId?: string | null
   lastError: string | null
+  productFetchFailed?: boolean
+  onRetryProductFetch?: () => void
+  isRetryingProductFetch?: boolean
 }
 
 export function SubscriptionPaywall({
@@ -48,6 +51,9 @@ export function SubscriptionPaywall({
   purchasingTier,
   purchasingProductId,
   lastError,
+  productFetchFailed,
+  onRetryProductFetch,
+  isRetryingProductFetch = false,
 }: SubscriptionPaywallProps) {
   const [selectedPeriods, setSelectedPeriods] = useState<
     Partial<Record<SubscriptionTier, BillingPeriod>>
@@ -118,6 +124,41 @@ export function SubscriptionPaywall({
             </YStack>
           </Pressable>
         </XStack>
+
+        {/* Product fetch failure — offer retry */}
+        {productFetchFailed && onRetryProductFetch ? (
+          <Card
+            backgroundColor={'$backgroundPress'}
+            borderColor={'$error'}
+            borderWidth={1}
+            padding={12}
+            borderRadius={12}
+            marginBottom={16}
+          >
+            <XStack alignItems="center" justifyContent="space-between">
+              <YStack flex={1} paddingRight={12}>
+                <Text color={'$error'} fontSize={13} fontWeight="600">
+                  Couldn't load pricing
+                </Text>
+                <Text color={'$placeholderColor'} fontSize={12} marginTop={2}>
+                  Check your connection and try again.
+                </Text>
+              </YStack>
+              <Button
+                variant="outline"
+                size="$sm"
+                borderColor={'$error'}
+                onPress={onRetryProductFetch}
+                disabled={isRetryingProductFetch}
+              >
+                {isRetryingProductFetch ? <Spinner size="small" color={'$error'} /> : null}
+                <Text color={'$error'} fontSize={13} fontWeight="600">
+                  {isRetryingProductFetch ? 'Retrying…' : 'Retry'}
+                </Text>
+              </Button>
+            </XStack>
+          </Card>
+        ) : null}
 
         {/* Error message */}
         {lastError && (

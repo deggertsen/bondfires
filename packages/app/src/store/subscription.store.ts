@@ -201,6 +201,8 @@ export interface SubscriptionState {
   currentTier: SubscriptionTier
   /** Whether the store products have been fetched. */
   productsLoaded: boolean
+  /** Whether the last product fetch failed and should be retried. */
+  productFetchFailed: boolean
   /** Map of productId → localized price string (e.g. "$4.99"). */
   productPrices: Record<string, string>
   /** Map of productId → Android subscription offer token required for purchase. */
@@ -230,6 +232,7 @@ export interface SubscriptionState {
 export const subscriptionStore$ = observable<SubscriptionState>({
   currentTier: 'free',
   productsLoaded: false,
+  productFetchFailed: false,
   productPrices: {},
   productOfferTokens: {},
   isPurchasing: false,
@@ -285,10 +288,13 @@ export const subscriptionActions = {
     subscriptionStore$.productPrices.set(prices)
     subscriptionStore$.productOfferTokens.set(offerTokens)
     subscriptionStore$.productsLoaded.set(true)
+    subscriptionStore$.productFetchFailed.set(false)
   },
 
-  setProductsLoaded(loaded: boolean) {
-    subscriptionStore$.productsLoaded.set(loaded)
+  failProductFetch() {
+    // A failed attempt still makes the paywall render so it can offer retry.
+    subscriptionStore$.productsLoaded.set(true)
+    subscriptionStore$.productFetchFailed.set(true)
   },
 
   startPurchase(tier: SubscriptionTier, productId?: string) {
