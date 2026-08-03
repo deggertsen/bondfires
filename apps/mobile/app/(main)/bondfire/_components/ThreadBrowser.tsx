@@ -218,8 +218,8 @@ export function ThreadBrowser({
   const currentItem = videoItems[currentVideoIndex]
   const totalVideos = videoItems.length
   const unwatchedCount = videoItems.filter((item) => !item.watchedByViewer).length
-  // At most two chips on the collapsed bar — it shares a line with the counter.
-  const currentTags = currentItem?.aiTags?.slice(0, 2) ?? []
+  // Single priority tag on the collapsed bar.
+  const currentTag = currentItem?.aiTags?.[0]
 
   if (!currentItem) return null
 
@@ -266,11 +266,10 @@ export function ThreadBrowser({
               </XStack>
               <XStack alignItems="center" gap={5} minWidth={0}>
                 <Text fontSize={11} color={OVERLAY_COLORS.textSecondary} flexShrink={0}>
-                  {videoLabel(currentItem)} · {formatShortDate(currentItem.createdAt)}
+                  {formatShortDate(currentItem.createdAt)}
                 </Text>
-                {currentTags.map((tag) => (
+                {currentTag ? (
                   <XStack
-                    key={tag}
                     backgroundColor="rgba(255,255,255,0.14)"
                     paddingHorizontal={6}
                     paddingVertical={1}
@@ -279,11 +278,16 @@ export function ThreadBrowser({
                     minWidth={0}
                   >
                     <Text fontSize={9} color={OVERLAY_COLORS.textSecondary} numberOfLines={1}>
-                      {tag}
+                      {currentTag}
                     </Text>
                   </XStack>
-                ))}
+                ) : null}
               </XStack>
+              {currentItem.summary ? (
+                <Text fontSize={10} color={OVERLAY_COLORS.textSecondary} opacity={0.7} numberOfLines={1}>
+                  {currentItem.summary}
+                </Text>
+              ) : null}
             </YStack>
             <Text fontSize={12} fontWeight="600" color={OVERLAY_COLORS.textSecondary}>
               {currentVideoIndex + 1} / {totalVideos}
