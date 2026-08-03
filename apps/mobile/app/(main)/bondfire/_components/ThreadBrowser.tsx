@@ -218,7 +218,8 @@ export function ThreadBrowser({
   const currentItem = videoItems[currentVideoIndex]
   const totalVideos = videoItems.length
   const unwatchedCount = videoItems.filter((item) => !item.watchedByViewer).length
-  // Single priority tag on the collapsed bar.
+  // One chip only on the collapsed bar — the model emits its most salient tag
+  // first, and the rest are visible on the expanded rows.
   const currentTag = currentItem?.aiTags?.[0]
 
   if (!currentItem) return null
@@ -252,46 +253,63 @@ export function ThreadBrowser({
               size={38}
             />
             <YStack flex={1} minWidth={0}>
-              <XStack alignItems="center" gap={6}>
-                <Text
-                  fontSize={13}
-                  fontWeight="700"
-                  color={OVERLAY_COLORS.textPrimary}
-                  numberOfLines={1}
-                  flexShrink={1}
-                >
-                  {currentItem.creatorName}
-                </Text>
-                <ChevronUp size={13} color={OVERLAY_COLORS.textSecondary} />
+              {/* Identity + tag on the left, position + expand affordance on the
+                  right. Keeping the counter inside the text stack (instead of a
+                  third pill column) is what gives the summary line below its
+                  full width. */}
+              <XStack alignItems="center" gap={8} minWidth={0}>
+                <XStack alignItems="center" gap={6} flex={1} minWidth={0}>
+                  <Text
+                    fontSize={13}
+                    fontWeight="700"
+                    color={OVERLAY_COLORS.textPrimary}
+                    numberOfLines={1}
+                    flexShrink={1}
+                  >
+                    {currentItem.creatorName}
+                  </Text>
+                  {currentTag ? (
+                    <XStack
+                      backgroundColor="rgba(255,255,255,0.14)"
+                      paddingHorizontal={6}
+                      paddingVertical={1}
+                      borderRadius={5}
+                      flexShrink={1}
+                      minWidth={0}
+                    >
+                      <Text fontSize={9} color={OVERLAY_COLORS.textSecondary} numberOfLines={1}>
+                        {currentTag}
+                      </Text>
+                    </XStack>
+                  ) : null}
+                </XStack>
+                <XStack alignItems="center" gap={4} flexShrink={0}>
+                  <Text fontSize={12} fontWeight="600" color={OVERLAY_COLORS.textSecondary}>
+                    {currentVideoIndex + 1} / {totalVideos}
+                  </Text>
+                  <ChevronUp size={13} color={OVERLAY_COLORS.textSecondary} />
+                </XStack>
               </XStack>
-              <XStack alignItems="center" gap={5} minWidth={0}>
+              {/* Summary takes the line and the date trails it, mirroring the
+                  expanded rows. Two lines total, so the 38px avatar still sets
+                  the bar's height whether or not AI insights have landed. */}
+              <XStack alignItems="center" gap={8} minWidth={0}>
+                {currentItem.summary ? (
+                  <Text
+                    fontSize={11}
+                    color={OVERLAY_COLORS.textSecondary}
+                    numberOfLines={1}
+                    flex={1}
+                    minWidth={0}
+                  >
+                    {currentItem.summary}
+                  </Text>
+                ) : null}
                 <Text fontSize={11} color={OVERLAY_COLORS.textSecondary} flexShrink={0}>
                   {formatShortDate(currentItem.createdAt)}
                 </Text>
-                {currentTag ? (
-                  <XStack
-                    backgroundColor="rgba(255,255,255,0.14)"
-                    paddingHorizontal={6}
-                    paddingVertical={1}
-                    borderRadius={5}
-                    flexShrink={1}
-                    minWidth={0}
-                  >
-                    <Text fontSize={9} color={OVERLAY_COLORS.textSecondary} numberOfLines={1}>
-                      {currentTag}
-                    </Text>
-                  </XStack>
-                ) : null}
               </XStack>
-              {currentItem.summary ? (
-                <Text fontSize={10} color={OVERLAY_COLORS.textSecondary} opacity={0.7} numberOfLines={1}>
-                  {currentItem.summary}
-                </Text>
-              ) : null}
             </YStack>
-            <Text fontSize={12} fontWeight="600" color={OVERLAY_COLORS.textSecondary}>
-              {currentVideoIndex + 1} / {totalVideos}
-            </Text>
           </XStack>
         </Pressable>
       )}
