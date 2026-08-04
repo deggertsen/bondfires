@@ -18,6 +18,12 @@ function videoLabel(item: BondfireVideoItem) {
   return item.isMainVideo ? 'Spark' : `Response #${item.responseIndex}`
 }
 
+// The collapsed bar is tight and its avatar already identifies the speaker, so
+// a first name is enough there. The expanded rows keep the full name.
+function firstName(name: string) {
+  return name.trim().split(/\s+/)[0] || name
+}
+
 function formatShortDate(ms: number) {
   const date = new Date(ms)
   return `${date.toLocaleDateString('en-US', {
@@ -268,8 +274,15 @@ export function ThreadBrowser({
                     numberOfLines={1}
                     flexShrink={1}
                   >
-                    {currentItem.creatorName}
+                    {firstName(currentItem.creatorName)}
                   </Text>
+                  {/* When a summary is present it takes the whole line below,
+                      so the date rides up here instead of stealing its width. */}
+                  {currentSummary ? (
+                    <Text fontSize={10} color={OVERLAY_COLORS.textSecondary} flexShrink={0}>
+                      {currentDate}
+                    </Text>
+                  ) : null}
                   {currentTag ? (
                     <XStack
                       backgroundColor="rgba(255,255,255,0.14)"
@@ -283,13 +296,6 @@ export function ThreadBrowser({
                         {currentTag}
                       </Text>
                     </XStack>
-                  ) : null}
-                  {/* When a summary is present it takes the whole line below,
-                      so the date rides up here instead of stealing its width. */}
-                  {currentSummary ? (
-                    <Text fontSize={10} color={OVERLAY_COLORS.textSecondary} flexShrink={0}>
-                      {currentDate}
-                    </Text>
                   ) : null}
                 </XStack>
                 <XStack alignItems="center" gap={4} flexShrink={0}>
