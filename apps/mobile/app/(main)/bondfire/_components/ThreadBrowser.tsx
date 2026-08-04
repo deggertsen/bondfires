@@ -221,6 +221,8 @@ export function ThreadBrowser({
   // One chip only on the collapsed bar — the model emits its most salient tag
   // first, and the rest are visible on the expanded rows.
   const currentTag = currentItem?.aiTags?.[0]
+  const currentSummary = currentItem?.summary
+  const currentDate = currentItem ? formatShortDate(currentItem.createdAt) : ''
 
   if (!currentItem) return null
 
@@ -253,10 +255,10 @@ export function ThreadBrowser({
               size={38}
             />
             <YStack flex={1} minWidth={0}>
-              {/* Identity + tag on the left, position + expand affordance on the
-                  right. Keeping the counter inside the text stack (instead of a
-                  third pill column) is what gives the summary line below its
-                  full width. */}
+              {/* Header line: who, topic, when on the left; position and the
+                  expand affordance on the right. The counter lives inside the
+                  text stack rather than as a third pill column so the line
+                  below spans the full width. */}
               <XStack alignItems="center" gap={8} minWidth={0}>
                 <XStack alignItems="center" gap={6} flex={1} minWidth={0}>
                   <Text
@@ -282,6 +284,13 @@ export function ThreadBrowser({
                       </Text>
                     </XStack>
                   ) : null}
+                  {/* When a summary is present it takes the whole line below,
+                      so the date rides up here instead of stealing its width. */}
+                  {currentSummary ? (
+                    <Text fontSize={10} color={OVERLAY_COLORS.textSecondary} flexShrink={0}>
+                      {currentDate}
+                    </Text>
+                  ) : null}
                 </XStack>
                 <XStack alignItems="center" gap={4} flexShrink={0}>
                   <Text fontSize={12} fontWeight="600" color={OVERLAY_COLORS.textSecondary}>
@@ -290,25 +299,12 @@ export function ThreadBrowser({
                   <ChevronUp size={13} color={OVERLAY_COLORS.textSecondary} />
                 </XStack>
               </XStack>
-              {/* Summary takes the line and the date trails it, mirroring the
-                  expanded rows. Two lines total, so the 38px avatar still sets
-                  the bar's height whether or not AI insights have landed. */}
-              <XStack alignItems="center" gap={8} minWidth={0}>
-                {currentItem.summary ? (
-                  <Text
-                    fontSize={11}
-                    color={OVERLAY_COLORS.textSecondary}
-                    numberOfLines={1}
-                    flex={1}
-                    minWidth={0}
-                  >
-                    {currentItem.summary}
-                  </Text>
-                ) : null}
-                <Text fontSize={11} color={OVERLAY_COLORS.textSecondary} flexShrink={0}>
-                  {formatShortDate(currentItem.createdAt)}
-                </Text>
-              </XStack>
+              {/* The summary, or the date on its own until AI insights land.
+                  Either way it is one line, so the 38px avatar keeps setting
+                  the bar's height. */}
+              <Text fontSize={11} color={OVERLAY_COLORS.textSecondary} numberOfLines={1}>
+                {currentSummary ?? currentDate}
+              </Text>
             </YStack>
           </XStack>
         </Pressable>
