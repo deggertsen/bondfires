@@ -59,6 +59,10 @@ export interface BackgroundUploadOptions {
   tags?: string[]
   isResponse: boolean
   draftBondfireId?: string
+  taskType?: UploadTask['taskType']
+  liveSessionId?: string
+  recordId?: string
+  recordType?: 'bondfire' | 'response'
   createMuxDirectUpload: (args: {
     filename: string
     contentType: string
@@ -71,6 +75,15 @@ export interface BackgroundUploadOptions {
     width?: number
     height?: number
     draftBondfireId?: string
+  }) => Promise<MuxDirectUpload>
+  /** Recovery uploads: attach to an existing live-linked record (no new row). */
+  createLiveBackupDirectUpload?: (args: {
+    liveSessionId: string
+    filename: string
+    contentType: string
+    durationMs?: number
+    width?: number
+    height?: number
   }) => Promise<MuxDirectUpload>
   getMuxUploadStatus: (args: { uploadId: string }) => Promise<MuxUploadStatus>
   callbacks?: BackgroundUploadCallbacks
@@ -278,6 +291,10 @@ export async function startBackgroundUpload(
   const task: UploadTask = {
     id: taskId,
     videoFilePath: persistentPath,
+    taskType: options.taskType ?? 'legacy',
+    liveSessionId: options.liveSessionId,
+    recordId: options.recordId,
+    recordType: options.recordType,
     bondfireId: options.bondfireId,
     campId: options.campId,
     personalCamp: options.personalCamp,
@@ -286,7 +303,7 @@ export async function startBackgroundUpload(
     draftBondfireId: options.draftBondfireId,
     status: 'pending',
     progress: 0,
-    stage: 'Queued',
+    stage: options.taskType === 'live_backup' ? 'Recovering your recording…' : 'Queued',
     uploadFilename: uploadFileInfo.filename,
     uploadContentType: uploadFileInfo.contentType,
     attemptCount: 0,
@@ -308,6 +325,58 @@ export async function startBackgroundUpload(
   }
 
   return taskId
+}
+
+/**
+ * Enqueue a Phase 2 live-backup recovery upload for an existing live session.
+ * Dedupes against an already-queued task for the same session.
+ */
+export async function startLiveBackupUpload(
+  options: {
+    videoUri: string
+    liveSessionId: string
+    recordId?: string
+    recordType?: 'bondfire' | 'response'
+    isResponse: boolean
+    createLiveBackupDirectUpload: NonNullable<
+      BackgroundUploadOptions['createLiveBackupDirectUpload']
+    >
+    getMuxUploadStatus: BackgroundUploadOptions['getMuxUploadStatus']
+    createMuxDirectUpload: BackgroundUploadOptions['createMuxDirectUpload']
+    callbacks?: BackgroundUploadCallbacks
+  },
+  autoStart = true,
+): Promise<string | null> {
+  const existing = uploadQueueActions.findLiveBackupTask(options.liveSessionId)
+  if (existing) {
+    telemetry.breadcrumb('backup:recovery_already_queued', {
+      liveSessionId: options.liveSessionId,
+      taskId: existing.id,
+    })
+    return existing.id
+  }
+
+  telemetry.info('backup:recovery_enqueued', 'Enqueued local backup recovery upload', {
+    liveSessionId: options.liveSessionId,
+    recordId: options.recordId,
+    recordType: options.recordType,
+  })
+
+  return await startBackgroundUpload(
+    {
+      videoUri: options.videoUri,
+      isResponse: options.isResponse,
+      taskType: 'live_backup',
+      liveSessionId: options.liveSessionId,
+      recordId: options.recordId,
+      recordType: options.recordType,
+      createMuxDirectUpload: options.createMuxDirectUpload,
+      createLiveBackupDirectUpload: options.createLiveBackupDirectUpload,
+      getMuxUploadStatus: options.getMuxUploadStatus,
+      callbacks: options.callbacks,
+    },
+    autoStart,
+  )
 }
 
 /**
@@ -366,23 +435,48 @@ async function processUploadTask(taskId: string, options: BackgroundUploadOption
     // Step 2: Create Mux direct upload and pending Convex record if needed.
     let muxUpload = task.muxUpload
     if (!muxUpload) {
-      setTaskProgress(taskId, options, PROCESSING_MAX_PROGRESS, 'Creating Mux upload...')
-      muxUpload = await options.createMuxDirectUpload({
-        filename: uploadFileInfo.filename,
-        contentType: uploadFileInfo.contentType,
-        isResponse: task.isResponse,
-        bondfireId: task.bondfireId,
-        campId: task.campId,
-        personalCamp: task.personalCamp,
-        tags: task.tags,
-        durationMs: processed.metadata.durationMs,
-        width: processed.metadata.width,
-        height: processed.metadata.height,
-        draftBondfireId: task.draftBondfireId,
-      })
+      const isLiveBackup = task.taskType === 'live_backup'
+      setTaskProgress(
+        taskId,
+        options,
+        PROCESSING_MAX_PROGRESS,
+        isLiveBackup ? 'Recovering your recording…' : 'Creating Mux upload...',
+      )
+      if (isLiveBackup) {
+        if (!options.createLiveBackupDirectUpload) {
+          throw new Error('Live backup upload requires createLiveBackupDirectUpload')
+        }
+        if (!task.liveSessionId) {
+          throw new Error('Live backup upload is missing liveSessionId')
+        }
+        muxUpload = await options.createLiveBackupDirectUpload({
+          liveSessionId: task.liveSessionId,
+          filename: uploadFileInfo.filename,
+          contentType: uploadFileInfo.contentType,
+          durationMs: processed.metadata.durationMs,
+          width: processed.metadata.width,
+          height: processed.metadata.height,
+        })
+      } else {
+        muxUpload = await options.createMuxDirectUpload({
+          filename: uploadFileInfo.filename,
+          contentType: uploadFileInfo.contentType,
+          isResponse: task.isResponse,
+          bondfireId: task.bondfireId,
+          campId: task.campId,
+          personalCamp: task.personalCamp,
+          tags: task.tags,
+          durationMs: processed.metadata.durationMs,
+          width: processed.metadata.width,
+          height: processed.metadata.height,
+          draftBondfireId: task.draftBondfireId,
+        })
+      }
 
       uploadQueueActions.updateTask(taskId, {
         muxUpload,
+        recordId: muxUpload.recordId,
+        recordType: muxUpload.recordType,
       })
     }
 
@@ -501,6 +595,10 @@ export async function resumePendingUploads(
     const taskOptions: BackgroundUploadOptions = {
       ...options,
       videoUri: task.videoFilePath,
+      taskType: task.taskType,
+      liveSessionId: task.liveSessionId,
+      recordId: task.recordId,
+      recordType: task.recordType,
       bondfireId: task.bondfireId,
       campId: task.campId,
       personalCamp: task.personalCamp,

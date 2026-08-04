@@ -35,6 +35,34 @@ import { goBackOrReplace } from '../../lib/navigation'
 import { routes } from '../../lib/routes'
 import { BondfireLivePublisher } from '../../modules/bondfire-live-publisher'
 
+/**
+ * Copy for the completion screen's detail line. When the live asset died and
+ * the on-device backup is uploading in its place, this line is the only place
+ * the user learns the video leaves their phone before anyone else can see it —
+ * so say so here rather than interrupting them with an alert.
+ */
+function getCompletionDetail(args: {
+  backupRecoveryPending: boolean
+  isResponse: boolean
+  isPersonalCamp: boolean
+}): string {
+  if (args.backupRecoveryPending) {
+    return args.isResponse
+      ? "The connection dropped, but your response is saved on your phone. It's uploading in the background and will show in activity lists once it finishes."
+      : "The connection dropped, but your recording is saved on your phone. It's uploading in the background and will show for others once it finishes."
+  }
+
+  if (args.isResponse) {
+    return 'Awesome, great video! We are getting your response ready now. It may take up to two minutes to show in activity lists.'
+  }
+
+  if (args.isPersonalCamp) {
+    return 'Your Personal Bondfire is being processed. Invite someone to join the conversation!'
+  }
+
+  return 'Awesome, great video! We are getting it ready now. It may take up to two minutes for your video to show in Discover, Recent, and Active.'
+}
+
 export default function CreateScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
@@ -103,6 +131,8 @@ export default function CreateScreen() {
   const tradeTag = useValue(state$.tradeTag)
   const recordingPhase = useValue(recordingStore$.phase)
   const videoUri = useValue(recordingStore$.videoUri)
+  const backupRecoveryPending = useValue(recordingStore$.backupRecoveryPending)
+  const backupRecoveryRecordId = useValue(recordingStore$.backupRecoveryRecordId)
   const isLivePublisherAvailable = useValue(recordingStore$.isLivePublisherAvailable)
   const livePublishEnabled = useValue(appStore$.preferences.livePublishEnabled)
   const currentCampId = useValue(appStore$.currentCampId)
@@ -123,9 +153,14 @@ export default function CreateScreen() {
   // completion screen would be a lie. Detect that state so we can recover to the
   // camera instead of rendering it. (Pre-connect, which precedes recording, is
   // preview-only and has no recordId yet — see the note below.)
+  //
+  // Backup recovery is the one exception: the row exists server-side (awaiting
+  // its on-device upload) but livePublishStore was already reset, so the id
+  // comes from the recording store instead.
   const isLiveBondfireCompletion =
     recordingPhase === 'completion' && !!videoUri && shouldUseLivePublish && !respondTo
-  const liveCompletionMissingRecord = isLiveBondfireCompletion && !liveRecordId
+  const completionRecordId = liveRecordId ?? backupRecoveryRecordId
+  const liveCompletionMissingRecord = isLiveBondfireCompletion && !completionRecordId
 
   // NOTE: There is intentionally no "pre_connected must have a recordId" guard
   // here. Pre-connect is preview-only for every flow (response AND new
@@ -140,6 +175,7 @@ export default function CreateScreen() {
   // provisions fresh and never relies on a pre-provisioned ingest.
 
   const createMuxDirectUpload = useAction(api.videos.createMuxDirectUpload)
+  const createLiveBackupDirectUpload = useAction(api.videos.createLiveBackupDirectUpload)
   const getMuxUploadStatus = useAction(api.videos.getMuxUploadStatus)
   const camps = useQuery(api.camps.list, respondTo ? 'skip' : {})
   const subscription = useQuery(api.subscriptions.current, {})
@@ -434,11 +470,21 @@ export default function CreateScreen() {
           draftBondfireId: args.draftBondfireId as Id<'bondfires'> | undefined,
         })
       },
+      createLiveBackupDirectUpload: async (args) => {
+        return await createLiveBackupDirectUpload({
+          liveSessionId: args.liveSessionId as Id<'liveSessions'>,
+          filename: args.filename,
+          contentType: args.contentType,
+          durationMs: args.durationMs,
+          width: args.width,
+          height: args.height,
+        })
+      },
       getMuxUploadStatus: async (args) => {
         return await getMuxUploadStatus(args)
       },
     })
-  }, [createMuxDirectUpload, getMuxUploadStatus])
+  }, [createLiveBackupDirectUpload, createMuxDirectUpload, getMuxUploadStatus])
 
   const schedulePendingUploads = useCallback(() => {
     clearUploadStartTimeout()
@@ -705,19 +751,19 @@ export default function CreateScreen() {
   // above), so the completion screen always has a title to edit and a row to
   // share; the id-less branch is only for responses and legacy uploads.
   if (recordingPhase === 'completion' && videoUri) {
-    const completionDetail = respondTo
-      ? 'Awesome, great video! We are getting your response ready now. It may take up to two minutes to show in activity lists.'
-      : isPersonalCamp
-        ? 'Your Personal Bondfire is being processed. Invite someone to join the conversation!'
-        : 'Awesome, great video! We are getting it ready now. It may take up to two minutes for your video to show in Discover, Recent, and Active.'
+    const completionDetail = getCompletionDetail({
+      backupRecoveryPending,
+      isResponse: !!respondTo,
+      isPersonalCamp,
+    })
 
     // The inline title field / Invite button only apply when the user owns
     // the just-created bondfire and it already exists server-side: the
     // live-publish camp and personal flows. Responses edit someone else's
     // bondfire, and legacy background uploads have no bondfire ID yet.
     const editableBondfireId =
-      !respondTo && shouldUseLivePublish && liveRecordId
-        ? (liveRecordId as Id<'bondfires'>)
+      !respondTo && shouldUseLivePublish && completionRecordId
+        ? (completionRecordId as Id<'bondfires'>)
         : undefined
 
     return (

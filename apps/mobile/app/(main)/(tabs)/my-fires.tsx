@@ -140,6 +140,18 @@ function MyFiresRetry({ onRetry }: { onRetry: () => void }) {
   )
 }
 
+/**
+ * `awaiting_recovery` rows are only listed for their own creator (see
+ * listMyFires), so the label doubles as the explanation for why nobody else can
+ * watch it yet.
+ */
+function getMyFireStatusLabel(thread: MyFire): string {
+  if (thread.videoStatus === 'awaiting_recovery') {
+    return 'Uploading from your phone'
+  }
+  return thread.unread ? 'New' : 'Viewed'
+}
+
 function toBondfireRowProps(
   thread: MyFire,
   thumbnailUrl: string | null,
@@ -164,7 +176,7 @@ function toBondfireRowProps(
     campLabel: thread.camp?.name,
     thumbnailUrl,
     isLive: thread.videoStatus === 'live',
-    statusLabel: thread.unread ? 'New' : 'Viewed',
+    statusLabel: getMyFireStatusLabel(thread),
     badge: thread.badge,
     participants: thread.participants.map((participant) => ({
       userId: participant.user._id,

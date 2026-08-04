@@ -2,7 +2,7 @@
 
 **Author(s):** David + Claude
 **Date:** 2026-07-22
-**Status:** Draft
+**Status:** Phase 1 shipped (#187). Phase 2 in progress. Phase 3 not started.
 **Complexity:** Large (three independently shippable phases)
 
 ---
@@ -61,13 +61,19 @@ Reconnect is the first line of defense: it handles transient network switches wi
 
 - On terminal failure (`live:early_drop` cancel path *with a backup present*, reconnect give-up finalize where Mux later reports the asset errored, or next-launch crash recovery), enqueue the backup file into the existing upload queue with a new task type `live_backup` carrying `{ liveSessionId, recordId }`.
 - Next-launch matching: files are named `<liveSessionId>.mp4`; on launch, for each orphaned file ask the server for that session's record state — asset `ready` → delete file; `errored`/`processing`-stuck → enqueue recovery upload. This composes with the crash-recovery sweep (which, since PR #183, finalizes rather than deletes progressed sessions).
-- UX: silent when possible; a small "Recovering your recording…" state on the affected bondfire is acceptable.
+- UX: ambient, never modal. A recovering bondfire must never look lost, which is the whole point of the feature. Four surfaces, all reusing existing chrome:
+  - **Completion screen** — an early drop with a salvageable backup lands here (with copy explaining the background upload) instead of the "Recording didn't start" retry state.
+  - **Bondfire detail** — `awaiting_recovery` renders `BondfireRecoveringScreen` ("Finishing upload...") rather than falling through to playback's bare spinner.
+  - **My Fires** — `listMyFires` keeps the creator's own `awaiting_recovery` row visible, labelled "Uploading from your phone".
+  - **Launch sweep** — one auto-dismissing info toast when the sweep enqueues recovery for an earlier session.
+  - Progress detail stays on Profile → `UploadProgressCard` ("Recovering recording").
 
 ### Server (Convex)
 
 - New mutation/action `recoverLiveRecordWithUpload`: given `liveSessionId` + a completed direct-upload asset, attach the asset to the **same** `bondfires`/`bondfireVideos` record (reuse `markRecordReady` plumbing), only when the record's live asset is `errored` or terminally stuck.
 - **Dedupe rule:** if both the live asset and the backup upload end up viable, the live asset wins and the backup asset is deleted (`deleteFailedBondfireMuxAssets` path). Never double-attach.
 - Guard rails: the record must belong to the session's user; the recovery window is bounded (e.g. 7 days, matching client retention).
+- **Announcement gap:** live rows are announced to their camp/thread at the `live_stream.active` webhook, so `markRecordReady` skipped notifying anything with a `liveSessionId`. A stream that dropped early or never pushed a frame never announced itself, which left a recovered record — most acutely a recovered *response*, which has no equivalent of the spark's `pending`→`live` notify — silently landing in its thread. Gate the skip on whether the session actually went live (`liveSessions.startedAt`) rather than on the mere presence of a `liveSessionId`; `claimDeliveries` dedupes per recipient, so sessions that did announce can't double-push. The creator deliberately gets **no** "your upload finished" push: it isn't actionable, and the notification budget belongs to other people's activity.
 - Important interaction: `handleFailedBondfire` / `markLinkedLiveRecordErrored` currently delete never-watchable spark rows. With recovery possible, deletion should be deferred for records that may still receive a backup upload (e.g. mark `awaiting_recovery` with a give-up cron) — this is the subtlest server change in the plan.
 
 **Estimate:** ~a week including the deferred-deletion rework and tests.

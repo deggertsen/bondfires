@@ -317,7 +317,15 @@ export const listMyFires = query({
     const threads: ThreadSummary[] = []
     for (const threadId of threadIds) {
       const bondfire = await ctx.db.get(threadId)
-      if (!bondfire || !isPlayableVideoRecord(bondfire)) {
+      if (!bondfire) {
+        continue
+      }
+      // A creator keeps seeing their own fire while its on-device backup
+      // uploads (videoStatus 'awaiting_recovery'). Hiding it until playable
+      // makes a recording that is safely saved look like it was lost.
+      const isRecoveringForCreator =
+        bondfire.userId === userId && bondfire.videoStatus === 'awaiting_recovery'
+      if (!isPlayableVideoRecord(bondfire) && !isRecoveringForCreator) {
         continue
       }
       if (!(await isBondfireVisibleToViewer(ctx, bondfire, viewer))) {

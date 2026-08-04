@@ -73,7 +73,7 @@ function isProcessingVideoRecord(record: {
   }
 
   const status = record.videoStatus ?? 'ready'
-  if (status === 'errored') {
+  if (status === 'errored' || status === 'awaiting_recovery') {
     return false
   }
 
@@ -91,7 +91,12 @@ function isDetailVisibleVideoRecord(record: {
   }
 
   const status = record.videoStatus ?? 'ready'
-  if (status === 'pending' || status === 'processing' || status === 'errored') {
+  if (
+    status === 'pending' ||
+    status === 'processing' ||
+    status === 'errored' ||
+    status === 'awaiting_recovery'
+  ) {
     return true
   }
 

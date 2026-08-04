@@ -34,6 +34,12 @@ import {
 } from './entitlements'
 import { throwUserError, withUserFacingActionErrors } from './errors'
 import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
+import {
+  decideReadyAssetConflict,
+  type RecordedAssetSource,
+  shouldAnnounceRecordOnReady,
+  shouldDeferLiveFailureForBackup,
+} from './lib/liveBackupRecovery'
 import { classifyMuxIngest, type IngestEvidence, localIngestSource } from './lib/liveIngest'
 import { assessLiveSessionProgress } from './liveSessionProgress'
 import {
@@ -157,6 +163,10 @@ const STUCK_LIVE_RECORDING_GIVE_UP_MS = 60 * 60 * 1000
 // unreachable orphan. Generous beyond any plausible upload completion (Mux
 // direct-upload URLs expire in ~1h) so we never kill an in-flight upload.
 const STUCK_WAITING_FOR_UPLOAD_GIVE_UP_MS = 6 * 60 * 60 * 1000
+// Local backup recovery window (Phase 2 of docs/plans/local-backup-recording.md).
+// Matches client LOCAL_BACKUP_RETENTION_MS — after this, awaiting_recovery rows
+// are given up via handleFailedBondfire / response uncount.
+const LOCAL_BACKUP_RECOVERY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 const RECONCILE_BATCH_LIMIT = 25
 // The mobile client closes native RTMP before calling endLiveStream, so a short
 // wait here is safe. Mux's live_stream.active webhook can lag behind the
@@ -1141,11 +1151,35 @@ async function findMuxRecord(
   return null
 }
 
+function inferRecordedAssetSource(
+  record: MuxRecord,
+  args: { uploadId?: string; liveStreamId?: string },
+): RecordedAssetSource {
+  if (args.liveStreamId) {
+    return 'live'
+  }
+  if (args.uploadId) {
+    return record.document.liveSessionId ? 'backup' : 'direct'
+  }
+  return 'unknown'
+}
+
 async function markRecordAssetCreated(
   ctx: MutationCtx,
   record: MuxRecord,
   args: { assetId: string; assetStatus?: string },
 ) {
+  // Asset-created events can arrive after a different asset is already ready.
+  // Keep the playable row stable; the later asset-ready event will perform the
+  // source-aware live-wins decision and delete whichever asset lost.
+  if (
+    hasResolvedRecordedAsset(record.document) &&
+    (record.document.videoStatus ?? 'ready') === 'ready' &&
+    record.document.muxAssetId !== args.assetId
+  ) {
+    return false
+  }
+
   const patch = {
     muxAssetId: args.assetId,
     muxAssetStatus: args.assetStatus ?? 'preparing',
@@ -1160,6 +1194,7 @@ async function markRecordAssetCreated(
   } else {
     await ctx.db.patch(record.document._id, patch)
   }
+  return true
 }
 
 async function assertMuxMetadataDurationAllowed(
@@ -1187,6 +1222,18 @@ async function assertMuxMetadataDurationAllowed(
   }
 }
 
+/** See shouldAnnounceRecordOnReady — this only resolves the live session for it. */
+async function shouldAnnounceOnReady(
+  ctx: MutationCtx,
+  liveSessionId: Id<'liveSessions'> | undefined,
+): Promise<boolean> {
+  const liveSession = liveSessionId ? await ctx.db.get(liveSessionId) : null
+  return shouldAnnounceRecordOnReady({
+    liveSessionId,
+    liveSessionStartedAt: liveSession?.startedAt,
+  })
+}
+
 async function markRecordReady(
   ctx: MutationCtx,
   record: MuxRecord,
@@ -1198,8 +1245,37 @@ async function markRecordReady(
     durationMs?: number
     muxAspectRatio?: string
     muxMaxResolution?: string
+    source: RecordedAssetSource
   },
 ): Promise<'ready' | 'rejected'> {
+  const conflictDecision = decideReadyAssetConflict({
+    existingAssetId: record.document.muxAssetId,
+    existingPlaybackId: record.document.muxPlaybackId,
+    incomingAssetId: args.assetId,
+    incomingSource: args.source,
+  })
+
+  if (conflictDecision === 'keep_existing') {
+    await ctx.scheduler.runAfter(0, internal.bondfireFailureCleanup.deleteFailedBondfireMuxAssets, {
+      assetIds: [args.assetId],
+    })
+    if (record.document.liveSessionId) {
+      await logServerEvent(ctx, {
+        level: 'info',
+        event: 'backup:live_won',
+        message: 'Ignored recovery asset because the recording is already ready',
+        userId: record.document.userId,
+        data: {
+          table: record.table,
+          recordId: record.document._id,
+          liveAssetId: record.document.muxAssetId,
+          backupAssetId: args.assetId,
+        },
+      })
+    }
+    return 'ready'
+  }
+
   try {
     await assertMuxMetadataDurationAllowed(ctx, record, args.durationMs)
   } catch {
@@ -1212,7 +1288,28 @@ async function markRecordReady(
   }
 
   const wasReady = (record.document.videoStatus ?? 'ready') === 'ready'
-  if (!wasReady) {
+  if (
+    conflictDecision === 'replace_existing' &&
+    record.document.muxAssetId &&
+    record.document.muxAssetId !== args.assetId
+  ) {
+    await ctx.scheduler.runAfter(0, internal.bondfireFailureCleanup.deleteFailedBondfireMuxAssets, {
+      assetIds: [record.document.muxAssetId],
+    })
+    await logServerEvent(ctx, {
+      level: 'info',
+      event: 'backup:live_won',
+      message: 'Live VOD replaced the ready recovery asset',
+      userId: record.document.userId,
+      data: {
+        table: record.table,
+        recordId: record.document._id,
+        liveAssetId: args.assetId,
+        backupAssetId: record.document.muxAssetId,
+      },
+    })
+  }
+  if (!wasReady || conflictDecision === 'replace_existing') {
     // Ensure the asset ends up with a caption track feeding the AI pipeline.
     // Covers every path to 'ready' (webhook, poller, reconciler). Only live
     // recordings may POST generate-subtitles here — direct uploads requested
@@ -1222,7 +1319,7 @@ async function markRecordReady(
       muxAssetId: args.assetId,
       table: record.table,
       recordId: record.document._id,
-      requestIfMissing: record.document.liveSessionId !== undefined,
+      requestIfMissing: args.source === 'live',
     })
   }
   const patch = {
@@ -1260,7 +1357,7 @@ async function markRecordReady(
           })
         }
       }
-      if (!record.document.liveSessionId) {
+      if (await shouldAnnounceOnReady(ctx, record.document.liveSessionId)) {
         await ctx.scheduler.runAfter(0, internal.sendNotification.notifyCampBondfire, {
           bondfireId: record.document._id,
           creatorId: record.document.userId,
@@ -1282,8 +1379,8 @@ async function markRecordReady(
   // missed. Idempotent via countedAt either way.
   await countResponse(ctx, record.document)
 
-  if (record.document.liveSessionId) {
-    // Live responses were already announced at stream-watchable.
+  if (!(await shouldAnnounceOnReady(ctx, record.document.liveSessionId))) {
+    // Already announced when the stream became watchable.
     return 'ready'
   }
 
@@ -1307,10 +1404,46 @@ async function markRecordReady(
 async function markRecordErrored(
   ctx: MutationCtx,
   record: MuxRecord,
-  args: { assetId?: string; assetStatus?: string; durationMs?: number; muxErrorMessage?: string },
+  args: {
+    assetId?: string
+    assetStatus?: string
+    durationMs?: number
+    muxErrorMessage?: string
+  },
 ) {
+  // A late failure for the losing asset must never demote the winner that is
+  // already playable (for example, a backup upload timing out after live won).
+  if (
+    hasResolvedRecordedAsset(record.document) &&
+    (record.document.videoStatus ?? 'ready') === 'ready' &&
+    (!args.assetId || record.document.muxAssetId !== args.assetId)
+  ) {
+    if (args.assetId) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.bondfireFailureCleanup.deleteFailedBondfireMuxAssets,
+        { assetIds: [args.assetId] },
+      )
+    }
+    return
+  }
+
+  const liveSession = record.document.liveSessionId
+    ? await ctx.db.get(record.document.liveSessionId)
+    : null
+  // Do not put every failed live recording into a seven-day zombie state.
+  // Recovery is promised only when native positively confirmed a local file;
+  // a duration violation is terminal because re-uploading the same file cannot
+  // make it compliant.
+  const deferForBackupRecovery = shouldDeferLiveFailureForBackup({
+    localBackupAvailable: liveSession?.localBackupAvailable === true,
+    assetStatus: args.assetStatus,
+    durationLimitExceededStatus: DURATION_LIMIT_EXCEEDED_STATUS,
+  })
   const patch = {
-    videoStatus: 'errored' as const,
+    videoStatus: (deferForBackupRecovery ? 'awaiting_recovery' : 'errored') as
+      | 'awaiting_recovery'
+      | 'errored',
     muxAssetId: args.assetId,
     muxAssetStatus: args.assetStatus ?? 'errored',
     durationMs: args.durationMs,
@@ -1322,30 +1455,46 @@ async function markRecordErrored(
       updatedAt: Date.now(),
     })
 
-    // A spark whose recording terminally failed must never remain a reachable
-    // "isn't available" dead end. Capture forensics and (when enabled) delete it.
-    const errored = await ctx.db.get(record.document._id)
-    if (errored) {
-      const reason: BondfireFailureReason =
-        args.assetStatus === DURATION_LIMIT_EXCEEDED_STATUS
-          ? 'duration_limit_exceeded'
-          : 'recording_errored'
-      const result = await handleFailedBondfire(ctx, errored, reason, {
-        assetStatus: args.assetStatus,
-        muxErrorMessage: args.muxErrorMessage,
-        durationMs: args.durationMs,
-        source: 'markRecordErrored',
-      })
-      if ((result.deleted || result.reverted) && result.muxAssetIds.length > 0) {
-        await ctx.scheduler.runAfter(
-          0,
-          internal.bondfireFailureCleanup.deleteFailedBondfireMuxAssets,
-          { assetIds: result.muxAssetIds },
-        )
+    if (!deferForBackupRecovery) {
+      // A spark whose recording terminally failed must never remain a reachable
+      // "isn't available" dead end. Capture forensics and (when enabled) delete it.
+      const errored = await ctx.db.get(record.document._id)
+      if (errored) {
+        const reason: BondfireFailureReason =
+          args.assetStatus === DURATION_LIMIT_EXCEEDED_STATUS
+            ? 'duration_limit_exceeded'
+            : 'recording_errored'
+        const result = await handleFailedBondfire(ctx, errored, reason, {
+          assetStatus: args.assetStatus,
+          muxErrorMessage: args.muxErrorMessage,
+          durationMs: args.durationMs,
+          source: 'markRecordErrored',
+        })
+        if ((result.deleted || result.reverted) && result.muxAssetIds.length > 0) {
+          await ctx.scheduler.runAfter(
+            0,
+            internal.bondfireFailureCleanup.deleteFailedBondfireMuxAssets,
+            { assetIds: result.muxAssetIds },
+          )
+        }
       }
+    } else {
+      await logServerEvent(ctx, {
+        level: 'warn',
+        event: 'backup:awaiting_recovery',
+        message: 'Live-linked spark marked awaiting_recovery after Mux asset error',
+        userId: record.document.userId,
+        data: {
+          bondfireId: record.document._id,
+          liveSessionId: record.document.liveSessionId,
+          assetStatus: args.assetStatus,
+          muxErrorMessage: args.muxErrorMessage,
+        },
+      })
     }
   } else {
     // Uncount using the pre-patch document so countedAt is still visible.
+    // Recovery upload can re-count via markRecordReady → countResponse.
     await uncountResponse(ctx, record.document)
     await ctx.db.patch(record.document._id, patch)
   }
@@ -1354,9 +1503,7 @@ async function markRecordErrored(
   // (not just the client log) tells us *why* the asset was rejected.
   // bondfires/bondfireVideos don't have an errorMessage field; the
   // clientLogs entry from the caller carries the same payload.
-  const liveSessionId = record.document.liveSessionId
-  if (liveSessionId) {
-    const liveSession = await ctx.db.get(liveSessionId)
+  if (liveSession) {
     if (liveSession && liveSession.errorMessage == null) {
       const reason =
         args.muxErrorMessage ??
@@ -1381,9 +1528,16 @@ async function markRecordErrored(
 // to live-session state transitions. Narrowing the type prevents accidental
 // patches with fields that only exist on one of the two tables.
 type LiveLinkedRecordPatch = {
-  videoStatus?: 'waiting_for_upload' | 'processing' | 'live' | 'ready' | 'errored'
+  videoStatus?:
+    | 'waiting_for_upload'
+    | 'processing'
+    | 'live'
+    | 'ready'
+    | 'errored'
+    | 'awaiting_recovery'
   muxAssetStatus?: string
   muxAssetId?: string
+  muxUploadId?: string
 }
 
 // Shared subset of Convex ctx that only needs `db.get` — used by
@@ -1472,10 +1626,9 @@ async function markLinkedLiveRecordProcessing(ctx: MutationCtx, liveSession: Doc
 }
 
 async function markLinkedLiveRecordErrored(ctx: MutationCtx, liveSession: Doc<'liveSessions'>) {
-  // Never went live → no recorded asset will arrive, so mark the bondfire
-  // permanently errored. Already went live → the playback URL is dead, so
-  // demote it to 'processing' and let the recorded-asset webhook either
-  // promote it to 'ready' or mark it errored later.
+  // Already went live → demote to 'processing' and let the recorded-asset
+  // webhook / reconciler settle it. A never-started session is recoverable only
+  // when native positively confirmed an on-device file for this exact session.
   if (liveSession.startedAt) {
     await patchLinkedLiveRecord(ctx, liveSession, {
       videoStatus: 'processing',
@@ -1485,7 +1638,7 @@ async function markLinkedLiveRecordErrored(ctx: MutationCtx, liveSession: Doc<'l
   }
 
   // Give back any count this response holds so the thread doesn't
-  // permanently show a response nobody can swipe to.
+  // permanently show a response nobody can swipe to. Recovery re-counts.
   if (liveSession.bondfireVideoId) {
     const video = await ctx.db.get(liveSession.bondfireVideoId)
     if (video) {
@@ -1493,19 +1646,37 @@ async function markLinkedLiveRecordErrored(ctx: MutationCtx, liveSession: Doc<'l
     }
   }
 
+  if (liveSession.localBackupAvailable) {
+    await patchLinkedLiveRecord(ctx, liveSession, {
+      videoStatus: 'awaiting_recovery',
+      muxAssetStatus: 'errored',
+    })
+
+    await logServerEvent(ctx, {
+      level: 'warn',
+      event: 'backup:awaiting_recovery',
+      message: 'Never-started live session deferred to awaiting_recovery for backup salvage',
+      userId: liveSession.userId,
+      data: {
+        liveSessionId: liveSession._id,
+        bondfireId: liveSession.bondfireId,
+        bondfireVideoId: liveSession.bondfireVideoId,
+        liveSessionStatus: liveSession.status,
+      },
+    })
+    return
+  }
+
   await patchLinkedLiveRecord(ctx, liveSession, {
     videoStatus: 'errored',
     muxAssetStatus: 'errored',
   })
 
-  // A spark live recording that never went live has no recoverable video and
-  // must not linger as an unreachable "isn't available" dead end. Capture
-  // forensics and (when enabled) delete it. Responses are handled by their own
-  // thread/uncount logic above, so only act on sparks here.
+  // Preserve the pre-Phase-2 cleanup behavior for users who did not have a
+  // backup. Otherwise the UI would claim to be uploading a file that never
+  // existed and leave an unreachable row around for seven days.
   if (liveSession.bondfireId && !liveSession.bondfireVideoId) {
     const spark = await ctx.db.get(liveSession.bondfireId)
-    // A draft-born Hearth reuses its bondfire row after a failed attempt. A
-    // delayed error from the old Mux session must not revert the newer one.
     if (spark?.liveSessionId === liveSession._id) {
       const result = await handleFailedBondfire(ctx, spark, 'live_never_watchable', {
         liveSessionId: liveSession._id,
@@ -2502,7 +2673,8 @@ export const getLinkedLiveRecordVideoStatus = internalQuery({
  * Public, auth-gated status lookup for the caller's own live session. Used by
  * the local-backup launch sweep (packages/app/src/services/localBackupSweep.ts)
  * to decide whether an on-device backup MP4 is still worth keeping: a 'ready'
- * videoStatus means the live asset resolved and the backup can be deleted.
+ * videoStatus means the live asset resolved and the backup can be deleted;
+ * recovery-eligible statuses enqueue a live_backup upload (Phase 2).
  * Returns a null status when the session or its linked record is missing (or
  * belongs to another user) so the client keeps the file conservatively.
  */
@@ -2510,17 +2682,466 @@ export const getLiveSessionRecordStatus = query({
   args: {
     liveSessionId: v.id('liveSessions'),
   },
-  handler: async (ctx, args): Promise<{ videoStatus: string | null }> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    videoStatus: string | null
+    recordId: Id<'bondfires'> | Id<'bondfireVideos'> | null
+    recordType: 'bondfire' | 'response' | null
+    recoveryEligible: boolean
+  }> => {
+    const empty = {
+      videoStatus: null,
+      recordId: null,
+      recordType: null,
+      recoveryEligible: false,
+    }
     const userId = await auth.getUserId(ctx)
     if (!userId) {
-      return { videoStatus: null }
+      return empty
     }
     const liveSession = await ctx.db.get(args.liveSessionId)
     if (!liveSession || liveSession.userId !== userId) {
-      return { videoStatus: null }
+      return empty
     }
     const record = await getLinkedLiveRecord(ctx, liveSession)
-    return { videoStatus: record?.videoStatus ?? null }
+    if (!record) {
+      return empty
+    }
+    const videoStatus = record.videoStatus ?? null
+    const withinRecoveryWindow =
+      Date.now() - liveSession.createdAt <= LOCAL_BACKUP_RECOVERY_WINDOW_MS
+    const recoveryEligible =
+      withinRecoveryWindow &&
+      !hasResolvedRecordedAsset(record) &&
+      (videoStatus === 'errored' || videoStatus === 'awaiting_recovery')
+    return {
+      videoStatus,
+      recordId: record._id,
+      recordType: liveSession.bondfireVideoId ? 'response' : 'bondfire',
+      recoveryEligible,
+    }
+  },
+})
+
+/**
+ * Create a Mux direct upload that attaches to an EXISTING live-linked record
+ * (Phase 2 recovery). Does not insert a new bondfire/response row.
+ */
+export const createLiveBackupDirectUpload = action({
+  args: {
+    liveSessionId: v.id('liveSessions'),
+    filename: v.string(),
+    contentType: v.string(),
+    durationMs: v.optional(v.number()),
+    width: v.optional(v.number()),
+    height: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<MuxDirectUploadResult> => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      throwUserError('Not authenticated')
+    }
+
+    const prepared: {
+      recordId: Id<'bondfires'> | Id<'bondfireVideos'>
+      recordType: 'bondfire' | 'response'
+      playbackPolicy: PlaybackPolicy
+    } = await ctx.runMutation(internal.videos.prepareLiveBackupUpload, {
+      userId,
+      liveSessionId: args.liveSessionId,
+      durationMs: args.durationMs,
+      width: args.width,
+      height: args.height,
+    })
+
+    const config = getMuxConfig()
+    const uploadTimeout = readMuxSeconds(
+      process.env.MUX_UPLOAD_TIMEOUT_SECONDS,
+      DEFAULT_MUX_UPLOAD_TIMEOUT_SECONDS,
+      MUX_UPLOAD_TIMEOUT_MIN_SECONDS,
+      MUX_UPLOAD_TIMEOUT_MAX_SECONDS,
+    )
+    const payload = {
+      cors_origin: config.uploadCorsOrigin,
+      timeout: uploadTimeout,
+      new_asset_settings: {
+        playback_policies: [prepared.playbackPolicy],
+        video_quality: config.videoQuality,
+        inputs: [{ generated_subtitles: [GENERATED_SUBTITLES_SETTINGS] }],
+        passthrough: JSON.stringify({
+          userId,
+          liveSessionId: args.liveSessionId,
+          recovery: true,
+          filename: args.filename,
+          contentType: args.contentType,
+        }),
+      },
+    }
+
+    const data = parseMuxData(
+      await muxRequest('/uploads', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    )
+    const uploadId = readString(data.id, 'upload id')
+    const uploadUrl = readString(data.url, 'upload url')
+    const expiresIn = readOptionalNumber(data.timeout) ?? payload.timeout
+
+    await ctx.runMutation(internal.videos.attachLiveBackupUploadId, {
+      userId,
+      liveSessionId: args.liveSessionId,
+      uploadId,
+    })
+
+    return {
+      uploadId,
+      uploadUrl,
+      recordId: prepared.recordId,
+      recordType: prepared.recordType,
+      expiresIn,
+    }
+  },
+})
+
+export const prepareLiveBackupUpload = internalMutation({
+  args: {
+    userId: v.id('users'),
+    liveSessionId: v.id('liveSessions'),
+    durationMs: v.optional(v.number()),
+    width: v.optional(v.number()),
+    height: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const liveSession = await ctx.db.get(args.liveSessionId)
+    if (!liveSession || liveSession.userId !== args.userId) {
+      throwUserError('Live session not found')
+    }
+    if (Date.now() - liveSession.createdAt > LOCAL_BACKUP_RECOVERY_WINDOW_MS) {
+      throwUserError('Recovery window has expired for this recording')
+    }
+
+    // Reaching this authenticated upload path is also positive evidence that
+    // the client has the local file, even if the earlier arm-confirmation
+    // mutation was lost during a network transition.
+    if (!liveSession.localBackupAvailable) {
+      await ctx.db.patch(liveSession._id, {
+        localBackupAvailable: true,
+        updatedAt: Date.now(),
+      })
+    }
+
+    const record = await getLinkedLiveRecord(ctx, liveSession)
+    if (!record) {
+      throwUserError('No recording found to recover')
+    }
+    if (hasResolvedRecordedAsset(record) && (record.videoStatus ?? 'ready') === 'ready') {
+      throwUserError('Recording already ready, so no backup upload is needed')
+    }
+
+    const status = record.videoStatus
+    const eligible =
+      status === 'errored' ||
+      status === 'awaiting_recovery' ||
+      status === 'processing' ||
+      status === 'live'
+    if (!eligible) {
+      throwUserError('Recording is not eligible for backup recovery')
+    }
+
+    if (args.durationMs !== undefined) {
+      await assertMuxMetadataDurationAllowed(
+        ctx,
+        liveSession.bondfireVideoId
+          ? { table: 'bondfireVideos', document: record as Doc<'bondfireVideos'> }
+          : { table: 'bondfires', document: record as Doc<'bondfires'> },
+        args.durationMs,
+      )
+    }
+
+    if (args.width !== undefined || args.height !== undefined || args.durationMs !== undefined) {
+      if (liveSession.bondfireVideoId) {
+        await ctx.db.patch(liveSession.bondfireVideoId, {
+          ...(args.durationMs !== undefined ? { durationMs: args.durationMs } : {}),
+          ...(args.width !== undefined ? { width: args.width } : {}),
+          ...(args.height !== undefined ? { height: args.height } : {}),
+        })
+      } else if (liveSession.bondfireId) {
+        await ctx.db.patch(liveSession.bondfireId, {
+          ...(args.durationMs !== undefined ? { durationMs: args.durationMs } : {}),
+          ...(args.width !== undefined ? { width: args.width } : {}),
+          ...(args.height !== undefined ? { height: args.height } : {}),
+          updatedAt: Date.now(),
+        })
+      }
+    }
+
+    // Ensure the row is in awaiting_recovery while the backup upload runs.
+    if (status !== 'awaiting_recovery') {
+      await patchLinkedLiveRecord(ctx, liveSession, {
+        videoStatus: 'awaiting_recovery',
+        muxAssetStatus: 'awaiting_recovery',
+      })
+    }
+
+    return {
+      recordId: record._id as Id<'bondfires'> | Id<'bondfireVideos'>,
+      recordType: (liveSession.bondfireVideoId ? 'response' : 'bondfire') as
+        | 'bondfire'
+        | 'response',
+      playbackPolicy: (record.muxPlaybackPolicy ?? 'public') as PlaybackPolicy,
+    }
+  },
+})
+
+export const attachLiveBackupUploadId = internalMutation({
+  args: {
+    userId: v.id('users'),
+    liveSessionId: v.id('liveSessions'),
+    uploadId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const liveSession = await ctx.db.get(args.liveSessionId)
+    if (!liveSession || liveSession.userId !== args.userId) {
+      throwUserError('Live session not found')
+    }
+    const record = await getLinkedLiveRecord(ctx, liveSession)
+    if (!record) {
+      throwUserError('No recording found to recover')
+    }
+    // Always retain the upload ID so its eventual webhook can be matched and
+    // the losing backup asset deleted. If live won between prepare and attach,
+    // leave the playable fields untouched instead of orphaning the new upload.
+    if (hasResolvedRecordedAsset(record) && (record.videoStatus ?? 'ready') === 'ready') {
+      await patchLinkedLiveRecord(ctx, liveSession, { muxUploadId: args.uploadId })
+      return { attached: false, reason: 'live_won' as const }
+    }
+
+    await patchLinkedLiveRecord(ctx, liveSession, {
+      muxUploadId: args.uploadId,
+      videoStatus: 'awaiting_recovery',
+      muxAssetStatus: 'waiting_for_upload',
+    })
+    return { attached: true as const }
+  },
+})
+
+/**
+ * Explicit attach path for a completed backup upload. Prefer getMuxUploadStatus
+ * (which finds the row by muxUploadId); this exists for clients that already
+ * have asset metadata and for live-wins dedupe when the live asset raced ahead.
+ */
+export const recoverLiveRecordWithUpload = mutation({
+  args: {
+    liveSessionId: v.id('liveSessions'),
+    assetId: v.string(),
+    playbackId: v.string(),
+    assetStatus: v.optional(v.string()),
+    durationMs: v.optional(v.number()),
+    muxAspectRatio: v.optional(v.string()),
+    muxMaxResolution: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) {
+      throwUserError('Not authenticated')
+    }
+    const liveSession = await ctx.db.get(args.liveSessionId)
+    if (!liveSession || liveSession.userId !== userId) {
+      throwUserError('Live session not found')
+    }
+    if (Date.now() - liveSession.createdAt > LOCAL_BACKUP_RECOVERY_WINDOW_MS) {
+      throwUserError('Recovery window has expired for this recording')
+    }
+
+    const linked = await getLinkedLiveRecord(ctx, liveSession)
+    if (!linked) {
+      throwUserError('No recording found to recover')
+    }
+
+    const record: MuxRecord = liveSession.bondfireVideoId
+      ? { table: 'bondfireVideos', document: linked as Doc<'bondfireVideos'> }
+      : { table: 'bondfires', document: linked as Doc<'bondfires'> }
+
+    if (hasResolvedRecordedAsset(linked) && (linked.videoStatus ?? 'ready') === 'ready') {
+      if (linked.muxAssetId !== args.assetId) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.bondfireFailureCleanup.deleteFailedBondfireMuxAssets,
+          { assetIds: [args.assetId] },
+        )
+      }
+      return { attached: false, reason: 'live_won' as const }
+    }
+
+    const status = await markRecordReady(ctx, record, {
+      assetId: args.assetId,
+      playbackId: args.playbackId,
+      assetStatus: args.assetStatus ?? 'ready',
+      durationMs: args.durationMs,
+      muxAspectRatio: args.muxAspectRatio,
+      muxMaxResolution: args.muxMaxResolution,
+      source: 'backup',
+    })
+
+    return {
+      attached: status === 'ready',
+      reason: status === 'rejected' ? ('rejected' as const) : ('recovered' as const),
+    }
+  },
+})
+
+/**
+ * End a live session without destroying the linked record — used by early_drop
+ * when a local backup exists and will be uploaded as recovery.
+ */
+export const markMuxLiveSessionAwaitingRecovery = internalMutation({
+  args: {
+    userId: v.id('users'),
+    liveSessionId: v.id('liveSessions'),
+    reason: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const liveSession = await ctx.db.get(args.liveSessionId)
+    if (!liveSession || liveSession.userId !== args.userId) {
+      throwUserError('Live session not found')
+    }
+
+    const linked = await getLinkedLiveRecord(ctx, liveSession)
+    if (linked && !(hasResolvedRecordedAsset(linked) && linked.videoStatus === 'ready')) {
+      // Responses that never became watchable should not stay counted.
+      if (liveSession.bondfireVideoId && linked.videoStatus !== 'awaiting_recovery') {
+        await uncountResponse(ctx, linked as Doc<'bondfireVideos'>)
+      }
+      await patchLinkedLiveRecord(ctx, liveSession, {
+        videoStatus: 'awaiting_recovery',
+        muxAssetStatus: 'awaiting_recovery',
+      })
+    }
+
+    await logServerEvent(ctx, {
+      level: 'warn',
+      event: 'backup:awaiting_recovery',
+      message: `Live session marked awaiting_recovery (${args.reason})`,
+      userId: args.userId,
+      data: {
+        liveSessionId: args.liveSessionId,
+        reason: args.reason,
+        statusBefore: liveSession.status,
+        hadLinkedRecord: Boolean(linked),
+      },
+    })
+
+    await ctx.db.patch(args.liveSessionId, {
+      status: 'ended',
+      endedAt: Date.now(),
+      errorMessage: args.reason,
+      localBackupAvailable: true,
+      updatedAt: Date.now(),
+    })
+
+    return { cancelled: false, awaitingRecovery: true }
+  },
+})
+
+export const listAwaitingRecoveryGiveUp = internalQuery({
+  args: {
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now()
+    const limit = args.limit ?? RECONCILE_BATCH_LIMIT
+    const cutoff = now - LOCAL_BACKUP_RECOVERY_WINDOW_MS
+
+    const bondfires = await ctx.db
+      .query('bondfires')
+      .withIndex('by_video_status', (q) =>
+        q.eq('videoStatus', 'awaiting_recovery').lt('updatedAt', cutoff),
+      )
+      .take(limit)
+
+    const responses = await ctx.db
+      .query('bondfireVideos')
+      .withIndex('by_video_status', (q) =>
+        q.eq('videoStatus', 'awaiting_recovery').lt('createdAt', cutoff),
+      )
+      .take(limit)
+
+    return {
+      bondfires: bondfires.map((b) => b._id),
+      responses: responses.map((r) => r._id),
+    }
+  },
+})
+
+export const giveUpAwaitingRecoveryRecord = internalMutation({
+  args: {
+    table: v.union(v.literal('bondfires'), v.literal('bondfireVideos')),
+    recordId: v.union(v.id('bondfires'), v.id('bondfireVideos')),
+  },
+  handler: async (ctx, args) => {
+    if (args.table === 'bondfires') {
+      const bondfire = await ctx.db.get(args.recordId as Id<'bondfires'>)
+      if (!bondfire || bondfire.videoStatus !== 'awaiting_recovery') {
+        return { updated: false }
+      }
+      await ctx.db.patch(bondfire._id, {
+        videoStatus: 'errored',
+        muxAssetStatus: 'recovery_abandoned',
+        updatedAt: Date.now(),
+      })
+      const result = await handleFailedBondfire(ctx, bondfire, 'live_never_watchable', {
+        source: 'giveUpAwaitingRecovery',
+      })
+      if ((result.deleted || result.reverted) && result.muxAssetIds.length > 0) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.bondfireFailureCleanup.deleteFailedBondfireMuxAssets,
+          { assetIds: result.muxAssetIds },
+        )
+      }
+      return { updated: true }
+    }
+
+    const video = await ctx.db.get(args.recordId as Id<'bondfireVideos'>)
+    if (!video || video.videoStatus !== 'awaiting_recovery') {
+      return { updated: false }
+    }
+    await uncountResponse(ctx, video)
+    await ctx.db.patch(video._id, {
+      videoStatus: 'errored',
+      muxAssetStatus: 'recovery_abandoned',
+    })
+    return { updated: true }
+  },
+})
+
+export const giveUpAwaitingRecovery = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const batch: {
+      bondfires: Id<'bondfires'>[]
+      responses: Id<'bondfireVideos'>[]
+    } = await ctx.runQuery(internal.videos.listAwaitingRecoveryGiveUp, {})
+
+    let updated = 0
+    for (const recordId of batch.bondfires) {
+      const result: { updated: boolean } = await ctx.runMutation(
+        internal.videos.giveUpAwaitingRecoveryRecord,
+        { table: 'bondfires', recordId },
+      )
+      if (result.updated) updated += 1
+    }
+    for (const recordId of batch.responses) {
+      const result: { updated: boolean } = await ctx.runMutation(
+        internal.videos.giveUpAwaitingRecoveryRecord,
+        { table: 'bondfireVideos', recordId },
+      )
+      if (result.updated) updated += 1
+    }
+    return { updated }
   },
 })
 
@@ -2663,6 +3284,16 @@ export const cancelLiveStream = action({
           throw new Error('Failed to cancel Mux live stream')
         }
 
+        // Early-drop / terminal failure with a local backup present: tear down
+        // the Mux live stream but keep the linked record for recovery upload.
+        if (args.reason === 'backup_recovery') {
+          return await ctx.runMutation(internal.videos.markMuxLiveSessionAwaitingRecovery, {
+            userId,
+            liveSessionId: args.liveSessionId,
+            reason: args.reason,
+          })
+        }
+
         return await ctx.runMutation(internal.videos.cancelMuxLiveSessionRecord, {
           userId,
           liveSessionId: args.liveSessionId,
@@ -2738,6 +3369,33 @@ export const touchLiveSession = mutation({
 
     await ctx.db.patch(args.liveSessionId, { updatedAt: Date.now() })
     return { touched: true }
+  },
+})
+
+/**
+ * Record positive evidence that native opened the on-device MP4 sink. Failure
+ * handling consults this bit before exposing `awaiting_recovery` to users.
+ */
+export const confirmLiveSessionLocalBackup = mutation({
+  args: {
+    liveSessionId: v.id('liveSessions'),
+  },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) throwUserError('Not authenticated')
+
+    const liveSession = await ctx.db.get(args.liveSessionId)
+    if (!liveSession || liveSession.userId !== userId) {
+      return { confirmed: false }
+    }
+
+    if (!liveSession.localBackupAvailable) {
+      await ctx.db.patch(args.liveSessionId, {
+        localBackupAvailable: true,
+        updatedAt: Date.now(),
+      })
+    }
+    return { confirmed: true }
   },
 })
 
@@ -3622,7 +4280,10 @@ export const markMuxAssetReady = internalMutation({
       return { updated: false }
     }
 
-    const status = await markRecordReady(ctx, record, args)
+    const status = await markRecordReady(ctx, record, {
+      ...args,
+      source: inferRecordedAssetSource(record, args),
+    })
     return { updated: true, rejected: status === 'rejected' }
   },
 })
@@ -4270,6 +4931,7 @@ export const handleMuxWebhookEvent = internalMutation({
           durationMs: parseMuxDurationMs(data.duration),
           muxAspectRatio: readOptionalString(data.aspect_ratio),
           muxMaxResolution: readOptionalString(data.max_stored_resolution),
+          source: inferRecordedAssetSource(record, { uploadId, liveStreamId }),
         })
       } else {
         // Dropping this event would leave the record stuck in 'processing'
@@ -4530,26 +5192,13 @@ async function reconcileStuckMuxRecord(
     liveStreamId: record.muxLiveStreamId,
   }
 
-  // 1. Resolve the asset ID, asking Mux when our record doesn't have one yet.
-  let assetId = record.muxAssetId
+  // 1. Resolve the asset ID from its source. Recovery rows can have both a
+  // direct upload and a live stream, so prefer a viable live candidate and
+  // preserve the source identity for the live-wins decision below.
+  let assetId: string | undefined
+  let assetSource: RecordedAssetSource = 'unknown'
 
-  if (!assetId && record.muxUploadId) {
-    const upload = await muxRequestOptional(`/uploads/${record.muxUploadId}`)
-    if (upload) {
-      const uploadData = parseMuxData(upload)
-      const uploadStatus = readOptionalString(uploadData.status) ?? 'waiting'
-      assetId = readOptionalString(uploadData.asset_id)
-      if (!assetId && MUX_FAILED_STATUSES.has(uploadStatus)) {
-        await ctx.runMutation(internal.videos.markMuxAssetErrored, {
-          uploadId: record.muxUploadId,
-          assetStatus: uploadStatus,
-        })
-        return { outcome: 'errored', detail: `upload ${uploadStatus}` }
-      }
-    }
-  }
-
-  if (!assetId && record.muxLiveStreamId) {
+  if (record.muxLiveStreamId) {
     const liveStream = await muxRequestOptional(`/live-streams/${record.muxLiveStreamId}`)
     if (liveStream) {
       const liveData = parseMuxData(liveStream)
@@ -4559,8 +5208,35 @@ async function reconcileStuckMuxRecord(
       assetId =
         readOptionalString(liveData.active_asset_id) ??
         (recentAssetIds.length > 0 ? recentAssetIds[recentAssetIds.length - 1] : undefined)
+      if (assetId) {
+        assetSource = 'live'
+      }
     }
+  }
 
+  if (!assetId && record.muxUploadId) {
+    const upload = await muxRequestOptional(`/uploads/${record.muxUploadId}`)
+    if (upload) {
+      const uploadData = parseMuxData(upload)
+      const uploadStatus = readOptionalString(uploadData.status) ?? 'waiting'
+      assetId = readOptionalString(uploadData.asset_id)
+      if (assetId) {
+        assetSource = record.muxLiveStreamId ? 'backup' : 'direct'
+      } else if (MUX_FAILED_STATUSES.has(uploadStatus)) {
+        await ctx.runMutation(internal.videos.markMuxAssetErrored, {
+          uploadId: record.muxUploadId,
+          assetStatus: uploadStatus,
+        })
+        return { outcome: 'errored', detail: `upload ${uploadStatus}` }
+      }
+    }
+  }
+
+  if (!assetId && record.muxAssetId) {
+    assetId = record.muxAssetId
+  }
+
+  if (!assetId && record.muxLiveStreamId) {
     if (!assetId && record.videoStatus === 'processing') {
       if (record.stuckForMs > STUCK_LIVE_RECORDING_GIVE_UP_MS) {
         await ctx.runMutation(internal.videos.markMuxAssetErrored, {
@@ -4572,6 +5248,13 @@ async function reconcileStuckMuxRecord(
       return { outcome: 'still_processing', detail: 'awaiting live recording asset' }
     }
   }
+
+  const assetRef =
+    assetSource === 'live'
+      ? { liveStreamId: record.muxLiveStreamId }
+      : assetSource === 'backup' || assetSource === 'direct'
+        ? { uploadId: record.muxUploadId }
+        : recordRef
 
   if (!assetId) {
     if (record.videoStatus === 'waiting_for_upload') {
@@ -4603,7 +5286,7 @@ async function reconcileStuckMuxRecord(
   const asset = await muxRequestOptional(`/assets/${assetId}`)
   if (!asset) {
     await ctx.runMutation(internal.videos.markMuxAssetErrored, {
-      ...recordRef,
+      ...assetRef,
       assetId,
       assetStatus: 'deleted',
     })
@@ -4617,7 +5300,7 @@ async function reconcileStuckMuxRecord(
     const result: { updated: boolean; rejected?: boolean } = await ctx.runMutation(
       internal.videos.markMuxAssetReady,
       {
-        ...recordRef,
+        ...assetRef,
         assetId: info.assetId,
         playbackId: info.playbackId,
         assetStatus: info.assetStatus,
@@ -4637,7 +5320,7 @@ async function reconcileStuckMuxRecord(
   if (info.assetStatus && MUX_FAILED_STATUSES.has(info.assetStatus)) {
     const muxErrorInfo = readMuxErrorInfo(assetData)
     await ctx.runMutation(internal.videos.markMuxAssetErrored, {
-      ...recordRef,
+      ...assetRef,
       assetId,
       assetStatus: info.assetStatus,
       muxErrorMessage: muxErrorInfo.message,

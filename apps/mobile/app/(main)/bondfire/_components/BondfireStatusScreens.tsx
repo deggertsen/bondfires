@@ -126,6 +126,38 @@ export function BondfireProcessingScreen(props: BackProps) {
   )
 }
 
+/**
+ * `awaiting_recovery`: the live asset failed and the creator's on-device backup
+ * is uploading in its place. Without this the status falls through to playback
+ * and shows a bare spinner, which reads as "my video is gone".
+ */
+export function BondfireRecoveringScreen({
+  bondfireData,
+  isOwner,
+  ...props
+}: BackProps & {
+  bondfireData: BondfireDetailData
+  isOwner: boolean
+}) {
+  const creatorName = bondfireData.creatorName ?? 'Someone'
+
+  return (
+    <StatusShell {...props}>
+      <YStack flex={1} alignItems="center" justifyContent="center" gap={16}>
+        <Spinner size="large" color={'$primary'} />
+        <Text fontSize={22} fontWeight="900" textAlign="center">
+          Finishing upload...
+        </Text>
+        <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
+          {isOwner
+            ? 'This recording is saved on your phone and still uploading. Once it finishes it will play here for you and everyone else.'
+            : `${creatorName}'s recording is still uploading. It will play as soon as it is ready.`}
+        </Text>
+      </YStack>
+    </StatusShell>
+  )
+}
+
 export function BondfireErroredScreen({
   bondfireData,
   ...props

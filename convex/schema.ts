@@ -459,6 +459,9 @@ export default defineSchema({
         v.literal('live'),
         v.literal('ready'),
         v.literal('errored'),
+        // Live asset failed (or never arrived) but a local backup may still
+        // recover the recording. Give-up cron → errored/delete after 7 days.
+        v.literal('awaiting_recovery'),
       ),
     ),
     liveSessionId: v.optional(v.id('liveSessions')),
@@ -533,6 +536,7 @@ export default defineSchema({
         v.literal('live'),
         v.literal('ready'),
         v.literal('errored'),
+        v.literal('awaiting_recovery'),
       ),
     ),
     liveSessionId: v.optional(v.id('liveSessions')),
@@ -631,6 +635,9 @@ export default defineSchema({
     muxActiveAssetId: v.optional(v.string()),
     muxRecentAssetId: v.optional(v.string()),
     muxRecordedAssetId: v.optional(v.string()),
+    // Set only after the native publisher confirms its on-device MP4 sink.
+    // Server failure paths use this to avoid promising recovery where no file exists.
+    localBackupAvailable: v.optional(v.boolean()),
     transport: v.optional(v.union(v.literal('rtmps'), v.literal('srt'))),
     latencyMode: v.optional(v.union(v.literal('standard'), v.literal('reduced'), v.literal('low'))),
     status: v.union(

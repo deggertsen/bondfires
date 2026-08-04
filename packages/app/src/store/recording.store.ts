@@ -70,6 +70,10 @@ export interface RecordingState {
   preConnectFailed: boolean
   /** Idle preview hit the expiry window before the server reaped it. */
   previewExpired: boolean
+  /** The live asset died but the on-device backup is uploading in its place. */
+  backupRecoveryPending: boolean
+  /** Record the recovering backup belongs to — livePublishStore is reset by then. */
+  backupRecoveryRecordId: string | null
 }
 
 const defaultRecordingState: RecordingState = {
@@ -87,6 +91,8 @@ const defaultRecordingState: RecordingState = {
   progressStage: '',
   preConnectFailed: false,
   previewExpired: false,
+  backupRecoveryPending: false,
+  backupRecoveryRecordId: null,
 }
 
 // Not persisted: a recording flow never survives an app restart.
@@ -113,6 +119,22 @@ export const recordingActions = {
   },
 
   /**
+   * The live asset died early but the on-device backup survived and is queued
+   * for upload, so nothing was actually lost. Land on the normal completion
+   * screen (which explains the deferred upload) rather than the
+   * "recording didn't start" error state.
+   */
+  enterBackupRecoveryCompletion: (recordId: string | null, reason?: string) => {
+    recordingStore$.backupRecoveryPending.set(true)
+    recordingStore$.backupRecoveryRecordId.set(recordId)
+    recordingStore$.preConnectFailed.set(false)
+    recordingStore$.previewExpired.set(false)
+    recordingStore$.progressStage.set('')
+    recordingStore$.videoUri.set('live')
+    recordingActions.setPhase('completion', reason ?? 'backup recovery completion')
+  },
+
+  /**
    * Clear all per-attempt state and return to idle. Camera availability and
    * facing survive — they describe the device/session, not the attempt.
    */
@@ -124,6 +146,8 @@ export const recordingActions = {
     recordingStore$.videoUri.set(null)
     recordingStore$.progress.set(0)
     recordingStore$.progressStage.set('')
+    recordingStore$.backupRecoveryPending.set(false)
+    recordingStore$.backupRecoveryRecordId.set(null)
   },
 
   /** Full reset, including device/session flags. For unmount/teardown. */
