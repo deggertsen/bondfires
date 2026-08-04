@@ -150,7 +150,7 @@ export function BondfireRecoveringScreen({
         </Text>
         <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
           {isOwner
-            ? "This recording is saved on your phone and still uploading. It will play here — and for everyone else — once it's done."
+            ? 'This recording is saved on your phone and still uploading. Once it finishes it will play here for you and everyone else.'
             : `${creatorName}'s recording is still uploading. It will play as soon as it is ready.`}
         </Text>
       </YStack>

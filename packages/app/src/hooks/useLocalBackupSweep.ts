@@ -9,7 +9,7 @@ import { toastActions } from '../store/toast.store'
 import { useRecordingResourceLock } from './useRecordingResourceLock'
 
 const RECOVERY_TOAST_MESSAGE =
-  "Finishing an upload from an earlier recording — it'll appear once it's done."
+  "Finishing an upload from an earlier recording. It'll appear once it's done."
 
 /**
  * Run the local backup sweep once on app start (Phase 1+2 of

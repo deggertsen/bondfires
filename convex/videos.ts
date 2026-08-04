@@ -2838,7 +2838,7 @@ export const prepareLiveBackupUpload = internalMutation({
       throwUserError('No recording found to recover')
     }
     if (hasResolvedRecordedAsset(record) && (record.videoStatus ?? 'ready') === 'ready') {
-      throwUserError('Recording already ready — backup upload not needed')
+      throwUserError('Recording already ready, so no backup upload is needed')
     }
 
     const status = record.videoStatus
