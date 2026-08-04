@@ -1337,77 +1337,97 @@ export function useLivePublisher(options: {
     [options.cancelLiveStream],
   )
 
-  const cancel = useCallback(async () => {
-    const sessionId = livePublishStore$.sessionId.get()
-    let publisherError: unknown
-    let backendError: unknown
+  const cancel = useCallback(
+    async (optionsOverride?: { preserveBackup?: boolean; cancelReason?: string }) => {
+      const sessionId = livePublishStore$.sessionId.get()
+      let publisherError: unknown
+      let backendError: unknown
+      const preserveBackup = optionsOverride?.preserveBackup === true
+      const cancelReason = optionsOverride?.cancelReason ?? 'creator_cancelled'
 
-    telemetry.setCrashBreadcrumb('live:cancelling', {
-      sessionId,
-      recordId: livePublishStore$.recordId.peek(),
-      status: 'stopping',
-    })
+      telemetry.setCrashBreadcrumb('live:cancelling', {
+        sessionId,
+        recordId: livePublishStore$.recordId.peek(),
+        status: 'stopping',
+        preserveBackup,
+        cancelReason,
+      })
 
-    try {
-      await options.publisher.stop()
-    } catch (error) {
-      publisherError = error
-    }
-
-    // A cancelled recording is footage the user chose to discard — delete the
-    // local backup instead of letting the sweep age it out.
-    const localBackup = localBackupRef.current
-    if (localBackup && localBackup.sessionId === sessionId) {
-      localBackupRef.current = null
       try {
-        const fileCount = await deleteLocalBackupsForSession(sessionId)
-        telemetry.info('backup:discarded', 'Local backup deleted after cancel', {
-          sessionId,
-          reason: 'cancelled',
-          fileCount,
-        })
+        await options.publisher.stop()
       } catch (error) {
-        // Best effort — the retention sweep deletes anything left behind.
-        telemetry.warn('backup:discard_failed', 'Failed to delete cancelled local backup', {
-          sessionId,
-          error: String(error),
-        })
+        publisherError = error
       }
-    }
 
-    try {
-      if (sessionId) {
-        await options.cancelLiveStream({ liveSessionId: sessionId, reason: 'creator_cancelled' })
+      // A cancelled recording is footage the user chose to discard — delete the
+      // local backup instead of letting the sweep age it out. Recovery paths
+      // (early_drop with backup) pass preserveBackup to keep the file for upload.
+      const localBackup = localBackupRef.current
+      if (localBackup && localBackup.sessionId === sessionId) {
+        localBackupRef.current = null
+        if (!preserveBackup) {
+          try {
+            const fileCount = await deleteLocalBackupsForSession(sessionId)
+            telemetry.info('backup:discarded', 'Local backup deleted after cancel', {
+              sessionId,
+              reason: 'cancelled',
+              fileCount,
+            })
+          } catch (error) {
+            // Best effort — the retention sweep deletes anything left behind.
+            telemetry.warn('backup:discard_failed', 'Failed to delete cancelled local backup', {
+              sessionId,
+              error: String(error),
+            })
+          }
+        } else {
+          telemetry.info('backup:preserved', 'Local backup preserved for recovery upload', {
+            sessionId,
+            reason: cancelReason,
+          })
+        }
       }
-    } catch (error) {
-      backendError = error
-    } finally {
-      stopStatsSampling()
-      ingestRef.current = null
-      livePublishActions.reset()
-    }
 
-    telemetry.info('live:stop', 'Live publisher cancelled', {
-      sessionId,
-      reason: 'user_cancelled',
-      publisherError: publisherError ? String(publisherError) : undefined,
-    })
+      try {
+        if (sessionId) {
+          await options.cancelLiveStream({ liveSessionId: sessionId, reason: cancelReason })
+        }
+      } catch (error) {
+        backendError = error
+      } finally {
+        stopStatsSampling()
+        ingestRef.current = null
+        livePublishActions.reset()
+      }
 
-    telemetry.clearCrashBreadcrumb()
+      telemetry.info('live:stop', 'Live publisher cancelled', {
+        sessionId,
+        reason: cancelReason,
+        preserveBackup,
+        publisherError: publisherError ? String(publisherError) : undefined,
+      })
 
-    if (publisherError) {
+      telemetry.clearCrashBreadcrumb()
+
+      if (publisherError) {
+        if (backendError) {
+          telemetry.warn(
+            'live:cancel',
+            'Failed to cancel live stream after publisher stop failed',
+            {
+              error: String(backendError),
+            },
+          )
+        }
+        throw publisherError
+      }
+
       if (backendError) {
-        telemetry.warn('live:cancel', 'Failed to cancel live stream after publisher stop failed', {
-          error: String(backendError),
-        })
+        throw backendError
       }
-      throw publisherError
-    }
-
-    if (backendError) {
-      throw backendError
-    }
-  }, [options, stopStatsSampling])
+    },
+    [options, stopStatsSampling],
+  )
 
   const swapCamera = useCallback(async () => {
     await options.publisher.swapCamera()

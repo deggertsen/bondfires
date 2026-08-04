@@ -4,20 +4,22 @@ import {
   getInfoAsync,
   readDirectoryAsync,
 } from 'expo-file-system/legacy'
-import { isBackupExpired, parseLocalBackupFileName } from '../utils/localBackupPolicy'
+import {
+  isBackupExpired,
+  parseLocalBackupFileName,
+  shouldEnqueueLiveBackupRecovery,
+} from '../utils/localBackupPolicy'
 import { telemetry } from './telemetry'
 
 /**
- * Launch sweep for local backup recordings (Phase 1 of
+ * Launch sweep for local backup recordings (Phase 1+2 of
  * docs/plans/local-backup-recording.md).
  *
  * The native publisher writes a parallel MP4 backup of each live recording to
  * <documents>/recordings/<liveSessionId>.mp4. User cancellation deletes it
  * immediately; successful recordings stay until this sweep confirms that the
- * live asset is ready. The sweep also handles crashes, kills, and failed
- * deletes: expired files are removed, files whose live asset resolved to
- * 'ready' are removed, and everything else is kept for Phase 2's recovery
- * upload.
+ * live asset is ready. Phase 2: recovery-eligible leftovers are enqueued into
+ * the upload queue as `live_backup` tasks.
  */
 
 /**
@@ -65,6 +67,9 @@ export interface LocalBackupSessionStats {
   exists: boolean
   fileCount: number
   sizeBytes: number
+  /** Largest file URI for the session (primary or Android .partN). */
+  bestFileUri: string | null
+  bestFileName: string | null
 }
 
 /** Aggregate the primary backup and every Android reconnect segment. */
@@ -73,19 +78,34 @@ export async function getLocalBackupSessionStats(
 ): Promise<LocalBackupSessionStats> {
   const directoryUri = getLocalBackupDirectoryUri()
   if (!directoryUri) {
-    return { exists: false, fileCount: 0, sizeBytes: 0 }
+    return {
+      exists: false,
+      fileCount: 0,
+      sizeBytes: 0,
+      bestFileUri: null,
+      bestFileName: null,
+    }
   }
   const fileNames = await getLocalBackupFileNamesForSession(liveSessionId)
   let fileCount = 0
   let sizeBytes = 0
+  let bestFileUri: string | null = null
+  let bestFileName: string | null = null
+  let bestSize = -1
   for (const fileName of fileNames) {
     const info = await getInfoAsync(`${directoryUri}${fileName}`)
     if (info.exists && !info.isDirectory) {
       fileCount += 1
-      sizeBytes += info.size ?? 0
+      const fileSize = info.size ?? 0
+      sizeBytes += fileSize
+      if (fileSize > bestSize) {
+        bestSize = fileSize
+        bestFileUri = `${directoryUri}${fileName}`
+        bestFileName = fileName
+      }
     }
   }
-  return { exists: fileCount > 0, fileCount, sizeBytes }
+  return { exists: fileCount > 0, fileCount, sizeBytes, bestFileUri, bestFileName }
 }
 
 /** Delete the primary backup and every Android reconnect segment. */
@@ -111,11 +131,23 @@ export async function deleteLocalBackupsForSession(liveSessionId: string): Promi
   return deletedCount
 }
 
+export interface LiveSessionRecordStatus {
+  videoStatus: string | null
+  recordId?: string | null
+  recordType?: 'bondfire' | 'response' | null
+  recoveryEligible?: boolean
+}
+
 export interface LocalBackupSweepOptions {
   /** Auth-gated status lookup (convex videos.getLiveSessionRecordStatus). */
-  getLiveSessionRecordStatus: (args: {
+  getLiveSessionRecordStatus: (args: { liveSessionId: string }) => Promise<LiveSessionRecordStatus>
+  /** Optional Phase 2 recovery enqueue. When omitted, eligible files are kept. */
+  enqueueLiveBackupRecovery?: (args: {
     liveSessionId: string
-  }) => Promise<{ videoStatus: string | null }>
+    fileUri: string
+    recordId?: string | null
+    recordType?: 'bondfire' | 'response' | null
+  }) => Promise<void>
 }
 
 /**
@@ -144,56 +176,104 @@ export async function sweepLocalBackups(options: LocalBackupSweepOptions): Promi
     return
   }
 
+  // Group by liveSessionId so Android .partN segments enqueue once.
+  const filesBySession = new Map<string, string[]>()
   for (const fileName of fileNames) {
-    try {
-      const identity = parseLocalBackupFileName(fileName)
-      if (!identity) {
-        continue
-      }
-      const fileUri = `${directoryUri}${fileName}`
-      const info = await getInfoAsync(fileUri)
-      if (!info.exists || info.isDirectory) {
-        continue
-      }
-      const { liveSessionId } = identity
-      // expo-file-system reports modificationTime in seconds. A missing
-      // timestamp must mean "keep" (treat as new), never "expired" — a 0
-      // fallback would delete a file we merely failed to stat.
-      const modifiedAtMs = info.modificationTime != null ? info.modificationTime * 1000 : Date.now()
-      const sizeBytes = info.size
+    const identity = parseLocalBackupFileName(fileName)
+    if (!identity) {
+      continue
+    }
+    const existing = filesBySession.get(identity.liveSessionId) ?? []
+    existing.push(fileName)
+    filesBySession.set(identity.liveSessionId, existing)
+  }
 
-      if (isBackupExpired({ modifiedAtMs, nowMs: Date.now() })) {
-        await deleteAsync(fileUri, { idempotent: true })
+  for (const [liveSessionId, sessionFileNames] of filesBySession) {
+    try {
+      let oldestModifiedAtMs = Date.now()
+      let totalSizeBytes = 0
+      let bestFileUri: string | null = null
+      let bestSize = -1
+      let anyExists = false
+
+      for (const fileName of sessionFileNames) {
+        const fileUri = `${directoryUri}${fileName}`
+        const info = await getInfoAsync(fileUri)
+        if (!info.exists || info.isDirectory) {
+          continue
+        }
+        anyExists = true
+        const fileSize = info.size ?? 0
+        totalSizeBytes += fileSize
+        if (fileSize > bestSize) {
+          bestSize = fileSize
+          bestFileUri = fileUri
+        }
+        // expo-file-system reports modificationTime in seconds. A missing
+        // timestamp must mean "keep" (treat as new), never "expired".
+        const modifiedAtMs =
+          info.modificationTime != null ? info.modificationTime * 1000 : Date.now()
+        if (modifiedAtMs < oldestModifiedAtMs) {
+          oldestModifiedAtMs = modifiedAtMs
+        }
+      }
+
+      if (!anyExists || !bestFileUri) {
+        continue
+      }
+
+      if (isBackupExpired({ modifiedAtMs: oldestModifiedAtMs, nowMs: Date.now() })) {
+        await deleteLocalBackupsForSession(liveSessionId)
         telemetry.info('backup:discarded', 'Expired local backup deleted', {
           liveSessionId,
           reason: 'retention',
-          sizeBytes,
+          sizeBytes: totalSizeBytes,
         })
         continue
       }
 
-      const { videoStatus } = await options.getLiveSessionRecordStatus({ liveSessionId })
-      if (videoStatus === 'ready') {
-        await deleteAsync(fileUri, { idempotent: true })
+      const status = await options.getLiveSessionRecordStatus({ liveSessionId })
+      const decision = shouldEnqueueLiveBackupRecovery({
+        videoStatus: status.videoStatus,
+        recoveryEligible: status.recoveryEligible,
+      })
+
+      if (decision === 'delete_ready') {
+        await deleteLocalBackupsForSession(liveSessionId)
         telemetry.info('backup:discarded', 'Local backup deleted — live asset is ready', {
           liveSessionId,
           reason: 'asset_ready',
-          sizeBytes,
+          sizeBytes: totalSizeBytes,
+        })
+        continue
+      }
+
+      if (decision === 'enqueue' && options.enqueueLiveBackupRecovery) {
+        await options.enqueueLiveBackupRecovery({
+          liveSessionId,
+          fileUri: bestFileUri,
+          recordId: status.recordId,
+          recordType: status.recordType,
+        })
+        telemetry.info('backup:recovery_sweep', 'Sweep enqueued local backup recovery', {
+          liveSessionId,
+          videoStatus: status.videoStatus,
+          sizeBytes: totalSizeBytes,
         })
         continue
       }
 
       telemetry.breadcrumb('backup:kept', {
         liveSessionId,
-        videoStatus,
-        sizeBytes,
-        modifiedAtMs,
+        videoStatus: status.videoStatus,
+        sizeBytes: totalSizeBytes,
+        modifiedAtMs: oldestModifiedAtMs,
       })
     } catch (error) {
       // A bad file or failed status query must never stop the sweep — keep
       // the file (footage is only deleted on positive evidence) and move on.
-      telemetry.warn('backup:sweep_file_failed', 'Failed to sweep local backup file', {
-        fileName,
+      telemetry.warn('backup:sweep_file_failed', 'Failed to sweep local backup session', {
+        liveSessionId,
         error: String(error),
       })
     }

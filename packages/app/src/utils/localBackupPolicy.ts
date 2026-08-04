@@ -66,6 +66,44 @@ export function isBackupExpired(args: { modifiedAtMs: number; nowMs: number }): 
   return args.nowMs - args.modifiedAtMs > LOCAL_BACKUP_RETENTION_MS
 }
 
+/**
+ * Server/client statuses where a local backup should be uploaded to salvage the
+ * recording (Phase 2 of docs/plans/local-backup-recording.md).
+ */
+export type LocalBackupRecoveryStatus =
+  | 'errored'
+  | 'awaiting_recovery'
+  | 'processing'
+  | 'ready'
+  | 'live'
+  | 'pending'
+  | 'waiting_for_upload'
+  | string
+
+/** Terminal failure / deferred-deletion states that warrant a recovery upload. */
+export function isRecoveryEligibleStatus(videoStatus: string | null | undefined): boolean {
+  return videoStatus === 'errored' || videoStatus === 'awaiting_recovery'
+}
+
+/**
+ * Decide whether the launch sweep should enqueue a live_backup upload for a
+ * leftover file. Ready assets win (delete). Recovery-eligible statuses enqueue.
+ * In-flight live/processing statuses keep the file without uploading yet —
+ * Mux may still deliver the live VOD.
+ */
+export function shouldEnqueueLiveBackupRecovery(args: {
+  videoStatus: string | null | undefined
+  recoveryEligible?: boolean
+}): 'delete_ready' | 'enqueue' | 'keep' {
+  if (args.videoStatus === 'ready') {
+    return 'delete_ready'
+  }
+  if (args.recoveryEligible === true || isRecoveryEligibleStatus(args.videoStatus)) {
+    return 'enqueue'
+  }
+  return 'keep'
+}
+
 export interface LocalBackupFileIdentity {
   liveSessionId: string
   /** Null for the primary file; positive for Android reconnect segments. */

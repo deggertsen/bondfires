@@ -8,10 +8,16 @@ const ACTIVE_STATUSES = new Set<UploadTask['status']>(['pending', 'processing', 
 const RECENT_COMPLETION_WINDOW_MS = 120000
 
 function getTaskLabel(task: UploadTask): string {
+  if (task.taskType === 'live_backup') {
+    return 'Recovering recording'
+  }
   return task.isResponse ? 'Response upload' : 'Bondfire upload'
 }
 
-function getDefaultStage(status: UploadTask['status']): string {
+function getDefaultStage(status: UploadTask['status'], taskType?: UploadTask['taskType']): string {
+  if (taskType === 'live_backup' && status !== 'failed' && status !== 'completed') {
+    return 'Recovering your recording…'
+  }
   switch (status) {
     case 'pending':
       return 'Queued...'
@@ -65,7 +71,7 @@ export function UploadProgressCard() {
         <YStack gap={12}>
           {activeTasks.map((task) => {
             const progress = getProgress(task)
-            const stage = task.stage || getDefaultStage(task.status)
+            const stage = task.stage || getDefaultStage(task.status, task.taskType)
 
             return (
               <YStack key={task.id} gap={6}>

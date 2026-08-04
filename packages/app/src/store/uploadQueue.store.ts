@@ -1,9 +1,18 @@
 import { observable } from '@legendapp/state'
 import { syncObservable } from '@legendapp/state/sync'
 
+export type UploadTaskType = 'legacy' | 'live_backup'
+
 export interface UploadTask {
   id: string
   videoFilePath: string // Persistent path (copied from cache)
+  /** Defaults to legacy create-from-upload. `live_backup` attaches to an existing live record. */
+  taskType?: UploadTaskType
+  /** Live session the on-device backup belongs to (live_backup tasks). */
+  liveSessionId?: string
+  /** Existing bondfire / response row the backup should recover into. */
+  recordId?: string
+  recordType?: 'bondfire' | 'response'
   bondfireId?: string // If responding to existing bondfire
   campId?: string
   personalCamp?: boolean
@@ -104,6 +113,17 @@ export const uploadQueueActions = {
   getTask: (taskId: string): UploadTask | undefined => {
     const tasks = uploadQueueStore$.tasks.get()
     return tasks.find((t) => t.id === taskId)
+  },
+
+  findLiveBackupTask: (liveSessionId: string): UploadTask | undefined => {
+    const tasks = uploadQueueStore$.tasks.get()
+    return tasks.find(
+      (t) =>
+        t.taskType === 'live_backup' &&
+        t.liveSessionId === liveSessionId &&
+        t.status !== 'completed' &&
+        t.status !== 'failed',
+    )
   },
 
   cleanupForRefresh: (now = Date.now()): UploadTask[] => {

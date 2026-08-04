@@ -459,6 +459,9 @@ export default defineSchema({
         v.literal('live'),
         v.literal('ready'),
         v.literal('errored'),
+        // Live asset failed (or never arrived) but a local backup may still
+        // recover the recording. Give-up cron → errored/delete after 7 days.
+        v.literal('awaiting_recovery'),
       ),
     ),
     liveSessionId: v.optional(v.id('liveSessions')),
@@ -533,6 +536,7 @@ export default defineSchema({
         v.literal('live'),
         v.literal('ready'),
         v.literal('errored'),
+        v.literal('awaiting_recovery'),
       ),
     ),
     liveSessionId: v.optional(v.id('liveSessions')),

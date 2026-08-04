@@ -140,6 +140,7 @@ export default function CreateScreen() {
   // provisions fresh and never relies on a pre-provisioned ingest.
 
   const createMuxDirectUpload = useAction(api.videos.createMuxDirectUpload)
+  const createLiveBackupDirectUpload = useAction(api.videos.createLiveBackupDirectUpload)
   const getMuxUploadStatus = useAction(api.videos.getMuxUploadStatus)
   const camps = useQuery(api.camps.list, respondTo ? 'skip' : {})
   const subscription = useQuery(api.subscriptions.current, {})
@@ -434,11 +435,21 @@ export default function CreateScreen() {
           draftBondfireId: args.draftBondfireId as Id<'bondfires'> | undefined,
         })
       },
+      createLiveBackupDirectUpload: async (args) => {
+        return await createLiveBackupDirectUpload({
+          liveSessionId: args.liveSessionId as Id<'liveSessions'>,
+          filename: args.filename,
+          contentType: args.contentType,
+          durationMs: args.durationMs,
+          width: args.width,
+          height: args.height,
+        })
+      },
       getMuxUploadStatus: async (args) => {
         return await getMuxUploadStatus(args)
       },
     })
-  }, [createMuxDirectUpload, getMuxUploadStatus])
+  }, [createLiveBackupDirectUpload, createMuxDirectUpload, getMuxUploadStatus])
 
   const schedulePendingUploads = useCallback(() => {
     clearUploadStartTimeout()

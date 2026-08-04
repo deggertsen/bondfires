@@ -21,6 +21,15 @@ crons.interval(
   {},
 )
 
+// Give up on live-linked records waiting for a local backup recovery upload
+// after the 7-day window (matches client LOCAL_BACKUP_RETENTION_MS).
+crons.interval(
+  'give up awaiting backup recovery',
+  { hours: 6 },
+  internal.videos.giveUpAwaitingRecovery,
+  {},
+)
+
 // Process frozen camps whose 30-day reclaim window has expired.
 // Runs daily at 9:00 UTC to catch expired reclaim deadlines.
 crons.daily(

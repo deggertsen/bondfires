@@ -3,6 +3,7 @@ import {
   computeReconnectDeadlineMs,
   freeUpgradeActions,
   getDefaultBondfireTitle,
+  getLocalBackupSessionStats,
   getReconnectAttemptDelayMs,
   getReconnectAttemptTimeoutMs,
   getUserFacingErrorMessage,
@@ -17,6 +18,7 @@ import {
   recordingStore$,
   shouldAttemptLiveReconnect,
   shouldShowReportIssue,
+  startLiveBackupUpload,
   telemetry,
   useAppThemeColors,
   useLivePublisher,
@@ -194,6 +196,9 @@ export function LiveRecordScreen({
   const createLiveStream = useAction(api.videos.createLiveStream)
   const endLiveStream = useAction(api.videos.endLiveStream)
   const cancelLiveStream = useAction(api.videos.cancelLiveStream)
+  const createLiveBackupDirectUpload = useAction(api.videos.createLiveBackupDirectUpload)
+  const createMuxDirectUpload = useAction(api.videos.createMuxDirectUpload)
+  const getMuxUploadStatus = useAction(api.videos.getMuxUploadStatus)
   const touchLiveSession = useMutation(api.videos.touchLiveSession)
   const markBondfireLive = useMutation(api.videos.markBondfireLive)
 
@@ -1269,7 +1274,9 @@ export function LiveRecordScreen({
 
   // Terminal-transport recovery, shared by the immediate path below and the
   // reconnect loop's give-up fallback. Cancels never-started/early drops
-  // (nothing at Mux worth keeping), finalizes everything else.
+  // (nothing at Mux worth keeping), finalizes everything else. When a local
+  // backup exists for an early drop, preserve it and enqueue recovery upload
+  // instead of destroying the linked record (Phase 2).
   const finalizeDeadLiveStream = useCallback(
     (deadStatus: LivePublishStatus) => {
       if (liveTerminalRecoveryFiredRef.current) {
@@ -1291,17 +1298,78 @@ export function LiveRecordScreen({
         durationMs !== undefined &&
         durationMs < NEVER_STARTED_CANCEL_MAX_MS
       if ((durationMs !== undefined && durationMs < EARLY_LIVE_DROP_MS) || neverStarted) {
+        const sessionId = livePublishStore$.sessionId.peek()
+        const recordId = livePublishStore$.recordId.peek()
+        const recordType: 'bondfire' | 'response' =
+          provisionedRecordTypeRef.current ?? (respondTo ? 'response' : 'bondfire')
         telemetry.warn('live:early_drop', 'Live stream dropped before sufficient video data', {
           reason: deadStatus,
           durationMs,
           neverStarted,
-          sessionId: livePublishStore$.sessionId.peek(),
-          recordId: livePublishStore$.recordId.peek(),
+          sessionId,
+          recordId,
         })
         recordingStore$.preConnectFailed.set(true)
         recordingStore$.previewExpired.set(false)
         recordingStore$.progressStage.set("Recording didn't start")
-        void cancelLiveRecording()
+
+        void (async () => {
+          if (!sessionId) {
+            void cancelLiveRecording()
+            return
+          }
+          const backupStats = await getLocalBackupSessionStats(sessionId)
+          if (!backupStats.exists || !backupStats.bestFileUri) {
+            void cancelLiveRecording()
+            return
+          }
+
+          try {
+            await livePublisher.cancel({
+              preserveBackup: true,
+              cancelReason: 'backup_recovery',
+            })
+            await startLiveBackupUpload({
+              videoUri: backupStats.bestFileUri,
+              liveSessionId: sessionId,
+              recordId: recordId ?? undefined,
+              recordType,
+              isResponse: recordType === 'response',
+              createLiveBackupDirectUpload: async (args) =>
+                await createLiveBackupDirectUpload({
+                  liveSessionId: args.liveSessionId as Id<'liveSessions'>,
+                  filename: args.filename,
+                  contentType: args.contentType,
+                  durationMs: args.durationMs,
+                  width: args.width,
+                  height: args.height,
+                }),
+              createMuxDirectUpload: async (args) =>
+                await createMuxDirectUpload({
+                  ...args,
+                  bondfireId: args.bondfireId as Id<'bondfires'> | undefined,
+                  campId: args.campId as Id<'camps'> | undefined,
+                  draftBondfireId: args.draftBondfireId as Id<'bondfires'> | undefined,
+                }),
+              getMuxUploadStatus: async (args) => await getMuxUploadStatus(args),
+            })
+            recordingStore$.progressStage.set('Recovering your recording…')
+          } catch (error) {
+            // Session already ended awaiting_recovery; keep the file for the
+            // launch sweep to enqueue later rather than destroying footage.
+            telemetry.warn('backup:recovery_enqueue_failed', 'Failed to start backup recovery', {
+              sessionId,
+              error: String(error),
+            })
+            recordingStore$.progressStage.set('Saved on your phone — will recover shortly')
+          } finally {
+            ownsPreviewRef.current = false
+            livePublishActions.reset()
+            recordingActions.setPhase('idle', 'live early-drop recovery')
+            recordingStore$.videoUri.set(null)
+            state$.showInviteSheet.set(false)
+          }
+        })()
         return
       }
 
@@ -1322,7 +1390,16 @@ export function LiveRecordScreen({
 
       void stopLiveRecording()
     },
-    [cancelLiveRecording, stopLiveRecording],
+    [
+      cancelLiveRecording,
+      createLiveBackupDirectUpload,
+      createMuxDirectUpload,
+      getMuxUploadStatus,
+      livePublisher,
+      respondTo,
+      state$,
+      stopLiveRecording,
+    ],
   )
 
   const finalizeDeadLiveStreamRef = useRef(finalizeDeadLiveStream)

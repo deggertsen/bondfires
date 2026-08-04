@@ -5,6 +5,7 @@ import {
   LOCAL_BACKUP_RETENTION_MS,
   parseLocalBackupFileName,
   shouldArmLocalBackup,
+  shouldEnqueueLiveBackupRecovery,
 } from '../../../../packages/app/src/utils/localBackupPolicy'
 
 describe('shouldArmLocalBackup', () => {
@@ -81,5 +82,25 @@ describe('parseLocalBackupFileName', () => {
     expect(parseLocalBackupFileName('session_123.part0.mp4')).toBeNull()
     expect(parseLocalBackupFileName(`session_123.part${'9'.repeat(400)}.mp4`)).toBeNull()
     expect(parseLocalBackupFileName('.mp4')).toBeNull()
+  })
+})
+
+describe('shouldEnqueueLiveBackupRecovery', () => {
+  it('deletes when the live asset is ready', () => {
+    expect(shouldEnqueueLiveBackupRecovery({ videoStatus: 'ready' })).toBe('delete_ready')
+  })
+
+  it('enqueues for recovery-eligible statuses', () => {
+    expect(shouldEnqueueLiveBackupRecovery({ videoStatus: 'errored' })).toBe('enqueue')
+    expect(shouldEnqueueLiveBackupRecovery({ videoStatus: 'awaiting_recovery' })).toBe('enqueue')
+    expect(
+      shouldEnqueueLiveBackupRecovery({ videoStatus: 'processing', recoveryEligible: true }),
+    ).toBe('enqueue')
+  })
+
+  it('keeps in-flight processing without an explicit recovery flag', () => {
+    expect(shouldEnqueueLiveBackupRecovery({ videoStatus: 'processing' })).toBe('keep')
+    expect(shouldEnqueueLiveBackupRecovery({ videoStatus: 'live' })).toBe('keep')
+    expect(shouldEnqueueLiveBackupRecovery({ videoStatus: null })).toBe('keep')
   })
 })
