@@ -18,6 +18,12 @@ function videoLabel(item: BondfireVideoItem) {
   return item.isMainVideo ? 'Spark' : `Response #${item.responseIndex}`
 }
 
+// The collapsed bar is tight and its avatar already identifies the speaker, so
+// a first name is enough there. The expanded rows keep the full name.
+function firstName(name: string) {
+  return name.trim().split(/\s+/)[0] || name
+}
+
 function formatShortDate(ms: number) {
   const date = new Date(ms)
   return `${date.toLocaleDateString('en-US', {
@@ -218,8 +224,11 @@ export function ThreadBrowser({
   const currentItem = videoItems[currentVideoIndex]
   const totalVideos = videoItems.length
   const unwatchedCount = videoItems.filter((item) => !item.watchedByViewer).length
-  // At most two chips on the collapsed bar — it shares a line with the counter.
-  const currentTags = currentItem?.aiTags?.slice(0, 2) ?? []
+  // One chip only on the collapsed bar — the model emits its most salient tag
+  // first, and the rest are visible on the expanded rows.
+  const currentTag = currentItem?.aiTags?.[0]
+  const currentSummary = currentItem?.summary
+  const currentDate = currentItem ? formatShortDate(currentItem.createdAt) : ''
 
   if (!currentItem) return null
 
@@ -252,42 +261,57 @@ export function ThreadBrowser({
               size={38}
             />
             <YStack flex={1} minWidth={0}>
-              <XStack alignItems="center" gap={6}>
-                <Text
-                  fontSize={13}
-                  fontWeight="700"
-                  color={OVERLAY_COLORS.textPrimary}
-                  numberOfLines={1}
-                  flexShrink={1}
-                >
-                  {currentItem.creatorName}
-                </Text>
-                <ChevronUp size={13} color={OVERLAY_COLORS.textSecondary} />
-              </XStack>
-              <XStack alignItems="center" gap={5} minWidth={0}>
-                <Text fontSize={11} color={OVERLAY_COLORS.textSecondary} flexShrink={0}>
-                  {videoLabel(currentItem)} · {formatShortDate(currentItem.createdAt)}
-                </Text>
-                {currentTags.map((tag) => (
-                  <XStack
-                    key={tag}
-                    backgroundColor="rgba(255,255,255,0.14)"
-                    paddingHorizontal={6}
-                    paddingVertical={1}
-                    borderRadius={5}
+              {/* Header line: who, topic, when on the left; position and the
+                  expand affordance on the right. The counter lives inside the
+                  text stack rather than as a third pill column so the line
+                  below spans the full width. */}
+              <XStack alignItems="center" gap={8} minWidth={0}>
+                <XStack alignItems="center" gap={6} flex={1} minWidth={0}>
+                  <Text
+                    fontSize={13}
+                    fontWeight="700"
+                    color={OVERLAY_COLORS.textPrimary}
+                    numberOfLines={1}
                     flexShrink={1}
-                    minWidth={0}
                   >
-                    <Text fontSize={9} color={OVERLAY_COLORS.textSecondary} numberOfLines={1}>
-                      {tag}
+                    {firstName(currentItem.creatorName)}
+                  </Text>
+                  {/* When a summary is present it takes the whole line below,
+                      so the date rides up here instead of stealing its width. */}
+                  {currentSummary ? (
+                    <Text fontSize={10} color={OVERLAY_COLORS.textSecondary} flexShrink={0}>
+                      {currentDate}
                     </Text>
-                  </XStack>
-                ))}
+                  ) : null}
+                  {currentTag ? (
+                    <XStack
+                      backgroundColor="rgba(255,255,255,0.14)"
+                      paddingHorizontal={6}
+                      paddingVertical={1}
+                      borderRadius={5}
+                      flexShrink={1}
+                      minWidth={0}
+                    >
+                      <Text fontSize={9} color={OVERLAY_COLORS.textSecondary} numberOfLines={1}>
+                        {currentTag}
+                      </Text>
+                    </XStack>
+                  ) : null}
+                </XStack>
+                <XStack alignItems="center" gap={4} flexShrink={0}>
+                  <Text fontSize={12} fontWeight="600" color={OVERLAY_COLORS.textSecondary}>
+                    {currentVideoIndex + 1} / {totalVideos}
+                  </Text>
+                  <ChevronUp size={13} color={OVERLAY_COLORS.textSecondary} />
+                </XStack>
               </XStack>
+              {/* The summary, or the date on its own until AI insights land.
+                  Either way it is one line, so the 38px avatar keeps setting
+                  the bar's height. */}
+              <Text fontSize={11} color={OVERLAY_COLORS.textSecondary} numberOfLines={1}>
+                {currentSummary ?? currentDate}
+              </Text>
             </YStack>
-            <Text fontSize={12} fontWeight="600" color={OVERLAY_COLORS.textSecondary}>
-              {currentVideoIndex + 1} / {totalVideos}
-            </Text>
           </XStack>
         </Pressable>
       )}
