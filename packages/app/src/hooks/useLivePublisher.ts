@@ -155,6 +155,7 @@ export function useLivePublisher(options: {
   }) => Promise<CreateLiveStreamResult>
   endLiveStream: (args: { liveSessionId: string; reason?: string }) => Promise<unknown>
   cancelLiveStream: (args: { liveSessionId: string; reason?: string }) => Promise<unknown>
+  confirmLiveSessionLocalBackup: (args: { liveSessionId: string }) => Promise<unknown>
 }) {
   const statsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   // The ingest is tagged with the session it belongs to. Ownership
@@ -344,8 +345,18 @@ export function useLivePublisher(options: {
         sessionId,
         freeDiskBytes,
       })
+      // Server failure paths must know whether recovery is real before they
+      // defer cleanup or show "Uploading from your phone". Fire immediately
+      // after native confirms the sink; a later upload preparation repeats the
+      // confirmation if this request is lost during a network transition.
+      void options.confirmLiveSessionLocalBackup({ liveSessionId: sessionId }).catch((error) => {
+        telemetry.warn('backup:confirm_failed', 'Failed to confirm local backup with server', {
+          sessionId,
+          error: String(error),
+        })
+      })
     },
-    [],
+    [options.confirmLiveSessionLocalBackup],
   )
 
   useEffect(() => {

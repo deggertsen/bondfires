@@ -200,6 +200,7 @@ export function LiveRecordScreen({
   const createMuxDirectUpload = useAction(api.videos.createMuxDirectUpload)
   const getMuxUploadStatus = useAction(api.videos.getMuxUploadStatus)
   const touchLiveSession = useMutation(api.videos.touchLiveSession)
+  const confirmLiveSessionLocalBackup = useMutation(api.videos.confirmLiveSessionLocalBackup)
   const markBondfireLive = useMutation(api.videos.markBondfireLive)
 
   const recordingTimeRemainingSeconds = effectiveMaxRecordingSeconds
@@ -240,6 +241,10 @@ export function LiveRecordScreen({
     cancelLiveStream: async (args) =>
       await cancelLiveStream({
         ...args,
+        liveSessionId: args.liveSessionId as Id<'liveSessions'>,
+      }),
+    confirmLiveSessionLocalBackup: async (args) =>
+      await confirmLiveSessionLocalBackup({
         liveSessionId: args.liveSessionId as Id<'liveSessions'>,
       }),
   })
