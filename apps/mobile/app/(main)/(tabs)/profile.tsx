@@ -14,7 +14,16 @@ import {
   usePreferences,
   useSubscription,
 } from '@bondfires/app'
-import { AdminPanel, Button, Card, Input, Spinner, SubscriptionStatus, Text } from '@bondfires/ui'
+import {
+  AdminPanel,
+  Button,
+  Card,
+  Input,
+  Spinner,
+  SubscriptionStatus,
+  Text,
+  UserAvatar,
+} from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
 import {
@@ -32,7 +41,6 @@ import {
   Settings,
   Sun,
   Trash2,
-  User,
 } from '@tamagui/lucide-icons'
 import { useConvex, useMutation, useQuery } from 'convex/react'
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator'
@@ -40,7 +48,7 @@ import * as ImagePicker from 'expo-image-picker'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, FlatList, Pressable, RefreshControl, ScrollView, StatusBar } from 'react-native'
-import { Avatar, Separator, Sheet, Switch, XStack, YStack } from 'tamagui'
+import { Separator, Sheet, Switch, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { NotificationPreferencesSection } from '../../../components/NotificationPreferencesSection'
@@ -537,22 +545,13 @@ export default function ProfileScreen() {
           <Card elevated marginBottom={20}>
             <XStack gap={16} alignItems="center">
               <Pressable onPress={handleChangePhoto} disabled={isUploadingPhoto}>
-                <Avatar circular size="$8">
-                  {currentUser.photoUrl ? (
-                    <Avatar.Image source={{ uri: currentUser.photoUrl }} />
-                  ) : (
-                    <Avatar.Fallback
-                      backgroundColor={'$backgroundHover'}
-                      borderWidth={2}
-                      borderRadius={100}
-                      borderColor={'$primary'}
-                      alignItems="center"
-                      justifyContent="center"
-                    >
-                      <User size={32} color={'$primary'} />
-                    </Avatar.Fallback>
-                  )}
-                </Avatar>
+                <UserAvatar
+                  name={currentUser.displayName ?? currentUser.name}
+                  photoUrl={currentUser.photoUrl}
+                  size={84}
+                  borderWidth={2}
+                  borderColor={'$primary'}
+                />
                 <YStack
                   position="absolute"
                   bottom={0}
@@ -720,19 +719,13 @@ export default function ProfileScreen() {
                       onPress={() => handleOpenCloseCircle(item)}
                     >
                       <YStack alignItems="center" gap={10}>
-                        <Avatar circular size="$6">
-                          {item.user.photoUrl ? (
-                            <Avatar.Image source={{ uri: item.user.photoUrl }} />
-                          ) : (
-                            <Avatar.Fallback
-                              backgroundColor={'$backgroundHover'}
-                              borderWidth={1}
-                              borderColor={'$primary'}
-                            >
-                              <User size={24} color={'$primary'} />
-                            </Avatar.Fallback>
-                          )}
-                        </Avatar>
+                        <UserAvatar
+                          name={item.user.displayName ?? item.user.name}
+                          photoUrl={item.user.photoUrl}
+                          size={64}
+                          borderWidth={1}
+                          borderColor={'$primary'}
+                        />
                         <Text fontSize={15} fontWeight="900" numberOfLines={1} textAlign="center">
                           {item.user.displayName ?? item.user.name ?? 'Someone'}
                         </Text>

@@ -1,5 +1,5 @@
 import { subscriptionActions, telemetry, useAppThemeColors } from '@bondfires/app'
-import { Button, Spinner, Text } from '@bondfires/ui'
+import { Button, Spinner, Text, UserAvatar } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { Check, Copy, Link, Plus, Share, X } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
@@ -8,7 +8,7 @@ import { useCallback, useMemo } from 'react'
 import { Alert, Pressable, Share as RNShare, ScrollView, StatusBar, TextInput } from 'react-native'
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { Avatar, XStack, YStack } from 'tamagui'
+import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
 import {
@@ -715,7 +715,6 @@ function CandidateAvatar({
   onToggle: () => void
 }) {
   const displayName = candidate.displayName ?? candidate.name ?? 'Friend'
-  const initial = displayName.trim().charAt(0).toUpperCase() || '?'
   return (
     <Pressable
       onPress={onToggle}
@@ -734,18 +733,7 @@ function CandidateAvatar({
           justifyContent="center"
           backgroundColor={'$backgroundHover'}
         >
-          <Avatar circular size={selected ? 54 : 60}>
-            {candidate.photoUrl ? <Avatar.Image source={{ uri: candidate.photoUrl }} /> : null}
-            <Avatar.Fallback
-              backgroundColor={'$backgroundHover'}
-              alignItems="center"
-              justifyContent="center"
-            >
-              <Text color={'$color'} fontWeight="700" fontSize={20}>
-                {initial}
-              </Text>
-            </Avatar.Fallback>
-          </Avatar>
+          <UserAvatar name={displayName} photoUrl={candidate.photoUrl} size={selected ? 54 : 60} />
           {selected && (
             <YStack
               position="absolute"

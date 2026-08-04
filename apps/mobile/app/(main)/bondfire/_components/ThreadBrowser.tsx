@@ -1,10 +1,10 @@
-import { Button, Text } from '@bondfires/ui'
+import { Button, Text, UserAvatar } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { Check, ChevronUp, Flame, Share2 } from '@tamagui/lucide-icons'
 import { useEffect, useMemo, useRef } from 'react'
 import { FlatList, Pressable } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { Avatar, Sheet, XStack, YStack } from 'tamagui'
+import { Sheet, XStack, YStack } from 'tamagui'
 import { VIDEO_OVERLAY_COLORS as OVERLAY_COLORS } from '../../../../components/videoOverlayColors'
 import type { BondfireVideoItem, ThreadParticipant } from '../_lib/bondfireDetailHelpers'
 
@@ -16,26 +16,11 @@ const AVATAR_SIZE = 38
 const COMPACT_ROW_HEIGHT = 54
 // Uniform per-thread so the scroll-offset math stays a simple multiply.
 const COMPACT_ROW_HEIGHT_WITH_SUMMARY = 68
-// Ember tones from the brand palette rather than theme tokens: this circle is
-// drawn both over video and on a themed sheet, and it has to stay legible in
-// either place.
-const INITIALS_BACKGROUND = '#A04E24'
-const INITIALS_COLOR = '#F3F4F6'
 
 // Only the first name — the avatar beside it already identifies the speaker,
 // and both surfaces are too tight to spend width on a surname.
 function firstName(name: string) {
   return name.trim().split(/\s+/)[0] || name
-}
-
-// "David Eggertsen" → "DE", mononyms → one letter. Array.from so a name that
-// starts with an emoji or an astral character does not get sliced in half.
-function initials(name: string) {
-  const words = name.trim().split(/\s+/).filter(Boolean)
-  if (words.length === 0) return '?'
-  const first = Array.from(words[0])[0] ?? ''
-  const last = words.length > 1 ? (Array.from(words[words.length - 1])[0] ?? '') : ''
-  return `${first}${last}`.toUpperCase()
 }
 
 function formatShortDate(ms: number) {
@@ -44,56 +29,6 @@ function formatShortDate(ms: number) {
     month: 'short',
     day: 'numeric',
   })}, ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
-}
-
-function CreatorAvatar({
-  name,
-  photoUrl,
-  size,
-}: {
-  name: string
-  photoUrl?: string
-  size: number
-}) {
-  const fallback = (
-    <Text fontSize={size * 0.36} fontWeight="700" color={INITIALS_COLOR} letterSpacing={0.5}>
-      {initials(name)}
-    </Text>
-  )
-
-  // With no image child, Tamagui leaves the avatar's loading status at 'idle'
-  // and Avatar.Fallback never paints — that is what left an empty circle on
-  // every creator without a profile photo. Draw the initials directly instead,
-  // and keep Avatar.Fallback only for the case it does handle: a photo that
-  // exists but fails to load.
-  if (!photoUrl) {
-    return (
-      <YStack
-        width={size}
-        height={size}
-        borderRadius={size / 2}
-        backgroundColor={INITIALS_BACKGROUND}
-        alignItems="center"
-        justifyContent="center"
-        flexShrink={0}
-      >
-        {fallback}
-      </YStack>
-    )
-  }
-
-  return (
-    <Avatar size={size} borderRadius={size / 2} flexShrink={0}>
-      <Avatar.Image source={{ uri: photoUrl }} />
-      <Avatar.Fallback
-        backgroundColor={INITIALS_BACKGROUND}
-        alignItems="center"
-        justifyContent="center"
-      >
-        {fallback}
-      </Avatar.Fallback>
-    </Avatar>
-  )
 }
 
 /**
@@ -200,7 +135,7 @@ function ThreadBrowserRow({
         borderColor={isPlaying ? '$primary' : 'transparent'}
         backgroundColor={isPlaying ? '$backgroundHover' : 'transparent'}
       >
-        <CreatorAvatar name={item.creatorName} photoUrl={photoUrl} size={AVATAR_SIZE} />
+        <UserAvatar name={item.creatorName} photoUrl={photoUrl} size={AVATAR_SIZE} />
         <ThreadItemLines
           item={item}
           summaryLines={2}
@@ -322,7 +257,7 @@ export function ThreadBrowser({
             borderWidth={1}
             borderColor="rgba(255,255,255,0.12)"
           >
-            <CreatorAvatar
+            <UserAvatar
               name={currentItem.creatorName}
               photoUrl={photoByUserId.get(currentItem.videoOwnerId)}
               size={AVATAR_SIZE}

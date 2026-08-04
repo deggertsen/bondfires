@@ -1,10 +1,11 @@
-import { Flame, MessageCircle, User } from '@tamagui/lucide-icons'
+import { Flame, MessageCircle } from '@tamagui/lucide-icons'
 import { Image } from 'expo-image'
 import { Pressable } from 'react-native'
-import { Avatar, XStack, YStack } from 'tamagui'
+import { XStack, YStack } from 'tamagui'
 import { Button } from './Button'
 import { type SwipeAction, SwipeableRow } from './SwipeableRow'
 import { Text } from './Text'
+import { UserAvatar } from './UserAvatar'
 
 export type BondfireParticipant = {
   userId: string
@@ -55,26 +56,15 @@ function ParticipantStack({ participants }: { participants: BondfireParticipant[
   return (
     <XStack height={28} alignItems="center">
       {participants.slice(0, 4).map((participant, index) => (
-        <Avatar
+        <UserAvatar
           key={participant.userId}
-          circular
-          size="$1.5"
+          name={participant.displayName}
+          photoUrl={participant.photoUrl}
+          size={24}
           marginLeft={index === 0 ? 0 : -8}
           borderWidth={1}
           borderColor="$background"
-        >
-          {participant.photoUrl ? (
-            <Avatar.Image source={{ uri: participant.photoUrl }} />
-          ) : (
-            <Avatar.Fallback
-              backgroundColor="$backgroundHover"
-              alignItems="center"
-              justifyContent="center"
-            >
-              <User size={14} color="$placeholderColor" />
-            </Avatar.Fallback>
-          )}
-        </Avatar>
+        />
       ))}
     </XStack>
   )
