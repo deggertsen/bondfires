@@ -7,21 +7,35 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Avatar, Sheet, XStack, YStack } from 'tamagui'
 import { VIDEO_OVERLAY_COLORS as OVERLAY_COLORS } from '../../../../components/videoOverlayColors'
 import type { BondfireVideoItem, ThreadParticipant } from '../_lib/bondfireDetailHelpers'
-import { formatTime } from '../_lib/bondfireDetailHelpers'
 
-const COMPACT_ROW_HEIGHT = 44
-// Once AI summaries exist, rows gain a summary line. Uniform per-thread so the
-// scroll-offset math stays a simple multiply.
-const COMPACT_ROW_HEIGHT_WITH_SUMMARY = 58
+// Avatar sizes are shared by the bar and the rows so the two read as one
+// component. The 38px avatar is what sets the height of both.
+const AVATAR_SIZE = 38
+// Two lines of text (header + summary/date) fit inside the avatar, so these are
+// avatar-driven. Rows give the summary a second line, hence the taller variant.
+const COMPACT_ROW_HEIGHT = 54
+// Uniform per-thread so the scroll-offset math stays a simple multiply.
+const COMPACT_ROW_HEIGHT_WITH_SUMMARY = 68
+// Ember tones from the brand palette rather than theme tokens: this circle is
+// drawn both over video and on a themed sheet, and it has to stay legible in
+// either place.
+const INITIALS_BACKGROUND = '#A04E24'
+const INITIALS_COLOR = '#F3F4F6'
 
-function videoLabel(item: BondfireVideoItem) {
-  return item.isMainVideo ? 'Spark' : `Response #${item.responseIndex}`
-}
-
-// The collapsed bar is tight and its avatar already identifies the speaker, so
-// a first name is enough there. The expanded rows keep the full name.
+// Only the first name — the avatar beside it already identifies the speaker,
+// and both surfaces are too tight to spend width on a surname.
 function firstName(name: string) {
   return name.trim().split(/\s+/)[0] || name
+}
+
+// "David Eggertsen" → "DE", mononyms → one letter. Array.from so a name that
+// starts with an emoji or an astral character does not get sliced in half.
+function initials(name: string) {
+  const words = name.trim().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return '?'
+  const first = Array.from(words[0])[0] ?? ''
+  const last = words.length > 1 ? (Array.from(words[words.length - 1])[0] ?? '') : ''
+  return `${first}${last}`.toUpperCase()
 }
 
 function formatShortDate(ms: number) {
@@ -30,14 +44,6 @@ function formatShortDate(ms: number) {
     month: 'short',
     day: 'numeric',
   })}, ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
-}
-
-function formatTimestamp(ms: number) {
-  const date = new Date(ms)
-  return `${date.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-  })} at ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
 }
 
 function CreatorAvatar({
@@ -49,20 +55,119 @@ function CreatorAvatar({
   photoUrl?: string
   size: number
 }) {
-  const initial = (name[0] ?? '?').toUpperCase()
+  const fallback = (
+    <Text fontSize={size * 0.36} fontWeight="700" color={INITIALS_COLOR} letterSpacing={0.5}>
+      {initials(name)}
+    </Text>
+  )
+
+  // With no image child, Tamagui leaves the avatar's loading status at 'idle'
+  // and Avatar.Fallback never paints — that is what left an empty circle on
+  // every creator without a profile photo. Draw the initials directly instead,
+  // and keep Avatar.Fallback only for the case it does handle: a photo that
+  // exists but fails to load.
+  if (!photoUrl) {
+    return (
+      <YStack
+        width={size}
+        height={size}
+        borderRadius={size / 2}
+        backgroundColor={INITIALS_BACKGROUND}
+        alignItems="center"
+        justifyContent="center"
+        flexShrink={0}
+      >
+        {fallback}
+      </YStack>
+    )
+  }
+
   return (
-    <Avatar size={size} borderRadius={size / 2}>
-      {photoUrl ? <Avatar.Image source={{ uri: photoUrl }} /> : null}
+    <Avatar size={size} borderRadius={size / 2} flexShrink={0}>
+      <Avatar.Image source={{ uri: photoUrl }} />
       <Avatar.Fallback
-        backgroundColor={'$backgroundHover'}
+        backgroundColor={INITIALS_BACKGROUND}
         alignItems="center"
         justifyContent="center"
       >
-        <Text fontSize={size * 0.4} fontWeight="700" color={'$color'}>
-          {initial}
-        </Text>
+        {fallback}
       </Avatar.Fallback>
     </Avatar>
+  )
+}
+
+/**
+ * The two lines shared by the collapsed bar and the expanded rows: who / when /
+ * topic on the header line, summary below. Both surfaces render this so they
+ * cannot drift apart; they differ only in colors, in how many summary lines
+ * they allow, and in what sits at the end of the header line.
+ */
+function ThreadItemLines({
+  item,
+  summaryLines,
+  primaryColor,
+  secondaryColor,
+  chipBackground,
+  headerTrailing,
+}: {
+  item: BondfireVideoItem
+  summaryLines: number
+  primaryColor: string
+  secondaryColor: string
+  chipBackground: string
+  headerTrailing?: React.ReactNode
+}) {
+  const tag = item.aiTags?.[0]
+  const date = formatShortDate(item.createdAt)
+
+  return (
+    <YStack flex={1} minWidth={0}>
+      <XStack alignItems="center" gap={8} minWidth={0}>
+        <XStack alignItems="center" gap={6} flex={1} minWidth={0}>
+          {item.isMainVideo ? <Flame size={11} color={'$primary'} /> : null}
+          <Text
+            fontSize={13}
+            fontWeight="700"
+            color={primaryColor}
+            numberOfLines={1}
+            flexShrink={1}
+          >
+            {firstName(item.creatorName)}
+          </Text>
+          {/* When a summary is present it takes the whole line below, so the
+              date rides up here instead of stealing its width. */}
+          {item.summary ? (
+            <Text fontSize={10} color={secondaryColor} flexShrink={0}>
+              {date}
+            </Text>
+          ) : null}
+          {tag ? (
+            <XStack
+              backgroundColor={chipBackground}
+              paddingHorizontal={6}
+              paddingVertical={1}
+              borderRadius={5}
+              flexShrink={1}
+              minWidth={0}
+            >
+              <Text fontSize={9} color={secondaryColor} numberOfLines={1}>
+                {tag}
+              </Text>
+            </XStack>
+          ) : null}
+        </XStack>
+        {headerTrailing ? (
+          <XStack alignItems="center" gap={4} flexShrink={0}>
+            {headerTrailing}
+          </XStack>
+        ) : null}
+      </XStack>
+      {/* The summary, or the date on its own until AI insights land. Either way
+          the line is always there, so the row height never changes. */}
+      <Text fontSize={11} color={secondaryColor} numberOfLines={summaryLines}>
+        {item.summary ?? date}
+      </Text>
+    </YStack>
   )
 }
 
@@ -81,57 +186,33 @@ function ThreadBrowserRow({
 }) {
   const isUnwatched = !item.watchedByViewer
 
-  if (isPlaying) {
-    return (
-      <Pressable onPress={onPress}>
-        <XStack
-          alignItems="center"
-          gap={10}
-          paddingVertical={8}
-          paddingHorizontal={8}
-          marginVertical={2}
-          borderRadius={12}
-          borderWidth={1}
-          borderColor={'$primary'}
-          backgroundColor={'$backgroundHover'}
-        >
-          <CreatorAvatar name={item.creatorName} photoUrl={photoUrl} size={40} />
-          <YStack flex={1} minWidth={0}>
-            <XStack alignItems="center" gap={6}>
-              {item.isMainVideo ? <Flame size={12} color={'$primary'} /> : null}
-              <Text fontSize={14} fontWeight="700" numberOfLines={1}>
-                {item.creatorName}
-              </Text>
-            </XStack>
-            <Text fontSize={11} color={'$placeholderColor'}>
-              {videoLabel(item)} · {formatTimestamp(item.createdAt)}
-              {item.durationMs ? ` · ${formatTime(item.durationMs)}` : ''}
-            </Text>
-            {item.summary ? (
-              <Text fontSize={12} color={'$color'} opacity={0.8} numberOfLines={2}>
-                {item.summary}
-              </Text>
-            ) : null}
-          </YStack>
-          <Text fontSize={9} fontWeight="800" color={'$primary'} letterSpacing={1}>
-            NOW
-          </Text>
-        </XStack>
-      </Pressable>
-    )
-  }
-
   return (
     <Pressable onPress={onPress}>
-      <XStack alignItems="center" gap={10} height={rowHeight} paddingHorizontal={8}>
-        <CreatorAvatar name={item.creatorName} photoUrl={photoUrl} size={30} />
-        <YStack flex={1} minWidth={0} justifyContent="center">
-          <XStack alignItems="center" gap={6} minWidth={0}>
-            {item.isMainVideo ? <Flame size={11} color={'$primary'} /> : null}
-            <Text fontSize={13} fontWeight="600" numberOfLines={1} flexShrink={1}>
-              {item.creatorName}
-            </Text>
-            {isUnwatched ? (
+      <XStack
+        alignItems="center"
+        gap={10}
+        height={rowHeight}
+        paddingHorizontal={8}
+        borderRadius={12}
+        // Border on every row, transparent unless playing, so highlighting a
+        // row cannot change its height and the scroll math stays exact.
+        borderWidth={1}
+        borderColor={isPlaying ? '$primary' : 'transparent'}
+        backgroundColor={isPlaying ? '$backgroundHover' : 'transparent'}
+      >
+        <CreatorAvatar name={item.creatorName} photoUrl={photoUrl} size={AVATAR_SIZE} />
+        <ThreadItemLines
+          item={item}
+          summaryLines={2}
+          primaryColor={'$color'}
+          secondaryColor={'$placeholderColor'}
+          chipBackground={'$backgroundPress'}
+          headerTrailing={
+            isPlaying ? (
+              <Text fontSize={9} fontWeight="800" color={'$primary'} letterSpacing={1}>
+                NOW
+              </Text>
+            ) : isUnwatched ? (
               <XStack
                 backgroundColor={'$secondary'}
                 paddingHorizontal={6}
@@ -142,20 +223,11 @@ function ThreadBrowserRow({
                   NEW
                 </Text>
               </XStack>
-            ) : null}
-          </XStack>
-          {item.summary ? (
-            <Text fontSize={11} color={'$placeholderColor'} numberOfLines={1}>
-              {item.summary}
-            </Text>
-          ) : null}
-        </YStack>
-        <Text fontSize={11} color={'$placeholderColor'}>
-          {formatShortDate(item.createdAt)}
-        </Text>
-        <YStack width={16} alignItems="flex-end">
-          {!isUnwatched ? <Check size={12} color={'$placeholderColor'} /> : null}
-        </YStack>
+            ) : (
+              <Check size={12} color={'$placeholderColor'} />
+            )
+          }
+        />
       </XStack>
     </Pressable>
   )
@@ -224,11 +296,6 @@ export function ThreadBrowser({
   const currentItem = videoItems[currentVideoIndex]
   const totalVideos = videoItems.length
   const unwatchedCount = videoItems.filter((item) => !item.watchedByViewer).length
-  // One chip only on the collapsed bar — the model emits its most salient tag
-  // first, and the rest are visible on the expanded rows.
-  const currentTag = currentItem?.aiTags?.[0]
-  const currentSummary = currentItem?.summary
-  const currentDate = currentItem ? formatShortDate(currentItem.createdAt) : ''
 
   if (!currentItem) return null
 
@@ -258,60 +325,25 @@ export function ThreadBrowser({
             <CreatorAvatar
               name={currentItem.creatorName}
               photoUrl={photoByUserId.get(currentItem.videoOwnerId)}
-              size={38}
+              size={AVATAR_SIZE}
             />
-            <YStack flex={1} minWidth={0}>
-              {/* Header line: who, topic, when on the left; position and the
-                  expand affordance on the right. The counter lives inside the
-                  text stack rather than as a third pill column so the line
-                  below spans the full width. */}
-              <XStack alignItems="center" gap={8} minWidth={0}>
-                <XStack alignItems="center" gap={6} flex={1} minWidth={0}>
-                  <Text
-                    fontSize={13}
-                    fontWeight="700"
-                    color={OVERLAY_COLORS.textPrimary}
-                    numberOfLines={1}
-                    flexShrink={1}
-                  >
-                    {firstName(currentItem.creatorName)}
-                  </Text>
-                  {/* When a summary is present it takes the whole line below,
-                      so the date rides up here instead of stealing its width. */}
-                  {currentSummary ? (
-                    <Text fontSize={10} color={OVERLAY_COLORS.textSecondary} flexShrink={0}>
-                      {currentDate}
-                    </Text>
-                  ) : null}
-                  {currentTag ? (
-                    <XStack
-                      backgroundColor="rgba(255,255,255,0.14)"
-                      paddingHorizontal={6}
-                      paddingVertical={1}
-                      borderRadius={5}
-                      flexShrink={1}
-                      minWidth={0}
-                    >
-                      <Text fontSize={9} color={OVERLAY_COLORS.textSecondary} numberOfLines={1}>
-                        {currentTag}
-                      </Text>
-                    </XStack>
-                  ) : null}
-                </XStack>
-                <XStack alignItems="center" gap={4} flexShrink={0}>
+            {/* One summary line here against the rows' two: the bar has to stay
+                inside the avatar's height so it never grows over the video. */}
+            <ThreadItemLines
+              item={currentItem}
+              summaryLines={1}
+              primaryColor={OVERLAY_COLORS.textPrimary}
+              secondaryColor={OVERLAY_COLORS.textSecondary}
+              chipBackground="rgba(255,255,255,0.14)"
+              headerTrailing={
+                <>
                   <Text fontSize={12} fontWeight="600" color={OVERLAY_COLORS.textSecondary}>
                     {currentVideoIndex + 1} / {totalVideos}
                   </Text>
                   <ChevronUp size={13} color={OVERLAY_COLORS.textSecondary} />
-                </XStack>
-              </XStack>
-              {/* The summary, or the date on its own until AI insights land.
-                  Either way it is one line, so the 38px avatar keeps setting
-                  the bar's height. */}
-              <Text fontSize={11} color={OVERLAY_COLORS.textSecondary} numberOfLines={1}>
-                {currentSummary ?? currentDate}
-              </Text>
-            </YStack>
+                </>
+              }
+            />
           </XStack>
         </Pressable>
       )}
