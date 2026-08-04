@@ -5,7 +5,11 @@ import type { Id } from '../../../../convex/_generated/dataModel'
 import { startLiveBackupUpload } from '../services/backgroundUpload'
 import { sweepLocalBackups } from '../services/localBackupSweep'
 import { telemetry } from '../services/telemetry'
+import { toastActions } from '../store/toast.store'
 import { useRecordingResourceLock } from './useRecordingResourceLock'
+
+const RECOVERY_TOAST_MESSAGE =
+  "Finishing an upload from an earlier recording — it'll appear once it's done."
 
 /**
  * Run the local backup sweep once on app start (Phase 1+2 of
@@ -30,6 +34,10 @@ export function useLocalBackupSweep() {
     if (hasRun.current) return
     if (recordingResourceLocked) return
     hasRun.current = true
+
+    // One passive heads-up per sweep no matter how many sessions it recovers:
+    // the user shouldn't have to guess why an old recording is still missing.
+    let announcedRecovery = false
 
     sweepLocalBackups({
       getLiveSessionRecordStatus: (args) =>
@@ -61,6 +69,11 @@ export function useLocalBackupSweep() {
             }),
           getMuxUploadStatus: async (statusArgs) => await getMuxUploadStatus(statusArgs),
         })
+
+        if (!announcedRecovery) {
+          announcedRecovery = true
+          toastActions.addToast('info', RECOVERY_TOAST_MESSAGE)
+        }
       },
     }).catch((error) => {
       telemetry.warn('backup:sweep_failed', 'Local backup sweep crashed', {

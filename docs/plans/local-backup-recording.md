@@ -61,7 +61,12 @@ Reconnect is the first line of defense: it handles transient network switches wi
 
 - On terminal failure (`live:early_drop` cancel path *with a backup present*, reconnect give-up finalize where Mux later reports the asset errored, or next-launch crash recovery), enqueue the backup file into the existing upload queue with a new task type `live_backup` carrying `{ liveSessionId, recordId }`.
 - Next-launch matching: files are named `<liveSessionId>.mp4`; on launch, for each orphaned file ask the server for that session's record state — asset `ready` → delete file; `errored`/`processing`-stuck → enqueue recovery upload. This composes with the crash-recovery sweep (which, since PR #183, finalizes rather than deletes progressed sessions).
-- UX: silent when possible; a small "Recovering your recording…" state on the affected bondfire is acceptable.
+- UX: ambient, never modal. A recovering bondfire must never look lost, which is the whole point of the feature. Four surfaces, all reusing existing chrome:
+  - **Completion screen** — an early drop with a salvageable backup lands here (with copy explaining the background upload) instead of the "Recording didn't start" retry state.
+  - **Bondfire detail** — `awaiting_recovery` renders `BondfireRecoveringScreen` ("Finishing upload...") rather than falling through to playback's bare spinner.
+  - **My Fires** — `listMyFires` keeps the creator's own `awaiting_recovery` row visible, labelled "Uploading from your phone".
+  - **Launch sweep** — one auto-dismissing info toast when the sweep enqueues recovery for an earlier session.
+  - Progress detail stays on Profile → `UploadProgressCard` ("Recovering recording").
 
 ### Server (Convex)
 

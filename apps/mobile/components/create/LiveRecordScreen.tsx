@@ -1309,17 +1309,18 @@ export function LiveRecordScreen({
           sessionId,
           recordId,
         })
-        recordingStore$.preConnectFailed.set(true)
         recordingStore$.previewExpired.set(false)
-        recordingStore$.progressStage.set("Recording didn't start")
 
         void (async () => {
-          if (!sessionId) {
-            void cancelLiveRecording()
-            return
-          }
-          const backupStats = await getLocalBackupSessionStats(sessionId)
-          if (!backupStats.exists || !backupStats.bestFileUri) {
+          const backupStats = sessionId ? await getLocalBackupSessionStats(sessionId) : null
+
+          // Nothing salvageable on device: keep the original destructive path
+          // and the error state the user retries from. The failure state is set
+          // here rather than up front so a recoverable drop never flashes
+          // "Recording didn't start" at someone whose footage is fine.
+          if (!sessionId || !backupStats?.exists || !backupStats.bestFileUri) {
+            recordingStore$.preConnectFailed.set(true)
+            recordingStore$.progressStage.set("Recording didn't start")
             void cancelLiveRecording()
             return
           }
@@ -1353,7 +1354,6 @@ export function LiveRecordScreen({
                 }),
               getMuxUploadStatus: async (args) => await getMuxUploadStatus(args),
             })
-            recordingStore$.progressStage.set('Recovering your recording…')
           } catch (error) {
             // Session already ended awaiting_recovery; keep the file for the
             // launch sweep to enqueue later rather than destroying footage.
@@ -1361,13 +1361,14 @@ export function LiveRecordScreen({
               sessionId,
               error: String(error),
             })
-            recordingStore$.progressStage.set('Saved on your phone — will recover shortly')
           } finally {
             ownsPreviewRef.current = false
             livePublishActions.reset()
-            recordingActions.setPhase('idle', 'live early-drop recovery')
-            recordingStore$.videoUri.set(null)
             state$.showInviteSheet.set(false)
+            recordingActions.enterBackupRecoveryCompletion(
+              recordId ?? null,
+              'live early-drop backup recovery',
+            )
           }
         })()
         return

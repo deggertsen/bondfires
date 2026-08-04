@@ -26,6 +26,7 @@ import {
   BondfireLoadingScreen,
   BondfirePendingScreen,
   BondfireProcessingScreen,
+  BondfireRecoveringScreen,
   BondfireUnavailableScreen,
 } from './_components/BondfireStatusScreens'
 import {
@@ -510,6 +511,16 @@ export default function BondfireDetailScreen() {
 
   if (bondfireData.videoStatus === 'processing') {
     return <BondfireProcessingScreen {...statusScreenProps} />
+  }
+
+  if (bondfireData.videoStatus === 'awaiting_recovery') {
+    return (
+      <BondfireRecoveringScreen
+        {...statusScreenProps}
+        bondfireData={bondfireData}
+        isOwner={bondfireData.userId === currentUserId}
+      />
+    )
   }
 
   if (bondfireData.videoStatus === 'errored') {
