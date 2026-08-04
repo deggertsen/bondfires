@@ -24,6 +24,27 @@ export function decideReadyAssetConflict(args: {
   return args.incomingSource === 'live' ? 'replace_existing' : 'keep_existing'
 }
 
+/**
+ * Should reaching 'ready' announce this record to its camp or thread?
+ *
+ * Live rows are announced when Mux reports the stream watchable, which is also
+ * where `liveSessions.startedAt` is stamped — so an unset `startedAt` means
+ * nobody was ever told. That is the normal state for a backup recovery: the
+ * stream dropped early or never pushed a frame, making 'ready' the first moment
+ * its audience can hear about it. Notification delivery dedupes per recipient
+ * on a stable video key, so announcing a session that did go live can't produce
+ * a second push.
+ */
+export function shouldAnnounceRecordOnReady(args: {
+  liveSessionId?: string
+  liveSessionStartedAt?: number
+}): boolean {
+  if (!args.liveSessionId) {
+    return true
+  }
+  return args.liveSessionStartedAt === undefined
+}
+
 /** Only sessions that positively confirmed an on-device file get deferred. */
 export function shouldDeferLiveFailureForBackup(args: {
   localBackupAvailable: boolean

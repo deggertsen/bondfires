@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { decideReadyAssetConflict, shouldDeferLiveFailureForBackup } from './liveBackupRecovery'
+import {
+  decideReadyAssetConflict,
+  shouldAnnounceRecordOnReady,
+  shouldDeferLiveFailureForBackup,
+} from './liveBackupRecovery'
 
 describe('decideReadyAssetConflict', () => {
   it('accepts the first playable asset and idempotent repeats', () => {
@@ -50,6 +54,22 @@ describe('decideReadyAssetConflict', () => {
         incomingSource: 'unknown',
       }),
     ).toBe('keep_existing')
+  })
+})
+
+describe('shouldAnnounceRecordOnReady', () => {
+  it('announces direct uploads, which have no live session to announce them', () => {
+    expect(shouldAnnounceRecordOnReady({})).toBe(true)
+  })
+
+  it('announces a recovery for a stream that never became watchable', () => {
+    expect(shouldAnnounceRecordOnReady({ liveSessionId: 'session-1' })).toBe(true)
+  })
+
+  it('stays silent when the stream already announced itself at go-live', () => {
+    expect(
+      shouldAnnounceRecordOnReady({ liveSessionId: 'session-1', liveSessionStartedAt: 1 }),
+    ).toBe(false)
   })
 })
 

@@ -37,6 +37,7 @@ import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 import {
   decideReadyAssetConflict,
   type RecordedAssetSource,
+  shouldAnnounceRecordOnReady,
   shouldDeferLiveFailureForBackup,
 } from './lib/liveBackupRecovery'
 import { classifyMuxIngest, type IngestEvidence, localIngestSource } from './lib/liveIngest'
@@ -1221,6 +1222,18 @@ async function assertMuxMetadataDurationAllowed(
   }
 }
 
+/** See shouldAnnounceRecordOnReady — this only resolves the live session for it. */
+async function shouldAnnounceOnReady(
+  ctx: MutationCtx,
+  liveSessionId: Id<'liveSessions'> | undefined,
+): Promise<boolean> {
+  const liveSession = liveSessionId ? await ctx.db.get(liveSessionId) : null
+  return shouldAnnounceRecordOnReady({
+    liveSessionId,
+    liveSessionStartedAt: liveSession?.startedAt,
+  })
+}
+
 async function markRecordReady(
   ctx: MutationCtx,
   record: MuxRecord,
@@ -1344,7 +1357,7 @@ async function markRecordReady(
           })
         }
       }
-      if (!record.document.liveSessionId) {
+      if (await shouldAnnounceOnReady(ctx, record.document.liveSessionId)) {
         await ctx.scheduler.runAfter(0, internal.sendNotification.notifyCampBondfire, {
           bondfireId: record.document._id,
           creatorId: record.document.userId,
@@ -1366,8 +1379,8 @@ async function markRecordReady(
   // missed. Idempotent via countedAt either way.
   await countResponse(ctx, record.document)
 
-  if (record.document.liveSessionId) {
-    // Live responses were already announced at stream-watchable.
+  if (!(await shouldAnnounceOnReady(ctx, record.document.liveSessionId))) {
+    // Already announced when the stream became watchable.
     return 'ready'
   }
 
