@@ -10,9 +10,11 @@ import { livePublishActions, livePublishStore$ } from '../store/livePublish.stor
 import { isNativePublisherStatus, type NativePublisherError } from '../store/livePublisherContract'
 import { uploadQueueStore$ } from '../store/uploadQueue.store'
 import { interruptionReasonLabel } from '../utils/captureInterruption'
+import { writeLiveAbrPrior } from '../utils/liveAbrPrior'
 import {
   composeLiveVideoBitrate,
   createNetworkBitrateController,
+  type LiveVideoBitrateTier,
   type NetworkBitrateController,
 } from '../utils/liveBitratePolicy'
 import {
@@ -22,6 +24,7 @@ import {
   STATS_SAMPLE_INTERVAL_MS,
   type StallDetector,
 } from '../utils/liveStallDetector'
+import { resolveLiveStartBitrate } from '../utils/liveUplinkProbe'
 import { isLocalBackupFlagEnabled, shouldArmLocalBackup } from '../utils/localBackupPolicy'
 import { assessNetworkTransport } from '../utils/networkTransport'
 
@@ -205,18 +208,22 @@ export function useLivePublisher(options: {
   })
   const lastConfiguredQualityRef = useRef<LivePublisherVideoQualityResult | null>(null)
 
-  const resetNetworkAbr = useCallback(() => {
+  const resetNetworkAbr = useCallback((initialTier: LiveVideoBitrateTier = 0) => {
     if (!networkAbrRef.current) {
       networkAbrRef.current = createNetworkBitrateController()
     }
-    networkAbrRef.current.reset()
-    networkBitrateCapRef.current = networkAbrRef.current.bitrate()
+    networkAbrRef.current.reset(initialTier)
+    const bitrate = networkAbrRef.current.bitrate()
+    networkBitrateCapRef.current = bitrate
+    // Fresh connect: thermal starts at the nominal ceiling. Network start tier
+    // is whatever the probe/prior selected — lastRequested must match so the
+    // first composed apply is not a no-op against a stale 2.5M assumption.
     thermalCeilingRef.current = {
       bitrate: LIVE_DEFAULT_VIDEO_BITRATE,
       fps: LIVE_DEFAULT_VIDEO_FPS,
     }
     lastRequestedQualityRef.current = {
-      bitrate: LIVE_DEFAULT_VIDEO_BITRATE,
+      bitrate,
       fps: LIVE_DEFAULT_VIDEO_FPS,
     }
     lastConfiguredQualityRef.current = null
@@ -588,7 +595,7 @@ export function useLivePublisher(options: {
   const stallDetectorRef = useRef<StallDetector | null>(null)
 
   const startStatsSampling = useCallback(
-    (opts?: { preserveThroughputHistory?: boolean }) => {
+    (opts?: { preserveThroughputHistory?: boolean; initialTier?: LiveVideoBitrateTier }) => {
       if (statsIntervalRef.current) {
         clearInterval(statsIntervalRef.current)
       }
@@ -606,7 +613,7 @@ export function useLivePublisher(options: {
       if (!opts?.preserveThroughputHistory) {
         livePublishActions.resetThroughput()
       }
-      resetNetworkAbr()
+      resetNetworkAbr(opts?.initialTier ?? 0)
 
       // Prime the throughput baseline (Android's TrafficStats measurement needs
       // a first reading to diff against). Without this the first 5s tick is an
@@ -901,14 +908,21 @@ export function useLivePublisher(options: {
         throw new Error('No provisioned live stream to connect')
       }
 
-      // Transport snapshot is telemetry only — encoder starts at the ceiling
-      // and ABR adapts from measured throughput (see liveBitratePolicy).
+      // Probe / remembered prior pick the encoder open bitrate. Transport type
+      // is still telemetry-only for the bitrate decision itself — it only
+      // invalidates a stale prior when Wi‑Fi vs cellular changed.
       const transport = await assessNetworkTransport()
+      const startBitrate = resolveLiveStartBitrate({ transportType: transport.type })
       telemetry.info('live:network_transport', 'Network transport before connect', {
         type: transport.type,
         isConnected: transport.isConnected,
         isInternetReachable: transport.isInternetReachable,
-        initialVideoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
+        initialVideoBitrate: startBitrate.bitrateBps,
+        initialAbrTier: startBitrate.tier,
+        startBitrateSource: startBitrate.source,
+        probeStatus: startBitrate.probe?.status,
+        probeUplinkBps: startBitrate.probe?.uplinkBps,
+        probeElapsedMs: startBitrate.probe?.elapsedMs,
       })
 
       const localBackup = await resolveLocalBackup(ingest.sessionId)
@@ -924,7 +938,7 @@ export function useLivePublisher(options: {
           rtmpsUrl: ingest.rtmpsUrl,
           streamKey: ingest.streamKey,
           fps: LIVE_DEFAULT_VIDEO_FPS,
-          videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
+          videoBitrate: startBitrate.bitrateBps,
           audioBitrate: 128_000,
           initialCamera: args.initialCamera ?? 'front',
           localBackupFileName: localBackup.fileName,
@@ -934,7 +948,7 @@ export function useLivePublisher(options: {
           startResult?.localBackupArmed ? localBackup.fileName : '',
           localBackup.freeDiskBytes,
         )
-        startStatsSampling()
+        startStatsSampling({ initialTier: startBitrate.tier })
         telemetry.setCrashBreadcrumb('live:recording', {
           sessionId: livePublishStore$.sessionId.peek(),
           recordId: livePublishStore$.recordId.peek(),
@@ -948,6 +962,9 @@ export function useLivePublisher(options: {
           connectMs,
           totalMs: connectMs,
           preProvisioned: true,
+          initialAbrTier: startBitrate.tier,
+          startBitrateBps: startBitrate.bitrateBps,
+          startBitrateSource: startBitrate.source,
         })
       } catch (error) {
         // Keep the provisioned session intact so the user can retry the tap;
@@ -1119,14 +1136,18 @@ export function useLivePublisher(options: {
           playbackId: liveStream.playbackId,
         })
 
-        // Transport snapshot is telemetry only — encoder starts at the ceiling
-        // and ABR adapts from measured throughput (see liveBitratePolicy).
         const transport = await assessNetworkTransport()
+        const startBitrate = resolveLiveStartBitrate({ transportType: transport.type })
         telemetry.info('live:network_transport', 'Network transport before start', {
           type: transport.type,
           isConnected: transport.isConnected,
           isInternetReachable: transport.isInternetReachable,
-          initialVideoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
+          initialVideoBitrate: startBitrate.bitrateBps,
+          initialAbrTier: startBitrate.tier,
+          startBitrateSource: startBitrate.source,
+          probeStatus: startBitrate.probe?.status,
+          probeUplinkBps: startBitrate.probe?.uplinkBps,
+          probeElapsedMs: startBitrate.probe?.elapsedMs,
         })
 
         const localBackup = await resolveLocalBackup(liveStream.liveSessionId)
@@ -1141,7 +1162,7 @@ export function useLivePublisher(options: {
           rtmpsUrl: liveStream.ingest.rtmpsUrl,
           streamKey: liveStream.ingest.streamKey,
           fps: LIVE_DEFAULT_VIDEO_FPS,
-          videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
+          videoBitrate: startBitrate.bitrateBps,
           audioBitrate: 128_000,
           initialCamera: args.initialCamera ?? 'front',
           localBackupFileName: localBackup.fileName,
@@ -1151,7 +1172,7 @@ export function useLivePublisher(options: {
           startResult?.localBackupArmed ? localBackup.fileName : '',
           localBackup.freeDiskBytes,
         )
-        startStatsSampling()
+        startStatsSampling({ initialTier: startBitrate.tier })
         telemetry.setCrashBreadcrumb('live:recording', {
           sessionId: liveStream.liveSessionId,
           recordId: liveStream.recordId,
@@ -1167,6 +1188,9 @@ export function useLivePublisher(options: {
           connectMs: Date.now() - connectStartedAt,
           totalMs: Date.now() - startRequestedAt,
           preProvisioned: false,
+          initialAbrTier: startBitrate.tier,
+          startBitrateBps: startBitrate.bitrateBps,
+          startBitrateSource: startBitrate.source,
         })
       } catch (error) {
         const errObj = error instanceof Error ? error : new Error(String(error))
@@ -1225,6 +1249,18 @@ export function useLivePublisher(options: {
     } catch (error) {
       publisherError = error
     } finally {
+      // Remember the tier this session settled on so the next cold start can
+      // open lower when a preflight probe has not finished yet.
+      const settledTier = networkAbrRef.current?.tier()
+      if (settledTier !== undefined) {
+        void assessNetworkTransport()
+          .then((transport) => {
+            writeLiveAbrPrior({ tier: settledTier, transportType: transport.type })
+          })
+          .catch(() => {
+            writeLiveAbrPrior({ tier: settledTier })
+          })
+      }
       stopStatsSampling()
       ingestRef.current = null
       livePublishActions.setStatus('ended')

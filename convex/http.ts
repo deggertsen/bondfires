@@ -115,4 +115,20 @@ http.route({
   }),
 })
 
+http.route({
+  path: '/live/uplink-probe',
+  method: 'POST',
+  handler: httpAction(async (_ctx, request) => {
+    // Discard the body. The client times how long the upload takes and maps
+    // that onto the live ABR start ladder — we only need a reachable uplink
+    // sink that does not create storage or Mux work.
+    try {
+      await request.arrayBuffer()
+    } catch {
+      return new Response(null, { status: 400 })
+    }
+    return new Response(null, { status: 204 })
+  }),
+})
+
 export default http

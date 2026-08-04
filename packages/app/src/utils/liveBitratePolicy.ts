@@ -3,7 +3,8 @@
  *
  * Industry pattern (OBS / Streamlabs Dynamic Bitrate, HaishinKit QoS delegates,
  * modern RTMP publisher ABR controllers):
- *   - Start at a configured ceiling
+ *   - Open at a start tier chosen by the opportunistic uplink probe / remembered
+ *     prior when available, otherwise the configured ceiling
  *   - Cut quickly when the uplink cannot sustain the encoder target
  *   - Recover slowly with hysteresis so we don't sawtooth
  *   - Never key off transport type (Wi‑Fi vs cellular) — only observed capacity
@@ -12,6 +13,9 @@
  * configured encoder target (video + audio). That matches what mobile RTMP
  * stacks can measure today: HaishinKit stream bytes on iOS, TrafficStats TX
  * deltas on Android. Send-queue depth (OBS's gold signal) is not exposed.
+ *
+ * Pre-connect also runs a short HTTP uplink probe (see liveUplinkProbe.ts) so
+ * a weak link can open below the ceiling without gating the record button.
  */
 
 export const LIVE_VIDEO_BITRATE_LADDER = [
@@ -85,16 +89,45 @@ export interface NetworkBitrateController {
   sample(sample: NetworkBitrateSample): NetworkBitrateDecision
 }
 
-function ladderBitrate(tier: LiveVideoBitrateTier): number {
+export function ladderBitrate(tier: LiveVideoBitrateTier): number {
   return LIVE_VIDEO_BITRATE_LADDER[tier]
 }
 
-function clampTier(tier: number): LiveVideoBitrateTier {
+export function clampLiveVideoBitrateTier(tier: number): LiveVideoBitrateTier {
   if (tier <= 0) return 0
   if (tier >= LIVE_VIDEO_BITRATE_LADDER.length - 1) {
     return (LIVE_VIDEO_BITRATE_LADDER.length - 1) as LiveVideoBitrateTier
   }
   return tier as LiveVideoBitrateTier
+}
+
+function clampTier(tier: number): LiveVideoBitrateTier {
+  return clampLiveVideoBitrateTier(tier)
+}
+
+/**
+ * Map a measured uplink (bits/sec) onto the ABR ladder.
+ *
+ * Uses the same 0.7 headroom as congestion detection so a probe that barely
+ * cleared a rung does not start the encoder at that rung — RTMP overhead and
+ * variance usually eat the rest. Returns the highest tier whose video+audio
+ * target fits in the usable capacity, or the survival floor.
+ */
+export function tierForMeasuredUplinkBps(
+  uplinkBps: number,
+  audioBitrateBps: number = LIVE_AUDIO_BITRATE_BPS,
+): LiveVideoBitrateTier {
+  if (!Number.isFinite(uplinkBps) || uplinkBps <= 0) {
+    return (LIVE_VIDEO_BITRATE_LADDER.length - 1) as LiveVideoBitrateTier
+  }
+
+  const usable = uplinkBps * ABR_DOWN_RATIO
+  for (let tier = 0; tier < LIVE_VIDEO_BITRATE_LADDER.length; tier++) {
+    if (LIVE_VIDEO_BITRATE_LADDER[tier] + audioBitrateBps <= usable) {
+      return tier as LiveVideoBitrateTier
+    }
+  }
+  return (LIVE_VIDEO_BITRATE_LADDER.length - 1) as LiveVideoBitrateTier
 }
 
 function nextTierBelow(

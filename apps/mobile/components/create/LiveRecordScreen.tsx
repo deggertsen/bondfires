@@ -1,5 +1,7 @@
 import {
+  beginLiveUplinkProbe,
   buildErrorReportMailto,
+  cancelLiveUplinkProbe,
   computeReconnectDeadlineMs,
   freeUpgradeActions,
   getDefaultBondfireTitle,
@@ -13,6 +15,7 @@ import {
   type LivePublishStatus,
   livePublishActions,
   livePublishStore$,
+  liveUplinkProbeUrl,
   parseError,
   recordingActions,
   recordingStore$,
@@ -648,6 +651,28 @@ export function LiveRecordScreen({
     provisionInFlightRef.current = chain
   }, [phase, isFocused, isAppActive, provisionArgsKey])
 
+  // Opportunistic uplink probe — sibling of eager Mux provision. Never awaited
+  // by record tap; connect()/start() consume whatever result is ready.
+  useEffect(() => {
+    if (phase !== 'pre_connected' || !isFocused || !isAppActive) {
+      cancelLiveUplinkProbe()
+      return
+    }
+    const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL
+    const probeUrl = convexUrl ? liveUplinkProbeUrl(convexUrl) : null
+    if (!probeUrl) {
+      telemetry.warn('live:uplink_probe', 'Skipped uplink probe; Convex site URL unavailable', {
+        hasConvexUrl: !!convexUrl,
+      })
+      return
+    }
+    beginLiveUplinkProbe({ probeUrl })
+    telemetry.breadcrumb('live:uplink_probe_start', { probeUrlHost: probeUrl.split('/')[2] })
+    return () => {
+      cancelLiveUplinkProbe()
+    }
+  }, [phase, isFocused, isAppActive])
+
   const startLiveRecording = useCallback(async () => {
     if (recordingStore$.phase.get() !== 'pre_connected') {
       return
@@ -678,6 +703,10 @@ export function LiveRecordScreen({
 
     liveTerminalRecoveryFiredRef.current = false
     state$.isTapStarting.set(true)
+
+    // Stop any in-flight probe so it cannot compete with the RTMP connect for
+    // uplink. Completed results stay available for resolveLiveStartBitrate.
+    cancelLiveUplinkProbe()
 
     try {
       // Wait out an in-flight eager provision instead of racing it with a
