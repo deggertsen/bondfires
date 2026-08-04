@@ -1,10 +1,10 @@
-import { Button, Text } from '@bondfires/ui'
+import { Button, Text, UserAvatar } from '@bondfires/ui'
 import { Check, Copy, Share, X } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import * as Clipboard from 'expo-clipboard'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, Pressable, Share as RNShare, ScrollView } from 'react-native'
-import { Avatar, Sheet, XStack, YStack } from 'tamagui'
+import { Sheet, XStack, YStack } from 'tamagui'
 import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
 
@@ -203,9 +203,6 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
                   {contacts.map((contact) => {
                     const sent = inviteSent[contact._id]
                     const photoUrl = contact.photoUrl
-                    const initial = (
-                      (contact.displayName ?? contact.name ?? '?')[0] ?? '?'
-                    ).toUpperCase()
 
                     return (
                       <Pressable
@@ -214,20 +211,15 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
                         disabled={sent}
                       >
                         <YStack alignItems="center" gap={6} width={64}>
-                          <Avatar size={52} borderRadius={26}>
-                            {photoUrl ? <Avatar.Image source={{ uri: photoUrl }} /> : null}
-                            <Avatar.Fallback
-                              backgroundColor={sent ? '$green10Light' : '$orange8Light'}
-                            >
-                              {sent ? (
-                                <Check size={22} color="$green10Dark" />
-                              ) : (
-                                <Text fontSize={20} fontWeight="700" color="$orange11Dark">
-                                  {initial}
-                                </Text>
-                              )}
-                            </Avatar.Fallback>
-                          </Avatar>
+                          <UserAvatar
+                            name={contact.displayName ?? contact.name}
+                            photoUrl={photoUrl}
+                            size={52}
+                            // A sent invite reads as a state, not as a person,
+                            // so it overrides the initials.
+                            fallback={sent ? <Check size={22} color="$green10Dark" /> : undefined}
+                            fallbackBackgroundColor={sent ? '$green10Light' : undefined}
+                          />
                           <Text
                             fontSize={11}
                             textAlign="center"

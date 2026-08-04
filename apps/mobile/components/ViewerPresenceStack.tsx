@@ -1,8 +1,8 @@
 import type { Viewer } from '@bondfires/app'
-import { Flame } from '@tamagui/lucide-icons'
+import { UserAvatar } from '@bondfires/ui'
 import { useEffect, useMemo, useRef } from 'react'
 import { Animated, ScrollView, type StyleProp, type ViewStyle } from 'react-native'
-import { AnimatePresence, Avatar, Text, YStack } from 'tamagui'
+import { AnimatePresence, Text, YStack } from 'tamagui'
 import { VIDEO_OVERLAY_COLORS } from './videoOverlayColors'
 
 export interface ActiveReaction {
@@ -131,14 +131,12 @@ export function ViewerPresenceStack({
                 justifyContent="center"
                 overflow="visible"
               >
-                <Avatar size={AVATAR_SIZE} borderRadius={AVATAR_RADIUS}>
-                  {viewer.userPhotoUrl ? (
-                    <Avatar.Image source={{ uri: viewer.userPhotoUrl }} />
-                  ) : null}
-                  <Avatar.Fallback backgroundColor={VIDEO_OVERLAY_COLORS.pillBackground}>
-                    <Flame size={18} color={VIDEO_OVERLAY_COLORS.textPrimary} />
-                  </Avatar.Fallback>
-                </Avatar>
+                <UserAvatar
+                  name={viewer.userName}
+                  photoUrl={viewer.userPhotoUrl}
+                  size={AVATAR_SIZE}
+                  borderRadius={AVATAR_RADIUS}
+                />
                 {/* Emoji overlays for matching reactions on this live viewer */}
                 {viewerReactions.map((reaction) => (
                   <AnimatedEmoji
@@ -194,12 +192,12 @@ function TransientReactionAvatar({
       overflow="visible"
     >
       <YStack position="relative" alignItems="center" justifyContent="center" overflow="visible">
-        <Avatar size={AVATAR_SIZE} borderRadius={AVATAR_RADIUS}>
-          {reaction.userPhotoUrl ? <Avatar.Image source={{ uri: reaction.userPhotoUrl }} /> : null}
-          <Avatar.Fallback backgroundColor={VIDEO_OVERLAY_COLORS.pillBackground}>
-            <Flame size={18} color={VIDEO_OVERLAY_COLORS.textPrimary} />
-          </Avatar.Fallback>
-        </Avatar>
+        <UserAvatar
+          name={reaction.userName}
+          photoUrl={reaction.userPhotoUrl}
+          size={AVATAR_SIZE}
+          borderRadius={AVATAR_RADIUS}
+        />
         <AnimatedEmoji reactionId={reaction.id} emoji={reaction.emoji} onExpired={onExpired} />
       </YStack>
     </YStack>
