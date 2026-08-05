@@ -9,6 +9,7 @@ import {
   getReconnectAttemptTimeoutMs,
   getUserFacingErrorMessage,
   interruptionReasonLabel,
+  isReusableLiveUplinkProbeResult,
   LIVE_DEFAULT_VIDEO_BITRATE,
   LIVE_DEFAULT_VIDEO_FPS,
   type LivePublishStatus,
@@ -658,8 +659,21 @@ export function LiveRecordScreen({
   // by record tap; connect()/start() consume whatever result is ready.
   useEffect(() => {
     if (phase !== 'pre_connected' || !isFocused || !isAppActive) {
+      // Drop the measurement only when leaving pre-connect entirely. Brief
+      // blur/background keeps a finished result for the next arm.
+      if (phase !== 'pre_connected' && uplinkProbeRef.current) {
+        uplinkProbeRef.current.cancel()
+        uplinkProbeRef.current = null
+      }
       return
     }
+
+    // Reuse a finished probe across focus/AppState flickers instead of
+    // throwing away a free capacity signal and restarting from scratch.
+    if (isReusableLiveUplinkProbeResult(uplinkProbeRef.current?.getResult())) {
+      return
+    }
+
     const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL
     const probeUrl = convexUrl ? liveUplinkProbeUrl(convexUrl) : null
     if (!probeUrl) {
@@ -668,10 +682,18 @@ export function LiveRecordScreen({
       })
       return
     }
+
+    // Replace any in-flight / failed leftover from a previous arm.
+    uplinkProbeRef.current?.cancel()
     const probe = beginLiveUplinkProbe({ probeUrl })
     uplinkProbeRef.current = probe
     telemetry.breadcrumb('live:uplink_probe_start', { probeUrlHost: probeUrl.split('/')[2] })
     return () => {
+      // Keep finished results on the ref so re-focus can reuse them. Cancel
+      // only in-flight work so a backgrounded screen does not keep uploading.
+      if (isReusableLiveUplinkProbeResult(probe.getResult())) {
+        return
+      }
       probe.cancel()
       if (uplinkProbeRef.current === probe) {
         uplinkProbeRef.current = null

@@ -125,7 +125,7 @@ http.route({
       return new Response(null, { status: 411 })
     }
     if (Number(declaredLength) !== expectedBytes) {
-      return new Response(null, { status: 413 })
+      return new Response(null, { status: 400 })
     }
 
     // Discard the body. The client times how long the upload takes and maps

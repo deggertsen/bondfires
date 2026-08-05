@@ -12,7 +12,7 @@
  * not steal uplink from RTMP.
  *
  * Probe state is deliberately instance-owned. The app can keep more than one
- * create screen mounted, so a module-global controller lets a blurred screen
+ * create screen mounted; a module-global controller would let a blurred screen
  * cancel or reuse the focused screen's measurement.
  */
 
@@ -52,6 +52,13 @@ export interface LiveUplinkProbeHandle {
   cancel(): void
   /** Return the latest terminal result without waiting. */
   getResult(): LiveUplinkProbeResult | null
+}
+
+/** Finished measurements worth keeping across brief focus / AppState flickers. */
+export function isReusableLiveUplinkProbeResult(
+  result: LiveUplinkProbeResult | null | undefined,
+): boolean {
+  return result?.status === 'completed' || result?.status === 'timed_out'
 }
 
 export type LiveStartBitrateSource = 'probe' | 'probe_timeout' | 'prior' | 'default'

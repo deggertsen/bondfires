@@ -31,6 +31,7 @@ import {
 import {
   beginLiveUplinkProbe,
   convexHttpSiteUrl,
+  isReusableLiveUplinkProbeResult,
   LIVE_UPLINK_PROBE_TIMEOUT_TIER,
   liveUplinkProbeUrl,
   resolveLiveStartBitrate,
@@ -149,6 +150,43 @@ describe('resolveLiveStartBitrate', () => {
 describe('liveUplinkProbe helpers', () => {
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  it('treats only finished capacity signals as reusable across flickers', () => {
+    expect(isReusableLiveUplinkProbeResult(null)).toBe(false)
+    expect(
+      isReusableLiveUplinkProbeResult({
+        status: 'cancelled',
+        tier: 0,
+        elapsedMs: 10,
+        bytes: 1,
+      }),
+    ).toBe(false)
+    expect(
+      isReusableLiveUplinkProbeResult({
+        status: 'failed',
+        tier: 3,
+        elapsedMs: 10,
+        bytes: 1,
+      }),
+    ).toBe(false)
+    expect(
+      isReusableLiveUplinkProbeResult({
+        status: 'completed',
+        uplinkBps: 4_000_000,
+        tier: 0,
+        elapsedMs: 100,
+        bytes: 256_000,
+      }),
+    ).toBe(true)
+    expect(
+      isReusableLiveUplinkProbeResult({
+        status: 'timed_out',
+        tier: 3,
+        elapsedMs: 2_000,
+        bytes: 256_000,
+      }),
+    ).toBe(true)
   })
 
   it('maps convex.cloud URLs onto the HTTP site host', () => {
