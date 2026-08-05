@@ -1,4 +1,5 @@
 import {
+  beginLiveUplinkProbe,
   buildErrorReportMailto,
   computeReconnectDeadlineMs,
   freeUpgradeActions,
@@ -8,11 +9,14 @@ import {
   getReconnectAttemptTimeoutMs,
   getUserFacingErrorMessage,
   interruptionReasonLabel,
+  isReusableLiveUplinkProbeResult,
   LIVE_DEFAULT_VIDEO_BITRATE,
   LIVE_DEFAULT_VIDEO_FPS,
   type LivePublishStatus,
+  type LiveUplinkProbeHandle,
   livePublishActions,
   livePublishStore$,
+  liveUplinkProbeUrl,
   parseError,
   recordingActions,
   recordingStore$,
@@ -148,6 +152,9 @@ export function LiveRecordScreen({
   const provisionedArgsKeyRef = useRef<string | null>(null)
   const provisionedRecordTypeRef = useRef<'bondfire' | 'response' | null>(null)
   const provisionAttemptRef = useRef(0)
+  // Instance-owned so a blurred create screen cannot cancel or reuse the
+  // focused screen's preflight measurement.
+  const uplinkProbeRef = useRef<LiveUplinkProbeHandle | null>(null)
   // Thermal mitigation state (see the thermal effect below). Refs so effect
   // re-runs don't re-fire telemetry or re-apply encoder settings; reset when
   // the phase leaves 'recording'.
@@ -648,6 +655,52 @@ export function LiveRecordScreen({
     provisionInFlightRef.current = chain
   }, [phase, isFocused, isAppActive, provisionArgsKey])
 
+  // Opportunistic uplink probe — sibling of eager Mux provision. Never awaited
+  // by record tap; connect()/start() consume whatever result is ready.
+  useEffect(() => {
+    if (phase !== 'pre_connected' || !isFocused || !isAppActive) {
+      // Drop the measurement only when leaving pre-connect entirely. Brief
+      // blur/background keeps a finished result for the next arm.
+      if (phase !== 'pre_connected' && uplinkProbeRef.current) {
+        uplinkProbeRef.current.cancel()
+        uplinkProbeRef.current = null
+      }
+      return
+    }
+
+    // Reuse a finished probe across focus/AppState flickers instead of
+    // throwing away a free capacity signal and restarting from scratch.
+    if (isReusableLiveUplinkProbeResult(uplinkProbeRef.current?.getResult())) {
+      return
+    }
+
+    const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL
+    const probeUrl = convexUrl ? liveUplinkProbeUrl(convexUrl) : null
+    if (!probeUrl) {
+      telemetry.warn('live:uplink_probe', 'Skipped uplink probe; Convex site URL unavailable', {
+        hasConvexUrl: !!convexUrl,
+      })
+      return
+    }
+
+    // Replace any in-flight / failed leftover from a previous arm.
+    uplinkProbeRef.current?.cancel()
+    const probe = beginLiveUplinkProbe({ probeUrl })
+    uplinkProbeRef.current = probe
+    telemetry.breadcrumb('live:uplink_probe_start', { probeUrlHost: probeUrl.split('/')[2] })
+    return () => {
+      // Keep finished results on the ref so re-focus can reuse them. Cancel
+      // only in-flight work so a backgrounded screen does not keep uploading.
+      if (isReusableLiveUplinkProbeResult(probe.getResult())) {
+        return
+      }
+      probe.cancel()
+      if (uplinkProbeRef.current === probe) {
+        uplinkProbeRef.current = null
+      }
+    }
+  }, [phase, isFocused, isAppActive])
+
   const startLiveRecording = useCallback(async () => {
     if (recordingStore$.phase.get() !== 'pre_connected') {
       return
@@ -679,6 +732,12 @@ export function LiveRecordScreen({
     liveTerminalRecoveryFiredRef.current = false
     state$.isTapStarting.set(true)
 
+    // Stop any in-flight probe so it cannot compete with the RTMP connect for
+    // uplink. Completed results stay available for resolveLiveStartBitrate.
+    const uplinkProbe = uplinkProbeRef.current
+    uplinkProbe?.cancel()
+    const uplinkProbeResult = uplinkProbe?.getResult() ?? null
+
     try {
       // Wait out an in-flight eager provision instead of racing it with a
       // second createLiveStream — the server refuses concurrent sessions.
@@ -696,7 +755,7 @@ export function LiveRecordScreen({
         if (canUseProvisioned) {
           // Fast path: the stream was provisioned during framing, so the tap
           // only opens the RTMP connection.
-          await publisher.connect({ initialCamera })
+          await publisher.connect({ initialCamera, uplinkProbeResult })
           // Flip the pending record live for immediate feed visibility. Fire
           // and forget — the live_stream.active webhook is the authoritative
           // backstop for both record types.
@@ -723,7 +782,7 @@ export function LiveRecordScreen({
           }
           provisionedArgsKeyRef.current = null
           provisionedRecordTypeRef.current = null
-          await publisher.start({ ...expectedArgs, initialCamera })
+          await publisher.start({ ...expectedArgs, initialCamera, uplinkProbeResult })
         }
         ownsPreviewRef.current = false
       } catch (error) {
