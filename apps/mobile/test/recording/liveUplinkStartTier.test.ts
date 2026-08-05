@@ -30,13 +30,10 @@ import {
 } from '../../../../packages/app/src/utils/liveBitratePolicy'
 import {
   beginLiveUplinkProbe,
-  cancelLiveUplinkProbe,
   convexHttpSiteUrl,
   LIVE_UPLINK_PROBE_TIMEOUT_TIER,
   liveUplinkProbeUrl,
-  resetLiveUplinkProbeForTests,
   resolveLiveStartBitrate,
-  setLiveUplinkProbeResultForTests,
 } from '../../../../packages/app/src/utils/liveUplinkProbe'
 
 describe('tierForMeasuredUplinkBps', () => {
@@ -92,39 +89,36 @@ describe('liveAbrPrior', () => {
 describe('resolveLiveStartBitrate', () => {
   beforeEach(() => {
     memory.clear()
-    resetLiveUplinkProbeForTests()
-  })
-
-  afterEach(() => {
-    resetLiveUplinkProbeForTests()
   })
 
   it('prefers a completed probe over the remembered prior', () => {
     writeLiveAbrPrior({ tier: 3, now: 1_000 })
-    setLiveUplinkProbeResultForTests({
+    const probeResult = {
       status: 'completed',
       uplinkBps: 4_000_000,
-      tier: 0,
+      tier: 0 as const,
       elapsedMs: 400,
       bytes: 256_000,
-    })
-    expect(resolveLiveStartBitrate({ now: 1_000, transportType: 'WIFI' })).toMatchObject({
+    } as const
+    expect(
+      resolveLiveStartBitrate({ now: 1_000, transportType: 'WIFI', probeResult }),
+    ).toMatchObject({
       source: 'probe',
       tier: 0,
       bitrateBps: LIVE_VIDEO_BITRATE_LADDER[0],
     })
   })
 
-  it('uses the timeout tier when the probe could not finish', () => {
-    setLiveUplinkProbeResultForTests({
+  it('uses the survival floor when the probe could not finish', () => {
+    const probeResult = {
       status: 'timed_out',
       tier: LIVE_UPLINK_PROBE_TIMEOUT_TIER,
       elapsedMs: 2_000,
       bytes: 256_000,
-    })
-    expect(resolveLiveStartBitrate({ now: 1_000 })).toMatchObject({
+    } as const
+    expect(resolveLiveStartBitrate({ now: 1_000, probeResult })).toMatchObject({
       source: 'probe_timeout',
-      tier: LIVE_UPLINK_PROBE_TIMEOUT_TIER,
+      tier: 3,
     })
   })
 
@@ -139,13 +133,13 @@ describe('resolveLiveStartBitrate', () => {
 
   it('ignores a cancelled probe and uses the prior', () => {
     writeLiveAbrPrior({ tier: 1, now: 1_000 })
-    setLiveUplinkProbeResultForTests({
+    const probeResult = {
       status: 'cancelled',
-      tier: 0,
+      tier: 0 as const,
       elapsedMs: 100,
       bytes: 256_000,
-    })
-    expect(resolveLiveStartBitrate({ now: 1_000 })).toMatchObject({
+    } as const
+    expect(resolveLiveStartBitrate({ now: 1_000, probeResult })).toMatchObject({
       source: 'prior',
       tier: 1,
     })
@@ -154,7 +148,7 @@ describe('resolveLiveStartBitrate', () => {
 
 describe('liveUplinkProbe helpers', () => {
   afterEach(() => {
-    resetLiveUplinkProbeForTests()
+    vi.restoreAllMocks()
   })
 
   it('maps convex.cloud URLs onto the HTTP site host', () => {
@@ -171,21 +165,58 @@ describe('liveUplinkProbe helpers', () => {
     const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }))
     const now = vi.spyOn(Date, 'now')
     now.mockReturnValueOnce(1_000).mockReturnValue(1_100) // 100ms upload
-    beginLiveUplinkProbe({
+    const probe = beginLiveUplinkProbe({
       probeUrl: 'https://example.convex.site/live/uplink-probe',
       bytes: 256 * 1024,
       timeoutMs: 2_000,
       fetchImpl: fetchImpl as unknown as typeof fetch,
     })
     await vi.waitFor(() => {
-      expect(resolveLiveStartBitrate().source).toBe('probe')
+      expect(probe.getResult()?.status).toBe('completed')
     })
     // 256KiB in 100ms ≈ 21 Mbps → ceiling
-    expect(resolveLiveStartBitrate().tier).toBe(0)
+    expect(resolveLiveStartBitrate({ probeResult: probe.getResult() }).tier).toBe(0)
 
     // Cancel with nothing in flight is a no-op that preserves the result.
-    cancelLiveUplinkProbe()
-    expect(resolveLiveStartBitrate().source).toBe('probe')
-    now.mockRestore()
+    probe.cancel()
+    expect(resolveLiveStartBitrate({ probeResult: probe.getResult() }).source).toBe('probe')
+  })
+
+  it('cancels only the handle that owns the in-flight request', async () => {
+    const pendingFetch = (_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+      })
+    const first = beginLiveUplinkProbe({
+      probeUrl: 'https://example.convex.site/live/uplink-probe',
+      fetchImpl: pendingFetch as typeof fetch,
+    })
+    const second = beginLiveUplinkProbe({
+      probeUrl: 'https://example.convex.site/live/uplink-probe',
+      fetchImpl: vi.fn(async () => new Response(null, { status: 204 })) as unknown as typeof fetch,
+    })
+
+    first.cancel()
+    await vi.waitFor(() => {
+      expect(second.getResult()?.status).toBe('completed')
+    })
+    expect(first.getResult()?.status).toBe('cancelled')
+    expect(second.getResult()?.status).toBe('completed')
+  })
+
+  it('records a timeout immediately at the survival floor', async () => {
+    const pendingFetch = (_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+      })
+    const probe = beginLiveUplinkProbe({
+      probeUrl: 'https://example.convex.site/live/uplink-probe',
+      timeoutMs: 5,
+      fetchImpl: pendingFetch as typeof fetch,
+    })
+
+    await vi.waitFor(() => {
+      expect(probe.getResult()).toMatchObject({ status: 'timed_out', tier: 3 })
+    })
   })
 })

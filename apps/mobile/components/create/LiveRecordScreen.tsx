@@ -1,7 +1,6 @@
 import {
   beginLiveUplinkProbe,
   buildErrorReportMailto,
-  cancelLiveUplinkProbe,
   computeReconnectDeadlineMs,
   freeUpgradeActions,
   getDefaultBondfireTitle,
@@ -13,6 +12,7 @@ import {
   LIVE_DEFAULT_VIDEO_BITRATE,
   LIVE_DEFAULT_VIDEO_FPS,
   type LivePublishStatus,
+  type LiveUplinkProbeHandle,
   livePublishActions,
   livePublishStore$,
   liveUplinkProbeUrl,
@@ -151,6 +151,9 @@ export function LiveRecordScreen({
   const provisionedArgsKeyRef = useRef<string | null>(null)
   const provisionedRecordTypeRef = useRef<'bondfire' | 'response' | null>(null)
   const provisionAttemptRef = useRef(0)
+  // Instance-owned so a blurred create screen cannot cancel or reuse the
+  // focused screen's preflight measurement.
+  const uplinkProbeRef = useRef<LiveUplinkProbeHandle | null>(null)
   // Thermal mitigation state (see the thermal effect below). Refs so effect
   // re-runs don't re-fire telemetry or re-apply encoder settings; reset when
   // the phase leaves 'recording'.
@@ -655,7 +658,6 @@ export function LiveRecordScreen({
   // by record tap; connect()/start() consume whatever result is ready.
   useEffect(() => {
     if (phase !== 'pre_connected' || !isFocused || !isAppActive) {
-      cancelLiveUplinkProbe()
       return
     }
     const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL
@@ -666,10 +668,14 @@ export function LiveRecordScreen({
       })
       return
     }
-    beginLiveUplinkProbe({ probeUrl })
+    const probe = beginLiveUplinkProbe({ probeUrl })
+    uplinkProbeRef.current = probe
     telemetry.breadcrumb('live:uplink_probe_start', { probeUrlHost: probeUrl.split('/')[2] })
     return () => {
-      cancelLiveUplinkProbe()
+      probe.cancel()
+      if (uplinkProbeRef.current === probe) {
+        uplinkProbeRef.current = null
+      }
     }
   }, [phase, isFocused, isAppActive])
 
@@ -706,7 +712,9 @@ export function LiveRecordScreen({
 
     // Stop any in-flight probe so it cannot compete with the RTMP connect for
     // uplink. Completed results stay available for resolveLiveStartBitrate.
-    cancelLiveUplinkProbe()
+    const uplinkProbe = uplinkProbeRef.current
+    uplinkProbe?.cancel()
+    const uplinkProbeResult = uplinkProbe?.getResult() ?? null
 
     try {
       // Wait out an in-flight eager provision instead of racing it with a
@@ -725,7 +733,7 @@ export function LiveRecordScreen({
         if (canUseProvisioned) {
           // Fast path: the stream was provisioned during framing, so the tap
           // only opens the RTMP connection.
-          await publisher.connect({ initialCamera })
+          await publisher.connect({ initialCamera, uplinkProbeResult })
           // Flip the pending record live for immediate feed visibility. Fire
           // and forget — the live_stream.active webhook is the authoritative
           // backstop for both record types.
@@ -752,7 +760,7 @@ export function LiveRecordScreen({
           }
           provisionedArgsKeyRef.current = null
           provisionedRecordTypeRef.current = null
-          await publisher.start({ ...expectedArgs, initialCamera })
+          await publisher.start({ ...expectedArgs, initialCamera, uplinkProbeResult })
         }
         ownsPreviewRef.current = false
       } catch (error) {

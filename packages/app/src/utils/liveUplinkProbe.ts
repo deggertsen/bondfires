@@ -7,9 +7,13 @@
  *
  * Measurement: POST a fixed payload to a Convex HTTP action that discards the
  * body. Completing within the budget yields bits/sec → ladder tier. Timing out
- * means the link could not push ~256KB in ~2s (<~1 Mbps) → survival-adjacent
- * tier. Cancelling for record tap discards the result so a half-finished upload
- * does not steal uplink from RTMP.
+ * means the link could not push ~256KiB in ~2s → survival floor. Cancelling
+ * for record tap marks the instance cancelled so a half-finished upload does
+ * not steal uplink from RTMP.
+ *
+ * Probe state is deliberately instance-owned. The app can keep more than one
+ * create screen mounted, so a module-global controller lets a blurred screen
+ * cancel or reuse the focused screen's measurement.
  */
 
 import { readLiveAbrPrior } from './liveAbrPrior'
@@ -26,10 +30,11 @@ export const LIVE_UPLINK_PROBE_BYTES = 256 * 1024
 export const LIVE_UPLINK_PROBE_TIMEOUT_MS = 2_000
 
 /**
- * Could not finish the probe body in time → treat as weak uplink. 256KB in 2s
- * needs ~1 Mbps; the ladder's 1.0 Mbps rung (tier 2) is the conservative start.
+ * Could not finish the probe body in time → treat as weak uplink. 256KiB in
+ * 2s already needs ~1.05 Mbps before RTMP/audio overhead, so only the survival
+ * floor is defensible.
  */
-export const LIVE_UPLINK_PROBE_TIMEOUT_TIER: LiveVideoBitrateTier = 2
+export const LIVE_UPLINK_PROBE_TIMEOUT_TIER: LiveVideoBitrateTier = 3
 
 export type LiveUplinkProbeStatus = 'completed' | 'timed_out' | 'cancelled' | 'failed'
 
@@ -42,6 +47,13 @@ export interface LiveUplinkProbeResult {
   bytes: number
 }
 
+export interface LiveUplinkProbeHandle {
+  /** Abort this probe only. A completed result is preserved. */
+  cancel(): void
+  /** Return the latest terminal result without waiting. */
+  getResult(): LiveUplinkProbeResult | null
+}
+
 export type LiveStartBitrateSource = 'probe' | 'probe_timeout' | 'prior' | 'default'
 
 export interface LiveStartBitrate {
@@ -50,17 +62,6 @@ export interface LiveStartBitrate {
   source: LiveStartBitrateSource
   probe?: LiveUplinkProbeResult
 }
-
-type ActiveProbe = {
-  controller: AbortController
-  generation: number
-  /** Why this probe was aborted, if it was. */
-  abortReason?: 'timeout' | 'cancelled'
-}
-
-let activeProbe: ActiveProbe | null = null
-let completedResult: LiveUplinkProbeResult | null = null
-let probeGeneration = 0
 
 /** Derive the HTTP Actions host from the Convex deployment URL. */
 export function convexHttpSiteUrl(convexCloudUrl: string): string | null {
@@ -79,43 +80,47 @@ export function liveUplinkProbeUrl(convexCloudUrl: string): string | null {
 }
 
 function buildProbeBody(bytes: number): ArrayBuffer {
-  // Zeros compress poorly enough over TLS framing and avoid allocating strings.
+  // TLS does not compress request bodies; zeroes avoid a large string allocation.
   return new ArrayBuffer(bytes)
 }
 
 /**
- * Kick off a probe. Replaces any in-flight probe. Safe to call repeatedly from
- * the pre-connect effect — only the latest generation can publish a result.
+ * Kick off one independently owned probe. The caller keeps the returned handle
+ * and cancels only that instance during effect cleanup or record tap.
  */
 export function beginLiveUplinkProbe(args: {
   probeUrl: string
   bytes?: number
   timeoutMs?: number
   fetchImpl?: typeof fetch
-}): void {
-  // Keep a useful finished result across focus flickers — restarting would
-  // throw away the only signal we have before record tap.
-  if (completedResult?.status === 'completed' || completedResult?.status === 'timed_out') {
-    return
-  }
-
-  cancelLiveUplinkProbe()
-  completedResult = null
-
+}): LiveUplinkProbeHandle {
   const bytes = args.bytes ?? LIVE_UPLINK_PROBE_BYTES
   const timeoutMs = args.timeoutMs ?? LIVE_UPLINK_PROBE_TIMEOUT_MS
-  const generation = ++probeGeneration
   const controller = new AbortController()
-  activeProbe = { controller, generation }
-  const probe = activeProbe
-
   const startedAt = Date.now()
   const fetchImpl = args.fetchImpl ?? fetch
-  const timeoutId = setTimeout(() => {
-    if (activeProbe?.generation === generation) {
-      activeProbe.abortReason = 'timeout'
+  let result: LiveUplinkProbeResult | null = null
+  let settled = false
+  let abortReason: 'timeout' | 'cancelled' | null = null
+
+  const finishAbort = (reason: 'timeout' | 'cancelled') => {
+    if (settled || abortReason) return
+    abortReason = reason
+    result = {
+      status: reason === 'timeout' ? 'timed_out' : 'cancelled',
+      tier: reason === 'timeout' ? LIVE_UPLINK_PROBE_TIMEOUT_TIER : 0,
+      elapsedMs: Math.max(1, Date.now() - startedAt),
+      bytes,
     }
-    controller.abort()
+    try {
+      controller.abort()
+    } catch {
+      // ignore
+    }
+  }
+
+  const timeoutId = setTimeout(() => {
+    finishAbort('timeout')
   }, timeoutMs)
 
   void (async () => {
@@ -129,13 +134,13 @@ export function beginLiveUplinkProbe(args: {
         signal: controller.signal,
       })
 
-      if (generation !== probeGeneration) {
-        return
-      }
+      // Some fetch implementations can still resolve after abort. The timeout
+      // or record tap owns the terminal result once it fires.
+      if (abortReason) return
 
       const elapsedMs = Math.max(1, Date.now() - startedAt)
       if (!response.ok) {
-        completedResult = {
+        result = {
           status: 'failed',
           tier: LIVE_UPLINK_PROBE_TIMEOUT_TIER,
           elapsedMs,
@@ -145,7 +150,7 @@ export function beginLiveUplinkProbe(args: {
       }
 
       const uplinkBps = (bytes * 8) / (elapsedMs / 1000)
-      completedResult = {
+      result = {
         status: 'completed',
         uplinkBps,
         tier: tierForMeasuredUplinkBps(uplinkBps),
@@ -153,82 +158,24 @@ export function beginLiveUplinkProbe(args: {
         bytes,
       }
     } catch {
-      if (generation !== probeGeneration) {
-        return
-      }
+      if (abortReason) return
 
-      const elapsedMs = Math.max(1, Date.now() - startedAt)
-      const abortReason = probe.abortReason
-
-      if (abortReason === 'timeout') {
-        completedResult = {
-          status: 'timed_out',
-          tier: LIVE_UPLINK_PROBE_TIMEOUT_TIER,
-          elapsedMs,
-          bytes,
-        }
-        return
-      }
-
-      if (abortReason === 'cancelled') {
-        completedResult = {
-          status: 'cancelled',
-          tier: 0,
-          elapsedMs,
-          bytes,
-        }
-        return
-      }
-
-      completedResult = {
+      result = {
         status: 'failed',
         tier: LIVE_UPLINK_PROBE_TIMEOUT_TIER,
-        elapsedMs,
+        elapsedMs: Math.max(1, Date.now() - startedAt),
         bytes,
       }
     } finally {
+      settled = true
       clearTimeout(timeoutId)
-      if (activeProbe?.generation === generation) {
-        activeProbe = null
-      }
     }
   })()
-}
 
-/** Abort an in-flight probe (record tap). Completed results are left alone. */
-export function cancelLiveUplinkProbe(): void {
-  if (!activeProbe) {
-    return
+  return {
+    cancel: () => finishAbort('cancelled'),
+    getResult: () => result,
   }
-  const { controller, generation } = activeProbe
-  activeProbe.abortReason = 'cancelled'
-  activeProbe = null
-  // Bump generation so a late timeout handler cannot overwrite a cancel.
-  if (generation === probeGeneration) {
-    probeGeneration++
-  }
-  try {
-    controller.abort()
-  } catch {
-    // ignore
-  }
-}
-
-export function getLiveUplinkProbeResult(): LiveUplinkProbeResult | null {
-  return completedResult
-}
-
-/** Test helper — reset module state between cases. */
-export function resetLiveUplinkProbeForTests(): void {
-  cancelLiveUplinkProbe()
-  completedResult = null
-  probeGeneration = 0
-}
-
-/** Test helper — inject a completed result without fetching. */
-export function setLiveUplinkProbeResultForTests(result: LiveUplinkProbeResult | null): void {
-  completedResult = result
-  activeProbe = null
 }
 
 /**
@@ -240,7 +187,7 @@ export function resolveLiveStartBitrate(args?: {
   now?: number
   probeResult?: LiveUplinkProbeResult | null
 }): LiveStartBitrate {
-  const probe = args?.probeResult !== undefined ? args.probeResult : completedResult
+  const probe = args?.probeResult ?? null
 
   if (probe?.status === 'completed') {
     return {

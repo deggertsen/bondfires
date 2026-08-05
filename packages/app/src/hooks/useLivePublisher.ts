@@ -14,6 +14,7 @@ import { writeLiveAbrPrior } from '../utils/liveAbrPrior'
 import {
   composeLiveVideoBitrate,
   createNetworkBitrateController,
+  LIVE_VIDEO_BITRATE_LADDER,
   type LiveVideoBitrateTier,
   type NetworkBitrateController,
 } from '../utils/liveBitratePolicy'
@@ -24,7 +25,7 @@ import {
   STATS_SAMPLE_INTERVAL_MS,
   type StallDetector,
 } from '../utils/liveStallDetector'
-import { resolveLiveStartBitrate } from '../utils/liveUplinkProbe'
+import { type LiveUplinkProbeResult, resolveLiveStartBitrate } from '../utils/liveUplinkProbe'
 import { isLocalBackupFlagEnabled, shouldArmLocalBackup } from '../utils/localBackupPolicy'
 import { assessNetworkTransport } from '../utils/networkTransport'
 
@@ -902,7 +903,12 @@ export function useLivePublisher(options: {
    * publishing. This is the moment recording actually begins.
    */
   const connect = useCallback(
-    async (args: { initialCamera?: 'front' | 'back' } = {}) => {
+    async (
+      args: {
+        initialCamera?: 'front' | 'back'
+        uplinkProbeResult?: LiveUplinkProbeResult | null
+      } = {},
+    ) => {
       const ingest = ingestRef.current
       if (!ingest || ingest.sessionId !== livePublishStore$.sessionId.peek()) {
         throw new Error('No provisioned live stream to connect')
@@ -912,7 +918,10 @@ export function useLivePublisher(options: {
       // is still telemetry-only for the bitrate decision itself — it only
       // invalidates a stale prior when Wi‑Fi vs cellular changed.
       const transport = await assessNetworkTransport()
-      const startBitrate = resolveLiveStartBitrate({ transportType: transport.type })
+      const startBitrate = resolveLiveStartBitrate({
+        transportType: transport.type,
+        probeResult: args.uplinkProbeResult,
+      })
       telemetry.info('live:network_transport', 'Network transport before connect', {
         type: transport.type,
         isConnected: transport.isConnected,
@@ -1020,6 +1029,11 @@ export function useLivePublisher(options: {
       // screen's applied-level bookkeeping will not re-fire on an unchanged
       // thermal reading.
       const thermalCeilingBeforeDrop = thermalCeilingRef.current
+      const reconnectTier = networkAbrRef.current?.tier() ?? 0
+      const reconnectBitrate = composeLiveVideoBitrate(
+        LIVE_VIDEO_BITRATE_LADDER[reconnectTier],
+        thermalCeilingBeforeDrop.bitrate,
+      )
 
       // Reuse the backup armed at connect time — no fresh disk check mid-drop.
       // iOS's mixer-attached recorder survives the session rebuild untouched;
@@ -1034,7 +1048,7 @@ export function useLivePublisher(options: {
         rtmpsUrl: ingest.rtmpsUrl,
         streamKey: ingest.streamKey,
         fps: LIVE_DEFAULT_VIDEO_FPS,
-        videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
+        videoBitrate: reconnectBitrate,
         audioBitrate: 128_000,
         initialCamera: args.initialCamera ?? 'front',
         localBackupFileName,
@@ -1065,10 +1079,11 @@ export function useLivePublisher(options: {
         return
       }
 
-      // Native start() reset the encoder to the default ladder top; the ABR
-      // refs reset alongside so JS and native agree (resetNetworkAbr inside).
+      // Reconnect at the ABR tier the same session had already earned. Jumping
+      // back to 2.5 Mbps here recreates the weak-link failure the start probe
+      // avoids and can immediately drop the recovered socket again.
       // Throughput history survives: this is still the same recording.
-      startStatsSampling({ preserveThroughputHistory: true })
+      startStatsSampling({ preserveThroughputHistory: true, initialTier: reconnectTier })
       thermalCeilingRef.current = thermalCeilingBeforeDrop
       if (
         thermalCeilingBeforeDrop.bitrate < LIVE_DEFAULT_VIDEO_BITRATE ||
@@ -1101,6 +1116,7 @@ export function useLivePublisher(options: {
         title?: string
         pending?: boolean
         draftBondfireId?: string
+        uplinkProbeResult?: LiveUplinkProbeResult | null
       } = {},
     ) => {
       telemetry.info('live:start', 'Live publisher start requested', {
@@ -1137,7 +1153,10 @@ export function useLivePublisher(options: {
         })
 
         const transport = await assessNetworkTransport()
-        const startBitrate = resolveLiveStartBitrate({ transportType: transport.type })
+        const startBitrate = resolveLiveStartBitrate({
+          transportType: transport.type,
+          probeResult: args.uplinkProbeResult,
+        })
         telemetry.info('live:network_transport', 'Network transport before start', {
           type: transport.type,
           isConnected: transport.isConnected,

@@ -119,11 +119,24 @@ http.route({
   path: '/live/uplink-probe',
   method: 'POST',
   handler: httpAction(async (_ctx, request) => {
+    const expectedBytes = 256 * 1024
+    const declaredLength = request.headers.get('content-length')
+    if (declaredLength === null) {
+      return new Response(null, { status: 411 })
+    }
+    if (Number(declaredLength) !== expectedBytes) {
+      return new Response(null, { status: 413 })
+    }
+
     // Discard the body. The client times how long the upload takes and maps
     // that onto the live ABR start ladder — we only need a reachable uplink
-    // sink that does not create storage or Mux work.
+    // sink that does not create storage or Mux work. Enforce the fixed probe
+    // size so this public route cannot become a general-purpose upload sink.
     try {
-      await request.arrayBuffer()
+      const body = await request.arrayBuffer()
+      if (body.byteLength !== expectedBytes) {
+        return new Response(null, { status: 400 })
+      }
     } catch {
       return new Response(null, { status: 400 })
     }
