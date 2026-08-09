@@ -80,6 +80,7 @@ export interface VideoPlayerProps {
   isActive: boolean
   isScreenFocused: boolean
   isAppActive: boolean
+  shouldSuppressPlayback: boolean
   onComplete: (positionMs?: number, durationMs?: number) => void
   onProgress: (progress: number, positionMs: number, durationMs?: number) => void
   onScrubbingChange?: (scrubbing: boolean) => void
@@ -99,6 +100,7 @@ export function VideoPlayer({
   isActive,
   isScreenFocused,
   isAppActive,
+  shouldSuppressPlayback,
   onComplete,
   onProgress,
   onScrubbingChange,
@@ -113,7 +115,8 @@ export function VideoPlayer({
   const isMuted = useValue(appStore$.preferences.videoMuted)
   const playbackSpeed = useValue(appStore$.preferences.playbackSpeed)
   const currentUserId = useValue(appStore$.userId)
-  const shouldSuppressPlayback = isLive && currentUserId === videoOwnerId
+  const shouldSuppressLivePlayback = isLive && currentUserId === videoOwnerId
+  const isPlaybackSuppressed = shouldSuppressPlayback || shouldSuppressLivePlayback
   const videoReactionKey = isMainVideo
     ? `bondfire:${bondfireId ?? ''}`
     : `response:${bondfireVideoId ?? ''}`
@@ -132,7 +135,7 @@ export function VideoPlayer({
   const { currentTier } = useSubscription()
   const isPaid = tierMeetsRequirement(currentTier, 'plus')
   const shouldHandleVodReactions = !isLive && isActive && isScreenFocused && isAppActive
-  const shouldTrackPlayback = isActive && isScreenFocused && isAppActive && !shouldSuppressPlayback
+  const shouldTrackPlayback = isActive && isScreenFocused && isAppActive && !isPlaybackSuppressed
 
   const currentUser = useQuery(api.users.current, shouldHandleVodReactions ? {} : 'skip')
   const recentEmojis = useQuery(
@@ -159,7 +162,7 @@ export function VideoPlayer({
     isActive,
     isScreenFocused,
     isAppActive,
-    shouldSuppressPlayback,
+    shouldSuppressPlayback: isPlaybackSuppressed,
   })
     ? videoUrl
     : null
@@ -210,7 +213,8 @@ export function VideoPlayer({
     lastSeekAt: 0,
   })
 
-  const player = useVideoPlayer(currentUrl, (player) => {
+  const playerSource = shouldSuppressPlayback ? null : currentUrl
+  const player = useVideoPlayer(playerSource, (player) => {
     player.loop = false
     player.muted = isMuted
     player.playbackRate = playbackSpeed
@@ -257,13 +261,13 @@ export function VideoPlayer({
       gate.isActive &&
       gate.isScreenFocused &&
       gate.isAppActive &&
-      !shouldSuppressPlayback &&
+      !isPlaybackSuppressed &&
       !userPausedRef.current &&
       (appStore$.preferences.autoplayVideos.peek() || state$.userInitiatedPlay.peek())
     ) {
       player.play()
     }
-  }, [player, shouldSuppressPlayback, state$])
+  }, [player, isPlaybackSuppressed, state$])
 
   const retryPlayback = useCallback(() => {
     if (!player || !currentUrl) return
@@ -498,7 +502,7 @@ export function VideoPlayer({
   useEffect(() => {
     if (!player) return
 
-    const shouldPlay = isActive && isScreenFocused && isAppActive && !shouldSuppressPlayback
+    const shouldPlay = isActive && isScreenFocused && isAppActive && !isPlaybackSuppressed
 
     if (shouldPlay) {
       player.playbackRate = playbackSpeed
@@ -520,7 +524,7 @@ export function VideoPlayer({
     autoplayVideos,
     playbackSpeed,
     state$,
-    shouldSuppressPlayback,
+    isPlaybackSuppressed,
   ])
 
   useEffect(() => {
@@ -987,7 +991,7 @@ export function VideoPlayer({
     }),
   ).current
 
-  if (shouldSuppressPlayback) {
+  if (shouldSuppressLivePlayback) {
     return (
       <YStack
         flex={1}

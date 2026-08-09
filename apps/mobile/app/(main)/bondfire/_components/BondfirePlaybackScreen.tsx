@@ -191,6 +191,7 @@ export function BondfirePlaybackScreen({
               isActive={index === currentVideoIndex}
               isScreenFocused={isFocused && !suppressPlayback}
               isAppActive={isAppActive}
+              shouldSuppressPlayback={suppressPlayback}
               onComplete={onVideoComplete}
               onProgress={onProgress}
               onScrubbingChange={onScrubbingChange}
