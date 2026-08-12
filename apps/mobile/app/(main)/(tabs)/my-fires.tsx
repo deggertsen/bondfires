@@ -385,13 +385,10 @@ export default function MyFiresScreen() {
   }, [resetLoadTracking])
 
   // My Fires left the tab bar (href: null) — it's reached from Home's Ember
-  // Rail, so it needs an explicit way back. Deep links can land here with no
-  // history, hence the Home fallback.
+  // Rail, so it needs an explicit way back. Tab navigators don't keep stack
+  // history (router.back() can land on a sibling tab like Camps), so the
+  // chevron deterministically returns to Home.
   const handleBack = useCallback(() => {
-    if (router.canGoBack()) {
-      router.back()
-      return
-    }
     router.replace(routes.feed)
   }, [router])
 
