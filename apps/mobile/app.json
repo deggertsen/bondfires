@@ -123,6 +123,7 @@
           "color": "#FF6B35"
         }
       ],
+      "./plugins/withNotificationServiceExtension.js",
       [
         "expo-build-properties",
         {

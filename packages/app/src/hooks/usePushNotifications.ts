@@ -272,7 +272,7 @@ export function usePushNotifications(
 
   // Register token with backend
   const registerWithBackend = useCallback(
-    async (token: string) => {
+    async (token: string, tokenType: 'apns' | 'fcm') => {
       if (!registerTokenMutation) {
         telemetry.breadcrumb('push:register:skip', {
           reason: 'no_mutation_fn',
@@ -309,12 +309,13 @@ export function usePushNotifications(
       try {
         telemetry.breadcrumb('push:register:attempt', {
           tokenPrefix: token.slice(0, 16),
+          tokenType,
           platform: Platform.OS,
           deviceId: Constants.deviceId ?? 'unknown',
         })
         const result = await registerTokenMutation({
           token,
-          tokenType: 'expo',
+          tokenType,
           platform: Platform.OS,
           deviceId: Constants.deviceId ?? 'unknown',
           timezone: getDeviceTimezone(),
@@ -332,6 +333,7 @@ export function usePushNotifications(
         setError(null)
         telemetry.breadcrumb('push:register:success', {
           tokenPrefix: token.slice(0, 16),
+          tokenType,
         })
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e)
@@ -353,27 +355,36 @@ export function usePushNotifications(
         telemetry.warn('push:register', 'Failed to register token with backend', {
           error: message,
           tokenPrefix: token.slice(0, 16),
+          tokenType,
         })
       }
     },
     [registerTokenMutation],
   )
 
-  // Get the Expo push token
-  const getExpoPushToken = useCallback(async (): Promise<string | null> => {
-    const projectId = Constants.expoConfig?.extra?.eas?.projectId
-    if (!projectId) {
-      telemetry.error('push:config', 'EAS project ID not found in app config')
-      return null
-    }
-
+  // Native device push token (APNs on iOS, FCM on Android).
+  const getNativePushToken = useCallback(async (): Promise<{
+    token: string
+    tokenType: 'apns' | 'fcm'
+  } | null> => {
     try {
-      telemetry.breadcrumb('push:token:attempt', { projectId })
-      const tokenData = await Notifications.getExpoPushTokenAsync({ projectId })
+      telemetry.breadcrumb('push:token:attempt', { mode: 'native' })
+      const tokenData = await Notifications.getDevicePushTokenAsync()
+      const rawType = String(tokenData.type).toLowerCase()
+      const tokenType: 'apns' | 'fcm' =
+        rawType === 'ios' || rawType === 'apns'
+          ? 'apns'
+          : rawType === 'android' || rawType === 'fcm'
+            ? 'fcm'
+            : Platform.OS === 'ios'
+              ? 'apns'
+              : 'fcm'
+      const token = typeof tokenData.data === 'string' ? tokenData.data : String(tokenData.data)
       telemetry.breadcrumb('push:token:success', {
-        tokenPrefix: tokenData.data.slice(0, 16),
+        tokenPrefix: token.slice(0, 16),
+        tokenType,
       })
-      return tokenData.data
+      return { token, tokenType }
     } catch (e) {
       // Handle Firebase auth errors gracefully (common in dev builds)
       const errorMessage = e instanceof Error ? e.message : String(e)
@@ -391,7 +402,7 @@ export function usePushNotifications(
         })
         return null
       }
-      telemetry.error('push:token', 'Unexpected error getting Expo push token', {
+      telemetry.error('push:token', 'Unexpected error getting native push token', {
         error: errorMessage,
       })
       throw e
@@ -431,11 +442,11 @@ export function usePushNotifications(
       telemetry.breadcrumb('push:permissions:granted')
       await ensureAndroidNotificationChannel()
 
-      // Get Expo push token
-      const token = await getExpoPushToken()
-      if (token) {
-        setStoredExpoPushToken(token)
-        await registerWithBackend(token)
+      // Get native push token (APNs / FCM)
+      const native = await getNativePushToken()
+      if (native) {
+        setStoredExpoPushToken(native.token)
+        await registerWithBackend(native.token, native.tokenType)
       } else {
         telemetry.breadcrumb('push:permissions:skip', { reason: 'no_token_after_grant' })
         setError('Failed to get push notification token')
@@ -460,7 +471,7 @@ export function usePushNotifications(
       setError('Failed to set up push notifications')
       return false
     }
-  }, [getExpoPushToken, registerWithBackend, setStoredExpoPushToken])
+  }, [getNativePushToken, registerWithBackend, setStoredExpoPushToken])
 
   // Register the token only if OS permission is already granted — never prompts.
   const registerIfGranted = useCallback(async (): Promise<boolean> => {
@@ -485,16 +496,17 @@ export function usePushNotifications(
 
       await ensureAndroidNotificationChannel()
 
-      const token = await getExpoPushToken()
-      if (!token) {
+      const native = await getNativePushToken()
+      if (!native) {
         telemetry.breadcrumb('push:registerIfGranted:skip', { reason: 'no_token' })
         return false
       }
 
-      setStoredExpoPushToken(token)
-      await registerWithBackend(token)
+      setStoredExpoPushToken(native.token)
+      await registerWithBackend(native.token, native.tokenType)
       telemetry.breadcrumb('push:registerIfGranted:success', {
-        tokenPrefix: token.slice(0, 16),
+        tokenPrefix: native.token.slice(0, 16),
+        tokenType: native.tokenType,
       })
       return true
     } catch (e) {
@@ -504,7 +516,7 @@ export function usePushNotifications(
       })
       return false
     }
-  }, [getExpoPushToken, registerWithBackend, setStoredExpoPushToken])
+  }, [getNativePushToken, registerWithBackend, setStoredExpoPushToken])
 
   // Unregister from push notifications
   const unregister = useCallback(async () => {
@@ -578,15 +590,16 @@ export function usePushNotifications(
 
           await ensureAndroidNotificationChannel()
 
-          const token = await getExpoPushToken()
-          if (token && token !== expoPushTokenRef.current) {
+          const native = await getNativePushToken()
+          if (native && native.token !== expoPushTokenRef.current) {
             telemetry.breadcrumb('push:foreground:token_changed', {
               oldPrefix: expoPushTokenRef.current?.slice(0, 16),
-              newPrefix: token.slice(0, 16),
+              newPrefix: native.token.slice(0, 16),
+              tokenType: native.tokenType,
             })
-            setStoredExpoPushToken(token)
-            await registerWithBackend(token)
-          } else if (!token) {
+            setStoredExpoPushToken(native.token)
+            await registerWithBackend(native.token, native.tokenType)
+          } else if (!native) {
             telemetry.breadcrumb('push:foreground:skip', { reason: 'no_token' })
           }
         } catch (e) {
@@ -606,7 +619,7 @@ export function usePushNotifications(
       appStateSubscription.remove()
     }
   }, [
-    getExpoPushToken,
+    getNativePushToken,
     handlePermissionRevoked,
     onNotificationReceived,
     onNotificationResponse,
@@ -649,10 +662,10 @@ export function usePushNotifications(
         try {
           await ensureAndroidNotificationChannel()
 
-          const token = await getExpoPushToken()
-          if (token) {
-            setStoredExpoPushToken(token)
-            await registerWithBackend(token)
+          const native = await getNativePushToken()
+          if (native) {
+            setStoredExpoPushToken(native.token)
+            await registerWithBackend(native.token, native.tokenType)
           } else {
             telemetry.breadcrumb('push:mount:skip', { reason: 'no_token' })
           }
@@ -668,7 +681,7 @@ export function usePushNotifications(
     }
 
     checkInitialStatus()
-  }, [getExpoPushToken, registerWithBackend, setStoredExpoPushToken])
+  }, [getNativePushToken, registerWithBackend, setStoredExpoPushToken])
 
   // Sync Android channel state → in-app preferences. Reads each channel's
   // importance — if the user disabled it in Android settings (importance ===

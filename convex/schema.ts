@@ -700,8 +700,10 @@ export default defineSchema({
     token: v.string(),
     platform: v.union(v.literal('ios'), v.literal('android')),
 
-    // Token type - FCM (Firebase) or Expo
-    tokenType: v.optional(v.union(v.literal('fcm'), v.literal('expo'))),
+    // Token type — native APNs/FCM preferred; 'expo' retained for legacy cleanup
+    tokenType: v.optional(
+      v.union(v.literal('apns'), v.literal('fcm'), v.literal('expo')),
+    ),
 
     // Device identifier (for managing multiple devices per user)
     deviceId: v.optional(v.string()),

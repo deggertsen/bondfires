@@ -191,7 +191,7 @@ function videoInsightsPrompt(transcript: string): string {
     `{"summary": "<one sentence, max ${MAX_SUMMARY_CHARS} characters>", "tags": ["<topic tag>"]}`,
     '',
     'Rules:',
-    '- summary: third person, present tense, concrete ("Shares news about the new job and asks about the kids"), no preamble, no speaker names.',
+    '- summary: third person, present tense, concrete. Include the speaker\'s first name when known (e.g., "David shares news about the new job and asks about the kids"). No preamble.',
     `- tags: 1 to ${MAX_TAGS} tags, each 1-2 lowercase words naming concrete topics (e.g. "job news", "birthday", "soccer"). Never generic filler like "update", "chat", or "video".`,
   ].join('\n')
 }
