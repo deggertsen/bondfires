@@ -253,8 +253,40 @@ export function usePushNotifications(
   isAuthenticatedRef.current = isAuthenticated
   const expoPushTokenRef = useRef(expoPushToken)
   expoPushTokenRef.current = expoPushToken
+  const onNotificationReceivedRef = useRef(onNotificationReceived)
+  onNotificationReceivedRef.current = onNotificationReceived
+  const onNotificationResponseRef = useRef(onNotificationResponse)
+  onNotificationResponseRef.current = onNotificationResponse
   const onPermissionRevokedRef = useRef(onPermissionRevoked)
   onPermissionRevokedRef.current = onPermissionRevoked
+  const lastHandledNotificationResponseIdRef = useRef<string | null>(null)
+
+  const dispatchNotificationResponse = useCallback(
+    (response: Notifications.NotificationResponse) => {
+      const callback = onNotificationResponseRef.current
+      if (!callback) return
+
+      const responseId = response.notification.request.identifier
+      if (lastHandledNotificationResponseIdRef.current === responseId) return
+      lastHandledNotificationResponseIdRef.current = responseId
+
+      try {
+        callback(response)
+      } finally {
+        // Native state retains the last response until it is explicitly
+        // cleared. Clearing it prevents a handled tap from being replayed on
+        // the next ordinary app launch.
+        try {
+          Notifications.clearLastNotificationResponse()
+        } catch (e) {
+          telemetry.warn('push:response:clear', 'Failed to clear notification response', {
+            error: String(e),
+          })
+        }
+      }
+    },
+    [],
+  )
 
   // Debounce: prevent rapid re-registration from multiple lifecycle paths
   // (mount, foreground, sign-in observer, notificationsEnabled observer).
@@ -540,19 +572,36 @@ export function usePushNotifications(
     onPermissionRevokedRef.current?.()
   }, [setStoredExpoPushToken, unregisterTokenMutation])
 
-  // Set up notification listeners
+  // Use one response pipeline for both cold starts and taps received while the
+  // app is running. Subscribe before reading native state so a response that
+  // arrives during setup is observed by at least one path; identifier-based
+  // deduplication prevents both paths from dispatching it twice.
   useEffect(() => {
-    // Foreground notification handler
     notificationListener.current = Notifications.addNotificationReceivedListener((notification) => {
-      onNotificationReceived?.(notification)
+      onNotificationReceivedRef.current?.(notification)
     })
 
-    // Notification response handler (when user taps notification)
     responseListener.current = Notifications.addNotificationResponseReceivedListener((response) => {
-      onNotificationResponse?.(response)
+      dispatchNotificationResponse(response)
     })
 
-    // Handle app state changes (refresh token on foreground, sync OS permission)
+    try {
+      const initialResponse = Notifications.getLastNotificationResponse()
+      if (initialResponse) dispatchNotificationResponse(initialResponse)
+    } catch (e) {
+      telemetry.warn('push:response:initial', 'Failed to read initial notification response', {
+        error: String(e),
+      })
+    }
+
+    return () => {
+      notificationListener.current?.remove()
+      responseListener.current?.remove()
+    }
+  }, [dispatchNotificationResponse])
+
+  // Handle app state changes (refresh token on foreground, sync OS permission).
+  useEffect(() => {
     const handleAppStateChange = async (nextAppState: AppStateStatus) => {
       const cameToForeground =
         appStateRef.current.match(/inactive|background/) && nextAppState === 'active'
@@ -601,18 +650,9 @@ export function usePushNotifications(
     const appStateSubscription = AppState.addEventListener('change', handleAppStateChange)
 
     return () => {
-      notificationListener.current?.remove()
-      responseListener.current?.remove()
       appStateSubscription.remove()
     }
-  }, [
-    getExpoPushToken,
-    handlePermissionRevoked,
-    onNotificationReceived,
-    onNotificationResponse,
-    registerWithBackend,
-    setStoredExpoPushToken,
-  ])
+  }, [getExpoPushToken, handlePermissionRevoked, registerWithBackend, setStoredExpoPushToken])
 
   // Ensure the Android notification channel exists on every mount.
   // Channel creation is idempotent — safe to call even if it already exists.
