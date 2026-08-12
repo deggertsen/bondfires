@@ -21,7 +21,11 @@ import type {
 } from '../_lib/bondfireDetailHelpers'
 import { SCREEN_WIDTH, shouldOfferResponseAfterPlayback } from '../_lib/bondfireDetailHelpers'
 import { ThreadBrowser } from './ThreadBrowser'
-import { VideoPlayer } from './VideoPlayer'
+import { VideoPlayer, type VideoPlayerHandle } from './VideoPlayer'
+
+function waitForNextFrame() {
+  return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+}
 
 export function BondfirePlaybackScreen({
   statusBarStyle,
@@ -74,6 +78,8 @@ export function BondfirePlaybackScreen({
   const showNotepad = useValue(overlayState$.showNotepad)
   const isInviteSheetOpen = useValue(overlayState$.isInviteSheetOpen)
   const suppressPlayback = useValue(overlayState$.suppressPlayback)
+  const activeVideoPlayerRef = useRef<VideoPlayerHandle>(null)
+  const respondNavigationPendingRef = useRef(false)
   const totalVideos = videoItems.length
   const canRespond = bondfireData.campStatus !== 'archived'
   const processingResponseCount = bondfireData.processingResponses?.length ?? 0
@@ -88,15 +94,24 @@ export function BondfirePlaybackScreen({
     },
     [onVideoIndexChange],
   )
-  const handleRespond = useCallback(() => {
-    if (bondfireData.campStatus === 'archived') return
+  const handleRespond = useCallback(async () => {
+    if (bondfireData.campStatus === 'archived' || respondNavigationPendingRef.current) return
+    respondNavigationPendingRef.current = true
+
+    await activeVideoPlayerRef.current?.releaseSourceForRecorder()
     overlayState$.suppressPlayback.set(true)
+
+    // Let React commit the source-less render as a fallback before the camera
+    // route mounts. The imperative release above is the deterministic path;
+    // this also covers the brief window where the active item has no ref.
+    await waitForNextFrame()
     router.push(routes.createRespondTo(bondfireId))
   }, [bondfireData.campStatus, bondfireId, overlayState$, router])
 
   useEffect(() => {
     if (isFocused) {
       overlayState$.suppressPlayback.set(false)
+      respondNavigationPendingRef.current = false
     }
   }, [isFocused, overlayState$])
 
@@ -183,6 +198,7 @@ export function BondfirePlaybackScreen({
           keyExtractor={(item) => item.key}
           renderItem={({ item, index }) => (
             <VideoPlayer
+              ref={index === currentVideoIndex ? activeVideoPlayerRef : undefined}
               bondfireId={item.bondfireId}
               bondfireVideoId={item.bondfireVideoId}
               videoUrl={item.url}
@@ -191,7 +207,6 @@ export function BondfirePlaybackScreen({
               isActive={index === currentVideoIndex}
               isScreenFocused={isFocused && !suppressPlayback}
               isAppActive={isAppActive}
-              shouldSuppressPlayback={suppressPlayback}
               onComplete={onVideoComplete}
               onProgress={onProgress}
               onScrubbingChange={onScrubbingChange}

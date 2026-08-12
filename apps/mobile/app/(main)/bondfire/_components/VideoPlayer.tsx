@@ -14,7 +14,15 @@ import { useMutation, useQuery } from 'convex/react'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { LinearGradient } from 'expo-linear-gradient'
 import { useVideoPlayer, VideoView } from 'expo-video'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import {
+  type Ref,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+} from 'react'
 import { type LayoutChangeEvent, PanResponder, Pressable, type View } from 'react-native'
 import { YStack } from 'tamagui'
 import { api } from '../../../../../../convex/_generated/api'
@@ -71,7 +79,12 @@ function getFirstReactionAfter<T extends { timestampMs: number }>(
   return low
 }
 
+export interface VideoPlayerHandle {
+  releaseSourceForRecorder: () => Promise<void>
+}
+
 export interface VideoPlayerProps {
+  ref?: Ref<VideoPlayerHandle>
   bondfireId?: Id<'bondfires'>
   bondfireVideoId?: Id<'bondfireVideos'>
   videoUrl: string | null
@@ -80,7 +93,6 @@ export interface VideoPlayerProps {
   isActive: boolean
   isScreenFocused: boolean
   isAppActive: boolean
-  shouldSuppressPlayback: boolean
   onComplete: (positionMs?: number, durationMs?: number) => void
   onProgress: (progress: number, positionMs: number, durationMs?: number) => void
   onScrubbingChange?: (scrubbing: boolean) => void
@@ -92,6 +104,7 @@ export interface VideoPlayerProps {
 }
 
 export function VideoPlayer({
+  ref,
   bondfireId,
   bondfireVideoId,
   videoUrl,
@@ -100,7 +113,6 @@ export function VideoPlayer({
   isActive,
   isScreenFocused,
   isAppActive,
-  shouldSuppressPlayback,
   onComplete,
   onProgress,
   onScrubbingChange,
@@ -115,8 +127,7 @@ export function VideoPlayer({
   const isMuted = useValue(appStore$.preferences.videoMuted)
   const playbackSpeed = useValue(appStore$.preferences.playbackSpeed)
   const currentUserId = useValue(appStore$.userId)
-  const shouldSuppressLivePlayback = isLive && currentUserId === videoOwnerId
-  const isPlaybackSuppressed = shouldSuppressPlayback || shouldSuppressLivePlayback
+  const shouldSuppressPlayback = isLive && currentUserId === videoOwnerId
   const videoReactionKey = isMainVideo
     ? `bondfire:${bondfireId ?? ''}`
     : `response:${bondfireVideoId ?? ''}`
@@ -135,7 +146,7 @@ export function VideoPlayer({
   const { currentTier } = useSubscription()
   const isPaid = tierMeetsRequirement(currentTier, 'plus')
   const shouldHandleVodReactions = !isLive && isActive && isScreenFocused && isAppActive
-  const shouldTrackPlayback = isActive && isScreenFocused && isAppActive && !isPlaybackSuppressed
+  const shouldTrackPlayback = isActive && isScreenFocused && isAppActive && !shouldSuppressPlayback
 
   const currentUser = useQuery(api.users.current, shouldHandleVodReactions ? {} : 'skip')
   const recentEmojis = useQuery(
@@ -162,7 +173,7 @@ export function VideoPlayer({
     isActive,
     isScreenFocused,
     isAppActive,
-    shouldSuppressPlayback: isPlaybackSuppressed,
+    shouldSuppressPlayback,
   })
     ? videoUrl
     : null
@@ -213,8 +224,7 @@ export function VideoPlayer({
     lastSeekAt: 0,
   })
 
-  const playerSource = shouldSuppressPlayback ? null : currentUrl
-  const player = useVideoPlayer(playerSource, (player) => {
+  const player = useVideoPlayer(currentUrl, (player) => {
     player.loop = false
     player.muted = isMuted
     player.playbackRate = playbackSpeed
@@ -254,6 +264,36 @@ export function VideoPlayer({
   // Deliberate user pause — auto-recovery must never play over it.
   const userPausedRef = useRef(false)
 
+  useImperativeHandle(
+    ref,
+    () => ({
+      releaseSourceForRecorder: async () => {
+        if (errorRetryRef.current.timer) {
+          clearTimeout(errorRetryRef.current.timer)
+          errorRetryRef.current.timer = null
+        }
+        userPausedRef.current = true
+        player.pause()
+        state$.isPlaying.set(false)
+
+        try {
+          // Unlike a state update followed immediately by navigation, this
+          // promise resolves only after Android has cleared ExoPlayer's media
+          // items on the main queue. That gives the recorder the decoder and
+          // media resources before its camera session mounts.
+          await player.replaceAsync(null)
+        } catch (error: unknown) {
+          telemetry.warn(
+            'video:recorder_source_release_failed',
+            error instanceof Error ? error.message : String(error),
+            { videoId, isLive },
+          )
+        }
+      },
+    }),
+    [isLive, player, state$, videoId],
+  )
+
   const resumePlaybackAfterRecovery = useCallback(() => {
     if (!player) return
     const gate = playbackGateRef.current
@@ -261,13 +301,13 @@ export function VideoPlayer({
       gate.isActive &&
       gate.isScreenFocused &&
       gate.isAppActive &&
-      !isPlaybackSuppressed &&
+      !shouldSuppressPlayback &&
       !userPausedRef.current &&
       (appStore$.preferences.autoplayVideos.peek() || state$.userInitiatedPlay.peek())
     ) {
       player.play()
     }
-  }, [player, isPlaybackSuppressed, state$])
+  }, [player, shouldSuppressPlayback, state$])
 
   const retryPlayback = useCallback(() => {
     if (!player || !currentUrl) return
@@ -502,7 +542,7 @@ export function VideoPlayer({
   useEffect(() => {
     if (!player) return
 
-    const shouldPlay = isActive && isScreenFocused && isAppActive && !isPlaybackSuppressed
+    const shouldPlay = isActive && isScreenFocused && isAppActive && !shouldSuppressPlayback
 
     if (shouldPlay) {
       player.playbackRate = playbackSpeed
@@ -524,7 +564,7 @@ export function VideoPlayer({
     autoplayVideos,
     playbackSpeed,
     state$,
-    isPlaybackSuppressed,
+    shouldSuppressPlayback,
   ])
 
   useEffect(() => {
@@ -991,7 +1031,7 @@ export function VideoPlayer({
     }),
   ).current
 
-  if (shouldSuppressLivePlayback) {
+  if (shouldSuppressPlayback) {
     return (
       <YStack
         flex={1}
