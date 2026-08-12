@@ -7,8 +7,7 @@ import { ConvexAuthProvider } from '@convex-dev/auth/react'
 import { ConvexReactClient, useConvexAuth, useMutation, useQuery } from 'convex/react'
 import Constants from 'expo-constants'
 import { useFonts } from 'expo-font'
-import * as Notifications from 'expo-notifications'
-import { useLastNotificationResponse } from 'expo-notifications'
+import type { NotificationResponse } from 'expo-notifications'
 import { Stack, useRouter } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
 import {
@@ -46,7 +45,8 @@ import {
 import { useObserve, useValue } from '@legendapp/state/react'
 import * as Clipboard from 'expo-clipboard'
 import { api } from '../../../convex/_generated/api'
-import { resolveExternalRoute, routes } from '../lib/routes'
+import { resolveNotificationRoute } from '../lib/notificationRouting'
+import { routes } from '../lib/routes'
 
 export const unstable_settings = {
   // Ensure that reloading keeps proper navigation state
@@ -425,28 +425,10 @@ function AppContent() {
     startUpdate,
   } = useForceUpdate()
 
-  // Handle notification taps — warm-start path (app in background/foreground).
-  // Cold-start is handled separately via useLastNotificationResponse below.
   const handleNotificationResponse = useCallback(
-    (response: Notifications.NotificationResponse) => {
-      const data = response.notification.request.content.data
-
-      // Navigate based on notification type. Notification payloads are untrusted,
-      // so resolve `screen` against an allowlist instead of casting it to a route.
-      if (data?.bondfireId) {
-        const bondfireVideoId = data.bondfireVideoId ? String(data.bondfireVideoId) : undefined
-        router.push(routes.bondfire(String(data.bondfireId), bondfireVideoId))
-      } else if (data?.campId) {
-        // Camp membership and lifecycle notifications have campId but no
-        // bondfireId — route to the camp screen.
-        router.push(routes.camp(String(data.campId)))
-      } else if (typeof data?.screen === 'string') {
-        const target = resolveExternalRoute(data.screen)
-        if (target) router.push(target)
-      } else if (data?.type === 'digest' || data?.type === 'nudge') {
-        // Multi-item digest/nudge has no single target — land on the feed.
-        router.push(routes.feed)
-      }
+    (response: NotificationResponse) => {
+      const target = resolveNotificationRoute(response.notification.request.content.data)
+      if (target) router.push(target)
     },
     [router],
   )
@@ -518,20 +500,6 @@ function AppContent() {
   syncAndroidChannelPrefsRef.current = syncAndroidChannelPrefs
   const resetChannelForCategoryRef = useRef(resetChannelForCategory)
   resetChannelForCategoryRef.current = resetChannelForCategory
-  const handleNotificationResponseRef = useRef(handleNotificationResponse)
-  handleNotificationResponseRef.current = handleNotificationResponse
-
-  // Cold-start notification handling: when the app is killed and the user
-  // taps a notification, the NotificationResponseReceivedListener set up by
-  // usePushNotifications may not be mounted yet when the OS delivers the
-  // initial response. This hook catches that initial notification and we
-  // route it through the same handler once the navigation stack is ready.
-  const lastNotificationResponse = useLastNotificationResponse()
-  useEffect(() => {
-    if (!lastNotificationResponse) return
-    handleNotificationResponseRef.current(lastNotificationResponse)
-  }, [lastNotificationResponse])
-
   // Expose the OS permission dialog to feature screens (push pre-prompt,
   // settings toggle). The dialog is one-shot on iOS, so it only ever fires
   // from explicit user intent — never automatically here.
