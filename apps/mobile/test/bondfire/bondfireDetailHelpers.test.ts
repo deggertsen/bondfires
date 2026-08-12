@@ -123,6 +123,7 @@ describe('bondfireDetailHelpers', () => {
       userId: 'user-1',
       creatorName: 'Ada',
       videoStatus: 'live',
+      muxLivePlaybackId: 'main-live-playback',
       watchedByViewer: true,
       durationMs: 62_000,
       videos: [
@@ -172,5 +173,26 @@ describe('bondfireDetailHelpers', () => {
         durationMs: undefined,
       },
     ])
+  })
+
+  it('does not classify unplayable live rows as active streams', () => {
+    const bondfireData = {
+      _id: 'bondfire-1',
+      _creationTime: 1700000000000,
+      userId: 'user-1',
+      videoStatus: 'live',
+      videos: [
+        {
+          _id: 'response-1',
+          _creationTime: 1700000060000,
+          userId: 'user-2',
+          videoStatus: 'live',
+        },
+      ],
+    } as unknown as BondfireDetailData
+
+    const items = buildBondfireVideoItems(bondfireData, [{ url: '' }, { url: '' }])
+
+    expect(items.map((item) => item.isLive)).toEqual([false, false])
   })
 })

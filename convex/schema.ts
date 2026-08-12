@@ -531,6 +531,7 @@ export default defineSchema({
     // Video storage
     videoStatus: v.optional(
       v.union(
+        v.literal('pending'),
         v.literal('waiting_for_upload'),
         v.literal('processing'),
         v.literal('live'),
