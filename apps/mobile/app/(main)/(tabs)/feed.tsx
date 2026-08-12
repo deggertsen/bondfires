@@ -23,6 +23,8 @@ import {
   type BondfireRowProps,
   Button,
   closeOpenSwipeableRow,
+  EmberRail,
+  type EmberRailItem,
   Input,
   Spinner,
   Text,
@@ -67,7 +69,39 @@ type BondfireData = Doc<'bondfires'> &
   }
 type JoinedCamp = Doc<'camps'> & { membership: Doc<'campMembers'> }
 
+type PublicUser = {
+  _id: Id<'users'>
+  displayName?: string
+  name?: string
+  photoUrl?: string
+}
+
+type ThreadParticipant = {
+  user: PublicUser
+  latestAt: number
+  videoCount: number
+  isPinned: boolean
+}
+
+/** Shape returned by api.conversations.listMyFires (same as the My Fires screen). */
+type MyFire = Doc<'bondfires'> &
+  BondfireThumbnailFields & {
+    camp: Doc<'camps'> | null
+    lastActivityAt: number
+    unread: boolean
+    participants: ThreadParticipant[]
+    badge?: 'sparked' | 'invited' | 'kindled' | null
+  }
+
 type ViewMode = 'discover' | 'recent' | 'active' | 'unseen'
+
+// Home shows at most this many unread threads as full rows before deferring to
+// the "See all" overflow into My Fires, so heavy responders still reach
+// Discover in one thumb-swipe.
+const NEW_RESPONSES_CAP = 5
+// The rail is recognition, not an archive — cap it and let the lead tile carry
+// the full list.
+const RAIL_MAX_ITEMS = 20
 
 function ModePill({
   label,
@@ -157,6 +191,59 @@ function toBondfireRowProps(
     statusLabel: hasViewedToday(bondfire._id) ? 'Viewed' : 'New',
     badge: bondfire.badge,
     participants: [], // Feed doesn't load participants yet — empty for now
+    actions: getBondfireSwipeActions({
+      isOwner,
+      isPinned,
+      onDelete,
+      onPin,
+      onUnpin,
+      onReport,
+    }),
+    onOpen,
+    onRespond,
+  }
+}
+
+/**
+ * Map a MyFire thread to BondfireRow props for the "New responses" section.
+ * Mirrors the My Fires screen's mapping (lastActivityAt timestamp, server-side
+ * unread label, real participants) minus the owner-only edit swipe action.
+ */
+function toMyFireRowProps(
+  thread: MyFire,
+  thumbnailUrl: string | null,
+  currentUserId: string | null,
+  pinnedIds: string[],
+  onOpen: () => void,
+  onRespond: () => void,
+  onDelete: () => void,
+  onPin: () => void,
+  onUnpin: () => void,
+  onReport: () => void,
+): BondfireRowProps {
+  const isOwner = currentUserId === thread.userId
+  const isPinned = pinnedIds.includes(thread._id)
+
+  return {
+    title: thread.title,
+    creatorName: thread.creatorName ?? 'Anonymous',
+    timestamp: thread.lastActivityAt,
+    videoCount: thread.videoCount,
+    campLabel: thread.camp?.name,
+    thumbnailUrl,
+    isLive: thread.videoStatus === 'live',
+    statusLabel:
+      thread.videoStatus === 'awaiting_recovery'
+        ? 'Uploading from your phone'
+        : thread.unread
+          ? 'New'
+          : 'Viewed',
+    badge: thread.badge,
+    participants: thread.participants.map((participant) => ({
+      userId: participant.user._id,
+      displayName: participant.user.displayName ?? participant.user.name,
+      photoUrl: participant.user.photoUrl,
+    })),
     actions: getBondfireSwipeActions({
       isOwner,
       isPinned,
@@ -359,7 +446,7 @@ function FeedSubscription({
   return null
 }
 
-export default function FeedScreen() {
+export default function HomeScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const insets = useSafeAreaInsets()
@@ -405,6 +492,38 @@ export default function FeedScreen() {
   const listExtraData = useMemo(() => ({ currentUserId, pinnedIds }), [currentUserId, pinnedIds])
   const pinnedOrder = useMemo(() => new Map(pinnedIds.map((id, index) => [id, index])), [pinnedIds])
 
+  // Threads the user participates in — powers the Ember Rail and the
+  // "New responses" section. Convex keeps this live, so unread state and new
+  // responses appear without a manual refresh.
+  const myFires = useQuery(
+    api.conversations.listMyFires,
+    canLoadTabData && currentUserId ? { limit: 80, pinnedFirst: false } : 'skip',
+  ) as MyFire[] | undefined
+  const myFireIdSet = useMemo(() => new Set((myFires ?? []).map((t) => t._id)), [myFires])
+
+  // Rail order: unread first, quiet after, pinned hoisted within each group.
+  const sortedMyFires = useMemo(() => {
+    const byPinnedThenActivity = (a: MyFire, b: MyFire) => {
+      const aIndex = pinnedOrder.get(a._id)
+      const bIndex = pinnedOrder.get(b._id)
+      if (aIndex !== undefined || bIndex !== undefined) {
+        if (aIndex === undefined) return 1
+        if (bIndex === undefined) return -1
+        return aIndex - bIndex
+      }
+      return b.lastActivityAt - a.lastActivityAt
+    }
+    const unread = (myFires ?? []).filter((t) => t.unread).sort(byPinnedThenActivity)
+    const quiet = (myFires ?? []).filter((t) => !t.unread).sort(byPinnedThenActivity)
+    return { unread, quiet }
+  }, [myFires, pinnedOrder])
+
+  const newResponseThreads = useMemo(
+    () => sortedMyFires.unread.slice(0, NEW_RESPONSES_CAP),
+    [sortedMyFires],
+  )
+  const unreadCount = sortedMyFires.unread.length
+
   // Mutations for swipe actions
   const deleteBondfire = useMutation(api.bondfires.deleteBondfire)
   const pinBondfire = useMutation(api.bondfires.pinBondfire)
@@ -415,6 +534,18 @@ export default function FeedScreen() {
     thumbnailUrls: {} as Record<string, string | null>,
   })
   const thumbnailUrls = useValue(state$.thumbnailUrls)
+
+  const railItems = useMemo<EmberRailItem[]>(
+    () =>
+      [...sortedMyFires.unread, ...sortedMyFires.quiet].slice(0, RAIL_MAX_ITEMS).map((thread) => ({
+        id: thread._id,
+        label: thread.title?.trim() || `${thread.creatorName ?? 'Anonymous'}'s Bondfire`,
+        thumbnailUrl: getCachedBondfireThumbnail(thread, thumbnailUrls),
+        unread: thread.unread,
+        isUnansweredSpark: thread.userId === currentUserId && thread.videoCount <= 1,
+      })),
+    [currentUserId, sortedMyFires, thumbnailUrls],
+  )
 
   const listRef = useRef<FlatList<BondfireData> | null>(null)
   const filteredRef = useRef<BondfireData[]>([])
@@ -493,7 +624,9 @@ export default function FeedScreen() {
     if (!bondfires) return bondfires
 
     const q = query.trim().toLowerCase()
-    let items = bondfires
+    // Discover is for fires you're NOT in yet — threads you participate in
+    // already live in the rail and the "New responses" section above.
+    let items = bondfires.filter((b) => !myFireIdSet.has(b._id))
 
     if (viewMode === 'unseen') {
       items = items.filter((b) => b.userId !== currentUserId && !hasViewedToday(b._id))
@@ -550,7 +683,7 @@ export default function FeedScreen() {
     })
 
     return sorted
-  }, [bondfires, currentUserId, pinnedOrder, query, viewMode])
+  }, [bondfires, currentUserId, myFireIdSet, pinnedOrder, query, viewMode])
 
   filteredRef.current = filtered ?? []
 
@@ -626,6 +759,15 @@ export default function FeedScreen() {
     }
   }, [filtered, ensureThumbnailUrl, shouldRunBackgroundWork])
 
+  // Rail tiles and "New responses" rows resolve their thumbnails through the
+  // same cache as the Discover list.
+  useEffect(() => {
+    if (!shouldRunBackgroundWork || !myFires) return
+    for (const thread of [...sortedMyFires.unread, ...sortedMyFires.quiet].slice(0, 12)) {
+      ensureThumbnailUrl(thread)
+    }
+  }, [ensureThumbnailUrl, myFires, shouldRunBackgroundWork, sortedMyFires])
+
   const handleBondfirePress = useCallback(
     (bondfireId: string) => {
       setFeedActiveBondfireId(bondfireId)
@@ -669,6 +811,10 @@ export default function FeedScreen() {
 
   const handleBrowseCamps = useCallback(() => {
     router.push(routes.camps)
+  }, [router])
+
+  const handleOpenAllFires = useCallback(() => {
+    router.push(routes.myFires)
   }, [router])
 
   const handleSelectCamp = useCallback(
@@ -873,108 +1019,174 @@ export default function FeedScreen() {
           <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
         )}
         ListHeaderComponent={
-          <YStack paddingTop={insets.top + 16} paddingBottom={12} paddingHorizontal={16} gap={12}>
-            <XStack alignItems="baseline" justifyContent="space-between" gap={16}>
-              <YStack gap={2} flex={1}>
-                <Text fontSize={26} fontWeight="900" numberOfLines={1}>
-                  Camp Feed
-                </Text>
-                <Text fontSize={13} color={'$placeholderColor'}>
-                  Filter by joined camp or scan every fire.
-                </Text>
+          <YStack paddingTop={insets.top + 16} paddingBottom={12} gap={12}>
+            <YStack paddingHorizontal={16} gap={12}>
+              <XStack alignItems="baseline" justifyContent="space-between" gap={16}>
+                <YStack gap={2} flex={1}>
+                  <Text fontSize={26} fontWeight="900" numberOfLines={1}>
+                    Home
+                  </Text>
+                  <Text fontSize={13} color={'$placeholderColor'}>
+                    {unreadCount > 0
+                      ? `${unreadCount} ${unreadCount === 1 ? 'fire has' : 'fires have'} new responses`
+                      : 'All caught up — discover something new.'}
+                  </Text>
+                </YStack>
+
+                <Button variant="secondary" size="$sm" onPress={handleSpark}>
+                  <Text color={'$color'} fontWeight="900">
+                    Spark
+                  </Text>
+                </Button>
+              </XStack>
+
+              {showFreeSummaryCard ? <FreeSummaryCard /> : null}
+            </YStack>
+
+            {railItems.length > 0 ? (
+              <EmberRail
+                items={railItems}
+                totalCount={myFires?.length ?? 0}
+                onOpenItem={handleBondfirePress}
+                onOpenAll={handleOpenAllFires}
+              />
+            ) : null}
+
+            {newResponseThreads.length > 0 ? (
+              <YStack>
+                <XStack
+                  paddingHorizontal={16}
+                  paddingBottom={4}
+                  alignItems="center"
+                  justifyContent="space-between"
+                >
+                  <Text fontSize={13} color={'$placeholderColor'} fontWeight="900">
+                    New responses
+                  </Text>
+                  {unreadCount > NEW_RESPONSES_CAP ? (
+                    <Text
+                      fontSize={13}
+                      color={'$primary'}
+                      fontWeight="800"
+                      accessibilityRole="button"
+                      accessibilityLabel={`See all ${unreadCount} unread fires`}
+                      onPress={handleOpenAllFires}
+                    >
+                      See all {unreadCount}
+                    </Text>
+                  ) : null}
+                </XStack>
+                {newResponseThreads.map((thread) => {
+                  const props = toMyFireRowProps(
+                    thread,
+                    getCachedBondfireThumbnail(thread, thumbnailUrls),
+                    currentUserId,
+                    pinnedIds,
+                    () => handleBondfirePress(thread._id),
+                    () => handleRespond(thread._id),
+                    () => handleDelete(thread._id),
+                    () => handlePin(thread._id),
+                    () => handleUnpin(thread._id),
+                    () => handleReport(thread._id, thread.userId),
+                  )
+                  return (
+                    <YStack key={thread._id}>
+                      <BondfireRow {...props} />
+                      <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
+                    </YStack>
+                  )
+                })}
               </YStack>
+            ) : null}
 
-              <Button variant="secondary" size="$sm" onPress={handleSpark}>
-                <Text color={'$color'} fontWeight="900">
-                  Spark
-                </Text>
-              </Button>
-            </XStack>
+            <YStack paddingHorizontal={16} gap={12}>
+              <Text fontSize={13} color={'$placeholderColor'} fontWeight="900">
+                Discover
+              </Text>
 
-            {showFreeSummaryCard ? <FreeSummaryCard /> : null}
-
-            <XStack
-              alignItems="center"
-              gap={10}
-              backgroundColor={'$backgroundHover'}
-              borderRadius={14}
-              borderWidth={1}
-              borderColor={'$borderColor'}
-              paddingHorizontal={12}
-              paddingVertical={10}
-            >
-              <Search size={18} color={'$placeholderColor'} />
-              <Input
-                value={query}
-                onChangeText={setQuery}
-                placeholder="Search creator, camp, or tags"
-                backgroundColor="transparent"
-                borderWidth={0}
-                height={22}
-                paddingHorizontal={0}
-                flex={1}
-              />
-              {filtered ? (
-                <Text fontSize={12} color={'$placeholderColor'} fontWeight="900">
-                  {filtered.length}
-                </Text>
-              ) : null}
-            </XStack>
-
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ gap: 8, paddingRight: 8 }}
-            >
-              <CampPill
-                label="All"
-                selected={!activeCampId}
-                onPress={() => handleSelectCamp(null)}
-              />
-              {feedCamps.map((camp) => (
-                <CampPill
-                  key={camp._id}
-                  label={camp.name.replace(/ \((Men|Women)\)$/, '')}
-                  selected={activeCampId === camp._id}
-                  onPress={() => handleSelectCamp(camp._id)}
+              <XStack
+                alignItems="center"
+                gap={10}
+                backgroundColor={'$backgroundHover'}
+                borderRadius={14}
+                borderWidth={1}
+                borderColor={'$borderColor'}
+                paddingHorizontal={12}
+                paddingVertical={10}
+              >
+                <Search size={18} color={'$placeholderColor'} />
+                <Input
+                  value={query}
+                  onChangeText={setQuery}
+                  placeholder="Search creator, camp, or tags"
+                  backgroundColor="transparent"
+                  borderWidth={0}
+                  height={22}
+                  paddingHorizontal={0}
+                  flex={1}
                 />
-              ))}
-            </ScrollView>
+                {filtered ? (
+                  <Text fontSize={12} color={'$placeholderColor'} fontWeight="900">
+                    {filtered.length}
+                  </Text>
+                ) : null}
+              </XStack>
 
-            <XStack gap={10} flexWrap="wrap">
-              <ModePill
-                label="Discover"
-                selected={viewMode === 'discover'}
-                onPress={() => {
-                  setViewMode('discover')
-                  listRef.current?.scrollToOffset({ offset: 0, animated: true })
-                }}
-              />
-              <ModePill
-                label="Recent"
-                selected={viewMode === 'recent'}
-                onPress={() => {
-                  setViewMode('recent')
-                  listRef.current?.scrollToOffset({ offset: 0, animated: true })
-                }}
-              />
-              <ModePill
-                label="Active"
-                selected={viewMode === 'active'}
-                onPress={() => {
-                  setViewMode('active')
-                  listRef.current?.scrollToOffset({ offset: 0, animated: true })
-                }}
-              />
-              <ModePill
-                label="Unseen"
-                selected={viewMode === 'unseen'}
-                onPress={() => {
-                  setViewMode('unseen')
-                  listRef.current?.scrollToOffset({ offset: 0, animated: true })
-                }}
-              />
-            </XStack>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ gap: 8, paddingRight: 8 }}
+              >
+                <CampPill
+                  label="All"
+                  selected={!activeCampId}
+                  onPress={() => handleSelectCamp(null)}
+                />
+                {feedCamps.map((camp) => (
+                  <CampPill
+                    key={camp._id}
+                    label={camp.name.replace(/ \((Men|Women)\)$/, '')}
+                    selected={activeCampId === camp._id}
+                    onPress={() => handleSelectCamp(camp._id)}
+                  />
+                ))}
+              </ScrollView>
+
+              <XStack gap={10} flexWrap="wrap">
+                <ModePill
+                  label="Discover"
+                  selected={viewMode === 'discover'}
+                  onPress={() => {
+                    setViewMode('discover')
+                    listRef.current?.scrollToOffset({ offset: 0, animated: true })
+                  }}
+                />
+                <ModePill
+                  label="Recent"
+                  selected={viewMode === 'recent'}
+                  onPress={() => {
+                    setViewMode('recent')
+                    listRef.current?.scrollToOffset({ offset: 0, animated: true })
+                  }}
+                />
+                <ModePill
+                  label="Active"
+                  selected={viewMode === 'active'}
+                  onPress={() => {
+                    setViewMode('active')
+                    listRef.current?.scrollToOffset({ offset: 0, animated: true })
+                  }}
+                />
+                <ModePill
+                  label="Unseen"
+                  selected={viewMode === 'unseen'}
+                  onPress={() => {
+                    setViewMode('unseen')
+                    listRef.current?.scrollToOffset({ offset: 0, animated: true })
+                  }}
+                />
+              </XStack>
+            </YStack>
           </YStack>
         }
         ListEmptyComponent={
