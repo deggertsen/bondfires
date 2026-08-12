@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Pressable, type StyleProp, StyleSheet, type ViewStyle } from 'react-native'
 import ReanimatedSwipeable, {
   type SwipeableMethods,
+  SwipeDirection,
 } from 'react-native-gesture-handler/ReanimatedSwipeable'
 import Animated, { type SharedValue, useAnimatedStyle } from 'react-native-reanimated'
 import { YStack } from 'tamagui'
@@ -128,6 +129,9 @@ export function SwipeableRow({
   const rightPanelWidth = rightActionWidth ?? (rightActions?.length ?? 0) * 72
   const swipeableRef = useRef<SwipeableMethods>(null)
   const [isOpen, setIsOpen] = useState(false)
+  // Track which direction the row opened so the dismiss overlay can be
+  // offset to avoid covering the revealed action panel (Android fix).
+  const [openDirection, setOpenDirection] = useState<SwipeDirection | null>(null)
 
   const close = useCallback(() => {
     swipeableRef.current?.close()
@@ -141,11 +145,12 @@ export function SwipeableRow({
     }
   }, [])
 
-  const handleWillOpen = useCallback(() => {
+  const handleWillOpen = useCallback((direction: SwipeDirection) => {
     if (openRow && openRow !== swipeableRef.current) {
       openRow.close()
     }
     openRow = swipeableRef.current
+    setOpenDirection(direction)
     setIsOpen(true)
   }, [])
 
@@ -153,6 +158,7 @@ export function SwipeableRow({
     if (openRow === swipeableRef.current) {
       openRow = null
     }
+    setOpenDirection(null)
     setIsOpen(false)
   }, [])
 
@@ -215,7 +221,18 @@ export function SwipeableRow({
       {children}
       {isOpen && (
         <Pressable
-          style={StyleSheet.absoluteFill}
+          // Offset the dismiss overlay so it doesn't cover the revealed
+          // action panel. On Android the absoluteFill Pressable sat on top
+          // of the action buttons, intercepting taps before they reached
+          // Edit/Delete/Pin.
+          style={[
+            StyleSheet.absoluteFill,
+            openDirection === SwipeDirection.RIGHT
+              ? { left: rightPanelWidth }
+              : openDirection === SwipeDirection.LEFT
+                ? { right: leftPanelWidth }
+                : undefined,
+          ]}
           onPress={close}
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
