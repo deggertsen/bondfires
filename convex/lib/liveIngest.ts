@@ -10,6 +10,15 @@ export type IngestEvidence = {
   source: string
 }
 
+/**
+ * Eager provisioning creates the linked record before media is published.
+ * Keep that record pending until the record tap (or Mux's active webhook)
+ * confirms that the session should be visible.
+ */
+export function initialLiveRecordStatus(pending?: boolean): 'pending' | 'live' {
+  return pending ? 'pending' : 'live'
+}
+
 // Evidence already persisted on our row. All of these are set by Mux's
 // authoritative webhooks (live_stream.active / asset events), never by an early
 // client-side "live" signal, so they are trustworthy ingest proof.
