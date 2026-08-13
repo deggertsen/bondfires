@@ -141,7 +141,12 @@
           }
         }
       ],
-      "expo-video",
+      [
+        "expo-video",
+        {
+          "supportsBackgroundPlayback": true
+        }
+      ],
       "expo-font",
       "expo-iap",
       "@react-native-community/datetimepicker",

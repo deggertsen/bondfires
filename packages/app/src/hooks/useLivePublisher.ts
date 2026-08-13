@@ -76,8 +76,8 @@ export interface LivePublisherStats {
    * stall watchdog.
    */
   statsSupported?: number
-  /** Mic route for the session: 'wired' | 'bluetooth' | 'builtin' (Android only for now). */
-  audioRoute?: string
+  /** Mic route selected by the native publisher. */
+  audioRoute?: 'builtin' | 'wired' | 'bluetooth'
 }
 
 export interface LivePublisherVideoQualityResult {
