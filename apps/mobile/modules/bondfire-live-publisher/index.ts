@@ -47,8 +47,8 @@ export interface LivePublisherStats {
   currentFps?: number
   /** 1 when bitrateBps is a real measurement, 0 when it's a hard zero. */
   statsSupported?: number
-  /** Mic route for the session: 'wired' | 'bluetooth' | 'builtin' (Android only for now). */
-  audioRoute?: string
+  /** Mic route for the session: 'wired' | 'bluetooth' | 'builtin'. */
+  audioRoute?: 'builtin' | 'wired' | 'bluetooth'
 }
 
 export interface LivePublisherVideoQualityResult {
