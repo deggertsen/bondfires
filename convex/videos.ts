@@ -3646,43 +3646,83 @@ export const getVideoUrlsBatch = action({
   },
 })
 
-export const getThumbnailUrl = action({
-  args: {
-    muxPlaybackId: v.string(),
-    muxPlaybackPolicy: v.optional(v.union(v.literal('public'), v.literal('signed'))),
-    bondfireId: v.optional(v.id('bondfires')),
-    bondfireVideoId: v.optional(v.id('bondfireVideos')),
-  },
-  handler: async (ctx, args) => {
-    let playbackPolicy = args.muxPlaybackPolicy ?? 'public'
-    // Thumbnail URLs are cosmetic — don't throw on access validation failures.
-    // If the bondfire/camp is gone or the user lost access, fall back to a
-    // public Mux thumbnail URL (Mux may serve it or 403 — either is fine).
-    try {
-      if (args.bondfireId || args.bondfireVideoId || playbackPolicy === 'signed') {
-        const userId = (await auth.getUserId(ctx)) ?? undefined
+const thumbnailUrlRequestArgs = {
+  muxPlaybackId: v.string(),
+  muxPlaybackPolicy: v.optional(v.union(v.literal('public'), v.literal('signed'))),
+  bondfireId: v.optional(v.id('bondfires')),
+  bondfireVideoId: v.optional(v.id('bondfireVideos')),
+}
 
-        const access = await ctx.runQuery(internal.videos.validatePlaybackAccess, {
-          userId,
+type ThumbnailUrlRequest = VideoUrlRequest
+
+async function resolveThumbnailUrl(ctx: ActionCtx, args: ThumbnailUrlRequest) {
+  let playbackPolicy = args.muxPlaybackPolicy ?? 'public'
+  // Thumbnail URLs are cosmetic — don't throw on access validation failures.
+  // If the bondfire/camp is gone or the user lost access, fall back to a
+  // public Mux thumbnail URL (Mux may serve it or 403 — either is fine).
+  try {
+    if (args.bondfireId || args.bondfireVideoId || playbackPolicy === 'signed') {
+      const userId = (await auth.getUserId(ctx)) ?? undefined
+
+      const access = await ctx.runQuery(internal.videos.validatePlaybackAccess, {
+        userId,
+        muxPlaybackId: args.muxPlaybackId,
+        bondfireId: args.bondfireId,
+        bondfireVideoId: args.bondfireVideoId,
+      })
+      playbackPolicy = access.playbackPolicy
+    }
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    // Access validation failed — return a public thumbnail URL as a fallback.
+    // The Mux CDN may serve it or return 403, but the feed won't crash.
+    try {
+      await ctx.runMutation(internal.clientLogs.createInternal, {
+        level: 'warn',
+        event: 'video:thumbnail:access_validation_failed',
+        message,
+        data: {
           muxPlaybackId: args.muxPlaybackId,
           bondfireId: args.bondfireId,
           bondfireVideoId: args.bondfireVideoId,
-        })
-        playbackPolicy = access.playbackPolicy
+        },
+        platform: 'server',
+        createdAt: Date.now(),
+      })
+    } catch {
+      // Best effort
+    }
+    return {
+      thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
+      previewUrl: getMuxPreviewUrl(args.muxPlaybackId),
+      expiresIn: 0,
+    }
+  }
+
+  if (playbackPolicy === 'signed') {
+    try {
+      const thumbnailToken = await signMuxPlaybackToken(args.muxPlaybackId, 't')
+      const previewToken = await signMuxPlaybackToken(args.muxPlaybackId, 'g')
+
+      return {
+        thumbnailUrl: withMuxToken(getMuxThumbnailUrl(args.muxPlaybackId), thumbnailToken),
+        previewUrl: withMuxToken(getMuxPreviewUrl(args.muxPlaybackId), previewToken),
+        expiresIn: SIGNED_PLAYBACK_URL_TTL_SECONDS,
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
-      // Access validation failed — return a public thumbnail URL as a fallback.
-      // The Mux CDN may serve it or return 403, but the feed won't crash.
+      const stack = e instanceof Error ? e.stack : undefined
       try {
         await ctx.runMutation(internal.clientLogs.createInternal, {
-          level: 'warn',
-          event: 'video:thumbnail:access_validation_failed',
+          level: 'error',
+          event: 'video:thumbnail:signing_failed',
           message,
           data: {
             muxPlaybackId: args.muxPlaybackId,
             bondfireId: args.bondfireId,
             bondfireVideoId: args.bondfireVideoId,
+            playbackPolicy,
+            stack,
           },
           platform: 'server',
           createdAt: Date.now(),
@@ -3696,51 +3736,33 @@ export const getThumbnailUrl = action({
         expiresIn: 0,
       }
     }
+  }
 
-    if (playbackPolicy === 'signed') {
-      try {
-        const thumbnailToken = await signMuxPlaybackToken(args.muxPlaybackId, 't')
-        const previewToken = await signMuxPlaybackToken(args.muxPlaybackId, 'g')
+  return {
+    thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
+    previewUrl: getMuxPreviewUrl(args.muxPlaybackId),
+    expiresIn: 0,
+  }
+}
 
-        return {
-          thumbnailUrl: withMuxToken(getMuxThumbnailUrl(args.muxPlaybackId), thumbnailToken),
-          previewUrl: withMuxToken(getMuxPreviewUrl(args.muxPlaybackId), previewToken),
-          expiresIn: SIGNED_PLAYBACK_URL_TTL_SECONDS,
-        }
-      } catch (e) {
-        const message = e instanceof Error ? e.message : String(e)
-        const stack = e instanceof Error ? e.stack : undefined
-        try {
-          await ctx.runMutation(internal.clientLogs.createInternal, {
-            level: 'error',
-            event: 'video:thumbnail:signing_failed',
-            message,
-            data: {
-              muxPlaybackId: args.muxPlaybackId,
-              bondfireId: args.bondfireId,
-              bondfireVideoId: args.bondfireVideoId,
-              playbackPolicy,
-              stack,
-            },
-            platform: 'server',
-            createdAt: Date.now(),
-          })
-        } catch {
-          // Best effort
-        }
-        return {
-          thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
-          previewUrl: getMuxPreviewUrl(args.muxPlaybackId),
-          expiresIn: 0,
-        }
-      }
+export const getThumbnailUrl = action({
+  args: thumbnailUrlRequestArgs,
+  handler: resolveThumbnailUrl,
+})
+
+const MAX_THUMBNAIL_URL_BATCH = 50
+
+// Feed surfaces need several cosmetic thumbnails at once. Resolve them in
+// parallel behind one client action so list hydration does not create a burst
+// of websocket round trips. Each item retains the single-item resolver's
+// access checks and public-URL fallback behavior.
+export const getThumbnailUrlsBatch = action({
+  args: { items: v.array(v.object(thumbnailUrlRequestArgs)) },
+  handler: async (ctx, { items }) => {
+    if (items.length > MAX_THUMBNAIL_URL_BATCH) {
+      throw new Error(`getThumbnailUrlsBatch supports at most ${MAX_THUMBNAIL_URL_BATCH} items`)
     }
-
-    return {
-      thumbnailUrl: getMuxThumbnailUrl(args.muxPlaybackId),
-      previewUrl: getMuxPreviewUrl(args.muxPlaybackId),
-      expiresIn: 0,
-    }
+    return Promise.all(items.map((item) => resolveThumbnailUrl(ctx, item)))
   },
 })
 

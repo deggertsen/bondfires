@@ -21,9 +21,9 @@ import {
 } from '@bondfires/ui'
 import { useIsFocused } from '@react-navigation/native'
 import { AlertTriangle, ChevronLeft, Flame, Pin, RefreshCw } from '@tamagui/lucide-icons'
-import { useAction, useMutation, useQuery } from 'convex/react'
+import { useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Alert, FlatList, Pressable, RefreshControl, StatusBar } from 'react-native'
 import { Separator, useTheme, variableToString, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
@@ -37,10 +37,10 @@ import {
 } from '../../../lib/bondfireSwipeActions'
 import {
   type BondfireThumbnailFields,
-  getBondfireThumbnailPlayback,
   getCachedBondfireThumbnail,
 } from '../../../lib/bondfireThumbnails'
 import { routes } from '../../../lib/routes'
+import { useBondfireThumbnails } from '../../../lib/useBondfireThumbnails'
 
 type ThreadParticipant = {
   user: PublicUser
@@ -249,7 +249,6 @@ export default function MyFiresScreen() {
   const invitedRows = useQuery(api.inviteClaims.listUnseenInvites, canLoadTabData ? {} : 'skip') as
     | InviteRow[]
     | undefined
-  const getThumbnailUrl = useAction(api.videos.getThumbnailUrl)
 
   // Swipe action mutations
   const deleteBondfire = useMutation(api.bondfires.deleteBondfire)
@@ -323,52 +322,19 @@ export default function MyFiresScreen() {
     })
   }, [currentUserId, isUserLoading, threads])
 
-  const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string | null>>({})
-  const loadingThumbsRef = useRef<Set<string>>(new Set())
+  const { ensureThumbnailUrls, resetThumbnailUrls, thumbnailUrls } = useBondfireThumbnails({
+    enabled: shouldRunBackgroundWork,
+  })
   const { editingBondfire, openEditTitleSheet, closeEditTitleSheet } = useEditTitleSheet()
   const listExtraData = useMemo(
-    () => ({ currentUserId, pinnedIds, thumbnailUrls, editingBondfire }),
-    [currentUserId, pinnedIds, thumbnailUrls, editingBondfire],
-  )
-
-  const ensureThumbnailUrl = useCallback(
-    async (thread: MyFire) => {
-      if (!shouldRunBackgroundWork) return
-      const playback = getBondfireThumbnailPlayback(thread)
-      if (!playback) return
-      if (thumbnailUrls[playback.cacheKey] !== undefined) return
-      if (loadingThumbsRef.current.has(playback.cacheKey)) return
-
-      loadingThumbsRef.current.add(playback.cacheKey)
-      try {
-        const { thumbnailUrl } = await getThumbnailUrl({
-          muxPlaybackId: playback.muxPlaybackId,
-          muxPlaybackPolicy: playback.muxPlaybackPolicy,
-          bondfireId: playback.bondfireVideoId ? undefined : thread._id,
-          bondfireVideoId: playback.bondfireVideoId,
-        })
-        setThumbnailUrls((prev) =>
-          prev[playback.cacheKey] === undefined
-            ? { ...prev, [playback.cacheKey]: thumbnailUrl }
-            : prev,
-        )
-      } catch {
-        setThumbnailUrls((prev) =>
-          prev[playback.cacheKey] === undefined ? { ...prev, [playback.cacheKey]: null } : prev,
-        )
-      } finally {
-        loadingThumbsRef.current.delete(playback.cacheKey)
-      }
-    },
-    [getThumbnailUrl, shouldRunBackgroundWork, thumbnailUrls],
+    () => ({ currentUserId, pinnedIds, editingBondfire }),
+    [currentUserId, pinnedIds, editingBondfire],
   )
 
   useEffect(() => {
     if (!shouldRunBackgroundWork || !threads) return
-    for (const thread of [...invitedThreads, ...threads].slice(0, 10)) {
-      ensureThumbnailUrl(thread)
-    }
-  }, [ensureThumbnailUrl, invitedThreads, shouldRunBackgroundWork, threads])
+    ensureThumbnailUrls([...invitedThreads, ...threads].slice(0, 10))
+  }, [ensureThumbnailUrls, invitedThreads, shouldRunBackgroundWork, threads])
 
   const unreadCount = useMemo(
     () => threads?.filter((thread) => thread.unread).length ?? 0,
@@ -377,12 +343,11 @@ export default function MyFiresScreen() {
 
   const handleRefresh = useCallback(() => {
     resetLoadTracking()
-    setThumbnailUrls({})
-    loadingThumbsRef.current = new Set()
+    resetThumbnailUrls()
     setIsRefreshing(true)
     setRefreshKey((current) => current + 1)
     setTimeout(() => setIsRefreshing(false), 800)
-  }, [resetLoadTracking])
+  }, [resetLoadTracking, resetThumbnailUrls])
 
   // My Fires left the tab bar (href: null) — it's reached from Home's Ember
   // Rail, so it needs an explicit way back. Tab navigators don't keep stack

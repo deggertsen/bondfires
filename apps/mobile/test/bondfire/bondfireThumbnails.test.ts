@@ -3,6 +3,7 @@ import type { Id } from '../../../../convex/_generated/dataModel'
 import {
   getBondfireThumbnailPlayback,
   getCachedBondfireThumbnail,
+  getPendingBondfireThumbnails,
 } from '../../lib/bondfireThumbnails'
 
 describe('getBondfireThumbnailPlayback', () => {
@@ -55,5 +56,67 @@ describe('getBondfireThumbnailPlayback', () => {
         urls,
       ),
     ).toBe('new-thumbnail')
+  })
+})
+
+describe('getPendingBondfireThumbnails', () => {
+  it('builds one ordered request batch for the visible window', () => {
+    expect(
+      getPendingBondfireThumbnails(
+        [
+          {
+            _id: 'bondfire-1',
+            muxPlaybackId: 'spark-id',
+            muxPlaybackPolicy: 'signed',
+          },
+          {
+            _id: 'bondfire-2',
+            latestResponseBondfireVideoId: 'response-2' as Id<'bondfireVideos'>,
+            latestResponseMuxPlaybackId: 'response-id',
+          },
+        ],
+        {},
+        new Set(),
+      ),
+    ).toEqual([
+      {
+        bondfireId: 'bondfire-1',
+        cacheKey: 'bondfire-1:spark-id',
+        request: {
+          muxPlaybackId: 'spark-id',
+          muxPlaybackPolicy: 'signed',
+          bondfireId: 'bondfire-1',
+          bondfireVideoId: undefined,
+        },
+      },
+      {
+        bondfireId: 'bondfire-2',
+        cacheKey: 'bondfire-2:response-id',
+        request: {
+          muxPlaybackId: 'response-id',
+          muxPlaybackPolicy: undefined,
+          bondfireId: undefined,
+          bondfireVideoId: 'response-2',
+        },
+      },
+    ])
+  })
+
+  it('skips cached, loading, missing, and duplicate playback entries', () => {
+    const duplicate = { _id: 'bondfire-1', muxPlaybackId: 'playback-1' }
+
+    expect(
+      getPendingBondfireThumbnails(
+        [
+          duplicate,
+          duplicate,
+          { _id: 'bondfire-2', muxPlaybackId: 'playback-2' },
+          { _id: 'bondfire-3', muxPlaybackId: 'playback-3' },
+          { _id: 'bondfire-4' },
+        ],
+        { 'bondfire-2:playback-2': null },
+        new Set(['bondfire-3:playback-3']),
+      ).map((item) => item.cacheKey),
+    ).toEqual(['bondfire-1:playback-1'])
   })
 })
