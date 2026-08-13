@@ -87,10 +87,11 @@ JavaScript and TypeScript-only changes normally require only a Metro reload.
 
 ## Production releases
 
-Production versioning, validation, local builds, store submission, failure recovery, and
+Production versioning, validation, **local** builds, store submission, failure recovery, and
 force-update gating are documented in the repository-level
 [`RELEASE_PROCESS.md`](../../RELEASE_PROCESS.md). Use the root `yarn release` commands rather than
-assembling production build and submission commands from this development guide.
+assembling production build and submission commands from this development guide. Production
+`eas build` must always pass `--local`; cloud EAS builds are for development clients only.
 
 ## Structure
 

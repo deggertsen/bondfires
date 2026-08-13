@@ -29,7 +29,7 @@ production Convex deployment by default, so avoid destructive or broadly visible
 
 The release machine needs:
 
-- EAS authentication and valid iOS/Android signing credentials
+- EAS authentication and valid iOS/Android signing credentials (used for signing and store upload, not for compiling)
 - App Store Connect and Google Play submission access
 - `jq`, `fastlane`, CocoaPods, Xcode, and the Android SDK/JDK
 - `ANDROID_HOME` or `ANDROID_SDK_ROOT` when releasing Android
@@ -52,6 +52,23 @@ The automated gate covers:
 Run `yarn validate` directly when diagnosing a failure. The release command runs it again so the
 production path never depends on a remembered manual checklist.
 
+## Local build, then submit
+
+Production binaries are always compiled on this machine. Never queue an EAS cloud
+build (`eas build` without `--local`) for a store release — that path sits in
+Expo's build queue and takes ages.
+
+The required order is:
+
+1. **Build locally** with `eas build --local`. This produces the `.ipa` / `.aab`
+   on disk. Signing credentials still come from EAS; the compile does not.
+2. **Submit** that artifact with `eas submit --path <artifact>`. EAS is only the
+   upload transport to App Store Connect and Google Play internal testing.
+
+`yarn release` does both steps in that order. Do not run a production
+`eas build` without `--local`, and do not submit an artifact you did not just
+build locally.
+
 ## Release commands
 
 Run releases from the repository root with a clean working tree:
@@ -72,8 +89,9 @@ The script:
 3. Commits the version change.
 4. Starts an ignored evidence manifest at `apps/mobile/build/release-<version>.json`.
 5. Deploys Convex to production.
-6. Builds the requested native platforms locally with EAS tooling.
-7. Submits the artifacts to App Store Connect and/or Google Play internal testing.
+6. Builds the requested native platforms locally (`eas build --local`).
+7. Submits those local artifacts (`eas submit --path`) to App Store Connect and/or
+   Google Play internal testing.
 8. Records build, submission, completion, or failure events in the evidence manifest.
 
 The evidence manifest is local and ignored by Git. Copy it elsewhere if a durable release record is
@@ -132,4 +150,4 @@ For an iOS capability/provisioning mismatch, run
 
 **Established:** 2026-02-19 after a navigation routing failure reached users
 
-**Last updated:** 2026-08-13 — deterministic preflight and release evidence automated
+**Last updated:** 2026-08-13 — local production builds required; EAS is submit-only

@@ -175,9 +175,10 @@ yarn release:minor
 yarn release:major
 ```
 
-The script validates the repository, versions and deploys the release, builds locally, submits to
-the stores, and records release evidence. See [`RELEASE_PROCESS.md`](RELEASE_PROCESS.md) for the
-human readiness checks, prerequisites, failure recovery, and force-update policy.
+The script validates the repository, versions and deploys the release, builds locally
+(`eas build --local`), submits those artifacts to the stores, and records release evidence.
+Never queue an EAS cloud build for production. See [`RELEASE_PROCESS.md`](RELEASE_PROCESS.md) for
+the human readiness checks, prerequisites, failure recovery, and force-update policy.
 
 ## License
 
