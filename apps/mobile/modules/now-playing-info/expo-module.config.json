@@ -1,0 +1,10 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "podspecPath": "NowPlayingInfo.podspec",
+    "modules": ["NowPlayingInfoModule"]
+  },
+  "android": {
+    "modules": ["org.bondfires.nowplayinginfo.NowPlayingInfoModule"]
+  }
+}

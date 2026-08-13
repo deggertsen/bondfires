@@ -419,6 +419,7 @@ export const getWithVideos = query({
       return null
     }
     const camp = bondfire.campId ? await ctx.db.get(bondfire.campId) : null
+    const campName = await resolveCampLabel(ctx, bondfire)
 
     const videos = await ctx.db
       .query('bondfireVideos')
@@ -463,7 +464,7 @@ export const getWithVideos = query({
       ...withLiveFlags(bondfire),
       watchedByViewer: mainWatched,
       campStatus: camp?.status,
-      campName: camp?.name,
+      campName,
       videos: readyVideos,
       processingResponses,
       participants: await getThreadParticipants(ctx, bondfire),

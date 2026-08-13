@@ -5,6 +5,7 @@ import {
   telemetry,
   tierMeetsRequirement,
   useMuxData,
+  useNowPlayingInfo,
   usePresence,
   useSubscription,
 } from '@bondfires/app'
@@ -97,6 +98,8 @@ export interface VideoPlayerProps {
   onProgress: (progress: number, positionMs: number, durationMs?: number) => void
   onScrubbingChange?: (scrubbing: boolean) => void
   creatorName: string
+  campName?: string
+  bondfireTitle?: string
   isMainVideo: boolean
   responseIndex?: number
   isLive?: boolean
@@ -117,6 +120,8 @@ export function VideoPlayer({
   onProgress,
   onScrubbingChange,
   creatorName,
+  campName,
+  bondfireTitle,
   isMainVideo,
   responseIndex,
   isLive = false,
@@ -404,6 +409,14 @@ export function VideoPlayer({
       [currentUserId],
     ),
     isActive: isActive && isScreenFocused && isAppActive,
+  })
+
+  useNowPlayingInfo({
+    videoOwnerName: creatorName,
+    campName,
+    bondfireTitle,
+    player,
+    isActive: shouldTrackPlayback,
   })
 
   const updatePlaybackProgress = useCallback(

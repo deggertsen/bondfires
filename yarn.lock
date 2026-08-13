@@ -1259,6 +1259,7 @@ __metadata:
     expo-iap: "*"
     expo-in-app-updates: "*"
     expo-linking: "*"
+    expo-modules-core: "*"
     expo-network: "*"
     expo-notifications: "*"
     react: "*"
@@ -7486,7 +7487,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"expo-modules-core@npm:3.0.30":
+"expo-modules-core@npm:3.0.30, expo-modules-core@npm:~3.0.30":
   version: 3.0.30
   resolution: "expo-modules-core@npm:3.0.30"
   dependencies:
@@ -9759,6 +9760,7 @@ __metadata:
     expo-keep-awake: "npm:~15.0.8"
     expo-linear-gradient: "npm:~15.0.8"
     expo-linking: "npm:~8.0.12"
+    expo-modules-core: "npm:~3.0.30"
     expo-network: "npm:~8.0.8"
     expo-notifications: "npm:~0.32.17"
     expo-router: "npm:~6.0.24"
