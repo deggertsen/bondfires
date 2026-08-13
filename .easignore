@@ -1,0 +1,88 @@
+# EAS archive rules. When present, replaces .gitignore for project uploads.
+# Keep in sync with .gitignore, but do not blanket-ignore .yarn/ — EAS does not
+# reliably apply gitignore negation, and patched deps need .yarn/patches/.
+
+# Dependencies
+node_modules/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+.next/
+.expo/
+*.tsbuildinfo
+
+# Bun
+bun.lockb
+
+# Expo
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+web-build/
+
+# Native artifacts
+*.ipa
+*.apk
+*.aab
+
+# Generated Expo prebuild folders only. Do not ignore android/ or ios/ globally
+# or custom Expo modules under apps/mobile/modules/ will be stripped.
+/apps/mobile/android
+/apps/mobile/ios
+/apps/mobile/.kotlin
+
+# Local secrets and credentials
+google-services-key.json
+credentials.json
+
+# Agent worktrees (nested biome.json / extra app copies confuse tooling)
+.claude/worktrees/
+
+# Turborepo
+.turbo
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+
+# Convex
+.convex/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Testing
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Terraform
+infrastructure/terraform/.terraform/
+infrastructure/terraform/*.tfstate
+infrastructure/terraform/*.tfstate.backup
+infrastructure/terraform/.terraform.lock.hcl
+
+# Misc
+*.pem
+Thumbs.db
