@@ -54,7 +54,7 @@ fi
 
 # --- Deterministic preflight before changing version or production state ---
 echo "🔎 Running repository validation and release preflight..."
-yarn validate
+CONVEX_CODEGEN_FULL=1 yarn validate
 echo "✅ Release preflight passed"
 
 # --- Read current version + build number ---

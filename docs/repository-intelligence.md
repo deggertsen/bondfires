@@ -13,8 +13,9 @@ yarn repo:impact --base origin/main --head HEAD
 yarn repo:impact --staged --format json
 ```
 
-`yarn validate` performs typechecking, the complete unit-test suite, Convex generated-binding
-freshness, repository-specific invariant checks, and a non-mutating Biome check.
+`yarn validate` performs typechecking, the complete unit-test suite, offline Convex API
+module-registry parity, repository-specific invariant checks, and a non-mutating Biome check. The
+release preflight additionally performs a full authenticated Convex code-generation comparison.
 
 `yarn repo:impact` is advisory. It maps a Git diff to checks, tests, builds, deployments, and
 reviews, and explains the rule or external boundary behind every action. Unknown files broaden

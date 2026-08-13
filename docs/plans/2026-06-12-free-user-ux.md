@@ -75,8 +75,8 @@ Specifically: (1) hide the Spark tab for free users (nav chrome can't be made in
 - [ ] **M9. Telemetry events fire for the new flow points: `paywall:cta_shown` (live screen blocked), `paywall:cta_clicked` (View Plans tapped), `paywall:explainer_clicked` (What can I do for free? tapped), `paywall:opened_from` with source (`live_blocked`, `camps_hearth_card`, `feed_empty`, `feed_spark`, `feed_summary`, `camp_detail`).**
   - *Verify by:* trigger each entry point in dev, inspect the `clientLogs` Convex table for the matching event with the correct `source` value.
 
-- [ ] **M10. The pre-release audit per `docs/RELEASE_PROCESS.md` passes — navigation integrity, TypeScript compile, build health, architecture consistency — for the changed files.**
-  - *Verify by:* `npx tsc --noEmit` exits 0; manual route walk-through of all changed screens; no new top-level abstractions.
+- [ ] **M10. Repository validation passes and the affected routes receive a manual device walk-through.**
+  - *Verify by:* `yarn validate` exits 0; manually exercise every changed route; introduce no unnecessary top-level abstractions.
 
 - [ ] **M11. With the Spark tab gone, free users retain at least one persistent, low-friction upgrade front door on the Feed: a dismissible summary card (above the camp pills, below the header) — "You're on the free plan — respond to any fire, or upgrade to spark your own" with an "Upgrade" link.** (Promoted from W4. Rationale: removing the tab removes the most prominent always-visible upgrade trigger; this is the conversion-surface replacement.)
   - *Verify by:* as a free user, the card renders on the Feed; tapping "Upgrade" opens the paywall and fires `paywall:opened_from` with `source: feed_summary`; dismissing it removes the card and reclaims its vertical space; the dismissed state persists across app restarts (persisted observable). Paid users never see the card.
@@ -128,7 +128,7 @@ Specifically: (1) hide the Spark tab for free users (nav chrome can't be made in
 - All existing "join camp" flows for public/approval/invite-only camps work unchanged.
 - Deep link invite flows for personal bondfires work unchanged.
 - The legacy `LegacyRecordScreen` alert-with-CTA path remains functional (the simulator/no-dev-build fallback) — verify on simulator that the Alert.alert("Upgrade to Create", …, [{text: "View Plans", onPress: showPaywall}]) still fires for free users.
-- `npx tsc --noEmit` passes; `npx convex dev --typecheck` passes.
+- `yarn validate` passes.
 - `clientLogs` table still receives existing telemetry events; new events have stable names and `source` values.
 
 ## Post-Release Guardrail Metric
@@ -142,9 +142,7 @@ No new automated tests are in scope. The change is UX/IA surface; the verificati
 **Validation commands:**
 
 ```bash
-npx tsc --noEmit
-npx convex dev --typecheck
-yarn turbo run typecheck
+yarn validate
 ```
 
 ---
@@ -165,7 +163,7 @@ yarn turbo run typecheck
 - `packages/app/src/store/subscription.store.ts` — `isPaywallVisible`, `subscriptionActions.showPaywall()`, tier rank helpers.
 - `packages/ui/` (SubscriptionPaywall) — the paywall component; check whether `freeTier` features are passed as a prop or hardcoded.
 - `convex/videos.ts:510-565` — `assertUserCanParticipateInCamp` confirms spark always requires Plus (sanity check; no change).
-- `docs/RELEASE_PROCESS.md` — the pre-release audit checklist (must pass before merge).
+- `RELEASE_PROCESS.md` — automated preflight, human readiness checks, and rollout guidance.
 
 ## Strategy & Constraints
 

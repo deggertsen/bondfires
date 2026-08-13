@@ -1,154 +1,135 @@
 # Bondfires Release Process
 
-## MANDATORY PRE-RELEASE AUDIT
+This is the source of truth for production mobile releases. The release script owns repeatable
+mechanics; this document focuses on decisions and runtime checks that automation cannot prove.
 
-**CRITICAL:** Never run `yarn release` without completing this audit first.
+## Before releasing
 
-### 1. Navigation Integrity Check
-
-All navigation MUST go through the centralized, type-safe route registry at
-`apps/mobile/lib/routes.ts`. That module builds every target as a typed
-`Href`, so a moved/renamed screen becomes a **compile error in one file**
-(caught by `yarn typecheck`) instead of a runtime crash for users.
+### 1. Review the change-specific impact
 
 ```bash
-# 1. No unsafe route casts in source (these defeat typed routes). Expect ZERO hits.
-grep -rn "as RelativePathString\|as ExternalPathString" \
-  apps/mobile/app apps/mobile/components apps/mobile/lib
-
-# 2. No raw path strings passed to the router or <Redirect>. Expect ZERO hits
-#    outside apps/mobile/lib/routes.ts (the only place literals are allowed).
-grep -rn "router\.\(push\|replace\)( *['\"\`]/\|href=['\"\`]/\|href={\`/" apps/mobile/app apps/mobile/components
-
-# 3. Verify route files still match the registry's pathnames.
-find apps/mobile/app -name "*.tsx" | sort
+yarn repo:impact --base origin/main --head HEAD
 ```
 
-**What to verify:**
-- Checks 1 and 2 return no results (all navigation flows through `routes.*`).
-- All `routes.*` pathnames in `lib/routes.ts` resolve against the current file
-  tree (guaranteed by `yarn typecheck` once route types are regenerated — see §2).
-- Untrusted navigation (push notifications, deep links) goes through
-  `resolveExternalRoute` / `resolveAuthRedirect`, never a raw cast.
-- Deep linking paths work (notifications, auth redirects).
-- Tab navigation and stack navigation properly configured.
+Complete the relevant review and smoke-test actions in the report. In particular:
 
-> **Why this matters:** the navigation bug that created this document came from a
-> hardcoded path surviving a file move. Centralized typed routes turn that whole
-> class of bug into a failed `yarn typecheck`.
+- Confirm Convex schema and public-function changes remain compatible with mobile versions already
+  installed in production. Convex deploys before the new native builds are submitted.
+- Exercise affected device-only behavior such as recording, notifications, deep links, billing,
+  permissions, and light/dark themes.
+- Review affected external contracts such as Mux, APNs, FCM, app-store billing, universal links,
+  email, and AI providers.
+- For native capabilities or entitlements, confirm that signing credentials and provisioning
+  profiles include the change.
 
-### 2. TypeScript Compilation
+Use the dedicated test account from `AGENTS.md` for low-impact production QA. The app targets the
+production Convex deployment by default, so avoid destructive or broadly visible test data.
+
+### 2. Confirm release access
+
+The release machine needs:
+
+- EAS authentication and valid iOS/Android signing credentials
+- App Store Connect and Google Play submission access
+- `jq`, `fastlane`, CocoaPods, Xcode, and the Android SDK/JDK
+- `ANDROID_HOME` or `ANDROID_SDK_ROOT` when releasing Android
+
+## Automated preflight
+
+Every release runs `yarn validate` before changing `app.json`, creating a commit, or touching
+production. Pull requests run the same command in CI.
+
+The automated gate covers:
+
+- Workspace typechecking and the complete unit-test suite
+- Non-mutating Biome checks
+- Offline Convex API module-registry parity; authenticated releases also perform full codegen
+- Centralized route usage and unsafe route-cast detection
+- Registered environment-variable ownership and required production build configuration
+- Matching iOS/Android build numbers and deep-link hosts
+- Repository intelligence coverage and known operational-documentation drift
+
+Run `yarn validate` directly when diagnosing a failure. The release command runs it again so the
+production path never depends on a remembered manual checklist.
+
+## Release commands
+
+Run releases from the repository root with a clean working tree:
 
 ```bash
-# Must pass 100% - no exceptions
-yarn typecheck
+yarn release          # patch release; iOS and Android
+yarn release:minor    # minor release; iOS and Android
+yarn release:major    # major release; iOS and Android
+
+yarn release --ios-only
+yarn release --android-only
 ```
 
-**If using Expo typed routes:**
-```bash
-cd apps/mobile
-npx expo start --clear  # Regenerates .expo/types/router.d.ts
-# Stop server after route types regenerate
-yarn typecheck  # Verify compilation passes
-```
+The script:
 
-### 3. Build Health Check
+1. Validates the local toolchain, clean working tree, and repository.
+2. Increments the app version and shared iOS/Android build number in `apps/mobile/app.json`.
+3. Commits the version change.
+4. Starts an ignored evidence manifest at `apps/mobile/build/release-<version>.json`.
+5. Deploys Convex to production.
+6. Builds the requested native platforms locally with EAS tooling.
+7. Submits the artifacts to App Store Connect and/or Google Play internal testing.
+8. Records build, submission, completion, or failure events in the evidence manifest.
 
-```bash
-# Verify import paths (especially after file moves)
-find apps/mobile -name "*.tsx" -exec grep -l "convex/_generated" {} \;
+The evidence manifest is local and ignored by Git. Copy it elsewhere if a durable release record is
+needed.
 
-# Check for correct relative import depths
-grep -r "from.*convex/_generated" apps/mobile/app/ -n
-```
+## After submission
 
-**What to verify:**
-- Import paths correct after any file restructuring
-- No orphaned components or broken references
-- Environment variables set in eas.json production profile
-- Permissions properly configured in app.json
+1. Inspect the release evidence manifest and confirm every requested platform was submitted.
+2. Check the Convex dashboard and logs for deployment or runtime errors.
+3. Confirm the iOS build processes successfully in App Store Connect.
+4. Confirm the Android build is available on the Google Play internal testing track.
+5. Install the store-served builds and smoke-test the affected critical paths.
+6. Monitor application telemetry and user reports closely for the first 24 hours.
 
-### 4. Configuration Audit
+## Force-update gating
 
-```bash
-# Check app.json for hardcoded screen references
-grep -r "screen\|route" apps/mobile/app.json apps/mobile/eas.json
-
-# Verify deep linking configuration
-grep -r "scheme\|link" apps/mobile/app.json
-```
-
-### 5. What the Release Script Does
-
-The `scripts/release.sh` script performs these steps automatically:
-
-1. Validates the local toolchain and clean git working tree
-2. Runs the complete deterministic `yarn validate` preflight
-3. Bumps the version in `apps/mobile/app.json`
-4. Commits the version bump
-5. **Deploys Convex backend to production** (`npx convex deploy`)
-6. Runs local EAS production builds for iOS + Android
-7. Auto-submits to App Store Connect and Google Play
-8. Records an ignored release-evidence manifest under `apps/mobile/build/`
-
-It intentionally does **not** set `minAppVersion`. Force-update gating must only be
-enabled after the new version is live and downloadable in both App Store Connect
-and Google Play.
-
-## Release Command
-
-Only after all audit steps pass:
+The release script intentionally does not change `minAppVersion`. Enable a force update only after
+the exact version is downloadable from both stores; otherwise existing clients can be locked out
+without an available upgrade.
 
 ```bash
-yarn release        # patch bump (most common)
-yarn release:minor  # minor bump
-yarn release:major  # major bump
+npx convex run publicConfig:setMinVersion '{"version":"<version>"}'
 ```
 
-## Post-Release Monitoring
-
-1. **EAS Build Dashboard:** https://expo.dev/accounts/deggertsen/projects/bondfires/builds
-2. **Android:** Internal testing track (completed status)
-3. **iOS:** App Store Connect review process
-4. **Version tracking:** Monitor for crashes/issues in first 24 hours
-
-## Enabling Force Updates
-
-Only after the new version is live in both stores and can actually be downloaded:
+For an Android flexible in-app update:
 
 ```bash
-npx convex run publicConfig:setMinVersion '{"version":"1.0.27"}'
+npx convex run publicConfig:setMinVersion \
+  '{"version":"<version>","updatePriority":"flexible"}'
 ```
 
-For Android flexible in-app updates:
+## Failure recovery
 
-```bash
-npx convex run publicConfig:setMinVersion '{"version":"1.0.27","updatePriority":"flexible"}'
-```
+The release flow is not resumable. If it fails after the version commit:
 
-Never set `minAppVersion` while either store is still processing, reviewing, or
-serving the previous version. Existing clients may block on that value.
+1. Read `apps/mobile/build/release-<version>.json` to find the last successful action.
+2. Determine whether either store received the version before retrying.
+3. Fix the underlying issue and run `yarn validate`.
+4. Choose deliberately between manually completing the interrupted version or starting a new
+   patch release. Running `yarn release` again creates another version commit.
 
-## Common Issues Caught by Audit
+For an iOS capability/provisioning mismatch, run
+`./scripts/refresh-ios-provisioning-profile.sh`, or replace the production provisioning profile via
+`eas credentials -p ios`. Keep `ios.associatedDomains` and `ios.entitlements` aligned in
+`apps/mobile/app.json`.
 
-- **iOS provisioning profile missing new capabilities** (e.g. after adding `associatedDomains` / universal links): Xcode error mentions Associated Domains or `com.apple.developer.associated-domains`. EAS may enable the capability on your App ID but still reuse an old App Store profile. Fix: run `./scripts/refresh-ios-provisioning-profile.sh` (or delete the production provisioning profile in `eas credentials -p ios` → production → Build Credentials), then rebuild. Ensure `apps/mobile/app.json` includes matching `ios.entitlements` (not only `associatedDomains`).
-- **Navigation routing failures** after file restructuring
-- **TypeScript compilation errors** from stale typed routes
-- **Import path breaks** when components move
-- **Deep linking failures** from hardcoded paths in configs
-- **Environment variable misconfigurations**
+## Emergency hotfix
 
-## Emergency Hotfix Process
-
-If critical issues found after release:
-
-1. **Fix immediately** - don't wait
-2. **Run full audit** on hotfix
-3. **Version bump** (patch increment)
-4. **Fast-track release** with `yarn release`
-5. **Monitor deployment** closely
+1. Fix the smallest safe surface and add a regression test when practical.
+2. Review `yarn repo:impact` and complete its runtime checks.
+3. Run `yarn release` for a patch release.
+4. Verify the store-served build and monitor production closely.
+5. Apply force-update gating only after both stores serve the hotfix.
 
 ---
 
-**Established:** 2026-02-19 after critical navigation routing bug reached users
-**Last Updated:** 2026-06-08 — force-update gating is now a manual post-store-availability step
+**Established:** 2026-02-19 after a navigation routing failure reached users
+
+**Last updated:** 2026-08-13 — deterministic preflight and release evidence automated
