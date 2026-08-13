@@ -88,26 +88,26 @@ uplink quality are more likely remaining contributors.
 ### Microphone routing
 
 iOS routes headset mics through the shared `AVAudioSession`
-(`.allowBluetooth` + `.playAndRecord`), so wired and Bluetooth headsets work
-without extra code. Android requires explicit routing: StreamPack's default
-audio source is `CAMCORDER`, which is pinned to the built-in camcorder mics
-and ignores connected headsets. At streamer creation the module picks a route
-from the connected input devices:
+(`.allowBluetooth` + `.playAndRecord`). A route-change observer prefers newly
+connected Bluetooth inputs and falls back through wired and built-in inputs
+when a device disconnects. Android requires explicit routing: StreamPack's
+default audio source is `CAMCORDER`, which is pinned to the built-in camcorder
+mics and ignores connected headsets. At streamer creation the module picks a
+route from the connected input devices:
 
 | Route | Audio source | Extra routing |
 |---|---|---|
-| Wired / USB headset | `DEFAULT` (follows platform input routing) | none |
+| Wired / USB headset | `VOICE_COMMUNICATION` | none |
 | Bluetooth (LE audio or SCO) | `VOICE_COMMUNICATION` | `setCommunicationDevice` (API 31+) / legacy SCO |
-| None connected | `CAMCORDER` (built-in) | none |
+| None connected | `VOICE_COMMUNICATION` (built-in) | none |
 
 The Bluetooth claim is released in `cleanupStreamer`. The chosen route is
 reported as `audioRoute` in `getStats()` payloads, so `live:stats_sample`
-telemetry shows which mic a session recorded from. If the headset
-disconnects mid-session the framework reroutes capture to the built-in mic
-on its own (with a brief audio gap) and an `AudioDeviceCallback` flips
-`audioRoute` to `builtin` so later stats samples stay truthful. Headsets
-connected mid-session do not take over until the next session (route is
-chosen at creation time).
+telemetry shows which mic a session recorded from. An `AudioDeviceCallback`
+handles both Bluetooth connects and routed-device disconnects without
+rebuilding the capture pipeline. On either platform, `audioRoute` updates to
+the selected `bluetooth`, `wired`, or `builtin` input so later stats samples
+stay truthful.
 
 ### Error events (`error`)
 

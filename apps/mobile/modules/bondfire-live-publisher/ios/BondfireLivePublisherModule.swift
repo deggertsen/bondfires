@@ -8,7 +8,7 @@ import Network
 /// statsSupported=0 zeros: the JS stall watchdog ignores these samples.
 /// Single source for the stats payload shape — keep key set in sync with the
 /// measured branch in LivePublisher.getStats() and the Kotlin STATS_ZEROS.
-private let livePublisherZeroStats: [String: Int] = [
+private let livePublisherZeroStats: [String: Any] = [
   "bitrateBps": 0,
   "rttMs": 0,
   "droppedFrames": 0,
@@ -122,7 +122,7 @@ public class BondfireLivePublisherModule: Module {
       return try await publisher.updateVideoQuality(videoBitrate: videoBitrate, fps: fps)
     }
 
-    AsyncFunction("getStats") { () -> [String: Int] in
+    AsyncFunction("getStats") { () -> [String: Any] in
       if let publisher = self.publisher {
         return await publisher.getStats()
       }
@@ -391,6 +391,8 @@ final class LivePublisher {
   /// stream: every failure is telemetry-only (`backup_failed`).
   private var backupRecorder: HKStreamRecorder?
   private var publishingCaptureInterruptionPending = false
+  private var audioRouteChangeObserver: NSObjectProtocol?
+  private var audioRouteName = "builtin"
 
   /// MTHKView registered as a mixer output — HaishinKit 2.x preview approach
   private lazy var previewView: MTHKView = {
@@ -827,6 +829,7 @@ final class LivePublisher {
     connectionMonitorTask = nil
     stopNetworkMonitor()
     removeCaptureObservers()
+    removeAudioRouteChangeObserver()
     // Finalize the backup file while the mixer is still running so the last
     // fragment lands before capture tears down.
     await stopBackupRecorder()
@@ -918,21 +921,22 @@ final class LivePublisher {
   /// actor with per-second byte counts and encoder FPS — downcast to reach
   /// them. The JS stall watchdog uses bitrateBps==0 (after having seen
   /// nonzero) to detect a frozen encoder that the connection poll misses.
-  func getStats() async -> [String: Int] {
+  func getStats() async -> [String: Any] {
     // statsSupported=0 zeros are ignored by the JS stall watchdog;
     // statsSupported=1 marks bitrateBps as a real measurement.
+    var stats = livePublisherZeroStats
+    stats["audioRoute"] = audioRouteName
     guard let session else {
-      return livePublisherZeroStats
+      return stats
     }
     // `Session.stream` is actor-isolated, so the access must be awaited
     // (mirrors the awaited stream access in start()).
     guard let rtmpStream = await session.stream as? RTMPStream else {
-      return livePublisherZeroStats
+      return stats
     }
 
     let info = await rtmpStream.info
     let fps = await rtmpStream.currentFPS
-    var stats = livePublisherZeroStats
     stats["bitrateBps"] = info.currentBytesPerSecond * 8
     stats["currentFps"] = Int(fps)
     stats["statsSupported"] = 1
@@ -946,9 +950,89 @@ final class LivePublisher {
     do {
       try audioSession.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
       try audioSession.setActive(true)
+      routeToPreferredAudioInput(audioSession)
+      installAudioRouteChangeObserver()
     } catch {
       emitError("audio_session_failed", error.localizedDescription)
     }
+  }
+
+  private func installAudioRouteChangeObserver() {
+    guard audioRouteChangeObserver == nil else { return }
+    let audioSession = AVAudioSession.sharedInstance()
+    audioRouteChangeObserver = NotificationCenter.default.addObserver(
+      forName: AVAudioSession.routeChangeNotification,
+      object: audioSession,
+      queue: .main
+    ) { [weak self] notification in
+      guard let rawReason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+            let reason = AVAudioSession.RouteChangeReason(rawValue: rawReason) else {
+        return
+      }
+
+      switch reason {
+      case .newDeviceAvailable, .oldDeviceUnavailable, .routeConfigurationChange:
+        Task { @MainActor [weak self] in
+          guard let self, self.isCaptureRunning, !self.isStopping else { return }
+          self.routeToPreferredAudioInput(audioSession)
+        }
+      default:
+        break
+      }
+    }
+  }
+
+  private func removeAudioRouteChangeObserver() {
+    guard let observer = audioRouteChangeObserver else { return }
+    NotificationCenter.default.removeObserver(observer)
+    audioRouteChangeObserver = nil
+  }
+
+  private func routeToPreferredAudioInput(_ audioSession: AVAudioSession) {
+    let availableInputs = audioSession.availableInputs ?? []
+    let preferredInput = availableInputs.first(where: isBluetoothInput)
+      ?? availableInputs.first(where: isWiredInput)
+      ?? availableInputs.first(where: { $0.portType == .builtInMic })
+
+    do {
+      if audioSession.preferredInput?.uid != preferredInput?.uid {
+        try audioSession.setPreferredInput(preferredInput)
+      }
+      audioRouteName = routeName(for: audioSession.currentRoute.inputs.first)
+    } catch {
+      // A device can disappear between availableInputs and setPreferredInput.
+      // Keep capture running and report the route AVAudioSession actually chose.
+      audioRouteName = routeName(for: audioSession.currentRoute.inputs.first)
+    }
+  }
+
+  private func isBluetoothInput(_ input: AVAudioSessionPortDescription) -> Bool {
+    switch input.portType {
+    case .bluetoothHFP, .bluetoothLE, .carAudio:
+      return true
+    default:
+      return false
+    }
+  }
+
+  private func isWiredInput(_ input: AVAudioSessionPortDescription) -> Bool {
+    switch input.portType {
+    case .headsetMic, .usbAudio, .lineIn:
+      return true
+    default:
+      return false
+    }
+  }
+
+  private func routeName(for input: AVAudioSessionPortDescription?) -> String {
+    guard let input else { return "builtin" }
+    if isBluetoothInput(input) {
+      return "bluetooth"
+    }
+    if isWiredInput(input) {
+      return "wired"
+    }
+    return "builtin"
   }
 
   // MARK: - Event emission

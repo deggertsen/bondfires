@@ -11,6 +11,7 @@ import {
 import { Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useMutation, useQuery } from 'convex/react'
+import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { LinearGradient } from 'expo-linear-gradient'
 import { useVideoPlayer, VideoView } from 'expo-video'
@@ -59,6 +60,15 @@ import {
 
 const PROGRESS_STATE_UPDATE_INTERVAL_MS = 250
 const PROGRESS_TIME_UPDATE_INTERVAL_SECONDS = PROGRESS_STATE_UPDATE_INTERVAL_MS / 1000
+const PLAYBACK_AUDIO_MODE = {
+  allowsRecordingIOS: false,
+  interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+  playsInSilentModeIOS: true,
+  staysActiveInBackground: false,
+  interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
+  shouldDuckAndroid: false,
+  playThroughEarpieceAndroid: false,
+}
 
 function getFirstReactionAfter<T extends { timestampMs: number }>(
   reactions: readonly T[],
@@ -177,6 +187,18 @@ export function VideoPlayer({
   })
     ? videoUrl
     : null
+
+  useEffect(() => {
+    if (!currentUrl || !isActive || !isScreenFocused || !isAppActive) return
+
+    Audio.setAudioModeAsync(PLAYBACK_AUDIO_MODE).catch((error: unknown) => {
+      telemetry.warn(
+        'video:audio_mode_setup_failed',
+        error instanceof Error ? error.message : String(error),
+        { videoId, isLive },
+      )
+    })
+  }, [currentUrl, isActive, isScreenFocused, isAppActive, videoId, isLive])
 
   const state$ = useObservable({
     showReport: false,
