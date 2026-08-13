@@ -4,23 +4,17 @@ import {
   useAppThemeColors,
   useCanRunRecordingBackgroundWork,
 } from '@bondfires/app'
-import {
-  BondfireRow,
-  type BondfireRowProps,
-  Button,
-  closeOpenSwipeableRow,
-  Spinner,
-  Text,
-} from '@bondfires/ui'
+import { type BondfireRowProps, Button, closeOpenSwipeableRow, Spinner, Text } from '@bondfires/ui'
 import { useIsFocused } from '@react-navigation/native'
 import { ArrowLeft, Flame, Lock, Plus } from '@tamagui/lucide-icons'
-import { useAction, useMutation, useQuery } from 'convex/react'
+import { useMutation, useQuery } from 'convex/react'
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, FlatList, Pressable, StatusBar } from 'react-native'
 import { Separator, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../convex/_generated/dataModel'
+import { BondfireThumbnailRow } from '../../components/BondfireThumbnail'
 import { EditTitleSheet, useEditTitleSheet } from '../../components/EditTitleSheet'
 import { InviteSheet } from '../../components/InviteSheet'
 import {
@@ -29,13 +23,16 @@ import {
   getBondfireSwipeActions,
   getSwipeReportComment,
 } from '../../lib/bondfireSwipeActions'
+import type { BondfireThumbnailFields } from '../../lib/bondfireThumbnails'
 import { goBackOrReplace } from '../../lib/navigation'
 import { routes } from '../../lib/routes'
+import { useBondfireThumbnails } from '../../lib/useBondfireThumbnails'
 
-type BondfireData = Doc<'bondfires'> & {
-  participantCount: number
-  campLabel?: string
-}
+type BondfireData = Doc<'bondfires'> &
+  BondfireThumbnailFields & {
+    participantCount: number
+    campLabel?: string
+  }
 
 export default function PersonalCampScreen() {
   const { statusBarStyle } = useAppThemeColors()
@@ -59,10 +56,20 @@ export default function PersonalCampScreen() {
     shouldRunBackgroundWork && personalCamp ? {} : 'skip',
   )
 
-  // Thumbnail loading (same pattern as feed)
-  const getThumbnailUrl = useAction(api.videos.getThumbnailUrl)
-  const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string | null>>({})
-  const loadingThumbsRef = useRef<Set<string>>(new Set())
+  const handleThumbnailBatchError = useCallback(
+    (error: unknown, pending: Array<{ bondfireId: string }>) => {
+      telemetry.warn('personalCamp:thumbnail', 'Failed to load thumbnail URL batch', {
+        batchSize: pending.length,
+        bondfireIds: pending.map((item) => item.bondfireId),
+        error: String(error),
+      })
+    },
+    [],
+  )
+  const { ensureThumbnailUrls, thumbnailUrls$ } = useBondfireThumbnails({
+    enabled: shouldRunBackgroundWork,
+    onBatchError: handleThumbnailBatchError,
+  })
 
   // Auth user for pin state
   const currentUser = useQuery(api.users.current, shouldRunBackgroundWork ? {} : 'skip')
@@ -111,42 +118,11 @@ export default function PersonalCampScreen() {
     }
   }, [createdAfter, newFire, enrichedBondfires])
 
-  // Lazy-load thumbnails
-  const ensureThumbnailUrl = useCallback(
-    async (bondfire: BondfireData) => {
-      if (!shouldRunBackgroundWork) return
-      if (!bondfire.muxPlaybackId) return
-      if (thumbnailUrls[bondfire._id] !== undefined) return
-      if (loadingThumbsRef.current.has(bondfire._id)) return
-
-      loadingThumbsRef.current.add(bondfire._id)
-      try {
-        const result = await getThumbnailUrl({
-          muxPlaybackId: bondfire.muxPlaybackId,
-          muxPlaybackPolicy: bondfire.muxPlaybackPolicy,
-          bondfireId: bondfire._id,
-        })
-        setThumbnailUrls((prev) => ({ ...prev, [bondfire._id]: result.thumbnailUrl }))
-      } catch (error) {
-        setThumbnailUrls((prev) => ({ ...prev, [bondfire._id]: null }))
-        telemetry.warn('personalCamp:thumbnail', 'Failed to load thumbnail URL', {
-          bondfireId: bondfire._id,
-          error: String(error),
-        })
-      } finally {
-        loadingThumbsRef.current.delete(bondfire._id)
-      }
-    },
-    [getThumbnailUrl, shouldRunBackgroundWork, thumbnailUrls],
-  )
-
   // Preload first 10 thumbnails
   useEffect(() => {
     if (!shouldRunBackgroundWork || !enrichedBondfires) return
-    for (const bondfire of enrichedBondfires.slice(0, 10)) {
-      ensureThumbnailUrl(bondfire)
-    }
-  }, [enrichedBondfires, ensureThumbnailUrl, shouldRunBackgroundWork])
+    ensureThumbnailUrls(enrichedBondfires.slice(0, 10))
+  }, [enrichedBondfires, ensureThumbnailUrls, shouldRunBackgroundWork])
 
   // Preload thumbnails for visible items
   const handleViewableChanged = useCallback(
@@ -159,11 +135,9 @@ export default function PersonalCampScreen() {
 
       const minIdx = Math.max(0, Math.min(...indices) - 2)
       const maxIdx = Math.min(enrichedBondfires.length - 1, Math.max(...indices) + 8)
-      for (let i = minIdx; i <= maxIdx; i++) {
-        ensureThumbnailUrl(enrichedBondfires[i])
-      }
+      ensureThumbnailUrls(enrichedBondfires.slice(minIdx, maxIdx + 1))
     },
-    [enrichedBondfires, ensureThumbnailUrl, shouldRunBackgroundWork],
+    [enrichedBondfires, ensureThumbnailUrls, shouldRunBackgroundWork],
   )
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 10 }).current
 
@@ -279,7 +253,7 @@ export default function PersonalCampScreen() {
   // ── Build BondfireRow props ─────────────────────────────────────────
 
   const toBondfireRowProps = useCallback(
-    (bondfire: BondfireData): BondfireRowProps => {
+    (bondfire: BondfireData): Omit<BondfireRowProps, 'thumbnailUrl'> => {
       const isOwner = bondfire.userId === currentUser?._id
       const isPinned = pinnedIds.includes(bondfire._id)
 
@@ -289,7 +263,6 @@ export default function PersonalCampScreen() {
         timestamp: bondfire.createdAt,
         videoCount: bondfire.videoCount,
         campLabel: bondfire.campLabel,
-        thumbnailUrl: thumbnailUrls[bondfire._id] ?? null,
         isLive: bondfire.videoStatus === 'live',
         statusLabel: bondfire.status === 'draft' ? 'Draft — not recorded yet' : '',
         participants: [],
@@ -317,7 +290,6 @@ export default function PersonalCampScreen() {
     [
       currentUser?._id,
       pinnedIds,
-      thumbnailUrls,
       handleDelete,
       handlePin,
       handleUnpin,
@@ -513,7 +485,13 @@ export default function PersonalCampScreen() {
             <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
           )}
           contentContainerStyle={{ paddingBottom: 40 }}
-          renderItem={({ item }) => <BondfireRow {...toBondfireRowProps(item)} />}
+          renderItem={({ item }) => (
+            <BondfireThumbnailRow
+              {...toBondfireRowProps(item)}
+              bondfire={item}
+              thumbnailUrls$={thumbnailUrls$}
+            />
+          )}
           onViewableItemsChanged={handleViewableChanged}
           viewabilityConfig={viewabilityConfig}
         />

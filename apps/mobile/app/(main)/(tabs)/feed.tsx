@@ -19,7 +19,6 @@ import {
   useSubscription,
 } from '@bondfires/app'
 import {
-  BondfireRow,
   type BondfireRowProps,
   Button,
   closeOpenSwipeableRow,
@@ -29,10 +28,10 @@ import {
   Spinner,
   Text,
 } from '@bondfires/ui'
-import { useObservable, useValue } from '@legendapp/state/react'
+import { useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
 import { AlertTriangle, Flame, RefreshCw, Search, X } from '@tamagui/lucide-icons'
-import { useAction, useMutation, useQuery } from 'convex/react'
+import { useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -49,16 +48,17 @@ import { Separator, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import {
+  BondfireThumbnailContent,
+  BondfireThumbnailRow,
+} from '../../../components/BondfireThumbnail'
+import {
   BONDFIRE_REPORT_OPTIONS,
   getBondfireSwipeActions,
   getSwipeReportComment,
 } from '../../../lib/bondfireSwipeActions'
-import {
-  type BondfireThumbnailFields,
-  getBondfireThumbnailPlayback,
-  getCachedBondfireThumbnail,
-} from '../../../lib/bondfireThumbnails'
+import type { BondfireThumbnailFields } from '../../../lib/bondfireThumbnails'
 import { routes } from '../../../lib/routes'
+import { useBondfireThumbnails } from '../../../lib/useBondfireThumbnails'
 
 type BondfireData = Doc<'bondfires'> &
   BondfireThumbnailFields & {
@@ -167,7 +167,6 @@ function CampPill({
 /** Map a BondfireData item to the shared BondfireRow props */
 function toBondfireRowProps(
   bondfire: BondfireData,
-  thumbnailUrl: string | null,
   currentUserId: string | null,
   pinnedIds: string[],
   onOpen: () => void,
@@ -176,7 +175,7 @@ function toBondfireRowProps(
   onPin: () => void,
   onUnpin: () => void,
   onReport: () => void,
-): BondfireRowProps {
+): Omit<BondfireRowProps, 'thumbnailUrl'> {
   const isOwner = currentUserId === bondfire.userId
   const isPinned = pinnedIds.includes(bondfire._id)
 
@@ -186,7 +185,6 @@ function toBondfireRowProps(
     timestamp: bondfire.createdAt,
     videoCount: bondfire.videoCount,
     campLabel: bondfire.campLabel,
-    thumbnailUrl,
     isLive: bondfire.videoStatus === 'live' || !!bondfire.isLive,
     statusLabel: hasViewedToday(bondfire._id) ? 'Viewed' : 'New',
     badge: bondfire.badge,
@@ -211,7 +209,6 @@ function toBondfireRowProps(
  */
 function toMyFireRowProps(
   thread: MyFire,
-  thumbnailUrl: string | null,
   currentUserId: string | null,
   pinnedIds: string[],
   onOpen: () => void,
@@ -220,7 +217,7 @@ function toMyFireRowProps(
   onPin: () => void,
   onUnpin: () => void,
   onReport: () => void,
-): BondfireRowProps {
+): Omit<BondfireRowProps, 'thumbnailUrl'> {
   const isOwner = currentUserId === thread.userId
   const isPinned = pinnedIds.includes(thread._id)
 
@@ -230,7 +227,6 @@ function toMyFireRowProps(
     timestamp: thread.lastActivityAt,
     videoCount: thread.videoCount,
     campLabel: thread.camp?.name,
-    thumbnailUrl,
     isLive: thread.videoStatus === 'live',
     statusLabel:
       thread.videoStatus === 'awaiting_recovery'
@@ -453,7 +449,6 @@ export default function HomeScreen() {
   const isFocused = useIsFocused()
   const canLoadTabData = useCanLoadTabData(isFocused)
   const shouldRunBackgroundWork = useCanRunRecordingBackgroundWork(isFocused)
-  const getThumbnailUrl = useAction(api.videos.getThumbnailUrl)
   const { canCreate } = useSubscription()
   const subscriptionResolved = useValue(subscriptionStore$.subscriptionResolved)
   const summaryDismissed = useValue(freeSummaryDismissed$.dismissed)
@@ -530,26 +525,52 @@ export default function HomeScreen() {
   const unpinBondfire = useMutation(api.bondfires.unpinBondfire)
   const reportBondfire = useMutation(api.reports.submit)
 
-  const state$ = useObservable({
-    thumbnailUrls: {} as Record<string, string | null>,
+  const handleThumbnailBatchError = useCallback(
+    (error: unknown, pending: Array<{ bondfireId: string }>) => {
+      telemetry.warn('feed:thumbnail', 'Failed to load thumbnail URL batch', {
+        batchSize: pending.length,
+        bondfireIds: pending.map((item) => item.bondfireId),
+        error: String(error),
+      })
+    },
+    [],
+  )
+  const { ensureThumbnailUrls, resetThumbnailUrls, thumbnailUrls$ } = useBondfireThumbnails({
+    enabled: shouldRunBackgroundWork,
+    onBatchError: handleThumbnailBatchError,
   })
-  const thumbnailUrls = useValue(state$.thumbnailUrls)
 
+  const railThreads = useMemo(
+    () => [...sortedMyFires.unread, ...sortedMyFires.quiet].slice(0, RAIL_MAX_ITEMS),
+    [sortedMyFires],
+  )
   const railItems = useMemo<EmberRailItem[]>(
     () =>
-      [...sortedMyFires.unread, ...sortedMyFires.quiet].slice(0, RAIL_MAX_ITEMS).map((thread) => ({
+      railThreads.map((thread) => ({
         id: thread._id,
         label: thread.title?.trim() || `${thread.creatorName ?? 'Anonymous'}'s Bondfire`,
-        thumbnailUrl: getCachedBondfireThumbnail(thread, thumbnailUrls),
+        thumbnailUrl: null,
         unread: thread.unread,
         isUnansweredSpark: thread.userId === currentUserId && thread.videoCount <= 1,
       })),
-    [currentUserId, sortedMyFires, thumbnailUrls],
+    [currentUserId, railThreads],
+  )
+  const railThreadsById = useMemo(
+    () => new Map<string, MyFire>(railThreads.map((thread) => [thread._id, thread])),
+    [railThreads],
+  )
+  const renderRailThumbnail = useCallback(
+    (item: EmberRailItem) => {
+      const thread = railThreadsById.get(item.id)
+      return thread ? (
+        <BondfireThumbnailContent bondfire={thread} thumbnailUrls$={thumbnailUrls$} />
+      ) : null
+    },
+    [railThreadsById, thumbnailUrls$],
   )
 
   const listRef = useRef<FlatList<BondfireData> | null>(null)
   const filteredRef = useRef<BondfireData[]>([])
-  const loadingThumbsRef = useRef<Set<string>>(new Set())
   const didRestoreScrollRef = useRef(false)
   const persistActiveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -577,8 +598,7 @@ export default function HomeScreen() {
 
   const handleRefresh = useCallback(() => {
     resetLoadTracking()
-    state$.thumbnailUrls.set({})
-    loadingThumbsRef.current = new Set()
+    resetThumbnailUrls()
     setIsRefreshing(true)
     setRefreshKey((current) => current + 1)
 
@@ -589,7 +609,7 @@ export default function HomeScreen() {
       refreshTimeoutRef.current = null
       setIsRefreshing(false)
     }, 5000)
-  }, [resetLoadTracking, state$])
+  }, [resetLoadTracking, resetThumbnailUrls])
 
   const handleBondfiresResolved = useCallback(
     (nextBondfires: BondfireData[]) => {
@@ -614,11 +634,10 @@ export default function HomeScreen() {
     if (!feedCamps.some((camp) => camp._id === selectedCampId)) {
       resetLoadTracking()
       setBondfires(undefined)
-      state$.thumbnailUrls.set({})
-      loadingThumbsRef.current = new Set()
+      resetThumbnailUrls()
       appActions.setCurrentCampId(null)
     }
-  }, [feedCamps, joinedCamps, resetLoadTracking, selectedCampId, state$])
+  }, [feedCamps, joinedCamps, resetLoadTracking, resetThumbnailUrls, selectedCampId])
 
   const filtered = useMemo(() => {
     if (!bondfires) return bondfires
@@ -710,63 +729,17 @@ export default function HomeScreen() {
     }, 0)
   }, [filtered])
 
-  const ensureThumbnailUrl = useCallback(
-    async (bondfire: BondfireData) => {
-      if (!shouldRunBackgroundWork) return
-      const playback = getBondfireThumbnailPlayback(bondfire)
-      if (!playback) return
-      // Already resolved (including null = previously failed)
-      if (state$.thumbnailUrls[playback.cacheKey].get() !== undefined) return
-      if (loadingThumbsRef.current.has(playback.cacheKey)) return
-
-      loadingThumbsRef.current.add(playback.cacheKey)
-      try {
-        const { thumbnailUrl } = await getThumbnailUrl({
-          muxPlaybackId: playback.muxPlaybackId,
-          muxPlaybackPolicy: playback.muxPlaybackPolicy,
-          bondfireId: playback.bondfireVideoId ? undefined : bondfire._id,
-          bondfireVideoId: playback.bondfireVideoId,
-        })
-        state$.thumbnailUrls[playback.cacheKey].set(thumbnailUrl)
-        telemetry.breadcrumb('feed:thumbnail:loaded', {
-          bondfireId: bondfire._id,
-          hasToken: thumbnailUrl.includes('token='),
-        })
-      } catch (error) {
-        // Mark as null so we don't retry this bondfire repeatedly
-        state$.thumbnailUrls[playback.cacheKey].set(null)
-        // Use warn instead of error — thumbnails are cosmetic, and error
-        // toasts to users for non-breaking failures.
-        telemetry.warn('feed:thumbnail', 'Failed to load thumbnail URL', {
-          bondfireId: bondfire._id,
-          playbackPolicy: playback.muxPlaybackPolicy,
-          hasCampId: !!bondfire.campId,
-          hasPersonalCampId: !!bondfire.personalCampId,
-          videoStatus: bondfire.videoStatus,
-          error: String(error),
-        })
-      } finally {
-        loadingThumbsRef.current.delete(playback.cacheKey)
-      }
-    },
-    [getThumbnailUrl, shouldRunBackgroundWork, state$],
-  )
-
   useEffect(() => {
     if (!shouldRunBackgroundWork || !filtered) return
-    for (const bondfire of filtered.slice(0, 10)) {
-      ensureThumbnailUrl(bondfire)
-    }
-  }, [filtered, ensureThumbnailUrl, shouldRunBackgroundWork])
+    ensureThumbnailUrls(filtered.slice(0, 10))
+  }, [ensureThumbnailUrls, filtered, shouldRunBackgroundWork])
 
   // Rail tiles and "New responses" rows resolve their thumbnails through the
   // same cache as the Discover list.
   useEffect(() => {
     if (!shouldRunBackgroundWork || !myFires) return
-    for (const thread of [...sortedMyFires.unread, ...sortedMyFires.quiet].slice(0, 12)) {
-      ensureThumbnailUrl(thread)
-    }
-  }, [ensureThumbnailUrl, myFires, shouldRunBackgroundWork, sortedMyFires])
+    ensureThumbnailUrls([...sortedMyFires.unread, ...sortedMyFires.quiet].slice(0, 12))
+  }, [ensureThumbnailUrls, myFires, shouldRunBackgroundWork, sortedMyFires])
 
   const handleBondfirePress = useCallback(
     (bondfireId: string) => {
@@ -821,12 +794,11 @@ export default function HomeScreen() {
     (campId: string | null) => {
       resetLoadTracking()
       setBondfires(undefined)
-      state$.thumbnailUrls.set({})
-      loadingThumbsRef.current = new Set()
+      resetThumbnailUrls()
       appActions.setCurrentCampId(campId)
       listRef.current?.scrollToOffset({ offset: 0, animated: true })
     },
-    [resetLoadTracking, state$],
+    [resetLoadTracking, resetThumbnailUrls],
   )
 
   // ── Swipe action handlers ───────────────────────────────────────
@@ -931,11 +903,9 @@ export default function HomeScreen() {
       const minIndex = Math.max(0, Math.min(...indices) - 2)
       const maxIndex = Math.min(items.length - 1, Math.max(...indices) + 8)
 
-      for (let i = minIndex; i <= maxIndex; i++) {
-        ensureThumbnailUrl(items[i])
-      }
+      ensureThumbnailUrls(items.slice(minIndex, maxIndex + 1))
     },
-    [ensureThumbnailUrl, shouldRunBackgroundWork],
+    [ensureThumbnailUrls, shouldRunBackgroundWork],
   )
 
   useEffect(() => {
@@ -1003,7 +973,6 @@ export default function HomeScreen() {
         renderItem={({ item }) => {
           const props = toBondfireRowProps(
             item,
-            getCachedBondfireThumbnail(item, thumbnailUrls),
             currentUserId,
             pinnedIds,
             () => handleBondfirePress(item._id),
@@ -1013,7 +982,7 @@ export default function HomeScreen() {
             () => handleUnpin(item._id),
             () => handleReport(item._id, item.userId),
           )
-          return <BondfireRow {...props} />
+          return <BondfireThumbnailRow {...props} bondfire={item} thumbnailUrls$={thumbnailUrls$} />
         }}
         ItemSeparatorComponent={() => (
           <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
@@ -1049,6 +1018,7 @@ export default function HomeScreen() {
                 totalCount={myFires?.length ?? 0}
                 onOpenItem={handleBondfirePress}
                 onOpenAll={handleOpenAllFires}
+                renderThumbnail={renderRailThumbnail}
               />
             ) : null}
 
@@ -1079,7 +1049,6 @@ export default function HomeScreen() {
                 {newResponseThreads.map((thread) => {
                   const props = toMyFireRowProps(
                     thread,
-                    getCachedBondfireThumbnail(thread, thumbnailUrls),
                     currentUserId,
                     pinnedIds,
                     () => handleBondfirePress(thread._id),
@@ -1091,7 +1060,11 @@ export default function HomeScreen() {
                   )
                   return (
                     <YStack key={thread._id}>
-                      <BondfireRow {...props} />
+                      <BondfireThumbnailRow
+                        {...props}
+                        bondfire={thread}
+                        thumbnailUrls$={thumbnailUrls$}
+                      />
                       <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
                     </YStack>
                   )
