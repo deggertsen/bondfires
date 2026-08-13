@@ -7640,7 +7640,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"expo-video@npm:~3.0.16":
+"expo-video@npm:3.0.16":
   version: 3.0.16
   resolution: "expo-video@npm:3.0.16"
   peerDependencies:
@@ -7648,6 +7648,17 @@ __metadata:
     react: "*"
     react-native: "*"
   checksum: 10c0/b0f9e7c2597f2c44515eb34c16fbd0e79f19bcc4227c99788f9a98833832418a0717fcf2d06f66d2aba3ceb8e08733b28c2b6d662da304eccd728e6aa12a7ef2
+  languageName: node
+  linkType: hard
+
+"expo-video@patch:expo-video@npm%3A3.0.16#~/.yarn/patches/expo-video-npm-3.0.16-8037695497.patch":
+  version: 3.0.16
+  resolution: "expo-video@patch:expo-video@npm%3A3.0.16#~/.yarn/patches/expo-video-npm-3.0.16-8037695497.patch::version=3.0.16&hash=283ccd"
+  peerDependencies:
+    expo: "*"
+    react: "*"
+    react-native: "*"
+  checksum: 10c0/b81fb76417e669f85e70355b61ae0da7d0a1f618bc112c18525bde263252b9d1f514dd5a55dced2dee5439cb3b6a73c9216f627cb096c70d1c3dc20f3b05cad3
   languageName: node
   linkType: hard
 
@@ -9765,7 +9776,7 @@ __metadata:
     expo-splash-screen: "npm:~31.0.13"
     expo-status-bar: "npm:~3.0.9"
     expo-task-manager: "npm:~14.0.9"
-    expo-video: "npm:~3.0.16"
+    expo-video: "patch:expo-video@npm%3A3.0.16#~/.yarn/patches/expo-video-npm-3.0.16-8037695497.patch"
     expo-web-browser: "npm:~15.0.11"
     mux-embed: "npm:5.18.1"
     react: "npm:19.1.0"

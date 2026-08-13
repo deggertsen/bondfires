@@ -1,6 +1,8 @@
 # Dependencies
 node_modules/
-.yarn/
+.yarn/*
+!.yarn/patches/
+!.yarn/patches/**
 .pnp
 .pnp.js
 
@@ -66,4 +68,3 @@ infrastructure/terraform/.terraform.lock.hcl
 # Misc
 *.pem
 Thumbs.db
-

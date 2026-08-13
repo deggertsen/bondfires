@@ -27,6 +27,12 @@ function waitForNextFrame() {
   return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
 }
 
+function getNowPlayingTitle(bondfireData: BondfireDetailData, video: BondfireVideoItem) {
+  const threadTitle = bondfireData.title || bondfireData.aiTitle
+  if (!video.isMainVideo && video.summary) return video.summary
+  return threadTitle || video.summary || `${video.creatorName}'s Bondfire`
+}
+
 export function BondfirePlaybackScreen({
   statusBarStyle,
   backgroundColor,
@@ -211,6 +217,8 @@ export function BondfirePlaybackScreen({
               onProgress={onProgress}
               onScrubbingChange={onScrubbingChange}
               creatorName={item.creatorName}
+              campName={bondfireData.campName}
+              bondfireTitle={getNowPlayingTitle(bondfireData, item)}
               isMainVideo={item.isMainVideo}
               responseIndex={item.responseIndex}
               isLive={item.isLive}
