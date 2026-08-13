@@ -73,7 +73,10 @@ function isProcessingVideoRecord(record: {
   }
 
   const status = record.videoStatus ?? 'ready'
-  if (status === 'errored' || status === 'awaiting_recovery') {
+  // A pending response is only an eagerly provisioned recording session. It
+  // has not been counted into the thread and should not appear as either a
+  // playable video or an in-flight processing response.
+  if (status === 'pending' || status === 'errored' || status === 'awaiting_recovery') {
     return false
   }
 

@@ -209,6 +209,7 @@ export function LiveRecordScreen({
   const touchLiveSession = useMutation(api.videos.touchLiveSession)
   const confirmLiveSessionLocalBackup = useMutation(api.videos.confirmLiveSessionLocalBackup)
   const markBondfireLive = useMutation(api.videos.markBondfireLive)
+  const markBondfireVideoLive = useMutation(api.videos.markBondfireVideoLive)
 
   const recordingTimeRemainingSeconds = effectiveMaxRecordingSeconds
     ? Math.max(0, effectiveMaxRecordingSeconds - recordingDuration)
@@ -594,7 +595,7 @@ export function LiveRecordScreen({
   // record tap only has to open the RTMP connection (the provision leg —
   // Convex action + Mux API — comes off the tap's critical path). Provisioned
   // records are created pending:true so nothing is user-visible until video
-  // actually flows (markBondfireLive at tap, live_stream.active webhook as
+  // actually flows (the mark-live mutations at tap, live_stream.active as
   // the authoritative backstop). Abandoned sessions are released by the
   // existing blur/unmount/expiry cancel paths, the post-provision check
   // below, and ultimately the server's 5-minute pending cap + stale sweep.
@@ -760,15 +761,21 @@ export function LiveRecordScreen({
           // and forget — the live_stream.active webhook is the authoritative
           // backstop for both record types.
           const provisionedRecordId = livePublishStore$.recordId.get()
-          if (provisionedRecordTypeRef.current === 'bondfire' && provisionedRecordId) {
-            markBondfireLive({ bondfireId: provisionedRecordId as Id<'bondfires'> }).catch(
-              (error) => {
-                telemetry.warn('live:start', 'markBondfireLive failed; webhook will resolve it', {
-                  recordId: provisionedRecordId,
-                  error: String(error),
-                })
-              },
-            )
+          const provisionedRecordType = provisionedRecordTypeRef.current
+          if (provisionedRecordType && provisionedRecordId) {
+            const markLive =
+              provisionedRecordType === 'bondfire'
+                ? markBondfireLive({ bondfireId: provisionedRecordId as Id<'bondfires'> })
+                : markBondfireVideoLive({
+                    bondfireVideoId: provisionedRecordId as Id<'bondfireVideos'>,
+                  })
+            markLive.catch((error) => {
+              telemetry.warn('live:start', 'Marking pending record live failed', {
+                recordId: provisionedRecordId,
+                recordType: provisionedRecordType,
+                error: String(error),
+              })
+            })
           }
         } else {
           // Fallback: eager provisioning failed, was reaped, or its args went
@@ -797,7 +804,7 @@ export function LiveRecordScreen({
     } finally {
       state$.isTapStarting.set(false)
     }
-  }, [logRecordingError, markBondfireLive, state$])
+  }, [logRecordingError, markBondfireLive, markBondfireVideoLive, state$])
 
   const stopLiveRecording = useCallback(async () => {
     const currentRecordingState = recordingStore$.phase.get()

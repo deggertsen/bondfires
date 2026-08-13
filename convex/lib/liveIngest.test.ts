@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Doc } from '../_generated/dataModel'
-import { classifyMuxIngest, localIngestSource } from './liveIngest'
+import { classifyMuxIngest, initialLiveRecordStatus, localIngestSource } from './liveIngest'
 
 // Minimal liveSessions doc — localIngestSource only reads the fields below, so
 // we cast a partial rather than fabricate every column.
@@ -10,6 +10,17 @@ function session(overrides: Partial<Doc<'liveSessions'>>): Doc<'liveSessions'> {
     ...overrides,
   } as Doc<'liveSessions'>
 }
+
+describe('initialLiveRecordStatus', () => {
+  it('keeps eagerly provisioned records pending until recording starts', () => {
+    expect(initialLiveRecordStatus(true)).toBe('pending')
+  })
+
+  it('keeps direct-start records live', () => {
+    expect(initialLiveRecordStatus(false)).toBe('live')
+    expect(initialLiveRecordStatus()).toBe('live')
+  })
+})
 
 describe('localIngestSource', () => {
   it('returns null when the row has no ingest evidence', () => {

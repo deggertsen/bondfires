@@ -7,7 +7,7 @@ import {
   useSubscription,
 } from '@bondfires/app'
 import { useValue } from '@legendapp/state/react'
-import { Flame, Home, Map, MessageCircle, User } from '@tamagui/lucide-icons'
+import { Flame, Home, Map, User } from '@tamagui/lucide-icons'
 import { Tabs, useRouter } from 'expo-router'
 import { useCallback } from 'react'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -69,15 +69,19 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="feed"
         options={{
-          title: 'Feed',
+          title: 'Home',
           tabBarIcon: ({ color, size }) => <Home color={color} size={size} />,
         }}
       />
       <Tabs.Screen
         name="my-fires"
         options={{
+          // `href: null` hides the tab while keeping the route addressable:
+          // push notifications and deep links still target
+          // /(main)/(tabs)/my-fires (see EXTERNAL_STATIC_ROUTES). The screen
+          // is now reached from Home's Ember Rail instead of the tab bar.
+          href: null,
           title: 'My Fires',
-          tabBarIcon: ({ color, size }) => <MessageCircle color={color} size={size} />,
         }}
       />
       <Tabs.Screen

@@ -40,7 +40,12 @@ import {
   shouldAnnounceRecordOnReady,
   shouldDeferLiveFailureForBackup,
 } from './lib/liveBackupRecovery'
-import { classifyMuxIngest, type IngestEvidence, localIngestSource } from './lib/liveIngest'
+import {
+  classifyMuxIngest,
+  type IngestEvidence,
+  initialLiveRecordStatus,
+  localIngestSource,
+} from './lib/liveIngest'
 import { assessLiveSessionProgress } from './liveSessionProgress'
 import {
   assertCanRespondToPersonalBondfire,
@@ -3334,6 +3339,26 @@ async function markBondfireLiveFromPending(
   }
 }
 
+async function markBondfireVideoLiveFromPending(
+  ctx: MutationCtx,
+  bondfireVideoId: Id<'bondfireVideos'>,
+  expectedUserId?: Id<'users'>,
+) {
+  const video = await ctx.db.get(bondfireVideoId)
+  if (!video) throwUserError('Response video not found')
+  if (expectedUserId && video.userId !== expectedUserId) {
+    throwUserError('Not authorized')
+  }
+  if (video.videoStatus !== 'pending') {
+    return
+  }
+
+  await ctx.db.patch(bondfireVideoId, {
+    videoStatus: 'live',
+    muxAssetStatus: 'live',
+  })
+}
+
 /**
  * Public mutation: flip pending to live when the user taps record after pre-connect.
  */
@@ -3345,6 +3370,21 @@ export const markBondfireLive = mutation({
     const userId = await auth.getUserId(ctx)
     if (!userId) throwUserError('Not authenticated')
     await markBondfireLiveFromPending(ctx, args.bondfireId, userId)
+  },
+})
+
+/**
+ * Public mutation: flip a pending response live when the user taps record
+ * after pre-connect. The live_stream.active webhook is the backstop.
+ */
+export const markBondfireVideoLive = mutation({
+  args: {
+    bondfireVideoId: v.id('bondfireVideos'),
+  },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) throwUserError('Not authenticated')
+    await markBondfireVideoLiveFromPending(ctx, args.bondfireVideoId, userId)
   },
 })
 
@@ -4328,6 +4368,7 @@ export const createLinkedMuxLiveSession = internalMutation({
   handler: async (ctx, args) => {
     const now = Date.now()
     const user = await ctx.db.get(args.userId)
+    const initialStatus = initialLiveRecordStatus(args.pending)
     let expiresAt: number | undefined
 
     if (args.isResponse) {
@@ -4392,11 +4433,11 @@ export const createLinkedMuxLiveSession = internalMutation({
         creatorName: user?.displayName ?? user?.name,
         sequenceNumber,
         liveSessionId,
-        videoStatus: 'live',
+        videoStatus: initialStatus,
         muxLiveStreamId: args.liveStreamId,
         muxLivePlaybackId: args.playbackId,
         muxPlaybackPolicy: args.playbackPolicy,
-        muxAssetStatus: 'live',
+        muxAssetStatus: initialStatus,
         width: args.width,
         height: args.height,
         tags: args.tags,
@@ -4422,8 +4463,6 @@ export const createLinkedMuxLiveSession = internalMutation({
     }
 
     if (args.personalCamp) {
-      const initialStatus = args.pending ? 'pending' : 'live'
-
       // When a draft bondfire exists (pre-recording invite flow), activate it
       // instead of creating a new row. The draft already has participants and
       // invite codes; we just attach the Mux live stream fields and flip
@@ -4529,7 +4568,6 @@ export const createLinkedMuxLiveSession = internalMutation({
       return { liveSessionId, recordId, recordType: 'bondfire' as const }
     }
 
-    const initialStatus = args.pending ? 'pending' : 'live'
     const recordId = await ctx.db.insert('bondfires', {
       userId: args.userId,
       creatorName: user?.displayName ?? user?.name,

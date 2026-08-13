@@ -14,7 +14,15 @@ import { useMutation, useQuery } from 'convex/react'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { LinearGradient } from 'expo-linear-gradient'
 import { useVideoPlayer, VideoView } from 'expo-video'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import {
+  type Ref,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+} from 'react'
 import { type LayoutChangeEvent, PanResponder, Pressable, type View } from 'react-native'
 import { YStack } from 'tamagui'
 import { api } from '../../../../../../convex/_generated/api'
@@ -71,7 +79,12 @@ function getFirstReactionAfter<T extends { timestampMs: number }>(
   return low
 }
 
+export interface VideoPlayerHandle {
+  releaseSourceForRecorder: () => Promise<void>
+}
+
 export interface VideoPlayerProps {
+  ref?: Ref<VideoPlayerHandle>
   bondfireId?: Id<'bondfires'>
   bondfireVideoId?: Id<'bondfireVideos'>
   videoUrl: string | null
@@ -91,6 +104,7 @@ export interface VideoPlayerProps {
 }
 
 export function VideoPlayer({
+  ref,
   bondfireId,
   bondfireVideoId,
   videoUrl,
@@ -249,6 +263,36 @@ export function VideoPlayer({
   playbackGateRef.current = { isActive, isScreenFocused, isAppActive }
   // Deliberate user pause — auto-recovery must never play over it.
   const userPausedRef = useRef(false)
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      releaseSourceForRecorder: async () => {
+        if (errorRetryRef.current.timer) {
+          clearTimeout(errorRetryRef.current.timer)
+          errorRetryRef.current.timer = null
+        }
+        userPausedRef.current = true
+        player.pause()
+        state$.isPlaying.set(false)
+
+        try {
+          // Unlike a state update followed immediately by navigation, this
+          // promise resolves only after Android has cleared ExoPlayer's media
+          // items on the main queue. That gives the recorder the decoder and
+          // media resources before its camera session mounts.
+          await player.replaceAsync(null)
+        } catch (error: unknown) {
+          telemetry.warn(
+            'video:recorder_source_release_failed',
+            error instanceof Error ? error.message : String(error),
+            { videoId, isLive },
+          )
+        }
+      },
+    }),
+    [isLive, player, state$, videoId],
+  )
 
   const resumePlaybackAfterRecovery = useCallback(() => {
     if (!player) return
