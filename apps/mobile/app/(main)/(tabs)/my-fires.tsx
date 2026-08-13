@@ -11,14 +11,7 @@ import {
   useCurrentUserId,
   useLoadingTimeoutTelemetry,
 } from '@bondfires/app'
-import {
-  BondfireRow,
-  type BondfireRowProps,
-  Button,
-  closeOpenSwipeableRow,
-  Spinner,
-  Text,
-} from '@bondfires/ui'
+import { type BondfireRowProps, Button, closeOpenSwipeableRow, Spinner, Text } from '@bondfires/ui'
 import { useIsFocused } from '@react-navigation/native'
 import { AlertTriangle, ChevronLeft, Flame, Pin, RefreshCw } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
@@ -28,6 +21,7 @@ import { Alert, FlatList, Pressable, RefreshControl, StatusBar } from 'react-nat
 import { Separator, useTheme, variableToString, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
+import { BondfireThumbnailRow } from '../../../components/BondfireThumbnail'
 import { EditTitleSheet, useEditTitleSheet } from '../../../components/EditTitleSheet'
 import {
   BONDFIRE_REPORT_OPTIONS,
@@ -35,10 +29,7 @@ import {
   getBondfireSwipeActions,
   getSwipeReportComment,
 } from '../../../lib/bondfireSwipeActions'
-import {
-  type BondfireThumbnailFields,
-  getCachedBondfireThumbnail,
-} from '../../../lib/bondfireThumbnails'
+import type { BondfireThumbnailFields } from '../../../lib/bondfireThumbnails'
 import { routes } from '../../../lib/routes'
 import { useBondfireThumbnails } from '../../../lib/useBondfireThumbnails'
 
@@ -154,7 +145,6 @@ function getMyFireStatusLabel(thread: MyFire): string {
 
 function toBondfireRowProps(
   thread: MyFire,
-  thumbnailUrl: string | null,
   currentUserId: string | null,
   pinnedIds: string[],
   onOpen: () => void,
@@ -164,7 +154,7 @@ function toBondfireRowProps(
   onUnpin: () => void,
   onReport: () => void,
   onEdit: () => void,
-): BondfireRowProps {
+): Omit<BondfireRowProps, 'thumbnailUrl'> {
   const isOwner = currentUserId === thread.userId
   const isPinned = pinnedIds.includes(thread._id)
 
@@ -174,7 +164,6 @@ function toBondfireRowProps(
     timestamp: thread.lastActivityAt,
     videoCount: thread.videoCount,
     campLabel: thread.camp?.name,
-    thumbnailUrl,
     isLive: thread.videoStatus === 'live',
     statusLabel: getMyFireStatusLabel(thread),
     badge: thread.badge,
@@ -202,18 +191,16 @@ function toBondfireRowProps(
 
 function toInvitedBondfireRowProps(
   thread: MyFire,
-  thumbnailUrl: string | null,
   onOpen: () => void,
   onRespond: () => void,
   onDismiss: () => void,
-): BondfireRowProps {
+): Omit<BondfireRowProps, 'thumbnailUrl'> {
   return {
     title: thread.title,
     creatorName: thread.creatorName ?? 'Anonymous',
     timestamp: thread.lastActivityAt,
     videoCount: thread.videoCount,
     campLabel: thread.camp?.name,
-    thumbnailUrl,
     isLive: thread.videoStatus === 'live',
     statusLabel: 'Invited',
     badge: 'invited',
@@ -322,7 +309,7 @@ export default function MyFiresScreen() {
     })
   }, [currentUserId, isUserLoading, threads])
 
-  const { ensureThumbnailUrls, resetThumbnailUrls, thumbnailUrls } = useBondfireThumbnails({
+  const { ensureThumbnailUrls, resetThumbnailUrls, thumbnailUrls$ } = useBondfireThumbnails({
     enabled: shouldRunBackgroundWork,
   })
   const { editingBondfire, openEditTitleSheet, closeEditTitleSheet } = useEditTitleSheet()
@@ -505,7 +492,6 @@ export default function MyFiresScreen() {
         renderItem={({ item }) => {
           const props = toBondfireRowProps(
             item,
-            getCachedBondfireThumbnail(item, thumbnailUrls),
             currentUserId,
             pinnedIds,
             () => handleOpen(item._id),
@@ -516,7 +502,7 @@ export default function MyFiresScreen() {
             () => handleReport(item._id, item.userId),
             () => openEditTitleSheet(item._id, item.title ?? '', item.creatorName ?? undefined),
           )
-          return <BondfireRow {...props} />
+          return <BondfireThumbnailRow {...props} bondfire={item} thumbnailUrls$={thumbnailUrls$} />
         }}
         ItemSeparatorComponent={() => (
           <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
@@ -563,7 +549,6 @@ export default function MyFiresScreen() {
 
                   const props = toInvitedBondfireRowProps(
                     item,
-                    getCachedBondfireThumbnail(item, thumbnailUrls),
                     () => handleOpen(item._id),
                     () => handleRespond(item._id),
                     () => handleDismissInvite(row.claim._id),
@@ -571,7 +556,11 @@ export default function MyFiresScreen() {
 
                   return (
                     <YStack key={row.claim._id}>
-                      <BondfireRow {...props} />
+                      <BondfireThumbnailRow
+                        {...props}
+                        bondfire={item}
+                        thumbnailUrls$={thumbnailUrls$}
+                      />
                       <Separator borderColor={'$borderColor'} opacity={0.6} />
                     </YStack>
                   )

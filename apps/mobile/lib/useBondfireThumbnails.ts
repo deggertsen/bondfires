@@ -1,5 +1,7 @@
+import { batch, type Observable } from '@legendapp/state'
+import { useObservable } from '@legendapp/state/react'
 import { useAction } from 'convex/react'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useRef } from 'react'
 import { api } from '../../../convex/_generated/api'
 import {
   type BondfireThumbnailFields,
@@ -9,6 +11,8 @@ import {
 
 type ThumbnailBondfire = BondfireThumbnailFields & { _id: string }
 
+export type BondfireThumbnailUrls$ = Observable<Record<string, string | null>>
+
 type UseBondfireThumbnailsOptions = {
   enabled: boolean
   onBatchError?: (error: unknown, pending: PendingBondfireThumbnail[]) => void
@@ -16,13 +20,14 @@ type UseBondfireThumbnailsOptions = {
 
 /**
  * Loads a visible window of thumbnail URLs in one Convex action and publishes
- * the completed window in one React state update. A generation guard prevents
- * stale requests from repopulating the cache after a refresh or camp change.
+ * results to a key-addressable observable. Consumers subscribe to their own
+ * cache key, so thumbnail hydration never rerenders the parent list. A
+ * generation guard prevents stale requests from repopulating the cache after
+ * a refresh or camp change.
  */
 export function useBondfireThumbnails({ enabled, onBatchError }: UseBondfireThumbnailsOptions) {
   const getThumbnailUrlsBatch = useAction(api.videos.getThumbnailUrlsBatch)
-  const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string | null | undefined>>({})
-  const thumbnailUrlsRef = useRef(thumbnailUrls)
+  const thumbnailUrls$ = useObservable<Record<string, string | null>>({})
   const loadingKeysRef = useRef<Set<string>>(new Set())
   const generationRef = useRef(0)
   const onBatchErrorRef = useRef(onBatchError)
@@ -34,7 +39,7 @@ export function useBondfireThumbnails({ enabled, onBatchError }: UseBondfireThum
 
       const pending = getPendingBondfireThumbnails(
         bondfires,
-        thumbnailUrlsRef.current,
+        thumbnailUrls$.peek(),
         loadingKeysRef.current,
       )
       if (pending.length === 0) return
@@ -49,33 +54,30 @@ export function useBondfireThumbnails({ enabled, onBatchError }: UseBondfireThum
         })
         if (generation !== generationRef.current) return
 
-        const next = { ...thumbnailUrlsRef.current }
-        pending.forEach((item, index) => {
-          next[item.cacheKey] = results[index]?.thumbnailUrl ?? null
+        batch(() => {
+          pending.forEach((item, index) => {
+            thumbnailUrls$[item.cacheKey].set(results[index]?.thumbnailUrl ?? null)
+          })
         })
-        thumbnailUrlsRef.current = next
-        setThumbnailUrls(next)
       } catch (error) {
         if (generation !== generationRef.current) return
 
-        const next = { ...thumbnailUrlsRef.current }
-        for (const item of pending) next[item.cacheKey] = null
-        thumbnailUrlsRef.current = next
-        setThumbnailUrls(next)
+        batch(() => {
+          for (const item of pending) thumbnailUrls$[item.cacheKey].set(null)
+        })
         onBatchErrorRef.current?.(error, pending)
       } finally {
         for (const item of pending) loadingKeys.delete(item.cacheKey)
       }
     },
-    [enabled, getThumbnailUrlsBatch],
+    [enabled, getThumbnailUrlsBatch, thumbnailUrls$],
   )
 
   const resetThumbnailUrls = useCallback(() => {
     generationRef.current += 1
     loadingKeysRef.current = new Set()
-    thumbnailUrlsRef.current = {}
-    setThumbnailUrls({})
-  }, [])
+    thumbnailUrls$.set({})
+  }, [thumbnailUrls$])
 
-  return { ensureThumbnailUrls, resetThumbnailUrls, thumbnailUrls }
+  return { ensureThumbnailUrls, resetThumbnailUrls, thumbnailUrls$ }
 }

@@ -26,6 +26,8 @@ export type BondfireRowProps = {
   campLabel?: string
   /** Thumbnail URL for the spark video */
   thumbnailUrl: string | null
+  /** Optional reactive thumbnail content; takes precedence over thumbnailUrl. */
+  thumbnailContent?: React.ReactNode
   /** Whether this bondfire is currently live */
   isLive: boolean
   /** Status label displayed after the timestamp, e.g. "Viewed" or "New" */
@@ -119,6 +121,7 @@ export function BondfireRow({
   videoCount,
   campLabel,
   thumbnailUrl,
+  thumbnailContent,
   isLive,
   statusLabel,
   badge,
@@ -167,7 +170,9 @@ export function BondfireRow({
           alignItems="center"
           justifyContent="center"
         >
-          {thumbnailUrl ? (
+          {thumbnailContent !== undefined ? (
+            thumbnailContent
+          ) : thumbnailUrl ? (
             <Image
               source={{ uri: thumbnailUrl }}
               style={{ width: '100%', height: '100%' }}

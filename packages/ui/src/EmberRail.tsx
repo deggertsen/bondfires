@@ -22,6 +22,8 @@ export type EmberRailProps = {
   totalCount: number
   onOpenItem: (id: string) => void
   onOpenAll: () => void
+  /** Optional renderer for stores that resolve thumbnails reactively. */
+  renderThumbnail?: (item: EmberRailItem) => React.ReactNode
 }
 
 const RING_SIZE = 56
@@ -88,7 +90,13 @@ function CountBadge({ count }: { count: number }) {
  * ring and dot, quiet threads sit dimmed after them, and the viewer's own
  * unanswered sparks carry a gold spark-dot as a gentle re-engagement nudge.
  */
-export function EmberRail({ items, totalCount, onOpenItem, onOpenAll }: EmberRailProps) {
+export function EmberRail({
+  items,
+  totalCount,
+  onOpenItem,
+  onOpenAll,
+  renderThumbnail,
+}: EmberRailProps) {
   return (
     <ScrollView
       horizontal
@@ -143,7 +151,9 @@ export function EmberRail({ items, totalCount, onOpenItem, onOpenAll }: EmberRai
               justifyContent="center"
               opacity={item.unread ? 1 : 0.6}
             >
-              {item.thumbnailUrl ? (
+              {renderThumbnail ? (
+                renderThumbnail(item)
+              ) : item.thumbnailUrl ? (
                 <Image
                   source={{ uri: item.thumbnailUrl }}
                   style={{ width: '100%', height: '100%' }}
