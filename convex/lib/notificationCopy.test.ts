@@ -8,7 +8,6 @@ import {
   responseLiveBody,
   responsePublishBody,
 } from './notificationCopy'
-import { buildFcmMessage } from './pushProviders'
 
 describe('bodyFromSummary', () => {
   it('formats third-person summary into Name: Rest', () => {
@@ -84,43 +83,5 @@ describe('accessApprovedTitle', () => {
   it('uses warmer copy', () => {
     expect(accessApprovedTitle('Trailblazers')).toBe('Trailblazers let you in')
     expect(accessApprovedBody()).toBe("You're now a member — tap to look around")
-  })
-})
-
-describe('buildFcmMessage', () => {
-  it('includes android image when avatarUrl is set', () => {
-    const message = buildFcmMessage('token-1', {
-      title: 'New response',
-      body: 'David: Shares news',
-      channelId: 'bondfires-responses',
-      avatarUrl: 'https://example.com/avatar.jpg',
-      data: { type: 'bondfire_response' },
-    }) as {
-      message: {
-        notification: { image?: string }
-        android: { notification: { image?: string } }
-        data: Record<string, string>
-      }
-    }
-
-    expect(message.message.notification.image).toBe('https://example.com/avatar.jpg')
-    expect(message.message.android.notification.image).toBe('https://example.com/avatar.jpg')
-    expect(message.message.data.avatarUrl).toBe('https://example.com/avatar.jpg')
-  })
-
-  it('omits image fields when avatarUrl is missing', () => {
-    const message = buildFcmMessage('token-1', {
-      title: 'New response',
-      body: 'Hello',
-      channelId: 'bondfires-responses',
-    }) as {
-      message: {
-        notification: { image?: string }
-        android: { notification: { image?: string } }
-      }
-    }
-
-    expect(message.message.notification.image).toBeUndefined()
-    expect(message.message.android.notification.image).toBeUndefined()
   })
 })

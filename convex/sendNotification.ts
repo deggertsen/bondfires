@@ -1,5 +1,5 @@
 import { v } from 'convex/values'
-import { api, internal } from './_generated/api'
+import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import {
   type ActionCtx,
@@ -118,19 +118,9 @@ function uniqueUserIds(userIds: Array<Id<'users'>>) {
   return [...new Set(userIds)]
 }
 
-function isNativeToken(token: DeviceToken): boolean {
-  if (token.tokenType === 'apns' || token.tokenType === 'fcm') return true
-  if (token.tokenType === 'expo') return false
-  // Untyped tokens: treat platform as the source of truth when the value
-  // doesn't look like an Expo push token.
-  if (token.token.startsWith('ExponentPushToken')) return false
-  return token.platform === 'ios' || token.platform === 'android'
-}
-
 function resolveTokenType(token: DeviceToken): 'apns' | 'fcm' | null {
   if (token.tokenType === 'apns' || token.tokenType === 'fcm') return token.tokenType
-  if (!isNativeToken(token)) return null
-  return token.platform === 'ios' ? 'apns' : 'fcm'
+  return null
 }
 
 /**
@@ -252,14 +242,16 @@ async function deliverNativePush(
       failureCount += apnsTokens.length
       errors.push('APNs credentials not configured (APNS_KEY_P8 / APNS_KEY_ID / APNS_TEAM_ID)')
     } else {
-      const result = await sendApnsPushNotification(apnsTokens, payload, config.apns)
-      if (result.success) successCount += apnsTokens.length - result.invalidTokens.length
-      failureCount += result.invalidTokens.length
-      if (!result.success && result.error) {
-        failureCount = Math.max(failureCount, apnsTokens.length)
+      try {
+        const result = await sendApnsPushNotification(apnsTokens, payload, config.apns)
+        successCount += result.successCount
+        failureCount += result.failureCount
+        invalidTokens.push(...result.invalidTokens)
+        if (result.error) errors.push(result.error)
+      } catch (error) {
+        failureCount += apnsTokens.length
+        errors.push(`APNs: ${error instanceof Error ? error.message : String(error)}`)
       }
-      invalidTokens.push(...result.invalidTokens)
-      if (result.error) errors.push(result.error)
     }
   }
 
@@ -268,13 +260,16 @@ async function deliverNativePush(
       failureCount += fcmTokens.length
       errors.push('FCM credentials not configured (FCM_SERVICE_ACCOUNT_JSON)')
     } else {
-      const result = await sendFcmPushNotification(fcmTokens, payload, config.fcm)
-      // Count successes as tokens that weren't invalid when overall success
-      const fcmSuccesses = result.success ? fcmTokens.length - result.invalidTokens.length : 0
-      successCount += fcmSuccesses
-      failureCount += fcmTokens.length - fcmSuccesses
-      invalidTokens.push(...result.invalidTokens)
-      if (result.error) errors.push(result.error)
+      try {
+        const result = await sendFcmPushNotification(fcmTokens, payload, config.fcm)
+        successCount += result.successCount
+        failureCount += result.failureCount
+        invalidTokens.push(...result.invalidTokens)
+        if (result.error) errors.push(result.error)
+      } catch (error) {
+        failureCount += fcmTokens.length
+        errors.push(`FCM: ${error instanceof Error ? error.message : String(error)}`)
+      }
     }
   }
 
@@ -322,7 +317,7 @@ export const sendToUser = internalAction({
     }
 
     // Get all device tokens for the user
-    const tokens: DeviceToken[] = await ctx.runQuery(api.notifications.getTokensForUser, {
+    const tokens: DeviceToken[] = await ctx.runQuery(internal.notifications.getTokensForUser, {
       userId: args.userId,
     })
 
@@ -341,7 +336,7 @@ export const sendToUser = internalAction({
     }
 
     // Prefer native APNs/FCM tokens. Legacy Expo tokens are ignored after migration.
-    const nativeTokens = tokens.filter((t) => isNativeToken(t))
+    const nativeTokens = tokens.filter((token) => resolveTokenType(token) !== null)
 
     if (nativeTokens.length === 0) {
       await recordPushSendEvent(ctx, {

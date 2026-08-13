@@ -1,6 +1,12 @@
 import { v } from 'convex/values'
 import type { Id } from './_generated/dataModel'
-import { internalMutation, type MutationCtx, mutation, query } from './_generated/server'
+import {
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+  mutation,
+  query,
+} from './_generated/server'
 import { auth } from './auth'
 import { throwUserError } from './errors'
 import { logServerEvent } from './serverTelemetry'
@@ -20,10 +26,7 @@ async function deleteLegacyExpoTokensForDevice(
   for (const token of tokens) {
     if (token._id === keepTokenId) continue
     if (token.deviceId !== deviceId) continue
-    const isExpo =
-      token.tokenType === 'expo' ||
-      token.tokenType === undefined ||
-      token.token.startsWith('ExponentPushToken')
+    const isExpo = token.tokenType === 'expo' || token.tokenType === undefined
     if (isExpo) {
       await ctx.db.delete(token._id)
     }
@@ -60,7 +63,10 @@ export const registerDevice = mutation({
     }
 
     const now = Date.now()
-    const tokenType = args.tokenType ?? (args.platform === 'ios' ? 'apns' : 'fcm')
+    // Older shipped clients omit tokenType and always register Expo tokens.
+    // Preserve that default so a backend-first deploy never misroutes those
+    // values directly to APNs/FCM.
+    const tokenType = args.tokenType ?? 'expo'
 
     // Check if token already exists
     const existing = await ctx.db
@@ -228,7 +234,7 @@ export const getDeviceTokenCount = query({
 })
 
 // Get all device tokens for a user (internal use for sending notifications)
-export const getTokensForUser = query({
+export const getTokensForUser = internalQuery({
   args: { userId: v.id('users') },
   handler: async (ctx, args) => {
     return await ctx.db

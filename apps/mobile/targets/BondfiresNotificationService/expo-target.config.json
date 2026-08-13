@@ -1,0 +1,7 @@
+{
+  "type": "notification-service",
+  "name": "BondfiresNotificationService",
+  "displayName": "Bondfires Notification Service",
+  "bundleIdentifier": ".NotificationServiceExtension",
+  "deploymentTarget": "16.4"
+}

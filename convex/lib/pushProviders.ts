@@ -23,7 +23,8 @@ export interface PushPayload {
 }
 
 export interface PushSendResult {
-  success: boolean
+  successCount: number
+  failureCount: number
   /** Tokens that should be deleted (unregistered / invalid). */
   invalidTokens: string[]
   error?: string
@@ -173,11 +174,12 @@ async function signJwt(params: {
 
 // ── APNs ─────────────────────────────────────────────────────────────
 
-let cachedApnsJwt: { token: string; expiresAt: number } | null = null
+let cachedApnsJwt: { cacheKey: string; token: string; expiresAt: number } | null = null
 
 async function getApnsJwt(config: ApnsConfig): Promise<string> {
   const now = Math.floor(Date.now() / 1000)
-  if (cachedApnsJwt && cachedApnsJwt.expiresAt > now + 60) {
+  const cacheKey = `${config.teamId}:${config.keyId}`
+  if (cachedApnsJwt && cachedApnsJwt.cacheKey === cacheKey && cachedApnsJwt.expiresAt > now + 60) {
     return cachedApnsJwt.token
   }
 
@@ -189,27 +191,17 @@ async function getApnsJwt(config: ApnsConfig): Promise<string> {
   })
 
   // APNs JWTs are valid for up to 60 minutes.
-  cachedApnsJwt = { token, expiresAt: now + 50 * 60 }
+  cachedApnsJwt = { cacheKey, token, expiresAt: now + 50 * 60 }
   return token
 }
 
-export async function sendApnsPushNotification(
-  tokens: string[],
-  payload: PushPayload,
-  config: ApnsConfig,
-): Promise<PushSendResult> {
-  if (tokens.length === 0) {
-    return { success: false, invalidTokens: [], error: 'No APNs tokens' }
-  }
-
-  const jwt = await getApnsJwt(config)
-  const host = config.production ? 'api.push.apple.com' : 'api.sandbox.push.apple.com'
-  // Flatten custom data onto the root payload (APNs convention). Keep `aps`
-  // for system fields; NSE reads `avatarUrl` from userInfo.
+/** Build the provider-specific APNs body without performing network I/O. */
+export function buildApnsPayload(payload: PushPayload): Record<string, unknown> {
   const customData: Record<string, unknown> = { ...(payload.data ?? {}) }
   if (payload.avatarUrl) {
     customData.avatarUrl = payload.avatarUrl
   }
+
   const body: Record<string, unknown> = {
     aps: {
       alert: {
@@ -221,9 +213,26 @@ export async function sendApnsPushNotification(
       ...(payload.threadId ? { 'thread-id': payload.threadId } : {}),
     },
   }
+
   for (const [key, value] of Object.entries(customData)) {
+    if (value === undefined) continue
     body[key] = typeof value === 'string' ? value : JSON.stringify(value)
   }
+  return body
+}
+
+export async function sendApnsPushNotification(
+  tokens: string[],
+  payload: PushPayload,
+  config: ApnsConfig,
+): Promise<PushSendResult> {
+  if (tokens.length === 0) {
+    return { successCount: 0, failureCount: 0, invalidTokens: [] }
+  }
+
+  const jwt = await getApnsJwt(config)
+  const host = config.production ? 'api.push.apple.com' : 'api.sandbox.push.apple.com'
+  const body = buildApnsPayload(payload)
   const invalidTokens: string[] = []
   let successCount = 0
   const errors: string[] = []
@@ -259,11 +268,9 @@ export async function sendApnsPushNotification(
             // ignore parse errors
           }
 
-          const invalid =
-            response.status === 410 ||
-            reason === 'BadDeviceToken' ||
-            reason === 'Unregistered' ||
-            reason === 'ExpiredToken'
+          // BadDeviceToken can also mean a sandbox/production or topic
+          // mismatch. Only delete tokens APNs explicitly reports as inactive.
+          const invalid = response.status === 410 || reason === 'Unregistered'
 
           return { token, ok: false as const, reason, invalid }
         } catch (error) {
@@ -288,7 +295,8 @@ export async function sendApnsPushNotification(
   }
 
   return {
-    success: successCount > 0,
+    successCount,
+    failureCount: tokens.length - successCount,
     invalidTokens,
     error: errors.length > 0 ? errors.slice(0, 5).join('; ') : undefined,
   }
@@ -296,11 +304,16 @@ export async function sendApnsPushNotification(
 
 // ── FCM v1 ───────────────────────────────────────────────────────────
 
-let cachedFcmAccessToken: { token: string; expiresAt: number } | null = null
+let cachedFcmAccessToken: { cacheKey: string; token: string; expiresAt: number } | null = null
 
 async function getFcmAccessToken(config: FcmConfig): Promise<string> {
   const now = Math.floor(Date.now() / 1000)
-  if (cachedFcmAccessToken && cachedFcmAccessToken.expiresAt > now + 60) {
+  const cacheKey = `${config.projectId}:${config.clientEmail}`
+  if (
+    cachedFcmAccessToken &&
+    cachedFcmAccessToken.cacheKey === cacheKey &&
+    cachedFcmAccessToken.expiresAt > now + 60
+  ) {
     return cachedFcmAccessToken.token
   }
 
@@ -331,8 +344,12 @@ async function getFcmAccessToken(config: FcmConfig): Promise<string> {
     throw new Error(`FCM OAuth error: ${response.status} - ${text}`)
   }
 
-  const json = (await response.json()) as { access_token: string; expires_in?: number }
+  const json = (await response.json()) as { access_token?: string; expires_in?: number }
+  if (!json.access_token) {
+    throw new Error('FCM OAuth response did not include an access token')
+  }
   cachedFcmAccessToken = {
+    cacheKey,
     token: json.access_token,
     expiresAt: now + (json.expires_in ?? 3600) - 60,
   }
@@ -343,7 +360,9 @@ function stringifyData(data: Record<string, unknown> | undefined): Record<string
   if (!data) return {}
   const out: Record<string, string> = {}
   for (const [key, value] of Object.entries(data)) {
-    out[key] = typeof value === 'string' ? value : JSON.stringify(value)
+    if (value === undefined) continue
+    const serialized = typeof value === 'string' ? value : JSON.stringify(value)
+    if (serialized !== undefined) out[key] = serialized
   }
   return out
 }
@@ -393,7 +412,7 @@ export async function sendFcmPushNotification(
   config: FcmConfig,
 ): Promise<PushSendResult> {
   if (tokens.length === 0) {
-    return { success: false, invalidTokens: [], error: 'No FCM tokens' }
+    return { successCount: 0, failureCount: 0, invalidTokens: [] }
   }
 
   const accessToken = await getFcmAccessToken(config)
@@ -427,8 +446,9 @@ export async function sendFcmPushNotification(
         }
         reason = json.error?.status ?? reason
         const errorCode = json.error?.details?.find((d) => d.errorCode)?.errorCode
-        invalid =
-          errorCode === 'UNREGISTERED' || errorCode === 'INVALID_ARGUMENT' || reason === 'NOT_FOUND'
+        // INVALID_ARGUMENT can describe a malformed payload, so deleting the
+        // token on that status can wipe valid registrations.
+        invalid = errorCode === 'UNREGISTERED' || reason === 'NOT_FOUND'
       } catch {
         // keep text reason
         reason = text.slice(0, 200) || reason
@@ -444,7 +464,8 @@ export async function sendFcmPushNotification(
   }
 
   return {
-    success: successCount > 0,
+    successCount,
+    failureCount: tokens.length - successCount,
     invalidTokens,
     error: errors.length > 0 ? errors.slice(0, 5).join('; ') : undefined,
   }

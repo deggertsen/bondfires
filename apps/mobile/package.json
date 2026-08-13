@@ -34,6 +34,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@bacons/apple-targets": "4.0.7",
     "@bondfires/app": "workspace:*",
     "@bondfires/config": "workspace:*",
     "@bondfires/ui": "workspace:*",

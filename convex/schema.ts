@@ -702,9 +702,7 @@ export default defineSchema({
     platform: v.union(v.literal('ios'), v.literal('android')),
 
     // Token type — native APNs/FCM preferred; 'expo' retained for legacy cleanup
-    tokenType: v.optional(
-      v.union(v.literal('apns'), v.literal('fcm'), v.literal('expo')),
-    ),
+    tokenType: v.optional(v.union(v.literal('apns'), v.literal('fcm'), v.literal('expo'))),
 
     // Device identifier (for managing multiple devices per user)
     deviceId: v.optional(v.string()),
