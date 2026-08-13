@@ -1,0 +1,377 @@
+{
+  "version": 1,
+  "actions": {
+    "validate": {
+      "kind": "check",
+      "description": "Run the complete deterministic repository validation suite."
+    },
+    "convex-codegen-check": {
+      "kind": "check",
+      "description": "Confirm committed Convex bindings match the current backend source."
+    },
+    "convex-deploy": {
+      "kind": "deploy",
+      "description": "Deploy the Convex backend after validation and compatibility review."
+    },
+    "client-compatibility-review": {
+      "kind": "review",
+      "description": "Review compatibility with mobile clients already installed in production."
+    },
+    "ios-build": {
+      "kind": "build",
+      "description": "Build the iOS native application."
+    },
+    "android-build": {
+      "kind": "build",
+      "description": "Build the Android native application."
+    },
+    "device-smoke": {
+      "kind": "test",
+      "description": "Run a low-impact smoke test on a development client or device."
+    },
+    "route-integrity": {
+      "kind": "check",
+      "description": "Verify typed routes, deep links, and untrusted navigation handling."
+    },
+    "recording-smoke": {
+      "kind": "test",
+      "description": "Exercise the live and fallback recording paths on a device."
+    },
+    "push-notification-smoke": {
+      "kind": "test",
+      "description": "Verify push registration, delivery, and notification routing."
+    },
+    "theme-smoke": {
+      "kind": "test",
+      "description": "Review affected UI in both light and dark themes."
+    },
+    "documentation-review": {
+      "kind": "review",
+      "description": "Review documentation for correctness and stale operational facts."
+    },
+    "dependency-review": {
+      "kind": "review",
+      "description": "Review dependency, toolchain, and native compatibility changes."
+    },
+    "legacy-infrastructure-review": {
+      "kind": "review",
+      "description": "Confirm whether the deprecated Terraform still needs a corresponding external change."
+    },
+    "release-preflight": {
+      "kind": "check",
+      "description": "Run release readiness checks before versioning or production mutation."
+    },
+    "external-contract-review": {
+      "kind": "review",
+      "description": "Review the affected external-system contract and configuration."
+    },
+    "unknown-change-review": {
+      "kind": "review",
+      "description": "Classify an unmodeled change before relying on a narrower action plan."
+    }
+  },
+  "rules": [
+    {
+      "id": "documentation",
+      "description": "Documentation and agent guidance",
+      "patterns": ["**/*.md", "docs/**", ".claude/**", ".cursor/**"],
+      "actions": ["documentation-review"]
+    },
+    {
+      "id": "convex-generated",
+      "description": "Committed Convex bindings",
+      "patterns": ["convex/_generated/**"],
+      "actions": ["validate", "convex-codegen-check"]
+    },
+    {
+      "id": "convex-schema",
+      "description": "Database schema and generated client contract",
+      "patterns": ["convex/schema.ts", "convex/auth.config.ts"],
+      "actions": [
+        "validate",
+        "convex-codegen-check",
+        "client-compatibility-review",
+        "convex-deploy"
+      ]
+    },
+    {
+      "id": "convex-backend",
+      "description": "Convex functions, HTTP actions, jobs, and tests",
+      "patterns": ["convex/**"],
+      "excludePatterns": ["convex/_generated/**", "convex/**/*.md"],
+      "actions": ["validate", "convex-codegen-check", "convex-deploy"]
+    },
+    {
+      "id": "mobile-native",
+      "description": "Native modules, application configuration, credentials metadata, and bundled assets",
+      "patterns": [
+        "apps/mobile/modules/**",
+        "apps/mobile/targets/**",
+        "apps/mobile/app.json",
+        "apps/mobile/eas.json",
+        "apps/mobile/package.json",
+        "apps/mobile/GoogleService-Info.plist",
+        "apps/mobile/google-services.json",
+        "apps/mobile/assets/**"
+      ],
+      "actions": ["validate", "dependency-review", "ios-build", "android-build", "device-smoke"]
+    },
+    {
+      "id": "mobile-routes",
+      "description": "Expo Router screens and centralized navigation contracts",
+      "patterns": ["apps/mobile/app/**", "apps/mobile/lib/routes.ts", "apps/mobile/lib/navigation.ts"],
+      "actions": ["validate", "route-integrity", "device-smoke"]
+    },
+    {
+      "id": "mobile-application",
+      "description": "Mobile application source and unit tests",
+      "patterns": [
+        "apps/mobile/**/*.ts",
+        "apps/mobile/**/*.tsx",
+        "apps/mobile/**/*.js",
+        "apps/mobile/**/*.json",
+        "apps/mobile/**/*.plist",
+        "apps/mobile/**/*.gradle",
+        "apps/mobile/.env.example",
+        "apps/mobile/.gitignore"
+      ],
+      "actions": ["validate", "device-smoke"]
+    },
+    {
+      "id": "recording-stack",
+      "description": "Mux and live-recording behavior across backend, JavaScript, Swift, and Kotlin",
+      "patterns": [
+        "convex/videos.ts",
+        "convex/http.ts",
+        "convex/lib/live*.ts",
+        "apps/mobile/modules/bondfire-live-publisher/**",
+        "apps/mobile/components/create/*RecordScreen.tsx",
+        "packages/app/src/hooks/useLivePublisher.ts",
+        "packages/app/src/utils/live*.ts"
+      ],
+      "actions": ["validate", "recording-smoke", "device-smoke"]
+    },
+    {
+      "id": "shared-app",
+      "description": "Shared state, hooks, services, and policies consumed by mobile",
+      "patterns": ["packages/app/**"],
+      "actions": ["validate", "device-smoke"]
+    },
+    {
+      "id": "shared-ui",
+      "description": "Shared UI components and Tamagui configuration",
+      "patterns": ["packages/ui/**", "packages/config/**"],
+      "actions": ["validate", "theme-smoke", "device-smoke"]
+    },
+    {
+      "id": "repository-validation",
+      "description": "Repository validation, impact planning, formatting, tests, and CI tooling",
+      "patterns": [
+        "tsconfig.json",
+        "turbo.json",
+        "biome.json",
+        "vitest.config.ts",
+        ".gitignore",
+        "repository-intelligence.json",
+        ".github/**",
+        "scripts/check-*.mjs",
+        "scripts/repo-impact.mjs",
+        "scripts/repository-intelligence.test.mjs",
+        "scripts/lib/**"
+      ],
+      "actions": ["validate", "dependency-review"]
+    },
+    {
+      "id": "workspace-dependencies",
+      "description": "Workspace dependencies and runtime toolchain",
+      "patterns": ["package.json", "yarn.lock", ".yarnrc.yml", ".yarn/**", "app.json"],
+      "actions": [
+        "validate",
+        "dependency-review",
+        "ios-build",
+        "android-build",
+        "device-smoke"
+      ]
+    },
+    {
+      "id": "release-automation",
+      "description": "Production release and provisioning automation",
+      "patterns": [
+        "scripts/release.sh",
+        "scripts/release-evidence.mjs",
+        "scripts/refresh-ios-provisioning-profile.sh",
+        "RELEASE_PROCESS.md"
+      ],
+      "actions": ["validate", "release-preflight", "external-contract-review"]
+    },
+    {
+      "id": "development-automation",
+      "description": "Local iOS and Android development automation",
+      "patterns": ["scripts/dev-ios.sh", "scripts/dev-android.sh"],
+      "actions": ["validate", "device-smoke"]
+    },
+    {
+      "id": "legacy-infrastructure",
+      "description": "Deprecated website infrastructure retained for reference",
+      "patterns": ["infrastructure/**"],
+      "actions": ["validate", "legacy-infrastructure-review"]
+    }
+  ],
+  "boundaries": [
+    {
+      "id": "convex-mobile-api",
+      "description": "Convex schema and public functions are consumed by released mobile clients.",
+      "owner": "Bondfires maintainers",
+      "triggerPatterns": [
+        "convex/**",
+        "apps/mobile/app/**",
+        "apps/mobile/components/**",
+        "apps/mobile/lib/**",
+        "apps/mobile/modules/**",
+        "apps/mobile/targets/**",
+        "apps/mobile/app.json",
+        "apps/mobile/package.json",
+        "packages/app/**"
+      ],
+      "excludePatterns": [
+        "convex/_generated/**",
+        "convex/**/*.test.ts",
+        "convex/**/*.md",
+        "apps/mobile/test/**"
+      ],
+      "environmentKeys": ["EXPO_PUBLIC_CONVEX_URL"],
+      "documents": ["convex/ARCHITECTURE.md", "RELEASE_PROCESS.md"],
+      "actions": ["client-compatibility-review"]
+    },
+    {
+      "id": "mux-video",
+      "description": "Mux APIs, webhooks, playback signing, and native publishing form one recording contract.",
+      "owner": "Bondfires maintainers",
+      "triggerPatterns": [
+        "convex/videos.ts",
+        "convex/http.ts",
+        "convex/bondfireRetention.ts",
+        "apps/mobile/modules/bondfire-live-publisher/**",
+        "apps/mobile/components/create/*RecordScreen.tsx",
+        "packages/app/src/hooks/useLivePublisher.ts",
+        "packages/app/src/utils/live*.ts"
+      ],
+      "environmentKeys": [
+        "EXPO_PUBLIC_MUX_DATA_ENV_KEY",
+        "EXPO_PUBLIC_LOCAL_BACKUP_RECORDING",
+        "MUX_LIVE_LATENCY_MODE",
+        "MUX_LIVE_RECONNECT_SLATE_URL",
+        "MUX_LIVE_RECONNECT_WINDOW_SECONDS",
+        "MUX_PLAYBACK_POLICY",
+        "MUX_SIGNING_KEY_ID",
+        "MUX_SIGNING_PRIVATE_KEY",
+        "MUX_TOKEN_ID",
+        "MUX_TOKEN_SECRET",
+        "MUX_UPLOAD_CORS_ORIGIN",
+        "MUX_UPLOAD_TIMEOUT_SECONDS",
+        "MUX_VIDEO_QUALITY",
+        "MUX_WEBHOOK_SECRET"
+      ],
+      "documents": ["docs/mux-setup.md", "docs/plans/mux-live-streaming.md"],
+      "actions": ["external-contract-review", "recording-smoke"]
+    },
+    {
+      "id": "push-providers",
+      "description": "APNs and FCM credentials, native configuration, backend delivery, and client routing must agree.",
+      "owner": "Bondfires maintainers",
+      "triggerPatterns": [
+        "convex/sendNotification.ts",
+        "convex/notifications.ts",
+        "convex/lib/pushProviders.ts",
+        "packages/app/src/hooks/usePushNotifications.ts",
+        "apps/mobile/components/NotificationPreferencesSection.tsx",
+        "apps/mobile/lib/notificationRouting.ts",
+        "apps/mobile/app.json",
+        "apps/mobile/GoogleService-Info.plist",
+        "apps/mobile/google-services.json"
+      ],
+      "environmentKeys": [
+        "APNS_BUNDLE_ID",
+        "APNS_KEY_ID",
+        "APNS_KEY_P8",
+        "APNS_PRODUCTION",
+        "APNS_TEAM_ID",
+        "FCM_PROJECT_ID",
+        "FCM_SERVICE_ACCOUNT_JSON"
+      ],
+      "documents": ["docs/plans/push-notifications-v2.md"],
+      "actions": ["external-contract-review", "push-notification-smoke"]
+    },
+    {
+      "id": "store-billing",
+      "description": "Apple and Google billing configuration is reconciled into Convex entitlements.",
+      "owner": "Bondfires maintainers",
+      "triggerPatterns": [
+        "convex/subscriptions.ts",
+        "convex/entitlements.ts",
+        "packages/app/src/hooks/useSubscription.ts",
+        "apps/mobile/eas.json",
+        "apps/mobile/app.json"
+      ],
+      "environmentKeys": [
+        "APPLE_IAP_ENVIRONMENT",
+        "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON"
+      ],
+      "documents": ["RELEASE_PROCESS.md"],
+      "actions": ["external-contract-review", "client-compatibility-review"]
+    },
+    {
+      "id": "email-and-ai",
+      "description": "Transactional email and AI actions depend on externally managed providers and credentials.",
+      "owner": "Bondfires maintainers",
+      "triggerPatterns": ["convex/email.ts", "convex/auth.ts", "convex/ai.ts"],
+      "environmentKeys": [
+        "EMAIL_FROM",
+        "OPENROUTER_API_KEY",
+        "OPENROUTER_MODEL",
+        "RESEND_API_KEY",
+        "SITE_URL"
+      ],
+      "documents": ["apps/mobile/.env.example"],
+      "actions": ["external-contract-review"]
+    },
+    {
+      "id": "website-deep-links",
+      "description": "The separate marketing website owns universal-link files and public invite entry points.",
+      "owner": "Bondfires website maintainers",
+      "triggerPatterns": [
+        "apps/mobile/app.json",
+        "apps/mobile/lib/routes.ts",
+        "apps/mobile/app/invite/**",
+        "apps/mobile/app/(main)/personal-bondfire/**"
+      ],
+      "environmentKeys": [],
+      "documents": ["AGENTS.md", "RELEASE_PROCESS.md"],
+      "actions": ["external-contract-review", "route-integrity"]
+    },
+    {
+      "id": "app-store-rollout",
+      "description": "Convex deploy, native artifacts, store submissions, and force-update gating have ordered rollout requirements.",
+      "owner": "Bondfires release owner",
+      "triggerPatterns": [
+        "apps/mobile/app.json",
+        "apps/mobile/eas.json",
+        "scripts/release.sh",
+        "convex/publicConfig.ts",
+        "packages/app/src/hooks/useForceUpdate.ts"
+      ],
+      "environmentKeys": [],
+      "documents": ["RELEASE_PROCESS.md"],
+      "actions": ["release-preflight", "client-compatibility-review"]
+    },
+    {
+      "id": "runtime-toolchain",
+      "description": "NODE_ENV controls development-only behavior in application tooling.",
+      "owner": "Bondfires maintainers",
+      "triggerPatterns": ["apps/mobile/babel.config.js"],
+      "environmentKeys": ["NODE_ENV"],
+      "documents": ["apps/mobile/README.md"],
+      "actions": ["dependency-review"]
+    }
+  ]
+}

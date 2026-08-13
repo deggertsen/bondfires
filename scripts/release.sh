@@ -32,6 +32,7 @@ done
 APP_JSON="apps/mobile/app.json"
 
 cd "$(git rev-parse --show-toplevel)"
+REPO_ROOT=$(pwd)
 
 # --- Validate local build toolchain before touching anything ---
 for cmd in jq fastlane pod; do
@@ -50,6 +51,11 @@ if [[ -n "$(git status --porcelain)" ]]; then
   echo "❌ Working tree is dirty. Commit or stash changes first."
   exit 1
 fi
+
+# --- Deterministic preflight before changing version or production state ---
+echo "🔎 Running repository validation and release preflight..."
+CONVEX_CODEGEN_FULL=1 yarn validate
+echo "✅ Release preflight passed"
 
 # --- Read current version + build number ---
 CURRENT_VERSION=$(jq -r '.expo.version' "$APP_JSON")
@@ -77,9 +83,40 @@ git add "$APP_JSON"
 git commit -m "chore: bump version to $NEW_VERSION for release"
 echo "✅ Committed version bump"
 
+# --- Start an ignored release-evidence manifest ---
+CONVEX_URL=$(jq -r '.build.production.env.EXPO_PUBLIC_CONVEX_URL' apps/mobile/eas.json)
+RELEASE_MANIFEST="apps/mobile/build/release-$NEW_VERSION.json"
+mkdir -p apps/mobile/build
+
+EVIDENCE_INIT_ARGS=(
+  init
+  --manifest "$RELEASE_MANIFEST"
+  --version "$NEW_VERSION"
+  --build-number "$NEW_BUILD_NUMBER"
+  --convex-url "$CONVEX_URL"
+)
+for platform in "${PLATFORMS[@]}"; do
+  EVIDENCE_INIT_ARGS+=(--platform "$platform")
+done
+node scripts/release-evidence.mjs "${EVIDENCE_INIT_ARGS[@]}"
+
+record_release_failure() {
+  local status=$?
+  set +e
+  node "$REPO_ROOT/scripts/release-evidence.mjs" event \
+    --manifest "$RELEASE_MANIFEST" \
+    --name release-failed \
+    --detail "release.sh exited with status $status"
+  exit "$status"
+}
+trap record_release_failure ERR
+
 # --- Deploy Convex backend to production ---
 echo "⚡ Deploying Convex backend to production..."
 npx convex deploy
+node "$REPO_ROOT/scripts/release-evidence.mjs" event \
+  --manifest "$RELEASE_MANIFEST" \
+  --name convex-deployed
 echo "✅ Convex backend deployed"
 
 # --- Build locally + submit each platform ---
@@ -101,6 +138,11 @@ for platform in "${PLATFORMS[@]}"; do
     --local \
     --non-interactive \
     --output "$ARTIFACT"
+  node "$REPO_ROOT/scripts/release-evidence.mjs" event \
+    --manifest "$RELEASE_MANIFEST" \
+    --name platform-built \
+    --platform "$platform" \
+    --artifact "apps/mobile/$ARTIFACT"
   echo "✅ $platform build complete: $ARTIFACT"
 
   echo "📤 Submitting $platform build..."
@@ -109,11 +151,23 @@ for platform in "${PLATFORMS[@]}"; do
     --profile production \
     --path "$ARTIFACT" \
     --non-interactive
+  node "$REPO_ROOT/scripts/release-evidence.mjs" event \
+    --manifest "$RELEASE_MANIFEST" \
+    --name platform-submitted \
+    --platform "$platform" \
+    --artifact "apps/mobile/$ARTIFACT"
   echo "✅ $platform submitted"
 done
 
+cd ../..
+node "$REPO_ROOT/scripts/release-evidence.mjs" event \
+  --manifest "$RELEASE_MANIFEST" \
+  --name release-complete
+trap - ERR
+
 echo ""
 echo "🎉 Release $NEW_VERSION (build $NEW_BUILD_NUMBER) built and submitted!"
+echo "   Evidence: $RELEASE_MANIFEST"
 echo "   iOS:     https://appstoreconnect.apple.com/apps/6755933598/testflight/ios"
 echo "   Android: Google Play Console — internal testing track"
 echo ""

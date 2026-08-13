@@ -17,7 +17,7 @@ A video sharing social app where users create "bondfires" (video posts) and othe
 | Video Metadata | react-native-compressor |
 | Monorepo | Turborepo |
 | Package Manager | Yarn |
-| Infrastructure | Terraform |
+| Infrastructure | Legacy AWS Terraform (deprecated) |
 
 ## Repository Structure
 
@@ -30,7 +30,7 @@ bondfires/
 │   ├── app/                 # Features, hooks, Legend State stores
 │   └── config/              # Tamagui configuration
 ├── convex/                  # Convex backend
-├── infrastructure/          # Terraform for AWS
+├── infrastructure/          # Deprecated AWS website Terraform
 └── package.json
 ```
 
@@ -78,7 +78,7 @@ yarn dlx convex dev
 
 ### Environment Variables
 
-Create a `.env.local` file in the root:
+Copy `apps/mobile/.env.example` to `apps/mobile/.env` and set the client deployment URL:
 
 ```env
 EXPO_PUBLIC_CONVEX_URL=your-convex-deployment-url
@@ -167,36 +167,17 @@ yarn ios
 
 ## Releasing to App Stores
 
-One command to bump version, build both platforms, and auto-submit:
+Run production releases from the repository root:
 
 ```bash
-# Patch release (1.0.3 → 1.0.4) — most common
 yarn release
-
-# Minor release (1.0.3 → 1.1.0)
 yarn release:minor
-
-# Major release (1.0.3 → 2.0.0)
 yarn release:major
 ```
 
-This runs `scripts/release.sh` which:
-1. Bumps the version in `app.json`
-2. Commits the version bump
-3. Deploys Convex backend changes
-4. Kicks off EAS production builds for iOS + Android
-5. Auto-submits to App Store Connect and Google Play when builds finish
-
-**Requirements:** Clean git tree, `eas-cli` installed and logged in.
-
-**Notes:**
-- Build numbers (iOS `buildNumber`, Android `versionCode`) auto-increment via EAS remote versioning
-- The `version` string in `app.json` must be bumped for each store submission (stores reject duplicate versions)
-- Android submits to the `internal` track as a draft
-- iOS submits to App Store Connect (you still need to submit for review from there)
-- Force updates are enabled manually with `publicConfig:setMinVersion` only after the new version is live and downloadable in both stores
-
-Monitor builds at: https://expo.dev/accounts/deggertsen/projects/bondfires/builds
+The script validates the repository, versions and deploys the release, builds locally, submits to
+the stores, and records release evidence. See [`RELEASE_PROCESS.md`](RELEASE_PROCESS.md) for the
+human readiness checks, prerequisites, failure recovery, and force-update policy.
 
 ## License
 
