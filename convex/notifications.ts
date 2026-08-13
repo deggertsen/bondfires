@@ -1,8 +1,37 @@
 import { v } from 'convex/values'
-import { mutation, query } from './_generated/server'
+import type { Id } from './_generated/dataModel'
+import {
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+  mutation,
+  query,
+} from './_generated/server'
 import { auth } from './auth'
 import { throwUserError } from './errors'
 import { logServerEvent } from './serverTelemetry'
+
+/** Drop legacy Expo tokens for a device once a native APNs/FCM token is registered. */
+async function deleteLegacyExpoTokensForDevice(
+  ctx: MutationCtx,
+  userId: Id<'users'>,
+  deviceId: string,
+  keepTokenId: Id<'deviceTokens'>,
+) {
+  const tokens = await ctx.db
+    .query('deviceTokens')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .collect()
+
+  for (const token of tokens) {
+    if (token._id === keepTokenId) continue
+    if (token.deviceId !== deviceId) continue
+    const isExpo = token.tokenType === 'expo' || token.tokenType === undefined
+    if (isExpo) {
+      await ctx.db.delete(token._id)
+    }
+  }
+}
 
 // Register a device token for push notifications.
 //
@@ -18,7 +47,7 @@ export const registerDevice = mutation({
   args: {
     token: v.string(),
     platform: v.union(v.literal('ios'), v.literal('android')),
-    tokenType: v.optional(v.union(v.literal('fcm'), v.literal('expo'))),
+    tokenType: v.optional(v.union(v.literal('apns'), v.literal('fcm'), v.literal('expo'))),
     deviceId: v.optional(v.string()),
     // IANA timezone (e.g. 'America/Denver') for local-time digest delivery
     timezone: v.optional(v.string()),
@@ -34,6 +63,10 @@ export const registerDevice = mutation({
     }
 
     const now = Date.now()
+    // Older shipped clients omit tokenType and always register Expo tokens.
+    // Preserve that default so a backend-first deploy never misroutes those
+    // values directly to APNs/FCM.
+    const tokenType = args.tokenType ?? 'expo'
 
     // Check if token already exists
     const existing = await ctx.db
@@ -46,7 +79,7 @@ export const registerDevice = mutation({
       await ctx.db.patch(existing._id, {
         userId,
         platform: args.platform,
-        tokenType: args.tokenType ?? 'expo',
+        tokenType,
         deviceId: args.deviceId,
         timezone: args.timezone ?? existing.timezone,
         updatedAt: now,
@@ -59,10 +92,17 @@ export const registerDevice = mutation({
         data: {
           tokenId: existing._id,
           platform: args.platform,
-          tokenType: args.tokenType ?? 'expo',
+          tokenType,
           deviceId: args.deviceId,
+          timezone: args.timezone ?? existing.timezone ?? null,
         },
       })
+
+      // Native registration supersedes legacy Expo tokens for this device.
+      if (tokenType !== 'expo' && args.deviceId) {
+        await deleteLegacyExpoTokensForDevice(ctx, userId, args.deviceId, existing._id)
+      }
+
       return existing._id
     }
 
@@ -71,7 +111,7 @@ export const registerDevice = mutation({
       userId,
       token: args.token,
       platform: args.platform,
-      tokenType: args.tokenType ?? 'expo',
+      tokenType,
       deviceId: args.deviceId,
       timezone: args.timezone,
       createdAt: now,
@@ -85,10 +125,16 @@ export const registerDevice = mutation({
       data: {
         tokenId,
         platform: args.platform,
-        tokenType: args.tokenType ?? 'expo',
+        tokenType,
         deviceId: args.deviceId,
+        timezone: args.timezone ?? null,
       },
     })
+
+    if (tokenType !== 'expo' && args.deviceId) {
+      await deleteLegacyExpoTokensForDevice(ctx, userId, args.deviceId, tokenId)
+    }
+
     return tokenId
   },
 })
@@ -111,6 +157,24 @@ export const unregisterDevice = mutation({
 
     if (existing && existing.userId === userId) {
       await ctx.db.delete(existing._id)
+    }
+  },
+})
+
+/** Internal cleanup for invalid/expired tokens reported by APNs/FCM. */
+export const deleteTokensByValue = internalMutation({
+  args: {
+    tokens: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    for (const token of args.tokens) {
+      const existing = await ctx.db
+        .query('deviceTokens')
+        .withIndex('by_token', (q) => q.eq('token', token))
+        .first()
+      if (existing) {
+        await ctx.db.delete(existing._id)
+      }
     }
   },
 })
@@ -170,7 +234,7 @@ export const getDeviceTokenCount = query({
 })
 
 // Get all device tokens for a user (internal use for sending notifications)
-export const getTokensForUser = query({
+export const getTokensForUser = internalQuery({
   args: { userId: v.id('users') },
   handler: async (ctx, args) => {
     return await ctx.db

@@ -19,6 +19,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "org.bondfires",
+      "appleTeamId": "A9BJ2VA78M",
       "buildNumber": "94",
       "googleServicesFile": "./GoogleService-Info.plist",
       "associatedDomains": [
@@ -123,6 +124,7 @@
           "color": "#FF6B35"
         }
       ],
+      "@bacons/apple-targets",
       [
         "expo-build-properties",
         {

@@ -2,6 +2,7 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
+import { digestSingleBody } from './lib/notificationCopy'
 import { DEFAULT_DIGEST_WINDOW_HOUR, resolveNotificationPrefs } from './notifications'
 
 // ── Daily digest + 72h nudge ──
@@ -44,6 +45,7 @@ interface DigestItem {
   // 'response' = a reply video in a thread you participate in; 'bondfire' = a
   // new camp fire (the root video) surfaced to camp members.
   kind: 'response' | 'bondfire'
+  summary?: string | null
 }
 
 interface PushUser {
@@ -202,6 +204,7 @@ export const collectDigestItems = internalQuery({
           creatorName: video.creatorName ?? null,
           title: bondfire.title ?? null,
           kind: 'response',
+          summary: video.summary ?? null,
         })
       }
     }
@@ -269,6 +272,7 @@ export const collectDigestItems = internalQuery({
           creatorName: bondfire.creatorName ?? null,
           title: bondfire.title ?? null,
           kind: 'bondfire',
+          summary: bondfire.summary ?? null,
         })
       }
     }
@@ -425,18 +429,9 @@ export const runDigestForUser = internalAction({
 
       if (claimedItems.length > 0) {
         const single = claimedItems.length === 1 ? claimedItems[0] : null
-        let body: string
-        if (!single) {
-          body = `${claimedItems.length} new videos waiting in your Bondfires`
-        } else if (single.kind === 'bondfire') {
-          body = single.title
-            ? `${single.creatorName ?? 'Someone'} started "${single.title}"`
-            : `${single.creatorName ?? 'Someone'} started a new Bondfire`
-        } else {
-          body = single.title
-            ? `${single.creatorName ?? 'Someone'} responded in "${single.title}"`
-            : `${single.creatorName ?? 'Someone'} added a video to a Bondfire you're in`
-        }
+        const body = single
+          ? digestSingleBody(single)
+          : `${claimedItems.length} new videos waiting in your Bondfires`
 
         await ctx.runAction(internal.sendNotification.sendToUser, {
           userId: args.userId,
@@ -510,12 +505,20 @@ export const runDigestForUser = internalAction({
  */
 export const runHourlySweep = internalAction({
   args: {},
-  handler: async (ctx): Promise<{ scheduled: number }> => {
+  handler: async (
+    ctx,
+  ): Promise<{
+    scheduled: number
+    usersChecked: number
+    usersInWindow: number
+  }> => {
     const now = new Date()
     const users: PushUser[] = await ctx.runQuery(internal.digest.listPushUsers, {})
 
     let scheduled = 0
+    let usersMissingTimezone = 0
     for (const user of users) {
+      if (!user.timezone) usersMissingTimezone++
       if (getLocalHour(user.timezone, now) !== user.digestHour) continue
       await ctx.scheduler.runAfter(0, internal.digest.runDigestForUser, {
         userId: user.userId,
@@ -523,6 +526,27 @@ export const runHourlySweep = internalAction({
       scheduled++
     }
 
-    return { scheduled }
+    try {
+      await ctx.runMutation(internal.serverTelemetry.recordServerEvent, {
+        level: 'info',
+        event: 'digest:sweep',
+        message: 'Hourly digest sweep completed',
+        data: {
+          usersChecked: users.length,
+          usersInWindow: scheduled,
+          usersMissingTimezone,
+          digestsScheduled: scheduled,
+          localUtcHour: now.getUTCHours(),
+        },
+      })
+    } catch {
+      // Telemetry must never block the sweep.
+    }
+
+    return {
+      scheduled,
+      usersChecked: users.length,
+      usersInWindow: scheduled,
+    }
   },
 })

@@ -1,5 +1,5 @@
 import { v } from 'convex/values'
-import { api, internal } from './_generated/api'
+import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import {
   type ActionCtx,
@@ -9,6 +9,20 @@ import {
   internalQuery,
 } from './_generated/server'
 import { isCampParticipableStatus } from './campLifecycle'
+import {
+  accessApprovedBody,
+  accessApprovedTitle,
+  hearthJoinBody,
+  responseLiveBody,
+  responsePublishBody,
+  sparkPublishBodyWithSummary,
+} from './lib/notificationCopy'
+import {
+  getPushProviderConfig,
+  type PushPayload,
+  sendApnsPushNotification,
+  sendFcmPushNotification,
+} from './lib/pushProviders'
 import { resolveNotificationPrefs } from './notifications'
 
 // Max one response push per bondfire per recipient per hour.
@@ -61,39 +75,11 @@ export const isCategoryEnabledForUser = internalQuery({
   },
 })
 
-// Expo Push API types
-interface ExpoPushMessage {
-  to: string | string[]
-  title?: string
-  body?: string
-  data?: Record<string, unknown>
-  sound?: 'default' | null
-  badge?: number
-  channelId?: string
-  threadId?: string
-  priority?: 'default' | 'normal' | 'high'
-}
-
-interface ExpoPushTicket {
-  status: 'ok' | 'error'
-  id?: string
-  message?: string
-  details?: { error?: string }
-}
-
-interface SendResult {
-  success: boolean
-  ticketId?: string
-  error?: string
-}
-
 interface DeviceToken {
   token: string
   platform: 'ios' | 'android'
-  tokenType?: 'fcm' | 'expo'
+  tokenType?: 'apns' | 'fcm' | 'expo'
 }
-
-const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send'
 
 /** Map notification category → Android channel ID. Must match the client-side
  * mapping in usePushNotifications.ts. iOS uses threadId (below) for grouping. */
@@ -130,6 +116,11 @@ async function recordPushSendEvent(
 
 function uniqueUserIds(userIds: Array<Id<'users'>>) {
   return [...new Set(userIds)]
+}
+
+function resolveTokenType(token: DeviceToken): 'apns' | 'fcm' | null {
+  if (token.tokenType === 'apns' || token.tokenType === 'fcm') return token.tokenType
+  return null
 }
 
 /**
@@ -226,25 +217,69 @@ function escapeHtml(value: string) {
   })
 }
 
-// Send notification via Expo Push API
-async function sendExpoPushNotification(messages: ExpoPushMessage[]): Promise<ExpoPushTicket[]> {
-  const response = await fetch(EXPO_PUSH_URL, {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Accept-Encoding': 'gzip, deflate',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(messages),
-  })
+// Send notification via direct APNs / FCM
+async function deliverNativePush(
+  tokens: DeviceToken[],
+  payload: PushPayload,
+): Promise<{
+  success: boolean
+  successCount: number
+  failureCount: number
+  invalidTokens: string[]
+  error?: string
+}> {
+  const config = getPushProviderConfig()
+  const apnsTokens = tokens.filter((t) => resolveTokenType(t) === 'apns').map((t) => t.token)
+  const fcmTokens = tokens.filter((t) => resolveTokenType(t) === 'fcm').map((t) => t.token)
 
-  if (!response.ok) {
-    const text = await response.text()
-    throw new Error(`Expo Push error: ${response.status} - ${text}`)
+  const invalidTokens: string[] = []
+  let successCount = 0
+  let failureCount = 0
+  const errors: string[] = []
+
+  if (apnsTokens.length > 0) {
+    if (!config.apns) {
+      failureCount += apnsTokens.length
+      errors.push('APNs credentials not configured (APNS_KEY_P8 / APNS_KEY_ID / APNS_TEAM_ID)')
+    } else {
+      try {
+        const result = await sendApnsPushNotification(apnsTokens, payload, config.apns)
+        successCount += result.successCount
+        failureCount += result.failureCount
+        invalidTokens.push(...result.invalidTokens)
+        if (result.error) errors.push(result.error)
+      } catch (error) {
+        failureCount += apnsTokens.length
+        errors.push(`APNs: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
   }
 
-  const result = await response.json()
-  return result.data as ExpoPushTicket[]
+  if (fcmTokens.length > 0) {
+    if (!config.fcm) {
+      failureCount += fcmTokens.length
+      errors.push('FCM credentials not configured (FCM_SERVICE_ACCOUNT_JSON)')
+    } else {
+      try {
+        const result = await sendFcmPushNotification(fcmTokens, payload, config.fcm)
+        successCount += result.successCount
+        failureCount += result.failureCount
+        invalidTokens.push(...result.invalidTokens)
+        if (result.error) errors.push(result.error)
+      } catch (error) {
+        failureCount += fcmTokens.length
+        errors.push(`FCM: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+  }
+
+  return {
+    success: successCount > 0,
+    successCount,
+    failureCount,
+    invalidTokens,
+    error: errors.length > 0 ? errors.join('; ') : undefined,
+  }
 }
 
 // Internal action to send a notification to a specific user
@@ -256,6 +291,8 @@ export const sendToUser = internalAction({
     data: v.optional(v.any()),
     // Preference category. Omitted = always send (debug/test paths).
     category: v.optional(notificationCategory),
+    // Optional sender avatar for rich media (APNs mutable-content / FCM image).
+    avatarUrl: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (
     ctx,
@@ -280,7 +317,7 @@ export const sendToUser = internalAction({
     }
 
     // Get all device tokens for the user
-    const tokens: DeviceToken[] = await ctx.runQuery(api.notifications.getTokensForUser, {
+    const tokens: DeviceToken[] = await ctx.runQuery(internal.notifications.getTokensForUser, {
       userId: args.userId,
     })
 
@@ -298,17 +335,15 @@ export const sendToUser = internalAction({
       return { success: false, error: 'No device tokens found for user' }
     }
 
-    // Filter for Expo tokens (tokens starting with "ExponentPushToken")
-    const expoTokens = tokens.filter(
-      (t) => t.tokenType === 'expo' || t.token.startsWith('ExponentPushToken'),
-    )
+    // Prefer native APNs/FCM tokens. Legacy Expo tokens are ignored after migration.
+    const nativeTokens = tokens.filter((token) => resolveTokenType(token) !== null)
 
-    if (expoTokens.length === 0) {
+    if (nativeTokens.length === 0) {
       await recordPushSendEvent(ctx, {
         userId: args.userId,
         level: 'breadcrumb',
-        event: 'push:sendToUser:no_expo_tokens',
-        message: 'No Expo push tokens found for recipient',
+        event: 'push:sendToUser:no_native_tokens',
+        message: 'No native APNs/FCM tokens found for recipient',
         data: {
           totalTokens: tokens.length,
           tokenTypes: tokens.map((t) => ({
@@ -317,7 +352,7 @@ export const sendToUser = internalAction({
           })),
         },
       })
-      return { success: false, error: 'No Expo push tokens found for user' }
+      return { success: false, error: 'No native push tokens found for user' }
     }
 
     // Route to the Android notification channel matching the push category.
@@ -327,68 +362,66 @@ export const sendToUser = internalAction({
       ? (CATEGORY_TO_CHANNEL[args.category] ?? 'bondfires-default')
       : 'bondfires-default'
     const threadId = args.category ? `bondfires-${args.category}` : undefined
+    const avatarUrl = args.avatarUrl?.trim() ? args.avatarUrl.trim() : undefined
 
     await recordPushSendEvent(ctx, {
       userId: args.userId,
       level: 'breadcrumb',
       event: 'push:sendToUser:attempt',
-      message: 'Sending Expo push notifications',
+      message: 'Sending native push notifications',
       data: {
         category: args.category ?? 'uncategorized',
         title: args.title,
-        tokenCount: expoTokens.length,
+        tokenCount: nativeTokens.length,
         channelId,
+        hasAvatar: Boolean(avatarUrl),
         ...(threadId ? { threadId } : {}),
       },
     })
 
-    // Build messages for each token
-    const messages: ExpoPushMessage[] = expoTokens.map((tokenDoc) => ({
-      to: tokenDoc.token,
+    const payload: PushPayload = {
       title: args.title,
       body: args.body,
       data: args.data as Record<string, unknown> | undefined,
-      sound: 'default',
-      priority: 'high',
+      avatarUrl,
       channelId,
-      ...(threadId ? { threadId } : {}),
-    }))
+      threadId,
+      highPriority: true,
+    }
 
     try {
-      const tickets = await sendExpoPushNotification(messages)
+      const result = await deliverNativePush(nativeTokens, payload)
 
-      const results: SendResult[] = tickets.map((ticket) => ({
-        success: ticket.status === 'ok',
-        ticketId: ticket.id,
-        error:
-          ticket.status === 'error'
-            ? (ticket.message ?? ticket.details?.error ?? 'Unknown error')
-            : undefined,
-      }))
-
-      const successCount = results.filter((r) => r.success).length
-      const failureCount = results.filter((r) => !r.success).length
+      if (result.invalidTokens.length > 0) {
+        try {
+          await ctx.runMutation(internal.notifications.deleteTokensByValue, {
+            tokens: result.invalidTokens,
+          })
+        } catch {
+          // Token cleanup is best-effort.
+        }
+      }
 
       await recordPushSendEvent(ctx, {
         userId: args.userId,
-        level: failureCount > 0 ? 'warn' : 'breadcrumb',
+        level: result.failureCount > 0 ? 'warn' : 'breadcrumb',
         event: 'push:sendToUser:result',
-        message: 'Expo push delivery result received',
+        message: 'Native push delivery result received',
         data: {
           category: args.category ?? 'uncategorized',
-          successCount,
-          failureCount,
-          errors: results
-            .filter((r) => !r.success)
-            .map((r) => r.error ?? 'Unknown Expo push error'),
+          successCount: result.successCount,
+          failureCount: result.failureCount,
+          invalidTokenCount: result.invalidTokens.length,
+          ...(result.error ? { error: result.error } : {}),
         },
       })
 
       return {
-        success: successCount > 0,
-        successCount,
-        failureCount,
-        errors: results.filter((r) => !r.success).map((r) => r.error),
+        success: result.success,
+        successCount: result.successCount,
+        failureCount: result.failureCount,
+        error: result.error,
+        errors: result.error ? [result.error] : undefined,
       }
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : 'Unknown error sending notification'
@@ -402,7 +435,7 @@ export const sendToUser = internalAction({
           title: args.title,
         },
       })
-      console.error('Error sending Expo push notification:', errorMessage)
+      console.error('Error sending native push notification:', errorMessage)
       return { success: false, error: errorMessage }
     }
   },
@@ -617,13 +650,25 @@ export const notifyCampBondfire = internalAction({
         { personalCampId: bondfire.personalCampId },
       )
 
+      const summary: string | null = await ctx.runQuery(internal.sendNotification.getVideoSummary, {
+        bondfireId: args.bondfireId,
+      })
+      const avatarUrl: string | null = await ctx.runQuery(
+        internal.sendNotification.getUserAvatarUrl,
+        { userId: args.creatorId },
+      )
+      const body = summary
+        ? sparkPublishBodyWithSummary(args.creatorName, summary)
+        : `${args.creatorName} sparked a new Bondfire`
+
       await Promise.all(
         claimedHearthIds.map((userId) =>
           ctx.runAction(internal.sendNotification.sendToUser, {
             userId,
             title: hearthName ?? 'Your Hearth',
-            body: `${args.creatorName} sparked a new Bondfire`,
+            body,
             category: 'hearth',
+            avatarUrl,
             data: {
               type: 'hearth_bondfire',
               bondfireId: args.bondfireId,
@@ -681,15 +726,29 @@ export const notifyCampBondfire = internalAction({
       : []
     const pinnerSet = new Set(pinnerIds)
 
+    const summary: string | null = isRegularCopy
+      ? await ctx.runQuery(internal.sendNotification.getVideoSummary, {
+          bondfireId: args.bondfireId,
+        })
+      : null
+    const avatarUrl: string | null = await ctx.runQuery(
+      internal.sendNotification.getUserAvatarUrl,
+      { userId: args.creatorId },
+    )
+    const summaryBody = summary ? sparkPublishBodyWithSummary(args.creatorName, summary) : null
+
     await Promise.all(
       claimedIds.map((userId) =>
         ctx.runAction(internal.sendNotification.sendToUser, {
           userId,
           title: copy.title,
-          body: pinnerSet.has(userId)
-            ? `${args.creatorName} from your Close Circle sparked a new Bondfire`
-            : copy.body,
+          body: summaryBody
+            ? summaryBody
+            : pinnerSet.has(userId)
+              ? `${args.creatorName} from your Close Circle sparked a new Bondfire`
+              : copy.body,
           category: 'recording',
+          avatarUrl,
           data: {
             type: camp.crisisBroadcast
               ? 'camp_crisis'
@@ -772,19 +831,43 @@ export const notifyBondfireResponse = internalAction({
       return { success: true, skipped: true }
     }
 
-    const body = args.isLive
-      ? bondfire.title
-        ? `${args.responderName} is responding in "${bondfire.title}" — watch live or later`
-        : `${args.responderName} is responding live — watch now or later`
-      : `${args.responderName} added a video to a Bondfire you're in`
+    let body: string
+    if (args.isLive) {
+      body = responseLiveBody(args.responderName, bondfire.title)
+    } else {
+      const summary: string | null = args.bondfireVideoId
+        ? await ctx.runQuery(internal.sendNotification.getVideoSummary, {
+            bondfireVideoId: args.bondfireVideoId,
+          })
+        : null
+      body = responsePublishBody(args.responderName, summary)
+    }
+
+    const avatarUrl: string | null = await ctx.runQuery(
+      internal.sendNotification.getUserAvatarUrl,
+      { userId: args.responderId },
+    )
+
+    // Close Circle personalization for camp responses (nice-to-have).
+    const pinnerIds: Array<Id<'users'>> =
+      !args.isLive && bondfire.campId
+        ? await ctx.runQuery(internal.sendNotification.getCloseCirclePinnerIds, {
+            pinnedUserId: args.responderId,
+          })
+        : []
+    const pinnerSet = new Set(pinnerIds)
 
     await Promise.all(
       claimedIds.map((userId) =>
         ctx.runAction(internal.sendNotification.sendToUser, {
           userId,
           title: 'New response',
-          body,
+          body:
+            pinnerSet.has(userId) && !args.isLive && !body.includes(':')
+              ? `${args.responderName} from your Close Circle added a video to a Bondfire you're in`
+              : body,
           category: bondfire.personalCampId ? 'hearth' : 'responses',
+          avatarUrl,
           data: {
             type: 'bondfire_response',
             bondfireId: args.bondfireId,
@@ -970,6 +1053,9 @@ export const notifyAccessRequest = internalAction({
       title: 'New access request',
       body: `${args.requesterName} wants to join ${camp.name}`,
       category: 'membership',
+      avatarUrl: await ctx.runQuery(internal.sendNotification.getUserAvatarUrl, {
+        userId: args.requesterId,
+      }),
       data: {
         type: 'camp_access_request',
         campId: args.campId,
@@ -1076,6 +1162,39 @@ export const getUserEmail = internalQuery({
   },
 })
 
+/** Fresh public avatar URL for rich push media. Prefers storageId so the URL
+ * is minted at send time (Convex storage URLs can expire). */
+export const getUserAvatarUrl = internalQuery({
+  args: { userId: v.id('users') },
+  handler: async (ctx, args): Promise<string | null> => {
+    const user = await ctx.db.get(args.userId)
+    if (!user) return null
+    if (user.photoStorageId) {
+      return (await ctx.storage.getUrl(user.photoStorageId)) ?? user.photoUrl ?? null
+    }
+    return user.photoUrl ?? null
+  },
+})
+
+/** AI summary for a bondfire root or response video. */
+export const getVideoSummary = internalQuery({
+  args: {
+    bondfireId: v.optional(v.id('bondfires')),
+    bondfireVideoId: v.optional(v.id('bondfireVideos')),
+  },
+  handler: async (ctx, args): Promise<string | null> => {
+    if (args.bondfireVideoId) {
+      const video = await ctx.db.get(args.bondfireVideoId)
+      return video?.summary ?? null
+    }
+    if (args.bondfireId) {
+      const bondfire = await ctx.db.get(args.bondfireId)
+      return bondfire?.summary ?? null
+    }
+    return null
+  },
+})
+
 // ── Shared email helper (Resend) ──
 
 async function sendResendEmail(options: {
@@ -1170,8 +1289,8 @@ export const notifyAccessApproved = internalAction({
 
     return await ctx.runAction(internal.sendNotification.sendToUser, {
       userId: args.userId,
-      title: `${camp.name} let you in`,
-      body: "You're now a member. Tap to look around.",
+      title: accessApprovedTitle(camp.name),
+      body: accessApprovedBody(),
       category: 'membership',
       data: {
         type: 'camp_access_approved',
@@ -1254,11 +1373,17 @@ export const notifyHearthJoin = internalAction({
       { personalCampId: bondfire.personalCampId },
     )
 
+    const avatarUrl: string | null = await ctx.runQuery(
+      internal.sendNotification.getUserAvatarUrl,
+      { userId: args.joinerId },
+    )
+
     return await ctx.runAction(internal.sendNotification.sendToUser, {
       userId: bondfire.userId,
       title: hearthName ?? 'Your Hearth',
-      body: `${args.joinerName} joined the conversation`,
+      body: hearthJoinBody(args.joinerName, bondfire.title),
       category: 'hearth',
+      avatarUrl,
       data: {
         type: 'hearth_join',
         bondfireId: args.bondfireId,

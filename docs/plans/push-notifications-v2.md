@@ -2,7 +2,7 @@
 
 **Author(s):** David + Forge
 **Date:** August 8, 2026
-**Status:** Draft
+**Status:** In progress (implementation branch `agent/feat/push-notifications-v2`)
 **Complexity:** Large
 
 ---
