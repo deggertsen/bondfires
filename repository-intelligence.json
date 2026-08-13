@@ -184,7 +184,7 @@
     {
       "id": "workspace-dependencies",
       "description": "Workspace dependencies and runtime toolchain",
-      "patterns": ["package.json", "yarn.lock", ".yarnrc.yml", "app.json"],
+      "patterns": ["package.json", "yarn.lock", ".yarnrc.yml", ".yarn/**", "app.json"],
       "actions": [
         "validate",
         "dependency-review",
