@@ -22,7 +22,6 @@
     "expo-iap": "*",
     "expo-in-app-updates": "*",
     "expo-linking": "*",
-    "expo-modules-core": "*",
     "expo-network": "*",
     "expo-notifications": "*",
     "react": "*",

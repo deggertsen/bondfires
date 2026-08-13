@@ -5,7 +5,6 @@ import {
   telemetry,
   tierMeetsRequirement,
   useMuxData,
-  useNowPlayingInfo,
   usePresence,
   useSubscription,
 } from '@bondfires/app'
@@ -14,7 +13,7 @@ import { useObservable, useValue } from '@legendapp/state/react'
 import { useMutation, useQuery } from 'convex/react'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { LinearGradient } from 'expo-linear-gradient'
-import { useVideoPlayer, VideoView } from 'expo-video'
+import { useVideoPlayer, type VideoSource, VideoView } from 'expo-video'
 import {
   type Ref,
   useCallback,
@@ -183,6 +182,20 @@ export function VideoPlayer({
     ? videoUrl
     : null
 
+  const currentSource = useMemo<VideoSource>(() => {
+    if (!currentUrl) return null
+
+    const artist = creatorName.trim() || 'Unknown'
+    return {
+      uri: currentUrl,
+      metadata: {
+        artist,
+        album: campName?.trim() || 'Bondfires',
+        title: bondfireTitle?.trim() || `${artist}'s Bondfire`,
+      },
+    }
+  }, [bondfireTitle, campName, creatorName, currentUrl])
+
   const state$ = useObservable({
     showReport: false,
     progress: 0,
@@ -229,7 +242,7 @@ export function VideoPlayer({
     lastSeekAt: 0,
   })
 
-  const player = useVideoPlayer(currentUrl, (player) => {
+  const player = useVideoPlayer(currentSource, (player) => {
     player.loop = false
     player.muted = isMuted
     player.playbackRate = playbackSpeed
@@ -315,7 +328,7 @@ export function VideoPlayer({
   }, [player, shouldSuppressPlayback, state$])
 
   const retryPlayback = useCallback(() => {
-    if (!player || !currentUrl) return
+    if (!player || !currentSource) return
     telemetry.info('video:playback_retry', 'User retried video after playback failure', {
       videoId,
       isLive,
@@ -327,12 +340,12 @@ export function VideoPlayer({
     state$.userInitiatedPlay.set(true)
     userPausedRef.current = false
     player
-      .replaceAsync(currentUrl)
+      .replaceAsync(currentSource)
       .then(() => resumePlaybackAfterRecovery())
       .catch(() => {
         // Failure surfaces through the statusChange 'error' path.
       })
-  }, [player, currentUrl, state$, videoId, isLive, resumePlaybackAfterRecovery])
+  }, [player, currentSource, state$, videoId, isLive, resumePlaybackAfterRecovery])
 
   // Caption cues, fetched lazily when captions are on and this video has a
   // caption track. Cue matching happens in the timeUpdate listener below.
@@ -411,13 +424,14 @@ export function VideoPlayer({
     isActive: isActive && isScreenFocused && isAppActive,
   })
 
-  useNowPlayingInfo({
-    videoOwnerName: creatorName,
-    campName,
-    bondfireTitle,
-    player,
-    isActive: shouldTrackPlayback,
-  })
+  useEffect(() => {
+    // Keep the system media session attached to the real native player. Only
+    // the visible item opts in, so neighboring feed cells cannot take over.
+    player.showNowPlayingNotification = shouldTrackPlayback
+    return () => {
+      player.showNowPlayingNotification = false
+    }
+  }, [player, shouldTrackPlayback])
 
   const updatePlaybackProgress = useCallback(
     ({
