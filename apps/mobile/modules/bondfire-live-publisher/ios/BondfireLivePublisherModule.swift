@@ -845,6 +845,7 @@ final class LivePublisher {
     } catch {
       // Best effort detach
     }
+    tearDownAudioSession()
     session = nil
     currentOptions = nil
     isCaptureRunning = false
@@ -973,7 +974,7 @@ final class LivePublisher {
       switch reason {
       case .newDeviceAvailable, .oldDeviceUnavailable, .routeConfigurationChange:
         Task { @MainActor [weak self] in
-          guard let self, self.isCaptureRunning, !self.isStopping else { return }
+          guard let self, !self.isStopping else { return }
           self.routeToPreferredAudioInput(audioSession)
         }
       default:
@@ -986,6 +987,13 @@ final class LivePublisher {
     guard let observer = audioRouteChangeObserver else { return }
     NotificationCenter.default.removeObserver(observer)
     audioRouteChangeObserver = nil
+  }
+
+  private func tearDownAudioSession() {
+    let audioSession = AVAudioSession.sharedInstance()
+    try? audioSession.setPreferredInput(nil)
+    try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+    audioRouteName = "builtin"
   }
 
   private func routeToPreferredAudioInput(_ audioSession: AVAudioSession) {

@@ -800,20 +800,6 @@ class BondfireLivePublisherModule : Module() {
       return null
     }
 
-    val wired = firstInput(
-      AudioDeviceInfo.TYPE_WIRED_HEADSET,
-      AudioDeviceInfo.TYPE_USB_HEADSET,
-      AudioDeviceInfo.TYPE_USB_DEVICE,
-    )
-    if (wired != null) {
-      return AudioInputRouting(
-        MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-        wired,
-        false,
-        "wired",
-      )
-    }
-
     // TYPE_BLE_HEADSET only appears in results on API 31+ devices.
     val bluetooth = firstInput(
       AudioDeviceInfo.TYPE_BLE_HEADSET,
@@ -825,6 +811,20 @@ class BondfireLivePublisherModule : Module() {
         bluetooth,
         true,
         "bluetooth",
+      )
+    }
+
+    val wired = firstInput(
+      AudioDeviceInfo.TYPE_WIRED_HEADSET,
+      AudioDeviceInfo.TYPE_USB_HEADSET,
+      AudioDeviceInfo.TYPE_USB_DEVICE,
+    )
+    if (wired != null) {
+      return AudioInputRouting(
+        MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+        wired,
+        false,
+        "wired",
       )
     }
 
@@ -851,6 +851,7 @@ class BondfireLivePublisherModule : Module() {
       override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
         val bluetoothInput = addedDevices.firstOrNull(::isBluetoothInputDevice) ?: return
         if (audioDeviceCallback !== this) return
+        if (audioRouteName == "bluetooth" && routedInputDeviceId == bluetoothInput.id) return
 
         if (applyBluetoothMicRouting(context, bluetoothInput)) {
           routedInputDeviceId = bluetoothInput.id
@@ -876,8 +877,8 @@ class BondfireLivePublisherModule : Module() {
       }
     }
     // null handler: callbacks post to the main looper.
-    audioManager.registerAudioDeviceCallback(callback, null)
     audioDeviceCallback = callback
+    audioManager.registerAudioDeviceCallback(callback, null)
   }
 
   private fun isBluetoothInputDevice(device: AudioDeviceInfo): Boolean {
@@ -912,8 +913,8 @@ class BondfireLivePublisherModule : Module() {
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
       val communicationDevice = audioManager.availableCommunicationDevices.firstOrNull {
-        it.type == device.type
-      }
+        it.type == device.type && it.address == device.address
+      } ?: audioManager.availableCommunicationDevices.firstOrNull { it.type == device.type }
       communicationDeviceSet = communicationDevice != null &&
         audioManager.setCommunicationDevice(communicationDevice)
       if (!communicationDeviceSet) {

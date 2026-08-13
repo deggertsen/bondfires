@@ -90,7 +90,9 @@ uplink quality are more likely remaining contributors.
 iOS routes headset mics through the shared `AVAudioSession`
 (`.allowBluetooth` + `.playAndRecord`). A route-change observer prefers newly
 connected Bluetooth inputs and falls back through wired and built-in inputs
-when a device disconnects. Android requires explicit routing: StreamPack's
+when a device disconnects. Teardown clears the preferred input and deactivates
+the recording session so playback can resume on the current system output.
+Android requires explicit routing: StreamPack's
 default audio source is `CAMCORDER`, which is pinned to the built-in camcorder
 mics and ignores connected headsets. At streamer creation the module picks a
 route from the connected input devices:
@@ -101,7 +103,8 @@ route from the connected input devices:
 | Bluetooth (LE audio or SCO) | `VOICE_COMMUNICATION` | `setCommunicationDevice` (API 31+) / legacy SCO |
 | None connected | `VOICE_COMMUNICATION` (built-in) | none |
 
-The Bluetooth claim is released in `cleanupStreamer`. The chosen route is
+The Bluetooth claim and prior `AudioManager` mode are restored in
+`cleanupStreamer`. The chosen route is
 reported as `audioRoute` in `getStats()` payloads, so `live:stats_sample`
 telemetry shows which mic a session recorded from. An `AudioDeviceCallback`
 handles both Bluetooth connects and routed-device disconnects without
