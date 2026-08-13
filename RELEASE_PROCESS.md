@@ -82,12 +82,14 @@ grep -r "scheme\|link" apps/mobile/app.json
 
 The `scripts/release.sh` script performs these steps automatically:
 
-1. Validates clean git working tree
-2. Bumps the version in `apps/mobile/app.json`
-3. Commits the version bump
-4. **Deploys Convex backend to production** (`npx convex deploy`)
-5. Kicks off EAS production builds for iOS + Android
-6. Auto-submits to App Store Connect and Google Play
+1. Validates the local toolchain and clean git working tree
+2. Runs the complete deterministic `yarn validate` preflight
+3. Bumps the version in `apps/mobile/app.json`
+4. Commits the version bump
+5. **Deploys Convex backend to production** (`npx convex deploy`)
+6. Runs local EAS production builds for iOS + Android
+7. Auto-submits to App Store Connect and Google Play
+8. Records an ignored release-evidence manifest under `apps/mobile/build/`
 
 It intentionally does **not** set `minAppVersion`. Force-update gating must only be
 enabled after the new version is live and downloadable in both App Store Connect

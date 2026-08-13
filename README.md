@@ -184,13 +184,14 @@ This runs `scripts/release.sh` which:
 1. Bumps the version in `app.json`
 2. Commits the version bump
 3. Deploys Convex backend changes
-4. Kicks off EAS production builds for iOS + Android
-5. Auto-submits to App Store Connect and Google Play when builds finish
+4. Builds iOS and Android locally using EAS tooling
+5. Auto-submits the local artifacts to App Store Connect and Google Play
+6. Records an ignored release-evidence manifest under `apps/mobile/build/`
 
 **Requirements:** Clean git tree, `eas-cli` installed and logged in.
 
 **Notes:**
-- Build numbers (iOS `buildNumber`, Android `versionCode`) auto-increment via EAS remote versioning
+- Build numbers (iOS `buildNumber`, Android `versionCode`) are incremented together in `app.json`
 - The `version` string in `app.json` must be bumped for each store submission (stores reject duplicate versions)
 - Android submits to the `internal` track as a draft
 - iOS submits to App Store Connect (you still need to submit for review from there)

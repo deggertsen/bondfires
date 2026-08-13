@@ -48,6 +48,7 @@ The app targets **prod** Convex by default (`apps/mobile/.env`), so actions whil
 ## Validation (run before every commit)
 
 ```bash
+yarn validate         # Complete non-mutating validation gate
 yarn typecheck        # TypeScript checks
 yarn lint             # Linting
 yarn format           # Code formatting

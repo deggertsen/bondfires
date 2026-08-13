@@ -184,8 +184,8 @@ yarn build:ios:dev:sim
 
 The production build profile is configured in `eas.json` with:
 
-- **Production Convex URL**: `https://fleet-caiman-92.convex.cloud` (configured in build profile)
-- **Auto-increment build numbers**: Enabled for both iOS and Android
+- **Production Convex URL**: `https://ideal-akita-27.convex.cloud` (configured in build profile)
+- **Local version source**: `scripts/release.sh` increments iOS and Android build numbers together
 - **Build distribution**: App Store (iOS) / Google Play (Android)
 
 ### Prerequisites
@@ -279,10 +279,10 @@ eas build --platform android --profile production
 
 **Build Process:**
 
-- Builds run on EAS Build servers (cloud)
-- Build numbers are auto-incremented (iOS: `buildNumber`, Android: `versionCode`)
-- Production environment variables are injected automatically
-- Build artifacts are stored on EAS servers
+- The standard `yarn release` flow runs EAS builds locally
+- The release script increments iOS `buildNumber` and Android `versionCode` together
+- Production environment variables come from the production EAS profile
+- Local build artifacts and release evidence are written under `apps/mobile/build/`
 
 ### Submitting to App Stores
 
