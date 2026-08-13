@@ -20,7 +20,7 @@ import {
   Text,
 } from '@bondfires/ui'
 import { useIsFocused } from '@react-navigation/native'
-import { AlertTriangle, Flame, Pin, RefreshCw } from '@tamagui/lucide-icons'
+import { AlertTriangle, ChevronLeft, Flame, Pin, RefreshCw } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -384,6 +384,14 @@ export default function MyFiresScreen() {
     setTimeout(() => setIsRefreshing(false), 800)
   }, [resetLoadTracking])
 
+  // My Fires left the tab bar (href: null) — it's reached from Home's Ember
+  // Rail, so it needs an explicit way back. Tab navigators don't keep stack
+  // history (router.back() can land on a sibling tab like Camps), so the
+  // chevron deterministically returns to Home.
+  const handleBack = useCallback(() => {
+    router.replace(routes.feed)
+  }, [router])
+
   const handleTogglePinnedFirst = useCallback(() => {
     resetLoadTracking()
     setThreads(undefined)
@@ -551,16 +559,26 @@ export default function MyFiresScreen() {
         ListHeaderComponent={
           <YStack paddingTop={62} paddingHorizontal={16} paddingBottom={14} gap={10}>
             <XStack alignItems="center" justifyContent="space-between">
-              <YStack gap={2}>
-                <Text fontSize={28} fontWeight="900">
-                  My Fires
-                </Text>
-                <Text fontSize={13} color={'$placeholderColor'}>
-                  {unreadCount > 0
-                    ? `${unreadCount} unread ${unreadCount === 1 ? 'thread' : 'threads'}`
-                    : 'All caught up'}
-                </Text>
-              </YStack>
+              <XStack alignItems="center" gap={8}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Back to Home"
+                  hitSlop={12}
+                  onPress={handleBack}
+                >
+                  <ChevronLeft size={26} color={'$color'} />
+                </Pressable>
+                <YStack gap={2}>
+                  <Text fontSize={28} fontWeight="900">
+                    My Fires
+                  </Text>
+                  <Text fontSize={13} color={'$placeholderColor'}>
+                    {unreadCount > 0
+                      ? `${unreadCount} unread ${unreadCount === 1 ? 'thread' : 'threads'}`
+                      : 'All caught up'}
+                  </Text>
+                </YStack>
+              </XStack>
               <Pressable onPress={handleTogglePinnedFirst} hitSlop={12}>
                 <Pin
                   size={22}
@@ -605,7 +623,7 @@ export default function MyFiresScreen() {
                 No active fires yet
               </Text>
               <Text fontSize={15} color={'$placeholderColor'} textAlign="center" marginTop={8}>
-                Respond to a fire in the feed and the conversation shows up here.
+                Respond to a fire on Home and the conversation shows up here.
               </Text>
               <Button
                 variant="primary"
@@ -614,7 +632,7 @@ export default function MyFiresScreen() {
                 onPress={() => router.push(routes.feed)}
               >
                 <Text color={'$color'} fontWeight="900">
-                  Browse Feed
+                  Browse Home
                 </Text>
               </Button>
             </YStack>
