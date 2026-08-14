@@ -2,6 +2,7 @@ import {
   appActions,
   appStore$,
   type MuxDataVideoMetadata,
+  safelyUseCurrentPlayer,
   telemetry,
   tierMeetsRequirement,
   useMuxData,
@@ -13,7 +14,12 @@ import { useObservable, useValue } from '@legendapp/state/react'
 import { useMutation, useQuery } from 'convex/react'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { LinearGradient } from 'expo-linear-gradient'
-import { useVideoPlayer, type VideoSource, VideoView } from 'expo-video'
+import {
+  type VideoPlayer as ExpoVideoPlayer,
+  useVideoPlayer,
+  type VideoSource,
+  VideoView,
+} from 'expo-video'
 import {
   type Ref,
   useCallback,
@@ -250,6 +256,27 @@ export function VideoPlayer({
     player.timeUpdateEventInterval = PROGRESS_TIME_UPDATE_INTERVAL_SECONDS
   })
 
+  // useVideoPlayer releases and replaces its native shared object whenever
+  // currentSource changes, not only on unmount. Async work must therefore
+  // validate the exact player instance it captured before touching native
+  // properties or methods.
+  const activePlayerRef = useRef<ExpoVideoPlayer | null>(player)
+  activePlayerRef.current = player
+
+  useLayoutEffect(() => {
+    return () => {
+      if (activePlayerRef.current === player) {
+        activePlayerRef.current = null
+      }
+    }
+  }, [player])
+
+  const withCurrentPlayer = useCallback(
+    <T,>(operation: (currentPlayer: ExpoVideoPlayer) => T) =>
+      safelyUseCurrentPlayer(activePlayerRef.current, player, operation),
+    [player],
+  )
+
   // Fatal-error recovery: bounded automatic reloads before surfacing the
   // retry overlay. Reset whenever the source changes — a new URL is a new
   // playback attempt with a fresh budget.
@@ -291,7 +318,11 @@ export function VideoPlayer({
           errorRetryRef.current.timer = null
         }
         userPausedRef.current = true
-        player.pause()
+        const replacePromise = withCurrentPlayer((currentPlayer) => {
+          currentPlayer.pause()
+          return currentPlayer.replaceAsync(null)
+        })
+        if (!replacePromise) return
         state$.isPlaying.set(false)
 
         try {
@@ -299,21 +330,25 @@ export function VideoPlayer({
           // promise resolves only after Android has cleared ExoPlayer's media
           // items on the main queue. That gives the recorder the decoder and
           // media resources before its camera session mounts.
-          await player.replaceAsync(null)
+          await replacePromise
         } catch (error: unknown) {
-          telemetry.warn(
-            'video:recorder_source_release_failed',
-            error instanceof Error ? error.message : String(error),
-            { videoId, isLive },
-          )
+          // A rejected replace is expected if this instance was released while
+          // the native operation was in flight. Only report failures for the
+          // player that is still current.
+          if (withCurrentPlayer(() => true)) {
+            telemetry.warn(
+              'video:recorder_source_release_failed',
+              error instanceof Error ? error.message : String(error),
+              { videoId, isLive },
+            )
+          }
         }
       },
     }),
-    [isLive, player, state$, videoId],
+    [isLive, state$, videoId, withCurrentPlayer],
   )
 
   const resumePlaybackAfterRecovery = useCallback(() => {
-    if (!player) return
     const gate = playbackGateRef.current
     if (
       gate.isActive &&
@@ -323,12 +358,12 @@ export function VideoPlayer({
       !userPausedRef.current &&
       (appStore$.preferences.autoplayVideos.peek() || state$.userInitiatedPlay.peek())
     ) {
-      player.play()
+      withCurrentPlayer((currentPlayer) => currentPlayer.play())
     }
-  }, [player, shouldSuppressPlayback, state$])
+  }, [shouldSuppressPlayback, state$, withCurrentPlayer])
 
   const retryPlayback = useCallback(() => {
-    if (!player || !currentSource) return
+    if (!currentSource) return
     telemetry.info('video:playback_retry', 'User retried video after playback failure', {
       videoId,
       isLive,
@@ -339,13 +374,19 @@ export function VideoPlayer({
     // Tapping "Try Again" is explicit play intent.
     state$.userInitiatedPlay.set(true)
     userPausedRef.current = false
-    player
-      .replaceAsync(currentSource)
-      .then(() => resumePlaybackAfterRecovery())
-      .catch(() => {
-        // Failure surfaces through the statusChange 'error' path.
+    const replacePromise = withCurrentPlayer((currentPlayer) =>
+      currentPlayer.replaceAsync(currentSource),
+    )
+    if (!replacePromise) return
+    replacePromise
+      .then(() => {
+        resumePlaybackAfterRecovery()
       })
-  }, [player, currentSource, state$, videoId, isLive, resumePlaybackAfterRecovery])
+      .catch(() => {
+        // Failure surfaces through the statusChange 'error' path, or this
+        // player was released while replacement was in flight.
+      })
+  }, [currentSource, state$, videoId, isLive, resumePlaybackAfterRecovery, withCurrentPlayer])
 
   // Caption cues, fetched lazily when captions are on and this video has a
   // caption track. Cue matching happens in the timeUpdate listener below.
@@ -375,7 +416,10 @@ export function VideoPlayer({
         captionCuesRef.current = cues
         // A paused player will not emit another timeUpdate just because the
         // caption file finished loading or captions were toggled on.
-        syncCaptionText(player.currentTime * 1000)
+        const currentTime = withCurrentPlayer((currentPlayer) => currentPlayer.currentTime)
+        if (currentTime !== undefined) {
+          syncCaptionText(currentTime * 1000)
+        }
       })
       .catch((error: unknown) => {
         if (cancelled) return
@@ -388,7 +432,15 @@ export function VideoPlayer({
     return () => {
       cancelled = true
     }
-  }, [captionsEnabled, captionsUrl, player, shouldTrackPlayback, state$, syncCaptionText, videoId])
+  }, [
+    captionsEnabled,
+    captionsUrl,
+    shouldTrackPlayback,
+    state$,
+    syncCaptionText,
+    videoId,
+    withCurrentPlayer,
+  ])
 
   const muxPlaybackId = useMemo(() => {
     if (!videoUrl) return null
@@ -427,11 +479,15 @@ export function VideoPlayer({
   useEffect(() => {
     // Keep the system media session attached to the real native player. Only
     // the visible item opts in, so neighboring feed cells cannot take over.
-    player.showNowPlayingNotification = shouldTrackPlayback
+    withCurrentPlayer((currentPlayer) => {
+      currentPlayer.showNowPlayingNotification = shouldTrackPlayback
+    })
     return () => {
-      player.showNowPlayingNotification = false
+      withCurrentPlayer((currentPlayer) => {
+        currentPlayer.showNowPlayingNotification = false
+      })
     }
-  }, [player, shouldTrackPlayback])
+  }, [shouldTrackPlayback, withCurrentPlayer])
 
   const updatePlaybackProgress = useCallback(
     ({
@@ -598,6 +654,8 @@ export function VideoPlayer({
     if (!player) return
 
     const statusSubscription = player.addListener('statusChange', (status) => {
+      if (!withCurrentPlayer(() => true)) return
+
       if (status.status === 'readyToPlay') {
         state$.isLoading.set(false)
         state$.hasError.set(false)
@@ -634,13 +692,14 @@ export function VideoPlayer({
             clearTimeout(errorRetryRef.current.timer)
           }
           errorRetryRef.current.timer = setTimeout(() => {
+            const replacePromise = withCurrentPlayer((currentPlayer) =>
+              currentPlayer.replaceAsync(currentUrl),
+            )
+            if (!replacePromise) return
             state$.isLoading.set(true)
             // Preserve the pre-error play intent: a silent auto-recovery
             // mid-watch should resume, not leave the player paused.
-            player
-              .replaceAsync(currentUrl)
-              .then(() => resumePlaybackAfterRecovery())
-              .catch(() => {})
+            replacePromise.then(resumePlaybackAfterRecovery).catch(() => {})
           }, delayMs)
         } else {
           state$.hasError.set(true)
@@ -664,7 +723,7 @@ export function VideoPlayer({
     })
 
     const endSubscription = player.addListener('playToEnd', () => {
-      if (!shouldTrackPlayback) return
+      if (!shouldTrackPlayback || !withCurrentPlayer(() => true)) return
 
       state$.hasEnded.set(true)
       state$.progress.set(1)
@@ -678,6 +737,7 @@ export function VideoPlayer({
     })
 
     const playingSubscription = player.addListener('playingChange', ({ isPlaying }) => {
+      if (!withCurrentPlayer(() => true)) return
       state$.isPlaying.set(shouldTrackPlayback ? isPlaying : false)
     })
 
@@ -685,6 +745,7 @@ export function VideoPlayer({
       if (
         !shouldTrackPlayback ||
         isScrubbingRef.current ||
+        !withCurrentPlayer(() => true) ||
         player.status !== 'readyToPlay' ||
         !player.duration
       ) {
@@ -714,6 +775,7 @@ export function VideoPlayer({
     videoId,
     isLive,
     resumePlaybackAfterRecovery,
+    withCurrentPlayer,
   ])
 
   const keepAwakeTag = `video-playback-${videoId}`
@@ -743,20 +805,22 @@ export function VideoPlayer({
     }
 
     const stallWarnTimer = setTimeout(() => {
+      const currentTime = withCurrentPlayer((currentPlayer) => currentPlayer.currentTime) ?? 0
       telemetry.warn('video:playback_stall', 'Video stuck buffering', {
         videoId,
         isLive,
         stalledForMs: 15_000,
-        positionMs: Math.round((player?.currentTime ?? 0) * 1000),
+        positionMs: Math.round(currentTime * 1000),
       })
     }, 15_000)
 
     const giveUpTimer = setTimeout(() => {
+      const currentTime = withCurrentPlayer((currentPlayer) => currentPlayer.currentTime) ?? 0
       telemetry.error('video:playback_stall_timeout', 'Video buffering timed out', {
         videoId,
         isLive,
         stalledForMs: stallGiveUpMs,
-        positionMs: Math.round((player?.currentTime ?? 0) * 1000),
+        positionMs: Math.round(currentTime * 1000),
       })
       state$.isLoading.set(false)
       state$.hasError.set(true)
@@ -772,7 +836,7 @@ export function VideoPlayer({
     isAppActive,
     currentUrl,
     isLoadingValue,
-    player,
+    withCurrentPlayer,
     state$,
     videoId,
     isLive,
@@ -794,36 +858,46 @@ export function VideoPlayer({
   }, [isActive, isScreenFocused, isAppActive, isPlaying, videoId, isLive])
 
   const togglePlayPause = useCallback(() => {
-    if (!player) return
+    const action = withCurrentPlayer((currentPlayer) => {
+      if (state$.hasEnded.get()) {
+        currentPlayer.replay()
+        return 'replay' as const
+      }
+      if (currentPlayer.playing) {
+        currentPlayer.pause()
+        return 'pause' as const
+      }
+      currentPlayer.play()
+      return 'play' as const
+    })
+    if (!action) return
 
-    if (state$.hasEnded.get()) {
+    if (action === 'replay') {
       triggeredReactionIdsRef.current = {}
       lastReactionPlaybackMsRef.current = null
       state$.triggeredReactionIds.set(triggeredReactionIdsRef.current)
       state$.lastReactionPlaybackMs.set(lastReactionPlaybackMsRef.current)
       clearActiveReactions(state$)
-      player.replay()
       state$.hasEnded.set(false)
       state$.isPlaying.set(true)
       state$.userInitiatedPlay.set(true)
       userPausedRef.current = false
-    } else if (player.playing) {
-      player.pause()
+    } else if (action === 'pause') {
       state$.isPlaying.set(false)
       // Deliberate pause — error auto-recovery must not resume over it.
       userPausedRef.current = true
     } else {
       state$.userInitiatedPlay.set(true)
       userPausedRef.current = false
-      player.play()
       state$.isPlaying.set(true)
     }
-  }, [player, state$])
+  }, [state$, withCurrentPlayer])
 
   const toggleMute = useCallback(() => {
-    if (!player) return
-    appActions.setVideoMuted(!isMuted)
-  }, [player, isMuted])
+    if (withCurrentPlayer(() => true)) {
+      appActions.setVideoMuted(!isMuted)
+    }
+  }, [isMuted, withCurrentPlayer])
 
   const handleEmojiSelect = useCallback(
     (emoji: string) => {
@@ -832,7 +906,8 @@ export function VideoPlayer({
       state$.lastReactionTime.set(now)
 
       const optimisticId = `optimistic-${now}-${Math.random()}`
-      const currentMs = player?.currentTime ? Math.floor(player.currentTime * 1000) : 0
+      const currentTime = withCurrentPlayer((currentPlayer) => currentPlayer.currentTime) ?? 0
+      const currentMs = Math.floor(currentTime * 1000)
       const reaction: ActiveReaction = {
         id: optimisticId,
         userId: currentUserId ?? '',
@@ -868,7 +943,7 @@ export function VideoPlayer({
       return true
     },
     [
-      player,
+      withCurrentPlayer,
       currentUserId,
       currentUser,
       bondfireId,
@@ -896,10 +971,9 @@ export function VideoPlayer({
 
   const seekToProgressLocation = useCallback(
     (locationX: number, shouldSeek = true) => {
-      if (!player) return
-
-      const videoDuration = player.duration
-      if (!Number.isFinite(videoDuration) || videoDuration <= 0) return
+      const videoDuration = withCurrentPlayer((currentPlayer) => currentPlayer.duration)
+      if (videoDuration === undefined || !Number.isFinite(videoDuration) || videoDuration <= 0)
+        return
 
       const { width } = progressBarRef.current
 
@@ -907,7 +981,11 @@ export function VideoPlayer({
         const seekProgress = Math.max(0, Math.min(1, locationX / width))
         const seekTime = seekProgress * videoDuration
         if (shouldSeek) {
-          player.currentTime = seekTime
+          const didSeek = withCurrentPlayer((currentPlayer) => {
+            currentPlayer.currentTime = seekTime
+            return true
+          })
+          if (!didSeek) return
           syncLocalReactionPlaybackAfterSeek(seekTime * 1000)
           syncCaptionText(seekTime * 1000)
         }
@@ -916,7 +994,7 @@ export function VideoPlayer({
         state$.userInitiatedPlay.set(true)
       }
     },
-    [player, state$, syncCaptionText, syncLocalReactionPlaybackAfterSeek],
+    [state$, syncCaptionText, syncLocalReactionPlaybackAfterSeek, withCurrentPlayer],
   )
 
   const canSeekProgress = Number.isFinite(player?.duration) && (player?.duration ?? 0) > 0

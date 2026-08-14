@@ -1,8 +1,9 @@
 /// <reference path="../types/mux-embed.d.ts" />
 
 import mux, { type Metadata } from 'mux-embed'
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { Platform } from 'react-native'
+import { safelyUseCurrentPlayer, safelyUsePlayer } from '../utils/videoPlayerAccess'
 
 type VideoPlayer = import('expo-video').VideoPlayer
 
@@ -11,7 +12,6 @@ const MUX_DATA_ENV_KEY = (
 ).EXPO_PUBLIC_MUX_DATA_ENV_KEY?.trim()
 
 const EXPO_VIDEO_VERSION = '3.0.15'
-const TIME_UPDATE_INTERVAL_SECONDS = 0.25
 
 export interface MuxDataVideoMetadata {
   video_id: string
@@ -41,11 +41,12 @@ function secondsToMs(seconds: number | undefined) {
 }
 
 function videoDurationMs(player: VideoPlayer | undefined) {
-  if (!player?.duration || !Number.isFinite(player.duration)) {
+  const duration = safelyUsePlayer(player, (currentPlayer) => currentPlayer.duration)
+  if (!duration || !Number.isFinite(duration)) {
     return undefined
   }
 
-  return secondsToMs(player.duration)
+  return secondsToMs(duration)
 }
 
 function buildMonitorId(videoId: string) {
@@ -78,6 +79,17 @@ export function useMuxData({
   isActiveRef.current = isActive
   videoMetadataRef.current = videoMetadata
 
+  // useVideoPlayer releases its native object during passive cleanup. Clear
+  // our reference in the earlier layout-cleanup phase so Mux callbacks and
+  // cleanup can no longer reach that instance during unmount.
+  useLayoutEffect(() => {
+    return () => {
+      if (playerRef.current === player) {
+        playerRef.current = undefined
+      }
+    }
+  }, [player])
+
   useEffect(() => {
     const currentVideoMetadata = videoMetadataRef.current
     const currentSourceUrl = sourceUrlRef.current
@@ -100,16 +112,28 @@ export function useMuxData({
     playerReadyEmittedRef.current = false
     rebufferingRef.current = false
 
-    const getPlayheadTime = () => secondsToMs(playerRef.current?.currentTime)
+    const withCurrentPlayer = <T>(operation: (currentPlayer: VideoPlayer) => T) =>
+      safelyUseCurrentPlayer(playerRef.current, player, operation)
+
+    const getPlayheadTime = () =>
+      secondsToMs(withCurrentPlayer((currentPlayer) => currentPlayer.currentTime))
 
     const getStateData = (): Metadata => {
-      const currentPlayer = playerRef.current
       const currentVideoMetadata = videoMetadataRef.current
-      const currentDuration = currentVideoMetadata?.video_duration ?? videoDurationMs(currentPlayer)
+      const playerState = withCurrentPlayer((currentPlayer) => ({
+        duration: currentPlayer.duration,
+        playing: currentPlayer.playing,
+        status: currentPlayer.status,
+      }))
+      const currentDuration =
+        currentVideoMetadata?.video_duration ??
+        (playerState?.duration && Number.isFinite(playerState.duration)
+          ? secondsToMs(playerState.duration)
+          : undefined)
 
       return {
         player_is_paused:
-          !isActiveRef.current || !currentPlayer?.playing || currentPlayer.status !== 'readyToPlay',
+          !isActiveRef.current || !playerState?.playing || playerState.status !== 'readyToPlay',
         player_playhead_time: getPlayheadTime(),
         video_source_url: sourceUrlRef.current ?? undefined,
         video_source_duration: currentDuration,
@@ -136,7 +160,9 @@ export function useMuxData({
         video_stream_type: currentVideoMetadata.video_stream_type ?? 'on-demand',
         video_series: currentVideoMetadata.video_series,
         video_source_url: currentSourceUrl,
-        video_source_duration: currentVideoMetadata.video_duration ?? videoDurationMs(player),
+        video_source_duration:
+          currentVideoMetadata.video_duration ??
+          withCurrentPlayer((currentPlayer) => videoDurationMs(currentPlayer)),
         custom_1: currentVideoMetadata.custom_1,
         custom_2: currentVideoMetadata.custom_2,
         custom_3: currentVideoMetadata.custom_3,
@@ -151,22 +177,29 @@ export function useMuxData({
       },
     })
 
-    if (player.status === 'readyToPlay') {
+    const initialPlayerState = withCurrentPlayer((currentPlayer) => ({
+      playing: currentPlayer.playing,
+      status: currentPlayer.status,
+    }))
+    if (!initialPlayerState) {
+      mux.emit(monitorId, mux.events.DESTROY)
+      monitorIdRef.current = null
+      return
+    }
+
+    if (initialPlayerState.status === 'readyToPlay') {
       mux.emit(monitorId, mux.events.PLAYER_READY)
       playerReadyEmittedRef.current = true
     }
 
-    if (player.playing) {
+    if (initialPlayerState.playing) {
       mux.emit(monitorId, mux.events.PLAY)
       mux.emit(monitorId, mux.events.PLAYING)
       lastPlayingRef.current = true
     }
 
-    const previousTimeUpdateInterval = player.timeUpdateEventInterval
-    player.timeUpdateEventInterval = TIME_UPDATE_INTERVAL_SECONDS
-
     const statusSubscription = player.addListener('statusChange', (status) => {
-      if (monitorIdRef.current !== monitorId) return
+      if (monitorIdRef.current !== monitorId || !withCurrentPlayer(() => true)) return
 
       if (status.status === 'readyToPlay') {
         if (!playerReadyEmittedRef.current) {
@@ -199,7 +232,7 @@ export function useMuxData({
     })
 
     const playingSubscription = player.addListener('playingChange', ({ isPlaying }) => {
-      if (monitorIdRef.current !== monitorId) return
+      if (monitorIdRef.current !== monitorId || !withCurrentPlayer(() => true)) return
 
       if (isPlaying && isActiveRef.current) {
         mux.emit(monitorId, mux.events.PLAY)
@@ -212,7 +245,7 @@ export function useMuxData({
     })
 
     const timeUpdateSubscription = player.addListener('timeUpdate', ({ currentTime }) => {
-      if (monitorIdRef.current !== monitorId) return
+      if (monitorIdRef.current !== monitorId || !withCurrentPlayer(() => true)) return
 
       mux.emit(monitorId, mux.events.TIME_UPDATE, {
         player_playhead_time: secondsToMs(currentTime),
@@ -220,7 +253,7 @@ export function useMuxData({
     })
 
     const endSubscription = player.addListener('playToEnd', () => {
-      if (monitorIdRef.current !== monitorId) return
+      if (monitorIdRef.current !== monitorId || !withCurrentPlayer(() => true)) return
 
       mux.emit(monitorId, mux.events.ENDED)
       lastPlayingRef.current = false
@@ -231,7 +264,6 @@ export function useMuxData({
       playingSubscription.remove()
       timeUpdateSubscription.remove()
       endSubscription.remove()
-      player.timeUpdateEventInterval = previousTimeUpdateInterval
 
       if (monitorIdRef.current === monitorId) {
         mux.emit(monitorId, mux.events.DESTROY)
