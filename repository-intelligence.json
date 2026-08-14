@@ -109,6 +109,7 @@
         "apps/mobile/targets/**",
         "apps/mobile/app.json",
         "apps/mobile/eas.json",
+        ".easignore",
         "apps/mobile/package.json",
         "apps/mobile/GoogleService-Info.plist",
         "apps/mobile/google-services.json",
