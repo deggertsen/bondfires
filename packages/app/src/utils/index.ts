@@ -1,5 +1,6 @@
 export * from './authRedirect'
 export * from './captureInterruption'
+export * from './convexReconnect'
 export * from './errorUtils'
 export * from './liveAbrPrior'
 export * from './liveBitratePolicy'

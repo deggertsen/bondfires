@@ -1,13 +1,16 @@
 import {
   appActions,
+  forceConvexReconnect,
   freeUpgradeActions,
   getBondfireVideoIndex,
   parseError,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
+  telemetry,
   useAppThemeColors,
   useAuth,
-  useCanRunRecordingBackgroundWork,
+  useCanLoadTabData,
+  useLoadingTimeoutTelemetry,
   useSubscription,
 } from '@bondfires/app'
 import {
@@ -20,6 +23,7 @@ import {
 } from '@bondfires/ui'
 import { useIsFocused } from '@react-navigation/native'
 import {
+  AlertTriangle,
   ArrowLeft,
   Ban,
   Bell,
@@ -29,10 +33,11 @@ import {
   Flame,
   Lock,
   MessageCircle,
+  RefreshCw,
   Shield,
   UserX,
 } from '@tamagui/lucide-icons'
-import { useMutation, useQuery } from 'convex/react'
+import { useConvex, useMutation, useQuery } from 'convex/react'
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useState } from 'react'
 import { Alert, FlatList, Modal, Pressable, StatusBar, TextInput } from 'react-native'
@@ -47,6 +52,12 @@ import { isAuthSessionErrorMessage, redirectToCampJoinLogin } from '../../../lib
 import { goBackOrReplace } from '../../../lib/navigation'
 import { routes } from '../../../lib/routes'
 import { OwnerCampSections } from './OwnerCampSections'
+
+/** Threshold (ms) after which camp loading is considered "slow". */
+const CAMP_SLOW_QUERY_THRESHOLD_MS = 3000
+
+/** Hard timeout (ms) after which camp loading shows a retry screen. */
+const CAMP_LOADING_TIMEOUT_MS = 15_000
 
 type CampWithMembership = Doc<'camps'> & {
   membership: Doc<'campMembers'> | null
@@ -822,13 +833,13 @@ export default function CampDetailScreen() {
   const { canCreate } = useSubscription()
   const navigation = useNavigation()
   const isFocused = useIsFocused()
-  const shouldRunBackgroundWork = useCanRunRecordingBackgroundWork(isFocused)
+  const canLoadScreenData = useCanLoadTabData(isFocused)
   const { id } = useLocalSearchParams<{ id?: string }>()
   const campId = id as Id<'camps'> | undefined
-  const camp = useQuery(api.camps.get, shouldRunBackgroundWork && campId ? { campId } : 'skip')
+  const camp = useQuery(api.camps.get, canLoadScreenData && campId ? { campId } : 'skip')
   const bondfires = useQuery(
     api.bondfires.listByCamp,
-    shouldRunBackgroundWork && campId ? { campId, limit: 50 } : 'skip',
+    canLoadScreenData && campId ? { campId, limit: 50 } : 'skip',
   )
   const canReviewAccessRequests =
     camp?.membership?.status === 'active' && camp.membership.role === 'owner'
@@ -839,17 +850,17 @@ export default function CampDetailScreen() {
   const pendingRequests: PendingRequest[] =
     useQuery(
       api.camps.getPendingRequests,
-      shouldRunBackgroundWork && campId && canReviewAccessRequests && camp?.status === 'active'
+      canLoadScreenData && campId && canReviewAccessRequests && camp?.status === 'active'
         ? { campId }
         : 'skip',
     ) ?? []
   const members: CampMember[] | undefined = useQuery(
     api.camps.listCampMembers,
-    shouldRunBackgroundWork && campId && isManager ? { campId } : 'skip',
+    canLoadScreenData && campId && isManager ? { campId } : 'skip',
   )
   const bannedMembers: BannedMember[] | undefined = useQuery(
     api.camps.getBannedMembers,
-    shouldRunBackgroundWork && campId && isManager ? { campId } : 'skip',
+    canLoadScreenData && campId && isManager ? { campId } : 'skip',
   )
   const joinCamp = useMutation(api.camps.join)
   const requestJoinCamp = useMutation(api.camps.requestJoin)
@@ -867,6 +878,58 @@ export default function CampDetailScreen() {
   const [archiveConfirmText, setArchiveConfirmText] = useState('')
   const [isInviteSheetOpen, setIsInviteSheetOpen] = useState(false)
   const { editingBondfire, openEditTitleSheet, closeEditTitleSheet } = useEditTitleSheet()
+
+  const convex = useConvex()
+  const [campRetryCount, setCampRetryCount] = useState(0)
+  const isCampLoading =
+    canLoadScreenData && !!campId && (camp === undefined || bondfires === undefined)
+  const getConnectionContext = useCallback(() => {
+    const connectionState = convex.connectionState()
+    return {
+      isWebSocketConnected: connectionState.isWebSocketConnected,
+      hasEverConnected: connectionState.hasEverConnected,
+      connectionCount: connectionState.connectionCount,
+      connectionRetries: connectionState.connectionRetries,
+    }
+  }, [convex])
+  const reconnectIfDisconnected = useCallback(() => {
+    if (!convex.connectionState().isWebSocketConnected) {
+      forceConvexReconnect(convex)
+    }
+  }, [convex])
+  const { timedOut: campTimedOut, resetLoadTracking } = useLoadingTimeoutTelemetry({
+    eventName: 'camp',
+    label: 'Camp',
+    isLoading: isCampLoading,
+    loadedCount: bondfires?.length,
+    context: {
+      campId,
+      isFocused,
+      canLoadScreenData,
+      campResolved: camp !== undefined,
+      bondfiresResolved: bondfires !== undefined,
+      retryCount: campRetryCount,
+    },
+    getContext: getConnectionContext,
+    onSlowLoad: reconnectIfDisconnected,
+    onLoadingTimeout: reconnectIfDisconnected,
+    trackingKey: canLoadScreenData ? (campId ?? null) : null,
+    slowLoadThresholdMs: CAMP_SLOW_QUERY_THRESHOLD_MS,
+    loadingTimeoutMs: CAMP_LOADING_TIMEOUT_MS,
+  })
+  const handleLoadingRetry = useCallback(() => {
+    const connectionState = convex.connectionState()
+    const nextRetryCount = campRetryCount + 1
+    telemetry.breadcrumb('camp:retry', {
+      isWebSocketConnected: connectionState.isWebSocketConnected,
+      hasEverConnected: connectionState.hasEverConnected,
+      retryCount: nextRetryCount,
+      campId,
+    })
+    forceConvexReconnect(convex)
+    resetLoadTracking()
+    setCampRetryCount(nextRetryCount)
+  }, [campId, campRetryCount, convex, resetLoadTracking])
 
   const handleJoin = useCallback(async () => {
     if (!campId) return
@@ -1039,6 +1102,48 @@ export default function CampDetailScreen() {
   }, [navigation, router])
 
   if (camp === undefined || bondfires === undefined) {
+    if (campTimedOut) {
+      return (
+        <YStack
+          flex={1}
+          backgroundColor={'$background'}
+          alignItems="center"
+          justifyContent="center"
+          padding="$6"
+          gap="$4"
+        >
+          <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
+          <AlertTriangle size={48} color={'$primary'} />
+          <Text fontSize="$6" fontWeight="700" color={'$color'} textAlign="center">
+            Connection Issue
+          </Text>
+          <Text fontSize="$4" color={'$placeholderColor'} opacity={0.7} textAlign="center">
+            We're having trouble loading this camp. Check your internet connection and try again.
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading camp"
+            onPress={handleLoadingRetry}
+          >
+            <YStack
+              flexDirection="row"
+              alignItems="center"
+              gap="$2"
+              backgroundColor={'$primary'}
+              paddingHorizontal="$5"
+              paddingVertical="$3"
+              borderRadius="$4"
+            >
+              <RefreshCw size={18} color={'$background'} />
+              <Text fontSize="$4" fontWeight="600" color={'$background'}>
+                Try Again
+              </Text>
+            </YStack>
+          </Pressable>
+        </YStack>
+      )
+    }
+
     return (
       <YStack flex={1} backgroundColor={'$background'} alignItems="center" justifyContent="center">
         <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
