@@ -1,4 +1,10 @@
-import { appActions, appStore$, getLastLocation, telemetry } from '@bondfires/app'
+import {
+  appActions,
+  appStore$,
+  forceConvexReconnect,
+  getLastLocation,
+  telemetry,
+} from '@bondfires/app'
 import { Spinner } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
 import { AlertTriangle, RefreshCw } from '@tamagui/lucide-icons'
@@ -18,57 +24,6 @@ const SLOW_QUERY_THRESHOLD_MS = 3000
  * This handles the case where the WebSocket dies and queries never resolve.
  */
 const LOADING_TIMEOUT_MS = 15_000
-
-type ReconnectableWebSocketManager = {
-  socketState?: () => unknown
-  tryReconnectImmediately?: () => void
-  closeAndReconnect?: (reason: string) => void
-}
-
-type ConvexInternalSync = {
-  sync?: { webSocketManager?: ReconnectableWebSocketManager }
-  cachedSync?: { webSocketManager?: ReconnectableWebSocketManager }
-}
-
-/**
- * Force the Convex WebSocket to reconnect. The two internal WebSocketManager
- * methods are complementary and each no-ops outside its own socket state:
- * - "disconnected" (waiting on a backoff timer): tryReconnectImmediately()
- *   cancels the timer and dials now — closeAndReconnect() would no-op here
- * - "connecting" (DNS/TCP hanging) or "ready": closeAndReconnect() tears the
- *   socket down and reconnects — tryReconnectImmediately() would no-op here
- *
- * The TS types mark webSocketManager as private, but it's accessible at
- * runtime. This is a known workaround pattern for Convex RN apps. The
- * telemetry warns exist so the daily audit notices if a convex upgrade
- * renames these internals.
- */
-function forceConvexReconnect(convex: ReturnType<typeof useConvex>) {
-  try {
-    const internalConvex = convex as unknown as ConvexInternalSync
-    const sync = internalConvex.sync ?? internalConvex.cachedSync
-    const wsm = sync?.webSocketManager
-    if (!wsm) {
-      telemetry.warn('loading:reconnect', 'Convex webSocketManager not found', {
-        hasSync: !!sync,
-      })
-      return false
-    }
-    const socketState = typeof wsm.socketState === 'function' ? wsm.socketState() : undefined
-    if (socketState === 'disconnected' && typeof wsm.tryReconnectImmediately === 'function') {
-      wsm.tryReconnectImmediately()
-      return true
-    }
-    if (typeof wsm.closeAndReconnect === 'function') {
-      wsm.closeAndReconnect('client')
-      return true
-    }
-    telemetry.warn('loading:reconnect', 'Convex reconnect methods not found', { socketState })
-  } catch (e) {
-    telemetry.warn('loading:reconnect', `Failed to force reconnect: ${String(e)}`)
-  }
-  return false
-}
 
 export default function SplashScreen() {
   const hasSeenOnboarding = useValue(appStore$.hasSeenOnboarding)
