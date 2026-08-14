@@ -9,7 +9,8 @@ import {
   telemetry,
   useAppThemeColors,
   useAuth,
-  useCanRunRecordingBackgroundWork,
+  useCanLoadTabData,
+  useLoadingTimeoutTelemetry,
   useSubscription,
 } from '@bondfires/app'
 import {
@@ -38,7 +39,7 @@ import {
 } from '@tamagui/lucide-icons'
 import { useConvex, useMutation, useQuery } from 'convex/react'
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { Alert, FlatList, Modal, Pressable, StatusBar, TextInput } from 'react-native'
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
 import { Separator, Image as TamaguiImage, XStack, YStack } from 'tamagui'
@@ -832,13 +833,13 @@ export default function CampDetailScreen() {
   const { canCreate } = useSubscription()
   const navigation = useNavigation()
   const isFocused = useIsFocused()
-  const shouldRunBackgroundWork = useCanRunRecordingBackgroundWork(isFocused)
+  const canLoadScreenData = useCanLoadTabData(isFocused)
   const { id } = useLocalSearchParams<{ id?: string }>()
   const campId = id as Id<'camps'> | undefined
-  const camp = useQuery(api.camps.get, shouldRunBackgroundWork && campId ? { campId } : 'skip')
+  const camp = useQuery(api.camps.get, canLoadScreenData && campId ? { campId } : 'skip')
   const bondfires = useQuery(
     api.bondfires.listByCamp,
-    shouldRunBackgroundWork && campId ? { campId, limit: 50 } : 'skip',
+    canLoadScreenData && campId ? { campId, limit: 50 } : 'skip',
   )
   const canReviewAccessRequests =
     camp?.membership?.status === 'active' && camp.membership.role === 'owner'
@@ -849,17 +850,17 @@ export default function CampDetailScreen() {
   const pendingRequests: PendingRequest[] =
     useQuery(
       api.camps.getPendingRequests,
-      shouldRunBackgroundWork && campId && canReviewAccessRequests && camp?.status === 'active'
+      canLoadScreenData && campId && canReviewAccessRequests && camp?.status === 'active'
         ? { campId }
         : 'skip',
     ) ?? []
   const members: CampMember[] | undefined = useQuery(
     api.camps.listCampMembers,
-    shouldRunBackgroundWork && campId && isManager ? { campId } : 'skip',
+    canLoadScreenData && campId && isManager ? { campId } : 'skip',
   )
   const bannedMembers: BannedMember[] | undefined = useQuery(
     api.camps.getBannedMembers,
-    shouldRunBackgroundWork && campId && isManager ? { campId } : 'skip',
+    canLoadScreenData && campId && isManager ? { campId } : 'skip',
   )
   const joinCamp = useMutation(api.camps.join)
   const requestJoinCamp = useMutation(api.camps.requestJoin)
@@ -878,95 +879,57 @@ export default function CampDetailScreen() {
   const [isInviteSheetOpen, setIsInviteSheetOpen] = useState(false)
   const { editingBondfire, openEditTitleSheet, closeEditTitleSheet } = useEditTitleSheet()
 
-  // --- Camp loading timeout / retry / telemetry ---
   const convex = useConvex()
-  const campQueryStartTime = useRef(Date.now())
-  const campSlowQueryLogged = useRef(false)
-  const [campTimedOut, setCampTimedOut] = useState(false)
   const [campRetryCount, setCampRetryCount] = useState(0)
-
-  // Log when the recording resource lock gates the camp queries — this is
-  // a common cause of infinite "Loading camp..." that would otherwise be
-  // invisible in telemetry.
-  useEffect(() => {
-    if (!shouldRunBackgroundWork && campId) {
-      telemetry.warn(
-        'camp:queries_skipped',
-        'Camp queries skipped — recording resource locked or tab not focused',
-        {
-          campId,
-          isFocused,
-        },
-      )
+  const isCampLoading =
+    canLoadScreenData && !!campId && (camp === undefined || bondfires === undefined)
+  const getConnectionContext = useCallback(() => {
+    const connectionState = convex.connectionState()
+    return {
+      isWebSocketConnected: connectionState.isWebSocketConnected,
+      hasEverConnected: connectionState.hasEverConnected,
+      connectionCount: connectionState.connectionCount,
+      connectionRetries: connectionState.connectionRetries,
     }
-  }, [shouldRunBackgroundWork, campId, isFocused])
-
-  // Slow-query detection for camp loading
-  useEffect(() => {
-    // Reset diagnostics when retry count changes
-    if (campRetryCount > 0) {
-      campQueryStartTime.current = Date.now()
-      campSlowQueryLogged.current = false
+  }, [convex])
+  const reconnectIfDisconnected = useCallback(() => {
+    if (!convex.connectionState().isWebSocketConnected) {
+      forceConvexReconnect(convex)
     }
-
-    const campLoading = camp === undefined || bondfires === undefined
-    if (!campLoading) {
-      setCampTimedOut(false)
-      return
-    }
-
-    if (!campSlowQueryLogged.current) {
-      const timer = setTimeout(() => {
-        if (!campSlowQueryLogged.current) {
-          campSlowQueryLogged.current = true
-          const elapsed = Date.now() - campQueryStartTime.current
-          const connectionState = convex.connectionState()
-          telemetry.warn('camp:query_slow', 'Camp queries not resolved', {
-            elapsedMs: elapsed,
-            isWebSocketConnected: connectionState.isWebSocketConnected,
-            hasEverConnected: connectionState.hasEverConnected,
-            shouldRunBackgroundWork,
-            campId,
-            retryCount: campRetryCount,
-          })
-
-          if (!connectionState.isWebSocketConnected) {
-            forceConvexReconnect(convex)
-          }
-        }
-      }, CAMP_SLOW_QUERY_THRESHOLD_MS)
-      return () => clearTimeout(timer)
-    }
-  }, [camp, bondfires, convex, campRetryCount, shouldRunBackgroundWork, campId])
-
-  // Hard timeout for camp loading
-  useEffect(() => {
-    const campLoading = camp === undefined || bondfires === undefined
-    if (!campLoading) return
-
-    const timer = setTimeout(() => {
-      const elapsed = Date.now() - campQueryStartTime.current
-      const connectionState = convex.connectionState()
-      telemetry.error('camp:loading_timeout', 'Camp loading timed out', {
-        elapsedMs: elapsed,
-        isWebSocketConnected: connectionState.isWebSocketConnected,
-        hasEverConnected: connectionState.hasEverConnected,
-        connectionCount: connectionState.connectionCount,
-        connectionRetries: connectionState.connectionRetries,
-        shouldRunBackgroundWork,
-        campId,
-        retryCount: campRetryCount,
-      })
-
-      if (!connectionState.isWebSocketConnected) {
-        forceConvexReconnect(convex)
-      }
-
-      setCampTimedOut(true)
-    }, CAMP_LOADING_TIMEOUT_MS)
-
-    return () => clearTimeout(timer)
-  }, [camp, bondfires, convex, shouldRunBackgroundWork, campId, campRetryCount])
+  }, [convex])
+  const { timedOut: campTimedOut, resetLoadTracking } = useLoadingTimeoutTelemetry({
+    eventName: 'camp',
+    label: 'Camp',
+    isLoading: isCampLoading,
+    loadedCount: bondfires?.length,
+    context: {
+      campId,
+      isFocused,
+      canLoadScreenData,
+      campResolved: camp !== undefined,
+      bondfiresResolved: bondfires !== undefined,
+      retryCount: campRetryCount,
+    },
+    getContext: getConnectionContext,
+    onSlowLoad: reconnectIfDisconnected,
+    onLoadingTimeout: reconnectIfDisconnected,
+    trackingKey: canLoadScreenData ? (campId ?? null) : null,
+    slowLoadThresholdMs: CAMP_SLOW_QUERY_THRESHOLD_MS,
+    loadingTimeoutMs: CAMP_LOADING_TIMEOUT_MS,
+  })
+  const handleLoadingRetry = useCallback(() => {
+    const connectionState = convex.connectionState()
+    const nextRetryCount = campRetryCount + 1
+    telemetry.breadcrumb('camp:retry', {
+      isWebSocketConnected: connectionState.isWebSocketConnected,
+      hasEverConnected: connectionState.hasEverConnected,
+      retryCount: nextRetryCount,
+      campId,
+    })
+    forceConvexReconnect(convex)
+    resetLoadTracking()
+    setCampRetryCount(nextRetryCount)
+  }, [campId, campRetryCount, convex, resetLoadTracking])
 
   const handleJoin = useCallback(async () => {
     if (!campId) return
@@ -1151,28 +1114,16 @@ export default function CampDetailScreen() {
         >
           <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
           <AlertTriangle size={48} color={'$primary'} />
-          <Text fontSize="$6" fontWeight="700" color={'$placeholderColor'} textAlign="center">
+          <Text fontSize="$6" fontWeight="700" color={'$color'} textAlign="center">
             Connection Issue
           </Text>
           <Text fontSize="$4" color={'$placeholderColor'} opacity={0.7} textAlign="center">
             We're having trouble loading this camp. Check your internet connection and try again.
           </Text>
           <Pressable
-            onPress={() => {
-              const connectionState = convex.connectionState()
-              const nextRetryCount = campRetryCount + 1
-              telemetry.breadcrumb('camp:loading_retry', {
-                wsConnected: connectionState.isWebSocketConnected,
-                hasEverConnected: connectionState.hasEverConnected,
-                retryCount: nextRetryCount,
-                campId,
-              })
-              forceConvexReconnect(convex)
-              setCampTimedOut(false)
-              campQueryStartTime.current = Date.now()
-              campSlowQueryLogged.current = false
-              setCampRetryCount(nextRetryCount)
-            }}
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading camp"
+            onPress={handleLoadingRetry}
           >
             <YStack
               flexDirection="row"

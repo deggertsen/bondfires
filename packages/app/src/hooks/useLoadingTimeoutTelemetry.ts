@@ -13,6 +13,13 @@ type UseLoadingTimeoutTelemetryOptions = {
   isLoading: boolean
   loadedCount?: number
   context?: LoadingTelemetryContext
+  /** Adds diagnostics that must be read at the moment a timer fires. */
+  getContext?: () => LoadingTelemetryContext
+  /** Optional recovery actions run after the matching telemetry event. */
+  onSlowLoad?: () => void
+  onLoadingTimeout?: () => void
+  /** Re-arms telemetry when the identity of the load changes. */
+  trackingKey?: string | number | null
   slowLoadThresholdMs?: number
   loadingTimeoutMs?: number
 }
@@ -23,22 +30,35 @@ export function useLoadingTimeoutTelemetry({
   isLoading,
   loadedCount,
   context,
+  getContext,
+  onSlowLoad,
+  onLoadingTimeout,
+  trackingKey,
   slowLoadThresholdMs = DEFAULT_SLOW_LOAD_THRESHOLD_MS,
   loadingTimeoutMs = DEFAULT_LOADING_TIMEOUT_MS,
 }: UseLoadingTimeoutTelemetryOptions) {
   const contextRef = useRef<LoadingTelemetryContext | undefined>(context)
+  const getContextRef = useRef(getContext)
+  const onSlowLoadRef = useRef(onSlowLoad)
+  const onLoadingTimeoutRef = useRef(onLoadingTimeout)
+  const trackingKeyRef = useRef(trackingKey)
   const loadStartedAtRef = useRef(Date.now())
   const slowLoadLoggedRef = useRef(false)
   const loadingTimeoutLoggedRef = useRef(false)
   const loadedLoggedRef = useRef(false)
   const [timedOut, setTimedOut] = useState(false)
+  const [loadAttempt, setLoadAttempt] = useState(0)
 
   contextRef.current = context
+  getContextRef.current = getContext
+  onSlowLoadRef.current = onSlowLoad
+  onLoadingTimeoutRef.current = onLoadingTimeout
 
   const getLoadingTelemetryContext = useCallback(
     (elapsedMs: number) => ({
       elapsedMs,
       ...(contextRef.current ?? {}),
+      ...(getContextRef.current?.() ?? {}),
       recordingPhase: recordingStore$.phase.peek(),
       liveStatus: livePublishStore$.status.peek(),
     }),
@@ -51,7 +71,17 @@ export function useLoadingTimeoutTelemetry({
     loadingTimeoutLoggedRef.current = false
     loadedLoggedRef.current = false
     setTimedOut(false)
+    setLoadAttempt((current) => current + 1)
   }, [])
+
+  useEffect(() => {
+    if (Object.is(trackingKeyRef.current, trackingKey)) {
+      return
+    }
+
+    trackingKeyRef.current = trackingKey
+    resetLoadTracking()
+  }, [resetLoadTracking, trackingKey])
 
   useEffect(() => {
     if (!isLoading) {
@@ -65,13 +95,15 @@ export function useLoadingTimeoutTelemetry({
 
       slowLoadLoggedRef.current = true
       const elapsedMs = Date.now() - loadStartedAtRef.current
-      telemetry.warn(`${eventName}:slow-load`, `${label} still loading after 5 seconds`, {
+      telemetry.warn(`${eventName}:slow-load`, `${label} is still loading`, {
         ...getLoadingTelemetryContext(elapsedMs),
+        loadAttempt,
       })
+      onSlowLoadRef.current?.()
     }, slowLoadThresholdMs)
 
     return () => clearTimeout(timer)
-  }, [eventName, getLoadingTelemetryContext, isLoading, label, slowLoadThresholdMs])
+  }, [eventName, getLoadingTelemetryContext, isLoading, label, loadAttempt, slowLoadThresholdMs])
 
   useEffect(() => {
     if (!isLoading) {
@@ -87,12 +119,14 @@ export function useLoadingTimeoutTelemetry({
       const elapsedMs = Date.now() - loadStartedAtRef.current
       telemetry.error(`${eventName}:loading-timeout`, `${label} loading timed out`, {
         ...getLoadingTelemetryContext(elapsedMs),
+        loadAttempt,
       })
       setTimedOut(true)
+      onLoadingTimeoutRef.current?.()
     }, loadingTimeoutMs)
 
     return () => clearTimeout(timer)
-  }, [eventName, getLoadingTelemetryContext, isLoading, label, loadingTimeoutMs])
+  }, [eventName, getLoadingTelemetryContext, isLoading, label, loadAttempt, loadingTimeoutMs])
 
   useEffect(() => {
     if (isLoading || loadedCount === undefined || loadedLoggedRef.current) {

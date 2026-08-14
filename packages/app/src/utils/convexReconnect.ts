@@ -1,4 +1,5 @@
 import type { useConvex } from 'convex/react'
+import { telemetry } from '../services/telemetry'
 
 type ReconnectableWebSocketManager = {
   socketState?: () => unknown
@@ -27,7 +28,12 @@ export function forceConvexReconnect(convex: ReturnType<typeof useConvex>): bool
     const internalConvex = convex as unknown as ConvexInternalSync
     const sync = internalConvex.sync ?? internalConvex.cachedSync
     const wsm = sync?.webSocketManager
-    if (!wsm) return false
+    if (!wsm) {
+      telemetry.warn('loading:reconnect', 'Convex webSocketManager not found', {
+        hasSync: !!sync,
+      })
+      return false
+    }
 
     const socketState = typeof wsm.socketState === 'function' ? wsm.socketState() : undefined
     if (socketState === 'disconnected' && typeof wsm.tryReconnectImmediately === 'function') {
@@ -38,8 +44,10 @@ export function forceConvexReconnect(convex: ReturnType<typeof useConvex>): bool
       wsm.closeAndReconnect('client')
       return true
     }
+    telemetry.warn('loading:reconnect', 'Convex reconnect methods not found', { socketState })
     return false
-  } catch {
+  } catch (error) {
+    telemetry.warn('loading:reconnect', `Failed to force reconnect: ${String(error)}`)
     return false
   }
 }
