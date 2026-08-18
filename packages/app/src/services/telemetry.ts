@@ -631,6 +631,15 @@ export class TelemetryLogger {
     const originalHandler = ErrorUtils.getGlobalHandler?.()
 
     ErrorUtils.setGlobalHandler((error: Error, isFatal?: boolean) => {
+      // Transient Convex auth blips surface here too — downgrade to breadcrumb.
+      if (isTransientAuthError(error.message ?? '')) {
+        this.enqueue('breadcrumb', 'error:auth:transient', error.message ?? 'Unknown auth error', {
+          stack: error.stack,
+          isFatal,
+        }, { echo: false })
+        return
+      }
+
       this.error('error:unhandled', error.message ?? 'Unknown error', {
         stack: error.stack,
         isFatal,
@@ -660,10 +669,23 @@ export class TelemetryLogger {
       allRejections: true,
       onUnhandled: (id, error) => {
         const err = error instanceof Error ? error : new Error(String(error))
+        const msg = err.message ?? 'Unhandled rejection'
+
+        // Transient Convex auth blips frequently surface as unhandled rejections
+        // (the auth promise rejects during a WS reconnect, .catch attaches a
+        // tick late). Downgrade to a breadcrumb — these are noise, not bugs.
+        if (isTransientAuthError(msg)) {
+          this.enqueue('breadcrumb', 'error:auth:transient_rejection', msg, {
+            stack: err.stack,
+            rejectionId: id,
+          }, { echo: false })
+          return
+        }
+
         // enqueue directly, NOT this.error(): error() fires the user-facing
         // toast, and rejections are frequent background noise (network blips,
         // .catch attached a tick late) — telemetry-only, never a toast.
-        this.enqueue('error', 'error:unhandled_rejection', err.message ?? 'Unhandled rejection', {
+        this.enqueue('error', 'error:unhandled_rejection', msg, {
           stack: err.stack,
           rejectionId: id,
         })
@@ -701,7 +723,17 @@ export class TelemetryLogger {
   private installConsoleOverrides(): void {
     console.error = (...args: unknown[]) => {
       this._origConsoleError(...args)
-      this.enqueue('error', 'console:error', formatConsoleArgs(args) || 'console.error', args, {
+      const formatted = formatConsoleArgs(args) || 'console.error'
+
+      // Transient Convex auth blips (token expired during WS reconnect, etc.)
+      // are auto-recovered by the client. Downgrade to a breadcrumb so we
+      // keep the trail without firing an error-level telemetry entry or toast.
+      if (isTransientAuthError(formatted)) {
+        this.enqueue('breadcrumb', 'console:auth:transient', formatted, args, { echo: false })
+        return
+      }
+
+      this.enqueue('error', 'console:error', formatted, args, {
         echo: false,
       })
     }
@@ -713,6 +745,32 @@ export class TelemetryLogger {
       })
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Transient auth error classification (module-level)
+// ---------------------------------------------------------------------------
+
+/**
+ * Patterns that indicate a transient Convex auth/WebSocket blip — the server
+ * briefly rejects a token during a reconnect, the client automatically
+ * re-authenticates, and life continues. These are not user-actionable and
+ * should not produce error-level telemetry (which fires a user-facing toast).
+ * Downgrade to a breadcrumb so we still have the trail without the noise.
+ *
+ * Exported so call sites (login.tsx, signup.tsx, etc.) can classify the same
+ * way without duplicating patterns.
+ */
+const TRANSIENT_AUTH_ERROR_PATTERNS: readonly RegExp[] = [
+  /Failed to authenticate:/i,
+  /\[Request ID:.*\] AuthError/i,
+  /AuthError.*Request ID/i,
+  /Not authenticated/i,
+  /Unauthorized/i,
+]
+
+export function isTransientAuthError(message: string): boolean {
+  return TRANSIENT_AUTH_ERROR_PATTERNS.some((p) => p.test(message))
 }
 
 // ---------------------------------------------------------------------------

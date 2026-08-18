@@ -1,4 +1,4 @@
-import { appActions, telemetry, useAppThemeColors } from '@bondfires/app'
+import { appActions, isTransientAuthError, telemetry, useAppThemeColors } from '@bondfires/app'
 import { Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
@@ -156,7 +156,17 @@ export default function LoginScreen() {
       }, POST_SIGN_IN_NAV_TIMEOUT_MS)
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err)
-      telemetry.error('auth:signInError', 'Sign in failed', { error: errorMessage })
+
+      // Transient Convex auth blips (token expired during WS reconnect, server
+      // briefly rejects, client auto-retries) are not user-actionable. Downgrade
+      // to a warn so we keep the trail without firing a toast or error-level entry.
+      if (isTransientAuthError(errorMessage)) {
+        telemetry.warn('auth:signInTransient', 'Transient auth error during signIn', {
+          error: errorMessage,
+        })
+      } else {
+        telemetry.error('auth:signInError', 'Sign in failed', { error: errorMessage })
+      }
 
       // Check if error is about email verification.
       // Only redirect if we haven't already navigated above.

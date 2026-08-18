@@ -17,7 +17,7 @@ export {
   setPushPermissionRequester,
 } from './services/pushPermissions'
 export type { LogEntry, LogLevel, TelemetryLogger } from './services/telemetry'
-export { telemetry } from './services/telemetry'
+export { isTransientAuthError, telemetry } from './services/telemetry'
 export * from './store'
 // Utils
 export * from './utils'
