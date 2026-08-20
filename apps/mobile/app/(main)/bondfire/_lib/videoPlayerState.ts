@@ -28,24 +28,32 @@ export type VideoPlayerState = {
   triggeredReactionIds: Record<string, true>
   lastReactionTime: number
   lastReactionPlaybackMs: number | null
+  isInPictureInPicture: boolean
 }
 
 export type VideoPlayerState$ = Observable<VideoPlayerState>
+
+/** Delay before pausing after PiP closes, so returning to the app is not treated as a dismiss. */
+export const PICTURE_IN_PICTURE_STOP_PAUSE_GRACE_MS = 300
 
 export function shouldLoadVideoSource({
   videoUrl,
   isActive,
   isScreenFocused,
-  isAppActive,
   shouldSuppressPlayback,
 }: {
   videoUrl: string | null
   isActive: boolean
   isScreenFocused: boolean
-  isAppActive: boolean
   shouldSuppressPlayback: boolean
 }) {
-  return !!videoUrl && isActive && isScreenFocused && isAppActive && !shouldSuppressPlayback
+  // Keep the source loaded while this item is the focused session, including
+  // when the app is backgrounded, so Picture-in-Picture can keep playing.
+  return !!videoUrl && isActive && isScreenFocused && !shouldSuppressPlayback
+}
+
+export function shouldPauseAfterPictureInPictureStop(appState: string) {
+  return appState !== 'active'
 }
 
 export function shouldShowRespondCTA({

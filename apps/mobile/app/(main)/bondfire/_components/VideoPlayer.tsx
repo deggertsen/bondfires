@@ -29,7 +29,7 @@ import {
   useMemo,
   useRef,
 } from 'react'
-import { type LayoutChangeEvent, PanResponder, Pressable, type View } from 'react-native'
+import { AppState, type LayoutChangeEvent, PanResponder, Pressable, type View } from 'react-native'
 import { YStack } from 'tamagui'
 import { api } from '../../../../../../convex/_generated/api'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
@@ -45,9 +45,11 @@ import { type CaptionCue, fetchCaptionCues, findCaptionText } from '../_lib/vide
 import {
   clearActiveReactions,
   type PendingScrubSeek,
+  PICTURE_IN_PICTURE_STOP_PAUSE_GRACE_MS,
   type ProgressBarMetrics,
   resetReactionState,
   shouldLoadVideoSource,
+  shouldPauseAfterPictureInPictureStop,
   syncReactionPlaybackAfterSeek,
 } from '../_lib/videoPlayerState'
 import {
@@ -156,7 +158,9 @@ export function VideoPlayer({
   const { currentTier } = useSubscription()
   const isPaid = tierMeetsRequirement(currentTier, 'plus')
   const shouldHandleVodReactions = !isLive && isActive && isScreenFocused && isAppActive
-  const shouldTrackPlayback = isActive && isScreenFocused && isAppActive && !shouldSuppressPlayback
+  // Keep the playback session alive in the background so automatic PiP can
+  // continue. App-active is only a chrome/presence gate, not a player gate.
+  const shouldTrackPlayback = isActive && isScreenFocused && !shouldSuppressPlayback
 
   const currentUser = useQuery(api.users.current, shouldHandleVodReactions ? {} : 'skip')
   const recentEmojis = useQuery(
@@ -182,7 +186,6 @@ export function VideoPlayer({
     videoUrl,
     isActive,
     isScreenFocused,
-    isAppActive,
     shouldSuppressPlayback,
   })
     ? videoUrl
@@ -217,6 +220,7 @@ export function VideoPlayer({
     triggeredReactionIds: {} as Record<string, true>,
     lastReactionTime: 0,
     lastReactionPlaybackMs: null as number | null,
+    isInPictureInPicture: false,
   })
 
   const triggeredReactionIdsRef = useRef<Record<string, true>>({})
@@ -224,6 +228,9 @@ export function VideoPlayer({
   const lastProgressStateUpdateAtRef = useRef(0)
 
   const isPlaying = useValue(state$.isPlaying)
+  const isInPictureInPicture = useValue(state$.isInPictureInPicture)
+  const videoViewRef = useRef<VideoView>(null)
+  const pictureInPictureStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const resetLocalReactionState = useCallback(() => {
     triggeredReactionIdsRef.current = {}
@@ -254,6 +261,7 @@ export function VideoPlayer({
     player.playbackRate = playbackSpeed
     player.preservesPitch = true
     player.timeUpdateEventInterval = PROGRESS_TIME_UPDATE_INTERVAL_SECONDS
+    player.staysActiveInBackground = true
   })
 
   // useVideoPlayer releases and replaces its native shared object whenever
@@ -302,10 +310,10 @@ export function VideoPlayer({
   //
   // The gates are read through a per-render ref, NOT closure props: the
   // helper runs after an async replaceAsync resolves, by which time the user
-  // may have backgrounded the app or swiped away — a stale closure would
-  // start audio on a page that should be paused.
-  const playbackGateRef = useRef({ isActive, isScreenFocused, isAppActive })
-  playbackGateRef.current = { isActive, isScreenFocused, isAppActive }
+  // may have swiped away — a stale closure would start audio on a page that
+  // should be paused. Backgrounding is allowed: PiP keeps this session alive.
+  const playbackGateRef = useRef({ isActive, isScreenFocused })
+  playbackGateRef.current = { isActive, isScreenFocused }
   // Deliberate user pause — auto-recovery must never play over it.
   const userPausedRef = useRef(false)
 
@@ -353,7 +361,6 @@ export function VideoPlayer({
     if (
       gate.isActive &&
       gate.isScreenFocused &&
-      gate.isAppActive &&
       !shouldSuppressPlayback &&
       !userPausedRef.current &&
       (appStore$.preferences.autoplayVideos.peek() || state$.userInitiatedPlay.peek())
@@ -473,18 +480,22 @@ export function VideoPlayer({
       () => ({ viewer_user_id: currentUserId ?? undefined }),
       [currentUserId],
     ),
-    isActive: isActive && isScreenFocused && isAppActive,
+    isActive: isActive && isScreenFocused && !shouldSuppressPlayback,
   })
 
   useEffect(() => {
     // Keep the system media session attached to the real native player. Only
     // the visible item opts in, so neighboring feed cells cannot take over.
+    // staysActiveInBackground is required for automatic PiP: expo-video pauses
+    // on background unless this is set or PiP has already started.
     withCurrentPlayer((currentPlayer) => {
       currentPlayer.showNowPlayingNotification = shouldTrackPlayback
+      currentPlayer.staysActiveInBackground = shouldTrackPlayback
     })
     return () => {
       withCurrentPlayer((currentPlayer) => {
         currentPlayer.showNowPlayingNotification = false
+        currentPlayer.staysActiveInBackground = false
       })
     }
   }, [shouldTrackPlayback, withCurrentPlayer])
@@ -610,11 +621,11 @@ export function VideoPlayer({
   )
 
   useEffect(() => {
-    if (player && isActive && isScreenFocused && isAppActive) {
+    if (player && isActive && isScreenFocused) {
       player.playbackRate = playbackSpeed
       player.timeUpdateEventInterval = PROGRESS_TIME_UPDATE_INTERVAL_SECONDS
     }
-  }, [player, isActive, isScreenFocused, isAppActive, playbackSpeed])
+  }, [player, isActive, isScreenFocused, playbackSpeed])
 
   useEffect(() => {
     if (player) {
@@ -625,16 +636,20 @@ export function VideoPlayer({
   useEffect(() => {
     if (!player) return
 
-    const shouldPlay = isActive && isScreenFocused && isAppActive && !shouldSuppressPlayback
+    const shouldPlay = isActive && isScreenFocused && !shouldSuppressPlayback
 
     if (shouldPlay) {
       player.playbackRate = playbackSpeed
-      if (autoplayVideos || state$.userInitiatedPlay.get()) {
+      if (!userPausedRef.current && (autoplayVideos || state$.userInitiatedPlay.get())) {
         player.play()
       }
     } else {
+      if (state$.isInPictureInPicture.peek()) {
+        videoViewRef.current?.stopPictureInPicture().catch(() => {})
+      }
       player.pause()
       state$.isPlaying.set(false)
+      state$.isInPictureInPicture.set(false)
       if (!isActive) {
         state$.userInitiatedPlay.set(false)
       }
@@ -643,7 +658,6 @@ export function VideoPlayer({
     player,
     isActive,
     isScreenFocused,
-    isAppActive,
     autoplayVideos,
     playbackSpeed,
     state$,
@@ -734,6 +748,9 @@ export function VideoPlayer({
       state$.lastReactionPlaybackMs.set(lastReactionPlaybackMsRef.current)
       clearActiveReactions(state$)
       onComplete(player.currentTime * 1000, player.duration ? player.duration * 1000 : undefined)
+      if (state$.isInPictureInPicture.peek()) {
+        videoViewRef.current?.stopPictureInPicture().catch(() => {})
+      }
     })
 
     const playingSubscription = player.addListener('playingChange', ({ isPlaying }) => {
@@ -800,7 +817,7 @@ export function VideoPlayer({
   const stallGiveUpMs = isLive ? 75_000 : 45_000
   const isLoadingValue = useValue(state$.isLoading)
   useEffect(() => {
-    if (!isActive || !isScreenFocused || !isAppActive || !currentUrl || !isLoadingValue) {
+    if (!isActive || !isScreenFocused || !currentUrl || !isLoadingValue) {
       return
     }
 
@@ -833,7 +850,6 @@ export function VideoPlayer({
   }, [
     isActive,
     isScreenFocused,
-    isAppActive,
     currentUrl,
     isLoadingValue,
     withCurrentPlayer,
@@ -848,14 +864,52 @@ export function VideoPlayer({
   // crash:last_breadcrumb with this context. Recording has had the same
   // protection since the camera-freeze fix; playback crashes were invisible.
   useEffect(() => {
-    if (isActive && isScreenFocused && isAppActive && isPlaying) {
+    if (isActive && isScreenFocused && isPlaying) {
       telemetry.setCrashBreadcrumb('video:watching', { videoId, isLive })
       return () => {
         telemetry.clearCrashBreadcrumb()
       }
     }
     return undefined
-  }, [isActive, isScreenFocused, isAppActive, isPlaying, videoId, isLive])
+  }, [isActive, isScreenFocused, isPlaying, videoId, isLive])
+
+  const clearPictureInPictureStopTimer = useCallback(() => {
+    if (pictureInPictureStopTimerRef.current) {
+      clearTimeout(pictureInPictureStopTimerRef.current)
+      pictureInPictureStopTimerRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      clearPictureInPictureStopTimer()
+    }
+  }, [clearPictureInPictureStopTimer])
+
+  const handlePictureInPictureStart = useCallback(() => {
+    clearPictureInPictureStopTimer()
+    state$.isInPictureInPicture.set(true)
+    telemetry.info('video:pip_start', 'Video entered picture-in-picture', { videoId, isLive })
+  }, [clearPictureInPictureStopTimer, isLive, state$, videoId])
+
+  const handlePictureInPictureStop = useCallback(() => {
+    state$.isInPictureInPicture.set(false)
+    telemetry.info('video:pip_stop', 'Video exited picture-in-picture', {
+      videoId,
+      isLive,
+      appState: AppState.currentState,
+    })
+    clearPictureInPictureStopTimer()
+    pictureInPictureStopTimerRef.current = setTimeout(() => {
+      pictureInPictureStopTimerRef.current = null
+      if (!shouldPauseAfterPictureInPictureStop(AppState.currentState)) return
+      userPausedRef.current = true
+      withCurrentPlayer((currentPlayer) => {
+        currentPlayer.pause()
+      })
+      state$.isPlaying.set(false)
+    }, PICTURE_IN_PICTURE_STOP_PAUSE_GRACE_MS)
+  }, [clearPictureInPictureStopTimer, isLive, state$, videoId, withCurrentPlayer])
 
   const togglePlayPause = useCallback(() => {
     const action = withCurrentPlayer((currentPlayer) => {
@@ -1170,13 +1224,16 @@ export function VideoPlayer({
     <YStack flex={1} width={SCREEN_WIDTH} backgroundColor={'$background'}>
       {currentUrl && player ? (
         <VideoView
+          ref={videoViewRef}
           player={player}
           style={{ flex: 1 }}
           contentFit="cover"
           nativeControls={false}
           fullscreenOptions={{ enable: false }}
-          allowsPictureInPicture={false}
-          startsPictureInPictureAutomatically={false}
+          allowsPictureInPicture
+          startsPictureInPictureAutomatically={isPlaying}
+          onPictureInPictureStart={handlePictureInPictureStart}
+          onPictureInPictureStop={handlePictureInPictureStop}
         />
       ) : (
         <YStack flex={1} alignItems="center" justifyContent="center">
@@ -1184,89 +1241,93 @@ export function VideoPlayer({
         </YStack>
       )}
 
-      <Pressable
-        onPress={togglePlayPause}
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          zIndex: 1,
-        }}
-      />
+      {isInPictureInPicture ? null : (
+        <>
+          <Pressable
+            onPress={togglePlayPause}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 1,
+            }}
+          />
 
-      <LoadingOverlay state$={state$} currentUrl={currentUrl} />
+          <LoadingOverlay state$={state$} currentUrl={currentUrl} />
 
-      <PlaybackErrorOverlay state$={state$} onRetry={retryPlayback} />
+          <PlaybackErrorOverlay state$={state$} onRetry={retryPlayback} />
 
-      <ReactionPresenceLayer
-        state$={state$}
-        liveViewers={viewers}
-        onReactionExpired={handleReactionExpired}
-      />
+          <ReactionPresenceLayer
+            state$={state$}
+            liveViewers={viewers}
+            onReactionExpired={handleReactionExpired}
+          />
 
-      <PlayPauseIndicator state$={state$} />
+          <PlayPauseIndicator state$={state$} />
 
-      <LinearGradient
-        colors={OVERLAY_COLORS.gradientBottom}
-        style={{
-          position: 'absolute',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          height: 180,
-          zIndex: 2,
-        }}
-        pointerEvents="none"
-      />
+          <LinearGradient
+            colors={OVERLAY_COLORS.gradientBottom}
+            style={{
+              position: 'absolute',
+              bottom: 0,
+              left: 0,
+              right: 0,
+              height: 180,
+              zIndex: 2,
+            }}
+            pointerEvents="none"
+          />
 
-      {isLive ? (
-        <YStack position="absolute" bottom={132} left={20} zIndex={3}>
-          <YStack
-            backgroundColor={'$error'}
-            paddingHorizontal={14}
-            paddingVertical={7}
-            borderRadius={16}
-          >
-            <Text color={'$color'} fontSize={12} fontWeight="900">
-              LIVE
-            </Text>
-          </YStack>
-        </YStack>
-      ) : null}
+          {isLive ? (
+            <YStack position="absolute" bottom={132} left={20} zIndex={3}>
+              <YStack
+                backgroundColor={'$error'}
+                paddingHorizontal={14}
+                paddingVertical={7}
+                borderRadius={16}
+              >
+                <Text color={'$color'} fontSize={12} fontWeight="900">
+                  LIVE
+                </Text>
+              </YStack>
+            </YStack>
+          ) : null}
 
-      <CaptionOverlay state$={state$} />
+          <CaptionOverlay state$={state$} />
 
-      <VideoProgressBar
-        state$={state$}
-        progressBarViewRef={progressBarViewRef}
-        onLayout={handleProgressBarLayout}
-        panHandlers={progressBarPanResponder.panHandlers}
-      />
+          <VideoProgressBar
+            state$={state$}
+            progressBarViewRef={progressBarViewRef}
+            onLayout={handleProgressBarLayout}
+            panHandlers={progressBarPanResponder.panHandlers}
+          />
 
-      <PausedReportButton state$={state$} />
+          <PausedReportButton state$={state$} />
 
-      <RightSideControls
-        state$={state$}
-        isLive={isLive}
-        isPaid={isPaid}
-        recentEmojis={recentEmojis ?? []}
-        isMuted={isMuted}
-        onEmojiSelect={handleEmojiSelect}
-        onToggleMute={toggleMute}
-      />
+          <RightSideControls
+            state$={state$}
+            isLive={isLive}
+            isPaid={isPaid}
+            recentEmojis={recentEmojis ?? []}
+            isMuted={isMuted}
+            onEmojiSelect={handleEmojiSelect}
+            onToggleMute={toggleMute}
+          />
 
-      <ReportOverlayGate
-        state$={state$}
-        bondfireId={bondfireId}
-        bondfireVideoId={bondfireVideoId}
-        videoOwnerId={videoOwnerId}
-      />
+          <ReportOverlayGate
+            state$={state$}
+            bondfireId={bondfireId}
+            bondfireVideoId={bondfireVideoId}
+            videoOwnerId={videoOwnerId}
+          />
 
-      {onRespondAfterPlayback ? (
-        <RespondCTAOverlay state$={state$} onRespond={onRespondAfterPlayback} />
-      ) : null}
+          {onRespondAfterPlayback ? (
+            <RespondCTAOverlay state$={state$} onRespond={onRespondAfterPlayback} />
+          ) : null}
+        </>
+      )}
     </YStack>
   )
 }

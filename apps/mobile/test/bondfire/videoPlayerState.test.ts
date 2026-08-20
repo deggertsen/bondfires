@@ -2,6 +2,7 @@ import { observable } from '@legendapp/state'
 import { describe, expect, it } from 'vitest'
 import {
   shouldLoadVideoSource,
+  shouldPauseAfterPictureInPictureStop,
   shouldShowRespondCTA,
   syncReactionPlaybackAfterSeek,
   type VideoPlayerState,
@@ -33,6 +34,7 @@ function createVideoPlayerState() {
     triggeredReactionIds: {},
     lastReactionTime: 0,
     lastReactionPlaybackMs: null,
+    isInPictureInPicture: false,
   })
 }
 
@@ -77,7 +79,6 @@ describe('videoPlayerState', () => {
         videoUrl: 'https://stream.mux.com/test.m3u8',
         isActive: true,
         isScreenFocused: true,
-        isAppActive: true,
         shouldSuppressPlayback: false,
       }),
     ).toBe(true)
@@ -87,25 +88,29 @@ describe('videoPlayerState', () => {
         videoUrl: 'https://stream.mux.com/test.m3u8',
         isActive: false,
         isScreenFocused: true,
-        isAppActive: true,
         shouldSuppressPlayback: false,
       }),
     ).toBe(false)
   })
 
-  it('drops the source when playback is backgrounded or suppressed', () => {
+  it('keeps the source loaded when the app is backgrounded so PiP can continue', () => {
     const base = {
       videoUrl: 'https://stream.mux.com/test.m3u8',
       isActive: true,
       isScreenFocused: true,
-      isAppActive: true,
       shouldSuppressPlayback: false,
     }
 
+    expect(shouldLoadVideoSource(base)).toBe(true)
     expect(shouldLoadVideoSource({ ...base, isScreenFocused: false })).toBe(false)
-    expect(shouldLoadVideoSource({ ...base, isAppActive: false })).toBe(false)
     expect(shouldLoadVideoSource({ ...base, shouldSuppressPlayback: true })).toBe(false)
     expect(shouldLoadVideoSource({ ...base, videoUrl: null })).toBe(false)
+  })
+
+  it('pauses after PiP closes only when the app is still in the background', () => {
+    expect(shouldPauseAfterPictureInPictureStop('background')).toBe(true)
+    expect(shouldPauseAfterPictureInPictureStop('inactive')).toBe(true)
+    expect(shouldPauseAfterPictureInPictureStop('active')).toBe(false)
   })
 
   it('shows the response CTA only in the settled ended state', () => {
