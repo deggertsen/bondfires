@@ -1,4 +1,5 @@
 import type { Observable } from '@legendapp/state'
+import type { AppStateStatus } from 'react-native'
 import type { ActiveReaction } from '../../../../components/ViewerPresenceStack'
 
 export type ProgressBarMetrics = {
@@ -32,20 +33,41 @@ export type VideoPlayerState = {
 
 export type VideoPlayerState$ = Observable<VideoPlayerState>
 
+/** Delay before pausing after PiP closes, so returning to the app is not treated as a dismiss. */
+export const PICTURE_IN_PICTURE_STOP_PAUSE_GRACE_MS = 1_000
+
+export function shouldOwnPlaybackSession({
+  isActive,
+  isScreenFocused,
+  shouldSuppressPlayback,
+}: {
+  isActive: boolean
+  isScreenFocused: boolean
+  shouldSuppressPlayback: boolean
+}) {
+  return isActive && isScreenFocused && !shouldSuppressPlayback
+}
+
 export function shouldLoadVideoSource({
   videoUrl,
   isActive,
   isScreenFocused,
-  isAppActive,
   shouldSuppressPlayback,
 }: {
   videoUrl: string | null
   isActive: boolean
   isScreenFocused: boolean
-  isAppActive: boolean
   shouldSuppressPlayback: boolean
 }) {
-  return !!videoUrl && isActive && isScreenFocused && isAppActive && !shouldSuppressPlayback
+  // Keep the source loaded while this item is the focused session, including
+  // when the app is backgrounded, so Picture-in-Picture can keep playing.
+  return (
+    !!videoUrl && shouldOwnPlaybackSession({ isActive, isScreenFocused, shouldSuppressPlayback })
+  )
+}
+
+export function shouldPauseAfterPictureInPictureStop(appState: AppStateStatus) {
+  return appState !== 'active'
 }
 
 export function shouldShowRespondCTA({

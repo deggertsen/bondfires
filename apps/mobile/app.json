@@ -144,7 +144,8 @@
       [
         "expo-video",
         {
-          "supportsBackgroundPlayback": true
+          "supportsBackgroundPlayback": true,
+          "supportsPictureInPicture": true
         }
       ],
       "expo-font",
