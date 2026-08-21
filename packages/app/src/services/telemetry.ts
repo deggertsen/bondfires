@@ -633,10 +633,16 @@ export class TelemetryLogger {
     ErrorUtils.setGlobalHandler((error: Error, isFatal?: boolean) => {
       // Transient Convex auth blips surface here too — downgrade to breadcrumb.
       if (isTransientAuthError(error.message ?? '')) {
-        this.enqueue('breadcrumb', 'error:auth:transient', error.message ?? 'Unknown auth error', {
-          stack: error.stack,
-          isFatal,
-        }, { echo: false })
+        this.enqueue(
+          'breadcrumb',
+          'error:auth:transient',
+          error.message ?? 'Unknown auth error',
+          {
+            stack: error.stack,
+            isFatal,
+          },
+          { echo: false },
+        )
         return
       }
 
@@ -675,10 +681,16 @@ export class TelemetryLogger {
         // (the auth promise rejects during a WS reconnect, .catch attaches a
         // tick late). Downgrade to a breadcrumb — these are noise, not bugs.
         if (isTransientAuthError(msg)) {
-          this.enqueue('breadcrumb', 'error:auth:transient_rejection', msg, {
-            stack: err.stack,
-            rejectionId: id,
-          }, { echo: false })
+          this.enqueue(
+            'breadcrumb',
+            'error:auth:transient_rejection',
+            msg,
+            {
+              stack: err.stack,
+              rejectionId: id,
+            },
+            { echo: false },
+          )
           return
         }
 

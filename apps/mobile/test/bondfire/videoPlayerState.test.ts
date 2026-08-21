@@ -2,6 +2,7 @@ import { observable } from '@legendapp/state'
 import { describe, expect, it } from 'vitest'
 import {
   shouldLoadVideoSource,
+  shouldOwnPlaybackSession,
   shouldPauseAfterPictureInPictureStop,
   shouldShowRespondCTA,
   syncReactionPlaybackAfterSeek,
@@ -34,7 +35,6 @@ function createVideoPlayerState() {
     triggeredReactionIds: {},
     lastReactionTime: 0,
     lastReactionPlaybackMs: null,
-    isInPictureInPicture: false,
   })
 }
 
@@ -107,9 +107,24 @@ describe('videoPlayerState', () => {
     expect(shouldLoadVideoSource({ ...base, videoUrl: null })).toBe(false)
   })
 
+  it('gives the playback session only to the active focused viewer', () => {
+    const base = {
+      isActive: true,
+      isScreenFocused: true,
+      shouldSuppressPlayback: false,
+    }
+
+    expect(shouldOwnPlaybackSession(base)).toBe(true)
+    expect(shouldOwnPlaybackSession({ ...base, isActive: false })).toBe(false)
+    expect(shouldOwnPlaybackSession({ ...base, isScreenFocused: false })).toBe(false)
+    expect(shouldOwnPlaybackSession({ ...base, shouldSuppressPlayback: true })).toBe(false)
+  })
+
   it('pauses after PiP closes only when the app is still in the background', () => {
     expect(shouldPauseAfterPictureInPictureStop('background')).toBe(true)
     expect(shouldPauseAfterPictureInPictureStop('inactive')).toBe(true)
+    expect(shouldPauseAfterPictureInPictureStop('unknown')).toBe(true)
+    expect(shouldPauseAfterPictureInPictureStop('extension')).toBe(true)
     expect(shouldPauseAfterPictureInPictureStop('active')).toBe(false)
   })
 

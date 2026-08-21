@@ -49,6 +49,7 @@ import {
   type ProgressBarMetrics,
   resetReactionState,
   shouldLoadVideoSource,
+  shouldOwnPlaybackSession,
   shouldPauseAfterPictureInPictureStop,
   syncReactionPlaybackAfterSeek,
 } from '../_lib/videoPlayerState'
@@ -158,9 +159,13 @@ export function VideoPlayer({
   const { currentTier } = useSubscription()
   const isPaid = tierMeetsRequirement(currentTier, 'plus')
   const shouldHandleVodReactions = !isLive && isActive && isScreenFocused && isAppActive
-  // Keep the playback session alive in the background so automatic PiP can
-  // continue. App-active is only a chrome/presence gate, not a player gate.
-  const shouldTrackPlayback = isActive && isScreenFocused && !shouldSuppressPlayback
+  // The focused player owns the system playback session even while the app is
+  // backgrounded. Foreground-only UI and presence keep their isAppActive gate.
+  const ownsPlaybackSession = shouldOwnPlaybackSession({
+    isActive,
+    isScreenFocused,
+    shouldSuppressPlayback,
+  })
 
   const currentUser = useQuery(api.users.current, shouldHandleVodReactions ? {} : 'skip')
   const recentEmojis = useQuery(
@@ -220,7 +225,6 @@ export function VideoPlayer({
     triggeredReactionIds: {} as Record<string, true>,
     lastReactionTime: 0,
     lastReactionPlaybackMs: null as number | null,
-    isInPictureInPicture: false,
   })
 
   const triggeredReactionIdsRef = useRef<Record<string, true>>({})
@@ -228,8 +232,8 @@ export function VideoPlayer({
   const lastProgressStateUpdateAtRef = useRef(0)
 
   const isPlaying = useValue(state$.isPlaying)
-  const isInPictureInPicture = useValue(state$.isInPictureInPicture)
   const videoViewRef = useRef<VideoView>(null)
+  const isInPictureInPictureRef = useRef(false)
   const pictureInPictureStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const resetLocalReactionState = useCallback(() => {
@@ -261,7 +265,9 @@ export function VideoPlayer({
     player.playbackRate = playbackSpeed
     player.preservesPitch = true
     player.timeUpdateEventInterval = PROGRESS_TIME_UPDATE_INTERVAL_SECONDS
-    player.staysActiveInBackground = true
+    // Scope background playback to the one player eligible for automatic PiP.
+    // Inactive FlatList neighbors also create native players with null sources.
+    player.staysActiveInBackground = ownsPlaybackSession
   })
 
   // useVideoPlayer releases and replaces its native shared object whenever
@@ -414,7 +420,7 @@ export function VideoPlayer({
   useEffect(() => {
     captionCuesRef.current = null
     state$.captionText.set('')
-    if (!captionsEnabled || !captionsUrl || !shouldTrackPlayback) return
+    if (!captionsEnabled || !captionsUrl || !ownsPlaybackSession) return
 
     let cancelled = false
     fetchCaptionCues(captionsUrl)
@@ -442,7 +448,7 @@ export function VideoPlayer({
   }, [
     captionsEnabled,
     captionsUrl,
-    shouldTrackPlayback,
+    ownsPlaybackSession,
     state$,
     syncCaptionText,
     videoId,
@@ -480,17 +486,17 @@ export function VideoPlayer({
       () => ({ viewer_user_id: currentUserId ?? undefined }),
       [currentUserId],
     ),
-    isActive: isActive && isScreenFocused && !shouldSuppressPlayback,
+    isActive: ownsPlaybackSession,
   })
 
   useEffect(() => {
     // Keep the system media session attached to the real native player. Only
     // the visible item opts in, so neighboring feed cells cannot take over.
-    // staysActiveInBackground is required for automatic PiP: expo-video pauses
-    // on background unless this is set or PiP has already started.
+    // staysActiveInBackground is required for automatic PiP: expo-video may
+    // process the background transition before the native PiP transition.
     withCurrentPlayer((currentPlayer) => {
-      currentPlayer.showNowPlayingNotification = shouldTrackPlayback
-      currentPlayer.staysActiveInBackground = shouldTrackPlayback
+      currentPlayer.showNowPlayingNotification = ownsPlaybackSession
+      currentPlayer.staysActiveInBackground = ownsPlaybackSession
     })
     return () => {
       withCurrentPlayer((currentPlayer) => {
@@ -498,7 +504,7 @@ export function VideoPlayer({
         currentPlayer.staysActiveInBackground = false
       })
     }
-  }, [shouldTrackPlayback, withCurrentPlayer])
+  }, [ownsPlaybackSession, withCurrentPlayer])
 
   const updatePlaybackProgress = useCallback(
     ({
@@ -644,12 +650,12 @@ export function VideoPlayer({
         player.play()
       }
     } else {
-      if (state$.isInPictureInPicture.peek()) {
+      if (isInPictureInPictureRef.current) {
+        isInPictureInPictureRef.current = false
         videoViewRef.current?.stopPictureInPicture().catch(() => {})
       }
       player.pause()
       state$.isPlaying.set(false)
-      state$.isInPictureInPicture.set(false)
       if (!isActive) {
         state$.userInitiatedPlay.set(false)
       }
@@ -722,7 +728,7 @@ export function VideoPlayer({
 
       if (status.status === 'readyToPlay') {
         if (
-          shouldTrackPlayback &&
+          ownsPlaybackSession &&
           !isScrubbingRef.current &&
           player.currentTime !== undefined &&
           player.duration
@@ -737,7 +743,7 @@ export function VideoPlayer({
     })
 
     const endSubscription = player.addListener('playToEnd', () => {
-      if (!shouldTrackPlayback || !withCurrentPlayer(() => true)) return
+      if (!ownsPlaybackSession || !withCurrentPlayer(() => true)) return
 
       state$.hasEnded.set(true)
       state$.progress.set(1)
@@ -748,19 +754,20 @@ export function VideoPlayer({
       state$.lastReactionPlaybackMs.set(lastReactionPlaybackMsRef.current)
       clearActiveReactions(state$)
       onComplete(player.currentTime * 1000, player.duration ? player.duration * 1000 : undefined)
-      if (state$.isInPictureInPicture.peek()) {
+      if (isInPictureInPictureRef.current) {
+        isInPictureInPictureRef.current = false
         videoViewRef.current?.stopPictureInPicture().catch(() => {})
       }
     })
 
     const playingSubscription = player.addListener('playingChange', ({ isPlaying }) => {
       if (!withCurrentPlayer(() => true)) return
-      state$.isPlaying.set(shouldTrackPlayback ? isPlaying : false)
+      state$.isPlaying.set(ownsPlaybackSession ? isPlaying : false)
     })
 
     const timeUpdateSubscription = player.addListener('timeUpdate', ({ currentTime }) => {
       if (
-        !shouldTrackPlayback ||
+        !ownsPlaybackSession ||
         isScrubbingRef.current ||
         !withCurrentPlayer(() => true) ||
         player.status !== 'readyToPlay' ||
@@ -784,7 +791,7 @@ export function VideoPlayer({
     player,
     onComplete,
     state$,
-    shouldTrackPlayback,
+    ownsPlaybackSession,
     processTimedPlaybackUpdate,
     syncCaptionText,
     updatePlaybackProgress,
@@ -888,12 +895,12 @@ export function VideoPlayer({
 
   const handlePictureInPictureStart = useCallback(() => {
     clearPictureInPictureStopTimer()
-    state$.isInPictureInPicture.set(true)
+    isInPictureInPictureRef.current = true
     telemetry.info('video:pip_start', 'Video entered picture-in-picture', { videoId, isLive })
-  }, [clearPictureInPictureStopTimer, isLive, state$, videoId])
+  }, [clearPictureInPictureStopTimer, isLive, videoId])
 
   const handlePictureInPictureStop = useCallback(() => {
-    state$.isInPictureInPicture.set(false)
+    isInPictureInPictureRef.current = false
     telemetry.info('video:pip_stop', 'Video exited picture-in-picture', {
       videoId,
       isLive,
@@ -1241,93 +1248,89 @@ export function VideoPlayer({
         </YStack>
       )}
 
-      {isInPictureInPicture ? null : (
-        <>
-          <Pressable
-            onPress={togglePlayPause}
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              zIndex: 1,
-            }}
-          />
+      <Pressable
+        onPress={togglePlayPause}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 1,
+        }}
+      />
 
-          <LoadingOverlay state$={state$} currentUrl={currentUrl} />
+      <LoadingOverlay state$={state$} currentUrl={currentUrl} />
 
-          <PlaybackErrorOverlay state$={state$} onRetry={retryPlayback} />
+      <PlaybackErrorOverlay state$={state$} onRetry={retryPlayback} />
 
-          <ReactionPresenceLayer
-            state$={state$}
-            liveViewers={viewers}
-            onReactionExpired={handleReactionExpired}
-          />
+      <ReactionPresenceLayer
+        state$={state$}
+        liveViewers={viewers}
+        onReactionExpired={handleReactionExpired}
+      />
 
-          <PlayPauseIndicator state$={state$} />
+      <PlayPauseIndicator state$={state$} />
 
-          <LinearGradient
-            colors={OVERLAY_COLORS.gradientBottom}
-            style={{
-              position: 'absolute',
-              bottom: 0,
-              left: 0,
-              right: 0,
-              height: 180,
-              zIndex: 2,
-            }}
-            pointerEvents="none"
-          />
+      <LinearGradient
+        colors={OVERLAY_COLORS.gradientBottom}
+        style={{
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: 180,
+          zIndex: 2,
+        }}
+        pointerEvents="none"
+      />
 
-          {isLive ? (
-            <YStack position="absolute" bottom={132} left={20} zIndex={3}>
-              <YStack
-                backgroundColor={'$error'}
-                paddingHorizontal={14}
-                paddingVertical={7}
-                borderRadius={16}
-              >
-                <Text color={'$color'} fontSize={12} fontWeight="900">
-                  LIVE
-                </Text>
-              </YStack>
-            </YStack>
-          ) : null}
+      {isLive ? (
+        <YStack position="absolute" bottom={132} left={20} zIndex={3}>
+          <YStack
+            backgroundColor={'$error'}
+            paddingHorizontal={14}
+            paddingVertical={7}
+            borderRadius={16}
+          >
+            <Text color={'$color'} fontSize={12} fontWeight="900">
+              LIVE
+            </Text>
+          </YStack>
+        </YStack>
+      ) : null}
 
-          <CaptionOverlay state$={state$} />
+      <CaptionOverlay state$={state$} />
 
-          <VideoProgressBar
-            state$={state$}
-            progressBarViewRef={progressBarViewRef}
-            onLayout={handleProgressBarLayout}
-            panHandlers={progressBarPanResponder.panHandlers}
-          />
+      <VideoProgressBar
+        state$={state$}
+        progressBarViewRef={progressBarViewRef}
+        onLayout={handleProgressBarLayout}
+        panHandlers={progressBarPanResponder.panHandlers}
+      />
 
-          <PausedReportButton state$={state$} />
+      <PausedReportButton state$={state$} />
 
-          <RightSideControls
-            state$={state$}
-            isLive={isLive}
-            isPaid={isPaid}
-            recentEmojis={recentEmojis ?? []}
-            isMuted={isMuted}
-            onEmojiSelect={handleEmojiSelect}
-            onToggleMute={toggleMute}
-          />
+      <RightSideControls
+        state$={state$}
+        isLive={isLive}
+        isPaid={isPaid}
+        recentEmojis={recentEmojis ?? []}
+        isMuted={isMuted}
+        onEmojiSelect={handleEmojiSelect}
+        onToggleMute={toggleMute}
+      />
 
-          <ReportOverlayGate
-            state$={state$}
-            bondfireId={bondfireId}
-            bondfireVideoId={bondfireVideoId}
-            videoOwnerId={videoOwnerId}
-          />
+      <ReportOverlayGate
+        state$={state$}
+        bondfireId={bondfireId}
+        bondfireVideoId={bondfireVideoId}
+        videoOwnerId={videoOwnerId}
+      />
 
-          {onRespondAfterPlayback ? (
-            <RespondCTAOverlay state$={state$} onRespond={onRespondAfterPlayback} />
-          ) : null}
-        </>
-      )}
+      {onRespondAfterPlayback ? (
+        <RespondCTAOverlay state$={state$} onRespond={onRespondAfterPlayback} />
+      ) : null}
     </YStack>
   )
 }
