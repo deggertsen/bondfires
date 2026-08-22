@@ -9,9 +9,10 @@ import { VIDEO_OVERLAY_COLORS } from './videoOverlayColors'
 
 interface NotepadOverlayProps {
   onClose: () => void
+  autoFocus?: boolean
 }
 
-export function NotepadOverlay({ onClose }: NotepadOverlayProps) {
+export function NotepadOverlay({ onClose, autoFocus = true }: NotepadOverlayProps) {
   const { colors, themeName } = useAppThemeColors()
   const content = useValue(notepadStore$.content)
   const textInputRef = useRef<TextInput>(null)
@@ -21,12 +22,14 @@ export function NotepadOverlay({ onClose }: NotepadOverlayProps) {
 
   // Auto-focus on mount
   useEffect(() => {
+    if (!autoFocus) return
+
     // Small delay to ensure overlay is rendered
     const timer = setTimeout(() => {
       textInputRef.current?.focus()
     }, 100)
     return () => clearTimeout(timer)
-  }, [])
+  }, [autoFocus])
 
   // Legend State auto-persists, no debounce needed
   const handleTextChange = (text: string) => {
@@ -57,7 +60,7 @@ export function NotepadOverlay({ onClose }: NotepadOverlayProps) {
             multiline
             value={content}
             onChangeText={handleTextChange}
-            autoFocus
+            autoFocus={autoFocus}
           />
 
           {/* Clear button */}
