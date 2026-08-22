@@ -178,7 +178,7 @@ function cleanTitle(value: unknown): string | undefined {
   return title.length > MAX_TITLE_CHARS ? `${title.slice(0, MAX_TITLE_CHARS - 1)}…` : title
 }
 
-function videoInsightsPrompt(transcript: string): string {
+export function videoInsightsPrompt(transcript: string): string {
   return [
     'You summarize short personal video messages exchanged between close friends and family.',
     '',
@@ -191,7 +191,7 @@ function videoInsightsPrompt(transcript: string): string {
     `{"summary": "<one sentence, max ${MAX_SUMMARY_CHARS} characters>", "tags": ["<topic tag>"]}`,
     '',
     'Rules:',
-    '- summary: third person, present tense, concrete. Include the speaker\'s first name when known (e.g., "David shares news about the new job and asks about the kids"). No preamble.',
+    '- summary: third person, present tense, concrete ("Shares news about the new job and asks about the kids"). No preamble. Do not infer or include a speaker name; the app adds verified identity separately.',
     `- tags: 1 to ${MAX_TAGS} tags, each 1-2 lowercase words naming concrete topics (e.g. "job news", "birthday", "soccer"). Never generic filler like "update", "chat", or "video".`,
   ].join('\n')
 }
@@ -481,6 +481,68 @@ export const listRecordsMissingInsights = internalQuery({
 })
 
 /**
+ * Page through stored transcripts whose current parent record has AI insights.
+ * This supports deterministic repairs when the summarization prompt changes:
+ * the transcript is already stored, so no Mux request or caption regeneration
+ * is needed.
+ */
+export const listTranscriptsForInsightsRepair = internalQuery({
+  args: {
+    cursor: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = Math.min(Math.max(args.limit ?? 25, 1), SWEEP_PAGE_SIZE)
+    const page = await ctx.db
+      .query('videoTranscripts')
+      .paginate({ cursor: args.cursor ?? null, numItems: limit })
+
+    const items: Array<{
+      table: RecordTable
+      recordId: RecordId
+      muxAssetId: string
+    }> = []
+    for (const transcript of page.page) {
+      if (transcript.bondfireId) {
+        const bondfire = await ctx.db.get(transcript.bondfireId)
+        if (bondfire?.summary !== undefined && bondfire.muxAssetId === transcript.muxAssetId) {
+          items.push({
+            table: 'bondfires',
+            recordId: transcript.bondfireId,
+            muxAssetId: transcript.muxAssetId,
+          })
+        }
+        continue
+      }
+
+      if (transcript.bondfireVideoId) {
+        const video = await ctx.db.get(transcript.bondfireVideoId)
+        if (video?.summary !== undefined && video.muxAssetId === transcript.muxAssetId) {
+          items.push({
+            table: 'bondfireVideos',
+            recordId: transcript.bondfireVideoId,
+            muxAssetId: transcript.muxAssetId,
+          })
+        }
+      }
+    }
+
+    return {
+      items,
+      continueCursor: page.continueCursor,
+      isDone: page.isDone,
+    }
+  },
+})
+
+export function shouldSkipVideoInsights(
+  summary: string | undefined,
+  force: boolean | undefined,
+): boolean {
+  return summary !== undefined && force !== true
+}
+
+/**
  * Fetch a video's transcript and turn it into a one-line summary and topic
  * tags, then refresh the thread's AI title. Scheduled from the
  * video.asset.track.ready webhook; also the workhorse for backfill (when a
@@ -495,6 +557,7 @@ export const processVideoTranscript = internalAction({
     muxTrackId: v.optional(v.string()),
     languageCode: v.optional(v.string()),
     attempt: v.optional(v.number()),
+    force: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const record = await ctx.runQuery(internal.ai.getRecordForInsights, {
@@ -506,7 +569,7 @@ export const processVideoTranscript = internalAction({
     }
     // Both the track.ready webhook and markRecordReady's re-drive can schedule
     // this for the same video; the second arrival is a no-op.
-    if (record.summary !== undefined) {
+    if (shouldSkipVideoInsights(record.summary, args.force)) {
       return { processed: false, reason: 'already_summarized' }
     }
 
@@ -614,6 +677,45 @@ export const processVideoTranscript = internalAction({
       bondfireId: record.bondfireId,
     })
     return { processed: true }
+  },
+})
+
+/**
+ * Re-summarize every stored transcript that already has AI insights. Batches
+ * self-schedule and stagger LLM calls to respect the existing backfill rate.
+ * Safe to rerun: each result replaces the prior summary and regenerates its
+ * thread title.
+ *
+ * Manual maintenance command:
+ *   npx convex run ai:repairVideoInsights '{"limit":25}'
+ */
+export const repairVideoInsights = internalAction({
+  args: {
+    cursor: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<{ scheduled: number; done: boolean }> => {
+    const batch = await ctx.runQuery(internal.ai.listTranscriptsForInsightsRepair, args)
+
+    for (const [index, item] of batch.items.entries()) {
+      await ctx.scheduler.runAfter(index * 1_000, internal.ai.processVideoTranscript, {
+        ...item,
+        force: true,
+      })
+    }
+
+    if (!batch.isDone) {
+      await ctx.scheduler.runAfter(
+        batch.items.length * 1_000 + 1_000,
+        internal.ai.repairVideoInsights,
+        {
+          cursor: batch.continueCursor,
+          limit: args.limit,
+        },
+      )
+    }
+
+    return { scheduled: batch.items.length, done: batch.isDone }
   },
 })
 
