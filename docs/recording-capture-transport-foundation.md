@@ -63,8 +63,9 @@ paused in the background still counts toward the session limit even though no
 frames are captured during that interval. The UI clock derives from wall time
 when JS resumes.
 Mux-confirmed live sessions, plus pre-live sessions with confirmed durable
-capture, are exempt from the five-minute heartbeat reaper; Mux's 12-hour
-maximum continuous-duration limit remains the absolute server backstop.
+capture, are exempt from the five-minute heartbeat reaper. Mux enforces a
+12-hour maximum continuous duration, and the server reaper retains a 15-minute
+settlement window beyond that limit as its absolute backstop.
 
 ## Recovery selection
 

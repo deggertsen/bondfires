@@ -1,6 +1,7 @@
 package org.bondfires.livepublisher
 
 import android.content.Context
+import android.util.Log
 import io.github.thibaultbee.streampack.core.configuration.mediadescriptor.MediaDescriptor
 import io.github.thibaultbee.streampack.core.elements.data.FrameWithCloseable
 import io.github.thibaultbee.streampack.core.elements.encoders.CodecConfig
@@ -34,6 +35,10 @@ class CaptureTransportEndpoint(
   private val registeredStreams = linkedMapOf<CodecConfig, Int>()
   private var nextFanoutStreamId = 0
   private var transportAttached = false
+
+  private companion object {
+    const val TAG = "CaptureTransportEndpoint"
+  }
 
   val transportIsOpen: Boolean
     get() = transportEndpoint.isOpenFlow.value
@@ -149,7 +154,17 @@ class CaptureTransportEndpoint(
 
       val captureStreamId = endpointsToStreamIdsMap[Pair(captureEndpoint, streamPid)]
       if (captureEndpoint.isOpenFlow.value && captureStreamId != null) {
-        captureEndpoint.write(closeableFrame, captureStreamId)
+        try {
+          captureEndpoint.write(closeableFrame, captureStreamId)
+        } catch (error: Throwable) {
+          // Match CombineEndpoint: a child write failure is reported by that
+          // endpoint, but only becomes fatal when every sink has closed. This
+          // lets an in-progress RTMP attach take over if the backup sink fails.
+          Log.e(TAG, "Failed to write frame to detached capture sink", error)
+          if (endpointInternals.none { it.isOpenFlow.value }) {
+            throw error
+          }
+        }
       } else {
         // RTMP-only startup has no frame destination until startStream marks
         // the completed transport handshake attached.
