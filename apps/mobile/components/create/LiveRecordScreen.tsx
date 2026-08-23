@@ -917,6 +917,29 @@ export function LiveRecordScreen({
     }
   }, [livePublisher, liveStatus, logRecordingError, respondTo, state$])
 
+  // Android's foreground-service notification can stop and finalize the
+  // native camera/file pipeline while this screen is backgrounded. Native
+  // emits `ended` after that system control is used; finish the normal JS and
+  // server lifecycle as soon as the event is delivered (immediately when the
+  // JS runtime is active, or when it resumes). Calling the regular stop path
+  // is intentional: native stop is idempotent, while this path also ends the
+  // Mux session, records local-backup availability, and advances the UI.
+  useEffect(() => {
+    if (phase !== 'recording' || liveStatus !== 'ended' || !livePublisher.hasProvisionedIngest()) {
+      return
+    }
+
+    telemetry.info(
+      'live:system_stop_finalize',
+      'Native recording ended from a system control — finalizing live session',
+      {
+        sessionId: livePublishStore$.sessionId.peek(),
+        recordId: livePublishStore$.recordId.peek(),
+      },
+    )
+    void stopLiveRecording()
+  }, [livePublisher, liveStatus, phase, stopLiveRecording])
+
   // Thermal mitigation — RTMP encoding + camera generates significant heat.
   // Polls thermal state every 10s and reacts by reducing encoder load before
   // the OS kills the app. The native modules also have a safety-net auto-stop
