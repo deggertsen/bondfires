@@ -10,6 +10,7 @@ import io.github.thibaultbee.streampack.core.elements.endpoints.IEndpointInterna
 import io.github.thibaultbee.streampack.core.elements.endpoints.MediaMuxerEndpointFactory
 import io.github.thibaultbee.streampack.core.pipelines.IDispatcherProvider
 import io.github.thibaultbee.streampack.ext.rtmp.elements.endpoints.RtmpEndpointFactory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -157,6 +158,9 @@ class CaptureTransportEndpoint(
         try {
           captureEndpoint.write(closeableFrame, captureStreamId)
         } catch (error: Throwable) {
+          if (error is CancellationException) {
+            throw error
+          }
           // Match CombineEndpoint: a child write failure is reported by that
           // endpoint, but only becomes fatal when every sink has closed. This
           // lets an in-progress RTMP attach take over if the backup sink fails.
