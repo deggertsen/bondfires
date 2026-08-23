@@ -151,6 +151,8 @@ export interface LivePublisherStopResult {
   backendNotified: boolean
   /** A finalized whole-file backup exists even if Mux never became active. */
   localBackupAvailable: boolean
+  /** Finalized backup URI, returned with the stat result to avoid a second lookup. */
+  localBackupFileUri: string | null
 }
 
 export function useLivePublisher(options: {
@@ -1349,6 +1351,7 @@ export function useLivePublisher(options: {
     let completeSignaled: boolean | undefined
     let recordingStarted = true
     let localBackupAvailable = false
+    let localBackupFileUri: string | null = null
     const startedAt = livePublishStore$.startedAt.peek()
 
     // Crash context snapshot — write a breadcrumb right before the risky
@@ -1398,6 +1401,7 @@ export function useLivePublisher(options: {
       try {
         const stats = await getLocalBackupSessionStats(sessionId)
         localBackupAvailable = stats.exists && stats.sizeBytes > 0
+        localBackupFileUri = localBackupAvailable ? stats.bestFileUri : null
         telemetry.info('backup:finalized', 'Local backup recording finalized', {
           sessionId,
           sizeBytes: stats.sizeBytes,
@@ -1467,6 +1471,7 @@ export function useLivePublisher(options: {
       recordingStarted,
       backendNotified: !backendError,
       localBackupAvailable,
+      localBackupFileUri,
     }
   }, [options, stopStatsSampling])
 

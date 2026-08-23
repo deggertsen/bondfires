@@ -52,10 +52,16 @@ configuration with the RTMP child so each new connection receives fresh AAC
 and AVC sequence headers without changing the encoder-facing stream IDs.
 Endpoint map access is serialized with frame writes, and only open sinks
 receive stream registration, so RTMP-only sessions never touch an uninitialized
-`MediaMuxer`.
+`MediaMuxer`. RTMP remains detached from frame routing throughout its network
+and publish handshake; local capture therefore keeps receiving frames during a
+slow reconnect, and the completed transport mapping becomes visible atomically.
 
 Both native modules enforce the account recording-duration limit independently
-of React Native timers. The UI clock derives from wall time when JS resumes.
+of React Native timers. The limit and UI clock intentionally measure wall time
+from capture start. On iOS hardware without background camera support, time
+paused in the background still counts toward the session limit even though no
+frames are captured during that interval. The UI clock derives from wall time
+when JS resumes.
 Mux-confirmed live sessions, plus pre-live sessions with confirmed durable
 capture, are exempt from the five-minute heartbeat reaper; Mux's 12-hour
 maximum continuous-duration limit remains the absolute server backstop.
@@ -84,6 +90,8 @@ release gate for enabling the behavior beyond an internal cohort:
 - [ ] Android 12–16: switch apps for 5+ minutes and verify camera/mic + RTMP
       continue under the foreground-service notification.
 - [ ] Android: notification Return and Stop & save actions.
+- [ ] Android: force a slow or timed-out RTMP reconnect and verify the local
+      backup has no capture gap while the transport handshake is pending.
 - [ ] Both: airplane mode, Wi-Fi/cellular switching, reconnect-window expiry,
       and RTMP loss while local capture continues.
 - [ ] Both: force-kill/relaunch recovery, low disk, disk full, thermal pressure,

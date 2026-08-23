@@ -17,10 +17,9 @@ import kotlinx.coroutines.sync.withLock
  * sink. Unlike StreamPack's stock [CombineEndpoint], transport open/close does
  * not stop the encoder or the file sink, so a reconnect cannot cut capture.
  *
- * Stream registration still belongs to [CombineEndpoint]. The encoding
- * pipeline calls addStreams once when local capture starts, registering the
- * same codec configuration with both children. RTMP may then be opened and
- * started later without rebuilding camera, microphone, or MediaCodec.
+ * The encoding pipeline registers each codec configuration with the sinks that
+ * are open when encoding starts. RTMP may then register those saved configs and
+ * attach later without rebuilding camera, microphone, or MediaCodec.
  */
 class CaptureTransportEndpoint(
   private val transportEndpoint: IEndpointInternal,
@@ -31,8 +30,10 @@ class CaptureTransportEndpoint(
     dispatcherProvider.default,
   ) {
   private val lifecycleMutex = Mutex()
+  private val frameRoutingMutex = Mutex()
   private val registeredStreams = linkedMapOf<CodecConfig, Int>()
   private var nextFanoutStreamId = 0
+  private var transportAttached = false
 
   val transportIsOpen: Boolean
     get() = transportEndpoint.isOpenFlow.value
@@ -53,6 +54,7 @@ class CaptureTransportEndpoint(
   }
 
   suspend fun openTransport(descriptor: MediaDescriptor) = lifecycleMutex.withLock {
+    detachTransportFromFrameRouting()
     if (transportEndpoint.isOpenFlow.value) {
       transportEndpoint.close()
     }
@@ -61,6 +63,7 @@ class CaptureTransportEndpoint(
 
   /** Attach RTMP to an encoder that is already feeding the local file. */
   suspend fun connectTransport(descriptor: MediaDescriptor) = lifecycleMutex.withLock {
+    detachTransportFromFrameRouting()
     // RtmpEndpoint keeps FLV sequence-header state across close/open. Reset the
     // transport stream and re-register the same codec configs so each Mux
     // reconnect receives fresh AAC/AVC headers. The fanout stream ids exposed
@@ -69,16 +72,27 @@ class CaptureTransportEndpoint(
     if (transportEndpoint.isOpenFlow.value) {
       transportEndpoint.close()
     }
-    registeredStreams.forEach { (config, fanoutStreamId) ->
-      endpointsToStreamIdsMap[Pair(transportEndpoint, fanoutStreamId)] =
-        transportEndpoint.addStream(config)
+    val transportStreamIds = registeredStreams.map { (config, fanoutStreamId) ->
+      fanoutStreamId to transportEndpoint.addStream(config)
     }
     transportEndpoint.open(descriptor)
     transportEndpoint.startStream()
+
+    // The socket and publish handshake intentionally happen while RTMP is
+    // detached from frame routing. Commit its completed stream map atomically
+    // afterward, so a slow reconnect never stalls MediaMuxer writes and no
+    // frame can reach an open-but-not-started transport.
+    frameRoutingMutex.withLock {
+      transportStreamIds.forEach { (fanoutStreamId, transportStreamId) ->
+        endpointsToStreamIdsMap[Pair(transportEndpoint, fanoutStreamId)] = transportStreamId
+      }
+      transportAttached = true
+    }
   }
 
   /** Drop only RTMP. Capture and encoder ownership stay untouched. */
   suspend fun disconnectTransport() = lifecycleMutex.withLock {
+    detachTransportFromFrameRouting()
     if (transportEndpoint.isOpenFlow.value) {
       transportEndpoint.close()
     }
@@ -87,6 +101,11 @@ class CaptureTransportEndpoint(
   /** Start whichever sinks were opened before the encoding pipeline starts. */
   override suspend fun startStream() = lifecycleMutex.withLock {
     endpointInternals.filter { it.isOpenFlow.value }.forEach { it.startStream() }
+    if (transportEndpoint.isOpenFlow.value) {
+      frameRoutingMutex.withLock {
+        transportAttached = true
+      }
+    }
   }
 
   override suspend fun addStreams(
@@ -109,31 +128,52 @@ class CaptureTransportEndpoint(
   private suspend fun registerStream(streamConfig: CodecConfig): Int {
     val fanoutStreamId = nextFanoutStreamId++
     registeredStreams[streamConfig] = fanoutStreamId
-    endpointInternals.filter { it.isOpenFlow.value }.forEach { endpoint ->
-      endpointsToStreamIdsMap[Pair(endpoint, fanoutStreamId)] = endpoint.addStream(streamConfig)
+    val childStreamIds = endpointInternals.filter { it.isOpenFlow.value }.map { endpoint ->
+      endpoint to endpoint.addStream(streamConfig)
+    }
+    frameRoutingMutex.withLock {
+      childStreamIds.forEach { (endpoint, childStreamId) ->
+        endpointsToStreamIdsMap[Pair(endpoint, fanoutStreamId)] = childStreamId
+      }
     }
     return fanoutStreamId
   }
 
-  /**
-   * CombineEndpoint's write path reads its LinkedHashMap directly. Serialize
-   * frames with attach/detach so reconnect cannot mutate that map while an
-   * encoder frame is being fanned out, or write to RTMP between open and the
-   * completed start handshake.
-   */
+  /** Route capture continuously while RTMP performs its network handshake. */
   override suspend fun write(closeableFrame: FrameWithCloseable, streamPid: Int) =
-    lifecycleMutex.withLock {
-      super.write(closeableFrame, streamPid)
+    frameRoutingMutex.withLock {
+      if (transportAttached) {
+        super.write(closeableFrame, streamPid)
+        return@withLock
+      }
+
+      val captureStreamId = endpointsToStreamIdsMap[Pair(captureEndpoint, streamPid)]
+      if (captureEndpoint.isOpenFlow.value && captureStreamId != null) {
+        captureEndpoint.write(closeableFrame, captureStreamId)
+      } else {
+        // RTMP-only startup has no frame destination until startStream marks
+        // the completed transport handshake attached.
+        closeableFrame.close()
+      }
     }
 
+  private suspend fun detachTransportFromFrameRouting() = frameRoutingMutex.withLock {
+    transportAttached = false
+    endpointsToStreamIdsMap.keys.removeAll { (endpoint, _) -> endpoint === transportEndpoint }
+  }
+
   override suspend fun stopStream() = lifecycleMutex.withLock {
+    detachTransportFromFrameRouting()
     endpointInternals.filter { it.isOpenFlow.value }.forEach { it.stopStream() }
-    endpointsToStreamIdsMap.clear()
+    frameRoutingMutex.withLock {
+      endpointsToStreamIdsMap.clear()
+    }
     registeredStreams.clear()
     nextFanoutStreamId = 0
   }
 
   override suspend fun close() = lifecycleMutex.withLock {
+    detachTransportFromFrameRouting()
     endpointInternals.forEach { endpoint ->
       if (endpoint.isOpenFlow.value) {
         endpoint.close()

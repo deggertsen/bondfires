@@ -155,6 +155,7 @@ const MUX_LIVE_MAX_CONTINUOUS_DURATION_MAX_SECONDS = 12 * 60 * 60
 // this age regardless of client heartbeats. The client expires its preview
 // before this deadline, so only abandoned sessions hit the reaper.
 export const MAX_PENDING_LIVE_SESSION_AGE_MS = 5 * 60 * 1000
+const LIVE_SESSION_HEARTBEAT_STALE_MS = 5 * 60 * 1000
 const SIGNED_PLAYBACK_URL_TTL_SECONDS = 12 * 60 * 60
 const DURATION_LIMIT_EXCEEDED_STATUS = 'duration_limit_exceeded'
 // Reconciliation: how long a record may sit in a non-terminal status before
@@ -4692,8 +4693,6 @@ export const listStaleMuxLiveSessions = internalQuery({
   args: {},
   handler: async (ctx) => {
     const now = Date.now()
-    const staleBefore = now - 5 * 60 * 1000
-    const pendingMaxAgeBefore = now - MAX_PENDING_LIVE_SESSION_AGE_MS
     // 'created' covers sessions where the client errored before going live —
     // those would otherwise stay parked on Mux billing forever.
     const statuses = ['created', 'starting', 'live', 'ending'] as const
@@ -4714,8 +4713,8 @@ export const listStaleMuxLiveSessions = internalQuery({
         updatedAt: session.updatedAt,
         localBackupAvailable: session.localBackupAvailable,
         now,
-        staleAfterMs: now - staleBefore,
-        pendingMaxAgeMs: now - pendingMaxAgeBefore,
+        staleAfterMs: LIVE_SESSION_HEARTBEAT_STALE_MS,
+        pendingMaxAgeMs: MAX_PENDING_LIVE_SESSION_AGE_MS,
       }),
     )
   },

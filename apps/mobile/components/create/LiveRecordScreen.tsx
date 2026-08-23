@@ -784,6 +784,10 @@ export function LiveRecordScreen({
     const uplinkProbe = uplinkProbeRef.current
     uplinkProbe?.cancel()
     const uplinkProbeResult = uplinkProbe?.getResult() ?? null
+    const onCaptureStarted = () => {
+      recordingStore$.recordingDuration.set(0)
+      recordingActions.setPhase('recording', 'durable capture started')
+    }
 
     try {
       // Wait out an in-flight eager provision instead of racing it with a
@@ -806,10 +810,7 @@ export function LiveRecordScreen({
             initialCamera,
             uplinkProbeResult,
             maxDurationSeconds: effectiveMaxRecordingSeconds,
-            onCaptureStarted: () => {
-              recordingStore$.recordingDuration.set(0)
-              recordingActions.setPhase('recording', 'durable capture started')
-            },
+            onCaptureStarted,
           })
           // Flip the pending record live for immediate feed visibility. Fire
           // and forget — the live_stream.active webhook is the authoritative
@@ -848,10 +849,7 @@ export function LiveRecordScreen({
             initialCamera,
             uplinkProbeResult,
             maxDurationSeconds: effectiveMaxRecordingSeconds,
-            onCaptureStarted: () => {
-              recordingStore$.recordingDuration.set(0)
-              recordingActions.setPhase('recording', 'durable capture started')
-            },
+            onCaptureStarted,
           })
         }
         ownsPreviewRef.current = false
@@ -932,17 +930,7 @@ export function LiveRecordScreen({
           const recordId = livePublishStore$.recordId.peek()
           const recordType: 'bondfire' | 'response' =
             provisionedRecordTypeRef.current ?? (respondTo ? 'response' : 'bondfire')
-          let backupFileUri: string | null = null
-          try {
-            backupFileUri = sessionId
-              ? (await getLocalBackupSessionStats(sessionId)).bestFileUri
-              : null
-          } catch (error) {
-            telemetry.warn('backup:recovery_stat_failed', 'Failed to locate finalized backup', {
-              sessionId,
-              error: String(error),
-            })
-          }
+          const backupFileUri = result.localBackupFileUri
           if (sessionId && backupFileUri) {
             try {
               await enqueueLiveBackupRecovery({

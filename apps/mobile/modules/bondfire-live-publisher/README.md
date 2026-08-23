@@ -138,6 +138,8 @@ must never reach viewers); preserve it in any refactor.
 
 `maxDurationSeconds` is passed with the start options and enforced natively on
 both platforms, so the recording cap still stops and finalizes capture while
-React Native timers are suspended. Android keeps its camera/microphone
+React Native timers are suspended. It is an elapsed wall-time cap: on iOS
+devices that pause capture in the background, the paused interval still counts
+toward the limit. Android keeps its camera/microphone
 foreground service alive until finalization completes, including notification,
 recents-swipe, thermal, and duration-limit stops.
