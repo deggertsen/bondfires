@@ -34,16 +34,11 @@ import expo.modules.kotlin.views.ExpoView
 import io.github.thibaultbee.streampack.core.configuration.mediadescriptor.UriMediaDescriptor
 import io.github.thibaultbee.streampack.core.elements.encoders.AudioCodecConfig
 import io.github.thibaultbee.streampack.core.elements.encoders.VideoCodecConfig
-import io.github.thibaultbee.streampack.core.elements.endpoints.CombineEndpoint
-import io.github.thibaultbee.streampack.core.elements.endpoints.CombineEndpointFactory
 import io.github.thibaultbee.streampack.core.elements.endpoints.IEndpointInternal
-import io.github.thibaultbee.streampack.core.elements.endpoints.MediaMuxerEndpointFactory
 import io.github.thibaultbee.streampack.core.elements.sources.audio.audiorecord.MicrophoneSourceFactory
 import io.github.thibaultbee.streampack.core.elements.sources.video.camera.CameraSourceFactory
-import io.github.thibaultbee.streampack.core.interfaces.startStream
 import io.github.thibaultbee.streampack.core.streamers.single.SingleStreamer
 import io.github.thibaultbee.streampack.core.streamers.single.cameraSingleStreamer
-import io.github.thibaultbee.streampack.ext.rtmp.elements.endpoints.RtmpEndpointFactory
 import java.io.File
 import java.io.IOException
 import io.github.thibaultbee.streampack.ui.views.PreviewView
@@ -67,10 +62,8 @@ class LivePublisherStartOptions : Record {
   @Field val audioBitrate: Int = 128_000
   @Field val initialCamera: String = "front"
   /**
-   * Non-empty arms the local MP4 backup: the streamer's endpoint becomes a
-   * CombineEndpoint fanning the single encode out to RTMP AND
-   * <filesDir>/recordings/<localBackupFileName>. Empty (default) keeps the
-   * plain RTMP endpoint.
+   * Non-empty arms the local MP4 backup at
+   * <filesDir>/recordings/<localBackupFileName> before RTMP is attached.
    */
   @Field val localBackupFileName: String = ""
 }
@@ -129,8 +122,7 @@ class BondfireLivePublisherModule : Module() {
   // a torn-down streamer can never emit stale events into a new session.
   private val collectorJobs = mutableListOf<Job>()
   // Local backup recording (Phase 1, docs/plans/local-backup-recording.md).
-  // The MediaMuxer sub-endpoint of the CombineEndpoint when a backup is armed
-  // ([0]=RTMP, [1]=muxer). Claimed under teardownLock and explicitly
+  // The MediaMuxer sink is claimed under teardownLock and explicitly
   // finalized in cleanupStreamer — platform MediaMuxer only writes the moov
   // box in stop(), so release() alone would leave the file unplayable.
   @Volatile
@@ -268,73 +260,81 @@ class BondfireLivePublisherModule : Module() {
       )
     }
 
-    AsyncFunction("start") Coroutine { options: LivePublisherStartOptions ->
-      // Build the RTMPS URL
-      val rtmpsUrl = buildRtmpsUrl(options.rtmpsUrl, options.streamKey)
-
-      // A preview-only streamer can occasionally report RTMP "streaming" while
-      // never starting the video encoder after the record tap. Mux then closes
-      // the connection ~5s later because it received no video data. Build a
-      // fresh capture pipeline for the actual publish transition.
-      cleanupStreamer()
-      currentFacing = options.initialCamera
-      // Local backup (never fails the stream: a null file just means the
-      // backup is off for this session). The reconnect path re-enters start()
-      // after a full teardown; the finalized pre-drop segment is rolled aside
-      // by prepareBackupFile — it may be the only good copy of that footage —
-      // and the new leg records to a fresh file of the same name.
-      val backupFile = prepareBackupFile(options.localBackupFileName)
-      createStreamer(
-        fps = options.fps,
-        videoBitrate = options.videoBitrate,
-        audioBitrate = options.audioBitrate,
-        withLocalBackup = backupFile != null,
-      )
+    AsyncFunction("startCapture") Coroutine { options: LivePublisherStartOptions ->
+      if (streamer == null) {
+        currentFacing = options.initialCamera
+        createStreamer(
+          fps = options.fps,
+          videoBitrate = options.videoBitrate,
+          audioBitrate = options.audioBitrate,
+        )
+      }
       val activeStreamer = streamer
         ?: throw LivePublisherException("Streamer unavailable")
+      val endpoint = activeStreamer.endpoint as? CaptureTransportEndpoint
+        ?: throw LivePublisherException("Capture endpoint unavailable")
 
-      // Connect and start streaming
+      if (endpoint.captureIsOpen && activeStreamer.isStreamingFlow.value) {
+        return@Coroutine mapOf("localBackupArmed" to true)
+      }
+
+      val backupFile = prepareBackupFile(options.localBackupFileName)
+        ?: return@Coroutine mapOf("localBackupArmed" to false)
       try {
-        var localBackupArmed = false
-        sendStatus(PublisherStatus.CONNECTING)
-        val combinedEndpoint =
-          if (backupFile != null) activeStreamer.endpoint as? CombineEndpoint else null
-        if (backupFile != null && combinedEndpoint != null) {
-          // One descriptor per sub-endpoint, in factory order: RTMP, muxer.
-          activeStreamer.startStream(
-            CombineEndpoint.CombineDescriptor(
-              listOf(
-                UriMediaDescriptor(rtmpsUrl),
-                UriMediaDescriptor(Uri.fromFile(backupFile)),
-              )
-            )
-          )
-          // CombineEndpoint.open() swallows per-endpoint failures (it logs and
-          // moves on), so a failed RTMP connect must be re-detected here to
-          // keep the single-endpoint failure contract: start() throws and JS
-          // returns the session to 'ready' for a retry.
-          val rtmpOpen = combinedEndpoint.endpoints.getOrNull(0)?.isOpenFlow?.value == true
-          if (!rtmpOpen) {
-            throw IOException("RTMP endpoint failed to open (combined endpoint)")
-          }
-          // A failed backup sink is telemetry-only — the stream is healthy.
-          val muxerOpen = combinedEndpoint.endpoints.getOrNull(1)?.isOpenFlow?.value == true
-          localBackupArmed = muxerOpen
-          if (!muxerOpen) {
-            if (backupFile.exists() && !backupFile.delete()) {
-              Log.w(TAG, "Could not delete file left by failed backup sink")
-            }
-            sendEvent(
-              "error", mapOf(
-                "code" to "backup_failed",
-                "message" to "Local backup file sink failed to open"
-              )
-            )
-          }
-        } else {
-          activeStreamer.startStream(rtmpsUrl)
+        endpoint.openCapture(UriMediaDescriptor(Uri.fromFile(backupFile)))
+        activeStreamer.startStream()
+        backupMuxerEndpoint = endpoint.captureSink
+        installThermalStatusListener()
+        startRecordingForegroundService()
+        mapOf("localBackupArmed" to endpoint.captureIsOpen)
+      } catch (e: Exception) {
+        Log.w(TAG, "Failed to start durable local capture", e)
+        cleanupStreamer()
+        if (backupFile.exists() && !backupFile.delete()) {
+          Log.w(TAG, "Could not delete failed backup ${backupFile.absolutePath}")
         }
-        // startStream blocks until successful connection or throws
+        sendEvent(
+          "error", mapOf(
+            "code" to "backup_failed",
+            "message" to (e.message ?: "Failed to start durable local capture")
+          )
+        )
+        mapOf("localBackupArmed" to false)
+      }
+    }
+
+    AsyncFunction("start") Coroutine { options: LivePublisherStartOptions ->
+      val rtmpsUrl = buildRtmpsUrl(options.rtmpsUrl, options.streamKey)
+      if (streamer == null) {
+        currentFacing = options.initialCamera
+        createStreamer(
+          fps = options.fps,
+          videoBitrate = options.videoBitrate,
+          audioBitrate = options.audioBitrate,
+        )
+      }
+      val activeStreamer = streamer
+        ?: throw LivePublisherException("Streamer unavailable")
+      val endpoint = activeStreamer.endpoint as? CaptureTransportEndpoint
+        ?: throw LivePublisherException("Capture endpoint unavailable")
+
+      try {
+        sendStatus(PublisherStatus.CONNECTING)
+        val descriptor = UriMediaDescriptor(rtmpsUrl)
+        if (activeStreamer.isStreamingFlow.value) {
+          // The encoder and file capture are already running. Attach only the
+          // network sink; camera, microphone, MediaCodec, and MediaMuxer stay
+          // alive across initial connect and every reconnect.
+          endpoint.connectTransport(descriptor)
+        } else {
+          // Backup was unavailable/disabled. RTMP is still capture-owning for
+          // this session, but the preview streamer and camera are reused.
+          endpoint.openTransport(descriptor)
+          activeStreamer.startStream()
+        }
+        if (!endpoint.transportIsOpen) {
+          throw IOException("RTMP endpoint failed to open")
+        }
         synchronized(networkStateLock) {
           networkDropHandled = false
           lastNetworkTransportTypes = null
@@ -343,29 +343,18 @@ class BondfireLivePublisherModule : Module() {
         installThermalStatusListener()
         startRecordingForegroundService()
         sendStatus(PublisherStatus.LIVE)
-        mapOf("localBackupArmed" to localBackupArmed)
+        mapOf("localBackupArmed" to endpoint.captureIsOpen)
       } catch (e: Exception) {
         Log.e(TAG, "Failed to start stream", e)
-        // CombineEndpoint can leave the file sink running even when RTMP
-        // failed to open. Finalize and discard only this failed connection
-        // attempt; any rolled .partN files from earlier live legs remain.
-        if (backupFile != null) {
+        try {
+          endpoint.disconnectTransport()
+        } catch (disconnectError: Exception) {
+          Log.w(TAG, "Failed to close failed RTMP transport", disconnectError)
+        }
+        // A local capture owns this recording and must survive transport
+        // failure. Only tear down when RTMP was the sole active sink.
+        if (!endpoint.captureIsOpen) {
           cleanupStreamer()
-          try {
-            if (backupFile.exists() && !backupFile.delete()) {
-              throw IOException("Could not delete failed backup ${backupFile.absolutePath}")
-            }
-          } catch (backupError: Exception) {
-            Log.w(TAG, "Failed to discard backup after stream start failure", backupError)
-            sendEvent(
-              "error", mapOf(
-                "code" to "backup_failed",
-                "message" to (
-                  backupError.message ?: "Failed to discard backup after stream start failure"
-                )
-              )
-            )
-          }
         }
         sendEvent(
           "error", mapOf(
@@ -599,14 +588,14 @@ class BondfireLivePublisherModule : Module() {
    * This powers the camera preview but does NOT open any network connection —
    * streaming only begins when startStream() is called in start().
    *
-   * With [withLocalBackup] the endpoint is a CombineEndpoint fanning the
-   * single encode out to RTMP + a MediaMuxer MP4 sink (no second encode).
+   * The endpoint always contains a detachable RTMP sink plus a MediaMuxer
+   * sink. Either can be opened independently after preview without replacing
+   * the camera or encoder pipeline.
    */
   private suspend fun createStreamer(
     fps: Int,
     videoBitrate: Int,
     audioBitrate: Int,
-    withLocalBackup: Boolean = false,
   ) {
     val context = appContext.reactContext
       ?: throw LivePublisherException("No React context available")
@@ -645,20 +634,14 @@ class BondfireLivePublisherModule : Module() {
       context,
       cameraId = cameraId,
       audioSourceFactory = MicrophoneSourceFactory(audioRouting.audioSource),
-      endpointFactory = if (withLocalBackup) {
-        // Order matters: the collectors below assume [0]=RTMP, [1]=muxer.
-        CombineEndpointFactory(listOf(RtmpEndpointFactory(), MediaMuxerEndpointFactory()))
-      } else {
-        RtmpEndpointFactory()
-      },
+      endpointFactory = CaptureTransportEndpointFactory(),
     )
     streamer = newStreamer
 
-    // Sub-endpoint handles for the combined (backup-armed) pipeline.
-    val combinedEndpoint = if (withLocalBackup) newStreamer.endpoint as? CombineEndpoint else null
-    val rtmpEndpoint = combinedEndpoint?.endpoints?.getOrNull(0)
-    val muxerEndpoint = combinedEndpoint?.endpoints?.getOrNull(1) as? IEndpointInternal
-    backupMuxerEndpoint = muxerEndpoint
+    val captureTransportEndpoint = newStreamer.endpoint as? CaptureTransportEndpoint
+      ?: throw LivePublisherException("Capture endpoint unavailable")
+    val rtmpEndpoint = captureTransportEndpoint.transportSink
+    val muxerEndpoint = captureTransportEndpoint.captureSink
 
     // Collect StreamPack internal errors (encoder failures, codec crashes,
     // camera disconnects, etc.) and forward them to JS as error events.
@@ -672,10 +655,10 @@ class BondfireLivePublisherModule : Module() {
         // Errors surfacing during/after teardown belong to a dead session;
         // forwarding them would mark a subsequent healthy session as failed.
         if (streamer !== newStreamer || isStoppingIntentionally) return@collect
-        // The CombineEndpoint merges sub-endpoint throwable flows into the
+        // The fanout endpoint merges sub-endpoint throwable flows into the
         // streamer's. A throwable owned by the backup muxer must never fail
         // the stream — reroute it to the telemetry-only backup_failed code.
-        if (muxerEndpoint != null && muxerEndpoint.throwableFlow.value === throwable) {
+        if (muxerEndpoint.throwableFlow.value === throwable) {
           sendEvent(
             "error", mapOf(
               "code" to "backup_failed",
@@ -683,6 +666,10 @@ class BondfireLivePublisherModule : Module() {
               "throwableClass" to throwable.javaClass.name,
             )
           )
+          return@collect
+        }
+        if (rtmpEndpoint.throwableFlow.value === throwable) {
+          emitNetworkDrop("RTMP endpoint error: $msg")
           return@collect
         }
         sendEvent(
@@ -723,7 +710,7 @@ class BondfireLivePublisherModule : Module() {
     // isOpenFlow is "any sink open" — the healthy file sink would mask a dead
     // RTMP connection. Watch the RTMP sub-endpoint directly so drop
     // detection matches the single-endpoint path exactly.
-    val rtmpOpenFlow = rtmpEndpoint?.isOpenFlow ?: newStreamer.isOpenFlow
+    val rtmpOpenFlow = rtmpEndpoint.isOpenFlow
     collectorJobs += scope.launch {
       var wasOpen = false
       rtmpOpenFlow.collect { isOpen ->
@@ -734,34 +721,26 @@ class BondfireLivePublisherModule : Module() {
           // The ConnectivityManager NetworkCallback may have already fired
           // ENDPOINT_CLOSED on onLost (before the socket actually died).
           // Skip the duplicate emission if we already handled the drop.
-          if (networkDropHandled) {
-            Log.i(TAG, "isOpenFlow closed, but networkDropHandled already true — skipping duplicate ENDPOINT_CLOSED")
-          } else {
-            sendEvent(
-              "statusChange", mapOf("status" to PublisherStatus.ENDPOINT_CLOSED.wire)
-            )
-          }
+          emitNetworkDrop("RTMP endpoint closed")
         }
       }
     }
 
     // Watch the backup file sink dying mid-stream (disk full, muxer error).
     // Telemetry-only: the RTMP stream is healthy and must keep going.
-    if (muxerEndpoint != null) {
-      collectorJobs += scope.launch {
-        var wasOpen = false
-        muxerEndpoint.isOpenFlow.collect { isOpen ->
-          val closed = wasOpen && !isOpen
-          wasOpen = isOpen
-          if (closed && !isStoppingIntentionally && streamer === newStreamer) {
-            Log.w(TAG, "Local backup file sink closed mid-stream")
-            sendEvent(
-              "error", mapOf(
-                "code" to "backup_failed",
-                "message" to "Local backup file sink closed mid-stream"
-              )
+    collectorJobs += scope.launch {
+      var wasOpen = false
+      muxerEndpoint.isOpenFlow.collect { isOpen ->
+        val closed = wasOpen && !isOpen
+        wasOpen = isOpen
+        if (closed && !isStoppingIntentionally && streamer === newStreamer) {
+          Log.w(TAG, "Local backup file sink closed mid-stream")
+          sendEvent(
+            "error", mapOf(
+              "code" to "backup_failed",
+              "message" to "Local backup file sink closed mid-stream"
             )
-          }
+          )
         }
       }
     }

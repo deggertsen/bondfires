@@ -169,6 +169,7 @@ export function LiveRecordScreen({
   const state$ = useObservable({
     isAppActive: AppState.currentState === 'active',
     isFocused: isFocused,
+    isRecordingPictureInPictureActive: false,
     showInviteSheet: false,
     thermalWarning: false,
     // True while a record tap is being serviced (waiting out an in-flight
@@ -360,10 +361,12 @@ export function LiveRecordScreen({
           if (recordingStore$.captureStatus.peek() === 'paused') {
             recordingActions.setCaptureStatus('capturing', 'app returned to foreground')
           }
-        } else if (Platform.OS === 'android') {
+        } else if (Platform.OS === 'android' || state$.isRecordingPictureInPictureActive.get()) {
           recordingActions.setBackgroundStatus(
             'background_recording',
-            'Android foreground service owns capture',
+            Platform.OS === 'android'
+              ? 'Android foreground service owns capture'
+              : 'iOS Picture in Picture owns capture',
           )
         } else {
           recordingActions.setBackgroundStatus('paused', 'iOS camera interruption expected')
@@ -376,6 +379,30 @@ export function LiveRecordScreen({
       subscription.remove()
     }
   }, [state$, phase, liveStatus])
+
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return
+
+    const subscription = BondfireLivePublisher.addListener(
+      'pictureInPictureChange',
+      ({ active }) => {
+        state$.isRecordingPictureInPictureActive.set(active)
+        if (recordingStore$.phase.peek() !== 'recording') return
+
+        if (active) {
+          recordingActions.setBackgroundStatus('background_recording', 'iOS Picture in Picture')
+          recordingActions.setCaptureStatus('capturing', 'iOS Picture in Picture active')
+          return
+        }
+        if (!state$.isAppActive.get()) {
+          recordingActions.setBackgroundStatus('paused', 'iOS Picture in Picture ended')
+          recordingActions.setCaptureStatus('paused', 'iOS Picture in Picture ended')
+        }
+      },
+    )
+
+    return () => subscription.remove()
+  }, [state$])
 
   // Sync isFocused from hook to observable
   useEffect(() => {

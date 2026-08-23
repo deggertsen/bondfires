@@ -26,11 +26,14 @@ connection. The recorder remains attached when the HaishinKit `Session` is
 replaced during reconnect. If RTMP cannot connect, capture remains active and
 the whole-file recovery path can save it.
 
-iOS does not declare unsupported camera background modes. A normal AppState
-transition is non-terminal: the same logical recording moves to `paused`, and
-the existing `AVCaptureSession` interruption observers move it back to capture
-when the system releases camera/microphone access. PiP multitasking camera
-capture is a follow-up physical-device/App Store policy spike.
+iOS prepares a video-call Picture-in-Picture controller backed by a second
+HaishinKit preview output and enables `isMultitaskingCameraAccessEnabled` only
+when the capture session reports support. Switching apps requests a visible
+PiP camera window; native PiP events keep the JS capture/background state
+truthful. When PiP is unavailable or ends in the background, the same logical
+recording moves to `paused`, and the existing `AVCaptureSession` interruption
+observers move it back to capture when the system releases camera/microphone
+access. Device support and App Store acceptance remain release gates.
 
 ### Android
 
@@ -38,12 +41,12 @@ Once the user starts publishing while the app is visible, a camera/microphone
 foreground service keeps the native pipeline alive across app switching. Its
 persistent notification returns to Bondfires or stops and saves the recording.
 
-StreamPack 3.1.2 remains the constraint: `CombineEndpoint` owns RTMP and
-`MediaMuxer` together, and dynamically attaching/detaching only RTMP is not a
-supported API. Reconnect still rebuilds the combined pipeline and rolls the
-previous MP4 leg aside. A true capture/transport split therefore needs a
-StreamPack fork/replacement or an encoded-frame fanout; this PR does not invent
-a fragment backend or claim that limitation is solved.
+`CaptureTransportEndpoint` extends StreamPack's documented `CombineEndpoint`
+customization point. It starts `MediaMuxer` first, attaches RTMP later, and
+closes/reopens only RTMP during reconnect while camera, microphone, MediaCodec,
+and the local file remain alive. Reconnect re-registers the existing codec
+configuration with the RTMP child so each new connection receives fresh AAC
+and AVC sequence headers without changing the encoder-facing stream IDs.
 
 ## Recovery selection
 
@@ -76,11 +79,7 @@ release gate for enabling the behavior beyond an internal cohort:
 
 ## Follow-up boundary
 
-1. Prototype an Android detachable RTMP sink/encoded-frame fanout. Replace or
-   fork StreamPack only after that spike demonstrates clean MediaCodec and
-   MediaMuxer ownership.
-2. Add OS-assisted durable background transfer where feasible. The current
+1. Add OS-assisted durable background transfer where feasible. The current
    MMKV queue resumes on relaunch but is not an OS background-upload contract.
-3. Define duration/timestamp tolerances for "materially incomplete" live VODs.
-4. Evaluate supported iOS multitasking camera/PiP APIs on real hardware and
-   with App Store policy review before adding entitlements.
+2. Define duration/timestamp tolerances for "materially incomplete" live VODs.
+3. Complete the physical-device matrix above before widening the rollout.

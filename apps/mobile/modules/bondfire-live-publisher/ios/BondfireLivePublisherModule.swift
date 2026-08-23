@@ -1,5 +1,6 @@
 import ExpoModulesCore
 import UIKit
+import AVKit
 import HaishinKit
 import AVFoundation
 import Foundation
@@ -37,7 +38,7 @@ public class BondfireLivePublisherModule: Module {
   public func definition() -> ModuleDefinition {
     Name("BondfireLivePublisher")
 
-    Events("statusChange", "error")
+    Events("statusChange", "error", "pictureInPictureChange")
 
     OnCreate {
       BondfireLivePublisherModule.currentInstance = self
@@ -94,6 +95,10 @@ public class BondfireLivePublisherModule: Module {
       let publisher = try await MainActor.run { try self.ensurePublisher() }
       await MainActor.run { BondfireLivePublisherView.current?.attachPreviewIfAvailable() }
       let armed = await publisher.startCapture(options: options)
+      let sourceView = await MainActor.run { BondfireLivePublisherView.current }
+      if let sourceView {
+        await publisher.preparePictureInPicture(sourceView: sourceView)
+      }
       return ["localBackupArmed": armed]
     }
 
@@ -102,6 +107,10 @@ public class BondfireLivePublisherModule: Module {
       await MainActor.run { BondfireLivePublisherView.current?.attachPreviewIfAvailable() }
       await MainActor.run { self.sendEvent("statusChange", ["status": PublisherStatus.connecting.rawValue]) }
       let localBackupArmed = try await publisher.start(options: options)
+      let sourceView = await MainActor.run { BondfireLivePublisherView.current }
+      if let sourceView {
+        await publisher.preparePictureInPicture(sourceView: sourceView)
+      }
       self.installThermalStateObserver()
       return ["localBackupArmed": localBackupArmed]
     }
@@ -303,6 +312,8 @@ public class BondfireLivePublisherModule: Module {
         self.sendEvent("error", payload)
       case .captureInterruptionEnded:
         self.finishCaptureInterruption()
+      case .pictureInPictureChange(let active):
+        self.sendEvent("pictureInPictureChange", ["active": active])
       }
     })
     self.publisher = publisher
@@ -363,6 +374,7 @@ enum LivePublisherEvent {
   case error(String, String)
   case captureInterrupted(Int?, String)
   case captureInterruptionEnded
+  case pictureInPictureChange(Bool)
 }
 
 // MARK: - Live Publisher
@@ -409,6 +421,12 @@ final class LivePublisher {
     view.videoGravity = .resizeAspectFill
     return view
   }()
+  private lazy var pictureInPicturePreviewView: MTHKView = {
+    let view = MTHKView(frame: .zero)
+    view.videoGravity = .resizeAspectFill
+    return view
+  }()
+  private var pictureInPictureCoordinator: RecordingPictureInPictureCoordinator?
 
   /// The preview UIView exposed to BondfireLivePublisherView
   var cameraPreviewView: UIView { previewView }
@@ -476,6 +494,30 @@ final class LivePublisher {
     await mixer.setFrameRate(captureFps)
 
     isCaptureRunning = true
+  }
+
+  /// Prepare video-call PiP while the app is still foregrounded. On supported
+  /// devices iOS starts it automatically as the creator switches apps; the
+  /// visible floating camera window is what authorizes multitasking capture.
+  func preparePictureInPicture(sourceView: UIView) async {
+    guard #available(iOS 15.0, *) else { return }
+    guard pictureInPictureCoordinator == nil else { return }
+
+    await mixer.addOutput(pictureInPicturePreviewView)
+    if #available(iOS 16.0, *) {
+      await mixer.configuration { session in
+        guard session.isMultitaskingCameraAccessSupported else { return }
+        session.isMultitaskingCameraAccessEnabled = true
+      }
+    }
+
+    pictureInPictureCoordinator = RecordingPictureInPictureCoordinator(
+      sourceView: sourceView,
+      previewView: pictureInPicturePreviewView,
+      onStateChange: { [weak self] active in
+        self?.eventHandler(.pictureInPictureChange(active))
+      }
+    )
   }
 
   // MARK: - Start
@@ -851,6 +893,9 @@ final class LivePublisher {
     stopNetworkMonitor()
     removeCaptureObservers()
     removeAudioRouteChangeObserver()
+    pictureInPictureCoordinator?.invalidate()
+    pictureInPictureCoordinator = nil
+    await mixer.removeOutput(pictureInPicturePreviewView)
     // Finalize the backup file while the mixer is still running so the last
     // fragment lands before capture tears down.
     await stopBackupRecorder()
@@ -1072,6 +1117,99 @@ final class LivePublisher {
 
   private func emitError(_ code: String, _ message: String) {
     eventHandler(.error(code, message))
+  }
+}
+
+// MARK: - Recording Picture in Picture
+
+@available(iOS 15.0, *)
+@MainActor
+final class RecordingPictureInPictureCoordinator: NSObject,
+  @preconcurrency AVPictureInPictureControllerDelegate {
+  private let contentViewController = AVPictureInPictureVideoCallViewController()
+  private let onStateChange: (Bool) -> Void
+  private var willResignActiveObserver: NSObjectProtocol?
+  private var pictureInPictureController: AVPictureInPictureController?
+
+  init(
+    sourceView: UIView,
+    previewView: UIView,
+    onStateChange: @escaping (Bool) -> Void
+  ) {
+    self.onStateChange = onStateChange
+    super.init()
+
+    contentViewController.preferredContentSize = CGSize(width: 9, height: 16)
+    contentViewController.view.backgroundColor = .black
+    previewView.removeFromSuperview()
+    previewView.frame = contentViewController.view.bounds
+    previewView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    contentViewController.view.addSubview(previewView)
+
+    let contentSource = AVPictureInPictureController.ContentSource(
+      activeVideoCallSourceView: sourceView,
+      contentViewController: contentViewController
+    )
+    let controller = AVPictureInPictureController(contentSource: contentSource)
+    controller.delegate = self
+    controller.canStartPictureInPictureAutomaticallyFromInline = true
+    pictureInPictureController = controller
+
+    // Explicitly request PiP at the foreground -> background boundary. The
+    // automatic flag remains as a fallback for system-driven transitions.
+    willResignActiveObserver = NotificationCenter.default.addObserver(
+      forName: UIApplication.willResignActiveNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated {
+        guard let controller = self?.pictureInPictureController,
+              controller.isPictureInPicturePossible,
+              !controller.isPictureInPictureActive else {
+          return
+        }
+        controller.startPictureInPicture()
+      }
+    }
+  }
+
+  func invalidate() {
+    if let observer = willResignActiveObserver {
+      NotificationCenter.default.removeObserver(observer)
+      willResignActiveObserver = nil
+    }
+    if pictureInPictureController?.isPictureInPictureActive == true {
+      pictureInPictureController?.stopPictureInPicture()
+    }
+    pictureInPictureController?.delegate = nil
+    pictureInPictureController = nil
+    onStateChange(false)
+  }
+
+  func pictureInPictureControllerDidStartPictureInPicture(
+    _ pictureInPictureController: AVPictureInPictureController
+  ) {
+    onStateChange(true)
+  }
+
+  func pictureInPictureControllerDidStopPictureInPicture(
+    _ pictureInPictureController: AVPictureInPictureController
+  ) {
+    onStateChange(false)
+  }
+
+  func pictureInPictureController(
+    _ pictureInPictureController: AVPictureInPictureController,
+    failedToStartPictureInPictureWithError error: Error
+  ) {
+    onStateChange(false)
+  }
+
+  func pictureInPictureController(
+    _ pictureInPictureController: AVPictureInPictureController,
+    restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void
+  ) {
+    completionHandler(true)
   }
 }
 
