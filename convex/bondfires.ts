@@ -20,7 +20,7 @@ import { throwUserError } from './errors'
 import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 import { addInviteBadgesToBondfires } from './inviteBadges'
 import { getLatestResponsePlayback } from './lib/latestResponsePlayback'
-import { canViewPersonalBondfire } from './personalBondfireAccess'
+import { incrementProfileViews } from './watchEvents'
 
 type ExpiredPrivateCampVideoCleanupResult = {
   expiredBondfires?: number
@@ -726,8 +726,8 @@ export const updateTitle = mutation({
   },
 })
 
-// Record a unique view for the current user. Views are counted once per
-// viewer/bondfire and never for the creator's own videos.
+// Backward-compatible view endpoint for older app builds. Current builds record
+// starts through watchEvents.record so response plays can be attributed too.
 export const incrementViews = mutation({
   args: { bondfireId: v.id('bondfires') },
   handler: async (ctx, args) => {
@@ -744,41 +744,25 @@ export const incrementViews = mutation({
       throw new Error('Bondfire not found')
     }
 
-    if (bondfire.personalCampId) {
-      const canViewBondfire = await canViewPersonalBondfire(ctx, {
-        bondfire,
-        userId: viewerId,
-      })
-      if (!canViewBondfire) {
-        throw new Error('Bondfire not found')
-      }
-    } else if (bondfire.campId) {
-      const camp = await ctx.db.get(bondfire.campId)
-      if (!camp) {
-        throw new Error('Camp not found')
-      }
-
-      const viewer = await buildViewerVisibilityContext(ctx, viewerId)
-      if (!isCampContentVisibleToViewer(camp, viewer)) {
-        throw new Error('Bondfire not found')
-      }
+    const viewer = await buildViewerVisibilityContext(ctx, viewerId)
+    if (!(await isBondfireVisibleToViewer(ctx, bondfire, viewer))) {
+      throw new Error('Bondfire not found')
     }
 
     if (bondfire.userId === viewerId) {
       return { recorded: false, reason: 'own_video' }
     }
 
-    const existingView = await ctx.db
-      .query('watchEvents')
-      .withIndex('by_user_video', (q) => q.eq('userId', viewerId).eq('videoId', args.bondfireId))
-      .filter((q) => q.eq(q.field('eventType'), 'start'))
-      .first()
-
-    if (existingView) {
-      return { recorded: false, reason: 'already_viewed' }
+    const now = Date.now()
+    const result = await incrementProfileViews(
+      ctx,
+      { videoType: 'bondfire', videoId: args.bondfireId, eventType: 'start' },
+      viewerId,
+    )
+    if (!result.counted) {
+      return { recorded: false, reason: 'creator_not_found' }
     }
 
-    const now = Date.now()
     await ctx.db.insert('watchEvents', {
       userId: viewerId,
       videoType: 'bondfire',
@@ -788,20 +772,6 @@ export const incrementViews = mutation({
       durationMs: bondfire.durationMs,
       createdAt: now,
     })
-
-    const creator = await ctx.db.get(bondfire.userId)
-
-    await ctx.db.patch(args.bondfireId, {
-      viewCount: (bondfire.viewCount ?? 0) + 1,
-      updatedAt: now,
-    })
-
-    if (creator) {
-      await ctx.db.patch(bondfire.userId, {
-        totalViews: (creator.totalViews ?? 0) + 1,
-        updatedAt: now,
-      })
-    }
 
     return { recorded: true }
   },

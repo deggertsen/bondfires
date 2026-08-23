@@ -103,6 +103,7 @@ export interface VideoPlayerProps {
   isScreenFocused: boolean
   isAppActive: boolean
   onComplete: (positionMs?: number, durationMs?: number) => void
+  onStart: () => void
   onProgress: (progress: number, positionMs: number, durationMs?: number) => void
   onScrubbingChange?: (scrubbing: boolean) => void
   creatorName: string
@@ -125,6 +126,7 @@ export function VideoPlayer({
   isScreenFocused,
   isAppActive,
   onComplete,
+  onStart,
   onProgress,
   onScrubbingChange,
   creatorName,
@@ -295,6 +297,7 @@ export function VideoPlayer({
   // retry overlay. Reset whenever the source changes — a new URL is a new
   // playback attempt with a fresh budget.
   const errorRetryRef = useRef({ count: 0, timer: null as ReturnType<typeof setTimeout> | null })
+  const hasRecordedPlaybackStartRef = useRef(false)
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: currentUrl is the reset trigger, not read inside
   useEffect(() => {
@@ -308,6 +311,17 @@ export function VideoPlayer({
       }
     }
   }, [currentUrl, state$])
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: videoId is the playback-session reset trigger.
+  useEffect(() => {
+    hasRecordedPlaybackStartRef.current = false
+  }, [videoId])
+
+  useEffect(() => {
+    if (!ownsPlaybackSession) {
+      hasRecordedPlaybackStartRef.current = false
+    }
+  }, [ownsPlaybackSession])
 
   // replaceAsync only swaps the source — expo-video does not resume playback
   // on its own, and none of the autoplay effect's dependencies change on a
@@ -626,6 +640,12 @@ export function VideoPlayer({
     [isLive, player, state$, syncLocalReactionPlaybackAfterSeek, updatePlaybackProgress],
   )
 
+  const recordPlaybackStart = useCallback(() => {
+    if (hasRecordedPlaybackStartRef.current) return
+    hasRecordedPlaybackStartRef.current = true
+    onStart()
+  }, [onStart])
+
   useEffect(() => {
     if (player && isActive && isScreenFocused) {
       player.playbackRate = playbackSpeed
@@ -753,6 +773,7 @@ export function VideoPlayer({
       state$.triggeredReactionIds.set(triggeredReactionIdsRef.current)
       state$.lastReactionPlaybackMs.set(lastReactionPlaybackMsRef.current)
       clearActiveReactions(state$)
+      hasRecordedPlaybackStartRef.current = false
       onComplete(player.currentTime * 1000, player.duration ? player.duration * 1000 : undefined)
       if (isInPictureInPictureRef.current) {
         isInPictureInPictureRef.current = false
@@ -763,6 +784,9 @@ export function VideoPlayer({
     const playingSubscription = player.addListener('playingChange', ({ isPlaying }) => {
       if (!withCurrentPlayer(() => true)) return
       state$.isPlaying.set(ownsPlaybackSession ? isPlaying : false)
+      if (ownsPlaybackSession && isPlaying) {
+        recordPlaybackStart()
+      }
     })
 
     const timeUpdateSubscription = player.addListener('timeUpdate', ({ currentTime }) => {
@@ -776,6 +800,7 @@ export function VideoPlayer({
         return
       }
 
+      recordPlaybackStart()
       processTimedPlaybackUpdate(currentTime, player.duration)
 
       syncCaptionText(currentTime * 1000)
@@ -790,6 +815,7 @@ export function VideoPlayer({
   }, [
     player,
     onComplete,
+    recordPlaybackStart,
     state$,
     ownsPlaybackSession,
     processTimedPlaybackUpdate,
