@@ -20,7 +20,7 @@ import {
 import { Button, Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
-import { Flame, SwitchCamera, X } from '@tamagui/lucide-icons'
+import { Flame, X } from '@tamagui/lucide-icons'
 import { useAction, useConvex } from 'convex/react'
 import type { FunctionReturnType } from 'convex/server'
 import { CameraView } from 'expo-camera'
@@ -31,6 +31,8 @@ import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
 import { mergeVideoSegments } from '../../lib/videoSegmentMerger'
+import { NotepadOverlay } from '../NotepadOverlay'
+import { RecordingHeaderActions } from './RecordingHeaderActions'
 import {
   type CampWithMembership,
   formatMaxDuration,
@@ -98,9 +100,11 @@ export function LegacyRecordScreen({
   const state$ = useObservable({
     isAppActive: AppState.currentState === 'active',
     isFocused: isFocused,
+    showNotepad: false,
   })
 
   const isAppActive = useValue(state$.isAppActive)
+  const showNotepad = useValue(state$.showNotepad)
   const phase = useValue(recordingStore$.phase)
   const facing = useValue(recordingStore$.facing)
   const pendingFacing = useValue(recordingStore$.pendingFacing)
@@ -890,26 +894,12 @@ export function LegacyRecordScreen({
                 </YStack>
               )}
 
-              <Pressable
-                onPress={toggleFacing}
-                disabled={phase === 'stopping' || isSwitchingCamera}
-              >
-                <YStack
-                  width={40}
-                  height={40}
-                  borderRadius={20}
-                  backgroundColor="rgba(31, 32, 35, 0.7)"
-                  alignItems="center"
-                  justifyContent="center"
-                  opacity={phase === 'stopping' || isSwitchingCamera ? 0.5 : 1}
-                >
-                  {isSwitchingCamera ? (
-                    <Spinner size="small" color={'$color'} />
-                  ) : (
-                    <SwitchCamera size={22} color={'$color'} />
-                  )}
-                </YStack>
-              </Pressable>
+              <RecordingHeaderActions
+                onSwitchCamera={toggleFacing}
+                cameraSwitchDisabled={phase === 'stopping' || isSwitchingCamera}
+                cameraSwitchInProgress={isSwitchingCamera}
+                onOpenNotes={respondTo ? () => state$.showNotepad.set(true) : undefined}
+              />
             </XStack>
 
             {/* Title */}
@@ -1021,6 +1011,9 @@ export function LegacyRecordScreen({
               )}
             </YStack>
           </YStack>
+          {showNotepad && (
+            <NotepadOverlay autoFocus={false} onClose={() => state$.showNotepad.set(false)} />
+          )}
         </>
       ) : (
         <YStack flex={1} />

@@ -31,7 +31,7 @@ import {
 import { Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
-import { Flame, SwitchCamera, X } from '@tamagui/lucide-icons'
+import { Flame, X } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import type { FunctionReturnType } from 'convex/server'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
@@ -43,7 +43,9 @@ import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
 import { BondfireLivePublisher, LivePublisherView } from '../../modules/bondfire-live-publisher'
 import { InviteSheet } from '../InviteSheet'
+import { NotepadOverlay } from '../NotepadOverlay'
 import { ViewerPresenceStack } from '../ViewerPresenceStack'
+import { RecordingHeaderActions } from './RecordingHeaderActions'
 import { type CampWithMembership, formatRecordingClock, type TradeTag } from './shared'
 
 const keepAwakeTag = 'create-recording'
@@ -170,6 +172,7 @@ export function LiveRecordScreen({
     isAppActive: AppState.currentState === 'active',
     isFocused: isFocused,
     showInviteSheet: false,
+    showNotepad: false,
     thermalWarning: false,
     // True while a record tap is being serviced (waiting out an in-flight
     // eager provision, connecting, or running the full-start fallback).
@@ -180,6 +183,7 @@ export function LiveRecordScreen({
 
   const isAppActive = useValue(state$.isAppActive)
   const showInviteSheet = useValue(state$.showInviteSheet)
+  const showNotepad = useValue(state$.showNotepad)
   const isTapStarting = useValue(state$.isTapStarting)
   const thermalWarning = useValue(state$.thermalWarning)
   const phase = useValue(recordingStore$.phase)
@@ -1844,22 +1848,11 @@ export function LiveRecordScreen({
               </YStack>
             )}
 
-            <Pressable
-              onPress={toggleLiveFacing}
-              disabled={isLiveBusy || (!isPreConnected && !isLiveRecording)}
-            >
-              <YStack
-                width={40}
-                height={40}
-                borderRadius={20}
-                backgroundColor="rgba(31, 32, 35, 0.7)"
-                alignItems="center"
-                justifyContent="center"
-                opacity={isLiveBusy || (!isPreConnected && !isLiveRecording) ? 0.5 : 1}
-              >
-                <SwitchCamera size={22} color={'$color'} />
-              </YStack>
-            </Pressable>
+            <RecordingHeaderActions
+              onSwitchCamera={toggleLiveFacing}
+              cameraSwitchDisabled={isLiveBusy || (!isPreConnected && !isLiveRecording)}
+              onOpenNotes={respondTo ? () => state$.showNotepad.set(true) : undefined}
+            />
           </XStack>
 
           {/* Viewer presence stack — below the X button, left side */}
@@ -2079,6 +2072,9 @@ export function LiveRecordScreen({
               onClose={() => state$.showInviteSheet.set(false)}
             />
           ) : null}
+          {showNotepad && (
+            <NotepadOverlay autoFocus={false} onClose={() => state$.showNotepad.set(false)} />
+          )}
         </>
       ) : (
         <YStack flex={1} />
