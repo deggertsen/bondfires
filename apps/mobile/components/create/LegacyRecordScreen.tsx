@@ -20,7 +20,7 @@ import {
 import { Button, Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
-import { FileText, Flame, SwitchCamera, X } from '@tamagui/lucide-icons'
+import { Flame, X } from '@tamagui/lucide-icons'
 import { useAction, useConvex } from 'convex/react'
 import type { FunctionReturnType } from 'convex/server'
 import { CameraView } from 'expo-camera'
@@ -32,6 +32,7 @@ import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
 import { mergeVideoSegments } from '../../lib/videoSegmentMerger'
 import { NotepadOverlay } from '../NotepadOverlay'
+import { RecordingHeaderActions } from './RecordingHeaderActions'
 import {
   type CampWithMembership,
   formatMaxDuration,
@@ -893,47 +894,12 @@ export function LegacyRecordScreen({
                 </YStack>
               )}
 
-              <XStack gap={12}>
-                <Pressable
-                  onPress={toggleFacing}
-                  disabled={phase === 'stopping' || isSwitchingCamera}
-                >
-                  <YStack
-                    width={40}
-                    height={40}
-                    borderRadius={20}
-                    backgroundColor="rgba(31, 32, 35, 0.7)"
-                    alignItems="center"
-                    justifyContent="center"
-                    opacity={phase === 'stopping' || isSwitchingCamera ? 0.5 : 1}
-                  >
-                    {isSwitchingCamera ? (
-                      <Spinner size="small" color={'$color'} />
-                    ) : (
-                      <SwitchCamera size={22} color={'$color'} />
-                    )}
-                  </YStack>
-                </Pressable>
-
-                {respondTo && (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Open recording notes"
-                    onPress={() => state$.showNotepad.set(true)}
-                  >
-                    <YStack
-                      width={40}
-                      height={40}
-                      borderRadius={20}
-                      backgroundColor="rgba(31, 32, 35, 0.7)"
-                      alignItems="center"
-                      justifyContent="center"
-                    >
-                      <FileText size={22} color={'$color'} />
-                    </YStack>
-                  </Pressable>
-                )}
-              </XStack>
+              <RecordingHeaderActions
+                onSwitchCamera={toggleFacing}
+                cameraSwitchDisabled={phase === 'stopping' || isSwitchingCamera}
+                cameraSwitchInProgress={isSwitchingCamera}
+                onOpenNotes={respondTo ? () => state$.showNotepad.set(true) : undefined}
+              />
             </XStack>
 
             {/* Title */}
