@@ -1,6 +1,89 @@
 import { v } from 'convex/values'
+import type { Id } from './_generated/dataModel'
+import type { MutationCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
+
+type WatchVideoType = 'bondfire' | 'response'
+type WatchEventType = 'start' | 'milestone_25' | 'milestone_50' | 'milestone_75' | 'complete'
+
+export function shouldCountProfileView({
+  eventType,
+  ownerId,
+  viewerId,
+}: {
+  videoType: WatchVideoType
+  eventType: WatchEventType
+  ownerId: Id<'users'>
+  viewerId: Id<'users'>
+}) {
+  return eventType === 'start' && ownerId !== viewerId
+}
+
+export async function incrementProfileViews(
+  ctx: MutationCtx,
+  args: { videoType: WatchVideoType; videoId: string; eventType: WatchEventType },
+  viewerId: Id<'users'>,
+) {
+  if (args.eventType !== 'start') return false
+
+  if (args.videoType === 'response') {
+    const responseId = ctx.db.normalizeId('bondfireVideos', args.videoId)
+    if (!responseId) return false
+
+    const response = await ctx.db.get(responseId)
+    if (
+      !response ||
+      !shouldCountProfileView({
+        videoType: args.videoType,
+        eventType: args.eventType,
+        ownerId: response.userId,
+        viewerId,
+      })
+    ) {
+      return false
+    }
+
+    const owner = await ctx.db.get(response.userId)
+    if (!owner) return false
+
+    await ctx.db.patch(response.userId, {
+      totalViews: (owner.totalViews ?? 0) + 1,
+      updatedAt: Date.now(),
+    })
+    return true
+  }
+
+  const bondfireId = ctx.db.normalizeId('bondfires', args.videoId)
+  if (!bondfireId) return false
+
+  const bondfire = await ctx.db.get(bondfireId)
+  if (
+    !bondfire ||
+    !shouldCountProfileView({
+      videoType: args.videoType,
+      eventType: args.eventType,
+      ownerId: bondfire.userId,
+      viewerId,
+    })
+  ) {
+    return false
+  }
+
+  const owner = await ctx.db.get(bondfire.userId)
+  if (!owner) return false
+
+  const now = Date.now()
+  await ctx.db.patch(bondfire.userId, {
+    totalViews: (owner.totalViews ?? 0) + 1,
+    updatedAt: now,
+  })
+  await ctx.db.patch(bondfireId, {
+    viewCount: (bondfire.viewCount ?? 0) + 1,
+    updatedAt: now,
+  })
+  return true
+}
 
 // Record a watch event
 export const record = mutation({
@@ -22,6 +105,8 @@ export const record = mutation({
     if (!userId) {
       throw new Error('Not authenticated')
     }
+
+    await incrementProfileViews(ctx, args, userId)
 
     await ctx.db.insert('watchEvents', {
       userId,

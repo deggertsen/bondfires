@@ -103,6 +103,7 @@ export interface VideoPlayerProps {
   isScreenFocused: boolean
   isAppActive: boolean
   onComplete: (positionMs?: number, durationMs?: number) => void
+  onStart: () => void
   onProgress: (progress: number, positionMs: number, durationMs?: number) => void
   onScrubbingChange?: (scrubbing: boolean) => void
   creatorName: string
@@ -125,6 +126,7 @@ export function VideoPlayer({
   isScreenFocused,
   isAppActive,
   onComplete,
+  onStart,
   onProgress,
   onScrubbingChange,
   creatorName,
@@ -763,6 +765,9 @@ export function VideoPlayer({
     const playingSubscription = player.addListener('playingChange', ({ isPlaying }) => {
       if (!withCurrentPlayer(() => true)) return
       state$.isPlaying.set(ownsPlaybackSession ? isPlaying : false)
+      if (ownsPlaybackSession && isPlaying) {
+        onStart()
+      }
     })
 
     const timeUpdateSubscription = player.addListener('timeUpdate', ({ currentTime }) => {
@@ -790,6 +795,7 @@ export function VideoPlayer({
   }, [
     player,
     onComplete,
+    onStart,
     state$,
     ownsPlaybackSession,
     processTimedPlaybackUpdate,

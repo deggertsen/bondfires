@@ -43,7 +43,7 @@ import {
 import type { VideoPlaybackUrls } from './_lib/bondfireVideoUrlPlan'
 import { useBondfireVideoUrls } from './_lib/useBondfireVideoUrls'
 
-type WatchEventType = 'milestone_25' | 'milestone_50' | 'milestone_75' | 'complete'
+type WatchEventType = 'start' | 'milestone_25' | 'milestone_50' | 'milestone_75' | 'complete'
 
 type WatchTarget = {
   videoType: 'bondfire' | 'response'
@@ -115,7 +115,6 @@ export default function BondfireDetailScreen() {
   )
   const getVideoUrlsBatch = useAction(api.videos.getVideoUrlsBatch)
   const recordWatchEvent = useMutation(api.watchEvents.record)
-  const incrementViews = useMutation(api.bondfires.incrementViews)
   const markThreadRead = useMutation(api.conversations.markThreadRead)
   const markInviteSeen = useMutation(api.inviteClaims.markInviteSeen)
   const setVideoUrls = useCallback(
@@ -300,25 +299,8 @@ export default function BondfireDetailScreen() {
     if (bondfireData.userId === currentUserId) return
     if (hasViewedToday(bondfireId)) return
 
-    let isCancelled = false
-
-    const recordView = async () => {
-      try {
-        await incrementViews({ bondfireId })
-        if (!isCancelled) {
-          markViewed(bondfireId)
-        }
-      } catch (error) {
-        telemetry.error('bondfire:view', 'Failed to record bondfire view', { error: String(error) })
-      }
-    }
-
-    recordView()
-
-    return () => {
-      isCancelled = true
-    }
-  }, [bondfireId, bondfireData, currentUserId, incrementViews])
+    markViewed(bondfireId)
+  }, [bondfireId, bondfireData, currentUserId])
 
   useEffect(() => {
     if (!bondfireId || !bondfireData || !currentUserId) return
@@ -429,6 +411,15 @@ export default function BondfireDetailScreen() {
     },
     [bondfireData, currentVideoIndex, recordWatchEventOnce],
   )
+
+  const handleVideoStart = useCallback(() => {
+    if (!bondfireData) return
+
+    const target = getWatchTarget(bondfireData, currentVideoIndex)
+    if (!target) return
+
+    recordWatchEventOnce(target, 'start', 0)
+  }, [bondfireData, currentVideoIndex, recordWatchEventOnce])
 
   const handleScrubbingChange = useCallback(
     (scrubbing: boolean) => {
@@ -550,6 +541,7 @@ export default function BondfireDetailScreen() {
       flatListRef={flatListRef}
       onBackPress={handleBackPress}
       onVideoComplete={handleVideoComplete}
+      onVideoStart={handleVideoStart}
       onProgress={handleProgress}
       onScrubbingChange={handleScrubbingChange}
       onVideoIndexChange={handleVideoIndexChange}
