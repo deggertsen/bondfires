@@ -88,6 +88,15 @@ public class BondfireLivePublisherModule: Module {
       try await publisher.startPreview(options: options)
     }
 
+    // Capture is deliberately separate from RTMP on iOS. The recorder is a
+    // MediaMixer output, so it survives Session replacement during reconnects.
+    AsyncFunction("startCapture") { (options: LivePublisherStartOptions) in
+      let publisher = try await MainActor.run { try self.ensurePublisher() }
+      await MainActor.run { BondfireLivePublisherView.current?.attachPreviewIfAvailable() }
+      let armed = await publisher.startCapture(options: options)
+      return ["localBackupArmed": armed]
+    }
+
     AsyncFunction("start") { (options: LivePublisherStartOptions) in
       let publisher = try await MainActor.run { try self.ensurePublisher() }
       await MainActor.run { BondfireLivePublisherView.current?.attachPreviewIfAvailable() }
@@ -471,6 +480,20 @@ final class LivePublisher {
 
   // MARK: - Start
 
+  func startCapture(options: LivePublisherStartOptions) async -> Bool {
+    do {
+      if !isCaptureRunning {
+        try await startPreview(options: options)
+      }
+    } catch {
+      emitError("backup_failed", "Failed to start capture: \(error.localizedDescription)")
+      return false
+    }
+    currentOptions = options
+    guard !options.localBackupFileName.isEmpty else { return false }
+    return await armBackupRecorder(fileName: options.localBackupFileName)
+  }
+
   func start(options: LivePublisherStartOptions) async throws -> Bool {
     // Reuse the running capture pipeline when startPreview() already ran.
     if !isCaptureRunning {
@@ -555,10 +578,8 @@ final class LivePublisher {
       throw LivePublisherException(message: "RTMP connection failed: \(error.localizedDescription)")
     }
 
-    // Arm the local backup only after the RTMP connect succeeded, so a failed
-    // connect (user retries from 'ready') never leaves an orphaned recorder
-    // running. On the reconnect path the recorder is usually already
-    // recording and armBackupRecorder leaves it untouched.
+    // Capture may already have been armed by startCapture() before RTMP. The
+    // identity guard keeps reconnects and legacy callers idempotent.
     let localBackupArmed = if options.localBackupFileName.isEmpty {
       false
     } else {

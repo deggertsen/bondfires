@@ -355,6 +355,20 @@ export function LiveRecordScreen({
           liveStatus,
           sessionId: livePublishStore$.sessionId.peek(),
         })
+        if (appState === 'active') {
+          recordingActions.setBackgroundStatus('foreground', 'app became active')
+          if (recordingStore$.captureStatus.peek() === 'paused') {
+            recordingActions.setCaptureStatus('capturing', 'app returned to foreground')
+          }
+        } else if (Platform.OS === 'android') {
+          recordingActions.setBackgroundStatus(
+            'background_recording',
+            'Android foreground service owns capture',
+          )
+        } else {
+          recordingActions.setBackgroundStatus('paused', 'iOS camera interruption expected')
+          recordingActions.setCaptureStatus('paused', 'app left foreground')
+        }
       }
     })
 
@@ -756,13 +770,20 @@ export function LiveRecordScreen({
         if (canUseProvisioned) {
           // Fast path: the stream was provisioned during framing, so the tap
           // only opens the RTMP connection.
-          await publisher.connect({ initialCamera, uplinkProbeResult })
+          const transportConnected = await publisher.connect({
+            initialCamera,
+            uplinkProbeResult,
+            onCaptureStarted: () => {
+              recordingStore$.recordingDuration.set(0)
+              recordingActions.setPhase('recording', 'durable capture started')
+            },
+          })
           // Flip the pending record live for immediate feed visibility. Fire
           // and forget — the live_stream.active webhook is the authoritative
           // backstop for both record types.
           const provisionedRecordId = livePublishStore$.recordId.get()
           const provisionedRecordType = provisionedRecordTypeRef.current
-          if (provisionedRecordType && provisionedRecordId) {
+          if (transportConnected && provisionedRecordType && provisionedRecordId) {
             const markLive =
               provisionedRecordType === 'bondfire'
                 ? markBondfireLive({ bondfireId: provisionedRecordId as Id<'bondfires'> })
@@ -789,7 +810,15 @@ export function LiveRecordScreen({
           }
           provisionedArgsKeyRef.current = null
           provisionedRecordTypeRef.current = null
-          await publisher.start({ ...expectedArgs, initialCamera, uplinkProbeResult })
+          await publisher.start({
+            ...expectedArgs,
+            initialCamera,
+            uplinkProbeResult,
+            onCaptureStarted: () => {
+              recordingStore$.recordingDuration.set(0)
+              recordingActions.setPhase('recording', 'durable capture started')
+            },
+          })
         }
         ownsPreviewRef.current = false
       } catch (error) {
@@ -819,6 +848,18 @@ export function LiveRecordScreen({
     try {
       const result = await livePublisher.stop()
       if (result.recordingStarted === false) {
+        if (result.localBackupAvailable) {
+          recordingActions.enterBackupRecoveryCompletion(
+            livePublishStore$.recordId.peek(),
+            'Mux inactive; durable local capture queued for recovery',
+          )
+          state$.showInviteSheet.set(false)
+          Alert.alert(
+            'Saving your recording',
+            'The live connection did not start, but your recording is safe on this device and will upload through recovery.',
+          )
+          return
+        }
         recordingStore$.preConnectFailed.set(true)
         recordingStore$.previewExpired.set(false)
         recordingStore$.progressStage.set("Recording didn't start")
@@ -1082,6 +1123,13 @@ export function LiveRecordScreen({
 
     if (currentRecordingState === 'recording' || currentRecordingState === 'stopping') {
       if (!ownsLiveSession) {
+        return
+      }
+      // AppState loss is non-terminal. Android's native foreground service
+      // keeps capture/RTMP alive; iOS keeps the same logical recording paused
+      // until AVCaptureSession can resume. Navigating away while the app is
+      // still active remains an explicit stop-and-save boundary.
+      if (!isAppActive) {
         return
       }
       void stopLiveRecording()

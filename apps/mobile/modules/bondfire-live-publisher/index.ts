@@ -87,6 +87,8 @@ interface NativeLivePublisher {
   isAvailable?: () => Promise<boolean>
   getCameraCount?: () => Promise<number>
   startPreview?: (options: LivePublisherPreviewOptions) => Promise<void>
+  /** iOS-first split lifecycle: starts the durable file sink before transport. */
+  startCapture?: (options: LivePublisherStartOptions) => Promise<LivePublisherStartResult>
   start(options: LivePublisherStartOptions): Promise<LivePublisherStartResult>
   stop(): Promise<void>
   swapCamera(): Promise<void>
@@ -162,6 +164,10 @@ export const BondfireLivePublisher = {
 
   startPreview(options: LivePublisherPreviewOptions) {
     return nativeModule?.startPreview?.(options) ?? unavailablePromise()
+  },
+
+  startCapture(options: LivePublisherStartOptions) {
+    return nativeModule?.startCapture?.(options) ?? Promise.resolve({ localBackupArmed: false })
   },
 
   start(options: LivePublisherStartOptions) {

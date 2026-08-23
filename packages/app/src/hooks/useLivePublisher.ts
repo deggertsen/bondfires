@@ -8,6 +8,7 @@ import {
 import { telemetry } from '../services/telemetry'
 import { livePublishActions, livePublishStore$ } from '../store/livePublish.store'
 import { isNativePublisherStatus, type NativePublisherError } from '../store/livePublisherContract'
+import { recordingActions, recordingStore$ } from '../store/recording.store'
 import { uploadQueueStore$ } from '../store/uploadQueue.store'
 import { interruptionReasonLabel } from '../utils/captureInterruption'
 import { writeLiveAbrPrior } from '../utils/liveAbrPrior'
@@ -100,6 +101,7 @@ export interface LivePublisherPreviewOptions {
 export interface LivePublisherNativeModule {
   isAvailable?: () => Promise<boolean>
   startPreview(options: LivePublisherPreviewOptions): Promise<void>
+  startCapture?(options: LivePublisherStartOptions): Promise<LivePublisherStartResult>
   start(options: LivePublisherStartOptions): Promise<LivePublisherStartResult>
   stop(): Promise<void>
   swapCamera(): Promise<void>
@@ -141,6 +143,8 @@ export interface LivePublisherStopResult {
   recordingStarted: boolean
   /** False when the backend was unreachable (e.g. offline) at stop time. */
   backendNotified: boolean
+  /** A finalized whole-file backup exists even if Mux never became active. */
+  localBackupAvailable: boolean
 }
 
 export function useLivePublisher(options: {
@@ -435,6 +439,31 @@ export function useLivePublisher(options: {
       }
 
       livePublishActions.setStatus(status)
+      if (status === 'connecting') {
+        recordingActions.setTransportStatus('connecting', 'native publisher event')
+      } else if (status === 'live') {
+        recordingActions.setTransportStatus('connected', 'native publisher event')
+      } else if (status === 'reconnecting') {
+        recordingActions.setTransportStatus('reconnecting', 'native publisher event')
+      } else if (status === 'endpoint_closed' || status === 'stream_stopped_unexpectedly') {
+        recordingActions.setTransportStatus('disconnected', status)
+        if (livePublishStore$.sessionId.peek()) {
+          telemetry.info(
+            'live:transport_lost_capture_continues',
+            'RTMP transport ended without changing capture state',
+            {
+              status,
+              captureStatus: recordingStore$.captureStatus.peek(),
+              sessionId: livePublishStore$.sessionId.peek(),
+              recordId: livePublishStore$.recordId.peek(),
+            },
+          )
+        }
+      } else if (status === 'errored') {
+        recordingActions.setTransportStatus('failed', 'native publisher event')
+      } else if (status === 'ended') {
+        recordingActions.setTransportStatus('idle', 'native publisher ended')
+      }
 
       // Log unexpected drops to telemetry for diagnosis. No user-facing
       // toast — the UI already handles the status transition silently.
@@ -510,6 +539,14 @@ export function useLivePublisher(options: {
           sessionId,
           recordId,
         })
+        // AVCaptureSession.InterruptionReason.videoDeviceNotAvailableInBackground
+        // is raw value 1. Treat it as a pause even if the AppState event and
+        // native notification cross on the bridge in the opposite order.
+        if (AppState.currentState !== 'active' || reason === 1) {
+          recordingActions.setCaptureStatus('paused', 'iOS background capture interruption')
+          recordingActions.setBackgroundStatus('paused', 'iOS background capture interruption')
+          return
+        }
         livePublishActions.fail(new Error(error.message))
         return
       }
@@ -528,6 +565,10 @@ export function useLivePublisher(options: {
           sessionId: context?.sessionId,
           recordId: context?.recordId,
         })
+        if (livePublishStore$.status.peek() !== 'idle') {
+          recordingActions.setCaptureStatus('capturing', 'capture interruption ended')
+          recordingActions.setBackgroundStatus('foreground', 'capture interruption ended')
+        }
         return
       }
 
@@ -907,6 +948,7 @@ export function useLivePublisher(options: {
       args: {
         initialCamera?: 'front' | 'back'
         uplinkProbeResult?: LiveUplinkProbeResult | null
+        onCaptureStarted?: () => void
       } = {},
     ) => {
       const ingest = ingestRef.current
@@ -937,13 +979,14 @@ export function useLivePublisher(options: {
       const localBackup = await resolveLocalBackup(ingest.sessionId)
 
       const connectStartedAt = Date.now()
+      let captureStarted = false
       try {
         telemetry.setCrashBreadcrumb('live:starting', {
           sessionId: livePublishStore$.sessionId.peek(),
           recordId: livePublishStore$.recordId.peek(),
           status: livePublishStore$.status.peek(),
         })
-        const startResult = await options.publisher.start({
+        const publisherOptions = {
           rtmpsUrl: ingest.rtmpsUrl,
           streamKey: ingest.streamKey,
           fps: LIVE_DEFAULT_VIDEO_FPS,
@@ -951,12 +994,35 @@ export function useLivePublisher(options: {
           audioBitrate: 128_000,
           initialCamera: args.initialCamera ?? 'front',
           localBackupFileName: localBackup.fileName,
-        })
+        }
+        recordingActions.setCaptureStatus('starting', 'record tap')
+        if (options.publisher.startCapture && localBackup.fileName) {
+          const captureStartedAt = Date.now()
+          const captureResult = await options.publisher.startCapture(publisherOptions)
+          captureStarted = captureResult.localBackupArmed
+          if (captureStarted) {
+            noteLocalBackupArmed(ingest.sessionId, localBackup.fileName, localBackup.freeDiskBytes)
+            recordingActions.setCaptureStatus('capturing', 'native local recorder armed')
+            args.onCaptureStarted?.()
+            telemetry.info('live:capture_start_success', 'Durable local capture started', {
+              sessionId: ingest.sessionId,
+              captureStartMs: Date.now() - captureStartedAt,
+              platform: Platform.OS,
+            })
+          }
+        }
+        recordingActions.setTransportStatus('connecting', 'opening RTMP')
+        const startResult = await options.publisher.start(publisherOptions)
         noteLocalBackupArmed(
           ingest.sessionId,
-          startResult?.localBackupArmed ? localBackup.fileName : '',
+          startResult?.localBackupArmed && !captureStarted ? localBackup.fileName : '',
           localBackup.freeDiskBytes,
         )
+        if (!captureStarted) {
+          recordingActions.setCaptureStatus('capturing', 'combined native publisher started')
+          args.onCaptureStarted?.()
+        }
+        recordingActions.setTransportStatus('connected', 'RTMP connected')
         startStatsSampling({ initialTier: startBitrate.tier })
         telemetry.setCrashBreadcrumb('live:recording', {
           sessionId: livePublishStore$.sessionId.peek(),
@@ -975,7 +1041,9 @@ export function useLivePublisher(options: {
           startBitrateBps: startBitrate.bitrateBps,
           startBitrateSource: startBitrate.source,
         })
+        return true
       } catch (error) {
+        recordingActions.setTransportStatus('failed', 'RTMP connect failed')
         // Keep the provisioned session intact so the user can retry the tap;
         // status goes back to 'ready' rather than 'errored'.
         const errObj = error instanceof Error ? error : new Error(String(error))
@@ -984,6 +1052,16 @@ export function useLivePublisher(options: {
           errorName: errObj.name,
           sessionId: livePublishStore$.sessionId.peek(),
         })
+        if (captureStarted) {
+          livePublishActions.setStatus('endpoint_closed')
+          telemetry.warn(
+            'live:transport_start_failed_capture_continues',
+            'RTMP failed after durable capture started',
+            { sessionId: ingest.sessionId, error: String(error) },
+          )
+          return false
+        }
+        recordingActions.setCaptureStatus('failed', 'publisher start failed before capture')
         livePublishActions.setStatus('ready')
         throw error
       }
@@ -1117,6 +1195,7 @@ export function useLivePublisher(options: {
         pending?: boolean
         draftBondfireId?: string
         uplinkProbeResult?: LiveUplinkProbeResult | null
+        onCaptureStarted?: () => void
       } = {},
     ) => {
       telemetry.info('live:start', 'Live publisher start requested', {
@@ -1129,6 +1208,7 @@ export function useLivePublisher(options: {
 
       livePublishActions.beginCreate()
       let provisionedSessionId: string | null = null
+      let captureStarted = false
       const startRequestedAt = Date.now()
       try {
         const liveStream = await options.createLiveStream({
@@ -1177,7 +1257,7 @@ export function useLivePublisher(options: {
           status: livePublishStore$.status.peek(),
         })
         const connectStartedAt = Date.now()
-        const startResult = await options.publisher.start({
+        const publisherOptions = {
           rtmpsUrl: liveStream.ingest.rtmpsUrl,
           streamKey: liveStream.ingest.streamKey,
           fps: LIVE_DEFAULT_VIDEO_FPS,
@@ -1185,12 +1265,39 @@ export function useLivePublisher(options: {
           audioBitrate: 128_000,
           initialCamera: args.initialCamera ?? 'front',
           localBackupFileName: localBackup.fileName,
-        })
+        }
+        recordingActions.setCaptureStatus('starting', 'record tap after provisioning')
+        if (options.publisher.startCapture && localBackup.fileName) {
+          const captureStartedAt = Date.now()
+          const captureResult = await options.publisher.startCapture(publisherOptions)
+          captureStarted = captureResult.localBackupArmed
+          if (captureStarted) {
+            noteLocalBackupArmed(
+              liveStream.liveSessionId,
+              localBackup.fileName,
+              localBackup.freeDiskBytes,
+            )
+            recordingActions.setCaptureStatus('capturing', 'native local recorder armed')
+            args.onCaptureStarted?.()
+            telemetry.info('live:capture_start_success', 'Durable local capture started', {
+              sessionId: liveStream.liveSessionId,
+              captureStartMs: Date.now() - captureStartedAt,
+              platform: Platform.OS,
+            })
+          }
+        }
+        recordingActions.setTransportStatus('connecting', 'opening RTMP')
+        const startResult = await options.publisher.start(publisherOptions)
         noteLocalBackupArmed(
           liveStream.liveSessionId,
-          startResult?.localBackupArmed ? localBackup.fileName : '',
+          startResult?.localBackupArmed && !captureStarted ? localBackup.fileName : '',
           localBackup.freeDiskBytes,
         )
+        if (!captureStarted) {
+          recordingActions.setCaptureStatus('capturing', 'combined native publisher started')
+          args.onCaptureStarted?.()
+        }
+        recordingActions.setTransportStatus('connected', 'RTMP connected')
         startStatsSampling({ initialTier: startBitrate.tier })
         telemetry.setCrashBreadcrumb('live:recording', {
           sessionId: liveStream.liveSessionId,
@@ -1211,7 +1318,9 @@ export function useLivePublisher(options: {
           startBitrateBps: startBitrate.bitrateBps,
           startBitrateSource: startBitrate.source,
         })
+        return true
       } catch (error) {
+        recordingActions.setTransportStatus('failed', 'RTMP start failed')
         const errObj = error instanceof Error ? error : new Error(String(error))
         telemetry.error('live:start_failed', 'Live publisher start failed', {
           errorMessage: errObj.message,
@@ -1221,6 +1330,16 @@ export function useLivePublisher(options: {
           camera: args.initialCamera ?? 'unknown',
         })
         livePublishActions.fail(error)
+        if (captureStarted) {
+          livePublishActions.setStatus('endpoint_closed')
+          telemetry.warn(
+            'live:transport_start_failed_capture_continues',
+            'RTMP failed after durable capture started',
+            { sessionId: provisionedSessionId, error: String(error) },
+          )
+          return false
+        }
+        recordingActions.setCaptureStatus('failed', 'publisher start failed before capture')
         // Roll back the Mux live stream we provisioned so we don't keep paying
         // for an orphaned session that no client will ever publish to.
         if (provisionedSessionId) {
@@ -1244,11 +1363,14 @@ export function useLivePublisher(options: {
   const stop = useCallback(async (): Promise<LivePublisherStopResult> => {
     const sessionId = livePublishStore$.sessionId.get()
     livePublishActions.setStatus('stopping')
+    recordingActions.setCaptureStatus('stopping', 'creator stopped')
+    recordingActions.setTransportStatus('stopping', 'creator stopped')
     let publisherError: unknown
     let backendError: unknown
 
     let completeSignaled: boolean | undefined
     let recordingStarted = true
+    let localBackupAvailable = false
     const startedAt = livePublishStore$.startedAt.peek()
 
     // Crash context snapshot — write a breadcrumb right before the risky
@@ -1283,6 +1405,9 @@ export function useLivePublisher(options: {
       stopStatsSampling()
       ingestRef.current = null
       livePublishActions.setStatus('ended')
+      recordingActions.setCaptureStatus('idle', 'native capture finalized')
+      recordingActions.setTransportStatus('idle', 'native transport stopped')
+      recordingActions.setBackgroundStatus('foreground', 'recording stopped')
     }
 
     // Native stop finalized the local backup file (when one was armed) —
@@ -1294,6 +1419,7 @@ export function useLivePublisher(options: {
       localBackupRef.current = null
       try {
         const stats = await getLocalBackupSessionStats(sessionId)
+        localBackupAvailable = stats.exists && stats.sizeBytes > 0
         telemetry.info('backup:finalized', 'Local backup recording finalized', {
           sessionId,
           sizeBytes: stats.sizeBytes,
@@ -1361,6 +1487,7 @@ export function useLivePublisher(options: {
       completeSignaled,
       recordingStarted,
       backendNotified: !backendError,
+      localBackupAvailable,
     }
   }, [options, stopStatsSampling])
 
@@ -1420,6 +1547,8 @@ export function useLivePublisher(options: {
       })
 
       try {
+        recordingActions.setCaptureStatus('stopping', 'recording cancelled')
+        recordingActions.setTransportStatus('stopping', 'recording cancelled')
         await options.publisher.stop()
       } catch (error) {
         publisherError = error
@@ -1464,6 +1593,9 @@ export function useLivePublisher(options: {
         stopStatsSampling()
         ingestRef.current = null
         livePublishActions.reset()
+        recordingActions.setCaptureStatus('idle', 'recording cancelled')
+        recordingActions.setTransportStatus('idle', 'recording cancelled')
+        recordingActions.setBackgroundStatus('foreground', 'recording cancelled')
       }
 
       telemetry.info('live:stop', 'Live publisher cancelled', {

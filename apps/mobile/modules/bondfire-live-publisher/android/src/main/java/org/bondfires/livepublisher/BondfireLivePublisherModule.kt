@@ -1,6 +1,7 @@
 package org.bondfires.livepublisher
 
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.ComponentCallbacks2
 import android.hardware.camera2.CameraCharacteristics
@@ -112,6 +113,10 @@ class BondfireLivePublisherModule : Module() {
     @Volatile
     var currentInstance: BondfireLivePublisherModule? = null
       private set
+
+    fun requestStopFromNotification() {
+      currentInstance?.stopFromSystemControl()
+    }
   }
 
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -200,6 +205,7 @@ class BondfireLivePublisherModule : Module() {
 
     OnDestroy {
       BondfireLivePublisherModule.currentInstance = null
+      stopRecordingForegroundService()
       uninstallTrimMemoryObserver()
       uninstallThermalStatusListener()
       scope.launch {
@@ -335,6 +341,7 @@ class BondfireLivePublisherModule : Module() {
         }
         registerNetworkCallback()
         installThermalStatusListener()
+        startRecordingForegroundService()
         sendStatus(PublisherStatus.LIVE)
         mapOf("localBackupArmed" to localBackupArmed)
       } catch (e: Exception) {
@@ -377,6 +384,7 @@ class BondfireLivePublisherModule : Module() {
       // between sendStatus and cleanupStreamer() claiming the lock.
       isStoppingIntentionally = true
       sendStatus(PublisherStatus.ENDED)
+      stopRecordingForegroundService()
       cleanupStreamer()
     }
 
@@ -510,6 +518,32 @@ class BondfireLivePublisherModule : Module() {
     }
 
     View(BondfireLivePublisherView::class) {}
+  }
+
+  private fun stopFromSystemControl() {
+    scope.launch {
+      if (streamer == null || isStoppingIntentionally) return@launch
+      isStoppingIntentionally = true
+      sendStatus(PublisherStatus.ENDED)
+      stopRecordingForegroundService()
+      cleanupStreamer()
+    }
+  }
+
+  private fun startRecordingForegroundService() {
+    val context = appContext.reactContext ?: return
+    val intent = Intent(context, RecordingForegroundService::class.java)
+      .setAction(RecordingForegroundService.ACTION_START)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      context.startForegroundService(intent)
+    } else {
+      context.startService(intent)
+    }
+  }
+
+  private fun stopRecordingForegroundService() {
+    val context = appContext.reactContext ?: return
+    context.stopService(Intent(context, RecordingForegroundService::class.java))
   }
 
   /**
