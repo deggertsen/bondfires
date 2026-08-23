@@ -42,6 +42,7 @@ import type * as lib_emojis from "../lib/emojis.js";
 import type * as lib_latestResponsePlayback from "../lib/latestResponsePlayback.js";
 import type * as lib_liveBackupRecovery from "../lib/liveBackupRecovery.js";
 import type * as lib_liveIngest from "../lib/liveIngest.js";
+import type * as lib_liveSessionStaleness from "../lib/liveSessionStaleness.js";
 import type * as lib_notificationCopy from "../lib/notificationCopy.js";
 import type * as lib_presence from "../lib/presence.js";
 import type * as lib_pushProviders from "../lib/pushProviders.js";
@@ -107,6 +108,7 @@ declare const fullApi: ApiFromModules<{
   "lib/latestResponsePlayback": typeof lib_latestResponsePlayback;
   "lib/liveBackupRecovery": typeof lib_liveBackupRecovery;
   "lib/liveIngest": typeof lib_liveIngest;
+  "lib/liveSessionStaleness": typeof lib_liveSessionStaleness;
   "lib/notificationCopy": typeof lib_notificationCopy;
   "lib/presence": typeof lib_presence;
   "lib/pushProviders": typeof lib_pushProviders;

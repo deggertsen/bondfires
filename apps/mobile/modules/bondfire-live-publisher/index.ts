@@ -22,6 +22,8 @@ export interface LivePublisherStartOptions {
    * stream. Empty/absent disables the backup (the default).
    */
   localBackupFileName?: string
+  /** Native recording cap; 0/absent leaves the native timer disabled. */
+  maxDurationSeconds?: number
 }
 
 export interface LivePublisherStartResult {

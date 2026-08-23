@@ -26,11 +26,12 @@ connection. The recorder remains attached when the HaishinKit `Session` is
 replaced during reconnect. If RTMP cannot connect, capture remains active and
 the whole-file recovery path can save it.
 
-iOS prepares a video-call Picture-in-Picture controller backed by a second
-HaishinKit preview output and enables `isMultitaskingCameraAccessEnabled` only
-when the capture session reports support. Switching apps requests a visible
-PiP camera window; native PiP events keep the JS capture/background state
-truthful. When PiP is unavailable or ends in the background, the same logical
+iOS prepares a video-call Picture-in-Picture controller and its second
+HaishinKit preview output only after the capture session reports multitasking
+camera support. PiP starts at a real background transition, not transient
+`inactive` states such as Control Center or call banners. Native PiP events are
+routed through the publisher hook so capture/background state has one event
+owner. When PiP is unavailable or ends in the background, the same logical
 recording moves to `paused`, and the existing `AVCaptureSession` interruption
 observers move it back to capture when the system releases camera/microphone
 access. Device support and App Store acceptance remain release gates.
@@ -40,6 +41,8 @@ access. Device support and App Store acceptance remain release gates.
 Once the user starts publishing while the app is visible, a camera/microphone
 foreground service keeps the native pipeline alive across app switching. Its
 persistent notification returns to Bondfires or stops and saves the recording.
+Swiping the app from recents also stops and finalizes capture before releasing
+the foreground service, so no headless camera/microphone owner remains.
 
 `CaptureTransportEndpoint` extends StreamPack's documented `CombineEndpoint`
 customization point. It starts `MediaMuxer` first, attaches RTMP later, and
@@ -47,6 +50,15 @@ closes/reopens only RTMP during reconnect while camera, microphone, MediaCodec,
 and the local file remain alive. Reconnect re-registers the existing codec
 configuration with the RTMP child so each new connection receives fresh AAC
 and AVC sequence headers without changing the encoder-facing stream IDs.
+Endpoint map access is serialized with frame writes, and only open sinks
+receive stream registration, so RTMP-only sessions never touch an uninitialized
+`MediaMuxer`.
+
+Both native modules enforce the account recording-duration limit independently
+of React Native timers. The UI clock derives from wall time when JS resumes.
+Mux-confirmed live sessions, plus pre-live sessions with confirmed durable
+capture, are exempt from the five-minute heartbeat reaper; Mux's 12-hour
+maximum continuous-duration limit remains the absolute server backstop.
 
 ## Recovery selection
 
@@ -54,8 +66,10 @@ The existing launch sweep and `live_backup` upload queue remain authoritative.
 Mux Live wins when it reaches `ready`. A local backup is retained while the
 asset is live/processing and uploaded only for `errored` or
 `awaiting_recovery`. If Mux never became active but native stop finalized a
-non-empty local file, the creator sees recovery completion instead of
-"Recording didn't start."
+non-empty local file, `endLiveStream` preserves the linked record as
+`awaiting_recovery` and the client immediately enqueues the same deduplicated
+`live_backup` task used by early-drop recovery. The creator sees recovery
+completion instead of "Recording didn't start."
 
 ## Required physical-device validation
 

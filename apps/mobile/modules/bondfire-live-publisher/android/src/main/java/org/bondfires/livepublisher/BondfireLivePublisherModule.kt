@@ -66,6 +66,8 @@ class LivePublisherStartOptions : Record {
    * <filesDir>/recordings/<localBackupFileName> before RTMP is attached.
    */
   @Field val localBackupFileName: String = ""
+  /** Native safety cap that remains enforceable while React Native is paused. */
+  @Field val maxDurationSeconds: Int = 0
 }
 
 class LivePublisherPreviewOptions : Record {
@@ -107,8 +109,10 @@ class BondfireLivePublisherModule : Module() {
     var currentInstance: BondfireLivePublisherModule? = null
       private set
 
-    fun requestStopFromNotification() {
-      currentInstance?.stopFromSystemControl()
+    fun requestStopFromNotification(): Boolean {
+      val instance = currentInstance ?: return false
+      instance.stopFromSystemControl()
+      return true
     }
   }
 
@@ -160,6 +164,7 @@ class BondfireLivePublisherModule : Module() {
   private var lastNetworkTransportTypes: Set<Int>? = null
   private var trimMemoryObserver: ComponentCallbacks2? = null
   private var thermalStatusListener: OnThermalStatusChangedListener? = null
+  private var durationLimitJob: Job? = null
 
   // Baseline for the TrafficStats-delta throughput measurement in getStats().
   // StreamPack 3.x exposes no byte counters (RtmpEndpoint.getMetrics() throws
@@ -261,22 +266,33 @@ class BondfireLivePublisherModule : Module() {
     }
 
     AsyncFunction("startCapture") Coroutine { options: LivePublisherStartOptions ->
-      if (streamer == null) {
-        currentFacing = options.initialCamera
-        createStreamer(
-          fps = options.fps,
-          videoBitrate = options.videoBitrate,
-          audioBitrate = options.audioBitrate,
-        )
+      val existingStreamer = streamer
+      val existingEndpoint = existingStreamer?.endpoint as? CaptureTransportEndpoint
+      if (
+        existingStreamer != null &&
+        existingEndpoint?.captureIsOpen == true &&
+        existingStreamer.isStreamingFlow.value
+      ) {
+        return@Coroutine mapOf("localBackupArmed" to true)
       }
+
+      // Preserve the production invariant from the former combined start(): a
+      // preview-only StreamPack pipeline can fail to start its video encoder
+      // after the record tap. Rebuild once at the capture boundary, then keep
+      // this fresh encoder alive while RTMP attaches and reconnects.
+      if (existingStreamer != null) {
+        cleanupStreamer()
+      }
+      currentFacing = options.initialCamera
+      createStreamer(
+        fps = options.fps,
+        videoBitrate = options.videoBitrate,
+        audioBitrate = options.audioBitrate,
+      )
       val activeStreamer = streamer
         ?: throw LivePublisherException("Streamer unavailable")
       val endpoint = activeStreamer.endpoint as? CaptureTransportEndpoint
         ?: throw LivePublisherException("Capture endpoint unavailable")
-
-      if (endpoint.captureIsOpen && activeStreamer.isStreamingFlow.value) {
-        return@Coroutine mapOf("localBackupArmed" to true)
-      }
 
       val backupFile = prepareBackupFile(options.localBackupFileName)
         ?: return@Coroutine mapOf("localBackupArmed" to false)
@@ -286,6 +302,7 @@ class BondfireLivePublisherModule : Module() {
         backupMuxerEndpoint = endpoint.captureSink
         installThermalStatusListener()
         startRecordingForegroundService()
+        scheduleDurationLimit(options.maxDurationSeconds)
         mapOf("localBackupArmed" to endpoint.captureIsOpen)
       } catch (e: Exception) {
         Log.w(TAG, "Failed to start durable local capture", e)
@@ -305,6 +322,13 @@ class BondfireLivePublisherModule : Module() {
 
     AsyncFunction("start") Coroutine { options: LivePublisherStartOptions ->
       val rtmpsUrl = buildRtmpsUrl(options.rtmpsUrl, options.streamKey)
+      // startCapture already rebuilt the preview pipeline when durable capture
+      // armed. RTMP-only sessions still need that same fresh-pipeline boundary
+      // before encoding begins (the old preview pipeline can fail to produce
+      // video after the record tap on affected devices).
+      if (streamer != null && streamer?.isStreamingFlow?.value != true) {
+        cleanupStreamer()
+      }
       if (streamer == null) {
         currentFacing = options.initialCamera
         createStreamer(
@@ -342,6 +366,7 @@ class BondfireLivePublisherModule : Module() {
         registerNetworkCallback()
         installThermalStatusListener()
         startRecordingForegroundService()
+        scheduleDurationLimit(options.maxDurationSeconds)
         sendStatus(PublisherStatus.LIVE)
         mapOf("localBackupArmed" to endpoint.captureIsOpen)
       } catch (e: Exception) {
@@ -373,8 +398,8 @@ class BondfireLivePublisherModule : Module() {
       // between sendStatus and cleanupStreamer() claiming the lock.
       isStoppingIntentionally = true
       sendStatus(PublisherStatus.ENDED)
-      stopRecordingForegroundService()
       cleanupStreamer()
+      stopRecordingForegroundService()
     }
 
     AsyncFunction("swapCamera") Coroutine { ->
@@ -514,8 +539,19 @@ class BondfireLivePublisherModule : Module() {
       if (streamer == null || isStoppingIntentionally) return@launch
       isStoppingIntentionally = true
       sendStatus(PublisherStatus.ENDED)
-      stopRecordingForegroundService()
       cleanupStreamer()
+      stopRecordingForegroundService()
+    }
+  }
+
+  private fun scheduleDurationLimit(maxDurationSeconds: Int) {
+    if (maxDurationSeconds <= 0 || durationLimitJob != null) return
+    durationLimitJob = scope.launch {
+      delay(maxDurationSeconds.toLong() * 1_000L)
+      if (!isStoppingIntentionally && streamer != null) {
+        Log.i(TAG, "Native recording duration limit reached — stopping and saving")
+        stopFromSystemControl()
+      }
     }
   }
 
@@ -1263,6 +1299,8 @@ class BondfireLivePublisherModule : Module() {
     val claimed = synchronized(teardownLock) {
       val current = streamer ?: return
       streamer = null
+      durationLimitJob?.cancel()
+      durationLimitJob = null
       isStoppingIntentionally = true
       isMuted = false
       // Next session must rebind its preview from scratch.
@@ -1406,6 +1444,7 @@ class BondfireLivePublisherModule : Module() {
           isStoppingIntentionally = true
           sendStatus(PublisherStatus.ENDED)
           cleanupStreamer()
+          stopRecordingForegroundService()
         }
       }
     }

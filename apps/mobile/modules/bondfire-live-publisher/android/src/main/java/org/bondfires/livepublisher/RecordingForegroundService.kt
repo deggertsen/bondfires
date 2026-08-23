@@ -24,9 +24,10 @@ class RecordingForegroundService : Service() {
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     if (intent?.action == ACTION_STOP) {
-      BondfireLivePublisherModule.requestStopFromNotification()
-      stopForeground(STOP_FOREGROUND_REMOVE)
-      stopSelf()
+      if (!BondfireLivePublisherModule.requestStopFromNotification()) {
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+      }
       return START_NOT_STICKY
     }
 
@@ -45,6 +46,17 @@ class RecordingForegroundService : Service() {
   }
 
   override fun onBind(intent: Intent?): IBinder? = null
+
+  override fun onTaskRemoved(rootIntent: Intent?) {
+    // Swiping Bondfires from recents is an explicit ownership handoff: stop
+    // and finalize the MP4 while this foreground service still protects the
+    // process. The module removes the service after cleanup completes.
+    if (!BondfireLivePublisherModule.requestStopFromNotification()) {
+      stopForeground(STOP_FOREGROUND_REMOVE)
+      stopSelf()
+    }
+    super.onTaskRemoved(rootIntent)
+  }
 
   private fun buildNotification(): Notification {
     val launchIntent = packageManager.getLaunchIntentForPackage(packageName)

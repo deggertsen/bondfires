@@ -2,6 +2,7 @@ package org.bondfires.livepublisher
 
 import android.content.Context
 import io.github.thibaultbee.streampack.core.configuration.mediadescriptor.MediaDescriptor
+import io.github.thibaultbee.streampack.core.elements.data.FrameWithCloseable
 import io.github.thibaultbee.streampack.core.elements.encoders.CodecConfig
 import io.github.thibaultbee.streampack.core.elements.endpoints.CombineEndpoint
 import io.github.thibaultbee.streampack.core.elements.endpoints.IEndpointInternal
@@ -31,6 +32,7 @@ class CaptureTransportEndpoint(
   ) {
   private val lifecycleMutex = Mutex()
   private val registeredStreams = linkedMapOf<CodecConfig, Int>()
+  private var nextFanoutStreamId = 0
 
   val transportIsOpen: Boolean
     get() = transportEndpoint.isOpenFlow.value
@@ -90,20 +92,45 @@ class CaptureTransportEndpoint(
   override suspend fun addStreams(
     streamConfigs: List<CodecConfig>,
   ): Map<CodecConfig, Int> = lifecycleMutex.withLock {
-    val streamIds = super.addStreams(streamConfigs)
-    registeredStreams.putAll(streamIds)
-    streamIds
+    streamConfigs.associateWith { registerStream(it) }
   }
 
   override suspend fun addStream(streamConfig: CodecConfig): Int = lifecycleMutex.withLock {
-    val streamId = super.addStream(streamConfig)
-    registeredStreams[streamConfig] = streamId
-    streamId
+    registerStream(streamConfig)
   }
 
+  /**
+   * StreamPack registers encoder streams after the selected endpoint opens.
+   * Register only the sinks that are open at that moment: MediaMuxerEndpoint
+   * requires open() before addStream(), while RTMP-only sessions deliberately
+   * leave the file sink closed. A later transport attach uses the saved codec
+   * configs to add the RTMP mapping without changing the encoder-facing id.
+   */
+  private suspend fun registerStream(streamConfig: CodecConfig): Int {
+    val fanoutStreamId = nextFanoutStreamId++
+    registeredStreams[streamConfig] = fanoutStreamId
+    endpointInternals.filter { it.isOpenFlow.value }.forEach { endpoint ->
+      endpointsToStreamIdsMap[Pair(endpoint, fanoutStreamId)] = endpoint.addStream(streamConfig)
+    }
+    return fanoutStreamId
+  }
+
+  /**
+   * CombineEndpoint's write path reads its LinkedHashMap directly. Serialize
+   * frames with attach/detach so reconnect cannot mutate that map while an
+   * encoder frame is being fanned out, or write to RTMP between open and the
+   * completed start handshake.
+   */
+  override suspend fun write(closeableFrame: FrameWithCloseable, streamPid: Int) =
+    lifecycleMutex.withLock {
+      super.write(closeableFrame, streamPid)
+    }
+
   override suspend fun stopStream() = lifecycleMutex.withLock {
-    super.stopStream()
+    endpointInternals.filter { it.isOpenFlow.value }.forEach { it.stopStream() }
+    endpointsToStreamIdsMap.clear()
     registeredStreams.clear()
+    nextFanoutStreamId = 0
   }
 
   override suspend fun close() = lifecycleMutex.withLock {

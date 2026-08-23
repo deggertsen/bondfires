@@ -120,6 +120,7 @@ export const recordingStore$ = observable<RecordingState>(defaultRecordingState)
 export const recordingActions = {
   setCaptureStatus: (status: CaptureStatus, reason?: string) => {
     const previous = recordingStore$.captureStatus.peek()
+    if (previous === status) return
     recordingStore$.captureStatus.set(status)
     telemetry.info('recording:capture_state', 'Capture state changed', {
       from: previous,
@@ -130,6 +131,7 @@ export const recordingActions = {
 
   setTransportStatus: (status: TransportStatus, reason?: string) => {
     const previous = recordingStore$.transportStatus.peek()
+    if (previous === status) return
     recordingStore$.transportStatus.set(status)
     telemetry.info('recording:transport_state', 'Transport state changed', {
       from: previous,
@@ -140,6 +142,7 @@ export const recordingActions = {
 
   setBackgroundStatus: (status: RecordingBackgroundStatus, reason?: string) => {
     const previous = recordingStore$.backgroundStatus.peek()
+    if (previous === status) return
     recordingStore$.backgroundStatus.set(status)
     telemetry.info('recording:background_state', 'Recording background state changed', {
       from: previous,

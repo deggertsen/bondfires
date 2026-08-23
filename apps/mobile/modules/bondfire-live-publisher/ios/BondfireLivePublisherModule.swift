@@ -30,6 +30,8 @@ struct LivePublisherStartOptions: Record {
   /// written to Documents/recordings/<localBackupFileName> for crash/network
   /// failure recovery. Empty (default) disables the backup entirely.
   @Field var localBackupFileName: String = ""
+  /// Native safety cap that remains enforceable while React Native is paused.
+  @Field var maxDurationSeconds: Int = 0
 }
 
 public class BondfireLivePublisherModule: Module {
@@ -381,6 +383,10 @@ enum LivePublisherEvent {
 
 @MainActor
 final class LivePublisher {
+  private final class PictureInPictureSupport: @unchecked Sendable {
+    var isAvailable = false
+  }
+
   // useManualCapture: true gives us explicit control over when capture starts
   private let mixer = MediaMixer(multiCamSessionEnabled: false, useManualCapture: true)
   private var session: (any Session)?
@@ -398,6 +404,7 @@ final class LivePublisher {
   /// drop mid-recording is completely silent on iOS — the UI stays on "REC"
   /// with a frozen pipeline. Android gets the same signal from isOpenFlow.
   private var connectionMonitorTask: Task<Void, Never>?
+  private var durationLimitTask: Task<Void, Never>?
   /// Monitors network path changes while publishing. When the network drops
   /// entirely, or the active interface changes under the RTMP socket, the
   /// safest recovery is the existing `.endpointClosed` terminal path so JS can
@@ -500,17 +507,20 @@ final class LivePublisher {
   /// devices iOS starts it automatically as the creator switches apps; the
   /// visible floating camera window is what authorizes multitasking capture.
   func preparePictureInPicture(sourceView: UIView) async {
-    guard #available(iOS 15.0, *) else { return }
+    guard #available(iOS 16.0, *) else { return }
     guard pictureInPictureCoordinator == nil else { return }
+    guard AVPictureInPictureController.isPictureInPictureSupported() else { return }
 
-    await mixer.addOutput(pictureInPicturePreviewView)
-    if #available(iOS 16.0, *) {
-      await mixer.configuration { session in
-        guard session.isMultitaskingCameraAccessSupported else { return }
+    let support = PictureInPictureSupport()
+    await mixer.configuration { session in
+      support.isAvailable = session.isMultitaskingCameraAccessSupported
+      if support.isAvailable {
         session.isMultitaskingCameraAccessEnabled = true
       }
     }
+    guard support.isAvailable else { return }
 
+    await mixer.addOutput(pictureInPicturePreviewView)
     pictureInPictureCoordinator = RecordingPictureInPictureCoordinator(
       sourceView: sourceView,
       previewView: pictureInPicturePreviewView,
@@ -533,7 +543,11 @@ final class LivePublisher {
     }
     currentOptions = options
     guard !options.localBackupFileName.isEmpty else { return false }
-    return await armBackupRecorder(fileName: options.localBackupFileName)
+    let armed = await armBackupRecorder(fileName: options.localBackupFileName)
+    if armed {
+      scheduleDurationLimit(options.maxDurationSeconds)
+    }
+    return armed
   }
 
   func start(options: LivePublisherStartOptions) async throws -> Bool {
@@ -631,6 +645,7 @@ final class LivePublisher {
     emitStatusChange(.live)
     startConnectionMonitor()
     startNetworkMonitor()
+    scheduleDurationLimit(options.maxDurationSeconds)
     return localBackupArmed
   }
 
@@ -728,6 +743,17 @@ final class LivePublisher {
           return
         }
       }
+    }
+  }
+
+  private func scheduleDurationLimit(_ maxDurationSeconds: Int) {
+    guard maxDurationSeconds > 0, durationLimitTask == nil else { return }
+    durationLimitTask = Task { [weak self] in
+      try? await Task.sleep(nanoseconds: UInt64(maxDurationSeconds) * 1_000_000_000)
+      guard let self, !Task.isCancelled, !self.isStopping, self.isCaptureRunning else { return }
+      self.durationLimitTask = nil
+      self.emitStatusChange(.ended)
+      await self.cleanup()
     }
   }
 
@@ -888,6 +914,8 @@ final class LivePublisher {
 
   private func cleanup() async {
     isStopping = true
+    durationLimitTask?.cancel()
+    durationLimitTask = nil
     connectionMonitorTask?.cancel()
     connectionMonitorTask = nil
     stopNetworkMonitor()
@@ -1128,7 +1156,7 @@ final class RecordingPictureInPictureCoordinator: NSObject,
   @preconcurrency AVPictureInPictureControllerDelegate {
   private let contentViewController = AVPictureInPictureVideoCallViewController()
   private let onStateChange: (Bool) -> Void
-  private var willResignActiveObserver: NSObjectProtocol?
+  private var didEnterBackgroundObserver: NSObjectProtocol?
   private var pictureInPictureController: AVPictureInPictureController?
 
   init(
@@ -1155,10 +1183,11 @@ final class RecordingPictureInPictureCoordinator: NSObject,
     controller.canStartPictureInPictureAutomaticallyFromInline = true
     pictureInPictureController = controller
 
-    // Explicitly request PiP at the foreground -> background boundary. The
-    // automatic flag remains as a fallback for system-driven transitions.
-    willResignActiveObserver = NotificationCenter.default.addObserver(
-      forName: UIApplication.willResignActiveNotification,
+    // `willResignActive` also fires for Control Center, call banners, and
+    // permission sheets. Start explicitly only after true background entry;
+    // the automatic flag remains the primary system transition path.
+    didEnterBackgroundObserver = NotificationCenter.default.addObserver(
+      forName: UIApplication.didEnterBackgroundNotification,
       object: nil,
       queue: .main
     ) { [weak self] _ in
@@ -1174,9 +1203,9 @@ final class RecordingPictureInPictureCoordinator: NSObject,
   }
 
   func invalidate() {
-    if let observer = willResignActiveObserver {
+    if let observer = didEnterBackgroundObserver {
       NotificationCenter.default.removeObserver(observer)
-      willResignActiveObserver = nil
+      didEnterBackgroundObserver = nil
     }
     if pictureInPictureController?.isPictureInPictureActive == true {
       pictureInPictureController?.stopPictureInPicture()

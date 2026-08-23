@@ -53,3 +53,15 @@ export function shouldDeferLiveFailureForBackup(args: {
 }): boolean {
   return args.localBackupAvailable && args.assetStatus !== args.durationLimitExceededStatus
 }
+
+/**
+ * Stop carries final on-device file evidence in the same authenticated action
+ * that evaluates Mux ingest. Persisted arm evidence remains a fallback for
+ * system/crash paths that cannot report the final file stat directly.
+ */
+export function hasLocalBackupEvidence(args: {
+  reportedAtStop?: boolean
+  persistedAtArm?: boolean
+}): boolean {
+  return args.reportedAtStop === true || args.persistedAtArm === true
+}

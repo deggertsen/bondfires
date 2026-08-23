@@ -135,3 +135,9 @@ durable file first; `start()` attaches RTMP afterward. Android's custom
 `CaptureTransportEndpoint` and iOS's mixer outputs both preserve local capture
 while transport reconnects. This split is a product requirement (pre-roll
 must never reach viewers); preserve it in any refactor.
+
+`maxDurationSeconds` is passed with the start options and enforced natively on
+both platforms, so the recording cap still stops and finalizes capture while
+React Native timers are suspended. Android keeps its camera/microphone
+foreground service alive until finalization completes, including notification,
+recents-swipe, thermal, and duration-limit stops.

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   decideReadyAssetConflict,
+  hasLocalBackupEvidence,
   shouldAnnounceRecordOnReady,
   shouldDeferLiveFailureForBackup,
 } from './liveBackupRecovery'
@@ -54,6 +55,14 @@ describe('decideReadyAssetConflict', () => {
         incomingSource: 'unknown',
       }),
     ).toBe('keep_existing')
+  })
+})
+
+describe('hasLocalBackupEvidence', () => {
+  it('preserves a never-active recording from either final or persisted evidence', () => {
+    expect(hasLocalBackupEvidence({ reportedAtStop: true })).toBe(true)
+    expect(hasLocalBackupEvidence({ persistedAtArm: true })).toBe(true)
+    expect(hasLocalBackupEvidence({})).toBe(false)
   })
 })
 

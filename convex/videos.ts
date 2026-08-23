@@ -36,6 +36,7 @@ import { throwUserError, withUserFacingActionErrors } from './errors'
 import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 import {
   decideReadyAssetConflict,
+  hasLocalBackupEvidence,
   type RecordedAssetSource,
   shouldAnnounceRecordOnReady,
   shouldDeferLiveFailureForBackup,
@@ -46,6 +47,7 @@ import {
   initialLiveRecordStatus,
   localIngestSource,
 } from './lib/liveIngest'
+import { shouldReapLiveSession } from './lib/liveSessionStaleness'
 import { assessLiveSessionProgress } from './liveSessionProgress'
 import {
   assertCanRespondToPersonalBondfire,
@@ -2341,6 +2343,7 @@ export const endLiveStream = action({
   args: {
     liveSessionId: v.id('liveSessions'),
     reason: v.optional(v.string()),
+    localBackupAvailable: v.optional(v.boolean()),
   },
   handler: (ctx, args): Promise<EndLiveStreamResult> =>
     withUserFacingActionErrors(
@@ -2444,11 +2447,24 @@ export const endLiveStream = action({
             console.warn('Failed to delete never-active Mux live stream:', error)
           }
 
-          await ctx.runMutation(internal.videos.cancelMuxLiveSessionRecord, {
-            userId,
-            liveSessionId: args.liveSessionId,
-            reason: 'stopped_before_live_stream_active',
-          })
+          if (
+            hasLocalBackupEvidence({
+              reportedAtStop: args.localBackupAvailable,
+              persistedAtArm: activeSession.localBackupAvailable,
+            })
+          ) {
+            await ctx.runMutation(internal.videos.markMuxLiveSessionAwaitingRecovery, {
+              userId,
+              liveSessionId: args.liveSessionId,
+              reason: 'stopped_before_live_stream_active',
+            })
+          } else {
+            await ctx.runMutation(internal.videos.cancelMuxLiveSessionRecord, {
+              userId,
+              liveSessionId: args.liveSessionId,
+              reason: 'stopped_before_live_stream_active',
+            })
+          }
 
           return { ended: false, completeSignaled: false, recordingStarted: false }
         }
@@ -4691,12 +4707,16 @@ export const listStaleMuxLiveSessions = internalQuery({
       ),
     )
 
-    return batches.flat().filter(
-      (session) =>
-        session.updatedAt < staleBefore ||
-        // Hard cap on pending sessions: even an actively heartbeating preview
-        // can't hold a provisioned stream open past the max pending age.
-        (session.status === 'created' && session.createdAt < pendingMaxAgeBefore),
+    return batches.flat().filter((session) =>
+      shouldReapLiveSession({
+        status: session.status,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+        localBackupAvailable: session.localBackupAvailable,
+        now,
+        staleAfterMs: now - staleBefore,
+        pendingMaxAgeMs: now - pendingMaxAgeBefore,
+      }),
     )
   },
 })
