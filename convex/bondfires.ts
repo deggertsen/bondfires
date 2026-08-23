@@ -20,7 +20,6 @@ import { throwUserError } from './errors'
 import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 import { addInviteBadgesToBondfires } from './inviteBadges'
 import { getLatestResponsePlayback } from './lib/latestResponsePlayback'
-import { canViewPersonalBondfire } from './personalBondfireAccess'
 import { incrementProfileViews } from './watchEvents'
 
 type ExpiredPrivateCampVideoCleanupResult = {
@@ -745,24 +744,9 @@ export const incrementViews = mutation({
       throw new Error('Bondfire not found')
     }
 
-    if (bondfire.personalCampId) {
-      const canViewBondfire = await canViewPersonalBondfire(ctx, {
-        bondfire,
-        userId: viewerId,
-      })
-      if (!canViewBondfire) {
-        throw new Error('Bondfire not found')
-      }
-    } else if (bondfire.campId) {
-      const camp = await ctx.db.get(bondfire.campId)
-      if (!camp) {
-        throw new Error('Camp not found')
-      }
-
-      const viewer = await buildViewerVisibilityContext(ctx, viewerId)
-      if (!isCampContentVisibleToViewer(camp, viewer)) {
-        throw new Error('Bondfire not found')
-      }
+    const viewer = await buildViewerVisibilityContext(ctx, viewerId)
+    if (!(await isBondfireVisibleToViewer(ctx, bondfire, viewer))) {
+      throw new Error('Bondfire not found')
     }
 
     if (bondfire.userId === viewerId) {
@@ -770,12 +754,12 @@ export const incrementViews = mutation({
     }
 
     const now = Date.now()
-    const recorded = await incrementProfileViews(
+    const result = await incrementProfileViews(
       ctx,
       { videoType: 'bondfire', videoId: args.bondfireId, eventType: 'start' },
       viewerId,
     )
-    if (!recorded) {
+    if (!result.counted) {
       return { recorded: false, reason: 'creator_not_found' }
     }
 

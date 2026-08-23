@@ -368,12 +368,8 @@ export default function BondfireDetailScreen() {
     goBackOrReplace(router, navigation, routes.feed)
   }, [navigation, router])
 
-  const recordWatchEventOnce = useCallback(
+  const submitWatchEvent = useCallback(
     (target: WatchTarget, eventType: WatchEventType, positionMs: number, durationMs?: number) => {
-      const key = `${target.videoType}:${target.videoId}:${eventType}`
-      if (recordedWatchEventsRef.current.has(key)) return
-
-      recordedWatchEventsRef.current.add(key)
       recordWatchEvent({
         videoType: target.videoType,
         videoId: target.videoId,
@@ -390,6 +386,17 @@ export default function BondfireDetailScreen() {
       })
     },
     [recordWatchEvent],
+  )
+
+  const recordWatchEventOnce = useCallback(
+    (target: WatchTarget, eventType: WatchEventType, positionMs: number, durationMs?: number) => {
+      const key = `${target.videoType}:${target.videoId}:${eventType}`
+      if (recordedWatchEventsRef.current.has(key)) return
+
+      recordedWatchEventsRef.current.add(key)
+      submitWatchEvent(target, eventType, positionMs, durationMs)
+    },
+    [submitWatchEvent],
   )
 
   const handleVideoComplete = useCallback(
@@ -418,8 +425,8 @@ export default function BondfireDetailScreen() {
     const target = getWatchTarget(bondfireData, currentVideoIndex)
     if (!target) return
 
-    recordWatchEventOnce(target, 'start', 0)
-  }, [bondfireData, currentVideoIndex, recordWatchEventOnce])
+    submitWatchEvent(target, 'start', 0)
+  }, [bondfireData, currentVideoIndex, submitWatchEvent])
 
   const handleScrubbingChange = useCallback(
     (scrubbing: boolean) => {
