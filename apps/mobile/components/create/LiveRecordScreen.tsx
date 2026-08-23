@@ -167,10 +167,12 @@ export function LiveRecordScreen({
   const thermalCheckInFlightRef = useRef(false)
   const liveTerminalRecoveryFiredRef = useRef(false)
   const liveCameraSwapInFlightRef = useRef(false)
+  const stopLiveRecordingInFlightRef = useRef(false)
 
   const state$ = useObservable({
     isAppActive: AppState.currentState === 'active',
     isFocused: isFocused,
+    isRecordingPictureInPictureActive: false,
     showInviteSheet: false,
     showNotepad: false,
     thermalWarning: false,
@@ -233,6 +235,24 @@ export function LiveRecordScreen({
     ? `Auto-stops in ${recordingLimitClock}`
     : undefined
 
+  const handlePictureInPictureChange = useCallback(
+    (active: boolean) => {
+      state$.isRecordingPictureInPictureActive.set(active)
+      if (recordingStore$.phase.peek() !== 'recording') return
+
+      if (active) {
+        recordingActions.setBackgroundStatus('background_recording', 'iOS Picture in Picture')
+        recordingActions.setCaptureStatus('capturing', 'iOS Picture in Picture active')
+        return
+      }
+      if (!state$.isAppActive.get()) {
+        recordingActions.setBackgroundStatus('paused', 'iOS Picture in Picture ended')
+        recordingActions.setCaptureStatus('paused', 'iOS Picture in Picture ended')
+      }
+    },
+    [state$],
+  )
+
   const livePublisher = useLivePublisher({
     publisher: BondfireLivePublisher,
     createLiveStream: async (args) =>
@@ -259,6 +279,7 @@ export function LiveRecordScreen({
       await confirmLiveSessionLocalBackup({
         liveSessionId: args.liveSessionId as Id<'liveSessions'>,
       }),
+    onPictureInPictureChange: handlePictureInPictureChange,
   })
   // useLivePublisher intentionally exposes imperative methods, but its return
   // object is recreated as callback dependencies change. Keep the latest
@@ -310,14 +331,19 @@ export function LiveRecordScreen({
     }
   }, [activeSessions, cancelLiveStream])
 
-  // Recording timer (interval-based - keep useEffect)
+  // Derive from wall time so the clock catches up immediately after React
+  // Native timers were paused in the background. Native independently owns
+  // the hard duration cap while JS is suspended.
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | undefined
 
     if (phase === 'recording') {
-      interval = setInterval(() => {
-        recordingStore$.recordingDuration.set((prev) => prev + 1)
-      }, 1000)
+      const startedAt = recordingStore$.phaseStartedAt.peek() ?? Date.now()
+      const updateDuration = () => {
+        recordingStore$.recordingDuration.set(Math.floor((Date.now() - startedAt) / 1_000))
+      }
+      updateDuration()
+      interval = setInterval(updateDuration, 1000)
     }
 
     return () => {
@@ -359,6 +385,26 @@ export function LiveRecordScreen({
           liveStatus,
           sessionId: livePublishStore$.sessionId.peek(),
         })
+        if (appState === 'active') {
+          recordingActions.setBackgroundStatus('foreground', 'app became active')
+          if (recordingStore$.captureStatus.peek() === 'paused') {
+            recordingActions.setCaptureStatus('capturing', 'app returned to foreground')
+          }
+        } else if (appState === 'inactive') {
+          // Transient overlays (Control Center, call banners, permission
+          // sheets) do not imply that capture paused or entered background.
+          return
+        } else if (Platform.OS === 'android' || state$.isRecordingPictureInPictureActive.get()) {
+          recordingActions.setBackgroundStatus(
+            'background_recording',
+            Platform.OS === 'android'
+              ? 'Android foreground service owns capture'
+              : 'iOS Picture in Picture owns capture',
+          )
+        } else {
+          recordingActions.setBackgroundStatus('paused', 'iOS camera interruption expected')
+          recordingActions.setCaptureStatus('paused', 'app left foreground')
+        }
       }
     })
 
@@ -742,6 +788,10 @@ export function LiveRecordScreen({
     const uplinkProbe = uplinkProbeRef.current
     uplinkProbe?.cancel()
     const uplinkProbeResult = uplinkProbe?.getResult() ?? null
+    const onCaptureStarted = () => {
+      recordingStore$.recordingDuration.set(0)
+      recordingActions.setPhase('recording', 'durable capture started')
+    }
 
     try {
       // Wait out an in-flight eager provision instead of racing it with a
@@ -760,13 +810,18 @@ export function LiveRecordScreen({
         if (canUseProvisioned) {
           // Fast path: the stream was provisioned during framing, so the tap
           // only opens the RTMP connection.
-          await publisher.connect({ initialCamera, uplinkProbeResult })
+          const transportConnected = await publisher.connect({
+            initialCamera,
+            uplinkProbeResult,
+            maxDurationSeconds: effectiveMaxRecordingSeconds,
+            onCaptureStarted,
+          })
           // Flip the pending record live for immediate feed visibility. Fire
           // and forget — the live_stream.active webhook is the authoritative
           // backstop for both record types.
           const provisionedRecordId = livePublishStore$.recordId.get()
           const provisionedRecordType = provisionedRecordTypeRef.current
-          if (provisionedRecordType && provisionedRecordId) {
+          if (transportConnected && provisionedRecordType && provisionedRecordId) {
             const markLive =
               provisionedRecordType === 'bondfire'
                 ? markBondfireLive({ bondfireId: provisionedRecordId as Id<'bondfires'> })
@@ -793,7 +848,13 @@ export function LiveRecordScreen({
           }
           provisionedArgsKeyRef.current = null
           provisionedRecordTypeRef.current = null
-          await publisher.start({ ...expectedArgs, initialCamera, uplinkProbeResult })
+          await publisher.start({
+            ...expectedArgs,
+            initialCamera,
+            uplinkProbeResult,
+            maxDurationSeconds: effectiveMaxRecordingSeconds,
+            onCaptureStarted,
+          })
         }
         ownsPreviewRef.current = false
       } catch (error) {
@@ -808,7 +869,48 @@ export function LiveRecordScreen({
     } finally {
       state$.isTapStarting.set(false)
     }
-  }, [logRecordingError, markBondfireLive, markBondfireVideoLive, state$])
+  }, [
+    effectiveMaxRecordingSeconds,
+    logRecordingError,
+    markBondfireLive,
+    markBondfireVideoLive,
+    state$,
+  ])
+
+  const enqueueLiveBackupRecovery = useCallback(
+    async (args: {
+      videoUri: string
+      liveSessionId: string
+      recordId: string | null
+      recordType: 'bondfire' | 'response'
+    }) => {
+      await startLiveBackupUpload({
+        videoUri: args.videoUri,
+        liveSessionId: args.liveSessionId,
+        recordId: args.recordId ?? undefined,
+        recordType: args.recordType,
+        isResponse: args.recordType === 'response',
+        createLiveBackupDirectUpload: async (uploadArgs) =>
+          await createLiveBackupDirectUpload({
+            liveSessionId: uploadArgs.liveSessionId as Id<'liveSessions'>,
+            filename: uploadArgs.filename,
+            contentType: uploadArgs.contentType,
+            durationMs: uploadArgs.durationMs,
+            width: uploadArgs.width,
+            height: uploadArgs.height,
+          }),
+        createMuxDirectUpload: async (uploadArgs) =>
+          await createMuxDirectUpload({
+            ...uploadArgs,
+            bondfireId: uploadArgs.bondfireId as Id<'bondfires'> | undefined,
+            campId: uploadArgs.campId as Id<'camps'> | undefined,
+            draftBondfireId: uploadArgs.draftBondfireId as Id<'bondfires'> | undefined,
+          }),
+        getMuxUploadStatus: async (uploadArgs) => await getMuxUploadStatus(uploadArgs),
+      })
+    },
+    [createLiveBackupDirectUpload, createMuxDirectUpload, getMuxUploadStatus],
+  )
 
   const stopLiveRecording = useCallback(async () => {
     const currentRecordingState = recordingStore$.phase.get()
@@ -819,10 +921,49 @@ export function LiveRecordScreen({
     if (currentRecordingState !== 'recording' && !isConnectionActive) {
       return
     }
+    if (stopLiveRecordingInFlightRef.current) {
+      return
+    }
+    stopLiveRecordingInFlightRef.current = true
 
     try {
       const result = await livePublisher.stop()
       if (result.recordingStarted === false) {
+        if (result.localBackupAvailable) {
+          const sessionId = livePublishStore$.sessionId.peek()
+          const recordId = livePublishStore$.recordId.peek()
+          const recordType: 'bondfire' | 'response' =
+            provisionedRecordTypeRef.current ?? (respondTo ? 'response' : 'bondfire')
+          const backupFileUri = result.localBackupFileUri
+          if (sessionId && backupFileUri) {
+            try {
+              await enqueueLiveBackupRecovery({
+                videoUri: backupFileUri,
+                liveSessionId: sessionId,
+                recordId,
+                recordType,
+              })
+            } catch (error) {
+              // The server row is already awaiting_recovery and the file stays
+              // on device, so the launch sweep can retry this enqueue.
+              telemetry.warn(
+                'backup:recovery_enqueue_failed',
+                'Failed to start backup recovery after creator stop',
+                { sessionId, error: String(error) },
+              )
+            }
+          }
+          recordingActions.enterBackupRecoveryCompletion(
+            recordId,
+            'Mux inactive; durable local capture queued for recovery',
+          )
+          state$.showInviteSheet.set(false)
+          Alert.alert(
+            'Saving your recording',
+            'The live connection did not start, but your recording is safe on this device and will upload through recovery.',
+          )
+          return
+        }
         recordingStore$.preConnectFailed.set(true)
         recordingStore$.previewExpired.set(false)
         recordingStore$.progressStage.set("Recording didn't start")
@@ -877,8 +1018,38 @@ export function LiveRecordScreen({
       recordingActions.setPhase('idle', 'live stop failed')
       recordingStore$.videoUri.set(null)
       state$.showInviteSheet.set(false)
+    } finally {
+      stopLiveRecordingInFlightRef.current = false
     }
-  }, [livePublisher, liveStatus, logRecordingError, respondTo, state$])
+  }, [enqueueLiveBackupRecovery, livePublisher, liveStatus, logRecordingError, respondTo, state$])
+
+  // Android's foreground-service notification can stop and finalize the
+  // native camera/file pipeline while this screen is backgrounded. Native
+  // emits `ended` after that system control is used; finish the normal JS and
+  // server lifecycle as soon as the event is delivered (immediately when the
+  // JS runtime is active, or when it resumes). Calling the regular stop path
+  // is intentional: native stop is idempotent, while this path also ends the
+  // Mux session, records local-backup availability, and advances the UI.
+  useEffect(() => {
+    if (
+      phase !== 'recording' ||
+      liveStatus !== 'ended' ||
+      stopLiveRecordingInFlightRef.current ||
+      !livePublisher.hasProvisionedIngest()
+    ) {
+      return
+    }
+
+    telemetry.info(
+      'live:system_stop_finalize',
+      'Native recording ended from a system control — finalizing live session',
+      {
+        sessionId: livePublishStore$.sessionId.peek(),
+        recordId: livePublishStore$.recordId.peek(),
+      },
+    )
+    void stopLiveRecording()
+  }, [livePublisher, liveStatus, phase, stopLiveRecording])
 
   // Thermal mitigation — RTMP encoding + camera generates significant heat.
   // Polls thermal state every 10s and reacts by reducing encoder load before
@@ -1086,6 +1257,13 @@ export function LiveRecordScreen({
 
     if (currentRecordingState === 'recording' || currentRecordingState === 'stopping') {
       if (!ownsLiveSession) {
+        return
+      }
+      // AppState loss is non-terminal. Android's native foreground service
+      // keeps capture/RTMP alive; iOS keeps the same logical recording paused
+      // until AVCaptureSession can resume. Navigating away while the app is
+      // still active remains an explicit stop-and-save boundary.
+      if (!isAppActive) {
         return
       }
       void stopLiveRecording()
@@ -1405,29 +1583,11 @@ export function LiveRecordScreen({
               preserveBackup: true,
               cancelReason: 'backup_recovery',
             })
-            await startLiveBackupUpload({
+            await enqueueLiveBackupRecovery({
               videoUri: backupStats.bestFileUri,
               liveSessionId: sessionId,
-              recordId: recordId ?? undefined,
+              recordId,
               recordType,
-              isResponse: recordType === 'response',
-              createLiveBackupDirectUpload: async (args) =>
-                await createLiveBackupDirectUpload({
-                  liveSessionId: args.liveSessionId as Id<'liveSessions'>,
-                  filename: args.filename,
-                  contentType: args.contentType,
-                  durationMs: args.durationMs,
-                  width: args.width,
-                  height: args.height,
-                }),
-              createMuxDirectUpload: async (args) =>
-                await createMuxDirectUpload({
-                  ...args,
-                  bondfireId: args.bondfireId as Id<'bondfires'> | undefined,
-                  campId: args.campId as Id<'camps'> | undefined,
-                  draftBondfireId: args.draftBondfireId as Id<'bondfires'> | undefined,
-                }),
-              getMuxUploadStatus: async (args) => await getMuxUploadStatus(args),
             })
           } catch (error) {
             // Session already ended awaiting_recovery; keep the file for the
@@ -1468,9 +1628,7 @@ export function LiveRecordScreen({
     },
     [
       cancelLiveRecording,
-      createLiveBackupDirectUpload,
-      createMuxDirectUpload,
-      getMuxUploadStatus,
+      enqueueLiveBackupRecovery,
       livePublisher,
       respondTo,
       state$,

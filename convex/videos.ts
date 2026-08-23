@@ -36,6 +36,7 @@ import { throwUserError, withUserFacingActionErrors } from './errors'
 import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 import {
   decideReadyAssetConflict,
+  hasLocalBackupEvidence,
   type RecordedAssetSource,
   shouldAnnounceRecordOnReady,
   shouldDeferLiveFailureForBackup,
@@ -46,6 +47,7 @@ import {
   initialLiveRecordStatus,
   localIngestSource,
 } from './lib/liveIngest'
+import { shouldReapLiveSession } from './lib/liveSessionStaleness'
 import { assessLiveSessionProgress } from './liveSessionProgress'
 import {
   assertCanRespondToPersonalBondfire,
@@ -153,6 +155,7 @@ const MUX_LIVE_MAX_CONTINUOUS_DURATION_MAX_SECONDS = 12 * 60 * 60
 // this age regardless of client heartbeats. The client expires its preview
 // before this deadline, so only abandoned sessions hit the reaper.
 export const MAX_PENDING_LIVE_SESSION_AGE_MS = 5 * 60 * 1000
+const LIVE_SESSION_HEARTBEAT_STALE_MS = 5 * 60 * 1000
 const SIGNED_PLAYBACK_URL_TTL_SECONDS = 12 * 60 * 60
 const DURATION_LIMIT_EXCEEDED_STATUS = 'duration_limit_exceeded'
 // Reconciliation: how long a record may sit in a non-terminal status before
@@ -2341,6 +2344,7 @@ export const endLiveStream = action({
   args: {
     liveSessionId: v.id('liveSessions'),
     reason: v.optional(v.string()),
+    localBackupAvailable: v.optional(v.boolean()),
   },
   handler: (ctx, args): Promise<EndLiveStreamResult> =>
     withUserFacingActionErrors(
@@ -2444,11 +2448,24 @@ export const endLiveStream = action({
             console.warn('Failed to delete never-active Mux live stream:', error)
           }
 
-          await ctx.runMutation(internal.videos.cancelMuxLiveSessionRecord, {
-            userId,
-            liveSessionId: args.liveSessionId,
-            reason: 'stopped_before_live_stream_active',
-          })
+          if (
+            hasLocalBackupEvidence({
+              reportedAtStop: args.localBackupAvailable,
+              persistedAtArm: activeSession.localBackupAvailable,
+            })
+          ) {
+            await ctx.runMutation(internal.videos.markMuxLiveSessionAwaitingRecovery, {
+              userId,
+              liveSessionId: args.liveSessionId,
+              reason: 'stopped_before_live_stream_active',
+            })
+          } else {
+            await ctx.runMutation(internal.videos.cancelMuxLiveSessionRecord, {
+              userId,
+              liveSessionId: args.liveSessionId,
+              reason: 'stopped_before_live_stream_active',
+            })
+          }
 
           return { ended: false, completeSignaled: false, recordingStarted: false }
         }
@@ -4676,8 +4693,6 @@ export const listStaleMuxLiveSessions = internalQuery({
   args: {},
   handler: async (ctx) => {
     const now = Date.now()
-    const staleBefore = now - 5 * 60 * 1000
-    const pendingMaxAgeBefore = now - MAX_PENDING_LIVE_SESSION_AGE_MS
     // 'created' covers sessions where the client errored before going live —
     // those would otherwise stay parked on Mux billing forever.
     const statuses = ['created', 'starting', 'live', 'ending'] as const
@@ -4691,12 +4706,16 @@ export const listStaleMuxLiveSessions = internalQuery({
       ),
     )
 
-    return batches.flat().filter(
-      (session) =>
-        session.updatedAt < staleBefore ||
-        // Hard cap on pending sessions: even an actively heartbeating preview
-        // can't hold a provisioned stream open past the max pending age.
-        (session.status === 'created' && session.createdAt < pendingMaxAgeBefore),
+    return batches.flat().filter((session) =>
+      shouldReapLiveSession({
+        status: session.status,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+        localBackupAvailable: session.localBackupAvailable,
+        now,
+        staleAfterMs: LIVE_SESSION_HEARTBEAT_STALE_MS,
+        pendingMaxAgeMs: MAX_PENDING_LIVE_SESSION_AGE_MS,
+      }),
     )
   },
 })

@@ -33,6 +33,13 @@ code must be added in all three places.** JS rejects unknown statuses with a
 | Intentional-stop suppression | `isStopping` | `isStoppingIntentionally` |
 | Real throughput stats | ✅ (`RTMPStream.info`) | ✅ (`TrafficStats` UID TX-byte deltas) |
 
+### Picture-in-Picture events (`pictureInPictureChange`)
+
+iOS emits `{ active: boolean }` when the recording's video-call PiP window
+starts or stops. The create screen uses it to distinguish supported background
+capture from an interrupted/paused camera session. Android uses its foreground
+service notification instead and does not emit this event.
+
 `getStats()` marks real measurements with `statsSupported: 1`; the JS stall
 watchdog ignores samples without it, so builds that can't measure (or
 Android's first baseline-establishing poll) can never false-positive. The
@@ -123,6 +130,16 @@ greppability.
 ## Lifecycle
 
 `startPreview()` runs camera+mic+preview with **no network connection** —
-nothing is published or recorded until `start()` opens the RTMP connection.
-This split is a product requirement (pre-roll must never reach viewers);
-preserve it in any refactor.
+nothing is published or recorded during pre-roll. `startCapture()` arms the
+durable file first; `start()` attaches RTMP afterward. Android's custom
+`CaptureTransportEndpoint` and iOS's mixer outputs both preserve local capture
+while transport reconnects. This split is a product requirement (pre-roll
+must never reach viewers); preserve it in any refactor.
+
+`maxDurationSeconds` is passed with the start options and enforced natively on
+both platforms, so the recording cap still stops and finalizes capture while
+React Native timers are suspended. It is an elapsed wall-time cap: on iOS
+devices that pause capture in the background, the paused interval still counts
+toward the limit. Android keeps its camera/microphone
+foreground service alive until finalization completes, including notification,
+recents-swipe, thermal, and duration-limit stops.

@@ -45,9 +45,25 @@ const VALID_TRANSITIONS: Record<RecordingPhase, readonly RecordingPhase[]> = {
 }
 
 export type CameraFacing = 'front' | 'back'
+export type CaptureStatus = 'idle' | 'starting' | 'capturing' | 'paused' | 'stopping' | 'failed'
+export type TransportStatus =
+  | 'idle'
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'disconnected'
+  | 'stopping'
+  | 'failed'
+export type RecordingBackgroundStatus = 'foreground' | 'background_recording' | 'paused'
 
 export interface RecordingState {
   phase: RecordingPhase
+  /** Durable camera/file lifecycle. This is intentionally independent of RTMP. */
+  captureStatus: CaptureStatus
+  /** Best-effort live delivery lifecycle. A failure here must not imply capture failure. */
+  transportStatus: TransportStatus
+  /** What happened to capture when the app left the foreground. */
+  backgroundStatus: RecordingBackgroundStatus
   /** Timestamp for the current non-idle phase, used by the watchdog. */
   phaseStartedAt: number | null
   /** Which camera the user wants. The publisher/camera owns the real state. */
@@ -78,6 +94,9 @@ export interface RecordingState {
 
 const defaultRecordingState: RecordingState = {
   phase: 'idle',
+  captureStatus: 'idle',
+  transportStatus: 'idle',
+  backgroundStatus: 'foreground',
   phaseStartedAt: null,
   facing: 'front',
   pendingFacing: null,
@@ -99,6 +118,39 @@ const defaultRecordingState: RecordingState = {
 export const recordingStore$ = observable<RecordingState>(defaultRecordingState)
 
 export const recordingActions = {
+  setCaptureStatus: (status: CaptureStatus, reason?: string) => {
+    const previous = recordingStore$.captureStatus.peek()
+    if (previous === status) return
+    recordingStore$.captureStatus.set(status)
+    telemetry.info('recording:capture_state', 'Capture state changed', {
+      from: previous,
+      to: status,
+      reason,
+    })
+  },
+
+  setTransportStatus: (status: TransportStatus, reason?: string) => {
+    const previous = recordingStore$.transportStatus.peek()
+    if (previous === status) return
+    recordingStore$.transportStatus.set(status)
+    telemetry.info('recording:transport_state', 'Transport state changed', {
+      from: previous,
+      to: status,
+      reason,
+    })
+  },
+
+  setBackgroundStatus: (status: RecordingBackgroundStatus, reason?: string) => {
+    const previous = recordingStore$.backgroundStatus.peek()
+    if (previous === status) return
+    recordingStore$.backgroundStatus.set(status)
+    telemetry.info('recording:background_state', 'Recording background state changed', {
+      from: previous,
+      to: status,
+      reason,
+    })
+  },
+
   /** The only sanctioned way to change phase. */
   setPhase: (phase: RecordingPhase, reason?: string) => {
     const current = recordingStore$.phase.peek()
@@ -148,6 +200,9 @@ export const recordingActions = {
     recordingStore$.progressStage.set('')
     recordingStore$.backupRecoveryPending.set(false)
     recordingStore$.backupRecoveryRecordId.set(null)
+    recordingStore$.captureStatus.set('idle')
+    recordingStore$.transportStatus.set('idle')
+    recordingStore$.backgroundStatus.set('foreground')
   },
 
   /** Full reset, including device/session flags. For unmount/teardown. */

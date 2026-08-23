@@ -1,5 +1,6 @@
 import ExpoModulesCore
 import UIKit
+import AVKit
 import HaishinKit
 import AVFoundation
 import Foundation
@@ -29,6 +30,8 @@ struct LivePublisherStartOptions: Record {
   /// written to Documents/recordings/<localBackupFileName> for crash/network
   /// failure recovery. Empty (default) disables the backup entirely.
   @Field var localBackupFileName: String = ""
+  /// Native safety cap that remains enforceable while React Native is paused.
+  @Field var maxDurationSeconds: Int = 0
 }
 
 public class BondfireLivePublisherModule: Module {
@@ -37,7 +40,7 @@ public class BondfireLivePublisherModule: Module {
   public func definition() -> ModuleDefinition {
     Name("BondfireLivePublisher")
 
-    Events("statusChange", "error")
+    Events("statusChange", "error", "pictureInPictureChange")
 
     OnCreate {
       BondfireLivePublisherModule.currentInstance = self
@@ -88,11 +91,28 @@ public class BondfireLivePublisherModule: Module {
       try await publisher.startPreview(options: options)
     }
 
+    // Capture is deliberately separate from RTMP on iOS. The recorder is a
+    // MediaMixer output, so it survives Session replacement during reconnects.
+    AsyncFunction("startCapture") { (options: LivePublisherStartOptions) in
+      let publisher = try await MainActor.run { try self.ensurePublisher() }
+      await MainActor.run { BondfireLivePublisherView.current?.attachPreviewIfAvailable() }
+      let armed = await publisher.startCapture(options: options)
+      let sourceView = await MainActor.run { BondfireLivePublisherView.current }
+      if let sourceView {
+        await publisher.preparePictureInPicture(sourceView: sourceView)
+      }
+      return ["localBackupArmed": armed]
+    }
+
     AsyncFunction("start") { (options: LivePublisherStartOptions) in
       let publisher = try await MainActor.run { try self.ensurePublisher() }
       await MainActor.run { BondfireLivePublisherView.current?.attachPreviewIfAvailable() }
       await MainActor.run { self.sendEvent("statusChange", ["status": PublisherStatus.connecting.rawValue]) }
       let localBackupArmed = try await publisher.start(options: options)
+      let sourceView = await MainActor.run { BondfireLivePublisherView.current }
+      if let sourceView {
+        await publisher.preparePictureInPicture(sourceView: sourceView)
+      }
       self.installThermalStateObserver()
       return ["localBackupArmed": localBackupArmed]
     }
@@ -294,6 +314,8 @@ public class BondfireLivePublisherModule: Module {
         self.sendEvent("error", payload)
       case .captureInterruptionEnded:
         self.finishCaptureInterruption()
+      case .pictureInPictureChange(let active):
+        self.sendEvent("pictureInPictureChange", ["active": active])
       }
     })
     self.publisher = publisher
@@ -354,12 +376,17 @@ enum LivePublisherEvent {
   case error(String, String)
   case captureInterrupted(Int?, String)
   case captureInterruptionEnded
+  case pictureInPictureChange(Bool)
 }
 
 // MARK: - Live Publisher
 
 @MainActor
 final class LivePublisher {
+  private final class PictureInPictureSupport: @unchecked Sendable {
+    var isAvailable = false
+  }
+
   // useManualCapture: true gives us explicit control over when capture starts
   private let mixer = MediaMixer(multiCamSessionEnabled: false, useManualCapture: true)
   private var session: (any Session)?
@@ -377,6 +404,7 @@ final class LivePublisher {
   /// drop mid-recording is completely silent on iOS — the UI stays on "REC"
   /// with a frozen pipeline. Android gets the same signal from isOpenFlow.
   private var connectionMonitorTask: Task<Void, Never>?
+  private var durationLimitTask: Task<Void, Never>?
   /// Monitors network path changes while publishing. When the network drops
   /// entirely, or the active interface changes under the RTMP socket, the
   /// safest recovery is the existing `.endpointClosed` terminal path so JS can
@@ -400,6 +428,12 @@ final class LivePublisher {
     view.videoGravity = .resizeAspectFill
     return view
   }()
+  private lazy var pictureInPicturePreviewView: MTHKView = {
+    let view = MTHKView(frame: .zero)
+    view.videoGravity = .resizeAspectFill
+    return view
+  }()
+  private var pictureInPictureCoordinator: RecordingPictureInPictureCoordinator?
 
   /// The preview UIView exposed to BondfireLivePublisherView
   var cameraPreviewView: UIView { previewView }
@@ -469,7 +503,52 @@ final class LivePublisher {
     isCaptureRunning = true
   }
 
+  /// Prepare video-call PiP while the app is still foregrounded. On supported
+  /// devices iOS starts it automatically as the creator switches apps; the
+  /// visible floating camera window is what authorizes multitasking capture.
+  func preparePictureInPicture(sourceView: UIView) async {
+    guard #available(iOS 16.0, *) else { return }
+    guard pictureInPictureCoordinator == nil else { return }
+    guard AVPictureInPictureController.isPictureInPictureSupported() else { return }
+
+    let support = PictureInPictureSupport()
+    await mixer.configuration { session in
+      support.isAvailable = session.isMultitaskingCameraAccessSupported
+      if support.isAvailable {
+        session.isMultitaskingCameraAccessEnabled = true
+      }
+    }
+    guard support.isAvailable else { return }
+
+    await mixer.addOutput(pictureInPicturePreviewView)
+    pictureInPictureCoordinator = RecordingPictureInPictureCoordinator(
+      sourceView: sourceView,
+      previewView: pictureInPicturePreviewView,
+      onStateChange: { [weak self] active in
+        self?.eventHandler(.pictureInPictureChange(active))
+      }
+    )
+  }
+
   // MARK: - Start
+
+  func startCapture(options: LivePublisherStartOptions) async -> Bool {
+    do {
+      if !isCaptureRunning {
+        try await startPreview(options: options)
+      }
+    } catch {
+      emitError("backup_failed", "Failed to start capture: \(error.localizedDescription)")
+      return false
+    }
+    currentOptions = options
+    guard !options.localBackupFileName.isEmpty else { return false }
+    let armed = await armBackupRecorder(fileName: options.localBackupFileName)
+    if armed {
+      scheduleDurationLimit(options.maxDurationSeconds)
+    }
+    return armed
+  }
 
   func start(options: LivePublisherStartOptions) async throws -> Bool {
     // Reuse the running capture pipeline when startPreview() already ran.
@@ -555,10 +634,8 @@ final class LivePublisher {
       throw LivePublisherException(message: "RTMP connection failed: \(error.localizedDescription)")
     }
 
-    // Arm the local backup only after the RTMP connect succeeded, so a failed
-    // connect (user retries from 'ready') never leaves an orphaned recorder
-    // running. On the reconnect path the recorder is usually already
-    // recording and armBackupRecorder leaves it untouched.
+    // Capture may already have been armed by startCapture() before RTMP. The
+    // identity guard keeps reconnects and legacy callers idempotent.
     let localBackupArmed = if options.localBackupFileName.isEmpty {
       false
     } else {
@@ -568,6 +645,7 @@ final class LivePublisher {
     emitStatusChange(.live)
     startConnectionMonitor()
     startNetworkMonitor()
+    scheduleDurationLimit(options.maxDurationSeconds)
     return localBackupArmed
   }
 
@@ -665,6 +743,17 @@ final class LivePublisher {
           return
         }
       }
+    }
+  }
+
+  private func scheduleDurationLimit(_ maxDurationSeconds: Int) {
+    guard maxDurationSeconds > 0, durationLimitTask == nil else { return }
+    durationLimitTask = Task { [weak self] in
+      try? await Task.sleep(nanoseconds: UInt64(maxDurationSeconds) * 1_000_000_000)
+      guard let self, !Task.isCancelled, !self.isStopping, self.isCaptureRunning else { return }
+      self.durationLimitTask = nil
+      self.emitStatusChange(.ended)
+      await self.cleanup()
     }
   }
 
@@ -825,11 +914,16 @@ final class LivePublisher {
 
   private func cleanup() async {
     isStopping = true
+    durationLimitTask?.cancel()
+    durationLimitTask = nil
     connectionMonitorTask?.cancel()
     connectionMonitorTask = nil
     stopNetworkMonitor()
     removeCaptureObservers()
     removeAudioRouteChangeObserver()
+    pictureInPictureCoordinator?.invalidate()
+    pictureInPictureCoordinator = nil
+    await mixer.removeOutput(pictureInPicturePreviewView)
     // Finalize the backup file while the mixer is still running so the last
     // fragment lands before capture tears down.
     await stopBackupRecorder()
@@ -1051,6 +1145,100 @@ final class LivePublisher {
 
   private func emitError(_ code: String, _ message: String) {
     eventHandler(.error(code, message))
+  }
+}
+
+// MARK: - Recording Picture in Picture
+
+@available(iOS 15.0, *)
+@MainActor
+final class RecordingPictureInPictureCoordinator: NSObject,
+  @preconcurrency AVPictureInPictureControllerDelegate {
+  private let contentViewController = AVPictureInPictureVideoCallViewController()
+  private let onStateChange: (Bool) -> Void
+  private var didEnterBackgroundObserver: NSObjectProtocol?
+  private var pictureInPictureController: AVPictureInPictureController?
+
+  init(
+    sourceView: UIView,
+    previewView: UIView,
+    onStateChange: @escaping (Bool) -> Void
+  ) {
+    self.onStateChange = onStateChange
+    super.init()
+
+    contentViewController.preferredContentSize = CGSize(width: 9, height: 16)
+    contentViewController.view.backgroundColor = .black
+    previewView.removeFromSuperview()
+    previewView.frame = contentViewController.view.bounds
+    previewView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    contentViewController.view.addSubview(previewView)
+
+    let contentSource = AVPictureInPictureController.ContentSource(
+      activeVideoCallSourceView: sourceView,
+      contentViewController: contentViewController
+    )
+    let controller = AVPictureInPictureController(contentSource: contentSource)
+    controller.delegate = self
+    controller.canStartPictureInPictureAutomaticallyFromInline = true
+    pictureInPictureController = controller
+
+    // `willResignActive` also fires for Control Center, call banners, and
+    // permission sheets. Start explicitly only after true background entry;
+    // the automatic flag remains the primary system transition path.
+    didEnterBackgroundObserver = NotificationCenter.default.addObserver(
+      forName: UIApplication.didEnterBackgroundNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated {
+        guard let controller = self?.pictureInPictureController,
+              controller.isPictureInPicturePossible,
+              !controller.isPictureInPictureActive else {
+          return
+        }
+        controller.startPictureInPicture()
+      }
+    }
+  }
+
+  func invalidate() {
+    if let observer = didEnterBackgroundObserver {
+      NotificationCenter.default.removeObserver(observer)
+      didEnterBackgroundObserver = nil
+    }
+    if pictureInPictureController?.isPictureInPictureActive == true {
+      pictureInPictureController?.stopPictureInPicture()
+    }
+    pictureInPictureController?.delegate = nil
+    pictureInPictureController = nil
+    onStateChange(false)
+  }
+
+  func pictureInPictureControllerDidStartPictureInPicture(
+    _ pictureInPictureController: AVPictureInPictureController
+  ) {
+    onStateChange(true)
+  }
+
+  func pictureInPictureControllerDidStopPictureInPicture(
+    _ pictureInPictureController: AVPictureInPictureController
+  ) {
+    onStateChange(false)
+  }
+
+  func pictureInPictureController(
+    _ pictureInPictureController: AVPictureInPictureController,
+    failedToStartPictureInPictureWithError error: Error
+  ) {
+    onStateChange(false)
+  }
+
+  func pictureInPictureController(
+    _ pictureInPictureController: AVPictureInPictureController,
+    restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void
+  ) {
+    completionHandler(true)
   }
 }
 

@@ -22,6 +22,8 @@ export interface LivePublisherStartOptions {
    * stream. Empty/absent disables the backup (the default).
    */
   localBackupFileName?: string
+  /** Native recording cap; 0/absent leaves the native timer disabled. */
+  maxDurationSeconds?: number
 }
 
 export interface LivePublisherStartResult {
@@ -81,12 +83,15 @@ type ErrorEvent = {
   /** Monotonic interruption duration reported by native iOS. */
   elapsedMs?: number
 }
+type PictureInPictureEvent = { active: boolean }
 type EventSubscription = { remove: () => void }
 
 interface NativeLivePublisher {
   isAvailable?: () => Promise<boolean>
   getCameraCount?: () => Promise<number>
   startPreview?: (options: LivePublisherPreviewOptions) => Promise<void>
+  /** iOS-first split lifecycle: starts the durable file sink before transport. */
+  startCapture?: (options: LivePublisherStartOptions) => Promise<LivePublisherStartResult>
   start(options: LivePublisherStartOptions): Promise<LivePublisherStartResult>
   stop(): Promise<void>
   swapCamera(): Promise<void>
@@ -126,11 +131,15 @@ export const LivePublisherView = loadView()
 type AddListener = {
   (event: 'statusChange', cb: (status: Status) => void): EventSubscription
   (event: 'error', cb: (error: ErrorEvent) => void): EventSubscription
+  (event: 'pictureInPictureChange', cb: (event: PictureInPictureEvent) => void): EventSubscription
 }
 
 const addListener: AddListener = (
-  event: 'statusChange' | 'error',
-  cb: ((status: Status) => void) | ((error: ErrorEvent) => void),
+  event: 'statusChange' | 'error' | 'pictureInPictureChange',
+  cb:
+    | ((status: Status) => void)
+    | ((error: ErrorEvent) => void)
+    | ((event: PictureInPictureEvent) => void),
 ): EventSubscription => {
   if (!emitter) {
     return { remove: () => {} }
@@ -162,6 +171,10 @@ export const BondfireLivePublisher = {
 
   startPreview(options: LivePublisherPreviewOptions) {
     return nativeModule?.startPreview?.(options) ?? unavailablePromise()
+  },
+
+  startCapture(options: LivePublisherStartOptions) {
+    return nativeModule?.startCapture?.(options) ?? Promise.resolve({ localBackupArmed: false })
   },
 
   start(options: LivePublisherStartOptions) {
