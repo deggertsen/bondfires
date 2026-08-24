@@ -11,8 +11,10 @@ import io.github.thibaultbee.streampack.core.elements.endpoints.MediaMuxerEndpoi
 import io.github.thibaultbee.streampack.core.pipelines.IDispatcherProvider
 import io.github.thibaultbee.streampack.ext.rtmp.elements.endpoints.RtmpEndpointFactory
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
 
 /**
  * Fans one StreamPack encode into a durable file sink and a detachable RTMP
@@ -39,6 +41,7 @@ class CaptureTransportEndpoint(
 
   private companion object {
     const val TAG = "CaptureTransportEndpoint"
+    const val TRANSPORT_CLOSE_TIMEOUT_MS = 5_000L
   }
 
   val transportIsOpen: Boolean
@@ -60,24 +63,17 @@ class CaptureTransportEndpoint(
   }
 
   suspend fun openTransport(descriptor: MediaDescriptor) = lifecycleMutex.withLock {
-    detachTransportFromFrameRouting()
-    if (transportEndpoint.isOpenFlow.value) {
-      transportEndpoint.close()
-    }
+    resetTransportForOpen()
     transportEndpoint.open(descriptor)
   }
 
   /** Attach RTMP to an encoder that is already feeding the local file. */
   suspend fun connectTransport(descriptor: MediaDescriptor) = lifecycleMutex.withLock {
-    detachTransportFromFrameRouting()
+    resetTransportForOpen()
     // RtmpEndpoint keeps FLV sequence-header state across close/open. Reset the
     // transport stream and re-register the same codec configs so each Mux
     // reconnect receives fresh AAC/AVC headers. The fanout stream ids exposed
     // to the encoder remain stable; only their RTMP child mapping changes.
-    transportEndpoint.stopStream()
-    if (transportEndpoint.isOpenFlow.value) {
-      transportEndpoint.close()
-    }
     val transportStreamIds = registeredStreams.map { (config, fanoutStreamId) ->
       fanoutStreamId to transportEndpoint.addStream(config)
     }
@@ -93,6 +89,28 @@ class CaptureTransportEndpoint(
         endpointsToStreamIdsMap[Pair(transportEndpoint, fanoutStreamId)] = transportStreamId
       }
       transportAttached = true
+    }
+  }
+
+  /**
+   * Fully retire the previous RTMP connection before reusing its endpoint.
+   *
+   * StreamPack's RtmpEndpoint.close() returns before the old socket context's
+   * completion callback necessarily runs. That callback later clears the
+   * endpoint's shared client reference and emits isOpen=false. Reopening the
+   * same endpoint before that happens lets the stale callback invalidate the
+   * new Wi-Fi/cellular connection: publish() succeeds, but every subsequent
+   * frame is dropped as "Not opened". Waiting for the StateFlow transition is
+   * therefore part of the reconnect handshake, not optional cleanup.
+   */
+  private suspend fun resetTransportForOpen() {
+    detachTransportFromFrameRouting()
+    transportEndpoint.stopStream()
+    if (transportEndpoint.isOpenFlow.value) {
+      transportEndpoint.close()
+      withTimeout(TRANSPORT_CLOSE_TIMEOUT_MS) {
+        transportEndpoint.isOpenFlow.first { isOpen -> !isOpen }
+      }
     }
   }
 

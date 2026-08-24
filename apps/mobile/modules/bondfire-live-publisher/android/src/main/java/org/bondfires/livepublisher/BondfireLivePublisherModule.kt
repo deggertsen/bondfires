@@ -361,7 +361,14 @@ class BondfireLivePublisherModule : Module() {
         }
         synchronized(networkStateLock) {
           networkDropHandled = false
-          lastNetworkTransportTypes = null
+          // A reconnect keeps the existing default-network callback. Preserve
+          // the transport baseline it already observed (usually the newly
+          // available Wi-Fi/cellular network) so its next delivery cannot be
+          // mistaken for another handoff. A brand-new session establishes a
+          // fresh baseline when the callback is registered below.
+          if (networkCallback == null) {
+            lastNetworkTransportTypes = null
+          }
         }
         registerNetworkCallback()
         installThermalStatusListener()
@@ -1180,6 +1187,11 @@ class BondfireLivePublisherModule : Module() {
    * default network loss or active transport changes during streaming.
    */
   private fun registerNetworkCallback() {
+    if (networkCallback != null) {
+      Log.i(TAG, "registerNetworkCallback: callback already registered")
+      return
+    }
+
     val context = appContext.reactContext ?: return
     val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
       ?: return

@@ -1,12 +1,32 @@
 import { describe, expect, it } from 'vitest'
 import {
   isBackupExpired,
+  isLocalBackupFlagEnabled,
   LOCAL_BACKUP_MIN_FREE_DISK_BYTES,
   LOCAL_BACKUP_RETENTION_MS,
   parseLocalBackupFileName,
   shouldArmLocalBackup,
   shouldEnqueueLiveBackupRecovery,
 } from '../../../../packages/app/src/utils/localBackupPolicy'
+
+describe('isLocalBackupFlagEnabled', () => {
+  it('reads the statically referenced Expo public rollout flag', () => {
+    const previous = process.env.EXPO_PUBLIC_LOCAL_BACKUP_RECORDING
+    process.env.EXPO_PUBLIC_LOCAL_BACKUP_RECORDING = '1'
+
+    try {
+      expect(isLocalBackupFlagEnabled()).toBe(true)
+      process.env.EXPO_PUBLIC_LOCAL_BACKUP_RECORDING = '0'
+      expect(isLocalBackupFlagEnabled()).toBe(false)
+    } finally {
+      if (previous === undefined) {
+        delete process.env.EXPO_PUBLIC_LOCAL_BACKUP_RECORDING
+      } else {
+        process.env.EXPO_PUBLIC_LOCAL_BACKUP_RECORDING = previous
+      }
+    }
+  })
+})
 
 describe('shouldArmLocalBackup', () => {
   it('arms when the flag is on and disk headroom is sufficient', () => {
