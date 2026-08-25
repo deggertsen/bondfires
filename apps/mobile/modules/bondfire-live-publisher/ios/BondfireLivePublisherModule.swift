@@ -390,6 +390,7 @@ final class LivePublisher {
   // useManualCapture: true gives us explicit control over when capture starts
   private let mixer = MediaMixer(multiCamSessionEnabled: false, useManualCapture: true)
   private var session: (any Session)?
+  private var sessionURL: URL?
   private var currentOptions: LivePublisherStartOptions?
   private var currentCameraPosition: AVCaptureDevice.Position = .front
   private var isCaptureRunning = false
@@ -557,19 +558,6 @@ final class LivePublisher {
     }
     currentOptions = options
 
-    // Reconnect path: a previous session (dropped by a network switch) may
-    // still be wired into the mixer. Detach and close it before building the
-    // replacement — otherwise the encoder keeps feeding the dead stream and
-    // the mixer holds a growing list of orphaned outputs.
-    if let oldSession = self.session {
-      connectionMonitorTask?.cancel()
-      connectionMonitorTask = nil
-      stopNetworkMonitor()
-      await mixer.removeOutput(oldSession.stream)
-      try? await oldSession.close()
-      self.session = nil
-    }
-
     let urlString: String
     if options.rtmpsUrl.hasSuffix("/") {
       urlString = options.rtmpsUrl + options.streamKey
@@ -583,34 +571,58 @@ final class LivePublisher {
       throw LivePublisherException(message: "Could not parse RTMPS URL")
     }
 
+    connectionMonitorTask?.cancel()
+    connectionMonitorTask = nil
+    stopNetworkMonitor()
+
     // HaishinKit 2.x resolves a URL scheme to a Session via factories that
     // must be registered first; without this, build() throws .notFound. The
     // factory's register() is idempotent, so calling it on every start() is
     // safe and keeps the registration colocated with its only use.
     await SessionBuilderFactory.shared.register(RTMPSessionFactory())
 
-    // build() returns (any Session)? — guard-unwrap required
-    let newSession: any Session
-    do {
-      guard let built = try await SessionBuilderFactory.shared.make(url).build() else {
-        emitError("session_build_failed", "Session builder returned nil for URL: \(urlString)")
-        emitStatusChange(.errored)
-        throw LivePublisherException(message: "Session builder returned nil")
+    // HaishinKit's RTMP stream owns the encoder tasks fed by MediaMixer. Keep
+    // that stream attached across a transport handoff and reconnect its
+    // Session in place. Replacing the Session creates a fresh encoder output;
+    // in production those replacement streams completed the RTMP publish
+    // handshake but never consumed another mixer sample.
+    let isReconnect = session != nil && sessionURL == url
+    let activeSession: any Session
+    if let existingSession = session, sessionURL == url {
+      if await existingSession.isConnected {
+        try? await existingSession.close()
       }
-      newSession = built
-    } catch let e as LivePublisherException {
-      throw e
-    } catch {
-      emitError("session_build_failed", "Failed to build RTMP session: \(error.localizedDescription)")
-      emitStatusChange(.errored)
-      throw LivePublisherException(message: "Failed to build RTMP session: \(error.localizedDescription)")
+      activeSession = existingSession
+    } else {
+      if let oldSession = session {
+        await mixer.removeOutput(oldSession.stream)
+        try? await oldSession.close()
+      }
+
+      // build() returns (any Session)? — guard-unwrap required
+      do {
+        guard let built = try await SessionBuilderFactory.shared.make(url).build() else {
+          emitError("session_build_failed", "Session builder returned nil for URL: \(urlString)")
+          emitStatusChange(.errored)
+          throw LivePublisherException(message: "Session builder returned nil")
+        }
+        activeSession = built
+      } catch let e as LivePublisherException {
+        throw e
+      } catch {
+        emitError("session_build_failed", "Failed to build RTMP session: \(error.localizedDescription)")
+        emitStatusChange(.errored)
+        throw LivePublisherException(message: "Failed to build RTMP session: \(error.localizedDescription)")
+      }
+      session = activeSession
+      sessionURL = url
+
+      // Wire the stream output into the already-running mixer once. It stays
+      // attached until cleanup or a genuinely different ingest URL replaces it.
+      await mixer.addOutput(activeSession.stream)
     }
-    self.session = newSession
 
-    // Wire the stream output into the already-running mixer
-    await mixer.addOutput(newSession.stream)
-
-    var videoSettings = await newSession.stream.videoSettings
+    var videoSettings = await activeSession.stream.videoSettings
     videoSettings.bitRate = options.videoBitrate
     // The mixer emits portrait frames (matching the preview), but
     // activeFormat reports the sensor's landscape dimensions. Encode in
@@ -620,18 +632,40 @@ final class LivePublisher {
     let shortSide = Int(min(captureSize.width, captureSize.height))
     let longSide = Int(max(captureSize.width, captureSize.height))
     videoSettings.videoSize = CGSize(width: shortSide, height: longSide)
-    await newSession.stream.setVideoSettings(videoSettings)
+    await activeSession.stream.setVideoSettings(videoSettings)
 
-    var audioSettings = await newSession.stream.audioSettings
+    var audioSettings = await activeSession.stream.audioSettings
     audioSettings.bitRate = options.audioBitrate
-    await newSession.stream.setAudioSettings(audioSettings)
+    await activeSession.stream.setAudioSettings(audioSettings)
+
+    let reconnectByteBaseline: Int? = if isReconnect,
+                                         let rtmpStream = await activeSession.stream as? RTMPStream {
+      (await rtmpStream.info).byteCount
+    } else {
+      nil
+    }
 
     do {
-      try await newSession.connect(.ingest)
+      try await activeSession.connect(.ingest)
     } catch {
       emitError("connection_failed", "RTMP connection failed: \(error.localizedDescription)")
       emitStatusChange(.errored)
       throw LivePublisherException(message: "RTMP connection failed: \(error.localizedDescription)")
+    }
+
+    // A successful RTMP publish response proves only that Mux accepted the
+    // transport. Reconnect is successful only after this same stream emits
+    // encoded media again; otherwise JS would log success and wait ~30s for
+    // Mux to kill an empty asset before repeating forever.
+    if let reconnectByteBaseline,
+       !(await waitForReconnectMedia(
+         session: activeSession,
+         byteBaseline: reconnectByteBaseline
+       )) {
+      try? await activeSession.close()
+      emitError("reconnect_no_media", "RTMP reconnect opened but produced no encoded media")
+      emitStatusChange(.errored)
+      throw LivePublisherException(message: "RTMP reconnect produced no encoded media")
     }
 
     // Capture may already have been armed by startCapture() before RTMP. The
@@ -647,6 +681,25 @@ final class LivePublisher {
     startNetworkMonitor()
     scheduleDurationLimit(options.maxDurationSeconds)
     return localBackupArmed
+  }
+
+  private func waitForReconnectMedia(
+    session: any Session,
+    byteBaseline: Int
+  ) async -> Bool {
+    guard let rtmpStream = await session.stream as? RTMPStream else { return false }
+    let deadline = Date().addingTimeInterval(6)
+    let minimumEncodedBytes = 16 * 1024
+
+    while Date() < deadline {
+      guard await session.isConnected else { return false }
+      let info = await rtmpStream.info
+      if info.byteCount - byteBaseline >= minimumEncodedBytes {
+        return true
+      }
+      try? await Task.sleep(nanoseconds: 200_000_000)
+    }
+    return false
   }
 
   // MARK: - Local backup recording
@@ -941,6 +994,7 @@ final class LivePublisher {
     }
     tearDownAudioSession()
     session = nil
+    sessionURL = nil
     currentOptions = nil
     isCaptureRunning = false
     isStopping = false
