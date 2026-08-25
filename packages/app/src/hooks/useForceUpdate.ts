@@ -17,6 +17,7 @@ import {
   isAppUpdateRequired,
   type UpdatePriority,
 } from '../utils/forceUpdatePolicy'
+import { openStoreLink } from '../utils/storeLink'
 
 export type { UpdatePriority } from '../utils/forceUpdatePolicy'
 
@@ -150,7 +151,15 @@ function getStoreUrl(): string {
 }
 
 async function openPlatformStore(): Promise<void> {
-  await Linking.openURL(getStoreUrl())
+  const url = getStoreUrl()
+  const result = await openStoreLink(url, Linking.openURL)
+
+  if (!result.opened) {
+    telemetry.warn('inAppUpdates:storeOpenFailed', String(result.error), {
+      platform: Platform.OS,
+      url,
+    })
+  }
 }
 
 // ---------------------------------------------------------------------------
