@@ -156,6 +156,7 @@ async function openPlatformStore(): Promise<void> {
 
   if (!result.opened) {
     telemetry.warn('inAppUpdates:storeOpenFailed', String(result.error), {
+      error: result.error,
       platform: Platform.OS,
       url,
     })

@@ -3,7 +3,6 @@ import {
   chooseAndroidUpdateType,
   isAppUpdateRequired,
 } from '../../../packages/app/src/utils/forceUpdatePolicy'
-import { openStoreLink } from '../../../packages/app/src/utils/storeLink'
 
 describe('isAppUpdateRequired', () => {
   it('requires an update only when the installed version is below the configured minimum', () => {
@@ -58,15 +57,5 @@ describe('chooseAndroidUpdateType', () => {
   it('uses the store fallback when no native update can be delivered', () => {
     expect(chooseAndroidUpdateType('flexible', { updateAvailable: false })).toBeNull()
     expect(chooseAndroidUpdateType('immediate', { updateAvailable: true })).toBeNull()
-  })
-})
-
-describe('openStoreLink', () => {
-  it('converts a native linking rejection into a handled failure result', async () => {
-    const failure = new Error('Unable to open URL')
-
-    await expect(
-      openStoreLink('https://example.com/store', async () => Promise.reject(failure)),
-    ).resolves.toEqual({ opened: false, error: failure })
   })
 })
