@@ -4,6 +4,7 @@ import {
   hasLocalBackupEvidence,
   shouldAnnounceRecordOnReady,
   shouldDeferLiveFailureForBackup,
+  shouldIgnoreErroredLiveAsset,
 } from './liveBackupRecovery'
 
 describe('decideReadyAssetConflict', () => {
@@ -106,6 +107,48 @@ describe('shouldDeferLiveFailureForBackup', () => {
         localBackupAvailable: true,
         assetStatus: 'duration_limit_exceeded',
         durationLimitExceededStatus: 'duration_limit_exceeded',
+      }),
+    ).toBe(false)
+  })
+})
+
+describe('shouldIgnoreErroredLiveAsset', () => {
+  it('ignores failed RTMP legs while the parent live stream can reconnect', () => {
+    for (const liveSessionStatus of ['starting', 'live', 'ending']) {
+      expect(
+        shouldIgnoreErroredLiveAsset({
+          liveStreamId: 'live-1',
+          liveSessionStatus,
+          assetId: 'failed-leg',
+        }),
+      ).toBe(true)
+    }
+  })
+
+  it('ignores a losing leg after the final asset is known', () => {
+    expect(
+      shouldIgnoreErroredLiveAsset({
+        liveStreamId: 'live-1',
+        liveSessionStatus: 'ended',
+        assetId: 'failed-leg',
+        recentAssetId: 'final-leg',
+      }),
+    ).toBe(true)
+  })
+
+  it('keeps direct uploads and the ended stream final asset terminal', () => {
+    expect(
+      shouldIgnoreErroredLiveAsset({
+        liveSessionStatus: 'live',
+        assetId: 'asset-1',
+      }),
+    ).toBe(false)
+    expect(
+      shouldIgnoreErroredLiveAsset({
+        liveStreamId: 'live-1',
+        liveSessionStatus: 'ended',
+        assetId: 'final-leg',
+        recentAssetId: 'final-leg',
       }),
     ).toBe(false)
   })

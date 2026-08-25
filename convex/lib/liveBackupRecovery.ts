@@ -55,6 +55,32 @@ export function shouldDeferLiveFailureForBackup(args: {
 }
 
 /**
+ * Mux creates a recording asset for every RTMP leg. A network handoff can
+ * therefore error one short asset while the parent live stream remains
+ * resumable and later produces a healthy asset. Only the live-stream lifecycle
+ * (or the final/recent asset after it ended) is authoritative for the record.
+ */
+export function shouldIgnoreErroredLiveAsset(args: {
+  liveStreamId?: string
+  liveSessionStatus?: string
+  assetId?: string
+  recentAssetId?: string
+}): boolean {
+  if (!args.liveStreamId || !args.liveSessionStatus) return false
+
+  if (['starting', 'live', 'ending'].includes(args.liveSessionStatus)) {
+    return true
+  }
+
+  return (
+    args.liveSessionStatus === 'ended' &&
+    !!args.recentAssetId &&
+    !!args.assetId &&
+    args.assetId !== args.recentAssetId
+  )
+}
+
+/**
  * Stop carries final on-device file evidence in the same authenticated action
  * that evaluates Mux ingest. Persisted arm evidence remains a fallback for
  * system/crash paths that cannot report the final file stat directly.

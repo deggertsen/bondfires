@@ -40,6 +40,7 @@ import {
   type RecordedAssetSource,
   shouldAnnounceRecordOnReady,
   shouldDeferLiveFailureForBackup,
+  shouldIgnoreErroredLiveAsset,
 } from './lib/liveBackupRecovery'
 import {
   classifyMuxIngest,
@@ -5056,6 +5057,36 @@ export const handleMuxWebhookEvent = internalMutation({
       if (muxErrorInfo.message) logData.muxErrorMessage = muxErrorInfo.message
       if (muxErrorInfo.details) logData.muxErrorDetails = muxErrorInfo.details
       if (record) {
+        const liveSession = liveStreamId
+          ? await ctx.db
+              .query('liveSessions')
+              .withIndex('by_mux_live_stream', (q) => q.eq('muxLiveStreamId', liveStreamId))
+              .first()
+          : null
+        if (
+          args.eventType === 'video.asset.errored' &&
+          shouldIgnoreErroredLiveAsset({
+            liveStreamId,
+            liveSessionStatus: liveSession?.status,
+            assetId,
+            recentAssetId: liveSession?.muxRecentAssetId,
+          })
+        ) {
+          await logServerEvent(ctx, {
+            level: 'warn',
+            event: 'video:webhook:live_asset_leg_errored',
+            message: `Mux reported a failed RTMP recording leg while the live stream remained recoverable${muxErrorInfo.message ? `: ${muxErrorInfo.message}` : ''}`,
+            data: {
+              ...logData,
+              liveSessionId: liveSession?._id,
+              liveSessionStatus: liveSession?.status,
+              recentAssetId: liveSession?.muxRecentAssetId,
+            },
+            userId: record.document.userId,
+          })
+          return { handled: true }
+        }
+
         await markRecordErrored(ctx, record, {
           assetId,
           assetStatus,
