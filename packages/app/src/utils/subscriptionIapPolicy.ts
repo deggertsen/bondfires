@@ -53,25 +53,57 @@ export function isBillingClientNotReadyError(error: unknown) {
     getErrorField(error, 'debugMessage') ??
     ''
   ).toLowerCase()
-  return code === 'query-product' && message.includes('billing client not ready')
+  const isProductQueryError = code === 'query-product' || message.includes('query-product')
+  return isProductQueryError && message.includes('billing client not ready')
 }
 
-export function shouldRecoverIapCatalogConnection(
-  platform: string,
-  error: unknown,
-  alreadyRecovered: boolean,
-) {
-  return platform === 'android' && !alreadyRecovered && isBillingClientNotReadyError(error)
+export function shouldRecoverIapCatalogConnection(platform: string, error: unknown) {
+  return platform === 'android' && isBillingClientNotReadyError(error)
 }
 
 export type IapCatalogAttemptPhase = 'initial' | 'manual_retry'
+export type IapCatalogReconnectStatus = 'not_attempted' | 'succeeded' | 'failed'
+
+interface IapCatalogRecoveryInput<T> {
+  platform: string
+  loadCatalog: () => Promise<T>
+  reconnect: () => Promise<void>
+  getRecoveryError?: (error: unknown) => unknown
+  getRecoveryErrorFromResult?: (result: T) => unknown
+}
+
+/** Retry a catalog load exactly once after the Android Billing readiness race. */
+export async function loadIapCatalogWithRecovery<T>(input: IapCatalogRecoveryInput<T>) {
+  async function reconnectAndReload() {
+    await input.reconnect()
+    return await input.loadCatalog()
+  }
+
+  let result: T
+  try {
+    result = await input.loadCatalog()
+  } catch (error) {
+    const recoveryError = input.getRecoveryError?.(error) ?? error
+    if (!shouldRecoverIapCatalogConnection(input.platform, recoveryError)) {
+      throw error
+    }
+    return await reconnectAndReload()
+  }
+
+  const recoveryError = input.getRecoveryErrorFromResult?.(result)
+  if (shouldRecoverIapCatalogConnection(input.platform, recoveryError)) {
+    return await reconnectAndReload()
+  }
+  return result
+}
 
 interface IapCatalogTelemetryInput {
   phase: IapCatalogAttemptPhase
   platform: string
   requestedSubscriptionProductIds: readonly string[]
   returnedProductIds: readonly string[]
-  recoveredConnection: boolean
+  missingSubscriptionProductIds?: readonly string[]
+  reconnectStatus: IapCatalogReconnectStatus
   error: unknown
 }
 
@@ -84,7 +116,10 @@ export function buildIapCatalogTelemetryData(input: IapCatalogTelemetryInput) {
     requestedSubscriptionProductCount: input.requestedSubscriptionProductIds.length,
     returnedProductIds: [...input.returnedProductIds],
     returnedProductCount: input.returnedProductIds.length,
-    recoveredConnection: input.recoveredConnection,
+    missingSubscriptionProductIds: [...(input.missingSubscriptionProductIds ?? [])],
+    missingSubscriptionProductCount: input.missingSubscriptionProductIds?.length ?? 0,
+    reconnectStatus: input.reconnectStatus,
+    recoveredConnection: input.reconnectStatus === 'succeeded',
     error: serializeIapError(input.error),
   }
 }

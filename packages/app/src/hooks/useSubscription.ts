@@ -15,7 +15,7 @@ import {
   purchaseUpdatedListener,
   requestPurchase,
 } from 'expo-iap'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, Platform } from 'react-native'
 import { api } from '../../../../convex/_generated/api'
 import { telemetry } from '../services/telemetry'
@@ -33,12 +33,14 @@ import {
   TIER_RANK,
   tierMeetsRequirement,
 } from '../store/subscription.store'
+import { createIapConnectionCoordinator } from '../utils/iapConnectionCoordinator'
 import {
   buildIapCatalogTelemetryData,
   type IapCatalogAttemptPhase,
+  type IapCatalogReconnectStatus,
   isUserCancelledPurchase,
+  loadIapCatalogWithRecovery,
   serializeIapError,
-  shouldRecoverIapCatalogConnection,
 } from '../utils/subscriptionIapPolicy'
 
 type StorePurchaseSyncResult = {
@@ -80,57 +82,18 @@ function getAndroidOfferToken(product: StoreProduct): string | null {
   )
 }
 
-let iapConnectionPromise: Promise<boolean> | null = null
-let iapReconnectPromise: Promise<void> | null = null
-let iapDisconnectPromise: Promise<void> | null = null
-let iapConsumerCount = 0
 let purchaseUpdateSub: { remove: () => void } | undefined
 let purchaseErrorSub: { remove: () => void } | undefined
-
-async function ensureIapConnection() {
-  if (iapDisconnectPromise) {
-    await iapDisconnectPromise
-  }
-  if (iapReconnectPromise) {
-    await iapReconnectPromise
-    return
-  }
-
-  if (!iapConnectionPromise) {
-    iapConnectionPromise = initConnection().catch((error) => {
-      iapConnectionPromise = null
-      throw error
-    })
-  }
-
-  await iapConnectionPromise
-}
-
-async function reconnectIapConnection() {
-  if (!iapReconnectPromise) {
-    iapReconnectPromise = (async () => {
-      const previousConnection = iapConnectionPromise
-      iapConnectionPromise = null
-      await previousConnection?.catch(() => false)
-      await endConnection()
-      iapConnectionPromise = initConnection().catch((error) => {
-        iapConnectionPromise = null
-        throw error
-      })
-      await iapConnectionPromise
-    })().finally(() => {
-      iapReconnectPromise = null
-    })
-  }
-
-  await iapReconnectPromise
-}
+let syncPurchaseForUpdates: ((purchase: Purchase) => Promise<StorePurchaseSyncResult>) | undefined
+const iapConnection = createIapConnectionCoordinator({ initConnection, endConnection })
+const IAP_CATALOG_ATTEMPT_CANCELLED = Symbol('IAP_CATALOG_ATTEMPT_CANCELLED')
 
 class IapCatalogLoadError extends Error {
   constructor(
     message: string,
     readonly underlyingError: unknown,
     readonly returnedProductIds: string[],
+    readonly missingSubscriptionProductIds: string[],
   ) {
     super(message)
     this.name = 'IapCatalogLoadError'
@@ -170,6 +133,7 @@ async function loadSubscriptionProducts() {
       'Failed to fetch subscription products.',
       subsProducts.reason,
       returnedInAppProductIds,
+      [...ALL_SUBSCRIPTION_PRODUCT_IDS],
     )
   }
 
@@ -181,23 +145,24 @@ async function loadSubscriptionProducts() {
     throw new IapCatalogLoadError(
       'The store returned no subscription products.',
       new Error('The store returned no subscription products.'),
-      [],
+      returnedInAppProductIds,
+      [...ALL_SUBSCRIPTION_PRODUCT_IDS],
     )
   }
 
   const allProducts = [...availableSubscriptionProducts, ...returnedInAppProducts]
-
   const availableProducts = allProducts.filter((product): product is StoreProduct => !!product?.id)
-  subscriptionActions.setProducts(
-    availableProducts.map((product) => ({
-      productId: product.id,
-      price: product.displayPrice,
-      offerToken: getAndroidOfferToken(product),
-    })),
+  const returnedSubscriptionProductIds = new Set(
+    availableSubscriptionProducts.map((product) => product.id),
+  )
+  const missingSubscriptionProductIds = ALL_SUBSCRIPTION_PRODUCT_IDS.filter(
+    (productId) => !returnedSubscriptionProductIds.has(productId),
   )
 
   return {
+    products: availableProducts,
     returnedProductIds: availableProducts.map((product) => product.id),
+    missingSubscriptionProductIds,
     optionalProductError: inappProducts.status === 'rejected' ? inappProducts.reason : undefined,
   }
 }
@@ -207,47 +172,71 @@ function getCatalogFailure(error: unknown) {
     return {
       error: error.underlyingError,
       returnedProductIds: error.returnedProductIds,
+      missingSubscriptionProductIds: error.missingSubscriptionProductIds,
     }
   }
-  return { error, returnedProductIds: [] as string[] }
+  return {
+    error,
+    returnedProductIds: [] as string[],
+    missingSubscriptionProductIds: [] as string[],
+  }
 }
 
-async function runCatalogAttempt(phase: IapCatalogAttemptPhase, onConnected: () => boolean) {
-  let recoveredConnection = false
+async function runCatalogAttempt(phase: IapCatalogAttemptPhase, isActive: () => boolean) {
+  let reconnectStatus: IapCatalogReconnectStatus = 'not_attempted'
 
   try {
-    await ensureIapConnection()
-    if (!onConnected()) return
+    await iapConnection.ensureConnected()
+    if (!isActive()) return
 
-    let result: Awaited<ReturnType<typeof loadSubscriptionProducts>>
-    try {
-      result = await loadSubscriptionProducts()
-    } catch (error) {
-      const failure = getCatalogFailure(error)
-      if (!shouldRecoverIapCatalogConnection(Platform.OS, failure.error, recoveredConnection)) {
-        throw error
-      }
+    const result = await loadIapCatalogWithRecovery({
+      platform: Platform.OS,
+      loadCatalog: loadSubscriptionProducts,
+      getRecoveryError: (error) => getCatalogFailure(error).error,
+      getRecoveryErrorFromResult: (result) => result.optionalProductError,
+      reconnect: async () => {
+        if (!isActive()) throw IAP_CATALOG_ATTEMPT_CANCELLED
+        reconnectStatus = 'failed'
+        await iapConnection.reconnect()
+        reconnectStatus = 'succeeded'
+      },
+    })
+    if (!isActive()) return
 
-      recoveredConnection = true
-      await reconnectIapConnection()
-      result = await loadSubscriptionProducts()
-    }
+    subscriptionActions.setProducts(
+      result.products.map((product) => ({
+        productId: product.id,
+        price: product.displayPrice,
+        offerToken: getAndroidOfferToken(product),
+      })),
+    )
 
-    if (result.optionalProductError !== undefined) {
+    if (
+      result.optionalProductError !== undefined ||
+      result.missingSubscriptionProductIds.length > 0
+    ) {
+      const warningError =
+        result.optionalProductError ??
+        new Error(
+          `The store omitted ${result.missingSubscriptionProductIds.length} requested subscription products.`,
+        )
       telemetry.warn(
         'iap:catalog',
-        'IAP catalog loaded without optional in-app products',
+        'IAP catalog loaded partially',
         buildIapCatalogTelemetryData({
           phase,
           platform: Platform.OS,
           requestedSubscriptionProductIds: ALL_SUBSCRIPTION_PRODUCT_IDS,
           returnedProductIds: result.returnedProductIds,
-          recoveredConnection,
-          error: result.optionalProductError,
+          missingSubscriptionProductIds: result.missingSubscriptionProductIds,
+          reconnectStatus,
+          error: warningError,
         }),
       )
     }
   } catch (error) {
+    if (error === IAP_CATALOG_ATTEMPT_CANCELLED || !isActive()) return
+
     const failure = getCatalogFailure(error)
     telemetry.warn(
       'iap:catalog',
@@ -257,7 +246,8 @@ async function runCatalogAttempt(phase: IapCatalogAttemptPhase, onConnected: () 
         platform: Platform.OS,
         requestedSubscriptionProductIds: ALL_SUBSCRIPTION_PRODUCT_IDS,
         returnedProductIds: failure.returnedProductIds,
-        recoveredConnection,
+        missingSubscriptionProductIds: failure.missingSubscriptionProductIds,
+        reconnectStatus,
         error: failure.error,
       }),
     )
@@ -341,10 +331,14 @@ async function processPurchase(
 function subscribeToPurchaseUpdates(
   syncPurchase: (purchase: Purchase) => Promise<StorePurchaseSyncResult>,
 ) {
+  syncPurchaseForUpdates = syncPurchase
   if (!purchaseUpdateSub) {
     purchaseUpdateSub = purchaseUpdatedListener(async (purchase) => {
       try {
-        const result = await processPurchase(purchase, syncPurchase)
+        const currentSyncPurchase = syncPurchaseForUpdates
+        if (!currentSyncPurchase) return
+
+        const result = await processPurchase(purchase, currentSyncPurchase)
         if (result?.status === 'pending_verification') {
           Alert.alert(
             'Purchase Pending',
@@ -375,31 +369,6 @@ function subscribeToPurchaseUpdates(
       subscriptionActions.failPurchase(errMsg)
     })
   }
-}
-
-async function releaseIapConnection() {
-  if (iapReconnectPromise) {
-    await iapReconnectPromise.catch(() => undefined)
-  }
-  if (iapConsumerCount > 0) return
-
-  if (!iapDisconnectPromise) {
-    iapDisconnectPromise = (async () => {
-      purchaseUpdateSub?.remove()
-      purchaseErrorSub?.remove()
-      purchaseUpdateSub = undefined
-      purchaseErrorSub = undefined
-      try {
-        await endConnection()
-      } finally {
-        iapConnectionPromise = null
-      }
-    })().finally(() => {
-      iapDisconnectPromise = null
-    })
-  }
-
-  await iapDisconnectPromise
 }
 
 interface UseSubscriptionOptions {
@@ -437,6 +406,8 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
   const productsLoaded = useValue(subscriptionStore$.productsLoaded)
   const productFetchFailed = useValue(subscriptionStore$.productFetchFailed)
   const [isRetryingProductFetch, setIsRetryingProductFetch] = useState(false)
+  const iapActiveRef = useRef(false)
+  const iapGenerationRef = useRef(0)
 
   const syncAndVerifyStorePurchase = useCallback(
     async (purchase: Purchase) => {
@@ -463,18 +434,22 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
   useEffect(() => {
     if (!initializeIap) return
 
-    let mounted = true
-    iapConsumerCount += 1
+    const generation = iapGenerationRef.current + 1
+    iapGenerationRef.current = generation
+    iapActiveRef.current = true
+    iapConnection.addConsumer()
+    // expo-iap can emit queued transactions during initialization, so listeners
+    // must exist before the native connection opens.
+    subscribeToPurchaseUpdates(syncAndVerifyStorePurchase)
 
     async function initIAP() {
       try {
-        await runCatalogAttempt('initial', () => {
-          if (!mounted) return false
-          subscribeToPurchaseUpdates(syncAndVerifyStorePurchase)
-          return true
-        })
+        await runCatalogAttempt(
+          'initial',
+          () => iapActiveRef.current && iapGenerationRef.current === generation,
+        )
       } catch {
-        if (mounted) {
+        if (iapActiveRef.current && iapGenerationRef.current === generation) {
           subscriptionActions.failProductFetch()
         }
       }
@@ -483,28 +458,35 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
     initIAP()
 
     return () => {
-      mounted = false
-      iapConsumerCount = Math.max(0, iapConsumerCount - 1)
-      if (iapConsumerCount === 0) {
-        releaseIapConnection().catch((err) => {
+      if (iapGenerationRef.current === generation) {
+        iapActiveRef.current = false
+      }
+      iapConnection
+        .removeConsumer(() => {
+          purchaseUpdateSub?.remove()
+          purchaseErrorSub?.remove()
+          purchaseUpdateSub = undefined
+          purchaseErrorSub = undefined
+          syncPurchaseForUpdates = undefined
+        })
+        .catch((err) => {
           telemetry.warn('iap:close', 'Failed to close IAP connection', {
             error: serializeIapError(err),
           })
         })
-      }
     }
   }, [initializeIap, syncAndVerifyStorePurchase])
 
   const retryProductFetch = useCallback(async () => {
     if (!initializeIap || isRetryingProductFetch) return
     setIsRetryingProductFetch(true)
+    const generation = iapGenerationRef.current
     try {
-      // Initialization may have failed before listeners were attached. Retry
-      // the complete client setup, not just the catalog request.
-      await runCatalogAttempt('manual_retry', () => {
-        subscribeToPurchaseUpdates(syncAndVerifyStorePurchase)
-        return true
-      })
+      subscribeToPurchaseUpdates(syncAndVerifyStorePurchase)
+      await runCatalogAttempt(
+        'manual_retry',
+        () => iapActiveRef.current && iapGenerationRef.current === generation,
+      )
     } catch {
       subscriptionActions.failProductFetch()
     } finally {
@@ -514,7 +496,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
 
   const requestStorePurchase = useCallback(async (productId: string) => {
     try {
-      await ensureIapConnection()
+      await iapConnection.ensureConnected()
 
       const kind = mapProductIdToPurchaseKind(productId)
       if (!kind) {
@@ -583,7 +565,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
     subscriptionActions.startRestore()
 
     try {
-      await ensureIapConnection()
+      await iapConnection.ensureConnected()
       const purchases = await getAvailablePurchases({})
       if (!purchases || purchases.length === 0) {
         subscriptionActions.completeRestore(false)
@@ -638,7 +620,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
     /** Opens the OS-level subscription management screen. */
     async function openSubscriptionManagement(activeProductId?: string) {
       try {
-        await ensureIapConnection()
+        await iapConnection.ensureConnected()
         await deepLinkToSubscriptions({
           skuAndroid: activeProductId ?? TIER_PRODUCT_IDS.plus.monthly,
           packageNameAndroid:
