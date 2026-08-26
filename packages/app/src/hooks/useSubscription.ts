@@ -33,7 +33,13 @@ import {
   TIER_RANK,
   tierMeetsRequirement,
 } from '../store/subscription.store'
-import { isUserCancelledPurchase } from '../utils/subscriptionIapPolicy'
+import {
+  buildIapCatalogTelemetryData,
+  type IapCatalogAttemptPhase,
+  isUserCancelledPurchase,
+  serializeIapError,
+  shouldRecoverIapCatalogConnection,
+} from '../utils/subscriptionIapPolicy'
 
 type StorePurchaseSyncResult = {
   tier: SubscriptionTier
@@ -53,56 +59,6 @@ function getErrorField(error: unknown, field: 'message' | 'debugMessage' | 'code
 
 function getIapErrorMessage(error: unknown, fallback: string) {
   return getErrorField(error, 'message') ?? getErrorField(error, 'debugMessage') ?? fallback
-}
-
-const IAP_ERROR_FIELDS = [
-  'name',
-  'message',
-  'debugMessage',
-  'code',
-  'responseCode',
-  'underlyingErrorMessage',
-  'productId',
-  'platform',
-] as const
-
-/**
- * Convert any caught value (Error, expo-iap PurchaseError, plain object, string)
- * into a JSON-serializable shape suitable for telemetry `data`. Plain `String(err)`
- * yields '[object Object]' for non-Error throws, which is what the IAP audit
- * flagged.
- */
-function serializeIapError(err: unknown): Record<string, unknown> {
-  if (err == null) {
-    return { value: String(err) }
-  }
-
-  if (typeof err === 'string') {
-    return { message: err }
-  }
-
-  if (typeof err === 'object') {
-    const record = err as Record<string, unknown>
-    const out: Record<string, unknown> = {}
-    for (const key of IAP_ERROR_FIELDS) {
-      const value = record[key]
-      if (value === undefined) continue
-      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-        out[key] = value
-      }
-    }
-    if (err instanceof Error) {
-      out.name ??= err.name
-      out.message ??= err.message
-      if (err.stack) out.stack = err.stack
-    }
-    if (Object.keys(out).length === 0) {
-      out.message = String(err)
-    }
-    return out
-  }
-
-  return { value: String(err) }
 }
 
 type StoreProduct = Product | ProductSubscription
@@ -125,11 +81,21 @@ function getAndroidOfferToken(product: StoreProduct): string | null {
 }
 
 let iapConnectionPromise: Promise<boolean> | null = null
+let iapReconnectPromise: Promise<void> | null = null
+let iapDisconnectPromise: Promise<void> | null = null
 let iapConsumerCount = 0
 let purchaseUpdateSub: { remove: () => void } | undefined
 let purchaseErrorSub: { remove: () => void } | undefined
 
 async function ensureIapConnection() {
+  if (iapDisconnectPromise) {
+    await iapDisconnectPromise
+  }
+  if (iapReconnectPromise) {
+    await iapReconnectPromise
+    return
+  }
+
   if (!iapConnectionPromise) {
     iapConnectionPromise = initConnection().catch((error) => {
       iapConnectionPromise = null
@@ -138,6 +104,37 @@ async function ensureIapConnection() {
   }
 
   await iapConnectionPromise
+}
+
+async function reconnectIapConnection() {
+  if (!iapReconnectPromise) {
+    iapReconnectPromise = (async () => {
+      const previousConnection = iapConnectionPromise
+      iapConnectionPromise = null
+      await previousConnection?.catch(() => false)
+      await endConnection()
+      iapConnectionPromise = initConnection().catch((error) => {
+        iapConnectionPromise = null
+        throw error
+      })
+      await iapConnectionPromise
+    })().finally(() => {
+      iapReconnectPromise = null
+    })
+  }
+
+  await iapReconnectPromise
+}
+
+class IapCatalogLoadError extends Error {
+  constructor(
+    message: string,
+    readonly underlyingError: unknown,
+    readonly returnedProductIds: string[],
+  ) {
+    super(message)
+    this.name = 'IapCatalogLoadError'
+  }
 }
 
 async function loadSubscriptionProducts() {
@@ -156,21 +153,24 @@ async function loadSubscriptionProducts() {
     }),
   ])
 
-  if (subsProducts.status === 'rejected') {
-    telemetry.warn('iap:fetch', 'Failed to fetch subscription products', {
-      error: serializeIapError(subsProducts.reason),
-    })
-  }
-  if (inappProducts.status === 'rejected') {
-    telemetry.warn('iap:fetch', 'Failed to fetch in-app (kindling pack) products', {
-      error: serializeIapError(inappProducts.reason),
-    })
-  }
+  const returnedInAppProducts =
+    inappProducts.status === 'fulfilled'
+      ? Array.isArray(inappProducts.value)
+        ? inappProducts.value
+        : [inappProducts.value]
+      : []
+  const returnedInAppProductIds = returnedInAppProducts
+    .filter((product): product is StoreProduct => !!product?.id)
+    .map((product) => product.id)
 
   // Subscription pricing is required for the paywall. Kindling packs are an
   // optional add-on, so their failure is logged without blocking subscriptions.
   if (subsProducts.status === 'rejected') {
-    throw subsProducts.reason
+    throw new IapCatalogLoadError(
+      'Failed to fetch subscription products.',
+      subsProducts.reason,
+      returnedInAppProductIds,
+    )
   }
 
   const subsList = Array.isArray(subsProducts.value) ? subsProducts.value : [subsProducts.value]
@@ -178,31 +178,91 @@ async function loadSubscriptionProducts() {
     (product): product is StoreProduct => !!product?.id,
   )
   if (availableSubscriptionProducts.length === 0) {
-    const error = new Error('The store returned no subscription products.')
-    telemetry.warn('iap:fetch', 'Store returned no subscription products', {
-      error: serializeIapError(error),
-    })
-    throw error
+    throw new IapCatalogLoadError(
+      'The store returned no subscription products.',
+      new Error('The store returned no subscription products.'),
+      [],
+    )
   }
 
-  const inappList =
-    inappProducts.status === 'fulfilled'
-      ? Array.isArray(inappProducts.value)
-        ? inappProducts.value
-        : [inappProducts.value]
-      : []
+  const allProducts = [...availableSubscriptionProducts, ...returnedInAppProducts]
 
-  const allProducts = [...availableSubscriptionProducts, ...inappList]
-
+  const availableProducts = allProducts.filter((product): product is StoreProduct => !!product?.id)
   subscriptionActions.setProducts(
-    allProducts
-      .filter((product): product is StoreProduct => !!product?.id)
-      .map((product) => ({
-        productId: product.id,
-        price: product.displayPrice,
-        offerToken: getAndroidOfferToken(product),
-      })),
+    availableProducts.map((product) => ({
+      productId: product.id,
+      price: product.displayPrice,
+      offerToken: getAndroidOfferToken(product),
+    })),
   )
+
+  return {
+    returnedProductIds: availableProducts.map((product) => product.id),
+    optionalProductError: inappProducts.status === 'rejected' ? inappProducts.reason : undefined,
+  }
+}
+
+function getCatalogFailure(error: unknown) {
+  if (error instanceof IapCatalogLoadError) {
+    return {
+      error: error.underlyingError,
+      returnedProductIds: error.returnedProductIds,
+    }
+  }
+  return { error, returnedProductIds: [] as string[] }
+}
+
+async function runCatalogAttempt(phase: IapCatalogAttemptPhase, onConnected: () => boolean) {
+  let recoveredConnection = false
+
+  try {
+    await ensureIapConnection()
+    if (!onConnected()) return
+
+    let result: Awaited<ReturnType<typeof loadSubscriptionProducts>>
+    try {
+      result = await loadSubscriptionProducts()
+    } catch (error) {
+      const failure = getCatalogFailure(error)
+      if (!shouldRecoverIapCatalogConnection(Platform.OS, failure.error, recoveredConnection)) {
+        throw error
+      }
+
+      recoveredConnection = true
+      await reconnectIapConnection()
+      result = await loadSubscriptionProducts()
+    }
+
+    if (result.optionalProductError !== undefined) {
+      telemetry.warn(
+        'iap:catalog',
+        'IAP catalog loaded without optional in-app products',
+        buildIapCatalogTelemetryData({
+          phase,
+          platform: Platform.OS,
+          requestedSubscriptionProductIds: ALL_SUBSCRIPTION_PRODUCT_IDS,
+          returnedProductIds: result.returnedProductIds,
+          recoveredConnection,
+          error: result.optionalProductError,
+        }),
+      )
+    }
+  } catch (error) {
+    const failure = getCatalogFailure(error)
+    telemetry.warn(
+      'iap:catalog',
+      'Failed to load IAP catalog',
+      buildIapCatalogTelemetryData({
+        phase,
+        platform: Platform.OS,
+        requestedSubscriptionProductIds: ALL_SUBSCRIPTION_PRODUCT_IDS,
+        returnedProductIds: failure.returnedProductIds,
+        recoveredConnection,
+        error: failure.error,
+      }),
+    )
+    throw error
+  }
 }
 
 function getPurchaseField(purchase: Purchase, field: string) {
@@ -318,12 +378,28 @@ function subscribeToPurchaseUpdates(
 }
 
 async function releaseIapConnection() {
-  purchaseUpdateSub?.remove()
-  purchaseErrorSub?.remove()
-  purchaseUpdateSub = undefined
-  purchaseErrorSub = undefined
-  await endConnection()
-  iapConnectionPromise = null
+  if (iapReconnectPromise) {
+    await iapReconnectPromise.catch(() => undefined)
+  }
+  if (iapConsumerCount > 0) return
+
+  if (!iapDisconnectPromise) {
+    iapDisconnectPromise = (async () => {
+      purchaseUpdateSub?.remove()
+      purchaseErrorSub?.remove()
+      purchaseUpdateSub = undefined
+      purchaseErrorSub = undefined
+      try {
+        await endConnection()
+      } finally {
+        iapConnectionPromise = null
+      }
+    })().finally(() => {
+      iapDisconnectPromise = null
+    })
+  }
+
+  await iapDisconnectPromise
 }
 
 interface UseSubscriptionOptions {
@@ -392,13 +468,12 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
 
     async function initIAP() {
       try {
-        await ensureIapConnection()
-        if (!mounted) return
-
-        subscribeToPurchaseUpdates(syncAndVerifyStorePurchase)
-        await loadSubscriptionProducts()
-      } catch (err) {
-        telemetry.warn('iap:init', 'Failed to initialize IAP', { error: serializeIapError(err) })
+        await runCatalogAttempt('initial', () => {
+          if (!mounted) return false
+          subscribeToPurchaseUpdates(syncAndVerifyStorePurchase)
+          return true
+        })
+      } catch {
         if (mounted) {
           subscriptionActions.failProductFetch()
         }
@@ -424,13 +499,13 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
     if (!initializeIap || isRetryingProductFetch) return
     setIsRetryingProductFetch(true)
     try {
-      await ensureIapConnection()
       // Initialization may have failed before listeners were attached. Retry
       // the complete client setup, not just the catalog request.
-      subscribeToPurchaseUpdates(syncAndVerifyStorePurchase)
-      await loadSubscriptionProducts()
-    } catch (err) {
-      telemetry.warn('iap:retry', 'Product fetch retry failed', { error: serializeIapError(err) })
+      await runCatalogAttempt('manual_retry', () => {
+        subscribeToPurchaseUpdates(syncAndVerifyStorePurchase)
+        return true
+      })
+    } catch {
       subscriptionActions.failProductFetch()
     } finally {
       setIsRetryingProductFetch(false)
