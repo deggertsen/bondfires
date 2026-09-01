@@ -172,5 +172,5 @@ echo "   iOS:     https://appstoreconnect.apple.com/apps/6755933598/testflight/i
 echo "   Android: Google Play Console — internal testing track"
 echo ""
 echo "⚠️  Do not force-update users until the new version is live in both stores."
-echo "   After App Store Connect and Google Play can serve $NEW_VERSION, run:"
-echo "   npx convex run publicConfig:setMinVersion '{\"version\":\"$NEW_VERSION\"}'"
+echo "   After App Store Connect and Google Play can serve $NEW_VERSION, use"
+echo "   Profile → Admin Panel → App Update Policy in a store-served admin build."

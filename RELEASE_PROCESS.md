@@ -112,16 +112,10 @@ The release script intentionally does not change `minAppVersion`. Enable a force
 the exact version is downloadable from both stores; otherwise existing clients can be locked out
 without an available upgrade.
 
-```bash
-npx convex run publicConfig:setMinVersion '{"version":"<version>"}'
-```
-
-For an Android flexible in-app update:
-
-```bash
-npx convex run publicConfig:setMinVersion \
-  '{"version":"<version>","updatePriority":"flexible"}'
-```
+Sign in with an administrator account, open **Profile → Admin Panel → App Update Policy**, choose
+the exact store version and update behavior, and confirm the warning. The backend independently
+verifies the administrator session, validates the version, and writes an audit entry. Anonymous CLI
+calls are intentionally rejected.
 
 ## Failure recovery
 

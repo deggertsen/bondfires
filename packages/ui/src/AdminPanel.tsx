@@ -1,5 +1,5 @@
-import { ChevronDown, ChevronUp, Search, Shield } from '@tamagui/lucide-icons'
-import { useCallback, useState } from 'react'
+import { ChevronDown, ChevronUp, Search, Shield, Smartphone } from '@tamagui/lucide-icons'
+import { useCallback, useEffect, useState } from 'react'
 import { Alert } from 'react-native'
 import { ScrollView, XStack, YStack } from 'tamagui'
 import { Button } from './Button'
@@ -9,6 +9,13 @@ import { Spinner } from './Spinner'
 import { Text } from './Text'
 
 type SubscriptionTier = 'free' | 'plus' | 'premium' | 'pro'
+type UpdatePriority = 'flexible' | 'immediate'
+
+type UpdateConfig = {
+  minAppVersion: string | null
+  updatePriority: UpdatePriority
+  updatedAt: number | null
+}
 
 const TIER_LABELS: Record<SubscriptionTier, string> = {
   free: 'Free',
@@ -38,9 +45,18 @@ type AdminPanelProps = {
   onSearch: (emailQuery: string) => Promise<AdminSearchResult[]>
   onSetTier: (email: string, tier: SubscriptionTier | null) => Promise<AdminSearchResult | null>
   onGrantKindling: (email: string, amount: number) => Promise<AdminSearchResult | null>
+  updateConfig: UpdateConfig | undefined
+  onSetMinVersion: (version: string, priority: UpdatePriority) => Promise<UpdateConfig>
 }
 
-export function AdminPanel({ isAdmin, onSearch, onSetTier, onGrantKindling }: AdminPanelProps) {
+export function AdminPanel({
+  isAdmin,
+  onSearch,
+  onSetTier,
+  onGrantKindling,
+  updateConfig,
+  onSetMinVersion,
+}: AdminPanelProps) {
   const [emailQuery, setEmailQuery] = useState('')
   const [searchResults, setSearchResults] = useState<AdminSearchResult[]>([])
   const [isSearching, setIsSearching] = useState(false)
@@ -49,6 +65,15 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier, onGrantKindling }: Ad
   const [kindlingAmount, setKindlingAmount] = useState('')
   const [grantingId, setGrantingId] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
+  const [minVersion, setMinVersion] = useState('')
+  const [updatePriority, setUpdatePriority] = useState<UpdatePriority>('immediate')
+  const [isUpdatingConfig, setIsUpdatingConfig] = useState(false)
+
+  useEffect(() => {
+    if (!updateConfig) return
+    setMinVersion(updateConfig.minAppVersion ?? '')
+    setUpdatePriority(updateConfig.updatePriority)
+  }, [updateConfig])
 
   const handleSearch = useCallback(async () => {
     const query = emailQuery.trim()
@@ -126,6 +151,41 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier, onGrantKindling }: Ad
     [kindlingAmount, onGrantKindling],
   )
 
+  const handleSetMinVersion = useCallback(() => {
+    const version = minVersion.trim()
+    if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
+      Alert.alert('Invalid Version', 'Use major.minor.patch format, for example 1.2.3.')
+      return
+    }
+
+    const priorityLabel = updatePriority === 'immediate' ? 'blocking' : 'flexible on Android'
+    Alert.alert(
+      'Confirm Minimum Version',
+      `Require version ${version} with a ${priorityLabel} update? Users below this version may be unable to continue. Confirm the version is available in both stores first.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Update Policy',
+          style: 'destructive',
+          onPress: async () => {
+            setIsUpdatingConfig(true)
+            try {
+              await onSetMinVersion(version, updatePriority)
+              Alert.alert('Update Policy Saved', `Minimum app version is now ${version}.`)
+            } catch (err) {
+              Alert.alert(
+                'Error',
+                err instanceof Error ? err.message : 'Failed to update the minimum version',
+              )
+            } finally {
+              setIsUpdatingConfig(false)
+            }
+          },
+        },
+      ],
+    )
+  }, [minVersion, onSetMinVersion, updatePriority])
+
   if (!isAdmin) return null
 
   return (
@@ -152,130 +212,217 @@ export function AdminPanel({ isAdmin, onSearch, onSetTier, onGrantKindling }: Ad
       </Card>
 
       {expanded && (
-        <Card>
-          <YStack gap={16}>
-            <XStack gap={8}>
+        <YStack gap={12}>
+          <Card>
+            <YStack gap={14}>
+              <XStack alignItems="center" gap={8}>
+                <Smartphone size={18} color={'$primary'} />
+                <YStack flex={1}>
+                  <Text fontSize={15} fontWeight="700">
+                    App Update Policy
+                  </Text>
+                  <Text fontSize={12} color={'$placeholderColor'}>
+                    Current minimum: {updateConfig?.minAppVersion ?? 'Not configured'}
+                  </Text>
+                </YStack>
+              </XStack>
+
+              <Text fontSize={13} color={'$warning'}>
+                Only raise this after the version is downloadable from both app stores.
+              </Text>
+
               <Input
-                flex={1}
-                value={emailQuery}
-                onChangeText={setEmailQuery}
-                placeholder="Search by email..."
+                value={minVersion}
+                onChangeText={setMinVersion}
+                placeholder="Minimum version (for example 1.2.3)"
                 autoCapitalize="none"
                 autoCorrect={false}
-                returnKeyType="search"
-                onSubmitEditing={handleSearch}
+                keyboardType="numbers-and-punctuation"
+                accessibilityLabel="Minimum app version"
+                accessibilityHint="Enter a version in major dot minor dot patch format"
               />
-              <Button
-                variant="primary"
-                size="$sm"
-                onPress={handleSearch}
-                disabled={isSearching || emailQuery.trim().length < 2}
-              >
-                {isSearching ? (
-                  <Spinner size="small" color={'$color'} />
-                ) : (
-                  <>
-                    <Search size={16} color={'$color'} />
-                    <Text color={'$color'}>Search</Text>
-                  </>
-                )}
-              </Button>
-            </XStack>
 
-            {searchError && (
-              <Text fontSize={13} color={'$error'}>
-                {searchError}
-              </Text>
-            )}
-
-            {searchResults.length > 0 && (
-              <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator>
-                <YStack gap={8}>
-                  {searchResults.map((user) => {
-                    const userEmail = user.email ?? ''
+              <YStack gap={8}>
+                <Text fontSize={13} fontWeight="600">
+                  Update behavior
+                </Text>
+                <XStack gap={8}>
+                  {(['immediate', 'flexible'] as const).map((priority) => {
+                    const selected = updatePriority === priority
+                    const label = priority === 'immediate' ? 'Immediate' : 'Flexible'
                     return (
-                      <Card key={user._id} variant="outline">
-                        <YStack gap={8}>
-                          <XStack justifyContent="space-between" alignItems="center">
-                            <YStack flex={1}>
-                              <Text fontSize={14} fontWeight="600">
-                                {user.name ?? 'Unknown'}
-                              </Text>
-                              <Text fontSize={12} color={'$placeholderColor'}>
-                                {user.email}
-                              </Text>
-                              <Text fontSize={12} color={'$placeholderColor'}>
-                                Current:{' '}
-                                {user.forcedTier ? TIER_LABELS[user.forcedTier] : 'Store default'}
-                              </Text>
-                              <Text fontSize={12} color={'$placeholderColor'}>
-                                Kindling: {user.kindlingBalance ?? 0}
-                              </Text>
-                            </YStack>
-                          </XStack>
-
-                          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                            <XStack gap={6}>
-                              {TIER_OPTIONS.map((option) => {
-                                const isCurrent =
-                                  option.value === null
-                                    ? user.forcedTier === null
-                                    : user.forcedTier === option.value
-                                const isUpdating = updatingId === userEmail
-                                return (
-                                  <Button
-                                    key={option.label}
-                                    variant={isCurrent ? 'primary' : 'outline'}
-                                    size="$sm"
-                                    disabled={isUpdating || isCurrent}
-                                    onPress={() => handleSetTier(userEmail, option.value)}
-                                  >
-                                    <Text
-                                      fontSize={12}
-                                      color={isCurrent ? '$color' : '$placeholderColor'}
-                                    >
-                                      {isUpdating && isCurrent ? '...' : option.label}
-                                    </Text>
-                                  </Button>
-                                )
-                              })}
-                            </XStack>
-                          </ScrollView>
-
-                          {/* Kindling Grant */}
-                          <XStack gap={6} alignItems="center">
-                            <Input
-                              flex={1}
-                              value={grantingId === userEmail ? kindlingAmount : ''}
-                              onChangeText={setKindlingAmount}
-                              placeholder="Kindling amount..."
-                              keyboardType="numeric"
-                              returnKeyType="done"
-                            />
-                            <Button
-                              variant="primary"
-                              size="$sm"
-                              disabled={grantingId === userEmail}
-                              onPress={() => handleGrantKindling(userEmail)}
-                            >
-                              {grantingId === userEmail ? (
-                                <Spinner size="small" color={'$color'} />
-                              ) : (
-                                <Text color={'$color'} fontSize={12}>
-                                  Grant
-                                </Text>
-                              )}
-                            </Button>
-                          </XStack>
-                        </YStack>
-                      </Card>
+                      <Button
+                        key={priority}
+                        flex={1}
+                        variant={selected ? 'primary' : 'outline'}
+                        size="$sm"
+                        disabled={isUpdatingConfig}
+                        onPress={() => setUpdatePriority(priority)}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected }}
+                        accessibilityLabel={`${label} update behavior`}
+                      >
+                        <Text color={selected ? '$color' : '$placeholderColor'} fontSize={13}>
+                          {label}
+                        </Text>
+                      </Button>
                     )
                   })}
-                </YStack>
-              </ScrollView>
-            )}
-          </YStack>
-        </Card>
+                </XStack>
+                <Text fontSize={12} color={'$placeholderColor'}>
+                  Immediate blocks outdated users. Flexible allows Android to download in the
+                  background; iOS remains blocking.
+                </Text>
+              </YStack>
+
+              <Button
+                variant="destructive"
+                size="$sm"
+                disabled={
+                  isUpdatingConfig || updateConfig === undefined || minVersion.trim() === ''
+                }
+                onPress={handleSetMinVersion}
+                accessibilityLabel="Save minimum app version policy"
+              >
+                {isUpdatingConfig ? (
+                  <Spinner size="small" color={'$color'} />
+                ) : (
+                  <Text color={'$color'} fontWeight="600">
+                    Save Update Policy
+                  </Text>
+                )}
+              </Button>
+            </YStack>
+          </Card>
+
+          <Card>
+            <YStack gap={16}>
+              <Text fontSize={15} fontWeight="700">
+                User Entitlements
+              </Text>
+              <XStack gap={8}>
+                <Input
+                  flex={1}
+                  value={emailQuery}
+                  onChangeText={setEmailQuery}
+                  placeholder="Search by email..."
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  returnKeyType="search"
+                  onSubmitEditing={handleSearch}
+                />
+                <Button
+                  variant="primary"
+                  size="$sm"
+                  onPress={handleSearch}
+                  disabled={isSearching || emailQuery.trim().length < 2}
+                >
+                  {isSearching ? (
+                    <Spinner size="small" color={'$color'} />
+                  ) : (
+                    <>
+                      <Search size={16} color={'$color'} />
+                      <Text color={'$color'}>Search</Text>
+                    </>
+                  )}
+                </Button>
+              </XStack>
+
+              {searchError && (
+                <Text fontSize={13} color={'$error'}>
+                  {searchError}
+                </Text>
+              )}
+
+              {searchResults.length > 0 && (
+                <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator>
+                  <YStack gap={8}>
+                    {searchResults.map((user) => {
+                      const userEmail = user.email ?? ''
+                      return (
+                        <Card key={user._id} variant="outline">
+                          <YStack gap={8}>
+                            <XStack justifyContent="space-between" alignItems="center">
+                              <YStack flex={1}>
+                                <Text fontSize={14} fontWeight="600">
+                                  {user.name ?? 'Unknown'}
+                                </Text>
+                                <Text fontSize={12} color={'$placeholderColor'}>
+                                  {user.email}
+                                </Text>
+                                <Text fontSize={12} color={'$placeholderColor'}>
+                                  Current:{' '}
+                                  {user.forcedTier ? TIER_LABELS[user.forcedTier] : 'Store default'}
+                                </Text>
+                                <Text fontSize={12} color={'$placeholderColor'}>
+                                  Kindling: {user.kindlingBalance ?? 0}
+                                </Text>
+                              </YStack>
+                            </XStack>
+
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                              <XStack gap={6}>
+                                {TIER_OPTIONS.map((option) => {
+                                  const isCurrent =
+                                    option.value === null
+                                      ? user.forcedTier === null
+                                      : user.forcedTier === option.value
+                                  const isUpdating = updatingId === userEmail
+                                  return (
+                                    <Button
+                                      key={option.label}
+                                      variant={isCurrent ? 'primary' : 'outline'}
+                                      size="$sm"
+                                      disabled={isUpdating || isCurrent}
+                                      onPress={() => handleSetTier(userEmail, option.value)}
+                                    >
+                                      <Text
+                                        fontSize={12}
+                                        color={isCurrent ? '$color' : '$placeholderColor'}
+                                      >
+                                        {isUpdating && isCurrent ? '...' : option.label}
+                                      </Text>
+                                    </Button>
+                                  )
+                                })}
+                              </XStack>
+                            </ScrollView>
+
+                            {/* Kindling Grant */}
+                            <XStack gap={6} alignItems="center">
+                              <Input
+                                flex={1}
+                                value={grantingId === userEmail ? kindlingAmount : ''}
+                                onChangeText={setKindlingAmount}
+                                placeholder="Kindling amount..."
+                                keyboardType="numeric"
+                                returnKeyType="done"
+                              />
+                              <Button
+                                variant="primary"
+                                size="$sm"
+                                disabled={grantingId === userEmail}
+                                onPress={() => handleGrantKindling(userEmail)}
+                              >
+                                {grantingId === userEmail ? (
+                                  <Spinner size="small" color={'$color'} />
+                                ) : (
+                                  <Text color={'$color'} fontSize={12}>
+                                    Grant
+                                  </Text>
+                                )}
+                              </Button>
+                            </XStack>
+                          </YStack>
+                        </Card>
+                      )
+                    })}
+                  </YStack>
+                </ScrollView>
+              )}
+            </YStack>
+          </Card>
+        </YStack>
       )}
     </YStack>
   )

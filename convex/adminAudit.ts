@@ -44,6 +44,7 @@ const actionValidator = v.union(
   v.literal('member_remove'),
   v.literal('report_resolve'),
   v.literal('report_dismiss'),
+  v.literal('public_config_update'),
 )
 
 const targetTypeValidator = v.union(
@@ -52,6 +53,7 @@ const targetTypeValidator = v.union(
   v.literal('bondfire'),
   v.literal('purchase'),
   v.literal('report'),
+  v.literal('config'),
 )
 const metadataValidator = v.optional(
   v.object({
@@ -62,6 +64,10 @@ const metadataValidator = v.optional(
     membershipId: v.optional(v.id('campMembers')),
     purchaseId: v.optional(v.id('consumablePurchases')),
     reportId: v.optional(v.id('reports')),
+    previousVersion: v.optional(v.string()),
+    newVersion: v.optional(v.string()),
+    previousUpdatePriority: v.optional(v.string()),
+    newUpdatePriority: v.optional(v.string()),
   }),
 )
 
