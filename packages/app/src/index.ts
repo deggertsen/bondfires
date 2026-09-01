@@ -10,6 +10,11 @@ export * from './hooks'
 export * from './services/backgroundUpload'
 export * from './services/localBackupSweep'
 export {
+  isSensitiveTelemetryKey,
+  redactSensitiveText,
+  scrubTelemetryValue,
+} from './services/privacyScrubber'
+export {
   isPushPermissionGranted,
   requestPushPermission,
   resetChannelForCategory,
