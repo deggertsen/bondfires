@@ -19,8 +19,10 @@ the backend keeps only a restricted deletion tombstone while the workflow runs.
    backoff. An hourly cron recovers interrupted scheduler deliveries.
 5. Only after every Mux target is deleted or confirmed absent does database
    cleanup begin. Related transcripts, reactions, reports, analytics, invites,
-   notifications, presence, and live-session rows are removed in bounded
-   batches before their parent video row.
+   presence, and live-session rows are removed in bounded batches before their
+   parent video row. Thread-level notifications are removed only when their
+   parent Bondfire is deleted, never when a single participant deletes a
+   response.
 6. Public camps are transferred to an active moderator, then an active member.
    If there is no successor, a user-created camp is archived; a launch camp is
    left active without a user owner for administrator reassignment. Hearths and

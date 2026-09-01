@@ -196,6 +196,11 @@ const authBackend = convexAuth({
 
 export const { signIn, signOut, store } = authBackend
 
+// Account deletion needs the underlying identity once, even after its own
+// tombstone has committed, so a retried request can return the existing job.
+// All normal application operations must use the filtered `auth` export below.
+export const getUserIdIncludingDeleting = authBackend.auth.getUserId
+
 // Convex Auth JWTs can remain cryptographically valid briefly after their
 // refresh session is revoked. Make the deletion tombstone authoritative for
 // every query/mutation that uses the shared auth helper, so a replayed access
@@ -203,7 +208,7 @@ export const { signIn, signOut, store } = authBackend
 export const auth = {
   ...authBackend.auth,
   getUserId: async (ctx: Parameters<typeof authBackend.auth.getUserId>[0]) => {
-    const userId = await authBackend.auth.getUserId(ctx)
+    const userId = await getUserIdIncludingDeleting(ctx)
     if (!userId || !('db' in ctx)) return userId
     const user = await (ctx as typeof ctx & { db: QueryCtx['db'] }).db.get(userId)
     return user?.accountDeletionStatus ? null : userId

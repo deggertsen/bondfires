@@ -9,7 +9,7 @@ import {
   mutation,
   query,
 } from './_generated/server'
-import { auth } from './auth'
+import { getUserIdIncludingDeleting } from './auth'
 import { throwUserError } from './errors'
 import {
   ACCOUNT_DELETION_BATCH_SIZE,
@@ -36,7 +36,7 @@ type MediaKind = 'asset' | 'live_stream' | 'direct_upload'
 export const request = mutation({
   args: {},
   handler: async (ctx) => {
-    const userId = await auth.getUserId(ctx)
+    const userId = await getUserIdIncludingDeleting(ctx)
     if (!userId) throwUserError('Not authenticated')
 
     const user = await ctx.db.get(userId)
@@ -98,7 +98,7 @@ export const request = mutation({
 export const status = query({
   args: {},
   handler: async (ctx) => {
-    const userId = await auth.getUserId(ctx)
+    const userId = await getUserIdIncludingDeleting(ctx)
     if (!userId) return null
     return await ctx.db
       .query('accountDeletionJobs')
@@ -424,7 +424,6 @@ const RESPONSE_STAGES = [
   'presence',
   'watch',
   'deliveries',
-  'notifications',
   'row',
 ] as const
 const BONDFIRE_STAGES = [
@@ -516,11 +515,6 @@ export const deleteContentBatch = internalMutation({
         rows = await ctx.db
           .query('notificationDeliveries')
           .withIndex('by_video_user', (q) => q.eq('videoKey', video._id))
-          .take(BATCH_SIZE)
-      if (stage === 'notifications')
-        rows = await ctx.db
-          .query('notifications')
-          .withIndex('by_bondfire', (q) => q.eq('bondfireId', video.bondfireId))
           .take(BATCH_SIZE)
       await deleteRows(rows, ctx)
       if (rows.length === BATCH_SIZE) return { found: true }
@@ -888,6 +882,11 @@ export const cleanupUserBatch = internalMutation({
       rows = await ctx.db
         .query('clientLogs')
         .withIndex('by_log_user', (q) => q.eq('userId', userId))
+        .take(BATCH_SIZE)
+    if (stage === 'client_log_rate_limit')
+      rows = await ctx.db
+        .query('clientLogRateLimits')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
         .take(BATCH_SIZE)
     if (stage === 'invites_sender')
       rows = await ctx.db
