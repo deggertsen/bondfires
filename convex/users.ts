@@ -1,6 +1,7 @@
 import { v } from 'convex/values'
 import type { Doc } from './_generated/dataModel'
 import { mutation, query } from './_generated/server'
+import { calculateAgeAt } from './agePolicy'
 import { auth } from './auth'
 import { throwUserError } from './errors'
 
@@ -35,42 +36,6 @@ function publicUser(user: Doc<'users'>) {
   }
 }
 
-function parseBirthDate(birthDate: string) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(birthDate)
-  if (!match) {
-    return null
-  }
-
-  const year = Number(match[1])
-  const month = Number(match[2])
-  const day = Number(match[3])
-  const parsed = new Date(Date.UTC(year, month - 1, day))
-  if (
-    parsed.getUTCFullYear() !== year ||
-    parsed.getUTCMonth() !== month - 1 ||
-    parsed.getUTCDate() !== day
-  ) {
-    return null
-  }
-
-  return { year, month, day }
-}
-
-function calculateAge(birthDate: string): number | undefined {
-  const birth = parseBirthDate(birthDate)
-  if (!birth) {
-    return undefined
-  }
-
-  const today = new Date()
-  let age = today.getFullYear() - birth.year
-  const monthDelta = today.getMonth() + 1 - birth.month
-  if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < birth.day)) {
-    age -= 1
-  }
-  return age
-}
-
 function currentUser(user: Doc<'users'>) {
   return {
     _id: user._id,
@@ -82,7 +47,7 @@ function currentUser(user: Doc<'users'>) {
     displayName: user.displayName,
     photoUrl: user.photoUrl,
     gender: user.gender,
-    age: user.birthDate ? calculateAge(user.birthDate) : undefined,
+    age: user.birthDate ? (calculateAgeAt(user.birthDate) ?? undefined) : undefined,
     bondfireCount: user.bondfireCount ?? 0,
     responseCount: user.responseCount ?? 0,
     totalViews: user.totalViews ?? 0,

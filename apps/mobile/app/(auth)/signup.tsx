@@ -285,8 +285,25 @@ export default function SignupScreen() {
                 Birth Date
               </Text>
               <Text fontSize={12} color={'$placeholderColor'} marginBottom={4}>
-                Required. You must be at least 13. Private; not shown publicly.
+                Required. You must be at least 13. Your date is private and keeps 13–17 and adult
+                communities separate.
               </Text>
+              <YStack
+                backgroundColor="$backgroundHover"
+                borderColor="$borderColor"
+                borderWidth={1}
+                borderRadius="$3"
+                padding="$3"
+                gap="$2"
+              >
+                <Text fontSize={13} fontWeight="700" color="$color">
+                  Stay safe when sharing video
+                </Text>
+                <Text fontSize={12} color="$placeholderColor" lineHeight={17}>
+                  Never share your address, school, exact location, passwords, or private contact
+                  details. Tell a trusted adult and use Report if an interaction feels unsafe.
+                </Text>
+              </YStack>
               <Pressable onPress={() => setShowDatePicker(true)}>
                 <YStack pointerEvents="none">
                   <Input

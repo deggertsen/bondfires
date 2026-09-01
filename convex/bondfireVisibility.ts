@@ -1,5 +1,6 @@
 import type { Doc, Id } from './_generated/dataModel'
 import type { QueryCtx } from './_generated/server'
+import { getCampAgeBand, isUserEligibleForCamp } from './agePolicy'
 import { isCampReadableStatus, requiresActiveMembershipForVisibility } from './campLifecycle'
 import { computeVisibility } from './camps'
 import type { SubscriptionTier } from './entitlements'
@@ -98,6 +99,12 @@ export function isCampContentVisibleToViewer(
   camp: Doc<'camps'>,
   viewer: ViewerVisibilityContext,
 ): boolean {
+  if (
+    (viewer.user && !isUserEligibleForCamp(viewer.user, camp)) ||
+    (!viewer.user && getCampAgeBand(camp) === 'teen')
+  ) {
+    return false
+  }
   if (!isCampReadableStatus(camp.status)) {
     return false
   }
@@ -146,13 +153,19 @@ export async function isBondfireVisibleToViewer(
     return true
   }
 
-  if (viewer.claimedBondfireIds.has(bondfire._id)) {
-    return true
-  }
-
   const camp = await getCampCached(ctx, viewer, bondfire.campId)
   if (!camp) {
     return false
+  }
+
+  // A direct invite may bypass ordinary camp membership, but never the
+  // teen/adult boundary or lifecycle visibility.
+  if (viewer.claimedBondfireIds.has(bondfire._id)) {
+    return (
+      isCampReadableStatus(camp.status) &&
+      viewer.user !== null &&
+      isUserEligibleForCamp(viewer.user, camp)
+    )
   }
 
   return isCampContentVisibleToViewer(camp, viewer)

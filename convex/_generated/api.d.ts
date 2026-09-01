@@ -12,6 +12,8 @@ import type * as accountDeletion from "../accountDeletion.js";
 import type * as admin from "../admin.js";
 import type * as adminAudit from "../adminAudit.js";
 import type * as adminDashboard from "../adminDashboard.js";
+import type * as agePolicy from "../agePolicy.js";
+import type * as ageSafetyMaintenance from "../ageSafetyMaintenance.js";
 import type * as ai from "../ai.js";
 import type * as auth from "../auth.js";
 import type * as bondfireFailureCleanup from "../bondfireFailureCleanup.js";
@@ -82,6 +84,8 @@ declare const fullApi: ApiFromModules<{
   admin: typeof admin;
   adminAudit: typeof adminAudit;
   adminDashboard: typeof adminDashboard;
+  agePolicy: typeof agePolicy;
+  ageSafetyMaintenance: typeof ageSafetyMaintenance;
   ai: typeof ai;
   auth: typeof auth;
   bondfireFailureCleanup: typeof bondfireFailureCleanup;

@@ -25,6 +25,7 @@ const storeVerificationStatus = v.union(
   v.literal('refunded'),
 )
 const userGender = v.union(v.literal('male'), v.literal('female'), v.literal('other'))
+const ageBand = v.union(v.literal('teen'), v.literal('adult'))
 const campAccessVisibilityMode = v.union(v.literal('hide'), v.literal('gate'))
 const adminAuditTargetType = v.union(
   v.literal('camp'),
@@ -191,6 +192,8 @@ export default defineSchema({
     crisisBroadcast: v.optional(v.boolean()),
     welcomeBroadcast: v.optional(v.boolean()),
     access: v.union(v.literal('open'), v.literal('approval'), v.literal('invite')),
+    // Optional only for a zero-downtime rollout. Missing legacy rows are adult-only.
+    ageBand: v.optional(ageBand),
     status: v.union(
       v.literal('active'),
       v.literal('frozen'),
@@ -365,6 +368,8 @@ export default defineSchema({
     ownerId: v.id('users'),
     name: v.string(),
     status: v.union(v.literal('active'), v.literal('frozen')),
+    // Hearth audiences are age-segregated with the same invariant as camps.
+    ageBand: v.optional(ageBand),
     frozenAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),

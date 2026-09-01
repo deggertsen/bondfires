@@ -1,9 +1,22 @@
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
+import { assertUserAgeBand, getPersonalCampAgeBand, getUserAgeBand } from './agePolicy'
 import { getEntitlementSubscriptionTier, PAID_TIERS, type SubscriptionTier } from './entitlements'
 import { throwUserError } from './errors'
 
 type ConvexCtx = QueryCtx | MutationCtx
+
+export async function getPersonalCampForOwner(
+  ctx: ConvexCtx,
+  owner: Pick<Doc<'users'>, '_id' | 'birthDate'>,
+) {
+  const ageBand = assertUserAgeBand(owner)
+  const camps = await ctx.db
+    .query('personalCamps')
+    .withIndex('by_owner', (q) => q.eq('ownerId', owner._id))
+    .collect()
+  return camps.find((camp) => getPersonalCampAgeBand(camp) === ageBand) ?? null
+}
 
 /** Plus: sparker + 1. Premium/Pro: sparker + 7. */
 export function getPersonalBondfireParticipantCap(tier: SubscriptionTier): number {
@@ -57,15 +70,30 @@ export async function ensureActivePersonalBondfireParticipant(
     return { added: false }
   }
 
-  const [personalCamp, ownerTier] = await Promise.all([
+  const [personalCamp, ownerTier, owner, participantUser] = await Promise.all([
     ctx.db.get(args.bondfire.personalCampId),
     getEntitlementSubscriptionTier(ctx, args.bondfire.userId),
+    ctx.db.get(args.bondfire.userId),
+    ctx.db.get(args.userId),
   ])
   if (!personalCamp || personalCamp.status !== 'active' || !PAID_TIERS.includes(ownerTier)) {
     if (args.errorAudience === 'owner') {
       throwUserError('Your hearth is currently unavailable.')
     }
     throwUserError('This fire is unavailable.')
+  }
+  const campAgeBand = getPersonalCampAgeBand(personalCamp)
+  if (
+    !owner ||
+    !participantUser ||
+    getUserAgeBand(owner) !== campAgeBand ||
+    getUserAgeBand(participantUser) !== campAgeBand
+  ) {
+    throwUserError(
+      args.errorAudience === 'owner'
+        ? 'Hearth invites can only be sent to people in your age group.'
+        : 'This fire is only available to members in a different age group.',
+    )
   }
 
   const existing = await getPersonalBondfireParticipant(ctx, {
@@ -156,6 +184,15 @@ export async function canViewPersonalBondfire(
     return false
   }
 
+  const [viewer, personalCamp, owner] = await Promise.all([
+    ctx.db.get(args.userId),
+    args.bondfire.personalCampId ? ctx.db.get(args.bondfire.personalCampId) : null,
+    ctx.db.get(args.bondfire.userId),
+  ])
+  if (!viewer || !personalCamp || !owner) return false
+  const band = getPersonalCampAgeBand(personalCamp)
+  if (getUserAgeBand(viewer) !== band || getUserAgeBand(owner) !== band) return false
+
   return await isActivePersonalBondfireParticipant(ctx, {
     bondfire: args.bondfire,
     userId: args.userId,
@@ -173,12 +210,7 @@ export async function assertCanRespondToPersonalBondfire(
     throwUserError('This fire is unavailable.')
   }
 
-  if (
-    !(await isActivePersonalBondfireParticipant(ctx, {
-      bondfire: args.bondfire,
-      userId: args.userId,
-    }))
-  ) {
+  if (!(await canViewPersonalBondfire(ctx, { bondfire: args.bondfire, userId: args.userId }))) {
     throwUserError('Join this fire before responding.')
   }
 }

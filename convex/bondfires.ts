@@ -3,6 +3,7 @@ import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { action, internalQuery, mutation, query } from './_generated/server'
+import { assertUserCanAccessCamp } from './agePolicy'
 import { auth } from './auth'
 import {
   buildViewerVisibilityContext,
@@ -594,6 +595,7 @@ export const create = mutation({
     if (!camp || !isCampParticipableStatus(camp.status)) {
       throwUserError('Camp not found')
     }
+    assertUserCanAccessCamp(user, camp)
 
     const membership = await ctx.db
       .query('campMembers')

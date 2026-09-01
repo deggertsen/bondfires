@@ -3,6 +3,7 @@ import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalMutation, mutation, query } from './_generated/server'
+import { assertUsersShareAgeBand, getUserAgeBand } from './agePolicy'
 import { auth } from './auth'
 import {
   assertVideoDurationWithinTierLimit,
@@ -23,6 +24,7 @@ import {
   getActivePersonalBondfireParticipantCount,
   getPersonalBondfireParticipant,
   getPersonalBondfireParticipantCap,
+  getPersonalCampForOwner,
 } from './personalBondfireAccess'
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -208,10 +210,7 @@ export const createBondfire = mutation({
     }
 
     // Find the user's hearth — must exist and be active.
-    const personalCamp = await ctx.db
-      .query('personalCamps')
-      .withIndex('by_owner', (q) => q.eq('ownerId', user._id))
-      .first()
+    const personalCamp = await getPersonalCampForOwner(ctx, user)
 
     if (!personalCamp) {
       throwUserError('Hearth not found. Subscribe to Plus, Premium, or Pro to create one.')
@@ -288,10 +287,7 @@ export const createDraftBondfire = mutation({
           throwUserError('A Hearth requires a Plus, Premium, or Pro subscription.')
         }
 
-        const personalCamp = await ctx.db
-          .query('personalCamps')
-          .withIndex('by_owner', (q) => q.eq('ownerId', user._id))
-          .first()
+        const personalCamp = await getPersonalCampForOwner(ctx, user)
         if (!personalCamp) {
           throwUserError('Hearth not found. Subscribe to Plus, Premium, or Pro to create one.')
         }
@@ -434,6 +430,7 @@ export const sendDraftInvites = mutation({
           participant: Doc<'personalBondfireParticipants'> | null
         }> = []
         for (const recipientId of recipientIds) {
+          await assertUsersShareAgeBand(ctx, user._id, recipientId)
           const participant = await getPersonalBondfireParticipant(ctx, {
             bondfireId: args.bondfireId,
             userId: recipientId,
@@ -947,6 +944,8 @@ export const getInviteCandidates = query({
 
     const tier = await getEntitlementSubscriptionTier(ctx, userId)
     const participantCap = getPersonalBondfireParticipantCap(tier)
+    const currentUser = await ctx.db.get(userId)
+    const currentAgeBand = currentUser ? getUserAgeBand(currentUser) : null
 
     const pins = await ctx.db
       .query('closeCirclePins')
@@ -954,7 +953,10 @@ export const getInviteCandidates = query({
       .take(CLOSE_CIRCLE_LIMIT)
     const closeCircleUsers = (
       await Promise.all(pins.map((pin) => ctx.db.get(pin.pinnedUserId)))
-    ).filter((user): user is Doc<'users'> => user !== null)
+    ).filter(
+      (user): user is Doc<'users'> =>
+        user !== null && currentAgeBand !== null && getUserAgeBand(user) === currentAgeBand,
+    )
     const closeCircleIds = new Set(closeCircleUsers.map((user) => user._id))
 
     const cutoff = Date.now() - RECENT_CONNECTION_WINDOW_MS
@@ -1038,7 +1040,10 @@ export const getInviteCandidates = query({
       .map(([candidateId]) => candidateId)
     const recentUsers = (
       await Promise.all(recentIds.map((candidateId) => ctx.db.get(candidateId)))
-    ).filter((user): user is Doc<'users'> => user !== null)
+    ).filter(
+      (user): user is Doc<'users'> =>
+        user !== null && currentAgeBand !== null && getUserAgeBand(user) === currentAgeBand,
+    )
 
     return {
       closeCircle: closeCircleUsers.map(toInviteCandidate),
@@ -1059,10 +1064,9 @@ export const listMyPersonalBondfires = query({
       return []
     }
 
-    const personalCamp = await ctx.db
-      .query('personalCamps')
-      .withIndex('by_owner', (q) => q.eq('ownerId', userId))
-      .first()
+    const user = await ctx.db.get(userId)
+    if (!user) return []
+    const personalCamp = await getPersonalCampForOwner(ctx, user)
 
     if (!personalCamp) {
       return []

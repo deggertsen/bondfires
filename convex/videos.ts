@@ -10,6 +10,7 @@ import {
   mutation,
   query,
 } from './_generated/server'
+import { assertUserCanAccessCamp } from './agePolicy'
 import { auth } from './auth'
 import {
   type BondfireFailureReason,
@@ -53,6 +54,7 @@ import { assessLiveSessionProgress } from './liveSessionProgress'
 import {
   assertCanRespondToPersonalBondfire,
   canViewPersonalBondfire,
+  getPersonalCampForOwner,
 } from './personalBondfireAccess'
 import { countResponse, uncountResponse } from './responseCounts'
 import { logServerEvent } from './serverTelemetry'
@@ -604,10 +606,9 @@ async function assertCanCreatePersonalBondfire(
     throwUserError('A Hearth requires a Plus, Premium, or Pro subscription.')
   }
 
-  const personalCamp = await ctx.db
-    .query('personalCamps')
-    .withIndex('by_owner', (q) => q.eq('ownerId', args.userId))
-    .first()
+  const owner = await ctx.db.get(args.userId)
+  if (!owner) throwUserError('User not found')
+  const personalCamp = await getPersonalCampForOwner(ctx, owner)
 
   if (!personalCamp) {
     throwUserError('Hearth not found. Subscribe to Plus, Premium, or Pro to create one.')
@@ -644,6 +645,9 @@ async function assertCanViewBondfire(
   if (!camp || !isCampReadableStatus(camp.status)) {
     throwUserError('Camp not found')
   }
+  const viewer = await ctx.db.get(args.userId)
+  if (!viewer) throwUserError('User not found')
+  assertUserCanAccessCamp(viewer, camp)
 
   if (!requiresActiveMembershipForVisibility(camp)) {
     return
@@ -676,6 +680,7 @@ async function assertUserCanParticipateInCamp(
   if (!camp || !isCampParticipableStatus(camp.status)) {
     throwUserError('Camp not found')
   }
+  assertUserCanAccessCamp(user, camp)
 
   const membership = await ctx.db
     .query('campMembers')
