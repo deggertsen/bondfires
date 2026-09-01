@@ -270,12 +270,10 @@ function getPurchasePlatform(purchase: Purchase): 'ios' | 'android' {
 }
 
 function getStoreOriginalTransactionId(purchase: Purchase) {
-  return (
-    getPurchaseField(purchase, 'originalTransactionIdentifierIOS') ??
-    purchase.transactionId ??
-    purchase.purchaseToken ??
-    purchase.id
-  )
+  // A renewal transaction ID is not an original transaction ID. Keep these
+  // distinct so the server only applies an original-ID constraint when the
+  // native store actually supplied one.
+  return getPurchaseField(purchase, 'originalTransactionIdentifierIOS')
 }
 
 function getStorePurchaseSyncArgs(purchase: Purchase) {
@@ -392,6 +390,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
   const subscriptionQuery = useQuery(api.subscriptions.current)
   const syncStorePurchase = useMutation(api.subscriptions.syncStorePurchase)
   const verifyStorePurchase = useAction(api.subscriptions.verifyStorePurchase)
+  const prepareStorePurchase = useAction(api.storeBillingActions.prepareStorePurchase)
   const currentTier = useValue(subscriptionStore$.currentTier)
   const showExtraCampAddon = currentTier === 'pro'
   /** Whether the user owns camps that would be frozen on downgrade from a paid tier. */
@@ -411,10 +410,11 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
 
   const syncAndVerifyStorePurchase = useCallback(
     async (purchase: Purchase) => {
+      await prepareStorePurchase()
       await syncStorePurchase(getStorePurchaseSyncArgs(purchase))
       return await verifyStorePurchase(getStorePurchaseVerifyArgs(purchase))
     },
-    [syncStorePurchase, verifyStorePurchase],
+    [prepareStorePurchase, syncStorePurchase, verifyStorePurchase],
   )
 
   // Sync Convex state → local store
@@ -494,50 +494,55 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
     }
   }, [initializeIap, isRetryingProductFetch, syncAndVerifyStorePurchase])
 
-  const requestStorePurchase = useCallback(async (productId: string) => {
-    try {
-      await iapConnection.ensureConnected()
+  const requestStorePurchase = useCallback(
+    async (productId: string) => {
+      try {
+        await iapConnection.ensureConnected()
 
-      const kind = mapProductIdToPurchaseKind(productId)
-      if (!kind) {
-        throw new Error('Unsupported store product.')
-      }
-      const offerToken = subscriptionStore$.productOfferTokens[productId].get()
-      if (kind === 'subscription' && Platform.OS === 'android' && !offerToken) {
-        throw new Error('This store product is not available for purchase yet.')
-      }
+        const kind = mapProductIdToPurchaseKind(productId)
+        if (!kind) {
+          throw new Error('Unsupported store product.')
+        }
+        const offerToken = subscriptionStore$.productOfferTokens[productId].get()
+        if (kind === 'subscription' && Platform.OS === 'android' && !offerToken) {
+          throw new Error('This store product is not available for purchase yet.')
+        }
+        const { accountToken } = await prepareStorePurchase()
 
-      if (kind === 'consumable') {
-        await requestPurchase({
-          request: {
-            apple: { sku: productId },
-            google: { skus: [productId] },
-          },
-          type: 'in-app',
-        })
-      } else {
-        await requestPurchase({
-          request: {
-            apple: { sku: productId },
-            google: {
-              skus: [productId],
-              subscriptionOffers: offerToken ? [{ sku: productId, offerToken }] : undefined,
+        if (kind === 'consumable') {
+          await requestPurchase({
+            request: {
+              apple: { sku: productId, appAccountToken: accountToken },
+              google: { skus: [productId], obfuscatedAccountId: accountToken },
             },
-          },
-          type: 'subs',
-        })
+            type: 'in-app',
+          })
+        } else {
+          await requestPurchase({
+            request: {
+              apple: { sku: productId, appAccountToken: accountToken },
+              google: {
+                skus: [productId],
+                obfuscatedAccountId: accountToken,
+                subscriptionOffers: offerToken ? [{ sku: productId, offerToken }] : undefined,
+              },
+            },
+            type: 'subs',
+          })
+        }
+        // Purchase result handled by purchaseUpdatedListener
+      } catch (err: unknown) {
+        const message = getIapErrorMessage(err, 'Purchase was not completed.')
+        if (isUserCancelledPurchase(err, message)) {
+          subscriptionActions.completePurchase(false)
+        } else {
+          subscriptionActions.failPurchase(message)
+          Alert.alert('Purchase Failed', message)
+        }
       }
-      // Purchase result handled by purchaseUpdatedListener
-    } catch (err: unknown) {
-      const message = getIapErrorMessage(err, 'Purchase was not completed.')
-      if (isUserCancelledPurchase(err, message)) {
-        subscriptionActions.completePurchase(false)
-      } else {
-        subscriptionActions.failPurchase(message)
-        Alert.alert('Purchase Failed', message)
-      }
-    }
-  }, [])
+    },
+    [prepareStorePurchase],
+  )
 
   const purchase = useCallback(
     async (tier: SubscriptionTier, productId?: string) => {
@@ -566,6 +571,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
 
     try {
       await iapConnection.ensureConnected()
+      await prepareStorePurchase()
       const purchases = await getAvailablePurchases({})
       if (!purchases || purchases.length === 0) {
         subscriptionActions.completeRestore(false)
@@ -614,7 +620,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
       subscriptionActions.failRestore(message)
       Alert.alert('Restore Failed', message)
     }
-  }, [syncStorePurchase, verifyStorePurchase])
+  }, [prepareStorePurchase, syncStorePurchase, verifyStorePurchase])
 
   const managePlan = useCallback(async () => {
     /** Opens the OS-level subscription management screen. */
