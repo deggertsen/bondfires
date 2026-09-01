@@ -81,6 +81,7 @@ type CurrentUserData = {
   responseCount: number
   totalViews: number
   isAdmin?: boolean
+  role?: 'admin' | 'user'
 } | null
 
 const GENDER_OPTIONS: Array<{ value: Gender; label: string }> = [
@@ -203,6 +204,7 @@ export default function ProfileScreen() {
   const deleteAccountMutation = useMutation(api.users.deleteAccount)
   const adminSetForcedTier = useMutation(api.admin.adminSetForcedTier)
   const adminGrantKindling = useMutation(api.admin.adminGrantKindling)
+  const adminSetMinVersion = useMutation(api.publicConfig.setMinVersion)
   const closeCircle = useQuery(api.conversations.listCloseCircle) as CloseCircleEntry[] | undefined
 
   const { preferences, setAutoplayVideos, setNotificationsEnabled, setLivePublishEnabled } =
@@ -218,6 +220,8 @@ export default function ProfileScreen() {
   const [currentUser, setCurrentUser] = useState<CurrentUserData | undefined>(undefined)
   const [userBondfires, setUserBondfires] = useState<UserBondfireData[] | undefined>(undefined)
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isAdmin = currentUser?.isAdmin === true || currentUser?.role === 'admin'
+  const adminUpdateConfig = useQuery(api.publicConfig.getAdminUpdateConfig, isAdmin ? {} : 'skip')
 
   const state$ = useObservable({
     isEditSheetOpen: false,
@@ -330,6 +334,13 @@ export default function ProfileScreen() {
       return result as AdminSearchResult | null
     },
     [adminGrantKindling],
+  )
+
+  const handleAdminSetMinVersion = useCallback(
+    async (version: string, updatePriority: 'flexible' | 'immediate') => {
+      return adminSetMinVersion({ version, updatePriority })
+    },
+    [adminSetMinVersion],
   )
 
   const handleEditProfile = useCallback(() => {
@@ -675,12 +686,14 @@ export default function ProfileScreen() {
           </YStack>
 
           {/* Admin Panel — only visible to admin users */}
-          {currentUser.isAdmin && (
+          {isAdmin && (
             <AdminPanel
-              isAdmin={currentUser.isAdmin}
+              isAdmin={isAdmin}
               onSearch={handleAdminSearch}
               onSetTier={handleAdminSetTier}
               onGrantKindling={handleAdminGrantKindling}
+              updateConfig={adminUpdateConfig}
+              onSetMinVersion={handleAdminSetMinVersion}
             />
           )}
 

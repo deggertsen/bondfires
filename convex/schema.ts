@@ -32,6 +32,7 @@ const adminAuditTargetType = v.union(
   v.literal('bondfire'),
   v.literal('purchase'),
   v.literal('report'),
+  v.literal('config'),
 )
 
 const campRules = v.object({
@@ -409,6 +410,7 @@ export default defineSchema({
       v.literal('member_remove'),
       v.literal('report_resolve'),
       v.literal('report_dismiss'),
+      v.literal('public_config_update'),
     ),
     targetType: adminAuditTargetType,
     targetId: v.string(),
@@ -421,6 +423,10 @@ export default defineSchema({
         membershipId: v.optional(v.id('campMembers')),
         purchaseId: v.optional(v.id('consumablePurchases')),
         reportId: v.optional(v.id('reports')),
+        previousVersion: v.optional(v.string()),
+        newVersion: v.optional(v.string()),
+        previousUpdatePriority: v.optional(v.string()),
+        newUpdatePriority: v.optional(v.string()),
       }),
     ),
     createdAt: v.number(),
