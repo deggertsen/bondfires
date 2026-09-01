@@ -19,6 +19,9 @@ Complete the relevant review and smoke-test actions in the report. In particular
   permissions, and light/dark themes.
 - Review affected external contracts such as Mux, APNs, FCM, app-store billing, universal links,
   email, and AI providers.
+- For a billing change, complete the provider setup, health check, and replay review in
+  [`docs/store-billing-lifecycle.md`](docs/store-billing-lifecycle.md). Confirm App Store Server
+  Notifications V2 and authenticated Google RTDN are healthy before releasing the client.
 - For native capabilities or entitlements, confirm that signing credentials and provisioning
   profiles include the change.
 
@@ -129,6 +132,9 @@ needed.
 4. Confirm the Android build is available on the Google Play internal testing track.
 5. Install the store-served builds and smoke-test the affected critical paths.
 6. Monitor application telemetry and user reports closely for the first 24 hours.
+7. For billing releases, run `storeBilling:billingHealth` from the Convex dashboard Function Runner
+   with an admin identity after the first notification and reconciliation cycle; investigate any
+   failed events or overdue records.
 
 For Android, test a build installed from a Play track—not a locally signed AAB/APK. With the device
 online, reset and re-run domain verification:
