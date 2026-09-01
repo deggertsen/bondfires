@@ -128,6 +128,14 @@ export default defineSchema({
     // Kill switch for 72h re-engagement nudges — see convex/digest.ts.
     lastActiveAt: v.optional(v.number()),
 
+    // Set before account-deletion work begins. Sessions are revoked in the
+    // same transaction, while this tombstone prevents a partially deleted
+    // account from being treated as active if an old access token is replayed.
+    accountDeletionStatus: v.optional(
+      v.union(v.literal('requested'), v.literal('processing'), v.literal('retrying')),
+    ),
+    accountDeletionRequestedAt: v.optional(v.number()),
+
     // Per-category push preferences, enforced server-side in sendToUser
     // (convex/sendNotification.ts). Missing field/keys mean enabled.
     // Account-critical notifications (camp lifecycle) always send.
@@ -232,7 +240,8 @@ export default defineSchema({
     .index('by_user', ['userId', 'status'])
     .index('by_camp', ['campId', 'createdAt'])
     .index('by_user_camp', ['userId', 'campId'])
-    .index('by_camp_status', ['campId', 'status']),
+    .index('by_camp_status', ['campId', 'status'])
+    .index('by_camp_status_role', ['campId', 'status', 'role']),
 
   // Unified invite codes for all invite types (bondfires, personal bondfires, camps)
   inviteCodes: defineTable({
@@ -262,6 +271,7 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index('by_claimer', ['claimerId', 'createdAt'])
+    .index('by_sender', ['senderId', 'createdAt'])
     .index('by_claimer_unseen', ['claimerId', 'seen', 'dismissed'])
     .index('by_bondfire_claimer', ['bondfireId', 'claimerId'])
     .index('by_camp_claimer', ['campId', 'claimerId'])
@@ -379,7 +389,8 @@ export default defineSchema({
     .index('by_bondfire_status', ['bondfireId', 'status', 'joinedAt'])
     .index('by_bondfire_user', ['bondfireId', 'userId'])
     .index('by_user', ['userId', 'joinedAt'])
-    .index('by_user_status', ['userId', 'status', 'joinedAt']),
+    .index('by_user_status', ['userId', 'status', 'joinedAt'])
+    .index('by_removed_by', ['removedBy', 'createdAt']),
 
   // Invite codes for personal bondfires
   // REMOVED — replaced by inviteCodes table
@@ -736,7 +747,8 @@ export default defineSchema({
     sentAt: v.number(),
   })
     .index('by_video_user', ['videoKey', 'userId'])
-    .index('by_user_thread', ['userId', 'threadKey']),
+    .index('by_user_thread', ['userId', 'threadKey'])
+    .index('by_thread', ['threadKey', 'sentAt']),
 
   // Video Reports - for content moderation / child safety compliance
   reports: defineTable({
@@ -892,5 +904,82 @@ export default defineSchema({
   })
     .index('by_video', ['videoType', 'videoId'])
     .index('by_video_user', ['videoType', 'videoId', 'userId'])
+    .index('by_user', ['userId', 'createdAt'])
     .index('by_heartbeat', ['lastHeartbeatAt']),
+
+  // Receipt identifiers retained without a user/profile reference after
+  // deletion. This prevents the same store transaction from being replayed
+  // against a new account and supports refund/accounting obligations without
+  // retaining the deleted user's Bondfires identity.
+  deletedAccountPurchaseRecords: defineTable({
+    source: v.union(v.literal('subscription'), v.literal('consumable')),
+    platform: storePlatform,
+    storeProductId: v.string(),
+    storeTransactionId: v.optional(v.string()),
+    storeOriginalTransactionId: v.optional(v.string()),
+    storePurchaseToken: v.optional(v.string()),
+    deletedAt: v.number(),
+  })
+    .index('by_transaction', ['storeTransactionId'])
+    .index('by_original_transaction', ['storeOriginalTransactionId'])
+    .index('by_purchase_token', ['storePurchaseToken']),
+
+  // Persistent, resumable account deletion. The user-facing request revokes
+  // sessions immediately; scheduled workers then inventory media, delete it
+  // from Mux, and only afterward remove database pointers and the user row.
+  accountDeletionJobs: defineTable({
+    userId: v.optional(v.id('users')),
+    status: v.union(
+      v.literal('inventory'),
+      v.literal('media'),
+      v.literal('database'),
+      v.literal('retrying'),
+      v.literal('completed'),
+    ),
+    inventoryStage: v.optional(
+      v.union(v.literal('responses'), v.literal('bondfires'), v.literal('live_sessions')),
+    ),
+    inventoryCursor: v.optional(v.string()),
+    cleanupStage: v.optional(v.string()),
+    attempts: v.number(),
+    lastError: v.optional(v.string()),
+    retryPhase: v.optional(
+      v.union(v.literal('inventory'), v.literal('media'), v.literal('database')),
+    ),
+    requestedAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    profileStorageId: v.optional(v.id('_storage')),
+  })
+    .index('by_user', ['userId'])
+    .index('by_status_updated', ['status', 'updatedAt']),
+
+  accountDeletionContent: defineTable({
+    jobId: v.id('accountDeletionJobs'),
+    kind: v.union(v.literal('bondfire'), v.literal('response'), v.literal('live_session')),
+    recordId: v.string(),
+    mediaStatus: v.union(v.literal('pending'), v.literal('inventoried')),
+    childCursor: v.optional(v.string()),
+    databaseStatus: v.union(v.literal('pending'), v.literal('deleted')),
+    cleanupStage: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_job_record', ['jobId', 'kind', 'recordId'])
+    .index('by_job_media', ['jobId', 'mediaStatus'])
+    .index('by_job_database', ['jobId', 'databaseStatus'])
+    .index('by_job_database_kind', ['jobId', 'databaseStatus', 'kind']),
+
+  accountDeletionMedia: defineTable({
+    jobId: v.id('accountDeletionJobs'),
+    kind: v.union(v.literal('asset'), v.literal('live_stream'), v.literal('direct_upload')),
+    externalId: v.string(),
+    status: v.union(v.literal('pending'), v.literal('deleted'), v.literal('missing')),
+    attempts: v.number(),
+    lastError: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_job_external', ['jobId', 'kind', 'externalId'])
+    .index('by_job_status', ['jobId', 'status']),
 })

@@ -1810,23 +1810,36 @@ export const createMuxDirectUpload = action({
     const uploadUrl = readString(data.url, 'upload url')
     const expiresIn = readOptionalNumber(data.timeout) ?? payload.timeout
 
-    const pendingRecord: {
+    let pendingRecord: {
       recordId: Id<'bondfires'> | Id<'bondfireVideos'>
       recordType: 'bondfire' | 'response'
-    } = await ctx.runMutation(internal.videos.createPendingMuxVideo, {
-      userId,
-      uploadId,
-      isResponse: args.isResponse,
-      bondfireId: args.bondfireId,
-      campId: args.campId,
-      personalCamp: args.personalCamp,
-      tags: args.tags,
-      playbackPolicy,
-      durationMs: args.durationMs,
-      width: args.width,
-      height: args.height,
-      draftBondfireId: args.draftBondfireId,
-    })
+    }
+    try {
+      pendingRecord = await ctx.runMutation(internal.videos.createPendingMuxVideo, {
+        userId,
+        uploadId,
+        isResponse: args.isResponse,
+        bondfireId: args.bondfireId,
+        campId: args.campId,
+        personalCamp: args.personalCamp,
+        tags: args.tags,
+        playbackPolicy,
+        durationMs: args.durationMs,
+        width: args.width,
+        height: args.height,
+        draftBondfireId: args.draftBondfireId,
+      })
+    } catch (error) {
+      // The account may have entered deletion after Mux created the signed
+      // upload URL but before Convex linked it. Cancel the upload so a client
+      // already holding the URL cannot create an untracked asset.
+      try {
+        await muxRequest(`/uploads/${uploadId}/cancel`, { method: 'PUT' })
+      } catch (cancelError) {
+        console.warn('Failed to cancel unlinked Mux direct upload:', cancelError)
+      }
+      throw error
+    }
 
     return {
       uploadId,
@@ -2813,11 +2826,23 @@ export const createLiveBackupDirectUpload = action({
     const uploadUrl = readString(data.url, 'upload url')
     const expiresIn = readOptionalNumber(data.timeout) ?? payload.timeout
 
-    await ctx.runMutation(internal.videos.attachLiveBackupUploadId, {
-      userId,
-      liveSessionId: args.liveSessionId,
-      uploadId,
-    })
+    try {
+      await ctx.runMutation(internal.videos.attachLiveBackupUploadId, {
+        userId,
+        liveSessionId: args.liveSessionId,
+        uploadId,
+      })
+    } catch (error) {
+      // Account deletion can begin while Mux provisions the upload. If Convex
+      // refuses to attach it, cancel the upload so it cannot become an asset
+      // outside the deletion inventory.
+      try {
+        await muxRequest(`/uploads/${uploadId}/cancel`, { method: 'PUT' })
+      } catch (cancelError) {
+        console.warn('Failed to cancel unlinked Mux live backup upload:', cancelError)
+      }
+      throw error
+    }
 
     return {
       uploadId,
@@ -2838,6 +2863,11 @@ export const prepareLiveBackupUpload = internalMutation({
     height: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId)
+    if (!user || user.accountDeletionStatus) {
+      throwUserError('This account is being deleted')
+    }
+
     const liveSession = await ctx.db.get(args.liveSessionId)
     if (!liveSession || liveSession.userId !== args.userId) {
       throwUserError('Live session not found')
@@ -2926,6 +2956,11 @@ export const attachLiveBackupUploadId = internalMutation({
     uploadId: v.string(),
   },
   handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId)
+    if (!user || user.accountDeletionStatus) {
+      throwUserError('This account is being deleted')
+    }
+
     const liveSession = await ctx.db.get(args.liveSessionId)
     if (!liveSession || liveSession.userId !== args.userId) {
       throwUserError('Live session not found')
@@ -4049,6 +4084,9 @@ export const createPendingMuxVideo = internalMutation({
   handler: async (ctx, args) => {
     const now = Date.now()
     const user = await ctx.db.get(args.userId)
+    if (!user || user.accountDeletionStatus) {
+      throwUserError('This account is being deleted')
+    }
 
     if (args.isResponse) {
       if (!args.bondfireId) {
@@ -4408,6 +4446,9 @@ export const createLinkedMuxLiveSession = internalMutation({
   handler: async (ctx, args) => {
     const now = Date.now()
     const user = await ctx.db.get(args.userId)
+    if (!user || user.accountDeletionStatus) {
+      throwUserError('This account is being deleted')
+    }
     const initialStatus = initialLiveRecordStatus(args.pending)
     let expiresAt: number | undefined
 

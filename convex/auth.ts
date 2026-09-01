@@ -1,6 +1,7 @@
 import Resend from '@auth/core/providers/resend'
 import { Password } from '@convex-dev/auth/providers/Password'
 import { convexAuth } from '@convex-dev/auth/server'
+import type { QueryCtx } from './_generated/server'
 
 const DEFAULT_EMAIL_FROM = 'Bondfires <support@bondfires.org>'
 const VERIFY_EMAIL_SUBJECT = 'Verify your Bondfires account'
@@ -189,6 +190,27 @@ const PasswordWithVerification = Password({
   reset: ResendPasswordReset,
 })
 
-export const { auth, signIn, signOut, store } = convexAuth({
+const authBackend = convexAuth({
   providers: [PasswordWithVerification],
 })
+
+export const { signIn, signOut, store } = authBackend
+
+// Account deletion needs the underlying identity once, even after its own
+// tombstone has committed, so a retried request can return the existing job.
+// All normal application operations must use the filtered `auth` export below.
+export const getUserIdIncludingDeleting = authBackend.auth.getUserId
+
+// Convex Auth JWTs can remain cryptographically valid briefly after their
+// refresh session is revoked. Make the deletion tombstone authoritative for
+// every query/mutation that uses the shared auth helper, so a replayed access
+// token cannot operate a partially deleted account.
+export const auth = {
+  ...authBackend.auth,
+  getUserId: async (ctx: Parameters<typeof authBackend.auth.getUserId>[0]) => {
+    const userId = await getUserIdIncludingDeleting(ctx)
+    if (!userId || !('db' in ctx)) return userId
+    const user = await (ctx as typeof ctx & { db: QueryCtx['db'] }).db.get(userId)
+    return user?.accountDeletionStatus ? null : userId
+  },
+}

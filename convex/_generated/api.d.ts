@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as accountDeletion from "../accountDeletion.js";
 import type * as admin from "../admin.js";
 import type * as adminAudit from "../adminAudit.js";
 import type * as adminDashboard from "../adminDashboard.js";
@@ -38,6 +39,7 @@ import type * as inviteArtifacts from "../inviteArtifacts.js";
 import type * as inviteBadges from "../inviteBadges.js";
 import type * as inviteClaims from "../inviteClaims.js";
 import type * as inviteCodes from "../inviteCodes.js";
+import type * as lib_accountDeletionPolicy from "../lib/accountDeletionPolicy.js";
 import type * as lib_appVersion from "../lib/appVersion.js";
 import type * as lib_clientTelemetry from "../lib/clientTelemetry.js";
 import type * as lib_emojis from "../lib/emojis.js";
@@ -76,6 +78,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  accountDeletion: typeof accountDeletion;
   admin: typeof admin;
   adminAudit: typeof adminAudit;
   adminDashboard: typeof adminDashboard;
@@ -106,6 +109,7 @@ declare const fullApi: ApiFromModules<{
   inviteBadges: typeof inviteBadges;
   inviteClaims: typeof inviteClaims;
   inviteCodes: typeof inviteCodes;
+  "lib/accountDeletionPolicy": typeof lib_accountDeletionPolicy;
   "lib/appVersion": typeof lib_appVersion;
   "lib/clientTelemetry": typeof lib_clientTelemetry;
   "lib/emojis": typeof lib_emojis;

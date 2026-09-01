@@ -5,6 +5,10 @@ const crons = cronJobs()
 
 crons.interval('cleanup stale presence', { minutes: 1 }, internal.presence.cleanupStalePresence)
 
+// Account deletion normally self-schedules each bounded batch. This hourly
+// sweep recovers jobs if a scheduler delivery or worker process was interrupted.
+crons.interval('resume stale account deletions', { hours: 1 }, internal.accountDeletion.resumeStale)
+
 crons.interval(
   'disable stale Mux live streams',
   { minutes: 5 },
