@@ -16,52 +16,17 @@ import {
   TIER_RANK,
   tierCanCreateBondfires,
 } from './entitlements'
+import {
+  assertStoreAccountOwnership,
+  nextStoreSyncAt,
+  type StoreLifecycleState,
+  selectStoreRecordForUser,
+} from './lib/storeBillingPolicy'
 
 type SubscriptionPlatform = 'ios' | 'android'
 type StorePurchaseKind = 'subscription' | 'consumable'
 type VerifiedStoreStatus = 'active' | 'trialing' | 'past_due' | 'canceled' | 'expired'
 type StoreSyncStatus = 'pending_verification' | VerifiedStoreStatus
-
-type StoreVerificationResult = {
-  status: StoreSyncStatus
-  storeProductId: string
-  storeTransactionId?: string
-  storeOriginalTransactionId?: string
-  storePurchaseToken?: string
-  currentPeriodEnd?: number
-}
-
-type AppleTransactionPayload = {
-  bundleId?: string
-  expiresDate?: number
-  originalTransactionId?: string
-  productId?: string
-  transactionId?: string
-  type?: string
-}
-
-type GoogleSubscriptionPurchase = {
-  latestOrderId?: string
-  lineItems?: Array<{
-    expiryTime?: string
-    productId?: string
-  }>
-  subscriptionState?: string
-}
-
-type GoogleProductPurchase = {
-  orderId?: string
-  purchaseState?: number
-  purchaseTimeMillis?: string
-  consumptionState?: number
-  acknowledgementState?: number
-  quantity?: number
-}
-
-const APPLE_PRODUCTION_API_BASE = 'https://api.storekit.itunes.apple.com'
-const APPLE_SANDBOX_API_BASE = 'https://api.storekit-sandbox.itunes.apple.com'
-const GOOGLE_ANDROID_PUBLISHER_SCOPE = 'https://www.googleapis.com/auth/androidpublisher'
-const GOOGLE_OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 
 const storeStatusValidator = v.union(
   v.literal('pending_verification'),
@@ -73,6 +38,19 @@ const storeStatusValidator = v.union(
 )
 
 const storePurchaseKindValidator = v.union(v.literal('subscription'), v.literal('consumable'))
+const storeLifecycleValidator = v.union(
+  v.literal('pending'),
+  v.literal('active'),
+  v.literal('trialing'),
+  v.literal('grace_period'),
+  v.literal('billing_retry'),
+  v.literal('canceled'),
+  v.literal('paused'),
+  v.literal('on_hold'),
+  v.literal('expired'),
+  v.literal('refunded'),
+  v.literal('revoked'),
+)
 
 const PRODUCT_ID_TO_TIER: Record<string, SubscriptionTier | undefined> = {
   'bondfires.plus.monthly': 'plus',
@@ -110,381 +88,6 @@ function getTierForStoreProduct(storeProductId: string) {
   return PRODUCT_ID_TO_TIER[storeProductId] ?? null
 }
 
-function base64UrlEncode(input: string | ArrayBuffer) {
-  const bytes = typeof input === 'string' ? new TextEncoder().encode(input) : new Uint8Array(input)
-  let binary = ''
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte)
-  }
-  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '')
-}
-
-function base64UrlDecode(input: string) {
-  const padded = input
-    .replaceAll('-', '+')
-    .replaceAll('_', '/')
-    .padEnd(Math.ceil(input.length / 4) * 4, '=')
-  return atob(padded)
-}
-
-function parsePrivateKeyPem(privateKey: string) {
-  const normalized = privateKey.replace(/\\n/g, '\n')
-  const base64 = normalized
-    .replace(/-----BEGIN [^-]+-----/g, '')
-    .replace(/-----END [^-]+-----/g, '')
-    .replace(/\s/g, '')
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes.buffer
-}
-
-async function signJwt(
-  header: Record<string, unknown>,
-  payload: Record<string, unknown>,
-  keyAlgorithm: RsaHashedImportParams | EcKeyImportParams,
-  signAlgorithm: AlgorithmIdentifier | EcdsaParams,
-  privateKey: string,
-) {
-  const encodedHeader = base64UrlEncode(JSON.stringify(header))
-  const encodedPayload = base64UrlEncode(JSON.stringify(payload))
-  const signingInput = `${encodedHeader}.${encodedPayload}`
-  const key = await crypto.subtle.importKey(
-    'pkcs8',
-    parsePrivateKeyPem(privateKey),
-    keyAlgorithm,
-    false,
-    ['sign'],
-  )
-  const signature = await crypto.subtle.sign(
-    signAlgorithm,
-    key,
-    new TextEncoder().encode(signingInput),
-  )
-  return `${signingInput}.${base64UrlEncode(signature)}`
-}
-
-function readRequiredEnv(name: string) {
-  const value = process.env[name]
-  if (!value) {
-    throw new Error(`${name} is not configured`)
-  }
-  return value
-}
-
-function readGoogleServiceAccount() {
-  const rawJson = process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON
-  if (rawJson) {
-    const parsed = JSON.parse(rawJson) as { client_email?: string; private_key?: string }
-    if (!parsed.client_email || !parsed.private_key) {
-      throw new Error('GOOGLE_PLAY_SERVICE_ACCOUNT_JSON must include client_email and private_key')
-    }
-    return {
-      clientEmail: parsed.client_email,
-      privateKey: parsed.private_key,
-    }
-  }
-
-  return {
-    clientEmail: readRequiredEnv('GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL'),
-    privateKey: readRequiredEnv('GOOGLE_PLAY_SERVICE_ACCOUNT_PRIVATE_KEY'),
-  }
-}
-
-function decodeAppleSignedTransactionInfo(jws: string): AppleTransactionPayload {
-  const [, payload] = jws.split('.')
-  if (!payload) {
-    throw new Error('Apple transaction response did not include a signed payload')
-  }
-  return JSON.parse(base64UrlDecode(payload)) as AppleTransactionPayload
-}
-
-function mapAppleTransactionStatus(
-  payload: AppleTransactionPayload,
-  kind: StorePurchaseKind,
-): VerifiedStoreStatus {
-  if (kind === 'consumable') {
-    if (payload.type !== 'Consumable') {
-      throw new Error(`Unsupported Apple transaction type: ${payload.type ?? 'unknown'}`)
-    }
-    return 'active'
-  }
-
-  if (payload.type !== 'Auto-Renewable Subscription') {
-    throw new Error(`Unsupported Apple transaction type: ${payload.type ?? 'unknown'}`)
-  }
-
-  if (payload.expiresDate && payload.expiresDate > Date.now()) {
-    return 'active'
-  }
-
-  return 'expired'
-}
-
-function mapGoogleProductStatus(product: GoogleProductPurchase): StoreSyncStatus {
-  if (product.purchaseState === 0) {
-    return 'active'
-  }
-  if (product.purchaseState === 2) {
-    return 'pending_verification'
-  }
-  return product.purchaseState === 1 ? 'canceled' : 'pending_verification'
-}
-
-function mapGoogleSubscriptionStatus(
-  subscription: GoogleSubscriptionPurchase,
-  currentPeriodEnd?: number,
-): StoreSyncStatus {
-  const state = subscription.subscriptionState
-  const hasFuturePeriod = currentPeriodEnd === undefined || currentPeriodEnd > Date.now()
-
-  if (
-    hasFuturePeriod &&
-    (state === 'SUBSCRIPTION_STATE_ACTIVE' ||
-      state === 'SUBSCRIPTION_STATE_CANCELED' ||
-      state === 'SUBSCRIPTION_STATE_IN_GRACE_PERIOD')
-  ) {
-    return 'active'
-  }
-
-  if (state === 'SUBSCRIPTION_STATE_ON_HOLD' || state === 'SUBSCRIPTION_STATE_PAUSED') {
-    return 'past_due'
-  }
-
-  if (state === 'SUBSCRIPTION_STATE_CANCELED') {
-    return 'canceled'
-  }
-
-  if (state === 'SUBSCRIPTION_STATE_EXPIRED') {
-    return 'expired'
-  }
-
-  return 'pending_verification'
-}
-
-function getGoogleCurrentPeriodEnd(subscription: GoogleSubscriptionPurchase) {
-  const expiryTimes =
-    subscription.lineItems
-      ?.map((lineItem) => (lineItem.expiryTime ? Date.parse(lineItem.expiryTime) : Number.NaN))
-      .filter(Number.isFinite) ?? []
-  if (expiryTimes.length === 0) {
-    return undefined
-  }
-  return Math.max(...expiryTimes)
-}
-
-function getGoogleProductId(subscription: GoogleSubscriptionPurchase, fallbackProductId: string) {
-  const productIds = new Set(
-    subscription.lineItems?.map((lineItem) => lineItem.productId).filter(Boolean),
-  )
-  if (productIds.size === 0) {
-    return fallbackProductId
-  }
-  if (productIds.size > 1) {
-    throw new Error('Google purchase contains multiple subscription products')
-  }
-  return [...productIds][0] ?? fallbackProductId
-}
-
-async function verifyAppleStorePurchase(args: {
-  kind: StorePurchaseKind
-  storeProductId: string
-  storeTransactionId?: string
-  storeOriginalTransactionId?: string
-}): Promise<StoreVerificationResult> {
-  const transactionId = args.storeTransactionId ?? args.storeOriginalTransactionId
-  if (!transactionId) {
-    throw new Error('Apple verification requires a transaction identifier')
-  }
-
-  const bundleId = readRequiredEnv('APPLE_BUNDLE_ID')
-  const nowSeconds = Math.floor(Date.now() / 1000)
-  const token = await signJwt(
-    {
-      alg: 'ES256',
-      kid: readRequiredEnv('APPLE_IAP_KEY_ID'),
-      typ: 'JWT',
-    },
-    {
-      iss: readRequiredEnv('APPLE_IAP_ISSUER_ID'),
-      iat: nowSeconds,
-      exp: nowSeconds + 20 * 60,
-      aud: 'appstoreconnect-v1',
-      bid: bundleId,
-    },
-    { name: 'ECDSA', namedCurve: 'P-256' },
-    { name: 'ECDSA', hash: 'SHA-256' },
-    readRequiredEnv('APPLE_IAP_PRIVATE_KEY'),
-  )
-
-  const environment = process.env.APPLE_IAP_ENVIRONMENT
-  const apiBases =
-    environment === 'sandbox'
-      ? [APPLE_SANDBOX_API_BASE]
-      : environment === 'production'
-        ? [APPLE_PRODUCTION_API_BASE]
-        : [APPLE_PRODUCTION_API_BASE, APPLE_SANDBOX_API_BASE]
-
-  let lastError: string | null = null
-  for (const apiBase of apiBases) {
-    const response = await fetch(
-      `${apiBase}/inApps/v1/transactions/${encodeURIComponent(transactionId)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      },
-    )
-    if (!response.ok) {
-      lastError = `${response.status}: ${await response.text()}`
-      continue
-    }
-
-    const body = (await response.json()) as { signedTransactionInfo?: string }
-    if (!body.signedTransactionInfo) {
-      throw new Error('Apple transaction response did not include signedTransactionInfo')
-    }
-
-    const payload = decodeAppleSignedTransactionInfo(body.signedTransactionInfo)
-    if (payload.bundleId !== bundleId) {
-      throw new Error('Apple transaction bundle ID does not match this app')
-    }
-    if (payload.productId !== args.storeProductId) {
-      throw new Error('Apple transaction product does not match the requested product')
-    }
-
-    return {
-      status: mapAppleTransactionStatus(payload, args.kind),
-      storeProductId: payload.productId,
-      storeTransactionId: payload.transactionId ?? args.storeTransactionId,
-      storeOriginalTransactionId:
-        payload.originalTransactionId ?? args.storeOriginalTransactionId ?? payload.transactionId,
-      currentPeriodEnd: args.kind === 'subscription' ? payload.expiresDate : undefined,
-    }
-  }
-
-  throw new Error(`Apple purchase verification failed${lastError ? `: ${lastError}` : ''}`)
-}
-
-async function getGoogleAccessToken() {
-  const serviceAccount = readGoogleServiceAccount()
-  const nowSeconds = Math.floor(Date.now() / 1000)
-  const assertion = await signJwt(
-    {
-      alg: 'RS256',
-      typ: 'JWT',
-    },
-    {
-      iss: serviceAccount.clientEmail,
-      scope: GOOGLE_ANDROID_PUBLISHER_SCOPE,
-      aud: GOOGLE_OAUTH_TOKEN_URL,
-      iat: nowSeconds,
-      exp: nowSeconds + 60 * 60,
-    },
-    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-    { name: 'RSASSA-PKCS1-v1_5' },
-    serviceAccount.privateKey,
-  )
-
-  const response = await fetch(GOOGLE_OAUTH_TOKEN_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: new URLSearchParams({
-      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-      assertion,
-    }).toString(),
-  })
-
-  if (!response.ok) {
-    throw new Error(`Google OAuth failed: ${response.status} ${await response.text()}`)
-  }
-
-  const body = (await response.json()) as { access_token?: string }
-  if (!body.access_token) {
-    throw new Error('Google OAuth response did not include an access token')
-  }
-  return body.access_token
-}
-
-async function verifyGoogleStorePurchase(args: {
-  kind: StorePurchaseKind
-  storeProductId: string
-  storePurchaseToken?: string
-}): Promise<StoreVerificationResult> {
-  if (!args.storePurchaseToken) {
-    throw new Error('Google verification requires a purchase token')
-  }
-
-  const packageName = readRequiredEnv('GOOGLE_PLAY_PACKAGE_NAME')
-  const accessToken = await getGoogleAccessToken()
-  if (args.kind === 'consumable') {
-    const response = await fetch(
-      `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${encodeURIComponent(
-        packageName,
-      )}/purchases/products/${encodeURIComponent(args.storeProductId)}/tokens/${encodeURIComponent(
-        args.storePurchaseToken,
-      )}`,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      },
-    )
-
-    if (!response.ok) {
-      throw new Error(
-        `Google purchase verification failed: ${response.status} ${await response.text()}`,
-      )
-    }
-
-    const product = (await response.json()) as GoogleProductPurchase
-    return {
-      status: mapGoogleProductStatus(product),
-      storeProductId: args.storeProductId,
-      storeTransactionId: product.orderId,
-      storeOriginalTransactionId: args.storePurchaseToken,
-      storePurchaseToken: args.storePurchaseToken,
-    }
-  }
-
-  const response = await fetch(
-    `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${encodeURIComponent(
-      packageName,
-    )}/purchases/subscriptionsv2/tokens/${encodeURIComponent(args.storePurchaseToken)}`,
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    },
-  )
-
-  if (!response.ok) {
-    throw new Error(
-      `Google purchase verification failed: ${response.status} ${await response.text()}`,
-    )
-  }
-
-  const subscription = (await response.json()) as GoogleSubscriptionPurchase
-  const storeProductId = getGoogleProductId(subscription, args.storeProductId)
-  if (storeProductId !== args.storeProductId) {
-    throw new Error('Google subscription product does not match the requested product')
-  }
-
-  const currentPeriodEnd = getGoogleCurrentPeriodEnd(subscription)
-  return {
-    status: mapGoogleSubscriptionStatus(subscription, currentPeriodEnd),
-    storeProductId,
-    storeTransactionId: subscription.latestOrderId,
-    storeOriginalTransactionId: args.storePurchaseToken,
-    storePurchaseToken: args.storePurchaseToken,
-    currentPeriodEnd,
-  }
-}
-
 function getStoreOriginalTransactionId(args: {
   storeTransactionId?: string
   storeOriginalTransactionId?: string
@@ -499,6 +102,15 @@ function assertStoreIdentifiers(args: {
   storeOriginalTransactionId?: string
   storePurchaseToken?: string
 }) {
+  for (const identifier of [
+    args.storeTransactionId,
+    args.storeOriginalTransactionId,
+    args.storePurchaseToken,
+  ]) {
+    if (identifier && identifier.length > 4_096) {
+      throw new Error('Store purchase identifier is too long')
+    }
+  }
   if (args.platform === 'android' && !args.storePurchaseToken) {
     throw new Error('Android purchases require a store purchase token')
   }
@@ -512,17 +124,20 @@ function getVerifiedSyncStatus(existing?: {
   status?: string
   verificationStatus?: string
 }): StoreSyncStatus {
-  // Subscriptions have separate status + verificationStatus
-  if (
-    existing?.verificationStatus === 'verified' &&
-    existing?.status &&
-    (existing.status === 'active' || existing.status === 'trialing')
-  ) {
-    return existing.status
+  // Subscriptions have a lifecycle status in addition to verification state.
+  if (existing?.verificationStatus === 'verified' && existing.status) {
+    switch (existing.status) {
+      case 'active':
+      case 'trialing':
+      case 'past_due':
+      case 'canceled':
+      case 'expired':
+        return existing.status
+    }
   }
 
-  // Consumable purchases are verified once; no separate status field
-  if (existing?.verificationStatus === 'verified') {
+  // Consumable purchases are verified once and have no lifecycle status.
+  if (existing?.verificationStatus === 'verified' && existing.status === undefined) {
     return 'active'
   }
 
@@ -545,6 +160,23 @@ function statusUnlocksEntitlements(status: StoreSyncStatus) {
   return status === 'active' || status === 'trialing'
 }
 
+function lifecycleStateForStatus(status: StoreSyncStatus): StoreLifecycleState {
+  switch (status) {
+    case 'active':
+      return 'active'
+    case 'trialing':
+      return 'trialing'
+    case 'past_due':
+      return 'billing_retry'
+    case 'canceled':
+      return 'canceled'
+    case 'expired':
+      return 'expired'
+    default:
+      return 'pending'
+  }
+}
+
 async function findExistingSubscription(
   ctx: MutationCtx,
   args: {
@@ -555,22 +187,24 @@ async function findExistingSubscription(
   },
 ) {
   if (args.storeOriginalTransactionId) {
-    const byOriginalTransaction = await ctx.db
+    const byOriginalTransactions = await ctx.db
       .query('subscriptions')
       .withIndex('by_store_transaction', (q) =>
         q.eq('storeOriginalTransactionId', args.storeOriginalTransactionId),
       )
-      .first()
+      .collect()
+    const byOriginalTransaction = selectStoreRecordForUser(byOriginalTransactions, args.userId)
     if (byOriginalTransaction) return byOriginalTransaction
   }
 
   if (args.storePurchaseToken) {
-    const byPurchaseToken = await ctx.db
+    const byPurchaseTokens = await ctx.db
       .query('subscriptions')
       .withIndex('by_store_purchase_token', (q) =>
         q.eq('storePurchaseToken', args.storePurchaseToken),
       )
-      .first()
+      .collect()
+    const byPurchaseToken = selectStoreRecordForUser(byPurchaseTokens, args.userId)
     if (byPurchaseToken) return byPurchaseToken
   }
 
@@ -617,44 +251,49 @@ async function findExistingConsumablePurchase(
 ) {
   if (args.storeTransactionId) {
     const storeTransactionId = args.storeTransactionId
-    const byTransaction = await ctx.db
+    const byTransactions = await ctx.db
       .query('consumablePurchases')
       .withIndex('by_transaction', (q) => q.eq('storeTransactionId', storeTransactionId))
-      .first()
+      .collect()
+    const byTransaction = selectStoreRecordForUser(byTransactions, args.userId)
     if (byTransaction) return byTransaction
   }
 
   if (args.storeOriginalTransactionId) {
     const storeOriginalTransactionId = args.storeOriginalTransactionId
-    const byOriginalTransaction = await ctx.db
+    const byOriginalTransactions = await ctx.db
       .query('consumablePurchases')
       .withIndex('by_store_transaction', (q) =>
         q.eq('storeOriginalTransactionId', storeOriginalTransactionId),
       )
-      .first()
+      .collect()
+    const byOriginalTransaction = selectStoreRecordForUser(byOriginalTransactions, args.userId)
     if (byOriginalTransaction) return byOriginalTransaction
   }
 
   if (args.storePurchaseToken) {
     const storePurchaseToken = args.storePurchaseToken
-    const byPurchaseToken = await ctx.db
+    const byPurchaseTokens = await ctx.db
       .query('consumablePurchases')
       .withIndex('by_store_purchase_token', (q) => q.eq('storePurchaseToken', storePurchaseToken))
-      .first()
+      .collect()
+    const byPurchaseToken = selectStoreRecordForUser(byPurchaseTokens, args.userId)
     if (byPurchaseToken) return byPurchaseToken
   }
 
-  const pendingPurchases = await ctx.db
+  const unverifiedPurchases = await ctx.db
     .query('consumablePurchases')
     .withIndex('by_user', (q) => q.eq('userId', args.userId))
     .collect()
 
   return (
-    pendingPurchases.find(
-      (purchase) =>
-        purchase.storeProductId === args.storeProductId &&
-        purchase.verificationStatus === 'pending',
-    ) ?? null
+    unverifiedPurchases
+      .filter(
+        (purchase) =>
+          purchase.storeProductId === args.storeProductId &&
+          (purchase.verificationStatus === 'pending' || purchase.verificationStatus === 'failed'),
+      )
+      .sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? null
   )
 }
 
@@ -752,30 +391,15 @@ export const syncStorePurchase = mutation({
     assertStoreIdentifiers(args)
 
     const now = Date.now()
-    const storeOriginalTransactionId = getStoreOriginalTransactionId(args)
     let syncStatus: StoreSyncStatus = 'pending_verification'
-    const consumableStoreTransactionId =
-      args.storeTransactionId ?? storeOriginalTransactionId ?? args.storePurchaseToken
-    const receiptFields = {
-      storeTransactionId: args.storeTransactionId,
-      storeOriginalTransactionId,
-      storePurchaseToken: args.storePurchaseToken,
-      updatedAt: now,
-    }
-    const consumableReceiptFields = {
-      storeTransactionId: consumableStoreTransactionId,
-      storeOriginalTransactionId,
-      storePurchaseToken: args.storePurchaseToken,
-      updatedAt: now,
-    }
     const pendingStoreFields = {
       userId,
       status: 'pending_verification' as const,
       verificationStatus: 'pending' as const,
       platform: args.platform,
       storeProductId: args.storeProductId,
-      ...receiptFields,
       currentPeriodEnd: args.currentPeriodEnd,
+      updatedAt: now,
     }
 
     if (kind === 'subscription') {
@@ -787,7 +411,7 @@ export const syncStorePurchase = mutation({
       const existing = await findExistingSubscription(ctx, {
         userId,
         storeProductId: args.storeProductId,
-        storeOriginalTransactionId,
+        storeOriginalTransactionId: getStoreOriginalTransactionId(args),
         storePurchaseToken: args.storePurchaseToken,
       })
       if (existing && existing.userId !== userId) {
@@ -797,10 +421,8 @@ export const syncStorePurchase = mutation({
       if (existing) {
         syncStatus = getVerifiedSyncStatus(existing)
         if (isVerifiedActiveStoreRecord(existing)) {
-          if (existing.storeProductId !== args.storeProductId) {
-            throw new Error('Store subscription product changes require server verification')
-          }
-          await ctx.db.patch(existing._id, receiptFields)
+          // Do not mutate verified identifiers or tier from client input. The
+          // following action may still verify a legitimate store upgrade.
         } else {
           await ctx.db.patch(existing._id, {
             ...pendingStoreFields,
@@ -819,8 +441,8 @@ export const syncStorePurchase = mutation({
       const existing = await findExistingConsumablePurchase(ctx, {
         userId,
         storeProductId: args.storeProductId,
-        storeTransactionId: consumableStoreTransactionId,
-        storeOriginalTransactionId,
+        storeTransactionId: args.storeTransactionId,
+        storeOriginalTransactionId: getStoreOriginalTransactionId(args),
         storePurchaseToken: args.storePurchaseToken,
       })
       if (existing && existing.userId !== userId) {
@@ -833,17 +455,15 @@ export const syncStorePurchase = mutation({
       if (existing) {
         syncStatus = getVerifiedSyncStatus(existing)
         if (isVerifiedActiveStoreRecord(existing)) {
-          if (existing.storeProductId !== args.storeProductId) {
-            throw new Error('Store product changes require server verification')
-          }
-          await ctx.db.patch(existing._id, consumableReceiptFields)
+          // A verified consumable is immutable; replay/product mismatch is
+          // decided from the authoritative store response in the action.
         } else {
           await ctx.db.patch(existing._id, {
             userId,
             verificationStatus: 'pending' as const,
             platform: args.platform,
             storeProductId: args.storeProductId,
-            ...consumableReceiptFields,
+            updatedAt: now,
             quantity: getKindlingQuantityForProduct(args.storeProductId),
           })
         }
@@ -853,7 +473,7 @@ export const syncStorePurchase = mutation({
           verificationStatus: 'pending' as const,
           platform: args.platform,
           storeProductId: args.storeProductId,
-          ...consumableReceiptFields,
+          updatedAt: now,
           quantity: getKindlingQuantityForProduct(args.storeProductId),
           createdAt: args.purchasedAt ?? now,
         })
@@ -883,13 +503,27 @@ export const applyStorePurchaseVerification = internalMutation({
     storePurchaseToken: v.optional(v.string()),
     currentPeriodEnd: v.optional(v.number()),
     status: storeStatusValidator,
+    storeState: v.optional(storeLifecycleValidator),
+    willRenew: v.optional(v.boolean()),
+    storeEnvironment: v.optional(v.string()),
+    lastStoreEventAt: v.optional(v.number()),
   },
   handler: async (ctx, args): Promise<{ tier: SubscriptionTier; status: StoreSyncStatus }> => {
     assertStoreProductMatchesKind(args.storeProductId, args.kind)
 
     const now = Date.now()
     let appliedStatus: StoreSyncStatus = args.status
-    const verificationStatus = getVerificationStateForStatus(args.status)
+    const storeState = args.storeState ?? lifecycleStateForStatus(args.status)
+    const verificationStatus =
+      args.kind === 'consumable'
+        ? args.status === 'active'
+          ? ('verified' as const)
+          : args.status === 'pending_verification'
+            ? ('pending' as const)
+            : ('refunded' as const)
+        : storeState === 'refunded' || storeState === 'revoked'
+          ? ('refunded' as const)
+          : getVerificationStateForStatus(args.status)
     const lookup = {
       userId: args.userId,
       storeProductId: args.requestedStoreProductId,
@@ -931,7 +565,18 @@ export const applyStorePurchaseVerification = internalMutation({
         storeOriginalTransactionId: args.storeOriginalTransactionId,
         storePurchaseToken: args.storePurchaseToken,
         currentPeriodEnd: args.currentPeriodEnd,
-        verifiedAt: verificationStatus === 'verified' ? now : undefined,
+        storeState,
+        willRenew: args.willRenew,
+        storeEnvironment: args.storeEnvironment,
+        lastStoreEventAt:
+          args.lastStoreEventAt === undefined
+            ? existing?.lastStoreEventAt
+            : Math.max(existing?.lastStoreEventAt ?? 0, args.lastStoreEventAt),
+        lastStoreSyncAt: now,
+        nextStoreSyncAt: nextStoreSyncAt(now, storeState),
+        storeSyncFailureCount: 0,
+        lastStoreSyncErrorCode: undefined,
+        verifiedAt: verificationStatus === 'pending' ? undefined : now,
         updatedAt: now,
       }
 
@@ -944,7 +589,7 @@ export const applyStorePurchaseVerification = internalMutation({
         })
       }
 
-      if (verificationStatus === 'verified') {
+      if (verificationStatus === 'verified' || verificationStatus === 'refunded') {
         const newEffectiveTier = await getActiveSubscriptionTier(ctx, args.userId)
 
         // Grant the 3 free monthly kindling first so that reclaim/upgrade
@@ -1133,12 +778,31 @@ export const verifyStorePurchase = action({
     assertStoreIdentifiers(args)
 
     try {
+      const ownership = await ctx.runQuery(internal.storeBilling.getVerificationContext, {
+        userId,
+        kind,
+        storeOriginalTransactionId: args.storeOriginalTransactionId ?? args.storeTransactionId,
+        storePurchaseToken: args.storePurchaseToken,
+      })
       const verification =
         args.platform === 'ios'
-          ? await verifyAppleStorePurchase({ ...args, kind })
-          : await verifyGoogleStorePurchase({ ...args, kind })
+          ? await ctx.runAction(internal.storeBillingActions.verifyApplePurchase, {
+              kind,
+              storeProductId: args.storeProductId,
+              storeTransactionId: args.storeTransactionId,
+              storeOriginalTransactionId: args.storeOriginalTransactionId,
+            })
+          : await ctx.runAction(internal.storeBillingActions.verifyGooglePurchase, {
+              kind,
+              storeProductId: args.storeProductId,
+              storePurchaseToken: args.storePurchaseToken ?? '',
+            })
 
       assertStoreProductMatchesKind(verification.storeProductId, kind)
+      assertStoreAccountOwnership({
+        ...ownership,
+        verifiedAccountToken: verification.verifiedAccountToken,
+      })
 
       const result = await ctx.runMutation(internal.subscriptions.applyStorePurchaseVerification, {
         userId,
@@ -1154,6 +818,9 @@ export const verifyStorePurchase = action({
         storePurchaseToken: verification.storePurchaseToken,
         currentPeriodEnd: verification.currentPeriodEnd,
         status: verification.status,
+        storeState: verification.storeState,
+        willRenew: verification.willRenew,
+        storeEnvironment: verification.storeEnvironment,
       })
 
       return {
