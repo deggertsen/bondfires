@@ -112,14 +112,17 @@ payloads.
 
 ## Merge-train requirements
 
-- PR 217's durable account deletion and transaction tombstones must be rebased after this schema.
-  Delete subscriptions and the user's `storeAccountToken` with the user, but retain the redacted
-  `storeBillingEvents` ledger for its 90-day replay/evidence window. Its tombstone checks must run
-  before initial sync, webhook application, and reconciliation so a deleted account's store
-  transaction can never recreate entitlement on another account.
-- PR 220 also changes `convex/schema.ts`, generated bindings, and account-deletion integration.
-  Resolve those files explicitly and rerun Convex code generation plus the full validation suite.
-  Standalone merge of this PR does not complete the PR 217/220 integration.
+This PR must remain draft until the current merge train lands in this order: PR 216, rebase/merge PR
+217 (including telemetry cleanup), rebase/merge PR 218, then rebase/merge PR 220 and adapt the
+durable deletion worker for its UGC tables. Rebase this PR onto that resulting `main`, reconcile PR
+221's dependency state, resolve `convex/schema.ts`, generated bindings, subscription, and deletion
+worker conflicts, then rerun Convex code generation and the full validation suite.
+
+During that final rebase, integrate PR 217's transaction-tombstone checks before initial purchase
+application, webhook application, and reconciliation so deletion cannot make an old transaction
+claimable by another account. Delete subscriptions and the user's `storeAccountToken` with the
+user, but retain the redacted `storeBillingEvents` ledger for its 90-day replay/evidence window.
+Standalone merge of this PR is not integration-complete or safe.
 
 ## Primary references
 
