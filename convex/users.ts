@@ -395,6 +395,15 @@ export const deleteAccount = mutation({
       await ctx.db.delete(subscription._id)
     }
 
+    const abuseRateLimits = await ctx.db
+      .query('abuseRateLimits')
+      .withIndex('by_subject', (q) => q.eq('subjectType', 'user').eq('subjectId', userId))
+      .collect()
+
+    for (const rateLimit of abuseRateLimits) {
+      await ctx.db.delete(rateLimit._id)
+    }
+
     // 6. Delete auth-related data (sessions, accounts, refresh tokens)
     // These tables are created by @convex-dev/auth
     const authSessions = await ctx.db

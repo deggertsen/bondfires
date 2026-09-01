@@ -18,6 +18,7 @@ export default function InviteScreen() {
       loginHref={routes.loginWithInvite}
       redeemInvite={async (inviteCode) => {
         const result = await redeemInvite({ code: inviteCode })
+        if (result.type === 'invalid') throw new Error('Invite unavailable')
         return result.type === 'camp'
           ? routes.camp(result.campId)
           : routes.bondfire(result.bondfireId)

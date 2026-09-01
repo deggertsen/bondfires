@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as abuseLimits from "../abuseLimits.js";
 import type * as admin from "../admin.js";
 import type * as adminAudit from "../adminAudit.js";
 import type * as adminDashboard from "../adminDashboard.js";
@@ -74,6 +75,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  abuseLimits: typeof abuseLimits;
   admin: typeof admin;
   adminAudit: typeof adminAudit;
   adminDashboard: typeof adminDashboard;

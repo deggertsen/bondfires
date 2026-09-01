@@ -100,6 +100,35 @@ type MuxErrorInfo = {
   details?: MuxErrorDetail[]
 }
 
+const MAX_VIDEO_DIMENSION_PX = 16_384
+const MAX_VIDEO_TAGS = 20
+const MAX_VIDEO_TAG_LENGTH = 64
+
+export function assertClientMediaMetadataBounds(args: {
+  width?: number
+  height?: number
+  tags?: string[]
+}) {
+  for (const [name, value] of [
+    ['width', args.width],
+    ['height', args.height],
+  ] as const) {
+    if (
+      value !== undefined &&
+      (!Number.isInteger(value) || value < 1 || value > MAX_VIDEO_DIMENSION_PX)
+    ) {
+      throwUserError(`Video ${name} is invalid`)
+    }
+  }
+  if (
+    args.tags &&
+    (args.tags.length > MAX_VIDEO_TAGS ||
+      args.tags.some((tag) => tag.length < 1 || tag.length > MAX_VIDEO_TAG_LENGTH))
+  ) {
+    throwUserError('Video tags are invalid')
+  }
+}
+
 interface EndLiveStreamResult {
   ended: boolean
   completeSignaled: boolean
@@ -1735,6 +1764,7 @@ export const createMuxDirectUpload = action({
     if (!userId) {
       throwUserError('Not authenticated')
     }
+    assertClientMediaMetadataBounds(args)
 
     let playbackPolicy: PlaybackPolicy
     if (args.isResponse) {
@@ -1847,6 +1877,14 @@ export const getMuxUploadStatus = action({
     if (!userId) {
       throwUserError('Not authenticated')
     }
+    if (args.uploadId.length < 8 || args.uploadId.length > 256) {
+      throwUserError('Upload not found')
+    }
+    const ownsUpload = await ctx.runQuery(internal.videos.userOwnsMuxUpload, {
+      userId,
+      uploadId: args.uploadId,
+    })
+    if (!ownsUpload) throwUserError('Upload not found')
 
     const upload = parseMuxData(await muxRequest(`/uploads/${args.uploadId}`))
     const uploadStatus = readOptionalString(upload.status) ?? 'waiting'
@@ -1914,6 +1952,23 @@ export const getMuxUploadStatus = action({
         (assetStatus !== undefined &&
           (MUX_FAILED_STATUSES.has(assetStatus) || assetStatus === DURATION_LIMIT_EXCEEDED_STATUS)),
     }
+  },
+})
+
+export const userOwnsMuxUpload = internalQuery({
+  args: { userId: v.id('users'), uploadId: v.string() },
+  handler: async (ctx, args) => {
+    const [bondfire, response] = await Promise.all([
+      ctx.db
+        .query('bondfires')
+        .withIndex('by_mux_upload', (q) => q.eq('muxUploadId', args.uploadId))
+        .first(),
+      ctx.db
+        .query('bondfireVideos')
+        .withIndex('by_mux_upload', (q) => q.eq('muxUploadId', args.uploadId))
+        .first(),
+    ])
+    return bondfire?.userId === args.userId || response?.userId === args.userId
   },
 })
 
@@ -2112,6 +2167,7 @@ export const createLiveStream = action({
         if (!userId) {
           throwUserError('Not authenticated')
         }
+        assertClientMediaMetadataBounds(args)
 
         const resolvePlaybackPolicy = async (): Promise<PlaybackPolicy> => {
           if (args.isResponse) {
@@ -2766,6 +2822,7 @@ export const createLiveBackupDirectUpload = action({
     if (!userId) {
       throwUserError('Not authenticated')
     }
+    assertClientMediaMetadataBounds(args)
 
     const prepared: {
       recordId: Id<'bondfires'> | Id<'bondfireVideos'>
@@ -2952,12 +3009,13 @@ export const attachLiveBackupUploadId = internalMutation({
 })
 
 /**
- * Explicit attach path for a completed backup upload. Prefer getMuxUploadStatus
- * (which finds the row by muxUploadId); this exists for clients that already
- * have asset metadata and for live-wins dedupe when the live asset raced ahead.
+ * Internal attach path for a completed backup upload. Prefer getMuxUploadStatus
+ * (which finds the row by muxUploadId). Keeping asset attachment internal prevents
+ * a caller from asserting arbitrary Mux asset and playback identifiers.
  */
-export const recoverLiveRecordWithUpload = mutation({
+export const recoverLiveRecordWithUpload = internalMutation({
   args: {
+    userId: v.id('users'),
     liveSessionId: v.id('liveSessions'),
     assetId: v.string(),
     playbackId: v.string(),
@@ -2967,10 +3025,7 @@ export const recoverLiveRecordWithUpload = mutation({
     muxMaxResolution: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const userId = await auth.getUserId(ctx)
-    if (!userId) {
-      throwUserError('Not authenticated')
-    }
+    const userId = args.userId
     const liveSession = await ctx.db.get(args.liveSessionId)
     if (!liveSession || liveSession.userId !== userId) {
       throwUserError('Live session not found')

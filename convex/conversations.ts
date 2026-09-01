@@ -54,7 +54,8 @@ function toPublicUser(user: Doc<'users'>): PublicUser {
 }
 
 function clampLimit(limit: number | undefined) {
-  return Math.min(Math.max(limit ?? DEFAULT_THREAD_LIMIT, 1), MAX_THREAD_LIMIT)
+  if (limit === undefined || !Number.isFinite(limit)) return DEFAULT_THREAD_LIMIT
+  return Math.min(Math.max(Math.trunc(limit), 1), MAX_THREAD_LIMIT)
 }
 
 function isPlayableVideoRecord(record: {
