@@ -3,8 +3,10 @@
 Bondfires permits accounts age 13 and older. The product separates people age 13–17 from adults
 at the server boundary: teen accounts can only discover, join, invite, view, or participate in teen
 camps and Hearths, while adult accounts can only do so in adult spaces. Date of birth is private and
-is re-evaluated on each request, so the boundary changes on a member's 18th birthday without waiting
-for a cleanup job.
+is re-evaluated on each request. Because DOB has no verified timezone, Bondfires conservatively keeps
+a member in the younger band for the full UTC anniversary day; the boundary changes at 00:00 UTC the
+following day without waiting for a cleanup job. This prevents an early transition in negative UTC
+offsets at the cost of at most one extra day in the younger band.
 
 This runbook is an engineering and store-submission checklist, not legal advice. Counsel must review
 the privacy policy, Terms, child-safety standards, retention, and consent approach for every launch
@@ -23,10 +25,11 @@ Deploy backend enforcement before releasing a client that admits teen users.
    13–17 camps.
 4. Run `reconcileCampMemberships` and `reconcileHearthParticipants` once, then confirm each finishes
    all pages. Daily crons keep the rows reconciled after rollout. A member who turns 18 receives a
-   new adult Hearth; their historical teen Hearth remains permanently teen-banded and is frozen.
-5. Verify with separate boundary test accounts aged 13, 17, 18, and an existing member whose 18th
-   birthday is today. Test open, approval, camp-code, direct bondfire, Hearth-code, and direct Hearth
-   invites in both directions.
+   new adult Hearth after the conservative UTC transition; their historical teen Hearth remains
+   permanently teen-banded and is frozen.
+5. Verify with separate boundary test accounts aged 13, 17, 18, and an existing member on their 18th
+   UTC anniversary day and at 00:00 UTC the following day. Test open, approval, camp-code, direct
+   bondfire, Hearth-code, and direct Hearth invites in both directions.
 6. Confirm the public child-safety page says 13+, names the teen/adult separation, contains the
    published CSAE standards, and lists a monitored child-safety contact.
 

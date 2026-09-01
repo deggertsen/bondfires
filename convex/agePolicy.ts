@@ -41,7 +41,14 @@ export function calculateAgeAt(birthDate: string, now = new Date()): number | nu
 /** Missing, malformed, future, and under-13 dates are deliberately ineligible. */
 export function getAgeBand(birthDate: string | undefined, now = new Date()): AgeBand | null {
   if (!birthDate) return null
-  const age = calculateAgeAt(birthDate, now)
+  // DOB has no verified timezone. Evaluate against the previous UTC calendar
+  // day so a user can never cross 13 or 18 early in a negative UTC offset.
+  // This intentionally keeps them in the younger band for the full UTC
+  // anniversary day (at most a conservative one-day delay).
+  const priorUtcDay = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1),
+  )
+  const age = calculateAgeAt(birthDate, priorUtcDay)
   if (age === null || age < MINIMUM_AGE) return null
   return age < ADULT_AGE ? 'teen' : 'adult'
 }

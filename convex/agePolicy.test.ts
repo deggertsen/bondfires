@@ -4,11 +4,20 @@ import { calculateAgeAt, getAgeBand, getCampAgeBand, isUserEligibleForCamp } fro
 const TODAY = new Date('2026-08-31T12:00:00.000Z')
 
 describe('age-band policy', () => {
-  it('uses exact 13 and 18 birthday boundaries', () => {
-    expect(getAgeBand('2013-08-31', TODAY)).toBe('teen')
+  it('uses conservative 13 and 18 birthday boundaries', () => {
+    expect(getAgeBand('2013-08-31', TODAY)).toBeNull()
+    expect(getAgeBand('2013-08-30', TODAY)).toBe('teen')
     expect(getAgeBand('2008-09-01', TODAY)).toBe('teen')
-    expect(getAgeBand('2008-08-31', TODAY)).toBe('adult')
+    expect(getAgeBand('2008-08-31', TODAY)).toBe('teen')
+    expect(getAgeBand('2008-08-31', new Date('2026-09-01T00:00:00.000Z'))).toBe('adult')
     expect(calculateAgeAt('2008-09-01', TODAY)).toBe(17)
+  })
+
+  it('never promotes early when the member could be in UTC-12', () => {
+    const birthDate = '2008-08-31'
+    expect(getAgeBand(birthDate, new Date('2026-08-31T00:00:00.000Z'))).toBe('teen')
+    expect(getAgeBand(birthDate, new Date('2026-08-31T23:59:59.999Z'))).toBe('teen')
+    expect(getAgeBand(birthDate, new Date('2026-09-01T00:00:00.000Z'))).toBe('adult')
   })
 
   it('fails closed for missing, malformed, impossible, future, and under-13 dates', () => {

@@ -33,10 +33,12 @@ describe('camp content age isolation', () => {
     vi.useRealTimers()
   })
 
-  it('denies immediately on the 18th birthday before cleanup runs', () => {
+  it('denies after the full UTC 18th-birthday day before cleanup runs', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-31T12:00:00.000Z'))
     expect(isCampContentVisibleToViewer(camp('teen'), viewer('2008-09-01'))).toBe(true)
+    expect(isCampContentVisibleToViewer(camp('teen'), viewer('2008-08-31'))).toBe(true)
+    vi.setSystemTime(new Date('2026-09-01T00:00:00.000Z'))
     expect(isCampContentVisibleToViewer(camp('teen'), viewer('2008-08-31'))).toBe(false)
     vi.useRealTimers()
   })
