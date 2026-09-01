@@ -13,7 +13,14 @@ describe('age-band policy', () => {
     expect(calculateAgeAt('2008-09-01', TODAY)).toBe(17)
   })
 
-  it('never promotes early when the member could be in UTC-12', () => {
+  it('does not admit a 13-year-old early when they could still be 12 in UTC-12', () => {
+    const birthDate = '2013-08-31'
+    expect(getAgeBand(birthDate, new Date('2026-08-31T00:00:00.000Z'))).toBeNull()
+    expect(getAgeBand(birthDate, new Date('2026-08-31T23:59:59.999Z'))).toBeNull()
+    expect(getAgeBand(birthDate, new Date('2026-09-01T00:00:00.000Z'))).toBe('teen')
+  })
+
+  it('does not promote an 18-year-old early when they could still be 17 in UTC-12', () => {
     const birthDate = '2008-08-31'
     expect(getAgeBand(birthDate, new Date('2026-08-31T00:00:00.000Z'))).toBe('teen')
     expect(getAgeBand(birthDate, new Date('2026-08-31T23:59:59.999Z'))).toBe('teen')
