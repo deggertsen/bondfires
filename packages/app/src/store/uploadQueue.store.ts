@@ -73,6 +73,10 @@ syncObservable(uploadQueueStore$, {
 
 // Actions
 export const uploadQueueActions = {
+  clear: () => {
+    uploadQueueStore$.tasks.set([])
+  },
+
   addTask: (task: UploadTask) => {
     uploadQueueStore$.tasks.push({
       ...task,

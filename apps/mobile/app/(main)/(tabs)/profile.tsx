@@ -1,5 +1,6 @@
 import {
   appActions,
+  deleteAllLocalBackups,
   getBondfireVideoIndex,
   parseError,
   requestPushPermission,
@@ -201,7 +202,7 @@ export default function ProfileScreen() {
   const updateProfile = useMutation(api.users.updateProfile)
   const generateProfilePhotoUploadUrl = useMutation(api.users.generateProfilePhotoUploadUrl)
   const updateProfilePhoto = useMutation(api.users.updateProfilePhoto)
-  const deleteAccountMutation = useMutation(api.users.deleteAccount)
+  const deleteAccountMutation = useMutation(api.accountDeletion.request)
   const adminSetForcedTier = useMutation(api.admin.adminSetForcedTier)
   const adminGrantKindling = useMutation(api.admin.adminGrantKindling)
   const adminSetMinVersion = useMutation(api.publicConfig.setMinVersion)
@@ -294,7 +295,15 @@ export default function ProfileScreen() {
         text: 'Sign Out',
         style: 'destructive',
         onPress: async () => {
+          try {
+            await deleteAllLocalBackups()
+          } catch (error) {
+            telemetry.warn('backup:cleanup', 'Could not clear local backups during sign out', {
+              error: parseError(error).message,
+            })
+          }
           await signOut()
+          uploadQueueActions.clear()
           appActions.logout()
           router.replace(routes.login())
         },
@@ -391,7 +400,7 @@ export default function ProfileScreen() {
   const handleDeleteAccount = useCallback(() => {
     Alert.alert(
       'Delete Account',
-      'Are you sure you want to permanently delete your account? This will delete all your bondfires, videos, and data. This action cannot be undone.',
+      'This permanently closes your account and starts deletion of your profile, Bondfires, videos, and social activity. Store purchase identifiers may be retained without your profile for fraud prevention and accounting. Manage any active subscription in the App Store or Google Play to prevent future charges.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -400,7 +409,7 @@ export default function ProfileScreen() {
           onPress: () => {
             Alert.alert(
               'Final Confirmation',
-              'This is permanent. All your data will be deleted forever.',
+              'This is permanent. You will be signed out immediately. Deletion continues safely in the background and may take time if a video provider is temporarily unavailable. This does not cancel an App Store or Google Play subscription.',
               [
                 { text: 'Keep My Account', style: 'cancel' },
                 {
@@ -410,7 +419,8 @@ export default function ProfileScreen() {
                     state$.isDeleting.set(true)
                     try {
                       await deleteAccountMutation()
-                      await signOut()
+                      await Promise.allSettled([deleteAllLocalBackups(), signOut()])
+                      uploadQueueActions.clear()
                       appActions.logout()
                       router.replace(routes.login())
                     } catch (error) {

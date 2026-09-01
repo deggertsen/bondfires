@@ -545,6 +545,40 @@ function statusUnlocksEntitlements(status: StoreSyncStatus) {
   return status === 'active' || status === 'trialing'
 }
 
+async function wasRetainedForDeletedAccount(
+  ctx: MutationCtx,
+  args: {
+    storeTransactionId?: string
+    storeOriginalTransactionId?: string
+    storePurchaseToken?: string
+  },
+) {
+  if (args.storeTransactionId) {
+    const row = await ctx.db
+      .query('deletedAccountPurchaseRecords')
+      .withIndex('by_transaction', (q) => q.eq('storeTransactionId', args.storeTransactionId))
+      .first()
+    if (row) return true
+  }
+  if (args.storeOriginalTransactionId) {
+    const row = await ctx.db
+      .query('deletedAccountPurchaseRecords')
+      .withIndex('by_original_transaction', (q) =>
+        q.eq('storeOriginalTransactionId', args.storeOriginalTransactionId),
+      )
+      .first()
+    if (row) return true
+  }
+  if (args.storePurchaseToken) {
+    const row = await ctx.db
+      .query('deletedAccountPurchaseRecords')
+      .withIndex('by_purchase_token', (q) => q.eq('storePurchaseToken', args.storePurchaseToken))
+      .first()
+    if (row) return true
+  }
+  return false
+}
+
 async function findExistingSubscription(
   ctx: MutationCtx,
   args: {
@@ -751,6 +785,10 @@ export const syncStorePurchase = mutation({
 
     assertStoreIdentifiers(args)
 
+    if (await wasRetainedForDeletedAccount(ctx, args)) {
+      throw new Error('This store purchase belonged to a deleted account and cannot be reused')
+    }
+
     const now = Date.now()
     const storeOriginalTransactionId = getStoreOriginalTransactionId(args)
     let syncStatus: StoreSyncStatus = 'pending_verification'
@@ -886,6 +924,11 @@ export const applyStorePurchaseVerification = internalMutation({
   },
   handler: async (ctx, args): Promise<{ tier: SubscriptionTier; status: StoreSyncStatus }> => {
     assertStoreProductMatchesKind(args.storeProductId, args.kind)
+
+    const user = await ctx.db.get(args.userId)
+    if (!user || user.accountDeletionStatus) {
+      return { tier: 'free', status: 'expired' }
+    }
 
     const now = Date.now()
     let appliedStatus: StoreSyncStatus = args.status

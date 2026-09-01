@@ -1810,23 +1810,36 @@ export const createMuxDirectUpload = action({
     const uploadUrl = readString(data.url, 'upload url')
     const expiresIn = readOptionalNumber(data.timeout) ?? payload.timeout
 
-    const pendingRecord: {
+    let pendingRecord: {
       recordId: Id<'bondfires'> | Id<'bondfireVideos'>
       recordType: 'bondfire' | 'response'
-    } = await ctx.runMutation(internal.videos.createPendingMuxVideo, {
-      userId,
-      uploadId,
-      isResponse: args.isResponse,
-      bondfireId: args.bondfireId,
-      campId: args.campId,
-      personalCamp: args.personalCamp,
-      tags: args.tags,
-      playbackPolicy,
-      durationMs: args.durationMs,
-      width: args.width,
-      height: args.height,
-      draftBondfireId: args.draftBondfireId,
-    })
+    }
+    try {
+      pendingRecord = await ctx.runMutation(internal.videos.createPendingMuxVideo, {
+        userId,
+        uploadId,
+        isResponse: args.isResponse,
+        bondfireId: args.bondfireId,
+        campId: args.campId,
+        personalCamp: args.personalCamp,
+        tags: args.tags,
+        playbackPolicy,
+        durationMs: args.durationMs,
+        width: args.width,
+        height: args.height,
+        draftBondfireId: args.draftBondfireId,
+      })
+    } catch (error) {
+      // The account may have entered deletion after Mux created the signed
+      // upload URL but before Convex linked it. Cancel the upload so a client
+      // already holding the URL cannot create an untracked asset.
+      try {
+        await muxRequest(`/uploads/${uploadId}/cancel`, { method: 'PUT' })
+      } catch (cancelError) {
+        console.warn('Failed to cancel unlinked Mux direct upload:', cancelError)
+      }
+      throw error
+    }
 
     return {
       uploadId,
@@ -4049,6 +4062,9 @@ export const createPendingMuxVideo = internalMutation({
   handler: async (ctx, args) => {
     const now = Date.now()
     const user = await ctx.db.get(args.userId)
+    if (!user || user.accountDeletionStatus) {
+      throwUserError('This account is being deleted')
+    }
 
     if (args.isResponse) {
       if (!args.bondfireId) {
