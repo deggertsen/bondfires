@@ -149,6 +149,9 @@ adb shell am start -W -a android.intent.action.VIEW \
   -d 'https://bondfires.org/invite/camp/app-link-check'
 adb shell am start -W -a android.intent.action.VIEW \
   -c android.intent.category.BROWSABLE \
+  -d 'https://bondfires.app/invite/family/app-link-check'
+adb shell am start -W -a android.intent.action.VIEW \
+  -c android.intent.category.BROWSABLE \
   -d 'https://bondfires.app/personal-bondfire/app-link-check/app-link-check'
 ```
 
