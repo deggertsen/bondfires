@@ -2,11 +2,113 @@ import { v } from 'convex/values'
 import type { Id } from './_generated/dataModel'
 import type { MutationCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
+import { enforceWatchEventLimit } from './abuseLimits'
 import { auth } from './auth'
 import { buildViewerVisibilityContext, isBondfireVisibleToViewer } from './bondfireVisibility'
 
 type WatchVideoType = 'bondfire' | 'response'
 type WatchEventType = 'start' | 'milestone_25' | 'milestone_50' | 'milestone_75' | 'complete'
+
+const MAX_WATCH_POSITION_MS = 6 * 60 * 60 * 1_000
+const MAX_WATCH_HISTORY_LIMIT = 100
+const WATCH_EVENT_RATIOS: Partial<Record<WatchEventType, number>> = {
+  milestone_25: 0.2,
+  milestone_50: 0.45,
+  milestone_75: 0.7,
+  complete: 0.85,
+}
+
+export function normalizeWatchHistoryLimit(limit: number | undefined) {
+  if (limit === undefined || !Number.isFinite(limit)) return 50
+  return Math.min(Math.max(Math.trunc(limit), 1), MAX_WATCH_HISTORY_LIMIT)
+}
+
+export function validateWatchEventState(args: {
+  eventType: WatchEventType
+  positionMs: number
+  serverDurationMs?: number
+  hasStart: boolean
+  alreadyRecorded: boolean
+}):
+  | 'duplicate'
+  | 'invalid_position'
+  | 'start_required'
+  | 'duration_unavailable'
+  | 'position_too_early'
+  | null {
+  if (args.alreadyRecorded) return 'duplicate'
+  if (
+    !Number.isInteger(args.positionMs) ||
+    args.positionMs < 0 ||
+    args.positionMs > MAX_WATCH_POSITION_MS
+  ) {
+    return 'invalid_position'
+  }
+  if (args.eventType === 'start') return args.positionMs <= 5_000 ? null : 'invalid_position'
+  if (!args.hasStart) return 'start_required'
+
+  const ratio = WATCH_EVENT_RATIOS[args.eventType]
+  if (
+    ratio !== undefined &&
+    (args.serverDurationMs === undefined ||
+      !Number.isFinite(args.serverDurationMs) ||
+      args.serverDurationMs <= 0)
+  ) {
+    return 'duration_unavailable'
+  }
+  if (
+    ratio !== undefined &&
+    args.serverDurationMs !== undefined &&
+    args.positionMs < args.serverDurationMs * ratio
+  ) {
+    return 'position_too_early'
+  }
+  if (
+    args.serverDurationMs !== undefined &&
+    args.serverDurationMs > 0 &&
+    args.positionMs > args.serverDurationMs + 30_000
+  ) {
+    return 'invalid_position'
+  }
+  return null
+}
+
+function isPlayable(record: {
+  videoStatus?: string
+  muxPlaybackId?: string
+  muxLivePlaybackId?: string
+}) {
+  const status = record.videoStatus ?? 'ready'
+  return (
+    (status === 'ready' && !!record.muxPlaybackId) ||
+    (status === 'live' && !!record.muxLivePlaybackId)
+  )
+}
+
+async function resolveVisibleWatchTarget(
+  ctx: MutationCtx,
+  args: { videoType: WatchVideoType; videoId: string },
+  viewerId: Id<'users'>,
+) {
+  const viewer = await buildViewerVisibilityContext(ctx, viewerId)
+  if (args.videoType === 'bondfire') {
+    const id = ctx.db.normalizeId('bondfires', args.videoId)
+    if (!id) return null
+    const bondfire = await ctx.db.get(id)
+    if (!bondfire || !isPlayable(bondfire)) return null
+    if (!(await isBondfireVisibleToViewer(ctx, bondfire, viewer))) return null
+    return { durationMs: bondfire.durationMs }
+  }
+
+  const id = ctx.db.normalizeId('bondfireVideos', args.videoId)
+  if (!id) return null
+  const response = await ctx.db.get(id)
+  if (!response || !isPlayable(response)) return null
+  if (response.expiresAt !== undefined && response.expiresAt <= Date.now()) return null
+  const bondfire = await ctx.db.get(response.bondfireId)
+  if (!bondfire || !(await isBondfireVisibleToViewer(ctx, bondfire, viewer))) return null
+  return { durationMs: response.durationMs }
+}
 
 export function getProfileViewCountChanges({
   videoType,
@@ -138,14 +240,39 @@ export const record = mutation({
       throw new Error('Not authenticated')
     }
 
-    const profileViewResult = await incrementProfileViews(ctx, args, userId)
-    if (
-      args.eventType === 'start' &&
-      !profileViewResult.counted &&
-      (profileViewResult.reason === 'video_not_found' || profileViewResult.reason === 'not_visible')
-    ) {
-      return { recorded: false, reason: profileViewResult.reason }
-    }
+    await enforceWatchEventLimit(ctx, userId)
+    const target = await resolveVisibleWatchTarget(ctx, args, userId)
+    if (!target) return { recorded: false, reason: 'unavailable' as const }
+
+    const [existing, start] = await Promise.all([
+      ctx.db
+        .query('watchEvents')
+        .withIndex('by_user_video_event', (q) =>
+          q.eq('userId', userId).eq('videoId', args.videoId).eq('eventType', args.eventType),
+        )
+        .first(),
+      args.eventType === 'start'
+        ? Promise.resolve(null)
+        : ctx.db
+            .query('watchEvents')
+            .withIndex('by_user_video_event', (q) =>
+              q.eq('userId', userId).eq('videoId', args.videoId).eq('eventType', 'start'),
+            )
+            .first(),
+    ])
+    const stateError = validateWatchEventState({
+      eventType: args.eventType,
+      positionMs: args.positionMs,
+      serverDurationMs: target.durationMs,
+      hasStart: start !== null,
+      alreadyRecorded: existing !== null,
+    })
+    if (stateError) return { recorded: false, reason: stateError }
+
+    const profileViewResult =
+      args.eventType === 'start'
+        ? await incrementProfileViews(ctx, args, userId)
+        : ({ counted: false, reason: 'not_start' } as const)
 
     await ctx.db.insert('watchEvents', {
       userId,
@@ -153,7 +280,9 @@ export const record = mutation({
       videoId: args.videoId,
       eventType: args.eventType,
       positionMs: args.positionMs,
-      durationMs: args.durationMs,
+      // Duration is authoritative media metadata. The optional client field is
+      // retained in the API only for compatibility with deployed builds.
+      durationMs: target.durationMs,
       createdAt: Date.now(),
     })
 
@@ -205,7 +334,7 @@ export const getHistory = query({
       return []
     }
 
-    const limit = args.limit ?? 50
+    const limit = normalizeWatchHistoryLimit(args.limit)
 
     return await ctx.db
       .query('watchEvents')

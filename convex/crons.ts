@@ -96,6 +96,12 @@ crons.daily(
   internal.videos.purgeOldWebhookEvents,
 )
 
+crons.daily(
+  'cleanup stale abuse windows',
+  { hourUTC: 12, minuteUTC: 20 },
+  internal.abuseLimits.cleanupStale,
+)
+
 // Cleanup expired invite codes.
 // Runs daily at 12:30 UTC, after log purge.
 crons.daily(

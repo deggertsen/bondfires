@@ -395,6 +395,7 @@ function AppContent() {
     redeemInviteCode({ code: pendingInviteCode })
       .then((result) => {
         if (cancelled) return
+        if (result.type === 'invalid') throw new Error('Invite unavailable')
         router.replace(
           result.type === 'camp'
             ? routes.camp(result.campId)
@@ -404,7 +405,7 @@ function AppContent() {
         )
       })
       .catch((error) => {
-        telemetry.warn('invite:pendingRedeem', String(error), { code: pendingInviteCode })
+        telemetry.warn('invite:pendingRedeem', String(error))
       })
       .finally(() => {
         if (!cancelled && appStore$.pendingInviteCode.peek() === pendingInviteCode) {

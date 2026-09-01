@@ -4,6 +4,7 @@ import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalMutation, mutation, query } from './_generated/server'
 import { getUserAgeBand } from './agePolicy'
+import { enforceInviteAttemptLimit, enforceInviteLookupLimit } from './abuseLimits'
 import { auth } from './auth'
 import { requireUgcPermission } from './contentSafety'
 import {
@@ -22,6 +23,8 @@ import { createDirectInviteHandler } from './inviteClaims'
 import {
   findReusableInviteCode,
   generateAndInsertInviteCode,
+  isInviteCodeClaimable,
+  isSecureInviteCode,
   normalizeInviteCode,
 } from './inviteCodes'
 import {
@@ -181,8 +184,11 @@ async function deleteDraftBondfireCascade(ctx: MutationCtx, bondfire: Doc<'bondf
  * Sets personalCampId instead of campId.
  * Checks the hearth exists and is active.
  */
-export const createBondfire = mutation({
+// Legacy record attachment is internal-only. Public uploads create a pending
+// row through videos.createMuxDirectUpload and attach only verified Mux state.
+export const createBondfire = internalMutation({
   args: {
+    userId: v.id('users'),
     muxUploadId: v.optional(v.string()),
     muxAssetId: v.optional(v.string()),
     muxPlaybackId: v.optional(v.string()),
@@ -202,7 +208,8 @@ export const createBondfire = mutation({
     tags: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
-    const user = await getCurrentUser(ctx)
+    const user = await ctx.db.get(args.userId)
+    if (!user) throwUserError('User not found')
     const now = Date.now()
     await requireUgcPermission(ctx, user._id)
     await assertVideoDurationWithinTierLimit(ctx, user._id, args.durationMs)
@@ -384,8 +391,11 @@ export const sendDraftInvites = mutation({
         await requireUgcPermission(ctx, user._id)
         const now = Date.now()
 
-        if (args.emails.length > MAX_EMAIL_INVITES) {
-          throwUserError(`You can invite up to ${MAX_EMAIL_INVITES} people by email at a time.`)
+        if (
+          args.emails.length > MAX_EMAIL_INVITES ||
+          args.recipientIds.length > MAX_EMAIL_INVITES
+        ) {
+          throwUserError(`You can invite up to ${MAX_EMAIL_INVITES} people at a time.`)
         }
 
         const bondfire = await getPersonalBondfireOrThrow(ctx, args.bondfireId)
@@ -647,10 +657,16 @@ export const redeemInvite = mutation({
     ),
 })
 
-export async function redeemInviteHandler(ctx: MutationCtx, rawCode: string) {
+export async function redeemInviteHandler(
+  ctx: MutationCtx,
+  rawCode: string,
+  options: { rateLimitAlreadyConsumed?: boolean } = {},
+) {
   const user = await getCurrentUser(ctx)
+  if (!options.rateLimitAlreadyConsumed) await enforceInviteAttemptLimit(ctx, user._id)
   const now = Date.now()
   const code = normalizeInviteCode(rawCode)
+  if (!code || code.length > 128) return { invalid: true as const }
 
   const unifiedInvite = await ctx.db
     .query('inviteCodes')
@@ -658,38 +674,32 @@ export async function redeemInviteHandler(ctx: MutationCtx, rawCode: string) {
     .first()
 
   if (!unifiedInvite) {
-    throwUserError('Invite not found.')
+    return { invalid: true as const }
   }
 
-  if (unifiedInvite.expiresAt !== undefined && unifiedInvite.expiresAt <= now) {
-    throwUserError('This invite has expired.')
-  }
-  if (unifiedInvite.maxUses !== undefined && unifiedInvite.uses >= unifiedInvite.maxUses) {
-    throwUserError('This invite has already been used.')
+  if (!isInviteCodeClaimable(unifiedInvite, now)) {
+    return { invalid: true as const }
   }
   if (unifiedInvite.parentType !== 'personal-bondfire') {
-    throwUserError('Invite not found.')
+    return { invalid: true as const }
   }
 
   const bondfireId = unifiedInvite.parentId as Id<'bondfires'>
 
   const bondfire = await ctx.db.get(bondfireId)
   if (!bondfire) {
-    throwUserError('This fire has ended.')
+    return { invalid: true as const }
   }
 
   if (!bondfire.personalCampId) {
-    throwUserError('This bondfire is not part of a hearth.')
+    return { invalid: true as const }
   }
 
   // Draft bondfires are joinable: an invitee lands on the "waiting to start
   // recording" screen (videoStatus 'pending') and is already in the audience
   // when the owner goes live — same experience as a directly-invited user.
-  await assertPersonalCampActive(
-    ctx,
-    bondfire.personalCampId,
-    'The hearth is currently unavailable. The owner may have cancelled their subscription.',
-  )
+  const personalCamp = await ctx.db.get(bondfire.personalCampId)
+  if (!personalCamp || personalCamp.status !== 'active') return { invalid: true as const }
 
   const participant = await ensureActivePersonalBondfireParticipant(ctx, {
     bondfire,
@@ -854,17 +864,64 @@ export const deleteBondfire = mutation({
 
 // ── Queries ────────────────────────────────────────────────────────────────
 
-/**
- * Check if an invite code is valid and return bondfire info.
- * Used by the client before showing the join screen.
- */
+// Compatibility path for deployed clients that called this endpoint as a
+// query. Queries cannot transactionally consume an abuse counter, so this
+// accepts only new >100-bit codes; legacy low-entropy codes fail closed.
+// Current clients use the throttled, object-bound mutation below.
 export const checkInvite = query({
+  args: { code: v.string() },
+  handler: async (ctx, args) => {
+    await getCurrentUser(ctx)
+    const code = normalizeInviteCode(args.code)
+    const unavailable = { valid: false as const, reason: 'unavailable' as const }
+    if (!isSecureInviteCode(code)) return unavailable
+
+    const invite = await ctx.db
+      .query('inviteCodes')
+      .withIndex('by_code', (q) => q.eq('code', code))
+      .first()
+    if (
+      !invite ||
+      !isInviteCodeClaimable(invite, Date.now()) ||
+      invite.parentType !== 'personal-bondfire'
+    ) {
+      return unavailable
+    }
+
+    const bondfire = await ctx.db.get(invite.parentId as Id<'bondfires'>)
+    if (!bondfire?.personalCampId) return unavailable
+    const personalCamp = await ctx.db.get(bondfire.personalCampId)
+    if (!personalCamp || personalCamp.status !== 'active') return unavailable
+
+    const [participantCount, owner] = await Promise.all([
+      getActivePersonalBondfireParticipantCount(ctx, bondfire._id),
+      ctx.db.get(bondfire.userId),
+    ])
+    const ownerTier = owner ? await getEntitlementSubscriptionTier(ctx, owner._id) : 'free'
+    return {
+      valid: true as const,
+      bondfireId: bondfire._id,
+      creatorName: bondfire.creatorName,
+      participantCount,
+      cap: getPersonalBondfireParticipantCap(ownerTier),
+    }
+  },
+})
+
+/** Authenticated, throttled invite validation used before the join screen. */
+export const checkInviteSecure = mutation({
   args: {
     code: v.string(),
+    bondfireId: v.id('bondfires'),
   },
   handler: async (ctx, args) => {
+    const user = await getCurrentUser(ctx)
+    await enforceInviteLookupLimit(ctx, user._id)
     const code = normalizeInviteCode(args.code)
     const now = Date.now()
+
+    const unavailable = { valid: false as const, reason: 'unavailable' as const }
+    if (!code || code.length > 128) return unavailable
 
     // Check unified inviteCodes table
     const invite = await ctx.db
@@ -873,42 +930,29 @@ export const checkInvite = query({
       .first()
 
     if (!invite) {
-      return { valid: false, reason: 'not_found' as const }
+      return unavailable
     }
 
-    if (invite.expiresAt !== undefined && invite.expiresAt <= now) {
-      return { valid: false, reason: 'expired' as const }
-    }
-
-    if (invite.maxUses !== undefined && invite.uses >= invite.maxUses) {
-      return { valid: false, reason: 'used' as const }
+    if (!isInviteCodeClaimable(invite, now)) {
+      return unavailable
     }
 
     if (invite.parentType !== 'personal-bondfire') {
-      return { valid: false, reason: 'not_found' as const }
+      return unavailable
     }
 
     const bondfire = await ctx.db.get(invite.parentId as Id<'bondfires'>)
-    if (!bondfire) {
-      return { valid: false, reason: 'ended' as const }
-    }
+    if (!bondfire || bondfire._id !== args.bondfireId) return unavailable
     if (!bondfire.personalCampId) {
-      return { valid: false, reason: 'invalid' as const }
+      return unavailable
     }
     const personalCamp = await ctx.db.get(bondfire.personalCampId)
     if (!personalCamp || personalCamp.status !== 'active') {
-      return { valid: false, reason: 'frozen' as const }
+      return unavailable
     }
-    const activeCount = await getActivePersonalBondfireParticipantCount(ctx, bondfire._id)
-    const owner = await ctx.db.get(bondfire.userId)
-    const ownerTier = owner ? await getEntitlementSubscriptionTier(ctx, owner._id) : 'free'
-    const cap = getPersonalBondfireParticipantCap(ownerTier)
     return {
-      valid: true,
+      valid: true as const,
       bondfireId: bondfire._id,
-      creatorName: bondfire.creatorName,
-      participantCount: activeCount,
-      cap,
     }
   },
 })
