@@ -48,6 +48,7 @@ import {
   PICTURE_IN_PICTURE_STOP_PAUSE_GRACE_MS,
   type ProgressBarMetrics,
   resetReactionState,
+  STALL_SOFT_TIMEOUT_MS,
   shouldLoadVideoSource,
   shouldOwnPlaybackSession,
   shouldPauseAfterPictureInPictureStop,
@@ -297,11 +298,16 @@ export function VideoPlayer({
   // retry overlay. Reset whenever the source changes — a new URL is a new
   // playback attempt with a fresh budget.
   const errorRetryRef = useRef({ count: 0, timer: null as ReturnType<typeof setTimeout> | null })
+  // Source key of the last attempted stall-recovery reload. Prevents
+  // duplicate recovery reloads within one load attempt; a user retry or a
+  // new source resets the recovery budget.
+  const stallRecoverySourceKeyRef = useRef<string | null>(null)
   const hasRecordedPlaybackStartRef = useRef(false)
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: currentUrl is the reset trigger, not read inside
   useEffect(() => {
     errorRetryRef.current.count = 0
+    stallRecoverySourceKeyRef.current = null
     userPausedRef.current = false
     state$.hasError.set(false)
     return () => {
@@ -396,6 +402,7 @@ export function VideoPlayer({
       isLive,
     })
     errorRetryRef.current.count = 0
+    stallRecoverySourceKeyRef.current = null
     state$.hasError.set(false)
     state$.isLoading.set(true)
     // Tapping "Try Again" is explicit play intent.
@@ -414,6 +421,59 @@ export function VideoPlayer({
         // player was released while replacement was in flight.
       })
   }, [currentSource, state$, videoId, isLive, resumePlaybackAfterRecovery, withCurrentPlayer])
+
+  // A buffer is normal; a stall that outlasts STALL_SOFT_TIMEOUT_MS does not
+  // recover on its own, and the fatal-error path never fires — the player
+  // reports no error while hung on a buffer. Without recovery the viewer
+  // stares at a spinner until the give-up overlay. One bounded reload
+  // re-issues the stalled request (telemetry shows stalls coincide with
+  // network drops). Skipped on initial load, over a deliberate user pause,
+  // and without playback intent, so recovery can never fight the viewer.
+  const scheduleStallRecovery = useCallback(() => {
+    if (!currentUrl) return
+    if (stallRecoverySourceKeyRef.current === currentUrl) return
+    // Mid-playback recovery only: a first load that never reached 'playing'
+    // gets the give-up overlay, not a speculative reload of a URL that may
+    // simply be slow.
+    if (!hasRecordedPlaybackStartRef.current) return
+    const gate = playbackGateRef.current
+    if (!gate.isActive || !gate.isScreenFocused) return
+    if (shouldSuppressPlayback) return
+    if (userPausedRef.current) return
+    if (!(appStore$.preferences.autoplayVideos.peek() || state$.userInitiatedPlay.peek())) return
+
+    stallRecoverySourceKeyRef.current = currentUrl
+    state$.isLoading.set(true)
+    telemetry.warn('video:stall_recovery', 'Auto-reloading video after buffering stall', {
+      videoId,
+      isLive,
+    })
+    const replacePromise = withCurrentPlayer((currentPlayer) =>
+      currentPlayer.replaceAsync(currentUrl),
+    )
+    if (!replacePromise) {
+      stallRecoverySourceKeyRef.current = null
+      state$.isLoading.set(false)
+      return
+    }
+    replacePromise
+      .then(() => {
+        resumePlaybackAfterRecovery()
+      })
+      .catch(() => {
+        // A rejected replace surfaces through statusChange 'error', or this
+        // player was released while replacement was in flight. The key stays
+        // set for this load attempt — the give-up timer still bounds it.
+      })
+  }, [
+    currentUrl,
+    shouldSuppressPlayback,
+    state$,
+    videoId,
+    isLive,
+    resumePlaybackAfterRecovery,
+    withCurrentPlayer,
+  ])
 
   // Caption cues, fetched lazily when captions are on and this video has a
   // caption track. Cue matching happens in the timeUpdate listener below.
@@ -876,8 +936,20 @@ export function VideoPlayer({
       state$.hasError.set(true)
     }, stallGiveUpMs)
 
+    // Single bounded auto-recovery for mid-playback stalls (VOD only, gated
+    // to this focused session). Fatal errors already auto-retry; on a first
+    // load with no prior readyToPlay, the give-up overlay is the right UX.
+    const softTimer = isLive
+      ? null
+      : setTimeout(() => {
+          scheduleStallRecovery()
+        }, STALL_SOFT_TIMEOUT_MS)
+
     return () => {
       clearTimeout(stallWarnTimer)
+      if (softTimer) {
+        clearTimeout(softTimer)
+      }
       clearTimeout(giveUpTimer)
     }
   }, [
@@ -889,6 +961,7 @@ export function VideoPlayer({
     state$,
     videoId,
     isLive,
+    scheduleStallRecovery,
     stallGiveUpMs,
   ])
 
