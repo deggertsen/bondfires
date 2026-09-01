@@ -112,12 +112,6 @@
         }
       ],
       [
-        "expo-av",
-        {
-          "microphonePermission": "Bondfires needs access to your microphone to record audio with your videos."
-        }
-      ],
-      [
         "expo-notifications",
         {
           "icon": "./assets/images/notification-icon.png",
