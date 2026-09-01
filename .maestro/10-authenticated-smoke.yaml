@@ -1,0 +1,29 @@
+appId: org.bondfires
+name: Staging authenticated navigation and account safety
+---
+- launchApp:
+    clearState: true
+- assertVisible: Welcome back
+- tapOn: you@example.com
+- inputText: ${MAESTRO_TEST_EMAIL}
+- tapOn: Your password
+- inputText: ${MAESTRO_TEST_PASSWORD}
+- tapOn: Sign In
+- extendedWaitUntil:
+    visible: Home
+    timeout: 30000
+- tapOn: Camps
+- assertVisible: Camps
+- tapOn: Profile
+- assertVisible: Profile
+- scrollUntil:
+    element:
+      text: Delete Account
+    direction: DOWN
+- assertVisible: Delete Account
+- tapOn: Sign Out
+- assertVisible: Are you sure you want to sign out?
+- tapOn: Sign Out
+- extendedWaitUntil:
+    visible: Welcome back
+    timeout: 10000

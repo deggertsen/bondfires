@@ -10,6 +10,7 @@ import Constants from 'expo-constants'
 import * as Device from 'expo-device'
 import { AppState, Platform } from 'react-native'
 import { createMMKV, type MMKV } from 'react-native-mmkv'
+import { redactSensitiveText, scrubTelemetryValue } from './privacyScrubber'
 
 // ---------------------------------------------------------------------------
 // React Native global declarations
@@ -516,9 +517,9 @@ export class TelemetryLogger {
 
     this.queue.push({
       level,
-      event,
-      message,
-      data: serializeForConvex(data),
+      event: redactSensitiveText(event),
+      message: redactSensitiveText(message),
+      data: scrubTelemetryValue(serializeForConvex(data)),
       platform: this.platform,
       appVersion: this.appVersion,
       sessionId: this.sessionId,
@@ -549,7 +550,14 @@ export class TelemetryLogger {
     for (let i = 0; i < batch.length; i += TELEMETRY_BATCH_SIZE) {
       const chunk = batch.slice(i, i + TELEMETRY_BATCH_SIZE)
       try {
-        await this._mutationCreateBatch({ entries: chunk })
+        await this._mutationCreateBatch({
+          entries: chunk.map((entry) => ({
+            ...entry,
+            event: redactSensitiveText(entry.event),
+            message: redactSensitiveText(entry.message),
+            data: scrubTelemetryValue(entry.data),
+          })),
+        })
       } catch {
         // Keep failed entries instead of dropping them. The flush can fail for
         // non-user-facing reasons — a transient network blip or the

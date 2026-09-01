@@ -1,0 +1,10 @@
+appId: org.bondfires
+name: Signed-out deep-link routing
+---
+- launchApp:
+    clearState: true
+- assertVisible: Welcome back
+- openLink: bondfires://invite/maestro-invalid-invite
+- extendedWaitUntil:
+    visible: Welcome back
+    timeout: 10000
