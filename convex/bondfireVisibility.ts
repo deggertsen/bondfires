@@ -9,6 +9,9 @@ import { getEntitlementSubscriptionTier } from './entitlements'
 import { canViewPersonalBondfire } from './personalBondfireAccess'
 import { getBlockedUserIds } from './userSafety'
 
+const VIEWER_MEMBERSHIP_READ_MAX = 500
+const VIEWER_INVITE_CLAIM_READ_MAX = 500
+
 /**
  * Per-request viewer context for bondfire visibility checks.
  *
@@ -57,11 +60,11 @@ export async function buildViewerVisibilityContext(
     ctx.db
       .query('campMembers')
       .withIndex('by_user', (q) => q.eq('userId', userId).eq('status', 'active'))
-      .collect(),
+      .take(VIEWER_MEMBERSHIP_READ_MAX),
     ctx.db
       .query('inviteClaims')
       .withIndex('by_claimer', (q) => q.eq('claimerId', userId))
-      .collect(),
+      .take(VIEWER_INVITE_CLAIM_READ_MAX),
     getBlockedUserIds(ctx, userId),
   ])
 
