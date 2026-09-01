@@ -47,10 +47,34 @@ The automated gate covers:
 - Centralized route usage and unsafe route-cast detection
 - Registered environment-variable ownership and required production build configuration
 - Matching iOS/Android build numbers and deep-link hosts
+- Offline App Links contract checks for package, hosts, path prefixes, Apple app ID, and
+  certificate-fingerprint syntax
 - Repository intelligence coverage and known operational-documentation drift
 
 Run `yarn validate` directly when diagnosing a failure. The release command runs it again so the
 production path never depends on a remembered manual checklist.
+
+### App Links release gate
+
+Android releases additionally run `yarn check:app-links:live` before changing the version or
+touching production. The live check requires both `bondfires.org` and `bondfires.app` to serve,
+without redirects:
+
+- valid `application/json` association files;
+- an `org.bondfires` Digital Asset Links statement containing the **Google Play App Signing**
+  SHA-256 certificate;
+- the Apple app ID and all invite/personal-Bondfire paths; and
+- successful browser fallbacks for every supported path shape.
+
+The signing fingerprint is public metadata, not a secret. Commit it to
+`apps/mobile/app-links.json` once copied from Google Play Console, or temporarily supply it as a
+comma-separated `BONDFIRES_PLAY_APP_SIGNING_SHA256` environment variable. Do not use the local AAB
+or EAS upload-key fingerprint as a substitute: Google re-signs production installs with the Play
+App Signing key.
+
+Source of truth: **Google Play Console → Protected with Play → Play app signing → App signing key
+certificate → SHA-256 certificate fingerprint**. The Play Console Digital Asset Links snippet on
+that page is also authoritative.
 
 ## Local build, then submit
 
@@ -105,6 +129,32 @@ needed.
 4. Confirm the Android build is available on the Google Play internal testing track.
 5. Install the store-served builds and smoke-test the affected critical paths.
 6. Monitor application telemetry and user reports closely for the first 24 hours.
+
+For Android, test a build installed from a Play track—not a locally signed AAB/APK. With the device
+online, reset and re-run domain verification:
+
+```bash
+adb shell pm set-app-links --package org.bondfires 0 all
+adb shell pm verify-app-links --re-verify org.bondfires
+# Wait a few minutes for the verifier, then both hosts must say "verified":
+adb shell pm get-app-links org.bondfires
+adb shell pm get-app-links --user cur org.bondfires
+
+# Do not force the package; this proves Android selects Bondfires as the default handler.
+adb shell am start -W -a android.intent.action.VIEW \
+  -c android.intent.category.BROWSABLE \
+  -d 'https://bondfires.app/invite/app-link-check'
+adb shell am start -W -a android.intent.action.VIEW \
+  -c android.intent.category.BROWSABLE \
+  -d 'https://bondfires.org/invite/camp/app-link-check'
+adb shell am start -W -a android.intent.action.VIEW \
+  -c android.intent.category.BROWSABLE \
+  -d 'https://bondfires.app/personal-bondfire/app-link-check/app-link-check'
+```
+
+Each `am start` result must resolve to an `org.bondfires` activity without a browser or chooser.
+Uninstall any development build using the same package before this test; Android can associate only
+one installed app with a domain at a time.
 
 ## Force-update gating
 

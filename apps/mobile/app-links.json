@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "packageName": "org.bondfires",
+  "appleAppId": "A9BJ2VA78M.org.bondfires",
+  "hosts": ["bondfires.org", "bondfires.app"],
+  "androidPathPrefixes": ["/invite/", "/personal-bondfire/"],
+  "applePaths": ["/invite/*", "/invite/camp/*", "/personal-bondfire/*"],
+  "routeSamples": [
+    "/invite/app-link-check",
+    "/invite/camp/app-link-check",
+    "/personal-bondfire/app-link-check/app-link-check"
+  ],
+  "playAppSigningSha256Fingerprints": [],
+  "nonPlaySigningSha256Fingerprints": [
+    "B9:61:12:91:E7:3A:13:96:A2:92:0A:03:BB:05:C4:61:B3:29:85:8D:3C:AE:C4:D5:7D:CF:BC:FA:44:CD:99:74"
+  ]
+}

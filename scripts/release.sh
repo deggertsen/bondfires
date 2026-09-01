@@ -55,6 +55,10 @@ fi
 # --- Deterministic preflight before changing version or production state ---
 echo "🔎 Running repository validation and release preflight..."
 CONVEX_CODEGEN_FULL=1 yarn validate
+if [[ " ${PLATFORMS[*]} " == *" android "* ]]; then
+  echo "🔗 Verifying live Android App Links against the Play App Signing certificate..."
+  yarn check:app-links:live
+fi
 echo "✅ Release preflight passed"
 
 # --- Read current version + build number ---
