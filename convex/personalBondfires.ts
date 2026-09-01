@@ -5,6 +5,7 @@ import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalMutation, mutation, query } from './_generated/server'
 import { getUserAgeBand } from './agePolicy'
 import { auth } from './auth'
+import { requireUgcPermission } from './contentSafety'
 import {
   assertVideoDurationWithinTierLimit,
   getEntitlementSubscriptionTier,
@@ -31,6 +32,7 @@ import {
   getPersonalBondfireParticipantCap,
   getPersonalCampForOwner,
 } from './personalBondfireAccess'
+import { getBlockedUserIds } from './userSafety'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -202,6 +204,7 @@ export const createBondfire = mutation({
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx)
     const now = Date.now()
+    await requireUgcPermission(ctx, user._id)
     await assertVideoDurationWithinTierLimit(ctx, user._id, args.durationMs)
 
     if (args.muxPlaybackPolicy === 'public') {
@@ -229,6 +232,7 @@ export const createBondfire = mutation({
     const bondfireId = await ctx.db.insert('bondfires', {
       userId: user._id,
       creatorName: user.displayName ?? user.name,
+      moderationStatus: 'approved',
       personalCampId: personalCamp._id,
       frozen: false,
       videoStatus: args.videoStatus ?? 'ready',
@@ -286,6 +290,7 @@ export const createDraftBondfire = mutation({
       async () => {
         const user = await getCurrentUser(ctx)
         const now = Date.now()
+        await requireUgcPermission(ctx, user._id)
 
         const tier = await getEntitlementSubscriptionTier(ctx, user._id)
         if (!PAID_TIERS.includes(tier)) {
@@ -320,6 +325,7 @@ export const createDraftBondfire = mutation({
         const bondfireId = await ctx.db.insert('bondfires', {
           userId: user._id,
           creatorName: user.displayName ?? user.name,
+          moderationStatus: 'approved',
           personalCampId: personalCamp._id,
           title: normalizeTitle(args.title),
           frozen: false,
@@ -375,6 +381,7 @@ export const sendDraftInvites = mutation({
       'Something went wrong sending your invites. Please try again.',
       async () => {
         const user = await getCurrentUser(ctx)
+        await requireUgcPermission(ctx, user._id)
         const now = Date.now()
 
         if (args.emails.length > MAX_EMAIL_INVITES) {
@@ -965,16 +972,20 @@ export const getInviteCandidates = query({
 
     const tier = await getEntitlementSubscriptionTier(ctx, userId)
     const participantCap = getPersonalBondfireParticipantCap(tier)
-    const [currentUser, familyUserIds] = await Promise.all([
+    const [currentUser, familyUserIds, blockedUserIds] = await Promise.all([
       ctx.db.get(userId),
       getActiveFamilyConnectionUserIds(ctx, userId),
+      getBlockedUserIds(ctx, userId),
     ])
     const currentAgeBand = currentUser ? getUserAgeBand(currentUser) : null
     const familyUserIdSet = new Set(familyUserIds)
 
     const familyUsers = (
       await Promise.all(familyUserIds.map((familyUserId) => ctx.db.get(familyUserId)))
-    ).filter((user): user is Doc<'users'> => user !== null)
+    ).filter(
+      (user): user is Doc<'users'> =>
+        user !== null && !blockedUserIds.has(user._id) && user.moderationStatus !== 'suspended',
+    )
 
     const pins = await ctx.db
       .query('closeCirclePins')
@@ -986,6 +997,8 @@ export const getInviteCandidates = query({
       (user): user is Doc<'users'> =>
         user !== null &&
         !familyUserIdSet.has(user._id) &&
+        !blockedUserIds.has(user._id) &&
+        user.moderationStatus !== 'suspended' &&
         currentAgeBand !== null &&
         getUserAgeBand(user) === currentAgeBand,
     )
@@ -994,7 +1007,7 @@ export const getInviteCandidates = query({
     const cutoff = Date.now() - RECENT_CONNECTION_WINDOW_MS
     const latestByUser = new Map<Id<'users'>, number>()
     const bump = (candidateId: Id<'users'>, timestamp: number) => {
-      if (candidateId === userId || timestamp < cutoff) {
+      if (candidateId === userId || blockedUserIds.has(candidateId) || timestamp < cutoff) {
         return
       }
       latestByUser.set(candidateId, Math.max(latestByUser.get(candidateId) ?? 0, timestamp))
@@ -1076,6 +1089,8 @@ export const getInviteCandidates = query({
       (user): user is Doc<'users'> =>
         user !== null &&
         !familyUserIdSet.has(user._id) &&
+        !blockedUserIds.has(user._id) &&
+        user.moderationStatus !== 'suspended' &&
         currentAgeBand !== null &&
         getUserAgeBand(user) === currentAgeBand,
     )
@@ -1143,6 +1158,7 @@ export const listParticipants = query({
     if (!(await canViewPersonalBondfire(ctx, { bondfire, userId }))) {
       return []
     }
+    const blockedUserIds = userId ? await getBlockedUserIds(ctx, userId) : new Set<Id<'users'>>()
 
     const authorized = await Promise.all(
       participants.map((participant) =>
@@ -1159,7 +1175,10 @@ export const listParticipants = query({
         .filter((_participant, index) => authorized[index])
         .map((participant) => ctx.db.get(participant.userId)),
     )
-    const users = raw.filter((u): u is Doc<'users'> => u !== null)
+    const users = raw.filter(
+      (u): u is Doc<'users'> =>
+        u !== null && !blockedUserIds.has(u._id) && u.moderationStatus !== 'suspended',
+    )
 
     return users.map((u) => ({
       _id: u._id,

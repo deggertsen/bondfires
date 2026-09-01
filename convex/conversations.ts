@@ -6,11 +6,13 @@ import { auth } from './auth'
 import {
   buildViewerVisibilityContext,
   isBondfireVisibleToViewer,
+  isUserContentVisibleToViewer,
   type ViewerVisibilityContext,
 } from './bondfireVisibility'
 import { throwUserError } from './errors'
 import { addInviteBadgesToBondfires, type BondfireBadge } from './inviteBadges'
 import { getPlayableVideoPlayback, type VideoPlaybackReference } from './lib/latestResponsePlayback'
+import { assertUsersMayInteract } from './userSafety'
 
 type ThreadParticipant = {
   user: PublicUser
@@ -77,7 +79,11 @@ function isPlayableVideoRecord(record: {
 async function getParticipantMap(
   ctx: QueryCtx,
   bondfire: Doc<'bondfires'>,
-  args?: { responseLimit?: number },
+  args?: {
+    responseLimit?: number
+    viewer?: ViewerVisibilityContext
+    viewerId?: Id<'users'>
+  },
 ) {
   const participants = new Map<Id<'users'>, { latestAt: number; videoCount: number }>()
   participants.set(bondfire.userId, { latestAt: bondfire.createdAt, videoCount: 1 })
@@ -92,6 +98,17 @@ async function getParticipantMap(
 
   let latestResponsePlayback: VideoPlaybackReference | null = null
   for (const response of responses) {
+    if (args?.viewer && !(await isUserContentVisibleToViewer(ctx, response.userId, args.viewer))) {
+      continue
+    }
+    if (
+      response.moderationStatus === 'removed' ||
+      (response.moderationStatus === 'pending_review' &&
+        args?.viewerId !== response.userId &&
+        !args?.viewer?.isAdmin)
+    ) {
+      continue
+    }
     const playback = getPlayableVideoPlayback(response)
     if (!playback) continue
     latestResponsePlayback ??= playback
@@ -154,6 +171,7 @@ async function buildThreadSummary(
   args: {
     bondfire: Doc<'bondfires'>
     viewerId: Id<'users'>
+    viewer: ViewerVisibilityContext
     pinnedUserIds: Set<Id<'users'>>
   },
 ): Promise<ThreadSummary | null> {
@@ -162,6 +180,8 @@ async function buildThreadSummary(
     args.bondfire,
     {
       responseLimit: THREAD_RESPONSE_SUMMARY_LIMIT,
+      viewer: args.viewer,
+      viewerId: args.viewerId,
     },
   )
   const participantUsers = await Promise.all(
@@ -242,6 +262,7 @@ async function listSharedThreads(
     const summary = await buildThreadSummary(ctx, {
       bondfire,
       viewerId: args.viewerId,
+      viewer: args.viewer,
       pinnedUserIds: args.pinnedUserIds,
     })
     if (summary) {
@@ -283,6 +304,7 @@ async function listVisiblePrivateCampThreadsByUser(
     const summary = await buildThreadSummary(ctx, {
       bondfire,
       viewerId: args.viewerId,
+      viewer: args.viewer,
       pinnedUserIds: args.pinnedUserIds,
     })
     if (summary) {
@@ -332,7 +354,12 @@ export const listMyFires = query({
         continue
       }
 
-      const summary = await buildThreadSummary(ctx, { bondfire, viewerId: userId, pinnedUserIds })
+      const summary = await buildThreadSummary(ctx, {
+        bondfire,
+        viewerId: userId,
+        viewer,
+        pinnedUserIds,
+      })
       if (summary) {
         threads.push(summary)
       }
@@ -372,6 +399,7 @@ export const listCloseCircle = query({
 
     const entries = []
     for (const pin of pins) {
+      if (viewer.blockedUserIds.has(pin.pinnedUserId)) continue
       const user = await ctx.db.get(pin.pinnedUserId)
       if (!user) {
         continue
@@ -469,6 +497,7 @@ export const pinPerson = mutation({
     if (!ownerId) {
       throwUserError('Not authenticated')
     }
+    await assertUsersMayInteract(ctx, ownerId, args.userId)
     if (ownerId === args.userId) {
       throwUserError('You cannot pin yourself')
     }

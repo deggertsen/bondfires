@@ -45,9 +45,9 @@ Deploy backend enforcement before releasing a client that admits teen users.
    - neither account becomes visible to the other in public Camps, search, or recommendations;
    - either account can revoke the connection, immediately losing every Hearth participant grant
      tied to it; a new relationship requires a new invitation and does not revive old grants; and
-   - reporting continues to work for content shared through a connection. Bondfires does not yet
-     have account-level blocking; add and verify that control before claiming blocking support in
-     store declarations or public safety materials.
+   - reporting and bidirectional account blocking work for content shared through a connection;
+     blocking revokes the Family Connection and its grants so unblocking cannot silently restore
+     the private audience.
 7. Confirm the public child-safety page says 13+, accurately distinguishes public separation from
    controlled private Family Connections, contains the
    published CSAE standards, and lists a monitored child-safety contact.

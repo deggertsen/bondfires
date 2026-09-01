@@ -1,7 +1,7 @@
 import { useObservable, useValue } from '@legendapp/state/react'
 import { X } from '@tamagui/lucide-icons'
 import { useMutation } from 'convex/react'
-import { Modal, Pressable, StyleSheet } from 'react-native'
+import { Alert, Modal, Pressable, StyleSheet } from 'react-native'
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
 import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
@@ -9,11 +9,13 @@ import { CategoryStep } from './CategoryStep'
 import { CommentsStep } from './CommentsStep'
 import { SubCategoryStep } from './SubCategoryStep'
 import { SuccessStep } from './SuccessStep'
+import { TargetStep } from './TargetStep'
 import {
   CATEGORIES,
   type Category,
   type ReportOverlayProps,
   type ReportStep,
+  type ReportTarget,
   type SubCategory,
 } from './types'
 import { WarningStep } from './WarningStep'
@@ -25,7 +27,8 @@ export function ReportOverlay({
   onClose,
 }: ReportOverlayProps) {
   const state$ = useObservable({
-    step: 'category' as ReportStep,
+    step: 'target' as ReportStep,
+    target: null as ReportTarget | null,
     category: null as Category | null,
     subCategory: null as SubCategory | null,
     comments: '',
@@ -39,6 +42,7 @@ export function ReportOverlay({
   const error = useValue(state$.error)
 
   const submitReport = useMutation(api.reports.submit)
+  const blockUser = useMutation(api.userSafety.block)
 
   const handleCategorySelect = (cat: Category) => {
     state$.category.set(cat)
@@ -48,6 +52,11 @@ export function ReportOverlay({
     } else {
       state$.step.set('comments')
     }
+  }
+
+  const handleTargetSelect = (target: ReportTarget) => {
+    state$.target.set(target)
+    state$.step.set('category')
   }
 
   const handleSubCategorySelect = (subCat: SubCategory) => {
@@ -70,10 +79,11 @@ export function ReportOverlay({
     state$.error.set(null)
 
     try {
+      const target = state$.target.get()
       await submitReport({
-        bondfireId,
-        bondfireVideoId,
-        videoOwnerId,
+        bondfireId: target === 'content' ? bondfireId : undefined,
+        bondfireVideoId: target === 'content' ? bondfireVideoId : undefined,
+        reportedUserId: target === 'user' ? videoOwnerId : undefined,
         category,
         subCategory: subCategory || undefined,
         comments: currentComments.trim(),
@@ -93,6 +103,9 @@ export function ReportOverlay({
     if (currentStep === 'subcategory') {
       state$.step.set('category')
       state$.category.set(null)
+    } else if (currentStep === 'category') {
+      state$.step.set('target')
+      state$.target.set(null)
     } else if (currentStep === 'comments') {
       if (category === 'community_guidelines') {
         state$.step.set('subcategory')
@@ -108,6 +121,37 @@ export function ReportOverlay({
 
   const renderContent = () => {
     switch (step) {
+      case 'target':
+        return (
+          <TargetStep
+            onSelect={handleTargetSelect}
+            onBlock={() => {
+              Alert.alert(
+                'Block this user?',
+                'You will no longer see or receive interactions from each other. You can unblock them from Profile.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Block',
+                    style: 'destructive',
+                    onPress: async () => {
+                      try {
+                        await blockUser({ userId: videoOwnerId })
+                        onClose()
+                      } catch (err) {
+                        Alert.alert(
+                          'Unable to block user',
+                          err instanceof Error ? err.message : 'Try again',
+                        )
+                      }
+                    },
+                  },
+                ],
+              )
+            }}
+          />
+        )
+
       case 'category':
         return <CategoryStep onSelect={handleCategorySelect} />
 
@@ -135,7 +179,26 @@ export function ReportOverlay({
         )
 
       case 'success':
-        return <SuccessStep onClose={onClose} />
+        return (
+          <SuccessStep
+            onClose={onClose}
+            isBlocking={isSubmitting}
+            onBlock={async () => {
+              state$.isSubmitting.set(true)
+              try {
+                await blockUser({ userId: videoOwnerId })
+                onClose()
+              } catch (err) {
+                Alert.alert(
+                  'Unable to block user',
+                  err instanceof Error ? err.message : 'Try again',
+                )
+              } finally {
+                state$.isSubmitting.set(false)
+              }
+            }}
+          />
+        )
     }
   }
 

@@ -1,7 +1,8 @@
 import type { Id } from '../../../../convex/_generated/dataModel'
 
 // Report flow step types
-export type ReportStep = 'category' | 'subcategory' | 'comments' | 'warning' | 'success'
+export type ReportStep = 'target' | 'category' | 'subcategory' | 'comments' | 'warning' | 'success'
+export type ReportTarget = 'content' | 'user'
 
 // Main report categories
 export type Category =
@@ -76,6 +77,8 @@ export interface WarningStepProps extends StepProps {
 // Success step props
 export interface SuccessStepProps {
   onClose: () => void
+  onBlock?: () => void
+  isBlocking?: boolean
 }
 
 // Category definitions

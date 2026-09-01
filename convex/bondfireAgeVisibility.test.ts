@@ -13,14 +13,17 @@ function camp(ageBand: 'teen' | 'adult') {
   } as Doc<'camps'>
 }
 
-function viewer(birthDate: string, member = true): ViewerVisibilityContext {
+function viewer(birthDate: string, member = true, isAdmin = false): ViewerVisibilityContext {
   return {
     userId: 'user' as Id<'users'>,
     user: { _id: 'user' as Id<'users'>, birthDate } as Doc<'users'>,
     tier: 'free',
     memberCampIds: member ? new Set(['camp' as Id<'camps'>]) : new Set(),
     claimedBondfireIds: new Set(),
+    blockedUserIds: new Set(),
+    isAdmin,
     campCache: new Map(),
+    userCache: new Map(),
   }
 }
 
@@ -61,6 +64,7 @@ describe('camp content age isolation', () => {
       {} as QueryCtx,
       {
         _id: bondfireId,
+        userId: teenViewer.userId,
         campId: adultCamp._id,
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -69,5 +73,52 @@ describe('camp content age isolation', () => {
     )
     expect(visible).toBe(false)
     vi.useRealTimers()
+  })
+
+  it('limits the admin age-boundary bypass to explicit moderation review', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-31T12:00:00.000Z'))
+    const teenCamp = camp('teen')
+    const adminViewer = viewer('2000-01-01', false, true)
+    const creatorId = 'creator' as Id<'users'>
+    const bondfire = {
+      _id: 'bondfire' as Id<'bondfires'>,
+      userId: creatorId,
+      campId: teenCamp._id,
+      moderationStatus: 'pending_review',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    } as Doc<'bondfires'>
+    adminViewer.campCache.set(teenCamp._id, Promise.resolve(teenCamp))
+    adminViewer.userCache.set(creatorId, Promise.resolve({ _id: creatorId } as Doc<'users'>))
+
+    expect(await isBondfireVisibleToViewer({} as QueryCtx, bondfire, adminViewer)).toBe(false)
+    expect(
+      await isBondfireVisibleToViewer({} as QueryCtx, bondfire, adminViewer, {
+        allowAdminModerationReview: true,
+      }),
+    ).toBe(true)
+    vi.useRealTimers()
+  })
+
+  it('does not grant the moderation review bypass to non-admins', async () => {
+    const adultCamp = camp('adult')
+    const teenViewer = viewer('2010-01-01', false)
+    const creatorId = 'creator' as Id<'users'>
+    const bondfire = {
+      _id: 'bondfire' as Id<'bondfires'>,
+      userId: creatorId,
+      campId: adultCamp._id,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    } as Doc<'bondfires'>
+    teenViewer.campCache.set(adultCamp._id, Promise.resolve(adultCamp))
+    teenViewer.userCache.set(creatorId, Promise.resolve({ _id: creatorId } as Doc<'users'>))
+
+    expect(
+      await isBondfireVisibleToViewer({} as QueryCtx, bondfire, teenViewer, {
+        allowAdminModerationReview: true,
+      }),
+    ).toBe(false)
   })
 })

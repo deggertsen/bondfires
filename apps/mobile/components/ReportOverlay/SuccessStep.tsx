@@ -3,7 +3,7 @@ import { CheckCircle } from '@tamagui/lucide-icons'
 import { YStack } from 'tamagui'
 import type { SuccessStepProps } from './types'
 
-export function SuccessStep({ onClose }: SuccessStepProps) {
+export function SuccessStep({ onClose, onBlock, isBlocking }: SuccessStepProps) {
   return (
     <YStack gap={16} alignItems="center" padding={20}>
       <YStack
@@ -23,6 +23,20 @@ export function SuccessStep({ onClose }: SuccessStepProps) {
         Thanks for helping us keep our community safe! We'll review your report and take appropriate
         action.
       </Text>
+      {onBlock ? (
+        <Button
+          variant="destructive"
+          size="$lg"
+          onPress={onBlock}
+          disabled={isBlocking}
+          width="100%"
+          accessibilityLabel="Block this user"
+        >
+          <Text color={'$color'} fontWeight="600">
+            {isBlocking ? 'Blocking…' : 'Block this user'}
+          </Text>
+        </Button>
+      ) : null}
       <Button variant="primary" size="$lg" onPress={onClose} width="100%">
         <Text color={'$color'} fontWeight="600">
           Done
