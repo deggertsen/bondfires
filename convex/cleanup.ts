@@ -1,9 +1,11 @@
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
+import type { Doc } from './_generated/dataModel'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
 import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 
 const ARCHIVE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+const ARCHIVED_CAMP_BATCH_MAX = 2
 
 // ── Internal Query: Find camps past retention ──
 
@@ -12,14 +14,13 @@ export const listArchivedCampsPastRetention = internalQuery({
     const now = Date.now()
     const cutoff = now - ARCHIVE_RETENTION_MS
 
-    const allCamps = await ctx.db.query('camps').collect()
-    return allCamps.filter(
-      (camp) =>
-        camp.status === 'archived' &&
-        camp.isLaunchCamp !== true &&
-        camp.archivedAt !== undefined &&
-        camp.archivedAt <= cutoff,
-    )
+    const camps = await ctx.db
+      .query('camps')
+      .withIndex('by_status_archived', (q) =>
+        q.eq('status', 'archived').gt('archivedAt', 0).lte('archivedAt', cutoff),
+      )
+      .take(ARCHIVED_CAMP_BATCH_MAX * 2)
+    return camps.filter((camp) => camp.isLaunchCamp !== true).slice(0, ARCHIVED_CAMP_BATCH_MAX)
   },
 })
 
@@ -30,6 +31,9 @@ export const deleteArchivedCampData = internalMutation({
     campIds: v.array(v.id('camps')),
   },
   handler: async (ctx, args) => {
+    if (args.campIds.length > ARCHIVED_CAMP_BATCH_MAX) {
+      throw new Error(`campIds cannot exceed ${ARCHIVED_CAMP_BATCH_MAX}`)
+    }
     if (args.campIds.length === 0) {
       return { cleaned: 0 }
     }
@@ -254,7 +258,7 @@ export const dailyCleanupArchivedCamps = internalAction({
     if (camps.length === 0) {
       return { cleaned: 0 }
     }
-    const campIds = camps.map((c) => c._id)
+    const campIds = camps.map((camp: Doc<'camps'>) => camp._id)
 
     // Step 1: Delete Mux assets for camps past retention
     const muxResult = await ctx.runAction(internal.cleanup.deleteArchivedCampMuxAssets, {})
