@@ -36,6 +36,8 @@ import type * as digest from "../digest.js";
 import type * as email from "../email.js";
 import type * as entitlements from "../entitlements.js";
 import type * as errors from "../errors.js";
+import type * as familyConnections from "../familyConnections.js";
+import type * as familyRelationships from "../familyRelationships.js";
 import type * as http from "../http.js";
 import type * as inviteArtifacts from "../inviteArtifacts.js";
 import type * as inviteBadges from "../inviteBadges.js";
@@ -108,6 +110,8 @@ declare const fullApi: ApiFromModules<{
   email: typeof email;
   entitlements: typeof entitlements;
   errors: typeof errors;
+  familyConnections: typeof familyConnections;
+  familyRelationships: typeof familyRelationships;
   http: typeof http;
   inviteArtifacts: typeof inviteArtifacts;
   inviteBadges: typeof inviteBadges;

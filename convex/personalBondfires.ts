@@ -3,7 +3,7 @@ import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalMutation, mutation, query } from './_generated/server'
-import { assertUsersShareAgeBand, getUserAgeBand } from './agePolicy'
+import { getUserAgeBand } from './agePolicy'
 import { auth } from './auth'
 import {
   assertVideoDurationWithinTierLimit,
@@ -11,6 +11,11 @@ import {
   PAID_TIERS,
 } from './entitlements'
 import { throwUserError, withUserFacingErrors } from './errors'
+import {
+  assertUsersCanShareHearth,
+  getActiveFamilyConnectionUserIds,
+  isHearthParticipantAuthorized,
+} from './familyRelationships'
 import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 import { createDirectInviteHandler } from './inviteClaims'
 import {
@@ -428,15 +433,24 @@ export const sendDraftInvites = mutation({
         const toAdd: Array<{
           recipientId: Id<'users'>
           participant: Doc<'personalBondfireParticipants'> | null
+          familyConnectionId?: Id<'familyConnections'>
         }> = []
         for (const recipientId of recipientIds) {
-          await assertUsersShareAgeBand(ctx, user._id, recipientId)
+          const { familyConnectionId } = await assertUsersCanShareHearth(ctx, user._id, recipientId)
           const participant = await getPersonalBondfireParticipant(ctx, {
             bondfireId: args.bondfireId,
             userId: recipientId,
           })
-          if (participant?.status !== 'active') {
-            toAdd.push({ recipientId, participant })
+          const isAuthorized =
+            participant?.status === 'active' &&
+            (await isHearthParticipantAuthorized(
+              ctx,
+              user._id,
+              recipientId,
+              participant.familyConnectionId,
+            ))
+          if (!isAuthorized) {
+            toAdd.push({ recipientId, participant, familyConnectionId })
           }
         }
         if (activeCount + toAdd.length > cap) {
@@ -446,7 +460,7 @@ export const sendDraftInvites = mutation({
           throwUserError('This fire is full.')
         }
 
-        for (const { recipientId, participant } of toAdd) {
+        for (const { recipientId, participant, familyConnectionId } of toAdd) {
           if (participant) {
             await ctx.db.patch(participant._id, {
               status: 'active',
@@ -454,6 +468,7 @@ export const sendDraftInvites = mutation({
               leftAt: undefined,
               removedAt: undefined,
               removedBy: undefined,
+              familyConnectionId,
               updatedAt: now,
             })
           } else {
@@ -461,6 +476,7 @@ export const sendDraftInvites = mutation({
               bondfireId: args.bondfireId,
               userId: recipientId,
               status: 'active',
+              familyConnectionId,
               joinedAt: now,
               createdAt: now,
               updatedAt: now,
@@ -939,13 +955,21 @@ export const getInviteCandidates = query({
   handler: async (ctx) => {
     const userId = await auth.getUserId(ctx)
     if (!userId) {
-      return { closeCircle: [], recentConnections: [], participantCap: 2 }
+      return { familyConnections: [], closeCircle: [], recentConnections: [], participantCap: 2 }
     }
 
     const tier = await getEntitlementSubscriptionTier(ctx, userId)
     const participantCap = getPersonalBondfireParticipantCap(tier)
-    const currentUser = await ctx.db.get(userId)
+    const [currentUser, familyUserIds] = await Promise.all([
+      ctx.db.get(userId),
+      getActiveFamilyConnectionUserIds(ctx, userId),
+    ])
     const currentAgeBand = currentUser ? getUserAgeBand(currentUser) : null
+    const familyUserIdSet = new Set(familyUserIds)
+
+    const familyUsers = (
+      await Promise.all(familyUserIds.map((familyUserId) => ctx.db.get(familyUserId)))
+    ).filter((user): user is Doc<'users'> => user !== null)
 
     const pins = await ctx.db
       .query('closeCirclePins')
@@ -955,7 +979,10 @@ export const getInviteCandidates = query({
       await Promise.all(pins.map((pin) => ctx.db.get(pin.pinnedUserId)))
     ).filter(
       (user): user is Doc<'users'> =>
-        user !== null && currentAgeBand !== null && getUserAgeBand(user) === currentAgeBand,
+        user !== null &&
+        !familyUserIdSet.has(user._id) &&
+        currentAgeBand !== null &&
+        getUserAgeBand(user) === currentAgeBand,
     )
     const closeCircleIds = new Set(closeCircleUsers.map((user) => user._id))
 
@@ -1042,10 +1069,14 @@ export const getInviteCandidates = query({
       await Promise.all(recentIds.map((candidateId) => ctx.db.get(candidateId)))
     ).filter(
       (user): user is Doc<'users'> =>
-        user !== null && currentAgeBand !== null && getUserAgeBand(user) === currentAgeBand,
+        user !== null &&
+        !familyUserIdSet.has(user._id) &&
+        currentAgeBand !== null &&
+        getUserAgeBand(user) === currentAgeBand,
     )
 
     return {
+      familyConnections: familyUsers.map(toInviteCandidate),
       closeCircle: closeCircleUsers.map(toInviteCandidate),
       recentConnections: recentUsers.map(toInviteCandidate),
       participantCap,
@@ -1108,7 +1139,21 @@ export const listParticipants = query({
       return []
     }
 
-    const raw = await Promise.all(participants.map((p) => ctx.db.get(p.userId)))
+    const authorized = await Promise.all(
+      participants.map((participant) =>
+        isHearthParticipantAuthorized(
+          ctx,
+          bondfire.userId,
+          participant.userId,
+          participant.familyConnectionId,
+        ),
+      ),
+    )
+    const raw = await Promise.all(
+      participants
+        .filter((_participant, index) => authorized[index])
+        .map((participant) => ctx.db.get(participant.userId)),
+    )
     const users = raw.filter((u): u is Doc<'users'> => u !== null)
 
     return users.map((u) => ({

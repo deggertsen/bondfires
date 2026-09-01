@@ -85,7 +85,7 @@ const convex = new ConvexReactClient(convexUrl, {
   unsavedChangesWarning: false,
 })
 
-const INVITE_CODE_REGEX = /^[a-z]+-[a-z]+-[a-z]+$/
+const INVITE_CODE_REGEX = /^(?:[a-z]+-[a-z]+-[a-z]+|family-[a-f0-9]{32})$/
 
 type InstallReferrerNativeModule = {
   getInstallReferrer?: () => Promise<string>
@@ -396,7 +396,11 @@ function AppContent() {
       .then((result) => {
         if (cancelled) return
         router.replace(
-          result.type === 'camp' ? routes.camp(result.campId) : routes.bondfire(result.bondfireId),
+          result.type === 'camp'
+            ? routes.camp(result.campId)
+            : result.type === 'family-connection'
+              ? routes.externalFamilyInvite(result.code)
+              : routes.bondfire(result.bondfireId),
         )
       })
       .catch((error) => {

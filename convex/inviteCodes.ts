@@ -85,7 +85,7 @@ const INVITE_WORDS = [
 const DEFAULT_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 
 /** Parent types for invite codes. */
-type InviteParentType = 'bondfire' | 'personal-bondfire' | 'camp'
+type InviteParentType = 'bondfire' | 'personal-bondfire' | 'camp' | 'family-connection'
 
 export type ReusableInviteCode = Pick<Doc<'inviteCodes'>, '_id' | 'code' | 'expiresAt'>
 

@@ -3,6 +3,7 @@ import type { MutationCtx, QueryCtx } from './_generated/server'
 import { assertUserAgeBand, getPersonalCampAgeBand, getUserAgeBand } from './agePolicy'
 import { getEntitlementSubscriptionTier, PAID_TIERS, type SubscriptionTier } from './entitlements'
 import { throwUserError } from './errors'
+import { assertUsersCanShareHearth, isHearthParticipantAuthorized } from './familyRelationships'
 
 type ConvexCtx = QueryCtx | MutationCtx
 
@@ -45,12 +46,26 @@ export async function getActivePersonalBondfireParticipantCount(
   ctx: ConvexCtx,
   bondfireId: Id<'bondfires'>,
 ): Promise<number> {
-  const participants = await ctx.db
-    .query('personalBondfireParticipants')
-    .withIndex('by_bondfire_status', (q) => q.eq('bondfireId', bondfireId).eq('status', 'active'))
-    .collect()
+  const [bondfire, participants] = await Promise.all([
+    ctx.db.get(bondfireId),
+    ctx.db
+      .query('personalBondfireParticipants')
+      .withIndex('by_bondfire_status', (q) => q.eq('bondfireId', bondfireId).eq('status', 'active'))
+      .collect(),
+  ])
+  if (!bondfire) return 0
 
-  return participants.length
+  const authorized = await Promise.all(
+    participants.map((participant) =>
+      isHearthParticipantAuthorized(
+        ctx,
+        bondfire.userId,
+        participant.userId,
+        participant.familyConnectionId,
+      ),
+    ),
+  )
+  return authorized.filter(Boolean).length
 }
 
 /**
@@ -64,6 +79,8 @@ export async function ensureActivePersonalBondfireParticipant(
     bondfire: Doc<'bondfires'>
     userId: Id<'users'>
     errorAudience: 'owner' | 'invitee'
+    /** Bind this participant to a newly accepted family invitation. */
+    familyConnectionId?: Id<'familyConnections'>
   },
 ): Promise<{ added: boolean }> {
   if (!args.bondfire.personalCampId) {
@@ -82,25 +99,56 @@ export async function ensureActivePersonalBondfireParticipant(
     }
     throwUserError('This fire is unavailable.')
   }
-  const campAgeBand = getPersonalCampAgeBand(personalCamp)
   if (
     !owner ||
     !participantUser ||
-    getUserAgeBand(owner) !== campAgeBand ||
-    getUserAgeBand(participantUser) !== campAgeBand
+    getUserAgeBand(owner) !== getPersonalCampAgeBand(personalCamp)
   ) {
     throwUserError(
       args.errorAudience === 'owner'
-        ? 'Hearth invites can only be sent to people in your age group.'
-        : 'This fire is only available to members in a different age group.',
+        ? 'Your Hearth age group is unavailable.'
+        : 'This fire is unavailable.',
     )
+  }
+  let participantFamilyConnectionId = args.familyConnectionId
+  if (participantFamilyConnectionId) {
+    if (
+      !(await isHearthParticipantAuthorized(
+        ctx,
+        owner._id,
+        participantUser._id,
+        participantFamilyConnectionId,
+      ))
+    ) {
+      throwUserError('This family connection is no longer active.')
+    }
+  } else {
+    const authorization = await assertUsersCanShareHearth(ctx, owner._id, participantUser._id)
+    // Same-age peers have no connection id. Existing cross-age family members
+    // receive the currently active grant.
+    participantFamilyConnectionId = authorization.familyConnectionId
   }
 
   const existing = await getPersonalBondfireParticipant(ctx, {
     bondfireId: args.bondfire._id,
     userId: args.userId,
   })
-  if (existing?.status === 'active') {
+  const existingIsAuthorized =
+    existing?.status === 'active' &&
+    (await isHearthParticipantAuthorized(
+      ctx,
+      owner._id,
+      participantUser._id,
+      existing.familyConnectionId,
+    ))
+  // Ordinary invitations preserve a valid family-bound grant. Explicitly
+  // accepting a family invitation binds the row to that grant so it remains
+  // authorized if either person's age band later changes.
+  if (
+    existingIsAuthorized &&
+    (args.familyConnectionId === undefined ||
+      existing.familyConnectionId === participantFamilyConnectionId)
+  ) {
     return { added: false }
   }
 
@@ -111,7 +159,8 @@ export async function ensureActivePersonalBondfireParticipant(
 
   const cap = getPersonalBondfireParticipantCap(ownerTier)
   const activeCount = await getActivePersonalBondfireParticipantCount(ctx, args.bondfire._id)
-  if (activeCount >= cap) {
+  // Rebinding an already-authorized participant does not consume a new slot.
+  if (!existingIsAuthorized && activeCount >= cap) {
     if (args.errorAudience === 'owner' && ownerTier === 'plus') {
       throwUserError('Upgrade to Premium or Pro to invite more people to your Hearth.')
     }
@@ -121,10 +170,11 @@ export async function ensureActivePersonalBondfireParticipant(
   if (existing) {
     await ctx.db.patch(existing._id, {
       status: 'active',
-      joinedAt: now,
+      joinedAt: existingIsAuthorized ? existing.joinedAt : now,
       leftAt: undefined,
       removedAt: undefined,
       removedBy: undefined,
+      familyConnectionId: participantFamilyConnectionId,
       updatedAt: now,
     })
   } else {
@@ -132,13 +182,14 @@ export async function ensureActivePersonalBondfireParticipant(
       bondfireId: args.bondfire._id,
       userId: args.userId,
       status: 'active',
+      familyConnectionId: participantFamilyConnectionId,
       joinedAt: now,
       createdAt: now,
       updatedAt: now,
     })
   }
 
-  return { added: true }
+  return { added: !existingIsAuthorized }
 }
 
 export async function isActivePersonalBondfireParticipant(
@@ -157,7 +208,15 @@ export async function isActivePersonalBondfireParticipant(
     userId: args.userId,
   })
 
-  return participant?.status === 'active'
+  return (
+    participant?.status === 'active' &&
+    (await isHearthParticipantAuthorized(
+      ctx,
+      args.bondfire.userId,
+      args.userId,
+      participant.familyConnectionId,
+    ))
+  )
 }
 
 export async function isPersonalBondfireActive(ctx: ConvexCtx, bondfire: Doc<'bondfires'>) {
@@ -184,14 +243,12 @@ export async function canViewPersonalBondfire(
     return false
   }
 
-  const [viewer, personalCamp, owner] = await Promise.all([
-    ctx.db.get(args.userId),
+  const [personalCamp, owner] = await Promise.all([
     args.bondfire.personalCampId ? ctx.db.get(args.bondfire.personalCampId) : null,
     ctx.db.get(args.bondfire.userId),
   ])
-  if (!viewer || !personalCamp || !owner) return false
-  const band = getPersonalCampAgeBand(personalCamp)
-  if (getUserAgeBand(viewer) !== band || getUserAgeBand(owner) !== band) return false
+  if (!personalCamp || !owner) return false
+  if (getUserAgeBand(owner) !== getPersonalCampAgeBand(personalCamp)) return false
 
   return await isActivePersonalBondfireParticipant(ctx, {
     bondfire: args.bondfire,

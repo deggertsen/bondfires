@@ -144,6 +144,7 @@ export default function MainLayout() {
           options={{ headerShown: false }}
         />
         <Stack.Screen name="personal-camp" options={{ headerShown: false }} />
+        <Stack.Screen name="family-connections" options={{ headerShown: false }} />
       </Stack>
       <GlobalPaywall />
       <FreeCapabilitiesExplainer />

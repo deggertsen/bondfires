@@ -246,10 +246,15 @@ export default defineSchema({
     .index('by_camp_status', ['campId', 'status'])
     .index('by_camp_status_role', ['campId', 'status', 'role']),
 
-  // Unified invite codes for all invite types (bondfires, personal bondfires, camps)
+  // Unified invite codes for all invite types.
   inviteCodes: defineTable({
     code: v.string(),
-    parentType: v.union(v.literal('bondfire'), v.literal('personal-bondfire'), v.literal('camp')),
+    parentType: v.union(
+      v.literal('bondfire'),
+      v.literal('personal-bondfire'),
+      v.literal('camp'),
+      v.literal('family-connection'),
+    ),
     parentId: v.string(), // bondfire or camp ID (stored as string since it can be either type)
     uses: v.number(),
     maxUses: v.optional(v.number()),
@@ -260,6 +265,7 @@ export default defineSchema({
     .index('by_code', ['code'])
     .index('by_parent', ['parentType', 'parentId', 'createdAt'])
     .index('by_created_by', ['createdBy', 'createdAt'])
+    .index('by_created_by_type', ['createdBy', 'parentType', 'createdAt'])
     .index('by_expires_at', ['expiresAt']),
 
   inviteClaims: defineTable({
@@ -362,13 +368,14 @@ export default defineSchema({
     .index('by_store_transaction', ['storeOriginalTransactionId'])
     .index('by_store_purchase_token', ['storePurchaseToken']),
 
-  // Hearths — user-owned micro-camps for private friend groups
+  // Hearths — user-owned containers for private, participant-gated fires.
   personalCamps: defineTable({
     publicId: v.string(),
     ownerId: v.id('users'),
     name: v.string(),
     status: v.union(v.literal('active'), v.literal('frozen')),
-    // Hearth audiences are age-segregated with the same invariant as camps.
+    // The owner's current age band selects their active Hearth container.
+    // Individual fires may include an explicitly connected family member.
     ageBand: v.optional(ageBand),
     frozenAt: v.optional(v.number()),
     createdAt: v.number(),
@@ -387,6 +394,9 @@ export default defineSchema({
     leftAt: v.optional(v.number()),
     removedAt: v.optional(v.number()),
     removedBy: v.optional(v.id('users')),
+    // Cross-age access is tied to the exact accepted relationship grant. A
+    // revoked connection never becomes valid again if a new one is created.
+    familyConnectionId: v.optional(v.id('familyConnections')),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -395,7 +405,30 @@ export default defineSchema({
     .index('by_bondfire_user', ['bondfireId', 'userId'])
     .index('by_user', ['userId', 'joinedAt'])
     .index('by_user_status', ['userId', 'status', 'joinedAt'])
-    .index('by_removed_by', ['removedBy', 'createdAt']),
+    .index('by_removed_by', ['removedBy', 'createdAt'])
+    .index('by_family_connection_status', ['familyConnectionId', 'status', 'joinedAt']),
+
+  // Explicit, mutually accepted private relationships used only to authorize
+  // cross-age Hearth participation. "Family" is user-declared; Bondfires does
+  // not claim to verify a legal or biological relationship.
+  familyConnections: defineTable({
+    pairKey: v.string(),
+    firstUserId: v.id('users'),
+    secondUserId: v.id('users'),
+    status: v.union(v.literal('active'), v.literal('revoked')),
+    initiatedBy: v.id('users'),
+    acceptedBy: v.id('users'),
+    sourceBondfireId: v.id('bondfires'),
+    sourceInviteCodeId: v.id('inviteCodes'),
+    acceptedAt: v.number(),
+    revokedAt: v.optional(v.number()),
+    revokedBy: v.optional(v.id('users')),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_pair_status', ['pairKey', 'status', 'createdAt'])
+    .index('by_first_status', ['firstUserId', 'status', 'createdAt'])
+    .index('by_second_status', ['secondUserId', 'status', 'createdAt']),
 
   // Invite codes for personal bondfires
   // REMOVED — replaced by inviteCodes table

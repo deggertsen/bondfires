@@ -18,6 +18,7 @@ import { auth } from './auth'
 import { buildViewerVisibilityContext, isBondfireVisibleToViewer } from './bondfireVisibility'
 import { redeemCampInviteHandler } from './camps'
 import { throwUserError, withUserFacingErrors } from './errors'
+import { assertUsersCanShareHearth } from './familyRelationships'
 import {
   findReusableInviteCode,
   generateAndInsertInviteCode,
@@ -186,7 +187,11 @@ async function createDirectInviteCore(ctx: MutationCtx, args: DirectInviteArgs) 
   if (!recipient) {
     throwUserError('Recipient not found')
   }
-  await assertUsersShareAgeBand(ctx, sender._id, recipient._id)
+  if (bondfire.personalCampId) {
+    await assertUsersCanShareHearth(ctx, sender._id, recipient._id)
+  } else {
+    await assertUsersShareAgeBand(ctx, sender._id, recipient._id)
+  }
   if (bondfire.campId) {
     const camp = await ctx.db.get(bondfire.campId)
     if (!camp) throwUserError('Camp not found')
@@ -321,6 +326,12 @@ async function redeemInviteCodeHandler(ctx: MutationCtx, rawCode: string) {
   }
   if (invite.maxUses !== undefined && invite.uses >= invite.maxUses) {
     throwUserError('Invite has already been used')
+  }
+
+  // Family links require a dedicated consent screen. Resolving the generic
+  // invite route must never accept the relationship implicitly.
+  if (invite.parentType === 'family-connection') {
+    return { type: 'family-connection' as const, code }
   }
 
   if (invite.parentType === 'camp') {

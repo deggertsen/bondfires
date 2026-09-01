@@ -1,9 +1,11 @@
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
-import { internalAction, internalMutation, internalQuery } from './_generated/server'
+import { internalAction, internalMutation, internalQuery, type QueryCtx } from './_generated/server'
+import { isUserEligibleForCamp } from './agePolicy'
 import { digestSingleBody } from './lib/notificationCopy'
 import { DEFAULT_DIGEST_WINDOW_HOUR, resolveNotificationPrefs } from './notifications'
+import { canViewPersonalBondfire } from './personalBondfireAccess'
 
 // ── Daily digest + 72h nudge ──
 //
@@ -52,6 +54,35 @@ interface PushUser {
   userId: Id<'users'>
   timezone: string | null
   digestHour: number
+}
+
+async function canReceiveBondfireActivity(
+  ctx: QueryCtx,
+  userId: Id<'users'>,
+  bondfire: Doc<'bondfires'>,
+): Promise<boolean> {
+  if (bondfire.personalCampId) {
+    return await canViewPersonalBondfire(ctx, { bondfire, userId })
+  }
+  if (!bondfire.campId) return bondfire.userId === userId
+
+  const [user, camp, membership] = await Promise.all([
+    ctx.db.get(userId),
+    ctx.db.get(bondfire.campId),
+    ctx.db
+      .query('campMembers')
+      .withIndex('by_user_camp', (q) =>
+        q.eq('userId', userId).eq('campId', bondfire.campId as Id<'camps'>),
+      )
+      .first(),
+  ])
+  return (
+    user !== null &&
+    camp !== null &&
+    membership?.status === 'active' &&
+    !membership.muted &&
+    isUserEligibleForCamp(user, camp)
+  )
 }
 
 /**
@@ -149,18 +180,9 @@ export const collectDigestItems = internalQuery({
 
       const bondfire = await ctx.db.get(bondfireId)
       if (!bondfire) continue
+      if (!(await canReceiveBondfireActivity(ctx, args.userId, bondfire))) continue
       // Cheap freshness gate: updatedAt is bumped on every new video.
       if (bondfire.updatedAt < oldestAllowed) continue
-
-      // Camp mute / membership: muted or departed members get nothing.
-      if (bondfire.campId) {
-        const campId = bondfire.campId
-        const membership = await ctx.db
-          .query('campMembers')
-          .withIndex('by_user_camp', (q) => q.eq('userId', args.userId).eq('campId', campId))
-          .first()
-        if (membership?.status !== 'active' || membership.muted) continue
-      }
 
       const readMarker = await ctx.db
         .query('bondfireThreadReads')
@@ -223,6 +245,11 @@ export const collectDigestItems = internalQuery({
     for (const membership of campMemberships) {
       if (items.length >= MAX_ITEMS) break
       if (membership.muted) continue
+      const [user, camp] = await Promise.all([
+        ctx.db.get(args.userId),
+        ctx.db.get(membership.campId),
+      ])
+      if (!user || !camp || !isUserEligibleForCamp(user, camp)) continue
 
       const campBondfires = await ctx.db
         .query('bondfires')
@@ -333,6 +360,7 @@ export const collectNudgeItems = internalQuery({
       if ('bondfireId' in doc) {
         parentBondfireId = doc.bondfireId
         const parent = await ctx.db.get(parentBondfireId)
+        if (!parent || !(await canReceiveBondfireActivity(ctx, args.userId, parent))) continue
         title = parent?.title ?? null
         kind = 'response'
       } else {
@@ -340,6 +368,7 @@ export const collectNudgeItems = internalQuery({
         // the nudge is for *unanswered* fires, matching the digest gate.
         if (doc.videoCount > 1) continue
         parentBondfireId = doc._id
+        if (!(await canReceiveBondfireActivity(ctx, args.userId, doc))) continue
         title = doc.title ?? null
         kind = 'bondfire'
       }

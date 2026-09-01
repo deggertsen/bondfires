@@ -286,7 +286,8 @@ export default function SignupScreen() {
               </Text>
               <Text fontSize={12} color={'$placeholderColor'} marginBottom={4}>
                 Required. You must be at least 13. Your date is private and keeps 13–17 and adult
-                communities separate.
+                public communities separate. Private family Hearths require a separate invitation
+                and acceptance.
               </Text>
               <YStack
                 backgroundColor="$backgroundHover"

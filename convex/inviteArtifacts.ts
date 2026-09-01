@@ -9,7 +9,7 @@ import type { MutationCtx } from './_generated/server'
  * retention and account-deletion jobs do not need to scan recipients' inboxes.
  */
 export async function deleteBondfireInviteArtifacts(ctx: MutationCtx, bondfireId: Id<'bondfires'>) {
-  const [bondfireCodes, personalBondfireCodes, claims, legacyInvites, notifications] =
+  const [bondfireCodes, personalBondfireCodes, familyCodes, claims, legacyInvites, notifications] =
     await Promise.all([
       ctx.db
         .query('inviteCodes')
@@ -19,6 +19,12 @@ export async function deleteBondfireInviteArtifacts(ctx: MutationCtx, bondfireId
         .query('inviteCodes')
         .withIndex('by_parent', (q) =>
           q.eq('parentType', 'personal-bondfire').eq('parentId', bondfireId),
+        )
+        .collect(),
+      ctx.db
+        .query('inviteCodes')
+        .withIndex('by_parent', (q) =>
+          q.eq('parentType', 'family-connection').eq('parentId', bondfireId),
         )
         .collect(),
       ctx.db
@@ -39,7 +45,7 @@ export async function deleteBondfireInviteArtifacts(ctx: MutationCtx, bondfireId
     await ctx.db.delete(notification._id)
   }
 
-  for (const code of [...bondfireCodes, ...personalBondfireCodes]) {
+  for (const code of [...bondfireCodes, ...personalBondfireCodes, ...familyCodes]) {
     await ctx.db.delete(code._id)
   }
   for (const claim of claims) {

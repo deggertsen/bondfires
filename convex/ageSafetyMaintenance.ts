@@ -2,6 +2,7 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import { internalMutation } from './_generated/server'
 import { getCampAgeBand, getPersonalCampAgeBand, getUserAgeBand } from './agePolicy'
+import { isHearthParticipantAuthorized } from './familyRelationships'
 
 const PAGE_SIZE = 100
 const AGE_BAND_REASON = 'Age-group access changed; membership disabled automatically.'
@@ -117,13 +118,16 @@ export const reconcileHearthParticipants = internalMutation({
         : null
       const owner = bondfire ? await ctx.db.get(bondfire.userId) : null
       const band = personalCamp ? getPersonalCampAgeBand(personalCamp) : null
-      if (
-        !user ||
-        !owner ||
-        !band ||
-        getUserAgeBand(user) !== band ||
-        getUserAgeBand(owner) !== band
-      ) {
+      const participantAuthorized =
+        user && owner
+          ? await isHearthParticipantAuthorized(
+              ctx,
+              owner._id,
+              user._id,
+              participant.familyConnectionId,
+            )
+          : false
+      if (!user || !owner || !band || getUserAgeBand(owner) !== band || !participantAuthorized) {
         const now = Date.now()
         await ctx.db.patch(participant._id, {
           status: 'removed',

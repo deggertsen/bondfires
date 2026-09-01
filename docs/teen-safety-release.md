@@ -1,12 +1,16 @@
 # Teen safety release runbook
 
-Bondfires permits accounts age 13 and older. The product separates people age 13–17 from adults
-at the server boundary: teen accounts can only discover, join, invite, view, or participate in teen
-camps and Hearths, while adult accounts can only do so in adult spaces. Date of birth is private and
-is re-evaluated on each request. Because DOB has no verified timezone, Bondfires conservatively keeps
-a member in the younger band for the full UTC anniversary day; the boundary changes at 00:00 UTC the
-following day without waiting for a cleanup job. This prevents an early transition in negative UTC
-offsets at the cost of at most one extra day in the younger band.
+Bondfires permits accounts age 13 and older. Camps and public discovery are strictly separated at
+the server boundary: people age 13–17 cannot discover, join, invite into, view, or participate in
+adult Camps, and adults cannot do so in teen Camps. Private Hearths use the same boundary by default,
+with one narrow exception for a mutually accepted Family Connection. A short-lived, single-use
+family invitation grants access to one named Hearth Bondfire and establishes a revocable connection
+for future private Hearth invitations. It never changes public discovery or Camp eligibility.
+
+Date of birth is private and is re-evaluated on each request. Because DOB has no verified timezone,
+Bondfires conservatively keeps a member in the younger band for the full UTC anniversary day; the
+boundary changes at 00:00 UTC the following day without waiting for a cleanup job. This prevents an
+early transition in negative UTC offsets at the cost of at most one extra day in the younger band.
 
 This runbook is an engineering and store-submission checklist, not legal advice. Counsel must review
 the privacy policy, Terms, child-safety standards, retention, and consent approach for every launch
@@ -24,13 +28,26 @@ Deploy backend enforcement before releasing a client that admits teen users.
 3. Run `npx convex run --prod internal:camps:seedTeenCampsAdmin` to create/update the three default
    13–17 camps.
 4. Run `reconcileCampMemberships` and `reconcileHearthParticipants` once, then confirm each finishes
-   all pages. Daily crons keep the rows reconciled after rollout. A member who turns 18 receives a
-   new adult Hearth after the conservative UTC transition; their historical teen Hearth remains
-   permanently teen-banded and is frozen.
+   all pages. Daily crons keep the rows reconciled after rollout. Reconciliation preserves a Hearth
+   participant only when the participant is in the owner's current age band or that participant row
+   is tied to an active Family Connection. A member who turns 18 receives a new adult Hearth after
+   the conservative UTC transition; their historical teen Hearth remains permanently teen-banded
+   and is frozen.
 5. Verify with separate boundary test accounts aged 13, 17, 18, and an existing member on their 18th
    UTC anniversary day and at 00:00 UTC the following day. Test open, approval, camp-code, direct
-   bondfire, Hearth-code, and direct Hearth invites in both directions.
-6. Confirm the public child-safety page says 13+, names the teen/adult separation, contains the
+   bondfire, ordinary Hearth-code, and direct Hearth invites in both directions. All public and
+   ordinary private cross-age paths must fail.
+6. Test the controlled family path in both directions:
+   - only the Hearth owner can create a family link;
+   - the link expires after 24 hours, works once, and shows an explicit accept/decline screen;
+   - acceptance grants only the named Hearth Bondfire, while the connection appears in Profile for
+     deliberate future Hearth invitations;
+   - neither account becomes visible to the other in public Camps, search, or recommendations;
+   - either account can revoke the connection, immediately losing every Hearth participant grant
+     tied to it; a new relationship requires a new invitation and does not revive old grants; and
+   - reporting and blocking continue to work for content and accounts shared through a connection.
+7. Confirm the public child-safety page says 13+, accurately distinguishes public separation from
+   controlled private Family Connections, contains the
    published CSAE standards, and lists a monitored child-safety contact.
 
 Do not migrate an existing camp to `teen`. A teen camp must be explicitly seeded or created by a teen
@@ -50,8 +67,12 @@ Reviewer notes should state:
 
 - registration requires a valid date of birth and rejects users under 13;
 - DOB is not public;
-- 13–17 and 18+ camps/Hearths are mutually exclusive and checked server-side;
-- invite links and existing memberships do not bypass the boundary;
+- 13–17 and 18+ Camps and public discovery are mutually exclusive and checked server-side;
+- ordinary invites and existing memberships do not bypass the public or private boundary;
+- private cross-age Hearth access requires a 24-hour, one-time family link, explicit recipient
+  acceptance, and a specific active participant grant that either account can revoke;
+- a Family Connection does not enable public discovery or cross-age Camp access, and Bondfires does
+  not represent that user-declared connection as a verified legal or biological relationship;
 - in-app reporting/moderation and published child-safety standards are available (after the
   moderation/compliance PR is deployed).
 
@@ -80,6 +101,9 @@ controls, those controls are a release blocker; do not self-certify based on thi
 
 - Monitor reconciliation output and alert on disabled memberships/participants.
 - Treat DOB corrections as a support-reviewed identity change, never a normal profile edit.
+- Monitor family-invitation creation, acceptance, revocation, reports, and abuse-rate signals. The
+  product label is user-declared and must never be described internally or publicly as identity,
+  guardianship, or biological-relationship verification.
 - Investigate reports involving a minor under the child-safety escalation procedure; preserve only
   the data counsel and applicable law require.
 - Re-run the boundary test matrix before every change to camps, invites, feeds, playback, live
