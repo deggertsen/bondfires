@@ -836,6 +836,16 @@ export default defineSchema({
     .index('by_log_session', ['sessionId', 'createdAt'])
     .index('by_log_retention_level', ['retention', 'level', 'createdAt']),
 
+  // Fixed-window abuse controls for authenticated client telemetry. Keeping
+  // one row per user makes concurrent reservations serialize in Convex.
+  clientLogRateLimits: defineTable({
+    userId: v.id('users'),
+    minuteWindowStartedAt: v.number(),
+    minuteCount: v.number(),
+    hourWindowStartedAt: v.number(),
+    hourCount: v.number(),
+  }).index('by_user', ['userId']),
+
   // Bondfire Invites - in-app invites sent between users
   bondfireInvites: defineTable({
     bondfireId: v.id('bondfires'),
