@@ -583,6 +583,9 @@ export default function CampsScreen() {
     setIsSubmitting(true)
     try {
       const result = await redeemInvite({ code })
+      if ('invalid' in result) {
+        throw new Error('Invite unavailable')
+      }
       setInviteCode('')
       setIsRedeemInviteOpen(false)
       router.push(routes.camp(result.campId))

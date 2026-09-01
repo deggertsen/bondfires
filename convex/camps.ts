@@ -3,6 +3,7 @@ import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalMutation, mutation, query } from './_generated/server'
+import { enforceInviteAttemptLimit } from './abuseLimits'
 import { auth } from './auth'
 import { burnKindlingForCamp } from './campKindling'
 import { isCampVisibleStatus, isOwnerManageableCampStatus } from './campLifecycle'
@@ -20,6 +21,7 @@ import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 import {
   findReusableInviteCode,
   generateAndInsertInviteCode,
+  isInviteCodeClaimable,
   normalizeInviteCode,
 } from './inviteCodes'
 
@@ -1300,7 +1302,6 @@ export const muteCamp = mutation({
 export const createInvite = mutation({
   args: {
     campId: v.id('camps'),
-    code: v.optional(v.string()),
     maxUses: v.optional(v.number()),
     expiresAt: v.optional(v.number()),
   },
@@ -1317,8 +1318,7 @@ export const createInvite = mutation({
 
     const user = await assertCanManageCamp(ctx, camp)
 
-    const canReuseExistingInvite =
-      args.code === undefined && args.expiresAt === undefined && args.maxUses === undefined
+    const canReuseExistingInvite = args.expiresAt === undefined && args.maxUses === undefined
     const result = canReuseExistingInvite
       ? ((await findReusableInviteCode(ctx, {
           parentType: 'camp',
@@ -1334,7 +1334,6 @@ export const createInvite = mutation({
           parentType: 'camp',
           parentId: camp._id,
           createdBy: user._id,
-          code: args.code,
           expiresAt: args.expiresAt,
           maxUses: args.maxUses,
         })
@@ -1358,10 +1357,16 @@ export const redeemInvite = mutation({
     ),
 })
 
-export async function redeemCampInviteHandler(ctx: MutationCtx, rawCode: string) {
+export async function redeemCampInviteHandler(
+  ctx: MutationCtx,
+  rawCode: string,
+  options: { rateLimitAlreadyConsumed?: boolean } = {},
+) {
   const user = await getCurrentUser(ctx)
+  if (!options.rateLimitAlreadyConsumed) await enforceInviteAttemptLimit(ctx, user._id)
   const now = Date.now()
   const normalizedCode = normalizeInviteCode(rawCode)
+  if (!normalizedCode || normalizedCode.length > 128) return { invalid: true as const }
 
   const invite = await ctx.db
     .query('inviteCodes')
@@ -1369,31 +1374,28 @@ export async function redeemCampInviteHandler(ctx: MutationCtx, rawCode: string)
     .first()
 
   if (!invite) {
-    throwUserError('Invite not found')
+    return { invalid: true as const }
   }
 
-  if (invite.expiresAt !== undefined && invite.expiresAt <= now) {
-    throwUserError('Invite has expired')
-  }
-  if (invite.maxUses !== undefined && invite.uses >= invite.maxUses) {
-    throwUserError('Invite has already been used')
+  if (!isInviteCodeClaimable(invite, now)) {
+    return { invalid: true as const }
   }
   if (invite.parentType !== 'camp') {
-    throwUserError('Invite not found')
+    return { invalid: true as const }
   }
 
   const camp = await ctx.db.get(invite.parentId as Id<'camps'>)
   if (!camp) {
-    throwUserError('Camp not found')
+    return { invalid: true as const }
   }
 
   if (!isCampVisibleStatus(camp.status)) {
-    throwUserError('Camp not found')
+    return { invalid: true as const }
   }
 
   // Frozen and grace camps do not accept new members via invite.
   if (camp.status === 'frozen' || camp.status === 'grace') {
-    throwUserError('This camp is not accepting new members right now.')
+    return { invalid: true as const }
   }
 
   const existingMembership = await getMembership(ctx, user._id, camp._id)
@@ -1476,13 +1478,8 @@ export const setCampAccess = mutation({
 export const seedLaunchCamps = mutation({
   args: {},
   handler: async (ctx) => {
-    const existingCamps = await ctx.db.query('camps').take(1)
     const user = await getCurrentUser(ctx)
-    if (existingCamps.length > 0) {
-      if (!isAdmin(user)) {
-        throw new Error('Only admins can reseed camps')
-      }
-    }
+    if (!isAdmin(user)) throwUserError('Only admins can seed launch camps')
 
     const launchCampIds = []
     for (const seed of getLaunchCampSeeds()) {

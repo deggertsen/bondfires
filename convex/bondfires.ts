@@ -2,7 +2,8 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
-import { action, internalQuery, mutation, query } from './_generated/server'
+import { action, internalMutation, internalQuery, mutation, query } from './_generated/server'
+import { enforceWatchEventLimit } from './abuseLimits'
 import { auth } from './auth'
 import {
   buildViewerVisibilityContext,
@@ -36,6 +37,20 @@ type PublicUser = {
   displayName?: string
   name?: string
   photoUrl?: string
+}
+
+const DEFAULT_FEED_LIMIT = 20
+const MAX_FEED_LIMIT = 50
+const MAX_CLEANUP_LIMIT = 100
+
+export function normalizeFeedLimit(limit: number | undefined) {
+  if (limit === undefined || !Number.isFinite(limit)) return DEFAULT_FEED_LIMIT
+  return Math.min(Math.max(Math.trunc(limit), 1), MAX_FEED_LIMIT)
+}
+
+export function normalizeCleanupLimit(limit: number | undefined) {
+  if (limit === undefined || !Number.isFinite(limit)) return MAX_CLEANUP_LIMIT
+  return Math.min(Math.max(Math.trunc(limit), 1), MAX_CLEANUP_LIMIT)
 }
 
 // Works for both `bondfires` and `bondfireVideos` rows — they share the
@@ -240,7 +255,7 @@ export const listFeed = query({
     cursor: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const limit = args.limit ?? 20
+    const limit = normalizeFeedLimit(args.limit)
     const userId = await auth.getUserId(ctx)
 
     // Query bondfires ordered by video_count ascending (prioritize newer/smaller)
@@ -281,7 +296,7 @@ export const listByCamp = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const limit = args.limit ?? 20
+    const limit = normalizeFeedLimit(args.limit)
     const camp = await ctx.db.get(args.campId)
     if (!camp) {
       return []
@@ -536,13 +551,19 @@ export const cleanupExpiredPrivateCampVideos = action({
       throw new Error('Only admins can clean up expired private camp videos')
     }
 
-    return await ctx.runAction(internal.videos.cleanupExpiredPrivateCampVideos, args)
+    return await ctx.runAction(internal.videos.cleanupExpiredPrivateCampVideos, {
+      dryRun: args.dryRun,
+      limit: normalizeCleanupLimit(args.limit),
+    })
   },
 })
 
 // Create a new bondfire
-export const create = mutation({
+// Legacy record attachment is internal-only: clients must use videos.createMuxDirectUpload,
+// which creates the pending row before Mux asset identifiers can be attached.
+export const create = internalMutation({
   args: {
+    userId: v.id('users'),
     campId: v.optional(v.id('camps')),
     muxUploadId: v.optional(v.string()),
     muxAssetId: v.optional(v.string()),
@@ -567,10 +588,7 @@ export const create = mutation({
     tags: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
-    const userId = await auth.getUserId(ctx)
-    if (!userId) {
-      throwUserError('Not authenticated')
-    }
+    const userId = args.userId
 
     const user = await ctx.db.get(userId)
     const now = Date.now()
@@ -752,6 +770,15 @@ export const incrementViews = mutation({
     if (bondfire.userId === viewerId) {
       return { recorded: false, reason: 'own_video' }
     }
+
+    await enforceWatchEventLimit(ctx, viewerId)
+    const existingStart = await ctx.db
+      .query('watchEvents')
+      .withIndex('by_user_video_event', (q) =>
+        q.eq('userId', viewerId).eq('videoId', args.bondfireId).eq('eventType', 'start'),
+      )
+      .first()
+    if (existingStart) return { recorded: false, reason: 'duplicate' }
 
     const now = Date.now()
     const result = await incrementProfileViews(
