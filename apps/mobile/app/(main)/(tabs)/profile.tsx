@@ -531,7 +531,7 @@ export default function ProfileScreen() {
         <Text fontSize={28} fontWeight="700">
           Profile
         </Text>
-        <Pressable onPress={handleLogout}>
+        <Pressable onPress={handleLogout} accessibilityRole="button" accessibilityLabel="Sign Out">
           <YStack
             width={40}
             height={40}

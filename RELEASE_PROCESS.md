@@ -1,5 +1,11 @@
 # Bondfires Release Process
 
+> Crash monitoring, environment isolation, staging smoke tests, device gates, alerts,
+> and rollback guidance are defined in
+> [`docs/production-observability-and-release-qa.md`](docs/production-observability-and-release-qa.md).
+> Production automation fails before versioning if Sentry/source-map configuration
+> or the registered Convex target is missing or mismatched.
+
 This is the source of truth for production mobile releases. The release script owns repeatable
 mechanics; this document focuses on decisions and runtime checks that automation cannot prove.
 
@@ -98,13 +104,16 @@ build locally.
 Run releases from the repository root with a clean working tree:
 
 ```bash
-yarn release          # patch release; iOS and Android
-yarn release:minor    # minor release; iOS and Android
-yarn release:major    # major release; iOS and Android
+eas env:exec production 'yarn release'        # patch; iOS + Android
+eas env:exec production 'yarn release:minor'  # minor; iOS + Android
+eas env:exec production 'yarn release:major'  # major; iOS + Android
 
-yarn release --ios-only
-yarn release --android-only
+eas env:exec production 'yarn release --ios-only'
+eas env:exec production 'yarn release --android-only'
 ```
+
+The wrapper loads the production EAS environment into the local release process;
+the preflight rejects missing Sentry/source-map settings or a mismatched Convex URL.
 
 The script:
 

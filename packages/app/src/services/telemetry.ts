@@ -10,6 +10,7 @@ import Constants from 'expo-constants'
 import * as Device from 'expo-device'
 import { AppState, Platform } from 'react-native'
 import { createMMKV, type MMKV } from 'react-native-mmkv'
+import { redactSensitiveText, scrubTelemetryValue } from './privacyScrubber'
 
 // ---------------------------------------------------------------------------
 // React Native global declarations
@@ -592,9 +593,9 @@ export class TelemetryLogger {
       // Convex. In particular, console errors can contain very large strings;
       // one oversized entry must not cause its otherwise-valid batch to be
       // rejected and discarded.
-      event: truncateUtf8(event, CLIENT_EVENT_MAX_BYTES) || 'unknown',
-      message: truncateUtf8(message, CLIENT_MESSAGE_MAX_BYTES),
-      data: boundTelemetryData(data),
+      event: truncateUtf8(redactSensitiveText(event), CLIENT_EVENT_MAX_BYTES) || 'unknown',
+      message: truncateUtf8(redactSensitiveText(message), CLIENT_MESSAGE_MAX_BYTES),
+      data: boundTelemetryData(scrubTelemetryValue(serializeForConvex(data))),
       platform: this.platform,
       appVersion: this.appVersion,
       sessionId: this.sessionId,
@@ -638,7 +639,15 @@ export class TelemetryLogger {
       const chunk = attributable.slice(i, i + TELEMETRY_BATCH_SIZE)
       const payload = chunk.map(({ localUserId: _localUserId, ...entry }) => entry)
       try {
-        await this._mutationCreateBatch({ entries: payload })
+        await this._mutationCreateBatch({
+          entries: payload.map((entry) => ({
+            ...entry,
+            event:
+              truncateUtf8(redactSensitiveText(entry.event), CLIENT_EVENT_MAX_BYTES) || 'unknown',
+            message: truncateUtf8(redactSensitiveText(entry.message), CLIENT_MESSAGE_MAX_BYTES),
+            data: boundTelemetryData(scrubTelemetryValue(entry.data)),
+          })),
+        })
       } catch (error) {
         // Invalid entries can never succeed on retry, so discard this chunk
         // instead of letting one corrupt persisted event block the queue.

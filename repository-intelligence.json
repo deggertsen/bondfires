@@ -130,6 +130,7 @@
         "apps/mobile/**/*.ts",
         "apps/mobile/**/*.tsx",
         "apps/mobile/**/*.js",
+        "apps/mobile/**/*.cjs",
         "apps/mobile/**/*.json",
         "apps/mobile/**/*.plist",
         "apps/mobile/**/*.gradle",
@@ -137,6 +138,12 @@
         "apps/mobile/.gitignore"
       ],
       "actions": ["validate", "device-smoke"]
+    },
+    {
+      "id": "mobile-smoke-automation",
+      "description": "Maestro device smoke flows and their non-production contract",
+      "patterns": [".maestro/**"],
+      "actions": ["validate", "route-integrity", "device-smoke"]
     },
     {
       "id": "recording-stack",
@@ -200,6 +207,7 @@
       "patterns": [
         "scripts/release.sh",
         "scripts/release-evidence.mjs",
+        "scripts/mobile-release-preflight.mjs",
         "scripts/refresh-ios-provisioning-profile.sh",
         "RELEASE_PROCESS.md"
       ],
@@ -219,6 +227,31 @@
     }
   ],
   "boundaries": [
+    {
+      "id": "mobile-observability",
+      "description": "Sentry native crash reporting, source maps, privacy policy, and runtime environment tags.",
+      "owner": "Bondfires release owner",
+      "triggerPatterns": [
+        "apps/mobile/app.config.js",
+        "apps/mobile/config/**",
+        "apps/mobile/metro.config.js",
+        "apps/mobile/lib/monitoring*.ts",
+        "packages/app/src/services/privacyScrubber.ts",
+        "apps/mobile/eas.json",
+        "scripts/mobile-release-preflight.mjs"
+      ],
+      "environmentKeys": [
+        "APP_VARIANT",
+        "EAS_BUILD_PROFILE",
+        "EXPO_PUBLIC_APP_ENV",
+        "EXPO_PUBLIC_SENTRY_DSN",
+        "SENTRY_AUTH_TOKEN",
+        "SENTRY_ORG",
+        "SENTRY_PROJECT"
+      ],
+      "documents": ["docs/production-observability-and-release-qa.md"],
+      "actions": ["release-preflight", "external-contract-review", "dependency-review"]
+    },
     {
       "id": "convex-mobile-api",
       "description": "Convex schema and public functions are consumed by released mobile clients.",
