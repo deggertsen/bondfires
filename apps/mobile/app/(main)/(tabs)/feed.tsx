@@ -740,6 +740,7 @@ export default function HomeScreen() {
   // re-emitting myFires, so without refreshKey the rail would sit on flames.
   useEffect(() => {
     if (!shouldRunBackgroundWork || !myFires) return
+    void refreshKey
     ensureThumbnailUrls([...sortedMyFires.unread, ...sortedMyFires.quiet].slice(0, RAIL_MAX_ITEMS))
   }, [ensureThumbnailUrls, myFires, refreshKey, shouldRunBackgroundWork, sortedMyFires])
 
