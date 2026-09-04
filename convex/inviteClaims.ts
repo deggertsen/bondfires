@@ -30,6 +30,7 @@ import {
   ensureActivePersonalBondfireParticipant,
 } from './personalBondfireAccess'
 import { redeemInviteHandler as redeemPersonalBondfireInviteHandler } from './personalBondfires'
+import { assertUsersMayInteract, getBlockedUserIds } from './userSafety'
 
 type InviteClaimSource = 'direct' | 'code' | 'camp'
 
@@ -198,6 +199,7 @@ async function createDirectInviteCore(ctx: MutationCtx, args: DirectInviteArgs) 
     assertUserCanAccessCamp(sender, camp)
     assertUserCanAccessCamp(recipient, camp)
   }
+  await assertUsersMayInteract(ctx, sender._id, args.recipientId)
 
   // Hearth fires gate playback on personalBondfireParticipants. A claim +
   // notification without this row sends invitees to "isn't available".
@@ -226,6 +228,7 @@ async function createDirectInviteCore(ctx: MutationCtx, args: DirectInviteArgs) 
     body,
     data: {
       claimId,
+      senderId: sender._id,
       bondfireId: args.bondfireId,
       campId: bondfire.campId,
       source: 'direct',
@@ -327,6 +330,7 @@ async function redeemInviteCodeHandler(ctx: MutationCtx, rawCode: string) {
   if (invite.maxUses !== undefined && invite.uses >= invite.maxUses) {
     throwUserError('Invite has already been used')
   }
+  await assertUsersMayInteract(ctx, user._id, invite.createdBy)
 
   // Family links require a dedicated consent screen. Resolving the generic
   // invite route must never accept the relationship implicitly.
@@ -475,6 +479,7 @@ export const listUnseenInvites = query({
     if (!userId) {
       return []
     }
+    const blockedUserIds = await getBlockedUserIds(ctx, userId)
 
     const claims = await ctx.db
       .query('inviteClaims')
@@ -487,6 +492,7 @@ export const listUnseenInvites = query({
 
     const rows = await Promise.all(
       claims.map(async (claim) => {
+        if (blockedUserIds.has(claim.senderId)) return null
         const [bondfire, camp, sender, latestResponse] = await Promise.all([
           claim.bondfireId ? ctx.db.get(claim.bondfireId) : Promise.resolve(null),
           claim.campId ? ctx.db.get(claim.campId) : Promise.resolve(null),
@@ -522,6 +528,7 @@ export const listUnseenInvites = query({
     return (
       await Promise.all(
         rows.map(async (row) => {
+          if (!row) return null
           if (!row.bondfire) {
             return row.camp && viewer.user && isUserEligibleForCamp(viewer.user, row.camp)
               ? row

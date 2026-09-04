@@ -3,6 +3,7 @@ import { Password } from '@convex-dev/auth/providers/Password'
 import { convexAuth } from '@convex-dev/auth/server'
 import type { QueryCtx } from './_generated/server'
 import { calculateAgeAt } from './agePolicy'
+import { CURRENT_COMMUNITY_GUIDELINES_VERSION, CURRENT_TERMS_VERSION } from './contentSafety'
 
 const DEFAULT_EMAIL_FROM = 'Bondfires <support@bondfires.org>'
 const VERIFY_EMAIL_SUBJECT = 'Verify your Bondfires account'
@@ -127,6 +128,9 @@ const PasswordWithVerification = Password({
       if (age < 13) {
         throw new Error('You must be at least 13 years old')
       }
+      if (params.acceptedLegal !== 'true') {
+        throw new Error('You must accept the Terms and Community Guidelines')
+      }
     }
 
     const firstName = (params.firstName as string) ?? (params.name as string) ?? null
@@ -146,6 +150,13 @@ const PasswordWithVerification = Password({
     }
     if (birthDate) {
       ;(profile as Record<string, unknown>).birthDate = birthDate
+    }
+    if (flow === 'signUp') {
+      ;(profile as Record<string, unknown>).acceptedTermsVersion = CURRENT_TERMS_VERSION
+      ;(profile as Record<string, unknown>).acceptedCommunityGuidelinesVersion =
+        CURRENT_COMMUNITY_GUIDELINES_VERSION
+      ;(profile as Record<string, unknown>).legalAcceptedAt = Date.now()
+      ;(profile as Record<string, unknown>).moderationStatus = 'active'
     }
     return profile
   },

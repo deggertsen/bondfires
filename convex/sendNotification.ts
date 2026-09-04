@@ -26,6 +26,7 @@ import {
   sendFcmPushNotification,
 } from './lib/pushProviders'
 import { resolveNotificationPrefs } from './notifications'
+import { getBlockedUserIds } from './userSafety'
 
 // Max one response push per bondfire per recipient per hour.
 const RESPONSE_THROTTLE_MS = 60 * 60 * 1000
@@ -449,6 +450,7 @@ export const getLiveNotificationRecipientIds = internalQuery({
     campId: v.optional(v.id('camps')),
   },
   handler: async (ctx, args): Promise<Array<Id<'users'>>> => {
+    const blocked = await getBlockedUserIds(ctx, args.creatorId)
     if (args.campId) {
       const campId = args.campId
       const [camp, memberships] = await Promise.all([
@@ -470,7 +472,10 @@ export const getLiveNotificationRecipientIds = internalQuery({
         memberships
           .filter(
             (membership, index) =>
-              eligible[index] && !membership.muted && membership.userId !== args.creatorId,
+              eligible[index] &&
+              !membership.muted &&
+              membership.userId !== args.creatorId &&
+              !blocked.has(membership.userId),
           )
           .map((membership) => membership.userId),
       )
@@ -506,7 +511,7 @@ export const getHearthBondfireRecipientIds = internalQuery({
     creatorId: v.id('users'),
   },
   handler: async (ctx, args): Promise<Array<Id<'users'>>> => {
-    const [bondfire, participants] = await Promise.all([
+    const [bondfire, participants, blocked] = await Promise.all([
       ctx.db.get(args.bondfireId),
       ctx.db
         .query('personalBondfireParticipants')
@@ -514,6 +519,7 @@ export const getHearthBondfireRecipientIds = internalQuery({
           q.eq('bondfireId', args.bondfireId).eq('status', 'active'),
         )
         .collect(),
+      getBlockedUserIds(ctx, args.creatorId),
     ])
     if (!bondfire) return []
     const authorized = await Promise.all(
@@ -531,7 +537,7 @@ export const getHearthBondfireRecipientIds = internalQuery({
       participants
         .filter((_participant, index) => authorized[index])
         .map((participant) => participant.userId)
-        .filter((userId) => userId !== args.creatorId),
+        .filter((userId) => userId !== args.creatorId && !blocked.has(userId)),
     )
   },
 })
@@ -549,11 +555,12 @@ export const getPersonalCampName = internalQuery({
 export const getCloseCirclePinnerIds = internalQuery({
   args: { pinnedUserId: v.id('users') },
   handler: async (ctx, args): Promise<Array<Id<'users'>>> => {
+    const blocked = await getBlockedUserIds(ctx, args.pinnedUserId)
     const pins = await ctx.db
       .query('closeCirclePins')
       .withIndex('by_pinned', (q) => q.eq('pinnedUserId', args.pinnedUserId))
       .collect()
-    return uniqueUserIds(pins.map((pin) => pin.ownerId))
+    return uniqueUserIds(pins.map((pin) => pin.ownerId).filter((id) => !blocked.has(id)))
   },
 })
 
@@ -563,12 +570,13 @@ export const getCampNotificationRecipientIds = internalQuery({
     creatorId: v.id('users'),
   },
   handler: async (ctx, args): Promise<Array<Id<'users'>>> => {
-    const [camp, memberships] = await Promise.all([
+    const [camp, memberships, blocked] = await Promise.all([
       ctx.db.get(args.campId),
       ctx.db
         .query('campMembers')
         .withIndex('by_camp_status', (q) => q.eq('campId', args.campId).eq('status', 'active'))
         .collect(),
+      getBlockedUserIds(ctx, args.creatorId),
     ])
     if (!camp) return []
     const eligible = await Promise.all(
@@ -582,7 +590,10 @@ export const getCampNotificationRecipientIds = internalQuery({
       memberships
         .filter(
           (membership, index) =>
-            eligible[index] && !membership.muted && membership.userId !== args.creatorId,
+            eligible[index] &&
+            !membership.muted &&
+            membership.userId !== args.creatorId &&
+            !blocked.has(membership.userId),
         )
         .map((membership) => membership.userId),
     )
@@ -595,6 +606,7 @@ export const getResponseNotificationRecipientIds = internalQuery({
     responderId: v.id('users'),
   },
   handler: async (ctx, args): Promise<Array<Id<'users'>>> => {
+    const blocked = await getBlockedUserIds(ctx, args.responderId)
     const bondfire = await ctx.db.get(args.bondfireId)
     if (!bondfire) {
       return []
@@ -622,7 +634,7 @@ export const getResponseNotificationRecipientIds = internalQuery({
         participants
           .filter((_participant, index) => authorized[index])
           .map((participant) => participant.userId)
-          .filter((userId) => userId !== args.responderId),
+          .filter((userId) => userId !== args.responderId && !blocked.has(userId)),
       )
     }
 
@@ -641,7 +653,7 @@ export const getResponseNotificationRecipientIds = internalQuery({
     participantIds.delete(args.responderId)
 
     if (!bondfire.campId) {
-      return [...participantIds]
+      return [...participantIds].filter((userId) => !blocked.has(userId))
     }
 
     // Camp bondfires: drop participants who have since left or muted the camp.
@@ -666,7 +678,21 @@ export const getResponseNotificationRecipientIds = internalQuery({
         .map((membership) => membership.userId),
     )
 
-    return [...participantIds].filter((userId) => notifiedMemberIds.has(userId))
+    return [...participantIds].filter(
+      (userId) => notifiedMemberIds.has(userId) && !blocked.has(userId),
+    )
+  },
+})
+
+export const isResponseApprovedForNotification = internalQuery({
+  args: { bondfireVideoId: v.id('bondfireVideos') },
+  handler: async (ctx, args) => {
+    const response = await ctx.db.get(args.bondfireVideoId)
+    return (
+      !!response &&
+      response.moderationStatus !== 'pending_review' &&
+      response.moderationStatus !== 'removed'
+    )
   },
 })
 
@@ -688,6 +714,9 @@ export const notifyCampBondfire = internalAction({
       id: args.bondfireId,
     })
     if (!bondfire) {
+      return { success: true, skipped: true }
+    }
+    if (bondfire.moderationStatus === 'pending_review' || bondfire.moderationStatus === 'removed') {
       return { success: true, skipped: true }
     }
 
@@ -860,6 +889,13 @@ export const notifyBondfireResponse = internalAction({
 
     if (!bondfire) {
       return { success: false, error: 'Bondfire not found' }
+    }
+    if (args.bondfireVideoId) {
+      const approved = await ctx.runQuery(
+        internal.sendNotification.isResponseApprovedForNotification,
+        { bondfireVideoId: args.bondfireVideoId },
+      )
+      if (!approved) return { success: true, skipped: true }
     }
 
     const recipientIds: Array<Id<'users'>> = await ctx.runQuery(

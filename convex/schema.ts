@@ -31,9 +31,15 @@ const adminAuditTargetType = v.union(
   v.literal('camp'),
   v.literal('user'),
   v.literal('bondfire'),
+  v.literal('response'),
   v.literal('purchase'),
   v.literal('report'),
   v.literal('config'),
+)
+const moderationStatus = v.union(
+  v.literal('pending_review'),
+  v.literal('approved'),
+  v.literal('removed'),
 )
 
 const campRules = v.object({
@@ -116,6 +122,17 @@ export default defineSchema({
     isAdmin: v.optional(v.boolean()),
     role: v.optional(v.union(v.literal('admin'), v.literal('user'))),
 
+    // Trust & safety. Missing moderationStatus is treated as active for
+    // backwards compatibility with accounts created before moderation launch.
+    moderationStatus: v.optional(v.union(v.literal('active'), v.literal('suspended'))),
+    suspendedAt: v.optional(v.number()),
+    suspensionReason: v.optional(v.string()),
+
+    // Versioned acceptance is required server-side before creating UGC.
+    acceptedTermsVersion: v.optional(v.string()),
+    acceptedCommunityGuidelinesVersion: v.optional(v.string()),
+    legalAcceptedAt: v.optional(v.number()),
+
     // Admin-forced subscription tier override for QA and app review.
     // When set, this overrides any store-based subscription in entitlements.
     forcedTier: v.optional(subscriptionTier),
@@ -159,6 +176,7 @@ export default defineSchema({
   })
     .index('email', ['email']) // Required by @convex-dev/auth (must be named exactly 'email')
     .index('by_role', ['role'])
+    .index('by_moderation_status', ['moderationStatus', 'createdAt'])
     .index('by_created', ['createdAt'])
     .searchIndex('search_email', { searchField: 'email' }),
 
@@ -281,6 +299,7 @@ export default defineSchema({
   })
     .index('by_claimer', ['claimerId', 'createdAt'])
     .index('by_sender', ['senderId', 'createdAt'])
+    .index('by_sender_claimer', ['senderId', 'claimerId', 'createdAt'])
     .index('by_claimer_unseen', ['claimerId', 'seen', 'dismissed'])
     .index('by_bondfire_claimer', ['bondfireId', 'claimerId'])
     .index('by_camp_claimer', ['campId', 'claimerId'])
@@ -451,6 +470,9 @@ export default defineSchema({
   // Admin audit log — tracks all admin moderation & management actions.
   adminAuditLog: defineTable({
     adminId: v.id('users'),
+    // Set for moderation actions so account erasure can remove every audit
+    // row directly associated with the subject, regardless of target type.
+    subjectUserId: v.optional(v.id('users')),
     action: v.union(
       v.literal('manual_refund'),
       v.literal('camp_archive'),
@@ -460,6 +482,11 @@ export default defineSchema({
       v.literal('report_resolve'),
       v.literal('report_dismiss'),
       v.literal('public_config_update'),
+      v.literal('content_approve'),
+      v.literal('content_remove'),
+      v.literal('content_restore'),
+      v.literal('user_suspend'),
+      v.literal('user_reactivate'),
     ),
     targetType: adminAuditTargetType,
     targetId: v.string(),
@@ -481,6 +508,7 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index('by_admin', ['adminId', 'createdAt'])
+    .index('by_subject_user', ['subjectUserId', 'createdAt'])
     .index('by_target', ['targetType', 'targetId'])
     .index('by_action', ['action', 'createdAt'])
     .index('by_admin_action', ['adminId', 'action', 'createdAt'])
@@ -495,6 +523,10 @@ export default defineSchema({
     personalCampId: v.optional(v.id('personalCamps')),
     title: v.optional(v.string()),
     frozen: v.optional(v.boolean()),
+    moderationStatus: v.optional(moderationStatus),
+    moderationReason: v.optional(v.string()),
+    moderatedAt: v.optional(v.number()),
+    moderatedBy: v.optional(v.id('users')),
 
     // Pre-recording draft lifecycle (Hearth invite-first flow). 'draft' =
     // created from the pre-recording invite screen, no recording yet; 'live' =
@@ -568,6 +600,9 @@ export default defineSchema({
     .index('by_mux_upload', ['muxUploadId'])
     .index('by_mux_asset', ['muxAssetId'])
     .index('by_live_stream', ['muxLiveStreamId'])
+    .index('by_moderation_status', ['moderationStatus', 'createdAt'])
+    .index('by_moderation_video_status', ['moderationStatus', 'videoStatus', 'createdAt'])
+    .index('by_moderated_by', ['moderatedBy', 'moderatedAt'])
     // Reconciliation: find records stuck in a non-terminal video status
     .index('by_video_status', ['videoStatus', 'updatedAt'])
     // Draft cleanup cron: expired drafts ordered by deadline
@@ -579,6 +614,10 @@ export default defineSchema({
     bondfireId: v.id('bondfires'),
     userId: v.id('users'),
     creatorName: v.optional(v.string()), // Denormalized for display
+    moderationStatus: v.optional(moderationStatus),
+    moderationReason: v.optional(v.string()),
+    moderatedAt: v.optional(v.number()),
+    moderatedBy: v.optional(v.id('users')),
 
     // Position in the bondfire sequence
     sequenceNumber: v.number(),
@@ -636,6 +675,9 @@ export default defineSchema({
     .index('by_mux_upload', ['muxUploadId'])
     .index('by_mux_asset', ['muxAssetId'])
     .index('by_live_stream', ['muxLiveStreamId'])
+    .index('by_moderation_status', ['moderationStatus', 'createdAt'])
+    .index('by_moderation_video_status', ['moderationStatus', 'videoStatus', 'createdAt'])
+    .index('by_moderated_by', ['moderatedBy', 'moderatedAt'])
     // Reconciliation: find records stuck in a non-terminal video status
     .index('by_video_status', ['videoStatus', 'createdAt']),
 
@@ -793,9 +835,10 @@ export default defineSchema({
     // Reporter reference
     reporterUserId: v.id('users'),
 
-    // Video reference - exactly one must be set (enforced in mutation)
+    // Exactly one video or user target must be set (enforced in mutation).
     bondfireId: v.optional(v.id('bondfires')),
     bondfireVideoId: v.optional(v.id('bondfireVideos')),
+    reportedUserId: v.optional(v.id('users')),
 
     // Video owner (for quick reference)
     videoOwnerId: v.id('users'),
@@ -837,12 +880,28 @@ export default defineSchema({
     // Timestamps
     createdAt: v.number(),
     reviewedAt: v.optional(v.number()),
+    reviewedBy: v.optional(v.id('users')),
+    moderatorNote: v.optional(v.string()),
+    resolutionAction: v.optional(v.string()),
   })
     .index('by_bondfire', ['bondfireId', 'createdAt'])
     .index('by_bondfire_video', ['bondfireVideoId', 'createdAt'])
     .index('by_reporter', ['reporterUserId', 'createdAt'])
     .index('by_status', ['status', 'createdAt'])
-    .index('by_video_owner', ['videoOwnerId', 'createdAt']),
+    .index('by_video_owner', ['videoOwnerId', 'createdAt'])
+    .index('by_reported_user', ['reportedUserId', 'createdAt'])
+    .index('by_reviewed_by', ['reviewedBy', 'reviewedAt']),
+
+  // A block is enforced in both directions by server visibility and
+  // interaction helpers, even though only the blocker can remove it.
+  userBlocks: defineTable({
+    blockerId: v.id('users'),
+    blockedUserId: v.id('users'),
+    createdAt: v.number(),
+  })
+    .index('by_blocker', ['blockerId', 'createdAt'])
+    .index('by_blocked', ['blockedUserId', 'createdAt'])
+    .index('by_blocker_blocked', ['blockerId', 'blockedUserId']),
 
   // Public configuration values exposed via query (no auth required).
   // Use for min-app-version gating, feature flags, etc.
@@ -906,7 +965,8 @@ export default defineSchema({
   })
     .index('by_recipient', ['recipientId', 'createdAt'])
     .index('by_bondfire_recipient', ['bondfireId', 'recipientId'])
-    .index('by_sender', ['senderId', 'createdAt']),
+    .index('by_sender', ['senderId', 'createdAt'])
+    .index('by_sender_recipient', ['senderId', 'recipientId', 'createdAt']),
 
   // Video Reactions — timestamped emoji reactions on VOD videos
   videoReactions: defineTable({

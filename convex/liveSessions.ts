@@ -11,7 +11,11 @@ export const getByBondfireId = query({
       return null
     }
     const viewer = await buildViewerVisibilityContext(ctx, await auth.getUserId(ctx))
-    if (!(await isBondfireVisibleToViewer(ctx, bondfire, viewer))) {
+    if (
+      !(await isBondfireVisibleToViewer(ctx, bondfire, viewer, {
+        allowAdminModerationReview: true,
+      }))
+    ) {
       return null
     }
 

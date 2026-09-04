@@ -10,8 +10,11 @@ import {
   filterVisibleBondfiresForViewer,
   isBondfireVisibleToViewer,
   isCampContentVisibleToViewer,
+  isUserContentVisibleToViewer,
+  type ViewerVisibilityContext,
 } from './bondfireVisibility'
 import { isCampParticipableStatus } from './campLifecycle'
+import { initialModerationStatus, requireUgcPermission } from './contentSafety'
 import {
   assertCanCreateBondfire,
   assertVideoDurationWithinTierLimit,
@@ -127,8 +130,12 @@ function withLiveFlags<T extends { videoStatus?: string; muxLivePlaybackId?: str
   }
 }
 
-async function getThreadParticipants(ctx: QueryCtx, bondfire: Doc<'bondfires'>) {
-  const userId = await auth.getUserId(ctx)
+async function getThreadParticipants(
+  ctx: QueryCtx,
+  bondfire: Doc<'bondfires'>,
+  viewer: ViewerVisibilityContext,
+) {
+  const userId = viewer.userId
   const pinnedUserIds = new Set<Id<'users'>>()
   if (userId) {
     const pins = await ctx.db
@@ -149,6 +156,15 @@ async function getThreadParticipants(ctx: QueryCtx, bondfire: Doc<'bondfires'>) 
     .collect()
 
   for (const video of videos.filter(isPlayableVideoRecord)) {
+    if (!(await isUserContentVisibleToViewer(ctx, video.userId, viewer))) continue
+    if (
+      video.moderationStatus === 'removed' ||
+      (video.moderationStatus === 'pending_review' &&
+        viewer.userId !== video.userId &&
+        !viewer.isAdmin)
+    ) {
+      continue
+    }
     const current = participantMap.get(video.userId)
     participantMap.set(video.userId, {
       latestAt: Math.max(current?.latestAt ?? 0, video.createdAt),
@@ -328,8 +344,13 @@ export const get = query({
       return null
     }
 
-    const [visible] = await filterVisibleBondfires(ctx, [bondfire])
-    if (!visible) {
+    const viewerId = await auth.getUserId(ctx)
+    const viewer = await buildViewerVisibilityContext(ctx, viewerId)
+    if (
+      !(await isBondfireVisibleToViewer(ctx, bondfire, viewer, {
+        allowAdminModerationReview: true,
+      }))
+    ) {
       return null
     }
 
@@ -346,8 +367,13 @@ export const getWithCampContext = query({
       return null
     }
 
-    const [visible] = await filterVisibleBondfires(ctx, [bondfire])
-    if (!visible) {
+    const viewerId = await auth.getUserId(ctx)
+    const viewer = await buildViewerVisibilityContext(ctx, viewerId)
+    if (
+      !(await isBondfireVisibleToViewer(ctx, bondfire, viewer, {
+        allowAdminModerationReview: true,
+      }))
+    ) {
       return null
     }
 
@@ -415,8 +441,13 @@ export const getWithVideos = query({
       return null
     }
 
-    const [visible] = await filterVisibleBondfires(ctx, [bondfire])
-    if (!visible) {
+    const viewerId = await auth.getUserId(ctx)
+    const viewer = await buildViewerVisibilityContext(ctx, viewerId)
+    if (
+      !(await isBondfireVisibleToViewer(ctx, bondfire, viewer, {
+        allowAdminModerationReview: true,
+      }))
+    ) {
       return null
     }
     const camp = bondfire.campId ? await ctx.db.get(bondfire.campId) : null
@@ -428,9 +459,21 @@ export const getWithVideos = query({
       .order('asc')
       .collect()
 
+    const responseVisibility = await Promise.all(
+      videos.map(async (video) => {
+        if (!(await isUserContentVisibleToViewer(ctx, video.userId, viewer))) return false
+        return !(
+          video.moderationStatus === 'removed' ||
+          (video.moderationStatus === 'pending_review' &&
+            viewerId !== video.userId &&
+            !viewer.isAdmin)
+        )
+      }),
+    )
+    const visibleVideos = videos.filter((_, index) => responseVisibility[index])
+
     // Watched flags drive the initial scroll position (first unwatched video).
     // The viewer's own videos always count as watched.
-    const viewerId = await auth.getUserId(ctx)
     const hasWatchEvent = async (videoId: string) => {
       if (!viewerId) return false
       const event = await ctx.db
@@ -440,7 +483,7 @@ export const getWithVideos = query({
       return event !== null
     }
 
-    const playableVideos = videos.filter(isPlayableVideoRecord)
+    const playableVideos = visibleVideos.filter(isPlayableVideoRecord)
     const [mainWatched, ...videosWatched] = await Promise.all([
       bondfire.userId === viewerId ? true : hasWatchEvent(bondfire._id),
       ...playableVideos.map((video) =>
@@ -454,7 +497,7 @@ export const getWithVideos = query({
     }))
 
     // Lightweight projection only — no Mux IDs leak for unfinished videos.
-    const processingResponses = videos.filter(isProcessingVideoRecord).map((video) => ({
+    const processingResponses = visibleVideos.filter(isProcessingVideoRecord).map((video) => ({
       _id: video._id,
       userId: video.userId,
       creatorName: video.creatorName,
@@ -468,7 +511,7 @@ export const getWithVideos = query({
       campName,
       videos: readyVideos,
       processingResponses,
-      participants: await getThreadParticipants(ctx, bondfire),
+      participants: await getThreadParticipants(ctx, bondfire, viewer),
     }
   },
 })
@@ -578,6 +621,7 @@ export const create = mutation({
     if (!user) {
       throwUserError('User not found')
     }
+    await requireUgcPermission(ctx, userId)
 
     if (!args.muxAssetId || !args.muxPlaybackId) {
       if (args.videoStatus !== 'pending') {
@@ -649,6 +693,7 @@ export const create = mutation({
       userId,
       creatorName: user?.displayName ?? user?.name,
       campId,
+      moderationStatus: initialModerationStatus(camp, false),
       title: args.title,
       frozen: false,
       videoStatus: args.videoStatus ?? 'ready',
@@ -716,6 +761,18 @@ export const updateTitle = mutation({
     }
     if (bondfire.userId !== userId) {
       throw new Error('Not authorized to edit this bondfire')
+    }
+    await requireUgcPermission(ctx, userId)
+
+    if (bondfire.campId) {
+      const camp = await ctx.db.get(bondfire.campId)
+      if (
+        camp &&
+        (camp.access === 'open' || camp.access === 'approval') &&
+        bondfire.moderationStatus !== 'pending_review'
+      ) {
+        throwUserError('A public Bondfire title cannot be edited after moderation approval.')
+      }
     }
 
     const trimmed = args.title.trim().slice(0, 80)

@@ -5,11 +5,17 @@ import type { MutationCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import { assertUserCanAccessCamp } from './agePolicy'
 import { auth } from './auth'
-import { buildViewerVisibilityContext, isBondfireVisibleToViewer } from './bondfireVisibility'
+import {
+  buildViewerVisibilityContext,
+  isBondfireVisibleToViewer,
+  isUserContentVisibleToViewer,
+} from './bondfireVisibility'
 import { isCampParticipableStatus } from './campLifecycle'
+import { initialModerationStatus, requireUgcPermission } from './contentSafety'
 import { assertVideoDurationWithinTierLimit } from './entitlements'
 import { assertCanRespondToPersonalBondfire } from './personalBondfireAccess'
 import { countResponse } from './responseCounts'
+import { assertUsersMayInteract } from './userSafety'
 
 async function assertCanRespondToBondfire(
   ctx: MutationCtx,
@@ -26,6 +32,8 @@ async function assertCanRespondToBondfire(
   if (!bondfire) {
     throw new Error('Bondfire not found')
   }
+  await requireUgcPermission(ctx, args.userId)
+  await assertUsersMayInteract(ctx, args.userId, bondfire.userId)
   if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
     throw new Error('Bondfire not found')
   }
@@ -96,7 +104,9 @@ export const listByBondfire = query({
 
     const userId = await auth.getUserId(ctx)
     const viewer = await buildViewerVisibilityContext(ctx, userId)
-    const canViewBondfire = await isBondfireVisibleToViewer(ctx, bondfire, viewer)
+    const canViewBondfire = await isBondfireVisibleToViewer(ctx, bondfire, viewer, {
+      allowAdminModerationReview: true,
+    })
     if (!canViewBondfire) {
       return []
     }
@@ -107,17 +117,26 @@ export const listByBondfire = query({
       .order('asc')
       .collect()
 
-    return videos.filter((video) => {
-      if (video.expiresAt !== undefined && video.expiresAt <= Date.now()) {
-        return false
-      }
-
-      const status = video.videoStatus ?? 'ready'
-      return (
-        (status === 'ready' && video.muxPlaybackId) ||
-        (status === 'live' && video.muxLivePlaybackId)
-      )
-    })
+    const visibility = await Promise.all(
+      videos.map(async (video) => {
+        if (video.expiresAt !== undefined && video.expiresAt <= Date.now()) return false
+        if (!(await isUserContentVisibleToViewer(ctx, video.userId, viewer))) return false
+        if (
+          video.moderationStatus === 'removed' ||
+          (video.moderationStatus === 'pending_review' &&
+            viewer.userId !== video.userId &&
+            !viewer.isAdmin)
+        ) {
+          return false
+        }
+        const status = video.videoStatus ?? 'ready'
+        return (
+          (status === 'ready' && video.muxPlaybackId) ||
+          (status === 'live' && video.muxLivePlaybackId)
+        )
+      }),
+    )
+    return videos.filter((_, index) => visibility[index])
   },
 })
 
@@ -136,6 +155,15 @@ export const listByUser = query({
     const visibleVideos = []
     for (const video of videos) {
       if (video.expiresAt !== undefined && video.expiresAt <= Date.now()) {
+        continue
+      }
+      if (!(await isUserContentVisibleToViewer(ctx, video.userId, viewer))) continue
+      if (
+        video.moderationStatus === 'removed' ||
+        (video.moderationStatus === 'pending_review' &&
+          viewer.userId !== video.userId &&
+          !viewer.isAdmin)
+      ) {
         continue
       }
 
@@ -191,6 +219,7 @@ export const addResponse = mutation({
     }
 
     let requiresSignedPlayback = bondfire.muxPlaybackPolicy === 'signed'
+    const moderationCamp = bondfire.campId ? await ctx.db.get(bondfire.campId) : null
     if (!requiresSignedPlayback && bondfire.personalCampId) {
       requiresSignedPlayback = true
     }
@@ -214,6 +243,7 @@ export const addResponse = mutation({
     const videoId = await ctx.db.insert('bondfireVideos', {
       bondfireId: args.bondfireId,
       userId,
+      moderationStatus: initialModerationStatus(moderationCamp, !!bondfire.personalCampId),
       creatorName: user?.displayName ?? user?.name,
       sequenceNumber,
       muxUploadId: args.muxUploadId,
