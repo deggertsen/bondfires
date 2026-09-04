@@ -1,6 +1,6 @@
 import { parseError, useAppThemeColors, useAuth } from '@bondfires/app'
 import { Spinner, Text } from '@bondfires/ui'
-import { Flame, Sparkles } from '@tamagui/lucide-icons'
+import { ChevronLeft, Flame, Sparkles } from '@tamagui/lucide-icons'
 import type { FunctionReturnType } from 'convex/server'
 import { useRouter } from 'expo-router'
 import { useCallback } from 'react'
@@ -22,6 +22,8 @@ interface CampPickerScreenProps {
    * The router owns selectedCampId/tradeTag and the persisted camp id.
    */
   onCampConfirmed: (campId: Id<'camps'>) => void
+  /** Return to the previous screen (Home) without choosing a camp. */
+  onBack: () => void
 }
 
 export function CampPickerScreen({
@@ -30,6 +32,7 @@ export function CampPickerScreen({
   personalCampDoc,
   joinCamp,
   onCampConfirmed,
+  onBack,
 }: CampPickerScreenProps) {
   const { colors, statusBarStyle } = useAppThemeColors()
   const { isAuthenticated } = useAuth()
@@ -74,6 +77,14 @@ export function CampPickerScreen({
     <YStack flex={1} backgroundColor={'$background'}>
       <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
       <YStack paddingTop={64} paddingHorizontal={20} paddingBottom={16} gap={8}>
+        <Pressable
+          onPress={onBack}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="Back to Home"
+        >
+          <ChevronLeft size={26} color={'$color'} />
+        </Pressable>
         <Text fontSize={28} fontWeight="900">
           Choose a Camp
         </Text>

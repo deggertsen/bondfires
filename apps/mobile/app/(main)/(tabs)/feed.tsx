@@ -735,11 +735,14 @@ export default function HomeScreen() {
   }, [ensureThumbnailUrls, filtered, shouldRunBackgroundWork])
 
   // Rail tiles and "New responses" rows resolve their thumbnails through the
-  // same cache as the Discover list.
+  // same cache as the Discover list. Cover the full rail window, and re-kick
+  // after pull-to-refresh — resetThumbnailUrls() clears the cache without
+  // re-emitting myFires, so without refreshKey the rail would sit on flames.
   useEffect(() => {
     if (!shouldRunBackgroundWork || !myFires) return
-    ensureThumbnailUrls([...sortedMyFires.unread, ...sortedMyFires.quiet].slice(0, 12))
-  }, [ensureThumbnailUrls, myFires, shouldRunBackgroundWork, sortedMyFires])
+    void refreshKey
+    ensureThumbnailUrls([...sortedMyFires.unread, ...sortedMyFires.quiet].slice(0, RAIL_MAX_ITEMS))
+  }, [ensureThumbnailUrls, myFires, refreshKey, shouldRunBackgroundWork, sortedMyFires])
 
   const handleBondfirePress = useCallback(
     (bondfireId: string) => {
@@ -1169,6 +1172,27 @@ export default function HomeScreen() {
               onSpark={handleSpark}
               onBrowseCamps={handleBrowseCamps}
             />
+          ) : query.trim() === '' && viewMode === 'discover' ? (
+            <YStack paddingVertical={80} alignItems="center" justifyContent="center" gap={12}>
+              <Flame size={56} color={'$primary'} />
+              <Text fontSize={18} fontWeight="900">
+                All caught up
+              </Text>
+              <Text
+                fontSize={14}
+                color={'$placeholderColor'}
+                textAlign="center"
+                paddingHorizontal={48}
+              >
+                You're part of every fire here. Spark a new Bondfire to keep things burning.
+              </Text>
+              <Button variant="primary" size="$md" onPress={handleSpark}>
+                <Flame size={18} color={'$color'} />
+                <Text color={'$color'} fontWeight="900">
+                  Spark
+                </Text>
+              </Button>
+            </YStack>
           ) : (
             <YStack paddingVertical={80} alignItems="center" justifyContent="center" gap={12}>
               <Flame size={56} color={'$primary'} />

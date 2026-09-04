@@ -3,6 +3,9 @@ import type { Id } from '../../../convex/_generated/dataModel'
 export type BondfireThumbnailFields = {
   muxPlaybackId?: string
   muxPlaybackPolicy?: 'public' | 'signed'
+  /** Live sparks only expose muxLivePlaybackId until the VOD is ready. */
+  muxLivePlaybackId?: string
+  videoStatus?: string
   latestResponseBondfireVideoId?: Id<'bondfireVideos'>
   latestResponseMuxPlaybackId?: string
   latestResponseMuxPlaybackPolicy?: 'public' | 'signed'
@@ -39,7 +42,16 @@ export function getBondfireThumbnailPlayback(
       muxPlaybackPolicy: bondfire.latestResponseMuxPlaybackPolicy,
     }
   }
-  if (!bondfire.muxPlaybackId) return null
+  if (!bondfire.muxPlaybackId) {
+    // Live fires have no VOD playback id yet — fall back to the live stream's
+    // playback id so the rail shows the live frame instead of a plain flame.
+    if (bondfire.videoStatus !== 'live' || !bondfire.muxLivePlaybackId) return null
+    return {
+      cacheKey: `${bondfire._id}:${bondfire.muxLivePlaybackId}`,
+      muxPlaybackId: bondfire.muxLivePlaybackId,
+      muxPlaybackPolicy: bondfire.muxPlaybackPolicy,
+    }
+  }
   return {
     cacheKey: `${bondfire._id}:${bondfire.muxPlaybackId}`,
     muxPlaybackId: bondfire.muxPlaybackId,

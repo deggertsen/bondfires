@@ -16,12 +16,12 @@ import {
 import { Button, Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
-import { Flame } from '@tamagui/lucide-icons'
+import { ChevronLeft, Flame } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera'
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
-import { AppState, Platform, StatusBar } from 'react-native'
+import { AppState, Platform, Pressable, StatusBar } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
@@ -653,6 +653,7 @@ export default function CreateScreen() {
         personalCampDoc={personalCampDoc}
         joinCamp={joinCamp}
         onCampConfirmed={handleCampConfirmed}
+        onBack={handleBack}
       />
     )
   }
@@ -668,6 +669,15 @@ export default function CreateScreen() {
         gap={18}
       >
         <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+        <Pressable
+          onPress={handleBack}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="Back to Home"
+          style={{ position: 'absolute', top: 60, left: 20 }}
+        >
+          <ChevronLeft size={26} color={'$color'} />
+        </Pressable>
         <YStack
           width={78}
           height={78}
@@ -703,6 +713,15 @@ export default function CreateScreen() {
         gap={18}
       >
         <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+        <Pressable
+          onPress={handleBack}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="Back to Home"
+          style={{ position: 'absolute', top: 60, left: 20 }}
+        >
+          <ChevronLeft size={26} color={'$color'} />
+        </Pressable>
         <Text fontSize={24} fontWeight="900" textAlign="center">
           Need or Offer?
         </Text>
