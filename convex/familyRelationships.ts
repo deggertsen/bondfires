@@ -5,6 +5,8 @@ import { throwUserError } from './errors'
 
 type ConvexCtx = QueryCtx | MutationCtx
 
+export const MAX_ACTIVE_FAMILY_CONNECTIONS = 50
+
 type ConnectionGrant = Pick<
   Doc<'familyConnections'>,
   '_id' | 'firstUserId' | 'secondUserId' | 'status'
@@ -88,18 +90,34 @@ export async function getActiveFamilyConnectionUserIds(
     ctx.db
       .query('familyConnections')
       .withIndex('by_first_status', (q) => q.eq('firstUserId', userId).eq('status', 'active'))
-      .collect(),
+      .order('desc')
+      .take(MAX_ACTIVE_FAMILY_CONNECTIONS),
     ctx.db
       .query('familyConnections')
       .withIndex('by_second_status', (q) => q.eq('secondUserId', userId).eq('status', 'active'))
-      .collect(),
+      .order('desc')
+      .take(MAX_ACTIVE_FAMILY_CONNECTIONS),
   ])
   return [
     ...new Set([
       ...asFirst.map((connection) => connection.secondUserId),
       ...asSecond.map((connection) => connection.firstUserId),
     ]),
-  ]
+  ].slice(0, MAX_ACTIVE_FAMILY_CONNECTIONS)
+}
+
+export async function hasFamilyConnectionCapacity(ctx: ConvexCtx, userId: Id<'users'>) {
+  const [asFirst, asSecond] = await Promise.all([
+    ctx.db
+      .query('familyConnections')
+      .withIndex('by_first_status', (q) => q.eq('firstUserId', userId).eq('status', 'active'))
+      .take(MAX_ACTIVE_FAMILY_CONNECTIONS),
+    ctx.db
+      .query('familyConnections')
+      .withIndex('by_second_status', (q) => q.eq('secondUserId', userId).eq('status', 'active'))
+      .take(MAX_ACTIVE_FAMILY_CONNECTIONS),
+  ])
+  return asFirst.length + asSecond.length < MAX_ACTIVE_FAMILY_CONNECTIONS
 }
 
 export async function getHearthRelationshipAuthorization(

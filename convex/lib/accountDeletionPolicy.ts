@@ -14,6 +14,8 @@ export const ACCOUNT_DELETION_USER_STAGES = [
   'consumable_purchases',
   'personal_participants',
   'personal_removed_by',
+  'family_connections_first',
+  'family_connections_second',
   'personal_camps',
   'reconciliation',
   'tier_target',

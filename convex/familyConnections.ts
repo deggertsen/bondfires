@@ -3,10 +3,15 @@ import { internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalMutation, mutation, query } from './_generated/server'
-import { assertUserAgeBand } from './agePolicy'
+import { assertUserAgeBand, getPersonalCampAgeBand, getUserAgeBand } from './agePolicy'
 import { auth } from './auth'
 import { throwUserError } from './errors'
-import { familyPairKey, getActiveFamilyConnection } from './familyRelationships'
+import {
+  familyPairKey,
+  getActiveFamilyConnection,
+  hasFamilyConnectionCapacity,
+  MAX_ACTIVE_FAMILY_CONNECTIONS,
+} from './familyRelationships'
 import { generateAndInsertInviteCode, normalizeInviteCode } from './inviteCodes'
 import { ensureActivePersonalBondfireParticipant } from './personalBondfireAccess'
 
@@ -97,7 +102,11 @@ export const createInvite = mutation({
       throwUserError('Only the Hearth Bondfire owner can create a family invitation.')
     }
     const personalCamp = await ctx.db.get(bondfire.personalCampId)
-    if (!personalCamp || personalCamp.status !== 'active') {
+    if (
+      !personalCamp ||
+      personalCamp.status !== 'active' ||
+      getPersonalCampAgeBand(personalCamp) !== getUserAgeBand(owner)
+    ) {
       throwUserError('Your Hearth is currently unavailable.')
     }
 
@@ -153,7 +162,11 @@ export const checkInvite = query({
       return { valid: false, reason: 'ended' as const }
     }
     const personalCamp = await ctx.db.get(bondfire.personalCampId)
-    if (!personalCamp || personalCamp.status !== 'active') {
+    if (
+      !personalCamp ||
+      personalCamp.status !== 'active' ||
+      getPersonalCampAgeBand(personalCamp) !== getUserAgeBand(inviter)
+    ) {
       return { valid: false, reason: 'unavailable' as const }
     }
     return {
@@ -196,6 +209,15 @@ export const acceptInvite = mutation({
 
     let connection = await getActiveFamilyConnection(ctx, owner._id, recipient._id)
     if (!connection) {
+      const [ownerHasCapacity, recipientHasCapacity] = await Promise.all([
+        hasFamilyConnectionCapacity(ctx, owner._id),
+        hasFamilyConnectionCapacity(ctx, recipient._id),
+      ])
+      if (!ownerHasCapacity || !recipientHasCapacity) {
+        throwUserError(
+          `Family connections are limited to ${MAX_ACTIVE_FAMILY_CONNECTIONS} per account. Remove an existing connection before accepting another.`,
+        )
+      }
       const pair = orderedPair(owner._id, recipient._id)
       const connectionId = await ctx.db.insert('familyConnections', {
         pairKey: familyPairKey(owner._id, recipient._id),
@@ -241,13 +263,17 @@ export const listMine = query({
       ctx.db
         .query('familyConnections')
         .withIndex('by_first_status', (q) => q.eq('firstUserId', user._id).eq('status', 'active'))
-        .collect(),
+        .order('desc')
+        .take(MAX_ACTIVE_FAMILY_CONNECTIONS),
       ctx.db
         .query('familyConnections')
         .withIndex('by_second_status', (q) => q.eq('secondUserId', user._id).eq('status', 'active'))
-        .collect(),
+        .order('desc')
+        .take(MAX_ACTIVE_FAMILY_CONNECTIONS),
     ])
-    const connections = [...asFirst, ...asSecond].sort((a, b) => b.acceptedAt - a.acceptedAt)
+    const connections = [...asFirst, ...asSecond]
+      .sort((a, b) => b.acceptedAt - a.acceptedAt)
+      .slice(0, MAX_ACTIVE_FAMILY_CONNECTIONS)
     const rows = await Promise.all(
       connections.map(async (connection) => {
         const otherUserId =

@@ -576,6 +576,11 @@ export const createInvite = mutation({
       throwUserError('Only the bondfire owner can create invite codes.')
     }
 
+    const currentPersonalCamp = await getPersonalCampForOwner(ctx, user)
+    if (!currentPersonalCamp || currentPersonalCamp._id !== bondfire.personalCampId) {
+      throwUserError('This Hearth is no longer available for new invitations.')
+    }
+
     await assertPersonalCampActive(
       ctx,
       bondfire.personalCampId,

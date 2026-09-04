@@ -40,8 +40,8 @@ Deleted immediately:
 - Profile, profile photo, authentication accounts/sessions/codes.
 - Videos, Mux assets/live streams, captions/transcripts, local device backups.
 - Camp memberships, Hearths, invitations/claims, notifications, presence,
-  reactions, watch history, pins, client logs, reports, and audit rows that
-  directly identify the user.
+  Family Connections and their participant grants, reactions, watch history,
+  pins, client logs, reports, and audit rows that directly identify the user.
 - Kindling ledger entries and reconciliation records tied to the user.
 
 Retained without a Bondfires user/profile reference:

@@ -45,7 +45,9 @@ Deploy backend enforcement before releasing a client that admits teen users.
    - neither account becomes visible to the other in public Camps, search, or recommendations;
    - either account can revoke the connection, immediately losing every Hearth participant grant
      tied to it; a new relationship requires a new invitation and does not revive old grants; and
-   - reporting and blocking continue to work for content and accounts shared through a connection.
+   - reporting continues to work for content shared through a connection. Bondfires does not yet
+     have account-level blocking; add and verify that control before claiming blocking support in
+     store declarations or public safety materials.
 7. Confirm the public child-safety page says 13+, accurately distinguishes public separation from
    controlled private Family Connections, contains the
    published CSAE standards, and lists a monitored child-safety contact.
@@ -104,6 +106,8 @@ controls, those controls are a release blocker; do not self-certify based on thi
 - Monitor family-invitation creation, acceptance, revocation, reports, and abuse-rate signals. The
   product label is user-declared and must never be described internally or publicly as identity,
   guardianship, or biological-relationship verification.
+- Family Connections are capped at 50 active relationships per account. Treat attempts to reach
+  that limit as a potential abuse signal rather than raising it without a safety review.
 - Investigate reports involving a minor under the child-safety escalation procedure; preserve only
   the data counsel and applicable law require.
 - Re-run the boundary test matrix before every change to camps, invites, feeds, playback, live
