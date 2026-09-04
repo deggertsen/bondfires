@@ -3,6 +3,7 @@ import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
+import { assertUserCanAccessCamp } from './agePolicy'
 import { auth } from './auth'
 import { buildViewerVisibilityContext, isBondfireVisibleToViewer } from './bondfireVisibility'
 import { isCampParticipableStatus } from './campLifecycle'
@@ -47,6 +48,7 @@ async function assertCanRespondToBondfire(
   if (!camp || !isCampParticipableStatus(camp.status)) {
     throw new Error('Camp not found')
   }
+  assertUserCanAccessCamp(user, camp)
 
   const membership = await ctx.db
     .query('campMembers')

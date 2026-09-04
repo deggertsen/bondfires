@@ -9,9 +9,16 @@ import {
   mutation,
   query,
 } from './_generated/server'
+import {
+  assertUserCanAccessCamp,
+  assertUsersShareAgeBand,
+  isUserEligibleForCamp,
+} from './agePolicy'
 import { auth } from './auth'
+import { buildViewerVisibilityContext, isBondfireVisibleToViewer } from './bondfireVisibility'
 import { redeemCampInviteHandler } from './camps'
 import { throwUserError, withUserFacingErrors } from './errors'
+import { assertUsersCanShareHearth } from './familyRelationships'
 import {
   findReusableInviteCode,
   generateAndInsertInviteCode,
@@ -52,6 +59,8 @@ async function assertCanInviteToBondfire(ctx: MutationCtx, bondfire: Doc<'bondfi
 
   if (bondfire.campId) {
     const camp = await ctx.db.get(bondfire.campId)
+    if (!camp) throwUserError('Camp not found')
+    assertUserCanAccessCamp(sender, camp)
     const membership = await ctx.db
       .query('campMembers')
       .withIndex('by_user_camp', (q) =>
@@ -177,6 +186,17 @@ async function createDirectInviteCore(ctx: MutationCtx, args: DirectInviteArgs) 
   const recipient = await ctx.db.get(args.recipientId)
   if (!recipient) {
     throwUserError('Recipient not found')
+  }
+  if (bondfire.personalCampId) {
+    await assertUsersCanShareHearth(ctx, sender._id, recipient._id)
+  } else {
+    await assertUsersShareAgeBand(ctx, sender._id, recipient._id)
+  }
+  if (bondfire.campId) {
+    const camp = await ctx.db.get(bondfire.campId)
+    if (!camp) throwUserError('Camp not found')
+    assertUserCanAccessCamp(sender, camp)
+    assertUserCanAccessCamp(recipient, camp)
   }
 
   // Hearth fires gate playback on personalBondfireParticipants. A claim +
@@ -308,6 +328,12 @@ async function redeemInviteCodeHandler(ctx: MutationCtx, rawCode: string) {
     throwUserError('Invite has already been used')
   }
 
+  // Family links require a dedicated consent screen. Resolving the generic
+  // invite route must never accept the relationship implicitly.
+  if (invite.parentType === 'family-connection') {
+    return { type: 'family-connection' as const, code }
+  }
+
   if (invite.parentType === 'camp') {
     const result = await redeemCampInviteHandler(ctx, code)
     const camp = await ctx.db.get(result.campId)
@@ -410,7 +436,6 @@ export const markInviteSeen = mutation({
         q.eq('bondfireId', args.bondfireId).eq('claimerId', userId),
       )
       .collect()
-
     let updated = 0
     for (const claim of claims) {
       if (!claim.seen) {
@@ -458,6 +483,7 @@ export const listUnseenInvites = query({
       )
       .order('desc')
       .collect()
+    const viewer = await buildViewerVisibilityContext(ctx, userId)
 
     const rows = await Promise.all(
       claims.map(async (claim) => {
@@ -497,8 +523,11 @@ export const listUnseenInvites = query({
       await Promise.all(
         rows.map(async (row) => {
           if (!row.bondfire) {
-            return row.camp ? row : null
+            return row.camp && viewer.user && isUserEligibleForCamp(viewer.user, row.camp)
+              ? row
+              : null
           }
+          if (!(await isBondfireVisibleToViewer(ctx, row.bondfire, viewer))) return null
           // Don't surface hearth invites the viewer can't open yet (claim
           // without participant → "isn't available" dead end).
           if (row.bondfire.personalCampId) {

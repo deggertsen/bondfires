@@ -39,6 +39,7 @@ import {
   Pin,
   Play,
   Settings,
+  ShieldCheck,
   Sun,
   Trash2,
 } from '@tamagui/lucide-icons'
@@ -778,6 +779,31 @@ export default function ProfileScreen() {
 
             <Card>
               <YStack gap={16}>
+                <Pressable
+                  onPress={() => router.push(routes.familyConnections)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Manage family connections"
+                >
+                  <XStack justifyContent="space-between" alignItems="center">
+                    <XStack alignItems="center" gap={12} flex={1}>
+                      <ShieldCheck size={20} color={'$primary'} />
+                      <YStack flex={1}>
+                        <Text fontWeight="500" fontSize={15}>
+                          Family Connections
+                        </Text>
+                        <Text fontSize={13} color={'$placeholderColor'}>
+                          Manage private cross-age Hearth access
+                        </Text>
+                      </YStack>
+                    </XStack>
+                    <Text color={'$placeholderColor'} fontSize={20}>
+                      ›
+                    </Text>
+                  </XStack>
+                </Pressable>
+
+                <Separator borderColor={'$borderColor'} />
+
                 <XStack justifyContent="space-between" alignItems="center">
                   <XStack alignItems="center" gap={12}>
                     <Play size={20} color={'$secondary'} />

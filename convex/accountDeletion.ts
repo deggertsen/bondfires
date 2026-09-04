@@ -9,6 +9,7 @@ import {
   mutation,
   query,
 } from './_generated/server'
+import { isUserEligibleForCamp } from './agePolicy'
 import { getUserIdIncludingDeleting } from './auth'
 import { throwUserError } from './errors'
 import {
@@ -417,6 +418,77 @@ async function deleteRows(rows: Array<{ _id: Id<TableNames> }>, ctx: MutationCtx
   for (const row of rows) await ctx.db.delete(row._id)
 }
 
+async function deleteFamilyConnectionAndGrants(
+  ctx: MutationCtx,
+  connectionId: Id<'familyConnections'>,
+) {
+  const participants = await ctx.db
+    .query('personalBondfireParticipants')
+    .withIndex('by_family_connection_status', (q) => q.eq('familyConnectionId', connectionId))
+    .take(BATCH_SIZE)
+  await deleteRows(participants, ctx)
+  if (participants.length === BATCH_SIZE) return
+  await ctx.db.delete(connectionId)
+}
+
+async function findEligibleCampSuccessor(
+  ctx: MutationCtx,
+  camp: Doc<'camps'>,
+  deletingUserId: Id<'users'>,
+) {
+  let disabledCount = 0
+  const now = Date.now()
+
+  for (const role of ['moderator', 'member'] as const) {
+    const candidates = await ctx.db
+      .query('campMembers')
+      .withIndex('by_camp_status_role', (q) =>
+        q.eq('campId', camp._id).eq('status', 'active').eq('role', role),
+      )
+      .take(BATCH_SIZE)
+
+    for (const candidate of candidates) {
+      const candidateUser =
+        candidate.userId === deletingUserId ? null : await ctx.db.get(candidate.userId)
+      if (candidateUser && isUserEligibleForCamp(candidateUser, camp)) {
+        if (disabledCount > 0) {
+          await ctx.db.patch(camp._id, {
+            activeMemberCount: Math.max(0, (camp.activeMemberCount ?? 0) - disabledCount),
+            updatedAt: now,
+          })
+        }
+        return { successor: candidate, retry: false }
+      }
+
+      await ctx.db.patch(candidate._id, {
+        status: 'rejected',
+        moderationReason: 'Age-group access changed; membership disabled automatically.',
+        rejectedAt: now,
+        updatedAt: now,
+      })
+      disabledCount += 1
+    }
+
+    // Drain a full page of stale rows before deciding that this role has no
+    // eligible successor. This keeps account deletion bounded and resumable.
+    if (candidates.length === BATCH_SIZE) {
+      await ctx.db.patch(camp._id, {
+        activeMemberCount: Math.max(0, (camp.activeMemberCount ?? 0) - disabledCount),
+        updatedAt: now,
+      })
+      return { successor: null, retry: true }
+    }
+  }
+
+  if (disabledCount > 0) {
+    await ctx.db.patch(camp._id, {
+      activeMemberCount: Math.max(0, (camp.activeMemberCount ?? 0) - disabledCount),
+      updatedAt: now,
+    })
+  }
+  return { successor: null, retry: false }
+}
+
 const RESPONSE_STAGES = [
   'transcripts',
   'reports',
@@ -705,24 +777,8 @@ export const cleanupUserBatch = internalMutation({
         .withIndex('by_owner', (q) => q.eq('ownerId', userId))
         .first()
       if (camp) {
-        const moderator = await ctx.db
-          .query('campMembers')
-          .withIndex('by_camp_status_role', (q) =>
-            q.eq('campId', camp._id).eq('status', 'active').eq('role', 'moderator'),
-          )
-          .first()
-        const member = await ctx.db
-          .query('campMembers')
-          .withIndex('by_camp_status_role', (q) =>
-            q.eq('campId', camp._id).eq('status', 'active').eq('role', 'member'),
-          )
-          .first()
-        const successor =
-          moderator && moderator.userId !== userId
-            ? moderator
-            : member && member.userId !== userId
-              ? member
-              : null
+        const { successor, retry } = await findEligibleCampSuccessor(ctx, camp, userId)
+        if (retry) return { completed: false }
         if (successor) {
           const successorUser = await ctx.db.get(successor.userId)
           await ctx.db.patch(successor._id, { role: 'owner', updatedAt: Date.now() })
@@ -805,6 +861,30 @@ export const cleanupUserBatch = internalMutation({
         await ctx.db.patch(participant._id, { removedBy: undefined, updatedAt: Date.now() })
       }
       if (participants.length === BATCH_SIZE) return { completed: false }
+      await advanceJob(ctx, job)
+      return { completed: false }
+    }
+    if (stage === 'family_connections_first') {
+      const connection = await ctx.db
+        .query('familyConnections')
+        .withIndex('by_first_status', (q) => q.eq('firstUserId', userId))
+        .first()
+      if (connection) {
+        await deleteFamilyConnectionAndGrants(ctx, connection._id)
+        return { completed: false }
+      }
+      await advanceJob(ctx, job)
+      return { completed: false }
+    }
+    if (stage === 'family_connections_second') {
+      const connection = await ctx.db
+        .query('familyConnections')
+        .withIndex('by_second_status', (q) => q.eq('secondUserId', userId))
+        .first()
+      if (connection) {
+        await deleteFamilyConnectionAndGrants(ctx, connection._id)
+        return { completed: false }
+      }
       await advanceJob(ctx, job)
       return { completed: false }
     }

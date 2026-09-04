@@ -8,7 +8,9 @@ import {
   internalMutation,
   internalQuery,
 } from './_generated/server'
+import { isUserEligibleForCamp } from './agePolicy'
 import { isCampParticipableStatus } from './campLifecycle'
+import { isHearthParticipantAuthorized } from './familyRelationships'
 import {
   accessApprovedBody,
   accessApprovedTitle,
@@ -449,14 +451,27 @@ export const getLiveNotificationRecipientIds = internalQuery({
   handler: async (ctx, args): Promise<Array<Id<'users'>>> => {
     if (args.campId) {
       const campId = args.campId
-      const memberships = await ctx.db
-        .query('campMembers')
-        .withIndex('by_camp_status', (q) => q.eq('campId', campId).eq('status', 'active'))
-        .collect()
+      const [camp, memberships] = await Promise.all([
+        ctx.db.get(campId),
+        ctx.db
+          .query('campMembers')
+          .withIndex('by_camp_status', (q) => q.eq('campId', campId).eq('status', 'active'))
+          .collect(),
+      ])
+      if (!camp) return []
+      const eligible = await Promise.all(
+        memberships.map(async (membership) => {
+          const user = await ctx.db.get(membership.userId)
+          return user !== null && isUserEligibleForCamp(user, camp)
+        }),
+      )
 
       return uniqueUserIds(
         memberships
-          .filter((membership) => !membership.muted && membership.userId !== args.creatorId)
+          .filter(
+            (membership, index) =>
+              eligible[index] && !membership.muted && membership.userId !== args.creatorId,
+          )
           .map((membership) => membership.userId),
       )
     }
@@ -491,15 +506,30 @@ export const getHearthBondfireRecipientIds = internalQuery({
     creatorId: v.id('users'),
   },
   handler: async (ctx, args): Promise<Array<Id<'users'>>> => {
-    const participants = await ctx.db
-      .query('personalBondfireParticipants')
-      .withIndex('by_bondfire_status', (q) =>
-        q.eq('bondfireId', args.bondfireId).eq('status', 'active'),
-      )
-      .collect()
+    const [bondfire, participants] = await Promise.all([
+      ctx.db.get(args.bondfireId),
+      ctx.db
+        .query('personalBondfireParticipants')
+        .withIndex('by_bondfire_status', (q) =>
+          q.eq('bondfireId', args.bondfireId).eq('status', 'active'),
+        )
+        .collect(),
+    ])
+    if (!bondfire) return []
+    const authorized = await Promise.all(
+      participants.map((participant) =>
+        isHearthParticipantAuthorized(
+          ctx,
+          bondfire.userId,
+          participant.userId,
+          participant.familyConnectionId,
+        ),
+      ),
+    )
 
     return uniqueUserIds(
       participants
+        .filter((_participant, index) => authorized[index])
         .map((participant) => participant.userId)
         .filter((userId) => userId !== args.creatorId),
     )
@@ -533,14 +563,27 @@ export const getCampNotificationRecipientIds = internalQuery({
     creatorId: v.id('users'),
   },
   handler: async (ctx, args): Promise<Array<Id<'users'>>> => {
-    const memberships = await ctx.db
-      .query('campMembers')
-      .withIndex('by_camp_status', (q) => q.eq('campId', args.campId).eq('status', 'active'))
-      .collect()
+    const [camp, memberships] = await Promise.all([
+      ctx.db.get(args.campId),
+      ctx.db
+        .query('campMembers')
+        .withIndex('by_camp_status', (q) => q.eq('campId', args.campId).eq('status', 'active'))
+        .collect(),
+    ])
+    if (!camp) return []
+    const eligible = await Promise.all(
+      memberships.map(async (membership) => {
+        const user = await ctx.db.get(membership.userId)
+        return user !== null && isUserEligibleForCamp(user, camp)
+      }),
+    )
 
     return uniqueUserIds(
       memberships
-        .filter((membership) => !membership.muted && membership.userId !== args.creatorId)
+        .filter(
+          (membership, index) =>
+            eligible[index] && !membership.muted && membership.userId !== args.creatorId,
+        )
         .map((membership) => membership.userId),
     )
   },
@@ -564,9 +607,20 @@ export const getResponseNotificationRecipientIds = internalQuery({
           q.eq('bondfireId', args.bondfireId).eq('status', 'active'),
         )
         .collect()
+      const authorized = await Promise.all(
+        participants.map((participant) =>
+          isHearthParticipantAuthorized(
+            ctx,
+            bondfire.userId,
+            participant.userId,
+            participant.familyConnectionId,
+          ),
+        ),
+      )
 
       return uniqueUserIds(
         participants
+          .filter((_participant, index) => authorized[index])
           .map((participant) => participant.userId)
           .filter((userId) => userId !== args.responderId),
       )
@@ -592,12 +646,24 @@ export const getResponseNotificationRecipientIds = internalQuery({
 
     // Camp bondfires: drop participants who have since left or muted the camp.
     const campId = bondfire.campId
-    const memberships = await ctx.db
-      .query('campMembers')
-      .withIndex('by_camp_status', (q) => q.eq('campId', campId).eq('status', 'active'))
-      .collect()
+    const [camp, memberships] = await Promise.all([
+      ctx.db.get(campId),
+      ctx.db
+        .query('campMembers')
+        .withIndex('by_camp_status', (q) => q.eq('campId', campId).eq('status', 'active'))
+        .collect(),
+    ])
+    if (!camp) return []
+    const eligible = await Promise.all(
+      memberships.map(async (membership) => {
+        const user = await ctx.db.get(membership.userId)
+        return user !== null && isUserEligibleForCamp(user, camp)
+      }),
+    )
     const notifiedMemberIds = new Set(
-      memberships.filter((membership) => !membership.muted).map((membership) => membership.userId),
+      memberships
+        .filter((membership, index) => eligible[index] && !membership.muted)
+        .map((membership) => membership.userId),
     )
 
     return [...participantIds].filter((userId) => notifiedMemberIds.has(userId))

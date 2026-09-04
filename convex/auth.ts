@@ -2,46 +2,11 @@ import Resend from '@auth/core/providers/resend'
 import { Password } from '@convex-dev/auth/providers/Password'
 import { convexAuth } from '@convex-dev/auth/server'
 import type { QueryCtx } from './_generated/server'
+import { calculateAgeAt } from './agePolicy'
 
 const DEFAULT_EMAIL_FROM = 'Bondfires <support@bondfires.org>'
 const VERIFY_EMAIL_SUBJECT = 'Verify your Bondfires account'
 const RESET_PASSWORD_SUBJECT = 'Reset your Bondfires password'
-
-function parseBirthDate(birthDate: string) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(birthDate)
-  if (!match) {
-    return null
-  }
-
-  const year = Number(match[1])
-  const month = Number(match[2])
-  const day = Number(match[3])
-  const parsed = new Date(Date.UTC(year, month - 1, day))
-  if (
-    parsed.getUTCFullYear() !== year ||
-    parsed.getUTCMonth() !== month - 1 ||
-    parsed.getUTCDate() !== day
-  ) {
-    return null
-  }
-
-  return { year, month, day }
-}
-
-function calculateAge(birthDate: string): number | null {
-  const birth = parseBirthDate(birthDate)
-  if (!birth) {
-    return null
-  }
-
-  const today = new Date()
-  let age = today.getFullYear() - birth.year
-  const monthDelta = today.getMonth() + 1 - birth.month
-  if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < birth.day)) {
-    age -= 1
-  }
-  return age
-}
 
 // Generate a 6-digit numeric OTP using crypto for security
 function generateOTP(): string {
@@ -155,7 +120,7 @@ const PasswordWithVerification = Password({
         throw new Error('birthDate is required')
       }
 
-      const age = calculateAge(birthDate)
+      const age = calculateAgeAt(birthDate)
       if (age === null) {
         throw new Error('birthDate must be a valid YYYY-MM-DD date')
       }

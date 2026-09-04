@@ -22,6 +22,7 @@ const CLOSE_CIRCLE_DISPLAY_LIMIT = 8
 const RECENT_CONNECTIONS_DISPLAY_LIMIT = 20
 /** Same base URL as InviteSheet — both domains are app-linked in app.json. */
 const INVITE_BASE_URL = 'https://bondfires.app/invite'
+const FAMILY_INVITE_BASE_URL = 'https://bondfires.app/invite/family'
 
 interface InviteFormState {
   selectedRecipientIds: Id<'users'>[]
@@ -31,10 +32,13 @@ interface InviteFormState {
   emailInput: string
   /** Set once a share link has been created — the draft now exists server-side. */
   shareInfo: { bondfireId: string; code: string } | null
+  familyShareInfo: { bondfireId: string; code: string } | null
   copied: boolean
+  familyCopied: boolean
   isSubmitting: boolean
   isDiscarding: boolean
   isCreatingLink: boolean
+  isCreatingFamilyLink: boolean
 }
 
 /** Cap errors thrown by sendDraftInvites — see getParticipantCap tiers. */
@@ -101,10 +105,13 @@ export function PreRecordingInviteScreen({
     titleTouched: false,
     emailInput: '',
     shareInfo: null,
+    familyShareInfo: null,
     copied: false,
+    familyCopied: false,
     isSubmitting: false,
     isDiscarding: false,
     isCreatingLink: false,
+    isCreatingFamilyLink: false,
   })
 
   // Only fetch invite candidates for Hearth — the screen is never shown for
@@ -113,6 +120,10 @@ export function PreRecordingInviteScreen({
   const closeCircle = useMemo(
     () => (candidates?.closeCircle ?? []).slice(0, CLOSE_CIRCLE_DISPLAY_LIMIT),
     [candidates?.closeCircle],
+  )
+  const familyConnections = useMemo(
+    () => (candidates?.familyConnections ?? []).slice(0, CLOSE_CIRCLE_DISPLAY_LIMIT),
+    [candidates?.familyConnections],
   )
   const recentConnections = useMemo(
     () => (candidates?.recentConnections ?? []).slice(0, RECENT_CONNECTIONS_DISPLAY_LIMIT),
@@ -123,6 +134,7 @@ export function PreRecordingInviteScreen({
   const createDraft = useMutation(api.personalBondfires.createDraftBondfire)
   const sendInvites = useMutation(api.personalBondfires.sendDraftInvites)
   const discardDraft = useMutation(api.personalBondfires.discardDraftBondfire)
+  const createFamilyInvite = useMutation(api.familyConnections.createInvite)
 
   const selectedRecipientIds = useValue(form$.selectedRecipientIds)
   const emails = useValue(form$.emails)
@@ -130,16 +142,19 @@ export function PreRecordingInviteScreen({
   const titleTouched = useValue(form$.titleTouched)
   const emailInput = useValue(form$.emailInput)
   const shareInfo = useValue(form$.shareInfo)
+  const familyShareInfo = useValue(form$.familyShareInfo)
   const copied = useValue(form$.copied)
+  const familyCopied = useValue(form$.familyCopied)
   const isSubmitting = useValue(form$.isSubmitting)
   const isDiscarding = useValue(form$.isDiscarding)
   const isCreatingLink = useValue(form$.isCreatingLink)
-  const isBusy = isSubmitting || isDiscarding || isCreatingLink
+  const isCreatingFamilyLink = useValue(form$.isCreatingFamilyLink)
+  const isBusy = isSubmitting || isDiscarding || isCreatingLink || isCreatingFamilyLink
 
   // Combined candidate set used for both selection and auto-title.
   const allCandidates = useMemo(
-    () => [...closeCircle, ...recentConnections],
-    [closeCircle, recentConnections],
+    () => [...familyConnections, ...closeCircle, ...recentConnections],
+    [closeCircle, familyConnections, recentConnections],
   )
 
   // Auto-title: only when the user hasn't touched the field AND we have
@@ -155,17 +170,18 @@ export function PreRecordingInviteScreen({
     (displayTitle.trim().length > 0 ||
       selectedRecipientIds.length > 0 ||
       emails.length > 0 ||
-      shareInfo !== null)
+      shareInfo !== null ||
+      familyShareInfo !== null)
 
   // Once a draft exists (share link created, or one carried over from a prior
   // visit), skipping would record into a *different* bondfire and orphan the
   // draft people may already have joined — so hide the escape hatch.
-  const canSkip = !isBusy && shareInfo === null && !existingDraft
+  const canSkip = !isBusy && shareInfo === null && familyShareInfo === null && !existingDraft
 
   // The resume/discard prompt is for drafts left over from a *previous* visit.
   // Creating a share link creates a draft server-side, which echoes back into
   // the reactive existingDraft query — don't prompt about our own draft.
-  const showResumeBanner = Boolean(existingDraft) && shareInfo === null
+  const showResumeBanner = Boolean(existingDraft) && shareInfo === null && familyShareInfo === null
 
   const toggleRecipient = useCallback(
     (id: Id<'users'>) => {
@@ -278,6 +294,75 @@ export function PreRecordingInviteScreen({
     }
   }, [form$])
 
+  const handleCreateFamilyLink = useCallback(() => {
+    if (form$.isCreatingFamilyLink.get() || form$.familyShareInfo.get()) return
+    Alert.alert(
+      'Create a family invitation?',
+      'This one-time link can create private Hearth access across teen and adult age groups. Share it only with someone you know and trust offline.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Create link',
+          onPress: async () => {
+            form$.isCreatingFamilyLink.set(true)
+            try {
+              const trimmedTitle = (
+                form$.titleTouched.get()
+                  ? form$.title.get()
+                  : buildAutoTitle(
+                      allCandidates,
+                      form$.selectedRecipientIds.get(),
+                      form$.emails.get(),
+                    )
+              ).trim()
+              const draft = await createDraft({
+                ...(trimmedTitle.length > 0 ? { title: trimmedTitle } : {}),
+              })
+              const result = await createFamilyInvite({ bondfireId: draft.bondfireId })
+              form$.familyShareInfo.set({ bondfireId: draft.bondfireId, code: result.code })
+            } catch (error) {
+              telemetry.error('create:family_link', 'Failed to create family invitation', {
+                error: String(error),
+              })
+              Alert.alert(
+                'Could not create family link',
+                error instanceof Error ? error.message : 'Please try again.',
+              )
+            } finally {
+              form$.isCreatingFamilyLink.set(false)
+            }
+          },
+        },
+      ],
+    )
+  }, [allCandidates, createDraft, createFamilyInvite, form$])
+
+  const handleCopyFamilyLink = useCallback(async () => {
+    const info = form$.familyShareInfo.get()
+    if (!info) return
+    try {
+      await Clipboard.setStringAsync(`${FAMILY_INVITE_BASE_URL}/${info.code}`)
+      form$.familyCopied.set(true)
+      setTimeout(() => form$.familyCopied.set(false), 2000)
+    } catch (error) {
+      Alert.alert('Copy Failed', error instanceof Error ? error.message : String(error))
+    }
+  }, [form$])
+
+  const handleShareFamilyLink = useCallback(async () => {
+    const info = form$.familyShareInfo.get()
+    if (!info) return
+    const familyShareUrl = `${FAMILY_INVITE_BASE_URL}/${info.code}`
+    try {
+      await RNShare.share({
+        message: `Connect with me for a private family Hearth on Bondfires. Only accept if you know me offline.\n\n${familyShareUrl}`,
+        url: familyShareUrl,
+      })
+    } catch {
+      // User cancelled
+    }
+  }, [form$])
+
   const handleContinue = useCallback(async () => {
     if (form$.isSubmitting.get()) return
     form$.isSubmitting.set(true)
@@ -339,6 +424,7 @@ export function PreRecordingInviteScreen({
               await discardDraft({ bondfireId: existingDraft._id as Id<'bondfires'> })
               // The draft this session's share link pointed at is gone too.
               form$.shareInfo.set(null)
+              form$.familyShareInfo.set(null)
             } catch (error) {
               telemetry.warn('create:discard_draft', 'Failed to discard existing draft', {
                 error: String(error),
@@ -357,6 +443,9 @@ export function PreRecordingInviteScreen({
   }, [discardDraft, existingDraft, form$])
 
   const shareUrl = shareInfo ? `${INVITE_BASE_URL}/${shareInfo.code}` : null
+  const familyShareUrl = familyShareInfo
+    ? `${FAMILY_INVITE_BASE_URL}/${familyShareInfo.code}`
+    : null
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
@@ -432,6 +521,29 @@ export function PreRecordingInviteScreen({
                 </Button>
               </XStack>
             </YStack>
+          )}
+
+          {/* Family connections */}
+          {familyConnections.length > 0 && (
+            <InviteSection
+              title="Family Connections"
+              caption="Trusted people who can share private Hearths across age groups."
+            >
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
+              >
+                {familyConnections.map((candidate) => (
+                  <CandidateAvatar
+                    key={candidate._id}
+                    candidate={candidate}
+                    selected={selectedRecipientIds.includes(candidate._id)}
+                    onToggle={() => toggleRecipient(candidate._id)}
+                  />
+                ))}
+              </ScrollView>
+            </InviteSection>
           )}
 
           {/* Close Circle */}
@@ -530,8 +642,8 @@ export function PreRecordingInviteScreen({
 
           {/* Share link */}
           <InviteSection
-            title="Or share with anyone"
-            caption="Anyone with the link can join — they'll be there when you start."
+            title="Share a regular invite"
+            caption="For people in your age group or an existing family connection."
           >
             <YStack paddingHorizontal={16} gap={10}>
               {shareUrl ? (
@@ -597,6 +709,74 @@ export function PreRecordingInviteScreen({
                 >
                   <Text color={'$color'} fontWeight="700">
                     {isCreatingLink ? 'Creating link…' : 'Create share link'}
+                  </Text>
+                </Button>
+              )}
+            </YStack>
+          </InviteSection>
+
+          <InviteSection
+            title="Invite family across age groups"
+            caption="Creates a 24-hour, one-time link with an explicit acceptance step."
+          >
+            <YStack paddingHorizontal={16} gap={10}>
+              <Text color="$placeholderColor" fontSize={12} lineHeight={18}>
+                Share only with someone you know and trust offline. Bondfires does not verify legal
+                or biological relationships, and either person can revoke access later.
+              </Text>
+              {familyShareUrl ? (
+                <>
+                  <XStack
+                    alignItems="center"
+                    gap={10}
+                    padding={12}
+                    borderRadius={12}
+                    borderWidth={1}
+                    borderColor="$borderColor"
+                    backgroundColor="$backgroundHover"
+                  >
+                    <Link size={18} color="$placeholderColor" />
+                    <Text color="$color" fontSize={13} flex={1} numberOfLines={1}>
+                      {familyShareUrl}
+                    </Text>
+                  </XStack>
+                  <XStack gap={10}>
+                    <Button
+                      flex={1}
+                      variant="primary"
+                      size="$md"
+                      onPress={handleCopyFamilyLink}
+                      icon={familyCopied ? <Check size={16} /> : <Copy size={16} />}
+                    >
+                      <Text fontWeight="700">{familyCopied ? 'Copied' : 'Copy'}</Text>
+                    </Button>
+                    <Button
+                      flex={1}
+                      variant="outline"
+                      size="$md"
+                      onPress={handleShareFamilyLink}
+                      icon={<Share size={16} />}
+                    >
+                      <Text fontWeight="700">Share</Text>
+                    </Button>
+                  </XStack>
+                </>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="$md"
+                  onPress={handleCreateFamilyLink}
+                  disabled={isBusy}
+                  icon={
+                    isCreatingFamilyLink ? (
+                      <Spinner size="small" color="$color" />
+                    ) : (
+                      <Link size={16} color="$color" />
+                    )
+                  }
+                >
+                  <Text fontWeight="700">
+                    {isCreatingFamilyLink ? 'Creating…' : 'Create family link'}
                   </Text>
                 </Button>
               )}

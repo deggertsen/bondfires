@@ -3,6 +3,7 @@ import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalMutation, mutation, query } from './_generated/server'
+import { getUserAgeBand } from './agePolicy'
 import { auth } from './auth'
 import {
   assertVideoDurationWithinTierLimit,
@@ -10,6 +11,11 @@ import {
   PAID_TIERS,
 } from './entitlements'
 import { throwUserError, withUserFacingErrors } from './errors'
+import {
+  assertUsersCanShareHearth,
+  getActiveFamilyConnectionUserIds,
+  isHearthParticipantAuthorized,
+} from './familyRelationships'
 import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 import { createDirectInviteHandler } from './inviteClaims'
 import {
@@ -23,6 +29,7 @@ import {
   getActivePersonalBondfireParticipantCount,
   getPersonalBondfireParticipant,
   getPersonalBondfireParticipantCap,
+  getPersonalCampForOwner,
 } from './personalBondfireAccess'
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -208,10 +215,7 @@ export const createBondfire = mutation({
     }
 
     // Find the user's hearth — must exist and be active.
-    const personalCamp = await ctx.db
-      .query('personalCamps')
-      .withIndex('by_owner', (q) => q.eq('ownerId', user._id))
-      .first()
+    const personalCamp = await getPersonalCampForOwner(ctx, user)
 
     if (!personalCamp) {
       throwUserError('Hearth not found. Subscribe to Plus, Premium, or Pro to create one.')
@@ -288,10 +292,7 @@ export const createDraftBondfire = mutation({
           throwUserError('A Hearth requires a Plus, Premium, or Pro subscription.')
         }
 
-        const personalCamp = await ctx.db
-          .query('personalCamps')
-          .withIndex('by_owner', (q) => q.eq('ownerId', user._id))
-          .first()
+        const personalCamp = await getPersonalCampForOwner(ctx, user)
         if (!personalCamp) {
           throwUserError('Hearth not found. Subscribe to Plus, Premium, or Pro to create one.')
         }
@@ -432,14 +433,24 @@ export const sendDraftInvites = mutation({
         const toAdd: Array<{
           recipientId: Id<'users'>
           participant: Doc<'personalBondfireParticipants'> | null
+          familyConnectionId?: Id<'familyConnections'>
         }> = []
         for (const recipientId of recipientIds) {
+          const { familyConnectionId } = await assertUsersCanShareHearth(ctx, user._id, recipientId)
           const participant = await getPersonalBondfireParticipant(ctx, {
             bondfireId: args.bondfireId,
             userId: recipientId,
           })
-          if (participant?.status !== 'active') {
-            toAdd.push({ recipientId, participant })
+          const isAuthorized =
+            participant?.status === 'active' &&
+            (await isHearthParticipantAuthorized(
+              ctx,
+              user._id,
+              recipientId,
+              participant.familyConnectionId,
+            ))
+          if (!isAuthorized) {
+            toAdd.push({ recipientId, participant, familyConnectionId })
           }
         }
         if (activeCount + toAdd.length > cap) {
@@ -449,7 +460,7 @@ export const sendDraftInvites = mutation({
           throwUserError('This fire is full.')
         }
 
-        for (const { recipientId, participant } of toAdd) {
+        for (const { recipientId, participant, familyConnectionId } of toAdd) {
           if (participant) {
             await ctx.db.patch(participant._id, {
               status: 'active',
@@ -457,6 +468,7 @@ export const sendDraftInvites = mutation({
               leftAt: undefined,
               removedAt: undefined,
               removedBy: undefined,
+              familyConnectionId,
               updatedAt: now,
             })
           } else {
@@ -464,6 +476,7 @@ export const sendDraftInvites = mutation({
               bondfireId: args.bondfireId,
               userId: recipientId,
               status: 'active',
+              familyConnectionId,
               joinedAt: now,
               createdAt: now,
               updatedAt: now,
@@ -561,6 +574,11 @@ export const createInvite = mutation({
     // Only the owner can create invites.
     if (bondfire.userId !== user._id) {
       throwUserError('Only the bondfire owner can create invite codes.')
+    }
+
+    const currentPersonalCamp = await getPersonalCampForOwner(ctx, user)
+    if (!currentPersonalCamp || currentPersonalCamp._id !== bondfire.personalCampId) {
+      throwUserError('This Hearth is no longer available for new invitations.')
     }
 
     await assertPersonalCampActive(
@@ -942,11 +960,21 @@ export const getInviteCandidates = query({
   handler: async (ctx) => {
     const userId = await auth.getUserId(ctx)
     if (!userId) {
-      return { closeCircle: [], recentConnections: [], participantCap: 2 }
+      return { familyConnections: [], closeCircle: [], recentConnections: [], participantCap: 2 }
     }
 
     const tier = await getEntitlementSubscriptionTier(ctx, userId)
     const participantCap = getPersonalBondfireParticipantCap(tier)
+    const [currentUser, familyUserIds] = await Promise.all([
+      ctx.db.get(userId),
+      getActiveFamilyConnectionUserIds(ctx, userId),
+    ])
+    const currentAgeBand = currentUser ? getUserAgeBand(currentUser) : null
+    const familyUserIdSet = new Set(familyUserIds)
+
+    const familyUsers = (
+      await Promise.all(familyUserIds.map((familyUserId) => ctx.db.get(familyUserId)))
+    ).filter((user): user is Doc<'users'> => user !== null)
 
     const pins = await ctx.db
       .query('closeCirclePins')
@@ -954,7 +982,13 @@ export const getInviteCandidates = query({
       .take(CLOSE_CIRCLE_LIMIT)
     const closeCircleUsers = (
       await Promise.all(pins.map((pin) => ctx.db.get(pin.pinnedUserId)))
-    ).filter((user): user is Doc<'users'> => user !== null)
+    ).filter(
+      (user): user is Doc<'users'> =>
+        user !== null &&
+        !familyUserIdSet.has(user._id) &&
+        currentAgeBand !== null &&
+        getUserAgeBand(user) === currentAgeBand,
+    )
     const closeCircleIds = new Set(closeCircleUsers.map((user) => user._id))
 
     const cutoff = Date.now() - RECENT_CONNECTION_WINDOW_MS
@@ -1038,9 +1072,16 @@ export const getInviteCandidates = query({
       .map(([candidateId]) => candidateId)
     const recentUsers = (
       await Promise.all(recentIds.map((candidateId) => ctx.db.get(candidateId)))
-    ).filter((user): user is Doc<'users'> => user !== null)
+    ).filter(
+      (user): user is Doc<'users'> =>
+        user !== null &&
+        !familyUserIdSet.has(user._id) &&
+        currentAgeBand !== null &&
+        getUserAgeBand(user) === currentAgeBand,
+    )
 
     return {
+      familyConnections: familyUsers.map(toInviteCandidate),
       closeCircle: closeCircleUsers.map(toInviteCandidate),
       recentConnections: recentUsers.map(toInviteCandidate),
       participantCap,
@@ -1059,10 +1100,9 @@ export const listMyPersonalBondfires = query({
       return []
     }
 
-    const personalCamp = await ctx.db
-      .query('personalCamps')
-      .withIndex('by_owner', (q) => q.eq('ownerId', userId))
-      .first()
+    const user = await ctx.db.get(userId)
+    if (!user) return []
+    const personalCamp = await getPersonalCampForOwner(ctx, user)
 
     if (!personalCamp) {
       return []
@@ -1104,7 +1144,21 @@ export const listParticipants = query({
       return []
     }
 
-    const raw = await Promise.all(participants.map((p) => ctx.db.get(p.userId)))
+    const authorized = await Promise.all(
+      participants.map((participant) =>
+        isHearthParticipantAuthorized(
+          ctx,
+          bondfire.userId,
+          participant.userId,
+          participant.familyConnectionId,
+        ),
+      ),
+    )
+    const raw = await Promise.all(
+      participants
+        .filter((_participant, index) => authorized[index])
+        .map((participant) => ctx.db.get(participant.userId)),
+    )
     const users = raw.filter((u): u is Doc<'users'> => u !== null)
 
     return users.map((u) => ({

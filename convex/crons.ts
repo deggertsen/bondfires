@@ -3,6 +3,21 @@ import { internal } from './_generated/api'
 
 const crons = cronJobs()
 
+// Age-band reads enforce birthday transitions immediately. These bounded,
+// self-paginating sweeps remove stale membership rows and Hearth participants.
+crons.daily(
+  'reconcile camp age memberships',
+  { hourUTC: 0, minuteUTC: 30 },
+  internal.ageSafetyMaintenance.reconcileCampMemberships,
+  {},
+)
+crons.daily(
+  'reconcile hearth age participants',
+  { hourUTC: 0, minuteUTC: 45 },
+  internal.ageSafetyMaintenance.reconcileHearthParticipants,
+  {},
+)
+
 crons.interval('cleanup stale presence', { minutes: 1 }, internal.presence.cleanupStalePresence)
 
 // Account deletion normally self-schedules each bounded batch. This hourly

@@ -17,6 +17,8 @@ describe('account deletion policy', () => {
     }
     expect(visited).toEqual(ACCOUNT_DELETION_USER_STAGES)
     expect(visited).toContain('client_log_rate_limit')
+    expect(visited).toContain('family_connections_first')
+    expect(visited).toContain('family_connections_second')
     expect(nextAccountDeletionStage('finalize')).toBe('finalize')
   })
 
