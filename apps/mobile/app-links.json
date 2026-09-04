@@ -16,7 +16,9 @@
     "/invite/family/app-link-check",
     "/personal-bondfire/app-link-check/app-link-check"
   ],
-  "playAppSigningSha256Fingerprints": [],
+  "playAppSigningSha256Fingerprints": [
+    "97:2A:6F:88:10:BE:30:85:C1:82:76:04:13:50:30:DB:E6:4B:7F:35:6D:9A:F3:B9:28:B1:12:A0:CD:37:32:0C"
+  ],
   "nonPlaySigningSha256Fingerprints": [
     "B9:61:12:91:E7:3A:13:96:A2:92:0A:03:BB:05:C4:61:B3:29:85:8D:3C:AE:C4:D5:7D:CF:BC:FA:44:CD:99:74"
   ]
