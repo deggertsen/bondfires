@@ -255,6 +255,7 @@ export default defineSchema({
   })
     .index('by_slug', ['slug'])
     .index('by_owner', ['ownerId', 'createdAt'])
+    .index('by_status_archived', ['status', 'archivedAt'])
     .index('by_status_created', ['status', 'createdAt']),
 
   // Camp membership, notification preferences, and moderation roles
@@ -745,6 +746,8 @@ export default defineSchema({
   })
     // Get all videos for a bondfire in order
     .index('by_bondfire', ['bondfireId', 'sequenceNumber'])
+    .index('by_bondfire_created', ['bondfireId', 'createdAt'])
+    .index('by_bondfire_video_status', ['bondfireId', 'videoStatus'])
     // User's response videos
     .index('by_user', ['userId', 'createdAt'])
     .index('by_expires_at', ['expiresAt'])
@@ -1113,6 +1116,26 @@ export default defineSchema({
     .index('by_transaction', ['storeTransactionId'])
     .index('by_original_transaction', ['storeOriginalTransactionId'])
     .index('by_purchase_token', ['storePurchaseToken']),
+
+  // Retention removes the parent and saves its cleanup work in one transaction.
+  // These internal-only queues survive scheduler failures and Mux outages.
+  retentionCleanupJobs: defineTable({
+    kind: v.union(v.literal('bondfire'), v.literal('response'), v.literal('camp')),
+    recordId: v.string(),
+    stage: v.number(),
+    revision: v.number(),
+    updatedAt: v.number(),
+  }).index('by_updated', ['updatedAt']),
+
+  retentionMedia: defineTable({
+    kind: v.union(v.literal('asset'), v.literal('live_stream'), v.literal('direct_upload')),
+    externalId: v.string(),
+    attempts: v.number(),
+    nextAttemptAt: v.number(),
+    lastError: v.optional(v.string()),
+  })
+    .index('by_external', ['kind', 'externalId'])
+    .index('by_next_attempt', ['nextAttemptAt']),
 
   // Persistent, resumable account deletion. The user-facing request revokes
   // sessions immediately; scheduled workers then inventory media, delete it

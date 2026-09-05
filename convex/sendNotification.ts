@@ -26,6 +26,7 @@ import {
   sendFcmPushNotification,
 } from './lib/pushProviders'
 import { resolveNotificationPrefs } from './notifications'
+import { retainedVideoExists } from './retentionCleanup'
 import { getBlockedUserIds } from './userSafety'
 
 // Max one response push per bondfire per recipient per hour.
@@ -146,6 +147,16 @@ export const claimDeliveries = internalMutation({
     throttleMs: v.optional(v.number()),
   },
   handler: async (ctx, args): Promise<Array<Id<'users'>>> => {
+    // Recipient lookup runs in an action. Retention may have claimed its
+    // target since then; don't recreate delivery rows or send a stale push.
+    if (args.threadKey.startsWith('campstage:')) {
+      const campId = ctx.db.normalizeId('camps', args.threadKey.slice('campstage:'.length))
+      if (!campId || !(await ctx.db.get(campId))) return []
+    } else {
+      if (!(await retainedVideoExists(ctx, args.threadKey.replace(/:resp$/, '')))) return []
+      if (!args.videoKey.includes(':resp:') && !(await retainedVideoExists(ctx, args.videoKey)))
+        return []
+    }
     const now = Date.now()
     const claimed: Array<Id<'users'>> = []
 

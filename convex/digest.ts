@@ -17,6 +17,7 @@ import { digestSingleBody } from './lib/notificationCopy'
 import { boundedInteger } from './lib/queryBounds'
 import { DEFAULT_DIGEST_WINDOW_HOUR, resolveNotificationPrefs } from './notifications'
 import { canViewPersonalBondfire } from './personalBondfireAccess'
+import { retainedVideoExists } from './retentionCleanup'
 
 // ── Daily digest + 72h nudge ──
 //
@@ -517,6 +518,7 @@ export const claimUserDeliveries = internalMutation({
     const claimed: string[] = []
 
     for (const videoKey of args.videoKeys) {
+      if (!(await retainedVideoExists(ctx, videoKey.replace(/^(digest|nudge):/, '')))) continue
       const existing = await ctx.db
         .query('notificationDeliveries')
         .withIndex('by_video_user', (q) => q.eq('videoKey', videoKey).eq('userId', args.userId))

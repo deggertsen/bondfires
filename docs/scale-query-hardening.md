@@ -43,10 +43,9 @@ thumbnail safety, sparse-page continuation, and cursor checkpoints.
 
 ## Deferred work
 
-The proposed retention rewrite was removed from this PR after review found
-that it deleted Mux assets before rechecking thread eligibility. Retention
-and archived-Camp cleanup need an atomic deletion claim, resumable child-row
-cleanup, and retryable media deletion before that rewrite is ready.
+Retention and archived-Camp cleanup now use atomic parent claims, bounded
+resumable cleanup and a retryable media outbox. See [retention cleanup](retention-cleanup.md)
+for the staging checks and explicit production enable switch.
 
 Other remaining work includes paginating per-user device delivery, moderation
 and admin aggregates, repair/reconciliation scans, and non-feed block-list
