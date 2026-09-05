@@ -9,6 +9,7 @@ import { assertUserCanAccessCamp } from './agePolicy'
 import { auth } from './auth'
 import {
   buildViewerVisibilityContext,
+  ensureViewerCampMembership,
   filterVisibleBondfiresForViewer,
   isBondfireVisibleToViewer,
   isCampContentVisibleToViewer,
@@ -257,9 +258,11 @@ async function deleteWatchEventsForVideo(ctx: MutationCtx, videoId: string) {
 
 async function decorateFeedPage(ctx: QueryCtx, bondfires: Doc<'bondfires'>[], limit?: number) {
   const userId = await auth.getUserId(ctx)
-  const visibleBondfires = await filterVisibleBondfires(
+  const viewer = await buildViewerVisibilityContext(ctx, userId)
+  const visibleBondfires = await filterVisibleBondfiresForViewer(
     ctx,
     bondfires.filter(isPlayableVideoRecord),
+    viewer,
   )
   const selectedBondfires =
     limit === undefined ? visibleBondfires : visibleBondfires.slice(0, limit)
@@ -267,7 +270,7 @@ async function decorateFeedPage(ctx: QueryCtx, bondfires: Doc<'bondfires'>[], li
     selectedBondfires.map(async (bondfire) => {
       const [campLabel, latestResponse] = await Promise.all([
         resolveCampLabel(ctx, bondfire),
-        getLatestResponsePlayback(ctx, bondfire._id),
+        getLatestResponsePlayback(ctx, bondfire._id, viewer),
       ])
       return {
         ...withLiveFlags(bondfire),
@@ -300,7 +303,12 @@ export const listFeedPage = query({
       .query('bondfires')
       .withIndex('by_video_count')
       .order('asc')
-      .paginate({ ...args.paginationOpts, numItems: scanSize })
+      .paginate({
+        ...args.paginationOpts,
+        numItems: scanSize,
+        maximumRowsRead: FEED_VISIBILITY_SCAN_MAX,
+        maximumBytesRead: 2_000_000,
+      })
 
     return { ...result, page: await decorateFeedPage(ctx, result.page) }
   },
@@ -324,6 +332,8 @@ export const listFeed = query({
       .paginate({
         cursor: args.cursor ?? null,
         numItems: boundedScanSize(limit, FEED_VISIBILITY_SCAN_MULTIPLIER, FEED_VISIBILITY_SCAN_MAX),
+        maximumRowsRead: FEED_VISIBILITY_SCAN_MAX,
+        maximumBytesRead: 2_000_000,
       })
     return await decorateFeedPage(ctx, result.page, limit)
   },
@@ -343,6 +353,7 @@ export const listByCamp = query({
 
     const userId = await auth.getUserId(ctx)
     const viewer = await buildViewerVisibilityContext(ctx, userId)
+    await ensureViewerCampMembership(ctx, viewer, camp._id)
     if (!isCampContentVisibleToViewer(camp, viewer)) {
       return []
     }
@@ -353,11 +364,13 @@ export const listByCamp = query({
       .order('desc')
       .take(boundedScanSize(limit, FEED_VISIBILITY_SCAN_MULTIPLIER, FEED_VISIBILITY_SCAN_MAX))
 
-    const filtered = bondfires.filter(isPlayableVideoRecord).slice(0, limit)
+    const filtered = (
+      await filterVisibleBondfiresForViewer(ctx, bondfires.filter(isPlayableVideoRecord), viewer)
+    ).slice(0, limit)
 
     const withCampLabels = await Promise.all(
       filtered.map(async (bondfire) => {
-        const latestResponse = await getLatestResponsePlayback(ctx, bondfire._id)
+        const latestResponse = await getLatestResponsePlayback(ctx, bondfire._id, viewer)
         return {
           ...withLiveFlags(bondfire),
           campLabel: camp.name,

@@ -34,8 +34,8 @@ import {
   isInviteCodeClaimable,
   normalizeInviteCode,
 } from './inviteCodes'
-import { isEitherUserBlocked } from './userSafety'
 import { boundedInteger } from './lib/queryBounds'
+import { isEitherUserBlocked } from './userSafety'
 
 type CampAccess = 'open' | 'approval' | 'invite'
 type CampGender = 'male' | 'female' | 'any'
@@ -908,7 +908,26 @@ async function getRestrictedMemberCamps(
   )
 }
 
-function decorateCampListPage(
+async function hydrateCampListMemberships(
+  ctx: QueryCtx,
+  viewer: Awaited<ReturnType<typeof buildCampListViewer>>,
+  camps: Doc<'camps'>[],
+) {
+  if (!viewer.user || viewer.memberships.length < USER_MEMBERSHIP_READ_MAX) return
+  const userId = viewer.user._id
+  await Promise.all(
+    camps.map(async (camp) => {
+      if (viewer.membershipsByCamp.has(camp._id)) return
+      const membership = await ctx.db
+        .query('campMembers')
+        .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', camp._id))
+        .first()
+      if (membership) viewer.membershipsByCamp.set(camp._id, membership)
+    }),
+  )
+}
+
+export function decorateCampListPage(
   camps: Doc<'camps'>[],
   viewer: Awaited<ReturnType<typeof buildCampListViewer>>,
   includeArchived: boolean,
@@ -917,6 +936,7 @@ function decorateCampListPage(
   return camps
     .filter((camp) => includeArchived || isCampVisibleStatus(camp.status))
     .filter((camp) => {
+      if (user ? !isUserEligibleForCamp(user, camp) : getCampAgeBand(camp) === 'teen') return false
       const membership = membershipsByCamp.get(camp._id)
       if (camp.status === 'frozen' || camp.status === 'grace') {
         return membership?.status === 'active'
@@ -988,7 +1008,13 @@ export const listPage = query({
     const campQuery = args.includeArchived
       ? ctx.db.query('camps').withIndex('by_status_created')
       : ctx.db.query('camps').withIndex('by_status_created', (q) => q.eq('status', 'active'))
-    const result = await campQuery.paginate({ ...args.paginationOpts, numItems })
+    const result = await campQuery.paginate({
+      ...args.paginationOpts,
+      numItems,
+      maximumRowsRead: CAMP_PAGE_MAX,
+      maximumBytesRead: 2_000_000,
+    })
+    await hydrateCampListMemberships(ctx, viewer, result.page)
     const restrictedMemberCamps =
       args.paginationOpts.cursor === null && !args.includeArchived
         ? await getRestrictedMemberCamps(ctx, viewer)
@@ -1023,6 +1049,7 @@ export const list = query({
       campQuery.take(LEGACY_CAMP_SCAN_MAX),
       args.includeArchived ? [] : getRestrictedMemberCamps(ctx, viewer),
     ])
+    await hydrateCampListMemberships(ctx, viewer, camps)
     return sortCampList(
       decorateCampListPage(
         [...restrictedMemberCamps, ...camps],

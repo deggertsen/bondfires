@@ -435,6 +435,7 @@ function FeedSubscription({
     { initialNumItems: 50 },
   )
   const handledLoadRequest = useRef(0)
+  const requestedVisibleCount = useRef(1)
   const campBondfires = useQuery(
     api.bondfires.listByCamp,
     enabled && selectedCampId ? { campId: selectedCampId, limit: 50 } : 'skip',
@@ -445,7 +446,9 @@ function FeedSubscription({
       ? undefined
       : selectedCampId
         ? campBondfires
-        : deduplicatedAllBondfires
+        : allBondfiresStatus === 'LoadingFirstPage'
+          ? undefined
+          : deduplicatedAllBondfires
 
   useEffect(() => {
     if (bondfires !== undefined) {
@@ -454,16 +457,26 @@ function FeedSubscription({
   }, [bondfires, onResolved])
 
   useEffect(() => {
-    if (selectedCampId !== null || loadMoreRequest <= handledLoadRequest.current) return
-    if (allBondfiresStatus !== 'CanLoadMore') return
-    handledLoadRequest.current = loadMoreRequest
-    loadMore(50)
-  }, [allBondfiresStatus, loadMore, loadMoreRequest, selectedCampId])
-
-  useEffect(() => {
     if (selectedCampId !== null) return
-    if (shouldLoadSparsePage(allBondfiresStatus, allBondfires.length, 1)) loadMore(50)
-  }, [allBondfires.length, allBondfiresStatus, loadMore, selectedCampId])
+    if (loadMoreRequest > handledLoadRequest.current) {
+      handledLoadRequest.current = loadMoreRequest
+      requestedVisibleCount.current = deduplicatedAllBondfires.length + 1
+    }
+    if (
+      shouldLoadSparsePage(
+        allBondfiresStatus,
+        deduplicatedAllBondfires.length,
+        requestedVisibleCount.current,
+      )
+    )
+      loadMore(50)
+  }, [
+    deduplicatedAllBondfires.length,
+    allBondfiresStatus,
+    loadMore,
+    loadMoreRequest,
+    selectedCampId,
+  ])
 
   return null
 }

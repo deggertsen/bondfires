@@ -4,6 +4,14 @@ import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import { internalAction, internalMutation, internalQuery, type QueryCtx } from './_generated/server'
 import { isUserEligibleForCamp } from './agePolicy'
+import {
+  buildViewerVisibilityContext,
+  isBondfireVisibleToViewer,
+  isUserContentVisibleToViewer,
+  type ViewerVisibilityContext,
+} from './bondfireVisibility'
+import { isModeratedContentVisible } from './contentSafety'
+import { getPlayableVideoPlayback } from './lib/latestResponsePlayback'
 import { canStartMaintenanceRun, isExpectedMaintenancePage } from './lib/maintenanceRuns'
 import { digestSingleBody } from './lib/notificationCopy'
 import { boundedInteger } from './lib/queryBounds'
@@ -39,6 +47,8 @@ const NUDGE_AFTER_MS = 72 * 60 * 60 * 1000
 const MAX_THREADS = 75
 const MAX_ITEMS = 30
 const MAX_PER_THREAD_VIDEO_READS = MAX_ITEMS * 4
+const MAX_DIGEST_RESPONSE_READS = 600
+const MAX_DIGEST_ROOT_READS = 300
 const MAX_PRIOR_DIGEST_DELIVERIES = MAX_ITEMS * 4
 const DIGEST_TOKEN_BATCH_SIZE = 100
 const DIGEST_TOKEN_BATCH_MAX = 100
@@ -69,7 +79,11 @@ async function canReceiveBondfireActivity(
   ctx: QueryCtx,
   userId: Id<'users'>,
   bondfire: Doc<'bondfires'>,
+  viewer: ViewerVisibilityContext,
 ): Promise<boolean> {
+  if (!isModeratedContentVisible(bondfire.moderationStatus, { isOwner: false, isAdmin: false }))
+    return false
+  if (!(await isBondfireVisibleToViewer(ctx, bondfire, viewer))) return false
   if (bondfire.personalCampId) {
     return await canViewPersonalBondfire(ctx, { bondfire, userId })
   }
@@ -156,9 +170,12 @@ export const listPushUsersPage = internalQuery({
       max: DIGEST_TOKEN_BATCH_MAX,
       name: 'paginationOpts.numItems',
     })
-    const tokenPage = await ctx.db
-      .query('deviceTokens')
-      .paginate({ ...args.paginationOpts, numItems })
+    const tokenPage = await ctx.db.query('deviceTokens').paginate({
+      ...args.paginationOpts,
+      numItems,
+      maximumRowsRead: DIGEST_TOKEN_BATCH_MAX,
+      maximumBytesRead: 2_000_000,
+    })
     const byUser = new Map<Id<'users'>, string | null>()
     for (const token of tokenPage.page) {
       const existing = byUser.get(token.userId)
@@ -192,6 +209,13 @@ export const collectDigestItems = internalQuery({
   args: { userId: v.id('users') },
   handler: async (ctx, args): Promise<DigestItem[]> => {
     const now = Date.now()
+    const viewer = await buildViewerVisibilityContext(ctx, args.userId)
+    if (
+      !viewer.user ||
+      viewer.user.accountDeletionStatus ||
+      viewer.user.moderationStatus === 'suspended'
+    )
+      return []
     const newestAllowed = now - DIGEST_MIN_AGE_MS
     const oldestAllowed = now - DIGEST_MAX_AGE_MS
 
@@ -227,13 +251,14 @@ export const collectDigestItems = internalQuery({
 
     // ── Collect unwatched activity per thread ──
     const items: DigestItem[] = []
+    let remainingResponseReads = MAX_DIGEST_RESPONSE_READS
 
     for (const bondfireId of [...threadIds].slice(0, MAX_THREADS)) {
-      if (items.length >= MAX_ITEMS) break
+      if (items.length >= MAX_ITEMS || remainingResponseReads === 0) break
 
       const bondfire = await ctx.db.get(bondfireId)
       if (!bondfire) continue
-      if (!(await canReceiveBondfireActivity(ctx, args.userId, bondfire))) continue
+      if (!(await canReceiveBondfireActivity(ctx, args.userId, bondfire, viewer))) continue
       // Cheap freshness gate: updatedAt is bumped on every new video.
       if (bondfire.updatedAt < oldestAllowed) continue
 
@@ -249,11 +274,16 @@ export const collectDigestItems = internalQuery({
         .query('bondfireVideos')
         .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfireId))
         .order('desc')
-        .take(MAX_PER_THREAD_VIDEO_READS)
+        .take(Math.min(MAX_PER_THREAD_VIDEO_READS, remainingResponseReads))
+      remainingResponseReads -= videos.length
 
       for (const video of videos) {
         if (items.length >= MAX_ITEMS) break
         if (video.userId === args.userId) continue
+        if (!isModeratedContentVisible(video.moderationStatus, { isOwner: false, isAdmin: false }))
+          continue
+        if (!(await isUserContentVisibleToViewer(ctx, video.userId, viewer))) continue
+        if (video.expiresAt !== undefined && video.expiresAt <= now) continue
         if (video.videoStatus !== 'ready' && video.videoStatus !== 'live') continue
         if (video.createdAt > newestAllowed || video.createdAt < oldestAllowed) continue
         // The user opened the thread after this video landed — they saw
@@ -296,8 +326,9 @@ export const collectDigestItems = internalQuery({
       .withIndex('by_user', (q) => q.eq('userId', args.userId).eq('status', 'active'))
       .take(MAX_THREADS)
 
+    let remainingRootReads = MAX_DIGEST_ROOT_READS
     for (const membership of campMemberships) {
-      if (items.length >= MAX_ITEMS) break
+      if (items.length >= MAX_ITEMS || remainingRootReads === 0) break
       if (membership.muted) continue
       const [user, camp] = await Promise.all([
         ctx.db.get(args.userId),
@@ -311,11 +342,13 @@ export const collectDigestItems = internalQuery({
           q.eq('campId', membership.campId).gte('createdAt', oldestAllowed),
         )
         .order('desc')
-        .take(MAX_THREADS)
+        .take(Math.min(MAX_THREADS, remainingRootReads))
+      remainingRootReads -= campBondfires.length
 
       for (const bondfire of campBondfires) {
         if (items.length >= MAX_ITEMS) break
         if (bondfire.userId === args.userId) continue
+        if (!(await canReceiveBondfireActivity(ctx, args.userId, bondfire, viewer))) continue
         if (bondfire.videoStatus !== 'ready' && bondfire.videoStatus !== 'live') continue
         if (bondfire.createdAt > newestAllowed || bondfire.createdAt < oldestAllowed) continue
         // Only nudge about fires nobody has answered yet — the goal is to
@@ -370,6 +403,13 @@ export const collectNudgeItems = internalQuery({
   args: { userId: v.id('users') },
   handler: async (ctx, args): Promise<DigestItem[]> => {
     const now = Date.now()
+    const viewer = await buildViewerVisibilityContext(ctx, args.userId)
+    if (
+      !viewer.user ||
+      viewer.user.accountDeletionStatus ||
+      viewer.user.moderationStatus === 'suspended'
+    )
+      return []
 
     const digestDeliveries = await ctx.db
       .query('notificationDeliveries')
@@ -402,6 +442,10 @@ export const collectNudgeItems = internalQuery({
         | Doc<'bondfires'>
         | null
       if (!doc) continue
+      if (!getPlayableVideoPlayback({ ...doc, _id: undefined })) continue
+      if (!isModeratedContentVisible(doc.moderationStatus, { isOwner: false, isAdmin: false }))
+        continue
+      if (!(await isUserContentVisibleToViewer(ctx, doc.userId, viewer))) continue
 
       const watched = await ctx.db
         .query('watchEvents')
@@ -415,7 +459,8 @@ export const collectNudgeItems = internalQuery({
       if ('bondfireId' in doc) {
         parentBondfireId = doc.bondfireId
         const parent = await ctx.db.get(parentBondfireId)
-        if (!parent || !(await canReceiveBondfireActivity(ctx, args.userId, parent))) continue
+        if (!parent || !(await canReceiveBondfireActivity(ctx, args.userId, parent, viewer)))
+          continue
         title = parent?.title ?? null
         kind = 'response'
       } else {
@@ -423,7 +468,7 @@ export const collectNudgeItems = internalQuery({
         // the nudge is for *unanswered* fires, matching the digest gate.
         if (doc.videoCount > 1) continue
         parentBondfireId = doc._id
-        if (!(await canReceiveBondfireActivity(ctx, args.userId, doc))) continue
+        if (!(await canReceiveBondfireActivity(ctx, args.userId, doc, viewer))) continue
         title = doc.title ?? null
         kind = 'bondfire'
       }

@@ -7,7 +7,7 @@ import { isModeratedContentVisible } from './contentSafety'
 import type { SubscriptionTier } from './entitlements'
 import { getEntitlementSubscriptionTier } from './entitlements'
 import { canViewPersonalBondfire } from './personalBondfireAccess'
-import { getBlockedUserIds } from './userSafety'
+import { isEitherUserBlocked } from './userSafety'
 
 const VIEWER_MEMBERSHIP_READ_MAX = 500
 const VIEWER_INVITE_CLAIM_READ_MAX = 500
@@ -27,6 +27,9 @@ export type ViewerVisibilityContext = {
   memberCampIds: Set<Id<'camps'>>
   claimedBondfireIds: Set<Id<'bondfires'>>
   blockedUserIds: Set<Id<'users'>>
+  blockChecks?: Map<Id<'users'>, Promise<boolean>>
+  membershipContextTruncated?: boolean
+  inviteContextTruncated?: boolean
   isAdmin: boolean
   /**
    * Camps already requested during this query, keyed by id. Stores promises
@@ -54,7 +57,7 @@ export async function buildViewerVisibilityContext(
     }
   }
 
-  const [user, tier, memberships, inviteClaims, blockedUserIds] = await Promise.all([
+  const [user, tier, memberships, inviteClaims] = await Promise.all([
     ctx.db.get(userId),
     getEntitlementSubscriptionTier(ctx, userId),
     ctx.db
@@ -65,7 +68,6 @@ export async function buildViewerVisibilityContext(
       .query('inviteClaims')
       .withIndex('by_claimer', (q) => q.eq('claimerId', userId))
       .take(VIEWER_INVITE_CLAIM_READ_MAX),
-    getBlockedUserIds(ctx, userId),
   ])
 
   return {
@@ -78,7 +80,10 @@ export async function buildViewerVisibilityContext(
         .map((claim) => claim.bondfireId)
         .filter((bondfireId): bondfireId is Id<'bondfires'> => bondfireId !== undefined),
     ),
-    blockedUserIds,
+    blockedUserIds: new Set(),
+    blockChecks: new Map(),
+    membershipContextTruncated: memberships.length === VIEWER_MEMBERSHIP_READ_MAX,
+    inviteContextTruncated: inviteClaims.length === VIEWER_INVITE_CLAIM_READ_MAX,
     isAdmin: user?.isAdmin === true || user?.role === 'admin',
     campCache: new Map(),
     userCache: new Map(),
@@ -119,12 +124,40 @@ export async function isUserContentVisibleToViewer(
 ): Promise<boolean> {
   // Admin moderation must not be defeatable by blocking the admin account.
   if (viewer.userId && viewer.blockedUserIds.has(creatorId) && !viewer.isAdmin) return false
+  if (viewer.userId && viewer.blockChecks && !viewer.isAdmin && creatorId !== viewer.userId) {
+    let check = viewer.blockChecks.get(creatorId)
+    if (!check) {
+      check = isEitherUserBlocked(ctx, viewer.userId, creatorId)
+      viewer.blockChecks.set(creatorId, check)
+    }
+    if (await check) {
+      viewer.blockedUserIds.add(creatorId)
+      return false
+    }
+  }
   const creator = await getUserCached(ctx, viewer, creatorId)
   return !(
     creator?.moderationStatus === 'suspended' &&
     viewer.userId !== creatorId &&
     !viewer.isAdmin
   )
+}
+
+/** Resolve a specific membership when the bounded context was full. */
+export async function ensureViewerCampMembership(
+  ctx: QueryCtx,
+  viewer: ViewerVisibilityContext,
+  campId: Id<'camps'>,
+) {
+  if (!viewer.userId || !viewer.membershipContextTruncated || viewer.memberCampIds.has(campId))
+    return
+  const membership = await ctx.db
+    .query('campMembers')
+    .withIndex('by_user_camp', (q) =>
+      q.eq('userId', viewer.userId as Id<'users'>).eq('campId', campId),
+    )
+    .first()
+  if (membership?.status === 'active') viewer.memberCampIds.add(campId)
 }
 
 /**
@@ -221,6 +254,20 @@ export async function isBondfireVisibleToViewer(
   const camp = await getCampCached(ctx, viewer, bondfire.campId)
   if (!camp) {
     return false
+  }
+  await ensureViewerCampMembership(ctx, viewer, camp._id)
+  if (
+    viewer.userId &&
+    viewer.inviteContextTruncated &&
+    !viewer.claimedBondfireIds.has(bondfire._id)
+  ) {
+    const claim = await ctx.db
+      .query('inviteClaims')
+      .withIndex('by_bondfire_claimer', (q) =>
+        q.eq('bondfireId', bondfire._id).eq('claimerId', viewer.userId as Id<'users'>),
+      )
+      .first()
+    if (claim) viewer.claimedBondfireIds.add(bondfire._id)
   }
 
   // A direct invite may bypass ordinary camp membership, but never the

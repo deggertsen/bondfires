@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { shouldLoadSparsePage, uniqueById } from '../lib/pagination'
 
 describe('sparse visibility pagination', () => {
+  it('continues past hidden pages after previously visible results', () => {
+    const existingCount = 40
+    const requestedCount = existingCount + 1
+    expect(shouldLoadSparsePage('CanLoadMore', existingCount, requestedCount)).toBe(true)
+    expect(shouldLoadSparsePage('LoadingMore', existingCount, requestedCount)).toBe(false)
+    expect(shouldLoadSparsePage('CanLoadMore', existingCount + 1, requestedCount)).toBe(false)
+    expect(shouldLoadSparsePage('Exhausted', existingCount, requestedCount)).toBe(false)
+  })
   it('advances across more than a page of hidden rows until a visible camp is found', () => {
     // Each empty result represents a full raw page whose rows were hidden by
     // server-side eligibility filtering. This covers > page-size hidden rows.

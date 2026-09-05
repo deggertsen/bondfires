@@ -392,6 +392,7 @@ export default function CampsScreen() {
     status: campPageStatus,
     loadMore: loadMoreCamps,
   } = usePaginatedQuery(api.camps.listPage, {}, { initialNumItems: 40 })
+  const requestedVisibleCount = useRef(40)
   const camps = useMemo(
     () =>
       uniqueById(campPages).sort((left, right) => {
@@ -401,7 +402,8 @@ export default function CampsScreen() {
     [campPages],
   )
   useEffect(() => {
-    if (shouldLoadSparsePage(campPageStatus, camps.length, 40)) loadMoreCamps(40)
+    if (shouldLoadSparsePage(campPageStatus, camps.length, requestedVisibleCount.current))
+      loadMoreCamps(40)
   }, [campPageStatus, camps.length, loadMoreCamps])
   const myCamps = useQuery(api.camps.listMine, {})
   const personalCamp = useQuery(api.personalCamps.getMyPersonalCamp, {})
@@ -463,6 +465,12 @@ export default function CampsScreen() {
       return searchable.includes(q)
     })
   }, [camps, query])
+
+  useEffect(() => {
+    if (query.trim() && shouldLoadSparsePage(campPageStatus, filtered.length, 1)) {
+      loadMoreCamps(40)
+    }
+  }, [campPageStatus, filtered.length, loadMoreCamps, query])
 
   const archivedCamps = useMemo<CampWithMembership[]>(() => {
     if (!myCamps) return []
@@ -632,6 +640,7 @@ export default function CampsScreen() {
       <FlatList
         data={listItems}
         onEndReached={() => {
+          requestedVisibleCount.current = camps.length + 40
           if (campPageStatus === 'CanLoadMore') loadMoreCamps(40)
         }}
         onEndReachedThreshold={0.5}

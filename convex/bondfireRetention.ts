@@ -18,7 +18,6 @@
  * batch backlogs (e.g. run every 6 hours, then every hour).
  */
 
-import { paginationOptsValidator } from 'convex/server'
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
@@ -35,16 +34,11 @@ import {
   TIER_RANK,
 } from './entitlements'
 import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
-import { canStartMaintenanceRun, isExpectedMaintenancePage } from './lib/maintenanceRuns'
-import { boundedInteger } from './lib/queryBounds'
 
 const MUX_API_BASE_URL = 'https://api.mux.com/video/v1'
 
-const RETENTION_CANDIDATE_BATCH_SIZE = 5
-const RETENTION_CANDIDATE_BATCH_MAX = 10
-const RETENTION_RESPONSE_READ_MAX = 100
-const RETENTION_SWEEP_LEASE_MS = 6 * 60 * 60 * 1000
-const RETENTION_SWEEP_JOB = 'bondfire-retention'
+/** Maximum bondfires to process in one cron invocation. */
+const MAX_BONDFIRES_PER_RUN = 200
 
 type ExpiredBondfire = {
   bondfireId: Id<'bondfires'>
@@ -56,14 +50,12 @@ type RetentionStats = {
   bondfiresSkippedLive: number
   bondfiresSkippedUnlimitedRetention: number
   bondfiresSkippedNotExpired: number
-  bondfiresSkippedOversized: number
 }
 
 type ExpiredBondfireBatch = {
   expired: ExpiredBondfire[]
   stats: RetentionStats
-  continueCursor: string
-  isDone: boolean
+  remainingMayExist: boolean
 }
 
 type RetentionResult = RetentionStats & {
@@ -73,31 +65,7 @@ type RetentionResult = RetentionStats & {
   muxAssetsDeleted: number
   muxAssetsMissing: number
   muxAssetsFailed: number
-}
-
-const EMPTY_RETENTION_RESULT: RetentionResult = {
-  bondfiresChecked: 0,
-  bondfiresSkippedLive: 0,
-  bondfiresSkippedUnlimitedRetention: 0,
-  bondfiresSkippedNotExpired: 0,
-  bondfiresSkippedOversized: 0,
-  bondfiresDeleted: 0,
-  bondfiresSkippedAssetDrift: 0,
-  responseVideosDeleted: 0,
-  muxAssetsDeleted: 0,
-  muxAssetsMissing: 0,
-  muxAssetsFailed: 0,
-}
-
-function readRetentionResult(value: unknown): RetentionResult {
-  if (!value || typeof value !== 'object') return { ...EMPTY_RETENTION_RESULT }
-  const result = value as Partial<RetentionResult>
-  return Object.fromEntries(
-    Object.entries(EMPTY_RETENTION_RESULT).map(([key, fallback]) => [
-      key,
-      result[key as keyof RetentionResult] ?? fallback,
-    ]),
-  ) as RetentionResult
+  remainingMayExist: boolean
 }
 
 // ── Helpers ──
@@ -192,29 +160,27 @@ async function deleteLiveSessionIfExists(ctx: MutationCtx, liveSessionId: Id<'li
 // ── Internal Query: Find expired bondfires ──
 
 export const findExpiredBondfires = internalQuery({
-  args: { paginationOpts: paginationOptsValidator, cutoff: v.number() },
-  handler: async (ctx, args): Promise<ExpiredBondfireBatch> => {
+  handler: async (ctx): Promise<ExpiredBondfireBatch> => {
+    const cutoff = Date.now() - BONDFIRE_RETENTION_MS
     const stats: RetentionStats = {
       bondfiresChecked: 0,
       bondfiresSkippedLive: 0,
       bondfiresSkippedUnlimitedRetention: 0,
       bondfiresSkippedNotExpired: 0,
-      bondfiresSkippedOversized: 0,
     }
-    const numItems = boundedInteger(args.paginationOpts.numItems, {
-      defaultValue: RETENTION_CANDIDATE_BATCH_SIZE,
-      min: 1,
-      max: RETENTION_CANDIDATE_BATCH_MAX,
-      name: 'paginationOpts.numItems',
-    })
-    const candidates = await ctx.db
-      .query('bondfires')
-      .withIndex('by_updated', (q) => q.lt('updatedAt', args.cutoff))
-      .order('asc')
-      .paginate({ ...args.paginationOpts, numItems })
-    const expired: ExpiredBondfire[] = []
 
-    for (const bondfire of candidates.page) {
+    // Walk all bondfires. At small scale this is fine; at larger scale we'd
+    // paginate or use an index on most-recent-activity.
+    const allBondfires = await ctx.db.query('bondfires').collect()
+    const expired: ExpiredBondfire[] = []
+    let remainingMayExist = false
+
+    for (const bondfire of allBondfires) {
+      if (expired.length >= MAX_BONDFIRES_PER_RUN) {
+        remainingMayExist = true
+        break
+      }
+
       stats.bondfiresChecked++
 
       // Skip live bondfires
@@ -234,11 +200,7 @@ export const findExpiredBondfires = internalQuery({
       const responses = await ctx.db
         .query('bondfireVideos')
         .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
-        .take(RETENTION_RESPONSE_READ_MAX + 1)
-      if (responses.length > RETENTION_RESPONSE_READ_MAX) {
-        stats.bondfiresSkippedOversized++
-        continue
-      }
+        .collect()
 
       // Check if any response is currently live
       const anyResponseLive = responses.some(isLiveVideo)
@@ -247,13 +209,16 @@ export const findExpiredBondfires = internalQuery({
         continue
       }
 
-      // updatedAt is bumped when responses are added. Retain the defensive
-      // check for legacy rows whose timestamp may not reflect their responses.
-      const newestResponseAt = responses.reduce(
-        (latest, response) => Math.max(latest, response.createdAt),
-        0,
-      )
-      if (Math.max(bondfire.updatedAt, newestResponseAt) >= args.cutoff) {
+      // Find the newest createdAt across spark + all responses
+      let newestActivity = bondfire.createdAt
+      for (const response of responses) {
+        if (response.createdAt > newestActivity) {
+          newestActivity = response.createdAt
+        }
+      }
+
+      // If the newest video is still within the window, the bondfire stays
+      if (newestActivity >= cutoff) {
         stats.bondfiresSkippedNotExpired++
         continue
       }
@@ -276,12 +241,7 @@ export const findExpiredBondfires = internalQuery({
       })
     }
 
-    return {
-      expired,
-      stats,
-      continueCursor: candidates.continueCursor,
-      isDone: candidates.isDone,
-    }
+    return { expired, stats, remainingMayExist }
   },
 })
 
@@ -300,9 +260,9 @@ export const deleteExpiredBondfireRecords = internalMutation({
     let bondfiresDeleted = 0
     let bondfiresSkippedAssetDrift = 0
     let responseVideosDeleted = 0
-    const deletedBondfiresByUser = new Map<Id<'users'>, number>()
-    const deletedResponsesByUser = new Map<Id<'users'>, number>()
-    const deletedBondfiresByCamp = new Map<Id<'camps'>, number>()
+    const affectedUsers = new Set<Id<'users'>>()
+    const affectedCamps = new Set<Id<'camps'>>()
+    const deletedBondfireIds = new Set<Id<'bondfires'>>()
 
     for (const { bondfireId, muxAssetIds } of args.bondfires) {
       const bondfire = await ctx.db.get(bondfireId)
@@ -347,26 +307,13 @@ export const deleteExpiredBondfireRecords = internalMutation({
         continue
       }
 
-      if (isPlayableVideoRecord(bondfire)) {
-        deletedBondfiresByUser.set(
-          bondfire.userId,
-          (deletedBondfiresByUser.get(bondfire.userId) ?? 0) + 1,
-        )
-        if (bondfire.campId) {
-          deletedBondfiresByCamp.set(
-            bondfire.campId,
-            (deletedBondfiresByCamp.get(bondfire.campId) ?? 0) + 1,
-          )
-        }
+      affectedUsers.add(bondfire.userId)
+      if (bondfire.campId) {
+        affectedCamps.add(bondfire.campId)
       }
 
       for (const response of responses) {
-        if (isPlayableVideoRecord(response)) {
-          deletedResponsesByUser.set(
-            response.userId,
-            (deletedResponsesByUser.get(response.userId) ?? 0) + 1,
-          )
-        }
+        affectedUsers.add(response.userId)
         await deleteWatchEventsForVideo(ctx, response._id)
 
         const responseReports = await ctx.db
@@ -420,35 +367,60 @@ export const deleteExpiredBondfireRecords = internalMutation({
 
       await ctx.db.delete(bondfireId)
       bondfiresDeleted++
+      deletedBondfireIds.add(bondfireId)
     }
 
-    const affectedUserIds = new Set([
-      ...deletedBondfiresByUser.keys(),
-      ...deletedResponsesByUser.keys(),
-    ])
-    for (const userId of affectedUserIds) {
+    if (deletedBondfireIds.size > 0) {
+      const users = await ctx.db.query('users').collect()
+      for (const user of users) {
+        if (!user.pinnedBondfireIds?.some((id) => deletedBondfireIds.has(id))) {
+          continue
+        }
+
+        await ctx.db.patch(user._id, {
+          pinnedBondfireIds: user.pinnedBondfireIds.filter((id) => !deletedBondfireIds.has(id)),
+          updatedAt: Date.now(),
+        })
+      }
+    }
+
+    for (const userId of affectedUsers) {
       const user = await ctx.db.get(userId)
-      if (!user) continue
+      if (!user) {
+        continue
+      }
+
+      const [userBondfires, userResponses] = await Promise.all([
+        ctx.db
+          .query('bondfires')
+          .withIndex('by_user', (q) => q.eq('userId', userId))
+          .collect(),
+        ctx.db
+          .query('bondfireVideos')
+          .withIndex('by_user', (q) => q.eq('userId', userId))
+          .collect(),
+      ])
 
       await ctx.db.patch(userId, {
-        bondfireCount: Math.max(
-          0,
-          (user.bondfireCount ?? 0) - (deletedBondfiresByUser.get(userId) ?? 0),
-        ),
-        responseCount: Math.max(
-          0,
-          (user.responseCount ?? 0) - (deletedResponsesByUser.get(userId) ?? 0),
-        ),
+        bondfireCount: userBondfires.filter(isPlayableVideoRecord).length,
+        responseCount: userResponses.filter(isPlayableVideoRecord).length,
         updatedAt: Date.now(),
       })
     }
 
-    for (const [campId, deletedCount] of deletedBondfiresByCamp) {
+    for (const campId of affectedCamps) {
       const camp = await ctx.db.get(campId)
-      if (!camp) continue
+      if (!camp) {
+        continue
+      }
+
+      const campBondfires = await ctx.db
+        .query('bondfires')
+        .withIndex('by_camp', (q) => q.eq('campId', campId))
+        .collect()
 
       await ctx.db.patch(campId, {
-        bondfireCount: Math.max(0, (camp.bondfireCount ?? 0) - deletedCount),
+        bondfireCount: campBondfires.filter(isPlayableVideoRecord).length,
         updatedAt: Date.now(),
       })
     }
@@ -457,216 +429,85 @@ export const deleteExpiredBondfireRecords = internalMutation({
   },
 })
 
-const retentionResultValidator = v.object({
-  bondfiresChecked: v.number(),
-  bondfiresSkippedLive: v.number(),
-  bondfiresSkippedUnlimitedRetention: v.number(),
-  bondfiresSkippedNotExpired: v.number(),
-  bondfiresSkippedOversized: v.number(),
-  bondfiresDeleted: v.number(),
-  bondfiresSkippedAssetDrift: v.number(),
-  responseVideosDeleted: v.number(),
-  muxAssetsDeleted: v.number(),
-  muxAssetsMissing: v.number(),
-  muxAssetsFailed: v.number(),
-})
+// ── Internal Action: Enforce retention ──
 
-export const startRetentionSweep = internalMutation({
-  args: { runId: v.string(), sweepStartedAt: v.number() },
-  handler: async (ctx, args) => {
-    const now = Date.now()
-    const existing = await ctx.db
-      .query('maintenanceJobRuns')
-      .withIndex('by_job', (q) => q.eq('job', RETENTION_SWEEP_JOB))
-      .unique()
-    if (existing && !canStartMaintenanceRun(existing, now, RETENTION_SWEEP_LEASE_MS)) {
-      return { started: false, activeRunId: existing.runId }
-    }
-    const run = {
-      job: RETENTION_SWEEP_JOB,
-      runId: args.runId,
-      status: 'running' as const,
-      cursor: undefined,
-      startedAt: args.sweepStartedAt,
-      updatedAt: now,
-      completedAt: undefined,
-      error: undefined,
-      pagesProcessed: 0,
-      stats: EMPTY_RETENTION_RESULT,
-    }
-    if (existing) await ctx.db.replace(existing._id, run)
-    else await ctx.db.insert('maintenanceJobRuns', run)
-    await ctx.scheduler.runAfter(0, internal.bondfireRetention.runRetentionPage, {
-      runId: args.runId,
-      sweepStartedAt: args.sweepStartedAt,
-    })
-    return { started: true, activeRunId: args.runId }
-  },
-})
-
-export const checkpointRetentionSweep = internalMutation({
-  args: {
-    runId: v.string(),
-    sweepStartedAt: v.number(),
-    processedCursor: v.optional(v.string()),
-    nextCursor: v.string(),
-    isDone: v.boolean(),
-    result: retentionResultValidator,
-  },
-  handler: async (ctx, args) => {
-    const run = await ctx.db
-      .query('maintenanceJobRuns')
-      .withIndex('by_job', (q) => q.eq('job', RETENTION_SWEEP_JOB))
-      .unique()
-    if (
-      !run ||
-      run.runId !== args.runId ||
-      run.status !== 'running' ||
-      !isExpectedMaintenancePage(run.cursor, args.processedCursor)
-    ) {
-      return { accepted: false }
-    }
-    const previous = readRetentionResult(run.stats)
-    const totals = Object.fromEntries(
-      Object.keys(EMPTY_RETENTION_RESULT).map((key) => [
-        key,
-        previous[key as keyof RetentionResult] + args.result[key as keyof RetentionResult],
-      ]),
-    ) as RetentionResult
-    const now = Date.now()
-    await ctx.db.patch(run._id, {
-      cursor: args.isDone ? undefined : args.nextCursor,
-      status: args.isDone ? 'complete' : 'running',
-      completedAt: args.isDone ? now : undefined,
-      updatedAt: now,
-      pagesProcessed: run.pagesProcessed + 1,
-      stats: totals,
-    })
-    if (args.isDone) {
-      await ctx.scheduler.runAfter(0, internal.serverTelemetry.recordServerEvent, {
-        level: totals.muxAssetsFailed > 0 ? 'warn' : 'info',
-        event: 'bondfire:retention_sweep',
-        message: 'Bondfire retention sweep completed',
-        data: { runId: args.runId, pagesProcessed: run.pagesProcessed + 1, ...totals },
-      })
-    } else {
-      await ctx.scheduler.runAfter(0, internal.bondfireRetention.runRetentionPage, {
-        runId: args.runId,
-        cursor: args.nextCursor,
-        sweepStartedAt: args.sweepStartedAt,
-      })
-    }
-    return { accepted: true }
-  },
-})
-
-export const failRetentionSweep = internalMutation({
-  args: { runId: v.string(), processedCursor: v.optional(v.string()), error: v.string() },
-  handler: async (ctx, args) => {
-    const run = await ctx.db
-      .query('maintenanceJobRuns')
-      .withIndex('by_job', (q) => q.eq('job', RETENTION_SWEEP_JOB))
-      .unique()
-    if (
-      !run ||
-      run.runId !== args.runId ||
-      run.status !== 'running' ||
-      !isExpectedMaintenancePage(run.cursor, args.processedCursor)
-    ) {
-      return false
-    }
-    const error = args.error.slice(0, 500)
-    await ctx.db.patch(run._id, { status: 'failed', error, updatedAt: Date.now() })
-    await ctx.scheduler.runAfter(0, internal.serverTelemetry.recordServerEvent, {
-      level: 'error',
-      event: 'bondfire:retention_sweep_failed',
-      message: 'Bondfire retention sweep failed',
-      data: { runId: args.runId, pagesProcessed: run.pagesProcessed, error },
-    })
-    return true
-  },
-})
-
-export const runRetentionPage = internalAction({
-  args: {
-    runId: v.string(),
-    cursor: v.optional(v.string()),
-    sweepStartedAt: v.number(),
-  },
-  handler: async (ctx, args): Promise<{ accepted: boolean }> => {
-    try {
-      const batch: ExpiredBondfireBatch = await ctx.runQuery(
-        internal.bondfireRetention.findExpiredBondfires,
-        {
-          cutoff: args.sweepStartedAt - BONDFIRE_RETENTION_MS,
-          paginationOpts: {
-            cursor: args.cursor ?? null,
-            numItems: RETENTION_CANDIDATE_BATCH_SIZE,
-          },
-        },
-      )
-
-      const allMuxAssetIds = [...new Set(batch.expired.flatMap((bondfire) => bondfire.muxAssetIds))]
-      const deletableMuxAssetIds = new Set<string>()
-      let muxAssetsDeleted = 0
-      let muxAssetsMissing = 0
-      let muxAssetsFailed = 0
-      for (const assetId of allMuxAssetIds) {
-        try {
-          const result = await deleteMuxAsset(assetId)
-          deletableMuxAssetIds.add(assetId)
-          if (result === 'missing') muxAssetsMissing++
-          else muxAssetsDeleted++
-        } catch (error) {
-          muxAssetsFailed++
-          console.error(`[bondfireRetention] Failed to delete Mux asset ${assetId}:`, error)
-        }
-      }
-
-      const safeToDelete = batch.expired.filter((bondfire) =>
-        bondfire.muxAssetIds.every((id) => deletableMuxAssetIds.has(id)),
-      )
-      const deleted =
-        safeToDelete.length > 0
-          ? await ctx.runMutation(internal.bondfireRetention.deleteExpiredBondfireRecords, {
-              bondfires: safeToDelete,
-            })
-          : { bondfiresDeleted: 0, bondfiresSkippedAssetDrift: 0, responseVideosDeleted: 0 }
-      const result: RetentionResult = {
-        ...batch.stats,
-        ...deleted,
-        muxAssetsDeleted,
-        muxAssetsMissing,
-        muxAssetsFailed,
-      }
-      return await ctx.runMutation(internal.bondfireRetention.checkpointRetentionSweep, {
-        runId: args.runId,
-        sweepStartedAt: args.sweepStartedAt,
-        processedCursor: args.cursor,
-        nextCursor: batch.continueCursor,
-        isDone: batch.isDone,
-        result,
-      })
-    } catch (error) {
-      await ctx.runMutation(internal.bondfireRetention.failRetentionSweep, {
-        runId: args.runId,
-        processedCursor: args.cursor,
-        error: error instanceof Error ? error.message : String(error),
-      })
-      throw error
-    }
-  },
-})
-
-/** Daily entry point. The durable mutation rejects overlapping active runs. */
 export const enforceBondfireRetention = internalAction({
-  args: {},
-  handler: async (ctx): Promise<{ started: boolean; activeRunId: string }> => {
-    const sweepStartedAt = Date.now()
-    const runId = `${sweepStartedAt}-${Math.random().toString(36).slice(2, 10)}`
-    return (await ctx.runMutation(internal.bondfireRetention.startRetentionSweep, {
-      runId,
-      sweepStartedAt,
-    })) as { started: boolean; activeRunId: string }
+  handler: async (ctx): Promise<RetentionResult> => {
+    const { expired, stats, remainingMayExist }: ExpiredBondfireBatch = await ctx.runQuery(
+      internal.bondfireRetention.findExpiredBondfires,
+    )
+
+    if (expired.length === 0) {
+      return {
+        ...stats,
+        bondfiresDeleted: 0,
+        bondfiresSkippedAssetDrift: 0,
+        responseVideosDeleted: 0,
+        muxAssetsDeleted: 0,
+        muxAssetsMissing: 0,
+        muxAssetsFailed: 0,
+        remainingMayExist,
+      }
+    }
+
+    // Step 1: Delete Mux assets (must run as action — external HTTP calls)
+    const allMuxAssetIds = [...new Set(expired.flatMap((b) => b.muxAssetIds).filter(Boolean))]
+    const deletableMuxAssetIds = new Set<string>()
+    let muxAssetsDeleted = 0
+    let muxAssetsMissing = 0
+    let muxAssetsFailed = 0
+
+    for (const assetId of allMuxAssetIds) {
+      try {
+        const result = await deleteMuxAsset(assetId)
+        deletableMuxAssetIds.add(assetId)
+        if (result === 'missing') {
+          muxAssetsMissing++
+        } else {
+          muxAssetsDeleted++
+        }
+      } catch (err) {
+        muxAssetsFailed++
+        console.error(`[bondfireRetention] Failed to delete Mux asset ${assetId}:`, err)
+      }
+    }
+
+    // Step 2: Only delete Convex records for bondfires whose Mux assets were
+    // successfully deleted (or were already missing). This prevents orphaning
+    // Mux assets that we failed to delete.
+    const safeToDelete = expired.filter((bf) =>
+      bf.muxAssetIds.every((id) => deletableMuxAssetIds.has(id)),
+    )
+
+    const { bondfiresDeleted, bondfiresSkippedAssetDrift, responseVideosDeleted } =
+      safeToDelete.length > 0
+        ? await ctx.runMutation(internal.bondfireRetention.deleteExpiredBondfireRecords, {
+            bondfires: safeToDelete.map((bf) => ({
+              bondfireId: bf.bondfireId,
+              muxAssetIds: bf.muxAssetIds,
+            })),
+          })
+        : { bondfiresDeleted: 0, bondfiresSkippedAssetDrift: 0, responseVideosDeleted: 0 }
+
+    console.warn(
+      `[bondfireRetention] Run complete: ${bondfiresDeleted} bondfires deleted, ` +
+        `${responseVideosDeleted} response videos, ` +
+        `${bondfiresSkippedAssetDrift} skipped after asset drift, ` +
+        `${muxAssetsDeleted} Mux assets deleted, ` +
+        `${muxAssetsMissing} Mux assets already missing, ` +
+        `${muxAssetsFailed} Mux deletes failed`,
+    )
+
+    return {
+      ...stats,
+      bondfiresDeleted,
+      bondfiresSkippedAssetDrift,
+      responseVideosDeleted,
+      muxAssetsDeleted,
+      muxAssetsMissing,
+      muxAssetsFailed,
+      remainingMayExist:
+        remainingMayExist || safeToDelete.length < expired.length || bondfiresSkippedAssetDrift > 0,
+    }
   },
 })

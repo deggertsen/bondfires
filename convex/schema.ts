@@ -238,8 +238,7 @@ export default defineSchema({
   })
     .index('by_slug', ['slug'])
     .index('by_owner', ['ownerId', 'createdAt'])
-    .index('by_status_created', ['status', 'createdAt'])
-    .index('by_status_archived', ['status', 'archivedAt']),
+    .index('by_status_created', ['status', 'createdAt']),
 
   // Camp membership, notification preferences, and moderation roles
   campMembers: defineTable({
@@ -612,8 +611,6 @@ export default defineSchema({
     .index('by_user', ['userId', 'createdAt'])
     // Recent bondfires
     .index('by_created', ['createdAt'])
-    // Retention sweeps only scan threads whose latest activity is older than the cutoff.
-    .index('by_updated', ['updatedAt'])
     .index('by_camp', ['campId', 'createdAt'])
     .index('by_personal_camp', ['personalCampId', 'createdAt'])
     .index('by_expires_at', ['expiresAt'])
