@@ -1,5 +1,5 @@
 // Learn more https://docs.expo.io/guides/customizing-metro
-const { getDefaultConfig } = require('expo/metro-config')
+const { getSentryExpoConfig } = require('@sentry/react-native/metro')
 const { withTamagui } = require('@tamagui/metro-plugin')
 const path = require('path')
 
@@ -7,7 +7,12 @@ const projectRoot = __dirname
 const workspaceRoot = path.resolve(__dirname, '../..')
 
 /** @type {import('expo/metro-config').MetroConfig} */
-const config = getDefaultConfig(projectRoot)
+// Sentry's Expo Metro wrapper injects debug IDs so EAS Build source maps can
+// be matched without exposing them publicly.
+const config = getSentryExpoConfig(projectRoot, {
+  annotateReactComponents: false,
+  includeWebReplay: false,
+})
 
 // Required for react-native-mmkv
 config.resolver.sourceExts.push('cjs')
@@ -38,4 +43,3 @@ module.exports = withTamagui(config, {
   components: ['tamagui'],
   config: './tamagui.config.ts',
 })
-

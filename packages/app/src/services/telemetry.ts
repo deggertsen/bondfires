@@ -10,6 +10,7 @@ import Constants from 'expo-constants'
 import * as Device from 'expo-device'
 import { AppState, Platform } from 'react-native'
 import { createMMKV, type MMKV } from 'react-native-mmkv'
+import { redactSensitiveText, scrubTelemetryValue } from './privacyScrubber'
 
 // ---------------------------------------------------------------------------
 // React Native global declarations
@@ -252,7 +253,9 @@ function optionalString(value: unknown): string | undefined {
 
 function optionalBoundedString(value: unknown, maxBytes: number): string | undefined {
   const stringValue = optionalString(value)
-  return stringValue === undefined ? undefined : truncateUtf8(stringValue, maxBytes)
+  return stringValue === undefined
+    ? undefined
+    : truncateUtf8(redactSensitiveText(stringValue), maxBytes)
 }
 
 function normalizeDeviceInfo(value: unknown): DeviceInfo | undefined {
@@ -285,9 +288,9 @@ function normalizePersistedEntry(value: unknown): LogEntry | null {
 
   return {
     level,
-    event: truncateUtf8(event, CLIENT_EVENT_MAX_BYTES) || 'unknown',
-    message: truncateUtf8(message, CLIENT_MESSAGE_MAX_BYTES),
-    data: boundTelemetryData(value.data),
+    event: truncateUtf8(redactSensitiveText(event), CLIENT_EVENT_MAX_BYTES) || 'unknown',
+    message: truncateUtf8(redactSensitiveText(message), CLIENT_MESSAGE_MAX_BYTES),
+    data: boundTelemetryData(scrubTelemetryValue(value.data)),
     platform,
     appVersion: optionalBoundedString(value.appVersion, CLIENT_APP_VERSION_MAX_BYTES),
     sessionId: optionalBoundedString(value.sessionId, CLIENT_METADATA_MAX_BYTES),
@@ -500,8 +503,8 @@ export class TelemetryLogger {
     if (!this.storage) return
     try {
       this._lastCrashBreadcrumb = {
-        event,
-        data: boundTelemetryData(data),
+        event: truncateUtf8(redactSensitiveText(event), CLIENT_EVENT_MAX_BYTES),
+        data: boundTelemetryData(scrubTelemetryValue(data)),
         writtenAt: Date.now(),
       }
       this.storage.set(LAST_CRASH_KEY, JSON.stringify(this._lastCrashBreadcrumb))
@@ -592,9 +595,9 @@ export class TelemetryLogger {
       // Convex. In particular, console errors can contain very large strings;
       // one oversized entry must not cause its otherwise-valid batch to be
       // rejected and discarded.
-      event: truncateUtf8(event, CLIENT_EVENT_MAX_BYTES) || 'unknown',
-      message: truncateUtf8(message, CLIENT_MESSAGE_MAX_BYTES),
-      data: boundTelemetryData(data),
+      event: truncateUtf8(redactSensitiveText(event), CLIENT_EVENT_MAX_BYTES) || 'unknown',
+      message: truncateUtf8(redactSensitiveText(message), CLIENT_MESSAGE_MAX_BYTES),
+      data: boundTelemetryData(scrubTelemetryValue(serializeForConvex(data))),
       platform: this.platform,
       appVersion: this.appVersion,
       sessionId: this.sessionId,
@@ -638,7 +641,15 @@ export class TelemetryLogger {
       const chunk = attributable.slice(i, i + TELEMETRY_BATCH_SIZE)
       const payload = chunk.map(({ localUserId: _localUserId, ...entry }) => entry)
       try {
-        await this._mutationCreateBatch({ entries: payload })
+        await this._mutationCreateBatch({
+          entries: payload.map((entry) => ({
+            ...entry,
+            event:
+              truncateUtf8(redactSensitiveText(entry.event), CLIENT_EVENT_MAX_BYTES) || 'unknown',
+            message: truncateUtf8(redactSensitiveText(entry.message), CLIENT_MESSAGE_MAX_BYTES),
+            data: boundTelemetryData(scrubTelemetryValue(entry.data)),
+          })),
+        })
       } catch (error) {
         // Invalid entries can never succeed on retry, so discard this chunk
         // instead of letting one corrupt persisted event block the queue.
@@ -699,9 +710,8 @@ export class TelemetryLogger {
         if (entries.length > 0) {
           this.queue.restore(entries)
         }
-        if (entries.length !== parsed.length) {
-          this.persistNow()
-        }
+        // Rewrite even same-length legacy queues: normalization now removes PII.
+        this.persistNow()
       }
     } catch {
       // Corrupt payload — drop it so we don't get stuck reloading garbage.

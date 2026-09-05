@@ -24,6 +24,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { KeyboardProvider } from 'react-native-keyboard-controller'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { AnimatePresence, TamaguiProvider, Theme, YStack } from 'tamagui'
+import { captureUnhandledException, wrapWithMonitoring } from '../lib/monitoring'
 // Import config for TamaguiProvider
 import config from '../tamagui.config'
 import 'react-native-reanimated'
@@ -223,6 +224,7 @@ class LayoutErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    captureUnhandledException(error)
     telemetry.error('error:boundary', error.message ?? 'Unknown error boundary error', {
       stack: error.stack,
       componentStack: errorInfo.componentStack,
@@ -249,6 +251,7 @@ class LayoutErrorBoundary extends Component<
 
 // Override expo-router's default ErrorBoundary.
 export function ErrorBoundary(props: { error: Error; retry: () => void }) {
+  useEffect(() => captureUnhandledException(props.error), [props.error])
   return (
     <TamaguiProvider config={config}>
       <Theme name="dark">
@@ -600,7 +603,7 @@ function AppContent() {
 // Root Layout
 // ---------------------------------------------------------------------------
 
-export default function RootLayout() {
+function RootLayout() {
   // Breadcrumb: app:init — fires once on mount
   useEffect(() => {
     telemetry.breadcrumb('app:init')
@@ -649,3 +652,5 @@ export default function RootLayout() {
     </GestureHandlerRootView>
   )
 }
+
+export default wrapWithMonitoring(RootLayout)
