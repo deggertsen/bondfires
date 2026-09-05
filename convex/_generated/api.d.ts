@@ -9,6 +9,7 @@
  */
 
 import type * as accountDeletion from "../accountDeletion.js";
+import type * as abuseLimits from "../abuseLimits.js";
 import type * as admin from "../admin.js";
 import type * as adminAudit from "../adminAudit.js";
 import type * as adminDashboard from "../adminDashboard.js";
@@ -89,6 +90,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   accountDeletion: typeof accountDeletion;
+  abuseLimits: typeof abuseLimits;
   admin: typeof admin;
   adminAudit: typeof adminAudit;
   adminDashboard: typeof adminDashboard;

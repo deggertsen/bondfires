@@ -36,6 +36,7 @@ export const ACCOUNT_DELETION_USER_STAGES = [
   'reports_owner',
   'client_logs',
   'client_log_rate_limit',
+  'abuse_rate_limits',
   'invites_sender',
   'invites_recipient',
   'blocks_outgoing',

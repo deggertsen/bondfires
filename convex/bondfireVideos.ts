@@ -2,7 +2,7 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx } from './_generated/server'
-import { mutation, query } from './_generated/server'
+import { internalMutation, query } from './_generated/server'
 import { assertUserCanAccessCamp } from './agePolicy'
 import { auth } from './auth'
 import {
@@ -178,8 +178,11 @@ export const listByUser = query({
 })
 
 // Add a response video to a bondfire
-export const addResponse = mutation({
+// Legacy record attachment is internal-only. Public uploads create a pending
+// response through videos.createMuxDirectUpload before Mux identifiers attach.
+export const addResponse = internalMutation({
   args: {
+    userId: v.id('users'),
     bondfireId: v.id('bondfires'),
     muxUploadId: v.optional(v.string()),
     muxAssetId: v.optional(v.string()),
@@ -200,10 +203,7 @@ export const addResponse = mutation({
     tags: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
-    const userId = await auth.getUserId(ctx)
-    if (!userId) {
-      throw new Error('Not authenticated')
-    }
+    const userId = args.userId
 
     const user = await ctx.db.get(userId)
     const bondfire = await assertCanRespondToBondfire(ctx, {

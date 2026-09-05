@@ -305,6 +305,21 @@ export default defineSchema({
     .index('by_camp_claimer', ['campId', 'claimerId'])
     .index('by_invite_code', ['inviteCodeId', 'claimerId']),
 
+  // Transactional fixed-window abuse controls. User subjects are separately
+  // indexed so account deletion can remove their enforcement metadata.
+  abuseRateLimits: defineTable({
+    key: v.string(),
+    subjectType: v.literal('user'),
+    subjectId: v.id('users'),
+    category: v.string(),
+    count: v.number(),
+    windowStartedAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_key', ['key'])
+    .index('by_subject', ['subjectType', 'subjectId'])
+    .index('by_updated_at', ['updatedAt']),
+
   notifications: defineTable({
     userId: v.id('users'),
     bondfireId: v.optional(v.id('bondfires')),
@@ -788,7 +803,8 @@ export default defineSchema({
   })
     .index('by_user', ['userId', 'createdAt'])
     .index('by_video', ['videoId', 'createdAt'])
-    .index('by_user_video', ['userId', 'videoId']),
+    .index('by_user_video', ['userId', 'videoId'])
+    .index('by_user_video_event', ['userId', 'videoId', 'eventType']),
 
   // Device Tokens - for push notifications
   deviceTokens: defineTable({

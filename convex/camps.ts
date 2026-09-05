@@ -3,6 +3,7 @@ import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalMutation, mutation, query } from './_generated/server'
+import { enforceInviteAttemptLimit } from './abuseLimits'
 import {
   type AgeBand,
   assertUserAgeBand,
@@ -29,8 +30,10 @@ import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 import {
   findReusableInviteCode,
   generateAndInsertInviteCode,
+  isInviteCodeClaimable,
   normalizeInviteCode,
 } from './inviteCodes'
+import { isEitherUserBlocked } from './userSafety'
 
 type CampAccess = 'open' | 'approval' | 'invite'
 type CampGender = 'male' | 'female' | 'any'
@@ -1364,7 +1367,6 @@ export const muteCamp = mutation({
 export const createInvite = mutation({
   args: {
     campId: v.id('camps'),
-    code: v.optional(v.string()),
     maxUses: v.optional(v.number()),
     expiresAt: v.optional(v.number()),
   },
@@ -1382,8 +1384,7 @@ export const createInvite = mutation({
     const user = await assertCanManageCamp(ctx, camp)
     assertUserCanAccessCamp(user, camp)
 
-    const canReuseExistingInvite =
-      args.code === undefined && args.expiresAt === undefined && args.maxUses === undefined
+    const canReuseExistingInvite = args.expiresAt === undefined && args.maxUses === undefined
     const result = canReuseExistingInvite
       ? ((await findReusableInviteCode(ctx, {
           parentType: 'camp',
@@ -1399,7 +1400,6 @@ export const createInvite = mutation({
           parentType: 'camp',
           parentId: camp._id,
           createdBy: user._id,
-          code: args.code,
           expiresAt: args.expiresAt,
           maxUses: args.maxUses,
         })
@@ -1423,10 +1423,16 @@ export const redeemInvite = mutation({
     ),
 })
 
-export async function redeemCampInviteHandler(ctx: MutationCtx, rawCode: string) {
+export async function redeemCampInviteHandler(
+  ctx: MutationCtx,
+  rawCode: string,
+  options: { rateLimitAlreadyConsumed?: boolean } = {},
+) {
   const user = await getCurrentUser(ctx)
+  if (!options.rateLimitAlreadyConsumed) await enforceInviteAttemptLimit(ctx, user._id)
   const now = Date.now()
   const normalizedCode = normalizeInviteCode(rawCode)
+  if (!normalizedCode || normalizedCode.length > 128) return { invalid: true as const }
 
   const invite = await ctx.db
     .query('inviteCodes')
@@ -1434,33 +1440,35 @@ export async function redeemCampInviteHandler(ctx: MutationCtx, rawCode: string)
     .first()
 
   if (!invite) {
-    throwUserError('Invite not found')
+    return { invalid: true as const }
   }
 
-  if (invite.expiresAt !== undefined && invite.expiresAt <= now) {
-    throwUserError('Invite has expired')
-  }
-  if (invite.maxUses !== undefined && invite.uses >= invite.maxUses) {
-    throwUserError('Invite has already been used')
+  if (!isInviteCodeClaimable(invite, now)) {
+    return { invalid: true as const }
   }
   if (invite.parentType !== 'camp') {
-    throwUserError('Invite not found')
+    return { invalid: true as const }
   }
 
   const camp = await ctx.db.get(invite.parentId as Id<'camps'>)
   if (!camp) {
-    throwUserError('Camp not found')
+    return { invalid: true as const }
   }
 
   if (!isCampVisibleStatus(camp.status)) {
-    throwUserError('Camp not found')
+    return { invalid: true as const }
   }
 
   // Frozen and grace camps do not accept new members via invite.
   if (camp.status === 'frozen' || camp.status === 'grace') {
-    throwUserError('This camp is not accepting new members right now.')
+    return { invalid: true as const }
   }
-  assertUserCanAccessCamp(user, camp)
+  if (
+    !isUserEligibleForCamp(user, camp) ||
+    (await isEitherUserBlocked(ctx, user._id, invite.createdBy))
+  ) {
+    return { invalid: true as const }
+  }
 
   const existingMembership = await getMembership(ctx, user._id, camp._id)
   if (existingMembership?.status === 'active') {
@@ -1479,17 +1487,7 @@ export async function redeemCampInviteHandler(ctx: MutationCtx, rawCode: string)
     eligibility.reason !== 'invite_only' &&
     eligibility.reason !== 'private'
   ) {
-    const messages: Record<string, string> = {
-      wrong_gender: 'This camp is limited to members who match its gender setting',
-      tier_too_low: 'Your subscription tier is too low to join this camp',
-      underage: 'You do not meet the age requirement for this camp',
-      banned: 'You cannot join this camp',
-      already_member: 'You are already a member of this camp',
-      already_pending: 'You already have a pending request for this camp',
-      rejected_cooldown:
-        'Your previous request was denied. You can try again after the cooldown period.',
-    }
-    throwUserError(messages[eligibility.reason] ?? 'You cannot join this camp')
+    return { invalid: true as const }
   }
 
   const membershipId = await upsertMembership(ctx, {
@@ -1542,13 +1540,8 @@ export const setCampAccess = mutation({
 export const seedLaunchCamps = mutation({
   args: {},
   handler: async (ctx) => {
-    const existingCamps = await ctx.db.query('camps').take(1)
     const user = await getCurrentUser(ctx)
-    if (existingCamps.length > 0) {
-      if (!isAdmin(user)) {
-        throw new Error('Only admins can reseed camps')
-      }
-    }
+    if (!isAdmin(user)) throwUserError('Only admins can seed launch camps')
 
     const launchCampIds = []
     for (const seed of getLaunchCampSeeds()) {

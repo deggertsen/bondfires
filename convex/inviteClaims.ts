@@ -9,6 +9,7 @@ import {
   mutation,
   query,
 } from './_generated/server'
+import { enforceDirectInviteLimit, enforceInviteAttemptLimit } from './abuseLimits'
 import {
   assertUserCanAccessCamp,
   assertUsersShareAgeBand,
@@ -22,6 +23,7 @@ import { assertUsersCanShareHearth } from './familyRelationships'
 import {
   findReusableInviteCode,
   generateAndInsertInviteCode,
+  isInviteCodeClaimable,
   normalizeInviteCode,
 } from './inviteCodes'
 import { getLatestResponsePlayback } from './lib/latestResponsePlayback'
@@ -29,8 +31,11 @@ import {
   canViewPersonalBondfire,
   ensureActivePersonalBondfireParticipant,
 } from './personalBondfireAccess'
-import { redeemInviteHandler as redeemPersonalBondfireInviteHandler } from './personalBondfires'
-import { assertUsersMayInteract, getBlockedUserIds } from './userSafety'
+import {
+  isPersonalInviteAvailable,
+  redeemInviteHandler as redeemPersonalBondfireInviteHandler,
+} from './personalBondfires'
+import { assertUsersMayInteract, getBlockedUserIds, isEitherUserBlocked } from './userSafety'
 
 type InviteClaimSource = 'direct' | 'code' | 'camp'
 
@@ -200,6 +205,7 @@ async function createDirectInviteCore(ctx: MutationCtx, args: DirectInviteArgs) 
     assertUserCanAccessCamp(recipient, camp)
   }
   await assertUsersMayInteract(ctx, sender._id, args.recipientId)
+  await enforceDirectInviteLimit(ctx, sender._id)
 
   // Hearth fires gate playback on personalBondfireParticipants. A claim +
   // notification without this row sends invitees to "isn't available".
@@ -314,23 +320,24 @@ export const redeemInviteCode = mutation({
 
 async function redeemInviteCodeHandler(ctx: MutationCtx, rawCode: string) {
   const user = await getCurrentUser(ctx)
+  await enforceInviteAttemptLimit(ctx, user._id)
   const code = normalizeInviteCode(rawCode)
   const now = Date.now()
+  if (!code || code.length > 128) return { type: 'invalid' as const }
 
   const invite = await ctx.db
     .query('inviteCodes')
     .withIndex('by_code', (q) => q.eq('code', code))
     .first()
   if (!invite) {
-    throwUserError('Invite not found')
+    return { type: 'invalid' as const }
   }
-  if (invite.expiresAt !== undefined && invite.expiresAt <= now) {
-    throwUserError('Invite has expired')
+  if (!isInviteCodeClaimable(invite, now)) {
+    return { type: 'invalid' as const }
   }
-  if (invite.maxUses !== undefined && invite.uses >= invite.maxUses) {
-    throwUserError('Invite has already been used')
+  if (await isEitherUserBlocked(ctx, user._id, invite.createdBy)) {
+    return { type: 'invalid' as const }
   }
-  await assertUsersMayInteract(ctx, user._id, invite.createdBy)
 
   // Family links require a dedicated consent screen. Resolving the generic
   // invite route must never accept the relationship implicitly.
@@ -339,7 +346,8 @@ async function redeemInviteCodeHandler(ctx: MutationCtx, rawCode: string) {
   }
 
   if (invite.parentType === 'camp') {
-    const result = await redeemCampInviteHandler(ctx, code)
+    const result = await redeemCampInviteHandler(ctx, code, { rateLimitAlreadyConsumed: true })
+    if ('invalid' in result) return { type: 'invalid' as const }
     const camp = await ctx.db.get(result.campId)
     const { claimId, created } = await upsertInviteClaim(ctx, {
       inviteCodeId: invite._id,
@@ -360,7 +368,10 @@ async function redeemInviteCodeHandler(ctx: MutationCtx, rawCode: string) {
   }
 
   if (invite.parentType === 'personal-bondfire') {
-    const result = await redeemPersonalBondfireInviteHandler(ctx, code)
+    const result = await redeemPersonalBondfireInviteHandler(ctx, code, {
+      rateLimitAlreadyConsumed: true,
+    })
+    if ('invalid' in result) return { type: 'invalid' as const }
     const { claimId, created } = await upsertInviteClaim(ctx, {
       inviteCodeId: invite._id,
       bondfireId: result.bondfireId,
@@ -383,12 +394,29 @@ async function redeemInviteCodeHandler(ctx: MutationCtx, rawCode: string) {
   const bondfireId = invite.parentId as Id<'bondfires'>
   const bondfire = await ctx.db.get(bondfireId)
   if (!bondfire) {
-    throwUserError('Bondfire not found')
+    return { type: 'invalid' as const }
+  }
+
+  if (!bondfire.personalCampId) {
+    const viewer = await buildViewerVisibilityContext(ctx, user._id)
+    // Evaluate the access this claim would grant before creating any artifacts.
+    // Camp age/lifecycle rules and block/moderation checks still apply.
+    viewer.claimedBondfireIds.add(bondfire._id)
+    if (!(await isBondfireVisibleToViewer(ctx, bondfire, viewer))) {
+      return { type: 'invalid' as const }
+    }
   }
 
   // Legacy / mis-typed hearth codes (parentType 'bondfire' on a personal
   // fire) still need a participant row or the invitee hits "isn't available".
   if (bondfire.personalCampId) {
+    const personalCamp = await ctx.db.get(bondfire.personalCampId)
+    if (!personalCamp || personalCamp.status !== 'active') {
+      return { type: 'invalid' as const }
+    }
+    if (!(await isPersonalInviteAvailable(ctx, bondfire, user._id))) {
+      return { type: 'invalid' as const }
+    }
     await ensureActivePersonalBondfireParticipant(ctx, {
       bondfire,
       userId: user._id,
