@@ -7,6 +7,85 @@ const http = httpRouter()
 
 auth.addHttpRoutes(http)
 
+export async function readBoundedBody(request: Request, maxBytes = 128_000) {
+  const declaredLength = Number(request.headers.get('content-length') ?? 0)
+  if (declaredLength > maxBytes) return null
+  if (!request.body) return ''
+  const reader = request.body.getReader()
+  const decoder = new TextDecoder()
+  let size = 0
+  let body = ''
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) return body + decoder.decode()
+      size += value.byteLength
+      if (size > maxBytes) {
+        await reader.cancel()
+        return null
+      }
+      body += decoder.decode(value, { stream: true })
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+function billingWebhookResponse(result: { ok: boolean; statusCode?: number; errorCode?: string }) {
+  if (result.ok) return new Response(null, { status: 204 })
+  return Response.json(
+    { error: result.errorCode ?? 'billing_webhook_failed' },
+    { status: result.statusCode ?? 503 },
+  )
+}
+
+function appleBillingWebhook(environment: 'production' | 'sandbox') {
+  return httpAction(async (ctx, request) => {
+    const body = await readBoundedBody(request)
+    if (body === null) return new Response('Payload too large', { status: 413 })
+    let signedPayload: unknown
+    try {
+      signedPayload = (JSON.parse(body) as { signedPayload?: unknown }).signedPayload
+    } catch {
+      return new Response('Malformed JSON', { status: 400 })
+    }
+    if (typeof signedPayload !== 'string') {
+      return new Response('Missing signedPayload', { status: 400 })
+    }
+    const result = await ctx.runAction(internal.storeBillingActions.processAppleNotification, {
+      signedPayload,
+      environment,
+    })
+    return billingWebhookResponse(result)
+  })
+}
+
+http.route({
+  path: '/store/apple/notifications/production',
+  method: 'POST',
+  handler: appleBillingWebhook('production'),
+})
+
+http.route({
+  path: '/store/apple/notifications/sandbox',
+  method: 'POST',
+  handler: appleBillingWebhook('sandbox'),
+})
+
+http.route({
+  path: '/store/google/rtdn',
+  method: 'POST',
+  handler: httpAction(async (ctx, request) => {
+    const bodyJson = await readBoundedBody(request)
+    if (bodyJson === null) return new Response('Payload too large', { status: 413 })
+    const result = await ctx.runAction(internal.storeBillingActions.processGoogleNotification, {
+      authorization: request.headers.get('authorization') ?? '',
+      bodyJson,
+    })
+    return billingWebhookResponse(result)
+  }),
+})
+
 function parseMuxSignatureHeader(header: string | null): {
   timestamp?: string
   signatures: string[]

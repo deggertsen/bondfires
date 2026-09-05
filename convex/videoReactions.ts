@@ -192,7 +192,10 @@ export const getReactions = query({
         .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
         .order('asc')
         .collect()
-      return reactions.filter((reaction) => !viewer.blockedUserIds.has(reaction.userId))
+      const visible = await Promise.all(
+        reactions.map((reaction) => isUserContentVisibleToViewer(ctx, reaction.userId, viewer)),
+      )
+      return reactions.filter((_, index) => visible[index])
     }
 
     const reactions = await ctx.db
@@ -200,7 +203,10 @@ export const getReactions = query({
       .withIndex('by_bondfire_video', (q) => q.eq('bondfireVideoId', args.bondfireVideoId))
       .order('asc')
       .collect()
-    return reactions.filter((reaction) => !viewer.blockedUserIds.has(reaction.userId))
+    const visible = await Promise.all(
+      reactions.map((reaction) => isUserContentVisibleToViewer(ctx, reaction.userId, viewer)),
+    )
+    return reactions.filter((_, index) => visible[index])
   },
 })
 

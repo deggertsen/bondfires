@@ -24,6 +24,19 @@ const storeVerificationStatus = v.union(
   v.literal('failed'),
   v.literal('refunded'),
 )
+const storeLifecycleState = v.union(
+  v.literal('pending'),
+  v.literal('active'),
+  v.literal('trialing'),
+  v.literal('grace_period'),
+  v.literal('billing_retry'),
+  v.literal('canceled'),
+  v.literal('paused'),
+  v.literal('on_hold'),
+  v.literal('expired'),
+  v.literal('refunded'),
+  v.literal('revoked'),
+)
 const userGender = v.union(v.literal('male'), v.literal('female'), v.literal('other'))
 const ageBand = v.union(v.literal('teen'), v.literal('adult'))
 const campAccessVisibilityMode = v.union(v.literal('hide'), v.literal('gate'))
@@ -105,6 +118,10 @@ export default defineSchema({
     photoStorageId: v.optional(v.id('_storage')),
     gender: userGender,
     birthDate: v.optional(v.string()), // ISO date string (YYYY-MM-DD), private
+    // Opaque UUID sent to StoreKit/Play Billing to bind new purchases to this
+    // authenticated account. It is never accepted as proof without a verified
+    // store response containing the same value.
+    storeAccountToken: v.optional(v.string()),
 
     // Stats (denormalized for performance)
     bondfireCount: v.optional(v.number()),
@@ -177,6 +194,7 @@ export default defineSchema({
     .index('email', ['email']) // Required by @convex-dev/auth (must be named exactly 'email')
     .index('by_role', ['role'])
     .index('by_moderation_status', ['moderationStatus', 'createdAt'])
+    .index('by_is_admin', ['isAdmin'])
     .index('by_created', ['createdAt'])
     .searchIndex('search_email', { searchField: 'email' }),
 
@@ -236,7 +254,8 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_slug', ['slug'])
-    .index('by_owner', ['ownerId', 'createdAt']),
+    .index('by_owner', ['ownerId', 'createdAt'])
+    .index('by_status_created', ['status', 'createdAt']),
 
   // Camp membership, notification preferences, and moderation roles
   campMembers: defineTable({
@@ -347,13 +366,55 @@ export default defineSchema({
     storeOriginalTransactionId: v.optional(v.string()),
     storePurchaseToken: v.optional(v.string()),
     currentPeriodEnd: v.optional(v.number()),
+    storeState: v.optional(storeLifecycleState),
+    willRenew: v.optional(v.boolean()),
+    storeEnvironment: v.optional(v.string()),
+    lastStoreEventAt: v.optional(v.number()),
+    lastStoreSyncAt: v.optional(v.number()),
+    lastStoreReadStartedAt: v.optional(v.number()),
+    replacedByStorePurchaseToken: v.optional(v.string()),
+    nextStoreSyncAt: v.optional(v.number()),
+    storeSyncFailureCount: v.optional(v.number()),
+    lastStoreSyncErrorCode: v.optional(v.string()),
     verifiedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index('by_user', ['userId', 'status'])
     .index('by_store_transaction', ['storeOriginalTransactionId'])
-    .index('by_store_purchase_token', ['storePurchaseToken']),
+    .index('by_store_purchase_token', ['storePurchaseToken'])
+    .index('by_next_store_sync', ['nextStoreSyncAt'])
+    .index('by_verification_next_sync', [
+      'verificationStatus',
+      'replacedByStorePurchaseToken',
+      'nextStoreSyncAt',
+    ]),
+
+  // Durable webhook idempotency and operational status. Never stores signed
+  // payloads, receipts, transaction IDs, or purchase tokens.
+  storeBillingEvents: defineTable({
+    eventKey: v.string(),
+    platform: storePlatform,
+    version: v.string(),
+    notificationType: v.string(),
+    subtype: v.optional(v.string()),
+    subjectHash: v.optional(v.string()),
+    status: v.union(
+      v.literal('processing'),
+      v.literal('processed'),
+      v.literal('failed'),
+      v.literal('ignored'),
+    ),
+    attempts: v.number(),
+    receivedAt: v.number(),
+    lastAttemptAt: v.number(),
+    processedAt: v.optional(v.number()),
+    lastErrorCode: v.optional(v.string()),
+  })
+    .index('by_event_key', ['eventKey'])
+    .index('by_received', ['receivedAt'])
+    .index('by_status_received', ['status', 'receivedAt'])
+    .index('by_platform_received', ['platform', 'receivedAt']),
 
   // Immutable ledger of all camp kindling movements. The table and slot_credit
   // type names are retained for existing production data.
@@ -829,6 +890,21 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_token', ['token']),
+
+  // Durable singleton checkpoints for bounded cron continuations. Each job
+  // owns one row and replaces stale runs after its lease expires.
+  maintenanceJobRuns: defineTable({
+    job: v.string(),
+    runId: v.string(),
+    status: v.union(v.literal('running'), v.literal('complete'), v.literal('failed')),
+    cursor: v.optional(v.string()),
+    startedAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+    pagesProcessed: v.number(),
+    stats: v.any(),
+  }).index('by_job', ['job']),
 
   // Push notification deliveries — one row per (recipient, video) push.
   // Powers per-video dedupe (live-start suppresses publish-time sends)

@@ -400,7 +400,7 @@ export const listCloseCircle = query({
 
     const entries = []
     for (const pin of pins) {
-      if (viewer.blockedUserIds.has(pin.pinnedUserId)) continue
+      if (!(await isUserContentVisibleToViewer(ctx, pin.pinnedUserId, viewer))) continue
       const user = await ctx.db.get(pin.pinnedUserId)
       if (!user) {
         continue
