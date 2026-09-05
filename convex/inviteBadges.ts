@@ -1,6 +1,8 @@
 import type { Doc, Id } from './_generated/dataModel'
 import type { QueryCtx } from './_generated/server'
 
+const UNSEEN_INVITE_CLAIM_READ_MAX = 500
+
 export type BondfireBadge = 'sparked' | 'invited' | 'kindled'
 
 type BadgeableBondfire = Pick<Doc<'bondfires'>, '_id' | 'campId' | 'videoCount'> & {
@@ -27,7 +29,7 @@ export async function addInviteBadgesToBondfires<T extends BadgeableBondfire>(
     .withIndex('by_claimer_unseen', (q) =>
       q.eq('claimerId', userId).eq('seen', false).eq('dismissed', false),
     )
-    .collect()
+    .take(UNSEEN_INVITE_CLAIM_READ_MAX)
 
   const invitedBondfireIds = new Set(
     unseenClaims
