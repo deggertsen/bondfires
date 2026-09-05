@@ -40,6 +40,15 @@ crons.interval(
   {},
 )
 
+// Store webhooks are the fast path; bounded authoritative re-verification is
+// the backstop for missed, delayed, or out-of-order notifications.
+crons.interval(
+  'reconcile store subscriptions',
+  { hours: 6 },
+  internal.storeBillingActions.reconcileSubscriptions,
+  { limit: 20 },
+)
+
 // Give up on live-linked records waiting for a local backup recovery upload
 // after the 7-day window (matches client LOCAL_BACKUP_RETENTION_MS).
 crons.interval(
@@ -100,6 +109,12 @@ crons.daily(
   'cleanup stale abuse windows',
   { hourUTC: 12, minuteUTC: 20 },
   internal.abuseLimits.cleanupStale,
+)
+
+crons.daily(
+  'purge old store billing events',
+  { hourUTC: 12, minuteUTC: 25 },
+  internal.storeBilling.purgeOldEvents,
 )
 
 // Cleanup expired invite codes.

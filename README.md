@@ -112,6 +112,11 @@ OPENROUTER_API_KEY=your-openrouter-api-key
 OPENROUTER_MODEL=z-ai/glm-4.5-air
 ```
 
+Store billing requires server-only Apple and Google credentials plus authenticated webhook
+configuration. The complete key inventory and provider setup are documented in
+[`docs/store-billing-lifecycle.md`](docs/store-billing-lifecycle.md); never copy those credentials
+into `apps/mobile/.env`.
+
 Configure the Mux webhook endpoint to point at the Convex HTTP action path
 `https://<your-convex-deployment>.convex.site/mux/webhook`.
 Signing key variables are required for private camp video playback and any other

@@ -62,3 +62,7 @@ checked. Invite codes are bearer capabilities but redemption is authenticated.
   so the attempt counter commits. A valid Hearth invitation may still report a
   capacity/entitlement error; high-entropy Family Connection consent keeps its
   dedicated preview and acceptance flow.
+# Billing additions
+
+- `storeBilling.billingHealth`: authenticated admin only; bounded, redacted operational counters.
+- `storeBillingActions.prepareStorePurchase`: authenticated, non-deleting account; creates only a server-generated store binding, never an entitlement.
