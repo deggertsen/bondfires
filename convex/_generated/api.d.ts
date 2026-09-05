@@ -8,8 +8,8 @@
  * @module
  */
 
-import type * as accountDeletion from "../accountDeletion.js";
 import type * as abuseLimits from "../abuseLimits.js";
+import type * as accountDeletion from "../accountDeletion.js";
 import type * as admin from "../admin.js";
 import type * as adminAudit from "../adminAudit.js";
 import type * as adminDashboard from "../adminDashboard.js";
@@ -59,9 +59,9 @@ import type * as lib_maintenanceRuns from "../lib/maintenanceRuns.js";
 import type * as lib_notificationCopy from "../lib/notificationCopy.js";
 import type * as lib_presence from "../lib/presence.js";
 import type * as lib_pushProviders from "../lib/pushProviders.js";
+import type * as lib_queryBounds from "../lib/queryBounds.js";
 import type * as lib_reportPolicy from "../lib/reportPolicy.js";
 import type * as lib_storeBillingPolicy from "../lib/storeBillingPolicy.js";
-import type * as lib_queryBounds from "../lib/queryBounds.js";
 import type * as lib_videoReactions from "../lib/videoReactions.js";
 import type * as liveSessionProgress from "../liveSessionProgress.js";
 import type * as liveSessions from "../liveSessions.js";
@@ -75,6 +75,8 @@ import type * as publicConfig from "../publicConfig.js";
 import type * as reconciliation from "../reconciliation.js";
 import type * as reports from "../reports.js";
 import type * as responseCounts from "../responseCounts.js";
+import type * as retentionCleanup from "../retentionCleanup.js";
+import type * as retentionMedia from "../retentionMedia.js";
 import type * as sendNotification from "../sendNotification.js";
 import type * as serverTelemetry from "../serverTelemetry.js";
 import type * as storeBilling from "../storeBilling.js";
@@ -94,8 +96,8 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  accountDeletion: typeof accountDeletion;
   abuseLimits: typeof abuseLimits;
+  accountDeletion: typeof accountDeletion;
   admin: typeof admin;
   adminAudit: typeof adminAudit;
   adminDashboard: typeof adminDashboard;
@@ -145,9 +147,9 @@ declare const fullApi: ApiFromModules<{
   "lib/notificationCopy": typeof lib_notificationCopy;
   "lib/presence": typeof lib_presence;
   "lib/pushProviders": typeof lib_pushProviders;
+  "lib/queryBounds": typeof lib_queryBounds;
   "lib/reportPolicy": typeof lib_reportPolicy;
   "lib/storeBillingPolicy": typeof lib_storeBillingPolicy;
-  "lib/queryBounds": typeof lib_queryBounds;
   "lib/videoReactions": typeof lib_videoReactions;
   liveSessionProgress: typeof liveSessionProgress;
   liveSessions: typeof liveSessions;
@@ -161,6 +163,8 @@ declare const fullApi: ApiFromModules<{
   reconciliation: typeof reconciliation;
   reports: typeof reports;
   responseCounts: typeof responseCounts;
+  retentionCleanup: typeof retentionCleanup;
+  retentionMedia: typeof retentionMedia;
   sendNotification: typeof sendNotification;
   serverTelemetry: typeof serverTelemetry;
   storeBilling: typeof storeBilling;

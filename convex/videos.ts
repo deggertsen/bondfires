@@ -1870,14 +1870,13 @@ export const createMuxDirectUpload = action({
         draftBondfireId: args.draftBondfireId,
       })
     } catch (error) {
-      // The account may have entered deletion after Mux created the signed
-      // upload URL but before Convex linked it. Cancel the upload so a client
-      // already holding the URL cannot create an untracked asset.
-      try {
-        await muxRequest(`/uploads/${uploadId}/cancel`, { method: 'PUT' })
-      } catch (cancelError) {
-        console.warn('Failed to cancel unlinked Mux direct upload:', cancelError)
-      }
+      // Retention/account deletion can win while Mux provisions the upload.
+      // Durable compensation also checks for a successfully linked record
+      // before cancelling, in case the mutation's response was ambiguous.
+      await ctx.runMutation(internal.retentionMedia.enqueueUnlinked, {
+        kind: 'direct_upload',
+        externalId: uploadId,
+      })
       throw error
     }
 
@@ -2307,14 +2306,10 @@ export const createLiveStream = action({
             draftBondfireId: args.draftBondfireId,
           })
         } catch (error) {
-          try {
-            await deleteMuxLiveStream(liveStreamId)
-          } catch (deleteError) {
-            console.warn(
-              'Failed to delete Mux live stream after Convex linking failed:',
-              deleteError,
-            )
-          }
+          await ctx.runMutation(internal.retentionMedia.enqueueUnlinked, {
+            kind: 'live_stream',
+            externalId: liveStreamId,
+          })
           throw error
         }
 
@@ -2900,14 +2895,10 @@ export const createLiveBackupDirectUpload = action({
         uploadId,
       })
     } catch (error) {
-      // Account deletion can begin while Mux provisions the upload. If Convex
-      // refuses to attach it, cancel the upload so it cannot become an asset
-      // outside the deletion inventory.
-      try {
-        await muxRequest(`/uploads/${uploadId}/cancel`, { method: 'PUT' })
-      } catch (cancelError) {
-        console.warn('Failed to cancel unlinked Mux live backup upload:', cancelError)
-      }
+      await ctx.runMutation(internal.retentionMedia.enqueueUnlinked, {
+        kind: 'direct_upload',
+        externalId: uploadId,
+      })
       throw error
     }
 

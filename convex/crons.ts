@@ -24,6 +24,8 @@ crons.interval('cleanup stale presence', { minutes: 1 }, internal.presence.clean
 // sweep recovers jobs if a scheduler delivery or worker process was interrupted.
 crons.interval('resume stale account deletions', { hours: 1 }, internal.accountDeletion.resumeStale)
 
+crons.interval('resume retention cleanup', { minutes: 5 }, internal.retentionCleanup.resumeStale)
+
 crons.interval(
   'disable stale Mux live streams',
   { minutes: 5 },
@@ -126,7 +128,7 @@ crons.daily(
 )
 
 // Cleanup archived camps past the 30-day retention window.
-// Runs daily at 13:00 UTC — deletes Mux assets then camp data.
+// Runs daily at 13:00 UTC — atomically claims Camps, then resumes bounded cleanup.
 crons.daily(
   'cleanup archived camps',
   { hourUTC: 13, minuteUTC: 0 },

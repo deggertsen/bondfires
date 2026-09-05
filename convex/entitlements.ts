@@ -89,6 +89,14 @@ export async function getActiveSubscriptionTier(
     .withIndex('by_user', (q) => q.eq('userId', userId))
     .collect()
 
+  return activeTierFromSubscriptions(subscriptions, now)
+}
+
+/** Share verified/expiry rules with bounded maintenance reads. */
+export function activeTierFromSubscriptions(
+  subscriptions: Doc<'subscriptions'>[],
+  now: number,
+): SubscriptionTier {
   const activeSubscriptions = subscriptions.filter(
     (sub) =>
       sub.verificationStatus === 'verified' &&

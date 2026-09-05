@@ -304,9 +304,10 @@
         "MUX_UPLOAD_CORS_ORIGIN",
         "MUX_UPLOAD_TIMEOUT_SECONDS",
         "MUX_VIDEO_QUALITY",
-        "MUX_WEBHOOK_SECRET"
+        "MUX_WEBHOOK_SECRET",
+        "RETENTION_CLAIMS_ENABLED"
       ],
-      "documents": ["docs/mux-setup.md", "docs/plans/mux-live-streaming.md"],
+      "documents": ["docs/mux-setup.md", "docs/plans/mux-live-streaming.md", "docs/retention-cleanup.md"],
       "actions": ["external-contract-review", "recording-smoke"]
     },
     {
