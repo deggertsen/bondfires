@@ -1,5 +1,12 @@
 import type { Id } from '../_generated/dataModel'
 import type { QueryCtx } from '../_generated/server'
+import { auth } from '../auth'
+import {
+  buildViewerVisibilityContext,
+  isUserContentVisibleToViewer,
+  type ViewerVisibilityContext,
+} from '../bondfireVisibility'
+import { isModeratedContentVisible } from '../contentSafety'
 
 export type VideoPlaybackReference = {
   bondfireVideoId?: Id<'bondfireVideos'>
@@ -46,28 +53,27 @@ export function getPlayableVideoPlayback(
 export async function getLatestResponsePlayback(
   ctx: QueryCtx,
   bondfireId: Id<'bondfires'>,
+  viewerContext?: ViewerVisibilityContext,
 ): Promise<VideoPlaybackReference | null> {
   const now = Date.now()
-  const response = await ctx.db
+  const viewer =
+    viewerContext ?? (await buildViewerVisibilityContext(ctx, await auth.getUserId(ctx)))
+  const responses = await ctx.db
     .query('bondfireVideos')
     .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfireId))
     .order('desc')
-    .filter((q) =>
-      q.and(
-        q.or(q.eq(q.field('expiresAt'), undefined), q.gt(q.field('expiresAt'), now)),
-        q.or(
-          q.and(
-            q.or(q.eq(q.field('videoStatus'), undefined), q.eq(q.field('videoStatus'), 'ready')),
-            q.neq(q.field('muxPlaybackId'), undefined),
-          ),
-          q.and(
-            q.eq(q.field('videoStatus'), 'live'),
-            q.neq(q.field('muxLivePlaybackId'), undefined),
-          ),
-        ),
-      ),
+    .take(10)
+  for (const response of responses) {
+    const playback = getPlayableVideoPlayback(response, now)
+    if (
+      !playback ||
+      !isModeratedContentVisible(response.moderationStatus, {
+        isOwner: response.userId === viewer.userId,
+        isAdmin: viewer.isAdmin,
+      })
     )
-    .first()
-
-  return response ? getPlayableVideoPlayback(response) : null
+      continue
+    if (await isUserContentVisibleToViewer(ctx, response.userId, viewer)) return playback
+  }
+  return null
 }

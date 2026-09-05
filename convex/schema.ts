@@ -177,6 +177,7 @@ export default defineSchema({
     .index('email', ['email']) // Required by @convex-dev/auth (must be named exactly 'email')
     .index('by_role', ['role'])
     .index('by_moderation_status', ['moderationStatus', 'createdAt'])
+    .index('by_is_admin', ['isAdmin'])
     .index('by_created', ['createdAt'])
     .searchIndex('search_email', { searchField: 'email' }),
 
@@ -236,7 +237,8 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_slug', ['slug'])
-    .index('by_owner', ['ownerId', 'createdAt']),
+    .index('by_owner', ['ownerId', 'createdAt'])
+    .index('by_status_created', ['status', 'createdAt']),
 
   // Camp membership, notification preferences, and moderation roles
   campMembers: defineTable({
@@ -829,6 +831,21 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_token', ['token']),
+
+  // Durable singleton checkpoints for bounded cron continuations. Each job
+  // owns one row and replaces stale runs after its lease expires.
+  maintenanceJobRuns: defineTable({
+    job: v.string(),
+    runId: v.string(),
+    status: v.union(v.literal('running'), v.literal('complete'), v.literal('failed')),
+    cursor: v.optional(v.string()),
+    startedAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+    pagesProcessed: v.number(),
+    stats: v.any(),
+  }).index('by_job', ['job']),
 
   // Push notification deliveries — one row per (recipient, video) push.
   // Powers per-video dedupe (live-start suppresses publish-time sends)

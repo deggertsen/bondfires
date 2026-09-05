@@ -1,3 +1,4 @@
+import { paginationOptsValidator } from 'convex/server'
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
@@ -33,6 +34,7 @@ import {
   isInviteCodeClaimable,
   normalizeInviteCode,
 } from './inviteCodes'
+import { boundedInteger } from './lib/queryBounds'
 import { isEitherUserBlocked } from './userSafety'
 
 type CampAccess = 'open' | 'approval' | 'invite'
@@ -85,6 +87,11 @@ const JOIN_DENIED_MESSAGES: Partial<Record<CampJoinResult['reason'], string>> = 
 
 /** Cooldown duration for re-applying after rejection (30 days in ms). */
 const REJECTION_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000
+const CAMP_PAGE_DEFAULT = 40
+const CAMP_PAGE_MAX = 100
+const LEGACY_CAMP_LIST_MAX = 200
+const LEGACY_CAMP_SCAN_MAX = 500
+const USER_MEMBERSHIP_READ_MAX = 500
 
 type CampSeed = {
   slug: string
@@ -373,8 +380,10 @@ async function findAdminUser(ctx: QueryCtx | MutationCtx): Promise<Doc<'users'> 
     .first()
   if (adminByRole) return adminByRole
 
-  const users = await ctx.db.query('users').collect()
-  return users.find((u) => u.isAdmin === true) ?? null
+  return await ctx.db
+    .query('users')
+    .withIndex('by_is_admin', (q) => q.eq('isAdmin', true))
+    .first()
 }
 
 async function getMembership(
@@ -863,113 +872,191 @@ async function ensureCamp(
   })
 }
 
+async function buildCampListViewer(ctx: QueryCtx) {
+  const userId = await auth.getUserId(ctx)
+  const memberships = userId
+    ? await ctx.db
+        .query('campMembers')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .take(USER_MEMBERSHIP_READ_MAX)
+    : []
+  const user = userId ? await ctx.db.get(userId) : null
+  const userTier =
+    user && userId
+      ? await getEntitlementSubscriptionTier(ctx, userId)
+      : ('free' as SubscriptionTier)
+
+  return {
+    memberships,
+    membershipsByCamp: new Map(memberships.map((membership) => [membership.campId, membership])),
+    user,
+    userTier,
+  }
+}
+
+async function getRestrictedMemberCamps(
+  ctx: QueryCtx,
+  viewer: Awaited<ReturnType<typeof buildCampListViewer>>,
+) {
+  const camps = await Promise.all(
+    viewer.memberships
+      .filter((membership) => membership.status === 'active')
+      .map((membership) => ctx.db.get(membership.campId)),
+  )
+  return camps.filter(
+    (camp): camp is Doc<'camps'> => camp?.status === 'frozen' || camp?.status === 'grace',
+  )
+}
+
+async function hydrateCampListMemberships(
+  ctx: QueryCtx,
+  viewer: Awaited<ReturnType<typeof buildCampListViewer>>,
+  camps: Doc<'camps'>[],
+) {
+  if (!viewer.user || viewer.memberships.length < USER_MEMBERSHIP_READ_MAX) return
+  const userId = viewer.user._id
+  await Promise.all(
+    camps.map(async (camp) => {
+      if (viewer.membershipsByCamp.has(camp._id)) return
+      const membership = await ctx.db
+        .query('campMembers')
+        .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', camp._id))
+        .first()
+      if (membership) viewer.membershipsByCamp.set(camp._id, membership)
+    }),
+  )
+}
+
+export function decorateCampListPage(
+  camps: Doc<'camps'>[],
+  viewer: Awaited<ReturnType<typeof buildCampListViewer>>,
+  includeArchived: boolean,
+) {
+  const { membershipsByCamp, user, userTier } = viewer
+  return camps
+    .filter((camp) => includeArchived || isCampVisibleStatus(camp.status))
+    .filter((camp) => {
+      if (user ? !isUserEligibleForCamp(user, camp) : getCampAgeBand(camp) === 'teen') return false
+      const membership = membershipsByCamp.get(camp._id)
+      if (camp.status === 'frozen' || camp.status === 'grace') {
+        return membership?.status === 'active'
+      }
+      if (membership?.status === 'active') return true
+      return computeVisibility(
+        {
+          gender: user?.gender ?? 'other',
+          tier: userTier,
+          birthDate: user?.birthDate,
+        },
+        camp,
+      ).visible
+    })
+    .map((camp) => {
+      const membership = membershipsByCamp.get(camp._id) ?? null
+      const rank = computeSortRank(camp, user, userTier, membership)
+      const visibility: CampVisibilityResult =
+        membership?.status === 'active'
+          ? { visible: true }
+          : computeVisibility(
+              {
+                gender: user?.gender ?? 'other',
+                tier: userTier,
+                birthDate: user?.birthDate,
+              },
+              camp,
+            )
+      const reason = visibility.accessDeniedReason ?? lockedReason(camp, userTier)
+      return {
+        ...camp,
+        name: resolveCampDisplayName(camp),
+        membership,
+        _sortRank: camp.status === 'frozen' || camp.status === 'grace' ? 1 : rank,
+        _lockedReason:
+          camp.status === 'frozen'
+            ? 'Frozen — upgrade to manage this camp'
+            : membership?.status === 'active'
+              ? undefined
+              : reason,
+        frozen: camp.status === 'frozen',
+        grace: camp.status === 'grace',
+      }
+    })
+    .filter((camp) => camp._sortRank < 2)
+}
+
+function sortCampList<T extends { _sortRank: number; name: string }>(camps: T[]): T[] {
+  return camps.sort((left, right) => {
+    if (left._sortRank !== right._sortRank) return left._sortRank - right._sortRank
+    return left.name.localeCompare(right.name)
+  })
+}
+
+/** Cursor-based camp discovery used by current clients. */
+export const listPage = query({
+  args: {
+    includeArchived: v.optional(v.boolean()),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const numItems = boundedInteger(args.paginationOpts.numItems, {
+      defaultValue: CAMP_PAGE_DEFAULT,
+      min: 1,
+      max: CAMP_PAGE_MAX,
+      name: 'paginationOpts.numItems',
+    })
+    const viewer = await buildCampListViewer(ctx)
+    const campQuery = args.includeArchived
+      ? ctx.db.query('camps').withIndex('by_status_created')
+      : ctx.db.query('camps').withIndex('by_status_created', (q) => q.eq('status', 'active'))
+    const result = await campQuery.paginate({
+      ...args.paginationOpts,
+      numItems,
+      maximumRowsRead: CAMP_PAGE_MAX,
+      maximumBytesRead: 2_000_000,
+    })
+    await hydrateCampListMemberships(ctx, viewer, result.page)
+    const restrictedMemberCamps =
+      args.paginationOpts.cursor === null && !args.includeArchived
+        ? await getRestrictedMemberCamps(ctx, viewer)
+        : []
+    return {
+      ...result,
+      page: sortCampList(
+        decorateCampListPage(
+          [...restrictedMemberCamps, ...result.page],
+          viewer,
+          args.includeArchived === true,
+        ),
+      ),
+    }
+  },
+})
+
+/**
+ * Backward-compatible array wrapper for installed clients. New clients use
+ * listPage; this wrapper is deliberately capped so it cannot scan the table.
+ */
 export const list = query({
   args: {
     includeArchived: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const userId = await auth.getUserId(ctx)
-    const memberships = userId
-      ? await ctx.db
-          .query('campMembers')
-          .withIndex('by_user', (q) => q.eq('userId', userId))
-          .collect()
-      : []
-
-    const membershipsByCamp = new Map(
-      memberships.map((membership) => [membership.campId, membership]),
-    )
-
-    // Fetch user + tier for visibility evaluation
-    const user = userId ? await ctx.db.get(userId) : null
-    const userTier =
-      user && userId
-        ? await getEntitlementSubscriptionTier(ctx, userId)
-        : ('free' as SubscriptionTier)
-
-    const camps = await ctx.db.query('camps').collect()
-
-    return camps
-      .filter((camp) => args.includeArchived || isCampVisibleStatus(camp.status))
-      .filter((camp) => {
-        if (user && !isUserEligibleForCamp(user, camp)) {
-          return false
-        }
-        // Frozen and grace camps are only visible to existing active members.
-        if (camp.status === 'frozen' || camp.status === 'grace') {
-          const membership = membershipsByCamp.get(camp._id)
-          return membership?.status === 'active'
-        }
-        // Active members only bypass ordinary camp rules, never age isolation.
-        const membership = membershipsByCamp.get(camp._id)
-        if (membership?.status === 'active') {
-          return true
-        }
-        // Use computeVisibility for non-members
-        if (!user) {
-          // Anonymous user
-          const visibility = computeVisibility(
-            {
-              gender: 'other',
-              tier: 'free',
-              birthDate: undefined,
-            },
-            camp,
-          )
-          return visibility.visible
-        }
-        const visibility = computeVisibility(
-          {
-            gender: user.gender,
-            tier: userTier,
-            birthDate: user.birthDate,
-          },
-          camp,
-        )
-        return visibility.visible
-      })
-      .map((camp) => {
-        const membership = membershipsByCamp.get(camp._id) ?? null
-        const rank = computeSortRank(camp, user, userTier, membership)
-        const ageEligible = user
-          ? isUserEligibleForCamp(user, camp)
-          : getCampAgeBand(camp) !== 'teen'
-        const visibility: CampVisibilityResult =
-          membership?.status === 'active' && ageEligible
-            ? { visible: true }
-            : computeVisibility(
-                {
-                  gender: user?.gender ?? 'other',
-                  tier: userTier,
-                  birthDate: user?.birthDate,
-                },
-                camp,
-              )
-        const reason = visibility.accessDeniedReason ?? lockedReason(camp, userTier)
-        return {
-          ...camp,
-          name: resolveCampDisplayName(camp),
-          membership,
-          _sortRank: camp.status === 'frozen' || camp.status === 'grace' ? 1 : rank,
-          _lockedReason:
-            camp.status === 'frozen'
-              ? 'Frozen — upgrade to manage this camp'
-              : membership?.status === 'active'
-                ? undefined
-                : reason,
-          frozen: camp.status === 'frozen',
-          grace: camp.status === 'grace',
-        }
-      })
-      .filter((camp) => camp._sortRank < 2) // Exclude hidden camps
-      .sort((left, right) => {
-        // Primary: sort rank (joinable above locked)
-        if (left._sortRank !== right._sortRank) {
-          return left._sortRank - right._sortRank
-        }
-        // Secondary: alphabetic
-        return left.name.localeCompare(right.name)
-      })
+    const viewer = await buildCampListViewer(ctx)
+    const campQuery = args.includeArchived
+      ? ctx.db.query('camps').withIndex('by_status_created')
+      : ctx.db.query('camps').withIndex('by_status_created', (q) => q.eq('status', 'active'))
+    const [camps, restrictedMemberCamps] = await Promise.all([
+      campQuery.take(LEGACY_CAMP_SCAN_MAX),
+      args.includeArchived ? [] : getRestrictedMemberCamps(ctx, viewer),
+    ])
+    await hydrateCampListMemberships(ctx, viewer, camps)
+    return sortCampList(
+      decorateCampListPage(
+        [...restrictedMemberCamps, ...camps],
+        viewer,
+        args.includeArchived === true,
+      ),
+    ).slice(0, LEGACY_CAMP_LIST_MAX)
   },
 })
 
@@ -1080,7 +1167,7 @@ export const listMine = query({
     const memberships = await ctx.db
       .query('campMembers')
       .withIndex('by_user', (q) => q.eq('userId', user._id).eq('status', 'active'))
-      .collect()
+      .take(USER_MEMBERSHIP_READ_MAX)
 
     const camps = await Promise.all(memberships.map((membership) => ctx.db.get(membership.campId)))
     return camps

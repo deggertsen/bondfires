@@ -31,7 +31,7 @@ import {
 import { useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
 import { AlertTriangle, Flame, RefreshCw, Search, X } from '@tamagui/lucide-icons'
-import { useMutation, useQuery } from 'convex/react'
+import { useMutation, usePaginatedQuery, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -57,6 +57,7 @@ import {
   getSwipeReportComment,
 } from '../../../lib/bondfireSwipeActions'
 import type { BondfireThumbnailFields } from '../../../lib/bondfireThumbnails'
+import { shouldLoadSparsePage, uniqueById } from '../../../lib/pagination'
 import { routes } from '../../../lib/routes'
 import { useBondfireThumbnails } from '../../../lib/useBondfireThumbnails'
 
@@ -416,28 +417,66 @@ function FeedRetry({ onRetry }: { onRetry: () => void }) {
 function FeedSubscription({
   selectedCampId,
   enabled,
+  loadMoreRequest,
   onResolved,
 }: {
   selectedCampId: Doc<'camps'>['_id'] | null | undefined
   enabled: boolean
+  loadMoreRequest: number
   onResolved: (bondfires: BondfireData[]) => void
 }) {
-  const allBondfires = useQuery(
-    api.bondfires.listFeed,
-    enabled && selectedCampId === null ? { limit: 50 } : 'skip',
+  const {
+    results: allBondfires,
+    status: allBondfiresStatus,
+    loadMore,
+  } = usePaginatedQuery(
+    api.bondfires.listFeedPage,
+    enabled && selectedCampId === null ? {} : 'skip',
+    { initialNumItems: 50 },
   )
+  const handledLoadRequest = useRef(0)
+  const requestedVisibleCount = useRef(1)
   const campBondfires = useQuery(
     api.bondfires.listByCamp,
     enabled && selectedCampId ? { campId: selectedCampId, limit: 50 } : 'skip',
   )
+  const deduplicatedAllBondfires = useMemo(() => uniqueById(allBondfires), [allBondfires])
   const bondfires =
-    selectedCampId === undefined ? undefined : selectedCampId ? campBondfires : allBondfires
+    selectedCampId === undefined || !enabled
+      ? undefined
+      : selectedCampId
+        ? campBondfires
+        : allBondfiresStatus === 'LoadingFirstPage'
+          ? undefined
+          : deduplicatedAllBondfires
 
   useEffect(() => {
     if (bondfires !== undefined) {
       onResolved(bondfires)
     }
   }, [bondfires, onResolved])
+
+  useEffect(() => {
+    if (selectedCampId !== null) return
+    if (loadMoreRequest > handledLoadRequest.current) {
+      handledLoadRequest.current = loadMoreRequest
+      requestedVisibleCount.current = deduplicatedAllBondfires.length + 1
+    }
+    if (
+      shouldLoadSparsePage(
+        allBondfiresStatus,
+        deduplicatedAllBondfires.length,
+        requestedVisibleCount.current,
+      )
+    )
+      loadMore(50)
+  }, [
+    deduplicatedAllBondfires.length,
+    allBondfiresStatus,
+    loadMore,
+    loadMoreRequest,
+    selectedCampId,
+  ])
 
   return null
 }
@@ -459,6 +498,7 @@ export default function HomeScreen() {
   const [viewMode, setViewMode] = useState<ViewMode>('discover')
   const [query, setQuery] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
+  const [loadMoreRequest, setLoadMoreRequest] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [bondfires, setBondfires] = useState<BondfireData[] | undefined>(undefined)
   const currentUserId = useValue(appStore$.userId)
@@ -600,6 +640,7 @@ export default function HomeScreen() {
     resetLoadTracking()
     resetThumbnailUrls()
     setIsRefreshing(true)
+    setLoadMoreRequest(0)
     setRefreshKey((current) => current + 1)
 
     if (refreshTimeoutRef.current) {
@@ -794,6 +835,7 @@ export default function HomeScreen() {
     (campId: string | null) => {
       resetLoadTracking()
       setBondfires(undefined)
+      setLoadMoreRequest(0)
       resetThumbnailUrls()
       appActions.setCurrentCampId(campId)
       listRef.current?.scrollToOffset({ offset: 0, animated: true })
@@ -930,6 +972,7 @@ export default function HomeScreen() {
           key={feedSubscriptionKey}
           enabled={canLoadTabData}
           selectedCampId={activeCampId}
+          loadMoreRequest={loadMoreRequest}
           onResolved={handleBondfiresResolved}
         />
         {timedOut ? <FeedRetry onRetry={handleRetry} /> : <LoadingFeed />}
@@ -943,6 +986,7 @@ export default function HomeScreen() {
         key={feedSubscriptionKey}
         enabled={canLoadTabData}
         selectedCampId={activeCampId}
+        loadMoreRequest={loadMoreRequest}
         onResolved={handleBondfiresResolved}
       />
       <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
@@ -952,6 +996,10 @@ export default function HomeScreen() {
           listRef.current = r
         }}
         data={filtered ?? []}
+        onEndReached={() => {
+          if (activeCampId === null) setLoadMoreRequest((current) => current + 1)
+        }}
+        onEndReachedThreshold={0.5}
         extraData={listExtraData}
         keyExtractor={(item) => item._id}
         onScrollBeginDrag={closeOpenSwipeableRow}

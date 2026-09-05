@@ -1,3 +1,4 @@
+import { paginationOptsValidator } from 'convex/server'
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
@@ -8,6 +9,7 @@ import { assertUserCanAccessCamp } from './agePolicy'
 import { auth } from './auth'
 import {
   buildViewerVisibilityContext,
+  ensureViewerCampMembership,
   filterVisibleBondfiresForViewer,
   isBondfireVisibleToViewer,
   isCampContentVisibleToViewer,
@@ -25,6 +27,7 @@ import { throwUserError } from './errors'
 import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 import { addInviteBadgesToBondfires } from './inviteBadges'
 import { getLatestResponsePlayback } from './lib/latestResponsePlayback'
+import { boundedInteger, boundedScanSize } from './lib/queryBounds'
 import { incrementProfileViews } from './watchEvents'
 
 type ExpiredPrivateCampVideoCleanupResult = {
@@ -56,6 +59,10 @@ export function normalizeCleanupLimit(limit: number | undefined) {
   if (limit === undefined || !Number.isFinite(limit)) return MAX_CLEANUP_LIMIT
   return Math.min(Math.max(Math.trunc(limit), 1), MAX_CLEANUP_LIMIT)
 }
+const FEED_PAGE_DEFAULT = 20
+const FEED_PAGE_MAX = 50
+const FEED_VISIBILITY_SCAN_MULTIPLIER = 3
+const FEED_VISIBILITY_SCAN_MAX = 150
 
 // Works for both `bondfires` and `bondfireVideos` rows — they share the
 // status/playback fields this predicate touches. Exported for the
@@ -249,23 +256,68 @@ async function deleteWatchEventsForVideo(ctx: MutationCtx, videoId: string) {
   }
 }
 
-async function removeBondfireFromPinnedLists(ctx: MutationCtx, bondfireId: Id<'bondfires'>) {
-  const users = await ctx.db.query('users').collect()
-  const now = Date.now()
-
-  for (const user of users) {
-    if (!user.pinnedBondfireIds?.includes(bondfireId)) {
-      continue
-    }
-
-    await ctx.db.patch(user._id, {
-      pinnedBondfireIds: user.pinnedBondfireIds.filter((id) => id !== bondfireId),
-      updatedAt: now,
-    })
-  }
+async function decorateFeedPage(ctx: QueryCtx, bondfires: Doc<'bondfires'>[], limit?: number) {
+  const userId = await auth.getUserId(ctx)
+  const viewer = await buildViewerVisibilityContext(ctx, userId)
+  const visibleBondfires = await filterVisibleBondfiresForViewer(
+    ctx,
+    bondfires.filter(isPlayableVideoRecord),
+    viewer,
+  )
+  const selectedBondfires =
+    limit === undefined ? visibleBondfires : visibleBondfires.slice(0, limit)
+  const withCampLabels = await Promise.all(
+    selectedBondfires.map(async (bondfire) => {
+      const [campLabel, latestResponse] = await Promise.all([
+        resolveCampLabel(ctx, bondfire),
+        getLatestResponsePlayback(ctx, bondfire._id, viewer),
+      ])
+      return {
+        ...withLiveFlags(bondfire),
+        campLabel,
+        latestResponseBondfireVideoId: latestResponse?.bondfireVideoId,
+        latestResponseMuxPlaybackId: latestResponse?.muxPlaybackId,
+        latestResponseMuxPlaybackPolicy: latestResponse?.muxPlaybackPolicy,
+      }
+    }),
+  )
+  return await addInviteBadgesToBondfires(ctx, userId, withCampLabels)
 }
 
-// List bondfires for the feed (ordered by videoCount ASC for discovery)
+/** Cursor-based discovery feed for current clients. */
+export const listFeedPage = query({
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, args) => {
+    const requested = boundedInteger(args.paginationOpts.numItems, {
+      defaultValue: FEED_PAGE_DEFAULT,
+      min: 1,
+      max: FEED_PAGE_MAX,
+      name: 'paginationOpts.numItems',
+    })
+    const scanSize = boundedScanSize(
+      requested,
+      FEED_VISIBILITY_SCAN_MULTIPLIER,
+      FEED_VISIBILITY_SCAN_MAX,
+    )
+    const result = await ctx.db
+      .query('bondfires')
+      .withIndex('by_video_count')
+      .order('asc')
+      .paginate({
+        ...args.paginationOpts,
+        numItems: scanSize,
+        maximumRowsRead: FEED_VISIBILITY_SCAN_MAX,
+        maximumBytesRead: 2_000_000,
+      })
+
+    return { ...result, page: await decorateFeedPage(ctx, result.page) }
+  },
+})
+
+/**
+ * Backward-compatible array wrapper for installed clients. The historical
+ * cursor is now honored, and both its requested result and scan are capped.
+ */
 export const listFeed = query({
   args: {
     limit: v.optional(v.number()),
@@ -273,37 +325,17 @@ export const listFeed = query({
   },
   handler: async (ctx, args) => {
     const limit = normalizeFeedLimit(args.limit)
-    const userId = await auth.getUserId(ctx)
-
-    // Query bondfires ordered by video_count ascending (prioritize newer/smaller)
-    const bondfires = await ctx.db
+    const result = await ctx.db
       .query('bondfires')
       .withIndex('by_video_count')
       .order('asc')
-      .take(limit * 5)
-
-    const visibleBondfires = await filterVisibleBondfires(
-      ctx,
-      bondfires.filter(isPlayableVideoRecord),
-    )
-
-    const withCampLabels = await Promise.all(
-      visibleBondfires.slice(0, limit).map(async (bondfire) => {
-        const [campLabel, latestResponse] = await Promise.all([
-          resolveCampLabel(ctx, bondfire),
-          getLatestResponsePlayback(ctx, bondfire._id),
-        ])
-        return {
-          ...withLiveFlags(bondfire),
-          campLabel,
-          latestResponseBondfireVideoId: latestResponse?.bondfireVideoId,
-          latestResponseMuxPlaybackId: latestResponse?.muxPlaybackId,
-          latestResponseMuxPlaybackPolicy: latestResponse?.muxPlaybackPolicy,
-        }
-      }),
-    )
-
-    return await addInviteBadgesToBondfires(ctx, userId, withCampLabels)
+      .paginate({
+        cursor: args.cursor ?? null,
+        numItems: boundedScanSize(limit, FEED_VISIBILITY_SCAN_MULTIPLIER, FEED_VISIBILITY_SCAN_MAX),
+        maximumRowsRead: FEED_VISIBILITY_SCAN_MAX,
+        maximumBytesRead: 2_000_000,
+      })
+    return await decorateFeedPage(ctx, result.page, limit)
   },
 })
 
@@ -321,6 +353,7 @@ export const listByCamp = query({
 
     const userId = await auth.getUserId(ctx)
     const viewer = await buildViewerVisibilityContext(ctx, userId)
+    await ensureViewerCampMembership(ctx, viewer, camp._id)
     if (!isCampContentVisibleToViewer(camp, viewer)) {
       return []
     }
@@ -329,13 +362,15 @@ export const listByCamp = query({
       .query('bondfires')
       .withIndex('by_camp', (q) => q.eq('campId', args.campId))
       .order('desc')
-      .take(limit * 3)
+      .take(boundedScanSize(limit, FEED_VISIBILITY_SCAN_MULTIPLIER, FEED_VISIBILITY_SCAN_MAX))
 
-    const filtered = bondfires.filter(isPlayableVideoRecord).slice(0, limit)
+    const filtered = (
+      await filterVisibleBondfiresForViewer(ctx, bondfires.filter(isPlayableVideoRecord), viewer)
+    ).slice(0, limit)
 
     const withCampLabels = await Promise.all(
       filtered.map(async (bondfire) => {
-        const latestResponse = await getLatestResponsePlayback(ctx, bondfire._id)
+        const latestResponse = await getLatestResponsePlayback(ctx, bondfire._id, viewer)
         return {
           ...withLiveFlags(bondfire),
           campLabel: camp.name,
@@ -885,15 +920,17 @@ export const pinBondfire = mutation({
     if (!user) throw new Error('User not found')
 
     const pinned = user.pinnedBondfireIds ?? []
-    if (pinned.includes(args.bondfireId)) {
+    const existingPinned = await Promise.all(pinned.map((id) => ctx.db.get(id)))
+    const validPinned = pinned.filter((_, index) => existingPinned[index] !== null)
+    if (validPinned.includes(args.bondfireId)) {
       return { pinned: true, already: true }
     }
-    if (pinned.length >= 8) {
+    if (validPinned.length >= 8) {
       throw new Error('You can pin up to 8 bondfires')
     }
 
     await ctx.db.patch(userId, {
-      pinnedBondfireIds: [args.bondfireId, ...pinned],
+      pinnedBondfireIds: [args.bondfireId, ...validPinned],
       updatedAt: Date.now(),
     })
 
@@ -997,9 +1034,10 @@ export const deleteBondfire = mutation({
       await ctx.db.delete(r._id)
     }
 
-    // Remove from every user's pinned list.
+    // Deleted pin ids are pruned lazily the next time each user pins a fire.
     const creator = await ctx.db.get(bondfire.userId)
-    await removeBondfireFromPinnedLists(ctx, args.bondfireId)
+    // Pinned ids are capped at eight per user and are pruned lazily by
+    // pinBondfire. Avoid a full users-table scan on every deletion.
 
     if (bondfire.liveSessionId) {
       await ctx.db.delete(bondfire.liveSessionId)
