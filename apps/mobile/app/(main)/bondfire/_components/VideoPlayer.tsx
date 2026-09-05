@@ -28,6 +28,7 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
 } from 'react'
 import { AppState, type LayoutChangeEvent, PanResponder, Pressable, type View } from 'react-native'
 import { YStack } from 'tamagui'
@@ -53,6 +54,7 @@ import {
   shouldPauseAfterPictureInPictureStop,
   syncReactionPlaybackAfterSeek,
 } from '../_lib/videoPlayerState'
+import { createStallWatchdog, reloadVideoAtPosition } from '../_lib/videoStallRecovery'
 import {
   CaptionOverlay,
   LoadingOverlay,
@@ -297,14 +299,24 @@ export function VideoPlayer({
   // retry overlay. Reset whenever the source changes — a new URL is a new
   // playback attempt with a fresh budget.
   const errorRetryRef = useRef({ count: 0, timer: null as ReturnType<typeof setTimeout> | null })
+  // Source key of the last attempted stall-recovery reload. Prevents
+  // duplicate recovery reloads within one load attempt; a user retry or a
+  // new source resets the recovery budget.
+  const stallRecoverySourceKeyRef = useRef<string | null>(null)
+  const stallRecoveryGenerationRef = useRef(0)
+  const [playIntentVersion, setPlayIntentVersion] = useState(0)
   const hasRecordedPlaybackStartRef = useRef(false)
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: currentUrl is the reset trigger, not read inside
   useEffect(() => {
     errorRetryRef.current.count = 0
+    stallRecoverySourceKeyRef.current = null
+    stallRecoveryGenerationRef.current += 1
+    hasRecordedPlaybackStartRef.current = false
     userPausedRef.current = false
     state$.hasError.set(false)
     return () => {
+      stallRecoveryGenerationRef.current += 1
       if (errorRetryRef.current.timer) {
         clearTimeout(errorRetryRef.current.timer)
         errorRetryRef.current.timer = null
@@ -341,6 +353,7 @@ export function VideoPlayer({
     ref,
     () => ({
       releaseSourceForRecorder: async () => {
+        stallRecoveryGenerationRef.current += 1
         if (errorRetryRef.current.timer) {
           clearTimeout(errorRetryRef.current.timer)
           errorRetryRef.current.timer = null
@@ -391,11 +404,14 @@ export function VideoPlayer({
 
   const retryPlayback = useCallback(() => {
     if (!currentSource) return
+    setPlayIntentVersion((version) => version + 1)
     telemetry.info('video:playback_retry', 'User retried video after playback failure', {
       videoId,
       isLive,
     })
     errorRetryRef.current.count = 0
+    stallRecoverySourceKeyRef.current = null
+    stallRecoveryGenerationRef.current += 1
     state$.hasError.set(false)
     state$.isLoading.set(true)
     // Tapping "Try Again" is explicit play intent.
@@ -414,6 +430,56 @@ export function VideoPlayer({
         // player was released while replacement was in flight.
       })
   }, [currentSource, state$, videoId, isLive, resumePlaybackAfterRecovery, withCurrentPlayer])
+
+  // One mid-playback reload per source/user retry. Fatal-error retries retain
+  // their separate budget. Never reload an initial load, live stream or pause.
+  const scheduleStallRecovery = useCallback(() => {
+    if (isLive || !currentUrl || !currentSource || stallRecoverySourceKeyRef.current === currentUrl)
+      return
+    if (!hasRecordedPlaybackStartRef.current || errorRetryRef.current.timer) return
+    const gate = playbackGateRef.current
+    if (!gate.isActive || !gate.isScreenFocused || AppState.currentState !== 'active') return
+    if (shouldSuppressPlayback || userPausedRef.current || isScrubbingRef.current) return
+    if (!(appStore$.preferences.autoplayVideos.peek() || state$.userInitiatedPlay.peek())) return
+    const currentPlayer = withCurrentPlayer((player) => player)
+    if (!currentPlayer) return
+
+    stallRecoverySourceKeyRef.current = currentUrl
+    const generation = ++stallRecoveryGenerationRef.current
+    telemetry.warn('video:stall_recovery', 'Auto-reloading video after buffering stall', {
+      videoId,
+      isLive,
+      positionMs: Math.round(currentPlayer.currentTime * 1000),
+    })
+    void reloadVideoAtPosition({
+      player: currentPlayer,
+      source: currentSource,
+      isCurrent: () =>
+        stallRecoveryGenerationRef.current === generation && !!withCurrentPlayer(() => true),
+      shouldResume: () => {
+        const latest = playbackGateRef.current
+        return (
+          latest.isActive &&
+          latest.isScreenFocused &&
+          !shouldSuppressPlayback &&
+          !userPausedRef.current &&
+          !state$.hasError.peek() &&
+          (appStore$.preferences.autoplayVideos.peek() || state$.userInitiatedPlay.peek())
+        )
+      },
+    }).catch(() => {
+      // Native status errors use the existing retry path. If replacement hangs
+      // or rejects silently, the foreground give-up timer remains the backstop.
+    })
+  }, [
+    currentSource,
+    currentUrl,
+    isLive,
+    shouldSuppressPlayback,
+    state$,
+    videoId,
+    withCurrentPlayer,
+  ])
 
   // Caption cues, fetched lazily when captions are on and this video has a
   // caption track. Cue matching happens in the timeUpdate listener below.
@@ -849,46 +915,67 @@ export function VideoPlayer({
   // and showing "couldn't play" mid-gap would break a recoverable watch.
   const stallGiveUpMs = isLive ? 75_000 : 45_000
   const isLoadingValue = useValue(state$.isLoading)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: loading and explicit play-intent changes restart the clock; timer callbacks read current refs.
   useEffect(() => {
-    if (!isActive || !isScreenFocused || !currentUrl || !isLoadingValue) {
-      return
-    }
-
-    const stallWarnTimer = setTimeout(() => {
-      const currentTime = withCurrentPlayer((currentPlayer) => currentPlayer.currentTime) ?? 0
-      telemetry.warn('video:playback_stall', 'Video stuck buffering', {
-        videoId,
-        isLive,
-        stalledForMs: 15_000,
-        positionMs: Math.round(currentTime * 1000),
-      })
-    }, 15_000)
-
-    const giveUpTimer = setTimeout(() => {
-      const currentTime = withCurrentPlayer((currentPlayer) => currentPlayer.currentTime) ?? 0
-      telemetry.error('video:playback_stall_timeout', 'Video buffering timed out', {
-        videoId,
-        isLive,
-        stalledForMs: stallGiveUpMs,
-        positionMs: Math.round(currentTime * 1000),
-      })
-      state$.isLoading.set(false)
-      state$.hasError.set(true)
-    }, stallGiveUpMs)
-
+    const watchdog = createStallWatchdog({
+      isLive,
+      canRun: () =>
+        isActive &&
+        isScreenFocused &&
+        isAppActive &&
+        AppState.currentState === 'active' &&
+        !!currentUrl &&
+        state$.isLoading.peek() &&
+        !state$.hasError.peek() &&
+        !userPausedRef.current &&
+        !shouldSuppressPlayback &&
+        (autoplayVideos || state$.userInitiatedPlay.peek()),
+      onWarn: () => {
+        const currentTime = withCurrentPlayer((player) => player.currentTime)
+        if (currentTime === undefined) return
+        telemetry.warn('video:playback_stall', 'Video stuck buffering', {
+          videoId,
+          isLive,
+          stalledForMs: 15_000,
+          positionMs: Math.round(currentTime * 1000),
+        })
+      },
+      onRecover: scheduleStallRecovery,
+      onGiveUp: () => {
+        const currentTime = withCurrentPlayer((player) => player.currentTime)
+        if (currentTime === undefined) return
+        stallRecoveryGenerationRef.current += 1
+        if (!isLive) withCurrentPlayer((player) => player.pause())
+        telemetry.error('video:playback_stall_timeout', 'Video buffering timed out', {
+          videoId,
+          isLive,
+          stalledForMs: stallGiveUpMs,
+          positionMs: Math.round(currentTime * 1000),
+        })
+        state$.isLoading.set(false)
+        state$.hasError.set(true)
+      },
+    })
+    watchdog.restart()
+    const subscription = AppState.addEventListener('change', watchdog.restart)
     return () => {
-      clearTimeout(stallWarnTimer)
-      clearTimeout(giveUpTimer)
+      subscription.remove()
+      watchdog.stop()
     }
   }, [
     isActive,
     isScreenFocused,
+    isAppActive,
     currentUrl,
     isLoadingValue,
+    playIntentVersion,
+    autoplayVideos,
+    shouldSuppressPlayback,
     withCurrentPlayer,
     state$,
     videoId,
     isLive,
+    scheduleStallRecovery,
     stallGiveUpMs,
   ])
 
@@ -958,6 +1045,7 @@ export function VideoPlayer({
       return 'play' as const
     })
     if (!action) return
+    setPlayIntentVersion((version) => version + 1)
 
     if (action === 'replay') {
       triggeredReactionIdsRef.current = {}
