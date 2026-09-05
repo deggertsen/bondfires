@@ -45,12 +45,18 @@ const actionValidator = v.union(
   v.literal('report_resolve'),
   v.literal('report_dismiss'),
   v.literal('public_config_update'),
+  v.literal('content_approve'),
+  v.literal('content_remove'),
+  v.literal('content_restore'),
+  v.literal('user_suspend'),
+  v.literal('user_reactivate'),
 )
 
 const targetTypeValidator = v.union(
   v.literal('camp'),
   v.literal('user'),
   v.literal('bondfire'),
+  v.literal('response'),
   v.literal('purchase'),
   v.literal('report'),
   v.literal('config'),

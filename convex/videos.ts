@@ -20,10 +20,16 @@ import {
   revertBondfireToDraft,
 } from './bondfireFailureCleanup'
 import {
-  isCampParticipableStatus,
-  isCampReadableStatus,
-  requiresActiveMembershipForVisibility,
-} from './campLifecycle'
+  buildViewerVisibilityContext,
+  isBondfireVisibleToViewer,
+  isUserContentVisibleToViewer,
+} from './bondfireVisibility'
+import { isCampParticipableStatus } from './campLifecycle'
+import {
+  initialModerationStatus,
+  isModeratedContentVisible,
+  requireUgcPermission,
+} from './contentSafety'
 import {
   assertCanCreateBondfire,
   assertVideoDurationWithinTierLimit,
@@ -53,11 +59,11 @@ import { shouldReapLiveSession } from './lib/liveSessionStaleness'
 import { assessLiveSessionProgress } from './liveSessionProgress'
 import {
   assertCanRespondToPersonalBondfire,
-  canViewPersonalBondfire,
   getPersonalCampForOwner,
 } from './personalBondfireAccess'
 import { countResponse, uncountResponse } from './responseCounts'
 import { logServerEvent } from './serverTelemetry'
+import { assertUsersMayInteract } from './userSafety'
 
 type PlaybackPolicy = 'public' | 'signed'
 type LiveLatencyMode = 'standard' | 'reduced' | 'low'
@@ -599,6 +605,7 @@ async function assertCanCreatePersonalBondfire(
     durationMs?: number
   },
 ) {
+  await requireUgcPermission(ctx, args.userId)
   await assertVideoDurationWithinTierLimit(ctx, args.userId, args.durationMs)
 
   const tier = await getEntitlementSubscriptionTier(ctx, args.userId)
@@ -623,43 +630,38 @@ async function assertCanCreatePersonalBondfire(
 
 async function assertCanViewBondfire(
   ctx: QueryCtx,
-  args: { userId: Id<'users'>; bondfire: Doc<'bondfires'> },
+  args: { userId: Id<'users'> | null; bondfire: Doc<'bondfires'> },
 ) {
-  const bondfire = args.bondfire
-  if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
+  const viewer = await buildViewerVisibilityContext(ctx, args.userId)
+  if (
+    !(await isBondfireVisibleToViewer(ctx, args.bondfire, viewer, {
+      allowAdminModerationReview: true,
+    }))
+  ) {
     throwUserError('Bondfire not found')
   }
+}
 
-  if (bondfire.personalCampId) {
-    if (!(await canViewPersonalBondfire(ctx, { bondfire, userId: args.userId }))) {
-      throwUserError('Bondfire not found')
-    }
-    return
-  }
-
-  if (!bondfire.campId) {
-    return
-  }
-
-  const camp = await ctx.db.get(bondfire.campId)
-  if (!camp || !isCampReadableStatus(camp.status)) {
-    throwUserError('Camp not found')
-  }
-  const viewer = await ctx.db.get(args.userId)
-  if (!viewer) throwUserError('User not found')
-  assertUserCanAccessCamp(viewer, camp)
-
-  if (!requiresActiveMembershipForVisibility(camp)) {
-    return
-  }
-
-  const membership = await ctx.db
-    .query('campMembers')
-    .withIndex('by_user_camp', (q) => q.eq('userId', args.userId).eq('campId', camp._id))
-    .first()
-
-  if (membership?.status !== 'active') {
-    throwUserError('Bondfire not found')
+async function assertCanViewResponse(
+  ctx: QueryCtx,
+  args: {
+    userId: Id<'users'> | null
+    bondfire: Doc<'bondfires'>
+    response: Doc<'bondfireVideos'>
+  },
+) {
+  const viewer = await buildViewerVisibilityContext(ctx, args.userId)
+  if (
+    !(await isBondfireVisibleToViewer(ctx, args.bondfire, viewer, {
+      allowAdminModerationReview: true,
+    })) ||
+    !(await isUserContentVisibleToViewer(ctx, args.response.userId, viewer)) ||
+    !isModeratedContentVisible(args.response.moderationStatus, {
+      isOwner: args.userId === args.response.userId,
+      isAdmin: viewer.isAdmin,
+    })
+  ) {
+    throwUserError('Video not found')
   }
 }
 
@@ -673,6 +675,7 @@ async function assertUserCanParticipateInCamp(
     tags?: string[]
   },
 ): Promise<Doc<'camps'>> {
+  await requireUgcPermission(ctx, args.userId)
   const [user, camp] = await Promise.all([ctx.db.get(args.userId), ctx.db.get(args.campId)])
   if (!user) {
     throwUserError('User not found')
@@ -733,6 +736,7 @@ async function assertCanRespondToBondfire(
     durationMs?: number
   },
 ): Promise<Doc<'bondfires'>> {
+  await requireUgcPermission(ctx, args.userId)
   const bondfire = await ctx.db.get(args.bondfireId)
   if (!bondfire) {
     throwUserError('Bondfire not found')
@@ -740,6 +744,7 @@ async function assertCanRespondToBondfire(
   if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
     throwUserError('Bondfire not found')
   }
+  await assertUsersMayInteract(ctx, args.userId, bondfire.userId)
 
   await assertVideoDurationWithinTierLimit(ctx, args.userId, args.durationMs)
 
@@ -3955,7 +3960,6 @@ export const getMuxPlaybackPolicyForNewRecord = internalQuery({
         bondfireId: args.bondfireId,
         durationMs: args.durationMs,
       })
-
       if (bondfire.muxPlaybackPolicy === 'signed') {
         return { playbackPolicy: 'signed' }
       }
@@ -4020,12 +4024,7 @@ export const validatePlaybackAccess = internalQuery({
         }
       }
 
-      if (bondfire.muxPlaybackPolicy === 'signed') {
-        if (!args.userId) {
-          throwUserError('Not authenticated')
-        }
-        await assertCanViewBondfire(ctx, { userId: args.userId, bondfire })
-      }
+      await assertCanViewBondfire(ctx, { userId: args.userId ?? null, bondfire })
 
       return { playbackPolicy: bondfire.muxPlaybackPolicy ?? 'public' }
     }
@@ -4057,12 +4056,11 @@ export const validatePlaybackAccess = internalQuery({
         }
       }
 
-      if (video.muxPlaybackPolicy === 'signed') {
-        if (!args.userId) {
-          throwUserError('Not authenticated')
-        }
-        await assertCanViewBondfire(ctx, { userId: args.userId, bondfire })
-      }
+      await assertCanViewResponse(ctx, {
+        userId: args.userId ?? null,
+        bondfire,
+        response: video,
+      })
 
       return { playbackPolicy: video.muxPlaybackPolicy ?? 'public' }
     }
@@ -4103,6 +4101,7 @@ export const createPendingMuxVideo = internalMutation({
         bondfireId: args.bondfireId,
         durationMs: args.durationMs,
       })
+      const responseCamp = bondfire.campId ? await ctx.db.get(bondfire.campId) : null
       if (bondfire.personalCampId && args.playbackPolicy !== 'signed') {
         throw new Error('Personal fire responses must use signed Mux playback')
       }
@@ -4116,6 +4115,7 @@ export const createPendingMuxVideo = internalMutation({
         bondfireId: args.bondfireId,
         userId: args.userId,
         creatorName: user?.displayName ?? user?.name,
+        moderationStatus: initialModerationStatus(responseCamp, !!bondfire.personalCampId),
         sequenceNumber,
         videoStatus: 'waiting_for_upload',
         muxUploadId: args.uploadId,
@@ -4192,6 +4192,7 @@ export const createPendingMuxVideo = internalMutation({
       const recordId = await ctx.db.insert('bondfires', {
         userId: args.userId,
         creatorName: user?.displayName ?? user?.name,
+        moderationStatus: 'approved',
         personalCampId: personalCamp._id,
         frozen: false,
         videoStatus: 'waiting_for_upload',
@@ -4242,6 +4243,7 @@ export const createPendingMuxVideo = internalMutation({
     const recordId = await ctx.db.insert('bondfires', {
       userId: args.userId,
       creatorName: user?.displayName ?? user?.name,
+      moderationStatus: initialModerationStatus(camp, false),
       campId: args.campId,
       frozen: false,
       videoStatus: 'waiting_for_upload',
@@ -4507,6 +4509,7 @@ export const createLinkedMuxLiveSession = internalMutation({
       if (!bondfire) {
         throwUserError('Bondfire not found')
       }
+      const responseCamp = bondfire.campId ? await ctx.db.get(bondfire.campId) : null
 
       const existingVideos = await ctx.db
         .query('bondfireVideos')
@@ -4517,6 +4520,7 @@ export const createLinkedMuxLiveSession = internalMutation({
         bondfireId: args.bondfireId,
         userId: args.userId,
         creatorName: user?.displayName ?? user?.name,
+        moderationStatus: initialModerationStatus(responseCamp, !!bondfire.personalCampId),
         sequenceNumber,
         liveSessionId,
         videoStatus: initialStatus,
@@ -4612,6 +4616,7 @@ export const createLinkedMuxLiveSession = internalMutation({
       const recordId = await ctx.db.insert('bondfires', {
         userId: args.userId,
         creatorName: user?.displayName ?? user?.name,
+        moderationStatus: 'approved',
         personalCampId: personalCamp._id,
         title: args.title,
         frozen: false,
@@ -4657,6 +4662,10 @@ export const createLinkedMuxLiveSession = internalMutation({
     const recordId = await ctx.db.insert('bondfires', {
       userId: args.userId,
       creatorName: user?.displayName ?? user?.name,
+      moderationStatus: initialModerationStatus(
+        args.campId ? await ctx.db.get(args.campId) : null,
+        false,
+      ),
       campId: args.campId,
       title: args.title,
       frozen: false,

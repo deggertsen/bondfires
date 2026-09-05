@@ -918,6 +918,47 @@ export const cleanupUserBatch = internalMutation({
         .query('adminAuditLog')
         .withIndex('by_target', (q) => q.eq('targetType', 'user').eq('targetId', userId))
         .take(BATCH_SIZE)
+    if (stage === 'admin_audit_subject')
+      rows = await ctx.db
+        .query('adminAuditLog')
+        .withIndex('by_subject_user', (q) => q.eq('subjectUserId', userId))
+        .take(BATCH_SIZE)
+    if (stage === 'moderated_bondfires') {
+      const bondfires = await ctx.db
+        .query('bondfires')
+        .withIndex('by_moderated_by', (q) => q.eq('moderatedBy', userId))
+        .take(BATCH_SIZE)
+      for (const bondfire of bondfires) {
+        await ctx.db.patch(bondfire._id, { moderatedBy: undefined, updatedAt: Date.now() })
+      }
+      if (bondfires.length === BATCH_SIZE) return { completed: false }
+      await advanceJob(ctx, job)
+      return { completed: false }
+    }
+    if (stage === 'moderated_responses') {
+      const responses = await ctx.db
+        .query('bondfireVideos')
+        .withIndex('by_moderated_by', (q) => q.eq('moderatedBy', userId))
+        .take(BATCH_SIZE)
+      for (const response of responses) {
+        await ctx.db.patch(response._id, { moderatedBy: undefined })
+      }
+      if (responses.length === BATCH_SIZE) return { completed: false }
+      await advanceJob(ctx, job)
+      return { completed: false }
+    }
+    if (stage === 'reports_reviewer') {
+      const reports = await ctx.db
+        .query('reports')
+        .withIndex('by_reviewed_by', (q) => q.eq('reviewedBy', userId))
+        .take(BATCH_SIZE)
+      for (const report of reports) {
+        await ctx.db.patch(report._id, { reviewedBy: undefined })
+      }
+      if (reports.length === BATCH_SIZE) return { completed: false }
+      await advanceJob(ctx, job)
+      return { completed: false }
+    }
     if (stage === 'thread_reads')
       rows = await ctx.db
         .query('bondfireThreadReads')
@@ -977,6 +1018,16 @@ export const cleanupUserBatch = internalMutation({
       rows = await ctx.db
         .query('bondfireInvites')
         .withIndex('by_recipient', (q) => q.eq('recipientId', userId))
+        .take(BATCH_SIZE)
+    if (stage === 'blocks_outgoing')
+      rows = await ctx.db
+        .query('userBlocks')
+        .withIndex('by_blocker', (q) => q.eq('blockerId', userId))
+        .take(BATCH_SIZE)
+    if (stage === 'blocks_incoming')
+      rows = await ctx.db
+        .query('userBlocks')
+        .withIndex('by_blocked', (q) => q.eq('blockedUserId', userId))
         .take(BATCH_SIZE)
     if (stage === 'reactions')
       rows = await ctx.db

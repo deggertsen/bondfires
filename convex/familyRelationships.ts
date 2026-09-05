@@ -2,6 +2,7 @@ import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { type AgeBand, getUserAgeBand } from './agePolicy'
 import { throwUserError } from './errors'
+import { isEitherUserBlocked } from './userSafety'
 
 type ConvexCtx = QueryCtx | MutationCtx
 
@@ -127,6 +128,10 @@ export async function getHearthRelationshipAuthorization(
 ): Promise<HearthRelationshipAuthorization> {
   if (firstUserId === secondUserId) return { allowed: true }
 
+  if (await isEitherUserBlocked(ctx, firstUserId, secondUserId)) {
+    return { allowed: false }
+  }
+
   const [firstUser, secondUser, connection] = await Promise.all([
     ctx.db.get(firstUserId),
     ctx.db.get(secondUserId),
@@ -168,6 +173,8 @@ export async function isHearthParticipantAuthorized(
   familyConnectionId?: Id<'familyConnections'>,
 ): Promise<boolean> {
   if (ownerId === participantId) return true
+
+  if (await isEitherUserBlocked(ctx, ownerId, participantId)) return false
 
   const [owner, participant, connection] = await Promise.all([
     ctx.db.get(ownerId),

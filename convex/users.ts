@@ -4,6 +4,7 @@ import { mutation, query } from './_generated/server'
 import { calculateAgeAt } from './agePolicy'
 import { auth } from './auth'
 import { throwUserError } from './errors'
+import { getBlockedUserIds } from './userSafety'
 
 /**
  * App-open heartbeat. The client calls this on launch/foreground
@@ -75,7 +76,14 @@ export const current = query({
 export const get = query({
   args: { userId: v.id('users') },
   handler: async (ctx, args) => {
+    const viewerId = await auth.getUserId(ctx)
     const user = await ctx.db.get(args.userId)
+    if (!user) return null
+    const viewer = viewerId ? await ctx.db.get(viewerId) : null
+    if (user.moderationStatus === 'suspended' && viewerId !== user._id && !viewer?.isAdmin) {
+      return null
+    }
+    if (viewerId && (await getBlockedUserIds(ctx, viewerId)).has(user._id)) return null
     return user ? publicUser(user) : null
   },
 })

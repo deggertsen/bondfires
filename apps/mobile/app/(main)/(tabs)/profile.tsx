@@ -52,7 +52,9 @@ import { Alert, FlatList, Pressable, RefreshControl, ScrollView, StatusBar } fro
 import { Separator, Sheet, Switch, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
+import { ModerationAdminPanel } from '../../../components/ModerationAdminPanel'
 import { NotificationPreferencesSection } from '../../../components/NotificationPreferencesSection'
+import { SafetySettings } from '../../../components/SafetySettings'
 import { UploadProgressCard } from '../../../components/UploadProgressCard'
 import { routes } from '../../../lib/routes'
 
@@ -661,6 +663,8 @@ export default function ProfileScreen() {
 
           <UploadProgressCard />
 
+          <SafetySettings />
+
           {/* Camp Kindling Balance */}
           {!kindlingBalanceLoading && currentTier === 'pro' ? (
             <Card marginBottom={24}>
@@ -698,14 +702,17 @@ export default function ProfileScreen() {
 
           {/* Admin Panel — only visible to admin users */}
           {isAdmin && (
-            <AdminPanel
-              isAdmin={isAdmin}
-              onSearch={handleAdminSearch}
-              onSetTier={handleAdminSetTier}
-              onGrantKindling={handleAdminGrantKindling}
-              updateConfig={adminUpdateConfig}
-              onSetMinVersion={handleAdminSetMinVersion}
-            />
+            <>
+              <AdminPanel
+                isAdmin={isAdmin}
+                onSearch={handleAdminSearch}
+                onSetTier={handleAdminSetTier}
+                onGrantKindling={handleAdminGrantKindling}
+                updateConfig={adminUpdateConfig}
+                onSetMinVersion={handleAdminSetMinVersion}
+              />
+              <ModerationAdminPanel />
+            </>
           )}
 
           {closeCircle && closeCircle.length > 0 && (

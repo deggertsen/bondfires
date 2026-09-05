@@ -1,8 +1,14 @@
 import { v } from 'convex/values'
 import type { Doc, Id } from './_generated/dataModel'
-import type { MutationCtx } from './_generated/server'
+import type { MutationCtx, QueryCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import { auth } from './auth'
+import {
+  buildViewerVisibilityContext,
+  isBondfireVisibleToViewer,
+  isUserContentVisibleToViewer,
+} from './bondfireVisibility'
+import { requireUgcPermission } from './contentSafety'
 import { getEntitlementSubscriptionTier, TIER_RANK } from './entitlements'
 import { throwUserError, withUserFacingErrors } from './errors'
 import { isFreeEmoji, isReactionEmoji } from './lib/emojis'
@@ -34,13 +40,49 @@ function assertVodRecordIsReady(record: Doc<'bondfires'> | Doc<'bondfireVideos'>
   }
 }
 
-async function assertVodVideoExists(ctx: MutationCtx, video: VideoReference) {
+async function assertVodVideoExists(ctx: MutationCtx | QueryCtx, video: VideoReference) {
   if (video.bondfireId !== undefined) {
-    assertVodRecordIsReady(await ctx.db.get(video.bondfireId))
-    return
+    const bondfire = await ctx.db.get(video.bondfireId)
+    assertVodRecordIsReady(bondfire)
+    if (!bondfire) throwUserError('Video not found')
+    return { bondfire, response: null }
   }
 
-  assertVodRecordIsReady(await ctx.db.get(video.bondfireVideoId))
+  const response = await ctx.db.get(video.bondfireVideoId)
+  assertVodRecordIsReady(response)
+  const bondfire = response ? await ctx.db.get(response.bondfireId) : null
+  if (!bondfire) throwUserError('Video not found')
+  return { bondfire, response }
+}
+
+async function requireReactionVisibility(
+  ctx: MutationCtx | QueryCtx,
+  video: VideoReference,
+  userId: Id<'users'> | null,
+) {
+  const target = await assertVodVideoExists(ctx, video)
+  const viewer = await buildViewerVisibilityContext(ctx, userId)
+  if (
+    !(await isBondfireVisibleToViewer(ctx, target.bondfire, viewer, {
+      allowAdminModerationReview: true,
+    }))
+  ) {
+    throwUserError('Video not found')
+  }
+  if (target.response) {
+    if (!(await isUserContentVisibleToViewer(ctx, target.response.userId, viewer))) {
+      throwUserError('Video not found')
+    }
+    if (
+      target.response.moderationStatus === 'removed' ||
+      (target.response.moderationStatus === 'pending_review' &&
+        userId !== target.response.userId &&
+        !viewer.isAdmin)
+    ) {
+      throwUserError('Video not found')
+    }
+  }
+  return viewer
 }
 
 /**
@@ -50,7 +92,8 @@ async function assertVodVideoExists(ctx: MutationCtx, video: VideoReference) {
  * Denormalizes the reactor's displayName + photoUrl at creation time so
  * playback queries never need to join the users table.
  *
- * No server-side throttle — throttling is client-side only per spec.
+ * A server-side rolling limit prevents scripted reaction spam even if the
+ * client-side throttle is bypassed.
  */
 export const addReaction = mutation({
   args: {
@@ -68,6 +111,7 @@ export const addReaction = mutation({
         if (!userId) {
           throwUserError('Not authenticated')
         }
+        await requireUgcPermission(ctx, userId)
 
         if (!hasExactlyOneVideoReference(args)) {
           throwUserError('Exactly one of bondfireId or bondfireVideoId must be provided')
@@ -88,9 +132,22 @@ export const addReaction = mutation({
           }
         }
 
-        const [user] = await Promise.all([ctx.db.get(userId), assertVodVideoExists(ctx, args)])
+        const [user] = await Promise.all([
+          ctx.db.get(userId),
+          requireReactionVisibility(ctx, args, userId),
+        ])
         if (!user) {
           throw new Error('User not found')
+        }
+
+        const recent = await ctx.db
+          .query('videoReactions')
+          .withIndex('by_user_created', (q) =>
+            q.eq('userId', userId).gte('createdAt', Date.now() - 10_000),
+          )
+          .take(10)
+        if (recent.length >= 10) {
+          throwUserError('Please wait before adding more reactions')
         }
 
         const reactionId = await ctx.db.insert('videoReactions', {
@@ -127,19 +184,23 @@ export const getReactions = query({
       throwUserError('Exactly one of bondfireId or bondfireVideoId must be provided')
     }
 
+    const userId = await auth.getUserId(ctx)
+    const viewer = await requireReactionVisibility(ctx, args, userId)
     if (args.bondfireId) {
-      return await ctx.db
+      const reactions = await ctx.db
         .query('videoReactions')
         .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
         .order('asc')
         .collect()
+      return reactions.filter((reaction) => !viewer.blockedUserIds.has(reaction.userId))
     }
 
-    return await ctx.db
+    const reactions = await ctx.db
       .query('videoReactions')
       .withIndex('by_bondfire_video', (q) => q.eq('bondfireVideoId', args.bondfireVideoId))
       .order('asc')
       .collect()
+    return reactions.filter((reaction) => !viewer.blockedUserIds.has(reaction.userId))
   },
 })
 

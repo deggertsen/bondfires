@@ -7,6 +7,11 @@ import { assertUserAgeBand, getPersonalCampAgeBand, getUserAgeBand } from './age
 import { auth } from './auth'
 import { throwUserError } from './errors'
 import {
+  familyConnectionCleanupIsDone,
+  removeFamilyConnectionParticipantGrantBatch,
+  revokeFamilyConnection,
+} from './familyConnectionRevocation'
+import {
   familyPairKey,
   getActiveFamilyConnection,
   hasFamilyConnectionCapacity,
@@ -14,10 +19,10 @@ import {
 } from './familyRelationships'
 import { generateAndInsertInviteCode, normalizeInviteCode } from './inviteCodes'
 import { ensureActivePersonalBondfireParticipant } from './personalBondfireAccess'
+import { assertUsersMayInteract } from './userSafety'
 
 const FAMILY_INVITE_TTL_MS = 24 * 60 * 60 * 1000
 const MAX_FAMILY_INVITES_PER_DAY = 20
-const REVOCATION_CLEANUP_BATCH = 50
 
 async function getCurrentUser(ctx: QueryCtx | MutationCtx) {
   const userId = await auth.getUserId(ctx)
@@ -58,28 +63,6 @@ async function requireFamilyInvite(ctx: QueryCtx | MutationCtx, rawCode: string)
     throwUserError('This family invitation has already been used.')
   }
   return invite
-}
-
-async function removeParticipantGrantBatch(
-  ctx: MutationCtx,
-  connectionId: Id<'familyConnections'>,
-) {
-  const participants = await ctx.db
-    .query('personalBondfireParticipants')
-    .withIndex('by_family_connection_status', (q) =>
-      q.eq('familyConnectionId', connectionId).eq('status', 'active'),
-    )
-    .take(REVOCATION_CLEANUP_BATCH)
-  const now = Date.now()
-  for (const participant of participants) {
-    await ctx.db.patch(participant._id, {
-      status: 'removed',
-      removedAt: now,
-      removedBy: undefined,
-      updatedAt: now,
-    })
-  }
-  return participants.length
 }
 
 /**
@@ -206,6 +189,7 @@ export const acceptInvite = mutation({
       throwUserError('This family invitation is no longer available.')
     }
     assertUserAgeBand(owner)
+    await assertUsersMayInteract(ctx, owner._id, recipient._id)
 
     let connection = await getActiveFamilyConnection(ctx, owner._id, recipient._id)
     if (!connection) {
@@ -310,20 +294,7 @@ export const revoke = mutation({
     }
     if (connection.status === 'revoked') return { revoked: false }
 
-    const now = Date.now()
-    await ctx.db.patch(connection._id, {
-      status: 'revoked',
-      revokedAt: now,
-      revokedBy: user._id,
-      updatedAt: now,
-    })
-    const removed = await removeParticipantGrantBatch(ctx, connection._id)
-    if (removed === REVOCATION_CLEANUP_BATCH) {
-      await ctx.scheduler.runAfter(0, internal.familyConnections.removeRevokedParticipantGrants, {
-        connectionId: connection._id,
-      })
-    }
-    return { revoked: true }
+    return { revoked: await revokeFamilyConnection(ctx, connection, user._id) }
   },
 })
 
@@ -332,12 +303,12 @@ export const removeRevokedParticipantGrants = internalMutation({
   handler: async (ctx, args) => {
     const connection = await ctx.db.get(args.connectionId)
     if (!connection || connection.status !== 'revoked') return { removed: 0, done: true }
-    const removed = await removeParticipantGrantBatch(ctx, connection._id)
-    if (removed === REVOCATION_CLEANUP_BATCH) {
+    const removed = await removeFamilyConnectionParticipantGrantBatch(ctx, connection._id)
+    if (!familyConnectionCleanupIsDone(removed)) {
       await ctx.scheduler.runAfter(0, internal.familyConnections.removeRevokedParticipantGrants, {
         connectionId: connection._id,
       })
     }
-    return { removed, done: removed < REVOCATION_CLEANUP_BATCH }
+    return { removed, done: familyConnectionCleanupIsDone(removed) }
   },
 })
