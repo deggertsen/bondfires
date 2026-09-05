@@ -62,6 +62,9 @@ for (const required of [
   'Camps',
   'Profile',
   'Delete Account',
+  'Safety & legal',
+  'Terms',
+  'Privacy',
 ]) {
   if (!flows.includes(required)) fail(`Maestro smoke coverage is missing: ${required}`)
 }
@@ -79,6 +82,10 @@ if (
 }
 
 for (const [path, labels] of [
+  [
+    'apps/mobile/components/SafetySettings.tsx',
+    ['Safety & legal', '<Text>Terms</Text>', '<Text>Privacy</Text>'],
+  ],
   ['apps/mobile/app/(auth)/login.tsx', ['Welcome back', 'you@example.com', 'Your password']],
   [
     'apps/mobile/app/(main)/(tabs)/_layout.tsx',

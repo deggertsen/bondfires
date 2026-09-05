@@ -95,6 +95,13 @@ function validateMonitoringEnvironment({
   if (appEnvironment === 'production' && requireSourceMaps && !env.SENTRY_AUTH_TOKEN?.trim()) {
     throw new Error('Production source-map upload requires SENTRY_AUTH_TOKEN')
   }
+  if (appEnvironment === 'production' && requireProduction && env.SENTRY_NATIVE_PRIVACY_REVIEWED !== 'true') {
+    throw new Error('Production requires SENTRY_NATIVE_PRIVACY_REVIEWED=true after reviewing native crash payloads and provider scrubbing')
+  }
+  if (appEnvironment === 'production' && requireSourceMaps &&
+      [env.SENTRY_DISABLE_AUTO_UPLOAD, env.SENTRY_ALLOW_FAILURE].some((value) => value === 'true' || value === '1')) {
+    throw new Error('Production must not disable source-map upload or allow upload failures')
+  }
   return { enabled: missing.length === 0, missing }
 }
 

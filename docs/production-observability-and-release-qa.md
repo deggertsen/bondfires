@@ -30,6 +30,7 @@ No external project or credential is created by this repository change.
    | `SENTRY_ORG` | Plain text or Sensitive | Source-map organization slug |
    | `SENTRY_PROJECT` | Plain text or Sensitive | Source-map project slug |
    | `SENTRY_AUTH_TOKEN` | Sensitive | Build-only source-map upload credential; never `EXPO_PUBLIC_` |
+   | `SENTRY_NATIVE_PRIVACY_REVIEWED` | Plain text | Set to `true` only after the native privacy review below |
 
 3. Create a non-production Convex deployment and a dedicated staging test account.
    The repository deliberately contains no guessed staging URL or credentials.
@@ -54,12 +55,23 @@ automatic sessions, iOS watchdog termination/app-hang signals, Android native
 crash/ANR signals supplied by the native SDK, app version/build, OS/device family,
 and symbolicated stacks.
 
-The client sets `sendDefaultPii: false`, disables screenshots, view hierarchy,
-session replay, failed-request capture, tracing, and profiling. `beforeSend` and
-`beforeBreadcrumb` discard request/user/extra containers, arbitrary breadcrumb
-data, frame variables/source context, email, DOB/birth fields, credentials, invite
-codes, URLs, Mux media identifiers, and media paths. The existing Convex telemetry
-queue uses the same key/text scrubber before persistence and again before upload.
+The client sets `sendDefaultPii: false` and disables screenshots, view hierarchy,
+replay, tracing, profiling, and JavaScript failed-request capture. JavaScript
+`beforeSend`/`beforeBreadcrumb` allowlist context, remove arbitrary containers, and
+redact common email, DOB, credential, invite, and URL formats. Stack/debug-image
+locations retain matching filenames but discard hostnames, directories, and query
+strings. This is defense in depth, not a guarantee that arbitrary text is non-personal.
+The Convex queue scrubs new entries, restored entries, and synchronous crash breadcrumbs
+before persistence and again before upload, preserving byte limits and local account isolation.
+
+**Native privacy gate:** the React Native SDK does not forward JavaScript `beforeSend`
+or `beforeBreadcrumb` callbacks to its native SDKs. Native crash, ANR, hang, and session
+payloads therefore do not have the JavaScript scrubber's guarantee. Before production,
+capture staging iOS and Android native events, review their actual payloads and native
+breadcrumbs, configure and verify Sentry server-side scrubbing/retention, and approve the
+remaining collection in the public policy and store declarations. Only then set
+`SENTRY_NATIVE_PRIVACY_REVIEWED=true`; production preflight and EAS config reject its
+absence. This setting is an owner attestation, not an automatic privacy verification.
 Do not add Sentry `setUser`, arbitrary `extra`, request bodies, or media attachments.
 
 ## Environment and release preflight
@@ -96,6 +108,10 @@ during the build; Expo notes that `SENTRY_AUTH_TOKEN` is required in the build
 environment and Sentry cannot retroactively symbolicate events captured before
 artifacts arrive.
 
+Production rejects `SENTRY_DISABLE_AUTO_UPLOAD` and `SENTRY_ALLOW_FAILURE` bypasses.
+Local development also needs a dedicated backend: the old production-targeting `.env`
+will now fail environment validation rather than silently access production.
+
 ## Maestro smoke suite
 
 Install Maestro using its [official installation instructions](https://docs.maestro.dev/getting-started/installing-maestro).
@@ -109,7 +125,7 @@ yarn smoke:mobile
 ```
 
 The flows cover signed-out launch and deep-link routing, non-destructive sign-in,
-Home/Camps/Profile navigation, visibility of the Delete Account safety entry point,
+Home/Camps/Profile navigation, Terms/Privacy/Community Guidelines and Delete Account entry points,
 and sign-out. They do not create camps, publish video, redeem a valid invite, buy a
 subscription, or mutate production. Reset the staging account between release
 candidates by deleting only test-created staging records through an owner-reviewed
@@ -137,8 +153,8 @@ staging before store submission:
   routing, category preferences, and revoked-permission recovery;
 - universal/app links for both hosts, an invalid invite, and an authenticated valid
   staging invite;
-- light/dark theme, account deletion entry point, report/block entry points after
-  the UGC PR, privacy/terms surfaces when added, and sign-out cleanup;
+- light/dark theme, account deletion entry point, report/block, family age-boundary
+  and privacy/terms surfaces, and sign-out cleanup;
 - one intentional preview-only test exception, followed by verification that its
   event is scrubbed and symbolicated. Remove the test trigger before release.
 

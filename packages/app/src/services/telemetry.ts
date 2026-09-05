@@ -253,7 +253,9 @@ function optionalString(value: unknown): string | undefined {
 
 function optionalBoundedString(value: unknown, maxBytes: number): string | undefined {
   const stringValue = optionalString(value)
-  return stringValue === undefined ? undefined : truncateUtf8(stringValue, maxBytes)
+  return stringValue === undefined
+    ? undefined
+    : truncateUtf8(redactSensitiveText(stringValue), maxBytes)
 }
 
 function normalizeDeviceInfo(value: unknown): DeviceInfo | undefined {
@@ -286,9 +288,9 @@ function normalizePersistedEntry(value: unknown): LogEntry | null {
 
   return {
     level,
-    event: truncateUtf8(event, CLIENT_EVENT_MAX_BYTES) || 'unknown',
-    message: truncateUtf8(message, CLIENT_MESSAGE_MAX_BYTES),
-    data: boundTelemetryData(value.data),
+    event: truncateUtf8(redactSensitiveText(event), CLIENT_EVENT_MAX_BYTES) || 'unknown',
+    message: truncateUtf8(redactSensitiveText(message), CLIENT_MESSAGE_MAX_BYTES),
+    data: boundTelemetryData(scrubTelemetryValue(value.data)),
     platform,
     appVersion: optionalBoundedString(value.appVersion, CLIENT_APP_VERSION_MAX_BYTES),
     sessionId: optionalBoundedString(value.sessionId, CLIENT_METADATA_MAX_BYTES),
@@ -501,8 +503,8 @@ export class TelemetryLogger {
     if (!this.storage) return
     try {
       this._lastCrashBreadcrumb = {
-        event,
-        data: boundTelemetryData(data),
+        event: truncateUtf8(redactSensitiveText(event), CLIENT_EVENT_MAX_BYTES),
+        data: boundTelemetryData(scrubTelemetryValue(data)),
         writtenAt: Date.now(),
       }
       this.storage.set(LAST_CRASH_KEY, JSON.stringify(this._lastCrashBreadcrumb))
@@ -708,9 +710,8 @@ export class TelemetryLogger {
         if (entries.length > 0) {
           this.queue.restore(entries)
         }
-        if (entries.length !== parsed.length) {
-          this.persistNow()
-        }
+        // Rewrite even same-length legacy queues: normalization now removes PII.
+        this.persistNow()
       }
     } catch {
       // Corrupt payload — drop it so we don't get stuck reloading garbage.

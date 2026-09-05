@@ -7,6 +7,37 @@ import {
 } from '../config/environment.cjs'
 
 describe('mobile environment ownership', () => {
+  const productionMonitoring = {
+    EXPO_PUBLIC_SENTRY_DSN: 'https://public-key@o1.ingest.sentry.io/1234',
+    SENTRY_ORG: 'bondfires',
+    SENTRY_PROJECT: 'mobile',
+    SENTRY_AUTH_TOKEN: 'synthetic-token',
+    SENTRY_NATIVE_PRIVACY_REVIEWED: 'true',
+  }
+
+  it('requires a native-payload privacy review before production monitoring', () => {
+    expect(() =>
+      validateMonitoringEnvironment({
+        appEnvironment: 'production',
+        env: { ...productionMonitoring, SENTRY_NATIVE_PRIVACY_REVIEWED: undefined },
+        requireProduction: true,
+      }),
+    ).toThrow(/SENTRY_NATIVE_PRIVACY_REVIEWED/)
+  })
+
+  it.each(['SENTRY_DISABLE_AUTO_UPLOAD', 'SENTRY_ALLOW_FAILURE'])(
+    'rejects the source-map bypass %s',
+    (key) => {
+      expect(() =>
+        validateMonitoringEnvironment({
+          appEnvironment: 'production',
+          env: { ...productionMonitoring, [key]: 'true' },
+          requireProduction: true,
+          requireSourceMaps: true,
+        }),
+      ).toThrow(/must not disable/)
+    },
+  )
   it('rejects profile/environment mismatches', () => {
     expect(() =>
       resolveAppEnvironment({ EAS_BUILD_PROFILE: 'preview', EXPO_PUBLIC_APP_ENV: 'production' }),

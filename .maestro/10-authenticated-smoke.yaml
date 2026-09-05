@@ -18,9 +18,20 @@ name: Staging authenticated navigation and account safety
 - assertVisible: Profile
 - scrollUntil:
     element:
+      text: Safety & legal
+    direction: DOWN
+- assertVisible: Terms
+- assertVisible: Privacy
+- assertVisible: Community Guidelines
+- scrollUntil:
+    element:
       text: Delete Account
     direction: DOWN
 - assertVisible: Delete Account
+- scrollUntil:
+    element:
+      text: Sign Out
+    direction: UP
 - tapOn: Sign Out
 - assertVisible: Are you sure you want to sign out?
 - tapOn: Sign Out

@@ -6,6 +6,7 @@ const URL = /\b(?:https?|wss?|bondfires):\/\/[^\s"'<>]+/gi
 const JWT = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g
 const BEARER = /\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi
 const SECURE_INVITE = /\bbf-(?:[a-z0-9]{4}-){4}[a-z0-9]{4}\b/gi
+const FAMILY_INVITE = /\bfamily-[0-9a-f]{32}\b/gi
 const LEGACY_INVITE = /\b[a-z]{3,}-[a-z]{3,}-[a-z]{3,}\b/gi
 const SECRET_ASSIGNMENT = /\b(?:token|secret|password|authorization|code)=([^\s&]+)/gi
 const ISO_CALENDAR_DATE = /\b(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])\b/g
@@ -17,6 +18,7 @@ export function redactSensitiveText(value: string): string {
     .replace(EMAIL, REDACTED)
     .replace(URL, REDACTED)
     .replace(SECURE_INVITE, REDACTED)
+    .replace(FAMILY_INVITE, REDACTED)
     .replace(LEGACY_INVITE, REDACTED)
     .replace(SECRET_ASSIGNMENT, (_match, _value) => REDACTED)
     .replace(ISO_CALENDAR_DATE, REDACTED)
@@ -32,7 +34,7 @@ export function scrubTelemetryValue(
   if (value === undefined) return undefined
   if (value instanceof Error) {
     return {
-      name: value.name,
+      name: redactSensitiveText(value.name),
       message: redactSensitiveText(value.message),
       stack: value.stack ? redactSensitiveText(value.stack) : undefined,
     }
@@ -48,6 +50,8 @@ export function scrubTelemetryValue(
 
   const output: Record<string, unknown> = {}
   for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    // Dynamic keys can themselves contain an email, invite, or media URL.
+    if (redactSensitiveText(key) !== key) continue
     output[key] = SENSITIVE_KEY.test(key) ? REDACTED : scrubTelemetryValue(item, depth + 1, seen)
   }
   return output

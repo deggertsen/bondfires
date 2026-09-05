@@ -52,9 +52,45 @@ type ScrubbedSentryEvent = Omit<SentryEventLike, 'tags'> & {
   tags: Record<string, string>
 }
 
+function safeContext(value: unknown, keys: string[]) {
+  if (!value || typeof value !== 'object') return undefined
+  const record = value as Record<string, unknown>
+  return Object.fromEntries(
+    keys.flatMap<[string, string | number | boolean]>((key) => {
+      const item = record[key]
+      if (typeof item === 'string') return [[key, redactSensitiveText(item)]]
+      if (typeof item === 'number' || typeof item === 'boolean') return [[key, item]]
+      return []
+    }),
+  )
+}
+
+// Debug-ID matching needs the same code location in frames and debug images,
+// but not a server hostname, query credentials, or a user's local directory.
+function safeCodeLocation(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  return redactSensitiveText(value.split(/[?#]/)[0].replaceAll('\\', '/').split('/').pop() ?? '')
+}
+
+function safeDebugMeta(value: unknown) {
+  if (!value || typeof value !== 'object') return undefined
+  const images = (value as { images?: unknown }).images
+  if (!Array.isArray(images)) return undefined
+  return {
+    images: images.map((image) => {
+      if (!image || typeof image !== 'object') return {}
+      return {
+        ...safeContext(image, ['type', 'debug_id', 'code_id', 'image_addr', 'image_size', 'arch']),
+        code_file: safeCodeLocation(image.code_file),
+        debug_file: safeCodeLocation(image.debug_file),
+      }
+    }),
+  }
+}
+
 function scrubFrame(frame: SentryFrame): SentryFrame {
   return {
-    filename: typeof frame.filename === 'string' ? redactSensitiveText(frame.filename) : undefined,
+    filename: safeCodeLocation(frame.filename),
     function: typeof frame.function === 'string' ? redactSensitiveText(frame.function) : undefined,
     module: typeof frame.module === 'string' ? redactSensitiveText(frame.module) : undefined,
     lineno: frame.lineno,
@@ -119,8 +155,19 @@ export function scrubSentryEvent(event: SentryEventLike): ScrubbedSentryEvent {
     breadcrumbs: event.breadcrumbs?.map(scrubSentryBreadcrumb),
     contexts: event.contexts
       ? {
-          app: event.contexts.app,
-          os: event.contexts.os,
+          app: safeContext(event.contexts.app, [
+            'app_identifier',
+            'app_version',
+            'app_build',
+            'in_foreground',
+          ]),
+          os: safeContext(event.contexts.os, [
+            'name',
+            'version',
+            'build',
+            'kernel_version',
+            'rooted',
+          ]),
           device: event.contexts.device
             ? {
                 arch: event.contexts.device.arch,
@@ -132,6 +179,6 @@ export function scrubSentryEvent(event: SentryEventLike): ScrubbedSentryEvent {
         }
       : undefined,
     tags: safeTags,
-    debug_meta: event.debug_meta,
+    debug_meta: safeDebugMeta(event.debug_meta),
   }
 }

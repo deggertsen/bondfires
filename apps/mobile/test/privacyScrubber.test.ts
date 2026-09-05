@@ -5,6 +5,13 @@ import {
 } from '../../../packages/app/src/services/privacyScrubber'
 
 describe('telemetry privacy scrubber', () => {
+  it('redacts retained family links and drops secret-bearing object keys', () => {
+    const family = 'family-0123456789ab4def89ab0123456789ab'
+    expect(redactSensitiveText(`invite ${family}`)).toBe('invite [Redacted]')
+    expect(
+      scrubTelemetryValue({ 'person@example.com': 'value', [family]: 'value', safe: family }),
+    ).toEqual({ safe: '[Redacted]' })
+  })
   it('redacts identity, DOBs, bearer credentials, URLs, and both invite formats from text', () => {
     const value =
       'email person@example.com birth date 2008-08-31 Bearer abc.def.ghi https://video.example/file.mp4 bf-abcd-efgh-ijkl-mnop-qrst amber-river-torch'
