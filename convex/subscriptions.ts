@@ -124,6 +124,7 @@ function getVerifiedSyncStatus(existing?: {
   status?: string
   verificationStatus?: string
 }): StoreSyncStatus {
+  if (existing?.verificationStatus === 'refunded') return 'expired'
   // Subscriptions have a lifecycle status in addition to verification state.
   if (existing?.verificationStatus === 'verified' && existing.status) {
     switch (existing.status) {
@@ -547,6 +548,8 @@ export const applyStorePurchaseVerification = internalMutation({
     willRenew: v.optional(v.boolean()),
     storeEnvironment: v.optional(v.string()),
     lastStoreEventAt: v.optional(v.number()),
+    storeReadStartedAt: v.number(),
+    linkedPurchaseToken: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{ tier: SubscriptionTier; status: StoreSyncStatus }> => {
     assertStoreProductMatchesKind(args.storeProductId, args.kind)
@@ -604,6 +607,50 @@ export const applyStorePurchaseVerification = internalMutation({
         throw new Error('This store subscription is already linked to another account')
       }
 
+      if (existing?.replacedByStorePurchaseToken) {
+        return { tier: await getEntitlementSubscriptionTier(ctx, args.userId), status: 'expired' }
+      }
+      if (
+        existing?.lastStoreReadStartedAt !== undefined &&
+        existing.lastStoreReadStartedAt > args.storeReadStartedAt
+      ) {
+        return {
+          tier: await getEntitlementSubscriptionTier(ctx, args.userId),
+          status: getVerifiedSyncStatus(existing),
+        }
+      }
+
+      // Play upgrades/replacements must retire the old token's entitlement.
+      // Keep its record (and deletion tombstone) so it cannot be replayed.
+      if (args.linkedPurchaseToken && args.linkedPurchaseToken !== args.storePurchaseToken) {
+        if (
+          await wasRetainedForDeletedAccount(ctx, { storePurchaseToken: args.linkedPurchaseToken })
+        ) {
+          throw new Error('The replaced purchase belonged to a deleted account')
+        }
+        const linked = await findExistingSubscription(ctx, {
+          userId: args.userId,
+          storeProductId: args.storeProductId,
+          storePurchaseToken: args.linkedPurchaseToken,
+          includePendingFallback: false,
+        })
+        if (linked && linked.userId !== args.userId) {
+          throw new Error('The replaced purchase belongs to another account')
+        }
+        if (linked && linked._id !== existing?._id) {
+          await ctx.db.patch(linked._id, {
+            status: 'expired',
+            storeState: 'expired',
+            willRenew: false,
+            currentPeriodEnd: now,
+            lastStoreReadStartedAt: args.storeReadStartedAt,
+            nextStoreSyncAt: nextStoreSyncAt(now, 'expired'),
+            updatedAt: now,
+            replacedByStorePurchaseToken: args.storePurchaseToken,
+          })
+        }
+      }
+
       const fields = {
         userId: args.userId,
         tier,
@@ -623,6 +670,7 @@ export const applyStorePurchaseVerification = internalMutation({
             ? existing?.lastStoreEventAt
             : Math.max(existing?.lastStoreEventAt ?? 0, args.lastStoreEventAt),
         lastStoreSyncAt: now,
+        lastStoreReadStartedAt: args.storeReadStartedAt,
         nextStoreSyncAt: nextStoreSyncAt(now, storeState),
         storeSyncFailureCount: 0,
         lastStoreSyncErrorCode: undefined,
@@ -828,6 +876,7 @@ export const verifyStorePurchase = action({
     assertStoreIdentifiers(args)
 
     try {
+      const storeReadStartedAt = Date.now()
       const verification =
         args.platform === 'ios'
           ? await ctx.runAction(internal.storeBillingActions.verifyApplePurchase, {
@@ -873,6 +922,9 @@ export const verifyStorePurchase = action({
         storeState: verification.storeState,
         willRenew: verification.willRenew,
         storeEnvironment: verification.storeEnvironment,
+        storeReadStartedAt,
+        linkedPurchaseToken:
+          'linkedPurchaseToken' in verification ? verification.linkedPurchaseToken : undefined,
       })
 
       return {

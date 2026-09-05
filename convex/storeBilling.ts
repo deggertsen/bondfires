@@ -50,7 +50,10 @@ export const getVerificationContext = internalQuery({
                 )
                 .collect()
             ).find(
-              (record) => record.userId === args.userId && record.verificationStatus === 'verified',
+              (record) =>
+                record.userId === args.userId &&
+                (record.verificationStatus === 'verified' ||
+                  record.verificationStatus === 'refunded'),
             )
           : args.storePurchaseToken
             ? (
@@ -62,7 +65,9 @@ export const getVerificationContext = internalQuery({
                   .collect()
               ).find(
                 (record) =>
-                  record.userId === args.userId && record.verificationStatus === 'verified',
+                  record.userId === args.userId &&
+                  (record.verificationStatus === 'verified' ||
+                    record.verificationStatus === 'refunded'),
               )
             : null
         : args.storeOriginalTransactionId
@@ -74,7 +79,10 @@ export const getVerificationContext = internalQuery({
                 )
                 .collect()
             ).find(
-              (record) => record.userId === args.userId && record.verificationStatus === 'verified',
+              (record) =>
+                record.userId === args.userId &&
+                (record.verificationStatus === 'verified' ||
+                  record.verificationStatus === 'refunded'),
             )
           : args.storePurchaseToken
             ? (
@@ -86,14 +94,17 @@ export const getVerificationContext = internalQuery({
                   .collect()
               ).find(
                 (record) =>
-                  record.userId === args.userId && record.verificationStatus === 'verified',
+                  record.userId === args.userId &&
+                  (record.verificationStatus === 'verified' ||
+                    record.verificationStatus === 'refunded'),
               )
             : null
 
     return {
       expectedAccountToken: user.storeAccountToken,
       alreadyVerifiedForUser:
-        existing?.userId === args.userId && existing.verificationStatus === 'verified',
+        existing?.userId === args.userId &&
+        (existing.verificationStatus === 'verified' || existing.verificationStatus === 'refunded'),
     }
   },
 })
@@ -175,13 +186,13 @@ export const claimEvent = internalMutation({
 })
 
 export const completeEvent = internalMutation({
-  args: { eventKey: v.string(), ignored: v.optional(v.boolean()) },
+  args: { eventKey: v.string(), attempt: v.number(), ignored: v.optional(v.boolean()) },
   handler: async (ctx, args) => {
     const event = await ctx.db
       .query('storeBillingEvents')
       .withIndex('by_event_key', (q) => q.eq('eventKey', args.eventKey))
       .first()
-    if (!event) throw new Error('Billing event claim not found')
+    if (event?.status !== 'processing' || event.attempts !== args.attempt) return
     await ctx.db.patch(event._id, {
       status: args.ignored ? 'ignored' : 'processed',
       processedAt: Date.now(),
@@ -191,13 +202,13 @@ export const completeEvent = internalMutation({
 })
 
 export const failEvent = internalMutation({
-  args: { eventKey: v.string(), errorCode: v.string() },
+  args: { eventKey: v.string(), attempt: v.number(), errorCode: v.string() },
   handler: async (ctx, args) => {
     const event = await ctx.db
       .query('storeBillingEvents')
       .withIndex('by_event_key', (q) => q.eq('eventKey', args.eventKey))
       .first()
-    if (!event || event.status === 'processed' || event.status === 'ignored') return
+    if (event?.status !== 'processing' || event.attempts !== args.attempt) return
     await ctx.db.patch(event._id, { status: 'failed', lastErrorCode: args.errorCode.slice(0, 80) })
   },
 })
@@ -209,16 +220,15 @@ export const getReconciliationBatch = internalQuery({
     const now = Date.now()
     const candidates = await ctx.db
       .query('subscriptions')
-      .withIndex('by_verification_next_sync', (q) => q.eq('verificationStatus', 'verified'))
-      .order('asc')
-      .take(limit * 3)
-    return candidates
-      .filter(
-        (subscription) =>
-          (subscription.nextStoreSyncAt === undefined || subscription.nextStoreSyncAt <= now) &&
-          (subscription.storeOriginalTransactionId || subscription.storePurchaseToken),
+      .withIndex('by_verification_next_sync', (q) =>
+        q
+          .eq('verificationStatus', 'verified')
+          .eq('replacedByStorePurchaseToken', undefined)
+          .lte('nextStoreSyncAt', now),
       )
-      .slice(0, limit)
+      .order('asc')
+      .take(limit)
+    return candidates
   },
 })
 
@@ -273,7 +283,12 @@ export const billingHealth = query({
         .take(50),
       ctx.db
         .query('subscriptions')
-        .withIndex('by_verification_next_sync', (q) => q.eq('verificationStatus', 'verified'))
+        .withIndex('by_verification_next_sync', (q) =>
+          q
+            .eq('verificationStatus', 'verified')
+            .eq('replacedByStorePurchaseToken', undefined)
+            .lte('nextStoreSyncAt', now),
+        )
         .order('asc')
         .take(50),
     ])

@@ -74,13 +74,17 @@ backend always queries `purchases.subscriptionsv2.get` before changing entitleme
 - Billing retry, account hold, and pause are stored as `past_due` and are not entitled. Expiry,
   refund, and revocation end entitlement and run the existing downgrade/freeze workflow.
 - Event claims are keyed by provider, protocol version, and notification/message ID. Completed
-  events cannot replay; abandoned processing leases become retryable after five minutes.
+  events cannot replay; abandoned processing leases become retryable after five minutes. Attempt
+  fencing prevents an older worker from completing or failing a reclaimed lease.
 - A notification received before its initial purchase is linked returns a retryable response for
   five deliveries. It is then acknowledged but remains failed and visible to admins; the
   reconciliation job can still recover it after the purchase is linked.
-- The cron selects at most 20 due verified subscriptions every six hours. Queries and action work
-  are bounded at 50; failures use exponential retry capped at 24 hours. Terminal subscriptions are
-  still rechecked weekly so delayed refunds or corrections are observed.
+- The six-hour cron starts a sweep of due verified subscriptions, 20 per action by default (maximum
+  50). A full batch schedules another bounded action so the sweep is not limited to 80 users/day.
+  Failures move the next attempt with exponential backoff capped at 24 hours. Terminal subscriptions
+  are still rechecked weekly. Replaced Play tokens are excluded and cannot regain entitlement.
+- Store reads carry their server-side start time; an older in-flight read cannot overwrite a newer
+  applied observation. Webhook timestamps alone do not determine entitlement.
 - Billing event evidence is retained for 90 days and deleted in batches of 100.
 
 This lifecycle reconciler covers auto-renewable subscriptions. Voided Google one-time products are
@@ -110,19 +114,18 @@ payloads.
    reclaimed; processed/ignored event IDs are intentionally no-ops. Do not delete an event merely
    to force replay without first confirming its authoritative store state.
 
-## Merge-train requirements
+## Deletion and ownership integration
 
-This PR must remain draft until the current merge train lands in this order: PR 216, rebase/merge PR
-217 (including telemetry cleanup), rebase/merge PR 218, then rebase/merge PR 220 and adapt the
-durable deletion worker for its UGC tables. Rebase this PR onto that resulting `main`, reconcile PR
-221's dependency state, resolve `convex/schema.ts`, generated bindings, subscription, and deletion
-worker conflicts, then rerun Convex code generation and the full validation suite.
+The branch now incorporates the merged deletion, family, UGC, telemetry, security, and dependency
+work. The final purchase mutation checks provider-verified transaction tombstones atomically for
+initial verification, webhooks, and reconciliation. Deleting/deleted users cannot receive billing
+writes or new store account tokens. The existing bounded deletion worker removes subscriptions,
+consumables, and the user (including `storeAccountToken`), retaining only purchase tombstones and
+the redacted billing event ledger's 90-day window.
 
-During that final rebase, integrate PR 217's transaction-tombstone checks before initial purchase
-application, webhook application, and reconciliation so deletion cannot make an old transaction
-claimable by another account. Delete subscriptions and the user's `storeAccountToken` with the
-user, but retain the redacted `storeBillingEvents` ledger for its 90-day replay/evidence window.
-Standalone merge of this PR is not integration-complete or safe.
+Legacy purchases without store account tokens remain valid only for their previously verified
+owner. The lookup uses identifiers from the provider response, not client-selected identifiers.
+New purchases still require a matching store account binding.
 
 ## Primary references
 

@@ -7,11 +7,28 @@ const http = httpRouter()
 
 auth.addHttpRoutes(http)
 
-async function readBoundedBody(request: Request, maxBytes = 128_000) {
+export async function readBoundedBody(request: Request, maxBytes = 128_000) {
   const declaredLength = Number(request.headers.get('content-length') ?? 0)
   if (declaredLength > maxBytes) return null
-  const body = await request.text()
-  return new TextEncoder().encode(body).byteLength <= maxBytes ? body : null
+  if (!request.body) return ''
+  const reader = request.body.getReader()
+  const decoder = new TextDecoder()
+  let size = 0
+  let body = ''
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) return body + decoder.decode()
+      size += value.byteLength
+      if (size > maxBytes) {
+        await reader.cancel()
+        return null
+      }
+      body += decoder.decode(value, { stream: true })
+    }
+  } finally {
+    reader.releaseLock()
+  }
 }
 
 function billingWebhookResponse(result: { ok: boolean; statusCode?: number; errorCode?: string }) {

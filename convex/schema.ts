@@ -369,6 +369,8 @@ export default defineSchema({
     storeEnvironment: v.optional(v.string()),
     lastStoreEventAt: v.optional(v.number()),
     lastStoreSyncAt: v.optional(v.number()),
+    lastStoreReadStartedAt: v.optional(v.number()),
+    replacedByStorePurchaseToken: v.optional(v.string()),
     nextStoreSyncAt: v.optional(v.number()),
     storeSyncFailureCount: v.optional(v.number()),
     lastStoreSyncErrorCode: v.optional(v.string()),
@@ -380,7 +382,11 @@ export default defineSchema({
     .index('by_store_transaction', ['storeOriginalTransactionId'])
     .index('by_store_purchase_token', ['storePurchaseToken'])
     .index('by_next_store_sync', ['nextStoreSyncAt'])
-    .index('by_verification_next_sync', ['verificationStatus', 'nextStoreSyncAt']),
+    .index('by_verification_next_sync', [
+      'verificationStatus',
+      'replacedByStorePurchaseToken',
+      'nextStoreSyncAt',
+    ]),
 
   // Durable webhook idempotency and operational status. Never stores signed
   // payloads, receipts, transaction IDs, or purchase tokens.

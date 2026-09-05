@@ -17,6 +17,7 @@ import { auth } from './auth'
 import {
   appleVerificationIdentifiers,
   assertStoreAccountOwnership,
+  boundedReconciliationLimit,
   mapAppleSubscriptionState,
   mapGoogleSubscriptionState,
   matchesAppleOriginalTransaction,
@@ -35,9 +36,11 @@ type VerifiedSubscription = StoreLifecycleResult & {
   storePurchaseToken?: string
   verifiedAccountToken?: string
   storeEnvironment: string
+  linkedPurchaseToken?: string
 }
 
 type GoogleSubscriptionPurchase = {
+  linkedPurchaseToken?: string
   latestOrderId?: string
   subscriptionState?: string
   externalAccountIdentifiers?: { obfuscatedExternalAccountId?: string }
@@ -348,6 +351,7 @@ async function fetchGoogleSubscription(
     storeTransactionId: subscription.latestOrderId,
     storeOriginalTransactionId: purchaseToken,
     storePurchaseToken: purchaseToken,
+    linkedPurchaseToken: subscription.linkedPurchaseToken,
     verifiedAccountToken: subscription.externalAccountIdentifiers?.obfuscatedExternalAccountId,
     storeEnvironment: 'Production',
   }
@@ -418,6 +422,7 @@ async function applyVerifiedSubscription(
   ctx: ActionCtx,
   subscription: Doc<'subscriptions'>,
   verified: VerifiedSubscription,
+  storeReadStartedAt: number,
   lastStoreEventAt?: number,
 ) {
   const ownership = await ctx.runQuery(internal.storeBilling.getVerificationContext, {
@@ -448,6 +453,8 @@ async function applyVerifiedSubscription(
     willRenew: verified.willRenew,
     storeEnvironment: verified.storeEnvironment,
     lastStoreEventAt,
+    storeReadStartedAt,
+    linkedPurchaseToken: verified.linkedPurchaseToken,
   })
 }
 
@@ -537,6 +544,7 @@ export const processAppleNotification = internalAction({
   },
   handler: async (ctx, args): Promise<WebhookResult> => {
     let eventKey: string | undefined
+    let eventAttempt: number | undefined
     try {
       if (args.signedPayload.length > 128_000)
         throw new SafeBillingError('payload_too_large', 413, false)
@@ -566,17 +574,26 @@ export const processAppleNotification = internalAction({
         subtype: notification.subtype ? String(notification.subtype) : undefined,
         subjectHash: originalTransactionId ? subjectHash(originalTransactionId) : undefined,
       })
+      if (claim.claimed) eventAttempt = claim.attempts
       if (!claim.claimed) {
         return claim.complete
           ? { ok: true as const, status: 'duplicate' as const }
           : { ok: false as const, statusCode: 503, errorCode: 'event_in_progress' }
       }
       if (notification.notificationType === 'TEST') {
-        await ctx.runMutation(internal.storeBilling.completeEvent, { eventKey, ignored: true })
+        await ctx.runMutation(internal.storeBilling.completeEvent, {
+          eventKey,
+          attempt: claim.attempts,
+          ignored: true,
+        })
         return { ok: true as const, status: 'test' as const }
       }
       if (!originalTransactionId) {
-        await ctx.runMutation(internal.storeBilling.completeEvent, { eventKey, ignored: true })
+        await ctx.runMutation(internal.storeBilling.completeEvent, {
+          eventKey,
+          attempt: claim.attempts,
+          ignored: true,
+        })
         return { ok: true as const, status: 'non_subscription' as const }
       }
       const subscription = await ctx.runQuery(
@@ -590,12 +607,14 @@ export const processAppleNotification = internalAction({
         if (claim.attempts >= 5) {
           await ctx.runMutation(internal.storeBilling.failEvent, {
             eventKey,
+            attempt: claim.attempts,
             errorCode: 'subscription_not_linked',
           })
           return { ok: true as const, status: 'accepted_unmatched' as const }
         }
         throw new SafeBillingError('subscription_not_linked', 503, true)
       }
+      const storeReadStartedAt = Date.now()
       const verified = await fetchAppleSubscription(
         originalTransactionId,
         args.environment,
@@ -603,14 +622,24 @@ export const processAppleNotification = internalAction({
         originalTransactionId,
         transaction.transactionId,
       )
-      await applyVerifiedSubscription(ctx, subscription, verified, notification.signedDate)
-      await ctx.runMutation(internal.storeBilling.completeEvent, { eventKey })
+      await applyVerifiedSubscription(
+        ctx,
+        subscription,
+        verified,
+        storeReadStartedAt,
+        notification.signedDate,
+      )
+      await ctx.runMutation(internal.storeBilling.completeEvent, {
+        eventKey,
+        attempt: claim.attempts,
+      })
       return { ok: true as const, status: 'processed' as const }
     } catch (error) {
       const failure = safeFailure(error)
-      if (eventKey) {
+      if (eventKey && eventAttempt !== undefined) {
         await ctx.runMutation(internal.storeBilling.failEvent, {
           eventKey,
+          attempt: eventAttempt,
           errorCode: failure.code,
         })
       }
@@ -631,6 +660,7 @@ export const processGoogleNotification = internalAction({
   args: { authorization: v.string(), bodyJson: v.string() },
   handler: async (ctx, args): Promise<WebhookResult> => {
     let eventKey: string | undefined
+    let eventAttempt: number | undefined
     try {
       if (args.bodyJson.length > 128_000)
         throw new SafeBillingError('payload_too_large', 413, false)
@@ -655,17 +685,26 @@ export const processGoogleNotification = internalAction({
             : 'TEST',
         subjectHash: purchaseToken ? subjectHash(purchaseToken) : undefined,
       })
+      if (claim.claimed) eventAttempt = claim.attempts
       if (!claim.claimed) {
         return claim.complete
           ? { ok: true as const, status: 'duplicate' as const }
           : { ok: false as const, statusCode: 503, errorCode: 'event_in_progress' }
       }
       if (!notification && !voided) {
-        await ctx.runMutation(internal.storeBilling.completeEvent, { eventKey, ignored: true })
+        await ctx.runMutation(internal.storeBilling.completeEvent, {
+          eventKey,
+          attempt: claim.attempts,
+          ignored: true,
+        })
         return { ok: true as const, status: 'test' as const }
       }
       if (voided && voided.productType !== 1) {
-        await ctx.runMutation(internal.storeBilling.completeEvent, { eventKey, ignored: true })
+        await ctx.runMutation(internal.storeBilling.completeEvent, {
+          eventKey,
+          attempt: claim.attempts,
+          ignored: true,
+        })
         return { ok: true as const, status: 'non_subscription' as const }
       }
       if (!purchaseToken) throw new SafeBillingError('google_notification_malformed', 400, false)
@@ -680,12 +719,14 @@ export const processGoogleNotification = internalAction({
         if (claim.attempts >= 5) {
           await ctx.runMutation(internal.storeBilling.failEvent, {
             eventKey,
+            attempt: claim.attempts,
             errorCode: 'subscription_not_linked',
           })
           return { ok: true as const, status: 'accepted_unmatched' as const }
         }
         throw new SafeBillingError('subscription_not_linked', 503, true)
       }
+      const storeReadStartedAt = Date.now()
       const verified = await fetchGoogleSubscription(
         purchaseToken,
         notification?.notificationType,
@@ -703,15 +744,20 @@ export const processGoogleNotification = internalAction({
         ctx,
         subscription,
         verified,
+        storeReadStartedAt,
         eventTime && Number.isFinite(eventTime) ? eventTime : undefined,
       )
-      await ctx.runMutation(internal.storeBilling.completeEvent, { eventKey })
+      await ctx.runMutation(internal.storeBilling.completeEvent, {
+        eventKey,
+        attempt: claim.attempts,
+      })
       return { ok: true as const, status: 'processed' as const }
     } catch (error) {
       const failure = safeFailure(error)
-      if (eventKey) {
+      if (eventKey && eventAttempt !== undefined) {
         await ctx.runMutation(internal.storeBilling.failEvent, {
           eventKey,
+          attempt: eventAttempt,
           errorCode: failure.code,
         })
       }
@@ -739,6 +785,7 @@ export const reconcileSubscriptions = internalAction({
     let failed = 0
     for (const subscription of subscriptions) {
       try {
+        const storeReadStartedAt = Date.now()
         const verified =
           subscription.platform === 'ios'
             ? await fetchAppleSubscription(
@@ -748,7 +795,7 @@ export const reconcileSubscriptions = internalAction({
                 subscription.storeOriginalTransactionId,
               )
             : await fetchGoogleSubscription(subscription.storePurchaseToken ?? '')
-        await applyVerifiedSubscription(ctx, subscription, verified)
+        await applyVerifiedSubscription(ctx, subscription, verified, storeReadStartedAt)
         processed += 1
       } catch (error) {
         const failure = safeFailure(error)
@@ -758,6 +805,9 @@ export const reconcileSubscriptions = internalAction({
         })
         failed += 1
       }
+    }
+    if (subscriptions.length === boundedReconciliationLimit(args.limit)) {
+      await ctx.scheduler.runAfter(1_000, internal.storeBillingActions.reconcileSubscriptions, args)
     }
     return { selected: subscriptions.length, processed, failed }
   },

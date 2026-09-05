@@ -385,7 +385,13 @@ export function canClaimStoreEvent(
 }
 
 export function boundedReconciliationLimit(requested?: number) {
-  return Math.min(Math.max(Math.trunc(requested ?? 20), 1), 50)
+  return Math.min(
+    Math.max(
+      Math.trunc(typeof requested === 'number' && Number.isFinite(requested) ? requested : 20),
+      1,
+    ),
+    50,
+  )
 }
 
 export function nextStoreSyncAt(now: number, state: StoreLifecycleState, failureCount = 0) {
