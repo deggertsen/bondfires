@@ -102,7 +102,17 @@ export async function claimBondfire(ctx: MutationCtx, bondfire: Doc<'bondfires'>
 async function claimResponse(ctx: MutationCtx, response: Doc<'bondfireVideos'>) {
   await inventoryVideo(ctx, response)
   await enqueueJob(ctx, 'response', response._id)
-  await uncountResponse(ctx, response)
+  // Adopt legacy playable responses just as videoCountRepair does. They were
+  // counted before countedAt existed; the row deletion makes this decrement
+  // exactly-once even if the daily marker backfill hasn't reached them yet.
+  const legacyCounted =
+    response.countedAt === undefined &&
+    (response.videoStatus ?? 'ready') === 'ready' &&
+    !!response.muxPlaybackId
+  await uncountResponse(
+    ctx,
+    legacyCounted ? { ...response, countedAt: response.createdAt } : response,
+  )
   await ctx.db.delete(response._id)
 }
 

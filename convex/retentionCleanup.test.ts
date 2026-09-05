@@ -287,6 +287,17 @@ describe('retention transactions and resumable cleanup', () => {
     expect(tables.watchEvents).toHaveLength(0)
   })
 
+  it('decrements a legacy ready response without a countedAt marker exactly once', async () => {
+    tables.bondfireVideos[0].countedAt = undefined
+    tables.bondfireVideos[0].muxPlaybackId = 'legacy-playback'
+    await claimSweep()
+    await runDatabaseQueue()
+    expect(tables.users[0].responseCount).toBe(0)
+    await handler<MutationCtx>(resumeStale)(ctx, {})
+    await runDatabaseQueue()
+    expect(tables.users[0].responseCount).toBe(0)
+  })
+
   it('preserves legitimate delayed writes while the parent still exists', async () => {
     expect(
       await handler<MutationCtx>(claimDeliveries)(ctx, {
