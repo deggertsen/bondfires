@@ -17,7 +17,7 @@ import {
   hasFamilyConnectionCapacity,
   MAX_ACTIVE_FAMILY_CONNECTIONS,
 } from './familyRelationships'
-import { generateAndInsertInviteCode, normalizeInviteCode } from './inviteCodes'
+import { generateAndInsertInviteCode, isSecureInviteCode, normalizeInviteCode } from './inviteCodes'
 import { ensureActivePersonalBondfireParticipant } from './personalBondfireAccess'
 import { assertUsersMayInteract } from './userSafety'
 
@@ -38,13 +38,9 @@ function orderedPair(firstUserId: Id<'users'>, secondUserId: Id<'users'>) {
     : { firstUserId: secondUserId, secondUserId: firstUserId }
 }
 
-function familyInviteCode(): string {
-  return `family-${crypto.randomUUID().replaceAll('-', '')}`
-}
-
 async function getFamilyInvite(ctx: QueryCtx | MutationCtx, rawCode: string) {
   const code = normalizeInviteCode(rawCode)
-  if (!code || code.length > 80) return null
+  if (!isSecureInviteCode(code)) return null
   const invite = await ctx.db
     .query('inviteCodes')
     .withIndex('by_code', (q) => q.eq('code', code))
@@ -111,7 +107,6 @@ export const createInvite = mutation({
       parentType: 'family-connection',
       parentId: args.bondfireId,
       createdBy: owner._id,
-      code: familyInviteCode(),
       expiresAt: now + FAMILY_INVITE_TTL_MS,
       maxUses: 1,
     })

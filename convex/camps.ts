@@ -3,6 +3,7 @@ import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalMutation, mutation, query } from './_generated/server'
+import { enforceInviteAttemptLimit } from './abuseLimits'
 import {
   type AgeBand,
   assertUserAgeBand,
@@ -12,7 +13,6 @@ import {
   getUserAgeBand,
   isUserEligibleForCamp,
 } from './agePolicy'
-import { enforceInviteAttemptLimit } from './abuseLimits'
 import { auth } from './auth'
 import { burnKindlingForCamp } from './campKindling'
 import { isCampVisibleStatus, isOwnerManageableCampStatus } from './campLifecycle'
@@ -33,6 +33,7 @@ import {
   isInviteCodeClaimable,
   normalizeInviteCode,
 } from './inviteCodes'
+import { isEitherUserBlocked } from './userSafety'
 
 type CampAccess = 'open' | 'approval' | 'invite'
 type CampGender = 'male' | 'female' | 'any'
@@ -1462,7 +1463,12 @@ export async function redeemCampInviteHandler(
   if (camp.status === 'frozen' || camp.status === 'grace') {
     return { invalid: true as const }
   }
-  assertUserCanAccessCamp(user, camp)
+  if (
+    !isUserEligibleForCamp(user, camp) ||
+    (await isEitherUserBlocked(ctx, user._id, invite.createdBy))
+  ) {
+    return { invalid: true as const }
+  }
 
   const existingMembership = await getMembership(ctx, user._id, camp._id)
   if (existingMembership?.status === 'active') {
@@ -1481,17 +1487,7 @@ export async function redeemCampInviteHandler(
     eligibility.reason !== 'invite_only' &&
     eligibility.reason !== 'private'
   ) {
-    const messages: Record<string, string> = {
-      wrong_gender: 'This camp is limited to members who match its gender setting',
-      tier_too_low: 'Your subscription tier is too low to join this camp',
-      underage: 'You do not meet the age requirement for this camp',
-      banned: 'You cannot join this camp',
-      already_member: 'You are already a member of this camp',
-      already_pending: 'You already have a pending request for this camp',
-      rejected_cooldown:
-        'Your previous request was denied. You can try again after the cooldown period.',
-    }
-    throwUserError(messages[eligibility.reason] ?? 'You cannot join this camp')
+    return { invalid: true as const }
   }
 
   const membershipId = await upsertMembership(ctx, {

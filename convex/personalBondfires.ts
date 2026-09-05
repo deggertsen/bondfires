@@ -3,10 +3,14 @@ import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalMutation, mutation, query } from './_generated/server'
+import {
+  enforceDirectInviteLimit,
+  enforceInviteAttemptLimit,
+  enforceInviteLookupLimit,
+} from './abuseLimits'
 import { getUserAgeBand } from './agePolicy'
-import { enforceInviteAttemptLimit, enforceInviteLookupLimit } from './abuseLimits'
 import { auth } from './auth'
-import { requireUgcPermission } from './contentSafety'
+import { isModeratedContentVisible, requireUgcPermission } from './contentSafety'
 import {
   assertVideoDurationWithinTierLimit,
   getEntitlementSubscriptionTier,
@@ -16,6 +20,7 @@ import { throwUserError, withUserFacingErrors } from './errors'
 import {
   assertUsersCanShareHearth,
   getActiveFamilyConnectionUserIds,
+  getHearthRelationshipAuthorization,
   isHearthParticipantAuthorized,
 } from './familyRelationships'
 import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
@@ -61,6 +66,24 @@ const CLOSE_CIRCLE_LIMIT = 8
 const DRAFT_CLEANUP_BATCH_SIZE = 50
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+export async function isPersonalInviteAvailable(
+  ctx: QueryCtx | MutationCtx,
+  bondfire: Doc<'bondfires'>,
+  userId: Id<'users'>,
+) {
+  if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) return false
+  const owner = await ctx.db.get(bondfire.userId)
+  if (!owner || owner.moderationStatus === 'suspended') return false
+  if (
+    !isModeratedContentVisible(bondfire.moderationStatus, {
+      isOwner: userId === bondfire.userId,
+      isAdmin: false,
+    })
+  )
+    return false
+  return (await getHearthRelationshipAuthorization(ctx, bondfire.userId, userId)).allowed
+}
 
 async function getCurrentUser(ctx: QueryCtx | MutationCtx) {
   const userId = await auth.getUserId(ctx)
@@ -507,6 +530,7 @@ export const sendDraftInvites = mutation({
 
         const code = await ensureDraftInviteCode(ctx, args.bondfireId, user._id)
         for (const email of newUserEmails) {
+          await enforceDirectInviteLimit(ctx, user._id)
           await ctx.scheduler.runAfter(0, internal.sendNotification.sendHearthInviteEmail, {
             to: email,
             inviterName: user.displayName ?? user.name ?? 'Someone',
@@ -694,6 +718,9 @@ export async function redeemInviteHandler(
   if (!bondfire.personalCampId) {
     return { invalid: true as const }
   }
+  if (!(await isPersonalInviteAvailable(ctx, bondfire, user._id))) {
+    return { invalid: true as const }
+  }
 
   // Draft bondfires are joinable: an invitee lands on the "waiting to start
   // recording" screen (videoStatus 'pending') and is already in the audience
@@ -871,7 +898,7 @@ export const deleteBondfire = mutation({
 export const checkInvite = query({
   args: { code: v.string() },
   handler: async (ctx, args) => {
-    await getCurrentUser(ctx)
+    const user = await getCurrentUser(ctx)
     const code = normalizeInviteCode(args.code)
     const unavailable = { valid: false as const, reason: 'unavailable' as const }
     if (!isSecureInviteCode(code)) return unavailable
@@ -890,6 +917,7 @@ export const checkInvite = query({
 
     const bondfire = await ctx.db.get(invite.parentId as Id<'bondfires'>)
     if (!bondfire?.personalCampId) return unavailable
+    if (!(await isPersonalInviteAvailable(ctx, bondfire, user._id))) return unavailable
     const personalCamp = await ctx.db.get(bondfire.personalCampId)
     if (!personalCamp || personalCamp.status !== 'active') return unavailable
 
@@ -943,6 +971,7 @@ export const checkInviteSecure = mutation({
 
     const bondfire = await ctx.db.get(invite.parentId as Id<'bondfires'>)
     if (!bondfire || bondfire._id !== args.bondfireId) return unavailable
+    if (!(await isPersonalInviteAvailable(ctx, bondfire, user._id))) return unavailable
     if (!bondfire.personalCampId) {
       return unavailable
     }

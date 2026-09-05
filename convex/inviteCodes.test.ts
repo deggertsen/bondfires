@@ -43,4 +43,17 @@ describe('invite code security', () => {
       ),
     ).toBe(false)
   })
+
+  it('preserves existing UUID family links across the legacy word-code cutoff', () => {
+    const invite = {
+      code: 'family-1234567812344234a234123456789abc',
+      expiresAt: LEGACY_INVITE_CODE_CUTOFF_MS + 60_000,
+      maxUses: 1,
+      uses: 0,
+    }
+    expect(isSecureInviteCode(invite.code)).toBe(true)
+    expect(isInviteCodeClaimable(invite, LEGACY_INVITE_CODE_CUTOFF_MS)).toBe(true)
+    expect(isInviteCodeClaimable({ ...invite, uses: 1 }, LEGACY_INVITE_CODE_CUTOFF_MS)).toBe(false)
+    expect(isInviteCodeClaimable(invite, invite.expiresAt)).toBe(false)
+  })
 })

@@ -1024,6 +1024,11 @@ export const cleanupUserBatch = internalMutation({
         .query('userBlocks')
         .withIndex('by_blocker', (q) => q.eq('blockerId', userId))
         .take(BATCH_SIZE)
+    if (stage === 'abuse_rate_limits')
+      rows = await ctx.db
+        .query('abuseRateLimits')
+        .withIndex('by_subject', (q) => q.eq('subjectType', 'user').eq('subjectId', userId))
+        .take(BATCH_SIZE)
     if (stage === 'blocks_incoming')
       rows = await ctx.db
         .query('userBlocks')

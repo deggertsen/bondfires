@@ -4,7 +4,12 @@ import type { MutationCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import { enforceWatchEventLimit } from './abuseLimits'
 import { auth } from './auth'
-import { buildViewerVisibilityContext, isBondfireVisibleToViewer } from './bondfireVisibility'
+import {
+  buildViewerVisibilityContext,
+  isBondfireVisibleToViewer,
+  isUserContentVisibleToViewer,
+} from './bondfireVisibility'
+import { isModeratedContentVisible } from './contentSafety'
 
 type WatchVideoType = 'bondfire' | 'response'
 type WatchEventType = 'start' | 'milestone_25' | 'milestone_50' | 'milestone_75' | 'complete'
@@ -85,7 +90,7 @@ function isPlayable(record: {
   )
 }
 
-async function resolveVisibleWatchTarget(
+export async function resolveVisibleWatchTarget(
   ctx: MutationCtx,
   args: { videoType: WatchVideoType; videoId: string },
   viewerId: Id<'users'>,
@@ -104,6 +109,14 @@ async function resolveVisibleWatchTarget(
   if (!id) return null
   const response = await ctx.db.get(id)
   if (!response || !isPlayable(response)) return null
+  if (!(await isUserContentVisibleToViewer(ctx, response.userId, viewer))) return null
+  if (
+    !isModeratedContentVisible(response.moderationStatus, {
+      isOwner: viewerId === response.userId,
+      isAdmin: viewer.isAdmin,
+    })
+  )
+    return null
   if (response.expiresAt !== undefined && response.expiresAt <= Date.now()) return null
   const bondfire = await ctx.db.get(response.bondfireId)
   if (!bondfire || !(await isBondfireVisibleToViewer(ctx, bondfire, viewer))) return null
@@ -310,16 +323,14 @@ export const hasWatched = query({
       return false
     }
 
-    const events = await ctx.db
+    const event = await ctx.db
       .query('watchEvents')
-      .withIndex('by_user_video', (q) => q.eq('userId', userId).eq('videoId', args.videoId))
-      .collect()
-
-    if (args.eventType) {
-      return events.some((e) => e.eventType === args.eventType)
-    }
-
-    return events.length > 0
+      .withIndex('by_user_video_event', (q) => {
+        const target = q.eq('userId', userId).eq('videoId', args.videoId)
+        return args.eventType ? target.eq('eventType', args.eventType) : target
+      })
+      .first()
+    return event !== null
   },
 })
 

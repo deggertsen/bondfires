@@ -13,6 +13,7 @@ const MAX_USES = 1_000
 const RANDOM_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789'
 const RANDOM_CHARACTERS = 20
 const SECURE_CODE_PATTERN = /^bf-(?:[a-z0-9]{4}-){4}[a-z0-9]{4}$/
+const SECURE_FAMILY_CODE_PATTERN = /^family-[a-f0-9]{12}4[a-f0-9]{3}[89ab][a-f0-9]{15}$/
 // Legacy three-word codes are low entropy. Existing links remain claimable only
 // during this explicit rollout grace, and are never reissued.
 export const LEGACY_INVITE_CODE_CUTOFF_MS = Date.UTC(2026, 9, 1)
@@ -40,7 +41,7 @@ export function generateSecureInviteCode(): string {
 }
 
 export function isSecureInviteCode(code: string): boolean {
-  return SECURE_CODE_PATTERN.test(code)
+  return SECURE_CODE_PATTERN.test(code) || SECURE_FAMILY_CODE_PATTERN.test(code)
 }
 
 export function normalizeInviteCode(code: string): string {
@@ -185,7 +186,7 @@ export const cleanupExpiredInviteCodes = internalMutation({
     // Scan the by_expires_at index for expired codes
     const expiredCodes = await ctx.db
       .query('inviteCodes')
-      .withIndex('by_expires_at', (q) => q.lt('expiresAt', now))
+      .withIndex('by_expires_at', (q) => q.gte('expiresAt', 0).lte('expiresAt', now))
       .take(500)
 
     for (const code of expiredCodes) {
