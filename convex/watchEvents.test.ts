@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { Id } from './_generated/dataModel'
-import { getProfileViewCountChanges } from './watchEvents'
+import { getProfileViewCountChanges, validateWatchEventState } from './watchEvents'
 
 const ownerId = 'owner' as Id<'users'>
 const viewerId = 'viewer' as Id<'users'>
 
 describe('profile view counting', () => {
-  it('counts every non-owner playback start', () => {
+  it('computes the increment for a non-owner playback start', () => {
     expect(
       getProfileViewCountChanges({
         videoType: 'bondfire',
@@ -67,5 +67,87 @@ describe('profile view counting', () => {
         }),
       ).toBeNull()
     }
+  })
+})
+
+describe('watch event state validation', () => {
+  it('requires a start before non-start events', () => {
+    expect(
+      validateWatchEventState({
+        eventType: 'milestone_25',
+        positionMs: 25_000,
+        serverDurationMs: 100_000,
+        hasStart: false,
+        alreadyRecorded: false,
+      }),
+    ).toBe('start_required')
+  })
+
+  it('rejects spoofed early milestones and completion', () => {
+    expect(
+      validateWatchEventState({
+        eventType: 'milestone_75',
+        positionMs: 10_000,
+        serverDurationMs: 100_000,
+        hasStart: true,
+        alreadyRecorded: false,
+      }),
+    ).toBe('position_too_early')
+    expect(
+      validateWatchEventState({
+        eventType: 'complete',
+        positionMs: 50_000,
+        serverDurationMs: 100_000,
+        hasStart: true,
+        alreadyRecorded: false,
+      }),
+    ).toBe('position_too_early')
+  })
+
+  it('fails closed for milestones when authoritative duration is unavailable', () => {
+    for (const serverDurationMs of [undefined, 0, Number.NaN]) {
+      expect(
+        validateWatchEventState({
+          eventType: 'complete',
+          positionMs: 0,
+          serverDurationMs,
+          hasStart: true,
+          alreadyRecorded: false,
+        }),
+      ).toBe('duration_unavailable')
+    }
+  })
+
+  it('rejects duplicate, negative, fractional, and implausibly large positions', () => {
+    expect(
+      validateWatchEventState({
+        eventType: 'start',
+        positionMs: 0,
+        hasStart: false,
+        alreadyRecorded: true,
+      }),
+    ).toBe('duplicate')
+    for (const positionMs of [-1, 1.5, 6 * 60 * 60 * 1_000 + 1]) {
+      expect(
+        validateWatchEventState({
+          eventType: 'start',
+          positionMs,
+          hasStart: false,
+          alreadyRecorded: false,
+        }),
+      ).toBe('invalid_position')
+    }
+  })
+
+  it('accepts a plausible sequence using server duration', () => {
+    expect(
+      validateWatchEventState({
+        eventType: 'complete',
+        positionMs: 95_000,
+        serverDurationMs: 100_000,
+        hasStart: true,
+        alreadyRecorded: false,
+      }),
+    ).toBeNull()
   })
 })

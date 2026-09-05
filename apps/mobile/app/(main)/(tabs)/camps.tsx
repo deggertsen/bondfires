@@ -10,7 +10,7 @@ import {
   Sparkles,
   Users,
 } from '@tamagui/lucide-icons'
-import { useMutation, useQuery } from 'convex/react'
+import { useMutation, usePaginatedQuery, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, FlatList, Pressable, RefreshControl, StatusBar } from 'react-native'
@@ -18,6 +18,7 @@ import { Image, Separator, Sheet, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc } from '../../../../../convex/_generated/dataModel'
 import { isAuthSessionErrorMessage, redirectToCampJoinLogin } from '../../../lib/campJoinAuth'
+import { shouldLoadSparsePage, uniqueById } from '../../../lib/pagination'
 import { routes } from '../../../lib/routes'
 
 type CampWithMembership = Doc<'camps'> & {
@@ -386,7 +387,24 @@ function PersonalCampCard({
 export default function CampsScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
-  const camps = useQuery(api.camps.list, {})
+  const {
+    results: campPages,
+    status: campPageStatus,
+    loadMore: loadMoreCamps,
+  } = usePaginatedQuery(api.camps.listPage, {}, { initialNumItems: 40 })
+  const requestedVisibleCount = useRef(40)
+  const camps = useMemo(
+    () =>
+      uniqueById(campPages).sort((left, right) => {
+        if (left._sortRank !== right._sortRank) return left._sortRank - right._sortRank
+        return left.name.localeCompare(right.name)
+      }),
+    [campPages],
+  )
+  useEffect(() => {
+    if (shouldLoadSparsePage(campPageStatus, camps.length, requestedVisibleCount.current))
+      loadMoreCamps(40)
+  }, [campPageStatus, camps.length, loadMoreCamps])
   const myCamps = useQuery(api.camps.listMine, {})
   const personalCamp = useQuery(api.personalCamps.getMyPersonalCamp, {})
   const ensurePersonalCamp = useMutation(api.personalCamps.ensureMyPersonalCamp)
@@ -447,6 +465,12 @@ export default function CampsScreen() {
       return searchable.includes(q)
     })
   }, [camps, query])
+
+  useEffect(() => {
+    if (query.trim() && shouldLoadSparsePage(campPageStatus, filtered.length, 1)) {
+      loadMoreCamps(40)
+    }
+  }, [campPageStatus, filtered.length, loadMoreCamps, query])
 
   const archivedCamps = useMemo<CampWithMembership[]>(() => {
     if (!myCamps) return []
@@ -583,6 +607,9 @@ export default function CampsScreen() {
     setIsSubmitting(true)
     try {
       const result = await redeemInvite({ code })
+      if ('invalid' in result) {
+        throw new Error('Invite unavailable')
+      }
       setInviteCode('')
       setIsRedeemInviteOpen(false)
       router.push(routes.camp(result.campId))
@@ -594,7 +621,7 @@ export default function CampsScreen() {
     }
   }, [inviteCode, redeemInvite, router])
 
-  if (camps === undefined) {
+  if (campPageStatus === 'LoadingFirstPage') {
     return (
       <YStack flex={1} backgroundColor={'$background'} alignItems="center" justifyContent="center">
         <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
@@ -612,6 +639,11 @@ export default function CampsScreen() {
 
       <FlatList
         data={listItems}
+        onEndReached={() => {
+          requestedVisibleCount.current = camps.length + 40
+          if (campPageStatus === 'CanLoadMore') loadMoreCamps(40)
+        }}
+        onEndReachedThreshold={0.5}
         keyExtractor={(item) => (item.type === 'section' ? item.id : item.camp._id)}
         refreshControl={
           <RefreshControl
@@ -713,81 +745,89 @@ export default function CampsScreen() {
           <EmptyCamps hasQuery={query.trim().length > 0} onReset={() => setQuery('')} />
         }
         ListFooterComponent={
-          query.trim().length > 0 || archivedCamps.length === 0 ? null : (
-            <YStack paddingBottom={32}>
-              {/* Header row — always visible */}
-              <Pressable onPress={() => setArchivedExpanded(!archivedExpanded)}>
-                <XStack
-                  paddingHorizontal={16}
-                  paddingVertical={14}
-                  alignItems="center"
-                  gap={8}
-                  borderTopWidth={1}
-                  borderTopColor={'$borderColor'}
-                  marginTop={8}
-                >
-                  <YStack flex={1} gap={2}>
-                    <Text fontSize={13} color={'$error'} fontWeight="900">
-                      Archived ({archivedCamps.length})
-                    </Text>
-                    <Text fontSize={12} color={'$placeholderColor'}>
-                      Read-only. Content will be deleted after 30 days.
-                    </Text>
-                  </YStack>
-                  {archivedExpanded ? (
-                    <ChevronUp size={18} color={'$placeholderColor'} />
-                  ) : (
-                    <ChevronDown size={18} color={'$placeholderColor'} />
-                  )}
-                </XStack>
-              </Pressable>
-
-              {/* Collapsed camp list */}
-              {archivedExpanded
-                ? archivedCamps.map((camp, index) => (
-                    <YStack key={camp._id}>
-                      <Pressable onPress={() => router.push(routes.camp(camp._id))}>
-                        <XStack
-                          paddingHorizontal={16}
-                          paddingVertical={12}
-                          alignItems="center"
-                          gap={12}
-                          opacity={0.7}
-                        >
-                          <YStack
-                            width={40}
-                            height={40}
-                            borderRadius={12}
-                            backgroundColor={camp.color ?? '$backgroundHover'}
-                            alignItems="center"
-                            justifyContent="center"
-                          >
-                            <Lock size={18} color={'$color'} />
-                          </YStack>
-                          <YStack flex={1} gap={2}>
-                            <Text fontSize={14} fontWeight="900" numberOfLines={1}>
-                              {camp.name}
-                            </Text>
-                            <Text fontSize={12} color={'$placeholderColor'}>
-                              Archived {camp.archivedAt ? getTimeAgo(camp.archivedAt) : 'recently'}{' '}
-                              · {camp.activeMemberCount ?? 0}{' '}
-                              {camp.activeMemberCount === 1 ? 'member' : 'members'}
-                            </Text>
-                          </YStack>
-                        </XStack>
-                      </Pressable>
-                      {index < archivedCamps.length - 1 ? (
-                        <Separator
-                          borderColor={'$borderColor'}
-                          opacity={0.4}
-                          marginHorizontal={16}
-                        />
-                      ) : null}
+          <YStack>
+            {campPageStatus === 'LoadingMore' ? (
+              <YStack paddingVertical={18} alignItems="center">
+                <Spinner size="small" color={'$primary'} />
+              </YStack>
+            ) : null}
+            {query.trim().length > 0 || archivedCamps.length === 0 ? null : (
+              <YStack paddingBottom={32}>
+                {/* Header row — always visible */}
+                <Pressable onPress={() => setArchivedExpanded(!archivedExpanded)}>
+                  <XStack
+                    paddingHorizontal={16}
+                    paddingVertical={14}
+                    alignItems="center"
+                    gap={8}
+                    borderTopWidth={1}
+                    borderTopColor={'$borderColor'}
+                    marginTop={8}
+                  >
+                    <YStack flex={1} gap={2}>
+                      <Text fontSize={13} color={'$error'} fontWeight="900">
+                        Archived ({archivedCamps.length})
+                      </Text>
+                      <Text fontSize={12} color={'$placeholderColor'}>
+                        Read-only. Content will be deleted after 30 days.
+                      </Text>
                     </YStack>
-                  ))
-                : null}
-            </YStack>
-          )
+                    {archivedExpanded ? (
+                      <ChevronUp size={18} color={'$placeholderColor'} />
+                    ) : (
+                      <ChevronDown size={18} color={'$placeholderColor'} />
+                    )}
+                  </XStack>
+                </Pressable>
+
+                {/* Collapsed camp list */}
+                {archivedExpanded
+                  ? archivedCamps.map((camp, index) => (
+                      <YStack key={camp._id}>
+                        <Pressable onPress={() => router.push(routes.camp(camp._id))}>
+                          <XStack
+                            paddingHorizontal={16}
+                            paddingVertical={12}
+                            alignItems="center"
+                            gap={12}
+                            opacity={0.7}
+                          >
+                            <YStack
+                              width={40}
+                              height={40}
+                              borderRadius={12}
+                              backgroundColor={camp.color ?? '$backgroundHover'}
+                              alignItems="center"
+                              justifyContent="center"
+                            >
+                              <Lock size={18} color={'$color'} />
+                            </YStack>
+                            <YStack flex={1} gap={2}>
+                              <Text fontSize={14} fontWeight="900" numberOfLines={1}>
+                                {camp.name}
+                              </Text>
+                              <Text fontSize={12} color={'$placeholderColor'}>
+                                Archived{' '}
+                                {camp.archivedAt ? getTimeAgo(camp.archivedAt) : 'recently'} ·{' '}
+                                {camp.activeMemberCount ?? 0}{' '}
+                                {camp.activeMemberCount === 1 ? 'member' : 'members'}
+                              </Text>
+                            </YStack>
+                          </XStack>
+                        </Pressable>
+                        {index < archivedCamps.length - 1 ? (
+                          <Separator
+                            borderColor={'$borderColor'}
+                            opacity={0.4}
+                            marginHorizontal={16}
+                          />
+                        ) : null}
+                      </YStack>
+                    ))
+                  : null}
+              </YStack>
+            )}
+          </YStack>
         }
         contentContainerStyle={{ paddingBottom: 110 }}
       />

@@ -13,13 +13,13 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@tamagui/animations-react-native": "^1.144.0",
+    "@tamagui/animations-react-native": "^1.144.4",
     "react": "*",
     "react-native": "*",
     "react-native-gesture-handler": "^2.28.0",
     "react-native-reanimated": "^4.0.0",
     "react-native-svg": "^15.0.0",
-    "tamagui": "^1.144.0"
+    "tamagui": "^1.144.4"
   },
   "devDependencies": {
     "@types/react": "^19.1.0",

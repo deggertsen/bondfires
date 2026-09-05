@@ -54,7 +54,12 @@ fi
 
 # --- Deterministic preflight before changing version or production state ---
 echo "🔎 Running repository validation and release preflight..."
+node scripts/mobile-release-preflight.mjs --profile production
 CONVEX_CODEGEN_FULL=1 yarn validate
+if [[ " ${PLATFORMS[*]} " == *" android "* ]]; then
+  echo "🔗 Verifying live Android App Links against the Play App Signing certificate..."
+  yarn check:app-links:live
+fi
 echo "✅ Release preflight passed"
 
 # --- Read current version + build number ---
@@ -172,5 +177,5 @@ echo "   iOS:     https://appstoreconnect.apple.com/apps/6755933598/testflight/i
 echo "   Android: Google Play Console — internal testing track"
 echo ""
 echo "⚠️  Do not force-update users until the new version is live in both stores."
-echo "   After App Store Connect and Google Play can serve $NEW_VERSION, run:"
-echo "   npx convex run publicConfig:setMinVersion '{\"version\":\"$NEW_VERSION\"}'"
+echo "   After App Store Connect and Google Play can serve $NEW_VERSION, use"
+echo "   Profile → Admin Panel → App Update Policy in a store-served admin build."

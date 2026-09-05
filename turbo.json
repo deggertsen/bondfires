@@ -1,6 +1,7 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "ui": "tui",
+  "globalDependencies": ["convex/**"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -24,4 +25,3 @@
     }
   }
 }
-

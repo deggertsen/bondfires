@@ -20,16 +20,15 @@ describe('notification routing', () => {
     })
   })
 
-  it.each([
-    'camp_access_request',
-    'camp_access_approved',
-    'camp_lifecycle',
-  ])('opens the camp for %s notifications', (type) => {
-    expect(resolveNotificationRoute({ type, campId: 'camp-1' })).toEqual({
-      pathname: '/(main)/camp/[id]',
-      params: { id: 'camp-1' },
-    })
-  })
+  it.each(['camp_access_request', 'camp_access_approved', 'camp_lifecycle'])(
+    'opens the camp for %s notifications',
+    (type) => {
+      expect(resolveNotificationRoute({ type, campId: 'camp-1' })).toEqual({
+        pathname: '/(main)/camp/[id]',
+        params: { id: 'camp-1' },
+      })
+    },
+  )
 
   it('allows known screen routes from notification payloads', () => {
     expect(resolveNotificationRoute({ screen: '/(main)/(tabs)/my-fires' })).toBe(

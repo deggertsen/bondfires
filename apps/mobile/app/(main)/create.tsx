@@ -22,6 +22,7 @@ import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera'
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { AppState, Platform, Pressable, StatusBar } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
@@ -65,6 +66,7 @@ function getCompletionDetail(args: {
 
 export default function CreateScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
+  const insets = useSafeAreaInsets()
   const router = useRouter()
   const navigation = useNavigation()
   const { campId, respondTo, personalCamp } = useLocalSearchParams<{
@@ -673,8 +675,15 @@ export default function CreateScreen() {
           onPress={handleBack}
           hitSlop={12}
           accessibilityRole="button"
-          accessibilityLabel="Back to Home"
-          style={{ position: 'absolute', top: 60, left: 20 }}
+          accessibilityLabel="Go back"
+          style={{
+            position: 'absolute',
+            top: insets.top + 12,
+            left: 20,
+            minWidth: 44,
+            minHeight: 44,
+            justifyContent: 'center',
+          }}
         >
           <ChevronLeft size={26} color={'$color'} />
         </Pressable>
@@ -717,8 +726,15 @@ export default function CreateScreen() {
           onPress={handleBack}
           hitSlop={12}
           accessibilityRole="button"
-          accessibilityLabel="Back to Home"
-          style={{ position: 'absolute', top: 60, left: 20 }}
+          accessibilityLabel="Go back"
+          style={{
+            position: 'absolute',
+            top: insets.top + 12,
+            left: 20,
+            minWidth: 44,
+            minHeight: 44,
+            justifyContent: 'center',
+          }}
         >
           <ChevronLeft size={26} color={'$color'} />
         </Pressable>

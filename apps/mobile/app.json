@@ -61,22 +61,22 @@
             {
               "scheme": "https",
               "host": "bondfires.org",
-              "pathPrefix": "/personal-bondfire"
+              "pathPrefix": "/personal-bondfire/"
             },
             {
               "scheme": "https",
               "host": "bondfires.app",
-              "pathPrefix": "/personal-bondfire"
+              "pathPrefix": "/personal-bondfire/"
             },
             {
               "scheme": "https",
               "host": "bondfires.org",
-              "pathPrefix": "/invite"
+              "pathPrefix": "/invite/"
             },
             {
               "scheme": "https",
               "host": "bondfires.app",
-              "pathPrefix": "/invite"
+              "pathPrefix": "/invite/"
             }
           ],
           "category": [
@@ -109,12 +109,6 @@
           "cameraPermission": "Bondfires needs access to your camera to record videos for your bondfire sessions.",
           "microphonePermission": "Bondfires needs access to your microphone to record audio with your videos.",
           "recordAudioAndroid": true
-        }
-      ],
-      [
-        "expo-av",
-        {
-          "microphonePermission": "Bondfires needs access to your microphone to record audio with your videos."
         }
       ],
       [

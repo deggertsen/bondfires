@@ -1,8 +1,50 @@
 import { v } from 'convex/values'
+import type { Id } from './_generated/dataModel'
+import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalMutation, mutation, query } from './_generated/server'
 import { auth } from './auth'
+import {
+  buildViewerVisibilityContext,
+  isBondfireVisibleToViewer,
+  isUserContentVisibleToViewer,
+} from './bondfireVisibility'
+import { isModeratedContentVisible } from './contentSafety'
 import { throwUserError, withUserFacingErrors } from './errors'
 import { presenceCutoff } from './lib/presence'
+
+async function requirePresenceVisibility(
+  ctx: MutationCtx | QueryCtx,
+  args: { videoType: 'bondfire' | 'response'; videoId: string; userId: Id<'users'> },
+  options?: { allowAdminModerationReview?: boolean },
+) {
+  const response =
+    args.videoType === 'response' ? await ctx.db.get(args.videoId as Id<'bondfireVideos'>) : null
+  const bondfire =
+    args.videoType === 'bondfire'
+      ? await ctx.db.get(args.videoId as Id<'bondfires'>)
+      : response
+        ? await ctx.db.get(response.bondfireId)
+        : null
+  if (!bondfire) throwUserError('Video not found')
+  const viewer = await buildViewerVisibilityContext(ctx, args.userId)
+  if (!(await isBondfireVisibleToViewer(ctx, bondfire, viewer, options))) {
+    throwUserError('Video not found')
+  }
+  if (response) {
+    if (!(await isUserContentVisibleToViewer(ctx, response.userId, viewer))) {
+      throwUserError('Video not found')
+    }
+    if (
+      !isModeratedContentVisible(response.moderationStatus, {
+        isOwner: args.userId === response.userId,
+        isAdmin: viewer.isAdmin,
+      })
+    ) {
+      throwUserError('Video not found')
+    }
+  }
+  return viewer
+}
 
 /**
  * Heartbeat: upserts a presence row for the current user + video.
@@ -25,6 +67,7 @@ export const heartbeat = mutation({
         if (!userId) {
           throwUserError('Not authenticated')
         }
+        await requirePresenceVisibility(ctx, { ...args, userId })
 
         const existing = await ctx.db
           .query('presence')
@@ -103,11 +146,22 @@ export const listViewers = query({
     videoId: v.string(),
   },
   handler: async (ctx, args) => {
-    return await ctx.db
+    const userId = await auth.getUserId(ctx)
+    if (!userId) return []
+    const viewer = await requirePresenceVisibility(
+      ctx,
+      { ...args, userId },
+      { allowAdminModerationReview: true },
+    )
+    const rows = await ctx.db
       .query('presence')
       .withIndex('by_video', (q) => q.eq('videoType', args.videoType).eq('videoId', args.videoId))
       .filter((q) => q.gt(q.field('lastHeartbeatAt'), presenceCutoff(Date.now())))
       .collect()
+    const visible = await Promise.all(
+      rows.map((row) => isUserContentVisibleToViewer(ctx, row.userId, viewer)),
+    )
+    return rows.filter((_, index) => visible[index])
   },
 })
 

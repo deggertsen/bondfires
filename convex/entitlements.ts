@@ -89,6 +89,14 @@ export async function getActiveSubscriptionTier(
     .withIndex('by_user', (q) => q.eq('userId', userId))
     .collect()
 
+  return activeTierFromSubscriptions(subscriptions, now)
+}
+
+/** Share verified/expiry rules with bounded maintenance reads. */
+export function activeTierFromSubscriptions(
+  subscriptions: Doc<'subscriptions'>[],
+  now: number,
+): SubscriptionTier {
   const activeSubscriptions = subscriptions.filter(
     (sub) =>
       sub.verificationStatus === 'verified' &&
@@ -360,8 +368,8 @@ export async function assertCanCreateBondfire(
 
 /**
  * Asserts that the given duration in milliseconds is within the user's
- * tier limit.  Throws with a user-facing error when the duration exceeds
- * the cap.  Pro users have no cap.  Admin-forced tier overrides are
+ * tier limit. Throws with a user-facing error when the duration exceeds
+ * the cap or is malformed. Admin-forced tier overrides are
  * respected through getEntitlementSubscriptionTier.
  *
  * Callers should pass a valid `userId` (already authenticated) and
@@ -372,8 +380,12 @@ export async function assertVideoDurationWithinTierLimit(
   userId: Id<'users'>,
   durationMs: number | undefined,
 ): Promise<void> {
-  if (durationMs === undefined || durationMs <= 0) {
+  if (durationMs === undefined || durationMs === 0) {
     return
+  }
+
+  if (!Number.isFinite(durationMs) || !Number.isInteger(durationMs) || durationMs < 0) {
+    throwUserError('Video duration is invalid')
   }
 
   const tier = await getEntitlementSubscriptionTier(ctx, userId)

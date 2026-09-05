@@ -48,6 +48,13 @@ export function getLocalBackupFileUri(fileName: string): string | null {
   return directoryUri ? `${directoryUri}${fileName}` : null
 }
 
+/** Remove every locally retained recording before an account leaves the device. */
+export async function deleteAllLocalBackups(): Promise<void> {
+  const directoryUri = getLocalBackupDirectoryUri()
+  if (!directoryUri) return
+  await deleteAsync(directoryUri, { idempotent: true })
+}
+
 async function getLocalBackupFileNamesForSession(liveSessionId: string): Promise<string[]> {
   const directoryUri = getLocalBackupDirectoryUri()
   if (!directoryUri) {

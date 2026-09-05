@@ -1,46 +1,13 @@
 import Resend from '@auth/core/providers/resend'
 import { Password } from '@convex-dev/auth/providers/Password'
 import { convexAuth } from '@convex-dev/auth/server'
+import type { QueryCtx } from './_generated/server'
+import { calculateAgeAt } from './agePolicy'
+import { CURRENT_COMMUNITY_GUIDELINES_VERSION, CURRENT_TERMS_VERSION } from './contentSafety'
 
 const DEFAULT_EMAIL_FROM = 'Bondfires <support@bondfires.org>'
 const VERIFY_EMAIL_SUBJECT = 'Verify your Bondfires account'
 const RESET_PASSWORD_SUBJECT = 'Reset your Bondfires password'
-
-function parseBirthDate(birthDate: string) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(birthDate)
-  if (!match) {
-    return null
-  }
-
-  const year = Number(match[1])
-  const month = Number(match[2])
-  const day = Number(match[3])
-  const parsed = new Date(Date.UTC(year, month - 1, day))
-  if (
-    parsed.getUTCFullYear() !== year ||
-    parsed.getUTCMonth() !== month - 1 ||
-    parsed.getUTCDate() !== day
-  ) {
-    return null
-  }
-
-  return { year, month, day }
-}
-
-function calculateAge(birthDate: string): number | null {
-  const birth = parseBirthDate(birthDate)
-  if (!birth) {
-    return null
-  }
-
-  const today = new Date()
-  let age = today.getFullYear() - birth.year
-  const monthDelta = today.getMonth() + 1 - birth.month
-  if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < birth.day)) {
-    age -= 1
-  }
-  return age
-}
 
 // Generate a 6-digit numeric OTP using crypto for security
 function generateOTP(): string {
@@ -154,12 +121,15 @@ const PasswordWithVerification = Password({
         throw new Error('birthDate is required')
       }
 
-      const age = calculateAge(birthDate)
+      const age = calculateAgeAt(birthDate)
       if (age === null) {
         throw new Error('birthDate must be a valid YYYY-MM-DD date')
       }
       if (age < 13) {
         throw new Error('You must be at least 13 years old')
+      }
+      if (params.acceptedLegal !== 'true') {
+        throw new Error('You must accept the Terms and Community Guidelines')
       }
     }
 
@@ -181,6 +151,13 @@ const PasswordWithVerification = Password({
     if (birthDate) {
       ;(profile as Record<string, unknown>).birthDate = birthDate
     }
+    if (flow === 'signUp') {
+      ;(profile as Record<string, unknown>).acceptedTermsVersion = CURRENT_TERMS_VERSION
+      ;(profile as Record<string, unknown>).acceptedCommunityGuidelinesVersion =
+        CURRENT_COMMUNITY_GUIDELINES_VERSION
+      ;(profile as Record<string, unknown>).legalAcceptedAt = Date.now()
+      ;(profile as Record<string, unknown>).moderationStatus = 'active'
+    }
     return profile
   },
   // Require email verification before allowing sign in
@@ -189,6 +166,27 @@ const PasswordWithVerification = Password({
   reset: ResendPasswordReset,
 })
 
-export const { auth, signIn, signOut, store } = convexAuth({
+const authBackend = convexAuth({
   providers: [PasswordWithVerification],
 })
+
+export const { signIn, signOut, store } = authBackend
+
+// Account deletion needs the underlying identity once, even after its own
+// tombstone has committed, so a retried request can return the existing job.
+// All normal application operations must use the filtered `auth` export below.
+export const getUserIdIncludingDeleting = authBackend.auth.getUserId
+
+// Convex Auth JWTs can remain cryptographically valid briefly after their
+// refresh session is revoked. Make the deletion tombstone authoritative for
+// every query/mutation that uses the shared auth helper, so a replayed access
+// token cannot operate a partially deleted account.
+export const auth = {
+  ...authBackend.auth,
+  getUserId: async (ctx: Parameters<typeof authBackend.auth.getUserId>[0]) => {
+    const userId = await getUserIdIncludingDeleting(ctx)
+    if (!userId || !('db' in ctx)) return userId
+    const user = await (ctx as typeof ctx & { db: QueryCtx['db'] }).db.get(userId)
+    return user?.accountDeletionStatus ? null : userId
+  },
+}

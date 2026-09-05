@@ -15,7 +15,7 @@ import {
   purchaseUpdatedListener,
   requestPurchase,
 } from 'expo-iap'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, Platform } from 'react-native'
 import { api } from '../../../../convex/_generated/api'
 import { telemetry } from '../services/telemetry'
@@ -33,7 +33,15 @@ import {
   TIER_RANK,
   tierMeetsRequirement,
 } from '../store/subscription.store'
-import { isUserCancelledPurchase } from '../utils/subscriptionIapPolicy'
+import { createIapConnectionCoordinator } from '../utils/iapConnectionCoordinator'
+import {
+  buildIapCatalogTelemetryData,
+  type IapCatalogAttemptPhase,
+  type IapCatalogReconnectStatus,
+  isUserCancelledPurchase,
+  loadIapCatalogWithRecovery,
+  serializeIapError,
+} from '../utils/subscriptionIapPolicy'
 
 type StorePurchaseSyncResult = {
   tier: SubscriptionTier
@@ -55,56 +63,6 @@ function getIapErrorMessage(error: unknown, fallback: string) {
   return getErrorField(error, 'message') ?? getErrorField(error, 'debugMessage') ?? fallback
 }
 
-const IAP_ERROR_FIELDS = [
-  'name',
-  'message',
-  'debugMessage',
-  'code',
-  'responseCode',
-  'underlyingErrorMessage',
-  'productId',
-  'platform',
-] as const
-
-/**
- * Convert any caught value (Error, expo-iap PurchaseError, plain object, string)
- * into a JSON-serializable shape suitable for telemetry `data`. Plain `String(err)`
- * yields '[object Object]' for non-Error throws, which is what the IAP audit
- * flagged.
- */
-function serializeIapError(err: unknown): Record<string, unknown> {
-  if (err == null) {
-    return { value: String(err) }
-  }
-
-  if (typeof err === 'string') {
-    return { message: err }
-  }
-
-  if (typeof err === 'object') {
-    const record = err as Record<string, unknown>
-    const out: Record<string, unknown> = {}
-    for (const key of IAP_ERROR_FIELDS) {
-      const value = record[key]
-      if (value === undefined) continue
-      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-        out[key] = value
-      }
-    }
-    if (err instanceof Error) {
-      out.name ??= err.name
-      out.message ??= err.message
-      if (err.stack) out.stack = err.stack
-    }
-    if (Object.keys(out).length === 0) {
-      out.message = String(err)
-    }
-    return out
-  }
-
-  return { value: String(err) }
-}
-
 type StoreProduct = Product | ProductSubscription
 type AndroidOfferProduct = {
   subscriptionOffers?: Array<{ offerTokenAndroid?: string | null }> | null
@@ -124,20 +82,22 @@ function getAndroidOfferToken(product: StoreProduct): string | null {
   )
 }
 
-let iapConnectionPromise: Promise<boolean> | null = null
-let iapConsumerCount = 0
 let purchaseUpdateSub: { remove: () => void } | undefined
 let purchaseErrorSub: { remove: () => void } | undefined
+let syncPurchaseForUpdates: ((purchase: Purchase) => Promise<StorePurchaseSyncResult>) | undefined
+const iapConnection = createIapConnectionCoordinator({ initConnection, endConnection })
+const IAP_CATALOG_ATTEMPT_CANCELLED = Symbol('IAP_CATALOG_ATTEMPT_CANCELLED')
 
-async function ensureIapConnection() {
-  if (!iapConnectionPromise) {
-    iapConnectionPromise = initConnection().catch((error) => {
-      iapConnectionPromise = null
-      throw error
-    })
+class IapCatalogLoadError extends Error {
+  constructor(
+    message: string,
+    readonly underlyingError: unknown,
+    readonly returnedProductIds: string[],
+    readonly missingSubscriptionProductIds: string[],
+  ) {
+    super(message)
+    this.name = 'IapCatalogLoadError'
   }
-
-  await iapConnectionPromise
 }
 
 async function loadSubscriptionProducts() {
@@ -156,21 +116,25 @@ async function loadSubscriptionProducts() {
     }),
   ])
 
-  if (subsProducts.status === 'rejected') {
-    telemetry.warn('iap:fetch', 'Failed to fetch subscription products', {
-      error: serializeIapError(subsProducts.reason),
-    })
-  }
-  if (inappProducts.status === 'rejected') {
-    telemetry.warn('iap:fetch', 'Failed to fetch in-app (kindling pack) products', {
-      error: serializeIapError(inappProducts.reason),
-    })
-  }
+  const returnedInAppProducts =
+    inappProducts.status === 'fulfilled'
+      ? Array.isArray(inappProducts.value)
+        ? inappProducts.value
+        : [inappProducts.value]
+      : []
+  const returnedInAppProductIds = returnedInAppProducts
+    .filter((product): product is StoreProduct => !!product?.id)
+    .map((product) => product.id)
 
   // Subscription pricing is required for the paywall. Kindling packs are an
   // optional add-on, so their failure is logged without blocking subscriptions.
   if (subsProducts.status === 'rejected') {
-    throw subsProducts.reason
+    throw new IapCatalogLoadError(
+      'Failed to fetch subscription products.',
+      subsProducts.reason,
+      returnedInAppProductIds,
+      [...ALL_SUBSCRIPTION_PRODUCT_IDS],
+    )
   }
 
   const subsList = Array.isArray(subsProducts.value) ? subsProducts.value : [subsProducts.value]
@@ -178,31 +142,117 @@ async function loadSubscriptionProducts() {
     (product): product is StoreProduct => !!product?.id,
   )
   if (availableSubscriptionProducts.length === 0) {
-    const error = new Error('The store returned no subscription products.')
-    telemetry.warn('iap:fetch', 'Store returned no subscription products', {
-      error: serializeIapError(error),
-    })
-    throw error
+    throw new IapCatalogLoadError(
+      'The store returned no subscription products.',
+      new Error('The store returned no subscription products.'),
+      returnedInAppProductIds,
+      [...ALL_SUBSCRIPTION_PRODUCT_IDS],
+    )
   }
 
-  const inappList =
-    inappProducts.status === 'fulfilled'
-      ? Array.isArray(inappProducts.value)
-        ? inappProducts.value
-        : [inappProducts.value]
-      : []
+  const allProducts = [...availableSubscriptionProducts, ...returnedInAppProducts]
+  const availableProducts = allProducts.filter((product): product is StoreProduct => !!product?.id)
+  const returnedSubscriptionProductIds = new Set(
+    availableSubscriptionProducts.map((product) => product.id),
+  )
+  const missingSubscriptionProductIds = ALL_SUBSCRIPTION_PRODUCT_IDS.filter(
+    (productId) => !returnedSubscriptionProductIds.has(productId),
+  )
 
-  const allProducts = [...availableSubscriptionProducts, ...inappList]
+  return {
+    products: availableProducts,
+    returnedProductIds: availableProducts.map((product) => product.id),
+    missingSubscriptionProductIds,
+    optionalProductError: inappProducts.status === 'rejected' ? inappProducts.reason : undefined,
+  }
+}
 
-  subscriptionActions.setProducts(
-    allProducts
-      .filter((product): product is StoreProduct => !!product?.id)
-      .map((product) => ({
+function getCatalogFailure(error: unknown) {
+  if (error instanceof IapCatalogLoadError) {
+    return {
+      error: error.underlyingError,
+      returnedProductIds: error.returnedProductIds,
+      missingSubscriptionProductIds: error.missingSubscriptionProductIds,
+    }
+  }
+  return {
+    error,
+    returnedProductIds: [] as string[],
+    missingSubscriptionProductIds: [] as string[],
+  }
+}
+
+async function runCatalogAttempt(phase: IapCatalogAttemptPhase, isActive: () => boolean) {
+  let reconnectStatus: IapCatalogReconnectStatus = 'not_attempted'
+
+  try {
+    await iapConnection.ensureConnected()
+    if (!isActive()) return
+
+    const result = await loadIapCatalogWithRecovery({
+      platform: Platform.OS,
+      loadCatalog: loadSubscriptionProducts,
+      getRecoveryError: (error) => getCatalogFailure(error).error,
+      getRecoveryErrorFromResult: (result) => result.optionalProductError,
+      reconnect: async () => {
+        if (!isActive()) throw IAP_CATALOG_ATTEMPT_CANCELLED
+        reconnectStatus = 'failed'
+        await iapConnection.reconnect()
+        reconnectStatus = 'succeeded'
+      },
+    })
+    if (!isActive()) return
+
+    subscriptionActions.setProducts(
+      result.products.map((product) => ({
         productId: product.id,
         price: product.displayPrice,
         offerToken: getAndroidOfferToken(product),
       })),
-  )
+    )
+
+    if (
+      result.optionalProductError !== undefined ||
+      result.missingSubscriptionProductIds.length > 0
+    ) {
+      const warningError =
+        result.optionalProductError ??
+        new Error(
+          `The store omitted ${result.missingSubscriptionProductIds.length} requested subscription products.`,
+        )
+      telemetry.warn(
+        'iap:catalog',
+        'IAP catalog loaded partially',
+        buildIapCatalogTelemetryData({
+          phase,
+          platform: Platform.OS,
+          requestedSubscriptionProductIds: ALL_SUBSCRIPTION_PRODUCT_IDS,
+          returnedProductIds: result.returnedProductIds,
+          missingSubscriptionProductIds: result.missingSubscriptionProductIds,
+          reconnectStatus,
+          error: warningError,
+        }),
+      )
+    }
+  } catch (error) {
+    if (error === IAP_CATALOG_ATTEMPT_CANCELLED || !isActive()) return
+
+    const failure = getCatalogFailure(error)
+    telemetry.warn(
+      'iap:catalog',
+      'Failed to load IAP catalog',
+      buildIapCatalogTelemetryData({
+        phase,
+        platform: Platform.OS,
+        requestedSubscriptionProductIds: ALL_SUBSCRIPTION_PRODUCT_IDS,
+        returnedProductIds: failure.returnedProductIds,
+        missingSubscriptionProductIds: failure.missingSubscriptionProductIds,
+        reconnectStatus,
+        error: failure.error,
+      }),
+    )
+    throw error
+  }
 }
 
 function getPurchaseField(purchase: Purchase, field: string) {
@@ -220,12 +270,10 @@ function getPurchasePlatform(purchase: Purchase): 'ios' | 'android' {
 }
 
 function getStoreOriginalTransactionId(purchase: Purchase) {
-  return (
-    getPurchaseField(purchase, 'originalTransactionIdentifierIOS') ??
-    purchase.transactionId ??
-    purchase.purchaseToken ??
-    purchase.id
-  )
+  // A renewal transaction ID is not an original transaction ID. Keep these
+  // distinct so the server only applies an original-ID constraint when the
+  // native store actually supplied one.
+  return getPurchaseField(purchase, 'originalTransactionIdentifierIOS')
 }
 
 function getStorePurchaseSyncArgs(purchase: Purchase) {
@@ -281,10 +329,14 @@ async function processPurchase(
 function subscribeToPurchaseUpdates(
   syncPurchase: (purchase: Purchase) => Promise<StorePurchaseSyncResult>,
 ) {
+  syncPurchaseForUpdates = syncPurchase
   if (!purchaseUpdateSub) {
     purchaseUpdateSub = purchaseUpdatedListener(async (purchase) => {
       try {
-        const result = await processPurchase(purchase, syncPurchase)
+        const currentSyncPurchase = syncPurchaseForUpdates
+        if (!currentSyncPurchase) return
+
+        const result = await processPurchase(purchase, currentSyncPurchase)
         if (result?.status === 'pending_verification') {
           Alert.alert(
             'Purchase Pending',
@@ -317,15 +369,6 @@ function subscribeToPurchaseUpdates(
   }
 }
 
-async function releaseIapConnection() {
-  purchaseUpdateSub?.remove()
-  purchaseErrorSub?.remove()
-  purchaseUpdateSub = undefined
-  purchaseErrorSub = undefined
-  await endConnection()
-  iapConnectionPromise = null
-}
-
 interface UseSubscriptionOptions {
   initializeIap?: boolean
 }
@@ -347,6 +390,7 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
   const subscriptionQuery = useQuery(api.subscriptions.current)
   const syncStorePurchase = useMutation(api.subscriptions.syncStorePurchase)
   const verifyStorePurchase = useAction(api.subscriptions.verifyStorePurchase)
+  const prepareStorePurchase = useAction(api.storeBillingActions.prepareStorePurchase)
   const currentTier = useValue(subscriptionStore$.currentTier)
   const showExtraCampAddon = currentTier === 'pro'
   /** Whether the user owns camps that would be frozen on downgrade from a paid tier. */
@@ -361,13 +405,16 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
   const productsLoaded = useValue(subscriptionStore$.productsLoaded)
   const productFetchFailed = useValue(subscriptionStore$.productFetchFailed)
   const [isRetryingProductFetch, setIsRetryingProductFetch] = useState(false)
+  const iapActiveRef = useRef(false)
+  const iapGenerationRef = useRef(0)
 
   const syncAndVerifyStorePurchase = useCallback(
     async (purchase: Purchase) => {
+      await prepareStorePurchase()
       await syncStorePurchase(getStorePurchaseSyncArgs(purchase))
       return await verifyStorePurchase(getStorePurchaseVerifyArgs(purchase))
     },
-    [syncStorePurchase, verifyStorePurchase],
+    [prepareStorePurchase, syncStorePurchase, verifyStorePurchase],
   )
 
   // Sync Convex state → local store
@@ -387,19 +434,22 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
   useEffect(() => {
     if (!initializeIap) return
 
-    let mounted = true
-    iapConsumerCount += 1
+    const generation = iapGenerationRef.current + 1
+    iapGenerationRef.current = generation
+    iapActiveRef.current = true
+    iapConnection.addConsumer()
+    // expo-iap can emit queued transactions during initialization, so listeners
+    // must exist before the native connection opens.
+    subscribeToPurchaseUpdates(syncAndVerifyStorePurchase)
 
     async function initIAP() {
       try {
-        await ensureIapConnection()
-        if (!mounted) return
-
-        subscribeToPurchaseUpdates(syncAndVerifyStorePurchase)
-        await loadSubscriptionProducts()
-      } catch (err) {
-        telemetry.warn('iap:init', 'Failed to initialize IAP', { error: serializeIapError(err) })
-        if (mounted) {
+        await runCatalogAttempt(
+          'initial',
+          () => iapActiveRef.current && iapGenerationRef.current === generation,
+        )
+      } catch {
+        if (iapActiveRef.current && iapGenerationRef.current === generation) {
           subscriptionActions.failProductFetch()
         }
       }
@@ -408,79 +458,91 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
     initIAP()
 
     return () => {
-      mounted = false
-      iapConsumerCount = Math.max(0, iapConsumerCount - 1)
-      if (iapConsumerCount === 0) {
-        releaseIapConnection().catch((err) => {
+      if (iapGenerationRef.current === generation) {
+        iapActiveRef.current = false
+      }
+      iapConnection
+        .removeConsumer(() => {
+          purchaseUpdateSub?.remove()
+          purchaseErrorSub?.remove()
+          purchaseUpdateSub = undefined
+          purchaseErrorSub = undefined
+          syncPurchaseForUpdates = undefined
+        })
+        .catch((err) => {
           telemetry.warn('iap:close', 'Failed to close IAP connection', {
             error: serializeIapError(err),
           })
         })
-      }
     }
   }, [initializeIap, syncAndVerifyStorePurchase])
 
   const retryProductFetch = useCallback(async () => {
     if (!initializeIap || isRetryingProductFetch) return
     setIsRetryingProductFetch(true)
+    const generation = iapGenerationRef.current
     try {
-      await ensureIapConnection()
-      // Initialization may have failed before listeners were attached. Retry
-      // the complete client setup, not just the catalog request.
       subscribeToPurchaseUpdates(syncAndVerifyStorePurchase)
-      await loadSubscriptionProducts()
-    } catch (err) {
-      telemetry.warn('iap:retry', 'Product fetch retry failed', { error: serializeIapError(err) })
+      await runCatalogAttempt(
+        'manual_retry',
+        () => iapActiveRef.current && iapGenerationRef.current === generation,
+      )
+    } catch {
       subscriptionActions.failProductFetch()
     } finally {
       setIsRetryingProductFetch(false)
     }
   }, [initializeIap, isRetryingProductFetch, syncAndVerifyStorePurchase])
 
-  const requestStorePurchase = useCallback(async (productId: string) => {
-    try {
-      await ensureIapConnection()
+  const requestStorePurchase = useCallback(
+    async (productId: string) => {
+      try {
+        await iapConnection.ensureConnected()
 
-      const kind = mapProductIdToPurchaseKind(productId)
-      if (!kind) {
-        throw new Error('Unsupported store product.')
-      }
-      const offerToken = subscriptionStore$.productOfferTokens[productId].get()
-      if (kind === 'subscription' && Platform.OS === 'android' && !offerToken) {
-        throw new Error('This store product is not available for purchase yet.')
-      }
+        const kind = mapProductIdToPurchaseKind(productId)
+        if (!kind) {
+          throw new Error('Unsupported store product.')
+        }
+        const offerToken = subscriptionStore$.productOfferTokens[productId].get()
+        if (kind === 'subscription' && Platform.OS === 'android' && !offerToken) {
+          throw new Error('This store product is not available for purchase yet.')
+        }
+        const { accountToken } = await prepareStorePurchase()
 
-      if (kind === 'consumable') {
-        await requestPurchase({
-          request: {
-            apple: { sku: productId },
-            google: { skus: [productId] },
-          },
-          type: 'in-app',
-        })
-      } else {
-        await requestPurchase({
-          request: {
-            apple: { sku: productId },
-            google: {
-              skus: [productId],
-              subscriptionOffers: offerToken ? [{ sku: productId, offerToken }] : undefined,
+        if (kind === 'consumable') {
+          await requestPurchase({
+            request: {
+              apple: { sku: productId, appAccountToken: accountToken },
+              google: { skus: [productId], obfuscatedAccountId: accountToken },
             },
-          },
-          type: 'subs',
-        })
+            type: 'in-app',
+          })
+        } else {
+          await requestPurchase({
+            request: {
+              apple: { sku: productId, appAccountToken: accountToken },
+              google: {
+                skus: [productId],
+                obfuscatedAccountId: accountToken,
+                subscriptionOffers: offerToken ? [{ sku: productId, offerToken }] : undefined,
+              },
+            },
+            type: 'subs',
+          })
+        }
+        // Purchase result handled by purchaseUpdatedListener
+      } catch (err: unknown) {
+        const message = getIapErrorMessage(err, 'Purchase was not completed.')
+        if (isUserCancelledPurchase(err, message)) {
+          subscriptionActions.completePurchase(false)
+        } else {
+          subscriptionActions.failPurchase(message)
+          Alert.alert('Purchase Failed', message)
+        }
       }
-      // Purchase result handled by purchaseUpdatedListener
-    } catch (err: unknown) {
-      const message = getIapErrorMessage(err, 'Purchase was not completed.')
-      if (isUserCancelledPurchase(err, message)) {
-        subscriptionActions.completePurchase(false)
-      } else {
-        subscriptionActions.failPurchase(message)
-        Alert.alert('Purchase Failed', message)
-      }
-    }
-  }, [])
+    },
+    [prepareStorePurchase],
+  )
 
   const purchase = useCallback(
     async (tier: SubscriptionTier, productId?: string) => {
@@ -508,7 +570,8 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
     subscriptionActions.startRestore()
 
     try {
-      await ensureIapConnection()
+      await iapConnection.ensureConnected()
+      await prepareStorePurchase()
       const purchases = await getAvailablePurchases({})
       if (!purchases || purchases.length === 0) {
         subscriptionActions.completeRestore(false)
@@ -557,13 +620,13 @@ export function useSubscription(options: UseSubscriptionOptions = {}) {
       subscriptionActions.failRestore(message)
       Alert.alert('Restore Failed', message)
     }
-  }, [syncStorePurchase, verifyStorePurchase])
+  }, [prepareStorePurchase, syncStorePurchase, verifyStorePurchase])
 
   const managePlan = useCallback(async () => {
     /** Opens the OS-level subscription management screen. */
     async function openSubscriptionManagement(activeProductId?: string) {
       try {
-        await ensureIapConnection()
+        await iapConnection.ensureConnected()
         await deepLinkToSubscriptions({
           skuAndroid: activeProductId ?? TIER_PRODUCT_IDS.plus.monthly,
           packageNameAndroid:

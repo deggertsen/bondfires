@@ -1,10 +1,16 @@
 import type { Doc, Id } from './_generated/dataModel'
 import type { QueryCtx } from './_generated/server'
+import { getCampAgeBand, isUserEligibleForCamp } from './agePolicy'
 import { isCampReadableStatus, requiresActiveMembershipForVisibility } from './campLifecycle'
 import { computeVisibility } from './camps'
+import { isModeratedContentVisible } from './contentSafety'
 import type { SubscriptionTier } from './entitlements'
 import { getEntitlementSubscriptionTier } from './entitlements'
 import { canViewPersonalBondfire } from './personalBondfireAccess'
+import { isEitherUserBlocked } from './userSafety'
+
+const VIEWER_MEMBERSHIP_READ_MAX = 500
+const VIEWER_INVITE_CLAIM_READ_MAX = 500
 
 /**
  * Per-request viewer context for bondfire visibility checks.
@@ -20,11 +26,17 @@ export type ViewerVisibilityContext = {
   tier: SubscriptionTier
   memberCampIds: Set<Id<'camps'>>
   claimedBondfireIds: Set<Id<'bondfires'>>
+  blockedUserIds: Set<Id<'users'>>
+  blockChecks?: Map<Id<'users'>, Promise<boolean>>
+  membershipContextTruncated?: boolean
+  inviteContextTruncated?: boolean
+  isAdmin: boolean
   /**
    * Camps already requested during this query, keyed by id. Stores promises
    * so concurrent visibility checks (Promise.all over a feed) dedupe too.
    */
   campCache: Map<Id<'camps'>, Promise<Doc<'camps'> | null>>
+  userCache: Map<Id<'users'>, Promise<Doc<'users'> | null>>
 }
 
 export async function buildViewerVisibilityContext(
@@ -38,7 +50,10 @@ export async function buildViewerVisibilityContext(
       tier: 'free',
       memberCampIds: new Set(),
       claimedBondfireIds: new Set(),
+      blockedUserIds: new Set(),
+      isAdmin: false,
       campCache: new Map(),
+      userCache: new Map(),
     }
   }
 
@@ -48,11 +63,11 @@ export async function buildViewerVisibilityContext(
     ctx.db
       .query('campMembers')
       .withIndex('by_user', (q) => q.eq('userId', userId).eq('status', 'active'))
-      .collect(),
+      .take(VIEWER_MEMBERSHIP_READ_MAX),
     ctx.db
       .query('inviteClaims')
       .withIndex('by_claimer', (q) => q.eq('claimerId', userId))
-      .collect(),
+      .take(VIEWER_INVITE_CLAIM_READ_MAX),
   ])
 
   return {
@@ -65,7 +80,13 @@ export async function buildViewerVisibilityContext(
         .map((claim) => claim.bondfireId)
         .filter((bondfireId): bondfireId is Id<'bondfires'> => bondfireId !== undefined),
     ),
+    blockedUserIds: new Set(),
+    blockChecks: new Map(),
+    membershipContextTruncated: memberships.length === VIEWER_MEMBERSHIP_READ_MAX,
+    inviteContextTruncated: inviteClaims.length === VIEWER_INVITE_CLAIM_READ_MAX,
+    isAdmin: user?.isAdmin === true || user?.role === 'admin',
     campCache: new Map(),
+    userCache: new Map(),
   }
 }
 
@@ -80,6 +101,63 @@ function getCampCached(
     viewer.campCache.set(campId, campPromise)
   }
   return campPromise
+}
+
+function getUserCached(
+  ctx: QueryCtx,
+  viewer: ViewerVisibilityContext,
+  userId: Id<'users'>,
+): Promise<Doc<'users'> | null> {
+  if (userId === viewer.userId) return Promise.resolve(viewer.user)
+  let userPromise = viewer.userCache.get(userId)
+  if (!userPromise) {
+    userPromise = ctx.db.get(userId)
+    viewer.userCache.set(userId, userPromise)
+  }
+  return userPromise
+}
+
+export async function isUserContentVisibleToViewer(
+  ctx: QueryCtx,
+  creatorId: Id<'users'>,
+  viewer: ViewerVisibilityContext,
+): Promise<boolean> {
+  // Admin moderation must not be defeatable by blocking the admin account.
+  if (viewer.userId && viewer.blockedUserIds.has(creatorId) && !viewer.isAdmin) return false
+  if (viewer.userId && viewer.blockChecks && !viewer.isAdmin && creatorId !== viewer.userId) {
+    let check = viewer.blockChecks.get(creatorId)
+    if (!check) {
+      check = isEitherUserBlocked(ctx, viewer.userId, creatorId)
+      viewer.blockChecks.set(creatorId, check)
+    }
+    if (await check) {
+      viewer.blockedUserIds.add(creatorId)
+      return false
+    }
+  }
+  const creator = await getUserCached(ctx, viewer, creatorId)
+  return !(
+    creator?.moderationStatus === 'suspended' &&
+    viewer.userId !== creatorId &&
+    !viewer.isAdmin
+  )
+}
+
+/** Resolve a specific membership when the bounded context was full. */
+export async function ensureViewerCampMembership(
+  ctx: QueryCtx,
+  viewer: ViewerVisibilityContext,
+  campId: Id<'camps'>,
+) {
+  if (!viewer.userId || !viewer.membershipContextTruncated || viewer.memberCampIds.has(campId))
+    return
+  const membership = await ctx.db
+    .query('campMembers')
+    .withIndex('by_user_camp', (q) =>
+      q.eq('userId', viewer.userId as Id<'users'>).eq('campId', campId),
+    )
+    .first()
+  if (membership?.status === 'active') viewer.memberCampIds.add(campId)
 }
 
 /**
@@ -98,6 +176,12 @@ export function isCampContentVisibleToViewer(
   camp: Doc<'camps'>,
   viewer: ViewerVisibilityContext,
 ): boolean {
+  if (
+    (viewer.user && !isUserEligibleForCamp(viewer.user, camp)) ||
+    (!viewer.user && getCampAgeBand(camp) === 'teen')
+  ) {
+    return false
+  }
   if (!isCampReadableStatus(camp.status)) {
     return false
   }
@@ -133,9 +217,30 @@ export async function isBondfireVisibleToViewer(
   ctx: QueryCtx,
   bondfire: Doc<'bondfires'>,
   viewer: ViewerVisibilityContext,
+  options?: { allowAdminModerationReview?: boolean },
 ): Promise<boolean> {
+  if (!(await isUserContentVisibleToViewer(ctx, bondfire.userId, viewer))) {
+    return false
+  }
+
+  if (
+    !isModeratedContentVisible(bondfire.moderationStatus, {
+      isOwner: viewer.userId === bondfire.userId,
+      isAdmin: viewer.isAdmin,
+    })
+  ) {
+    return false
+  }
+
   if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
     return false
+  }
+
+  // Exact-ID moderation review is a privileged operational path. It may
+  // cross ordinary Camp age/membership and Hearth participant boundaries,
+  // but broad feeds and discovery never set this option.
+  if (options?.allowAdminModerationReview && viewer.isAdmin) {
+    return true
   }
 
   if (bondfire.personalCampId) {
@@ -146,13 +251,33 @@ export async function isBondfireVisibleToViewer(
     return true
   }
 
-  if (viewer.claimedBondfireIds.has(bondfire._id)) {
-    return true
-  }
-
   const camp = await getCampCached(ctx, viewer, bondfire.campId)
   if (!camp) {
     return false
+  }
+  await ensureViewerCampMembership(ctx, viewer, camp._id)
+  if (
+    viewer.userId &&
+    viewer.inviteContextTruncated &&
+    !viewer.claimedBondfireIds.has(bondfire._id)
+  ) {
+    const claim = await ctx.db
+      .query('inviteClaims')
+      .withIndex('by_bondfire_claimer', (q) =>
+        q.eq('bondfireId', bondfire._id).eq('claimerId', viewer.userId as Id<'users'>),
+      )
+      .first()
+    if (claim) viewer.claimedBondfireIds.add(bondfire._id)
+  }
+
+  // A direct invite may bypass ordinary camp membership, but never the
+  // teen/adult boundary or lifecycle visibility.
+  if (viewer.claimedBondfireIds.has(bondfire._id)) {
+    return (
+      isCampReadableStatus(camp.status) &&
+      viewer.user !== null &&
+      isUserEligibleForCamp(viewer.user, camp)
+    )
   }
 
   return isCampContentVisibleToViewer(camp, viewer)

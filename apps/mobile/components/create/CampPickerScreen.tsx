@@ -5,6 +5,7 @@ import type { FunctionReturnType } from 'convex/server'
 import { useRouter } from 'expo-router'
 import { useCallback } from 'react'
 import { Alert, Pressable, ScrollView, StatusBar } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { XStack, YStack } from 'tamagui'
 import type { api } from '../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../convex/_generated/dataModel'
@@ -35,6 +36,7 @@ export function CampPickerScreen({
   onBack,
 }: CampPickerScreenProps) {
   const { colors, statusBarStyle } = useAppThemeColors()
+  const insets = useSafeAreaInsets()
   const { isAuthenticated } = useAuth()
   const router = useRouter()
 
@@ -76,12 +78,13 @@ export function CampPickerScreen({
   return (
     <YStack flex={1} backgroundColor={'$background'}>
       <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
-      <YStack paddingTop={64} paddingHorizontal={20} paddingBottom={16} gap={8}>
+      <YStack paddingTop={insets.top + 12} paddingHorizontal={20} paddingBottom={16} gap={8}>
         <Pressable
           onPress={onBack}
           hitSlop={12}
           accessibilityRole="button"
-          accessibilityLabel="Back to Home"
+          accessibilityLabel="Go back"
+          style={{ alignSelf: 'flex-start', minWidth: 44, minHeight: 44, justifyContent: 'center' }}
         >
           <ChevronLeft size={26} color={'$color'} />
         </Pressable>

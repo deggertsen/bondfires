@@ -1,16 +1,23 @@
+import { paginationOptsValidator } from 'convex/server'
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
-import { action, internalQuery, mutation, query } from './_generated/server'
+import { action, internalMutation, internalQuery, mutation, query } from './_generated/server'
+import { enforceWatchEventLimit } from './abuseLimits'
+import { assertUserCanAccessCamp } from './agePolicy'
 import { auth } from './auth'
 import {
   buildViewerVisibilityContext,
+  ensureViewerCampMembership,
   filterVisibleBondfiresForViewer,
   isBondfireVisibleToViewer,
   isCampContentVisibleToViewer,
+  isUserContentVisibleToViewer,
+  type ViewerVisibilityContext,
 } from './bondfireVisibility'
 import { isCampParticipableStatus } from './campLifecycle'
+import { initialModerationStatus, requireUgcPermission } from './contentSafety'
 import {
   assertCanCreateBondfire,
   assertVideoDurationWithinTierLimit,
@@ -20,6 +27,7 @@ import { throwUserError } from './errors'
 import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 import { addInviteBadgesToBondfires } from './inviteBadges'
 import { getLatestResponsePlayback } from './lib/latestResponsePlayback'
+import { boundedInteger, boundedScanSize } from './lib/queryBounds'
 import { incrementProfileViews } from './watchEvents'
 
 type ExpiredPrivateCampVideoCleanupResult = {
@@ -37,6 +45,24 @@ type PublicUser = {
   name?: string
   photoUrl?: string
 }
+
+const DEFAULT_FEED_LIMIT = 20
+const MAX_FEED_LIMIT = 50
+const MAX_CLEANUP_LIMIT = 100
+
+export function normalizeFeedLimit(limit: number | undefined) {
+  if (limit === undefined || !Number.isFinite(limit)) return DEFAULT_FEED_LIMIT
+  return Math.min(Math.max(Math.trunc(limit), 1), MAX_FEED_LIMIT)
+}
+
+export function normalizeCleanupLimit(limit: number | undefined) {
+  if (limit === undefined || !Number.isFinite(limit)) return MAX_CLEANUP_LIMIT
+  return Math.min(Math.max(Math.trunc(limit), 1), MAX_CLEANUP_LIMIT)
+}
+const FEED_PAGE_DEFAULT = 20
+const FEED_PAGE_MAX = 50
+const FEED_VISIBILITY_SCAN_MULTIPLIER = 3
+const FEED_VISIBILITY_SCAN_MAX = 150
 
 // Works for both `bondfires` and `bondfireVideos` rows — they share the
 // status/playback fields this predicate touches. Exported for the
@@ -126,8 +152,12 @@ function withLiveFlags<T extends { videoStatus?: string; muxLivePlaybackId?: str
   }
 }
 
-async function getThreadParticipants(ctx: QueryCtx, bondfire: Doc<'bondfires'>) {
-  const userId = await auth.getUserId(ctx)
+async function getThreadParticipants(
+  ctx: QueryCtx,
+  bondfire: Doc<'bondfires'>,
+  viewer: ViewerVisibilityContext,
+) {
+  const userId = viewer.userId
   const pinnedUserIds = new Set<Id<'users'>>()
   if (userId) {
     const pins = await ctx.db
@@ -148,6 +178,15 @@ async function getThreadParticipants(ctx: QueryCtx, bondfire: Doc<'bondfires'>) 
     .collect()
 
   for (const video of videos.filter(isPlayableVideoRecord)) {
+    if (!(await isUserContentVisibleToViewer(ctx, video.userId, viewer))) continue
+    if (
+      video.moderationStatus === 'removed' ||
+      (video.moderationStatus === 'pending_review' &&
+        viewer.userId !== video.userId &&
+        !viewer.isAdmin)
+    ) {
+      continue
+    }
     const current = participantMap.get(video.userId)
     participantMap.set(video.userId, {
       latestAt: Math.max(current?.latestAt ?? 0, video.createdAt),
@@ -217,61 +256,86 @@ async function deleteWatchEventsForVideo(ctx: MutationCtx, videoId: string) {
   }
 }
 
-async function removeBondfireFromPinnedLists(ctx: MutationCtx, bondfireId: Id<'bondfires'>) {
-  const users = await ctx.db.query('users').collect()
-  const now = Date.now()
-
-  for (const user of users) {
-    if (!user.pinnedBondfireIds?.includes(bondfireId)) {
-      continue
-    }
-
-    await ctx.db.patch(user._id, {
-      pinnedBondfireIds: user.pinnedBondfireIds.filter((id) => id !== bondfireId),
-      updatedAt: now,
-    })
-  }
+async function decorateFeedPage(ctx: QueryCtx, bondfires: Doc<'bondfires'>[], limit?: number) {
+  const userId = await auth.getUserId(ctx)
+  const viewer = await buildViewerVisibilityContext(ctx, userId)
+  const visibleBondfires = await filterVisibleBondfiresForViewer(
+    ctx,
+    bondfires.filter(isPlayableVideoRecord),
+    viewer,
+  )
+  const selectedBondfires =
+    limit === undefined ? visibleBondfires : visibleBondfires.slice(0, limit)
+  const withCampLabels = await Promise.all(
+    selectedBondfires.map(async (bondfire) => {
+      const [campLabel, latestResponse] = await Promise.all([
+        resolveCampLabel(ctx, bondfire),
+        getLatestResponsePlayback(ctx, bondfire._id, viewer),
+      ])
+      return {
+        ...withLiveFlags(bondfire),
+        campLabel,
+        latestResponseBondfireVideoId: latestResponse?.bondfireVideoId,
+        latestResponseMuxPlaybackId: latestResponse?.muxPlaybackId,
+        latestResponseMuxPlaybackPolicy: latestResponse?.muxPlaybackPolicy,
+      }
+    }),
+  )
+  return await addInviteBadgesToBondfires(ctx, userId, withCampLabels)
 }
 
-// List bondfires for the feed (ordered by videoCount ASC for discovery)
+/** Cursor-based discovery feed for current clients. */
+export const listFeedPage = query({
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, args) => {
+    const requested = boundedInteger(args.paginationOpts.numItems, {
+      defaultValue: FEED_PAGE_DEFAULT,
+      min: 1,
+      max: FEED_PAGE_MAX,
+      name: 'paginationOpts.numItems',
+    })
+    const scanSize = boundedScanSize(
+      requested,
+      FEED_VISIBILITY_SCAN_MULTIPLIER,
+      FEED_VISIBILITY_SCAN_MAX,
+    )
+    const result = await ctx.db
+      .query('bondfires')
+      .withIndex('by_video_count')
+      .order('asc')
+      .paginate({
+        ...args.paginationOpts,
+        numItems: scanSize,
+        maximumRowsRead: FEED_VISIBILITY_SCAN_MAX,
+        maximumBytesRead: 2_000_000,
+      })
+
+    return { ...result, page: await decorateFeedPage(ctx, result.page) }
+  },
+})
+
+/**
+ * Backward-compatible array wrapper for installed clients. The historical
+ * cursor is now honored, and both its requested result and scan are capped.
+ */
 export const listFeed = query({
   args: {
     limit: v.optional(v.number()),
     cursor: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const limit = args.limit ?? 20
-    const userId = await auth.getUserId(ctx)
-
-    // Query bondfires ordered by video_count ascending (prioritize newer/smaller)
-    const bondfires = await ctx.db
+    const limit = normalizeFeedLimit(args.limit)
+    const result = await ctx.db
       .query('bondfires')
       .withIndex('by_video_count')
       .order('asc')
-      .take(limit * 5)
-
-    const visibleBondfires = await filterVisibleBondfires(
-      ctx,
-      bondfires.filter(isPlayableVideoRecord),
-    )
-
-    const withCampLabels = await Promise.all(
-      visibleBondfires.slice(0, limit).map(async (bondfire) => {
-        const [campLabel, latestResponse] = await Promise.all([
-          resolveCampLabel(ctx, bondfire),
-          getLatestResponsePlayback(ctx, bondfire._id),
-        ])
-        return {
-          ...withLiveFlags(bondfire),
-          campLabel,
-          latestResponseBondfireVideoId: latestResponse?.bondfireVideoId,
-          latestResponseMuxPlaybackId: latestResponse?.muxPlaybackId,
-          latestResponseMuxPlaybackPolicy: latestResponse?.muxPlaybackPolicy,
-        }
-      }),
-    )
-
-    return await addInviteBadgesToBondfires(ctx, userId, withCampLabels)
+      .paginate({
+        cursor: args.cursor ?? null,
+        numItems: boundedScanSize(limit, FEED_VISIBILITY_SCAN_MULTIPLIER, FEED_VISIBILITY_SCAN_MAX),
+        maximumRowsRead: FEED_VISIBILITY_SCAN_MAX,
+        maximumBytesRead: 2_000_000,
+      })
+    return await decorateFeedPage(ctx, result.page, limit)
   },
 })
 
@@ -281,7 +345,7 @@ export const listByCamp = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const limit = args.limit ?? 20
+    const limit = normalizeFeedLimit(args.limit)
     const camp = await ctx.db.get(args.campId)
     if (!camp) {
       return []
@@ -289,6 +353,7 @@ export const listByCamp = query({
 
     const userId = await auth.getUserId(ctx)
     const viewer = await buildViewerVisibilityContext(ctx, userId)
+    await ensureViewerCampMembership(ctx, viewer, camp._id)
     if (!isCampContentVisibleToViewer(camp, viewer)) {
       return []
     }
@@ -297,13 +362,15 @@ export const listByCamp = query({
       .query('bondfires')
       .withIndex('by_camp', (q) => q.eq('campId', args.campId))
       .order('desc')
-      .take(limit * 3)
+      .take(boundedScanSize(limit, FEED_VISIBILITY_SCAN_MULTIPLIER, FEED_VISIBILITY_SCAN_MAX))
 
-    const filtered = bondfires.filter(isPlayableVideoRecord).slice(0, limit)
+    const filtered = (
+      await filterVisibleBondfiresForViewer(ctx, bondfires.filter(isPlayableVideoRecord), viewer)
+    ).slice(0, limit)
 
     const withCampLabels = await Promise.all(
       filtered.map(async (bondfire) => {
-        const latestResponse = await getLatestResponsePlayback(ctx, bondfire._id)
+        const latestResponse = await getLatestResponsePlayback(ctx, bondfire._id, viewer)
         return {
           ...withLiveFlags(bondfire),
           campLabel: camp.name,
@@ -327,8 +394,13 @@ export const get = query({
       return null
     }
 
-    const [visible] = await filterVisibleBondfires(ctx, [bondfire])
-    if (!visible) {
+    const viewerId = await auth.getUserId(ctx)
+    const viewer = await buildViewerVisibilityContext(ctx, viewerId)
+    if (
+      !(await isBondfireVisibleToViewer(ctx, bondfire, viewer, {
+        allowAdminModerationReview: true,
+      }))
+    ) {
       return null
     }
 
@@ -345,8 +417,13 @@ export const getWithCampContext = query({
       return null
     }
 
-    const [visible] = await filterVisibleBondfires(ctx, [bondfire])
-    if (!visible) {
+    const viewerId = await auth.getUserId(ctx)
+    const viewer = await buildViewerVisibilityContext(ctx, viewerId)
+    if (
+      !(await isBondfireVisibleToViewer(ctx, bondfire, viewer, {
+        allowAdminModerationReview: true,
+      }))
+    ) {
       return null
     }
 
@@ -414,8 +491,13 @@ export const getWithVideos = query({
       return null
     }
 
-    const [visible] = await filterVisibleBondfires(ctx, [bondfire])
-    if (!visible) {
+    const viewerId = await auth.getUserId(ctx)
+    const viewer = await buildViewerVisibilityContext(ctx, viewerId)
+    if (
+      !(await isBondfireVisibleToViewer(ctx, bondfire, viewer, {
+        allowAdminModerationReview: true,
+      }))
+    ) {
       return null
     }
     const camp = bondfire.campId ? await ctx.db.get(bondfire.campId) : null
@@ -427,9 +509,21 @@ export const getWithVideos = query({
       .order('asc')
       .collect()
 
+    const responseVisibility = await Promise.all(
+      videos.map(async (video) => {
+        if (!(await isUserContentVisibleToViewer(ctx, video.userId, viewer))) return false
+        return !(
+          video.moderationStatus === 'removed' ||
+          (video.moderationStatus === 'pending_review' &&
+            viewerId !== video.userId &&
+            !viewer.isAdmin)
+        )
+      }),
+    )
+    const visibleVideos = videos.filter((_, index) => responseVisibility[index])
+
     // Watched flags drive the initial scroll position (first unwatched video).
     // The viewer's own videos always count as watched.
-    const viewerId = await auth.getUserId(ctx)
     const hasWatchEvent = async (videoId: string) => {
       if (!viewerId) return false
       const event = await ctx.db
@@ -439,7 +533,7 @@ export const getWithVideos = query({
       return event !== null
     }
 
-    const playableVideos = videos.filter(isPlayableVideoRecord)
+    const playableVideos = visibleVideos.filter(isPlayableVideoRecord)
     const [mainWatched, ...videosWatched] = await Promise.all([
       bondfire.userId === viewerId ? true : hasWatchEvent(bondfire._id),
       ...playableVideos.map((video) =>
@@ -453,7 +547,7 @@ export const getWithVideos = query({
     }))
 
     // Lightweight projection only — no Mux IDs leak for unfinished videos.
-    const processingResponses = videos.filter(isProcessingVideoRecord).map((video) => ({
+    const processingResponses = visibleVideos.filter(isProcessingVideoRecord).map((video) => ({
       _id: video._id,
       userId: video.userId,
       creatorName: video.creatorName,
@@ -467,7 +561,7 @@ export const getWithVideos = query({
       campName,
       videos: readyVideos,
       processingResponses,
-      participants: await getThreadParticipants(ctx, bondfire),
+      participants: await getThreadParticipants(ctx, bondfire, viewer),
     }
   },
 })
@@ -536,13 +630,19 @@ export const cleanupExpiredPrivateCampVideos = action({
       throw new Error('Only admins can clean up expired private camp videos')
     }
 
-    return await ctx.runAction(internal.videos.cleanupExpiredPrivateCampVideos, args)
+    return await ctx.runAction(internal.videos.cleanupExpiredPrivateCampVideos, {
+      dryRun: args.dryRun,
+      limit: normalizeCleanupLimit(args.limit),
+    })
   },
 })
 
 // Create a new bondfire
-export const create = mutation({
+// Legacy record attachment is internal-only: clients must use videos.createMuxDirectUpload,
+// which creates the pending row before Mux asset identifiers can be attached.
+export const create = internalMutation({
   args: {
+    userId: v.id('users'),
     campId: v.optional(v.id('camps')),
     muxUploadId: v.optional(v.string()),
     muxAssetId: v.optional(v.string()),
@@ -567,16 +667,14 @@ export const create = mutation({
     tags: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
-    const userId = await auth.getUserId(ctx)
-    if (!userId) {
-      throwUserError('Not authenticated')
-    }
+    const userId = args.userId
 
     const user = await ctx.db.get(userId)
     const now = Date.now()
     if (!user) {
       throwUserError('User not found')
     }
+    await requireUgcPermission(ctx, userId)
 
     if (!args.muxAssetId || !args.muxPlaybackId) {
       if (args.videoStatus !== 'pending') {
@@ -594,6 +692,7 @@ export const create = mutation({
     if (!camp || !isCampParticipableStatus(camp.status)) {
       throwUserError('Camp not found')
     }
+    assertUserCanAccessCamp(user, camp)
 
     const membership = await ctx.db
       .query('campMembers')
@@ -647,6 +746,7 @@ export const create = mutation({
       userId,
       creatorName: user?.displayName ?? user?.name,
       campId,
+      moderationStatus: initialModerationStatus(camp, false),
       title: args.title,
       frozen: false,
       videoStatus: args.videoStatus ?? 'ready',
@@ -715,6 +815,18 @@ export const updateTitle = mutation({
     if (bondfire.userId !== userId) {
       throw new Error('Not authorized to edit this bondfire')
     }
+    await requireUgcPermission(ctx, userId)
+
+    if (bondfire.campId) {
+      const camp = await ctx.db.get(bondfire.campId)
+      if (
+        camp &&
+        (camp.access === 'open' || camp.access === 'approval') &&
+        bondfire.moderationStatus !== 'pending_review'
+      ) {
+        throwUserError('A public Bondfire title cannot be edited after moderation approval.')
+      }
+    }
 
     const trimmed = args.title.trim().slice(0, 80)
     // Empty titles fall back to a sensible default rather than clearing the field.
@@ -752,6 +864,15 @@ export const incrementViews = mutation({
     if (bondfire.userId === viewerId) {
       return { recorded: false, reason: 'own_video' }
     }
+
+    await enforceWatchEventLimit(ctx, viewerId)
+    const existingStart = await ctx.db
+      .query('watchEvents')
+      .withIndex('by_user_video_event', (q) =>
+        q.eq('userId', viewerId).eq('videoId', args.bondfireId).eq('eventType', 'start'),
+      )
+      .first()
+    if (existingStart) return { recorded: false, reason: 'duplicate' }
 
     const now = Date.now()
     const result = await incrementProfileViews(
@@ -799,15 +920,17 @@ export const pinBondfire = mutation({
     if (!user) throw new Error('User not found')
 
     const pinned = user.pinnedBondfireIds ?? []
-    if (pinned.includes(args.bondfireId)) {
+    const existingPinned = await Promise.all(pinned.map((id) => ctx.db.get(id)))
+    const validPinned = pinned.filter((_, index) => existingPinned[index] !== null)
+    if (validPinned.includes(args.bondfireId)) {
       return { pinned: true, already: true }
     }
-    if (pinned.length >= 8) {
+    if (validPinned.length >= 8) {
       throw new Error('You can pin up to 8 bondfires')
     }
 
     await ctx.db.patch(userId, {
-      pinnedBondfireIds: [args.bondfireId, ...pinned],
+      pinnedBondfireIds: [args.bondfireId, ...validPinned],
       updatedAt: Date.now(),
     })
 
@@ -911,9 +1034,10 @@ export const deleteBondfire = mutation({
       await ctx.db.delete(r._id)
     }
 
-    // Remove from every user's pinned list.
+    // Deleted pin ids are pruned lazily the next time each user pins a fire.
     const creator = await ctx.db.get(bondfire.userId)
-    await removeBondfireFromPinnedLists(ctx, args.bondfireId)
+    // Pinned ids are capped at eight per user and are pruned lazily by
+    // pinBondfire. Avoid a full users-table scan on every deletion.
 
     if (bondfire.liveSessionId) {
       await ctx.db.delete(bondfire.liveSessionId)

@@ -2,13 +2,20 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx } from './_generated/server'
-import { mutation, query } from './_generated/server'
+import { internalMutation, query } from './_generated/server'
+import { assertUserCanAccessCamp } from './agePolicy'
 import { auth } from './auth'
-import { buildViewerVisibilityContext, isBondfireVisibleToViewer } from './bondfireVisibility'
+import {
+  buildViewerVisibilityContext,
+  isBondfireVisibleToViewer,
+  isUserContentVisibleToViewer,
+} from './bondfireVisibility'
 import { isCampParticipableStatus } from './campLifecycle'
+import { initialModerationStatus, requireUgcPermission } from './contentSafety'
 import { assertVideoDurationWithinTierLimit } from './entitlements'
 import { assertCanRespondToPersonalBondfire } from './personalBondfireAccess'
 import { countResponse } from './responseCounts'
+import { assertUsersMayInteract } from './userSafety'
 
 async function assertCanRespondToBondfire(
   ctx: MutationCtx,
@@ -25,6 +32,8 @@ async function assertCanRespondToBondfire(
   if (!bondfire) {
     throw new Error('Bondfire not found')
   }
+  await requireUgcPermission(ctx, args.userId)
+  await assertUsersMayInteract(ctx, args.userId, bondfire.userId)
   if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
     throw new Error('Bondfire not found')
   }
@@ -47,6 +56,7 @@ async function assertCanRespondToBondfire(
   if (!camp || !isCampParticipableStatus(camp.status)) {
     throw new Error('Camp not found')
   }
+  assertUserCanAccessCamp(user, camp)
 
   const membership = await ctx.db
     .query('campMembers')
@@ -94,7 +104,9 @@ export const listByBondfire = query({
 
     const userId = await auth.getUserId(ctx)
     const viewer = await buildViewerVisibilityContext(ctx, userId)
-    const canViewBondfire = await isBondfireVisibleToViewer(ctx, bondfire, viewer)
+    const canViewBondfire = await isBondfireVisibleToViewer(ctx, bondfire, viewer, {
+      allowAdminModerationReview: true,
+    })
     if (!canViewBondfire) {
       return []
     }
@@ -105,17 +117,26 @@ export const listByBondfire = query({
       .order('asc')
       .collect()
 
-    return videos.filter((video) => {
-      if (video.expiresAt !== undefined && video.expiresAt <= Date.now()) {
-        return false
-      }
-
-      const status = video.videoStatus ?? 'ready'
-      return (
-        (status === 'ready' && video.muxPlaybackId) ||
-        (status === 'live' && video.muxLivePlaybackId)
-      )
-    })
+    const visibility = await Promise.all(
+      videos.map(async (video) => {
+        if (video.expiresAt !== undefined && video.expiresAt <= Date.now()) return false
+        if (!(await isUserContentVisibleToViewer(ctx, video.userId, viewer))) return false
+        if (
+          video.moderationStatus === 'removed' ||
+          (video.moderationStatus === 'pending_review' &&
+            viewer.userId !== video.userId &&
+            !viewer.isAdmin)
+        ) {
+          return false
+        }
+        const status = video.videoStatus ?? 'ready'
+        return (
+          (status === 'ready' && video.muxPlaybackId) ||
+          (status === 'live' && video.muxLivePlaybackId)
+        )
+      }),
+    )
+    return videos.filter((_, index) => visibility[index])
   },
 })
 
@@ -136,6 +157,15 @@ export const listByUser = query({
       if (video.expiresAt !== undefined && video.expiresAt <= Date.now()) {
         continue
       }
+      if (!(await isUserContentVisibleToViewer(ctx, video.userId, viewer))) continue
+      if (
+        video.moderationStatus === 'removed' ||
+        (video.moderationStatus === 'pending_review' &&
+          viewer.userId !== video.userId &&
+          !viewer.isAdmin)
+      ) {
+        continue
+      }
 
       const bondfire = await ctx.db.get(video.bondfireId)
       if (bondfire && (await isBondfireVisibleToViewer(ctx, bondfire, viewer))) {
@@ -148,8 +178,11 @@ export const listByUser = query({
 })
 
 // Add a response video to a bondfire
-export const addResponse = mutation({
+// Legacy record attachment is internal-only. Public uploads create a pending
+// response through videos.createMuxDirectUpload before Mux identifiers attach.
+export const addResponse = internalMutation({
   args: {
+    userId: v.id('users'),
     bondfireId: v.id('bondfires'),
     muxUploadId: v.optional(v.string()),
     muxAssetId: v.optional(v.string()),
@@ -170,10 +203,7 @@ export const addResponse = mutation({
     tags: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
-    const userId = await auth.getUserId(ctx)
-    if (!userId) {
-      throw new Error('Not authenticated')
-    }
+    const userId = args.userId
 
     const user = await ctx.db.get(userId)
     const bondfire = await assertCanRespondToBondfire(ctx, {
@@ -189,6 +219,7 @@ export const addResponse = mutation({
     }
 
     let requiresSignedPlayback = bondfire.muxPlaybackPolicy === 'signed'
+    const moderationCamp = bondfire.campId ? await ctx.db.get(bondfire.campId) : null
     if (!requiresSignedPlayback && bondfire.personalCampId) {
       requiresSignedPlayback = true
     }
@@ -212,6 +243,7 @@ export const addResponse = mutation({
     const videoId = await ctx.db.insert('bondfireVideos', {
       bondfireId: args.bondfireId,
       userId,
+      moderationStatus: initialModerationStatus(moderationCamp, !!bondfire.personalCampId),
       creatorName: user?.displayName ?? user?.name,
       sequenceNumber,
       muxUploadId: args.muxUploadId,
