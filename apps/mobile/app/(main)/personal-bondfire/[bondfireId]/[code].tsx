@@ -2,10 +2,11 @@ import { telemetry } from '@bondfires/app'
 import { Spinner, Text } from '@bondfires/ui'
 import { useMutation, useQuery } from 'convex/react'
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert } from 'react-native'
 import { YStack } from 'tamagui'
 import { api } from '../../../../../../convex/_generated/api'
+import type { Id } from '../../../../../../convex/_generated/dataModel'
 import { personalBondfirePath, routes } from '../../../../lib/routes'
 
 export default function PersonalBondfireInviteScreen() {
@@ -16,11 +17,29 @@ export default function PersonalBondfireInviteScreen() {
   const authRedirectedRef = useRef(false)
   const inviteHandledRef = useRef(false)
 
-  const checkInvite = useQuery(
-    api.personalBondfires.checkInvite,
-    currentUser && code ? { code } : 'skip',
-  )
+  const checkInviteMutation = useMutation(api.personalBondfires.checkInviteSecure)
+  const [checkInvite, setCheckInvite] = useState<
+    { valid: true; bondfireId: Id<'bondfires'> } | { valid: false; reason: 'unavailable' }
+  >()
+  const inviteCheckKeyRef = useRef<string | undefined>(undefined)
   const redeemInvite = useMutation(api.personalBondfires.redeemInvite)
+
+  useEffect(() => {
+    if (!currentUser || !code || !bondfireId) return
+    const requestKey = `${currentUser._id}:${bondfireId}:${code}`
+    if (inviteCheckKeyRef.current === requestKey) return
+    inviteCheckKeyRef.current = requestKey
+    setCheckInvite(undefined)
+    checkInviteMutation({ code, bondfireId: bondfireId as Id<'bondfires'> })
+      .then((result) => {
+        if (inviteCheckKeyRef.current === requestKey) setCheckInvite(result)
+      })
+      .catch(() => {
+        if (inviteCheckKeyRef.current === requestKey) {
+          setCheckInvite({ valid: false, reason: 'unavailable' })
+        }
+      })
+  }, [bondfireId, checkInviteMutation, code, currentUser])
 
   const navigateToBondfire = useCallback(
     (id: string) => {
@@ -47,7 +66,7 @@ export default function PersonalBondfireInviteScreen() {
     if (!currentUser) {
       authRedirectedRef.current = true
       const returnUrl = personalBondfirePath(bondfireId, code)
-      telemetry.breadcrumb('deeplink:personal-bondfire:auth-required', { bondfireId, code })
+      telemetry.breadcrumb('deeplink:personal-bondfire:auth-required', { bondfireId })
       navigateToAuth(returnUrl)
       return
     }
@@ -63,45 +82,12 @@ export default function PersonalBondfireInviteScreen() {
     if (!checkInvite.valid || checkInvite.bondfireId !== bondfireId) {
       inviteHandledRef.current = true
       const reason = checkInvite.valid ? 'invalid' : (checkInvite.reason ?? 'invalid')
-      const reasonMessages: Record<string, { title: string; message: string }> = {
-        not_found: {
-          title: 'Invite Not Found',
-          message: "This invite code doesn't exist. Ask the host to send you a new one.",
-        },
-        expired: {
-          title: 'Invite Expired',
-          message: 'This invite has expired. Ask the host to send you a fresh one.',
-        },
-        used: {
-          title: 'Invite Used',
-          message: 'This invite has already been used. Ask the host for a new invite.',
-        },
-        ended: {
-          title: 'Fire Ended',
-          message: 'This bondfire has ended.',
-        },
-        invalid: {
-          title: 'Invalid Invite',
-          message: 'This invite is not valid for a hearth bondfire.',
-        },
-        frozen: {
-          title: 'Camp Unavailable',
-          message:
-            'The hearth is currently unavailable. The owner may have cancelled their subscription.',
-        },
-      }
-      const err = reasonMessages[reason] ?? {
-        title: 'Something Went Wrong',
-        message: 'This invite could not be processed. Please try again.',
-      }
-
       telemetry.warn('deeplink:personal-bondfire:invalid', 'Invalid personal bondfire invite', {
         reason: checkInvite.valid ? 'bondfire_mismatch' : reason,
         bondfireId,
-        code,
       })
 
-      Alert.alert(err.title, err.message, [
+      Alert.alert('Invite Unavailable', 'Ask the sender for a new invite link.', [
         {
           text: 'Go Home',
           onPress: () => router.replace(routes.feed),
@@ -114,11 +100,13 @@ export default function PersonalBondfireInviteScreen() {
     inviteHandledRef.current = true
     telemetry.breadcrumb('deeplink:personal-bondfire:redeeming', {
       bondfireId,
-      code,
     })
 
     redeemInvite({ code })
       .then((result) => {
+        if ('invalid' in result) {
+          throw new Error('Invite unavailable')
+        }
         telemetry.breadcrumb('deeplink:personal-bondfire:redeemed', {
           bondfireId: result.bondfireId,
           alreadyJoined: result.alreadyJoined,
@@ -129,7 +117,14 @@ export default function PersonalBondfireInviteScreen() {
         const message = error?.message ?? 'Something went wrong joining this fire.'
         telemetry.error('deeplink:personal-bondfire:redeem-failed', message)
 
-        if (message.includes('full')) {
+        if (message.includes('unavailable')) {
+          Alert.alert('Invite Unavailable', 'Ask the sender for a new invite link.', [
+            {
+              text: 'Go Home',
+              onPress: () => router.replace(routes.feed),
+            },
+          ])
+        } else if (message.includes('full')) {
           Alert.alert('Fire Full', 'This fire is full.', [
             {
               text: 'Go Home',

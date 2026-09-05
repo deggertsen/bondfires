@@ -36,13 +36,6 @@ export type VideoPlayerState$ = Observable<VideoPlayerState>
 /** Delay before pausing after PiP closes, so returning to the app is not treated as a dismiss. */
 export const PICTURE_IN_PICTURE_STOP_PAUSE_GRACE_MS = 1_000
 
-/**
- * VOD buffering-stall soft timeout. After a mid-playback stall lasts this
- * long, the player attempts one bounded source reload before the give-up
- * overlay lands at the timeout.
- */
-export const STALL_SOFT_TIMEOUT_MS = 30_000
-
 export function shouldOwnPlaybackSession({
   isActive,
   isScreenFocused,

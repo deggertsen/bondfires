@@ -11,6 +11,7 @@ import type { Id } from '../../../convex/_generated/dataModel'
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const INVITE_BASE_URL = 'https://bondfires.app/invite'
+const FAMILY_INVITE_BASE_URL = 'https://bondfires.app/invite/family'
 
 type InviteMode = 'bondfire' | 'personal-bondfire' | 'camp'
 
@@ -31,17 +32,23 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
   const [copied, setCopied] = useState(false)
   const [code, setCode] = useState<string | null>(null)
   const [isGeneratingCode, setIsGeneratingCode] = useState(false)
+  const [familyCode, setFamilyCode] = useState<string | null>(null)
+  const [isGeneratingFamilyCode, setIsGeneratingFamilyCode] = useState(false)
+  const [familyCopied, setFamilyCopied] = useState(false)
   const [inviteSent, setInviteSent] = useState<Record<string, boolean>>({})
   const hasRequestedCodeRef = useRef(false)
 
   const createCampInvite = useMutation(api.camps.createInvite)
   const createBondfireInvite = useMutation(api.inviteClaims.createBondfireInviteCode)
   const createPersonalInvite = useMutation(api.personalBondfires.createInvite)
+  const createFamilyInvite = useMutation(api.familyConnections.createInvite)
 
   useEffect(() => {
     void inviteTargetKey
     setCopied(false)
     setCode(null)
+    setFamilyCode(null)
+    setFamilyCopied(false)
     setInviteSent({})
     hasRequestedCodeRef.current = false
   }, [inviteTargetKey])
@@ -50,6 +57,7 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
     if (open) return
     setCopied(false)
     setIsGeneratingCode(false)
+    setIsGeneratingFamilyCode(false)
     if (!code) {
       hasRequestedCodeRef.current = false
     }
@@ -145,6 +153,59 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
     }
   }, [shareUrl])
 
+  const familyShareUrl = familyCode ? `${FAMILY_INVITE_BASE_URL}/${familyCode}` : null
+
+  const handleCreateFamilyLink = useCallback(() => {
+    if (mode !== 'personal-bondfire' || isGeneratingFamilyCode || familyCode) return
+    Alert.alert(
+      'Create a family invitation?',
+      'This one-time link can create private Hearth access across teen and adult age groups. Share it only with someone you know and trust offline.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Create link',
+          onPress: async () => {
+            setIsGeneratingFamilyCode(true)
+            try {
+              const result = await createFamilyInvite({ bondfireId: id as Id<'bondfires'> })
+              setFamilyCode(result.code)
+            } catch (error) {
+              Alert.alert(
+                'Family invite failed',
+                error instanceof Error ? error.message : String(error),
+              )
+            } finally {
+              setIsGeneratingFamilyCode(false)
+            }
+          },
+        },
+      ],
+    )
+  }, [createFamilyInvite, familyCode, id, isGeneratingFamilyCode, mode])
+
+  const handleCopyFamilyLink = useCallback(async () => {
+    if (!familyShareUrl) return
+    try {
+      await Clipboard.setStringAsync(familyShareUrl)
+      setFamilyCopied(true)
+      setTimeout(() => setFamilyCopied(false), 2000)
+    } catch (error) {
+      Alert.alert('Copy Failed', error instanceof Error ? error.message : String(error))
+    }
+  }, [familyShareUrl])
+
+  const handleShareFamilyLink = useCallback(async () => {
+    if (!familyShareUrl) return
+    try {
+      await RNShare.share({
+        message: `Connect with me for a private family Hearth on Bondfires. Only accept if you know me offline.\n\n${familyShareUrl}`,
+        url: familyShareUrl,
+      })
+    } catch {
+      // User cancelled
+    }
+  }, [familyShareUrl])
+
   // ── Title ────────────────────────────────────────────────────────────
 
   const sheetTitle =
@@ -163,7 +224,7 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
       onOpenChange={(isOpen: boolean) => {
         if (!isOpen) onClose()
       }}
-      snapPoints={[60]}
+      snapPoints={[mode === 'personal-bondfire' ? 82 : 60]}
       dismissOnSnapToBottom
     >
       <Sheet.Overlay backgroundColor="rgba(0,0,0,0.45)" />
@@ -305,6 +366,51 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
               <Text fontSize={20} fontWeight="900" letterSpacing={1.5} numberOfLines={1}>
                 {code}
               </Text>
+            </YStack>
+          )}
+
+          {mode === 'personal-bondfire' && (
+            <YStack
+              gap={10}
+              padding={14}
+              borderRadius={14}
+              borderWidth={1}
+              borderColor="$borderColor"
+              backgroundColor="$backgroundHover"
+            >
+              <Text fontWeight="800">Inviting a family member in another age group?</Text>
+              <Text color="$placeholderColor" fontSize={12} lineHeight={18}>
+                Use a one-time family link. The recipient must explicitly accept, and either person
+                can revoke the connection later. Bondfires does not verify family relationships.
+              </Text>
+              {familyShareUrl ? (
+                <XStack gap={10}>
+                  <Button
+                    variant="primary"
+                    flex={1}
+                    onPress={handleCopyFamilyLink}
+                    icon={familyCopied ? <Check size={18} /> : <Copy size={18} />}
+                  >
+                    <Text fontWeight="700">{familyCopied ? 'Copied' : 'Copy family link'}</Text>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onPress={handleShareFamilyLink}
+                    icon={<Share size={18} />}
+                    accessibilityLabel="Share family invitation"
+                  />
+                </XStack>
+              ) : (
+                <Button
+                  variant="outline"
+                  onPress={handleCreateFamilyLink}
+                  disabled={isGeneratingFamilyCode}
+                >
+                  <Text fontWeight="700">
+                    {isGeneratingFamilyCode ? 'Creating…' : 'Create family link'}
+                  </Text>
+                </Button>
+              )}
             </YStack>
           )}
         </YStack>

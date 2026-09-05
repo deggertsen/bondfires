@@ -19,8 +19,14 @@
     "check": "biome check .",
     "check:convex-generated": "node scripts/check-convex-generated.mjs",
     "check:repo": "node scripts/check-repository-invariants.mjs",
+    "check:app-links": "node scripts/check-app-links.mjs",
+    "check:app-links:live": "node scripts/check-app-links.mjs --live",
+    "check:security": "node scripts/check-convex-security.mjs",
+    "check:release-foundation": "node scripts/check-mobile-release-foundation.mjs",
+    "release:preflight": "node scripts/mobile-release-preflight.mjs --profile production",
+    "smoke:mobile": "maestro test .maestro",
     "repo:impact": "node scripts/repo-impact.mjs",
-    "validate": "yarn typecheck && yarn test && yarn check:convex-generated && yarn check:repo && yarn check",
+    "validate": "yarn typecheck && yarn test && yarn check:convex-generated && yarn check:repo && yarn check:app-links && yarn check:security && yarn check:release-foundation && yarn check",
     "clean": "turbo clean && rm -rf node_modules",
     "release": "./scripts/release.sh",
     "release:minor": "./scripts/release.sh minor",
@@ -28,16 +34,18 @@
     "eas-build-pre-install": "corepack enable && corepack prepare yarn@4.12.0 --activate"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.6",
-    "@types/node": "^25.0.3",
-    "turbo": "^2.3.0",
+    "@biomejs/biome": "^2.5.11",
+    "@types/node": "^22.20.1",
+    "turbo": "^2.10.12",
     "typescript": "^6.0.0",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.11"
   },
   "packageManager": "yarn@4.12.0",
   "dependencies": {
-    "@auth/core": "~0.37.0",
-    "@convex-dev/auth": "^0.0.90",
-    "convex": "^1.41.0"
+    "@apple/app-store-server-library": "3.1.0",
+    "@auth/core": "~0.41.3",
+    "@convex-dev/auth": "^0.0.95",
+    "convex": "^1.45.0",
+    "google-auth-library": "10.9.1"
   }
 }

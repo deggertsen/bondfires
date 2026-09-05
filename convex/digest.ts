@@ -1,9 +1,23 @@
+import { paginationOptsValidator } from 'convex/server'
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
-import { internalAction, internalMutation, internalQuery } from './_generated/server'
+import { internalAction, internalMutation, internalQuery, type QueryCtx } from './_generated/server'
+import { isUserEligibleForCamp } from './agePolicy'
+import {
+  buildViewerVisibilityContext,
+  isBondfireVisibleToViewer,
+  isUserContentVisibleToViewer,
+  type ViewerVisibilityContext,
+} from './bondfireVisibility'
+import { isModeratedContentVisible } from './contentSafety'
+import { getPlayableVideoPlayback } from './lib/latestResponsePlayback'
+import { canStartMaintenanceRun, isExpectedMaintenancePage } from './lib/maintenanceRuns'
 import { digestSingleBody } from './lib/notificationCopy'
+import { boundedInteger } from './lib/queryBounds'
 import { DEFAULT_DIGEST_WINDOW_HOUR, resolveNotificationPrefs } from './notifications'
+import { canViewPersonalBondfire } from './personalBondfireAccess'
+import { retainedVideoExists } from './retentionCleanup'
 
 // ── Daily digest + 72h nudge ──
 //
@@ -33,6 +47,14 @@ const NUDGE_AFTER_MS = 72 * 60 * 60 * 1000
 /** Threads / items caps to bound per-user work. */
 const MAX_THREADS = 75
 const MAX_ITEMS = 30
+const MAX_PER_THREAD_VIDEO_READS = MAX_ITEMS * 4
+const MAX_DIGEST_RESPONSE_READS = 600
+const MAX_DIGEST_ROOT_READS = 300
+const MAX_PRIOR_DIGEST_DELIVERIES = MAX_ITEMS * 4
+const DIGEST_TOKEN_BATCH_SIZE = 100
+const DIGEST_TOKEN_BATCH_MAX = 100
+const DIGEST_SWEEP_LEASE_MS = 50 * 60 * 1000
+const DIGEST_SWEEP_JOB = 'hourly-digest'
 
 const DIGEST_THREAD_KEY = 'digest'
 const NUDGE_THREAD_KEY = 'nudge'
@@ -52,6 +74,71 @@ interface PushUser {
   userId: Id<'users'>
   timezone: string | null
   digestHour: number
+}
+
+async function canReceiveBondfireActivity(
+  ctx: QueryCtx,
+  userId: Id<'users'>,
+  bondfire: Doc<'bondfires'>,
+  viewer: ViewerVisibilityContext,
+): Promise<boolean> {
+  if (!isModeratedContentVisible(bondfire.moderationStatus, { isOwner: false, isAdmin: false }))
+    return false
+  if (!(await isBondfireVisibleToViewer(ctx, bondfire, viewer))) return false
+  if (bondfire.personalCampId) {
+    return await canViewPersonalBondfire(ctx, { bondfire, userId })
+  }
+  if (!bondfire.campId) return bondfire.userId === userId
+
+  const [user, camp, membership] = await Promise.all([
+    ctx.db.get(userId),
+    ctx.db.get(bondfire.campId),
+    ctx.db
+      .query('campMembers')
+      .withIndex('by_user_camp', (q) =>
+        q.eq('userId', userId).eq('campId', bondfire.campId as Id<'camps'>),
+      )
+      .first(),
+  ])
+  return (
+    user !== null &&
+    camp !== null &&
+    membership?.status === 'active' &&
+    !membership.muted &&
+    isUserEligibleForCamp(user, camp)
+  )
+}
+
+type PushUsersPage = {
+  page: PushUser[]
+  continueCursor: string
+  isDone: boolean
+  tokensRead: number
+}
+
+type DigestSweepStats = {
+  tokensRead: number
+  usersChecked: number
+  usersInWindow: number
+  usersMissingTimezone: number
+}
+
+const EMPTY_DIGEST_SWEEP_STATS: DigestSweepStats = {
+  tokensRead: 0,
+  usersChecked: 0,
+  usersInWindow: 0,
+  usersMissingTimezone: 0,
+}
+
+function readDigestSweepStats(value: unknown): DigestSweepStats {
+  if (!value || typeof value !== 'object') return { ...EMPTY_DIGEST_SWEEP_STATS }
+  const stats = value as Partial<DigestSweepStats>
+  return {
+    tokensRead: stats.tokensRead ?? 0,
+    usersChecked: stats.usersChecked ?? 0,
+    usersInWindow: stats.usersInWindow ?? 0,
+    usersMissingTimezone: stats.usersMissingTimezone ?? 0,
+  }
 }
 
 /**
@@ -75,12 +162,23 @@ function getLocalHour(timezone: string | null, date: Date): number {
 
 /** Distinct push-capable users with their best-known timezone and
  * preferred digest window hour. */
-export const listPushUsers = internalQuery({
-  args: {},
-  handler: async (ctx): Promise<PushUser[]> => {
-    const tokens = await ctx.db.query('deviceTokens').collect()
+export const listPushUsersPage = internalQuery({
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, args) => {
+    const numItems = boundedInteger(args.paginationOpts.numItems, {
+      defaultValue: DIGEST_TOKEN_BATCH_SIZE,
+      min: 1,
+      max: DIGEST_TOKEN_BATCH_MAX,
+      name: 'paginationOpts.numItems',
+    })
+    const tokenPage = await ctx.db.query('deviceTokens').paginate({
+      ...args.paginationOpts,
+      numItems,
+      maximumRowsRead: DIGEST_TOKEN_BATCH_MAX,
+      maximumBytesRead: 2_000_000,
+    })
     const byUser = new Map<Id<'users'>, string | null>()
-    for (const token of tokens) {
+    for (const token of tokenPage.page) {
       const existing = byUser.get(token.userId)
       // Prefer any token that knows its timezone.
       if (existing === undefined || (existing === null && token.timezone)) {
@@ -88,15 +186,19 @@ export const listPushUsers = internalQuery({
       }
     }
 
-    const users: PushUser[] = []
-    for (const [userId, timezone] of byUser.entries()) {
-      const user = await ctx.db.get(userId)
-      const digestHour = user
-        ? resolveNotificationPrefs(user.notificationPrefs).digestWindowHour
-        : DEFAULT_DIGEST_WINDOW_HOUR
-      users.push({ userId, timezone, digestHour })
-    }
-    return users
+    const users: PushUser[] = await Promise.all(
+      [...byUser.entries()].map(async ([userId, timezone]) => {
+        const user = await ctx.db.get(userId)
+        return {
+          userId,
+          timezone,
+          digestHour: user
+            ? resolveNotificationPrefs(user.notificationPrefs).digestWindowHour
+            : DEFAULT_DIGEST_WINDOW_HOUR,
+        }
+      }),
+    )
+    return { ...tokenPage, page: users, tokensRead: tokenPage.page.length }
   },
 })
 
@@ -108,6 +210,13 @@ export const collectDigestItems = internalQuery({
   args: { userId: v.id('users') },
   handler: async (ctx, args): Promise<DigestItem[]> => {
     const now = Date.now()
+    const viewer = await buildViewerVisibilityContext(ctx, args.userId)
+    if (
+      !viewer.user ||
+      viewer.user.accountDeletionStatus ||
+      viewer.user.moderationStatus === 'suspended'
+    )
+      return []
     const newestAllowed = now - DIGEST_MIN_AGE_MS
     const oldestAllowed = now - DIGEST_MAX_AGE_MS
 
@@ -143,24 +252,16 @@ export const collectDigestItems = internalQuery({
 
     // ── Collect unwatched activity per thread ──
     const items: DigestItem[] = []
+    let remainingResponseReads = MAX_DIGEST_RESPONSE_READS
 
     for (const bondfireId of [...threadIds].slice(0, MAX_THREADS)) {
-      if (items.length >= MAX_ITEMS) break
+      if (items.length >= MAX_ITEMS || remainingResponseReads === 0) break
 
       const bondfire = await ctx.db.get(bondfireId)
       if (!bondfire) continue
+      if (!(await canReceiveBondfireActivity(ctx, args.userId, bondfire, viewer))) continue
       // Cheap freshness gate: updatedAt is bumped on every new video.
       if (bondfire.updatedAt < oldestAllowed) continue
-
-      // Camp mute / membership: muted or departed members get nothing.
-      if (bondfire.campId) {
-        const campId = bondfire.campId
-        const membership = await ctx.db
-          .query('campMembers')
-          .withIndex('by_user_camp', (q) => q.eq('userId', args.userId).eq('campId', campId))
-          .first()
-        if (membership?.status !== 'active' || membership.muted) continue
-      }
 
       const readMarker = await ctx.db
         .query('bondfireThreadReads')
@@ -173,11 +274,17 @@ export const collectDigestItems = internalQuery({
       const videos = await ctx.db
         .query('bondfireVideos')
         .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfireId))
-        .collect()
+        .order('desc')
+        .take(Math.min(MAX_PER_THREAD_VIDEO_READS, remainingResponseReads))
+      remainingResponseReads -= videos.length
 
       for (const video of videos) {
         if (items.length >= MAX_ITEMS) break
         if (video.userId === args.userId) continue
+        if (!isModeratedContentVisible(video.moderationStatus, { isOwner: false, isAdmin: false }))
+          continue
+        if (!(await isUserContentVisibleToViewer(ctx, video.userId, viewer))) continue
+        if (video.expiresAt !== undefined && video.expiresAt <= now) continue
         if (video.videoStatus !== 'ready' && video.videoStatus !== 'live') continue
         if (video.createdAt > newestAllowed || video.createdAt < oldestAllowed) continue
         // The user opened the thread after this video landed — they saw
@@ -220,9 +327,15 @@ export const collectDigestItems = internalQuery({
       .withIndex('by_user', (q) => q.eq('userId', args.userId).eq('status', 'active'))
       .take(MAX_THREADS)
 
+    let remainingRootReads = MAX_DIGEST_ROOT_READS
     for (const membership of campMemberships) {
-      if (items.length >= MAX_ITEMS) break
+      if (items.length >= MAX_ITEMS || remainingRootReads === 0) break
       if (membership.muted) continue
+      const [user, camp] = await Promise.all([
+        ctx.db.get(args.userId),
+        ctx.db.get(membership.campId),
+      ])
+      if (!user || !camp || !isUserEligibleForCamp(user, camp)) continue
 
       const campBondfires = await ctx.db
         .query('bondfires')
@@ -230,11 +343,13 @@ export const collectDigestItems = internalQuery({
           q.eq('campId', membership.campId).gte('createdAt', oldestAllowed),
         )
         .order('desc')
-        .take(MAX_THREADS)
+        .take(Math.min(MAX_THREADS, remainingRootReads))
+      remainingRootReads -= campBondfires.length
 
       for (const bondfire of campBondfires) {
         if (items.length >= MAX_ITEMS) break
         if (bondfire.userId === args.userId) continue
+        if (!(await canReceiveBondfireActivity(ctx, args.userId, bondfire, viewer))) continue
         if (bondfire.videoStatus !== 'ready' && bondfire.videoStatus !== 'live') continue
         if (bondfire.createdAt > newestAllowed || bondfire.createdAt < oldestAllowed) continue
         // Only nudge about fires nobody has answered yet — the goal is to
@@ -289,13 +404,21 @@ export const collectNudgeItems = internalQuery({
   args: { userId: v.id('users') },
   handler: async (ctx, args): Promise<DigestItem[]> => {
     const now = Date.now()
+    const viewer = await buildViewerVisibilityContext(ctx, args.userId)
+    if (
+      !viewer.user ||
+      viewer.user.accountDeletionStatus ||
+      viewer.user.moderationStatus === 'suspended'
+    )
+      return []
 
     const digestDeliveries = await ctx.db
       .query('notificationDeliveries')
       .withIndex('by_user_thread', (q) =>
         q.eq('userId', args.userId).eq('threadKey', DIGEST_THREAD_KEY),
       )
-      .collect()
+      .order('desc')
+      .take(MAX_PRIOR_DIGEST_DELIVERIES)
 
     const items: DigestItem[] = []
 
@@ -320,6 +443,10 @@ export const collectNudgeItems = internalQuery({
         | Doc<'bondfires'>
         | null
       if (!doc) continue
+      if (!getPlayableVideoPlayback({ ...doc, _id: undefined })) continue
+      if (!isModeratedContentVisible(doc.moderationStatus, { isOwner: false, isAdmin: false }))
+        continue
+      if (!(await isUserContentVisibleToViewer(ctx, doc.userId, viewer))) continue
 
       const watched = await ctx.db
         .query('watchEvents')
@@ -333,6 +460,8 @@ export const collectNudgeItems = internalQuery({
       if ('bondfireId' in doc) {
         parentBondfireId = doc.bondfireId
         const parent = await ctx.db.get(parentBondfireId)
+        if (!parent || !(await canReceiveBondfireActivity(ctx, args.userId, parent, viewer)))
+          continue
         title = parent?.title ?? null
         kind = 'response'
       } else {
@@ -340,6 +469,7 @@ export const collectNudgeItems = internalQuery({
         // the nudge is for *unanswered* fires, matching the digest gate.
         if (doc.videoCount > 1) continue
         parentBondfireId = doc._id
+        if (!(await canReceiveBondfireActivity(ctx, args.userId, doc, viewer))) continue
         title = doc.title ?? null
         kind = 'bondfire'
       }
@@ -388,6 +518,7 @@ export const claimUserDeliveries = internalMutation({
     const claimed: string[] = []
 
     for (const videoKey of args.videoKeys) {
+      if (!(await retainedVideoExists(ctx, videoKey.replace(/^(digest|nudge):/, '')))) continue
       const existing = await ctx.db
         .query('notificationDeliveries')
         .withIndex('by_video_user', (q) => q.eq('videoKey', videoKey).eq('userId', args.userId))
@@ -498,55 +629,210 @@ export const runDigestForUser = internalAction({
   },
 })
 
-/**
- * Hourly sweep: find users whose local digest window just opened and run
- * their digest. Timezone comes from device tokens; users without one get
- * the UTC window.
- */
+export const startDigestSweep = internalMutation({
+  args: { runId: v.string(), sweepStartedAt: v.number() },
+  handler: async (ctx, args) => {
+    const now = Date.now()
+    const existing = await ctx.db
+      .query('maintenanceJobRuns')
+      .withIndex('by_job', (q) => q.eq('job', DIGEST_SWEEP_JOB))
+      .unique()
+    if (existing && !canStartMaintenanceRun(existing, now, DIGEST_SWEEP_LEASE_MS)) {
+      return { started: false, activeRunId: existing.runId }
+    }
+
+    const run = {
+      job: DIGEST_SWEEP_JOB,
+      runId: args.runId,
+      status: 'running' as const,
+      cursor: undefined,
+      startedAt: args.sweepStartedAt,
+      updatedAt: now,
+      completedAt: undefined,
+      error: undefined,
+      pagesProcessed: 0,
+      stats: EMPTY_DIGEST_SWEEP_STATS,
+    }
+    if (existing) await ctx.db.replace(existing._id, run)
+    else await ctx.db.insert('maintenanceJobRuns', run)
+
+    await ctx.scheduler.runAfter(0, internal.digest.runHourlySweepPage, {
+      runId: args.runId,
+      sweepStartedAt: args.sweepStartedAt,
+    })
+    return { started: true, activeRunId: args.runId }
+  },
+})
+
+export const checkpointDigestSweep = internalMutation({
+  args: {
+    runId: v.string(),
+    sweepStartedAt: v.number(),
+    processedCursor: v.optional(v.string()),
+    nextCursor: v.string(),
+    isDone: v.boolean(),
+    tokensRead: v.number(),
+    usersChecked: v.number(),
+    usersMissingTimezone: v.number(),
+    userIdsInWindow: v.array(v.id('users')),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db
+      .query('maintenanceJobRuns')
+      .withIndex('by_job', (q) => q.eq('job', DIGEST_SWEEP_JOB))
+      .unique()
+    if (
+      !run ||
+      run.runId !== args.runId ||
+      run.status !== 'running' ||
+      !isExpectedMaintenancePage(run.cursor, args.processedCursor)
+    ) {
+      return { accepted: false }
+    }
+
+    for (const userId of args.userIdsInWindow) {
+      await ctx.scheduler.runAfter(0, internal.digest.runDigestForUser, { userId })
+    }
+
+    const previous = readDigestSweepStats(run.stats)
+    const stats: DigestSweepStats = {
+      tokensRead: previous.tokensRead + args.tokensRead,
+      usersChecked: previous.usersChecked + args.usersChecked,
+      usersInWindow: previous.usersInWindow + args.userIdsInWindow.length,
+      usersMissingTimezone: previous.usersMissingTimezone + args.usersMissingTimezone,
+    }
+    const now = Date.now()
+    await ctx.db.patch(run._id, {
+      cursor: args.isDone ? undefined : args.nextCursor,
+      status: args.isDone ? 'complete' : 'running',
+      completedAt: args.isDone ? now : undefined,
+      updatedAt: now,
+      pagesProcessed: run.pagesProcessed + 1,
+      stats,
+    })
+
+    if (args.isDone) {
+      await ctx.scheduler.runAfter(0, internal.serverTelemetry.recordServerEvent, {
+        level: 'info',
+        event: 'digest:sweep',
+        message: 'Hourly digest sweep completed',
+        data: {
+          runId: args.runId,
+          pagesProcessed: run.pagesProcessed + 1,
+          ...stats,
+          localUtcHour: new Date(args.sweepStartedAt).getUTCHours(),
+        },
+      })
+    } else {
+      await ctx.scheduler.runAfter(0, internal.digest.runHourlySweepPage, {
+        runId: args.runId,
+        cursor: args.nextCursor,
+        sweepStartedAt: args.sweepStartedAt,
+      })
+    }
+    return { accepted: true }
+  },
+})
+
+export const failDigestSweep = internalMutation({
+  args: { runId: v.string(), processedCursor: v.optional(v.string()), error: v.string() },
+  handler: async (ctx, args) => {
+    const run = await ctx.db
+      .query('maintenanceJobRuns')
+      .withIndex('by_job', (q) => q.eq('job', DIGEST_SWEEP_JOB))
+      .unique()
+    if (
+      !run ||
+      run.runId !== args.runId ||
+      run.status !== 'running' ||
+      !isExpectedMaintenancePage(run.cursor, args.processedCursor)
+    ) {
+      return false
+    }
+    const error = args.error.slice(0, 500)
+    await ctx.db.patch(run._id, { status: 'failed', error, updatedAt: Date.now() })
+    await ctx.scheduler.runAfter(0, internal.serverTelemetry.recordServerEvent, {
+      level: 'error',
+      event: 'digest:sweep_failed',
+      message: 'Hourly digest sweep failed',
+      data: { runId: args.runId, pagesProcessed: run.pagesProcessed, error },
+    })
+    return true
+  },
+})
+
+export const runHourlySweepPage = internalAction({
+  args: {
+    runId: v.string(),
+    cursor: v.optional(v.string()),
+    sweepStartedAt: v.number(),
+  },
+  handler: async (ctx, args): Promise<{ accepted: boolean }> => {
+    try {
+      const page: PushUsersPage = await ctx.runQuery(internal.digest.listPushUsersPage, {
+        paginationOpts: {
+          cursor: args.cursor ?? null,
+          numItems: DIGEST_TOKEN_BATCH_SIZE,
+        },
+      })
+      const sweepTime = new Date(args.sweepStartedAt)
+      const userIdsInWindow: Id<'users'>[] = []
+      let usersMissingTimezone = 0
+      for (const user of page.page) {
+        if (!user.timezone) usersMissingTimezone++
+        if (getLocalHour(user.timezone, sweepTime) === user.digestHour) {
+          userIdsInWindow.push(user.userId)
+        }
+      }
+      return await ctx.runMutation(internal.digest.checkpointDigestSweep, {
+        runId: args.runId,
+        sweepStartedAt: args.sweepStartedAt,
+        processedCursor: args.cursor,
+        nextCursor: page.continueCursor,
+        isDone: page.isDone,
+        tokensRead: page.tokensRead,
+        usersChecked: page.page.length,
+        usersMissingTimezone,
+        userIdsInWindow,
+      })
+    } catch (error) {
+      await ctx.runMutation(internal.digest.failDigestSweep, {
+        runId: args.runId,
+        processedCursor: args.cursor,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      throw error
+    }
+  },
+})
+
+/** Hourly entry point. The durable mutation rejects overlapping active runs. */
 export const runHourlySweep = internalAction({
   args: {},
   handler: async (
     ctx,
   ): Promise<{
+    started: boolean
+    runId: string
     scheduled: number
     usersChecked: number
     usersInWindow: number
   }> => {
-    const now = new Date()
-    const users: PushUser[] = await ctx.runQuery(internal.digest.listPushUsers, {})
-
-    let scheduled = 0
-    let usersMissingTimezone = 0
-    for (const user of users) {
-      if (!user.timezone) usersMissingTimezone++
-      if (getLocalHour(user.timezone, now) !== user.digestHour) continue
-      await ctx.scheduler.runAfter(0, internal.digest.runDigestForUser, {
-        userId: user.userId,
-      })
-      scheduled++
-    }
-
-    try {
-      await ctx.runMutation(internal.serverTelemetry.recordServerEvent, {
-        level: 'info',
-        event: 'digest:sweep',
-        message: 'Hourly digest sweep completed',
-        data: {
-          usersChecked: users.length,
-          usersInWindow: scheduled,
-          usersMissingTimezone,
-          digestsScheduled: scheduled,
-          localUtcHour: now.getUTCHours(),
-        },
-      })
-    } catch {
-      // Telemetry must never block the sweep.
-    }
-
+    const sweepStartedAt = Date.now()
+    const runId = `${sweepStartedAt}-${Math.random().toString(36).slice(2, 10)}`
+    const result: { started: boolean; activeRunId: string } = await ctx.runMutation(
+      internal.digest.startDigestSweep,
+      {
+        runId,
+        sweepStartedAt,
+      },
+    )
     return {
-      scheduled,
-      usersChecked: users.length,
-      usersInWindow: scheduled,
+      started: result.started,
+      runId: result.activeRunId,
+      scheduled: 0,
+      usersChecked: 0,
+      usersInWindow: 0,
     }
   },
 })

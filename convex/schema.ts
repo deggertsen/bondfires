@@ -24,14 +24,35 @@ const storeVerificationStatus = v.union(
   v.literal('failed'),
   v.literal('refunded'),
 )
+const storeLifecycleState = v.union(
+  v.literal('pending'),
+  v.literal('active'),
+  v.literal('trialing'),
+  v.literal('grace_period'),
+  v.literal('billing_retry'),
+  v.literal('canceled'),
+  v.literal('paused'),
+  v.literal('on_hold'),
+  v.literal('expired'),
+  v.literal('refunded'),
+  v.literal('revoked'),
+)
 const userGender = v.union(v.literal('male'), v.literal('female'), v.literal('other'))
+const ageBand = v.union(v.literal('teen'), v.literal('adult'))
 const campAccessVisibilityMode = v.union(v.literal('hide'), v.literal('gate'))
 const adminAuditTargetType = v.union(
   v.literal('camp'),
   v.literal('user'),
   v.literal('bondfire'),
+  v.literal('response'),
   v.literal('purchase'),
   v.literal('report'),
+  v.literal('config'),
+)
+const moderationStatus = v.union(
+  v.literal('pending_review'),
+  v.literal('approved'),
+  v.literal('removed'),
 )
 
 const campRules = v.object({
@@ -97,6 +118,10 @@ export default defineSchema({
     photoStorageId: v.optional(v.id('_storage')),
     gender: userGender,
     birthDate: v.optional(v.string()), // ISO date string (YYYY-MM-DD), private
+    // Opaque UUID sent to StoreKit/Play Billing to bind new purchases to this
+    // authenticated account. It is never accepted as proof without a verified
+    // store response containing the same value.
+    storeAccountToken: v.optional(v.string()),
 
     // Stats (denormalized for performance)
     bondfireCount: v.optional(v.number()),
@@ -114,6 +139,17 @@ export default defineSchema({
     isAdmin: v.optional(v.boolean()),
     role: v.optional(v.union(v.literal('admin'), v.literal('user'))),
 
+    // Trust & safety. Missing moderationStatus is treated as active for
+    // backwards compatibility with accounts created before moderation launch.
+    moderationStatus: v.optional(v.union(v.literal('active'), v.literal('suspended'))),
+    suspendedAt: v.optional(v.number()),
+    suspensionReason: v.optional(v.string()),
+
+    // Versioned acceptance is required server-side before creating UGC.
+    acceptedTermsVersion: v.optional(v.string()),
+    acceptedCommunityGuidelinesVersion: v.optional(v.string()),
+    legalAcceptedAt: v.optional(v.number()),
+
     // Admin-forced subscription tier override for QA and app review.
     // When set, this overrides any store-based subscription in entitlements.
     forcedTier: v.optional(subscriptionTier),
@@ -126,6 +162,14 @@ export default defineSchema({
     // Last app open/foreground (heartbeat from the client, throttled).
     // Kill switch for 72h re-engagement nudges — see convex/digest.ts.
     lastActiveAt: v.optional(v.number()),
+
+    // Set before account-deletion work begins. Sessions are revoked in the
+    // same transaction, while this tombstone prevents a partially deleted
+    // account from being treated as active if an old access token is replayed.
+    accountDeletionStatus: v.optional(
+      v.union(v.literal('requested'), v.literal('processing'), v.literal('retrying')),
+    ),
+    accountDeletionRequestedAt: v.optional(v.number()),
 
     // Per-category push preferences, enforced server-side in sendToUser
     // (convex/sendNotification.ts). Missing field/keys mean enabled.
@@ -149,6 +193,8 @@ export default defineSchema({
   })
     .index('email', ['email']) // Required by @convex-dev/auth (must be named exactly 'email')
     .index('by_role', ['role'])
+    .index('by_moderation_status', ['moderationStatus', 'createdAt'])
+    .index('by_is_admin', ['isAdmin'])
     .index('by_created', ['createdAt'])
     .searchIndex('search_email', { searchField: 'email' }),
 
@@ -182,6 +228,8 @@ export default defineSchema({
     crisisBroadcast: v.optional(v.boolean()),
     welcomeBroadcast: v.optional(v.boolean()),
     access: v.union(v.literal('open'), v.literal('approval'), v.literal('invite')),
+    // Optional only for a zero-downtime rollout. Missing legacy rows are adult-only.
+    ageBand: v.optional(ageBand),
     status: v.union(
       v.literal('active'),
       v.literal('frozen'),
@@ -206,7 +254,9 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_slug', ['slug'])
-    .index('by_owner', ['ownerId', 'createdAt']),
+    .index('by_owner', ['ownerId', 'createdAt'])
+    .index('by_status_archived', ['status', 'archivedAt'])
+    .index('by_status_created', ['status', 'createdAt']),
 
   // Camp membership, notification preferences, and moderation roles
   campMembers: defineTable({
@@ -231,12 +281,18 @@ export default defineSchema({
     .index('by_user', ['userId', 'status'])
     .index('by_camp', ['campId', 'createdAt'])
     .index('by_user_camp', ['userId', 'campId'])
-    .index('by_camp_status', ['campId', 'status']),
+    .index('by_camp_status', ['campId', 'status'])
+    .index('by_camp_status_role', ['campId', 'status', 'role']),
 
-  // Unified invite codes for all invite types (bondfires, personal bondfires, camps)
+  // Unified invite codes for all invite types.
   inviteCodes: defineTable({
     code: v.string(),
-    parentType: v.union(v.literal('bondfire'), v.literal('personal-bondfire'), v.literal('camp')),
+    parentType: v.union(
+      v.literal('bondfire'),
+      v.literal('personal-bondfire'),
+      v.literal('camp'),
+      v.literal('family-connection'),
+    ),
     parentId: v.string(), // bondfire or camp ID (stored as string since it can be either type)
     uses: v.number(),
     maxUses: v.optional(v.number()),
@@ -247,6 +303,7 @@ export default defineSchema({
     .index('by_code', ['code'])
     .index('by_parent', ['parentType', 'parentId', 'createdAt'])
     .index('by_created_by', ['createdBy', 'createdAt'])
+    .index('by_created_by_type', ['createdBy', 'parentType', 'createdAt'])
     .index('by_expires_at', ['expiresAt']),
 
   inviteClaims: defineTable({
@@ -261,10 +318,27 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index('by_claimer', ['claimerId', 'createdAt'])
+    .index('by_sender', ['senderId', 'createdAt'])
+    .index('by_sender_claimer', ['senderId', 'claimerId', 'createdAt'])
     .index('by_claimer_unseen', ['claimerId', 'seen', 'dismissed'])
     .index('by_bondfire_claimer', ['bondfireId', 'claimerId'])
     .index('by_camp_claimer', ['campId', 'claimerId'])
     .index('by_invite_code', ['inviteCodeId', 'claimerId']),
+
+  // Transactional fixed-window abuse controls. User subjects are separately
+  // indexed so account deletion can remove their enforcement metadata.
+  abuseRateLimits: defineTable({
+    key: v.string(),
+    subjectType: v.literal('user'),
+    subjectId: v.id('users'),
+    category: v.string(),
+    count: v.number(),
+    windowStartedAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_key', ['key'])
+    .index('by_subject', ['subjectType', 'subjectId'])
+    .index('by_updated_at', ['updatedAt']),
 
   notifications: defineTable({
     userId: v.id('users'),
@@ -293,13 +367,55 @@ export default defineSchema({
     storeOriginalTransactionId: v.optional(v.string()),
     storePurchaseToken: v.optional(v.string()),
     currentPeriodEnd: v.optional(v.number()),
+    storeState: v.optional(storeLifecycleState),
+    willRenew: v.optional(v.boolean()),
+    storeEnvironment: v.optional(v.string()),
+    lastStoreEventAt: v.optional(v.number()),
+    lastStoreSyncAt: v.optional(v.number()),
+    lastStoreReadStartedAt: v.optional(v.number()),
+    replacedByStorePurchaseToken: v.optional(v.string()),
+    nextStoreSyncAt: v.optional(v.number()),
+    storeSyncFailureCount: v.optional(v.number()),
+    lastStoreSyncErrorCode: v.optional(v.string()),
     verifiedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index('by_user', ['userId', 'status'])
     .index('by_store_transaction', ['storeOriginalTransactionId'])
-    .index('by_store_purchase_token', ['storePurchaseToken']),
+    .index('by_store_purchase_token', ['storePurchaseToken'])
+    .index('by_next_store_sync', ['nextStoreSyncAt'])
+    .index('by_verification_next_sync', [
+      'verificationStatus',
+      'replacedByStorePurchaseToken',
+      'nextStoreSyncAt',
+    ]),
+
+  // Durable webhook idempotency and operational status. Never stores signed
+  // payloads, receipts, transaction IDs, or purchase tokens.
+  storeBillingEvents: defineTable({
+    eventKey: v.string(),
+    platform: storePlatform,
+    version: v.string(),
+    notificationType: v.string(),
+    subtype: v.optional(v.string()),
+    subjectHash: v.optional(v.string()),
+    status: v.union(
+      v.literal('processing'),
+      v.literal('processed'),
+      v.literal('failed'),
+      v.literal('ignored'),
+    ),
+    attempts: v.number(),
+    receivedAt: v.number(),
+    lastAttemptAt: v.number(),
+    processedAt: v.optional(v.number()),
+    lastErrorCode: v.optional(v.string()),
+  })
+    .index('by_event_key', ['eventKey'])
+    .index('by_received', ['receivedAt'])
+    .index('by_status_received', ['status', 'receivedAt'])
+    .index('by_platform_received', ['platform', 'receivedAt']),
 
   // Immutable ledger of all camp kindling movements. The table and slot_credit
   // type names are retained for existing production data.
@@ -348,12 +464,15 @@ export default defineSchema({
     .index('by_store_transaction', ['storeOriginalTransactionId'])
     .index('by_store_purchase_token', ['storePurchaseToken']),
 
-  // Hearths — user-owned micro-camps for private friend groups
+  // Hearths — user-owned containers for private, participant-gated fires.
   personalCamps: defineTable({
     publicId: v.string(),
     ownerId: v.id('users'),
     name: v.string(),
     status: v.union(v.literal('active'), v.literal('frozen')),
+    // The owner's current age band selects their active Hearth container.
+    // Individual fires may include an explicitly connected family member.
+    ageBand: v.optional(ageBand),
     frozenAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -371,6 +490,9 @@ export default defineSchema({
     leftAt: v.optional(v.number()),
     removedAt: v.optional(v.number()),
     removedBy: v.optional(v.id('users')),
+    // Cross-age access is tied to the exact accepted relationship grant. A
+    // revoked connection never becomes valid again if a new one is created.
+    familyConnectionId: v.optional(v.id('familyConnections')),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -378,7 +500,31 @@ export default defineSchema({
     .index('by_bondfire_status', ['bondfireId', 'status', 'joinedAt'])
     .index('by_bondfire_user', ['bondfireId', 'userId'])
     .index('by_user', ['userId', 'joinedAt'])
-    .index('by_user_status', ['userId', 'status', 'joinedAt']),
+    .index('by_user_status', ['userId', 'status', 'joinedAt'])
+    .index('by_removed_by', ['removedBy', 'createdAt'])
+    .index('by_family_connection_status', ['familyConnectionId', 'status', 'joinedAt']),
+
+  // Explicit, mutually accepted private relationships used only to authorize
+  // cross-age Hearth participation. "Family" is user-declared; Bondfires does
+  // not claim to verify a legal or biological relationship.
+  familyConnections: defineTable({
+    pairKey: v.string(),
+    firstUserId: v.id('users'),
+    secondUserId: v.id('users'),
+    status: v.union(v.literal('active'), v.literal('revoked')),
+    initiatedBy: v.id('users'),
+    acceptedBy: v.id('users'),
+    sourceBondfireId: v.id('bondfires'),
+    sourceInviteCodeId: v.id('inviteCodes'),
+    acceptedAt: v.number(),
+    revokedAt: v.optional(v.number()),
+    revokedBy: v.optional(v.id('users')),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_pair_status', ['pairKey', 'status', 'createdAt'])
+    .index('by_first_status', ['firstUserId', 'status', 'createdAt'])
+    .index('by_second_status', ['secondUserId', 'status', 'createdAt']),
 
   // Invite codes for personal bondfires
   // REMOVED — replaced by inviteCodes table
@@ -401,6 +547,9 @@ export default defineSchema({
   // Admin audit log — tracks all admin moderation & management actions.
   adminAuditLog: defineTable({
     adminId: v.id('users'),
+    // Set for moderation actions so account erasure can remove every audit
+    // row directly associated with the subject, regardless of target type.
+    subjectUserId: v.optional(v.id('users')),
     action: v.union(
       v.literal('manual_refund'),
       v.literal('camp_archive'),
@@ -409,6 +558,12 @@ export default defineSchema({
       v.literal('member_remove'),
       v.literal('report_resolve'),
       v.literal('report_dismiss'),
+      v.literal('public_config_update'),
+      v.literal('content_approve'),
+      v.literal('content_remove'),
+      v.literal('content_restore'),
+      v.literal('user_suspend'),
+      v.literal('user_reactivate'),
     ),
     targetType: adminAuditTargetType,
     targetId: v.string(),
@@ -421,11 +576,16 @@ export default defineSchema({
         membershipId: v.optional(v.id('campMembers')),
         purchaseId: v.optional(v.id('consumablePurchases')),
         reportId: v.optional(v.id('reports')),
+        previousVersion: v.optional(v.string()),
+        newVersion: v.optional(v.string()),
+        previousUpdatePriority: v.optional(v.string()),
+        newUpdatePriority: v.optional(v.string()),
       }),
     ),
     createdAt: v.number(),
   })
     .index('by_admin', ['adminId', 'createdAt'])
+    .index('by_subject_user', ['subjectUserId', 'createdAt'])
     .index('by_target', ['targetType', 'targetId'])
     .index('by_action', ['action', 'createdAt'])
     .index('by_admin_action', ['adminId', 'action', 'createdAt'])
@@ -440,6 +600,10 @@ export default defineSchema({
     personalCampId: v.optional(v.id('personalCamps')),
     title: v.optional(v.string()),
     frozen: v.optional(v.boolean()),
+    moderationStatus: v.optional(moderationStatus),
+    moderationReason: v.optional(v.string()),
+    moderatedAt: v.optional(v.number()),
+    moderatedBy: v.optional(v.id('users')),
 
     // Pre-recording draft lifecycle (Hearth invite-first flow). 'draft' =
     // created from the pre-recording invite screen, no recording yet; 'live' =
@@ -513,6 +677,9 @@ export default defineSchema({
     .index('by_mux_upload', ['muxUploadId'])
     .index('by_mux_asset', ['muxAssetId'])
     .index('by_live_stream', ['muxLiveStreamId'])
+    .index('by_moderation_status', ['moderationStatus', 'createdAt'])
+    .index('by_moderation_video_status', ['moderationStatus', 'videoStatus', 'createdAt'])
+    .index('by_moderated_by', ['moderatedBy', 'moderatedAt'])
     // Reconciliation: find records stuck in a non-terminal video status
     .index('by_video_status', ['videoStatus', 'updatedAt'])
     // Draft cleanup cron: expired drafts ordered by deadline
@@ -524,6 +691,10 @@ export default defineSchema({
     bondfireId: v.id('bondfires'),
     userId: v.id('users'),
     creatorName: v.optional(v.string()), // Denormalized for display
+    moderationStatus: v.optional(moderationStatus),
+    moderationReason: v.optional(v.string()),
+    moderatedAt: v.optional(v.number()),
+    moderatedBy: v.optional(v.id('users')),
 
     // Position in the bondfire sequence
     sequenceNumber: v.number(),
@@ -575,12 +746,17 @@ export default defineSchema({
   })
     // Get all videos for a bondfire in order
     .index('by_bondfire', ['bondfireId', 'sequenceNumber'])
+    .index('by_bondfire_created', ['bondfireId', 'createdAt'])
+    .index('by_bondfire_video_status', ['bondfireId', 'videoStatus'])
     // User's response videos
     .index('by_user', ['userId', 'createdAt'])
     .index('by_expires_at', ['expiresAt'])
     .index('by_mux_upload', ['muxUploadId'])
     .index('by_mux_asset', ['muxAssetId'])
     .index('by_live_stream', ['muxLiveStreamId'])
+    .index('by_moderation_status', ['moderationStatus', 'createdAt'])
+    .index('by_moderation_video_status', ['moderationStatus', 'videoStatus', 'createdAt'])
+    .index('by_moderated_by', ['moderatedBy', 'moderatedAt'])
     // Reconciliation: find records stuck in a non-terminal video status
     .index('by_video_status', ['videoStatus', 'createdAt']),
 
@@ -691,7 +867,8 @@ export default defineSchema({
   })
     .index('by_user', ['userId', 'createdAt'])
     .index('by_video', ['videoId', 'createdAt'])
-    .index('by_user_video', ['userId', 'videoId']),
+    .index('by_user_video', ['userId', 'videoId'])
+    .index('by_user_video_event', ['userId', 'videoId', 'eventType']),
 
   // Device Tokens - for push notifications
   deviceTokens: defineTable({
@@ -717,6 +894,21 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_token', ['token']),
 
+  // Durable singleton checkpoints for bounded cron continuations. Each job
+  // owns one row and replaces stale runs after its lease expires.
+  maintenanceJobRuns: defineTable({
+    job: v.string(),
+    runId: v.string(),
+    status: v.union(v.literal('running'), v.literal('complete'), v.literal('failed')),
+    cursor: v.optional(v.string()),
+    startedAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+    pagesProcessed: v.number(),
+    stats: v.any(),
+  }).index('by_job', ['job']),
+
   // Push notification deliveries — one row per (recipient, video) push.
   // Powers per-video dedupe (live-start suppresses publish-time sends)
   // and per-thread response throttling (max 1 response push per
@@ -730,16 +922,18 @@ export default defineSchema({
     sentAt: v.number(),
   })
     .index('by_video_user', ['videoKey', 'userId'])
-    .index('by_user_thread', ['userId', 'threadKey']),
+    .index('by_user_thread', ['userId', 'threadKey'])
+    .index('by_thread', ['threadKey', 'sentAt']),
 
   // Video Reports - for content moderation / child safety compliance
   reports: defineTable({
     // Reporter reference
     reporterUserId: v.id('users'),
 
-    // Video reference - exactly one must be set (enforced in mutation)
+    // Exactly one video or user target must be set (enforced in mutation).
     bondfireId: v.optional(v.id('bondfires')),
     bondfireVideoId: v.optional(v.id('bondfireVideos')),
+    reportedUserId: v.optional(v.id('users')),
 
     // Video owner (for quick reference)
     videoOwnerId: v.id('users'),
@@ -781,12 +975,28 @@ export default defineSchema({
     // Timestamps
     createdAt: v.number(),
     reviewedAt: v.optional(v.number()),
+    reviewedBy: v.optional(v.id('users')),
+    moderatorNote: v.optional(v.string()),
+    resolutionAction: v.optional(v.string()),
   })
     .index('by_bondfire', ['bondfireId', 'createdAt'])
     .index('by_bondfire_video', ['bondfireVideoId', 'createdAt'])
     .index('by_reporter', ['reporterUserId', 'createdAt'])
     .index('by_status', ['status', 'createdAt'])
-    .index('by_video_owner', ['videoOwnerId', 'createdAt']),
+    .index('by_video_owner', ['videoOwnerId', 'createdAt'])
+    .index('by_reported_user', ['reportedUserId', 'createdAt'])
+    .index('by_reviewed_by', ['reviewedBy', 'reviewedAt']),
+
+  // A block is enforced in both directions by server visibility and
+  // interaction helpers, even though only the blocker can remove it.
+  userBlocks: defineTable({
+    blockerId: v.id('users'),
+    blockedUserId: v.id('users'),
+    createdAt: v.number(),
+  })
+    .index('by_blocker', ['blockerId', 'createdAt'])
+    .index('by_blocked', ['blockedUserId', 'createdAt'])
+    .index('by_blocker_blocked', ['blockerId', 'blockedUserId']),
 
   // Public configuration values exposed via query (no auth required).
   // Use for min-app-version gating, feature flags, etc.
@@ -830,6 +1040,16 @@ export default defineSchema({
     .index('by_log_session', ['sessionId', 'createdAt'])
     .index('by_log_retention_level', ['retention', 'level', 'createdAt']),
 
+  // Fixed-window abuse controls for authenticated client telemetry. Keeping
+  // one row per user makes concurrent reservations serialize in Convex.
+  clientLogRateLimits: defineTable({
+    userId: v.id('users'),
+    minuteWindowStartedAt: v.number(),
+    minuteCount: v.number(),
+    hourWindowStartedAt: v.number(),
+    hourCount: v.number(),
+  }).index('by_user', ['userId']),
+
   // Bondfire Invites - in-app invites sent between users
   bondfireInvites: defineTable({
     bondfireId: v.id('bondfires'),
@@ -840,7 +1060,8 @@ export default defineSchema({
   })
     .index('by_recipient', ['recipientId', 'createdAt'])
     .index('by_bondfire_recipient', ['bondfireId', 'recipientId'])
-    .index('by_sender', ['senderId', 'createdAt']),
+    .index('by_sender', ['senderId', 'createdAt'])
+    .index('by_sender_recipient', ['senderId', 'recipientId', 'createdAt']),
 
   // Video Reactions — timestamped emoji reactions on VOD videos
   videoReactions: defineTable({
@@ -876,5 +1097,102 @@ export default defineSchema({
   })
     .index('by_video', ['videoType', 'videoId'])
     .index('by_video_user', ['videoType', 'videoId', 'userId'])
+    .index('by_user', ['userId', 'createdAt'])
     .index('by_heartbeat', ['lastHeartbeatAt']),
+
+  // Receipt identifiers retained without a user/profile reference after
+  // deletion. This prevents the same store transaction from being replayed
+  // against a new account and supports refund/accounting obligations without
+  // retaining the deleted user's Bondfires identity.
+  deletedAccountPurchaseRecords: defineTable({
+    source: v.union(v.literal('subscription'), v.literal('consumable')),
+    platform: storePlatform,
+    storeProductId: v.string(),
+    storeTransactionId: v.optional(v.string()),
+    storeOriginalTransactionId: v.optional(v.string()),
+    storePurchaseToken: v.optional(v.string()),
+    deletedAt: v.number(),
+  })
+    .index('by_transaction', ['storeTransactionId'])
+    .index('by_original_transaction', ['storeOriginalTransactionId'])
+    .index('by_purchase_token', ['storePurchaseToken']),
+
+  // Retention removes the parent and saves its cleanup work in one transaction.
+  // These internal-only queues survive scheduler failures and Mux outages.
+  retentionCleanupJobs: defineTable({
+    kind: v.union(v.literal('bondfire'), v.literal('response'), v.literal('camp')),
+    recordId: v.string(),
+    stage: v.number(),
+    revision: v.number(),
+    updatedAt: v.number(),
+  }).index('by_updated', ['updatedAt']),
+
+  retentionMedia: defineTable({
+    kind: v.union(v.literal('asset'), v.literal('live_stream'), v.literal('direct_upload')),
+    externalId: v.string(),
+    attempts: v.number(),
+    nextAttemptAt: v.number(),
+    lastError: v.optional(v.string()),
+  })
+    .index('by_external', ['kind', 'externalId'])
+    .index('by_next_attempt', ['nextAttemptAt']),
+
+  // Persistent, resumable account deletion. The user-facing request revokes
+  // sessions immediately; scheduled workers then inventory media, delete it
+  // from Mux, and only afterward remove database pointers and the user row.
+  accountDeletionJobs: defineTable({
+    userId: v.optional(v.id('users')),
+    status: v.union(
+      v.literal('inventory'),
+      v.literal('media'),
+      v.literal('database'),
+      v.literal('retrying'),
+      v.literal('completed'),
+    ),
+    inventoryStage: v.optional(
+      v.union(v.literal('responses'), v.literal('bondfires'), v.literal('live_sessions')),
+    ),
+    inventoryCursor: v.optional(v.string()),
+    cleanupStage: v.optional(v.string()),
+    attempts: v.number(),
+    lastError: v.optional(v.string()),
+    retryPhase: v.optional(
+      v.union(v.literal('inventory'), v.literal('media'), v.literal('database')),
+    ),
+    requestedAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    profileStorageId: v.optional(v.id('_storage')),
+  })
+    .index('by_user', ['userId'])
+    .index('by_status_updated', ['status', 'updatedAt']),
+
+  accountDeletionContent: defineTable({
+    jobId: v.id('accountDeletionJobs'),
+    kind: v.union(v.literal('bondfire'), v.literal('response'), v.literal('live_session')),
+    recordId: v.string(),
+    mediaStatus: v.union(v.literal('pending'), v.literal('inventoried')),
+    childCursor: v.optional(v.string()),
+    databaseStatus: v.union(v.literal('pending'), v.literal('deleted')),
+    cleanupStage: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_job_record', ['jobId', 'kind', 'recordId'])
+    .index('by_job_media', ['jobId', 'mediaStatus'])
+    .index('by_job_database', ['jobId', 'databaseStatus'])
+    .index('by_job_database_kind', ['jobId', 'databaseStatus', 'kind']),
+
+  accountDeletionMedia: defineTable({
+    jobId: v.id('accountDeletionJobs'),
+    kind: v.union(v.literal('asset'), v.literal('live_stream'), v.literal('direct_upload')),
+    externalId: v.string(),
+    status: v.union(v.literal('pending'), v.literal('deleted'), v.literal('missing')),
+    attempts: v.number(),
+    lastError: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_job_external', ['jobId', 'kind', 'externalId'])
+    .index('by_job_status', ['jobId', 'status']),
 })

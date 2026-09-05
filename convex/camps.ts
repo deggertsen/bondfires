@@ -1,8 +1,19 @@
+import { paginationOptsValidator } from 'convex/server'
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalMutation, mutation, query } from './_generated/server'
+import { enforceInviteAttemptLimit } from './abuseLimits'
+import {
+  type AgeBand,
+  assertUserAgeBand,
+  assertUserCanAccessCamp,
+  calculateAgeAt,
+  getCampAgeBand,
+  getUserAgeBand,
+  isUserEligibleForCamp,
+} from './agePolicy'
 import { auth } from './auth'
 import { burnKindlingForCamp } from './campKindling'
 import { isCampVisibleStatus, isOwnerManageableCampStatus } from './campLifecycle'
@@ -20,13 +31,17 @@ import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 import {
   findReusableInviteCode,
   generateAndInsertInviteCode,
+  isInviteCodeClaimable,
   normalizeInviteCode,
 } from './inviteCodes'
+import { boundedInteger } from './lib/queryBounds'
+import { isEitherUserBlocked } from './userSafety'
 
 type CampAccess = 'open' | 'approval' | 'invite'
 type CampGender = 'male' | 'female' | 'any'
 export type CampAccessVisibilityMode = 'hide' | 'gate'
 export type CampVisibilityDeniedReason =
+  | 'age_group'
   | 'wrong_gender'
   | 'tier_too_low'
   | 'underage'
@@ -43,6 +58,7 @@ type CampJoinResult = {
   reason:
     | 'ok'
     | 'wrong_gender'
+    | 'age_group'
     | 'tier_too_low'
     | 'underage'
     | 'invite_only'
@@ -56,6 +72,7 @@ type CampJoinResult = {
 }
 
 const JOIN_DENIED_MESSAGES: Partial<Record<CampJoinResult['reason'], string>> = {
+  age_group: 'This camp is only available to members in a different age group',
   wrong_gender: 'This camp is limited to members who match its gender setting',
   tier_too_low: 'Your subscription tier is too low to join this camp',
   underage: 'You do not meet the age requirement for this camp',
@@ -70,6 +87,11 @@ const JOIN_DENIED_MESSAGES: Partial<Record<CampJoinResult['reason'], string>> = 
 
 /** Cooldown duration for re-applying after rejection (30 days in ms). */
 const REJECTION_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000
+const CAMP_PAGE_DEFAULT = 40
+const CAMP_PAGE_MAX = 100
+const LEGACY_CAMP_LIST_MAX = 200
+const LEGACY_CAMP_SCAN_MAX = 500
+const USER_MEMBERSHIP_READ_MAX = 500
 
 type CampSeed = {
   slug: string
@@ -80,6 +102,7 @@ type CampSeed = {
   color: string
   defaultPrompt: string
   gender: CampGender
+  ageBand?: AgeBand
   crisisBroadcast?: boolean
   welcomeBroadcast?: boolean
   requiresTradeTags?: boolean
@@ -218,6 +241,55 @@ const BASE_LAUNCH_CAMPS = [
   },
 ] as const
 
+const TEEN_LAUNCH_CAMPS: CampSeed[] = [
+  {
+    slug: 'teen-welcome-fires',
+    name: 'Teen Welcome Fires',
+    theme: 'Arrival',
+    purpose: 'A 13–17 community for introductions, orientation, and finding your people.',
+    icon: 'flame',
+    color: '#F97316',
+    defaultPrompt: 'What should this camp know about you and what brought you here?',
+    gender: 'any',
+    ageBand: 'teen',
+    welcomeBroadcast: true,
+    advisoryGuidelines: [
+      'Protect personal information such as your school, address, and exact location.',
+      'Be welcoming and tell a trusted adult if an interaction feels unsafe.',
+    ],
+  },
+  {
+    slug: 'teen-victory-fires',
+    name: 'Teen Victory Fires',
+    theme: 'Wins',
+    purpose: 'A 13–17 community for celebrating progress, creativity, school, sports, and life.',
+    icon: 'trophy',
+    color: '#EAB308',
+    defaultPrompt: 'What win, big or small, are you proud of today?',
+    gender: 'any',
+    ageBand: 'teen',
+    advisoryGuidelines: [
+      'Celebrate without sharing identifying school or location details.',
+      'Encourage effort and growth; do not compare or pressure others.',
+    ],
+  },
+  {
+    slug: 'teen-support-fires',
+    name: 'Teen Support Fires',
+    theme: 'Peer Support',
+    purpose: 'A 13–17 community for age-appropriate encouragement and everyday challenges.',
+    icon: 'shield',
+    color: '#0F766E',
+    defaultPrompt: 'What support or encouragement would help today?',
+    gender: 'any',
+    ageBand: 'teen',
+    advisoryGuidelines: [
+      'This camp is not emergency or professional support; contact a trusted adult in a crisis.',
+      'Do not ask for or share private contact, school, or location information.',
+    ],
+  },
+]
+
 function variantName(baseName: string, gender: Exclude<CampGender, 'any'>) {
   return [baseName, ' (', gender === 'male' ? 'Men' : 'Women', ')'].join('')
 }
@@ -253,7 +325,7 @@ function getLaunchCampSeeds(): CampSeed[] {
     gender: 'any' as const,
   }))
 
-  return [...mixedCamps, ...genderedCamps]
+  return [...mixedCamps, ...genderedCamps, ...TEEN_LAUNCH_CAMPS]
 }
 
 async function getCurrentUser(ctx: QueryCtx | MutationCtx) {
@@ -308,8 +380,10 @@ async function findAdminUser(ctx: QueryCtx | MutationCtx): Promise<Doc<'users'> 
     .first()
   if (adminByRole) return adminByRole
 
-  const users = await ctx.db.query('users').collect()
-  return users.find((u) => u.isAdmin === true) ?? null
+  return await ctx.db
+    .query('users')
+    .withIndex('by_is_admin', (q) => q.eq('isAdmin', true))
+    .first()
 }
 
 async function getMembership(
@@ -367,42 +441,6 @@ async function findCampBySlug(ctx: QueryCtx | MutationCtx, slug: string) {
 
 // ── Centralized Camp Eligibility Helpers ──────────────────────────────────
 
-function parseBirthDate(birthDate: string) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(birthDate)
-  if (!match) {
-    return null
-  }
-
-  const year = Number(match[1])
-  const month = Number(match[2])
-  const day = Number(match[3])
-  const parsed = new Date(Date.UTC(year, month - 1, day))
-  if (
-    parsed.getUTCFullYear() !== year ||
-    parsed.getUTCMonth() !== month - 1 ||
-    parsed.getUTCDate() !== day
-  ) {
-    return null
-  }
-
-  return { year, month, day }
-}
-
-function calculateAge(birthDate: string): number | null {
-  const birth = parseBirthDate(birthDate)
-  if (!birth) {
-    return null
-  }
-
-  const today = new Date()
-  let age = today.getFullYear() - birth.year
-  const monthDelta = today.getMonth() + 1 - birth.month
-  if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < birth.day)) {
-    age -= 1
-  }
-  return age
-}
-
 function deniedByAccessRule(
   visibilityMode: CampAccessVisibilityMode,
   accessDeniedCode: CampVisibilityDeniedReason,
@@ -433,6 +471,17 @@ export function computeVisibility(
   user: { gender?: string; tier: SubscriptionTier; birthDate?: string },
   camp: Doc<'camps'>,
 ): CampVisibilityResult {
+  const userAgeBand = getUserAgeBand(user)
+  const campAgeBand = getCampAgeBand(camp)
+  // Anonymous viewers may discover adult camps before authentication. Teen
+  // camps never appear without an authenticated profile/DOB.
+  if (
+    (!user.birthDate && campAgeBand === 'teen') ||
+    (user.birthDate !== undefined && userAgeBand !== campAgeBand)
+  ) {
+    return deniedByAccessRule('hide', 'age_group', 'This camp is for a different age group')
+  }
+
   // Legacy camps created before the rules field was introduced have no access
   // rules — treat them as visible to everyone.
   const access = camp.rules?.access
@@ -461,7 +510,7 @@ export function computeVisibility(
     )
   }
 
-  const age = user.birthDate ? calculateAge(user.birthDate) : null
+  const age = user.birthDate ? calculateAgeAt(user.birthDate) : null
   if (access.minAge && (age === null || age < access.minAge.value)) {
     return deniedByAccessRule(
       access.minAge.visibilityMode,
@@ -704,6 +753,7 @@ async function joinCamp(
   if (!camp || !isCampVisibleStatus(camp.status)) {
     throwUserError('Camp not found')
   }
+  assertUserCanAccessCamp(user, camp)
 
   if (camp.status === 'frozen' || camp.status === 'grace') {
     throwUserError('This camp is not accepting new members right now.')
@@ -793,6 +843,7 @@ async function ensureCamp(
     crisisBroadcast: seed.crisisBroadcast ?? false,
     welcomeBroadcast: seed.welcomeBroadcast ?? false,
     access: 'open' as const,
+    ageBand: seed.ageBand ?? ('adult' as const),
     status: 'active' as const,
     bondfireCount: existing?.bondfireCount ?? 0,
     activeMemberCount: existing?.activeMemberCount ?? 0,
@@ -821,107 +872,191 @@ async function ensureCamp(
   })
 }
 
+async function buildCampListViewer(ctx: QueryCtx) {
+  const userId = await auth.getUserId(ctx)
+  const memberships = userId
+    ? await ctx.db
+        .query('campMembers')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .take(USER_MEMBERSHIP_READ_MAX)
+    : []
+  const user = userId ? await ctx.db.get(userId) : null
+  const userTier =
+    user && userId
+      ? await getEntitlementSubscriptionTier(ctx, userId)
+      : ('free' as SubscriptionTier)
+
+  return {
+    memberships,
+    membershipsByCamp: new Map(memberships.map((membership) => [membership.campId, membership])),
+    user,
+    userTier,
+  }
+}
+
+async function getRestrictedMemberCamps(
+  ctx: QueryCtx,
+  viewer: Awaited<ReturnType<typeof buildCampListViewer>>,
+) {
+  const camps = await Promise.all(
+    viewer.memberships
+      .filter((membership) => membership.status === 'active')
+      .map((membership) => ctx.db.get(membership.campId)),
+  )
+  return camps.filter(
+    (camp): camp is Doc<'camps'> => camp?.status === 'frozen' || camp?.status === 'grace',
+  )
+}
+
+async function hydrateCampListMemberships(
+  ctx: QueryCtx,
+  viewer: Awaited<ReturnType<typeof buildCampListViewer>>,
+  camps: Doc<'camps'>[],
+) {
+  if (!viewer.user || viewer.memberships.length < USER_MEMBERSHIP_READ_MAX) return
+  const userId = viewer.user._id
+  await Promise.all(
+    camps.map(async (camp) => {
+      if (viewer.membershipsByCamp.has(camp._id)) return
+      const membership = await ctx.db
+        .query('campMembers')
+        .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', camp._id))
+        .first()
+      if (membership) viewer.membershipsByCamp.set(camp._id, membership)
+    }),
+  )
+}
+
+export function decorateCampListPage(
+  camps: Doc<'camps'>[],
+  viewer: Awaited<ReturnType<typeof buildCampListViewer>>,
+  includeArchived: boolean,
+) {
+  const { membershipsByCamp, user, userTier } = viewer
+  return camps
+    .filter((camp) => includeArchived || isCampVisibleStatus(camp.status))
+    .filter((camp) => {
+      if (user ? !isUserEligibleForCamp(user, camp) : getCampAgeBand(camp) === 'teen') return false
+      const membership = membershipsByCamp.get(camp._id)
+      if (camp.status === 'frozen' || camp.status === 'grace') {
+        return membership?.status === 'active'
+      }
+      if (membership?.status === 'active') return true
+      return computeVisibility(
+        {
+          gender: user?.gender ?? 'other',
+          tier: userTier,
+          birthDate: user?.birthDate,
+        },
+        camp,
+      ).visible
+    })
+    .map((camp) => {
+      const membership = membershipsByCamp.get(camp._id) ?? null
+      const rank = computeSortRank(camp, user, userTier, membership)
+      const visibility: CampVisibilityResult =
+        membership?.status === 'active'
+          ? { visible: true }
+          : computeVisibility(
+              {
+                gender: user?.gender ?? 'other',
+                tier: userTier,
+                birthDate: user?.birthDate,
+              },
+              camp,
+            )
+      const reason = visibility.accessDeniedReason ?? lockedReason(camp, userTier)
+      return {
+        ...camp,
+        name: resolveCampDisplayName(camp),
+        membership,
+        _sortRank: camp.status === 'frozen' || camp.status === 'grace' ? 1 : rank,
+        _lockedReason:
+          camp.status === 'frozen'
+            ? 'Frozen — upgrade to manage this camp'
+            : membership?.status === 'active'
+              ? undefined
+              : reason,
+        frozen: camp.status === 'frozen',
+        grace: camp.status === 'grace',
+      }
+    })
+    .filter((camp) => camp._sortRank < 2)
+}
+
+function sortCampList<T extends { _sortRank: number; name: string }>(camps: T[]): T[] {
+  return camps.sort((left, right) => {
+    if (left._sortRank !== right._sortRank) return left._sortRank - right._sortRank
+    return left.name.localeCompare(right.name)
+  })
+}
+
+/** Cursor-based camp discovery used by current clients. */
+export const listPage = query({
+  args: {
+    includeArchived: v.optional(v.boolean()),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const numItems = boundedInteger(args.paginationOpts.numItems, {
+      defaultValue: CAMP_PAGE_DEFAULT,
+      min: 1,
+      max: CAMP_PAGE_MAX,
+      name: 'paginationOpts.numItems',
+    })
+    const viewer = await buildCampListViewer(ctx)
+    const campQuery = args.includeArchived
+      ? ctx.db.query('camps').withIndex('by_status_created')
+      : ctx.db.query('camps').withIndex('by_status_created', (q) => q.eq('status', 'active'))
+    const result = await campQuery.paginate({
+      ...args.paginationOpts,
+      numItems,
+      maximumRowsRead: CAMP_PAGE_MAX,
+      maximumBytesRead: 2_000_000,
+    })
+    await hydrateCampListMemberships(ctx, viewer, result.page)
+    const restrictedMemberCamps =
+      args.paginationOpts.cursor === null && !args.includeArchived
+        ? await getRestrictedMemberCamps(ctx, viewer)
+        : []
+    return {
+      ...result,
+      page: sortCampList(
+        decorateCampListPage(
+          [...restrictedMemberCamps, ...result.page],
+          viewer,
+          args.includeArchived === true,
+        ),
+      ),
+    }
+  },
+})
+
+/**
+ * Backward-compatible array wrapper for installed clients. New clients use
+ * listPage; this wrapper is deliberately capped so it cannot scan the table.
+ */
 export const list = query({
   args: {
     includeArchived: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const userId = await auth.getUserId(ctx)
-    const memberships = userId
-      ? await ctx.db
-          .query('campMembers')
-          .withIndex('by_user', (q) => q.eq('userId', userId))
-          .collect()
-      : []
-
-    const membershipsByCamp = new Map(
-      memberships.map((membership) => [membership.campId, membership]),
-    )
-
-    // Fetch user + tier for visibility evaluation
-    const user = userId ? await ctx.db.get(userId) : null
-    const userTier =
-      user && userId
-        ? await getEntitlementSubscriptionTier(ctx, userId)
-        : ('free' as SubscriptionTier)
-
-    const camps = await ctx.db.query('camps').collect()
-
-    return camps
-      .filter((camp) => args.includeArchived || isCampVisibleStatus(camp.status))
-      .filter((camp) => {
-        // Frozen and grace camps are only visible to existing active members.
-        if (camp.status === 'frozen' || camp.status === 'grace') {
-          const membership = membershipsByCamp.get(camp._id)
-          return membership?.status === 'active'
-        }
-        // Active members always see their camps
-        const membership = membershipsByCamp.get(camp._id)
-        if (membership?.status === 'active') {
-          return true
-        }
-        // Use computeVisibility for non-members
-        if (!user) {
-          // Anonymous user
-          const visibility = computeVisibility(
-            {
-              gender: 'other',
-              tier: 'free',
-              birthDate: undefined,
-            },
-            camp,
-          )
-          return visibility.visible
-        }
-        const visibility = computeVisibility(
-          {
-            gender: user.gender,
-            tier: userTier,
-            birthDate: user.birthDate,
-          },
-          camp,
-        )
-        return visibility.visible
-      })
-      .map((camp) => {
-        const membership = membershipsByCamp.get(camp._id) ?? null
-        const rank = computeSortRank(camp, user, userTier, membership)
-        const visibility: CampVisibilityResult =
-          membership?.status === 'active'
-            ? { visible: true }
-            : computeVisibility(
-                {
-                  gender: user?.gender ?? 'other',
-                  tier: userTier,
-                  birthDate: user?.birthDate,
-                },
-                camp,
-              )
-        const reason = visibility.accessDeniedReason ?? lockedReason(camp, userTier)
-        return {
-          ...camp,
-          name: resolveCampDisplayName(camp),
-          membership,
-          _sortRank: camp.status === 'frozen' || camp.status === 'grace' ? 1 : rank,
-          _lockedReason:
-            camp.status === 'frozen'
-              ? 'Frozen — upgrade to manage this camp'
-              : membership?.status === 'active'
-                ? undefined
-                : reason,
-          frozen: camp.status === 'frozen',
-          grace: camp.status === 'grace',
-        }
-      })
-      .filter((camp) => camp._sortRank < 2) // Exclude hidden camps
-      .sort((left, right) => {
-        // Primary: sort rank (joinable above locked)
-        if (left._sortRank !== right._sortRank) {
-          return left._sortRank - right._sortRank
-        }
-        // Secondary: alphabetic
-        return left.name.localeCompare(right.name)
-      })
+    const viewer = await buildCampListViewer(ctx)
+    const campQuery = args.includeArchived
+      ? ctx.db.query('camps').withIndex('by_status_created')
+      : ctx.db.query('camps').withIndex('by_status_created', (q) => q.eq('status', 'active'))
+    const [camps, restrictedMemberCamps] = await Promise.all([
+      campQuery.take(LEGACY_CAMP_SCAN_MAX),
+      args.includeArchived ? [] : getRestrictedMemberCamps(ctx, viewer),
+    ])
+    await hydrateCampListMemberships(ctx, viewer, camps)
+    return sortCampList(
+      decorateCampListPage(
+        [...restrictedMemberCamps, ...camps],
+        viewer,
+        args.includeArchived === true,
+      ),
+    ).slice(0, LEGACY_CAMP_LIST_MAX)
   },
 })
 
@@ -949,6 +1084,13 @@ export const get = query({
 
     const userId = await auth.getUserId(ctx)
     const membership = userId ? await getMembership(ctx, userId, camp._id) : null
+    const user = userId ? await ctx.db.get(userId) : null
+    if (user && !isUserEligibleForCamp(user, camp)) {
+      return null
+    }
+    if (!user && getCampAgeBand(camp) === 'teen') {
+      return null
+    }
 
     // Archived camps are visible to active members only.
     if (camp.status === 'archived') {
@@ -991,7 +1133,6 @@ export const get = query({
     }
 
     // For non-members, use computeVisibility
-    const user = userId ? await ctx.db.get(userId) : null
     const userTier =
       user && userId
         ? await getEntitlementSubscriptionTier(ctx, userId)
@@ -1026,14 +1167,16 @@ export const listMine = query({
     const memberships = await ctx.db
       .query('campMembers')
       .withIndex('by_user', (q) => q.eq('userId', user._id).eq('status', 'active'))
-      .collect()
+      .take(USER_MEMBERSHIP_READ_MAX)
 
     const camps = await Promise.all(memberships.map((membership) => ctx.db.get(membership.campId)))
     return camps
       .map((camp, index) => (camp ? { ...camp, membership: memberships[index] } : null))
       .filter(
         (camp): camp is NonNullable<typeof camp> =>
-          !!camp && (isCampVisibleStatus(camp.status) || camp.status === 'archived'),
+          !!camp &&
+          isUserEligibleForCamp(user, camp) &&
+          (isCampVisibleStatus(camp.status) || camp.status === 'archived'),
       )
       .sort((left, right) => left.name.localeCompare(right.name))
   },
@@ -1075,6 +1218,9 @@ export const approveMember = mutation({
       throwUserError('Camp not found')
     }
     await assertCanManageCamp(ctx, camp)
+    const member = await ctx.db.get(args.userId)
+    if (!member) throwUserError('User not found')
+    assertUserCanAccessCamp(member, camp)
 
     const membershipId = await upsertMembership(ctx, {
       userId: args.userId,
@@ -1104,6 +1250,11 @@ export const updateMemberStatus = mutation({
     const membership = await getMembership(ctx, args.userId, args.campId)
     if (!membership) {
       throwUserError('Membership not found')
+    }
+    if (args.status === 'active') {
+      const member = await ctx.db.get(args.userId)
+      if (!member) throwUserError('User not found')
+      assertUserCanAccessCamp(member, camp)
     }
 
     const now = Date.now()
@@ -1153,6 +1304,9 @@ export const approveAccessRequest = mutation({
     }
 
     await assertCanReviewAccessRequests(ctx, camp)
+    const requester = await ctx.db.get(membership.userId)
+    if (!requester) throwUserError('User not found')
+    assertUserCanAccessCamp(requester, camp)
 
     const now = Date.now()
     await ctx.db.patch(args.membershipId, {
@@ -1300,7 +1454,6 @@ export const muteCamp = mutation({
 export const createInvite = mutation({
   args: {
     campId: v.id('camps'),
-    code: v.optional(v.string()),
     maxUses: v.optional(v.number()),
     expiresAt: v.optional(v.number()),
   },
@@ -1316,9 +1469,9 @@ export const createInvite = mutation({
     }
 
     const user = await assertCanManageCamp(ctx, camp)
+    assertUserCanAccessCamp(user, camp)
 
-    const canReuseExistingInvite =
-      args.code === undefined && args.expiresAt === undefined && args.maxUses === undefined
+    const canReuseExistingInvite = args.expiresAt === undefined && args.maxUses === undefined
     const result = canReuseExistingInvite
       ? ((await findReusableInviteCode(ctx, {
           parentType: 'camp',
@@ -1334,7 +1487,6 @@ export const createInvite = mutation({
           parentType: 'camp',
           parentId: camp._id,
           createdBy: user._id,
-          code: args.code,
           expiresAt: args.expiresAt,
           maxUses: args.maxUses,
         })
@@ -1358,10 +1510,16 @@ export const redeemInvite = mutation({
     ),
 })
 
-export async function redeemCampInviteHandler(ctx: MutationCtx, rawCode: string) {
+export async function redeemCampInviteHandler(
+  ctx: MutationCtx,
+  rawCode: string,
+  options: { rateLimitAlreadyConsumed?: boolean } = {},
+) {
   const user = await getCurrentUser(ctx)
+  if (!options.rateLimitAlreadyConsumed) await enforceInviteAttemptLimit(ctx, user._id)
   const now = Date.now()
   const normalizedCode = normalizeInviteCode(rawCode)
+  if (!normalizedCode || normalizedCode.length > 128) return { invalid: true as const }
 
   const invite = await ctx.db
     .query('inviteCodes')
@@ -1369,31 +1527,34 @@ export async function redeemCampInviteHandler(ctx: MutationCtx, rawCode: string)
     .first()
 
   if (!invite) {
-    throwUserError('Invite not found')
+    return { invalid: true as const }
   }
 
-  if (invite.expiresAt !== undefined && invite.expiresAt <= now) {
-    throwUserError('Invite has expired')
-  }
-  if (invite.maxUses !== undefined && invite.uses >= invite.maxUses) {
-    throwUserError('Invite has already been used')
+  if (!isInviteCodeClaimable(invite, now)) {
+    return { invalid: true as const }
   }
   if (invite.parentType !== 'camp') {
-    throwUserError('Invite not found')
+    return { invalid: true as const }
   }
 
   const camp = await ctx.db.get(invite.parentId as Id<'camps'>)
   if (!camp) {
-    throwUserError('Camp not found')
+    return { invalid: true as const }
   }
 
   if (!isCampVisibleStatus(camp.status)) {
-    throwUserError('Camp not found')
+    return { invalid: true as const }
   }
 
   // Frozen and grace camps do not accept new members via invite.
   if (camp.status === 'frozen' || camp.status === 'grace') {
-    throwUserError('This camp is not accepting new members right now.')
+    return { invalid: true as const }
+  }
+  if (
+    !isUserEligibleForCamp(user, camp) ||
+    (await isEitherUserBlocked(ctx, user._id, invite.createdBy))
+  ) {
+    return { invalid: true as const }
   }
 
   const existingMembership = await getMembership(ctx, user._id, camp._id)
@@ -1413,17 +1574,7 @@ export async function redeemCampInviteHandler(ctx: MutationCtx, rawCode: string)
     eligibility.reason !== 'invite_only' &&
     eligibility.reason !== 'private'
   ) {
-    const messages: Record<string, string> = {
-      wrong_gender: 'This camp is limited to members who match its gender setting',
-      tier_too_low: 'Your subscription tier is too low to join this camp',
-      underage: 'You do not meet the age requirement for this camp',
-      banned: 'You cannot join this camp',
-      already_member: 'You are already a member of this camp',
-      already_pending: 'You already have a pending request for this camp',
-      rejected_cooldown:
-        'Your previous request was denied. You can try again after the cooldown period.',
-    }
-    throwUserError(messages[eligibility.reason] ?? 'You cannot join this camp')
+    return { invalid: true as const }
   }
 
   const membershipId = await upsertMembership(ctx, {
@@ -1476,13 +1627,8 @@ export const setCampAccess = mutation({
 export const seedLaunchCamps = mutation({
   args: {},
   handler: async (ctx) => {
-    const existingCamps = await ctx.db.query('camps').take(1)
     const user = await getCurrentUser(ctx)
-    if (existingCamps.length > 0) {
-      if (!isAdmin(user)) {
-        throw new Error('Only admins can reseed camps')
-      }
-    }
+    if (!isAdmin(user)) throwUserError('Only admins can seed launch camps')
 
     const launchCampIds = []
     for (const seed of getLaunchCampSeeds()) {
@@ -1493,6 +1639,35 @@ export const seedLaunchCamps = mutation({
       launchCampIds,
       launchCampCount: launchCampIds.length,
     }
+  },
+})
+
+/** Idempotently create/update only the 13–17 launch camps. Admin-only. */
+export const seedTeenCamps = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getCurrentUser(ctx)
+    if (!isAdmin(user)) throwUserError('Only admins can seed teen camps')
+    const campIds = []
+    for (const seed of TEEN_LAUNCH_CAMPS) {
+      campIds.push(await ensureCamp(ctx, seed, { isLaunchCamp: true, ownerId: user._id }))
+    }
+    return { campIds, count: campIds.length }
+  },
+})
+
+/** Deployment-safe CLI path: npx convex run internal:camps:seedTeenCampsAdmin */
+export const seedTeenCampsAdmin = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const adminUser = await findAdminUser(ctx)
+    const ownerId = adminUser?._id ?? (await ctx.db.query('users').first())?._id
+    if (!ownerId) throw new Error('No users found to assign as camp owner')
+    const campIds = []
+    for (const seed of TEEN_LAUNCH_CAMPS) {
+      campIds.push(await ensureCamp(ctx, seed, { isLaunchCamp: true, ownerId }))
+    }
+    return { campIds, count: campIds.length }
   },
 })
 
@@ -1683,6 +1858,7 @@ export const createPublicCamp = mutation({
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx)
+    const ownerAgeBand = assertUserAgeBand(user)
 
     // Validate Pro subscription and kindling balance
     await assertCanCreatePublicCamp(ctx, user._id)
@@ -1749,6 +1925,7 @@ export const createPublicCamp = mutation({
       crisisBroadcast: false,
       welcomeBroadcast: false,
       access: args.access ?? 'open',
+      ageBand: ownerAgeBand,
       status: 'active',
       ownerId: user._id,
       bondfireCount: 0,
@@ -1768,7 +1945,7 @@ export const createPublicCamp = mutation({
 
     // Add admin as moderator
     const adminUser = await findAdminUser(ctx)
-    if (adminUser && adminUser._id !== user._id) {
+    if (adminUser && adminUser._id !== user._id && getUserAgeBand(adminUser) === ownerAgeBand) {
       await upsertMembership(ctx, {
         userId: adminUser._id,
         campId,
@@ -1797,6 +1974,7 @@ export const createPrivateCamp = mutation({
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUser(ctx)
+    const ownerAgeBand = assertUserAgeBand(user)
     const tier = await assertCanCreatePrivateCamp(ctx, user._id)
 
     const name = args.name.trim()
@@ -1843,6 +2021,7 @@ export const createPrivateCamp = mutation({
       crisisBroadcast: false,
       welcomeBroadcast: false,
       access: 'invite',
+      ageBand: ownerAgeBand,
       status: 'active',
       ownerId: user._id,
       bondfireCount: 0,
@@ -1876,7 +2055,7 @@ export const createPrivateCamp = mutation({
     })
 
     const adminUser = await findAdminUser(ctx)
-    if (adminUser && adminUser._id !== user._id) {
+    if (adminUser && adminUser._id !== user._id && getUserAgeBand(adminUser) === ownerAgeBand) {
       await upsertMembership(ctx, {
         userId: adminUser._id,
         campId,
@@ -1901,6 +2080,7 @@ export const claimInactivePublicCamp = mutation({
     if (!camp || camp.access === 'invite' || camp.status !== 'inactive') {
       return { success: false as const, reason: 'not_claimable' as const }
     }
+    assertUserCanAccessCamp(user, camp)
 
     const existingMembership = await getMembership(ctx, user._id, camp._id)
     if (existingMembership?.status === 'banned') {
@@ -2038,6 +2218,18 @@ export const adminBackfill = mutation({
 
       const adminMembershipRole = ownerId === adminUser._id ? 'owner' : 'moderator'
       const existingMembership = await getMembership(ctx, adminUser._id, camp._id)
+      if (!isUserEligibleForCamp(adminUser, camp)) {
+        if (existingMembership?.status === 'active') {
+          await ctx.db.patch(existingMembership._id, {
+            status: 'rejected',
+            moderationReason: 'Administrative account is outside this camp age group.',
+            rejectedAt: now,
+            updatedAt: now,
+          })
+          await refreshActiveMemberCount(ctx, camp._id)
+        }
+        continue
+      }
       if (!existingMembership) {
         await upsertMembership(ctx, {
           userId: adminUser._id,
@@ -2145,6 +2337,18 @@ export const adminBackfillAdmin = internalMutation({
 
       const adminMembershipRole = ownerId === adminUser._id ? 'owner' : 'moderator'
       const existingMembership = await getMembership(ctx, adminUser._id, camp._id)
+      if (!isUserEligibleForCamp(adminUser, camp)) {
+        if (existingMembership?.status === 'active') {
+          await ctx.db.patch(existingMembership._id, {
+            status: 'rejected',
+            moderationReason: 'Administrative account is outside this camp age group.',
+            rejectedAt: now,
+            updatedAt: now,
+          })
+          await refreshActiveMemberCount(ctx, camp._id)
+        }
+        continue
+      }
       if (!existingMembership) {
         await upsertMembership(ctx, {
           userId: adminUser._id,
@@ -2233,6 +2437,7 @@ export const setOwner = mutation({
     if (!newOwner) {
       throw new Error('New owner user not found')
     }
+    assertUserCanAccessCamp(newOwner, camp)
 
     const previousOwnerId = camp.ownerId
     const now = Date.now()

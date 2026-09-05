@@ -130,6 +130,7 @@
         "apps/mobile/**/*.ts",
         "apps/mobile/**/*.tsx",
         "apps/mobile/**/*.js",
+        "apps/mobile/**/*.cjs",
         "apps/mobile/**/*.json",
         "apps/mobile/**/*.plist",
         "apps/mobile/**/*.gradle",
@@ -137,6 +138,12 @@
         "apps/mobile/.gitignore"
       ],
       "actions": ["validate", "device-smoke"]
+    },
+    {
+      "id": "mobile-smoke-automation",
+      "description": "Maestro device smoke flows and their non-production contract",
+      "patterns": [".maestro/**"],
+      "actions": ["validate", "route-integrity", "device-smoke"]
     },
     {
       "id": "recording-stack",
@@ -200,6 +207,7 @@
       "patterns": [
         "scripts/release.sh",
         "scripts/release-evidence.mjs",
+        "scripts/mobile-release-preflight.mjs",
         "scripts/refresh-ios-provisioning-profile.sh",
         "RELEASE_PROCESS.md"
       ],
@@ -219,6 +227,31 @@
     }
   ],
   "boundaries": [
+    {
+      "id": "mobile-observability",
+      "description": "Sentry native crash reporting, source maps, privacy policy, and runtime environment tags.",
+      "owner": "Bondfires release owner",
+      "triggerPatterns": [
+        "apps/mobile/app.config.js",
+        "apps/mobile/config/**",
+        "apps/mobile/metro.config.js",
+        "apps/mobile/lib/monitoring*.ts",
+        "packages/app/src/services/privacyScrubber.ts",
+        "apps/mobile/eas.json",
+        "scripts/mobile-release-preflight.mjs"
+      ],
+      "environmentKeys": [
+        "APP_VARIANT",
+        "EAS_BUILD_PROFILE",
+        "EXPO_PUBLIC_APP_ENV",
+        "EXPO_PUBLIC_SENTRY_DSN",
+        "SENTRY_AUTH_TOKEN",
+        "SENTRY_ORG",
+        "SENTRY_PROJECT"
+      ],
+      "documents": ["docs/production-observability-and-release-qa.md"],
+      "actions": ["release-preflight", "external-contract-review", "dependency-review"]
+    },
     {
       "id": "convex-mobile-api",
       "description": "Convex schema and public functions are consumed by released mobile clients.",
@@ -271,9 +304,10 @@
         "MUX_UPLOAD_CORS_ORIGIN",
         "MUX_UPLOAD_TIMEOUT_SECONDS",
         "MUX_VIDEO_QUALITY",
-        "MUX_WEBHOOK_SECRET"
+        "MUX_WEBHOOK_SECRET",
+        "RETENTION_CLAIMS_ENABLED"
       ],
-      "documents": ["docs/mux-setup.md", "docs/plans/mux-live-streaming.md"],
+      "documents": ["docs/mux-setup.md", "docs/plans/mux-live-streaming.md", "docs/retention-cleanup.md"],
       "actions": ["external-contract-review", "recording-smoke"]
     },
     {
@@ -309,16 +343,41 @@
       "owner": "Bondfires maintainers",
       "triggerPatterns": [
         "convex/subscriptions.ts",
+        "convex/storeBilling.ts",
+        "convex/storeBillingActions.ts",
+        "convex/lib/storeBillingPolicy.ts",
+        "convex/lib/storeBillingPolicy.test.ts",
+        "convex/http.ts",
+        "convex/crons.ts",
+        "convex/schema.ts",
         "convex/entitlements.ts",
         "packages/app/src/hooks/useSubscription.ts",
         "apps/mobile/eas.json",
-        "apps/mobile/app.json"
+        "apps/mobile/app.json",
+        "docs/store-billing.env.example",
+        "docs/store-billing-lifecycle.md"
       ],
       "environmentKeys": [
         "APPLE_IAP_ENVIRONMENT",
-        "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON"
+        "APPLE_IAP_ALLOW_SANDBOX_NOTIFICATIONS",
+        "APPLE_BUNDLE_ID",
+        "APPLE_APP_ID",
+        "APPLE_IAP_KEY_ID",
+        "APPLE_IAP_ISSUER_ID",
+        "APPLE_IAP_PRIVATE_KEY",
+        "APPLE_ROOT_CA_CERTIFICATES_BASE64",
+        "GOOGLE_PLAY_PACKAGE_NAME",
+        "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON",
+        "GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL",
+        "GOOGLE_PLAY_SERVICE_ACCOUNT_PRIVATE_KEY",
+        "GOOGLE_PUBSUB_AUDIENCE",
+        "GOOGLE_PUBSUB_PUSH_SERVICE_ACCOUNT_EMAIL"
       ],
-      "documents": ["RELEASE_PROCESS.md"],
+      "documents": [
+        "docs/store-billing.env.example",
+        "docs/store-billing-lifecycle.md",
+        "RELEASE_PROCESS.md"
+      ],
       "actions": ["external-contract-review", "client-compatibility-review"]
     },
     {

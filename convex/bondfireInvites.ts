@@ -2,9 +2,15 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import { internalAction, mutation, query } from './_generated/server'
+import { getUserAgeBand } from './agePolicy'
 import { auth } from './auth'
-import { buildViewerVisibilityContext, isCampContentVisibleToViewer } from './bondfireVisibility'
+import {
+  buildViewerVisibilityContext,
+  isBondfireVisibleToViewer,
+  isCampContentVisibleToViewer,
+} from './bondfireVisibility'
 import { createDirectInviteHandler } from './inviteClaims'
+import { getBlockedUserIds } from './userSafety'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -25,6 +31,7 @@ export const listInvitableContacts = query({
 
     const cutoff = Date.now() - INTERACTION_WINDOW_MS
     const contactMap = new Map<string, number>() // userId -> latest interaction time
+    const blockedUserIds = await getBlockedUserIds(ctx, userId)
 
     // 1. Get all camp memberships for the current user (any status)
     const myMemberships = await ctx.db
@@ -43,7 +50,7 @@ export const listInvitableContacts = query({
         .collect()
 
       for (const m of members) {
-        if (m.userId === userId) continue
+        if (m.userId === userId || blockedUserIds.has(m.userId)) continue
         const existing = contactMap.get(m.userId)
         if (!existing || m._creationTime > existing) {
           contactMap.set(m.userId, m._creationTime)
@@ -66,6 +73,7 @@ export const listInvitableContacts = query({
         .collect()
 
       for (const r of responses) {
+        if (blockedUserIds.has(r.userId)) continue
         const existing = contactMap.get(r.userId)
         if (!existing || r._creationTime > existing) {
           contactMap.set(r.userId, r._creationTime)
@@ -84,7 +92,7 @@ export const listInvitableContacts = query({
 
     for (const bondfireId of respondedBondfireIds) {
       const bondfire = await ctx.db.get(bondfireId)
-      if (!bondfire || bondfire.userId === userId) continue
+      if (!bondfire || bondfire.userId === userId || blockedUserIds.has(bondfire.userId)) continue
       const existing = contactMap.get(bondfire.userId)
       const time = Math.max(bondfire._creationTime, cutoff)
       if (!existing || time > existing) {
@@ -99,8 +107,10 @@ export const listInvitableContacts = query({
       .map(([uid]) => uid)
 
     const users = await Promise.all(sorted.map((id) => ctx.db.get(id as Id<'users'>)))
+    const currentUser = await ctx.db.get(userId)
+    const currentAgeBand = currentUser ? getUserAgeBand(currentUser) : null
     return users
-      .filter((u): u is Doc<'users'> => u !== null)
+      .filter((u): u is Doc<'users'> => u !== null && getUserAgeBand(u) === currentAgeBand)
       .map((u) => ({
         _id: u._id,
         displayName: u.displayName,
@@ -165,6 +175,9 @@ export const canAccessBondfire = query({
     const bondfire = await ctx.db.get(args.bondfireId)
     if (!bondfire) return null
 
+    const viewer = await buildViewerVisibilityContext(ctx, userId)
+    if (!(await isBondfireVisibleToViewer(ctx, bondfire, viewer))) return null
+
     if (!bondfire.campId) {
       return { needsCampJoin: false, campId: null }
     }
@@ -174,7 +187,7 @@ export const canAccessBondfire = query({
     if (!camp) return null
 
     if (!userId) {
-      if (camp.access === 'open') {
+      if (camp.access === 'open' && isCampContentVisibleToViewer(camp, viewer)) {
         return { needsCampJoin: false, campId: camp._id }
       }
       return null
@@ -185,6 +198,10 @@ export const canAccessBondfire = query({
       .withIndex('by_user_camp', (q) => q.eq('userId', userId).eq('campId', campId))
       .unique()
 
+    if (!isCampContentVisibleToViewer(camp, viewer)) {
+      return null
+    }
+
     if (membership && membership.status === 'active') {
       return { needsCampJoin: false, campId: camp._id }
     }
@@ -193,10 +210,6 @@ export const canAccessBondfire = query({
       // Only show the join prompt if the camp is actually visible/joinable for
       // this user (readable status + gender, age, and tier rules from
       // rules.access with hide-mode visibility).
-      const viewer = await buildViewerVisibilityContext(ctx, userId)
-      if (!isCampContentVisibleToViewer(camp, viewer)) {
-        return null
-      }
       return { needsCampJoin: true, campId: camp._id }
     }
 

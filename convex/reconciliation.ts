@@ -99,7 +99,10 @@ export const listRecentDiscrepancies = query({
   handler: async (ctx, args) => {
     await requireAdmin(ctx)
 
-    const requestedLimit = args.limit ?? DEFAULT_DISCREPANCY_LIMIT
+    const requestedLimit =
+      args.limit === undefined || !Number.isFinite(args.limit)
+        ? DEFAULT_DISCREPANCY_LIMIT
+        : args.limit
     const limit = Math.min(Math.max(Math.trunc(requestedLimit), 1), MAX_DISCREPANCY_LIMIT)
 
     return ctx.db.query('reconciliationLog').withIndex('by_created').order('desc').take(limit)

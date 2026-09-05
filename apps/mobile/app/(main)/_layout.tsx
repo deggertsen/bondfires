@@ -11,6 +11,7 @@ import { SubscriptionPaywall } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
 import { Stack } from 'expo-router'
 import { useMemo } from 'react'
+import { CommunityAcceptanceGate } from '../../components/CommunityAcceptanceGate'
 import { FreeCapabilitiesExplainer } from '../../components/FreeCapabilitiesExplainer'
 
 function GlobalPaywall() {
@@ -144,9 +145,11 @@ export default function MainLayout() {
           options={{ headerShown: false }}
         />
         <Stack.Screen name="personal-camp" options={{ headerShown: false }} />
+        <Stack.Screen name="family-connections" options={{ headerShown: false }} />
       </Stack>
       <GlobalPaywall />
       <FreeCapabilitiesExplainer />
+      <CommunityAcceptanceGate />
     </>
   )
 }

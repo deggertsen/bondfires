@@ -19,6 +19,7 @@ type AuditAction = AuditEntry['action']
 
 const DEFAULT_AUDIT_LIMIT = 100
 const MAX_AUDIT_LIMIT = 500
+const MAX_AUDIT_LOOKBACK_DAYS = 365
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -44,14 +45,22 @@ const actionValidator = v.union(
   v.literal('member_remove'),
   v.literal('report_resolve'),
   v.literal('report_dismiss'),
+  v.literal('public_config_update'),
+  v.literal('content_approve'),
+  v.literal('content_remove'),
+  v.literal('content_restore'),
+  v.literal('user_suspend'),
+  v.literal('user_reactivate'),
 )
 
 const targetTypeValidator = v.union(
   v.literal('camp'),
   v.literal('user'),
   v.literal('bondfire'),
+  v.literal('response'),
   v.literal('purchase'),
   v.literal('report'),
+  v.literal('config'),
 )
 const metadataValidator = v.optional(
   v.object({
@@ -62,6 +71,10 @@ const metadataValidator = v.optional(
     membershipId: v.optional(v.id('campMembers')),
     purchaseId: v.optional(v.id('consumablePurchases')),
     reportId: v.optional(v.id('reports')),
+    previousVersion: v.optional(v.string()),
+    newVersion: v.optional(v.string()),
+    previousUpdatePriority: v.optional(v.string()),
+    newUpdatePriority: v.optional(v.string()),
   }),
 )
 
@@ -97,12 +110,13 @@ export const internalLogAdminAction = internalMutation({
 // ── Queries ────────────────────────────────────────────────────────────────
 
 function normalizeLimit(requestedLimit: number | undefined) {
-  return Math.min(Math.max(Math.trunc(requestedLimit ?? DEFAULT_AUDIT_LIMIT), 1), MAX_AUDIT_LIMIT)
+  if (requestedLimit === undefined || !Number.isFinite(requestedLimit)) return DEFAULT_AUDIT_LIMIT
+  return Math.min(Math.max(Math.trunc(requestedLimit), 1), MAX_AUDIT_LIMIT)
 }
 
 function getDaysCutoff(days: number | undefined) {
-  if (days === undefined) return undefined
-  const normalizedDays = Math.max(Math.trunc(days), 1)
+  if (days === undefined || !Number.isFinite(days)) return undefined
+  const normalizedDays = Math.min(Math.max(Math.trunc(days), 1), MAX_AUDIT_LOOKBACK_DAYS)
   return Date.now() - normalizedDays * 24 * 60 * 60 * 1000
 }
 

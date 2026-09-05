@@ -5,15 +5,19 @@
  * and persists them for debugging and support purposes.
  */
 
-import { v } from 'convex/values'
+import { ConvexError, v } from 'convex/values'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { internalMutation, internalQuery, mutation, query } from './_generated/server'
 import { auth } from './auth'
+import {
+  reserveClientLogRateLimit,
+  validateClientLogBatch,
+  validateClientLogEntry,
+} from './lib/clientTelemetry'
 
 const LOG_LEVELS = ['error', 'warn', 'info', 'breadcrumb'] as const
 const PURGEABLE_RETENTIONS = [undefined, 'standard'] as const
-const MAX_BATCH_SIZE = 20
 const MAX_RETENTION_DAYS = 30
 const MAX_LIST_LIMIT = 100
 
@@ -27,6 +31,67 @@ async function getCurrentUserId(ctx: QueryCtx | MutationCtx): Promise<Id<'users'
     return userId ?? undefined
   } catch {
     return undefined
+  }
+}
+
+async function requireCurrentUserId(ctx: MutationCtx): Promise<Id<'users'>> {
+  const userId = await getCurrentUserId(ctx)
+  if (!userId) throw new Error('Not authenticated')
+  return userId
+}
+
+async function reserveIngestionCapacity(
+  ctx: MutationCtx,
+  userId: Id<'users'>,
+  requestedEntries: number,
+  now: number,
+): Promise<void> {
+  const existing = await ctx.db
+    .query('clientLogRateLimits')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .unique()
+
+  let next: ReturnType<typeof reserveClientLogRateLimit>
+  try {
+    next = reserveClientLogRateLimit(existing, now, requestedEntries)
+  } catch (error) {
+    throw new ConvexError({
+      code: 'TELEMETRY_RATE_LIMITED',
+      message: error instanceof Error ? error.message : 'Telemetry rate limit exceeded',
+    })
+  }
+  if (existing) {
+    await ctx.db.patch(existing._id, next)
+  } else {
+    await ctx.db.insert('clientLogRateLimits', { userId, ...next })
+  }
+}
+
+function validateClientEntryOrThrow(
+  entry: Parameters<typeof validateClientLogEntry>[0],
+  now: number,
+) {
+  try {
+    validateClientLogEntry(entry, now)
+  } catch (error) {
+    throw new ConvexError({
+      code: 'INVALID_TELEMETRY',
+      message: error instanceof Error ? error.message : 'Invalid telemetry entry',
+    })
+  }
+}
+
+function validateClientBatchOrThrow(
+  entry: Parameters<typeof validateClientLogBatch>[0],
+  now: number,
+) {
+  try {
+    validateClientLogBatch(entry, now)
+  } catch (error) {
+    throw new ConvexError({
+      code: 'INVALID_TELEMETRY',
+      message: error instanceof Error ? error.message : 'Invalid telemetry batch',
+    })
   }
 }
 
@@ -52,9 +117,12 @@ function logEntry(doc: Doc<'clientLogs'>) {
 // ---------------------------------------------------------------------------
 
 /**
- * Insert a single client log entry.
- * Accepts an optional userId — the mutation also attaches the authenticated
- * user if available and no explicit userId was provided.
+ * Insert a single authenticated client log entry. Identity is always derived
+ * from the current session; clients cannot select which user owns a log.
+ *
+ * `userId` remains in the validator temporarily because released clients send
+ * it. The handler deliberately ignores it so backend-first deploys remain
+ * compatible without trusting client-selected ownership.
  */
 const DEVICE_INFO = v.optional(
   v.object({
@@ -85,10 +153,13 @@ export const create = mutation({
     device: DEVICE_INFO,
   },
   handler: async (ctx, args) => {
-    const resolvedUserId = args.userId ?? (await getCurrentUserId(ctx))
+    const userId = await requireCurrentUserId(ctx)
+    const now = Date.now()
+    validateClientEntryOrThrow(args, now)
+    await reserveIngestionCapacity(ctx, userId, 1, now)
 
     return await ctx.db.insert('clientLogs', {
-      userId: resolvedUserId,
+      userId,
       level: args.level,
       event: args.event,
       message: args.message,
@@ -104,9 +175,10 @@ export const create = mutation({
 })
 
 /**
- * Batch-insert up to 20 log entries in a single mutation.
- * Each entry's userId is resolved independently (authenticated user
- * override, or kept null when not authenticated).
+ * Batch-insert authenticated log entries. A non-empty bounded batch is
+ * validated atomically before any rows or rate-limit state are written. The
+ * legacy `userId` field is accepted for installed-client compatibility and
+ * ignored; every inserted row uses the authenticated session identity.
  */
 export const createBatch = mutation({
   args: {
@@ -131,17 +203,15 @@ export const createBatch = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    if (args.entries.length > MAX_BATCH_SIZE) {
-      throw new Error(`Cannot batch more than ${MAX_BATCH_SIZE} entries per call`)
-    }
-
-    const currentUserId = await getCurrentUserId(ctx)
+    const userId = await requireCurrentUserId(ctx)
+    const now = Date.now()
+    validateClientBatchOrThrow(args.entries, now)
+    await reserveIngestionCapacity(ctx, userId, args.entries.length, now)
     const ids: Id<'clientLogs'>[] = []
 
     for (const entry of args.entries) {
-      const resolvedUserId = entry.userId ?? currentUserId
       const id = await ctx.db.insert('clientLogs', {
-        userId: resolvedUserId,
+        userId,
         level: entry.level,
         event: entry.event,
         message: entry.message,
