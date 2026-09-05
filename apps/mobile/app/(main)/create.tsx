@@ -16,12 +16,13 @@ import {
 import { Button, Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
-import { Flame } from '@tamagui/lucide-icons'
+import { ChevronLeft, Flame } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera'
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
-import { AppState, Platform, StatusBar } from 'react-native'
+import { AppState, Platform, Pressable, StatusBar } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
@@ -65,6 +66,7 @@ function getCompletionDetail(args: {
 
 export default function CreateScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
+  const insets = useSafeAreaInsets()
   const router = useRouter()
   const navigation = useNavigation()
   const { campId, respondTo, personalCamp } = useLocalSearchParams<{
@@ -653,6 +655,7 @@ export default function CreateScreen() {
         personalCampDoc={personalCampDoc}
         joinCamp={joinCamp}
         onCampConfirmed={handleCampConfirmed}
+        onBack={handleBack}
       />
     )
   }
@@ -668,6 +671,22 @@ export default function CreateScreen() {
         gap={18}
       >
         <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+        <Pressable
+          onPress={handleBack}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          style={{
+            position: 'absolute',
+            top: insets.top + 12,
+            left: 20,
+            minWidth: 44,
+            minHeight: 44,
+            justifyContent: 'center',
+          }}
+        >
+          <ChevronLeft size={26} color={'$color'} />
+        </Pressable>
         <YStack
           width={78}
           height={78}
@@ -703,6 +722,22 @@ export default function CreateScreen() {
         gap={18}
       >
         <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+        <Pressable
+          onPress={handleBack}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          style={{
+            position: 'absolute',
+            top: insets.top + 12,
+            left: 20,
+            minWidth: 44,
+            minHeight: 44,
+            justifyContent: 'center',
+          }}
+        >
+          <ChevronLeft size={26} color={'$color'} />
+        </Pressable>
         <Text fontSize={24} fontWeight="900" textAlign="center">
           Need or Offer?
         </Text>

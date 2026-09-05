@@ -62,9 +62,10 @@ export function useBondfireThumbnails({ enabled, onBatchError }: UseBondfireThum
       } catch (error) {
         if (generation !== generationRef.current) return
 
-        batch(() => {
-          for (const item of pending) thumbnailUrls$[item.cacheKey].set(null)
-        })
+        // Leave these cache keys unset. Caching null here froze tiles as
+        // flames until the next full reset whenever one batch hiccuped
+        // (flaky network, action cold start). An absent key lets a later
+        // ensure pass — new data, refocus, viewability — retry them.
         onBatchErrorRef.current?.(error, pending)
       } finally {
         for (const item of pending) loadingKeys.delete(item.cacheKey)
