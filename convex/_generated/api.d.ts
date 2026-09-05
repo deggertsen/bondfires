@@ -55,11 +55,13 @@ import type * as lib_latestResponsePlayback from "../lib/latestResponsePlayback.
 import type * as lib_liveBackupRecovery from "../lib/liveBackupRecovery.js";
 import type * as lib_liveIngest from "../lib/liveIngest.js";
 import type * as lib_liveSessionStaleness from "../lib/liveSessionStaleness.js";
+import type * as lib_maintenanceRuns from "../lib/maintenanceRuns.js";
 import type * as lib_notificationCopy from "../lib/notificationCopy.js";
 import type * as lib_presence from "../lib/presence.js";
 import type * as lib_pushProviders from "../lib/pushProviders.js";
 import type * as lib_reportPolicy from "../lib/reportPolicy.js";
 import type * as lib_storeBillingPolicy from "../lib/storeBillingPolicy.js";
+import type * as lib_queryBounds from "../lib/queryBounds.js";
 import type * as lib_videoReactions from "../lib/videoReactions.js";
 import type * as liveSessionProgress from "../liveSessionProgress.js";
 import type * as liveSessions from "../liveSessions.js";
@@ -139,11 +141,13 @@ declare const fullApi: ApiFromModules<{
   "lib/liveBackupRecovery": typeof lib_liveBackupRecovery;
   "lib/liveIngest": typeof lib_liveIngest;
   "lib/liveSessionStaleness": typeof lib_liveSessionStaleness;
+  "lib/maintenanceRuns": typeof lib_maintenanceRuns;
   "lib/notificationCopy": typeof lib_notificationCopy;
   "lib/presence": typeof lib_presence;
   "lib/pushProviders": typeof lib_pushProviders;
   "lib/reportPolicy": typeof lib_reportPolicy;
   "lib/storeBillingPolicy": typeof lib_storeBillingPolicy;
+  "lib/queryBounds": typeof lib_queryBounds;
   "lib/videoReactions": typeof lib_videoReactions;
   liveSessionProgress: typeof liveSessionProgress;
   liveSessions: typeof liveSessions;
