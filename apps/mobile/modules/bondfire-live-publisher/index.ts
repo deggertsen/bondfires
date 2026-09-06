@@ -32,6 +32,8 @@ export interface LivePublisherStartResult {
 }
 
 export interface LivePublisherPreviewOptions {
+  width?: number
+  height?: number
   fps?: number
   videoBitrate?: number
   audioBitrate?: number

@@ -19,8 +19,8 @@
  */
 
 export const LIVE_VIDEO_BITRATE_LADDER = [
-  2_500_000, // tier 0 — nominal ceiling
-  1_500_000, // tier 1 — mild congestion
+  1_500_000, // tier 0 — talking-head recording ceiling
+  1_200_000, // tier 1 — mild congestion
   1_000_000, // tier 2 — serious congestion
   600_000, // tier 3 — survival floor
 ] as const

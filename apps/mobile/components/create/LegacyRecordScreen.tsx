@@ -1,3 +1,4 @@
+import { useUploadCompletion } from '@bondfires/app'
 // ── FROZEN FALLBACK ──────────────────────────────────────────────────────
 // Legacy expo-camera segment recording, used only when the native live
 // publisher is unavailable (simulator, missing dev build). Do not add
@@ -117,7 +118,7 @@ export function LegacyRecordScreen({
   const isSwitchingCamera = phase === 'recording' && !!pendingFacing
 
   const createMuxDirectUpload = useAction(api.videos.createMuxDirectUpload)
-  const getMuxUploadStatus = useAction(api.videos.getMuxUploadStatus)
+  const waitForMuxUploadReady = useUploadCompletion()
   const convex = useConvex()
 
   const recordingTimeRemainingSeconds = effectiveMaxRecordingSeconds
@@ -322,8 +323,8 @@ export function LegacyRecordScreen({
                 draftBondfireId: args.draftBondfireId as Id<'bondfires'> | undefined,
               })
             },
-            getMuxUploadStatus: async (args) => {
-              return await getMuxUploadStatus(args)
+            waitForMuxUploadReady: async (args) => {
+              return await waitForMuxUploadReady(args)
             },
           },
           false,
@@ -359,7 +360,7 @@ export function LegacyRecordScreen({
       respondTo,
       selectedCampTags,
       createMuxDirectUpload,
-      getMuxUploadStatus,
+      waitForMuxUploadReady,
       currentUser?._id,
       convex,
       isPersonalCamp,
@@ -814,6 +815,8 @@ export function LegacyRecordScreen({
             style={{ flex: 1 }}
             facing={facing}
             mode="video"
+            videoQuality="720p"
+            videoBitrate={1_500_000}
             onCameraReady={() => {
               recordingStore$.isCameraReady.set(true)
               recordingStore$.cameraMountError.set(null)

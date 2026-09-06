@@ -161,7 +161,15 @@ export const listViewers = query({
     const visible = await Promise.all(
       rows.map((row) => isUserContentVisibleToViewer(ctx, row.userId, viewer)),
     )
-    return rows.filter((_, index) => visible[index])
+    // Heartbeats update liveness without changing the visible viewer payload.
+    return rows
+      .filter((_, index) => visible[index])
+      .map(({ _id, userId, userName, userPhotoUrl }) => ({
+        _id,
+        userId,
+        userName,
+        userPhotoUrl,
+      }))
   },
 })
 

@@ -2,7 +2,7 @@
  * Client-side telemetry logger (singleton).
  *
  * Queues breadcrumbs, errors, and warnings in memory and batch-flushes
- * them to the Convex `clientLogs` table every 10 seconds.  Also hooks
+ * them to the Convex `clientLogs` table within 60 seconds.  Also hooks
  * React Native's global error handler to capture unhandled exceptions.
  */
 
@@ -87,7 +87,7 @@ function generateSessionId(): string {
 // ---------------------------------------------------------------------------
 
 const MAX_QUEUE_SIZE = 100
-const FLUSH_INTERVAL_MS = 10000
+const FLUSH_INTERVAL_MS = 60_000
 const MAX_SERIALIZE_DEPTH = 5
 const MAX_SERIALIZE_KEYS = 50
 const MAX_SERIALIZE_ARRAY_ITEMS = 100
@@ -352,6 +352,7 @@ export class TelemetryLogger {
   private userId: string | null = null
   private isInitialized = false
   private flushTimer: ReturnType<typeof setTimeout> | null = null
+  private sendInFlight: Promise<void> | null = null
   private persistTimer: ReturnType<typeof setTimeout> | null = null
   private storage: MMKV | null = null
   private _mutationCreateBatch: ((args: unknown) => Promise<unknown>) | null = null
@@ -607,19 +608,34 @@ export class TelemetryLogger {
     })
 
     this.schedulePersist()
+    this.startFlushTimer()
+    if (this.queue.length >= MAX_QUEUE_SIZE - TELEMETRY_BATCH_SIZE) void this.sendBatch()
   }
 
   private startFlushTimer(): void {
-    if (this.flushTimer) clearInterval(this.flushTimer)
-
-    this.flushTimer = setInterval(() => {
+    if (this.flushTimer || this.queue.length === 0 || !this._mutationCreateBatch || !this.userId)
+      return
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null
       void this.sendBatch()
     }, FLUSH_INTERVAL_MS)
   }
 
-  private async sendBatch(): Promise<void> {
-    // Preserve startup/crash telemetry locally until Convex auth has resolved.
-    // Anonymous ingestion would expose a database write endpoint to anyone.
+  private sendBatch(): Promise<void> {
+    // Preserve startup/crash telemetry locally until Convex auth resolves.
+    // Avoid an empty in-flight send blocking the immediate post-auth flush.
+    if (!this._mutationCreateBatch || !this.userId) return Promise.resolve()
+    if (this.sendInFlight) return this.sendInFlight
+    if (this.flushTimer) clearTimeout(this.flushTimer)
+    this.flushTimer = null
+    this.sendInFlight = this.drainBatch().finally(() => {
+      this.sendInFlight = null
+      this.startFlushTimer()
+    })
+    return this.sendInFlight
+  }
+
+  private async drainBatch(): Promise<void> {
     if (!this._mutationCreateBatch || !this.userId) return
 
     const batch = this.queue.drain()

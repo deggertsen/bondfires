@@ -7,6 +7,13 @@
       "exclude": [
         "typescript"
       ]
+    },
+    "autolinking": {
+      "android": {
+        "buildFromSource": [
+          "expo-video"
+        ]
+      }
     }
   },
   "scripts": {

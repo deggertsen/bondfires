@@ -27,6 +27,7 @@ export function usePreferences() {
 
   return {
     preferences,
+    setPlaybackQuality: appActions.setPlaybackQuality,
     setAutoplayVideos: appActions.setAutoplayVideos,
     setNotificationsEnabled: appActions.setNotificationsEnabled,
     setLivePublishEnabled: appActions.setLivePublishEnabled,

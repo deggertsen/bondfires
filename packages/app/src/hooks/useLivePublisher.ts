@@ -36,8 +36,8 @@ import { assessNetworkTransport } from '../utils/networkTransport'
  * The thermal mitigation ladder in LiveRecordScreen restores these when the
  * device cools back down.
  */
-export const LIVE_DEFAULT_VIDEO_BITRATE = 2_500_000
-export const LIVE_DEFAULT_VIDEO_FPS = 30
+export const LIVE_DEFAULT_VIDEO_BITRATE = 1_500_000
+export const LIVE_DEFAULT_VIDEO_FPS = 24
 
 export interface LivePublisherStartOptions {
   rtmpsUrl: string
@@ -94,6 +94,8 @@ export interface LivePublisherSubscription {
 }
 
 export interface LivePublisherPreviewOptions {
+  width?: number
+  height?: number
   fps?: number
   videoBitrate?: number
   audioBitrate?: number
@@ -861,6 +863,8 @@ export function useLivePublisher(options: {
   const preview = useCallback(
     async (args: { initialCamera?: 'front' | 'back' } = {}) => {
       await options.publisher.startPreview({
+        width: 720,
+        height: 1280,
         fps: LIVE_DEFAULT_VIDEO_FPS,
         videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
         audioBitrate: 128_000,
@@ -1017,6 +1021,8 @@ export function useLivePublisher(options: {
         const publisherOptions = {
           rtmpsUrl: args.ingest.rtmpsUrl,
           streamKey: args.ingest.streamKey,
+          width: 720,
+          height: 1280,
           fps: LIVE_DEFAULT_VIDEO_FPS,
           videoBitrate: startBitrate.bitrateBps,
           audioBitrate: 128_000,
@@ -1191,6 +1197,8 @@ export function useLivePublisher(options: {
       await options.publisher.start({
         rtmpsUrl: ingest.rtmpsUrl,
         streamKey: ingest.streamKey,
+        width: 720,
+        height: 1280,
         fps: LIVE_DEFAULT_VIDEO_FPS,
         videoBitrate: reconnectBitrate,
         audioBitrate: 128_000,

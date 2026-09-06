@@ -20,8 +20,6 @@ const CREDENTIALS_READY_PROGRESS = 20
 const UPLOAD_END_PROGRESS = 97
 const MUX_READY_PROGRESS = 99
 const COMPLETE_PROGRESS = 100
-const MUX_READY_POLL_INTERVAL_MS = 5000
-const MUX_READY_TIMEOUT_MS = 10 * 60 * 1000
 
 interface MuxUploadStatus {
   uploadStatus: string
@@ -85,7 +83,7 @@ export interface BackgroundUploadOptions {
     width?: number
     height?: number
   }) => Promise<MuxDirectUpload>
-  getMuxUploadStatus: (args: { uploadId: string }) => Promise<MuxUploadStatus>
+  waitForMuxUploadReady: (args: { uploadId: string }) => Promise<MuxUploadStatus>
   callbacks?: BackgroundUploadCallbacks
 }
 
@@ -129,10 +127,6 @@ function hasPreparedUpload(
   video: UploadTask['processedVideo'] | undefined,
 ): video is ProcessedVideo {
   return !!video && typeof video.uploadUri === 'string'
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function getExtensionFromUri(uri: string): string | null {
@@ -212,33 +206,17 @@ async function waitForMuxVideoReady(params: {
   options: BackgroundUploadOptions
   taskId: string
 }): Promise<MuxUploadStatus> {
-  const startedAt = Date.now()
-
-  while (Date.now() - startedAt < MUX_READY_TIMEOUT_MS) {
-    const status = await params.options.getMuxUploadStatus({
-      uploadId: params.upload.uploadId,
-    })
-
-    if (status.isFailed) {
-      throw new Error('Mux failed to process the uploaded video')
-    }
-
-    if (status.isReady) {
-      setTaskProgress(params.taskId, params.options, MUX_READY_PROGRESS, 'Video is ready')
-      return status
-    }
-
-    const statusLabel = status.assetStatus ?? status.uploadStatus
-    setTaskProgress(
-      params.taskId,
-      params.options,
-      UPLOAD_END_PROGRESS,
-      `Waiting for video processing (${statusLabel})...`,
-    )
-    await delay(MUX_READY_POLL_INTERVAL_MS)
-  }
-
-  throw new Error('Mux video is still processing. Upload will resume checking shortly.')
+  setTaskProgress(
+    params.taskId,
+    params.options,
+    UPLOAD_END_PROGRESS,
+    'Waiting for video processing...',
+  )
+  const status = await params.options.waitForMuxUploadReady({ uploadId: params.upload.uploadId })
+  if (!status.isReady || status.isFailed)
+    throw new Error('Mux failed to process the uploaded video')
+  setTaskProgress(params.taskId, params.options, MUX_READY_PROGRESS, 'Video is ready')
+  return status
 }
 
 /**
@@ -341,7 +319,7 @@ export async function startLiveBackupUpload(
     createLiveBackupDirectUpload: NonNullable<
       BackgroundUploadOptions['createLiveBackupDirectUpload']
     >
-    getMuxUploadStatus: BackgroundUploadOptions['getMuxUploadStatus']
+    waitForMuxUploadReady: BackgroundUploadOptions['waitForMuxUploadReady']
     createMuxDirectUpload: BackgroundUploadOptions['createMuxDirectUpload']
     callbacks?: BackgroundUploadCallbacks
   },
@@ -372,7 +350,7 @@ export async function startLiveBackupUpload(
       recordType: options.recordType,
       createMuxDirectUpload: options.createMuxDirectUpload,
       createLiveBackupDirectUpload: options.createLiveBackupDirectUpload,
-      getMuxUploadStatus: options.getMuxUploadStatus,
+      waitForMuxUploadReady: options.waitForMuxUploadReady,
       callbacks: options.callbacks,
     },
     autoStart,

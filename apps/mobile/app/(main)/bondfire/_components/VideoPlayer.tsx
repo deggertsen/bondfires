@@ -34,6 +34,7 @@ import { AppState, type LayoutChangeEvent, PanResponder, Pressable, type View } 
 import { YStack } from 'tamagui'
 import { api } from '../../../../../../convex/_generated/api'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
+import { playbackSize } from '../../../../../../packages/app/src/utils/playbackQualityPolicy'
 import type { ActiveReaction } from '../../../../components/ViewerPresenceStack'
 import { VIDEO_OVERLAY_COLORS as OVERLAY_COLORS } from '../../../../components/videoOverlayColors'
 import {
@@ -42,6 +43,7 @@ import {
   SCREEN_WIDTH,
   SCRUB_SEEK_THROTTLE_MS,
 } from '../_lib/bondfireDetailHelpers'
+import { usePlaybackQuality } from '../_lib/usePlaybackQuality'
 import { type CaptionCue, fetchCaptionCues, findCaptionText } from '../_lib/videoCaptions'
 import {
   clearActiveReactions,
@@ -142,6 +144,7 @@ export function VideoPlayer({
   const videoId = bondfireId || bondfireVideoId || ''
   const autoplayVideos = useValue(appStore$.preferences.autoplayVideos)
   const isMuted = useValue(appStore$.preferences.videoMuted)
+  const playbackQuality = useValue(appStore$.preferences.playbackQuality) ?? 720
   const playbackSpeed = useValue(appStore$.preferences.playbackSpeed)
   const currentUserId = useValue(appStore$.userId)
   const shouldSuppressPlayback = isLive && currentUserId === videoOwnerId
@@ -264,6 +267,7 @@ export function VideoPlayer({
   })
 
   const player = useVideoPlayer(currentSource, (player) => {
+    player.maxVideoSize = playbackSize(playbackQuality)
     player.loop = false
     player.muted = isMuted
     player.playbackRate = playbackSpeed
@@ -273,6 +277,8 @@ export function VideoPlayer({
     // Inactive FlatList neighbors also create native players with null sources.
     player.staysActiveInBackground = ownsPlaybackSession
   })
+
+  usePlaybackQuality(player, ownsPlaybackSession, isScrubbingRef, pendingScrubSeekRef)
 
   // useVideoPlayer releases and replaces its native shared object whenever
   // currentSource changes, not only on unmount. Async work must therefore

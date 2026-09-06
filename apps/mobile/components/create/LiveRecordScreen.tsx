@@ -27,6 +27,7 @@ import {
   useAppThemeColors,
   useLivePublisher,
   usePresence,
+  useUploadCompletion,
 } from '@bondfires/app'
 import { Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
@@ -55,7 +56,7 @@ const keepAwakeTag = 'create-recording'
 // MediaCodec reconfigure mid-stream.
 const THERMAL_QUALITY_LADDER = [
   { bitrate: LIVE_DEFAULT_VIDEO_BITRATE, fps: LIVE_DEFAULT_VIDEO_FPS }, // nominal
-  { bitrate: 1_500_000, fps: 24 }, // fair / moderate
+  { bitrate: 1_000_000, fps: 24 }, // fair / moderate
   { bitrate: 800_000, fps: 15 }, // serious / severe
 ] as const
 const THERMAL_POLL_INTERVAL_MS = 10_000
@@ -211,7 +212,7 @@ export function LiveRecordScreen({
   const cancelLiveStream = useAction(api.videos.cancelLiveStream)
   const createLiveBackupDirectUpload = useAction(api.videos.createLiveBackupDirectUpload)
   const createMuxDirectUpload = useAction(api.videos.createMuxDirectUpload)
-  const getMuxUploadStatus = useAction(api.videos.getMuxUploadStatus)
+  const waitForMuxUploadReady = useUploadCompletion()
   const touchLiveSession = useMutation(api.videos.touchLiveSession)
   const confirmLiveSessionLocalBackup = useMutation(api.videos.confirmLiveSessionLocalBackup)
   const markBondfireLive = useMutation(api.videos.markBondfireLive)
@@ -906,10 +907,10 @@ export function LiveRecordScreen({
             campId: uploadArgs.campId as Id<'camps'> | undefined,
             draftBondfireId: uploadArgs.draftBondfireId as Id<'bondfires'> | undefined,
           }),
-        getMuxUploadStatus: async (uploadArgs) => await getMuxUploadStatus(uploadArgs),
+        waitForMuxUploadReady: async (uploadArgs) => await waitForMuxUploadReady(uploadArgs),
       })
     },
-    [createLiveBackupDirectUpload, createMuxDirectUpload, getMuxUploadStatus],
+    [createLiveBackupDirectUpload, createMuxDirectUpload, waitForMuxUploadReady],
   )
 
   const stopLiveRecording = useCallback(async () => {

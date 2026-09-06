@@ -7,6 +7,7 @@ import { sweepLocalBackups } from '../services/localBackupSweep'
 import { telemetry } from '../services/telemetry'
 import { toastActions } from '../store/toast.store'
 import { useRecordingResourceLock } from './useRecordingResourceLock'
+import { useUploadCompletion } from './useUploadCompletion'
 
 const RECOVERY_TOAST_MESSAGE =
   "Finishing an upload from an earlier recording. It'll appear once it's done."
@@ -25,7 +26,7 @@ export function useLocalBackupSweep() {
   const convex = useConvex()
   const createLiveBackupDirectUpload = useAction(api.videos.createLiveBackupDirectUpload)
   const createMuxDirectUpload = useAction(api.videos.createMuxDirectUpload)
-  const getMuxUploadStatus = useAction(api.videos.getMuxUploadStatus)
+  const waitForMuxUploadReady = useUploadCompletion()
   const hasRun = useRef(false)
   const recordingResourceLocked = useRecordingResourceLock()
 
@@ -67,7 +68,7 @@ export function useLocalBackupSweep() {
               campId: uploadArgs.campId as Id<'camps'> | undefined,
               draftBondfireId: uploadArgs.draftBondfireId as Id<'bondfires'> | undefined,
             }),
-          getMuxUploadStatus: async (statusArgs) => await getMuxUploadStatus(statusArgs),
+          waitForMuxUploadReady: async (statusArgs) => await waitForMuxUploadReady(statusArgs),
         })
 
         if (!announcedRecovery) {
@@ -84,7 +85,7 @@ export function useLocalBackupSweep() {
     convex,
     createLiveBackupDirectUpload,
     createMuxDirectUpload,
-    getMuxUploadStatus,
+    waitForMuxUploadReady,
     recordingResourceLocked,
   ])
 }

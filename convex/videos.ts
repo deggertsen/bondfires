@@ -1120,10 +1120,7 @@ function isPlayableVideoRecord(record: {
   )
 }
 
-async function findMuxRecordByUpload(
-  ctx: MutationCtx,
-  uploadId: string,
-): Promise<MuxRecord | null> {
+async function findMuxRecordByUpload(ctx: QueryCtx, uploadId: string): Promise<MuxRecord | null> {
   const bondfire = await ctx.db
     .query('bondfires')
     .withIndex('by_mux_upload', (q) => q.eq('muxUploadId', uploadId))
@@ -1217,13 +1214,12 @@ async function markRecordAssetCreated(
   record: MuxRecord,
   args: { assetId: string; assetStatus?: string },
 ) {
-  // Asset-created events can arrive after a different asset is already ready.
+  // Asset-created events (including duplicates for the same asset) can arrive after ready.
   // Keep the playable row stable; the later asset-ready event will perform the
   // source-aware live-wins decision and delete whichever asset lost.
   if (
     hasResolvedRecordedAsset(record.document) &&
-    (record.document.videoStatus ?? 'ready') === 'ready' &&
-    record.document.muxAssetId !== args.assetId
+    (record.document.videoStatus ?? 'ready') === 'ready'
   ) {
     return false
   }
@@ -1890,90 +1886,176 @@ export const createMuxDirectUpload = action({
   },
 })
 
-export const getMuxUploadStatus = action({
-  args: {
-    uploadId: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const userId = await auth.getUserId(ctx)
-    if (!userId) {
-      throwUserError('Not authenticated')
+// Shared by legacy callers and the bounded server-side completion recovery job.
+async function syncMuxUploadStatus(ctx: ActionCtx, uploadId: string) {
+  const upload = parseMuxData(await muxRequest(`/uploads/${uploadId}`))
+  const uploadStatus = readOptionalString(upload.status) ?? 'waiting'
+  const assetId = readOptionalString(upload.asset_id)
+  let assetStatus: string | undefined
+  let playbackId: string | undefined
+  let durationMs: number | undefined
+  let muxAspectRatio: string | undefined
+  let muxMaxResolution: string | undefined
+
+  if (assetId) {
+    await ctx.runMutation(internal.videos.markMuxAssetCreated, {
+      uploadId: uploadId,
+      assetId,
+      assetStatus: 'preparing',
+    })
+
+    const asset = parseMuxData(await muxRequest(`/assets/${assetId}`))
+    const assetInfo = readMuxAssetInfo(asset)
+    assetStatus = assetInfo.assetStatus
+    playbackId = assetInfo.playbackId
+    durationMs = assetInfo.durationMs
+    muxAspectRatio = assetInfo.muxAspectRatio
+    muxMaxResolution = assetInfo.muxMaxResolution
+
+    if (assetStatus && MUX_READY_STATUSES.has(assetStatus) && playbackId) {
+      const result: { updated: boolean; rejected?: boolean } = await ctx.runMutation(
+        internal.videos.markMuxAssetReady,
+        {
+          uploadId: uploadId,
+          assetId,
+          playbackId,
+          assetStatus,
+          durationMs,
+          muxAspectRatio,
+          muxMaxResolution,
+        },
+      )
+      if (result.rejected) {
+        assetStatus = DURATION_LIMIT_EXCEEDED_STATUS
+        playbackId = undefined
+      }
+    } else if (assetStatus && MUX_FAILED_STATUSES.has(assetStatus)) {
+      await ctx.runMutation(internal.videos.markMuxAssetErrored, {
+        uploadId: uploadId,
+        assetId,
+        assetStatus,
+      })
     }
-    if (args.uploadId.length < 8 || args.uploadId.length > 256) {
+  } else if (MUX_FAILED_STATUSES.has(uploadStatus)) {
+    await ctx.runMutation(internal.videos.markMuxAssetErrored, {
+      uploadId: uploadId,
+      assetStatus: uploadStatus,
+    })
+  }
+
+  return {
+    uploadStatus,
+    assetStatus,
+    assetId,
+    playbackId,
+    isReady: !!playbackId && assetStatus !== undefined && MUX_READY_STATUSES.has(assetStatus),
+    isFailed:
+      MUX_FAILED_STATUSES.has(uploadStatus) ||
+      (assetStatus !== undefined &&
+        (MUX_FAILED_STATUSES.has(assetStatus) || assetStatus === DURATION_LIMIT_EXCEEDED_STATUS)),
+  }
+}
+
+function uploadCompletionStatus(record: MuxRecord) {
+  const doc = record.document
+  return {
+    uploadStatus: doc.videoStatus ?? 'waiting_for_upload',
+    assetStatus: doc.muxAssetStatus,
+    assetId: doc.muxAssetId,
+    playbackId: doc.muxPlaybackId,
+    isReady: doc.videoStatus === 'ready' && !!doc.muxPlaybackId,
+    isFailed:
+      doc.videoStatus === 'errored' ||
+      (doc.videoStatus !== 'ready' &&
+        (MUX_FAILED_STATUSES.has(doc.muxAssetStatus ?? '') ||
+          doc.muxAssetStatus === DURATION_LIMIT_EXCEEDED_STATUS)),
+  }
+}
+
+export const getUploadCompletion = query({
+  args: { uploadId: v.string() },
+  handler: async (ctx, args) => {
+    if (args.uploadId.length < 8 || args.uploadId.length > 256) throwUserError('Upload not found')
+    const userId = await auth.getUserId(ctx)
+    const record = await findMuxRecordByUpload(ctx, args.uploadId)
+    if (!userId || !record || record.document.userId !== userId) {
       throwUserError('Upload not found')
     }
+    return uploadCompletionStatus(record)
+  },
+})
+
+export const getUploadCompletionRecord = internalQuery({
+  args: { uploadId: v.string() },
+  handler: async (ctx, args) => {
+    const record = await findMuxRecordByUpload(ctx, args.uploadId)
+    return record
+      ? {
+          ...uploadCompletionStatus(record),
+          userId: record.document.userId,
+          startedAt: record.document.muxCompletionCheckStartedAt,
+        }
+      : null
+  },
+})
+
+export const getMuxUploadStatus = action({
+  args: { uploadId: v.string() },
+  handler: async (ctx, args): Promise<Awaited<ReturnType<typeof syncMuxUploadStatus>>> => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) throwUserError('Not authenticated')
+    if (args.uploadId.length < 8 || args.uploadId.length > 256) throwUserError('Upload not found')
     const ownsUpload = await ctx.runQuery(internal.videos.userOwnsMuxUpload, {
       userId,
       uploadId: args.uploadId,
     })
     if (!ownsUpload) throwUserError('Upload not found')
+    return await syncMuxUploadStatus(ctx, args.uploadId)
+  },
+})
 
-    const upload = parseMuxData(await muxRequest(`/uploads/${args.uploadId}`))
-    const uploadStatus = readOptionalString(upload.status) ?? 'waiting'
-    const assetId = readOptionalString(upload.asset_id)
-    let assetStatus: string | undefined
-    let playbackId: string | undefined
-    let durationMs: number | undefined
-    let muxAspectRatio: string | undefined
-    let muxMaxResolution: string | undefined
+// A transaction prevents duplicate jobs when several mounted screens resume an upload.
+export const monitorUploadCompletion = mutation({
+  args: { uploadId: v.string() },
+  handler: async (ctx, args) => {
+    if (args.uploadId.length < 8 || args.uploadId.length > 256) throwUserError('Upload not found')
+    const userId = await auth.getUserId(ctx)
+    const record = await findMuxRecordByUpload(ctx, args.uploadId)
+    if (!userId || !record || record.document.userId !== userId) throwUserError('Upload not found')
+    const status = uploadCompletionStatus(record)
+    if (status.isReady || status.isFailed) return
+    const now = Date.now()
+    if (now - (record.document.muxCompletionCheckStartedAt ?? 0) < 15 * 60_000) return
+    await ctx.db.patch(record.document._id, { muxCompletionCheckStartedAt: now })
+    await ctx.scheduler.runAfter(30_000, internal.videos.recoverUploadCompletion, {
+      uploadId: args.uploadId,
+      startedAt: now,
+      attempt: 0,
+    })
+  },
+})
 
-    if (assetId) {
-      await ctx.runMutation(internal.videos.markMuxAssetCreated, {
-        uploadId: args.uploadId,
-        assetId,
-        assetStatus: 'preparing',
-      })
-
-      const asset = parseMuxData(await muxRequest(`/assets/${assetId}`))
-      const assetInfo = readMuxAssetInfo(asset)
-      assetStatus = assetInfo.assetStatus
-      playbackId = assetInfo.playbackId
-      durationMs = assetInfo.durationMs
-      muxAspectRatio = assetInfo.muxAspectRatio
-      muxMaxResolution = assetInfo.muxMaxResolution
-
-      if (assetStatus && MUX_READY_STATUSES.has(assetStatus) && playbackId) {
-        const result: { updated: boolean; rejected?: boolean } = await ctx.runMutation(
-          internal.videos.markMuxAssetReady,
-          {
-            uploadId: args.uploadId,
-            assetId,
-            playbackId,
-            assetStatus,
-            durationMs,
-            muxAspectRatio,
-            muxMaxResolution,
-          },
-        )
-        if (result.rejected) {
-          assetStatus = DURATION_LIMIT_EXCEEDED_STATUS
-          playbackId = undefined
-        }
-      } else if (assetStatus && MUX_FAILED_STATUSES.has(assetStatus)) {
-        await ctx.runMutation(internal.videos.markMuxAssetErrored, {
-          uploadId: args.uploadId,
-          assetId,
-          assetStatus,
-        })
-      }
-    } else if (MUX_FAILED_STATUSES.has(uploadStatus)) {
-      await ctx.runMutation(internal.videos.markMuxAssetErrored, {
-        uploadId: args.uploadId,
-        assetStatus: uploadStatus,
-      })
+export const recoverUploadCompletion = internalAction({
+  args: { uploadId: v.string(), startedAt: v.number(), attempt: v.number() },
+  handler: async (ctx, args): Promise<void> => {
+    const record = await ctx.runQuery(internal.videos.getUploadCompletionRecord, {
+      uploadId: args.uploadId,
+    })
+    if (!record || record.startedAt !== args.startedAt || record.isReady || record.isFailed) return
+    try {
+      const status = await syncMuxUploadStatus(ctx, args.uploadId)
+      if (status.isReady || status.isFailed) return
+    } catch {
+      // Transient Mux errors still advance the retry ladder. The existing
+      // reconciliation cron remains the final safety net after this bounded job.
     }
-
-    return {
-      uploadStatus,
-      assetStatus,
-      assetId,
-      playbackId,
-      isReady: !!playbackId && assetStatus !== undefined && MUX_READY_STATUSES.has(assetStatus),
-      isFailed:
-        MUX_FAILED_STATUSES.has(uploadStatus) ||
-        (assetStatus !== undefined &&
-          (MUX_FAILED_STATUSES.has(assetStatus) || assetStatus === DURATION_LIMIT_EXCEEDED_STATUS)),
-    }
+    const delays = [60_000, 120_000, 240_000, 240_000]
+    const delay = delays[args.attempt]
+    if (delay !== undefined)
+      await ctx.scheduler.runAfter(delay, internal.videos.recoverUploadCompletion, {
+        ...args,
+        attempt: args.attempt + 1,
+      })
   },
 })
 

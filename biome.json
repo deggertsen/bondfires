@@ -15,6 +15,7 @@
       "!**/build",
       "!**/out",
       "!**/.next",
+      "!**/Pods",
       "!**/node_modules"
     ]
   },

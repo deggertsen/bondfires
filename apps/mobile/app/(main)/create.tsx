@@ -12,6 +12,7 @@ import {
   useAppThemeColors,
   useRecordingResourceLock,
   useSubscription,
+  useUploadCompletion,
 } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
@@ -178,7 +179,7 @@ export default function CreateScreen() {
 
   const createMuxDirectUpload = useAction(api.videos.createMuxDirectUpload)
   const createLiveBackupDirectUpload = useAction(api.videos.createLiveBackupDirectUpload)
-  const getMuxUploadStatus = useAction(api.videos.getMuxUploadStatus)
+  const waitForMuxUploadReady = useUploadCompletion()
   const camps = useQuery(api.camps.list, respondTo ? 'skip' : {})
   const subscription = useQuery(api.subscriptions.current, {})
   const currentUser = useQuery(api.users.current)
@@ -482,11 +483,11 @@ export default function CreateScreen() {
           height: args.height,
         })
       },
-      getMuxUploadStatus: async (args) => {
-        return await getMuxUploadStatus(args)
+      waitForMuxUploadReady: async (args) => {
+        return await waitForMuxUploadReady(args)
       },
     })
-  }, [createLiveBackupDirectUpload, createMuxDirectUpload, getMuxUploadStatus])
+  }, [createLiveBackupDirectUpload, createMuxDirectUpload, waitForMuxUploadReady])
 
   const schedulePendingUploads = useCallback(() => {
     clearUploadStartTimeout()

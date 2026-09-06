@@ -16,3 +16,5 @@ export * from './useRecordingWatchdog'
 export * from './useResumeUploads'
 export * from './useSubscription'
 export * from './useThemeColors'
+
+export * from './useUploadCompletion'

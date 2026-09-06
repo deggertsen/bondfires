@@ -19,6 +19,7 @@ export interface AppState {
     autoplayVideos: boolean
     videoMuted: boolean
     notificationsEnabled: boolean
+    playbackQuality: 720 | 1080
     playbackSpeed: number // 1.0 to 2.0
     livePublishEnabled: boolean
     captionsEnabled: boolean
@@ -59,6 +60,7 @@ const defaultState: AppState = {
     autoplayVideos: true,
     videoMuted: true,
     notificationsEnabled: true,
+    playbackQuality: 720,
     playbackSpeed: 1.0,
     livePublishEnabled: true,
     // On by default: videos default to muted (videoMuted above), and captions
@@ -101,7 +103,7 @@ syncObservable(appStore$, {
 // Must run AFTER persistence has loaded, or the loaded MMKV blob would clobber
 // whatever the migration set. `syncState(...).isPersistLoaded` resolves
 // synchronously for the MMKV plugin, so this normally fires on the same tick.
-const CURRENT_MIGRATION_VERSION = 2
+const CURRENT_MIGRATION_VERSION = 3
 
 when(syncState(appStore$).isPersistLoaded, () => {
   const persistedVersion = appStore$.migrationVersion.peek() ?? 0
@@ -128,6 +130,10 @@ when(syncState(appStore$).isPersistLoaded, () => {
     appStore$.preferences.captionsEnabled.set(true)
   }
 
+  if (persistedVersion < 3) {
+    appStore$.preferences.playbackQuality.set(720)
+  }
+
   appStore$.migrationVersion.set(CURRENT_MIGRATION_VERSION)
 })
 
@@ -147,6 +153,10 @@ export const appActions = {
 
   setNotificationsEnabled: (enabled: boolean) => {
     appStore$.preferences.notificationsEnabled.set(enabled)
+  },
+
+  setPlaybackQuality: (quality: 720 | 1080) => {
+    appStore$.preferences.playbackQuality.set(quality)
   },
 
   setPlaybackSpeed: (speed: number) => {
