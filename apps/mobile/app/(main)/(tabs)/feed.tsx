@@ -31,7 +31,7 @@ import {
 import { useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
 import { AlertTriangle, Flame, RefreshCw, Search, X } from '@tamagui/lucide-icons'
-import { useMutation, useQuery } from 'convex/react'
+import { useMutation, usePaginatedQuery, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -57,6 +57,8 @@ import {
   getSwipeReportComment,
 } from '../../../lib/bondfireSwipeActions'
 import type { BondfireThumbnailFields } from '../../../lib/bondfireThumbnails'
+import { type FeedPageState, getHomeFeedEmptyState } from '../../../lib/homeFeedState'
+import { shouldLoadSparsePage, uniqueById } from '../../../lib/pagination'
 import { routes } from '../../../lib/routes'
 import { useBondfireThumbnails } from '../../../lib/useBondfireThumbnails'
 
@@ -416,28 +418,73 @@ function FeedRetry({ onRetry }: { onRetry: () => void }) {
 function FeedSubscription({
   selectedCampId,
   enabled,
+  loadMoreRequest,
   onResolved,
 }: {
   selectedCampId: Doc<'camps'>['_id'] | null | undefined
   enabled: boolean
-  onResolved: (bondfires: BondfireData[]) => void
+  loadMoreRequest: number
+  onResolved: (bondfires: BondfireData[], pageState: FeedPageState) => void
 }) {
-  const allBondfires = useQuery(
-    api.bondfires.listFeed,
-    enabled && selectedCampId === null ? { limit: 50 } : 'skip',
+  const {
+    results: allBondfires,
+    status: allBondfiresStatus,
+    loadMore,
+  } = usePaginatedQuery(
+    api.bondfires.listFeedPage,
+    enabled && selectedCampId === null ? {} : 'skip',
+    { initialNumItems: 50 },
   )
+  const handledLoadRequest = useRef(0)
+  const requestedVisibleCount = useRef(1)
   const campBondfires = useQuery(
     api.bondfires.listByCamp,
     enabled && selectedCampId ? { campId: selectedCampId, limit: 50 } : 'skip',
   )
+  const deduplicatedAllBondfires = useMemo(() => uniqueById(allBondfires), [allBondfires])
   const bondfires =
-    selectedCampId === undefined ? undefined : selectedCampId ? campBondfires : allBondfires
+    selectedCampId === undefined || !enabled
+      ? undefined
+      : selectedCampId
+        ? campBondfires
+        : allBondfiresStatus === 'LoadingFirstPage'
+          ? undefined
+          : deduplicatedAllBondfires
 
   useEffect(() => {
     if (bondfires !== undefined) {
-      onResolved(bondfires)
+      onResolved(
+        bondfires,
+        selectedCampId || allBondfiresStatus === 'Exhausted'
+          ? 'done'
+          : allBondfiresStatus === 'CanLoadMore'
+            ? 'available'
+            : 'loading',
+      )
     }
-  }, [bondfires, onResolved])
+  }, [bondfires, onResolved, selectedCampId, allBondfiresStatus])
+
+  useEffect(() => {
+    if (selectedCampId !== null) return
+    if (loadMoreRequest > handledLoadRequest.current) {
+      handledLoadRequest.current = loadMoreRequest
+      requestedVisibleCount.current = deduplicatedAllBondfires.length + 1
+    }
+    if (
+      shouldLoadSparsePage(
+        allBondfiresStatus,
+        deduplicatedAllBondfires.length,
+        requestedVisibleCount.current,
+      )
+    )
+      loadMore(50)
+  }, [
+    deduplicatedAllBondfires.length,
+    allBondfiresStatus,
+    loadMore,
+    loadMoreRequest,
+    selectedCampId,
+  ])
 
   return null
 }
@@ -459,8 +506,10 @@ export default function HomeScreen() {
   const [viewMode, setViewMode] = useState<ViewMode>('discover')
   const [query, setQuery] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
+  const [loadMoreRequest, setLoadMoreRequest] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [bondfires, setBondfires] = useState<BondfireData[] | undefined>(undefined)
+  const [feedPageState, setFeedPageState] = useState<FeedPageState>('loading')
   const currentUserId = useValue(appStore$.userId)
   const currentCampId = useValue(appStore$.currentCampId)
   const joinedCamps = useQuery(api.camps.listMine, canLoadTabData && currentUserId ? {} : 'skip') as
@@ -600,6 +649,7 @@ export default function HomeScreen() {
     resetLoadTracking()
     resetThumbnailUrls()
     setIsRefreshing(true)
+    setLoadMoreRequest(0)
     setRefreshKey((current) => current + 1)
 
     if (refreshTimeoutRef.current) {
@@ -612,8 +662,9 @@ export default function HomeScreen() {
   }, [resetLoadTracking, resetThumbnailUrls])
 
   const handleBondfiresResolved = useCallback(
-    (nextBondfires: BondfireData[]) => {
+    (nextBondfires: BondfireData[], pageState: FeedPageState) => {
       setBondfires(nextBondfires)
+      setFeedPageState(pageState)
       stopRefreshing()
     },
     [stopRefreshing],
@@ -735,11 +786,14 @@ export default function HomeScreen() {
   }, [ensureThumbnailUrls, filtered, shouldRunBackgroundWork])
 
   // Rail tiles and "New responses" rows resolve their thumbnails through the
-  // same cache as the Discover list.
+  // same cache as the Discover list. Cover the full rail window, and re-kick
+  // after pull-to-refresh — resetThumbnailUrls() clears the cache without
+  // re-emitting myFires, so without refreshKey the rail would sit on flames.
   useEffect(() => {
     if (!shouldRunBackgroundWork || !myFires) return
-    ensureThumbnailUrls([...sortedMyFires.unread, ...sortedMyFires.quiet].slice(0, 12))
-  }, [ensureThumbnailUrls, myFires, shouldRunBackgroundWork, sortedMyFires])
+    void refreshKey
+    ensureThumbnailUrls([...sortedMyFires.unread, ...sortedMyFires.quiet].slice(0, RAIL_MAX_ITEMS))
+  }, [ensureThumbnailUrls, myFires, refreshKey, shouldRunBackgroundWork, sortedMyFires])
 
   const handleBondfirePress = useCallback(
     (bondfireId: string) => {
@@ -794,6 +848,7 @@ export default function HomeScreen() {
     (campId: string | null) => {
       resetLoadTracking()
       setBondfires(undefined)
+      setLoadMoreRequest(0)
       resetThumbnailUrls()
       appActions.setCurrentCampId(campId)
       listRef.current?.scrollToOffset({ offset: 0, animated: true })
@@ -922,6 +977,12 @@ export default function HomeScreen() {
   }, [])
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 10 }).current
+  const emptyState = getHomeFeedEmptyState({
+    pageState: feedPageState,
+    loadedCount: bondfires?.length ?? 0,
+    query,
+    viewMode,
+  })
 
   if (bondfires === undefined) {
     return (
@@ -930,6 +991,7 @@ export default function HomeScreen() {
           key={feedSubscriptionKey}
           enabled={canLoadTabData}
           selectedCampId={activeCampId}
+          loadMoreRequest={loadMoreRequest}
           onResolved={handleBondfiresResolved}
         />
         {timedOut ? <FeedRetry onRetry={handleRetry} /> : <LoadingFeed />}
@@ -943,6 +1005,7 @@ export default function HomeScreen() {
         key={feedSubscriptionKey}
         enabled={canLoadTabData}
         selectedCampId={activeCampId}
+        loadMoreRequest={loadMoreRequest}
         onResolved={handleBondfiresResolved}
       />
       <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
@@ -952,6 +1015,10 @@ export default function HomeScreen() {
           listRef.current = r
         }}
         data={filtered ?? []}
+        onEndReached={() => {
+          if (activeCampId === null) setLoadMoreRequest((current) => current + 1)
+        }}
+        onEndReachedThreshold={0.5}
         extraData={listExtraData}
         keyExtractor={(item) => item._id}
         onScrollBeginDrag={closeOpenSwipeableRow}
@@ -1163,12 +1230,46 @@ export default function HomeScreen() {
           </YStack>
         }
         ListEmptyComponent={
-          bondfires.length === 0 ? (
+          emptyState === 'loading' || emptyState === 'more' ? (
+            <YStack paddingVertical={48} alignItems="center" gap={12}>
+              {emptyState === 'loading' ? (
+                <Spinner size="large" color={'$primary'} />
+              ) : (
+                <>
+                  <Text color={'$placeholderColor'}>More fires may match this view.</Text>
+                  <Button onPress={() => setLoadMoreRequest((current) => current + 1)}>
+                    <Text>Load more</Text>
+                  </Button>
+                </>
+              )}
+            </YStack>
+          ) : emptyState === 'empty' ? (
             <EmptyFeed
               canCreate={canCreate}
               onSpark={handleSpark}
               onBrowseCamps={handleBrowseCamps}
             />
+          ) : emptyState === 'caught-up' ? (
+            <YStack paddingVertical={80} alignItems="center" justifyContent="center" gap={12}>
+              <Flame size={56} color={'$primary'} />
+              <Text fontSize={18} fontWeight="900">
+                All caught up
+              </Text>
+              <Text
+                fontSize={14}
+                color={'$placeholderColor'}
+                textAlign="center"
+                paddingHorizontal={48}
+              >
+                No new fires in this view. Spark a new Bondfire to keep things burning.
+              </Text>
+              <Button variant="primary" size="$md" onPress={handleSpark}>
+                <Flame size={18} color={'$color'} />
+                <Text color={'$color'} fontWeight="900">
+                  Spark
+                </Text>
+              </Button>
+            </YStack>
           ) : (
             <YStack paddingVertical={80} alignItems="center" justifyContent="center" gap={12}>
               <Flame size={56} color={'$primary'} />

@@ -27,7 +27,7 @@ function recordContext(overrides: Record<string, unknown> = {}) {
     _id: 'record',
     userId: 'owner',
     videoStatus: 'processing',
-    muxUploadId: 'upload',
+    muxUploadId: 'upload-test',
     ...overrides,
   }
   const query = { withIndex: vi.fn(), first: vi.fn().mockResolvedValue(doc) }
@@ -59,20 +59,29 @@ describe('upload completion recovery', () => {
   })
   it('deduplicates repeated monitor requests and schedules the first check after 30 seconds', async () => {
     const { ctx, schedule } = recordContext()
-    await monitor(ctx, { uploadId: 'upload' })
-    await monitor(ctx, { uploadId: 'upload' })
+    await monitor(ctx, { uploadId: 'upload-test' })
+    await monitor(ctx, { uploadId: 'upload-test' })
     expect(schedule).toHaveBeenCalledOnce()
     expect(schedule.mock.calls[0][0]).toBe(30_000)
   })
+  it('rejects malformed upload IDs before reading records or scheduling recovery', async () => {
+    const { ctx, schedule } = recordContext()
+    for (const uploadId of ['short', 'x'.repeat(257)]) {
+      await expect(monitor(ctx, { uploadId })).rejects.toThrow('Upload not found')
+      await expect(status(ctx, { uploadId })).rejects.toThrow('Upload not found')
+    }
+    expect(ctx.db.query).not.toHaveBeenCalled()
+    expect(schedule).not.toHaveBeenCalled()
+  })
   it('rejects watching or scheduling another user’s upload', async () => {
     const { ctx, schedule } = recordContext({ userId: 'someone-else' })
-    await expect(monitor(ctx, { uploadId: 'upload' })).rejects.toThrow('Upload not found')
-    await expect(status(ctx, { uploadId: 'upload' })).rejects.toThrow('Upload not found')
+    await expect(monitor(ctx, { uploadId: 'upload-test' })).rejects.toThrow('Upload not found')
+    await expect(status(ctx, { uploadId: 'upload-test' })).rejects.toThrow('Upload not found')
     expect(schedule).not.toHaveBeenCalled()
   })
   it('does no recovery work for an already-ready video', async () => {
     const { ctx, schedule } = recordContext({ videoStatus: 'ready', muxPlaybackId: 'playback' })
-    await monitor(ctx, { uploadId: 'upload' })
+    await monitor(ctx, { uploadId: 'upload-test' })
     expect(schedule).not.toHaveBeenCalled()
   })
   it('does not regress ready state on late or duplicate asset-created events', async () => {
@@ -81,8 +90,8 @@ describe('upload completion recovery', () => {
       muxPlaybackId: 'playback',
       muxAssetId: 'asset',
     })
-    await created(ctx, { uploadId: 'upload', assetId: 'asset' })
-    await created(ctx, { uploadId: 'upload', assetId: 'different-asset' })
+    await created(ctx, { uploadId: 'upload-test', assetId: 'asset' })
+    await created(ctx, { uploadId: 'upload-test', assetId: 'different-asset' })
     expect(patch).not.toHaveBeenCalled()
   })
   it('stops obsolete jobs and jobs already completed by a webhook before contacting Mux', async () => {
@@ -91,9 +100,9 @@ describe('upload completion recovery', () => {
     const runAfter = vi.fn()
     const runQuery = vi.fn().mockResolvedValue({ startedAt: 1, isReady: true })
     const ctx = { runQuery, scheduler: { runAfter } } as unknown as ActionCtx
-    await recover(ctx, { uploadId: 'upload', startedAt: 1, attempt: 0 })
+    await recover(ctx, { uploadId: 'upload-test', startedAt: 1, attempt: 0 })
     runQuery.mockResolvedValue({ startedAt: 2, isReady: false })
-    await recover(ctx, { uploadId: 'upload', startedAt: 1, attempt: 0 })
+    await recover(ctx, { uploadId: 'upload-test', startedAt: 1, attempt: 0 })
     expect(fetch).not.toHaveBeenCalled()
     expect(runAfter).not.toHaveBeenCalled()
   })
@@ -127,10 +136,10 @@ describe('upload completion recovery', () => {
       runMutation,
       scheduler: { runAfter },
     } as unknown as ActionCtx
-    await recover(ctx, { uploadId: 'upload', startedAt: 1, attempt: 0 })
+    await recover(ctx, { uploadId: 'upload-test', startedAt: 1, attempt: 0 })
     expect(runMutation).toHaveBeenCalledTimes(2)
     expect(runMutation.mock.calls[1][1]).toMatchObject({
-      uploadId: 'upload',
+      uploadId: 'upload-test',
       assetId: 'asset',
       playbackId: 'playback',
       assetStatus: 'ready',
@@ -147,7 +156,7 @@ describe('upload completion recovery', () => {
       scheduler: { runAfter },
     } as unknown as ActionCtx
     for (let attempt = 0; attempt < 5; attempt++) {
-      await recover(ctx, { uploadId: 'upload', startedAt: 1, attempt })
+      await recover(ctx, { uploadId: 'upload-test', startedAt: 1, attempt })
     }
     expect(runAfter.mock.calls.map(([delay]) => delay)).toEqual([60_000, 120_000, 240_000, 240_000])
   })

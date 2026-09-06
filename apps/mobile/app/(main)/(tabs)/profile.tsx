@@ -1,5 +1,6 @@
 import {
   appActions,
+  deleteAllLocalBackups,
   getBondfireVideoIndex,
   parseError,
   requestPushPermission,
@@ -38,6 +39,7 @@ import {
   Pin,
   Play,
   Settings,
+  ShieldCheck,
   Sun,
   Trash2,
 } from '@tamagui/lucide-icons'
@@ -50,7 +52,9 @@ import { Alert, FlatList, Pressable, RefreshControl, ScrollView, StatusBar } fro
 import { Separator, Sheet, Switch, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
+import { ModerationAdminPanel } from '../../../components/ModerationAdminPanel'
 import { NotificationPreferencesSection } from '../../../components/NotificationPreferencesSection'
+import { SafetySettings } from '../../../components/SafetySettings'
 import { UploadProgressCard } from '../../../components/UploadProgressCard'
 import { routes } from '../../../lib/routes'
 
@@ -81,6 +85,7 @@ type CurrentUserData = {
   responseCount: number
   totalViews: number
   isAdmin?: boolean
+  role?: 'admin' | 'user'
 } | null
 
 const GENDER_OPTIONS: Array<{ value: Gender; label: string }> = [
@@ -200,9 +205,10 @@ export default function ProfileScreen() {
   const updateProfile = useMutation(api.users.updateProfile)
   const generateProfilePhotoUploadUrl = useMutation(api.users.generateProfilePhotoUploadUrl)
   const updateProfilePhoto = useMutation(api.users.updateProfilePhoto)
-  const deleteAccountMutation = useMutation(api.users.deleteAccount)
+  const deleteAccountMutation = useMutation(api.accountDeletion.request)
   const adminSetForcedTier = useMutation(api.admin.adminSetForcedTier)
   const adminGrantKindling = useMutation(api.admin.adminGrantKindling)
+  const adminSetMinVersion = useMutation(api.publicConfig.setMinVersion)
   const closeCircle = useQuery(api.conversations.listCloseCircle) as CloseCircleEntry[] | undefined
 
   const {
@@ -223,6 +229,8 @@ export default function ProfileScreen() {
   const [currentUser, setCurrentUser] = useState<CurrentUserData | undefined>(undefined)
   const [userBondfires, setUserBondfires] = useState<UserBondfireData[] | undefined>(undefined)
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isAdmin = currentUser?.isAdmin === true || currentUser?.role === 'admin'
+  const adminUpdateConfig = useQuery(api.publicConfig.getAdminUpdateConfig, isAdmin ? {} : 'skip')
 
   const state$ = useObservable({
     isEditSheetOpen: false,
@@ -295,7 +303,15 @@ export default function ProfileScreen() {
         text: 'Sign Out',
         style: 'destructive',
         onPress: async () => {
+          try {
+            await deleteAllLocalBackups()
+          } catch (error) {
+            telemetry.warn('backup:cleanup', 'Could not clear local backups during sign out', {
+              error: parseError(error).message,
+            })
+          }
           await signOut()
+          uploadQueueActions.clear()
           appActions.logout()
           router.replace(routes.login())
         },
@@ -335,6 +351,13 @@ export default function ProfileScreen() {
       return result as AdminSearchResult | null
     },
     [adminGrantKindling],
+  )
+
+  const handleAdminSetMinVersion = useCallback(
+    async (version: string, updatePriority: 'flexible' | 'immediate') => {
+      return adminSetMinVersion({ version, updatePriority })
+    },
+    [adminSetMinVersion],
   )
 
   const handleEditProfile = useCallback(() => {
@@ -385,7 +408,7 @@ export default function ProfileScreen() {
   const handleDeleteAccount = useCallback(() => {
     Alert.alert(
       'Delete Account',
-      'Are you sure you want to permanently delete your account? This will delete all your bondfires, videos, and data. This action cannot be undone.',
+      'This permanently closes your account and starts deletion of your profile, Bondfires, videos, and social activity. Store purchase identifiers may be retained without your profile for fraud prevention and accounting. Manage any active subscription in the App Store or Google Play to prevent future charges.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -394,7 +417,7 @@ export default function ProfileScreen() {
           onPress: () => {
             Alert.alert(
               'Final Confirmation',
-              'This is permanent. All your data will be deleted forever.',
+              'This is permanent. You will be signed out immediately. Deletion continues safely in the background and may take time if a video provider is temporarily unavailable. This does not cancel an App Store or Google Play subscription.',
               [
                 { text: 'Keep My Account', style: 'cancel' },
                 {
@@ -404,7 +427,8 @@ export default function ProfileScreen() {
                     state$.isDeleting.set(true)
                     try {
                       await deleteAccountMutation()
-                      await signOut()
+                      await Promise.allSettled([deleteAllLocalBackups(), signOut()])
+                      uploadQueueActions.clear()
                       appActions.logout()
                       router.replace(routes.login())
                     } catch (error) {
@@ -512,7 +536,7 @@ export default function ProfileScreen() {
         <Text fontSize={28} fontWeight="700">
           Profile
         </Text>
-        <Pressable onPress={handleLogout}>
+        <Pressable onPress={handleLogout} accessibilityRole="button" accessibilityLabel="Sign Out">
           <YStack
             width={40}
             height={40}
@@ -644,6 +668,8 @@ export default function ProfileScreen() {
 
           <UploadProgressCard />
 
+          <SafetySettings />
+
           {/* Camp Kindling Balance */}
           {!kindlingBalanceLoading && currentTier === 'pro' ? (
             <Card marginBottom={24}>
@@ -680,13 +706,18 @@ export default function ProfileScreen() {
           </YStack>
 
           {/* Admin Panel — only visible to admin users */}
-          {currentUser.isAdmin && (
-            <AdminPanel
-              isAdmin={currentUser.isAdmin}
-              onSearch={handleAdminSearch}
-              onSetTier={handleAdminSetTier}
-              onGrantKindling={handleAdminGrantKindling}
-            />
+          {isAdmin && (
+            <>
+              <AdminPanel
+                isAdmin={isAdmin}
+                onSearch={handleAdminSearch}
+                onSetTier={handleAdminSetTier}
+                onGrantKindling={handleAdminGrantKindling}
+                updateConfig={adminUpdateConfig}
+                onSetMinVersion={handleAdminSetMinVersion}
+              />
+              <ModerationAdminPanel />
+            </>
           )}
 
           {closeCircle && closeCircle.length > 0 && (
@@ -760,6 +791,31 @@ export default function ProfileScreen() {
 
             <Card>
               <YStack gap={16}>
+                <Pressable
+                  onPress={() => router.push(routes.familyConnections)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Manage family connections"
+                >
+                  <XStack justifyContent="space-between" alignItems="center">
+                    <XStack alignItems="center" gap={12} flex={1}>
+                      <ShieldCheck size={20} color={'$primary'} />
+                      <YStack flex={1}>
+                        <Text fontWeight="500" fontSize={15}>
+                          Family Connections
+                        </Text>
+                        <Text fontSize={13} color={'$placeholderColor'}>
+                          Manage private cross-age Hearth access
+                        </Text>
+                      </YStack>
+                    </XStack>
+                    <Text color={'$placeholderColor'} fontSize={20}>
+                      ›
+                    </Text>
+                  </XStack>
+                </Pressable>
+
+                <Separator borderColor={'$borderColor'} />
+
                 <XStack justifyContent="space-between" alignItems="center">
                   <XStack alignItems="center" gap={12}>
                     <Play size={20} color={'$secondary'} />

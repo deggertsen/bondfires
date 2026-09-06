@@ -1,5 +1,11 @@
 # Bondfires Release Process
 
+> Crash monitoring, environment isolation, staging smoke tests, device gates, alerts,
+> and rollback guidance are defined in
+> [`docs/production-observability-and-release-qa.md`](docs/production-observability-and-release-qa.md).
+> Production automation fails before versioning if Sentry/source-map configuration
+> or the registered Convex target is missing or mismatched.
+
 This is the source of truth for production mobile releases. The release script owns repeatable
 mechanics; this document focuses on decisions and runtime checks that automation cannot prove.
 
@@ -19,6 +25,9 @@ Complete the relevant review and smoke-test actions in the report. In particular
   permissions, and light/dark themes.
 - Review affected external contracts such as Mux, APNs, FCM, app-store billing, universal links,
   email, and AI providers.
+- For a billing change, complete the provider setup, health check, and replay review in
+  [`docs/store-billing-lifecycle.md`](docs/store-billing-lifecycle.md). Confirm App Store Server
+  Notifications V2 and authenticated Google RTDN are healthy before releasing the client.
 - For native capabilities or entitlements, confirm that signing credentials and provisioning
   profiles include the change.
 
@@ -47,10 +56,34 @@ The automated gate covers:
 - Centralized route usage and unsafe route-cast detection
 - Registered environment-variable ownership and required production build configuration
 - Matching iOS/Android build numbers and deep-link hosts
+- Offline App Links contract checks for package, hosts, path prefixes, Apple app ID, and
+  certificate-fingerprint syntax
 - Repository intelligence coverage and known operational-documentation drift
 
 Run `yarn validate` directly when diagnosing a failure. The release command runs it again so the
 production path never depends on a remembered manual checklist.
+
+### App Links release gate
+
+Android releases additionally run `yarn check:app-links:live` before changing the version or
+touching production. The live check requires both `bondfires.org` and `bondfires.app` to serve,
+without redirects:
+
+- valid `application/json` association files;
+- an `org.bondfires` Digital Asset Links statement containing the **Google Play App Signing**
+  SHA-256 certificate;
+- the Apple app ID and all invite/personal-Bondfire paths; and
+- successful browser fallbacks for every supported path shape.
+
+The signing fingerprint is public metadata, not a secret. Commit it to
+`apps/mobile/app-links.json` once copied from Google Play Console, or temporarily supply it as a
+comma-separated `BONDFIRES_PLAY_APP_SIGNING_SHA256` environment variable. Do not use the local AAB
+or EAS upload-key fingerprint as a substitute: Google re-signs production installs with the Play
+App Signing key.
+
+Source of truth: **Google Play Console → Protected with Play → Play app signing → App signing key
+certificate → SHA-256 certificate fingerprint**. The Play Console Digital Asset Links snippet on
+that page is also authoritative.
 
 ## Local build, then submit
 
@@ -74,13 +107,16 @@ build locally.
 Run releases from the repository root with a clean working tree:
 
 ```bash
-yarn release          # patch release; iOS and Android
-yarn release:minor    # minor release; iOS and Android
-yarn release:major    # major release; iOS and Android
+eas env:exec production 'yarn release'        # patch; iOS + Android
+eas env:exec production 'yarn release:minor'  # minor; iOS + Android
+eas env:exec production 'yarn release:major'  # major; iOS + Android
 
-yarn release --ios-only
-yarn release --android-only
+eas env:exec production 'yarn release --ios-only'
+eas env:exec production 'yarn release --android-only'
 ```
+
+The wrapper loads the production EAS environment into the local release process;
+the preflight rejects missing Sentry/source-map settings or a mismatched Convex URL.
 
 The script:
 
@@ -105,6 +141,38 @@ needed.
 4. Confirm the Android build is available on the Google Play internal testing track.
 5. Install the store-served builds and smoke-test the affected critical paths.
 6. Monitor application telemetry and user reports closely for the first 24 hours.
+7. For billing releases, run `storeBilling:billingHealth` from the Convex dashboard Function Runner
+   with an admin identity after the first notification and reconciliation cycle; investigate any
+   failed events or overdue records.
+
+For Android, test a build installed from a Play track—not a locally signed AAB/APK. With the device
+online, reset and re-run domain verification:
+
+```bash
+adb shell pm set-app-links --package org.bondfires 0 all
+adb shell pm verify-app-links --re-verify org.bondfires
+# Wait a few minutes for the verifier, then both hosts must say "verified":
+adb shell pm get-app-links org.bondfires
+adb shell pm get-app-links --user cur org.bondfires
+
+# Do not force the package; this proves Android selects Bondfires as the default handler.
+adb shell am start -W -a android.intent.action.VIEW \
+  -c android.intent.category.BROWSABLE \
+  -d 'https://bondfires.app/invite/app-link-check'
+adb shell am start -W -a android.intent.action.VIEW \
+  -c android.intent.category.BROWSABLE \
+  -d 'https://bondfires.org/invite/camp/app-link-check'
+adb shell am start -W -a android.intent.action.VIEW \
+  -c android.intent.category.BROWSABLE \
+  -d 'https://bondfires.app/invite/family/app-link-check'
+adb shell am start -W -a android.intent.action.VIEW \
+  -c android.intent.category.BROWSABLE \
+  -d 'https://bondfires.app/personal-bondfire/app-link-check/app-link-check'
+```
+
+Each `am start` result must resolve to an `org.bondfires` activity without a browser or chooser.
+Uninstall any development build using the same package before this test; Android can associate only
+one installed app with a domain at a time.
 
 ## Force-update gating
 
@@ -112,16 +180,10 @@ The release script intentionally does not change `minAppVersion`. Enable a force
 the exact version is downloadable from both stores; otherwise existing clients can be locked out
 without an available upgrade.
 
-```bash
-npx convex run publicConfig:setMinVersion '{"version":"<version>"}'
-```
-
-For an Android flexible in-app update:
-
-```bash
-npx convex run publicConfig:setMinVersion \
-  '{"version":"<version>","updatePriority":"flexible"}'
-```
+Sign in with an administrator account, open **Profile → Admin Panel → App Update Policy**, choose
+the exact store version and update behavior, and confirm the warning. The backend independently
+verifies the administrator session, validates the version, and writes an audit entry. Anonymous CLI
+calls are intentionally rejected.
 
 ## Failure recovery
 

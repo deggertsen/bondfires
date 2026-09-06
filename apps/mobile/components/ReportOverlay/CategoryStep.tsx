@@ -11,7 +11,7 @@ export function CategoryStep({ onSelect }: CategoryStepProps) {
         Report Video
       </Text>
       <Text fontSize={14} color={'$placeholderColor'}>
-        Why are you reporting this video?
+        Why are you reporting this?
       </Text>
       <YStack gap={8}>
         {CATEGORIES.map((cat) => (

@@ -89,6 +89,7 @@ export const routes = {
 
   // --- Main stack ---
   personalCamp: '/(main)/personal-camp',
+  familyConnections: '/(main)/family-connections',
 
   bondfire: (id: string, videoId?: string): Href => ({
     pathname: '/(main)/bondfire/[id]',
@@ -129,6 +130,16 @@ export const routes = {
   loginWithCampInvite: (code: string): Href => ({
     pathname: '/(auth)/login',
     params: { redirectTo: `/invite/camp/${code}` },
+  }),
+
+  externalFamilyInvite: (code: string): Href => ({
+    pathname: '/invite/family/[code]',
+    params: { code },
+  }),
+
+  loginWithFamilyInvite: (code: string): Href => ({
+    pathname: '/(auth)/login',
+    params: { redirectTo: `/invite/family/${code}` },
   }),
 } satisfies Record<string, Href | ((...args: never[]) => Href)>
 
@@ -184,6 +195,7 @@ const EXTERNAL_STATIC_ROUTES: Record<string, Href> = {
   '/(main)/(tabs)/spark': routes.create,
   '/(main)/create': routes.create,
   '/(main)/personal-camp': routes.personalCamp,
+  '/(main)/family-connections': routes.familyConnections,
 }
 
 const EXTERNAL_BONDFIRE_ROUTE = /^\/\(main\)\/bondfire\/([^/?#]+)$/
@@ -193,6 +205,7 @@ const EXTERNAL_CREATE_FOR_CAMP_ROUTE = /^\/\(main\)\/create\?campId=([^&#]+)$/
 
 const EXTERNAL_INVITE_ROUTE = /^\/invite\/([^/?#]+)$/
 const EXTERNAL_CAMP_INVITE_ROUTE = /^\/invite\/camp\/([^/?#]+)$/
+const EXTERNAL_FAMILY_INVITE_ROUTE = /^\/invite\/family\/([^/?#]+)$/
 
 /**
  * Validate and resolve a route path from an UNTRUSTED source (push notification
@@ -227,6 +240,11 @@ export function resolveExternalRoute(path: string | null | undefined): Href | nu
 
   const campInviteMatch = EXTERNAL_CAMP_INVITE_ROUTE.exec(path)
   if (campInviteMatch) return routes.externalCampInvite(decodeURIComponent(campInviteMatch[1]))
+
+  const familyInviteMatch = EXTERNAL_FAMILY_INVITE_ROUTE.exec(path)
+  if (familyInviteMatch) {
+    return routes.externalFamilyInvite(decodeURIComponent(familyInviteMatch[1]))
+  }
 
   return EXTERNAL_STATIC_ROUTES[path] ?? null
 }

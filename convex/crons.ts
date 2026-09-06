@@ -3,7 +3,28 @@ import { internal } from './_generated/api'
 
 const crons = cronJobs()
 
+// Age-band reads enforce birthday transitions immediately. These bounded,
+// self-paginating sweeps remove stale membership rows and Hearth participants.
+crons.daily(
+  'reconcile camp age memberships',
+  { hourUTC: 0, minuteUTC: 30 },
+  internal.ageSafetyMaintenance.reconcileCampMemberships,
+  {},
+)
+crons.daily(
+  'reconcile hearth age participants',
+  { hourUTC: 0, minuteUTC: 45 },
+  internal.ageSafetyMaintenance.reconcileHearthParticipants,
+  {},
+)
+
 crons.interval('cleanup stale presence', { minutes: 1 }, internal.presence.cleanupStalePresence)
+
+// Account deletion normally self-schedules each bounded batch. This hourly
+// sweep recovers jobs if a scheduler delivery or worker process was interrupted.
+crons.interval('resume stale account deletions', { hours: 1 }, internal.accountDeletion.resumeStale)
+
+crons.interval('resume retention cleanup', { minutes: 5 }, internal.retentionCleanup.resumeStale)
 
 crons.interval(
   'disable stale Mux live streams',
@@ -19,6 +40,15 @@ crons.interval(
   { minutes: 15 },
   internal.videos.reconcileStuckMuxVideos,
   {},
+)
+
+// Store webhooks are the fast path; bounded authoritative re-verification is
+// the backstop for missed, delayed, or out-of-order notifications.
+crons.interval(
+  'reconcile store subscriptions',
+  { hours: 6 },
+  internal.storeBillingActions.reconcileSubscriptions,
+  { limit: 20 },
 )
 
 // Give up on live-linked records waiting for a local backup recovery upload
@@ -77,6 +107,18 @@ crons.daily(
   internal.videos.purgeOldWebhookEvents,
 )
 
+crons.daily(
+  'cleanup stale abuse windows',
+  { hourUTC: 12, minuteUTC: 20 },
+  internal.abuseLimits.cleanupStale,
+)
+
+crons.daily(
+  'purge old store billing events',
+  { hourUTC: 12, minuteUTC: 25 },
+  internal.storeBilling.purgeOldEvents,
+)
+
 // Cleanup expired invite codes.
 // Runs daily at 12:30 UTC, after log purge.
 crons.daily(
@@ -86,7 +128,7 @@ crons.daily(
 )
 
 // Cleanup archived camps past the 30-day retention window.
-// Runs daily at 13:00 UTC — deletes Mux assets then camp data.
+// Runs daily at 13:00 UTC — atomically claims Camps, then resumes bounded cleanup.
 crons.daily(
   'cleanup archived camps',
   { hourUTC: 13, minuteUTC: 0 },

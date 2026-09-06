@@ -25,7 +25,7 @@ describe('telemetry batching', () => {
     vi.useRealTimers()
     vi.restoreAllMocks()
   })
-  function setup(send = vi.fn().mockResolvedValue(undefined)) {
+  function setup(send = vi.fn().mockResolvedValue(undefined), userId: string | null = 'owner') {
     const logger = new TelemetryLogger()
     // Global error/console interception is unrelated to scheduling under test.
     for (const method of [
@@ -38,6 +38,7 @@ describe('telemetry batching', () => {
         () => undefined,
       )
     }
+    logger.setUserId(userId)
     logger.init({ create: vi.fn(), createBatch: send })
     return { logger, send }
   }
@@ -55,6 +56,17 @@ describe('telemetry batching', () => {
     expect(send).toHaveBeenCalledOnce()
     expect(send.mock.calls[0][0].entries).toHaveLength(2)
     expect(vi.getTimerCount()).toBe(0)
+  })
+  it('buffers anonymous telemetry without periodic sends and flushes after authentication', async () => {
+    const { logger, send } = setup(undefined, null)
+    logger.breadcrumb('startup')
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(send).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+    logger.setUserId('owner')
+    await logger.flush()
+    expect(send).toHaveBeenCalledOnce()
+    expect(send.mock.calls[0][0].entries[0].event).toBe('startup')
   })
   it('flushes a nearly full queue before dropping entries', async () => {
     const { logger, send } = setup()

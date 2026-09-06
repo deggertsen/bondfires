@@ -7,6 +7,28 @@ import {
 } from '../../lib/bondfireThumbnails'
 
 describe('getBondfireThumbnailPlayback', () => {
+  it('resolves a live-only spark with its signed policy and parent authorization ID', () => {
+    const fire = {
+      _id: 'bondfire-1',
+      videoStatus: 'live',
+      muxLivePlaybackId: 'live-id',
+      muxPlaybackPolicy: 'signed' as const,
+    }
+    expect(getBondfireThumbnailPlayback(fire)).toEqual({
+      cacheKey: 'bondfire-1:live-id',
+      muxPlaybackId: 'live-id',
+      muxPlaybackPolicy: 'signed',
+    })
+    expect(getPendingBondfireThumbnails([fire], {}, new Set())[0].request).toMatchObject({
+      bondfireId: 'bondfire-1',
+      muxPlaybackId: 'live-id',
+      muxPlaybackPolicy: 'signed',
+    })
+    expect(getBondfireThumbnailPlayback({ ...fire, videoStatus: 'processing' })).toBeNull()
+    expect(getBondfireThumbnailPlayback({ ...fire, muxPlaybackId: 'vod-id' })?.muxPlaybackId).toBe(
+      'vod-id',
+    )
+  })
   it('prefers the latest response and keeps its playback policy', () => {
     expect(
       getBondfireThumbnailPlayback({

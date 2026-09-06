@@ -18,9 +18,12 @@ export default function CampInviteScreen() {
       loginHref={routes.loginWithCampInvite}
       redeemInvite={async (inviteCode) => {
         const result = await redeemInvite({ code: inviteCode })
-        return result.type === 'camp'
-          ? routes.camp(result.campId)
-          : routes.bondfire(result.bondfireId)
+        if (result.type === 'invalid') throw new Error('Invite unavailable')
+        if (result.type === 'camp') return routes.camp(result.campId)
+        if (result.type === 'family-connection') {
+          return routes.externalFamilyInvite(result.code)
+        }
+        return routes.bondfire(result.bondfireId)
       }}
       loadingText="Redeeming invite..."
       successText="Taking you there now."

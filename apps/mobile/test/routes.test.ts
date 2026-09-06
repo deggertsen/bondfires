@@ -32,4 +32,11 @@ describe('mobile routes', () => {
       params: { campId: 'camp-1' },
     })
   })
+
+  it('allowlists a nested family invitation without treating it as a regular invite', () => {
+    expect(resolveExternalRoute('/invite/family/family-0123456789abcdef0123456789abcdef')).toEqual({
+      pathname: '/invite/family/[code]',
+      params: { code: 'family-0123456789abcdef0123456789abcdef' },
+    })
+  })
 })

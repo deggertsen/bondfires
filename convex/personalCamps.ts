@@ -7,6 +7,7 @@ import {
   type QueryCtx,
   query,
 } from './_generated/server'
+import { type AgeBand, assertUserAgeBand, getPersonalCampAgeBand } from './agePolicy'
 import { auth } from './auth'
 import { getEntitlementSubscriptionTier, type SubscriptionTier, TIER_RANK } from './entitlements'
 
@@ -35,11 +36,30 @@ function personalCampPublicId() {
 async function getPersonalCampByOwner(
   ctx: { db: QueryCtx['db'] | MutationCtx['db'] },
   ownerId: Id<'users'>,
+  ageBand: AgeBand,
 ): Promise<Doc<'personalCamps'> | null> {
-  return await ctx.db
+  const camps = await ctx.db
     .query('personalCamps')
     .withIndex('by_owner', (q) => q.eq('ownerId', ownerId))
-    .first()
+    .collect()
+  return camps.find((camp) => getPersonalCampAgeBand(camp) === ageBand) ?? null
+}
+
+async function freezeOtherAgeBandCamps(
+  ctx: { db: MutationCtx['db'] },
+  ownerId: Id<'users'>,
+  currentAgeBand: AgeBand,
+) {
+  const camps = await ctx.db
+    .query('personalCamps')
+    .withIndex('by_owner', (q) => q.eq('ownerId', ownerId))
+    .collect()
+  const now = Date.now()
+  for (const camp of camps) {
+    if (camp.status === 'active' && getPersonalCampAgeBand(camp) !== currentAgeBand) {
+      await ctx.db.patch(camp._id, { status: 'frozen', frozenAt: now, updatedAt: now })
+    }
+  }
 }
 
 // ── Internal Mutations ─────────────────────────────────────────────────────
@@ -61,7 +81,11 @@ export const internalGetOrCreatePersonalCamp = internalMutation({
       return null
     }
 
-    const existing = await getPersonalCampByOwner(ctx, args.userId)
+    const user = await ctx.db.get(args.userId)
+    if (!user) return null
+    const ageBand = assertUserAgeBand(user)
+    await freezeOtherAgeBandCamps(ctx, args.userId, ageBand)
+    const existing = await getPersonalCampByOwner(ctx, args.userId, ageBand)
 
     if (existing) {
       if (existing.status === 'frozen') {
@@ -69,6 +93,7 @@ export const internalGetOrCreatePersonalCamp = internalMutation({
         await ctx.db.patch(existing._id, {
           status: 'active',
           frozenAt: undefined,
+          ageBand,
           updatedAt: now,
         })
 
@@ -76,16 +101,12 @@ export const internalGetOrCreatePersonalCamp = internalMutation({
           ...existing,
           status: 'active' as const,
           frozenAt: undefined,
+          ageBand,
           updatedAt: now,
         }
       }
 
       return existing
-    }
-
-    const user = await ctx.db.get(args.userId)
-    if (!user) {
-      return null
     }
 
     const now = Date.now()
@@ -96,6 +117,7 @@ export const internalGetOrCreatePersonalCamp = internalMutation({
       ownerId: args.userId,
       name,
       status: 'active',
+      ageBand,
       createdAt: now,
       updatedAt: now,
     })
@@ -106,6 +128,7 @@ export const internalGetOrCreatePersonalCamp = internalMutation({
       ownerId: args.userId,
       name,
       status: 'active' as const,
+      ageBand,
       createdAt: now,
       updatedAt: now,
     }
@@ -121,20 +144,18 @@ export const freezePersonalCamp = internalMutation({
     ownerId: v.id('users'),
   },
   handler: async (ctx, args) => {
-    const camp = await getPersonalCampByOwner(ctx, args.ownerId)
-
-    if (!camp || camp.status !== 'active') {
-      return null
-    }
-
+    const camps = await ctx.db
+      .query('personalCamps')
+      .withIndex('by_owner', (q) => q.eq('ownerId', args.ownerId))
+      .collect()
     const now = Date.now()
-    await ctx.db.patch(camp._id, {
-      status: 'frozen',
-      frozenAt: now,
-      updatedAt: now,
-    })
-
-    return camp._id
+    const frozen = []
+    for (const camp of camps) {
+      if (camp.status !== 'active') continue
+      await ctx.db.patch(camp._id, { status: 'frozen', frozenAt: now, updatedAt: now })
+      frozen.push(camp._id)
+    }
+    return frozen
   },
 })
 
@@ -147,7 +168,9 @@ export const unfreezePersonalCamp = internalMutation({
     ownerId: v.id('users'),
   },
   handler: async (ctx, args) => {
-    const camp = await getPersonalCampByOwner(ctx, args.ownerId)
+    const owner = await ctx.db.get(args.ownerId)
+    if (!owner) return null
+    const camp = await getPersonalCampByOwner(ctx, args.ownerId, assertUserAgeBand(owner))
 
     if (!camp || camp.status !== 'frozen') {
       return null
@@ -186,7 +209,9 @@ export const getMyPersonalCamp = query({
       return null
     }
 
-    return await getPersonalCampByOwner(ctx, userId)
+    const user = await ctx.db.get(userId)
+    if (!user) return null
+    return await getPersonalCampByOwner(ctx, userId, assertUserAgeBand(user))
   },
 })
 
@@ -209,7 +234,11 @@ export const ensureMyPersonalCamp = mutation({
       return null
     }
 
-    const existing = await getPersonalCampByOwner(ctx, userId)
+    const user = await ctx.db.get(userId)
+    if (!user) return null
+    const ageBand = assertUserAgeBand(user)
+    await freezeOtherAgeBandCamps(ctx, userId, ageBand)
+    const existing = await getPersonalCampByOwner(ctx, userId, ageBand)
 
     if (existing) {
       if (existing.status === 'frozen') {
@@ -217,6 +246,7 @@ export const ensureMyPersonalCamp = mutation({
         await ctx.db.patch(existing._id, {
           status: 'active',
           frozenAt: undefined,
+          ageBand,
           updatedAt: now,
         })
 
@@ -224,6 +254,7 @@ export const ensureMyPersonalCamp = mutation({
           ...existing,
           status: 'active' as const,
           frozenAt: undefined,
+          ageBand,
           updatedAt: now,
         }
       }
@@ -232,11 +263,6 @@ export const ensureMyPersonalCamp = mutation({
     }
 
     // Paid tier but no camp (admin override, manual assignment, etc.)
-    const user = await ctx.db.get(userId)
-    if (!user) {
-      return null
-    }
-
     const now = Date.now()
     const name = personalCampName(user.displayName, user.name)
     const publicId = personalCampPublicId()
@@ -245,6 +271,7 @@ export const ensureMyPersonalCamp = mutation({
       ownerId: userId,
       name,
       status: 'active',
+      ageBand,
       createdAt: now,
       updatedAt: now,
     })
@@ -255,6 +282,7 @@ export const ensureMyPersonalCamp = mutation({
       ownerId: userId,
       name,
       status: 'active' as const,
+      ageBand,
       createdAt: now,
       updatedAt: now,
     }

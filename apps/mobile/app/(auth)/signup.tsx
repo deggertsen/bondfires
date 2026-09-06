@@ -3,10 +3,10 @@ import { Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker'
-import { Flame, UserPlus } from '@tamagui/lucide-icons'
+import { CheckSquare, Flame, Square, UserPlus } from '@tamagui/lucide-icons'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useState } from 'react'
-import { Platform, Pressable, StatusBar } from 'react-native'
+import { Linking, Platform, Pressable, StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { XStack, YStack } from 'tamagui'
 import { routes } from '../../lib/routes'
@@ -60,6 +60,7 @@ export default function SignupScreen() {
     birthDate: '',
     isLoading: false,
     error: null as string | null,
+    acceptedLegal: false,
   })
 
   const firstName = useValue(form$.firstName)
@@ -71,6 +72,7 @@ export default function SignupScreen() {
   const birthDate = useValue(form$.birthDate)
   const isLoading = useValue(form$.isLoading)
   const error = useValue(form$.error)
+  const acceptedLegal = useValue(form$.acceptedLegal)
 
   // Date picker state
   const [showDatePicker, setShowDatePicker] = useState(false)
@@ -83,6 +85,7 @@ export default function SignupScreen() {
     const currentConfirmPassword = form$.confirmPassword.get()
     const currentGender = form$.gender.get()
     const currentBirthDate = form$.birthDate.get().trim()
+    const currentAcceptedLegal = form$.acceptedLegal.get()
 
     if (
       !currentFirstName ||
@@ -145,6 +148,10 @@ export default function SignupScreen() {
       form$.error.set('Password must be at least 8 characters')
       return
     }
+    if (!currentAcceptedLegal) {
+      form$.error.set('You must accept the Terms and Community Guidelines')
+      return
+    }
 
     form$.isLoading.set(true)
     form$.error.set(null)
@@ -158,6 +165,7 @@ export default function SignupScreen() {
         gender: currentGender,
         flow: 'signUp',
         birthDate: currentBirthDate,
+        acceptedLegal: 'true',
       })
       // Pass email to verify-email screen for OTP verification
       router.replace(routes.verifyEmail({ email: currentEmail, redirectTo }))
@@ -285,8 +293,26 @@ export default function SignupScreen() {
                 Birth Date
               </Text>
               <Text fontSize={12} color={'$placeholderColor'} marginBottom={4}>
-                Required. You must be at least 13. Private; not shown publicly.
+                Required. You must be at least 13. Your date is private and keeps 13–17 and adult
+                public communities separate. Private family Hearths require a separate invitation
+                and acceptance.
               </Text>
+              <YStack
+                backgroundColor="$backgroundHover"
+                borderColor="$borderColor"
+                borderWidth={1}
+                borderRadius="$3"
+                padding="$3"
+                gap="$2"
+              >
+                <Text fontSize={13} fontWeight="700" color="$color">
+                  Stay safe when sharing video
+                </Text>
+                <Text fontSize={12} color="$placeholderColor" lineHeight={17}>
+                  Never share your address, school, exact location, passwords, or private contact
+                  details. Tell a trusted adult and use Report if an interaction feels unsafe.
+                </Text>
+              </YStack>
               <Pressable onPress={() => setShowDatePicker(true)}>
                 <YStack pointerEvents="none">
                   <Input
@@ -340,6 +366,45 @@ export default function SignupScreen() {
                 error={confirmPassword.length > 0 && password !== confirmPassword}
               />
             </YStack>
+
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: acceptedLegal }}
+              accessibilityLabel="Accept Terms and Community Guidelines"
+              onPress={() => form$.acceptedLegal.set(!form$.acceptedLegal.get())}
+            >
+              <XStack gap={10} alignItems="flex-start">
+                {acceptedLegal ? (
+                  <CheckSquare size={22} color={'$primary'} />
+                ) : (
+                  <Square size={22} color={'$placeholderColor'} />
+                )}
+                <Text flex={1} fontSize={13} color={'$placeholderColor'}>
+                  I agree to the{' '}
+                  <Text
+                    color={'$primary'}
+                    onPress={() => Linking.openURL('https://bondfires.org/terms')}
+                  >
+                    Terms
+                  </Text>{' '}
+                  and{' '}
+                  <Text
+                    color={'$primary'}
+                    onPress={() => Linking.openURL('https://bondfires.org/community-guidelines')}
+                  >
+                    Community Guidelines
+                  </Text>
+                  . I have also reviewed the{' '}
+                  <Text
+                    color={'$primary'}
+                    onPress={() => Linking.openURL('https://bondfires.org/privacy')}
+                  >
+                    Privacy Policy
+                  </Text>
+                  .
+                </Text>
+              </XStack>
+            </Pressable>
 
             {error && (
               <Text color={'$error'} fontSize={14}>

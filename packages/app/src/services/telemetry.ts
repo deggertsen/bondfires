@@ -10,6 +10,7 @@ import Constants from 'expo-constants'
 import * as Device from 'expo-device'
 import { AppState, Platform } from 'react-native'
 import { createMMKV, type MMKV } from 'react-native-mmkv'
+import { redactSensitiveText, scrubTelemetryValue } from './privacyScrubber'
 
 // ---------------------------------------------------------------------------
 // React Native global declarations
@@ -59,7 +60,8 @@ export interface LogEntry {
   appVersion?: string
   sessionId?: string
   createdAt: number
-  userId?: string
+  /** Local routing marker only. It is stripped before network submission. */
+  localUserId?: string
   /** Device info captured at startup; included on every entry for crash triage. */
   device?: DeviceInfo
 }
@@ -88,16 +90,53 @@ const MAX_QUEUE_SIZE = 100
 const FLUSH_INTERVAL_MS = 60_000
 const MAX_SERIALIZE_DEPTH = 5
 const MAX_SERIALIZE_KEYS = 50
+const MAX_SERIALIZE_ARRAY_ITEMS = 100
 const TELEMETRY_BATCH_SIZE = 20
 const PERSIST_DEBOUNCE_MS = 1000
 const STORAGE_ID = 'bondfires-telemetry'
 const STORAGE_KEY = 'queue'
 const LAST_CRASH_KEY = 'last-crash-breadcrumb'
+const CLIENT_EVENT_MAX_BYTES = 128
+const CLIENT_MESSAGE_MAX_BYTES = 4096
+const CLIENT_DATA_PREVIEW_MAX_BYTES = 6 * 1024
+const CLIENT_APP_VERSION_MAX_BYTES = 64
+const CLIENT_METADATA_MAX_BYTES = 128
+const CLIENT_LOG_MAX_AGE_MS = 23 * 60 * 60 * 1000
+
+function utf8ByteLength(value: string): number {
+  let bytes = 0
+  for (const char of value) {
+    const codePoint = char.codePointAt(0) ?? 0
+    if (codePoint <= 0x7f) bytes += 1
+    else if (codePoint <= 0x7ff) bytes += 2
+    else if (codePoint <= 0xffff) bytes += 3
+    else bytes += 4
+  }
+  return bytes
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  if (utf8ByteLength(value) <= maxBytes) return value
+
+  const suffix = '…'
+  const target = Math.max(0, maxBytes - utf8ByteLength(suffix))
+  let bytes = 0
+  let output = ''
+  for (const char of value) {
+    const charBytes = utf8ByteLength(char)
+    if (bytes + charBytes > target) break
+    output += char
+    bytes += charBytes
+  }
+  return `${output}${suffix}`
+}
 
 function serializeForConvex(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
+  if (value === null || typeof value === 'boolean') {
     return value
   }
+
+  if (typeof value === 'string') return truncateUtf8(value, CLIENT_MESSAGE_MAX_BYTES)
 
   if (typeof value === 'number') {
     return Number.isFinite(value) ? value : String(value)
@@ -135,10 +174,12 @@ function serializeForConvex(value: unknown, depth = 0, seen = new WeakSet<object
   seen.add(value)
 
   if (Array.isArray(value)) {
-    return value.map((item) => {
+    const output = value.slice(0, MAX_SERIALIZE_ARRAY_ITEMS).map((item) => {
       const serialized = serializeForConvex(item, depth + 1, seen)
       return typeof serialized === 'undefined' ? null : serialized
     })
+    if (value.length > MAX_SERIALIZE_ARRAY_ITEMS) output.push('[Truncated]')
+    return output
   }
 
   const output: Record<string, unknown> = {}
@@ -155,6 +196,22 @@ function serializeForConvex(value: unknown, depth = 0, seen = new WeakSet<object
   }
 
   return output
+}
+
+function boundTelemetryData(value: unknown): unknown {
+  const serialized = serializeForConvex(value)
+  if (serialized === undefined) return undefined
+
+  try {
+    const json = JSON.stringify(serialized)
+    if (utf8ByteLength(json) <= CLIENT_DATA_PREVIEW_MAX_BYTES) return serialized
+    return {
+      __truncated: true,
+      preview: truncateUtf8(json, CLIENT_DATA_PREVIEW_MAX_BYTES),
+    }
+  } catch {
+    return { __truncated: true, preview: '[Unserializable telemetry data]' }
+  }
 }
 
 function formatConsoleArgs(args: unknown[]): string {
@@ -176,6 +233,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
+function telemetryErrorCode(error: unknown): string | undefined {
+  if (!isRecord(error)) return undefined
+  if (isRecord(error.data) && typeof error.data.code === 'string') return error.data.code
+  return typeof error.code === 'string' ? error.code : undefined
+}
+
 function isLogLevel(value: unknown): value is LogLevel {
   return value === 'error' || value === 'warn' || value === 'info' || value === 'breadcrumb'
 }
@@ -188,15 +251,22 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined
 }
 
+function optionalBoundedString(value: unknown, maxBytes: number): string | undefined {
+  const stringValue = optionalString(value)
+  return stringValue === undefined
+    ? undefined
+    : truncateUtf8(redactSensitiveText(stringValue), maxBytes)
+}
+
 function normalizeDeviceInfo(value: unknown): DeviceInfo | undefined {
   if (!isRecord(value)) return undefined
 
   const device: DeviceInfo = {}
-  const modelName = optionalString(value.modelName)
-  const osVersion = optionalString(value.osVersion)
-  const osName = optionalString(value.osName)
-  const manufacturer = optionalString(value.manufacturer)
-  const brand = optionalString(value.brand)
+  const modelName = optionalBoundedString(value.modelName, CLIENT_METADATA_MAX_BYTES)
+  const osVersion = optionalBoundedString(value.osVersion, CLIENT_METADATA_MAX_BYTES)
+  const osName = optionalBoundedString(value.osName, CLIENT_METADATA_MAX_BYTES)
+  const manufacturer = optionalBoundedString(value.manufacturer, CLIENT_METADATA_MAX_BYTES)
+  const brand = optionalBoundedString(value.brand, CLIENT_METADATA_MAX_BYTES)
 
   if (modelName !== undefined) device.modelName = modelName
   if (osVersion !== undefined) device.osVersion = osVersion
@@ -218,14 +288,16 @@ function normalizePersistedEntry(value: unknown): LogEntry | null {
 
   return {
     level,
-    event,
-    message,
-    data: value.data,
+    event: truncateUtf8(redactSensitiveText(event), CLIENT_EVENT_MAX_BYTES) || 'unknown',
+    message: truncateUtf8(redactSensitiveText(message), CLIENT_MESSAGE_MAX_BYTES),
+    data: boundTelemetryData(scrubTelemetryValue(value.data)),
     platform,
-    appVersion: optionalString(value.appVersion),
-    sessionId: optionalString(value.sessionId),
+    appVersion: optionalBoundedString(value.appVersion, CLIENT_APP_VERSION_MAX_BYTES),
+    sessionId: optionalBoundedString(value.sessionId, CLIENT_METADATA_MAX_BYTES),
     createdAt,
-    userId: optionalString(value.userId),
+    // Migrate persisted entries from the previous wire format. This marker is
+    // used only to prevent cross-account attribution and is never submitted.
+    localUserId: optionalString(value.localUserId) ?? optionalString(value.userId),
     device: normalizeDeviceInfo(value.device),
   }
 }
@@ -304,7 +376,10 @@ export class TelemetryLogger {
     this._origConsoleWarn = console.warn.bind(console)
 
     try {
-      this.appVersion = Constants.expoConfig?.version ?? Constants.nativeAppVersion
+      this.appVersion = optionalBoundedString(
+        Constants.expoConfig?.version ?? Constants.nativeAppVersion,
+        CLIENT_APP_VERSION_MAX_BYTES,
+      )
     } catch {
       this.appVersion = undefined
     }
@@ -429,8 +504,8 @@ export class TelemetryLogger {
     if (!this.storage) return
     try {
       this._lastCrashBreadcrumb = {
-        event,
-        data: serializeForConvex(data),
+        event: truncateUtf8(redactSensitiveText(event), CLIENT_EVENT_MAX_BYTES),
+        data: boundTelemetryData(scrubTelemetryValue(data)),
         writtenAt: Date.now(),
       }
       this.storage.set(LAST_CRASH_KEY, JSON.stringify(this._lastCrashBreadcrumb))
@@ -517,14 +592,18 @@ export class TelemetryLogger {
 
     this.queue.push({
       level,
-      event,
-      message,
-      data: serializeForConvex(data),
+      // Keep newly captured entries inside the same byte limits enforced by
+      // Convex. In particular, console errors can contain very large strings;
+      // one oversized entry must not cause its otherwise-valid batch to be
+      // rejected and discarded.
+      event: truncateUtf8(redactSensitiveText(event), CLIENT_EVENT_MAX_BYTES) || 'unknown',
+      message: truncateUtf8(redactSensitiveText(message), CLIENT_MESSAGE_MAX_BYTES),
+      data: boundTelemetryData(scrubTelemetryValue(serializeForConvex(data))),
       platform: this.platform,
       appVersion: this.appVersion,
       sessionId: this.sessionId,
       createdAt: Date.now(),
-      userId: this.userId ?? undefined,
+      localUserId: this.userId ?? undefined,
       device: this.deviceInfo,
     })
 
@@ -534,7 +613,8 @@ export class TelemetryLogger {
   }
 
   private startFlushTimer(): void {
-    if (this.flushTimer || this.queue.length === 0 || !this._mutationCreateBatch) return
+    if (this.flushTimer || this.queue.length === 0 || !this._mutationCreateBatch || !this.userId)
+      return
     this.flushTimer = setTimeout(() => {
       this.flushTimer = null
       void this.sendBatch()
@@ -542,6 +622,9 @@ export class TelemetryLogger {
   }
 
   private sendBatch(): Promise<void> {
+    // Preserve startup/crash telemetry locally until Convex auth resolves.
+    // Avoid an empty in-flight send blocking the immediate post-auth flush.
+    if (!this._mutationCreateBatch || !this.userId) return Promise.resolve()
     if (this.sendInFlight) return this.sendInFlight
     if (this.flushTimer) clearTimeout(this.flushTimer)
     this.flushTimer = null
@@ -553,18 +636,40 @@ export class TelemetryLogger {
   }
 
   private async drainBatch(): Promise<void> {
-    if (!this._mutationCreateBatch) return
+    if (!this._mutationCreateBatch || !this.userId) return
 
     const batch = this.queue.drain()
     if (batch.length === 0) return
 
+    // Anonymous startup events may be attributed to the user who authenticates
+    // in this session. Never attach logs captured for a previous account to a
+    // different account on a shared device.
+    const oldestAcceptedAt = Date.now() - CLIENT_LOG_MAX_AGE_MS
+    const attributable = batch.filter(
+      (entry) =>
+        (entry.localUserId === undefined || entry.localUserId === this.userId) &&
+        entry.createdAt >= oldestAcceptedAt,
+    )
+
     const failed: LogEntry[] = []
     // Match the Convex createBatch limit.
-    for (let i = 0; i < batch.length; i += TELEMETRY_BATCH_SIZE) {
-      const chunk = batch.slice(i, i + TELEMETRY_BATCH_SIZE)
+    for (let i = 0; i < attributable.length; i += TELEMETRY_BATCH_SIZE) {
+      const chunk = attributable.slice(i, i + TELEMETRY_BATCH_SIZE)
+      const payload = chunk.map(({ localUserId: _localUserId, ...entry }) => entry)
       try {
-        await this._mutationCreateBatch({ entries: chunk })
-      } catch {
+        await this._mutationCreateBatch({
+          entries: payload.map((entry) => ({
+            ...entry,
+            event:
+              truncateUtf8(redactSensitiveText(entry.event), CLIENT_EVENT_MAX_BYTES) || 'unknown',
+            message: truncateUtf8(redactSensitiveText(entry.message), CLIENT_MESSAGE_MAX_BYTES),
+            data: boundTelemetryData(scrubTelemetryValue(entry.data)),
+          })),
+        })
+      } catch (error) {
+        // Invalid entries can never succeed on retry, so discard this chunk
+        // instead of letting one corrupt persisted event block the queue.
+        if (telemetryErrorCode(error) === 'INVALID_TELEMETRY') continue
         // Keep failed entries instead of dropping them. The flush can fail for
         // non-user-facing reasons — a transient network blip or the
         // sign-out/sign-in auth gap — and silently losing these breadcrumbs is
@@ -621,9 +726,8 @@ export class TelemetryLogger {
         if (entries.length > 0) {
           this.queue.restore(entries)
         }
-        if (entries.length !== parsed.length) {
-          this.persistNow()
-        }
+        // Rewrite even same-length legacy queues: normalization now removes PII.
+        this.persistNow()
       }
     } catch {
       // Corrupt payload — drop it so we don't get stuck reloading garbage.

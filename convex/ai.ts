@@ -3,6 +3,7 @@ import { internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import type { QueryCtx } from './_generated/server'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
+import { retainedVideoExists } from './retentionCleanup'
 import { buildMuxTranscriptUrl } from './videos'
 
 /**
@@ -310,6 +311,15 @@ export const saveTranscript = internalMutation({
     text: v.string(),
   },
   handler: async (ctx, args) => {
+    // The caption fetch can finish after retention/account deletion, or after
+    // a replacement asset won. Do not resurrect orphaned or stale transcripts.
+    const record = await ctx.db.get(args.recordId)
+    if (
+      !record ||
+      record.muxAssetId !== args.muxAssetId ||
+      !(await retainedVideoExists(ctx, args.recordId))
+    )
+      return null
     const existing = await findTranscriptRow(ctx, args.table, args.recordId)
 
     const fields = {

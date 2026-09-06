@@ -1,10 +1,10 @@
 import { v } from 'convex/values'
 import type { Doc } from './_generated/dataModel'
 import { mutation, query } from './_generated/server'
+import { calculateAgeAt } from './agePolicy'
 import { auth } from './auth'
 import { throwUserError } from './errors'
-import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
-import { uncountResponse } from './responseCounts'
+import { getBlockedUserIds } from './userSafety'
 
 /**
  * App-open heartbeat. The client calls this on launch/foreground
@@ -37,42 +37,6 @@ function publicUser(user: Doc<'users'>) {
   }
 }
 
-function parseBirthDate(birthDate: string) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(birthDate)
-  if (!match) {
-    return null
-  }
-
-  const year = Number(match[1])
-  const month = Number(match[2])
-  const day = Number(match[3])
-  const parsed = new Date(Date.UTC(year, month - 1, day))
-  if (
-    parsed.getUTCFullYear() !== year ||
-    parsed.getUTCMonth() !== month - 1 ||
-    parsed.getUTCDate() !== day
-  ) {
-    return null
-  }
-
-  return { year, month, day }
-}
-
-function calculateAge(birthDate: string): number | undefined {
-  const birth = parseBirthDate(birthDate)
-  if (!birth) {
-    return undefined
-  }
-
-  const today = new Date()
-  let age = today.getFullYear() - birth.year
-  const monthDelta = today.getMonth() + 1 - birth.month
-  if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < birth.day)) {
-    age -= 1
-  }
-  return age
-}
-
 function currentUser(user: Doc<'users'>) {
   return {
     _id: user._id,
@@ -84,7 +48,7 @@ function currentUser(user: Doc<'users'>) {
     displayName: user.displayName,
     photoUrl: user.photoUrl,
     gender: user.gender,
-    age: user.birthDate ? calculateAge(user.birthDate) : undefined,
+    age: user.birthDate ? (calculateAgeAt(user.birthDate) ?? undefined) : undefined,
     bondfireCount: user.bondfireCount ?? 0,
     responseCount: user.responseCount ?? 0,
     totalViews: user.totalViews ?? 0,
@@ -112,7 +76,14 @@ export const current = query({
 export const get = query({
   args: { userId: v.id('users') },
   handler: async (ctx, args) => {
+    const viewerId = await auth.getUserId(ctx)
     const user = await ctx.db.get(args.userId)
+    if (!user) return null
+    const viewer = viewerId ? await ctx.db.get(viewerId) : null
+    if (user.moderationStatus === 'suspended' && viewerId !== user._id && !viewer?.isAdmin) {
+      return null
+    }
+    if (viewerId && (await getBlockedUserIds(ctx, viewerId)).has(user._id)) return null
     return user ? publicUser(user) : null
   },
 })
@@ -223,213 +194,6 @@ export const getStats = query({
       responseCount: user.responseCount ?? 0,
       totalViews: user.totalViews ?? 0,
     }
-  },
-})
-
-// Delete user account and all associated data
-export const deleteAccount = mutation({
-  args: {},
-  handler: async (ctx) => {
-    const userId = await auth.getUserId(ctx)
-    if (!userId) {
-      throwUserError('Not authenticated')
-    }
-
-    const user = await ctx.db.get(userId)
-    if (user?.photoStorageId) {
-      await ctx.storage.delete(user.photoStorageId)
-    }
-
-    // 1. Delete all user's response videos (bondfireVideos)
-    const userVideos = await ctx.db
-      .query('bondfireVideos')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .collect()
-
-    for (const video of userVideos) {
-      // Give the count back only if this response was actually counted.
-      await uncountResponse(ctx, video)
-      if (video.liveSessionId) {
-        await ctx.db.delete(video.liveSessionId)
-      }
-      await ctx.db.delete(video._id)
-    }
-
-    // 2. Delete all user's bondfires (and their response videos)
-    const userBondfires = await ctx.db
-      .query('bondfires')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .collect()
-
-    for (const bondfire of userBondfires) {
-      // Delete all response videos for this bondfire
-      const bondfireResponses = await ctx.db
-        .query('bondfireVideos')
-        .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
-        .collect()
-
-      for (const response of bondfireResponses) {
-        if (response.liveSessionId) {
-          await ctx.db.delete(response.liveSessionId)
-        }
-        await ctx.db.delete(response._id)
-      }
-
-      const personalParticipants = await ctx.db
-        .query('personalBondfireParticipants')
-        .withIndex('by_bondfire_status', (q) => q.eq('bondfireId', bondfire._id))
-        .collect()
-
-      for (const participant of personalParticipants) {
-        await ctx.db.delete(participant._id)
-      }
-
-      await deleteBondfireInviteArtifacts(ctx, bondfire._id)
-
-      if (bondfire.liveSessionId) {
-        await ctx.db.delete(bondfire.liveSessionId)
-      }
-
-      await ctx.db.delete(bondfire._id)
-    }
-
-    // 3. Delete all user's watch events
-    const watchEvents = await ctx.db
-      .query('watchEvents')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .collect()
-
-    for (const event of watchEvents) {
-      await ctx.db.delete(event._id)
-    }
-
-    const threadReads = await ctx.db
-      .query('bondfireThreadReads')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .collect()
-
-    for (const read of threadReads) {
-      await ctx.db.delete(read._id)
-    }
-
-    const ownedPins = await ctx.db
-      .query('closeCirclePins')
-      .withIndex('by_owner', (q) => q.eq('ownerId', userId))
-      .collect()
-
-    for (const pin of ownedPins) {
-      await ctx.db.delete(pin._id)
-    }
-
-    const incomingPins = await ctx.db
-      .query('closeCirclePins')
-      .withIndex('by_pinned', (q) => q.eq('pinnedUserId', userId))
-      .collect()
-
-    for (const pin of incomingPins) {
-      await ctx.db.delete(pin._id)
-    }
-
-    const personalParticipants = await ctx.db
-      .query('personalBondfireParticipants')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .collect()
-
-    for (const participant of personalParticipants) {
-      await ctx.db.delete(participant._id)
-    }
-
-    const personalInvites = await ctx.db
-      .query('inviteCodes')
-      .withIndex('by_created_by', (q) => q.eq('createdBy', userId))
-      .collect()
-
-    for (const invite of personalInvites) {
-      await ctx.db.delete(invite._id)
-    }
-
-    const personalCamps = await ctx.db
-      .query('personalCamps')
-      .withIndex('by_owner', (q) => q.eq('ownerId', userId))
-      .collect()
-
-    for (const personalCamp of personalCamps) {
-      await ctx.db.delete(personalCamp._id)
-    }
-
-    // 4. Delete all user's device tokens
-    const deviceTokens = await ctx.db
-      .query('deviceTokens')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .collect()
-
-    for (const token of deviceTokens) {
-      await ctx.db.delete(token._id)
-    }
-
-    // 5. Delete camp memberships, invites, and subscriptions
-    const campMemberships = await ctx.db
-      .query('campMembers')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .collect()
-
-    for (const membership of campMemberships) {
-      await ctx.db.delete(membership._id)
-    }
-
-    const campInvites = await ctx.db
-      .query('inviteCodes')
-      .withIndex('by_created_by', (q) => q.eq('createdBy', userId))
-      .collect()
-
-    for (const invite of campInvites) {
-      await ctx.db.delete(invite._id)
-    }
-
-    const subscriptions = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .collect()
-
-    for (const subscription of subscriptions) {
-      await ctx.db.delete(subscription._id)
-    }
-
-    // 6. Delete auth-related data (sessions, accounts, refresh tokens)
-    // These tables are created by @convex-dev/auth
-    const authSessions = await ctx.db
-      .query('authSessions')
-      .withIndex('userId', (q) => q.eq('userId', userId))
-      .collect()
-
-    for (const session of authSessions) {
-      // Delete associated refresh tokens
-      const refreshTokens = await ctx.db
-        .query('authRefreshTokens')
-        .withIndex('sessionId', (q) => q.eq('sessionId', session._id))
-        .collect()
-
-      for (const token of refreshTokens) {
-        await ctx.db.delete(token._id)
-      }
-
-      await ctx.db.delete(session._id)
-    }
-
-    // Delete auth accounts linked to this user
-    const authAccounts = await ctx.db
-      .query('authAccounts')
-      .withIndex('userIdAndProvider', (q) => q.eq('userId', userId))
-      .collect()
-
-    for (const account of authAccounts) {
-      await ctx.db.delete(account._id)
-    }
-
-    // 7. Finally, delete the user record itself
-    await ctx.db.delete(userId)
-
-    return { success: true }
   },
 })
 
