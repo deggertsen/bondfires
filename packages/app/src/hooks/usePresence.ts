@@ -8,7 +8,6 @@ export interface Viewer {
   userId: Id<'users'>
   userName: string
   userPhotoUrl?: string
-  lastHeartbeatAt: number
 }
 
 export interface UsePresenceOptions {
@@ -24,13 +23,13 @@ export interface UsePresenceResult {
   viewers: Viewer[]
 }
 
-const HEARTBEAT_INTERVAL_MS = 30_000
+const HEARTBEAT_INTERVAL_MS = 60_000
 
 /**
  * Manages presence heartbeats and viewer list subscriptions for a video.
  *
  * - When all conditions are met (active, focused, app foreground, videoId defined),
- *   fires a heartbeat immediately and then every 30 seconds.
+ *   fires a heartbeat immediately and then every 60 seconds.
  * - When any condition becomes false, clears the interval and calls leaveViewing.
  * - Subscribes to the viewer list via useQuery, filtering out the current user.
  * - On unmount, calls leaveViewing.

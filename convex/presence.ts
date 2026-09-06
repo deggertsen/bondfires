@@ -103,11 +103,19 @@ export const listViewers = query({
     videoId: v.string(),
   },
   handler: async (ctx, args) => {
-    return await ctx.db
+    const viewers = await ctx.db
       .query('presence')
       .withIndex('by_video', (q) => q.eq('videoType', args.videoType).eq('videoId', args.videoId))
       .filter((q) => q.gt(q.field('lastHeartbeatAt'), presenceCutoff(Date.now())))
       .collect()
+    // Heartbeat timestamps are liveness bookkeeping, not visible viewer data.
+    // A heartbeat still invalidates this query, but no longer changes its payload.
+    return viewers.map(({ _id, userId, userName, userPhotoUrl }) => ({
+      _id,
+      userId,
+      userName,
+      userPhotoUrl,
+    }))
   },
 })
 

@@ -1,8 +1,41 @@
+diff --git a/android/src/main/java/expo/modules/video/VideoModule.kt b/android/src/main/java/expo/modules/video/VideoModule.kt
+--- a/android/src/main/java/expo/modules/video/VideoModule.kt
++++ b/android/src/main/java/expo/modules/video/VideoModule.kt
+@@ -19,6 +19,7 @@
+ import expo.modules.video.enums.AudioMixingMode
+ import expo.modules.video.enums.ContentFit
+ import expo.modules.video.player.VideoPlayer
++import expo.modules.video.records.VideoSize
+ import expo.modules.video.records.BufferOptions
+ import expo.modules.video.records.FullscreenOptions
+ import expo.modules.video.records.SubtitleTrack
+@@ -248,6 +249,22 @@
+           }
+         }
+ 
++      Property("maxVideoSize")
++        .get { ref: VideoPlayer ->
++          runBlocking(appContext.mainQueue.coroutineContext) {
++            val parameters = ref.player.trackSelectionParameters
++            VideoSize(parameters.maxVideoWidth, parameters.maxVideoHeight)
++          }
++        }
++        .set { ref: VideoPlayer, size: VideoSize ->
++          appContext.mainQueue.launch {
++            ref.player.trackSelectionParameters = ref.player.trackSelectionParameters
++              .buildUpon()
++              .setMaxVideoSize(size.width.coerceAtLeast(1), size.height.coerceAtLeast(1))
++              .build()
++          }
++        }
++
+       Property("bufferOptions")
+         .get { ref: VideoPlayer ->
+           ref.bufferOptions
 diff --git a/android/src/main/java/expo/modules/video/records/VideoMetadata.kt b/android/src/main/java/expo/modules/video/records/VideoMetadata.kt
-index 8df1a9301cae9a01da063a1dd32bc0ec37e51862..0857d0783f80b854712bba95e95267e8e34fdae1 100644
 --- a/android/src/main/java/expo/modules/video/records/VideoMetadata.kt
 +++ b/android/src/main/java/expo/modules/video/records/VideoMetadata.kt
-@@ -8,5 +8,6 @@ import java.io.Serializable
+@@ -8,5 +8,6 @@
  class VideoMetadata(
    @Field var title: String? = null,
    @Field var artist: String? = null,
@@ -10,10 +43,9 @@ index 8df1a9301cae9a01da063a1dd32bc0ec37e51862..0857d0783f80b854712bba95e95267e8
    @Field var artwork: Uri? = null
  ) : Record, Serializable
 diff --git a/android/src/main/java/expo/modules/video/records/VideoSource.kt b/android/src/main/java/expo/modules/video/records/VideoSource.kt
-index 82a963332a717fb1ddddce3532e4d4778bad4357..e0ccb820b1cb715ebbec23350a01b2ec470f34ce 100644
 --- a/android/src/main/java/expo/modules/video/records/VideoSource.kt
 +++ b/android/src/main/java/expo/modules/video/records/VideoSource.kt
-@@ -38,6 +38,7 @@ class VideoSource(
+@@ -38,6 +38,7 @@
        "DRMHeadersValues:${this.drm?.headers?.values?.joinToString { it }}}" +
        "NotificationDataTitle:${this.metadata?.title}" +
        "NotificationDataSecondaryText:${this.metadata?.artist}" +
@@ -21,7 +53,7 @@ index 82a963332a717fb1ddddce3532e4d4778bad4357..e0ccb820b1cb715ebbec23350a01b2ec
        "NotificationDataArtwork:${this.metadata?.artwork?.path}" +
        "ContentType:${this.contentType.value}"
    }
-@@ -66,6 +67,7 @@ class VideoSource(
+@@ -66,6 +67,7 @@
            metadata?.let { data ->
              setTitle(data.title)
              setArtist(data.artist)
@@ -30,10 +62,18 @@ index 82a963332a717fb1ddddce3532e4d4778bad4357..e0ccb820b1cb715ebbec23350a01b2ec
                setArtworkUri(it)
              }
 diff --git a/build/VideoPlayer.types.d.ts b/build/VideoPlayer.types.d.ts
-index 204f98daf5fd3b5cf07c1f55ea948f80d6a06f2c..1bb71bf43864019adcd4ba3fff4bc86d13245393 100644
 --- a/build/VideoPlayer.types.d.ts
 +++ b/build/VideoPlayer.types.d.ts
-@@ -350,6 +350,12 @@ export type VideoMetadata = {
+@@ -147,6 +147,8 @@
+      * @platform ios
+      */
+     bufferOptions: BufferOptions;
++  /** Bondfires: adaptive playback ceiling; does not reload the source. */
++  maxVideoSize: { width: number; height: number };
+     /**
+      * Specifies the subtitle track which is currently displayed by the player. `null` when no subtitles are displayed.
+      *
+@@ -350,6 +352,12 @@
       * @platform ios
       */
      artist?: string;
@@ -47,10 +87,10 @@ index 204f98daf5fd3b5cf07c1f55ea948f80d6a06f2c..1bb71bf43864019adcd4ba3fff4bc86d
       * The uri of the video artwork.
       * @platform android
 diff --git a/ios/NowPlayingManager.swift b/ios/NowPlayingManager.swift
-index 414c01af74739376ec8281916f4975326d4f448d..6efb9bf409e963482632fc2c4d6a19b53f4dd483 100644
 --- a/ios/NowPlayingManager.swift
 +++ b/ios/NowPlayingManager.swift
-@@ -123,5 +123,6 @@ class NowPlayingManager: VideoPlayerObserverDelegate {
+@@ -122,6 +122,7 @@
+ 
        nowPlayingInfo[MPMediaItemPropertyTitle] = userMetadata?.title ?? title
        nowPlayingInfo[MPMediaItemPropertyArtist] = userMetadata?.artist ?? artist
 +      nowPlayingInfo[MPMediaItemPropertyAlbumTitle] = userMetadata?.album
@@ -58,28 +98,102 @@ index 414c01af74739376ec8281916f4975326d4f448d..6efb9bf409e963482632fc2c4d6a19b5
        nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentItem.currentTime().seconds
        nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = currentItem.duration.isIndefinite
 diff --git a/ios/Records/VideoMetadata.swift b/ios/Records/VideoMetadata.swift
-index f897db1c14bb76ccbbb419f797d19d73b46fa9a7..347727e6f27a326af209eefc903506b8c4e84bbe 100644
 --- a/ios/Records/VideoMetadata.swift
 +++ b/ios/Records/VideoMetadata.swift
-@@ -11 +11,4 @@ internal struct VideoMetadata: Record {
+@@ -11,6 +11,9 @@
    var artist: String? = nil
+ 
+   @Field
++  var album: String? = nil
 +
 +  @Field
-+  var album: String? = nil
+   var artwork: URL? = nil
+ }
+ // swiftlint:enable redundant_optional_initialization
+diff --git a/ios/VideoModule.swift b/ios/VideoModule.swift
+--- a/ios/VideoModule.swift
++++ b/ios/VideoModule.swift
+@@ -257,6 +257,13 @@
+ 
+       Property("bufferedPosition") { player -> Double in
+         return player.bufferedPosition
++      }
++
++      Property("maxVideoSize") { player -> [String: Any] in
++        return player.maxVideoSize.toDictionary()
++      }
++      .set { (player, size: VideoSize) in
++        player.maxVideoSize = size
+       }
+ 
+       Property("bufferOptions") { player -> [String: Any] in
+diff --git a/ios/VideoPlayer.swift b/ios/VideoPlayer.swift
+--- a/ios/VideoPlayer.swift
++++ b/ios/VideoPlayer.swift
+@@ -130,6 +130,17 @@
+     let timeIntervalSince = currentDate.timeIntervalSince1970
+     let unixTime = Date().timeIntervalSince1970
+     return unixTime - timeIntervalSince
++  }
++
++  // Bondfires: constrain adaptive playback without replacing the AVPlayerItem.
++  var maxVideoSize = VideoSize(width: 720, height: 1280) {
++    didSet { applyMaxVideoSize(to: ref.currentItem) }
++  }
++
++  private func applyMaxVideoSize(to item: AVPlayerItem?) {
++    item?.preferredMaximumResolution = CGSize(
++      width: CGFloat(maxVideoSize.width ?? 720), height: CGFloat(maxVideoSize.height ?? 1280)
++    )
+   }
+ 
+   var bufferOptions = BufferOptions() {
+@@ -215,6 +226,7 @@
+     }
+ 
+     playerItem.audioTimePitchAlgorithm = preservesPitch ? .spectral : .varispeed
++    applyMaxVideoSize(to: playerItem)
+     playerItem.preferredForwardBufferDuration = bufferOptions.preferredForwardBufferDuration
+ 
+     // The current item has to be replaced from the main thread. When replacing from other queues
+@@ -252,6 +264,7 @@
+     }
+ 
+     playerItem.audioTimePitchAlgorithm = self.preservesPitch ? .spectral : .varispeed
++    applyMaxVideoSize(to: playerItem)
+     playerItem.preferredForwardBufferDuration = self.bufferOptions.preferredForwardBufferDuration
+ 
+     // The current item has to be replaced from the main thread. When replacing from other queues
+@@ -346,6 +359,7 @@
+       oldSource: oldVideoPlayerItem?.videoSource
+     )
+     safeEmit(event: "sourceChange", payload: payload)
++    applyMaxVideoSize(to: newVideoPlayerItem)
+     newVideoPlayerItem?.preferredForwardBufferDuration = bufferOptions.preferredForwardBufferDuration
+   }
+ 
 diff --git a/src/VideoPlayer.types.ts b/src/VideoPlayer.types.ts
-index 8b1ff05d0d9ff13f48bf0c5a870ae00bd19e3aaf..04c39c4c1a36338780ecdb284ca274acc921bbea 100644
 --- a/src/VideoPlayer.types.ts
 +++ b/src/VideoPlayer.types.ts
-@@ -406,6 +406,12 @@ export type VideoMetadata = {
+@@ -169,6 +169,8 @@
     * @platform ios
     */
+   bufferOptions: BufferOptions;
++  /** Bondfires: adaptive playback ceiling; does not reload the source. */
++  maxVideoSize: { width: number; height: number };
+ 
+   /**
+    * Specifies the subtitle track which is currently displayed by the player. `null` when no subtitles are displayed.
+@@ -407,6 +409,12 @@
+    */
    artist?: string;
-+  /**
+   /**
 +   * The album or collection containing the video.
 +   * @platform android
 +   * @platform ios
 +   */
 +  album?: string;
-   /**
++  /**
     * The uri of the video artwork.
     * @platform android
+    * @platform ios

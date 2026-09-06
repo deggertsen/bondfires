@@ -20,10 +20,10 @@ private let livePublisherZeroStats: [String: Any] = [
 struct LivePublisherStartOptions: Record {
   @Field var rtmpsUrl: String = ""
   @Field var streamKey: String = ""
-  @Field var width: Int = 0
-  @Field var height: Int = 0
-  @Field var fps: Int = 30
-  @Field var videoBitrate: Int = 2_500_000
+  @Field var width: Int = 720
+  @Field var height: Int = 1280
+  @Field var fps: Int = 24
+  @Field var videoBitrate: Int = 1_500_000
   @Field var audioBitrate: Int = 128_000
   @Field var initialCamera: String = "front"
   /// Non-empty arms the local MP4 backup recorder: the mixer output is also
@@ -460,6 +460,8 @@ final class LivePublisher {
     setupAudioSession()
     addCaptureObservers()
 
+    // Select the sensor format before capture begins, not just the RTMP bitrate.
+    await mixer.setSessionPreset(.hd1280x720)
     await mixer.addOutput(previewView)
 
     guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position) else {
@@ -747,7 +749,17 @@ final class LivePublisher {
       // addOutput is identity-guarded in MediaMixer, so re-adding a reused
       // recorder instance is a no-op.
       await mixer.addOutput(recorder)
-      try await recorder.startRecording(fileURL)
+      var backupSettings = HKStreamRecorder.defaultSettings
+      backupSettings[.video] = [
+        AVVideoCodecKey: AVVideoCodecType.h264,
+        AVVideoWidthKey: Int(min(captureSize.width, captureSize.height)),
+        AVVideoHeightKey: Int(max(captureSize.width, captureSize.height)),
+        AVVideoCompressionPropertiesKey: [
+          AVVideoAverageBitRateKey: 1_500_000,
+          AVVideoExpectedSourceFrameRateKey: 24
+        ]
+      ]
+      try await recorder.startRecording(fileURL, settings: backupSettings)
       return true
     } catch {
       if let recorder = backupRecorder {

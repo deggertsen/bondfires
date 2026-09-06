@@ -205,8 +205,13 @@ export default function ProfileScreen() {
   const adminGrantKindling = useMutation(api.admin.adminGrantKindling)
   const closeCircle = useQuery(api.conversations.listCloseCircle) as CloseCircleEntry[] | undefined
 
-  const { preferences, setAutoplayVideos, setNotificationsEnabled, setLivePublishEnabled } =
-    usePreferences()
+  const {
+    preferences,
+    setPlaybackQuality,
+    setAutoplayVideos,
+    setNotificationsEnabled,
+    setLivePublishEnabled,
+  } = usePreferences()
 
   // Live publish is the primary recording path, but Phase 2 recovery uploads
   // (`live_backup` tasks) still need a visible progress card on profile.
@@ -781,6 +786,39 @@ export default function ProfileScreen() {
                   </Switch>
                 </XStack>
 
+                <Separator borderColor={'$borderColor'} />
+
+                <YStack gap={8}>
+                  <Text fontWeight="500" fontSize={15}>
+                    Video quality
+                  </Text>
+                  <XStack gap={8}>
+                    {([720, 1080] as const).map((quality) => (
+                      <Button
+                        key={quality}
+                        flex={1}
+                        accessibilityRole="radio"
+                        accessibilityState={{
+                          checked: (preferences.playbackQuality ?? 720) === quality,
+                        }}
+                        backgroundColor={
+                          (preferences.playbackQuality ?? 720) === quality
+                            ? '$backgroundPress'
+                            : '$background'
+                        }
+                        borderColor={'$borderColor'}
+                        borderWidth={1}
+                        onPress={() => setPlaybackQuality(quality)}
+                      >
+                        {quality}p
+                      </Button>
+                    ))}
+                  </XStack>
+                  <Text fontSize={13} color={'$placeholderColor'}>
+                    720p is recommended. 1080p may increase battery consumption and mobile data
+                    usage. Quality adjusts when your device gets warm or playback buffers.
+                  </Text>
+                </YStack>
                 <Separator borderColor={'$borderColor'} />
 
                 <XStack justifyContent="space-between" alignItems="center">

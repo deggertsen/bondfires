@@ -55,10 +55,10 @@ import kotlinx.coroutines.withTimeout
 class LivePublisherStartOptions : Record {
   @Field val rtmpsUrl: String = ""
   @Field val streamKey: String = ""
-  @Field val width: Int = 0
-  @Field val height: Int = 0
-  @Field val fps: Int = 30
-  @Field val videoBitrate: Int = 2_500_000
+  @Field val width: Int = 720
+  @Field val height: Int = 1280
+  @Field val fps: Int = 24
+  @Field val videoBitrate: Int = 1_500_000
   @Field val audioBitrate: Int = 128_000
   @Field val initialCamera: String = "front"
   /**
@@ -71,8 +71,8 @@ class LivePublisherStartOptions : Record {
 }
 
 class LivePublisherPreviewOptions : Record {
-  @Field val fps: Int = 30
-  @Field val videoBitrate: Int = 2_500_000
+  @Field val fps: Int = 24
+  @Field val videoBitrate: Int = 1_500_000
   @Field val audioBitrate: Int = 128_000
   @Field val initialCamera: String = "front"
 }
@@ -654,7 +654,7 @@ class BondfireLivePublisherModule : Module() {
 
     // Query camera for a supported output resolution to avoid stretching frames.
     val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-    val resolution = getBestCameraResolution(cameraManager, cameraId, 0, 0)
+    val resolution = getBestCameraResolution(cameraManager, cameraId, 720, 1280)
     Log.i(TAG, "Using camera output resolution ${resolution.width}x${resolution.height}")
 
     // Route the mic to a connected headset when one is present. StreamPack's
@@ -1086,11 +1086,11 @@ class BondfireLivePublisherModule : Module() {
         Math.abs(aspectRatio - requestedAspectRatio) < aspectRatioTolerance
       }
       val candidateSizes = if (matchedSizes.isNotEmpty()) matchedSizes else usableSizes
-      val fullHdPixels = 1920L * 1080L
+      val targetPixels = 1280L * 720L
       val cappedSizes = candidateSizes.filter { size ->
-        size.width.toLong() * size.height.toLong() <= fullHdPixels
+        size.width.toLong() * size.height.toLong() <= targetPixels
       }
-      val preferredSizes = if (cappedSizes.isNotEmpty()) cappedSizes else candidateSizes
+      val preferredSizes = if (cappedSizes.isNotEmpty()) cappedSizes else listOf(candidateSizes.minBy { it.width.toLong() * it.height.toLong() })
 
       val bestSize = preferredSizes.maxByOrNull { size ->
         size.width.toLong() * size.height.toLong()
@@ -1132,7 +1132,7 @@ class BondfireLivePublisherModule : Module() {
     return if (width > 0 && height > 0) {
       Size(width, height)
     } else {
-      Size(1920, 1080)
+      Size(1280, 720)
     }
   }
 

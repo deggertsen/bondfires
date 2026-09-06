@@ -7653,12 +7653,12 @@ __metadata:
 
 "expo-video@patch:expo-video@npm%3A3.0.16#~/.yarn/patches/expo-video-npm-3.0.16-8037695497.patch":
   version: 3.0.16
-  resolution: "expo-video@patch:expo-video@npm%3A3.0.16#~/.yarn/patches/expo-video-npm-3.0.16-8037695497.patch::version=3.0.16&hash=283ccd"
+  resolution: "expo-video@patch:expo-video@npm%3A3.0.16#~/.yarn/patches/expo-video-npm-3.0.16-8037695497.patch::version=3.0.16&hash=e114ad"
   peerDependencies:
     expo: "*"
     react: "*"
     react-native: "*"
-  checksum: 10c0/b81fb76417e669f85e70355b61ae0da7d0a1f618bc112c18525bde263252b9d1f514dd5a55dced2dee5439cb3b6a73c9216f627cb096c70d1c3dc20f3b05cad3
+  checksum: 10c0/ca5cfef24ec3672ed1d0cf7bb8e32c9e83c2b4efe4481c4b6174b113e111f5a7b379539a2801b2bda7bdf4d85e4f48d2ffd8e815453a35f71a8209a5fe6bfee4
   languageName: node
   linkType: hard
 
