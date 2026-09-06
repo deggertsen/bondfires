@@ -5,21 +5,6 @@ function isCanonicalConvexUrl(value) {
   return /^https:\/\/[a-z0-9-]+\.convex\.cloud$/.test(value ?? '')
 }
 
-function isValidSentryDsn(value) {
-  if (!value) return false
-  try {
-    const parsed = new URL(value)
-    return (
-      parsed.protocol === 'https:' &&
-      Boolean(parsed.username) &&
-      (parsed.hostname === 'sentry.io' || parsed.hostname.endsWith('.sentry.io')) &&
-      parsed.pathname !== '/'
-    )
-  } catch {
-    return false
-  }
-}
-
 /** @param {Record<string, string | undefined>} env */
 function resolveAppEnvironment(env = process.env) {
   const profile = env.EAS_BUILD_PROFILE
@@ -72,44 +57,31 @@ function validateConvexEnvironment({ appEnvironment, convexUrl, requireUrl = tru
 }
 
 /**
- * @param {{ appEnvironment: string, env?: Record<string, string | undefined>, requireProduction: boolean, requireSourceMaps?: boolean }} options
+ * @param {{ appEnvironment: string, env?: Record<string, string | undefined>, requireProduction: boolean }} options
  */
 function validateMonitoringEnvironment({
   appEnvironment,
   env = process.env,
   requireProduction,
-  requireSourceMaps = false,
 }) {
-  const missing = ['EXPO_PUBLIC_SENTRY_DSN', 'SENTRY_ORG', 'SENTRY_PROJECT'].filter(
-    (key) => !env[key]?.trim(),
-  )
-  if (env.EXPO_PUBLIC_SENTRY_DSN && !isValidSentryDsn(env.EXPO_PUBLIC_SENTRY_DSN)) {
-    throw new Error('EXPO_PUBLIC_SENTRY_DSN must be a valid HTTPS sentry.io project DSN')
+  const value = env.CRASHLYTICS_ENABLED
+  if (value && value !== 'true' && value !== 'false') {
+    throw new Error('CRASHLYTICS_ENABLED must be true or false')
   }
-  if (missing.length > 0 && missing.length < 3) {
-    throw new Error(`Monitoring configuration is incomplete: ${missing.join(', ')}`)
+  const enabled = value === 'true' && appEnvironment !== 'development'
+  if (appEnvironment === 'production' && requireProduction && !enabled) {
+    throw new Error('Production monitoring requires CRASHLYTICS_ENABLED=true')
   }
-  if (appEnvironment === 'production' && requireProduction && missing.length > 0) {
-    throw new Error(`Production monitoring configuration is missing: ${missing.join(', ')}`)
+  if (appEnvironment === 'production' && enabled && env.MONITORING_NATIVE_PRIVACY_REVIEWED !== 'true') {
+    throw new Error('Production requires MONITORING_NATIVE_PRIVACY_REVIEWED=true after reviewing Crashlytics native payloads and privacy declarations')
   }
-  if (appEnvironment === 'production' && requireSourceMaps && !env.SENTRY_AUTH_TOKEN?.trim()) {
-    throw new Error('Production source-map upload requires SENTRY_AUTH_TOKEN')
-  }
-  if (appEnvironment === 'production' && requireProduction && env.SENTRY_NATIVE_PRIVACY_REVIEWED !== 'true') {
-    throw new Error('Production requires SENTRY_NATIVE_PRIVACY_REVIEWED=true after reviewing native crash payloads and provider scrubbing')
-  }
-  if (appEnvironment === 'production' && requireSourceMaps &&
-      [env.SENTRY_DISABLE_AUTO_UPLOAD, env.SENTRY_ALLOW_FAILURE].some((value) => value === 'true' || value === '1')) {
-    throw new Error('Production must not disable source-map upload or allow upload failures')
-  }
-  return { enabled: missing.length === 0, missing }
+  return { enabled }
 }
 
 module.exports = {
   APP_ENVIRONMENTS,
   PRODUCTION_CONVEX_URL,
   isCanonicalConvexUrl,
-  isValidSentryDsn,
   resolveAppEnvironment,
   validateConvexEnvironment,
   validateMonitoringEnvironment,

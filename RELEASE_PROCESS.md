@@ -3,7 +3,7 @@
 > Crash monitoring, environment isolation, staging smoke tests, device gates, alerts,
 > and rollback guidance are defined in
 > [`docs/production-observability-and-release-qa.md`](docs/production-observability-and-release-qa.md).
-> Production automation fails before versioning if Sentry/source-map configuration
+> Production automation fails before versioning if Crashlytics configuration/privacy approval
 > or the registered Convex target is missing or mismatched.
 
 This is the source of truth for production mobile releases. The release script owns repeatable
@@ -116,7 +116,8 @@ eas env:exec production 'yarn release --android-only'
 ```
 
 The wrapper loads the production EAS environment into the local release process;
-the preflight rejects missing Sentry/source-map settings or a mismatched Convex URL.
+the preflight rejects missing Crashlytics enablement/privacy approval, invalid Firebase
+registrations, or a mismatched Convex URL.
 
 The script:
 

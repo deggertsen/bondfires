@@ -1,122 +1,92 @@
 # Production observability and release QA
 
-This is the operational contract for Bondfires native releases. It is intentionally
-fail-closed: a production artifact without crash monitoring, or a preview artifact
-without a separate Convex deployment, is not releasable.
+## Firebase Crashlytics setup
 
-The integration follows Expo's official [Sentry guide](https://docs.expo.dev/guides/using-sentry/),
-including the Expo config plugin, Sentry-aware Metro configuration, and
-`SENTRY_AUTH_TOKEN` source-map upload. EAS profiles explicitly select one of Expo's
-[development, preview, or production environments](https://docs.expo.dev/eas/environment-variables/),
-and update commands must pass `--environment` as described by Expo's
-[EAS environment usage guide](https://docs.expo.dev/eas/environment-variables/usage/).
+Bondfires uses React Native Firebase App + Crashlytics (26.4.0), not Sentry.
+The committed public Firebase registrations both target `bondfires-c455d` and
+`org.bondfires`. These are app configuration, not service-account credentials.
+The separate Play submission key is not used by Crashlytics.
 
-## Owner setup required before the first preview or production build
+Before release, the owner must:
 
-No external project or credential is created by this repository change.
+1. Open Firebase Console → `bondfires-c455d` → Crashlytics and finish onboarding
+   for both registered apps; configure new-fatal/regression alerts and recipients.
+2. Set `CRASHLYTICS_ENABLED=true` in the preview and production EAS environments.
+   Set `MONITORING_NATIVE_PRIVACY_REVIEWED=true` in production only after the
+   payload/privacy review below. Both are build-only, non-secret configuration.
+   Remove obsolete Sentry variables if previously added; no Sentry account,
+   DSN, upload token, organization or project is needed.
+3. Keep distinct Convex deployments for development/preview and production.
+   Set `EXPO_PUBLIC_APP_ENV`, `EXPO_PUBLIC_CONVEX_URL` and
+   `EXPO_PUBLIC_MUX_DATA_ENV_KEY` in the matching EAS environment. Provision a
+   staging account; never copy production credentials into staging smoke tests.
+4. Build new native binaries: existing development clients do not contain RNFB.
+   Preview uses the same Firebase project, with an `environment=preview` custom
+   key; filter release monitoring appropriately. Use separate device installs
+   for staging and production (or uninstall between environments): the bundle ID
+   is shared and Firebase collection preferences persist across upgrades.
 
-1. Create a Sentry React Native project and record its organization slug, project
-   slug, DSN, and organization auth token. Expo documents these exact inputs and
-   recommends Sensitive visibility for `SENTRY_AUTH_TOKEN`.
-2. In EAS, set the following separately for the `preview` and `production`
-   environments:
+The official [RNFB Expo setup](https://rnfirebase.io/#expo) and
+[Crashlytics integration](https://rnfirebase.io/crashlytics/usage) are the
+integration references. We retain CocoaPods/static linkage (`disableSPM`) and
+force-static-link the two RNFB modules to match Expo's prebuilt React Native.
 
-   | Variable | Visibility | Purpose |
-   | --- | --- | --- |
-   | `EXPO_PUBLIC_APP_ENV` | Plain text | Must match `preview` or `production` |
-   | `EXPO_PUBLIC_CONVEX_URL` | Plain text | Dedicated deployment URL; preview must not equal production |
-   | `EXPO_PUBLIC_MUX_DATA_ENV_KEY` | Plain text | Mux Data environment owned by that runtime |
-   | `EXPO_PUBLIC_SENTRY_DSN` | Plain text | Public client ingestion endpoint |
-   | `SENTRY_ORG` | Plain text or Sensitive | Source-map organization slug |
-   | `SENTRY_PROJECT` | Plain text or Sensitive | Source-map project slug |
-   | `SENTRY_AUTH_TOKEN` | Sensitive | Build-only source-map upload credential; never `EXPO_PUBLIC_` |
-   | `SENTRY_NATIVE_PRIVACY_REVIEWED` | Plain text | Set to `true` only after the native privacy review below |
+## Privacy and collection
 
-3. Create a non-production Convex deployment and a dedicated staging test account.
-   The repository deliberately contains no guessed staging URL or credentials.
-4. Configure Sentry alerts and link Sentry to EAS if desired. Expo documents the
-   [EAS dashboard integration](https://docs.expo.dev/guides/using-sentry/#sentry-integration-with-eas-dashboard).
-5. Before enabling Sentry in production, have the owner/legal reviewer update the
-   public privacy policy and the Apple App Privacy and Google Play Data Safety
-   declarations for crash/diagnostic collection, retention, and sharing. Record the
-   decision on Sentry's processor/subprocessor role, data-processing terms, region,
-   and retention. This repository does not make those legal declarations for the
-   business.
+Native auto-collection and debug reporting default off in `apps/mobile/firebase.json`.
+Approved preview/production runtimes enable collection after setting environment,
+release and build keys. Development, Expo Go and web do not initialize the adapter.
+First-launch crashes before JavaScript initialization may only upload on a later
+successful launch. Once enabled, the native SDK can capture crashes before JS runs.
 
-To load EAS values locally without committing them, use `eas env:pull --environment
-preview` or `eas env:exec`. Do not copy the production `.env` into a preview or
-development build.
+No Analytics SDK, user IDs, email attributes, replay, screenshots, arbitrary custom
+logs or media attachments are added. JavaScript boundary/global/polyfill error
+reports copy only scrubbed error text and bounded frames. RNFB's unsanitized JS
+handlers are replaced while preserving the app's original fatal-error handling.
+Hermes rejection tracking and application breadcrumbs remain in Convex telemetry.
+Manually recorded JS errors appear as non-fatal reports; a genuine native fatal
+may also appear separately. Crashlytics is not a replacement for backend/Mux logs.
 
-## What is and is not collected
+Native crash/ANR payloads bypass JavaScript scrubbing. Review actual iOS/Android
+preview payloads, installation identifiers, device data and retention against
+Firebase's [privacy information](https://firebase.google.com/support/privacy).
+Update the public privacy policy and Apple App Privacy / Play Data Safety answers
+for the selected provider and actual collection. The privacy environment variable
+is an owner attestation, not automated compliance verification or user consent.
+If the review requires consent or collection restrictions, implement them before
+enabling production; do not claim native payloads are anonymized by our JS scrubber.
 
-Sentry is disabled when `EXPO_PUBLIC_SENTRY_DSN` is absent. Production preflight
-requires it. Enabled builds collect native crashes, fatal JavaScript errors,
-automatic sessions, iOS watchdog termination/app-hang signals, Android native
-crash/ANR signals supplied by the native SDK, app version/build, OS/device family,
-and symbolicated stacks.
+## Build and symbol verification
 
-The client sets `sendDefaultPii: false` and disables screenshots, view hierarchy,
-replay, tracing, profiling, and JavaScript failed-request capture. JavaScript
-`beforeSend`/`beforeBreadcrumb` allowlist context, remove arbitrary containers, and
-redact common email, DOB, credential, invite, and URL formats. Stack/debug-image
-locations retain matching filenames but discard hostnames, directories, and query
-strings. This is defense in depth, not a guarantee that arbitrary text is non-personal.
-The Convex queue scrubs new entries, restored entries, and synchronous crash breadcrumbs
-before persistence and again before upload, preserving byte limits and local account isolation.
-
-**Native privacy gate:** the React Native SDK does not forward JavaScript `beforeSend`
-or `beforeBreadcrumb` callbacks to its native SDKs. Native crash, ANR, hang, and session
-payloads therefore do not have the JavaScript scrubber's guarantee. Before production,
-capture staging iOS and Android native events, review their actual payloads and native
-breadcrumbs, configure and verify Sentry server-side scrubbing/retention, and approve the
-remaining collection in the public policy and store declarations. Only then set
-`SENTRY_NATIVE_PRIVACY_REVIEWED=true`; production preflight and EAS config reject its
-absence. This setting is an owner attestation, not an automatic privacy verification.
-Do not add Sentry `setUser`, arbitrary `extra`, request bodies, or media attachments.
-
-## Environment and release preflight
-
-Every EAS profile declares both its EAS `environment` and bundled
-`EXPO_PUBLIC_APP_ENV`. The production Convex URL is registered exactly; other
-environments are rejected if they equal it. Preview currently has no URL in source,
-so this expected command fails with the exact owner action until staging exists:
+Run with EAS variables loaded:
 
 ```bash
-node scripts/mobile-release-preflight.mjs --profile preview
+eas env:exec preview 'node scripts/mobile-release-preflight.mjs --profile preview'
+eas env:exec production 'node scripts/mobile-release-preflight.mjs --profile production'
 ```
 
-After the owner provisions the preview environment, verify it with its EAS values
-loaded into the command process:
+Production preflight requires monitoring enablement, native privacy approval,
+matching Firebase app registrations and the registered Convex target. It cannot
+prove console onboarding, alert delivery or symbol upload succeeded.
 
-```bash
-eas env:exec preview \
-  'node scripts/mobile-release-preflight.mjs --profile preview'
-```
+RNFB adds the iOS Crashlytics dSYM upload phase. The Android config plugin enables
+NDK symbols and finalizes release assemble/bundle with the symbol-upload task;
+the Firebase Gradle plugin handles Java/Kotlin mapping files. Inspect build logs
+and resolve missing dSYMs/native symbols in Firebase before launch.
 
-For production, run with the matching EAS variables in the process:
+`yarn release` keeps local EAS working directories in
+`apps/mobile/build/symbols/<version>-<platform>/` and requests an iOS Hermes map
+via `SOURCEMAP_FILE`. Android Hermes maps live under the retained build's
+`android/app/build/generated/sourcemaps/react/release/`. Archive these exact-build
+maps and native symbols alongside the release evidence manifest. They are ignored
+by Git, can be large, and must not be hosted publicly. Confirm each map exists;
+do not substitute a map rebuilt later from similar source. Crashlytics does not
+provide the previous Sentry JS source-map upload pipeline: use the matching map
+with Metro symbolication for minified Hermes frames when investigating a report.
 
-```bash
-eas env:exec production \
-  'node scripts/mobile-release-preflight.mjs --profile production'
-```
+## Release-candidate gates
 
-`scripts/release.sh` runs the same production preflight before versioning, Convex
-deployment, native builds, or store submissions. After a build, confirm its Sentry
-event has `environment=production`, release `org.bondfires@<version>`, the native
-build number as `dist`, and a symbolicated in-app frame. Source maps must upload
-during the build; Expo notes that `SENTRY_AUTH_TOKEN` is required in the build
-environment and Sentry cannot retroactively symbolicate events captured before
-artifacts arrive.
-
-Production rejects `SENTRY_DISABLE_AUTO_UPLOAD` and `SENTRY_ALLOW_FAILURE` bypasses.
-Local development also needs a dedicated backend: the old production-targeting `.env`
-will now fail environment validation rather than silently access production.
-
-## Maestro smoke suite
-
-Install Maestro using its [official installation instructions](https://docs.maestro.dev/getting-started/installing-maestro).
-Build/install a **preview** binary, point it at staging, and provide only staging
-credentials:
+Install Maestro, build/install a preview binary and use staging credentials:
 
 ```bash
 export MAESTRO_TEST_EMAIL='<staging account>'
@@ -124,58 +94,31 @@ export MAESTRO_TEST_PASSWORD='<staging password>'
 yarn smoke:mobile
 ```
 
-The flows cover signed-out launch and deep-link routing, non-destructive sign-in,
-Home/Camps/Profile navigation, Terms/Privacy/Community Guidelines and Delete Account entry points,
-and sign-out. They do not create camps, publish video, redeem a valid invite, buy a
-subscription, or mutate production. Reset the staging account between release
-candidates by deleting only test-created staging records through an owner-reviewed
-staging admin procedure; never run a reset against the production deployment.
+These non-destructive flows cover launch/deep links, sign-in, Home/Camps/Profile,
+legal/deletion entry points and sign-out. CI validates their contracts, not actual
+device execution. Complete these additional checks on physical iOS and Android:
 
-CI runs a deterministic drift check for flow files, package/config privacy guards,
-profile mappings, and prohibited production URLs/credentials. Simulator/device
-execution remains a release-candidate gate because GitHub CI has no signed native
-binary or staging account.
+- Record, cancel, retry, publish, playback, respond, recover a local backup and
+  stream live; deny/regrant camera/microphone permissions and interrupt networking.
+- Test background/foreground playback/recording and PiP.
+- Test sandbox/TestFlight and Play internal-track purchase, restore and renewal.
+- Test APNs/FCM permissions, delivery, preferences and tap routing.
+- Test both link hosts from store-installed builds, valid/invalid staging invites,
+  report/block, deletion, teen/family boundaries and light/dark themes.
+- Temporarily trigger a scrubbed JS error and a native crash in preview only.
+  Disconnect the debugger, relaunch, confirm both platforms report to Firebase
+  with the correct version/build/environment, inspect privacy and symbolication,
+  and verify an alert reaches the release owner. Remove test triggers before release.
 
-## Device-only release gates
+## Launch watch and rollback
 
-Complete on both a physical iPhone and supported physical Android device against
-staging before store submission:
+Monitor new fatal crashes, Android ANRs, regressions, crash-free users/sessions,
+Convex action failures and Mux playback/upload errors. Choose launch thresholds
+from an internal baseline; monitor after every phased-rollout increase for the
+first 24 hours. Apple diagnostics remain complementary for iOS hangs/watchdogs.
 
-- confirm the published privacy policy and both store privacy declarations match
-  the enabled Sentry fields and the approved processor/subprocessor decision;
-
-- record, cancel, retry, publish, playback, response, local-backup recovery, and a
-  short live stream with camera/microphone permission denial and recovery;
-- background/foreground live recording and network-loss recovery;
-- sandbox/TestFlight and Play internal-track purchase, restore, renewal-state sync,
-  and cancellation guidance—never a real production purchase;
-- APNs/FCM permission, token registration, foreground/background delivery, tap
-  routing, category preferences, and revoked-permission recovery;
-- universal/app links for both hosts, an invalid invite, and an authenticated valid
-  staging invite;
-- light/dark theme, account deletion entry point, report/block, family age-boundary
-  and privacy/terms surfaces, and sign-out cleanup;
-- one intentional preview-only test exception, followed by verification that its
-  event is scrubbed and symbolicated. Remove the test trigger before release.
-
-## Alerts, launch watch, and rollback
-
-Configure these in Sentry; repository code cannot create project alerts safely:
-
-- immediate notification for any new production fatal/native crash issue;
-- warning when crash-free sessions fall below the agreed launch SLO, with a paging
-  threshold below that; choose the numeric SLO after a preview/internal baseline;
-- new or materially increased Android ANR/iOS app-hang/watchdog issues;
-- error-event volume materially above the seven-day baseline;
-- source-map/debug-file upload failure in the build pipeline;
-- environment/release mismatch (preview event in production or unknown release).
-
-For the first 24 hours, watch after each phased-store rollout increase. Halt rollout
-on a fatal regression, protect incompatible backend changes, and ship a corrected
-build. Do not raise `minAppVersion` until both stores can serve the fix. Native store
-artifacts cannot be instantly rolled back. This project does not currently declare
-`expo-updates` or a `runtimeVersion`, so an EAS Update is not an available emergency
-rollback path. If OTA updates are deliberately enabled later, require runtime
-compatibility, the correct `--environment`, and Sentry source-map upload as part of
-that separate rollout design. Record the decision and evidence manifest before
-resuming rollout.
+Halt rollout on a fatal regression and ship a corrected local native build. Preserve
+backend compatibility; do not raise `minAppVersion` until both stores serve the fix.
+Native artifacts cannot be instantly rolled back. There is no configured
+`expo-updates`/`runtimeVersion` OTA rollback path. Archive the release evidence and
+symbols before resuming rollout. See [RELEASE_PROCESS.md](../RELEASE_PROCESS.md).

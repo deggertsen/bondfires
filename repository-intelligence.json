@@ -229,13 +229,15 @@
   "boundaries": [
     {
       "id": "mobile-observability",
-      "description": "Sentry native crash reporting, source maps, privacy policy, and runtime environment tags.",
+      "description": "Crashlytics native crash reporting, retained symbols, privacy policy, and runtime environment tags.",
       "owner": "Bondfires release owner",
       "triggerPatterns": [
         "apps/mobile/app.config.js",
         "apps/mobile/config/**",
         "apps/mobile/metro.config.js",
         "apps/mobile/lib/monitoring*.ts",
+        "apps/mobile/firebase.json",
+        "apps/mobile/plugins/withCrashlyticsSymbols.js",
         "packages/app/src/services/privacyScrubber.ts",
         "apps/mobile/eas.json",
         "scripts/mobile-release-preflight.mjs"
@@ -244,10 +246,8 @@
         "APP_VARIANT",
         "EAS_BUILD_PROFILE",
         "EXPO_PUBLIC_APP_ENV",
-        "EXPO_PUBLIC_SENTRY_DSN",
-        "SENTRY_AUTH_TOKEN",
-        "SENTRY_ORG",
-        "SENTRY_PROJECT"
+        "CRASHLYTICS_ENABLED",
+        "MONITORING_NATIVE_PRIVACY_REVIEWED"
       ],
       "documents": ["docs/production-observability-and-release-qa.md"],
       "actions": ["release-preflight", "external-contract-review", "dependency-review"]

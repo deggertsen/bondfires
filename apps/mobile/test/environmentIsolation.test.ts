@@ -7,53 +7,15 @@ import {
 } from '../config/environment.cjs'
 
 describe('mobile environment ownership', () => {
-  const productionMonitoring = {
-    EXPO_PUBLIC_SENTRY_DSN: 'https://public-key@o1.ingest.sentry.io/1234',
-    SENTRY_ORG: 'bondfires',
-    SENTRY_PROJECT: 'mobile',
-    SENTRY_AUTH_TOKEN: 'synthetic-token',
-    SENTRY_NATIVE_PRIVACY_REVIEWED: 'true',
-  }
-
-  it('requires a native-payload privacy review before production monitoring', () => {
-    expect(() =>
-      validateMonitoringEnvironment({
-        appEnvironment: 'production',
-        env: { ...productionMonitoring, SENTRY_NATIVE_PRIVACY_REVIEWED: undefined },
-        requireProduction: true,
-      }),
-    ).toThrow(/SENTRY_NATIVE_PRIVACY_REVIEWED/)
-  })
-
-  it.each(['SENTRY_DISABLE_AUTO_UPLOAD', 'SENTRY_ALLOW_FAILURE'])(
-    'rejects the source-map bypass %s',
-    (key) => {
-      expect(() =>
-        validateMonitoringEnvironment({
-          appEnvironment: 'production',
-          env: { ...productionMonitoring, [key]: 'true' },
-          requireProduction: true,
-          requireSourceMaps: true,
-        }),
-      ).toThrow(/must not disable/)
-    },
-  )
   it('rejects profile/environment mismatches', () => {
     expect(() =>
       resolveAppEnvironment({ EAS_BUILD_PROFILE: 'preview', EXPO_PUBLIC_APP_ENV: 'production' }),
     ).toThrow(/must use preview/)
   })
-
-  it('prevents non-production builds from using production Convex', () => {
+  it('isolates the production Convex deployment', () => {
     expect(() =>
-      validateConvexEnvironment({
-        appEnvironment: 'preview',
-        convexUrl: PRODUCTION_CONVEX_URL,
-      }),
+      validateConvexEnvironment({ appEnvironment: 'preview', convexUrl: PRODUCTION_CONVEX_URL }),
     ).toThrow(/must not use the production/)
-  })
-
-  it('prevents production from using an unregistered deployment', () => {
     expect(() =>
       validateConvexEnvironment({
         appEnvironment: 'production',
@@ -61,48 +23,34 @@ describe('mobile environment ownership', () => {
       }),
     ).toThrow(/registered production/)
   })
-
-  it('requires monitoring configuration only for production release builds', () => {
+  it('disables development collection even when requested', () => {
     expect(
       validateMonitoringEnvironment({
         appEnvironment: 'development',
-        env: {},
+        env: { CRASHLYTICS_ENABLED: 'true' },
         requireProduction: false,
       }).enabled,
     ).toBe(false)
-    expect(() =>
-      validateMonitoringEnvironment({
-        appEnvironment: 'production',
-        env: {},
-        requireProduction: true,
-      }),
-    ).toThrow(/EXPO_PUBLIC_SENTRY_DSN/)
   })
-
-  it('rejects malformed DSNs and production builds without source-map credentials', () => {
-    expect(() =>
+  it('requires explicit enablement and native privacy approval in production', () => {
+    const check = (env: Record<string, string>) =>
+      validateMonitoringEnvironment({ appEnvironment: 'production', env, requireProduction: true })
+    expect(() => check({})).toThrow(/CRASHLYTICS_ENABLED/)
+    expect(() => check({ CRASHLYTICS_ENABLED: 'true' })).toThrow(
+      /MONITORING_NATIVE_PRIVACY_REVIEWED/,
+    )
+    expect(
+      check({ CRASHLYTICS_ENABLED: 'true', MONITORING_NATIVE_PRIVACY_REVIEWED: 'true' }).enabled,
+    ).toBe(true)
+    expect(() => check({ CRASHLYTICS_ENABLED: 'yes' })).toThrow(/true or false/)
+  })
+  it('allows explicit preview collection before production privacy sign-off', () => {
+    expect(
       validateMonitoringEnvironment({
-        appEnvironment: 'production',
-        env: {
-          EXPO_PUBLIC_SENTRY_DSN: 'https://not-sentry.example/project',
-          SENTRY_ORG: 'bondfires',
-          SENTRY_PROJECT: 'mobile',
-        },
-        requireProduction: true,
-      }),
-    ).toThrow(/valid HTTPS sentry.io/)
-
-    expect(() =>
-      validateMonitoringEnvironment({
-        appEnvironment: 'production',
-        env: {
-          EXPO_PUBLIC_SENTRY_DSN: 'https://public-key@o1.ingest.sentry.io/1234',
-          SENTRY_ORG: 'bondfires',
-          SENTRY_PROJECT: 'mobile',
-        },
-        requireProduction: true,
-        requireSourceMaps: true,
-      }),
-    ).toThrow(/SENTRY_AUTH_TOKEN/)
+        appEnvironment: 'preview',
+        env: { CRASHLYTICS_ENABLED: 'true' },
+        requireProduction: false,
+      }).enabled,
+    ).toBe(true)
   })
 })
