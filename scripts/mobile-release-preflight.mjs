@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const require = createRequire(import.meta.url)
+const { validateFirebaseFiles } = require('../apps/mobile/config/firebase.cjs')
 const {
   resolveAppEnvironment,
   validateConvexEnvironment,
@@ -45,7 +46,10 @@ try {
       appEnvironment,
       env,
       requireProduction: true,
-      requireSourceMaps: true,
+    })
+    validateFirebaseFiles({
+      mobileRoot: resolve(root, 'apps/mobile'),
+      config: JSON.parse(readFileSync(resolve(root, 'apps/mobile/app.json'), 'utf8')).expo,
     })
   }
 

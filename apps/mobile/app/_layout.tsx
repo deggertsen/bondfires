@@ -24,7 +24,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { KeyboardProvider } from 'react-native-keyboard-controller'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { AnimatePresence, TamaguiProvider, Theme, YStack } from 'tamagui'
-import { captureUnhandledException, wrapWithMonitoring } from '../lib/monitoring'
+import { captureUnhandledException } from '../lib/monitoring'
 // Import config for TamaguiProvider
 import config from '../tamagui.config'
 import 'react-native-reanimated'
@@ -653,4 +653,4 @@ function RootLayout() {
   )
 }
 
-export default wrapWithMonitoring(RootLayout)
+export default RootLayout

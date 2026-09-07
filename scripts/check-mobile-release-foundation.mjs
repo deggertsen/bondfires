@@ -31,19 +31,29 @@ for (const profile of ['development', 'development-simulator', 'preview']) {
     fail(`${profile} must not embed the production Convex URL`)
   }
 }
-if (appPackage.dependencies?.['@sentry/react-native'] !== '~7.2.0') {
-  fail('Expo SDK 54 must keep @sentry/react-native on the compatible ~7.2.0 line')
+if (
+  appPackage.dependencies?.['@react-native-firebase/app'] !== '26.4.0' ||
+  appPackage.dependencies?.['@react-native-firebase/crashlytics'] !== '26.4.0'
+) {
+  fail('Keep Firebase App and Crashlytics on the tested matching 26.4.0 versions')
 }
-
-const metro = read('apps/mobile/metro.config.js')
-if (!metro.includes('getSentryExpoConfig')) fail('Metro must inject Sentry source-map debug IDs')
+if (appPackage.dependencies?.['@react-native-firebase/analytics'])
+  fail('Analytics requires a separate privacy review')
+const firebase = JSON.parse(read('apps/mobile/firebase.json'))['react-native']
+for (const [key, value] of Object.entries({
+  crashlytics_auto_collection_enabled: false,
+  crashlytics_debug_enabled: false,
+  crashlytics_is_error_generation_on_js_crash_enabled: false,
+  crashlytics_javascript_exception_handler_chaining_enabled: true,
+  crashlytics_ndk_enabled: true,
+})) {
+  if (firebase[key] !== value) fail(`Firebase privacy/native guard drifted: ${key}`)
+}
 const monitoring = read('apps/mobile/lib/monitoring.ts')
 for (const guard of [
-  'sendDefaultPii: false',
-  'attachScreenshot: false',
-  'attachViewHierarchy: false',
-  'replaysSessionSampleRate: 0',
-  'beforeSend:',
+  'scrubMonitoringError(error)',
+  'originalHandler(error, fatal)',
+  'setCrashlyticsCollectionEnabled',
 ]) {
   if (!monitoring.includes(guard)) fail(`Monitoring privacy guard missing: ${guard}`)
 }

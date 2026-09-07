@@ -1,85 +1,82 @@
-import * as Sentry from '@sentry/react-native'
 import Constants from 'expo-constants'
-import type { ComponentType } from 'react'
-import { scrubSentryBreadcrumb, scrubSentryEvent } from './monitoringPrivacy'
+import { Platform } from 'react-native'
+import { scrubMonitoringError } from './monitoringPrivacy'
 
-export type MonitoringConfig = {
-  enabled: boolean
-  dsn?: string
-  environment: 'development' | 'preview' | 'production'
-  release: string
-  dist: string
+type CrashlyticsSdk = typeof import('@react-native-firebase/crashlytics')
+type GlobalErrorHandler = (error: Error, fatal?: boolean) => void
+type ErrorUtilsApi = {
+  getGlobalHandler: () => GlobalErrorHandler
+  setGlobalHandler: (handler: GlobalErrorHandler) => void
 }
 
-export function getMonitoringConfig(
-  env: Record<string, string | undefined> = {
-    // Expo only inlines EXPO_PUBLIC_* values when accessed with direct dot notation.
-    EXPO_PUBLIC_SENTRY_DSN: process.env.EXPO_PUBLIC_SENTRY_DSN,
-  },
-): MonitoringConfig {
-  const configuredEnvironment = Constants.expoConfig?.extra?.appEnvironment
-  const environment =
-    configuredEnvironment === 'preview' || configuredEnvironment === 'production'
-      ? configuredEnvironment
-      : 'development'
-  const version = Constants.expoConfig?.version ?? Constants.nativeAppVersion ?? '0.0.0'
-  const dist =
-    Constants.nativeBuildVersion ??
-    String(
-      Constants.expoConfig?.ios?.buildNumber ?? Constants.expoConfig?.android?.versionCode ?? '0',
-    )
-  const dsn = env.EXPO_PUBLIC_SENTRY_DSN?.trim()
+export function getMonitoringConfig() {
+  const extra = Constants.expoConfig?.extra
+  const environment = extra?.appEnvironment ?? 'development'
   return {
-    enabled: Boolean(dsn),
-    dsn: dsn || undefined,
+    enabled:
+      extra?.monitoringEnabled === true &&
+      environment !== 'development' &&
+      Platform.OS !== 'web' &&
+      Constants.appOwnership !== 'expo',
     environment,
-    release: `org.bondfires@${version}`,
-    dist,
+    release: `org.bondfires@${Constants.expoConfig?.version ?? Constants.nativeAppVersion ?? '0.0.0'}`,
+    dist: Constants.nativeBuildVersion ?? String(Constants.expoConfig?.ios?.buildNumber ?? '0'),
   }
 }
 
-const monitoringConfig = getMonitoringConfig()
-let initialized = false
+let sdk: CrashlyticsSdk | undefined
+let instance: ReturnType<CrashlyticsSdk['getCrashlytics']> | undefined
+let initialization: Promise<boolean> | undefined
 
-export function initializeMonitoring(): boolean {
-  if (initialized || !monitoringConfig.enabled) return initialized
-  Sentry.init({
-    dsn: monitoringConfig.dsn,
-    enabled: true,
-    environment: monitoringConfig.environment,
-    release: monitoringConfig.release,
-    dist: monitoringConfig.dist,
-    sendDefaultPii: false,
-    sampleRate: 1,
-    tracesSampleRate: 0,
-    profilesSampleRate: 0,
-    replaysSessionSampleRate: 0,
-    replaysOnErrorSampleRate: 0,
-    attachScreenshot: false,
-    attachViewHierarchy: false,
-    enableCaptureFailedRequests: false,
-    enableNative: true,
-    enableNativeCrashHandling: true,
-    enableNdk: true,
-    enableAutoSessionTracking: true,
-    enableWatchdogTerminationTracking: true,
-    enableAppHangTracking: true,
-    beforeSend: (event) => scrubSentryEvent(event) as unknown as typeof event,
-    beforeBreadcrumb: (breadcrumb) => scrubSentryBreadcrumb(breadcrumb) as typeof breadcrumb,
-  })
-  initialized = true
-  return true
+export function initializeMonitoring(): Promise<boolean> {
+  if (initialization) return initialization
+  const config = getMonitoringConfig()
+  if (!config.enabled) return Promise.resolve(false)
+  initialization = (async () => {
+    try {
+      // Lazy-load so Expo Go, web and unconfigured development can still launch.
+      sdk = await import('@react-native-firebase/crashlytics')
+      // @ts-expect-error This SDK-owned polyfill exposes no module declarations.
+      const rejectionTracking = (await import('promise/setimmediate/rejection-tracking')).default
+      const errorUtils = (globalThis as { ErrorUtils?: ErrorUtilsApi }).ErrorUtils
+      const originalHandler = errorUtils?.getGlobalHandler()
+      instance = sdk.getCrashlytics()
+      // RNFB installs unfiltered JS handlers on first access. Replace them with
+      // our scrubbed reporters, preserving RN/Convex handling of the original error.
+      if (errorUtils && originalHandler) {
+        errorUtils.setGlobalHandler((error, fatal) => {
+          captureUnhandledException(error)
+          originalHandler(error, fatal)
+        })
+      }
+      rejectionTracking.enable({
+        allRejections: true,
+        onUnhandled: (_id: number, error: unknown) => captureUnhandledException(error),
+        onHandled: () => {},
+      })
+      await sdk.setAttributes(instance, {
+        environment: config.environment,
+        release: config.release,
+        dist: config.dist,
+      })
+      await sdk.setCrashlyticsCollectionEnabled(instance, true)
+      return true
+    } catch {
+      // Monitoring must not create a startup crash or recursively report itself.
+      console.warn('Crashlytics initialization failed; verify the native build configuration.')
+      return false
+    }
+  })()
+  return initialization
 }
 
 export function captureUnhandledException(error: unknown): void {
-  if (!initialized) return
-  Sentry.captureException(error)
+  if (!sdk || !instance) return
+  try {
+    sdk.recordError(instance, scrubMonitoringError(error))
+  } catch {
+    // Best effort; preserve the app's existing error/fallback behavior.
+  }
 }
 
-export function wrapWithMonitoring<P extends Record<string, unknown>>(
-  component: ComponentType<P>,
-): ComponentType<P> {
-  return initialized ? Sentry.wrap(component) : component
-}
-
-initializeMonitoring()
+void initializeMonitoring()

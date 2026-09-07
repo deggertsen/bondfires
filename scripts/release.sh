@@ -137,6 +137,12 @@ for platform in "${PLATFORMS[@]}"; do
 
   echo ""
   echo "🔨 Building $platform locally (this runs on your machine — no EAS queue)..."
+  # Keep exact-binary Hermes maps, dSYMs and NDK symbols for offline diagnostics.
+  SYMBOL_DIR="$REPO_ROOT/apps/mobile/build/symbols/$NEW_VERSION-$platform"
+  mkdir -p "$SYMBOL_DIR"
+  EAS_LOCAL_BUILD_SKIP_CLEANUP=1 \
+  EAS_LOCAL_BUILD_WORKINGDIR="$SYMBOL_DIR/eas" \
+  SOURCEMAP_FILE="$SYMBOL_DIR/main.jsbundle.map" \
   npx eas-cli build \
     --platform "$platform" \
     --profile production \

@@ -104,6 +104,16 @@
       "expo-router",
       "expo-dev-client",
       [
+        "@react-native-firebase/app",
+        {
+          "ios": {
+            "disableSPM": true
+          }
+        }
+      ],
+      "@react-native-firebase/crashlytics",
+      "./plugins/withCrashlyticsSymbols",
+      [
         "expo-camera",
         {
           "cameraPermission": "Bondfires needs access to your camera to record videos for your bondfire sessions.",
@@ -125,7 +135,8 @@
           "ios": {
             "deploymentTarget": "16.4",
             "flipper": false,
-            "useFrameworks": "static"
+            "useFrameworks": "static",
+            "forceStaticLinking": ["RNFBApp", "RNFBCrashlytics"]
           },
           "android": {
             "minSdkVersion": 24,
