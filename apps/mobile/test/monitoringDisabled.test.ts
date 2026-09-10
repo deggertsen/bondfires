@@ -45,7 +45,7 @@ describe('Crashlytics adapter', () => {
       expect(mocks.recordError).not.toHaveBeenCalled()
     },
   )
-  it('initializes once and tags before enabling native collection', async () => {
+  it('enables native collection then tags environment keys so they persist', async () => {
     const monitoring = await import('../lib/monitoring')
     expect(await monitoring.initializeMonitoring()).toBe(true)
     await monitoring.initializeMonitoring()
@@ -55,8 +55,8 @@ describe('Crashlytics adapter', () => {
       release: 'org.bondfires@1.2.3',
       dist: '42',
     })
-    expect(mocks.setAttributes.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.setCrashlyticsCollectionEnabled.mock.invocationCallOrder[0],
+    expect(mocks.setCrashlyticsCollectionEnabled.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.setAttributes.mock.invocationCallOrder[0],
     )
   })
   it('scrubs boundary, global and polyfill errors without swallowing the original handler', async () => {

@@ -34,8 +34,9 @@ force-static-link the two RNFB modules to match Expo's prebuilt React Native.
 ## Privacy and collection
 
 Native auto-collection and debug reporting default off in `apps/mobile/firebase.json`.
-Approved preview/production runtimes enable collection after setting environment,
-release and build keys. Development, Expo Go and web do not initialize the adapter.
+Approved preview/production runtimes enable collection, then set environment,
+release and build keys. Attributes written while native auto-collection is still
+off are dropped. Development, Expo Go and web do not initialize the adapter.
 First-launch crashes before JavaScript initialization may only upload on a later
 successful launch. Once enabled, the native SDK can capture crashes before JS runs.
 

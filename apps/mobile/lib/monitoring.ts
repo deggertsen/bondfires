@@ -54,12 +54,14 @@ export function initializeMonitoring(): Promise<boolean> {
         onUnhandled: (_id: number, error: unknown) => captureUnhandledException(error),
         onHandled: () => {},
       })
+      // Collection must be on before custom keys persist. Attributes set while
+      // firebase.json has auto-collection off are dropped and never show in the console.
+      await sdk.setCrashlyticsCollectionEnabled(instance, true)
       await sdk.setAttributes(instance, {
         environment: config.environment,
         release: config.release,
         dist: config.dist,
       })
-      await sdk.setCrashlyticsCollectionEnabled(instance, true)
       return true
     } catch {
       // Monitoring must not create a startup crash or recursively report itself.
