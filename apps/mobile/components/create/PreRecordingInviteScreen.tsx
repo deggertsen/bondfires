@@ -570,7 +570,7 @@ export function PreRecordingInviteScreen({
           {recentConnections.length > 0 && (
             <InviteSection
               title="Recent Connections"
-              caption="People you've been in Bondfires with recently."
+              caption="People you've Bondfired or watched recently."
             >
               <ScrollView
                 horizontal

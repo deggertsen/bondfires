@@ -60,6 +60,7 @@ const RECENT_CONNECTION_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
 const RECENT_CONNECTIONS_LIMIT = 20
 const RECENT_CONNECTION_BONDFIRE_SCAN_LIMIT = 25
 const RECENT_CONNECTION_PARTICIPATION_SCAN_LIMIT = 25
+const RECENT_CONNECTION_WATCH_SCAN_LIMIT = 50
 const CLOSE_CIRCLE_LIMIT = 8
 
 /** Batch size per cleanup cron run. */
@@ -1032,8 +1033,8 @@ function toInviteCandidate(user: Doc<'users'>): InviteCandidate {
 /**
  * People the user can invite from the pre-recording screen: their Close
  * Circle pins plus Recent Connections — anyone they shared a Hearth bondfire
- * with (participants and responders, either direction) in the last 30 days,
- * newest interaction first, capped at 20.
+ * with (participants and responders, either direction) or watched a video
+ * from in the last 30 days, newest interaction first, capped at 20.
  */
 export const getInviteCandidates = query({
   args: {},
@@ -1148,6 +1149,32 @@ export const getInviteCandidates = query({
       const bondfire = await ctx.db.get(response.bondfireId)
       if (bondfire) {
         bump(bondfire.userId, response.createdAt)
+      }
+    }
+
+    // Creators of videos the user recently watched. watchEvents.record is
+    // written on every playback start (bondfires and responses alike), so
+    // this is what makes "I just watched their video" surface here.
+    const myWatchEvents = await ctx.db
+      .query('watchEvents')
+      .withIndex('by_user', (q) => q.eq('userId', userId).gte('createdAt', cutoff))
+      .order('desc')
+      .take(RECENT_CONNECTION_WATCH_SCAN_LIMIT)
+    for (const watchEvent of myWatchEvents) {
+      if (watchEvent.videoType === 'bondfire') {
+        const bondfireId = ctx.db.normalizeId('bondfires', watchEvent.videoId)
+        if (!bondfireId) continue
+        const watchedBondfire = await ctx.db.get(bondfireId)
+        if (watchedBondfire) {
+          bump(watchedBondfire.userId, watchEvent.createdAt)
+        }
+      } else {
+        const responseId = ctx.db.normalizeId('bondfireVideos', watchEvent.videoId)
+        if (!responseId) continue
+        const watchedResponse = await ctx.db.get(responseId)
+        if (watchedResponse) {
+          bump(watchedResponse.userId, watchEvent.createdAt)
+        }
       }
     }
 
