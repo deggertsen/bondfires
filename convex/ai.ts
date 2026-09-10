@@ -147,9 +147,28 @@ function extractJsonObject(content: string): Record<string, unknown> {
   return parsed as Record<string, unknown>
 }
 
+// LLMs drift toward describing the video instead of its content: "Person
+// shares a video message from an operating room". The prompt forbids that
+// framing; this deterministic strip is the backstop so the meta opener never
+// reaches the UI. Bounded to two passes for "The person shares ..." style.
+const SUMMARY_META_OPENER =
+  /^(?:(?:the\s+)?(?:person|speaker|creator|sender|author|user|he|she|they)\s+)?(?:shares|shared|is sharing|announces|announced|discusses|discussed|talks about|talked about|describes|described)\b[:,]?\s*/i
+
+export function stripSummaryMetaOpener(value: string): string {
+  let stripped = value.replace(/\s+/g, ' ').trim()
+  for (let i = 0; i < 2; i++) {
+    const next = stripped.replace(SUMMARY_META_OPENER, '')
+    if (next === stripped) break
+    stripped = next.trim()
+  }
+  // "Person shares a video message from X" reads best as "video message from
+  // X"; drop the leading article only when a video description follows.
+  return stripped.replace(/^a\s+(?=video\s+(?:message|clip)\b)/i, '')
+}
+
 function cleanSummary(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
-  const summary = value.replace(/\s+/g, ' ').trim()
+  const summary = stripSummaryMetaOpener(value)
   if (!summary) return undefined
   return summary.length > MAX_SUMMARY_CHARS
     ? `${summary.slice(0, MAX_SUMMARY_CHARS - 1)}…`
@@ -181,7 +200,7 @@ function cleanTitle(value: unknown): string | undefined {
 
 export function videoInsightsPrompt(transcript: string): string {
   return [
-    'You summarize short personal video messages exchanged between close friends and family.',
+    'You write one-line summaries of what was said in short personal video messages exchanged between close friends and family.',
     '',
     'Transcript of one video message:',
     '"""',
@@ -192,7 +211,7 @@ export function videoInsightsPrompt(transcript: string): string {
     `{"summary": "<one sentence, max ${MAX_SUMMARY_CHARS} characters>", "tags": ["<topic tag>"]}`,
     '',
     'Rules:',
-    '- summary: third person, present tense, concrete ("Shares news about the new job and asks about the kids"). No preamble. Do not infer or include a speaker name; the app adds verified identity separately.',
+    '- summary: present tense, concrete, strictly about what was said — the news, question, or reaction itself. Never describe the video or the act of sharing: no "shares", "posted", "sent", "video", "message", "clip", "the person", or "the speaker". Good: "Excited to start the new job Monday and asks how the kids are doing." Bad: "Person shares a video message about his new job." No preamble. Do not infer or include a speaker name; the app adds verified identity separately.',
     `- tags: 1 to ${MAX_TAGS} tags, each 1-2 lowercase words naming concrete topics (e.g. "job news", "birthday", "soccer"). Never generic filler like "update", "chat", or "video".`,
   ].join('\n')
 }
