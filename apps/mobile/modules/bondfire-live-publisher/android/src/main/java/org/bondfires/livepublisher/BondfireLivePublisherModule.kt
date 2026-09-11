@@ -36,21 +36,25 @@ import io.github.thibaultbee.streampack.core.elements.encoders.AudioCodecConfig
 import io.github.thibaultbee.streampack.core.elements.encoders.VideoCodecConfig
 import io.github.thibaultbee.streampack.core.elements.endpoints.IEndpointInternal
 import io.github.thibaultbee.streampack.core.elements.sources.audio.audiorecord.MicrophoneSourceFactory
+import io.github.thibaultbee.streampack.core.elements.sources.video.IPreviewableSource
 import io.github.thibaultbee.streampack.core.elements.sources.video.camera.CameraSourceFactory
 import io.github.thibaultbee.streampack.core.streamers.single.SingleStreamer
 import io.github.thibaultbee.streampack.core.streamers.single.cameraSingleStreamer
 import java.io.File
 import java.io.IOException
 import io.github.thibaultbee.streampack.ui.views.PreviewView
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 
 class LivePublisherStartOptions : Record {
   @Field val rtmpsUrl: String = ""
@@ -95,6 +99,15 @@ enum class PublisherStatus(val wire: String) {
 class BondfireLivePublisherModule : Module() {
   companion object {
     private const val TAG = "BondfireLivePublisher"
+
+    // Preview bind waits at the streamer rebuild (record tap / re-arm).
+    // Recording must never be blocked by preview trouble, but the wait must
+    // cover the previous source's preview teardown plus a cold camera open and
+    // the viewfinder surface handshake before the next attempt fires.
+    private const val PREVIEW_ATTACH_TIMEOUT_MS = 1_200L
+    private const val PREVIEW_BIND_MAX_ATTEMPTS = 2
+    private const val PREVIEW_BIND_RETRY_DELAY_MS = 150L
+    private const val PREVIEW_DETACH_TIMEOUT_MS = 600L
 
     // statsSupported=0 zeros: the JS stall watchdog ignores these samples.
     private val STATS_ZEROS = mapOf(
@@ -281,6 +294,12 @@ class BondfireLivePublisherModule : Module() {
       // after the record tap. Rebuild once at the capture boundary, then keep
       // this fresh encoder alive while RTMP attaches and reconnects.
       if (existingStreamer != null) {
+        // Release the preview binding BEFORE teardown. setVideoSourceProvider
+        // stops the previous source's preview under its previewMutex and marks
+        // the viewfinder surface safe to release; doing it first (time-boxed)
+        // keeps that handshake from contending with — or hanging behind — the
+        // new bind below on a wedged old camera.
+        detachPreviewBestEffort()
         cleanupStreamer()
       }
       currentFacing = options.initialCamera
@@ -327,6 +346,7 @@ class BondfireLivePublisherModule : Module() {
       // before encoding begins (the old preview pipeline can fail to produce
       // video after the record tap on affected devices).
       if (streamer != null && streamer?.isStreamingFlow?.value != true) {
+        detachPreviewBestEffort()
         cleanupStreamer()
       }
       if (streamer == null) {
@@ -822,9 +842,15 @@ class BondfireLivePublisherModule : Module() {
 
     // Bind preview — but only once the view has a real size (see
     // bindPreviewIfReady). If the view isn't laid out yet, the view's onLayout
-    // callback will trigger the bind.
+    // callback will trigger the bind. Await a bounded bind so the capture
+    // session is created with the preview output BEFORE startStream() adds
+    // the stream target — reconfiguring the session mid-encode to add the
+    // preview surface is exactly the flaky-HAL reconfigure this module avoids
+    // elsewhere, and the old fire-and-forget bind had exactly one attempt:
+    // when it lost the race or failed, nothing ever retried it and the
+    // preview stayed black for the whole recording while capture kept working.
     previewBound = false
-    bindPreviewIfReady()
+    bindPreviewAwaiting()
 
     // Ensure unmuted at start
     isMuted = false
@@ -1138,6 +1164,7 @@ class BondfireLivePublisherModule : Module() {
 
   fun attachPreview(view: PreviewView) {
     previewView = view
+    view.listener = previewViewListener
     // A freshly mounted create screen brings a brand-new PreviewView. The
     // module (and its streamer) is a singleton that outlives any single screen
     // instance, so when the screen remounts while a streamer is still alive
@@ -1167,19 +1194,134 @@ class BondfireLivePublisherModule : Module() {
     if (view.width <= 0 || view.height <= 0) return
     previewBound = true
     scope.launch {
-      try {
-        view.setVideoSourceProvider(s)
-        Log.i(TAG, "bindPreviewIfReady: bound preview at ${view.width}x${view.height}")
-      } catch (e: Exception) {
-        Log.e(TAG, "bindPreviewIfReady: failed to bind preview source", e)
+      if (!attachPreviewSource(view, s)) {
         previewBound = false
       }
     }
   }
 
+  /**
+   * Awaited variant for the streamer rebuild paths (record-tap startCapture /
+   * RTMP start). Preview trouble must never fail recording, so this is
+   * bounded, retried, and never throws — but unlike the fire-and-forget path
+   * it completes before startStream() opens the capture session, so the
+   * session is configured once with preview+stream targets instead of being
+   * reconfigured mid-encode.
+   */
+  private suspend fun bindPreviewAwaiting() {
+    if (previewBound) return
+    val s = streamer ?: return
+    val view = previewView ?: return
+    if (view.width <= 0 || view.height <= 0) return
+    previewBound = true
+    if (!attachPreviewSource(view, s)) {
+      previewBound = false
+      // One late self-heal attempt: transient HAL/preview failures sometimes
+      // clear once the torn-down camera is fully released. bindPreviewIfReady
+      // no-ops safely if the streamer is already gone by then.
+      scope.launch {
+        delay(2_000)
+        bindPreviewIfReady()
+      }
+    }
+  }
+
+  /**
+   * Bind [view] to [s] with retries. setVideoSourceProvider stops the
+   * previous source's preview under its previewMutex; on a wedged old camera
+   * that handshake can hang or fail transiently even when the new camera is
+   * healthy, so each attempt is time-boxed and retried before surfacing a
+   * telemetry-only failure.
+   */
+  private suspend fun attachPreviewSource(view: PreviewView, s: SingleStreamer): Boolean {
+    repeat(PREVIEW_BIND_MAX_ATTEMPTS) { attempt ->
+      val bound = withTimeoutOrNull(PREVIEW_ATTACH_TIMEOUT_MS) {
+        try {
+          view.setVideoSourceProvider(s)
+          // setVideoSourceProvider only swaps the provider — the real preview
+          // start (stop old preview → request viewfinder surface → camera
+          // addOutput) runs asynchronously via the sourceFlow collector. Wait
+          // until the camera actually reports previewing so startStream()
+          // configures a capture session that already contains the preview
+          // target instead of reconfiguring mid-encode.
+          val source = s.videoInput?.sourceFlow?.value
+          if (source is IPreviewableSource) {
+            source.isPreviewingFlow.first { it }
+          } else {
+            true
+          }
+        } catch (e: CancellationException) {
+          throw e
+        } catch (e: Exception) {
+          Log.w(TAG, "attachPreviewSource: bind attempt ${attempt + 1} failed", e)
+          false
+        }
+      }
+      if (bound == true) {
+        Log.i(TAG, "attachPreviewSource: bound preview at ${view.width}x${view.height}")
+        return true
+      }
+      if (attempt < PREVIEW_BIND_MAX_ATTEMPTS - 1) {
+        delay(PREVIEW_BIND_RETRY_DELAY_MS)
+      }
+    }
+    Log.w(
+      TAG,
+      "attachPreviewSource: preview bind failed after $PREVIEW_BIND_MAX_ATTEMPTS attempts",
+    )
+    sendEvent(
+      "error", mapOf(
+        "code" to "preview_bind_failed",
+        "message" to "Camera preview failed to bind after retries; recording continues",
+      )
+    )
+    return false
+  }
+
+  /**
+   * Release the preview binding before a streamer teardown/rebuild. Best-effort
+   * and time-boxed: this is the handshake that marks the old viewfinder surface
+   * safe to release, and skipping it (or letting it hang behind the teardown)
+   * leaves the new bind racing a stale surface request.
+   */
+  private suspend fun detachPreviewBestEffort() {
+    val view = previewView ?: return
+    if (streamer == null) return
+    val detached = withTimeoutOrNull(PREVIEW_DETACH_TIMEOUT_MS) {
+      try {
+        view.setVideoSourceProvider(null)
+        true
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        Log.w(TAG, "detachPreviewBestEffort: failed", e)
+        false
+      }
+    }
+    if (detached != true) {
+      Log.w(
+        TAG,
+        "detachPreviewBestEffort: preview detach did not settle in $PREVIEW_DETACH_TIMEOUT_MS ms",
+      )
+    }
+    previewBound = false
+  }
+
   /** Called by the view once it has a laid-out, non-zero size. */
   fun onPreviewLaidOut() {
     bindPreviewIfReady()
+  }
+
+  private val previewViewListener = object : PreviewView.Listener {
+    override fun onPreviewFailed(t: Throwable) {
+      Log.w(TAG, "PreviewView reported preview failure", t)
+      sendEvent(
+        "error", mapOf(
+          "code" to "preview_bind_failed",
+          "message" to (t.message ?: "Camera preview failed to start"),
+        )
+      )
+    }
   }
 
   /**

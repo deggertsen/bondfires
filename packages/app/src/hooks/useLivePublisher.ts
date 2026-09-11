@@ -530,6 +530,20 @@ export function useLivePublisher(options: {
         return
       }
 
+      // Android preview bind failures: the viewfinder surface failed to attach
+      // (usually a transient HAL race during the record-tap streamer rebuild).
+      // Capture and RTMP are unaffected — the user records fine on a black
+      // preview — so this is telemetry-only, never a recording failure.
+      if (error.code === 'preview_bind_failed') {
+        telemetry.warn('live:preview_bind_failed', 'Camera preview failed to bind', {
+          message: error.message,
+          sessionId: livePublishStore$.sessionId.peek(),
+          recordId: livePublishStore$.recordId.peek(),
+          status: livePublishStore$.status.peek(),
+        })
+        return
+      }
+
       // Capture interruption (a call, Siri, another app taking the camera/mic).
       // Telemetry-split from the generic crash path so triage can count these
       // distinctly and see the reason. Still finalizes (falls through to the
