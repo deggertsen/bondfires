@@ -6,7 +6,7 @@ import {
 } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
 import { Check, Share } from '@tamagui/lucide-icons'
-import { useMutation } from 'convex/react'
+import { useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useRef, useState } from 'react'
 import { StatusBar, TextInput } from 'react-native'
@@ -55,7 +55,14 @@ export function CompletionScreen({
   // null = untouched; render the (async-loading) default until the user types.
   const [editedTitle, setEditedTitle] = useState<string | null>(null)
   const defaultTitle = useDefaultBondfireTitle(campName)
-  const title = editedTitle ?? defaultTitle
+  // The bondfire's persisted title is authoritative: for Hearth flows the
+  // pre-recording invite screen already saved the user's title on the draft,
+  // so the recomputed default (first name) must not replace it. The default
+  // only covers the brief load window and records with no persisted title —
+  // camp provisioning stores exactly this default, so nothing changes there.
+  const bondfire = useQuery(api.bondfires.get, bondfireId ? { id: bondfireId } : 'skip')
+  const persistedTitle = bondfire?.title
+  const title = editedTitle ?? (persistedTitle?.trim() ? persistedTitle : defaultTitle)
 
   const updateTitle = useMutation(api.bondfires.updateTitle)
   const savedTitleRef = useRef<string | null>(null)
@@ -74,8 +81,9 @@ export function CompletionScreen({
    */
   const saveTitle = useCallback(async () => {
     if (!bondfireId) return
-    // Untouched: provisioning already persisted this exact default title, so
-    // there's nothing to re-save. (editedTitle is only set once the user types.)
+    // Untouched: provisioning already persisted the right title (the
+    // invite-screen title for Hearth drafts, else the default), so there's
+    // nothing to re-save. (editedTitle is only set once the user types.)
     if (editedTitle === null) return
     const trimmed = title.trim().slice(0, MAX_TITLE_LENGTH)
     if (!trimmed || savedTitleRef.current === trimmed) return
