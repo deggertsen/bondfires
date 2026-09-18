@@ -772,12 +772,19 @@ export default function HomeScreen() {
 
     if (!savedBondfireId) return
 
-    const index = items.findIndex((b) => b._id === savedBondfireId)
-    if (index < 0) return
+    if (!items.some((b) => b._id === savedBondfireId)) return
 
-    setTimeout(() => {
+    // Re-resolve against the *current* data when the timer fires. `filtered`
+    // can shrink between this effect and the timeout (a transient empty pass
+    // while the feed subscription re-settles after sign-in), and scrollToIndex
+    // throws synchronously on an out-of-range index — onScrollToIndexFailed
+    // only covers unmeasured layout, not a stale index.
+    const timer = setTimeout(() => {
+      const index = filteredRef.current.findIndex((b) => b._id === savedBondfireId)
+      if (index < 0) return
       listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0.2 })
     }, 0)
+    return () => clearTimeout(timer)
   }, [filtered])
 
   useEffect(() => {
