@@ -26,8 +26,9 @@ export interface AudienceFilter {
   count: number
 }
 
+/** Per-avatar label; kept short so it fits under a 68px avatar column. */
 const AUDIENCE_HINTS: Record<AudienceGroup, string> = {
-  family: 'Family connection',
+  family: 'Family',
   closeCircle: 'Close Circle',
   recent: 'Recent',
 }
@@ -72,21 +73,28 @@ export function buildAudienceItems(
   return items
 }
 
-/** Filter chips for the merged rail; empty groups are dropped. */
+/**
+ * Filter chips for the merged rail. Empty groups are dropped, and when only
+ * one group has people there is nothing to filter between — "All 3 / Family 3"
+ * is two chips saying the same thing — so no chips are returned at all.
+ */
 export function buildAudienceFilters(items: ReadonlyArray<AudienceItem>): AudienceFilter[] {
-  const keys: AudienceFilterKey[] = ['all', 'family', 'closeCircle', 'recent']
-  return keys
+  const groups: AudienceGroup[] = ['family', 'closeCircle', 'recent']
+  const groupFilters = groups
     .map((key) => ({
       key,
       label: AUDIENCE_LABELS[key],
-      count: key === 'all' ? items.length : items.filter((item) => item.group === key).length,
+      count: items.filter((item) => item.group === key).length,
     }))
-    .filter((filter) => filter.key === 'all' || filter.count > 0)
+    .filter((filter) => filter.count > 0)
+  if (groupFilters.length < 2) return []
+  return [{ key: 'all', label: AUDIENCE_LABELS.all, count: items.length }, ...groupFilters]
 }
 
 /**
  * A filter can outlive its candidates (a connection revoked in another
- * session), which would leave an empty rail behind a selected chip.
+ * session), which would leave an empty rail behind a selected chip. Also
+ * covers the no-chips case, where the only sensible view is everyone.
  */
 export function resolveAudienceFilter(
   key: AudienceFilterKey,

@@ -80,8 +80,10 @@ interface PreRecordingInviteScreenProps {
  * Pre-recording audience selection for Hearth bondfires. Shown *before* the
  * camera opens so the user has time to decide who this Bondfire is for:
  *
- *   1. Close Circle (pinned) + Recent Connections (interacted-with users
- *      from the last 30 days) for one-tap in-app invites.
+ *   1. One avatar rail of people they know — family connections, Close
+ *      Circle (pinned), and Recent Connections (interacted-with users from
+ *      the last 30 days) — with relationship chips to filter it, for one-tap
+ *      in-app invites.
  *   2. Email invites — emails that match an existing account become a direct
  *      invite; the rest get the code via Resend.
  *   3. A share link, created on demand (creating it creates the draft, so
@@ -561,68 +563,40 @@ export function PreRecordingInviteScreen({
                   : 'Tap to invite people you know.'
               }
             >
-              {audienceFilters.length > 1 && (
+              {audienceFilters.length > 0 && (
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
                   contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}
-                  style={{ marginBottom: 12 }}
+                  style={{ marginBottom: 14 }}
                 >
-                  {audienceFilters.map((definition) => {
-                    const active = definition.key === activeAudienceFilter
-                    return (
-                      <Pressable
-                        key={definition.key}
-                        onPress={() => form$.audienceFilter.set(definition.key)}
-                        accessibilityRole="button"
-                        accessibilityState={{ selected: active }}
-                        accessibilityLabel={`Show ${definition.label}`}
-                      >
-                        <YStack
-                          paddingHorizontal={14}
-                          paddingVertical={7}
-                          borderRadius={16}
-                          borderWidth={1}
-                          backgroundColor={active ? '$primary' : 'transparent'}
-                          borderColor={active ? '$primary' : '$borderColor'}
-                        >
-                          <Text
-                            fontSize={13}
-                            fontWeight="700"
-                            color={active ? '$color' : '$placeholderColor'}
-                          >
-                            {definition.count > 0
-                              ? `${definition.label} ${definition.count}`
-                              : definition.label}
-                          </Text>
-                        </YStack>
-                      </Pressable>
-                    )
-                  })}
-                </ScrollView>
-              )}
-              {orderedAudienceItems.length > 0 ? (
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
-                >
-                  {orderedAudienceItems.map((item) => (
-                    <CandidateAvatar
-                      key={item.candidate._id}
-                      candidate={item.candidate}
-                      hint={item.hint}
-                      familyConnection={item.group === 'family'}
-                      selected={selectedRecipientIds.includes(item.candidate._id)}
-                      onToggle={() => toggleRecipient(item.candidate._id)}
+                  {audienceFilters.map((definition) => (
+                    <AudienceFilterChip
+                      key={definition.key}
+                      label={definition.label}
+                      count={definition.count}
+                      active={definition.key === activeAudienceFilter}
+                      onPress={() => form$.audienceFilter.set(definition.key)}
                     />
                   ))}
                 </ScrollView>
-              ) : (
-                <Text paddingHorizontal={16} color="$placeholderColor" fontSize={13}>
-                  Nobody in this group yet.
-                </Text>
               )}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
+              >
+                {orderedAudienceItems.map((item) => (
+                  <CandidateAvatar
+                    key={item.candidate._id}
+                    candidate={item.candidate}
+                    hint={item.hint}
+                    familyConnection={item.group === 'family'}
+                    selected={selectedRecipientIds.includes(item.candidate._id)}
+                    onToggle={() => toggleRecipient(item.candidate._id)}
+                  />
+                ))}
+              </ScrollView>
             </InviteSection>
           )}
 
@@ -922,6 +896,47 @@ function InviteSection({
   )
 }
 
+/** Relationship filter pill — same shape as the feed's mode pills. */
+function AudienceFilterChip({
+  label,
+  count,
+  active,
+  onPress,
+}: {
+  label: string
+  count: number
+  active: boolean
+  onPress: () => void
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      hitSlop={{ top: 6, bottom: 6 }}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      accessibilityLabel={`Show ${label}, ${count} ${count === 1 ? 'person' : 'people'}`}
+    >
+      <XStack
+        alignItems="center"
+        gap={6}
+        paddingHorizontal={14}
+        paddingVertical={8}
+        borderRadius={999}
+        borderWidth={1}
+        backgroundColor={active ? '$primary' : '$backgroundHover'}
+        borderColor={active ? '$primary' : '$borderColor'}
+      >
+        <Text fontSize={13} fontWeight="700" color={'$color'}>
+          {label}
+        </Text>
+        <Text fontSize={12} fontWeight="600" color={'$color'} opacity={active ? 0.85 : 0.55}>
+          {count}
+        </Text>
+      </XStack>
+    </Pressable>
+  )
+}
+
 function CandidateAvatar({
   candidate,
   hint,
@@ -988,18 +1003,14 @@ function CandidateAvatar({
             </YStack>
           )}
         </YStack>
-        <Text color={'$color'} fontSize={11} numberOfLines={1} textAlign="center">
-          {displayName.split(' ')[0]}
-        </Text>
-        <Text
-          color={'$placeholderColor'}
-          fontSize={9}
-          numberOfLines={1}
-          textAlign="center"
-          marginTop={-3}
-        >
-          {hint}
-        </Text>
+        <YStack alignItems="center" gap={1}>
+          <Text color={'$color'} fontSize={11} fontWeight="600" numberOfLines={1}>
+            {displayName.split(' ')[0]}
+          </Text>
+          <Text color={'$placeholderColor'} fontSize={10} numberOfLines={1}>
+            {hint}
+          </Text>
+        </YStack>
       </YStack>
     </Pressable>
   )

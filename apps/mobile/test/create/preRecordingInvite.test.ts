@@ -77,7 +77,7 @@ describe('audience rail helpers', () => {
       ['user-4', 'closeCircle'],
       ['user-5', 'recent'],
     ])
-    expect(items[0]?.hint).toBe('Family connection')
+    expect(items[0]?.hint).toBe('Family')
     expect(items[4]?.hint).toBe('Recent')
   })
 
@@ -103,11 +103,20 @@ describe('audience rail helpers', () => {
     ])
   })
 
+  it('offers no chips when only one group has people', () => {
+    expect(buildAudienceFilters(buildAudienceItems([], closeCircle, []))).toEqual([])
+    expect(buildAudienceFilters([])).toEqual([])
+  })
+
   it('falls back to All when the selected filter no longer has candidates', () => {
-    const items = buildAudienceItems([], closeCircle, [])
+    const items = buildAudienceItems(family, closeCircle, [])
     const filters = buildAudienceFilters(items)
     expect(resolveAudienceFilter('closeCircle', filters)).toBe('closeCircle')
-    expect(resolveAudienceFilter('family', filters)).toBe('all')
+    expect(resolveAudienceFilter('recent', filters)).toBe('all')
+
+    // With a single group there are no chips, so any stale key resolves to All.
+    const single = buildAudienceFilters(buildAudienceItems([], closeCircle, []))
+    expect(resolveAudienceFilter('closeCircle', single)).toBe('all')
   })
 
   it('shows only the filtered group', () => {
