@@ -33,6 +33,7 @@ import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
 import { mergeVideoSegments } from '../../lib/videoSegmentMerger'
 import { NotepadOverlay } from '../NotepadOverlay'
+import { VIDEO_OVERLAY_COLORS } from '../videoOverlayColors'
 import { RecordingHeaderActions } from './RecordingHeaderActions'
 import {
   type CampWithMembership,
@@ -806,7 +807,10 @@ export function LegacyRecordScreen({
   // Camera view
   return (
     <YStack flex={1} backgroundColor={'$background'}>
-      <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
+      {/* Camera overlay: theme-independent by design. Controls sit on a live
+          camera feed, not on $background, so they use VIDEO_OVERLAY_COLORS
+          (light text on dark scrims) in both themes. See videoOverlayColors.ts. */}
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       {shouldRenderCamera ? (
         <>
           <CameraView
@@ -876,11 +880,11 @@ export function LegacyRecordScreen({
                   width={40}
                   height={40}
                   borderRadius={20}
-                  backgroundColor="rgba(31, 32, 35, 0.7)"
+                  backgroundColor={VIDEO_OVERLAY_COLORS.pillBackground}
                   alignItems="center"
                   justifyContent="center"
                 >
-                  <X size={24} color={'$color'} />
+                  <X size={24} color={VIDEO_OVERLAY_COLORS.textPrimary} />
                 </YStack>
               </Pressable>
 
@@ -891,7 +895,7 @@ export function LegacyRecordScreen({
                   paddingVertical={6}
                   borderRadius={16}
                 >
-                  <Text color={'$color'} fontWeight="700" fontSize={14}>
+                  <Text color={VIDEO_OVERLAY_COLORS.textPrimary} fontWeight="700" fontSize={14}>
                     {isSwitchingCamera ? 'Switching...' : recordingTimerLabel}
                   </Text>
                 </YStack>
@@ -911,11 +915,11 @@ export function LegacyRecordScreen({
                 <YStack alignItems="center" gap={12}>
                   <XStack alignItems="center" gap={8}>
                     <Flame size={28} color={'$primary'} />
-                    <Text color={'$color'} fontSize={22} fontWeight="700">
+                    <Text color={VIDEO_OVERLAY_COLORS.textPrimary} fontSize={22} fontWeight="700">
                       {respondTo ? 'Add Your Response' : (selectedCamp?.name ?? 'Spark a Bondfire')}
                     </Text>
                   </XStack>
-                  <Text color={'$placeholderColor'} fontSize={14}>
+                  <Text color={VIDEO_OVERLAY_COLORS.textSecondary} fontSize={14}>
                     Tap to start recording
                   </Text>
                 </YStack>
@@ -923,11 +927,11 @@ export function LegacyRecordScreen({
 
               {phase === 'stopping' && (
                 <YStack alignItems="center" gap={12}>
-                  <Spinner size="large" color={'$color'} />
-                  <Text color={'$color'} fontSize={18} fontWeight="700">
+                  <Spinner size="large" color={VIDEO_OVERLAY_COLORS.textPrimary} />
+                  <Text color={VIDEO_OVERLAY_COLORS.textPrimary} fontSize={18} fontWeight="700">
                     Finishing recording
                   </Text>
-                  <Text color={'$placeholderColor'} fontSize={14}>
+                  <Text color={VIDEO_OVERLAY_COLORS.textSecondary} fontSize={14}>
                     Please wait a moment...
                   </Text>
                 </YStack>
@@ -935,11 +939,11 @@ export function LegacyRecordScreen({
 
               {isSwitchingCamera && (
                 <YStack alignItems="center" gap={12}>
-                  <Spinner size="large" color={'$color'} />
-                  <Text color={'$color'} fontSize={18} fontWeight="700">
+                  <Spinner size="large" color={VIDEO_OVERLAY_COLORS.textPrimary} />
+                  <Text color={VIDEO_OVERLAY_COLORS.textPrimary} fontSize={18} fontWeight="700">
                     Switching camera
                   </Text>
-                  <Text color={'$placeholderColor'} fontSize={14}>
+                  <Text color={VIDEO_OVERLAY_COLORS.textSecondary} fontSize={14}>
                     Recording will continue automatically.
                   </Text>
                 </YStack>
@@ -966,7 +970,7 @@ export function LegacyRecordScreen({
                   height={80}
                   borderRadius={40}
                   borderWidth={4}
-                  borderColor={'$color'}
+                  borderColor={VIDEO_OVERLAY_COLORS.textPrimary}
                   alignItems="center"
                   justifyContent="center"
                   backgroundColor={
@@ -977,19 +981,21 @@ export function LegacyRecordScreen({
                   }
                 >
                   {phase === 'stopping' ? (
-                    <Spinner size="small" color={'$color'} />
+                    <Spinner size="small" color={VIDEO_OVERLAY_COLORS.textPrimary} />
                   ) : (
                     <YStack
                       width={phase === 'recording' ? 30 : 60}
                       height={phase === 'recording' ? 30 : 60}
                       borderRadius={phase === 'recording' ? 6 : 30}
-                      backgroundColor={phase === 'recording' ? '$color' : '$primary'}
+                      backgroundColor={
+                        phase === 'recording' ? VIDEO_OVERLAY_COLORS.textPrimary : '$primary'
+                      }
                     />
                   )}
                 </YStack>
               </Pressable>
 
-              <Text color={'$placeholderColor'} fontSize={13} marginTop={12}>
+              <Text color={VIDEO_OVERLAY_COLORS.textSecondary} fontSize={13} marginTop={12}>
                 {phase === 'stopping'
                   ? 'Stopping recording...'
                   : phase === 'recording'

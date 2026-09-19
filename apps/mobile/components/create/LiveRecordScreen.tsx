@@ -24,7 +24,6 @@ import {
   shouldShowReportIssue,
   startLiveBackupUpload,
   telemetry,
-  useAppThemeColors,
   useLivePublisher,
   usePresence,
   useUploadCompletion,
@@ -46,6 +45,7 @@ import { BondfireLivePublisher, LivePublisherView } from '../../modules/bondfire
 import { InviteSheet } from '../InviteSheet'
 import { NotepadOverlay } from '../NotepadOverlay'
 import { ViewerPresenceStack } from '../ViewerPresenceStack'
+import { VIDEO_OVERLAY_COLORS } from '../videoOverlayColors'
 import { RecordingHeaderActions } from './RecordingHeaderActions'
 import { type CampWithMembership, formatRecordingClock, type TradeTag } from './shared'
 
@@ -118,7 +118,6 @@ export function LiveRecordScreen({
   personalCreateStartedAtRef,
   draftBondfireId,
 }: LiveRecordScreenProps) {
-  const { statusBarStyle } = useAppThemeColors()
   const isFocused = useIsFocused()
 
   const preConnectInFlightRef = useRef(false)
@@ -1926,7 +1925,10 @@ export function LiveRecordScreen({
 
   return (
     <YStack flex={1} backgroundColor={'$background'}>
-      <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
+      {/* Camera overlay: theme-independent by design. Controls sit on a live
+          camera feed, not on $background, so they use VIDEO_OVERLAY_COLORS
+          (light text on dark scrims) in both themes. See videoOverlayColors.ts. */}
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       {shouldRenderCamera ? (
         <>
           <LivePublisherView style={{ flex: 1 }} />
@@ -1945,9 +1947,9 @@ export function LiveRecordScreen({
                   paddingHorizontal={16}
                   paddingVertical={8}
                   borderRadius={16}
-                  backgroundColor="rgba(31, 32, 35, 0.85)"
+                  backgroundColor={VIDEO_OVERLAY_COLORS.pillBackground}
                 >
-                  <Text color="white" fontSize={14} fontWeight="700">
+                  <Text color={VIDEO_OVERLAY_COLORS.textPrimary} fontSize={14} fontWeight="700">
                     {liveStatus === 'reconnecting'
                       ? 'Connection interrupted — reconnecting...'
                       : 'Network changed — saving your recording...'}
@@ -1986,11 +1988,11 @@ export function LiveRecordScreen({
                 width={40}
                 height={40}
                 borderRadius={20}
-                backgroundColor="rgba(31, 32, 35, 0.7)"
+                backgroundColor={VIDEO_OVERLAY_COLORS.pillBackground}
                 alignItems="center"
                 justifyContent="center"
               >
-                <X size={24} color={'$color'} />
+                <X size={24} color={VIDEO_OVERLAY_COLORS.textPrimary} />
               </YStack>
             </Pressable>
 
@@ -2001,7 +2003,7 @@ export function LiveRecordScreen({
                 paddingVertical={6}
                 borderRadius={16}
               >
-                <Text color={'$color'} fontWeight="800" fontSize={14}>
+                <Text color={VIDEO_OVERLAY_COLORS.textPrimary} fontWeight="800" fontSize={14}>
                   {`● REC ${recordingTimerLabel}`}
                 </Text>
               </YStack>
@@ -2031,11 +2033,11 @@ export function LiveRecordScreen({
               <YStack alignItems="center" gap={12} pointerEvents="none">
                 <XStack alignItems="center" gap={8}>
                   <Flame size={28} color={'$primary'} />
-                  <Text color={'$color'} fontSize={22} fontWeight="700">
+                  <Text color={VIDEO_OVERLAY_COLORS.textPrimary} fontSize={22} fontWeight="700">
                     {respondTo ? 'Respond' : (selectedCamp?.name ?? 'Spark a Bondfire')}
                   </Text>
                 </XStack>
-                <Text color={'$placeholderColor'} fontSize={14}>
+                <Text color={VIDEO_OVERLAY_COLORS.textSecondary} fontSize={14}>
                   Tap to record
                 </Text>
               </YStack>
@@ -2043,7 +2045,7 @@ export function LiveRecordScreen({
 
             {showPreConnectError && (
               <YStack alignItems="center" gap={16}>
-                <Text color={'$color'} fontSize={18} fontWeight="700">
+                <Text color={VIDEO_OVERLAY_COLORS.textPrimary} fontSize={18} fontWeight="700">
                   {previewExpired
                     ? 'Camera timed out'
                     : progressStage === "Recording didn't start"
@@ -2062,7 +2064,7 @@ export function LiveRecordScreen({
                     borderRadius={20}
                     backgroundColor={'$primary'}
                   >
-                    <Text color={'$color'} fontWeight="800">
+                    <Text color={VIDEO_OVERLAY_COLORS.textPrimary} fontWeight="800">
                       Try Again
                     </Text>
                   </YStack>
@@ -2072,7 +2074,12 @@ export function LiveRecordScreen({
 
             {showPreConnectBlocked && (
               <YStack alignItems="center" gap={16} paddingHorizontal={32}>
-                <Text color={'$color'} fontSize={16} fontWeight="700" textAlign="center">
+                <Text
+                  color={VIDEO_OVERLAY_COLORS.textPrimary}
+                  fontSize={16}
+                  fontWeight="700"
+                  textAlign="center"
+                >
                   {preConnectBlockReason}
                 </Text>
                 {showUpgradeBlock && (
@@ -2088,7 +2095,7 @@ export function LiveRecordScreen({
                         borderRadius={20}
                         backgroundColor={'$primary'}
                       >
-                        <Text color={'$color'} fontWeight="800">
+                        <Text color={VIDEO_OVERLAY_COLORS.textPrimary} fontWeight="800">
                           View Plans
                         </Text>
                       </YStack>
@@ -2098,7 +2105,11 @@ export function LiveRecordScreen({
                       accessibilityLabel="Learn what you can do for free"
                       onPress={() => freeUpgradeActions.openExplainer('live_blocked')}
                     >
-                      <Text color={'$color'} fontSize={14} textDecorationLine="underline">
+                      <Text
+                        color={VIDEO_OVERLAY_COLORS.textPrimary}
+                        fontSize={14}
+                        textDecorationLine="underline"
+                      >
                         What can I do for free?
                       </Text>
                     </Pressable>
@@ -2113,7 +2124,7 @@ export function LiveRecordScreen({
                         borderRadius={20}
                         backgroundColor={'$primary'}
                       >
-                        <Text color={'$color'} fontWeight="800">
+                        <Text color={VIDEO_OVERLAY_COLORS.textPrimary} fontWeight="800">
                           Need
                         </Text>
                       </YStack>
@@ -2125,7 +2136,7 @@ export function LiveRecordScreen({
                         borderRadius={20}
                         backgroundColor={'$primary'}
                       >
-                        <Text color={'$color'} fontWeight="800">
+                        <Text color={VIDEO_OVERLAY_COLORS.textPrimary} fontWeight="800">
                           Offer
                         </Text>
                       </YStack>
@@ -2137,8 +2148,8 @@ export function LiveRecordScreen({
 
             {showBusySpinner && (
               <YStack alignItems="center" gap={12} pointerEvents="none">
-                <Spinner size="large" color={'$color'} />
-                <Text color={'$color'} fontSize={18} fontWeight="700">
+                <Spinner size="large" color={VIDEO_OVERLAY_COLORS.textPrimary} />
+                <Text color={VIDEO_OVERLAY_COLORS.textPrimary} fontSize={18} fontWeight="700">
                   {statusLabel}
                 </Text>
               </YStack>
@@ -2158,7 +2169,7 @@ export function LiveRecordScreen({
               paddingHorizontal={16}
               zIndex={10}
             >
-              <Text color="white" fontSize={13} fontWeight="600">
+              <Text color={VIDEO_OVERLAY_COLORS.textPrimary} fontSize={13} fontWeight="600">
                 Device getting warm — reducing quality to protect your recording
               </Text>
             </XStack>
@@ -2171,10 +2182,10 @@ export function LiveRecordScreen({
                   paddingHorizontal={14}
                   paddingVertical={8}
                   borderRadius={16}
-                  backgroundColor="rgba(31, 32, 35, 0.7)"
+                  backgroundColor={VIDEO_OVERLAY_COLORS.pillBackground}
                   marginBottom={14}
                 >
-                  <Text color={'$color'} fontSize={13} fontWeight="800">
+                  <Text color={VIDEO_OVERLAY_COLORS.textPrimary} fontSize={13} fontWeight="800">
                     Share Link
                   </Text>
                 </YStack>
@@ -2196,26 +2207,28 @@ export function LiveRecordScreen({
                 height={80}
                 borderRadius={40}
                 borderWidth={4}
-                borderColor={'$color'}
+                borderColor={VIDEO_OVERLAY_COLORS.textPrimary}
                 alignItems="center"
                 justifyContent="center"
                 backgroundColor={isLiveRecording ? '$error' : 'transparent'}
                 opacity={isLiveBusy || (!isPreConnected && !isLiveRecording) ? 0.7 : 1}
               >
                 {isLiveBusy ? (
-                  <Spinner size="small" color={'$color'} />
+                  <Spinner size="small" color={VIDEO_OVERLAY_COLORS.textPrimary} />
                 ) : (
                   <YStack
                     width={isLiveRecording ? 30 : 60}
                     height={isLiveRecording ? 30 : 60}
                     borderRadius={isLiveRecording ? 6 : 30}
-                    backgroundColor={isLiveRecording ? '$color' : '$primary'}
+                    backgroundColor={
+                      isLiveRecording ? VIDEO_OVERLAY_COLORS.textPrimary : '$primary'
+                    }
                   />
                 )}
               </YStack>
             </Pressable>
 
-            <Text color={'$placeholderColor'} fontSize={13} marginTop={12}>
+            <Text color={VIDEO_OVERLAY_COLORS.textSecondary} fontSize={13} marginTop={12}>
               {isLiveRecording
                 ? showRecordingLimitCountdown && autoStopStatusLabel
                   ? autoStopStatusLabel
