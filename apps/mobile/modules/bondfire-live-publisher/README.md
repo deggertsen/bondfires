@@ -110,6 +110,23 @@ route from the connected input devices:
 | Bluetooth (LE audio or SCO) | `VOICE_COMMUNICATION` | `setCommunicationDevice` (API 31+) / legacy SCO |
 | None connected | `VOICE_COMMUNICATION` (built-in) | none |
 
+#### Android mic source experiment
+
+The built-in-mic source is overridable per session via the `audioSource`
+start/preview option (JS `EXPO_PUBLIC_LIVE_AUDIO_SOURCE`, default
+`voice_communication`). Accepted values are MediaRecorder source names:
+`voice_communication`, `camcorder`, `mic`, `voice_recognition`. Unknown values
+fall back to `voice_communication`.
+
+This exists to compare capture levels: `VOICE_COMMUNICATION` engages
+comms-style AGC/noise suppression, which can attenuate speech, while
+`CAMCORDER`/`MIC` skip it. A non-default source applies only when no headset is
+connected — headset routing still requires `VOICE_COMMUNICATION` — and it
+disables the mid-session Bluetooth reroute for that session. The resolved
+source is reported as `audioSource` in `getStats()` payloads alongside
+`audioRoute`, so `live:stats_sample` telemetry proves which source a recorded
+session used.
+
 The Bluetooth claim and prior `AudioManager` mode are restored in
 `cleanupStreamer`. The chosen route is
 reported as `audioRoute` in `getStats()` payloads, so `live:stats_sample`

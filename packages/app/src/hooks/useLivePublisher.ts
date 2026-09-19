@@ -39,6 +39,16 @@ import { assessNetworkTransport } from '../utils/networkTransport'
 export const LIVE_DEFAULT_VIDEO_BITRATE = 1_500_000
 export const LIVE_DEFAULT_VIDEO_FPS = 24
 
+/**
+ * Android mic source for the capture-level experiment (docs/audio-levels-
+ * investigation.md). Maps to a MediaRecorder.AudioSource name in the native
+ * module; iOS ignores it. Expo only inlines statically referenced EXPO_PUBLIC
+ * variables, so keep this as a direct process.env property access. The default
+ * preserves production behavior (VOICE_COMMUNICATION).
+ */
+export const LIVE_ANDROID_AUDIO_SOURCE =
+  process.env.EXPO_PUBLIC_LIVE_AUDIO_SOURCE ?? 'voice_communication'
+
 export interface LivePublisherStartOptions {
   rtmpsUrl: string
   streamKey: string
@@ -56,6 +66,12 @@ export interface LivePublisherStartOptions {
   localBackupFileName?: string
   /** Native recording cap; 0/absent leaves the native timer disabled. */
   maxDurationSeconds?: number
+  /**
+   * Android-only mic source experiment knob. Values map to MediaRecorder
+   * AudioSource names ('voice_communication' | 'camcorder' | 'mic' |
+   * 'voice_recognition'). Absent on iOS.
+   */
+  audioSource?: string
 }
 
 export interface LivePublisherStartResult {
@@ -100,6 +116,8 @@ export interface LivePublisherPreviewOptions {
   videoBitrate?: number
   audioBitrate?: number
   initialCamera?: 'front' | 'back'
+  /** See LivePublisherStartOptions.audioSource — Android-only mic source knob. */
+  audioSource?: string
 }
 
 export interface LivePublisherNativeModule {
@@ -883,6 +901,7 @@ export function useLivePublisher(options: {
         videoBitrate: LIVE_DEFAULT_VIDEO_BITRATE,
         audioBitrate: 128_000,
         initialCamera: args.initialCamera ?? 'front',
+        audioSource: LIVE_ANDROID_AUDIO_SOURCE,
       })
     },
     [options.publisher],
@@ -1043,6 +1062,7 @@ export function useLivePublisher(options: {
           initialCamera: args.initialCamera ?? 'front',
           localBackupFileName: localBackup.fileName,
           maxDurationSeconds: args.maxDurationSeconds,
+          audioSource: LIVE_ANDROID_AUDIO_SOURCE,
         }
         recordingActions.setCaptureStatus('starting', 'record tap')
         if (options.publisher.startCapture && localBackup.fileName) {
@@ -1218,6 +1238,7 @@ export function useLivePublisher(options: {
         audioBitrate: 128_000,
         initialCamera: args.initialCamera ?? 'front',
         localBackupFileName,
+        audioSource: LIVE_ANDROID_AUDIO_SOURCE,
       })
 
       if (reconnectGenerationRef.current !== generation) {

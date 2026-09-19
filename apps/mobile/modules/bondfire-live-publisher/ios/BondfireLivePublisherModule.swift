@@ -32,6 +32,11 @@ struct LivePublisherStartOptions: Record {
   @Field var localBackupFileName: String = ""
   /// Native safety cap that remains enforceable while React Native is paused.
   @Field var maxDurationSeconds: Int = 0
+  /// Android-only mic source knob (MediaRecorder AudioSource name). Accepted
+  /// for cross-platform option parity and intentionally unused here — iOS
+  /// routes mics through AVAudioSession instead. See
+  /// docs/audio-levels-investigation.md.
+  @Field var audioSource: String = "voice_communication"
 }
 
 public class BondfireLivePublisherModule: Module {

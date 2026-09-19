@@ -72,6 +72,13 @@ class LivePublisherStartOptions : Record {
   @Field val localBackupFileName: String = ""
   /** Native safety cap that remains enforceable while React Native is paused. */
   @Field val maxDurationSeconds: Int = 0
+  /**
+   * Android-only mic source experiment knob. Accepts MediaRecorder AudioSource
+   * names: "voice_communication" (default), "camcorder", "mic",
+   * "voice_recognition". Unknown values fall back to voice_communication.
+   * Ignored on iOS. See docs/audio-levels-investigation.md.
+   */
+  @Field val audioSource: String = "voice_communication"
 }
 
 class LivePublisherPreviewOptions : Record {
@@ -79,6 +86,8 @@ class LivePublisherPreviewOptions : Record {
   @Field val videoBitrate: Int = 1_500_000
   @Field val audioBitrate: Int = 128_000
   @Field val initialCamera: String = "front"
+  /** See LivePublisherStartOptions.audioSource — Android-only mic source knob. */
+  @Field val audioSource: String = "voice_communication"
 }
 
 /**
@@ -150,6 +159,17 @@ class BondfireLivePublisherModule : Module() {
   // Reported in getStats() so live:stats_sample telemetry carries the route.
   @Volatile
   private var audioRouteName = "builtin"
+  // Resolved Android mic source for this session ("voice_communication" |
+  // "camcorder" | "mic" | "voice_recognition"). Carried alongside audioRoute
+  // in getStats() so the capture-level experiment is verifiable from telemetry.
+  @Volatile
+  private var audioSourceNameResolved = "voice_communication"
+  // False when a non-default built-in source pins the AudioRecord to
+  // CAMCORDER/MIC: such a record cannot follow a later setCommunicationDevice,
+  // so the device watcher is skipped rather than emitting a `bluetooth` route
+  // the active record is not actually using.
+  @Volatile
+  private var audioRerouteAllowed = true
   // Bluetooth mics require claiming the communication device (or legacy SCO);
   // teardown must undo whichever was engaged or the whole device stays routed
   // to the headset after the session ends.
@@ -275,6 +295,7 @@ class BondfireLivePublisherModule : Module() {
         fps = options.fps,
         videoBitrate = options.videoBitrate,
         audioBitrate = options.audioBitrate,
+        audioSourceName = options.audioSource,
       )
     }
 
@@ -307,6 +328,7 @@ class BondfireLivePublisherModule : Module() {
         fps = options.fps,
         videoBitrate = options.videoBitrate,
         audioBitrate = options.audioBitrate,
+        audioSourceName = options.audioSource,
       )
       val activeStreamer = streamer
         ?: throw LivePublisherException("Streamer unavailable")
@@ -355,6 +377,7 @@ class BondfireLivePublisherModule : Module() {
           fps = options.fps,
           videoBitrate = options.videoBitrate,
           audioBitrate = options.audioBitrate,
+          audioSourceName = options.audioSource,
         )
       }
       val activeStreamer = streamer
@@ -482,7 +505,10 @@ class BondfireLivePublisherModule : Module() {
       synchronized(statsLock) {
         // In-session samples carry the mic route so live:stats_sample
         // telemetry can verify headset routing in prod.
-        val sessionZeros = STATS_ZEROS + mapOf("audioRoute" to audioRouteName)
+        val sessionZeros = STATS_ZEROS + mapOf(
+          "audioRoute" to audioRouteName,
+          "audioSource" to audioSourceNameResolved,
+        )
         // The counter read happens inside the lock so the read + baseline
         // commit is atomic — overlapping polls could otherwise commit an
         // older reading over a newer baseline and emit a spurious
@@ -659,6 +685,7 @@ class BondfireLivePublisherModule : Module() {
     fps: Int,
     videoBitrate: Int,
     audioBitrate: Int,
+    audioSourceName: String = "voice_communication",
   ) {
     val context = appContext.reactContext
       ?: throw LivePublisherException("No React context available")
@@ -680,9 +707,12 @@ class BondfireLivePublisherModule : Module() {
     // Route the mic to a connected headset when one is present. StreamPack's
     // default audio source is CAMCORDER, which Android pins to the built-in
     // camcorder mics — with it, a connected headset mic is never used.
-    val audioRouting = selectAudioInputRouting(context)
+    val audioRouting = selectAudioInputRouting(context, audioSourceName)
     audioRouteName = audioRouting.routeName
-    Log.i(TAG, "Audio input routing: ${audioRouting.routeName} (audioSource=${audioRouting.audioSource})")
+    audioSourceNameResolved = audioSourceLabel(audioRouting.audioSource)
+    audioRerouteAllowed =
+      audioRouting.audioSource == MediaRecorder.AudioSource.VOICE_COMMUNICATION
+    Log.i(TAG, "Audio input routing: ${audioRouting.routeName} (audioSource=${audioSourceNameResolved})")
     audioRouting.headsetDevice?.let { device ->
       routedInputDeviceId = device.id
       if (audioRouting.requiresCommunicationDevice && !applyBluetoothMicRouting(context, device)) {
@@ -690,7 +720,9 @@ class BondfireLivePublisherModule : Module() {
         routedInputDeviceId = null
       }
     }
-    registerAudioDeviceCallback(context)
+    if (audioRerouteAllowed) {
+      registerAudioDeviceCallback(context)
+    }
 
     // Create camera + microphone streamer
     val newStreamer = cameraSingleStreamer(
@@ -869,8 +901,15 @@ class BondfireLivePublisherModule : Module() {
    * changes while still using the built-in mic when no headset is present.
    * Bluetooth mics (LE audio or classic SCO) additionally need to be claimed
    * as the communication device for the routing to apply.
+   *
+   * `requestedSource` only affects the built-in-mic case. A connected headset
+   * still requires VOICE_COMMUNICATION — CAMCORDER/MIC are pinned to the
+   * built-in mics and would silently ignore the headset.
    */
-  private fun selectAudioInputRouting(context: Context): AudioInputRouting {
+  private fun selectAudioInputRouting(
+    context: Context,
+    requestedSource: String = "voice_communication",
+  ): AudioInputRouting {
     val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
       ?: return AudioInputRouting(MediaRecorder.AudioSource.CAMCORDER, null, false, "builtin")
     val inputs = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
@@ -910,6 +949,17 @@ class BondfireLivePublisherModule : Module() {
       )
     }
 
+    // Built-in mic only: honor the requested source so the capture-level
+    // experiment can compare VOICE_COMMUNICATION (default, comms AGC) against
+    // CAMCORDER/MIC (no comms processing). An explicit requested source also
+    // suppresses the mid-session Bluetooth reroute for that session — the
+    // AudioRecord is created with it, so a later setCommunicationDevice could
+    // not take effect anyway.
+    val builtinSource = parseAudioSourceName(requestedSource)
+    if (builtinSource != MediaRecorder.AudioSource.VOICE_COMMUNICATION) {
+      return AudioInputRouting(builtinSource, null, false, "builtin")
+    }
+
     // VOICE_COMMUNICATION still captures from the built-in mic, but unlike
     // CAMCORDER it can follow a Bluetooth communication-device change while
     // this AudioRecord remains active.
@@ -919,6 +969,30 @@ class BondfireLivePublisherModule : Module() {
       false,
       "builtin",
     )
+  }
+
+  /**
+   * Maps the JS `audioSource` option to a MediaRecorder.AudioSource constant.
+   * Unknown/absent names keep the production default (VOICE_COMMUNICATION).
+   */
+  private fun parseAudioSourceName(name: String): Int {
+    return when (name) {
+      "camcorder" -> MediaRecorder.AudioSource.CAMCORDER
+      "mic" -> MediaRecorder.AudioSource.MIC
+      "voice_recognition" -> MediaRecorder.AudioSource.VOICE_RECOGNITION
+      "voice_communication" -> MediaRecorder.AudioSource.VOICE_COMMUNICATION
+      else -> MediaRecorder.AudioSource.VOICE_COMMUNICATION
+    }
+  }
+
+  /** Reverse of parseAudioSourceName for telemetry (never logs the raw int). */
+  private fun audioSourceLabel(source: Int): String {
+    return when (source) {
+      MediaRecorder.AudioSource.CAMCORDER -> "camcorder"
+      MediaRecorder.AudioSource.MIC -> "mic"
+      MediaRecorder.AudioSource.VOICE_RECOGNITION -> "voice_recognition"
+      else -> "voice_communication"
+    }
   }
 
   /**
@@ -1042,6 +1116,8 @@ class BondfireLivePublisherModule : Module() {
     audioDeviceCallback = null
     clearBluetoothMicRouting(appContext.reactContext ?: return)
     audioRouteName = "builtin"
+    audioSourceNameResolved = "voice_communication"
+    audioRerouteAllowed = true
     routedInputDeviceId = null
   }
 

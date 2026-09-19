@@ -244,6 +244,7 @@ function getMuxConfig() {
     liveLatencyMode: readLiveLatencyMode(process.env.MUX_LIVE_LATENCY_MODE),
     videoQuality: process.env.MUX_VIDEO_QUALITY ?? 'basic',
     uploadCorsOrigin: process.env.MUX_UPLOAD_CORS_ORIGIN ?? '*',
+    normalizeAudio: readMuxBoolean(process.env.MUX_NORMALIZE_AUDIO, true),
     reconnectSlateUrl:
       readMuxSlateUrl(process.env.MUX_LIVE_RECONNECT_SLATE_URL) ?? DEFAULT_MUX_RECONNECT_SLATE_URL,
     reconnectWindowSeconds: readMuxSeconds(
@@ -290,6 +291,11 @@ function readPlaybackPolicy(value: string | undefined): PlaybackPolicy {
 
 function getConfiguredPlaybackPolicy(): PlaybackPolicy {
   return readPlaybackPolicy(process.env.MUX_PLAYBACK_POLICY)
+}
+
+function readMuxBoolean(value: string | undefined, defaultValue: boolean): boolean {
+  if (value === undefined) return defaultValue
+  return value !== 'false' && value !== '0'
 }
 
 function readLiveLatencyMode(value: string | undefined): LiveLatencyMode {
@@ -1819,6 +1825,12 @@ export const createMuxDirectUpload = action({
       new_asset_settings: {
         playback_policies: [playbackPolicy],
         video_quality: config.videoQuality,
+        // Loudness normalization to Mux's -24 LUFS target. Mux only honors
+        // this when the asset is created from an uploaded file; it is
+        // silently dropped from a live stream's new_asset_settings (verified
+        // against the Mux API), so live-recorded VODs still depend on capture
+        // levels — see docs/audio-levels-investigation.md.
+        normalize_audio: config.normalizeAudio,
         // Auto-generated captions: viewers get CC, and the track.ready webhook
         // feeds the transcript → summary/tags pipeline in ai.ts. Included in
         // standard Mux encoding charges. Live recordings can't request this at
@@ -2949,6 +2961,9 @@ export const createLiveBackupDirectUpload = action({
       new_asset_settings: {
         playback_policies: [prepared.playbackPolicy],
         video_quality: config.videoQuality,
+        // Live-backup recovery re-ingests the on-device file through this
+        // direct-upload path, where Mux does honor normalization.
+        normalize_audio: config.normalizeAudio,
         inputs: [{ generated_subtitles: [GENERATED_SUBTITLES_SETTINGS] }],
         passthrough: JSON.stringify({
           userId,
