@@ -866,7 +866,9 @@ export default function ProfileScreen() {
                         borderWidth={1}
                         onPress={() => setPlaybackQuality(quality)}
                       >
-                        {quality}p
+                        <Text color={'$color'} fontWeight="700">
+                          {`${quality}p`}
+                        </Text>
                       </Button>
                     ))}
                   </XStack>

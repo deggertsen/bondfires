@@ -7,6 +7,118 @@ type InviteCandidate = {
   _id: Id<'users'>
   displayName?: string
   name?: string
+  photoUrl?: string
+}
+
+/** Relationship a person has to the current user, most trusted first. */
+export type AudienceGroup = 'family' | 'closeCircle' | 'recent'
+export type AudienceFilterKey = 'all' | AudienceGroup
+
+export interface AudienceItem {
+  candidate: InviteCandidate
+  group: AudienceGroup
+  hint: string
+}
+
+export interface AudienceFilter {
+  key: AudienceFilterKey
+  label: string
+  count: number
+}
+
+/** Per-avatar label; kept short so it fits under a 68px avatar column. */
+const AUDIENCE_HINTS: Record<AudienceGroup, string> = {
+  family: 'Family',
+  closeCircle: 'Close Circle',
+  recent: 'Recent',
+}
+
+const AUDIENCE_LABELS: Record<AudienceFilterKey, string> = {
+  all: 'All',
+  family: 'Family',
+  closeCircle: 'Close Circle',
+  recent: 'Recent',
+}
+
+/**
+ * Merge the three candidate lists into one rail. A person can appear in both
+ * Close Circle and Recent, and family connections are excluded server-side
+ * from Close Circle — the first list that claims an id wins the label, so the
+ * most trusted relationship is the one shown.
+ */
+export function buildAudienceItems(
+  familyConnections: ReadonlyArray<InviteCandidate>,
+  closeCircle: ReadonlyArray<InviteCandidate>,
+  recentConnections: ReadonlyArray<InviteCandidate>,
+): AudienceItem[] {
+  const claimed = new Set<Id<'users'>>()
+  const items: AudienceItem[] = []
+  const groups: ReadonlyArray<{
+    group: AudienceGroup
+    candidates: ReadonlyArray<InviteCandidate>
+  }> = [
+    { group: 'family', candidates: familyConnections },
+    { group: 'closeCircle', candidates: closeCircle },
+    { group: 'recent', candidates: recentConnections },
+  ]
+
+  for (const { group, candidates } of groups) {
+    for (const candidate of candidates) {
+      if (claimed.has(candidate._id)) continue
+      claimed.add(candidate._id)
+      items.push({ candidate, group, hint: AUDIENCE_HINTS[group] })
+    }
+  }
+
+  return items
+}
+
+/**
+ * Filter chips for the merged rail. Empty groups are dropped, and when only
+ * one group has people there is nothing to filter between — "All 3 / Family 3"
+ * is two chips saying the same thing — so no chips are returned at all.
+ */
+export function buildAudienceFilters(items: ReadonlyArray<AudienceItem>): AudienceFilter[] {
+  const groups: AudienceGroup[] = ['family', 'closeCircle', 'recent']
+  const groupFilters = groups
+    .map((key) => ({
+      key,
+      label: AUDIENCE_LABELS[key],
+      count: items.filter((item) => item.group === key).length,
+    }))
+    .filter((filter) => filter.count > 0)
+  if (groupFilters.length < 2) return []
+  return [{ key: 'all', label: AUDIENCE_LABELS.all, count: items.length }, ...groupFilters]
+}
+
+/**
+ * A filter can outlive its candidates (a connection revoked in another
+ * session), which would leave an empty rail behind a selected chip. Also
+ * covers the no-chips case, where the only sensible view is everyone.
+ */
+export function resolveAudienceFilter(
+  key: AudienceFilterKey,
+  filters: ReadonlyArray<AudienceFilter>,
+): AudienceFilterKey {
+  return filters.some((filter) => filter.key === key) ? key : 'all'
+}
+
+/**
+ * Items to render for the active filter. Selected people stay pinned to the
+ * front even when the filter hides them, so a chosen invitee never disappears
+ * from the rail mid-edit.
+ */
+export function selectAudienceItems(
+  items: ReadonlyArray<AudienceItem>,
+  filter: AudienceFilterKey,
+  selectedIds: ReadonlyArray<Id<'users'>>,
+): AudienceItem[] {
+  const visible = filter === 'all' ? [...items] : items.filter((item) => item.group === filter)
+  const visibleIds = new Set(visible.map((item) => item.candidate._id))
+  const pinned = items.filter(
+    (item) => selectedIds.includes(item.candidate._id) && !visibleIds.has(item.candidate._id),
+  )
+  return [...pinned, ...visible]
 }
 
 export function isValidInviteEmail(value: string): boolean {

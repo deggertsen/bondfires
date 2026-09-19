@@ -1,7 +1,7 @@
 import { subscriptionActions, telemetry, useAppThemeColors } from '@bondfires/app'
 import { Button, Spinner, Text, UserAvatar } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { Check, Copy, Link, Plus, Share, X } from '@tamagui/lucide-icons'
+import { Check, Copy, Link, Plus, Share, ShieldCheck, X } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import * as Clipboard from 'expo-clipboard'
 import { useCallback, useMemo } from 'react'
@@ -11,11 +11,16 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
+import type { AudienceFilterKey } from './preRecordingInvite'
 import {
+  buildAudienceFilters,
+  buildAudienceItems,
   buildAutoTitle,
   isValidInviteEmail,
   MAX_EMAIL_INVITES,
   MAX_TITLE_LENGTH,
+  resolveAudienceFilter,
+  selectAudienceItems,
 } from './preRecordingInvite'
 
 const CLOSE_CIRCLE_DISPLAY_LIMIT = 8
@@ -30,6 +35,7 @@ interface InviteFormState {
   title: string
   titleTouched: boolean
   emailInput: string
+  audienceFilter: AudienceFilterKey
   /** Set once a share link has been created — the draft now exists server-side. */
   shareInfo: { bondfireId: string; code: string } | null
   familyShareInfo: { bondfireId: string; code: string } | null
@@ -74,8 +80,10 @@ interface PreRecordingInviteScreenProps {
  * Pre-recording audience selection for Hearth bondfires. Shown *before* the
  * camera opens so the user has time to decide who this Bondfire is for:
  *
- *   1. Close Circle (pinned) + Recent Connections (interacted-with users
- *      from the last 30 days) for one-tap in-app invites.
+ *   1. One avatar rail of people they know — family connections, Close
+ *      Circle (pinned), and Recent Connections (interacted-with users from
+ *      the last 30 days) — with relationship chips to filter it, for one-tap
+ *      in-app invites.
  *   2. Email invites — emails that match an existing account become a direct
  *      invite; the rest get the code via Resend.
  *   3. A share link, created on demand (creating it creates the draft, so
@@ -104,6 +112,7 @@ export function PreRecordingInviteScreen({
     title: '',
     titleTouched: false,
     emailInput: '',
+    audienceFilter: 'all',
     shareInfo: null,
     familyShareInfo: null,
     copied: false,
@@ -141,6 +150,7 @@ export function PreRecordingInviteScreen({
   const title = useValue(form$.title)
   const titleTouched = useValue(form$.titleTouched)
   const emailInput = useValue(form$.emailInput)
+  const audienceFilter = useValue(form$.audienceFilter)
   const shareInfo = useValue(form$.shareInfo)
   const familyShareInfo = useValue(form$.familyShareInfo)
   const copied = useValue(form$.copied)
@@ -155,6 +165,24 @@ export function PreRecordingInviteScreen({
   const allCandidates = useMemo(
     () => [...familyConnections, ...closeCircle, ...recentConnections],
     [closeCircle, familyConnections, recentConnections],
+  )
+
+  // ── Single audience rail ────────────────────────────────────────────────
+  // Family / Close Circle / Recent used to be three stacked rails answering
+  // the same "who?" question. They now merge into one rail plus filter chips,
+  // so each person keeps their relationship label without the vertical cost.
+  const audienceItems = useMemo(
+    () => buildAudienceItems(familyConnections, closeCircle, recentConnections),
+    [closeCircle, familyConnections, recentConnections],
+  )
+
+  const audienceFilters = useMemo(() => buildAudienceFilters(audienceItems), [audienceItems])
+
+  const activeAudienceFilter = resolveAudienceFilter(audienceFilter, audienceFilters)
+
+  const orderedAudienceItems = useMemo(
+    () => selectAudienceItems(audienceItems, activeAudienceFilter, selectedRecipientIds),
+    [activeAudienceFilter, audienceItems, selectedRecipientIds],
   )
 
   // Auto-title: only when the user hasn't touched the field AND we have
@@ -523,66 +551,49 @@ export function PreRecordingInviteScreen({
             </YStack>
           )}
 
-          {/* Family connections */}
-          {familyConnections.length > 0 && (
+          {/* Audience — one rail, filtered. Family / Close Circle / Recent used
+              to be three stacked rails; the chips keep each relationship
+              visible without the vertical cost. */}
+          {audienceItems.length > 0 && (
             <InviteSection
-              title="Family Connections"
-              caption="Trusted people who can share private Hearths across age groups."
+              title="Who's this for?"
+              caption={
+                selectedRecipientIds.length > 0
+                  ? `${selectedRecipientIds.length} selected`
+                  : 'Tap to invite people you know.'
+              }
             >
+              {audienceFilters.length > 0 && (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}
+                  style={{ marginBottom: 14 }}
+                >
+                  {audienceFilters.map((definition) => (
+                    <AudienceFilterChip
+                      key={definition.key}
+                      label={definition.label}
+                      count={definition.count}
+                      active={definition.key === activeAudienceFilter}
+                      onPress={() => form$.audienceFilter.set(definition.key)}
+                    />
+                  ))}
+                </ScrollView>
+              )}
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
               >
-                {familyConnections.map((candidate) => (
+                {orderedAudienceItems.map((item) => (
                   <CandidateAvatar
-                    key={candidate._id}
-                    candidate={candidate}
-                    selected={selectedRecipientIds.includes(candidate._id)}
-                    onToggle={() => toggleRecipient(candidate._id)}
-                  />
-                ))}
-              </ScrollView>
-            </InviteSection>
-          )}
-
-          {/* Close Circle */}
-          {closeCircle.length > 0 && (
-            <InviteSection title="Close Circle" caption="People you've pinned for fast access.">
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
-              >
-                {closeCircle.map((candidate) => (
-                  <CandidateAvatar
-                    key={candidate._id}
-                    candidate={candidate}
-                    selected={selectedRecipientIds.includes(candidate._id)}
-                    onToggle={() => toggleRecipient(candidate._id)}
-                  />
-                ))}
-              </ScrollView>
-            </InviteSection>
-          )}
-
-          {/* Recent Connections */}
-          {recentConnections.length > 0 && (
-            <InviteSection
-              title="Recent Connections"
-              caption="People you've Bondfired or watched recently."
-            >
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
-              >
-                {recentConnections.map((candidate) => (
-                  <CandidateAvatar
-                    key={candidate._id}
-                    candidate={candidate}
-                    selected={selectedRecipientIds.includes(candidate._id)}
-                    onToggle={() => toggleRecipient(candidate._id)}
+                    key={item.candidate._id}
+                    candidate={item.candidate}
+                    hint={item.hint}
+                    familyConnection={item.group === 'family'}
+                    selected={selectedRecipientIds.includes(item.candidate._id)}
+                    onToggle={() => toggleRecipient(item.candidate._id)}
                   />
                 ))}
               </ScrollView>
@@ -885,12 +896,57 @@ function InviteSection({
   )
 }
 
+/** Relationship filter pill — same shape as the feed's mode pills. */
+function AudienceFilterChip({
+  label,
+  count,
+  active,
+  onPress,
+}: {
+  label: string
+  count: number
+  active: boolean
+  onPress: () => void
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      hitSlop={{ top: 6, bottom: 6 }}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      accessibilityLabel={`Show ${label}, ${count} ${count === 1 ? 'person' : 'people'}`}
+    >
+      <XStack
+        alignItems="center"
+        gap={6}
+        paddingHorizontal={14}
+        paddingVertical={8}
+        borderRadius={999}
+        borderWidth={1}
+        backgroundColor={active ? '$primary' : '$backgroundHover'}
+        borderColor={active ? '$primary' : '$borderColor'}
+      >
+        <Text fontSize={13} fontWeight="700" color={'$color'}>
+          {label}
+        </Text>
+        <Text fontSize={12} fontWeight="600" color={'$color'} opacity={active ? 0.85 : 0.55}>
+          {count}
+        </Text>
+      </XStack>
+    </Pressable>
+  )
+}
+
 function CandidateAvatar({
   candidate,
+  hint,
+  familyConnection,
   selected,
   onToggle,
 }: {
   candidate: { _id: Id<'users'>; displayName?: string; name?: string; photoUrl?: string }
+  hint: string
+  familyConnection: boolean
   selected: boolean
   onToggle: () => void
 }) {
@@ -899,7 +955,7 @@ function CandidateAvatar({
     <Pressable
       onPress={onToggle}
       accessibilityRole="button"
-      accessibilityLabel={displayName}
+      accessibilityLabel={`${displayName}, ${hint}${selected ? ', selected' : ''}`}
       accessibilityState={{ selected }}
     >
       <YStack alignItems="center" gap={6} width={68}>
@@ -929,10 +985,32 @@ function CandidateAvatar({
               <Check size={12} color={'$color'} />
             </YStack>
           )}
+          {familyConnection && (
+            <YStack
+              position="absolute"
+              top={-2}
+              left={-2}
+              width={20}
+              height={20}
+              borderRadius={10}
+              backgroundColor={'$background'}
+              borderWidth={1}
+              borderColor={'$primary'}
+              alignItems="center"
+              justifyContent="center"
+            >
+              <ShieldCheck size={12} color={'$primary'} />
+            </YStack>
+          )}
         </YStack>
-        <Text color={'$color'} fontSize={11} numberOfLines={1} textAlign="center">
-          {displayName.split(' ')[0]}
-        </Text>
+        <YStack alignItems="center" gap={1}>
+          <Text color={'$color'} fontSize={11} fontWeight="600" numberOfLines={1}>
+            {displayName.split(' ')[0]}
+          </Text>
+          <Text color={'$placeholderColor'} fontSize={10} numberOfLines={1}>
+            {hint}
+          </Text>
+        </YStack>
       </YStack>
     </Pressable>
   )
