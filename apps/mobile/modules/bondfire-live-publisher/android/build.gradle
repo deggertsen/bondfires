@@ -8,14 +8,18 @@ version = '0.1.0'
 
 android {
   namespace 'org.bondfires.livepublisher'
-  compileSdk 35
+  compileSdk rootProject.ext.compileSdkVersion
 
   defaultConfig {
     minSdk 24
+    testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
   }
 }
 
 dependencies {
+  androidTestImplementation 'androidx.test:runner:1.6.2'
+  androidTestImplementation 'androidx.test:rules:1.6.1'
+  androidTestImplementation 'androidx.test.ext:junit:1.2.1'
   implementation project(':expo-modules-core')
   implementation 'androidx.media3:media3-muxer:1.11.1'
   implementation 'io.github.thibaultbee.streampack:streampack-core:3.1.2'

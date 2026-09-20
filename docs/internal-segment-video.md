@@ -82,3 +82,25 @@ clips, maximum duration, silence, speech, Bluetooth and wired microphones, low s
 calls, backgrounding, force quit, airplane mode, Wi-Fi/cellular changes, sign-out during upload,
 retry conflicts, deletion, and camp membership removal. Compare audio loudness and artifacts with
 the prior Mux build. Store distribution is a test release, not evidence these checks passed.
+
+## Android preview regression
+
+Android build 103 rejected preview because a `UriMediaDescriptor` inferred its container type
+from `file:///dev/null`, which has no supported extension. The replacement uses an explicitly
+typed virtual MP4 descriptor, waits for the combined endpoint's open state, and obtains codec
+capabilities without opening a real file. Preview still persists no preroll and opens no transport.
+Empty encoded buffers are discarded, and a video keyframe only marks the track as started after
+its timestamp is accepted. Startup failures release the camera and report their native cause;
+the internal recording UI also sends stage-specific errors to the existing scrubbed telemetry.
+
+Run the native regression with an Android device or emulator attached:
+
+```sh
+cd apps/mobile/android
+./gradlew :bondfire-live-publisher:connectedDebugAndroidTest
+```
+
+It exercises the same warm-up helper as the production bridge, records locally, and checks
+both tracks, initial timestamps, sample continuity, finalization and absence of capture errors.
+An Android 16 emulator recording also decoded without errors with FFmpeg. Physical-device audio
+quality and timing remain part of internal testing.

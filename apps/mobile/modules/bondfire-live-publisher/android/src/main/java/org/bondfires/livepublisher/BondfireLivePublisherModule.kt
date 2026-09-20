@@ -270,10 +270,13 @@ class BondfireLivePublisherModule : Module() {
       currentFacing = options.initialCamera
       createStreamer(options.fps, options.videoBitrate, options.audioBitrate, segmented = true)
       val active = streamer ?: throw LivePublisherException("No camera")
-      val endpoint = active.endpoint as CaptureTransportEndpoint
-      endpoint.openCapture(UriMediaDescriptor(Uri.parse("file:///dev/null")))
-      active.startStream()
-      (endpoint.captureSink as SegmentEndpoint).awaitReady()
+      try {
+        active.startSegmentPreviewCapture()
+      } catch (error: Exception) {
+        Log.e(TAG, "Segment preview failed", error)
+        cleanupStreamer()
+        throw LivePublisherException("Could not prepare camera and microphone: ${error.message ?: error.javaClass.simpleName}")
+      }
     }
     AsyncFunction("startSegmentRecording") Coroutine { localId: String, maxDuration: Int ->
       val active = streamer ?: throw LivePublisherException("No camera")

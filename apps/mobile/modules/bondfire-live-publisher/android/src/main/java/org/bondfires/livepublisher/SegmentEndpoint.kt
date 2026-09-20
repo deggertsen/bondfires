@@ -2,6 +2,7 @@ package org.bondfires.livepublisher
 
 import android.content.Context
 import android.media.MediaFormat
+import android.net.Uri
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.muxer.BufferInfo
@@ -10,6 +11,11 @@ import io.github.thibaultbee.streampack.core.configuration.mediadescriptor.Media
 import io.github.thibaultbee.streampack.core.elements.data.FrameWithCloseable
 import io.github.thibaultbee.streampack.core.elements.encoders.CodecConfig
 import io.github.thibaultbee.streampack.core.elements.endpoints.IEndpointInternal
+import io.github.thibaultbee.streampack.core.elements.endpoints.IEndpoint
+import io.github.thibaultbee.streampack.core.elements.endpoints.MediaContainerType
+import io.github.thibaultbee.streampack.core.elements.endpoints.MediaSinkType
+import io.github.thibaultbee.streampack.core.streamers.single.SingleStreamer
+import kotlinx.coroutines.flow.first
 import java.io.File
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
@@ -23,6 +29,18 @@ import org.json.JSONObject
 
 /** Encodes during preview but discards samples until Record; never persists preroll. */
 class SegmentEndpoint(private val context: Context, private val delegate: IEndpointInternal) : IEndpointInternal by delegate {
+  companion object {
+    // A virtual MP4 sink: no file is opened or preroll persisted during preview.
+    // UriMediaDescriptor("file:///dev/null") fails while inferring its extension.
+    val previewDescriptor = object : MediaDescriptor(
+      MediaDescriptor.Type(MediaContainerType.MP4, MediaSinkType.FILE)
+    ) {
+      override val uri: Uri = Uri.EMPTY
+    }
+  }
+
+  override val info: IEndpoint.IEndpointInfo
+    get() = delegate.getInfo(previewDescriptor.type)
   override val isOpenFlow = MutableStateFlow(false)
   override val throwableFlow = MutableStateFlow<Throwable?>(null)
   private val lock = Mutex()
@@ -75,17 +93,17 @@ class SegmentEndpoint(private val context: Context, private val delegate: IEndpo
         if (!formats.containsKey(streamPid)) formats[streamPid] = mediaFormat(frame.format, frame.extra.orEmpty())
         if (formats.size == 2) ready.complete(Unit)
         val writer = muxer ?: return@withLock
-        if (!armed) return@withLock
+        if (!armed || !frame.rawBuffer.hasRemaining()) return@withLock
         val isVideo = frame.format.getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true
         if (startUs == null) startUs = frame.ptsInUs
         // Preserve audio immediately at Record, including speech before the
         // requested video keyframe arrives. Both tracks share one origin.
+        val pts = frame.ptsInUs - (startUs ?: return@withLock)
+        if (pts < 0) return@withLock
         if (isVideo && !videoStarted) {
           if (!frame.isKeyFrame) return@withLock
           videoStarted = true
         }
-        val pts = frame.ptsInUs - (startUs ?: return@withLock)
-        if (pts < 0) return@withLock
         if (pts >= maxUs) { finishLocked(); return@withLock }
         val track = tracks[streamPid] ?: error("Missing track")
         writer.writeSampleData(track, frame.rawBuffer.duplicate(), BufferInfo(pts, frame.rawBuffer.remaining(), if (frame.isKeyFrame) C.BUFFER_FLAG_KEY_FRAME else 0))
@@ -151,4 +169,15 @@ class SegmentEndpoint(private val context: Context, private val delegate: IEndpo
     FileOutputStream(temp).use { it.write(bytes); it.fd.sync() }
     check(temp.renameTo(file)) { "Could not commit media fragment" }
   }
+}
+
+/** The same warm-up path is exercised by the native device regression test. */
+internal suspend fun SingleStreamer.startSegmentPreviewCapture() {
+  val endpoint = endpoint as CaptureTransportEndpoint
+  endpoint.openCapture(SegmentEndpoint.previewDescriptor)
+  // CombineEndpoint computes its aggregate state asynchronously. Opening the
+  // child alone does not guarantee the pipeline can observe it yet.
+  withTimeout(5000) { endpoint.isOpenFlow.first { it } }
+  startStream()
+  (endpoint.captureSink as SegmentEndpoint).awaitReady()
 }

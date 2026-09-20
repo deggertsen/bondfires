@@ -1,4 +1,4 @@
-import { useAppThemeColors } from '@bondfires/app'
+import { telemetry, useAppThemeColors } from '@bondfires/app'
 import { Button, Text } from '@bondfires/ui'
 import { useConvex } from 'convex/react'
 import type { FunctionArgs } from 'convex/server'
@@ -51,6 +51,11 @@ export function SegmentRecordScreen({
     pending.current = serializeSegmentCapture(operation)
     return pending.current
   }, [])
+  const reportError = useCallback((stage: string, value: unknown) => {
+    const message = value instanceof Error ? value.message : String(value)
+    telemetry.error(`segment:${stage}:failed`, message)
+    if (mounted.current) setError(message)
+  }, [])
   const stopRef = useRef<() => Promise<void>>(async () => {})
   useEffect(() => {
     mounted.current = true
@@ -61,7 +66,7 @@ export function SegmentRecordScreen({
         if (mounted.current) setPhase('ready')
       } catch (e) {
         if (mounted.current) {
-          setError(String(e))
+          reportError('preview', e)
           setPhase('error')
         }
       }
@@ -86,7 +91,7 @@ export function SegmentRecordScreen({
             await BondfireLivePublisher.stop()
           })
         })().catch((e) => {
-          if (mounted.current) setError(String(e))
+          if (mounted.current) reportError('background', e)
         })
       } else if (!hasRecorded.current) {
         setPhase('warming')
@@ -95,14 +100,14 @@ export function SegmentRecordScreen({
           if (mounted.current) setPhase('ready')
         }).catch((e) => {
           if (mounted.current) {
-            setError(String(e))
+            reportError('resume', e)
             setPhase('error')
           }
         })
       }
     })
     const nativeError = BondfireLivePublisher.addListener('error', (event) => {
-      setError(event.message)
+      reportError('native', event.message)
       if (recording.current) void stopRef.current()
     })
     const back = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -129,7 +134,7 @@ export function SegmentRecordScreen({
       }).catch(() => {})
       void deactivateKeepAwake('segment-recording')
     }
-  }, [enqueue, maxDuration, userId])
+  }, [enqueue, maxDuration, reportError, userId])
   async function start() {
     if (busy.current || phase !== 'ready') return
     busy.current = true
@@ -147,7 +152,7 @@ export function SegmentRecordScreen({
       })
     } catch (e) {
       markSegmentCapture(localId.current, false)
-      setError(String(e))
+      reportError('start', e)
       setPhase('error')
     } finally {
       busy.current = false
@@ -168,7 +173,7 @@ export function SegmentRecordScreen({
       setPhase('saved')
       void runSegmentUploads(segmentUploadClient(client), userId)
     } catch (e) {
-      setError(String(e))
+      reportError('stop', e)
       setPhase('error')
     } finally {
       markSegmentCapture(localId.current, false)
@@ -196,7 +201,7 @@ export function SegmentRecordScreen({
         </Text>
         <Button
           onPress={() => {
-            void BondfireLivePublisher.swapCamera().catch((e) => setError(String(e)))
+            void BondfireLivePublisher.swapCamera().catch((e) => reportError('flip', e))
           }}
           disabled={phase !== 'ready'}
         >
