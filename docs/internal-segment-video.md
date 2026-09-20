@@ -104,3 +104,10 @@ It exercises the same warm-up helper as the production bridge, records locally, 
 both tracks, initial timestamps, sample continuity, finalization and absence of capture errors.
 An Android 16 emulator recording also decoded without errors with FFmpeg. Physical-device audio
 quality and timing remain part of internal testing.
+
+The Android writer's file-oriented fMP4 output also needs adaptation for HLS: each exported fragment
+now carries `tfdt` decode times and uses moof-relative addressing, and initialization advertises
+ISO6 compatibility. Decode clocks advance from the actual sample durations independently per track,
+including their initial timestamp offsets. This preserves timing when fragments are fetched as
+separate objects. The native test opens each fragment independently; the resulting segments also
+pass the shared upload parser and decode through an HLS playlist with FFmpeg.

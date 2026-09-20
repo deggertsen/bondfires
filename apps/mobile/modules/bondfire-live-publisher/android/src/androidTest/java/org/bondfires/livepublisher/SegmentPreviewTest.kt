@@ -13,8 +13,10 @@ import io.github.thibaultbee.streampack.core.elements.encoders.VideoCodecConfig
 import io.github.thibaultbee.streampack.core.streamers.single.cameraSingleStreamer
 import java.io.File
 import java.util.UUID
+import java.nio.ByteBuffer
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -41,11 +43,36 @@ class SegmentPreviewTest {
       assertNotNull(sink.info)
       sink.begin(localId, 30)
       streamer.videoEncoder?.requestKeyFrame()
-      delay(6500)
+      // Wait for a fragment committed during capture, then capture the tail.
+      // Emulator camera/encoder throughput need not match wall-clock speed.
+      withTimeout(20000) {
+        while (!File(directory, "segment-000000.m4s").exists()) delay(100)
+      }
+      delay(2000)
       assertNull("Capture must not silently lose frames", sink.throwableFlow.value)
       val count = sink.finish()
-      assertTrue("Expected committed media fragments", count >= 1)
+      assertTrue("Expected committed media fragments", count >= 2)
       assertTrue(File(directory, "finished.json").exists())
+      for (i in 0 until count) {
+        val piece = File(directory, "piece.mp4")
+        piece.outputStream().use { output ->
+          File(directory, "init.mp4").inputStream().use { it.copyTo(output) }
+          File(directory, "segment-%06d.m4s".format(java.util.Locale.US, i)).inputStream().use { it.copyTo(output) }
+        }
+        val reader = MediaExtractor()
+        try {
+          reader.setDataSource(piece.path)
+          assertEquals(2, reader.trackCount)
+          for (track in 0 until reader.trackCount) {
+            reader.selectTrack(track)
+            reader.seekTo(0, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+            assertTrue("Segment $i track $track must be independently readable", reader.readSampleData(ByteBuffer.allocate(1024 * 1024), 0) > 0)
+            // MediaExtractor can rebase a standalone file's first timestamp.
+            assertTrue("Fragment must expose a valid sample timestamp", reader.sampleTime >= 0)
+            reader.unselectTrack(track)
+          }
+        } finally { reader.release() }
+      }
       val movie = File(directory, "check.mp4")
       movie.outputStream().use { output ->
         File(directory, "init.mp4").inputStream().use { it.copyTo(output) }

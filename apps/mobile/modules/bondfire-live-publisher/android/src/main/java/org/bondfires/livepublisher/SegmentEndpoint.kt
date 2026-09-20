@@ -49,6 +49,7 @@ class SegmentEndpoint(private val context: Context, private val delegate: IEndpo
   private var nextStream = 0
   private val formats = mutableMapOf<Int, Format>()
   private val tracks = mutableMapOf<Int, Int>()
+  private var decodeTimes = mutableMapOf<Int, Long>()
   private var muxer: FragmentedMp4Muxer? = null
   private var directory: File? = null
   private var pendingFile: File? = null
@@ -79,6 +80,7 @@ class SegmentEndpoint(private val context: Context, private val delegate: IEndpo
     pendingFile = file
     val writer = FragmentedMp4Muxer.Builder(FileOutputStream(file)).setFragmentDurationMs(4000).setSampleCopyingEnabled(true).build()
     formats.forEach { (id, format) -> tracks[id] = writer.addTrack(format) }
+    decodeTimes.clear()
     muxer = writer
     scanOffset = 0; fragmentStart = 0; count = 0; startUs = null
     maxUs = maxDuration.toLong() * 1_000_000
@@ -106,6 +108,10 @@ class SegmentEndpoint(private val context: Context, private val delegate: IEndpo
         }
         if (pts >= maxUs) { finishLocked(); return@withLock }
         val track = tracks[streamPid] ?: error("Missing track")
+        // Media3 returns zero-based track handles but writes one-based MP4 IDs.
+        // Its video timebase is 90kHz; audio uses the configured sample rate.
+        val timescale = if (isVideo) 90000 else requireNotNull(formats[streamPid]).sampleRate
+        decodeTimes.putIfAbsent(track + 1, pts * timescale / 1_000_000)
         writer.writeSampleData(track, frame.rawBuffer.duplicate(), BufferInfo(pts, frame.rawBuffer.remaining(), if (frame.isKeyFrame) C.BUFFER_FLAG_KEY_FRAME else 0))
         exportCompleteBoxes()
       }
@@ -145,8 +151,14 @@ class SegmentEndpoint(private val context: Context, private val delegate: IEndpo
           check(end - fragmentStart <= 8 * 1024 * 1024)
           val bytes = ByteArray((end - fragmentStart).toInt())
           input.seek(fragmentStart); input.readFully(bytes)
-          val name = if (type == "moov") "init.mp4" else "segment-%06d.m4s".format(java.util.Locale.US, count++)
-          atomicWrite(File(folder, name), bytes)
+          if (type == "moov") {
+            atomicWrite(File(folder, "init.mp4"), HlsFragment.initialization(bytes))
+          } else {
+            val fragment = HlsFragment.convert(bytes, decodeTimes)
+            atomicWrite(File(folder, "segment-%06d.m4s".format(java.util.Locale.US, count)), fragment.bytes)
+            decodeTimes = fragment.nextDecodeTimes.toMutableMap()
+            count++
+          }
           fragmentStart = end
         }
         scanOffset = end
