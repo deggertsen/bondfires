@@ -2,7 +2,7 @@
 
 This branch replaces Mux ingest and playback **only in the internal store profile**.
 Production and the TestFlight Beta audience retain the existing build and Convex deployment.
-The TestFlight Alpha group is the intended Internal group; Google Play uses its internal track.
+The former TestFlight Alpha group has been renamed Internal; Google Play uses its internal track.
 
 ## Recording and delivery
 
@@ -54,8 +54,25 @@ Secrets live in ignored local files and deployed secret stores, never source con
 
 Build and submit with the `internal` profile. Verify TestFlight Beta has no automatic access to the
 new build before upload, and assign the processed build only to Internal. Do not promote the Play
-internal release to another track. Rollback is an older store build; internal media stays isolated
+internal release to another track. Internal currently has automatic access to all TestFlight builds,
+so omit EAS Submit `--groups`: Apple rejects redundant manual assignments to that group. Confirm
+its build list and `internalBuildState` after upload. Rollback is an older store build; internal media stays isolated
 and does not need a production data migration.
+
+## Internal release evidence — 2026-09-20
+
+Version 1.0.88, build 103 was built from `2001c4a` and distributed to both stores.
+The packaged JavaScript on both platforms contains the internal Convex URL and no production URL.
+App Store Connect reports build `817ca30c-fe1d-4e7c-b9e1-6294a1fb41a1` as VALID and
+IN_BETA_TESTING; the Internal group includes 103, while Beta remains on 102. Google Play reports
+internal version code 103 as completed; alpha remains on 102. Later commits update repository
+impact rules and documentation only.
+
+Repository validation passes with 493 tests, and both store builds succeeded. The deployed service
+smoke test verifies ordered uploads, exact retry/conflict handling, private playback, growing and
+finalized playlists, byte ranges, deletion revocation and R2 cleanup. A synthetic capture through
+the actual iOS writer decodes continuously as H.264/AAC with a normalized timeline. These checks
+do not substitute for the device checks below.
 
 ## Required device checks
 
