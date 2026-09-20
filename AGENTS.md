@@ -14,6 +14,8 @@ React Native (Expo) + Tamagui + Legend State + Convex (backend/DB/auth/file stor
 apps/mobile/                    — Expo mobile app
 convex/                         — Convex backend, auth, and HTTP actions
 infrastructure/terraform/       — Legacy AWS website infra (deprecated)
+infrastructure/media/           — Cloudflare Worker (bondfires-internal-media): segmented video ingest/serve
+packages/media/                 — Shared media wire protocol + MP4 segment parsing (Convex ↔ media Worker)
 packages/ui/                    — Shared Tamagui components
 packages/app/                   — Features, hooks, Legend State stores
 packages/config/                — Tamagui configuration
