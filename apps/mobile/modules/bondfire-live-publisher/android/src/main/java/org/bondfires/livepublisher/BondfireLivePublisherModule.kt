@@ -164,12 +164,6 @@ class BondfireLivePublisherModule : Module() {
   // in getStats() so the capture-level experiment is verifiable from telemetry.
   @Volatile
   private var audioSourceNameResolved = "voice_communication"
-  // False when a non-default built-in source pins the AudioRecord to
-  // CAMCORDER/MIC: such a record cannot follow a later setCommunicationDevice,
-  // so the device watcher is skipped rather than emitting a `bluetooth` route
-  // the active record is not actually using.
-  @Volatile
-  private var audioRerouteAllowed = true
   // Bluetooth mics require claiming the communication device (or legacy SCO);
   // teardown must undo whichever was engaged or the whole device stays routed
   // to the headset after the session ends.
@@ -704,14 +698,11 @@ class BondfireLivePublisherModule : Module() {
     val resolution = getBestCameraResolution(cameraManager, cameraId, 720, 1280)
     Log.i(TAG, "Using camera output resolution ${resolution.width}x${resolution.height}")
 
-    // Route the mic to a connected headset when one is present. StreamPack's
-    // default audio source is CAMCORDER, which Android pins to the built-in
-    // camcorder mics — with it, a connected headset mic is never used.
+    // Preserve the existing headset routing policy; use the experimental
+    // source only when starting without a headset.
     val audioRouting = selectAudioInputRouting(context, audioSourceName)
     audioRouteName = audioRouting.routeName
     audioSourceNameResolved = audioSourceLabel(audioRouting.audioSource)
-    audioRerouteAllowed =
-      audioRouting.audioSource == MediaRecorder.AudioSource.VOICE_COMMUNICATION
     Log.i(TAG, "Audio input routing: ${audioRouting.routeName} (audioSource=${audioSourceNameResolved})")
     audioRouting.headsetDevice?.let { device ->
       routedInputDeviceId = device.id
@@ -720,7 +711,9 @@ class BondfireLivePublisherModule : Module() {
         routedInputDeviceId = null
       }
     }
-    if (audioRerouteAllowed) {
+    // Only the existing communication-source path supports our Bluetooth
+    // reroute policy. Other sources follow device-specific audio policy.
+    if (audioRouting.audioSource == MediaRecorder.AudioSource.VOICE_COMMUNICATION) {
       registerAudioDeviceCallback(context)
     }
 
@@ -902,16 +895,16 @@ class BondfireLivePublisherModule : Module() {
    * Bluetooth mics (LE audio or classic SCO) additionally need to be claimed
    * as the communication device for the routing to apply.
    *
-   * `requestedSource` only affects the built-in-mic case. A connected headset
-   * still requires VOICE_COMMUNICATION — CAMCORDER/MIC are pinned to the
-   * built-in mics and would silently ignore the headset.
+   * `requestedSource` only affects sessions starting without a headset.
+   * Keep VOICE_COMMUNICATION for headsets to preserve the existing routing
+   * policy; other sources' device selection and processing vary by vendor.
    */
   private fun selectAudioInputRouting(
     context: Context,
     requestedSource: String = "voice_communication",
   ): AudioInputRouting {
     val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-      ?: return AudioInputRouting(MediaRecorder.AudioSource.CAMCORDER, null, false, "builtin")
+      ?: return AudioInputRouting(parseAudioSourceName(requestedSource), null, false, "builtin")
     val inputs = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
 
     fun firstInput(vararg types: Int): AudioDeviceInfo? {
@@ -949,22 +942,10 @@ class BondfireLivePublisherModule : Module() {
       )
     }
 
-    // Built-in mic only: honor the requested source so the capture-level
-    // experiment can compare VOICE_COMMUNICATION (default, comms AGC) against
-    // CAMCORDER/MIC (no comms processing). An explicit requested source also
-    // suppresses the mid-session Bluetooth reroute for that session — the
-    // AudioRecord is created with it, so a later setCommunicationDevice could
-    // not take effect anyway.
-    val builtinSource = parseAudioSourceName(requestedSource)
-    if (builtinSource != MediaRecorder.AudioSource.VOICE_COMMUNICATION) {
-      return AudioInputRouting(builtinSource, null, false, "builtin")
-    }
-
-    // VOICE_COMMUNICATION still captures from the built-in mic, but unlike
-    // CAMCORDER it can follow a Bluetooth communication-device change while
-    // this AudioRecord remains active.
+    // A source is a use-case request, not a guarantee of gain, preprocessing,
+    // or a particular physical microphone. Compare on real devices.
     return AudioInputRouting(
-      MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+      parseAudioSourceName(requestedSource),
       null,
       false,
       "builtin",
@@ -1117,7 +1098,6 @@ class BondfireLivePublisherModule : Module() {
     clearBluetoothMicRouting(appContext.reactContext ?: return)
     audioRouteName = "builtin"
     audioSourceNameResolved = "voice_communication"
-    audioRerouteAllowed = true
     routedInputDeviceId = null
   }
 

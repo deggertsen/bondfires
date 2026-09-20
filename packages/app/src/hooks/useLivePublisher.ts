@@ -97,6 +97,8 @@ export interface LivePublisherStats {
   statsSupported?: number
   /** Mic route selected by the native publisher. */
   audioRoute?: 'builtin' | 'wired' | 'bluetooth'
+  /** Resolved Android AudioSource; absent on iOS and older native builds. */
+  audioSource?: string
 }
 
 export interface LivePublisherVideoQualityResult {
@@ -779,6 +781,7 @@ export function useLivePublisher(options: {
                 rttMs: stats.rttMs,
                 statsSupported: stats.statsSupported,
                 audioRoute: stats.audioRoute,
+                audioSource: stats.audioSource,
                 networkBitrateCap: networkBitrateCapRef.current,
                 networkAbrTier: networkAbrRef.current?.tier() ?? 0,
                 elapsedMs: startedAt ? Date.now() - startedAt : undefined,

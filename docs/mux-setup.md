@@ -29,7 +29,8 @@ MUX_NORMALIZE_AUDIO=true
 > **Live recordings are not covered by `MUX_NORMALIZE_AUDIO`.** Mux silently
 > drops `normalize_audio` from a live stream's `new_asset_settings` (verified
 > against the API), so live-sourced VODs — which are nearly all Bondfires —
-> depend on capture levels instead. See
+> keep their original capture levels in the current pipeline. For the proposed
+> post-recording normalization approach, see
 > [docs/audio-levels-investigation.md](./audio-levels-investigation.md).
 
 ### Reconnect slate (branded placeholder)

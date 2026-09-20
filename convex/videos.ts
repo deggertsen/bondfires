@@ -294,8 +294,16 @@ function getConfiguredPlaybackPolicy(): PlaybackPolicy {
 }
 
 function readMuxBoolean(value: string | undefined, defaultValue: boolean): boolean {
-  if (value === undefined) return defaultValue
-  return value !== 'false' && value !== '0'
+  switch (value?.trim().toLowerCase()) {
+    case 'true':
+    case '1':
+      return true
+    case 'false':
+    case '0':
+      return false
+    default:
+      return defaultValue
+  }
 }
 
 function readLiveLatencyMode(value: string | undefined): LiveLatencyMode {
@@ -1825,11 +1833,8 @@ export const createMuxDirectUpload = action({
       new_asset_settings: {
         playback_policies: [playbackPolicy],
         video_quality: config.videoQuality,
-        // Loudness normalization to Mux's -24 LUFS target. Mux only honors
-        // this when the asset is created from an uploaded file; it is
-        // silently dropped from a live stream's new_asset_settings (verified
-        // against the Mux API), so live-recorded VODs still depend on capture
-        // levels — see docs/audio-levels-investigation.md.
+        // Mux normalizes on-demand assets to -24 LUFS. This does not cover
+        // assets produced by live ingest; see docs/audio-levels-investigation.md.
         normalize_audio: config.normalizeAudio,
         // Auto-generated captions: viewers get CC, and the track.ready webhook
         // feeds the transcript → summary/tags pipeline in ai.ts. Included in
