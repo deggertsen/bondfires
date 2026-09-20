@@ -219,13 +219,13 @@ class CaptureTransportEndpoint(
   }
 }
 
-class CaptureTransportEndpointFactory : IEndpointInternal.Factory {
+class CaptureTransportEndpointFactory(private val segmented: Boolean = false) : IEndpointInternal.Factory {
   override fun create(
     context: Context,
     dispatcherProvider: IDispatcherProvider,
   ): IEndpointInternal = CaptureTransportEndpoint(
     RtmpEndpointFactory().create(context, dispatcherProvider),
-    MediaMuxerEndpointFactory().create(context, dispatcherProvider),
+    MediaMuxerEndpointFactory().create(context, dispatcherProvider).let { if (segmented) SegmentEndpoint(context, it) else it },
     dispatcherProvider,
   )
 }

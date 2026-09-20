@@ -9,10 +9,18 @@ import {
 } from '@bondfires/app'
 import { SubscriptionPaywall } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
+import { useConvex, useQuery } from 'convex/react'
 import { Stack } from 'expo-router'
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
+import { api } from '../../../../convex/_generated/api'
 import { CommunityAcceptanceGate } from '../../components/CommunityAcceptanceGate'
 import { FreeCapabilitiesExplainer } from '../../components/FreeCapabilitiesExplainer'
+import {
+  runSegmentUploads,
+  segmentMediaEnabled,
+  segmentUploadClient,
+  setSegmentUploadOwner,
+} from '../../lib/media/segmentUploads'
 
 function GlobalPaywall() {
   const {
@@ -123,12 +131,34 @@ function GlobalPaywall() {
   )
 }
 
-export default function MainLayout() {
+function SegmentUploadResume() {
+  const client = useConvex()
+  const user = useQuery(api.users.current)
+  useEffect(() => {
+    setSegmentUploadOwner(user?._id ?? null)
+    if (!user) return
+    const tick = () => {
+      void runSegmentUploads(segmentUploadClient(client), user._id)
+    }
+    tick()
+    const timer = setInterval(tick, 2000)
+    return () => {
+      clearInterval(timer)
+      setSegmentUploadOwner(null)
+    }
+  }, [client, user])
+  return null
+}
+
+function LegacyRecordingMaintenance() {
   useRecordingWatchdog()
   // One-shot launch sweep for orphaned local backup recordings (gated on the
   // recording resource lock, same as upload resume).
   useLocalBackupSweep()
+  return null
+}
 
+export default function MainLayout() {
   return (
     <>
       <Stack screenOptions={{ headerShown: false }}>
@@ -147,6 +177,7 @@ export default function MainLayout() {
         <Stack.Screen name="personal-camp" options={{ headerShown: false }} />
         <Stack.Screen name="family-connections" options={{ headerShown: false }} />
       </Stack>
+      {segmentMediaEnabled ? <SegmentUploadResume /> : <LegacyRecordingMaintenance />}
       <GlobalPaywall />
       <FreeCapabilitiesExplainer />
       <CommunityAcceptanceGate />

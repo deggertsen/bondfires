@@ -70,6 +70,7 @@ const FEED_VISIBILITY_SCAN_MAX = 150
 export function isPlayableVideoRecord(record: {
   videoStatus?: string
   muxPlaybackId?: string
+  segmentRecordingId?: string
   muxLivePlaybackId?: string
   expiresAt?: number
 }) {
@@ -79,8 +80,8 @@ export function isPlayableVideoRecord(record: {
 
   const status = record.videoStatus ?? 'ready'
   return (
-    (status === 'ready' && !!record.muxPlaybackId) ||
-    (status === 'live' && !!record.muxLivePlaybackId)
+    (status === 'ready' && !!(record.muxPlaybackId || record.segmentRecordingId)) ||
+    (status === 'live' && !!(record.muxLivePlaybackId || record.segmentRecordingId))
   )
 }
 
@@ -141,10 +142,12 @@ function toPublicUser(user: Doc<'users'>): PublicUser {
   }
 }
 
-function withLiveFlags<T extends { videoStatus?: string; muxLivePlaybackId?: string }>(
-  record: T,
-): T & { isLive: boolean; livePlaybackId?: string } {
-  const isLive = (record.videoStatus ?? 'ready') === 'live' && !!record.muxLivePlaybackId
+function withLiveFlags<
+  T extends { videoStatus?: string; muxLivePlaybackId?: string; segmentRecordingId?: string },
+>(record: T): T & { isLive: boolean; livePlaybackId?: string } {
+  const isLive =
+    (record.videoStatus ?? 'ready') === 'live' &&
+    !!(record.muxLivePlaybackId || record.segmentRecordingId)
   return {
     ...record,
     isLive,

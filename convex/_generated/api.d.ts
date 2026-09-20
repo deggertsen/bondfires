@@ -77,6 +77,7 @@ import type * as reports from "../reports.js";
 import type * as responseCounts from "../responseCounts.js";
 import type * as retentionCleanup from "../retentionCleanup.js";
 import type * as retentionMedia from "../retentionMedia.js";
+import type * as segmentMedia from "../segmentMedia.js";
 import type * as sendNotification from "../sendNotification.js";
 import type * as serverTelemetry from "../serverTelemetry.js";
 import type * as storeBilling from "../storeBilling.js";
@@ -165,6 +166,7 @@ declare const fullApi: ApiFromModules<{
   responseCounts: typeof responseCounts;
   retentionCleanup: typeof retentionCleanup;
   retentionMedia: typeof retentionMedia;
+  segmentMedia: typeof segmentMedia;
   sendNotification: typeof sendNotification;
   serverTelemetry: typeof serverTelemetry;
   storeBilling: typeof storeBilling;

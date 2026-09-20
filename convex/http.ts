@@ -1,4 +1,5 @@
 import { httpRouter } from 'convex/server'
+import { equalSecret, verifyCapability } from '../packages/media/src/protocol'
 import { internal } from './_generated/api'
 import { httpAction } from './_generated/server'
 import { auth } from './auth'
@@ -30,6 +31,66 @@ export async function readBoundedBody(request: Request, maxBytes = 128_000) {
     reader.releaseLock()
   }
 }
+
+http.route({
+  path: '/internal-media',
+  method: 'POST',
+  handler: httpAction(async (ctx, request) => {
+    if (
+      !(await equalSecret(
+        request.headers.get('authorization')?.replace(/^Bearer /, '') ?? '',
+        process.env.MEDIA_WORKER_SECRET ?? '',
+      ))
+    )
+      return new Response('Forbidden', { status: 403 })
+    const text = await readBoundedBody(request, 4096)
+    if (!text) return new Response('Invalid request', { status: 400 })
+    try {
+      const body = JSON.parse(text)
+      const claims = await verifyCapability(body.token, process.env.MEDIA_TOKEN_SECRET ?? '')
+      // Convex validators validate IDs and numeric metadata at the internal boundary.
+      const recordingId =
+        claims.recordingId as import('./_generated/dataModel').Id<'segmentRecordings'>
+      const userId = claims.userId as import('./_generated/dataModel').Id<'users'>
+      if (body.operation === 'read' && claims.operation === 'read') {
+        return Response.json(
+          await ctx.runQuery(internal.segmentMedia.timeline, {
+            recordingId,
+            userId,
+            index: body.index,
+          }),
+        )
+      }
+      if (claims.operation !== 'upload') throw new Error('Forbidden')
+      const recording = await ctx.runQuery(internal.segmentMedia.authorize, {
+        recordingId,
+        userId,
+        operation: 'upload',
+      })
+      if (body.operation === 'authorizeUpload') {
+        if (
+          !Number.isInteger(body.index) ||
+          body.index < -1 ||
+          body.index > recording.segmentCount ||
+          (recording.finalCount !== undefined && body.index >= recording.finalCount)
+        )
+          throw new Error('Forbidden')
+      } else if (body.operation === 'receipt') {
+        await ctx.runMutation(internal.segmentMedia.receipt, {
+          recordingId,
+          userId,
+          index: body.index,
+          duration: body.duration,
+          size: body.size,
+          checksum: body.checksum,
+        })
+      } else throw new Error('Forbidden')
+      return Response.json({ complete: false, segments: [] })
+    } catch {
+      return new Response('Forbidden', { status: 403 })
+    }
+  }),
+})
 
 function billingWebhookResponse(result: { ok: boolean; statusCode?: number; errorCode?: string }) {
   if (result.ok) return new Response(null, { status: 204 })

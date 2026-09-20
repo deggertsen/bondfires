@@ -68,3 +68,10 @@ infrastructure/terraform/.terraform.lock.hcl
 # Misc
 *.pem
 Thumbs.db
+
+# Cloudflare local state and development secrets
+.wrangler/
+.dev.vars*
+
+# Generated Workers runtime declarations (npm run types)
+/infrastructure/media/worker-configuration.d.ts

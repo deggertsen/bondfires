@@ -32,7 +32,9 @@ import { CampPickerScreen } from '../../components/create/CampPickerScreen'
 import { LegacyRecordScreen } from '../../components/create/LegacyRecordScreen'
 import { LiveRecordScreen } from '../../components/create/LiveRecordScreen'
 import { PreRecordingInviteScreen } from '../../components/create/PreRecordingInviteScreen'
+import { SegmentRecordScreen } from '../../components/create/SegmentRecordScreen'
 import type { TradeTag } from '../../components/create/shared'
+import { segmentMediaEnabled } from '../../lib/media/segmentUploads'
 import { goBackOrReplace } from '../../lib/navigation'
 import { routes } from '../../lib/routes'
 import { BondfireLivePublisher } from '../../modules/bondfire-live-publisher'
@@ -461,6 +463,7 @@ export default function CreateScreen() {
   }, [])
 
   const startPendingUploads = useCallback(async () => {
+    if (segmentMediaEnabled) return
     await resumePendingUploads({
       isResponse: false,
       createMuxDirectUpload: async (args) => {
@@ -870,6 +873,30 @@ export default function CreateScreen() {
             router.dismissAll()
           }
           router.replace(routes.feed)
+        }}
+      />
+    )
+  }
+
+  if (segmentMediaEnabled) {
+    if (!currentUser)
+      return (
+        <YStack flex={1} backgroundColor="$background" justifyContent="center">
+          <Spinner />
+        </YStack>
+      )
+    return (
+      <SegmentRecordScreen
+        userId={currentUser._id}
+        maxDuration={Math.min(3600, effectiveMaxRecordingSeconds ?? 3600)}
+        onBack={handleBack}
+        options={{
+          isResponse: !!respondTo,
+          bondfireId: respondTo as Id<'bondfires'> | undefined,
+          campId: effectiveCampId,
+          personalCamp: isPersonalCamp,
+          tags: selectedCampTags,
+          draftBondfireId: draftBondfireId as Id<'bondfires'> | undefined,
         }}
       />
     )

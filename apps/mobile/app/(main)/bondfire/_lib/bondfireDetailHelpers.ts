@@ -131,7 +131,9 @@ export function buildBondfireVideoItems(
       creatorName: bondfireData.creatorName ?? 'Anonymous',
       isMainVideo: true,
       responseIndex: undefined,
-      isLive: bondfireData.videoStatus === 'live' && !!bondfireData.muxLivePlaybackId,
+      isLive:
+        bondfireData.videoStatus === 'live' &&
+        !!(bondfireData.muxLivePlaybackId || bondfireData.segmentRecordingId),
       createdAt: bondfireData._creationTime,
       watchedByViewer: bondfireData.watchedByViewer ?? false,
       durationMs: bondfireData.durationMs,
@@ -148,7 +150,8 @@ export function buildBondfireVideoItems(
       creatorName: video.creatorName ?? 'Anonymous',
       isMainVideo: false,
       responseIndex: index + 1,
-      isLive: video.videoStatus === 'live' && !!video.muxLivePlaybackId,
+      isLive:
+        video.videoStatus === 'live' && !!(video.muxLivePlaybackId || video.segmentRecordingId),
       createdAt: video._creationTime,
       watchedByViewer: video.watchedByViewer ?? false,
       durationMs: video.durationMs,

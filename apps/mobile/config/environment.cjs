@@ -1,5 +1,6 @@
 const PRODUCTION_CONVEX_URL = 'https://ideal-akita-27.convex.cloud'
-const APP_ENVIRONMENTS = ['development', 'preview', 'production']
+const INTERNAL_CONVEX_URL = 'https://lovely-malamute-525.convex.cloud'
+const APP_ENVIRONMENTS = ['development', 'preview', 'internal', 'production']
 
 function isCanonicalConvexUrl(value) {
   return /^https:\/\/[a-z0-9-]+\.convex\.cloud$/.test(value ?? '')
@@ -9,7 +10,7 @@ function isCanonicalConvexUrl(value) {
 function resolveAppEnvironment(env = process.env) {
   const profile = env.EAS_BUILD_PROFILE
   const profileEnvironment =
-    profile === 'production'
+    profile === 'internal' ? 'internal' : profile === 'production'
       ? 'production'
       : profile === 'preview'
         ? 'preview'
@@ -46,6 +47,7 @@ function validateConvexEnvironment({ appEnvironment, convexUrl, requireUrl = tru
   if (!isCanonicalConvexUrl(convexUrl)) {
     throw new Error('EXPO_PUBLIC_CONVEX_URL must be a canonical https://*.convex.cloud URL')
   }
+  if (appEnvironment === 'internal' && convexUrl !== INTERNAL_CONVEX_URL) throw new Error('Internal must use the registered internal Convex deployment')
   if (appEnvironment === 'production' && convexUrl !== PRODUCTION_CONVEX_URL) {
     throw new Error('Production must use the registered production Convex deployment')
   }

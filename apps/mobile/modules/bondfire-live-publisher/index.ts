@@ -5,7 +5,7 @@ import {
   requireNativeViewManager,
 } from 'expo-modules-core'
 import type { ComponentType } from 'react'
-import { View, type ViewProps } from 'react-native'
+import { Platform, View, type ViewProps } from 'react-native'
 
 export interface LivePublisherStartOptions {
   rtmpsUrl: string
@@ -89,6 +89,9 @@ type PictureInPictureEvent = { active: boolean }
 type EventSubscription = { remove: () => void }
 
 interface NativeLivePublisher {
+  startSegmentPreview?: (options: LivePublisherPreviewOptions) => Promise<void>
+  startSegmentRecording?: (localId: string, maxDuration: number) => Promise<void>
+  stopSegmentRecording?: () => Promise<number>
   isAvailable?: () => Promise<boolean>
   getCameraCount?: () => Promise<number>
   startPreview?: (options: LivePublisherPreviewOptions) => Promise<void>
@@ -163,6 +166,19 @@ const addListener: AddListener = (
 }
 
 export const BondfireLivePublisher = {
+  startSegmentPreview(options: LivePublisherPreviewOptions) {
+    return (
+      (Platform.OS === 'ios'
+        ? nativeModule?.startPreview?.(options)
+        : nativeModule?.startSegmentPreview?.(options)) ?? unavailablePromise()
+    )
+  },
+  startSegmentRecording(localId: string, maxDuration: number) {
+    return nativeModule?.startSegmentRecording?.(localId, maxDuration) ?? unavailablePromise()
+  },
+  stopSegmentRecording() {
+    return nativeModule?.stopSegmentRecording?.() ?? unavailablePromise()
+  },
   isAvailable() {
     return nativeModule?.isAvailable?.() ?? Promise.resolve(false)
   },

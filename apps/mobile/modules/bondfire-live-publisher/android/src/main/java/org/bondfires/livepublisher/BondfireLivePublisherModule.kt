@@ -265,6 +265,29 @@ class BondfireLivePublisherModule : Module() {
       }
     }
 
+    AsyncFunction("startSegmentPreview") Coroutine { options: LivePublisherPreviewOptions ->
+      cleanupStreamer()
+      currentFacing = options.initialCamera
+      createStreamer(options.fps, options.videoBitrate, options.audioBitrate, segmented = true)
+      val active = streamer ?: throw LivePublisherException("No camera")
+      val endpoint = active.endpoint as CaptureTransportEndpoint
+      endpoint.openCapture(UriMediaDescriptor(Uri.parse("file:///dev/null")))
+      active.startStream()
+      (endpoint.captureSink as SegmentEndpoint).awaitReady()
+    }
+    AsyncFunction("startSegmentRecording") Coroutine { localId: String, maxDuration: Int ->
+      val active = streamer ?: throw LivePublisherException("No camera")
+      val endpoint = (active.endpoint as? CaptureTransportEndpoint)?.captureSink as? SegmentEndpoint
+        ?: throw LivePublisherException("Segment capture unavailable")
+      endpoint.begin(localId, maxDuration)
+      active.videoEncoder?.requestKeyFrame()
+    }
+    AsyncFunction("stopSegmentRecording") Coroutine { ->
+      val endpoint = (streamer?.endpoint as? CaptureTransportEndpoint)?.captureSink as? SegmentEndpoint
+        ?: throw LivePublisherException("No recording")
+      endpoint.finish()
+    }
+
     AsyncFunction("startPreview") Coroutine { options: LivePublisherPreviewOptions ->
       // Camera preview only — nothing is connected or streamed until start() is called.
       if (streamer != null) {
@@ -659,6 +682,7 @@ class BondfireLivePublisherModule : Module() {
     fps: Int,
     videoBitrate: Int,
     audioBitrate: Int,
+    segmented: Boolean = false,
   ) {
     val context = appContext.reactContext
       ?: throw LivePublisherException("No React context available")
@@ -697,7 +721,7 @@ class BondfireLivePublisherModule : Module() {
       context,
       cameraId = cameraId,
       audioSourceFactory = MicrophoneSourceFactory(audioRouting.audioSource),
-      endpointFactory = CaptureTransportEndpointFactory(),
+      endpointFactory = CaptureTransportEndpointFactory(segmented),
     )
     streamer = newStreamer
 

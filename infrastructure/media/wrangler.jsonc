@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "bondfires-internal-media",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": false
+    }
+  },
+  "vars": {
+    "CONVEX_SITE_URL": "https://lovely-malamute-525.convex.site"
+  },
+  "r2_buckets": [
+    {
+      "binding": "VIDEO",
+      "bucket_name": "bondfires-internal-video"
+    }
+  ],
+  "secrets": {
+    "required": ["MEDIA_TOKEN_SECRET", "MEDIA_WORKER_SECRET"]
+  }
+}

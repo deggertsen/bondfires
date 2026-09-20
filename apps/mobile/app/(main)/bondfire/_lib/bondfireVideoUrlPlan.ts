@@ -29,7 +29,14 @@ export type VideoPlaybackUrls = {
  */
 export type VideoUrlTarget = {
   cacheKey: string | null
-  request: VideoUrlRequest | null
+  request:
+    | VideoUrlRequest
+    | {
+        segmentRecordingId: Id<'segmentRecordings'>
+        muxPlaybackId?: never
+        bondfireVideoId?: never
+      }
+    | null
   isLive: boolean
 }
 
@@ -54,34 +61,46 @@ export function buildVideoUrlTargets(bondfireData: BondfireDetailData): VideoUrl
     : null
 
   const targets: VideoUrlTarget[] = [
-    mainPlaybackId
+    bondfireData.segmentRecordingId && shouldLoadMainVideoUrls(bondfireData)
       ? {
-          cacheKey: `${mainPlaybackId}|${bondfireData.muxPlaybackPolicy ?? 'public'}|bondfire:${bondfireData._id}`,
-          request: {
-            muxPlaybackId: mainPlaybackId,
-            muxPlaybackPolicy: bondfireData.muxPlaybackPolicy,
-            bondfireId: bondfireData._id,
-          },
+          cacheKey: `segment:${bondfireData.segmentRecordingId}`,
+          request: { segmentRecordingId: bondfireData.segmentRecordingId },
           isLive: mainIsLive,
         }
-      : { cacheKey: null, request: null, isLive: mainIsLive },
+      : mainPlaybackId
+        ? {
+            cacheKey: `${mainPlaybackId}|${bondfireData.muxPlaybackPolicy ?? 'public'}|bondfire:${bondfireData._id}`,
+            request: {
+              muxPlaybackId: mainPlaybackId,
+              muxPlaybackPolicy: bondfireData.muxPlaybackPolicy,
+              bondfireId: bondfireData._id,
+            },
+            isLive: mainIsLive,
+          }
+        : { cacheKey: null, request: null, isLive: mainIsLive },
   ]
 
   for (const video of bondfireData.videos) {
     const isLive = video.videoStatus === 'live'
     const playbackId = getPlaybackIdForVideo(video)
     targets.push(
-      playbackId
+      video.segmentRecordingId && ['ready', 'live'].includes(video.videoStatus ?? '')
         ? {
-            cacheKey: `${playbackId}|${video.muxPlaybackPolicy ?? 'public'}|response:${video._id}`,
-            request: {
-              muxPlaybackId: playbackId,
-              muxPlaybackPolicy: video.muxPlaybackPolicy,
-              bondfireVideoId: video._id,
-            },
+            cacheKey: `segment:${video.segmentRecordingId}`,
+            request: { segmentRecordingId: video.segmentRecordingId },
             isLive,
           }
-        : { cacheKey: null, request: null, isLive },
+        : playbackId
+          ? {
+              cacheKey: `${playbackId}|${video.muxPlaybackPolicy ?? 'public'}|response:${video._id}`,
+              request: {
+                muxPlaybackId: playbackId,
+                muxPlaybackPolicy: video.muxPlaybackPolicy,
+                bondfireVideoId: video._id,
+              },
+              isLive,
+            }
+          : { cacheKey: null, request: null, isLive },
     )
   }
 
@@ -122,9 +141,9 @@ export function missingUrlRequests(
   cache: ReadonlyMap<string, VideoPlaybackUrls>,
   inFlight?: ReadonlySet<string>,
   window?: { start: number; end: number },
-): { cacheKey: string; request: VideoUrlRequest }[] {
+): { cacheKey: string; request: NonNullable<VideoUrlTarget['request']> }[] {
   const seen = new Set<string>()
-  const missing: { cacheKey: string; request: VideoUrlRequest }[] = []
+  const missing: { cacheKey: string; request: NonNullable<VideoUrlTarget['request']> }[] = []
   targets.forEach((target, index) => {
     if (window && (index < window.start || index > window.end)) return
     if (!target.cacheKey || !target.request) return
