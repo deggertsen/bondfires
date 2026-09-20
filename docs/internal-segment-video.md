@@ -111,3 +111,57 @@ ISO6 compatibility. Decode clocks advance from the actual sample durations indep
 including their initial timestamp offsets. This preserves timing when fragments are fetched as
 separate objects. The native test opens each fragment independently; the resulting segments also
 pass the shared upload parser and decode through an HLS playlist with FFmpeg.
+
+
+## Shared-link and recording lifecycle
+
+Audience authorization and playback availability are separate. A share link can
+be claimed before a video exists, using the existing login, invitation, age,
+blocking, and membership checks. It does not make the Bondfire public. Authorized
+invitees keep the same destination throughout these transitions:
+
+| State | Creator | Invited link visitor | Other users' feeds |
+| --- | --- | --- | --- |
+| Awaiting recording (`pending`, draft) | Start recording / discard | Existing waiting screen | Hidden |
+| Uploading (`waiting_for_upload`) | Upload progress / recovery | Waiting for the first playable portion | Hidden |
+| Watchable and growing (`live`) | Recording or upload catch-up | Growing HLS playback | Visible to authorized viewers |
+| Complete (`ready`) | Playback | On-demand playback | Visible to authorized viewers |
+| Failed / revoked | Error state; local media retained | Unavailable/error state | Hidden |
+| Empty draft expired/deleted | Unavailable | Link unavailable | Hidden |
+
+`convex/lib/videoLifecycle.ts` defines these states and the common feed predicate.
+Only ordered, validated upload receipts can advance segmented playback: init plus
+at least eight seconds of media becomes `live`; a finished shorter clip goes
+straight to `ready`. Local Record taps and share-link creation never publish a
+feed item. Convex subscriptions move waiting visitors into playback without
+reopening the link. “Live” means a watchable, potentially growing playlist, which
+can include upload catch-up after capture stops; it is not a camera heartbeat.
+
+The owner resumes the exact draft ID, preserving its title, audience and link.
+Preview failures and init-only captures leave it resumable. The device checks its
+journal for active capture or a durable first fragment before starting again or
+discarding through either draft entry point. Saved fragments go through upload
+recovery, never replacement. On the server, attaching a recording is atomic and
+idempotent by owner/local ID; a second local ID cannot replace the draft's first
+attached recording. Its 24-hour draft cleanup no longer applies after attachment.
+Expiry is also enforced on reads, invite redemption and activation, independently
+of the hourly deletion tick. Notifications are scheduled once on first playback
+availability, not on preparation, and remain subject to delivery deduplication
+and existing audience checks. Explicit pre-recording invitations still work.
+
+After seven days, an interrupted upload with received media finalizes its durable
+contiguous prefix instead of deleting it. Empty abandoned uploads become failed;
+revocation removes playback eligibility before storage cleanup. Revoked responses
+are uncounted. Retention, user deletion and access revocation still take precedence.
+
+The server cannot observe media recorded entirely offline. Until the first
+fragment can attach, the server still sees a draft and its existing 24-hour
+expiry applies. Local files are retained if attachment fails (including expiry or
+another device winning the attachment), but automatic creation of a replacement
+Bondfire is deliberately not attempted: that would silently break a shared link.
+This remains a recovery limitation to exercise in internal testing.
+
+Regression coverage exercises invite redemption before capture, the same detail
+query through upload/live/ready, feed exclusion before playback, short clips,
+repeat receipts/finalization, competing attempts, expiry, revocation, retained
+interrupted prefixes, and saved local journals.

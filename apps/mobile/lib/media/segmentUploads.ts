@@ -54,6 +54,26 @@ async function save(job: Job) {
   await FileSystem.writeAsStringAsync(`${path}.tmp`, JSON.stringify(job))
   await FileSystem.moveAsync({ from: `${path}.tmp`, to: path })
 }
+/** An empty preview journal is resumable; actual local media must upload, never be overwritten. */
+export async function hasSavedDraftCapture(userId: string, draftBondfireId: string) {
+  if (!(await FileSystem.getInfoAsync(root)).exists) return false
+  const names = new Set(
+    (await FileSystem.readDirectoryAsync(root)).map((name) => name.replace(/\.tmp$/, '')),
+  )
+  for (const name of names) {
+    if (!/^[a-f0-9-]{36}\.json$/.test(name)) continue
+    const committed = await FileSystem.getInfoAsync(`${root}${name}`)
+    const job: Job = JSON.parse(
+      await FileSystem.readAsStringAsync(`${root}${name}${committed.exists ? '' : '.tmp'}`),
+    )
+    if (job.userId !== userId || job.args.draftBondfireId !== draftBondfireId) continue
+    if (active.has(job.args.localId)) return true
+    const dir = segmentDirectory(job.args.localId)
+    if ((await FileSystem.getInfoAsync(`${dir}segment-000000.m4s`)).exists) return true
+  }
+  return false
+}
+
 export async function prepareSegmentJob(userId: string, args: Job['args']) {
   await save({ userId, args, nextIndex: -1, createdAt: Date.now() })
 }
@@ -86,6 +106,9 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
         if (job.userId !== userId) continue
         const dir = segmentDirectory(job.args.localId)
         if (!(await FileSystem.getInfoAsync(`${dir}init.mp4`)).exists) continue
+        // An init alone contains no video. Don't consume a shared draft until
+        // an actual fragment is durable; failed empty captures can be retried.
+        if (!(await FileSystem.getInfoAsync(`${dir}segment-000000.m4s`)).exists) continue
         if (!job.recordingId) {
           const created = await client.begin(job.args)
           job.recordingId = created.recordingId

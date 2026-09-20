@@ -1,4 +1,4 @@
-import { subscriptionActions, telemetry, useAppThemeColors } from '@bondfires/app'
+import { appStore$, subscriptionActions, telemetry, useAppThemeColors } from '@bondfires/app'
 import { Button, Spinner, Text, UserAvatar } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { Check, Copy, Link, Plus, Share, ShieldCheck, X } from '@tamagui/lucide-icons'
@@ -11,6 +11,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
+import { hasSavedDraftCapture, segmentMediaEnabled } from '../../lib/media/segmentUploads'
 import type { AudienceFilterKey } from './preRecordingInvite'
 import {
   buildAudienceFilters,
@@ -449,6 +450,18 @@ export function PreRecordingInviteScreen({
           onPress: async () => {
             form$.isDiscarding.set(true)
             try {
+              const userId = appStore$.userId.get()
+              if (
+                segmentMediaEnabled &&
+                userId &&
+                (await hasSavedDraftCapture(userId, existingDraft._id))
+              ) {
+                Alert.alert(
+                  'Recording saved',
+                  'Your recording is waiting to upload. Keep the app open to continue.',
+                )
+                return
+              }
               await discardDraft({ bondfireId: existingDraft._id as Id<'bondfires'> })
               // The draft this session's share link pointed at is gone too.
               form$.shareInfo.set(null)

@@ -72,10 +72,11 @@ export default function CreateScreen() {
   const insets = useSafeAreaInsets()
   const router = useRouter()
   const navigation = useNavigation()
-  const { campId, respondTo, personalCamp } = useLocalSearchParams<{
+  const { campId, respondTo, personalCamp, resumeDraft } = useLocalSearchParams<{
     campId?: string
     respondTo?: string
     personalCamp?: string
+    resumeDraft?: string
   }>()
   const isPersonalCamp = personalCamp === '1'
   const isFocused = useIsFocused()
@@ -190,6 +191,13 @@ export default function CreateScreen() {
     api.personalBondfires.getMyDraftBondfire,
     isPersonalCamp ? {} : 'skip',
   )
+  useEffect(() => {
+    // Resolve the exact owner draft before bypassing audience setup. Retain the
+    // selection when uploading activates it and getMyDraftBondfire becomes null.
+    if (resumeDraft && existingDraft?._id === resumeDraft && !draftBondfireId) {
+      draftBondfireId$.set(existingDraft._id)
+    }
+  }, [resumeDraft, existingDraft, draftBondfireId, draftBondfireId$])
   const joinCamp = useMutation(api.camps.join)
   const persistedCampId = currentCampId as Id<'camps'> | null
   const effectiveCampId = respondTo
@@ -834,6 +842,23 @@ export default function CreateScreen() {
           recordingActions.resetFlow('completion dismissed via continue')
         }}
       />
+    )
+  }
+
+  if (resumeDraft && !draftBondfireId) {
+    return (
+      <YStack flex={1} backgroundColor="$background" justifyContent="center" padding="$4" gap="$3">
+        {existingDraft === undefined || existingDraft?._id === resumeDraft ? (
+          <Spinner />
+        ) : (
+          <>
+            <Text>This draft has expired or already has a recording.</Text>
+            <Button onPress={() => router.replace(routes.bondfire(resumeDraft))}>
+              View Bondfire
+            </Button>
+          </>
+        )}
+      </YStack>
     )
   }
 

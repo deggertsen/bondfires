@@ -62,6 +62,7 @@ import type * as lib_pushProviders from "../lib/pushProviders.js";
 import type * as lib_queryBounds from "../lib/queryBounds.js";
 import type * as lib_reportPolicy from "../lib/reportPolicy.js";
 import type * as lib_storeBillingPolicy from "../lib/storeBillingPolicy.js";
+import type * as lib_videoLifecycle from "../lib/videoLifecycle.js";
 import type * as lib_videoReactions from "../lib/videoReactions.js";
 import type * as liveSessionProgress from "../liveSessionProgress.js";
 import type * as liveSessions from "../liveSessions.js";
@@ -151,6 +152,7 @@ declare const fullApi: ApiFromModules<{
   "lib/queryBounds": typeof lib_queryBounds;
   "lib/reportPolicy": typeof lib_reportPolicy;
   "lib/storeBillingPolicy": typeof lib_storeBillingPolicy;
+  "lib/videoLifecycle": typeof lib_videoLifecycle;
   "lib/videoReactions": typeof lib_videoReactions;
   liveSessionProgress: typeof liveSessionProgress;
   liveSessions: typeof liveSessions;

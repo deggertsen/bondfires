@@ -20,7 +20,8 @@ import {
 } from './_generated/server'
 import { auth } from './auth'
 import { getEntitlementSubscriptionTier, getTierMaxVideoDurationMs } from './entitlements'
-import { countResponse } from './responseCounts'
+import { getSegmentVideoStatus, isPlayableVideoRecord } from './lib/videoLifecycle'
+import { countResponse, uncountResponse } from './responseCounts'
 import { assertCanViewBondfire, assertCanViewResponse, createPendingVideoRecord } from './videos'
 
 export function requireInternalMedia() {
@@ -169,11 +170,9 @@ export const capability = action({
   },
 })
 async function updatePlayable(ctx: MutationCtx, recording: Doc<'segmentRecordings'>) {
-  const complete =
-    recording.finalCount !== undefined && recording.finalCount === recording.segmentCount
-  if (!recording.initChecksum || !recording.segmentCount || (!complete && recording.duration < 8))
-    return
-  const videoStatus = complete ? ('ready' as const) : ('live' as const)
+  const videoStatus = getSegmentVideoStatus(recording)
+  if (videoStatus !== 'ready' && videoStatus !== 'live') return
+  const complete = videoStatus === 'ready'
   if (recording.responseId) {
     const video = await ctx.db.get(recording.responseId)
     if (!video) throw new Error('Forbidden')
@@ -182,12 +181,29 @@ async function updatePlayable(ctx: MutationCtx, recording: Doc<'segmentRecording
       durationMs: Math.round(recording.duration * 1000),
     })
     await countResponse(ctx, video)
+    if (!isPlayableVideoRecord(video)) {
+      await ctx.scheduler.runAfter(0, internal.sendNotification.notifyBondfireResponse, {
+        bondfireId: video.bondfireId,
+        bondfireVideoId: video._id,
+        responderId: video.userId,
+        responderName: video.creatorName ?? 'Someone',
+      })
+    }
   } else if (recording.bondfireId) {
+    const bondfire = await ctx.db.get(recording.bondfireId)
+    if (!bondfire) throw new Error('Forbidden')
     await ctx.db.patch(recording.bondfireId, {
       videoStatus,
       durationMs: Math.round(recording.duration * 1000),
       updatedAt: Date.now(),
     })
+    if (!isPlayableVideoRecord(bondfire)) {
+      await ctx.scheduler.runAfter(0, internal.sendNotification.notifyCampBondfire, {
+        bondfireId: bondfire._id,
+        creatorId: bondfire.userId,
+        creatorName: bondfire.creatorName ?? 'Someone',
+      })
+    }
   }
   if (complete) await ctx.db.patch(recording._id, { status: 'ready' })
 }
@@ -318,6 +334,7 @@ export const cleanupPage = internalQuery({
     requireInternalMedia()
     const page = await ctx.db.query('segmentRecordings').paginate({ cursor, numItems: 50 })
     const ids: Id<'segmentRecordings'>[] = []
+    const interrupted: Id<'segmentRecordings'>[] = []
     for (const recording of page.page) {
       const owner = await ctx.db.get(recording.userId)
       const response = recording.responseId ? await ctx.db.get(recording.responseId) : null
@@ -332,21 +349,62 @@ export const cleanupPage = internalQuery({
         !source ||
         (recording.responseId && !response) ||
         (source.expiresAt !== undefined && source.expiresAt <= Date.now()) ||
-        recording.status === 'cancelled' ||
-        (recording.status === 'uploading' && recording.createdAt < Date.now() - 7 * 86400_000)
+        recording.status === 'cancelled'
       )
         ids.push(recording._id)
+      else if (
+        recording.status === 'uploading' &&
+        recording.createdAt < Date.now() - 7 * 86400_000
+      ) {
+        if (recording.initChecksum && recording.segmentCount > 0) interrupted.push(recording._id)
+        else ids.push(recording._id)
+      }
     }
-    return { ids, cursor: page.isDone ? null : page.continueCursor }
+    return { ids, interrupted, cursor: page.isDone ? null : page.continueCursor }
   },
 })
+/** End a long-interrupted recording at its durable prefix instead of deleting playable video. */
+export const finalizeInterrupted = internalMutation({
+  args: { recordingId: v.id('segmentRecordings') },
+  handler: async (ctx, { recordingId }) => {
+    requireInternalMedia()
+    const record = await ctx.db.get(recordingId)
+    if (
+      !record ||
+      record.status !== 'uploading' ||
+      record.createdAt >= Date.now() - 7 * 86400_000 ||
+      !record.initChecksum ||
+      !record.segmentCount
+    )
+      return
+    try {
+      await linkedAccess(ctx, record, record.userId)
+    } catch {
+      return // Deletion/revocation is handled by the next cleanup scan.
+    }
+    const finished = { ...record, finalCount: record.segmentCount, updatedAt: Date.now() }
+    await ctx.db.patch(record._id, {
+      finalCount: finished.finalCount,
+      updatedAt: finished.updatedAt,
+    })
+    await updatePlayable(ctx, finished)
+  },
+})
+
 export const revoke = internalMutation({
   args: { recordingId: v.id('segmentRecordings') },
   handler: async (ctx, { recordingId }) => {
     requireInternalMedia()
     const record = await ctx.db.get(recordingId)
-    if (record && record.status !== 'cancelled')
+    if (record && record.status !== 'cancelled') {
       await ctx.db.patch(recordingId, { status: 'cancelled', updatedAt: Date.now() })
+      const sourceId = record.responseId ?? record.bondfireId
+      const source = sourceId && (await ctx.db.get(sourceId))
+      if (source && source.segmentRecordingId === record._id) {
+        if ('bondfireId' in source) await uncountResponse(ctx, source)
+        await ctx.db.patch(source._id, { videoStatus: 'errored' })
+      }
+    }
   },
 })
 export const purge = internalMutation({
@@ -378,6 +436,9 @@ export const cleanup = internalAction({
     )
       return
     const page = await ctx.runQuery(internal.segmentMedia.cleanupPage, { cursor: cursor ?? null })
+    for (const recordingId of page.interrupted) {
+      await ctx.runMutation(internal.segmentMedia.finalizeInterrupted, { recordingId })
+    }
     for (const recordingId of page.ids) {
       await ctx.runMutation(internal.segmentMedia.revoke, { recordingId })
       const response = await fetch(`${process.env.MEDIA_WORKER_URL}/v1/${recordingId}`, {

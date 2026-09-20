@@ -111,3 +111,39 @@ describe('durable segment upload recovery', () => {
     })
   })
 })
+
+it('allows retrying an empty preview, but protects saved drafts and interrupted journals by owner', async () => {
+  const queue = await import('../lib/media/segmentUploads')
+  await queue.prepareSegmentJob('owner', {
+    localId: id,
+    isResponse: false,
+    draftBondfireId: 'draft' as Id<'bondfires'>,
+  })
+  expect(await queue.hasSavedDraftCapture('owner', 'draft')).toBe(false)
+  queue.markSegmentCapture(id, true)
+  expect(await queue.hasSavedDraftCapture('owner', 'draft')).toBe(true)
+  queue.markSegmentCapture(id, false)
+  state.files.set(dir + 'init.mp4', 'init')
+  expect(await queue.hasSavedDraftCapture('owner', 'draft')).toBe(false)
+  state.files.set(dir + 'segment-000000.m4s', 'video')
+  state.files.set(root + id + '.json.tmp', state.files.get(root + id + '.json') ?? '')
+  state.files.delete(root + id + '.json')
+  expect(await queue.hasSavedDraftCapture('owner', 'draft')).toBe(true)
+  expect(await queue.hasSavedDraftCapture('different', 'draft')).toBe(false)
+  expect(await queue.hasSavedDraftCapture('owner', 'another-draft')).toBe(false)
+})
+
+it('does not activate a shared draft for an empty failed capture', async () => {
+  const queue = await import('../lib/media/segmentUploads')
+  const convex = client()
+  queue.setSegmentUploadOwner('owner')
+  await queue.prepareSegmentJob('owner', {
+    localId: id,
+    isResponse: false,
+    draftBondfireId: 'draft' as Id<'bondfires'>,
+  })
+  state.files.set(dir + 'init.mp4', 'init')
+  await queue.runSegmentUploads(convex, 'owner')
+  expect(convex.begin).not.toHaveBeenCalled()
+  expect(state.uploaded).toEqual([])
+})

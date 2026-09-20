@@ -1,3 +1,4 @@
+import { isPlayableVideoRecord } from './lib/videoLifecycle'
 /**
  * Centralized failure handling for bondfires whose video is broken or abandoned.
  *
@@ -254,22 +255,6 @@ export async function purgeBondfireConvexRecords(
   }
 
   return { muxAssetIds: [...muxAssetIds] }
-}
-
-function isPlayableVideoRecord(record: {
-  videoStatus?: string
-  muxPlaybackId?: string
-  muxLivePlaybackId?: string
-  expiresAt?: number
-}): boolean {
-  if (record.expiresAt !== undefined && record.expiresAt <= Date.now()) {
-    return false
-  }
-  const status = record.videoStatus ?? 'ready'
-  return (
-    (status === 'ready' && !!record.muxPlaybackId) ||
-    (status === 'live' && !!record.muxLivePlaybackId)
-  )
 }
 
 /**

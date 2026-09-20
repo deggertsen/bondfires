@@ -4,6 +4,7 @@ import { assertUserAgeBand, getPersonalCampAgeBand, getUserAgeBand } from './age
 import { getEntitlementSubscriptionTier, PAID_TIERS, type SubscriptionTier } from './entitlements'
 import { throwUserError } from './errors'
 import { assertUsersCanShareHearth, isHearthParticipantAuthorized } from './familyRelationships'
+import { getVideoLifecycle } from './lib/videoLifecycle'
 
 type ConvexCtx = QueryCtx | MutationCtx
 
@@ -220,7 +221,7 @@ export async function isActivePersonalBondfireParticipant(
 }
 
 export async function isPersonalBondfireActive(ctx: ConvexCtx, bondfire: Doc<'bondfires'>) {
-  if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
+  if (getVideoLifecycle(bondfire) === 'expired') {
     return false
   }
 

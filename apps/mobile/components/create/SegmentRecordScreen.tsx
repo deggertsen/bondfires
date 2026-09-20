@@ -11,6 +11,7 @@ import { XStack, YStack } from 'tamagui'
 import type { api } from '../../../../convex/_generated/api'
 import { serializeSegmentCapture } from '../../lib/media/segmentCapture'
 import {
+  hasSavedDraftCapture,
   markSegmentCapture,
   prepareSegmentJob,
   runSegmentUploads,
@@ -34,7 +35,7 @@ export function SegmentRecordScreen({
   const insets = useSafeAreaInsets()
   const { colors } = useAppThemeColors()
   const [phase, setPhase] = useState<
-    'warming' | 'ready' | 'starting' | 'recording' | 'saving' | 'saved' | 'error'
+    'warming' | 'ready' | 'starting' | 'recording' | 'saving' | 'saved' | 'error' | 'uploading'
   >('warming')
   const [error, setError] = useState<string | null>(null)
   const [elapsed, setElapsed] = useState(0)
@@ -61,6 +62,13 @@ export function SegmentRecordScreen({
     mounted.current = true
     void enqueue(async () => {
       try {
+        const draftId = initialOptions.current.draftBondfireId
+        if (draftId && (await hasSavedDraftCapture(userId, draftId))) {
+          hasRecorded.current = true
+          if (mounted.current) setPhase('uploading')
+          void runSegmentUploads(segmentUploadClient(client), userId)
+          return
+        }
         await prepareSegmentJob(userId, { ...initialOptions.current, localId: localId.current })
         await BondfireLivePublisher.startSegmentPreview({ initialCamera: 'front' })
         if (mounted.current) setPhase('ready')
@@ -134,15 +142,22 @@ export function SegmentRecordScreen({
       }).catch(() => {})
       void deactivateKeepAwake('segment-recording')
     }
-  }, [enqueue, maxDuration, reportError, userId])
+  }, [client, enqueue, maxDuration, reportError, userId])
   async function start() {
     if (busy.current || phase !== 'ready') return
     busy.current = true
     setPhase('starting')
-    markSegmentCapture(localId.current, true)
     try {
       await enqueue(async () => {
         if (!mounted.current || interrupted.current) throw new Error('Camera is not active')
+        const draftId = initialOptions.current.draftBondfireId
+        if (draftId && (await hasSavedDraftCapture(userId, draftId))) {
+          hasRecorded.current = true
+          if (mounted.current) setPhase('uploading')
+          void runSegmentUploads(segmentUploadClient(client), userId)
+          return
+        }
+        markSegmentCapture(localId.current, true)
         await activateKeepAwakeAsync('segment-recording')
         await BondfireLivePublisher.startSegmentRecording(localId.current, maxDuration)
         started.current = Date.now()
@@ -208,7 +223,7 @@ export function SegmentRecordScreen({
           Flip
         </Button>
       </XStack>
-      {phase === 'saved' ? (
+      {phase === 'saved' || phase === 'uploading' ? (
         <YStack flex={1} justifyContent="center" padding="$4" gap="$3">
           <Text color="$color">Recording saved</Text>
           <Text color="$color">
@@ -225,7 +240,7 @@ export function SegmentRecordScreen({
           {error}
         </Text>
       )}
-      {phase !== 'saved' && (
+      {phase !== 'saved' && phase !== 'uploading' && (
         <Button
           margin="$3"
           disabled={phase !== 'ready' && phase !== 'recording'}

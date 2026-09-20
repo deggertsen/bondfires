@@ -15,9 +15,14 @@ import { useIsFocused, useNavigation } from '@react-navigation/native'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useCallback, useEffect, useRef } from 'react'
-import { Animated, AppState, type FlatList, InteractionManager } from 'react-native'
+import { Alert, Animated, AppState, type FlatList, InteractionManager } from 'react-native'
 import { api } from '../../../../../convex/_generated/api'
 import type { Id } from '../../../../../convex/_generated/dataModel'
+import {
+  canResumeUnrecordedDraft,
+  getVideoLifecycle,
+} from '../../../../../convex/lib/videoLifecycle'
+import { hasSavedDraftCapture, segmentMediaEnabled } from '../../../lib/media/segmentUploads'
 import { goBackOrReplace } from '../../../lib/navigation'
 import { routes } from '../../../lib/routes'
 import { BondfirePlaybackScreen } from './_components/BondfirePlaybackScreen'
@@ -116,6 +121,7 @@ export default function BondfireDetailScreen() {
   const getVideoUrlsBatch = useAction(api.videos.getVideoUrlsBatch)
   const recordWatchEvent = useMutation(api.watchEvents.record)
   const markThreadRead = useMutation(api.conversations.markThreadRead)
+  const discardDraft = useMutation(api.personalBondfires.discardDraftBondfire)
   const markInviteSeen = useMutation(api.inviteClaims.markInviteSeen)
   const setVideoUrls = useCallback(
     (urls: (VideoPlaybackUrls | null)[]) => {
@@ -497,12 +503,54 @@ export default function BondfireDetailScreen() {
     return <BondfireUnavailableScreen {...statusScreenProps} />
   }
 
-  if (bondfireData.videoStatus === 'pending') {
+  const lifecycle = getVideoLifecycle(bondfireData)
+  const isOwner = currentUserId === bondfireData.userId
+  const canResume = isOwner && canResumeUnrecordedDraft(bondfireData)
+  const discard = async () => {
+    try {
+      if (
+        segmentMediaEnabled &&
+        currentUserId &&
+        (await hasSavedDraftCapture(currentUserId, bondfireId))
+      ) {
+        Alert.alert(
+          'Recording saved',
+          'Your recording is waiting to upload. Keep the app open to continue.',
+        )
+        return
+      }
+      await discardDraft({ bondfireId })
+      handleBackPress()
+    } catch (error) {
+      Alert.alert(
+        'Could not discard draft',
+        error instanceof Error ? error.message : 'Please try again.',
+      )
+    }
+  }
+  if (lifecycle === 'expired') return <BondfireUnavailableScreen {...statusScreenProps} />
+  if (
+    lifecycle === 'awaiting_recording' ||
+    (lifecycle === 'uploading' &&
+      (bondfireData.segmentRecordingId || bondfireData.videoStatus === 'waiting_for_upload'))
+  ) {
     return (
       <BondfirePendingScreen
         {...statusScreenProps}
         bondfireData={bondfireData}
         pendingPulse={pendingPulse}
+        isOwner={isOwner}
+        isUploading={lifecycle === 'uploading'}
+        onStartRecording={canResume ? () => router.push(routes.resumeDraft(bondfireId)) : undefined}
+        onDiscard={
+          canResume
+            ? () =>
+                Alert.alert('Discard this draft?', 'Its shared links will stop working.', [
+                  { text: 'Keep draft', style: 'cancel' },
+                  { text: 'Discard', style: 'destructive', onPress: () => void discard() },
+                ])
+            : undefined
+        }
       />
     )
   }

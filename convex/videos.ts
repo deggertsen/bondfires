@@ -56,6 +56,7 @@ import {
   localIngestSource,
 } from './lib/liveIngest'
 import { shouldReapLiveSession } from './lib/liveSessionStaleness'
+import { canResumeUnrecordedDraft, isPlayableVideoRecord } from './lib/videoLifecycle'
 import { assessLiveSessionProgress } from './liveSessionProgress'
 import {
   assertCanRespondToPersonalBondfire,
@@ -1101,23 +1102,6 @@ async function disableMuxLiveStream(liveStreamId: string): Promise<'disabled' | 
   } finally {
     clearTimeout(timer)
   }
-}
-
-function isPlayableVideoRecord(record: {
-  videoStatus?: string
-  muxPlaybackId?: string
-  muxLivePlaybackId?: string
-  expiresAt?: number
-}) {
-  if (record.expiresAt !== undefined && record.expiresAt <= Date.now()) {
-    return false
-  }
-
-  const status = record.videoStatus ?? 'ready'
-  return (
-    (status === 'ready' && !!record.muxPlaybackId) ||
-    (status === 'live' && !!record.muxLivePlaybackId)
-  )
 }
 
 async function findMuxRecordByUpload(ctx: QueryCtx, uploadId: string): Promise<MuxRecord | null> {
@@ -4286,8 +4270,8 @@ export async function createPendingVideoRecord(ctx: MutationCtx, args: PendingVi
       if (draft.userId !== args.userId) {
         throwUserError('Only the draft owner can activate it.')
       }
-      if (draft.status !== 'draft') {
-        throwUserError('This bondfire is no longer a draft.')
+      if (!canResumeUnrecordedDraft(draft)) {
+        throwUserError('This draft has expired or already has a recording.')
       }
       await assertCanCreatePersonalBondfire(ctx, {
         userId: args.userId,
