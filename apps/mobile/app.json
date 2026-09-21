@@ -20,7 +20,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "org.bondfires",
       "appleTeamId": "A9BJ2VA78M",
-      "buildNumber": "109",
+      "buildNumber": "110",
       "googleServicesFile": "./GoogleService-Info.plist",
       "associatedDomains": [
         "applinks:bondfires.org",
@@ -46,7 +46,7 @@
     },
     "android": {
       "package": "org.bondfires",
-      "versionCode": 109,
+      "versionCode": 110,
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",

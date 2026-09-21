@@ -41,6 +41,13 @@ Android native regression switches front/back/front during a single capture and
 checks encoder identity, both tracks, continuous audio and independently readable
 fragments. iOS retains its existing mixer camera-switch implementation.
 
+Android also requests an IDR once per second of incoming capture time. The codec's
+configured GOP alone can stretch under low frame rates; delayed keyframes let the
+audio accumulating in Media3 produce a fragment beyond the 15-second ingest limit.
+The native test deliberately uses a 30-second encoder GOP at 6 FPS and requires
+short fragments during capture and across both flips. Decode offsets use Media3
+1.8's fixed 48 kHz audio timebase independently of the AAC sample rate.
+
 ## Isolated resources
 
 - Convex: `lovely-malamute-525`, named deployment `bondfires:bondfires:internal-video`.

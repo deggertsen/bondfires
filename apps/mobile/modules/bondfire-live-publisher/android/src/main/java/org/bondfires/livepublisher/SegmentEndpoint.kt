@@ -60,6 +60,8 @@ class SegmentEndpoint(private val context: Context, private val delegate: IEndpo
   private var maxUs = 0L
   private var armed = false
   private var videoStarted = false
+  var requestKeyFrame: () -> Unit = {}
+  private var nextKeyFrameRequestUs = 0L
 
   override suspend fun open(mediaDescriptor: MediaDescriptor) { isOpenFlow.value = true }
   override suspend fun addStream(streamConfig: CodecConfig): Int = nextStream++
@@ -85,6 +87,7 @@ class SegmentEndpoint(private val context: Context, private val delegate: IEndpo
     scanOffset = 0; fragmentStart = 0; count = 0; startUs = null
     maxUs = maxDuration.toLong() * 1_000_000
     videoStarted = false
+    nextKeyFrameRequestUs = 0L
     armed = true
   }
 
@@ -102,6 +105,14 @@ class SegmentEndpoint(private val context: Context, private val delegate: IEndpo
         // requested video keyframe arrives. Both tracks share one origin.
         val pts = frame.ptsInUs - (startUs ?: return@withLock)
         if (pts < 0) return@withLock
+        // Codec GOP intervals can count frames at the configured FPS. Under
+        // camera-switch/load stalls that can mean tens of wall-clock seconds
+        // without an IDR, so Media3 cannot close a fragment. Audio keeps this
+        // request cadence alive even while the camera is changing.
+        if (pts >= nextKeyFrameRequestUs) {
+          requestKeyFrame()
+          nextKeyFrameRequestUs = pts + 1_000_000
+        }
         if (isVideo && !videoStarted) {
           if (!frame.isKeyFrame) return@withLock
           videoStarted = true
@@ -109,8 +120,9 @@ class SegmentEndpoint(private val context: Context, private val delegate: IEndpo
         if (pts >= maxUs) { finishLocked(); return@withLock }
         val track = tracks[streamPid] ?: error("Missing track")
         // Media3 returns zero-based track handles but writes one-based MP4 IDs.
-        // Its video timebase is 90kHz; audio uses the configured sample rate.
-        val timescale = if (isVideo) 90000 else requireNotNull(formats[streamPid]).sampleRate
+        // Media3 1.8 uses fixed 90kHz video and 48kHz audio MP4 timebases,
+        // independent of the AAC sample rate (see Track.videoUnitTimebase).
+        val timescale = if (isVideo) 90000 else 48000
         decodeTimes.putIfAbsent(track + 1, pts * timescale / 1_000_000)
         // AAC frames are independently decodable. MediaCodec does not mark
         // them as video keyframes; forwarding that flag verbatim makes every
@@ -190,6 +202,7 @@ class SegmentEndpoint(private val context: Context, private val delegate: IEndpo
 /** The same warm-up path is exercised by the native device regression test. */
 internal suspend fun SingleStreamer.startSegmentPreviewCapture() {
   val endpoint = endpoint as CaptureTransportEndpoint
+  (endpoint.captureSink as SegmentEndpoint).requestKeyFrame = { videoEncoder?.requestKeyFrame() }
   endpoint.openCapture(SegmentEndpoint.previewDescriptor)
   // CombineEndpoint computes its aggregate state asynchronously. Opening the
   // child alone does not guarantee the pipeline can observe it yet.

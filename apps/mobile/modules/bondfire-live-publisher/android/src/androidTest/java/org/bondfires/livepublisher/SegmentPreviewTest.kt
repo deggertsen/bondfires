@@ -41,7 +41,9 @@ class SegmentPreviewTest {
     val streamer = cameraSingleStreamer(context, cameraId = front, audioSourceFactory = NormalizedMicrophoneSourceFactory(MediaRecorder.AudioSource.VOICE_COMMUNICATION), endpointFactory = CaptureTransportEndpointFactory(true))
     try {
       streamer.setAudioConfig(AudioCodecConfig(mimeType = MediaFormat.MIMETYPE_AUDIO_AAC, startBitrate = 128000, sampleRate = 44100, channelConfig = AudioFormat.CHANNEL_IN_MONO, byteFormat = AudioFormat.ENCODING_PCM_16BIT))
-      streamer.setVideoConfig(VideoCodecConfig(mimeType = MediaFormat.MIMETYPE_VIDEO_AVC, startBitrate = 1500000, resolution = Size(640, 480), fps = 24, gopDurationInS = 2.0f))
+      // Deliberately sparse encoder GOP: endpoint keyframe requests must still
+      // publish short fragments before the encoder's own 30-second interval.
+      streamer.setVideoConfig(VideoCodecConfig(mimeType = MediaFormat.MIMETYPE_VIDEO_AVC, startBitrate = 1500000, resolution = Size(640, 480), fps = 6, gopDurationInS = 30.0f))
       streamer.startSegmentPreviewCapture()
       assertTrue(streamer.isStreamingFlow.value)
       assertFalse(directory.exists())
@@ -89,6 +91,10 @@ class SegmentPreviewTest {
             }
             // MediaExtractor can rebase a standalone file's first timestamp.
             assertTrue("Fragment must expose a valid sample timestamp", reader.sampleTime >= 0)
+            val firstTime = reader.sampleTime
+            var lastTime = firstTime
+            while (reader.advance()) lastTime = reader.sampleTime
+            assertTrue("Segment $i track $track exceeds the 15-second ingest limit", lastTime - firstTime < 14_500_000)
             reader.unselectTrack(track)
           }
         } finally { reader.release() }
