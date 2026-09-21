@@ -31,6 +31,7 @@ import {
   useState,
 } from 'react'
 import { AppState, type LayoutChangeEvent, PanResponder, Pressable, type View } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { YStack } from 'tamagui'
 import { api } from '../../../../../../convex/_generated/api'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
@@ -58,7 +59,11 @@ import {
   suppressOwnerReplay,
   syncReactionPlaybackAfterSeek,
 } from '../_lib/videoPlayerState'
-import { createStallWatchdog, reloadVideoAtPosition } from '../_lib/videoStallRecovery'
+import {
+  createStallWatchdog,
+  playbackRetryTransition,
+  reloadVideoAtPosition,
+} from '../_lib/videoStallRecovery'
 import {
   CaptionOverlay,
   LoadingOverlay,
@@ -236,6 +241,7 @@ export function VideoPlayer({
     }
   }, [bondfireTitle, campName, creatorName, currentUrl])
 
+  const insets = useSafeAreaInsets()
   const state$ = useObservable({
     showReport: false,
     progress: 0,
@@ -323,7 +329,10 @@ export function VideoPlayer({
   // Fatal-error recovery: bounded automatic reloads before surfacing the
   // retry overlay. Reset whenever the source changes — a new URL is a new
   // playback attempt with a fresh budget.
-  const errorRetryRef = useRef({ count: 0, timer: null as ReturnType<typeof setTimeout> | null })
+  const errorRetryRef = useRef({
+    retry: { attempts: 0, blocked: false },
+    timer: null as ReturnType<typeof setTimeout> | null,
+  })
   // Source key of the last attempted stall-recovery reload. Prevents
   // duplicate recovery reloads within one load attempt; a user retry or a
   // new source resets the recovery budget.
@@ -334,7 +343,10 @@ export function VideoPlayer({
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: currentUrl is the reset trigger, not read inside
   useEffect(() => {
-    errorRetryRef.current.count = 0
+    errorRetryRef.current.retry = playbackRetryTransition(
+      errorRetryRef.current.retry,
+      'reset',
+    ).state
     stallRecoverySourceKeyRef.current = null
     stallRecoveryGenerationRef.current += 1
     hasRecordedPlaybackStartRef.current = false
@@ -434,7 +446,10 @@ export function VideoPlayer({
       videoId,
       isLive,
     })
-    errorRetryRef.current.count = 0
+    errorRetryRef.current.retry = playbackRetryTransition(
+      errorRetryRef.current.retry,
+      'reset',
+    ).state
     stallRecoverySourceKeyRef.current = null
     stallRecoveryGenerationRef.current += 1
     state$.hasError.set(false)
@@ -788,9 +803,15 @@ export function VideoPlayer({
       if (!withCurrentPlayer(() => true)) return
 
       if (status.status === 'readyToPlay') {
+        errorRetryRef.current.retry = playbackRetryTransition(
+          errorRetryRef.current.retry,
+          'ready',
+        ).state
+        if (errorRetryRef.current.retry.blocked || state$.hasError.peek()) {
+          player.pause()
+          return
+        }
         state$.isLoading.set(false)
-        state$.hasError.set(false)
-        errorRetryRef.current.count = 0
         // The player self-recovered — a still-pending auto-retry would force
         // a pointless reload that interrupts playback mid-watch.
         if (errorRetryRef.current.timer) {
@@ -801,38 +822,56 @@ export function VideoPlayer({
           state$.duration.set(player.duration * 1000)
         }
       } else if (status.status === 'loading') {
-        state$.isLoading.set(true)
+        if (!state$.hasError.peek()) state$.isLoading.set(true)
       } else if (status.status === 'error') {
         // Weak-cellular HLS loads fail transiently all the time; previously
         // this status was ignored and the user stared at an infinite spinner.
         state$.isLoading.set(false)
         const errorMessage = status.error?.message ?? 'unknown'
-        telemetry.error('video:playback_error', 'Video player reported a playback error', {
+        telemetry.warn('video:playback_error', 'Video player reported a playback error', {
           videoId,
           isLive,
           error: errorMessage,
-          retryCount: errorRetryRef.current.count,
+          retryCount: errorRetryRef.current.retry.attempts,
           positionMs: Math.round((player.currentTime ?? 0) * 1000),
         })
-        if (currentUrl && errorRetryRef.current.count < 2) {
-          errorRetryRef.current.count += 1
-          const delayMs = 2_000 * errorRetryRef.current.count
+        const decision = playbackRetryTransition(errorRetryRef.current.retry, 'error')
+        errorRetryRef.current.retry = decision.state
+        if (currentSource && decision.delayMs !== null) {
+          const delayMs = decision.delayMs
           // A rapid second error must not orphan the previous timer — the
           // single-slot ref is the only handle cleanup paths can clear.
           if (errorRetryRef.current.timer) {
             clearTimeout(errorRetryRef.current.timer)
           }
           errorRetryRef.current.timer = setTimeout(() => {
-            const replacePromise = withCurrentPlayer((currentPlayer) =>
-              currentPlayer.replaceAsync(currentUrl),
-            )
-            if (!replacePromise) return
+            errorRetryRef.current.timer = null
+            const currentPlayer = withCurrentPlayer((currentPlayer) => currentPlayer)
+            if (!currentPlayer || state$.hasError.peek()) return
+            const generation = ++stallRecoveryGenerationRef.current
             state$.isLoading.set(true)
-            // Preserve the pre-error play intent: a silent auto-recovery
-            // mid-watch should resume, not leave the player paused.
-            replacePromise.then(resumePlaybackAfterRecovery).catch(() => {})
+            void reloadVideoAtPosition({
+              player: currentPlayer,
+              source: currentSource,
+              isCurrent: () =>
+                stallRecoveryGenerationRef.current === generation &&
+                !!withCurrentPlayer(() => true),
+              shouldResume: () => {
+                const gate = playbackGateRef.current
+                return (
+                  gate.isActive &&
+                  gate.isScreenFocused &&
+                  !userPausedRef.current &&
+                  !state$.hasError.peek() &&
+                  (appStore$.preferences.autoplayVideos.peek() || state$.userInitiatedPlay.peek())
+                )
+              },
+            }).catch(() => {})
           }, delayMs)
         } else {
+          if (errorRetryRef.current.timer) clearTimeout(errorRetryRef.current.timer)
+          errorRetryRef.current.timer = null
+          player.pause()
           state$.hasError.set(true)
         }
       }
@@ -912,10 +951,9 @@ export function VideoPlayer({
     processTimedPlaybackUpdate,
     syncCaptionText,
     updatePlaybackProgress,
-    currentUrl,
+    currentSource,
     videoId,
     isLive,
-    resumePlaybackAfterRecovery,
     withCurrentPlayer,
   ])
 
@@ -970,8 +1008,11 @@ export function VideoPlayer({
         const currentTime = withCurrentPlayer((player) => player.currentTime)
         if (currentTime === undefined) return
         stallRecoveryGenerationRef.current += 1
-        if (!isLive) withCurrentPlayer((player) => player.pause())
-        telemetry.error('video:playback_stall_timeout', 'Video buffering timed out', {
+        errorRetryRef.current.retry.blocked = true
+        if (errorRetryRef.current.timer) clearTimeout(errorRetryRef.current.timer)
+        errorRetryRef.current.timer = null
+        withCurrentPlayer((player) => player.pause())
+        telemetry.warn('video:playback_stall_timeout', 'Video buffering timed out', {
           videoId,
           isLive,
           stalledForMs: stallGiveUpMs,
@@ -1433,7 +1474,15 @@ export function VideoPlayer({
       />
 
       {isLive ? (
-        <YStack position="absolute" bottom={132} left={20} zIndex={3}>
+        <YStack
+          position="absolute"
+          bottom={160 + insets.bottom}
+          left={0}
+          right={0}
+          alignItems="center"
+          zIndex={3}
+          pointerEvents="none"
+        >
           <YStack
             backgroundColor={'$error'}
             paddingHorizontal={14}
@@ -1447,7 +1496,7 @@ export function VideoPlayer({
         </YStack>
       ) : null}
 
-      <CaptionOverlay state$={state$} />
+      <CaptionOverlay state$={state$} bottomOffset={isLive ? 48 : 0} />
 
       <VideoProgressBar
         state$={state$}

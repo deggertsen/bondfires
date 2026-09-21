@@ -69,6 +69,11 @@ export function inspectInit(bytes: Uint8Array): Track[] {
     throw new Error('Audio and video tracks required')
   return tracks
 }
+export class InvalidSegmentDuration extends Error {
+  constructor(readonly duration: number) {
+    super('Invalid segment duration')
+  }
+}
 export function inspectSegment(bytes: Uint8Array, tracks: readonly Track[]): number {
   const root = boxes(bytes)
   const moof = required(root, 'moof')
@@ -106,7 +111,7 @@ export function inspectSegment(bytes: Uint8Array, tracks: readonly Track[]): num
     duration = Math.max(duration, ticks / track.timescale)
   }
   if (!Number.isFinite(duration) || duration <= 0 || duration > 15)
-    throw new Error('Invalid segment duration')
+    throw new InvalidSegmentDuration(duration)
   return duration
 }
 
@@ -162,5 +167,79 @@ export function normalizeAacSampleFlags(bytes: Uint8Array, tracks: readonly Trac
       }
     }
   }
+  return result
+}
+
+/**
+ * Media3 1.8 closes a one-sample track with duration zero. Recover that exact
+ * layout using the preceding fragment's last positive sample duration. Only
+ * duration words change; encoded samples, offsets, timestamps and flags stay
+ * intact. Call only for a zero-duration fragment with a validated predecessor.
+ */
+export function repairSingleSampleDuration(
+  bytes: Uint8Array,
+  tracks: readonly Track[],
+  previous: Uint8Array,
+): Uint8Array {
+  try {
+    inspectSegment(bytes, tracks)
+    return bytes
+  } catch (error) {
+    if (!(error instanceof InvalidSegmentDuration) || error.duration !== 0) throw error
+  }
+  inspectSegment(previous, tracks)
+  const durations = new Map<number, number>()
+  const previousView = new DataView(previous.buffer, previous.byteOffset, previous.byteLength)
+  const previousMoof = required(boxes(previous), 'moof')
+  for (const traf of boxes(previous, previousMoof.data, previousMoof.end).filter(
+    (b) => b.type === 'traf',
+  )) {
+    const children = boxes(previous, traf.data, traf.end)
+    const header = required(children, 'tfhd')
+    const id = u32(previousView, header, header.data + 4)
+    for (const run of children.filter((b) => b.type === 'trun')) {
+      const flags = u32(previousView, run, run.data) & 0xffffff
+      if (flags !== 0x701 && flags !== 0xf01) continue
+      const count = u32(previousView, run, run.data + 4)
+      const stride = flags & 0x800 ? 16 : 12
+      for (let i = 0; i < count; i++) {
+        const ticks = u32(previousView, run, run.data + 12 + i * stride)
+        if (ticks > 0) durations.set(id, ticks)
+      }
+    }
+  }
+  const result = bytes.slice()
+  const view = new DataView(result.buffer, result.byteOffset, result.byteLength)
+  const moof = required(boxes(result), 'moof')
+  const seen = new Set<number>()
+  for (const traf of boxes(result, moof.data, moof.end).filter((b) => b.type === 'traf')) {
+    const children = boxes(result, traf.data, traf.end)
+    const header = required(children, 'tfhd')
+    const id = u32(view, header, header.data + 4)
+    const track = tracks.find((t) => t.id === id)
+    const ticks = durations.get(id)
+    const runs = children.filter((b) => b.type === 'trun')
+    if (
+      seen.has(id) ||
+      u32(view, header, header.data) !== 0x020000 ||
+      !track ||
+      !ticks ||
+      ticks / track.timescale > 1 ||
+      runs.length !== 1
+    )
+      throw new Error('Unsupported zero-duration fragment')
+    seen.add(id)
+    const run = runs[0]
+    const flags = u32(view, run, run.data) & 0xffffff
+    if (
+      (flags !== 0x701 && flags !== 0xf01) ||
+      u32(view, run, run.data + 4) !== 1 ||
+      u32(view, run, run.data + 12) !== 0 ||
+      u32(view, run, run.data + 16) === 0
+    )
+      throw new Error('Unsupported zero-duration fragment')
+    view.setUint32(run.data + 12, ticks)
+  }
+  inspectSegment(result, tracks)
   return result
 }

@@ -1,7 +1,10 @@
 import {
+  InvalidSegmentDuration,
   inspectInit,
   inspectSegment,
   normalizeAacSampleFlags,
+  repairSingleSampleDuration,
+  type Track,
 } from '../../../packages/media/src/mp4'
 import {
   buildPlaylist,
@@ -58,6 +61,27 @@ async function backend(env: Env, body: Record<string, unknown>) {
     )
   return response.json() as Promise<{ complete: boolean; segments: MediaSegment[] }>
 }
+/** Preserve immutable uploaded bytes/checksums; normalize only validation and delivery. */
+async function normalizeTiming(
+  env: Env,
+  recordingId: string,
+  index: number,
+  bytes: Uint8Array,
+  tracks: readonly Track[],
+) {
+  try {
+    inspectSegment(bytes, tracks)
+    return bytes
+  } catch (error) {
+    if (!(error instanceof InvalidSegmentDuration) || error.duration !== 0 || index <= 0)
+      throw error
+    const previous = await env.VIDEO.get(
+      `${recordingId}/segment-${String(index - 1).padStart(6, '0')}.m4s`,
+    )
+    if (!previous || previous.size > MAX_SEGMENT_BYTES) throw error
+    return repairSingleSampleDuration(bytes, tracks, new Uint8Array(await previous.arrayBuffer()))
+  }
+}
 export default {
   async fetch(request, env): Promise<Response> {
     const url = new URL(request.url)
@@ -104,7 +128,25 @@ export default {
         else {
           const init = await env.VIDEO.get(`${recordingId}/init.mp4`)
           if (!init) return new Response('Upload initialization first', { status: 409 })
-          duration = inspectSegment(bytes, inspectInit(new Uint8Array(await init.arrayBuffer())))
+          try {
+            const tracks = inspectInit(new Uint8Array(await init.arrayBuffer()))
+            const normalized = await normalizeTiming(env, recordingId, index, bytes, tracks)
+            duration = inspectSegment(normalized, tracks)
+          } catch (error) {
+            // Structural diagnostics only: never persist rejected media or log
+            // request URLs, capabilities, payload bytes, or raw network errors.
+            console.warn(
+              JSON.stringify({
+                event: 'media_segment_rejected',
+                recordingId,
+                index,
+                size: bytes.length,
+                reason: error instanceof InvalidSegmentDuration ? 'duration' : 'invalid_mp4',
+                duration: error instanceof InvalidSegmentDuration ? error.duration : undefined,
+              }),
+            )
+            throw error
+          }
         }
         const checksum = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)).reduce(
           (s, b) => s + b.toString(16).padStart(2, '0'),
@@ -165,8 +207,15 @@ export default {
         const init = await env.VIDEO.get(`${recordingId}/init.mp4`)
         if (!init || init.size > 256 * 1024) throw new Error('Invalid initialization')
         const tracks = inspectInit(new Uint8Array(await init.arrayBuffer()))
-        const bytes = normalizeAacSampleFlags(new Uint8Array(await object.arrayBuffer()), tracks)
-        return mediaResponse(request, bytes, `"aac-sync-v1-${object.etag}"`)
+        const timed = await normalizeTiming(
+          env,
+          recordingId,
+          index,
+          new Uint8Array(await object.arrayBuffer()),
+          tracks,
+        )
+        const bytes = normalizeAacSampleFlags(timed, tracks)
+        return mediaResponse(request, bytes, `"sample-timing-v2-${object.etag}"`)
       }
       const object = await env.VIDEO.get(key, { range: request.headers })
       if (!object) return new Response('Not found', { status: 404 })

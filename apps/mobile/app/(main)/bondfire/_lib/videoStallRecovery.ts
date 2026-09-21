@@ -55,3 +55,16 @@ export function createStallWatchdog({
   }
   return { restart, stop }
 }
+
+export type PlaybackRetryState = { attempts: number; blocked: boolean }
+/** Becoming ready after a reload does not prove the failing portion became playable. */
+export function playbackRetryTransition(
+  state: PlaybackRetryState,
+  event: 'ready' | 'error' | 'reset',
+) {
+  if (event === 'reset') return { state: { attempts: 0, blocked: false }, delayMs: null }
+  if (event === 'ready' || state.blocked) return { state, delayMs: null }
+  if (state.attempts >= 2) return { state: { ...state, blocked: true }, delayMs: null }
+  const attempts = state.attempts + 1
+  return { state: { attempts, blocked: false }, delayMs: attempts * 2_000 }
+}

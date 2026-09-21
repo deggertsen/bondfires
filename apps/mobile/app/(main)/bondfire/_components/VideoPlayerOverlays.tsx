@@ -154,7 +154,13 @@ export function PlayPauseIndicator({ state$ }: { state$: VideoPlayerState$ }) {
  * anchored at bottom:100 and grows ~48px upward). Text comes from
  * state$.captionText, kept in sync by VideoPlayer's timeUpdate listener.
  */
-export function CaptionOverlay({ state$ }: { state$: VideoPlayerState$ }) {
+export function CaptionOverlay({
+  state$,
+  bottomOffset = 0,
+}: {
+  state$: VideoPlayerState$
+  bottomOffset?: number
+}) {
   const captionText = useValue(state$.captionText)
   const insets = useSafeAreaInsets()
   if (!captionText) return null
@@ -162,7 +168,7 @@ export function CaptionOverlay({ state$ }: { state$: VideoPlayerState$ }) {
   return (
     <YStack
       position="absolute"
-      bottom={152 + insets.bottom}
+      bottom={152 + insets.bottom + bottomOffset}
       // 76px insets keep captions clear of the round side controls (44px wide,
       // inset 16px): the mute/emoji stack on the right and the paused report
       // button on the left both sit within 60px of their edge.

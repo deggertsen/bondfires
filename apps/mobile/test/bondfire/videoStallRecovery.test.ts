@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createStallWatchdog,
+  playbackRetryTransition,
   reloadVideoAtPosition,
 } from '../../app/(main)/bondfire/_lib/videoStallRecovery'
 
@@ -176,4 +177,18 @@ describe('foreground stall watchdog', () => {
     expect(w.onRecover).not.toHaveBeenCalled()
     expect(w.onGiveUp).not.toHaveBeenCalled()
   })
+})
+
+it('stops retrying the same unfinished tail even when each reload briefly becomes ready', () => {
+  let state = { attempts: 0, blocked: false }
+  const delays = []
+  for (let i = 0; i < 4; i++) {
+    const result = playbackRetryTransition(state, 'error')
+    delays.push(result.delayMs)
+    state = playbackRetryTransition(result.state, 'ready').state
+  }
+  expect(delays).toEqual([2000, 4000, null, null])
+  expect(state).toEqual({ attempts: 2, blocked: true })
+  const reset = playbackRetryTransition(state, 'reset').state
+  expect(playbackRetryTransition(reset, 'error').delayMs).toBe(2000)
 })
