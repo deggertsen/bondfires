@@ -74,7 +74,9 @@ export const begin = mutation({
     campId: v.optional(v.id('camps')),
     personalCamp: v.optional(v.boolean()),
     tags: v.optional(v.array(v.string())),
-    draftBondfireId: v.optional(v.id('bondfires')),
+    // Released internal clients persist null when recording without a draft.
+    // Accept it so their durable upload journals can recover after an update.
+    draftBondfireId: v.optional(v.union(v.id('bondfires'), v.null())),
   },
   handler: async (ctx, args) => {
     const userId = await requireUser(ctx)
@@ -115,6 +117,7 @@ export const begin = mutation({
     })
     const result = await createPendingVideoRecord(ctx, {
       ...args,
+      draftBondfireId: args.draftBondfireId ?? undefined,
       userId,
       segmentRecordingId: recordingId,
       playbackPolicy: 'signed',

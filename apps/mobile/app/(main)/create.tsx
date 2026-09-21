@@ -935,7 +935,7 @@ export default function CreateScreen() {
           campId: effectiveCampId,
           personalCamp: isPersonalCamp,
           tags: selectedCampTags,
-          draftBondfireId: draftBondfireId as Id<'bondfires'> | undefined,
+          draftBondfireId: draftBondfireId as Id<'bondfires'> | null,
         }}
       />
     )

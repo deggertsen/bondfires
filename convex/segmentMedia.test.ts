@@ -70,6 +70,41 @@ beforeEach(() => {
 })
 afterEach(() => vi.unstubAllEnvs())
 describe('internal recording lifecycle', () => {
+  it('recovers persisted null-draft uploads for both new Bondfires and responses', async () => {
+    const { t, owner, args, record, receipt } = await setup()
+    const root = await owner.mutation(api.segmentMedia.begin, {
+      ...args,
+      localId: '00000000-0000-4000-8000-000000000002',
+      draftBondfireId: null,
+    })
+    expect((await t.run((ctx) => ctx.db.get(root.recordId)))?.segmentRecordingId).toBe(
+      root.recordingId,
+    )
+    await receipt(-1, 0)
+    await receipt(0)
+    await owner.mutation(api.segmentMedia.finish, {
+      recordingId: record.recordingId,
+      segmentCount: 1,
+    })
+    const responseArgs = {
+      ...args,
+      localId: '00000000-0000-4000-8000-000000000003',
+      isResponse: true,
+      bondfireId: record.recordId as import('./_generated/dataModel').Id<'bondfires'>,
+      draftBondfireId: null,
+    }
+    const response = await owner.mutation(api.segmentMedia.begin, responseArgs)
+    expect(await owner.mutation(api.segmentMedia.begin, responseArgs)).toEqual(response)
+    expect(
+      await owner.query(api.segmentMedia.getOwnRecording, {
+        localId: responseArgs.localId,
+      }),
+    ).toEqual({
+      bondfireId: record.recordId,
+      responseId: response.recordId,
+      videoStatus: 'waiting_for_upload',
+    })
+  })
   it('reveals upload destinations only to their owner and handles deleted records', async () => {
     const { t, owner, fixture, args, record } = await setup()
     expect(await owner.query(api.segmentMedia.getOwnRecording, { localId: args.localId })).toEqual({
