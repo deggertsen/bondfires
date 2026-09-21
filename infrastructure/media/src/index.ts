@@ -85,7 +85,12 @@ async function normalizeTiming(
 export default {
   async fetch(request, env): Promise<Response> {
     const url = new URL(request.url)
-    if (url.pathname === '/health') return Response.json({ environment: 'internal', version: 1 })
+    if (url.pathname === '/health')
+      return Response.json({
+        environment:
+          env.CONVEX_SITE_URL === 'https://ideal-akita-27.convex.site' ? 'production' : 'internal',
+        version: 1,
+      })
     try {
       const deletion = /^\/v1\/([a-z0-9]+)$/.exec(url.pathname)
       if (deletion && request.method === 'DELETE') {

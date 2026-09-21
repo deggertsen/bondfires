@@ -1,9 +1,13 @@
+import Apple from '@auth/core/providers/apple'
+import Google from '@auth/core/providers/google'
 import Resend from '@auth/core/providers/resend'
 import { Password } from '@convex-dev/auth/providers/Password'
 import { convexAuth } from '@convex-dev/auth/server'
-import type { QueryCtx } from './_generated/server'
-import { calculateAgeAt } from './agePolicy'
-import { CURRENT_COMMUNITY_GUIDELINES_VERSION, CURRENT_TERMS_VERSION } from './contentSafety'
+import { internal } from './_generated/api'
+import type { Id } from './_generated/dataModel'
+import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server'
+import { appleProfile, createOrUpdateAuthUser, googleProfile } from './lib/authProfiles'
+import { authRedirect, canUseApp, registrationProfile } from './lib/registrationPolicy'
 
 const DEFAULT_EMAIL_FROM = 'Bondfires <support@bondfires.org>'
 const VERIFY_EMAIL_SUBJECT = 'Verify your Bondfires account'
@@ -110,55 +114,11 @@ const PasswordWithVerification = Password({
   // Profile fields to include when creating a user.
   // Only requires birthDate during signUp flow.
   profile(params) {
-    const flow = params.flow as string
-    const birthDate =
-      typeof params.birthDate === 'string' && params.birthDate.trim()
-        ? params.birthDate.trim()
-        : undefined
-
-    if (flow === 'signUp') {
-      if (!birthDate) {
-        throw new Error('birthDate is required')
-      }
-
-      const age = calculateAgeAt(birthDate)
-      if (age === null) {
-        throw new Error('birthDate must be a valid YYYY-MM-DD date')
-      }
-      if (age < 13) {
-        throw new Error('You must be at least 13 years old')
-      }
-      if (params.acceptedLegal !== 'true') {
-        throw new Error('You must accept the Terms and Community Guidelines')
-      }
-    }
-
-    const firstName = (params.firstName as string) ?? (params.name as string) ?? null
-    const lastName = (params.lastName as string) ?? null
-    // Schema only allows these literals; any other client-supplied value would
-    // fail document validation and break signup entirely.
-    const gender =
-      params.gender === 'male' || params.gender === 'female' || params.gender === 'other'
-        ? params.gender
-        : 'other'
-    const profile = {
-      name: firstName && lastName ? `${firstName} ${lastName}` : (firstName ?? 'User'),
-      firstName: firstName,
-      lastName: lastName,
-      email: params.email as string,
-      gender,
-    }
-    if (birthDate) {
-      ;(profile as Record<string, unknown>).birthDate = birthDate
-    }
-    if (flow === 'signUp') {
-      ;(profile as Record<string, unknown>).acceptedTermsVersion = CURRENT_TERMS_VERSION
-      ;(profile as Record<string, unknown>).acceptedCommunityGuidelinesVersion =
-        CURRENT_COMMUNITY_GUIDELINES_VERSION
-      ;(profile as Record<string, unknown>).legalAcceptedAt = Date.now()
-      ;(profile as Record<string, unknown>).moderationStatus = 'active'
-    }
-    return profile
+    const email = typeof params.email === 'string' ? params.email.trim() : ''
+    if (!email) throw new Error('Email is required')
+    return params.flow === 'signUp'
+      ? { email, ...registrationProfile(params), moderationStatus: 'active' }
+      : { email }
   },
   // Require email verification before allowing sign in
   verify: ResendOTP,
@@ -167,26 +127,41 @@ const PasswordWithVerification = Password({
 })
 
 const authBackend = convexAuth({
-  providers: [PasswordWithVerification],
+  providers: [
+    PasswordWithVerification,
+    ...(process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET
+      ? [Google({ profile: googleProfile })]
+      : []),
+    ...(process.env.AUTH_APPLE_ID && process.env.AUTH_APPLE_SECRET
+      ? [Apple({ profile: appleProfile })]
+      : []),
+  ],
+  callbacks: {
+    redirect: async ({ redirectTo }) => authRedirect(redirectTo),
+    createOrUpdateUser: (ctx, args) => createOrUpdateAuthUser(ctx as MutationCtx, args),
+  },
 })
 
 export const { signIn, signOut, store } = authBackend
 
-// Account deletion needs the underlying identity once, even after its own
-// tombstone has committed, so a retried request can return the existing job.
+// Registration/current-user reads need the identity before completion, and
+// account deletion needs it after its tombstone commits for safe retries.
 // All normal application operations must use the filtered `auth` export below.
 export const getUserIdIncludingDeleting = authBackend.auth.getUserId
 
 // Convex Auth JWTs can remain cryptographically valid briefly after their
 // refresh session is revoked. Make the deletion tombstone authoritative for
-// every query/mutation that uses the shared auth helper, so a replayed access
-// token cannot operate a partially deleted account.
+// every query, mutation and action. Pending registrations are also denied
+// normal app access until the shared completion mutation succeeds.
 export const auth = {
   ...authBackend.auth,
-  getUserId: async (ctx: Parameters<typeof authBackend.auth.getUserId>[0]) => {
+  getUserId: async (ctx: QueryCtx | MutationCtx | ActionCtx): Promise<Id<'users'> | null> => {
     const userId = await getUserIdIncludingDeleting(ctx)
-    if (!userId || !('db' in ctx)) return userId
-    const user = await (ctx as typeof ctx & { db: QueryCtx['db'] }).db.get(userId)
-    return user?.accountDeletionStatus ? null : userId
+    if (!userId) return null
+    const eligible =
+      'db' in ctx
+        ? canUseApp(await ctx.db.get(userId))
+        : await ctx.runQuery(internal.registration.canUseApp, { userId })
+    return eligible ? userId : null
   },
 }

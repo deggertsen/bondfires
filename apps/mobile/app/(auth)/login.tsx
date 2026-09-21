@@ -10,6 +10,7 @@ import { StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
+import { SocialSignInButtons } from '../../components/SocialSignInButtons'
 import { resolveAuthRedirect, routes } from '../../lib/routes'
 
 export default function LoginScreen() {
@@ -62,7 +63,11 @@ export default function LoginScreen() {
         router.replace(routes.verifyEmail({ email: currentEmail, redirectTo }))
       } else if (user) {
         appActions.setAuth(user._id)
-        router.replace(resolveAuthRedirect(redirectTo))
+        router.replace(
+          user.registrationPending
+            ? routes.completeProfile(redirectTo)
+            : resolveAuthRedirect(redirectTo),
+        )
       } else {
         router.replace(routes.splash(redirectTo))
       }
@@ -217,6 +222,12 @@ export default function LoginScreen() {
             </YStack>
           </YStack>
 
+          <SocialSignInButtons
+            redirectTo={redirectTo}
+            disabled={isLoading}
+            onBusyChange={(busy) => form$.isLoading.set(busy)}
+          />
+
           {/* Form */}
           <YStack gap={20}>
             <YStack gap={8}>
@@ -272,7 +283,11 @@ export default function LoginScreen() {
               {isLoading ? <Spinner color={'$color'} /> : <Text color={'$color'}>Sign In</Text>}
             </Button>
 
-            <Button variant="outline" size="$md" onPress={() => router.push(routes.signup)}>
+            <Button
+              variant="outline"
+              size="$md"
+              onPress={() => router.push(routes.signupWithRedirect(redirectTo))}
+            >
               <Text>Create an account</Text>
             </Button>
           </YStack>

@@ -15,6 +15,7 @@ import { Pressable } from 'react-native'
 import { Text, YStack } from 'tamagui'
 import { api } from '../../../convex/_generated/api'
 import { resolveAuthRedirect, routes } from '../lib/routes'
+import { clearRegistrationDestination, registrationDestination } from '../lib/socialAuth'
 
 /** Threshold (ms) after which an unresolved query is considered "slow". */
 const SLOW_QUERY_THRESHOLD_MS = 3000
@@ -54,7 +55,7 @@ export default function SplashScreen() {
         elapsedMs: elapsed,
       })
 
-      if (currentUser) {
+      if (currentUser && !currentUser.registrationPending) {
         appActions.setAuth(currentUser._id)
         telemetry.setUserId(currentUser._id)
       } else {
@@ -212,8 +213,12 @@ export default function SplashScreen() {
 
   // User is authenticated, go to main app
   telemetry.breadcrumb('route:main')
-  if (redirectTo) {
-    return <Redirect href={resolveAuthRedirect(redirectTo)} />
+  const destination = redirectTo ?? registrationDestination()
+  if (currentUser.registrationPending)
+    return <Redirect href={routes.completeProfile(destination)} />
+  clearRegistrationDestination()
+  if (destination) {
+    return <Redirect href={resolveAuthRedirect(destination)} />
   }
 
   const lastLocation = getLastLocation()

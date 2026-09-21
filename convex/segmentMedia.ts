@@ -1,6 +1,6 @@
 import { v } from 'convex/values'
+import { mediaBackendEnabled } from '../packages/media/src/environment'
 import {
-  INTERNAL_CONVEX_URL,
   MAX_RECORDING_SECONDS,
   MAX_SEGMENT_BYTES,
   MAX_SEGMENTS,
@@ -25,15 +25,18 @@ import { getSegmentVideoStatus, isPlayableVideoRecord } from './lib/videoLifecyc
 import { countResponse, uncountResponse } from './responseCounts'
 import { assertCanViewBondfire, assertCanViewResponse, createPendingVideoRecord } from './videos'
 
-export function requireInternalMedia() {
-  if (
-    process.env.CONVEX_CLOUD_URL !== INTERNAL_CONVEX_URL ||
-    process.env.INTERNAL_SEGMENT_MEDIA !== '1'
+function isMediaEnabled() {
+  return mediaBackendEnabled(
+    process.env.CONVEX_CLOUD_URL,
+    process.env.SEGMENT_MEDIA_ENABLED,
+    process.env.INTERNAL_SEGMENT_MEDIA,
   )
-    throw new Error('Internal media is disabled')
+}
+export function requireSegmentMedia() {
+  if (!isMediaEnabled()) throw new Error('Segment media is disabled')
 }
 async function requireUser(ctx: QueryCtx | MutationCtx) {
-  requireInternalMedia()
+  requireSegmentMedia()
   const userId = await auth.getUserId(ctx)
   const user = userId && (await ctx.db.get(userId))
   if (!user || user.accountDeletionStatus) throw new Error('Sign in required')
@@ -137,7 +140,7 @@ export const begin = mutation({
 export const getOwnRecording = query({
   args: { localId: v.string() },
   handler: async (ctx, { localId }) => {
-    requireInternalMedia()
+    requireSegmentMedia()
     const userId = await auth.getUserId(ctx)
     const user = userId && (await ctx.db.get(userId))
     if (!user || user.accountDeletionStatus) return null
@@ -165,7 +168,7 @@ export const authorize = internalQuery({
     operation: v.union(v.literal('upload'), v.literal('read')),
   },
   handler: async (ctx, args) => {
-    requireInternalMedia()
+    requireSegmentMedia()
     const recording = await ctx.db.get(args.recordingId)
     if (!recording) throw new Error('Forbidden')
     await linkedAccess(ctx, recording, args.userId)
@@ -183,7 +186,7 @@ export const capability = action({
     operation: v.union(v.literal('upload'), v.literal('read')),
   },
   handler: async (ctx, args): Promise<{ token: string; baseUrl: string; expiresAt: number }> => {
-    requireInternalMedia()
+    requireSegmentMedia()
     const userId = await auth.getUserId(ctx)
     if (!userId) throw new Error('Sign in required')
     await ctx.runQuery(internal.segmentMedia.authorize, { ...args, userId })
@@ -246,7 +249,7 @@ export const receipt = internalMutation({
     checksum: v.string(),
   },
   handler: async (ctx, args) => {
-    requireInternalMedia()
+    requireSegmentMedia()
     const recording = await ctx.db.get(args.recordingId)
     if (!recording || recording.userId !== args.userId) throw new Error('Forbidden')
     await linkedAccess(ctx, recording, args.userId)
@@ -334,7 +337,7 @@ export const timeline = internalQuery({
     index: v.union(v.number(), v.null()),
   },
   handler: async (ctx, args) => {
-    requireInternalMedia()
+    requireSegmentMedia()
     const recording = await ctx.db.get(args.recordingId)
     if (!recording) throw new Error('Forbidden')
     await linkedAccess(ctx, recording, args.userId)
@@ -360,7 +363,7 @@ export const timeline = internalQuery({
 export const cleanupPage = internalQuery({
   args: { cursor: v.union(v.string(), v.null()) },
   handler: async (ctx, { cursor }) => {
-    requireInternalMedia()
+    requireSegmentMedia()
     const page = await ctx.db.query('segmentRecordings').paginate({ cursor, numItems: 50 })
     const ids: Id<'segmentRecordings'>[] = []
     const interrupted: Id<'segmentRecordings'>[] = []
@@ -396,7 +399,7 @@ export const cleanupPage = internalQuery({
 export const finalizeInterrupted = internalMutation({
   args: { recordingId: v.id('segmentRecordings') },
   handler: async (ctx, { recordingId }) => {
-    requireInternalMedia()
+    requireSegmentMedia()
     const record = await ctx.db.get(recordingId)
     if (
       !record ||
@@ -423,7 +426,7 @@ export const finalizeInterrupted = internalMutation({
 export const revoke = internalMutation({
   args: { recordingId: v.id('segmentRecordings') },
   handler: async (ctx, { recordingId }) => {
-    requireInternalMedia()
+    requireSegmentMedia()
     const record = await ctx.db.get(recordingId)
     if (record && record.status !== 'cancelled') {
       await ctx.db.patch(recordingId, { status: 'cancelled', updatedAt: Date.now() })
@@ -439,7 +442,7 @@ export const revoke = internalMutation({
 export const purge = internalMutation({
   args: { recordingId: v.id('segmentRecordings') },
   handler: async (ctx, { recordingId }) => {
-    requireInternalMedia()
+    requireSegmentMedia()
     const tombstone = await ctx.db.get(recordingId)
     if (
       !tombstone ||
@@ -459,11 +462,7 @@ export const purge = internalMutation({
 export const cleanup = internalAction({
   args: { cursor: v.optional(v.string()) },
   handler: async (ctx, { cursor }) => {
-    if (
-      process.env.CONVEX_CLOUD_URL !== INTERNAL_CONVEX_URL ||
-      process.env.INTERNAL_SEGMENT_MEDIA !== '1'
-    )
-      return
+    if (!isMediaEnabled()) return
     const page = await ctx.runQuery(internal.segmentMedia.cleanupPage, { cursor: cursor ?? null })
     for (const recordingId of page.interrupted) {
       await ctx.runMutation(internal.segmentMedia.finalizeInterrupted, { recordingId })

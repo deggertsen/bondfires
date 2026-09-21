@@ -1,8 +1,10 @@
 # Internal segmented video experiment
 
-This branch replaces Mux ingest and playback **only in the internal store profile**.
-Production and the TestFlight Beta audience retain the existing build and Convex deployment.
-The former TestFlight Alpha group has been renamed Internal; Google Play uses its internal track.
+The local segmented recorder was validated in the isolated internal store profile. The alpha
+rollout now also enables it in the `production` build profile against the main Convex database.
+See [Alpha rollout and Mux migration](alpha-video-rollout.md) for current deployment and rollback
+instructions. The historical internal rollout below remains useful for isolated development.
+The former TestFlight Alpha group has been renamed Internal.
 
 ## Recording and delivery
 

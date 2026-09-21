@@ -10,7 +10,7 @@ import {
 import { SubscriptionPaywall } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
 import { useConvex, useQuery } from 'convex/react'
-import { Stack } from 'expo-router'
+import { Redirect, Stack } from 'expo-router'
 import { useEffect, useMemo } from 'react'
 import { api } from '../../../../convex/_generated/api'
 import { CommunityAcceptanceGate } from '../../components/CommunityAcceptanceGate'
@@ -21,6 +21,9 @@ import {
   segmentUploadClient,
   setSegmentUploadOwner,
 } from '../../lib/media/segmentUploads'
+
+import { routes } from '../../lib/routes'
+import { registrationDestination } from '../../lib/socialAuth'
 
 function GlobalPaywall() {
   const {
@@ -159,6 +162,14 @@ function LegacyRecordingMaintenance() {
 }
 
 export default function MainLayout() {
+  const user = useQuery(api.users.current)
+  if (user?.registrationPending)
+    return <Redirect href={routes.completeProfile(registrationDestination())} />
+  if (user === undefined) return null
+  return <MainContent />
+}
+
+function MainContent() {
   return (
     <>
       <Stack screenOptions={{ headerShown: false }}>

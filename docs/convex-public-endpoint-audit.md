@@ -68,16 +68,23 @@ checked. Invite codes are bearer capabilities but redemption is authenticated.
 - `storeBilling.billingHealth`: authenticated admin only; bounded, redacted operational counters.
 - `storeBillingActions.prepareStorePurchase`: authenticated, non-deleting account; creates only a server-generated store binding, never an entitlement.
 
-## Internal segmented video
+## Segmented video
 
 | Endpoint | Authorization and validation |
 | --- | --- |
-| `segmentMedia.begin` | Registered internal deployment only; authenticated active user; existing camp/response creation, UGC, entitlement and draft ownership checks; owner-scoped idempotency key. |
-| `segmentMedia.getOwnRecording` | Registered internal deployment only; authenticated active owner-scoped lookup; returns linked destination IDs/status only, never media credentials; cancelled/deleted/detached recordings return null. |
-| `segmentMedia.capability` | Registered internal deployment only; current linked-record visibility; upload requires recording owner; signed capabilities bind recording, user, operation, audience and expiry. |
-| `segmentMedia.finish` | Registered internal deployment only; active recording owner and linked-record access; immutable bounded final count; ready only after all trusted receipts. |
+| `segmentMedia.begin` | Explicitly enabled registered deployment only; authenticated active user; existing camp/response creation, UGC, entitlement and draft ownership checks; owner-scoped idempotency key. |
+| `segmentMedia.getOwnRecording` | Explicitly enabled registered deployment only; authenticated active owner-scoped lookup; returns linked destination IDs/status only, never media credentials; cancelled/deleted/detached recordings return null. |
+| `segmentMedia.capability` | Explicitly enabled registered deployment only; current linked-record visibility; upload requires recording owner; signed capabilities bind recording, user, operation, audience and expiry. |
+| `segmentMedia.finish` | Explicitly enabled registered deployment only; active recording owner and linked-record access; immutable bounded final count; ready only after all trusted receipts. |
 
 The `/internal-media` HTTP route requires a separate Worker shared secret and a signed capability.
 Only internal functions accept segment receipts; upload duration and checksums come from the Worker,
 not client JSON. Playback rechecks current visibility on every resource. Cleanup revokes access before
 deleting R2 objects and retains a tombstone to cover in-flight uploads.
+### Social registration
+
+| Endpoint | Access and validation |
+| --- | --- |
+| `registration.providers` | Public; returns configured-provider booleans only, never credentials. |
+| `registration.status` | Authenticated account owner, including pending registration; excludes deleting users and returns only registration fields. |
+| `registration.complete` | Authenticated owner of a pending account; validates name, gender, minimum age and explicit versioned legal acceptance. Atomic, one-time completion; retries cannot change DOB. |

@@ -4,6 +4,7 @@ import * as FileSystem from 'expo-file-system/legacy'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
 import { telemetry } from '../../../../packages/app/src/services/telemetry'
+import { mediaClientEnabled } from '../../../../packages/media/src/environment'
 
 export type SegmentUploadClient = {
   begin: (
@@ -24,10 +25,11 @@ export function segmentUploadClient(client: ConvexReactClient): SegmentUploadCli
   }
 }
 
-export const segmentMediaEnabled =
-  process.env.EXPO_PUBLIC_SEGMENT_MEDIA === '1' &&
-  process.env.EXPO_PUBLIC_APP_ENV === 'internal' &&
-  process.env.EXPO_PUBLIC_CONVEX_URL === 'https://lovely-malamute-525.convex.cloud'
+export const segmentMediaEnabled = mediaClientEnabled(
+  process.env.EXPO_PUBLIC_APP_ENV,
+  process.env.EXPO_PUBLIC_CONVEX_URL,
+  process.env.EXPO_PUBLIC_SEGMENT_MEDIA,
+)
 const root = `${FileSystem.documentDirectory}segment-uploads/`
 export const segmentDirectory = (localId: string) =>
   `${FileSystem.documentDirectory}segments/${localId}/`

@@ -170,15 +170,19 @@ describe('internal recording lifecycle', () => {
     await t.run((ctx) => ctx.db.delete(record.recordId))
     await expect(receipt(-1, 0)).rejects.toThrow()
   })
-  it('enforces the camp duration cap and rejects production execution', async () => {
+  it('enforces duration caps and requires separate production enablement', async () => {
     const { receipt, owner, args } = await setup()
     await receipt(-1, 0)
     await receipt(0, 6)
     await expect(receipt(1, 6)).rejects.toThrow()
     vi.stubEnv('CONVEX_CLOUD_URL', 'https://ideal-akita-27.convex.cloud')
     await expect(owner.mutation(api.segmentMedia.begin, args)).rejects.toThrow(
-      'Internal media is disabled',
+      'Segment media is disabled',
     )
+    vi.stubEnv('SEGMENT_MEDIA_ENABLED', '1')
+    await expect(owner.mutation(api.segmentMedia.begin, args)).resolves.toMatchObject({
+      recordingId: expect.any(String),
+    })
   })
 })
 
