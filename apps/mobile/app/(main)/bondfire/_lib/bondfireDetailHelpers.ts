@@ -8,7 +8,7 @@ export const SCRUB_SEEK_THROTTLE_MS = 100
 export const REACTION_PLAYBACK_WINDOW_MS = 150
 export const REACTION_THROTTLE_MS = 5000
 // Processing normally completes within a couple of minutes; past this it is
-// likely stuck (missed Mux webhook) and worth a telemetry warning.
+// likely stalled and worth a telemetry warning.
 export const STUCK_PROCESSING_TELEMETRY_THRESHOLD_MS = 5 * 60 * 1000
 
 export type PublicUser = {
@@ -53,6 +53,7 @@ export type BondfireVideoItem = {
   isMainVideo: boolean
   responseIndex?: number
   isLive: boolean
+  isSegmented?: boolean
   createdAt: number
   watchedByViewer: boolean
   durationMs?: number
@@ -134,6 +135,7 @@ export function buildBondfireVideoItems(
       isLive:
         bondfireData.videoStatus === 'live' &&
         !!(bondfireData.muxLivePlaybackId || bondfireData.segmentRecordingId),
+      isSegmented: !!bondfireData.segmentRecordingId,
       createdAt: bondfireData._creationTime,
       watchedByViewer: bondfireData.watchedByViewer ?? false,
       durationMs: bondfireData.durationMs,
@@ -152,6 +154,7 @@ export function buildBondfireVideoItems(
       responseIndex: index + 1,
       isLive:
         video.videoStatus === 'live' && !!(video.muxLivePlaybackId || video.segmentRecordingId),
+      isSegmented: !!video.segmentRecordingId,
       createdAt: video._creationTime,
       watchedByViewer: video.watchedByViewer ?? false,
       durationMs: video.durationMs,

@@ -376,8 +376,14 @@ export class TelemetryLogger {
     this._origConsoleWarn = console.warn.bind(console)
 
     try {
+      const version = Constants.expoConfig?.version ?? Constants.nativeAppVersion
+      const build =
+        Constants.nativeBuildVersion ??
+        (Platform.OS === 'android'
+          ? Constants.expoConfig?.android?.versionCode
+          : Constants.expoConfig?.ios?.buildNumber)
       this.appVersion = optionalBoundedString(
-        Constants.expoConfig?.version ?? Constants.nativeAppVersion,
+        version && build ? `${version} (${build})` : version,
         CLIENT_APP_VERSION_MAX_BYTES,
       )
     } catch {

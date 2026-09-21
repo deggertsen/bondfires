@@ -5,7 +5,13 @@ import type { SegmentUploadClient } from '../lib/media/segmentUploads'
 const state = vi.hoisted(() => ({
   files: new Map<string, string>(),
   failSegment: false,
+  hangSegment: false,
+  cancel: vi.fn(async () => {}),
+  warn: vi.fn(),
   uploaded: [] as string[],
+}))
+vi.mock('../../../packages/app/src/services/telemetry', () => ({
+  telemetry: { warn: state.warn, info: vi.fn() },
 }))
 vi.mock('expo-file-system/legacy', () => ({
   documentDirectory: 'file:///documents/',
@@ -39,10 +45,14 @@ vi.mock('expo-file-system/legacy', () => ({
     for (const key of state.files.keys())
       if (key === path || key.startsWith(path + '/')) state.files.delete(key)
   }),
-  uploadAsync: vi.fn(async (_url: string, path: string) => {
-    state.uploaded.push(path.split('/').pop() ?? '')
-    return { status: state.failSegment && path.endsWith('.m4s') ? 503 : 204 }
-  }),
+  createUploadTask: vi.fn((_url: string, path: string) => ({
+    cancelAsync: state.cancel,
+    uploadAsync: async () => {
+      state.uploaded.push(path.split('/').pop() ?? '')
+      if (state.hangSegment && path.endsWith('.m4s')) return new Promise(() => {})
+      return { status: state.failSegment && path.endsWith('.m4s') ? 503 : 204 }
+    },
+  })),
 }))
 const id = '00000000-0000-4000-8000-000000000001'
 const root = 'file:///documents/segment-uploads/'
@@ -68,11 +78,16 @@ beforeEach(() => {
   state.files.clear()
   state.uploaded = []
   state.failSegment = false
+  state.hangSegment = false
+  vi.clearAllMocks()
   vi.stubEnv('EXPO_PUBLIC_SEGMENT_MEDIA', '1')
   vi.stubEnv('EXPO_PUBLIC_APP_ENV', 'internal')
   vi.stubEnv('EXPO_PUBLIC_CONVEX_URL', 'https://lovely-malamute-525.convex.cloud')
 })
-afterEach(() => vi.unstubAllEnvs())
+afterEach(() => {
+  vi.unstubAllEnvs()
+  vi.useRealTimers()
+})
 describe('durable segment upload recovery', () => {
   it('keeps media after a failed upload and resumes at the unacknowledged segment', async () => {
     const queue = await import('../lib/media/segmentUploads')
@@ -146,4 +161,78 @@ it('does not activate a shared draft for an empty failed capture', async () => {
   await queue.runSegmentUploads(convex, 'owner')
   expect(convex.begin).not.toHaveBeenCalled()
   expect(state.uploaded).toEqual([])
+})
+
+function seedCapture(count = 1) {
+  state.files.set(dir + 'init.mp4', 'init')
+  for (let i = 0; i < count; i++)
+    state.files.set(dir + `segment-${String(i).padStart(6, '0')}.m4s`, 'media')
+  state.files.set(dir + 'finished.json', JSON.stringify({ segmentCount: count }))
+}
+
+it('announces the final count before uploading the tail, but retains it until acknowledged', async () => {
+  const queue = await import('../lib/media/segmentUploads')
+  const convex = client()
+  queue.setSegmentUploadOwner('owner')
+  await queue.prepareSegmentJob('owner', { localId: id, isResponse: false })
+  seedCapture(5)
+  convex.finish.mockImplementation(async () => {
+    expect(state.files.has(dir + 'segment-000004.m4s')).toBe(true)
+    return { complete: false }
+  })
+  await queue.runSegmentUploads(convex, 'owner')
+  expect(convex.finish).toHaveBeenCalledWith({ recordingId: 'recording1', segmentCount: 5 })
+  expect(state.uploaded).toHaveLength(4) // init + three fragments per pass
+  expect(state.files.has(root + id + '.json')).toBe(true)
+  convex.finish.mockResolvedValue({ complete: true })
+  await queue.runSegmentUploads(convex, 'owner')
+  expect(state.uploaded).toHaveLength(6)
+  expect(state.files.has(root + id + '.json')).toBe(false)
+})
+
+it('cancels a hung PUT, retains the media, and allows the next pass to resume', async () => {
+  vi.useFakeTimers()
+  const queue = await import('../lib/media/segmentUploads')
+  const convex = client()
+  queue.setSegmentUploadOwner('owner')
+  await queue.prepareSegmentJob('owner', { localId: id, isResponse: false })
+  seedCapture()
+  state.hangSegment = true
+  const pass = queue.runSegmentUploads(convex, 'owner')
+  await vi.advanceTimersByTimeAsync(120_001)
+  await pass
+  expect(state.cancel).toHaveBeenCalledOnce()
+  expect(state.files.has(root + id + '.json')).toBe(true)
+  expect(queue.segmentUploadError(id)).toBeTruthy()
+  expect(queue.segmentUploadError('another-recording')).toBeNull()
+  expect(state.warn).toHaveBeenCalledWith(
+    'segment:upload:paused',
+    expect.any(String),
+    expect.objectContaining({ stage: 'upload', code: 'timeout', nextIndex: 0 }),
+  )
+  state.hangSegment = false
+  await queue.runSegmentUploads(convex, 'owner')
+  expect(state.uploaded).toEqual(['init.mp4', 'segment-000000.m4s', 'segment-000000.m4s'])
+  expect(state.files.has(root + id + '.json')).toBe(false)
+  expect(queue.segmentUploadError(id)).toBeNull()
+})
+
+it('retries a lost finish acknowledgement without exposing network credentials in telemetry', async () => {
+  vi.useFakeTimers()
+  const queue = await import('../lib/media/segmentUploads')
+  const convex = client()
+  queue.setSegmentUploadOwner('owner')
+  await queue.prepareSegmentJob('owner', { localId: id, isResponse: false })
+  seedCapture()
+  convex.finish.mockImplementationOnce(() => new Promise(() => {}))
+  const pass = queue.runSegmentUploads(convex, 'owner')
+  await vi.advanceTimersByTimeAsync(30_001)
+  await pass
+  expect(state.files.has(root + id + '.json')).toBe(true)
+  convex.capability.mockRejectedValueOnce(new Error('https://media.test?token=secret'))
+  await vi.advanceTimersByTimeAsync(60_000)
+  await queue.runSegmentUploads(convex, 'owner')
+  expect(JSON.stringify(state.warn.mock.calls)).not.toContain('secret')
+  await queue.runSegmentUploads(convex, 'owner')
+  expect(state.files.has(root + id + '.json')).toBe(false)
 })

@@ -55,6 +55,7 @@ import {
   shouldLoadVideoSource,
   shouldOwnPlaybackSession,
   shouldPauseAfterPictureInPictureStop,
+  suppressOwnerReplay,
   syncReactionPlaybackAfterSeek,
 } from '../_lib/videoPlayerState'
 import { createStallWatchdog, reloadVideoAtPosition } from '../_lib/videoStallRecovery'
@@ -117,6 +118,7 @@ export interface VideoPlayerProps {
   isMainVideo: boolean
   responseIndex?: number
   isLive?: boolean
+  isSegmented?: boolean
   onRespondAfterPlayback?: () => void
 }
 
@@ -140,6 +142,7 @@ export function VideoPlayer({
   isMainVideo,
   responseIndex,
   isLive = false,
+  isSegmented = false,
   onRespondAfterPlayback,
 }: VideoPlayerProps) {
   const videoId = bondfireId || bondfireVideoId || ''
@@ -148,7 +151,11 @@ export function VideoPlayer({
   const playbackQuality = useValue(appStore$.preferences.playbackQuality) ?? 720
   const playbackSpeed = useValue(appStore$.preferences.playbackSpeed)
   const currentUserId = useValue(appStore$.userId)
-  const shouldSuppressPlayback = isLive && currentUserId === videoOwnerId
+  const shouldSuppressPlayback = suppressOwnerReplay(
+    isLive,
+    isSegmented,
+    currentUserId === videoOwnerId,
+  )
   const videoReactionKey = isMainVideo
     ? `bondfire:${bondfireId ?? ''}`
     : `response:${bondfireVideoId ?? ''}`
@@ -1346,14 +1353,14 @@ export function VideoPlayer({
           borderRadius={16}
         >
           <Text color={'$color'} fontWeight="900" fontSize={13}>
-            LIVE
+            PROCESSING
           </Text>
         </YStack>
         <Text color={'$color'} fontSize={22} fontWeight="900">
-          You are live
+          Your video is processing
         </Text>
         <Text color={'$placeholderColor'} fontSize={14}>
-          Your replay will appear here after Mux finishes saving it.
+          Your video will appear here when it is ready.
         </Text>
       </YStack>
     )
@@ -1392,9 +1399,17 @@ export function VideoPlayer({
         }}
       />
 
-      <LoadingOverlay state$={state$} currentUrl={currentUrl} />
+      <LoadingOverlay
+        state$={state$}
+        currentUrl={currentUrl}
+        isProcessing={isLive && isSegmented}
+      />
 
-      <PlaybackErrorOverlay state$={state$} onRetry={retryPlayback} />
+      <PlaybackErrorOverlay
+        state$={state$}
+        onRetry={retryPlayback}
+        isProcessing={isLive && isSegmented}
+      />
 
       <ReactionPresenceLayer
         state$={state$}
@@ -1426,7 +1441,7 @@ export function VideoPlayer({
             borderRadius={16}
           >
             <Text color={'$color'} fontSize={12} fontWeight="900">
-              LIVE
+              {isSegmented ? 'PROCESSING' : 'LIVE'}
             </Text>
           </YStack>
         </YStack>

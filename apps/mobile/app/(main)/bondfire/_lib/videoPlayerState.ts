@@ -117,3 +117,8 @@ export function syncReactionPlaybackAfterSeek({
   state$.triggeredReactionIds.set(triggeredReactionIds)
   clearActiveReactions(state$)
 }
+
+/** Segmented EVENT playlists are playable by everyone, including their creator. */
+export function suppressOwnerReplay(isLive: boolean, isSegmented: boolean, isOwner: boolean) {
+  return isLive && !isSegmented && isOwner
+}

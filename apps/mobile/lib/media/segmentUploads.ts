@@ -3,6 +3,7 @@ import type { FunctionArgs, FunctionReturnType } from 'convex/server'
 import * as FileSystem from 'expo-file-system/legacy'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
+import { telemetry } from '../../../../packages/app/src/services/telemetry'
 
 export type SegmentUploadClient = {
   begin: (
@@ -44,9 +45,38 @@ let uploadOwner: string | null = null
 export function setSegmentUploadOwner(userId: string | null) {
   uploadOwner = userId
 }
-let lastError: string | null = null
-export function segmentUploadError() {
-  return lastError
+const failures = new Map<string, { message: string; reportedAt: number }>()
+export function segmentUploadError(localId: string) {
+  return failures.get(localId)?.message ?? null
+}
+class UploadFailure extends Error {
+  constructor(
+    readonly code: string,
+    readonly status?: number,
+  ) {
+    super('Video upload paused; it will retry automatically.')
+  }
+}
+/** Convex mutations and immutable PUTs are idempotent, including after a lost acknowledgement. */
+async function bounded<T>(operation: Promise<T>, ms = 30_000, cancel?: () => Promise<void>) {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new UploadFailure('timeout'))
+          // A stuck native cancellation must not hold the queue either.
+          if (cancel)
+            void Promise.resolve()
+              .then(cancel)
+              .catch(() => {})
+        }, ms)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
 }
 async function save(job: Job) {
   await FileSystem.makeDirectoryAsync(root, { intermediates: true })
@@ -89,19 +119,21 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
     const names = new Set(
       (await FileSystem.readDirectoryAsync(root)).map((name) => name.replace(/\.tmp$/, '')),
     )
-    let failure: string | null = null
     const ordered = [...names].sort(
       (a, b) => Number(active.has(b.slice(0, 36))) - Number(active.has(a.slice(0, 36))),
     )
     for (const name of ordered) {
+      let job: Job | undefined
+      let stage = 'journal'
       try {
         if (!/^[a-f0-9-]{36}\.json$/.test(name)) continue
         // Expo iOS removes the destination before renaming. If killed between
         // those operations, the completed temporary journal is the recovery copy.
         const committed = await FileSystem.getInfoAsync(`${root}${name}`)
-        const job: Job = JSON.parse(
+        job = JSON.parse(
           await FileSystem.readAsStringAsync(`${root}${name}${committed.exists ? '' : '.tmp'}`),
         )
+        if (!job) continue
         if (uploadOwner !== userId) return
         if (job.userId !== userId) continue
         const dir = segmentDirectory(job.args.localId)
@@ -110,15 +142,30 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
         // an actual fragment is durable; failed empty captures can be retried.
         if (!(await FileSystem.getInfoAsync(`${dir}segment-000000.m4s`)).exists) continue
         if (!job.recordingId) {
-          const created = await client.begin(job.args)
+          stage = 'begin'
+          const created = await bounded(client.begin(job.args))
           job.recordingId = created.recordingId
           job.recordId = created.recordId
           await save(job)
         }
-        let grant = await client.capability({
-          recordingId: job.recordingId,
-          operation: 'upload',
-        })
+        const marker = await FileSystem.getInfoAsync(`${dir}finished.json`)
+        let finalCount: number | undefined
+        if (marker.exists) {
+          finalCount = JSON.parse(await FileSystem.readAsStringAsync(marker.uri)).segmentCount
+          if (!Number.isSafeInteger(finalCount) || !finalCount || finalCount < 1)
+            throw new UploadFailure('invalid_finish_marker')
+          // Tell the server capture ended even if the tail is still uploading.
+          // Never remove local files until every PUT and finalization is acknowledged.
+          stage = 'finish'
+          await bounded(client.finish({ recordingId: job.recordingId, segmentCount: finalCount }))
+        }
+        stage = 'capability'
+        let grant = await bounded(
+          client.capability({
+            recordingId: job.recordingId,
+            operation: 'upload',
+          }),
+        )
         // Sequential immutable uploads make every published playlist a contiguous prefix.
         let uploadedThisPass = 0
         while (uploadOwner === userId && uploadedThisPass < 4) {
@@ -128,12 +175,18 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
               : `segment-${String(job.nextIndex).padStart(6, '0')}.m4s`
           const info = await FileSystem.getInfoAsync(`${dir}${filename}`)
           if (!info.exists) break
-          if (grant.expiresAt < Date.now() + 60_000)
-            grant = await client.capability({
-              recordingId: job.recordingId,
-              operation: 'upload',
-            })
-          const result = await FileSystem.uploadAsync(
+          if (grant.expiresAt < Date.now() + 60_000) {
+            stage = 'capability'
+            grant = await bounded(
+              client.capability({
+                recordingId: job.recordingId,
+                operation: 'upload',
+              }),
+            )
+          }
+          if (uploadOwner !== userId) return
+          stage = 'upload'
+          const task = FileSystem.createUploadTask(
             `${grant.baseUrl}/${filename}`,
             `${dir}${filename}`,
             {
@@ -143,18 +196,15 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
               sessionType: FileSystem.FileSystemSessionType.FOREGROUND,
             },
           )
-          if (result.status !== 204)
-            throw new Error(`Video upload paused (${result.status}); it will retry automatically.`)
+          const result = await bounded(task.uploadAsync(), 120_000, () => task.cancelAsync())
+          if (result?.status !== 204) throw new UploadFailure('http', result?.status)
           uploadedThisPass += 1
           job.nextIndex += 1
           await save(job)
         }
         if (uploadOwner !== userId) return
-        const marker = await FileSystem.getInfoAsync(`${dir}finished.json`)
-        let finalCount: number | undefined
-        if (marker.exists)
-          finalCount = JSON.parse(await FileSystem.readAsStringAsync(marker.uri)).segmentCount
-        else if (
+        if (
+          !marker.exists &&
           !active.has(job.args.localId) &&
           job.nextIndex > 0 &&
           !(
@@ -167,27 +217,50 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
           finalCount = job.nextIndex
         }
         if (finalCount && job.nextIndex === finalCount) {
-          const result = await client.finish({
-            recordingId: job.recordingId,
-            segmentCount: finalCount,
-          })
+          stage = 'finish'
+          const result = await bounded(
+            client.finish({
+              recordingId: job.recordingId,
+              segmentCount: finalCount,
+            }),
+          )
           if (result.complete) {
+            telemetry.info('segment:upload:complete', 'Video upload completed', {
+              localId: job.args.localId,
+              recordingId: job.recordingId,
+              segmentCount: finalCount,
+            })
             await FileSystem.deleteAsync(`${root}${name}`, { idempotent: true })
             await FileSystem.deleteAsync(`${root}${name}.tmp`, { idempotent: true })
             await FileSystem.deleteAsync(dir, { idempotent: true })
           }
         }
+        failures.delete(job.args.localId)
       } catch (error) {
-        failure =
-          error instanceof Error
-            ? error.message
-            : 'Video upload paused; it will retry automatically.'
+        if (uploadOwner !== userId) return
+        const localId = job?.args.localId ?? name.slice(0, 36)
+        const previous = failures.get(localId)
+        const now = Date.now()
+        if (!previous || now - previous.reportedAt >= 60_000) {
+          // Native/network errors may contain signed URLs. Log only controlled
+          // codes and identifiers, never the raw exception, token or response body.
+          telemetry.warn('segment:upload:paused', 'Video upload will retry', {
+            localId,
+            recordingId: job?.recordingId,
+            stage,
+            nextIndex: job?.nextIndex,
+            code: error instanceof UploadFailure ? error.code : 'operation_failed',
+            status: error instanceof UploadFailure ? error.status : undefined,
+          })
+          failures.set(localId, {
+            message: 'Video upload paused; it will retry automatically.',
+            reportedAt: now,
+          })
+        }
       }
     }
-    lastError = failure
-  } catch (error) {
-    lastError =
-      error instanceof Error ? error.message : 'Video upload paused; it will retry automatically.'
+  } catch {
+    telemetry.warn('segment:queue:failed', 'Could not read the video upload queue')
   } finally {
     running = false
   }

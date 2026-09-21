@@ -128,7 +128,7 @@ export function SegmentRecordScreen({
         setElapsed(seconds)
         if (seconds >= durationLimit.current) void stopRef.current()
       }
-      const uploadError = segmentUploadError()
+      const uploadError = segmentUploadError(localId.current)
       if (uploadError) setError(uploadError)
     }, 250)
     const state = AppState.addEventListener('change', (value) => {

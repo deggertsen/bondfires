@@ -21,9 +21,11 @@ import { shouldShowRespondCTA, type VideoPlayerState$ } from '../_lib/videoPlaye
 export function LoadingOverlay({
   state$,
   currentUrl,
+  isProcessing = false,
 }: {
   state$: VideoPlayerState$
   currentUrl: string | null
+  isProcessing?: boolean
 }) {
   const isLoading = useValue(state$.isLoading)
   if (!isLoading || !currentUrl) return null
@@ -42,6 +44,11 @@ export function LoadingOverlay({
       pointerEvents="none"
     >
       <Spinner size="large" color={'$primary'} />
+      {isProcessing && (
+        <Text color={OVERLAY_COLORS.textPrimary} marginTop="$3">
+          Video still processing…
+        </Text>
+      )}
     </YStack>
   )
 }
@@ -49,9 +56,11 @@ export function LoadingOverlay({
 export function PlaybackErrorOverlay({
   state$,
   onRetry,
+  isProcessing = false,
 }: {
   state$: VideoPlayerState$
   onRetry: () => void
+  isProcessing?: boolean
 }) {
   const hasError = useValue(state$.hasError)
   if (!hasError) return null
@@ -71,7 +80,9 @@ export function PlaybackErrorOverlay({
       paddingHorizontal={32}
     >
       <Text color={OVERLAY_COLORS.textPrimary} fontSize={15} textAlign="center">
-        This video couldn't be played. Check your connection and try again.
+        {isProcessing
+          ? 'The rest of this video is still uploading. Try again in a moment.'
+          : "This video couldn't be played. Check your connection and try again."}
       </Text>
       <Button size="$3" icon={RotateCcw} onPress={onRetry}>
         Try Again

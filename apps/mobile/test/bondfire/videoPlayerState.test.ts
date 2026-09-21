@@ -5,6 +5,7 @@ import {
   shouldOwnPlaybackSession,
   shouldPauseAfterPictureInPictureStop,
   shouldShowRespondCTA,
+  suppressOwnerReplay,
   syncReactionPlaybackAfterSeek,
   type VideoPlayerState,
 } from '../../app/(main)/bondfire/_lib/videoPlayerState'
@@ -136,4 +137,19 @@ describe('videoPlayerState', () => {
     expect(shouldShowRespondCTA({ hasEnded: true, isPlaying: true, isLoading: false })).toBe(false)
     expect(shouldShowRespondCTA({ hasEnded: true, isPlaying: false, isLoading: true })).toBe(false)
   })
+})
+
+it('allows a creator to watch a growing segmented playlist while preserving legacy replay gating', () => {
+  expect(suppressOwnerReplay(true, true, true)).toBe(false)
+  expect(suppressOwnerReplay(true, false, true)).toBe(true)
+  expect(suppressOwnerReplay(true, false, false)).toBe(false)
+  expect(suppressOwnerReplay(false, false, true)).toBe(false)
+  expect(
+    shouldLoadVideoSource({
+      videoUrl: 'https://media.test/index.m3u8',
+      isActive: true,
+      isScreenFocused: true,
+      shouldSuppressPlayback: suppressOwnerReplay(true, true, true),
+    }),
+  ).toBe(true)
 })
