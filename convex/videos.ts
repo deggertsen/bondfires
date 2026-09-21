@@ -244,6 +244,7 @@ function getMuxConfig() {
     liveLatencyMode: readLiveLatencyMode(process.env.MUX_LIVE_LATENCY_MODE),
     videoQuality: process.env.MUX_VIDEO_QUALITY ?? 'basic',
     uploadCorsOrigin: process.env.MUX_UPLOAD_CORS_ORIGIN ?? '*',
+    normalizeAudio: readMuxBoolean(process.env.MUX_NORMALIZE_AUDIO, true),
     reconnectSlateUrl:
       readMuxSlateUrl(process.env.MUX_LIVE_RECONNECT_SLATE_URL) ?? DEFAULT_MUX_RECONNECT_SLATE_URL,
     reconnectWindowSeconds: readMuxSeconds(
@@ -290,6 +291,19 @@ function readPlaybackPolicy(value: string | undefined): PlaybackPolicy {
 
 function getConfiguredPlaybackPolicy(): PlaybackPolicy {
   return readPlaybackPolicy(process.env.MUX_PLAYBACK_POLICY)
+}
+
+function readMuxBoolean(value: string | undefined, defaultValue: boolean): boolean {
+  switch (value?.trim().toLowerCase()) {
+    case 'true':
+    case '1':
+      return true
+    case 'false':
+    case '0':
+      return false
+    default:
+      return defaultValue
+  }
 }
 
 function readLiveLatencyMode(value: string | undefined): LiveLatencyMode {
@@ -1819,6 +1833,9 @@ export const createMuxDirectUpload = action({
       new_asset_settings: {
         playback_policies: [playbackPolicy],
         video_quality: config.videoQuality,
+        // Mux normalizes on-demand assets to -24 LUFS. This does not cover
+        // assets produced by live ingest; see docs/audio-levels-investigation.md.
+        normalize_audio: config.normalizeAudio,
         // Auto-generated captions: viewers get CC, and the track.ready webhook
         // feeds the transcript → summary/tags pipeline in ai.ts. Included in
         // standard Mux encoding charges. Live recordings can't request this at
@@ -2949,6 +2966,9 @@ export const createLiveBackupDirectUpload = action({
       new_asset_settings: {
         playback_policies: [prepared.playbackPolicy],
         video_quality: config.videoQuality,
+        // Live-backup recovery re-ingests the on-device file through this
+        // direct-upload path, where Mux does honor normalization.
+        normalize_audio: config.normalizeAudio,
         inputs: [{ generated_subtitles: [GENERATED_SUBTITLES_SETTINGS] }],
         passthrough: JSON.stringify({
           userId,

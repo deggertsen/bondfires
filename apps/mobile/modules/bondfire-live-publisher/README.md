@@ -99,10 +99,9 @@ iOS routes headset mics through the shared `AVAudioSession`
 connected Bluetooth inputs and falls back through wired and built-in inputs
 when a device disconnects. Teardown clears the preferred input and deactivates
 the recording session so playback can resume on the current system output.
-Android requires explicit routing: StreamPack's
-default audio source is `CAMCORDER`, which is pinned to the built-in camcorder
-mics and ignores connected headsets. At streamer creation the module picks a
-route from the connected input devices:
+Android uses `VOICE_COMMUNICATION` instead of StreamPack's default `CAMCORDER`
+to support the module's headset routing policy. At streamer creation the module
+picks a route from the connected input devices:
 
 | Route | Audio source | Extra routing |
 |---|---|---|
@@ -110,14 +109,36 @@ route from the connected input devices:
 | Bluetooth (LE audio or SCO) | `VOICE_COMMUNICATION` | `setCommunicationDevice` (API 31+) / legacy SCO |
 | None connected | `VOICE_COMMUNICATION` (built-in) | none |
 
+#### Android mic source experiment
+
+The built-in-mic source is overridable per session via the `audioSource`
+start/preview option (JS `EXPO_PUBLIC_LIVE_AUDIO_SOURCE`, default
+`voice_communication`). Accepted values are MediaRecorder source names:
+`voice_communication`, `camcorder`, `mic`, `voice_recognition`. Unknown values
+fall back to `voice_communication`.
+
+This is a capture comparison, not an automatic loudness fix. Android chooses
+physical inputs, gain, and preprocessing through device-specific audio policy;
+`CAMCORDER`/`MIC` do not guarantee that AGC or noise suppression is disabled.
+The override applies only when no headset is connected at capture start, so
+headsets retain our existing `VOICE_COMMUNICATION` routing policy. Sessions
+using a non-default source skip the app's mid-session Bluetooth reroute callback;
+keep headsets disconnected during those A/B recordings.
+
+The resolved source reaches `live:stats_sample.audioSource` via `getStats()`;
+it is absent on iOS and older native builds. It identifies the configured
+AudioSource, not the physical mic or measured gain. `audioRoute` is the route
+selected by the app; it does not verify OS-driven route changes in experiments.
+Native changes require rebuilding the app, and Expo flag changes require a new
+JS bundle. Attaching RTMP to existing local capture preserves its source.
+
 The Bluetooth claim and prior `AudioManager` mode are restored in
 `cleanupStreamer`. The chosen route is
-reported as `audioRoute` in `getStats()` payloads, so `live:stats_sample`
-telemetry shows which mic a session recorded from. An `AudioDeviceCallback`
-handles both Bluetooth connects and routed-device disconnects without
-rebuilding the capture pipeline. On either platform, `audioRoute` updates to
-the selected `bluetooth`, `wired`, or `builtin` input so later stats samples
-stay truthful.
+reported as `audioRoute` in `getStats()` payloads. For the default Android
+source, an `AudioDeviceCallback` handles Bluetooth connects and routed-device
+disconnects without rebuilding capture. Route selection updates the
+`bluetooth`, `wired`, or `builtin` label for later stats samples; verify actual
+microphone use on devices as part of audio QA.
 
 ### Error events (`error`)
 
