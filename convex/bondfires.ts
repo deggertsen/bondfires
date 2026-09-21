@@ -383,10 +383,14 @@ export const get = query({
 })
 
 /** Get a bondfire with its camp context for permission checks. */
+// Route IDs can outlive an environment switch or come from an invalid shared link.
+// Normalize before reading so the client can use its unavailable/recovery screen.
 export const getWithCampContext = query({
-  args: { id: v.id('bondfires') },
+  args: { id: v.string() },
   handler: async (ctx, args) => {
-    const bondfire = await ctx.db.get(args.id)
+    const id = ctx.db.normalizeId('bondfires', args.id)
+    if (!id) return null
+    const bondfire = await ctx.db.get(id)
     if (!bondfire || !isDetailVisibleVideoRecord(bondfire)) {
       return null
     }
@@ -458,9 +462,11 @@ export const getForNotification = internalQuery({
 
 // Get a bondfire with all its response videos
 export const getWithVideos = query({
-  args: { bondfireId: v.id('bondfires') },
+  args: { bondfireId: v.string() },
   handler: async (ctx, args) => {
-    const bondfire = await ctx.db.get(args.bondfireId)
+    const bondfireId = ctx.db.normalizeId('bondfires', args.bondfireId)
+    if (!bondfireId) return null
+    const bondfire = await ctx.db.get(bondfireId)
     if (!bondfire || !isDetailVisibleVideoRecord(bondfire)) {
       return null
     }
@@ -479,7 +485,7 @@ export const getWithVideos = query({
 
     const videos = await ctx.db
       .query('bondfireVideos')
-      .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
+      .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfireId))
       .order('asc')
       .collect()
 
@@ -548,9 +554,11 @@ export const getWithVideos = query({
  * show "isn't available".
  */
 export const getUnavailableReason = query({
-  args: { bondfireId: v.id('bondfires') },
+  args: { bondfireId: v.string() },
   handler: async (ctx, args) => {
-    const bondfire = await ctx.db.get(args.bondfireId)
+    const bondfireId = ctx.db.normalizeId('bondfires', args.bondfireId)
+    if (!bondfireId) return { reason: 'invalid_link' as const, videoStatus: undefined }
+    const bondfire = await ctx.db.get(bondfireId)
     if (!bondfire) {
       return { reason: 'deleted' as const, videoStatus: undefined }
     }
