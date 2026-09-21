@@ -127,7 +127,9 @@ async function verifyFile(importId, name, bytes) {
     headers: { ...headers, 'x-content-sha256': sha256, 'Content-Length': String(bytes.length) },
     body: bytes,
   })
-  const copy = Buffer.from(await (await request(url, { headers })).arrayBuffer())
+  const copy = await retry(async () =>
+    Buffer.from(await (await request(url, { headers })).arrayBuffer()),
+  )
   if (hash(copy) !== sha256) throw Error('R2 checksum mismatch')
   return { sha256, size: bytes.length }
 }
@@ -310,10 +312,20 @@ async function migrate(row) {
   } finally {
     await f.close()
   }
-  for (const name of readdirSync(out)
-    .filter((n) => n !== 'verified.json')
-    .sort())
-    files[name] = await verifyFile(importId, name, await readFile(resolve(out, name)))
+  const names = readdirSync(out)
+    .filter((name) => name !== 'verified.json')
+    .sort()
+  // Await each bounded batch even on failure; filename order keeps manifests deterministic.
+  for (let start = 0; start < names.length; start += 4) {
+    const batch = names.slice(start, start + 4)
+    const outcomes = await Promise.allSettled(
+      batch.map(async (name) => verifyFile(importId, name, await readFile(resolve(out, name)))),
+    )
+    for (const [index, result] of outcomes.entries()) {
+      if (result.status === 'rejected') throw result.reason
+      files[batch[index]] = result.value
+    }
+  }
   const verification = JSON.parse(readFileSync(resolve(out, 'verified.json')))
   const manifest = {
     version: 1,
