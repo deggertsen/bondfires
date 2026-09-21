@@ -48,6 +48,16 @@ http.route({
     try {
       const body = JSON.parse(text)
       const claims = await verifyCapability(body.token, process.env.MEDIA_TOKEN_SECRET ?? '')
+      if (body.operation === 'readImport' && claims.operation === 'read') {
+        return Response.json(
+          await ctx.runQuery(internal.mediaImports.authorize, {
+            importId: claims.recordingId as import('./_generated/dataModel').Id<'mediaImports'>,
+            userId: claims.userId
+              ? (claims.userId as import('./_generated/dataModel').Id<'users'>)
+              : undefined,
+          }),
+        )
+      }
       // Convex validators validate IDs and numeric metadata at the internal boundary.
       const recordingId =
         claims.recordingId as import('./_generated/dataModel').Id<'segmentRecordings'>

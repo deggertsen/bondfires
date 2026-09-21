@@ -1222,6 +1222,16 @@ export default defineSchema({
   })
     .index('by_owner_local', ['userId', 'localId'])
     .index('by_updated', ['updatedAt']),
+  mediaImports: defineTable({
+    recordId: v.union(v.id('bondfires'), v.id('bondfireVideos')),
+    muxAssetId: v.string(),
+    muxPlaybackId: v.string(),
+    status: v.union(v.literal('staging'), v.literal('ready'), v.literal('rollback')),
+    manifestChecksum: v.optional(v.string()),
+    duration: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('by_record', ['recordId']),
   mediaSegments: defineTable({
     recordingId: v.id('segmentRecordings'),
     index: v.number(),
