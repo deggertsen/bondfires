@@ -1,3 +1,4 @@
+import { putImmutable } from '../../../packages/media/src/immutableStorage'
 import {
   equalSecret,
   MAX_SEGMENT_BYTES,
@@ -41,12 +42,19 @@ export async function importRequest(
     ).join('')
     if (request.headers.get('x-content-sha256') !== digest)
       return new Response('Checksum mismatch', { status: 400 })
-    const result = await env.VIDEO.put(key, bytes, {
-      onlyIf: { etagDoesNotMatch: '*' },
-      customMetadata: { checksum: digest },
-    })
-    if (!result && (await env.VIDEO.head(key))?.customMetadata?.checksum !== digest)
-      return new Response('Immutable object conflict', { status: 409 })
+    const stored = await putImmutable(
+      digest,
+      async () => {
+        const object = await env.VIDEO.head(key)
+        return object ? (object.customMetadata?.checksum ?? '') : null
+      },
+      () =>
+        env.VIDEO.put(key, bytes, {
+          onlyIf: { etagDoesNotMatch: '*' },
+          customMetadata: { checksum: digest },
+        }),
+    )
+    if (!stored) return new Response('Immutable object conflict', { status: 409 })
     return new Response(null, { status: 204, headers: { 'x-content-sha256': digest } })
   }
   if (!['GET', 'HEAD'].includes(request.method)) return new Response('Forbidden', { status: 403 })

@@ -213,6 +213,7 @@
       "patterns": [
         "scripts/release.sh",
         "scripts/release-evidence.mjs",
+        "scripts/migrate-mux-r2.mjs",
         "scripts/mobile-release-preflight.mjs",
         "scripts/refresh-ios-provisioning-profile.sh",
         "RELEASE_PROCESS.md"

@@ -52,7 +52,9 @@ async function request(url, options = {}) {
     const r = await fetch(url, { ...options, signal: AbortSignal.timeout(120000) })
     if (!r.ok) {
       await r.body?.cancel()
-      throw Error(`HTTP ${r.status}`)
+      throw Error(
+        `HTTP ${r.status} ${options.method ?? 'GET'} ${new URL(url).pathname.split('/').pop()}`,
+      )
     }
     return r
   })
@@ -82,9 +84,9 @@ async function command(command, args, cwd) {
     )
   })
 }
-function signedMux(playbackId, audience) {
+function signedMux(playbackId, audience, options = {}) {
   const enc = (x) => Buffer.from(JSON.stringify(x)).toString('base64url')
-  const data = `${enc({ alg: 'RS256', typ: 'JWT', kid: secrets.MUX_SIGNING_KEY_ID })}.${enc({ sub: playbackId, aud: audience, exp: Math.floor(Date.now() / 1000) + 43200 })}`
+  const data = `${enc({ alg: 'RS256', typ: 'JWT', kid: secrets.MUX_SIGNING_KEY_ID })}.${enc({ sub: playbackId, aud: audience, ...options, exp: Math.floor(Date.now() / 1000) + 43200 })}`
   const key = secrets.MUX_SIGNING_PRIVATE_KEY.includes('BEGIN')
     ? secrets.MUX_SIGNING_PRIVATE_KEY
     : Buffer.from(secrets.MUX_SIGNING_PRIVATE_KEY, 'base64').toString()
@@ -266,7 +268,7 @@ async function migrate(row) {
   }
   const token = signedMux(row.muxPlaybackId, 'v'),
     imageToken = signedMux(row.muxPlaybackId, 't'),
-    previewToken = signedMux(row.muxPlaybackId, 'g')
+    previewToken = signedMux(row.muxPlaybackId, 'g', { width: 320, fps: 5, start: 0, end: 3 })
   const caption = a.tracks.find(
     (t) => t.type === 'text' && t.text_type === 'subtitles' && t.status === 'ready',
   )
@@ -281,8 +283,10 @@ async function migrate(row) {
     `https://image.mux.com/${row.muxPlaybackId}/thumbnail.jpg?token=${imageToken}`,
     resolve(out, 'thumbnail.jpg'),
   )
+  const previewPath = resolve(out, 'preview.gif')
+  if (existsSync(previewPath) && statSync(previewPath).size > 8 * 1024 * 1024) await rm(previewPath)
   await download(
-    `https://image.mux.com/${row.muxPlaybackId}/animated.gif?token=${previewToken}&width=320&fps=5&end=3`,
+    `https://image.mux.com/${row.muxPlaybackId}/animated.gif?token=${previewToken}`,
     resolve(out, 'preview.gif'),
   )
   const files = {},
@@ -340,11 +344,18 @@ async function migrate(row) {
   return { id: row._id, status: 'migrated', seconds: verification.duration, bytes: offset }
 }
 const rows = JSON.parse(readFileSync(resolve(dir, 'inventory.json'))).slice(0, limit)
+let stopping = false
+process.on('SIGTERM', () => {
+  stopping = true
+})
+process.on('SIGINT', () => {
+  stopping = true
+})
 let cursor = 0
 const results = []
 await Promise.all(
   Array.from({ length: concurrency }, async () => {
-    while (cursor < rows.length) {
+    while (cursor < rows.length && !stopping) {
       const row = rows[cursor++]
       try {
         const r = await migrate(row)
@@ -370,3 +381,5 @@ console.info(
   }),
 )
 if (results.some((r) => r.status === 'failed')) process.exitCode = 1
+
+if (stopping) process.exitCode = 130
