@@ -11,8 +11,7 @@ import {
 } from '@bondfires/app'
 import { Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { useMutation, useQueries, useQuery } from 'convex/react'
-import type { FunctionReturnType } from 'convex/server'
+import { useMutation, useQuery } from 'convex/react'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { LinearGradient } from 'expo-linear-gradient'
 import {
@@ -38,6 +37,7 @@ import type { Id } from '../../../../../../convex/_generated/dataModel'
 import { playbackSize } from '../../../../../../packages/app/src/utils/playbackQualityPolicy'
 import type { ActiveReaction } from '../../../../components/ViewerPresenceStack'
 import { VIDEO_OVERLAY_COLORS as OVERLAY_COLORS } from '../../../../components/videoOverlayColors'
+import { useOptionalQuery } from '../../../../lib/media/useOptionalQuery'
 import {
   REACTION_PLAYBACK_WINDOW_MS,
   REACTION_THROTTLE_MS,
@@ -178,35 +178,18 @@ export function VideoPlayer({
   const currentUser = useQuery(api.users.current, shouldHandleVodReactions ? {} : 'skip')
   // Reactions are optional decoration. A failed subscription must never
   // replace the video screen with the route's error boundary.
-  const reactionArgs: Record<string, string> | undefined = isMainVideo
-    ? bondfireId
-      ? { bondfireId }
-      : undefined
-    : bondfireVideoId
-      ? { bondfireVideoId }
-      : undefined
-  const reactionQueries = useQueries({
-    ...(isPaid && shouldHandleVodReactions
-      ? { recent: { query: api.videoReactions.getRecentEmojis, args: {} } }
-      : {}),
-    ...(shouldHandleVodReactions && reactionArgs
-      ? {
-          reactions: {
-            query: api.videoReactions.getReactions,
-            args: reactionArgs,
-          },
-        }
-      : {}),
-  })
-  const recentError = reactionQueries.recent instanceof Error ? reactionQueries.recent : null
-  const reactionsError =
-    reactionQueries.reactions instanceof Error ? reactionQueries.reactions : null
-  const recentEmojis = (recentError ? undefined : reactionQueries.recent) as
-    | FunctionReturnType<typeof api.videoReactions.getRecentEmojis>
-    | undefined
-  const reactionsData = (reactionsError ? undefined : reactionQueries.reactions) as
-    | FunctionReturnType<typeof api.videoReactions.getReactions>
-    | undefined
+  const { data: recentEmojis, error: recentError } = useOptionalQuery(
+    api.videoReactions.getRecentEmojis,
+    isPaid && shouldHandleVodReactions ? {} : 'skip',
+  )
+  const { data: reactionsData, error: reactionsError } = useOptionalQuery(
+    api.videoReactions.getReactions,
+    shouldHandleVodReactions && (isMainVideo ? bondfireId : bondfireVideoId)
+      ? isMainVideo
+        ? { bondfireId }
+        : { bondfireVideoId }
+      : 'skip',
+  )
   useEffect(() => {
     if (recentError || reactionsError) {
       telemetry.error('video:reactions:query', 'Unable to load video reactions', {

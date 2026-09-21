@@ -1,8 +1,8 @@
 import { telemetry, usePresence } from '@bondfires/app'
 import { Spinner, Text } from '@bondfires/ui'
 import { Flame, X } from '@tamagui/lucide-icons'
-import { useConvex, useQueries } from 'convex/react'
-import type { FunctionArgs, FunctionReturnType } from 'convex/server'
+import { useConvex } from 'convex/react'
+import type { FunctionArgs } from 'convex/server'
 import * as Crypto from 'expo-crypto'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -20,6 +20,7 @@ import {
   segmentUploadClient,
   segmentUploadError,
 } from '../../lib/media/segmentUploads'
+import { useOptionalQuery } from '../../lib/media/useOptionalQuery'
 import { BondfireLivePublisher, LivePublisherView } from '../../modules/bondfire-live-publisher'
 import { CompletionScreen } from '../CompletionScreen'
 import { InviteSheet } from '../InviteSheet'
@@ -59,11 +60,11 @@ export function SegmentRecordScreen({
   const [elapsed, setElapsed] = useState(0)
   const localId = useRef(Crypto.randomUUID().toLowerCase())
   // This subscription follows the uploader; recording never waits on it.
-  const metadata = useQueries({
-    recording: { query: api.segmentMedia.getOwnRecording, args: { localId: localId.current } },
-  }).recording as FunctionReturnType<typeof api.segmentMedia.getOwnRecording> | Error | undefined
-  const destination = metadata instanceof Error ? undefined : metadata
-  const metadataError = metadata instanceof Error ? metadata.message : undefined
+  const { data: destination, error: destinationError } = useOptionalQuery(
+    api.segmentMedia.getOwnRecording,
+    { localId: localId.current },
+  )
+  const metadataError = destinationError?.message
   useEffect(() => {
     if (metadataError) telemetry.error('segment:destination:failed', metadataError)
   }, [metadataError])
