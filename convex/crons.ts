@@ -200,4 +200,11 @@ crons.daily(
   internal.sendNotification.sendReclaimWarnings,
 )
 
+crons.daily(
+  'cleanup imported media',
+  { hourUTC: 16, minuteUTC: 30 },
+  internal.mediaImports.cleanup,
+  {},
+)
+
 export default crons

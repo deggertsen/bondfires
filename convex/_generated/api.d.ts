@@ -68,6 +68,7 @@ import type * as lib_videoLifecycle from "../lib/videoLifecycle.js";
 import type * as lib_videoReactions from "../lib/videoReactions.js";
 import type * as liveSessionProgress from "../liveSessionProgress.js";
 import type * as liveSessions from "../liveSessions.js";
+import type * as mediaImports from "../mediaImports.js";
 import type * as moderation from "../moderation.js";
 import type * as notifications from "../notifications.js";
 import type * as oauthCredentials from "../oauthCredentials.js";
@@ -162,6 +163,7 @@ declare const fullApi: ApiFromModules<{
   "lib/videoReactions": typeof lib_videoReactions;
   liveSessionProgress: typeof liveSessionProgress;
   liveSessions: typeof liveSessions;
+  mediaImports: typeof mediaImports;
   moderation: typeof moderation;
   notifications: typeof notifications;
   oauthCredentials: typeof oauthCredentials;

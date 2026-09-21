@@ -58,6 +58,7 @@ import {
 import { shouldReapLiveSession } from './lib/liveSessionStaleness'
 import { canResumeUnrecordedDraft, isPlayableVideoRecord } from './lib/videoLifecycle'
 import { assessLiveSessionProgress } from './liveSessionProgress'
+import { importedUrls } from './mediaImports'
 import {
   assertCanRespondToPersonalBondfire,
   getPersonalCampForOwner,
@@ -3698,6 +3699,8 @@ type VideoUrlRequest = {
 // track) adds a captionsUrl to the result; captions are cosmetic, so the
 // fallback paths simply omit it.
 async function resolvePlaybackUrls(ctx: ActionCtx, args: VideoUrlRequest, captionTrackId?: string) {
+  const imported = await importedUrls(ctx, args)
+  if (imported) return imported
   let playbackPolicy = args.muxPlaybackPolicy ?? 'public'
   try {
     if (args.bondfireId || args.bondfireVideoId || playbackPolicy === 'signed') {
@@ -3851,6 +3854,8 @@ const thumbnailUrlRequestArgs = {
 type ThumbnailUrlRequest = VideoUrlRequest
 
 async function resolveThumbnailUrl(ctx: ActionCtx, args: ThumbnailUrlRequest) {
+  const imported = await importedUrls(ctx, args)
+  if (imported) return imported
   let playbackPolicy = args.muxPlaybackPolicy ?? 'public'
   // Thumbnail URLs are cosmetic — don't throw on access validation failures.
   // If the bondfire/camp is gone or the user lost access, fall back to a

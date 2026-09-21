@@ -15,6 +15,7 @@ import {
   SEGMENT_NAME,
   verifyCapability,
 } from '../../../packages/media/src/protocol'
+import { importRequest } from './imports'
 import { mediaResponse } from './mediaResponse'
 
 async function readBounded(request: Request): Promise<Uint8Array> {
@@ -92,6 +93,8 @@ export default {
         version: 1,
       })
     try {
+      if (new URL(request.url).pathname.startsWith('/imports/'))
+        return await importRequest(request, env)
       const deletion = /^\/v1\/([a-z0-9]+)$/.exec(url.pathname)
       if (deletion && request.method === 'DELETE') {
         if (
