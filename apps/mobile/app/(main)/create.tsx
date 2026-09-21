@@ -83,6 +83,7 @@ export default function CreateScreen() {
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions()
   const [micPermission, requestMicPermission] = useMicrophonePermissions()
+  const requestingPermissions = useRef(false)
 
   // Subscription gating for Spark/create actions
   const { canCreate, showPaywall } = useSubscription()
@@ -365,17 +366,23 @@ export default function CreateScreen() {
   }, [liveCompletionMissingRecord, isPersonalCamp, isFocused])
 
   const requestPermissions = useCallback(async () => {
-    if (!cameraPermission?.granted) {
-      await requestCameraPermission()
-    }
-    if (!micPermission?.granted) {
-      await requestMicPermission()
+    // Wait for the permission reads before requesting. Re-requesting already
+    // granted permissions can briefly background Android's warmed camera.
+    if (!cameraPermission || !micPermission || requestingPermissions.current) return
+    requestingPermissions.current = true
+    try {
+      if (!cameraPermission.granted) await requestCameraPermission()
+      if (!micPermission.granted) await requestMicPermission()
+    } finally {
+      requestingPermissions.current = false
     }
   }, [cameraPermission, micPermission, requestCameraPermission, requestMicPermission])
 
   useEffect(() => {
-    requestPermissions()
-  }, [requestPermissions])
+    if (cameraPermission?.status === 'undetermined' || micPermission?.status === 'undetermined') {
+      void requestPermissions()
+    }
+  }, [cameraPermission?.status, micPermission?.status, requestPermissions])
 
   // Track camera permission state changes for live path
   useEffect(() => {

@@ -58,6 +58,8 @@ export function SegmentRecordScreen({
   >('warming')
   const [error, setError] = useState<string | null>(null)
   const [elapsed, setElapsed] = useState(0)
+  const durationLimit = useRef(maxDuration)
+  durationLimit.current = maxDuration
   const localId = useRef(Crypto.randomUUID().toLowerCase())
   // This subscription follows the uploader; recording never waits on it.
   const { data: destination, error: destinationError } = useOptionalQuery(
@@ -110,7 +112,7 @@ export function SegmentRecordScreen({
         }
         await prepareSegmentJob(userId, { ...initialOptions.current, localId: localId.current })
         await BondfireLivePublisher.startSegmentPreview({ initialCamera: 'front' })
-        if (mounted.current) setPhase('ready')
+        if (mounted.current && !interrupted.current) setPhase('ready')
       } catch (e) {
         if (mounted.current) {
           reportError('preview', e)
@@ -122,7 +124,7 @@ export function SegmentRecordScreen({
       if (recording.current) {
         const seconds = (Date.now() - started.current) / 1000
         setElapsed(seconds)
-        if (seconds >= maxDuration) void stopRef.current()
+        if (seconds >= durationLimit.current) void stopRef.current()
       }
       const uploadError = segmentUploadError()
       if (uploadError) setError(uploadError)
@@ -131,11 +133,15 @@ export function SegmentRecordScreen({
       // Stop deliberately on background/interruption, preserving complete media.
       interrupted.current = value !== 'active'
       if (value !== 'active') {
+        if (!hasRecorded.current) setPhase('warming')
         void (async () => {
           await pending.current.catch(() => {})
+          if (!mounted.current) return
           await stopRef.current()
           await enqueue(async () => {
-            await BondfireLivePublisher.stop()
+            // A quick permission-sheet/background round trip may already have
+            // queued the next preview. Never tear it down from a stale event.
+            if (mounted.current && interrupted.current) await BondfireLivePublisher.stop()
           })
         })().catch((e) => {
           if (mounted.current) reportError('background', e)
@@ -143,8 +149,9 @@ export function SegmentRecordScreen({
       } else if (!hasRecorded.current) {
         setPhase('warming')
         void enqueue(async () => {
+          if (!mounted.current || interrupted.current || hasRecorded.current) return
           await BondfireLivePublisher.startSegmentPreview({ initialCamera: 'front' })
-          if (mounted.current) setPhase('ready')
+          if (mounted.current && !interrupted.current) setPhase('ready')
         }).catch((e) => {
           if (mounted.current) {
             reportError('resume', e)
@@ -181,7 +188,7 @@ export function SegmentRecordScreen({
       }).catch(() => {})
       void deactivateKeepAwake('segment-recording')
     }
-  }, [client, enqueue, maxDuration, reportError, userId])
+  }, [client, enqueue, reportError, userId])
   async function start() {
     if (busy.current || phase !== 'ready') return
     busy.current = true
