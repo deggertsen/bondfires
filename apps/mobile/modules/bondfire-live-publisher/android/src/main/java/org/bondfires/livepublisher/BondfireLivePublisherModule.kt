@@ -1313,7 +1313,6 @@ class BondfireLivePublisherModule : Module() {
    */
   private suspend fun detachPreviewBestEffort() {
     val view = previewView ?: return
-    if (streamer == null) return
     val detached = withTimeoutOrNull(PREVIEW_DETACH_TIMEOUT_MS) {
       try {
         view.setVideoSourceProvider(null)
@@ -1504,6 +1503,13 @@ class BondfireLivePublisherModule : Module() {
     // without this, a late emission after isStoppingIntentionally resets
     // would surface as a bogus error/drop on the next session.
     claimed.second.forEach { it.cancel() }
+
+    // PreviewView retains its own source reference. Detach while that source
+    // is still alive: releasing it first cancels its coroutine scope, so the
+    // next bind tries to stop a dead source and fails with JobCancellationException.
+    // This also prevents window visibility changes from restarting a released
+    // camera when the user returns from the background.
+    detachPreviewBestEffort()
 
     // Unregister the proactive network callback — the streamer is being torn
     // down, so we no longer need to watch for network swaps.
