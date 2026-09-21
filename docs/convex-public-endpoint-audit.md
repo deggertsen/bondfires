@@ -67,3 +67,11 @@ checked. Invite codes are bearer capabilities but redemption is authenticated.
 
 - `storeBilling.billingHealth`: authenticated admin only; bounded, redacted operational counters.
 - `storeBillingActions.prepareStorePurchase`: authenticated, non-deleting account; creates only a server-generated store binding, never an entitlement.
+
+### Social registration
+
+| Endpoint | Access and validation |
+| --- | --- |
+| `registration.providers` | Public; returns configured-provider booleans only, never credentials. |
+| `registration.status` | Authenticated account owner, including pending registration; excludes deleting users and returns only registration fields. |
+| `registration.complete` | Authenticated owner of a pending account; validates name, gender, minimum age and explicit versioned legal acceptance. Atomic, one-time completion; retries cannot change DOB. |

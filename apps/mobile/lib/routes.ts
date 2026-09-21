@@ -31,6 +31,14 @@ export const routes = {
   // --- Auth ---
   onboarding: '/(auth)/onboarding',
   signup: '/(auth)/signup',
+  signupWithRedirect: (redirectTo?: string): Href => ({
+    pathname: '/(auth)/signup',
+    params: { redirectTo },
+  }),
+  completeProfile: (redirectTo?: string): Href => ({
+    pathname: '/(auth)/complete-profile',
+    params: { redirectTo },
+  }),
   forgotPassword: '/(auth)/forgot-password',
 
   login: (redirectTo?: string): Href =>
