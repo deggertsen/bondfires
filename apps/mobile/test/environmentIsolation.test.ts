@@ -54,3 +54,22 @@ describe('mobile environment ownership', () => {
     ).toBe(true)
   })
 })
+
+it('pins internal store builds to the isolated backend', () => {
+  expect(resolveAppEnvironment({ EAS_BUILD_PROFILE: 'internal' })).toBe('internal')
+  expect(() =>
+    validateConvexEnvironment({ appEnvironment: 'internal', convexUrl: PRODUCTION_CONVEX_URL }),
+  ).toThrow()
+  expect(() =>
+    validateConvexEnvironment({
+      appEnvironment: 'internal',
+      convexUrl: 'https://another-test.convex.cloud',
+    }),
+  ).toThrow()
+  expect(() =>
+    validateConvexEnvironment({
+      appEnvironment: 'internal',
+      convexUrl: 'https://lovely-malamute-525.convex.cloud',
+    }),
+  ).not.toThrow()
+})

@@ -2,6 +2,7 @@ import { cronJobs } from 'convex/server'
 import { internal } from './_generated/api'
 
 const crons = cronJobs()
+crons.interval('cleanup internal segment media', { minutes: 5 }, internal.segmentMedia.cleanup, {})
 
 // Age-band reads enforce birthday transitions immediately. These bounded,
 // self-paginating sweeps remove stale membership rows and Hearth participants.

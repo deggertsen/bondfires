@@ -6,6 +6,7 @@ import { computeVisibility } from './camps'
 import { isModeratedContentVisible } from './contentSafety'
 import type { SubscriptionTier } from './entitlements'
 import { getEntitlementSubscriptionTier } from './entitlements'
+import { getVideoLifecycle } from './lib/videoLifecycle'
 import { canViewPersonalBondfire } from './personalBondfireAccess'
 import { isEitherUserBlocked } from './userSafety'
 
@@ -232,7 +233,7 @@ export async function isBondfireVisibleToViewer(
     return false
   }
 
-  if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) {
+  if (getVideoLifecycle(bondfire) === 'expired') {
     return false
   }
 

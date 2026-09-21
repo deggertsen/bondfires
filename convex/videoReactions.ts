@@ -12,6 +12,7 @@ import { requireUgcPermission } from './contentSafety'
 import { getEntitlementSubscriptionTier, TIER_RANK } from './entitlements'
 import { throwUserError, withUserFacingErrors } from './errors'
 import { isFreeEmoji, isReactionEmoji } from './lib/emojis'
+import { getVideoLifecycle } from './lib/videoLifecycle'
 import { rankRecentEmojis } from './lib/videoReactions'
 
 type VideoReference =
@@ -25,53 +26,39 @@ function hasExactlyOneVideoReference(args: {
   return !!args.bondfireId !== !!args.bondfireVideoId
 }
 
-function assertVodRecordIsReady(record: Doc<'bondfires'> | Doc<'bondfireVideos'> | null) {
-  if (!record) {
-    throwUserError('Video not found')
-  }
-
-  if (record.expiresAt !== undefined && record.expiresAt <= Date.now()) {
-    throwUserError('Video not found')
-  }
-
-  const status = record.videoStatus ?? 'ready'
-  if (status !== 'ready' || !record.muxPlaybackId) {
-    throwUserError('Reactions are only available for videos on demand')
-  }
+function isVodRecordReady(record: Doc<'bondfires'> | Doc<'bondfireVideos'> | null) {
+  return record !== null && getVideoLifecycle(record) === 'ready'
 }
 
-async function assertVodVideoExists(ctx: MutationCtx | QueryCtx, video: VideoReference) {
+async function getVodVideo(ctx: MutationCtx | QueryCtx, video: VideoReference) {
   if (video.bondfireId !== undefined) {
     const bondfire = await ctx.db.get(video.bondfireId)
-    assertVodRecordIsReady(bondfire)
-    if (!bondfire) throwUserError('Video not found')
-    return { bondfire, response: null }
+    return bondfire && isVodRecordReady(bondfire) ? { bondfire, response: null } : null
   }
-
   const response = await ctx.db.get(video.bondfireVideoId)
-  assertVodRecordIsReady(response)
-  const bondfire = response ? await ctx.db.get(response.bondfireId) : null
-  if (!bondfire) throwUserError('Video not found')
-  return { bondfire, response }
+  if (!response || !isVodRecordReady(response)) return null
+  const bondfire = await ctx.db.get(response.bondfireId)
+  return bondfire ? { bondfire, response } : null
 }
 
-async function requireReactionVisibility(
+async function getReactionViewer(
   ctx: MutationCtx | QueryCtx,
   video: VideoReference,
   userId: Id<'users'> | null,
 ) {
-  const target = await assertVodVideoExists(ctx, video)
+  const target = await getVodVideo(ctx, video)
+  if (!target) return null
   const viewer = await buildViewerVisibilityContext(ctx, userId)
   if (
     !(await isBondfireVisibleToViewer(ctx, target.bondfire, viewer, {
       allowAdminModerationReview: true,
     }))
   ) {
-    throwUserError('Video not found')
+    return null
   }
   if (target.response) {
     if (!(await isUserContentVisibleToViewer(ctx, target.response.userId, viewer))) {
-      throwUserError('Video not found')
+      return null
     }
     if (
       target.response.moderationStatus === 'removed' ||
@@ -79,7 +66,7 @@ async function requireReactionVisibility(
         userId !== target.response.userId &&
         !viewer.isAdmin)
     ) {
-      throwUserError('Video not found')
+      return null
     }
   }
   return viewer
@@ -132,10 +119,11 @@ export const addReaction = mutation({
           }
         }
 
-        const [user] = await Promise.all([
+        const [user, viewer] = await Promise.all([
           ctx.db.get(userId),
-          requireReactionVisibility(ctx, args, userId),
+          getReactionViewer(ctx, args, userId),
         ])
+        if (!viewer) throwUserError('Video is unavailable for reactions')
         if (!user) {
           throw new Error('User not found')
         }
@@ -185,7 +173,10 @@ export const getReactions = query({
     }
 
     const userId = await auth.getUserId(ctx)
-    const viewer = await requireReactionVisibility(ctx, args, userId)
+    const viewer = await getReactionViewer(ctx, args, userId)
+    // Read subscriptions can outlive readiness or authorization. Return no
+    // reactions instead of throwing into the entire video screen. Writes deny.
+    if (!viewer) return []
     if (args.bondfireId) {
       const reactions = await ctx.db
         .query('videoReactions')

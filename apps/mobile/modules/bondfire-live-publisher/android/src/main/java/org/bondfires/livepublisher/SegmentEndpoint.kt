@@ -1,0 +1,212 @@
+package org.bondfires.livepublisher
+
+import android.content.Context
+import android.media.MediaFormat
+import android.net.Uri
+import androidx.media3.common.C
+import androidx.media3.common.Format
+import androidx.media3.muxer.BufferInfo
+import androidx.media3.muxer.FragmentedMp4Muxer
+import io.github.thibaultbee.streampack.core.configuration.mediadescriptor.MediaDescriptor
+import io.github.thibaultbee.streampack.core.elements.data.FrameWithCloseable
+import io.github.thibaultbee.streampack.core.elements.encoders.CodecConfig
+import io.github.thibaultbee.streampack.core.elements.endpoints.IEndpointInternal
+import io.github.thibaultbee.streampack.core.elements.endpoints.IEndpoint
+import io.github.thibaultbee.streampack.core.elements.endpoints.MediaContainerType
+import io.github.thibaultbee.streampack.core.elements.endpoints.MediaSinkType
+import io.github.thibaultbee.streampack.core.streamers.single.SingleStreamer
+import kotlinx.coroutines.flow.first
+import java.io.File
+import java.io.FileOutputStream
+import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import org.json.JSONObject
+
+/** Encodes during preview but discards samples until Record; never persists preroll. */
+class SegmentEndpoint(private val context: Context, private val delegate: IEndpointInternal) : IEndpointInternal by delegate {
+  companion object {
+    // A virtual MP4 sink: no file is opened or preroll persisted during preview.
+    // UriMediaDescriptor("file:///dev/null") fails while inferring its extension.
+    val previewDescriptor = object : MediaDescriptor(
+      MediaDescriptor.Type(MediaContainerType.MP4, MediaSinkType.FILE)
+    ) {
+      override val uri: Uri = Uri.EMPTY
+    }
+  }
+
+  override val info: IEndpoint.IEndpointInfo
+    get() = delegate.getInfo(previewDescriptor.type)
+  override val isOpenFlow = MutableStateFlow(false)
+  override val throwableFlow = MutableStateFlow<Throwable?>(null)
+  private val lock = Mutex()
+  private val ready = CompletableDeferred<Unit>()
+  suspend fun awaitReady() { withTimeout(5000) { ready.await() } }
+  private var nextStream = 0
+  private val formats = mutableMapOf<Int, Format>()
+  private val tracks = mutableMapOf<Int, Int>()
+  private var decodeTimes = mutableMapOf<Int, Long>()
+  private var muxer: FragmentedMp4Muxer? = null
+  private var directory: File? = null
+  private var pendingFile: File? = null
+  private var scanOffset = 0L
+  private var fragmentStart = 0L
+  private var count = 0
+  private var startUs: Long? = null
+  private var maxUs = 0L
+  private var armed = false
+  private var videoStarted = false
+  var requestKeyFrame: () -> Unit = {}
+  private var nextKeyFrameRequestUs = 0L
+
+  override suspend fun open(mediaDescriptor: MediaDescriptor) { isOpenFlow.value = true }
+  override suspend fun addStream(streamConfig: CodecConfig): Int = nextStream++
+  override suspend fun addStreams(streamConfigs: List<CodecConfig>) = streamConfigs.associateWith { addStream(it) }
+  override suspend fun startStream() {}
+  override suspend fun stopStream() { finish() }
+  override suspend fun close() { finish(); isOpenFlow.value = false }
+  override suspend fun release() { close(); delegate.release() }
+
+  suspend fun begin(localId: String, maxDuration: Int) = lock.withLock {
+    require(localId.matches(Regex("[a-f0-9-]{36}")) && maxDuration in 1..3600)
+    check(!armed && muxer == null && formats.size == 2) { "Camera and microphone are warming up" }
+    val folder = File(context.filesDir, "segments/$localId")
+    check(!folder.exists()) { "Recording already exists" }
+    check(folder.mkdirs()) { "Could not create recording directory" }
+    directory = folder
+    val file = File(folder, "capture.partial")
+    pendingFile = file
+    val writer = FragmentedMp4Muxer.Builder(FileOutputStream(file)).setFragmentDurationMs(4000).setSampleCopyingEnabled(true).build()
+    formats.forEach { (id, format) -> tracks[id] = writer.addTrack(format) }
+    decodeTimes.clear()
+    muxer = writer
+    scanOffset = 0; fragmentStart = 0; count = 0; startUs = null
+    maxUs = maxDuration.toLong() * 1_000_000
+    videoStarted = false
+    nextKeyFrameRequestUs = 0L
+    armed = true
+  }
+
+  override suspend fun write(closeableFrame: FrameWithCloseable, streamPid: Int) {
+    try {
+      lock.withLock {
+        val frame = closeableFrame.frame
+        if (!formats.containsKey(streamPid)) formats[streamPid] = mediaFormat(frame.format, frame.extra.orEmpty())
+        if (formats.size == 2) ready.complete(Unit)
+        val writer = muxer ?: return@withLock
+        if (!armed || !frame.rawBuffer.hasRemaining()) return@withLock
+        val isVideo = frame.format.getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true
+        if (startUs == null) startUs = frame.ptsInUs
+        // Preserve audio immediately at Record, including speech before the
+        // requested video keyframe arrives. Both tracks share one origin.
+        val pts = frame.ptsInUs - (startUs ?: return@withLock)
+        if (pts < 0) return@withLock
+        // Codec GOP intervals can count frames at the configured FPS. Under
+        // camera-switch/load stalls that can mean tens of wall-clock seconds
+        // without an IDR, so Media3 cannot close a fragment. Audio keeps this
+        // request cadence alive even while the camera is changing.
+        if (pts >= nextKeyFrameRequestUs) {
+          requestKeyFrame()
+          nextKeyFrameRequestUs = pts + 1_000_000
+        }
+        if (isVideo && !videoStarted) {
+          if (!frame.isKeyFrame) return@withLock
+          videoStarted = true
+        }
+        if (pts >= maxUs) { finishLocked(); return@withLock }
+        val track = tracks[streamPid] ?: error("Missing track")
+        // Media3 returns zero-based track handles but writes one-based MP4 IDs.
+        // Media3 1.8 uses fixed 90kHz video and 48kHz audio MP4 timebases,
+        // independent of the AAC sample rate (see Track.videoUnitTimebase).
+        val timescale = if (isVideo) 90000 else 48000
+        decodeTimes.putIfAbsent(track + 1, pts * timescale / 1_000_000)
+        // AAC frames are independently decodable. MediaCodec does not mark
+        // them as video keyframes; forwarding that flag verbatim makes every
+        // AAC sample non-sync and ExoPlayer discards the entire audio track.
+        val sampleFlags = if (!isVideo || frame.isKeyFrame) C.BUFFER_FLAG_KEY_FRAME else 0
+        writer.writeSampleData(track, frame.rawBuffer.duplicate(), BufferInfo(pts, frame.rawBuffer.remaining(), sampleFlags))
+        exportCompleteBoxes()
+      }
+    } catch (error: Throwable) {
+      throwableFlow.value = error
+      throw error
+    } finally { closeableFrame.close() }
+  }
+
+  suspend fun finish(): Int = lock.withLock { finishLocked() }
+  private fun finishLocked(): Int {
+    val writer = muxer ?: return count
+    armed = false
+    writer.close()
+    muxer = null
+    exportCompleteBoxes()
+    check(count > 0) { "No media was captured" }
+    atomicWrite(File(directory, "finished.json"), JSONObject().put("segmentCount", count).toString().toByteArray())
+    pendingFile?.delete()
+    tracks.clear()
+    return count
+  }
+
+  private fun exportCompleteBoxes() {
+    val file = pendingFile ?: return
+    val folder = directory ?: return
+    RandomAccessFile(file, "r").use { input ->
+      while (input.length() - scanOffset >= 8) {
+        input.seek(scanOffset)
+        val size = input.readInt().toLong() and 0xffffffffL
+        val typeBytes = ByteArray(4); input.readFully(typeBytes)
+        val type = String(typeBytes, Charsets.US_ASCII)
+        check(size >= 8 && size <= 8 * 1024 * 1024) { "Invalid fragment size" }
+        if (scanOffset + size > input.length()) break
+        val end = scanOffset + size
+        if (type == "moov" || type == "mdat") {
+          check(end - fragmentStart <= 8 * 1024 * 1024)
+          val bytes = ByteArray((end - fragmentStart).toInt())
+          input.seek(fragmentStart); input.readFully(bytes)
+          if (type == "moov") {
+            atomicWrite(File(folder, "init.mp4"), HlsFragment.initialization(bytes))
+          } else {
+            val fragment = HlsFragment.convert(bytes, decodeTimes)
+            atomicWrite(File(folder, "segment-%06d.m4s".format(java.util.Locale.US, count)), fragment.bytes)
+            decodeTimes = fragment.nextDecodeTimes.toMutableMap()
+            count++
+          }
+          fragmentStart = end
+        }
+        scanOffset = end
+      }
+    }
+  }
+
+  private fun mediaFormat(format: MediaFormat, extra: List<ByteBuffer>): Format {
+    val mime = requireNotNull(format.getString(MediaFormat.KEY_MIME))
+    val csd = (0..2).mapNotNull { i -> format.getByteBuffer("csd-$i") }.ifEmpty { extra }
+      .map { buffer -> val copy = buffer.duplicate(); ByteArray(copy.remaining()).also { copy.get(it) } }
+    val builder = Format.Builder().setSampleMimeType(mime).setInitializationData(csd)
+    if (mime.startsWith("video/")) builder.setWidth(format.getInteger(MediaFormat.KEY_WIDTH)).setHeight(format.getInteger(MediaFormat.KEY_HEIGHT))
+    else builder.setSampleRate(format.getInteger(MediaFormat.KEY_SAMPLE_RATE)).setChannelCount(format.getInteger(MediaFormat.KEY_CHANNEL_COUNT))
+    return builder.build()
+  }
+
+  private fun atomicWrite(file: File, bytes: ByteArray) {
+    val temp = File(file.parentFile, file.name + ".tmp")
+    FileOutputStream(temp).use { it.write(bytes); it.fd.sync() }
+    check(temp.renameTo(file)) { "Could not commit media fragment" }
+  }
+}
+
+/** The same warm-up path is exercised by the native device regression test. */
+internal suspend fun SingleStreamer.startSegmentPreviewCapture() {
+  val endpoint = endpoint as CaptureTransportEndpoint
+  (endpoint.captureSink as SegmentEndpoint).requestKeyFrame = { videoEncoder?.requestKeyFrame() }
+  endpoint.openCapture(SegmentEndpoint.previewDescriptor)
+  // CombineEndpoint computes its aggregate state asynchronously. Opening the
+  // child alone does not guarantee the pipeline can observe it yet.
+  withTimeout(5000) { endpoint.isOpenFlow.first { it } }
+  startStream()
+  (endpoint.captureSink as SegmentEndpoint).awaitReady()
+}

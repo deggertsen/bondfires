@@ -8014,6 +8014,17 @@ __metadata:
   languageName: node
   linkType: hard
 
+"expo-crypto@npm:~15.0.8":
+  version: 15.0.9
+  resolution: "expo-crypto@npm:15.0.9"
+  dependencies:
+    base64-js: "npm:^1.3.0"
+  peerDependencies:
+    expo: "*"
+  checksum: 10c0/fc0646231a57a4b58554734ead9be0a3bd2829900888926e8af94355fcf06632b846507553534ab8a04b52d268ec5bdb49100002105f91c1aae033384dfc56bc
+  languageName: node
+  linkType: hard
+
 "expo-dev-client@npm:~6.0.21":
   version: 6.0.21
   resolution: "expo-dev-client@npm:6.0.21"
@@ -10767,6 +10778,7 @@ __metadata:
     expo-camera: "npm:^17.0.10"
     expo-clipboard: "npm:~8.0.8"
     expo-constants: "npm:~18.0.14"
+    expo-crypto: "npm:~15.0.8"
     expo-dev-client: "npm:~6.0.21"
     expo-device: "npm:^8.0.10"
     expo-file-system: "npm:~19.0.24"

@@ -11,10 +11,10 @@ import {
   type ViewerVisibilityContext,
 } from './bondfireVisibility'
 import { isModeratedContentVisible } from './contentSafety'
-import { getPlayableVideoPlayback } from './lib/latestResponsePlayback'
 import { canStartMaintenanceRun, isExpectedMaintenancePage } from './lib/maintenanceRuns'
 import { digestSingleBody } from './lib/notificationCopy'
 import { boundedInteger } from './lib/queryBounds'
+import { isPlayableVideoRecord } from './lib/videoLifecycle'
 import { DEFAULT_DIGEST_WINDOW_HOUR, resolveNotificationPrefs } from './notifications'
 import { canViewPersonalBondfire } from './personalBondfireAccess'
 import { retainedVideoExists } from './retentionCleanup'
@@ -285,7 +285,7 @@ export const collectDigestItems = internalQuery({
           continue
         if (!(await isUserContentVisibleToViewer(ctx, video.userId, viewer))) continue
         if (video.expiresAt !== undefined && video.expiresAt <= now) continue
-        if (video.videoStatus !== 'ready' && video.videoStatus !== 'live') continue
+        if (!isPlayableVideoRecord(video)) continue
         if (video.createdAt > newestAllowed || video.createdAt < oldestAllowed) continue
         // The user opened the thread after this video landed — they saw
         // it and chose. Don't nag.
@@ -350,7 +350,7 @@ export const collectDigestItems = internalQuery({
         if (items.length >= MAX_ITEMS) break
         if (bondfire.userId === args.userId) continue
         if (!(await canReceiveBondfireActivity(ctx, args.userId, bondfire, viewer))) continue
-        if (bondfire.videoStatus !== 'ready' && bondfire.videoStatus !== 'live') continue
+        if (!isPlayableVideoRecord(bondfire)) continue
         if (bondfire.createdAt > newestAllowed || bondfire.createdAt < oldestAllowed) continue
         // Only nudge about fires nobody has answered yet — the goal is to
         // surface unanswered camp bondfires, not announce every new one.
@@ -443,7 +443,7 @@ export const collectNudgeItems = internalQuery({
         | Doc<'bondfires'>
         | null
       if (!doc) continue
-      if (!getPlayableVideoPlayback({ ...doc, _id: undefined })) continue
+      if (!isPlayableVideoRecord(doc)) continue
       if (!isModeratedContentVisible(doc.moderationStatus, { isOwner: false, isAdmin: false }))
         continue
       if (!(await isUserContentVisibleToViewer(ctx, doc.userId, viewer))) continue

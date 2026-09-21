@@ -154,6 +154,7 @@ describe('bondfireDetailHelpers', () => {
         isMainVideo: true,
         responseIndex: undefined,
         isLive: true,
+        isSegmented: false,
         createdAt: 1700000000000,
         watchedByViewer: true,
         durationMs: 62_000,
@@ -168,6 +169,7 @@ describe('bondfireDetailHelpers', () => {
         isMainVideo: false,
         responseIndex: 1,
         isLive: false,
+        isSegmented: false,
         createdAt: 1700000060000,
         watchedByViewer: false,
         durationMs: undefined,
@@ -195,4 +197,18 @@ describe('bondfireDetailHelpers', () => {
 
     expect(items.map((item) => item.isLive)).toEqual([false, false])
   })
+})
+
+it('preserves growing playlist semantics and identifies segmented roots and responses', () => {
+  const data = {
+    _id: 'root',
+    videoStatus: 'live',
+    segmentRecordingId: 'main-segments',
+    videos: [{ _id: 'response', videoStatus: 'live', segmentRecordingId: 'response-segments' }],
+  } as unknown as BondfireDetailData
+  const items = buildBondfireVideoItems(data, [{ url: 'root-url' }, { url: 'response-url' }])
+  expect(items.map(({ isLive, isSegmented }) => ({ isLive, isSegmented }))).toEqual([
+    { isLive: true, isSegmented: true },
+    { isLive: true, isSegmented: true },
+  ])
 })

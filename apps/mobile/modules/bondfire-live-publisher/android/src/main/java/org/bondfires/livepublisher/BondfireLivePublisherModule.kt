@@ -279,6 +279,32 @@ class BondfireLivePublisherModule : Module() {
       }
     }
 
+    AsyncFunction("startSegmentPreview") Coroutine { options: LivePublisherPreviewOptions ->
+      cleanupStreamer()
+      currentFacing = options.initialCamera
+      createStreamer(options.fps, options.videoBitrate, options.audioBitrate, segmented = true)
+      val active = streamer ?: throw LivePublisherException("No camera")
+      try {
+        active.startSegmentPreviewCapture()
+      } catch (error: Exception) {
+        Log.e(TAG, "Segment preview failed", error)
+        cleanupStreamer()
+        throw LivePublisherException("Could not prepare camera and microphone: ${error.message ?: error.javaClass.simpleName}")
+      }
+    }
+    AsyncFunction("startSegmentRecording") Coroutine { localId: String, maxDuration: Int ->
+      val active = streamer ?: throw LivePublisherException("No camera")
+      val endpoint = (active.endpoint as? CaptureTransportEndpoint)?.captureSink as? SegmentEndpoint
+        ?: throw LivePublisherException("Segment capture unavailable")
+      endpoint.begin(localId, maxDuration)
+      active.videoEncoder?.requestKeyFrame()
+    }
+    AsyncFunction("stopSegmentRecording") Coroutine { ->
+      val endpoint = (streamer?.endpoint as? CaptureTransportEndpoint)?.captureSink as? SegmentEndpoint
+        ?: throw LivePublisherException("No recording")
+      endpoint.finish()
+    }
+
     AsyncFunction("startPreview") Coroutine { options: LivePublisherPreviewOptions ->
       // Camera preview only — nothing is connected or streamed until start() is called.
       if (streamer != null) {
@@ -448,9 +474,11 @@ class BondfireLivePublisherModule : Module() {
 
     AsyncFunction("swapCamera") Coroutine { ->
       val s = streamer ?: return@Coroutine
-      currentFacing = if (currentFacing == "front") "back" else "front"
-      s.setVideoSource(CameraSourceFactory(findCameraIdForFacing(currentFacing)))
+      val nextFacing = if (currentFacing == "front") "back" else "front"
+      s.setVideoSource(CameraSourceFactory(findCameraIdForFacing(nextFacing)))
+      currentFacing = nextFacing
       previewView?.setVideoSourceProvider(s)
+      s.videoEncoder?.requestKeyFrame()
     }
 
     AsyncFunction("setMuted") Coroutine { muted: Boolean ->
@@ -679,6 +707,7 @@ class BondfireLivePublisherModule : Module() {
     fps: Int,
     videoBitrate: Int,
     audioBitrate: Int,
+    segmented: Boolean = false,
     audioSourceName: String = "voice_communication",
   ) {
     val context = appContext.reactContext
@@ -721,8 +750,9 @@ class BondfireLivePublisherModule : Module() {
     val newStreamer = cameraSingleStreamer(
       context,
       cameraId = cameraId,
-      audioSourceFactory = MicrophoneSourceFactory(audioRouting.audioSource),
-      endpointFactory = CaptureTransportEndpointFactory(),
+      audioSourceFactory = if (segmented) NormalizedMicrophoneSourceFactory(audioRouting.audioSource)
+        else MicrophoneSourceFactory(audioRouting.audioSource),
+      endpointFactory = CaptureTransportEndpointFactory(segmented),
     )
     streamer = newStreamer
 
@@ -1342,7 +1372,6 @@ class BondfireLivePublisherModule : Module() {
    */
   private suspend fun detachPreviewBestEffort() {
     val view = previewView ?: return
-    if (streamer == null) return
     val detached = withTimeoutOrNull(PREVIEW_DETACH_TIMEOUT_MS) {
       try {
         view.setVideoSourceProvider(null)
@@ -1533,6 +1562,13 @@ class BondfireLivePublisherModule : Module() {
     // without this, a late emission after isStoppingIntentionally resets
     // would surface as a bogus error/drop on the next session.
     claimed.second.forEach { it.cancel() }
+
+    // PreviewView retains its own source reference. Detach while that source
+    // is still alive: releasing it first cancels its coroutine scope, so the
+    // next bind tries to stop a dead source and fails with JobCancellationException.
+    // This also prevents window visibility changes from restarting a released
+    // camera when the user returns from the background.
+    detachPreviewBestEffort()
 
     // Unregister the proactive network callback — the streamer is being torn
     // down, so we no longer need to watch for network swaps.

@@ -12,6 +12,7 @@ import {
 import { throwUserError } from './errors'
 import { addInviteBadgesToBondfires, type BondfireBadge } from './inviteBadges'
 import { getPlayableVideoPlayback, type VideoPlaybackReference } from './lib/latestResponsePlayback'
+import { isPlayableVideoRecord } from './lib/videoLifecycle'
 import { assertUsersMayInteract } from './userSafety'
 
 type ThreadParticipant = {
@@ -60,23 +61,6 @@ function clampLimit(limit: number | undefined) {
   return Math.min(Math.max(Math.trunc(limit), 1), MAX_THREAD_LIMIT)
 }
 
-function isPlayableVideoRecord(record: {
-  videoStatus?: string
-  muxPlaybackId?: string
-  muxLivePlaybackId?: string
-  expiresAt?: number
-}) {
-  if (record.expiresAt !== undefined && record.expiresAt <= Date.now()) {
-    return false
-  }
-
-  const status = record.videoStatus ?? 'ready'
-  return (
-    (status === 'ready' && !!record.muxPlaybackId) ||
-    (status === 'live' && !!record.muxLivePlaybackId)
-  )
-}
-
 async function getParticipantMap(
   ctx: QueryCtx,
   bondfire: Doc<'bondfires'>,
@@ -110,8 +94,8 @@ async function getParticipantMap(
     ) {
       continue
     }
+    if (!isPlayableVideoRecord(response)) continue
     const playback = getPlayableVideoPlayback(response)
-    if (!playback) continue
     latestResponsePlayback ??= playback
 
     const current = participants.get(response.userId)

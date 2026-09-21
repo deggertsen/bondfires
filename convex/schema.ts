@@ -635,6 +635,7 @@ export default defineSchema({
         v.literal('awaiting_recovery'),
       ),
     ),
+    segmentRecordingId: v.optional(v.id('segmentRecordings')),
     liveSessionId: v.optional(v.id('liveSessions')),
     muxUploadId: v.optional(v.string()),
     muxCompletionCheckStartedAt: v.optional(v.number()),
@@ -719,6 +720,7 @@ export default defineSchema({
         v.literal('awaiting_recovery'),
       ),
     ),
+    segmentRecordingId: v.optional(v.id('segmentRecordings')),
     liveSessionId: v.optional(v.id('liveSessions')),
     muxUploadId: v.optional(v.string()),
     muxCompletionCheckStartedAt: v.optional(v.number()),
@@ -1204,4 +1206,27 @@ export default defineSchema({
   })
     .index('by_job_external', ['jobId', 'kind', 'externalId'])
     .index('by_job_status', ['jobId', 'status']),
+  segmentRecordings: defineTable({
+    userId: v.id('users'),
+    localId: v.string(),
+    bondfireId: v.optional(v.id('bondfires')),
+    responseId: v.optional(v.id('bondfireVideos')),
+    status: v.union(v.literal('uploading'), v.literal('ready'), v.literal('cancelled')),
+    segmentCount: v.number(),
+    duration: v.number(),
+    maxDuration: v.number(),
+    initChecksum: v.optional(v.string()),
+    finalCount: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_owner_local', ['userId', 'localId'])
+    .index('by_updated', ['updatedAt']),
+  mediaSegments: defineTable({
+    recordingId: v.id('segmentRecordings'),
+    index: v.number(),
+    duration: v.number(),
+    checksum: v.string(),
+    size: v.number(),
+  }).index('by_recording_index', ['recordingId', 'index']),
 })

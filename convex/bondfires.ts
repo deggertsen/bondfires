@@ -28,6 +28,7 @@ import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 import { addInviteBadgesToBondfires } from './inviteBadges'
 import { getLatestResponsePlayback } from './lib/latestResponsePlayback'
 import { boundedInteger, boundedScanSize } from './lib/queryBounds'
+import { getVideoLifecycle, isPlayableVideoRecord } from './lib/videoLifecycle'
 import { incrementProfileViews } from './watchEvents'
 
 type ExpiredPrivateCampVideoCleanupResult = {
@@ -64,25 +65,8 @@ const FEED_PAGE_MAX = 50
 const FEED_VISIBILITY_SCAN_MULTIPLIER = 3
 const FEED_VISIBILITY_SCAN_MAX = 150
 
-// Works for both `bondfires` and `bondfireVideos` rows — they share the
-// status/playback fields this predicate touches. Exported for the
-// videoCountRepair cron, which uses it to decide which rows count.
-export function isPlayableVideoRecord(record: {
-  videoStatus?: string
-  muxPlaybackId?: string
-  muxLivePlaybackId?: string
-  expiresAt?: number
-}) {
-  if (record.expiresAt !== undefined && record.expiresAt <= Date.now()) {
-    return false
-  }
-
-  const status = record.videoStatus ?? 'ready'
-  return (
-    (status === 'ready' && !!record.muxPlaybackId) ||
-    (status === 'live' && !!record.muxLivePlaybackId)
-  )
-}
+// Compatibility export for the counter repair job.
+export { isPlayableVideoRecord } from './lib/videoLifecycle'
 
 // In-flight responses: counted in bondfire.videoCount (live responses count at
 // provisioning, see videos.ts createMuxLiveStream) but not yet playable. The
@@ -109,27 +93,15 @@ function isProcessingVideoRecord(record: {
   return !isPlayableVideoRecord(record)
 }
 
-function isDetailVisibleVideoRecord(record: {
-  videoStatus?: string
-  muxPlaybackId?: string
-  muxLivePlaybackId?: string
-  expiresAt?: number
-}) {
-  if (record.expiresAt !== undefined && record.expiresAt <= Date.now()) {
-    return false
-  }
-
-  const status = record.videoStatus ?? 'ready'
-  if (
-    status === 'pending' ||
-    status === 'processing' ||
-    status === 'errored' ||
-    status === 'awaiting_recovery'
-  ) {
-    return true
-  }
-
-  return isPlayableVideoRecord(record)
+function isDetailVisibleVideoRecord(record: Doc<'bondfires'>) {
+  if (getVideoLifecycle(record) === 'expired') return false
+  // A shared link stays valid through preparation and upload. Audience checks
+  // still run in every public detail query; this never grants feed visibility.
+  return (
+    ['pending', 'waiting_for_upload', 'processing', 'errored', 'awaiting_recovery'].includes(
+      record.videoStatus ?? '',
+    ) || isPlayableVideoRecord(record)
+  )
 }
 
 function toPublicUser(user: Doc<'users'>): PublicUser {
@@ -141,10 +113,12 @@ function toPublicUser(user: Doc<'users'>): PublicUser {
   }
 }
 
-function withLiveFlags<T extends { videoStatus?: string; muxLivePlaybackId?: string }>(
-  record: T,
-): T & { isLive: boolean; livePlaybackId?: string } {
-  const isLive = (record.videoStatus ?? 'ready') === 'live' && !!record.muxLivePlaybackId
+function withLiveFlags<
+  T extends { videoStatus?: string; muxLivePlaybackId?: string; segmentRecordingId?: string },
+>(record: T): T & { isLive: boolean; livePlaybackId?: string } {
+  const isLive =
+    (record.videoStatus ?? 'ready') === 'live' &&
+    !!(record.muxLivePlaybackId || record.segmentRecordingId)
   return {
     ...record,
     isLive,

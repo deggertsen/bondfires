@@ -98,6 +98,15 @@ public class BondfireLivePublisherModule: Module {
 
     // Capture is deliberately separate from RTMP on iOS. The recorder is a
     // MediaMixer output, so it survives Session replacement during reconnects.
+    AsyncFunction("startSegmentRecording") { (localId: String, maxDuration: Int) in
+      let publisher = try await MainActor.run { try self.ensurePublisher() }
+      try await publisher.startSegmentRecording(localId: localId, maxDuration: maxDuration)
+    }
+    AsyncFunction("stopSegmentRecording") { () -> Int in
+      guard let publisher = self.publisher else { throw LivePublisherException(message: "No recording") }
+      return try await publisher.stopSegmentRecording()
+    }
+
     AsyncFunction("startCapture") { (options: LivePublisherStartOptions) in
       let publisher = try await MainActor.run { try self.ensurePublisher() }
       await MainActor.run { BondfireLivePublisherView.current?.attachPreviewIfAvailable() }
@@ -393,6 +402,23 @@ final class LivePublisher {
   }
 
   // useManualCapture: true gives us explicit control over when capture starts
+  private var segmentRecorder: SegmentedRecorder?
+  func startSegmentRecording(localId: String, maxDuration: Int) async throws {
+    guard segmentRecorder == nil else { throw LivePublisherException(message: "Already recording") }
+    guard isCaptureRunning else { throw LivePublisherException(message: "Camera is not ready") }
+    let recorder = try SegmentedRecorder(localId: localId, maxDuration: maxDuration) { [weak self] message in
+      Task { @MainActor in self?.eventHandler(.error("segment_capture_failed", message)) }
+    }
+    segmentRecorder = recorder
+    await mixer.addOutput(recorder)
+  }
+  func stopSegmentRecording() async throws -> Int {
+    guard let recorder = segmentRecorder else { throw LivePublisherException(message: "No recording") }
+    await mixer.removeOutput(recorder)
+    defer { segmentRecorder = nil }
+    return try await recorder.stop()
+  }
+
   private let mixer = MediaMixer(multiCamSessionEnabled: false, useManualCapture: true)
   private var session: (any Session)?
   private var sessionURL: URL?
@@ -1002,6 +1028,7 @@ final class LivePublisher {
     } catch {
       // Best effort close
     }
+    if segmentRecorder != nil { _ = try? await stopSegmentRecording() }
     await mixer.stopRunning()
     do {
       try await mixer.attachAudio(nil)

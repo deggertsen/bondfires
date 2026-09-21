@@ -1,5 +1,7 @@
 import { telemetry } from '@bondfires/app'
+import { useAction } from 'convex/react'
 import { useEffect, useRef } from 'react'
+import { api } from '../../../../../../convex/_generated/api'
 import type { BondfireDetailData } from './bondfireDetailHelpers'
 import {
   buildVideoUrlTargets,
@@ -27,6 +29,7 @@ export function useBondfireVideoUrls({
   getVideoUrlsBatch: GetVideoUrlsBatch
   setVideoUrls: (urls: (VideoPlaybackUrls | null)[]) => void
 }) {
+  const getCapability = useAction(api.segmentMedia.capability)
   // URLs live for the whole screen visit (signed tokens last 12h). Keyed per
   // video identity so a status change on one video (new response, live ending)
   // refetches only that video instead of blanking the whole set mid-playback.
@@ -73,7 +76,30 @@ export function useBondfireVideoUrls({
     if (missing.length === 0) return
 
     for (const entry of missing) inFlightRef.current.add(entry.cacheKey)
-    getVideoUrlsBatch({ items: missing.map((entry) => entry.request) })
+    void (async () => {
+      const legacy = missing.filter(
+        (entry): entry is { cacheKey: string; request: VideoUrlRequest } =>
+          'muxPlaybackId' in entry.request,
+      )
+      const legacyResults = legacy.length
+        ? await getVideoUrlsBatch({ items: legacy.map((entry) => entry.request) })
+        : []
+      return Promise.all(
+        missing.map(async (entry) => {
+          if ('segmentRecordingId' in entry.request) {
+            const grant = await getCapability({
+              recordingId: entry.request.segmentRecordingId,
+              operation: 'read',
+            })
+            return {
+              hdUrl: `${grant.baseUrl}/index.m3u8?token=${encodeURIComponent(grant.token)}`,
+              captionsUrl: undefined,
+            }
+          }
+          return legacyResults[legacy.findIndex((item) => item.cacheKey === entry.cacheKey)]
+        }),
+      )
+    })()
       .then((results) => {
         missing.forEach((entry, index) => {
           const result = results[index]
@@ -100,5 +126,5 @@ export function useBondfireVideoUrls({
       .finally(() => {
         for (const entry of missing) inFlightRef.current.delete(entry.cacheKey)
       })
-  }, [bondfireData, currentVideoIndex, getVideoUrlsBatch, setVideoUrls])
+  }, [bondfireData, currentVideoIndex, getVideoUrlsBatch, getCapability, setVideoUrls])
 }

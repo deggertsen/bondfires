@@ -1,4 +1,4 @@
-import { Spinner, Text } from '@bondfires/ui'
+import { Button, Spinner, Text } from '@bondfires/ui'
 import { ChevronLeft, Flame } from '@tamagui/lucide-icons'
 import { Stack } from 'expo-router'
 import type { Animated as AnimatedType } from 'react-native'
@@ -67,10 +67,18 @@ export function BondfireUnavailableScreen(props: BackProps) {
 export function BondfirePendingScreen({
   bondfireData,
   pendingPulse,
+  isOwner,
+  isUploading,
+  onStartRecording,
+  onDiscard,
   ...props
 }: BackProps & {
   bondfireData: BondfireDetailData
   pendingPulse: AnimatedType.Value
+  isOwner: boolean
+  isUploading?: boolean
+  onStartRecording?: () => void
+  onDiscard?: () => void
 }) {
   const creatorName = bondfireData.creatorName ?? 'Someone'
 
@@ -103,8 +111,21 @@ export function BondfirePendingScreen({
         </YStack>
 
         <Text fontSize={17} color={'$color'} textAlign="center" lineHeight={24}>
-          Waiting for {creatorName} to start recording...
+          {isUploading
+            ? isOwner
+              ? 'Your recording is uploading. Keep the app open to continue.'
+              : 'The first part of the recording will be available here soon.'
+            : isOwner
+              ? 'Your Bondfire is ready for you to record.'
+              : `Waiting for ${creatorName} to start recording...`}
         </Text>
+        {onStartRecording && <Button onPress={onStartRecording}>Start recording</Button>}
+        {onDiscard && <Button onPress={onDiscard}>Discard draft</Button>}
+        {!isOwner && (
+          <Text color="$placeholderColor" textAlign="center">
+            Playback starts here when the video is ready.
+          </Text>
+        )}
       </YStack>
     </StatusShell>
   )

@@ -1,0 +1,191 @@
+# Internal segmented video experiment
+
+The local segmented recorder was validated in the isolated internal store profile. The alpha
+rollout now also enables it in the `production` build profile against the main Convex database.
+See [Alpha rollout and Mux migration](alpha-video-rollout.md) for current deployment and rollback
+instructions. The historical internal rollout below remains useful for isolated development.
+The former TestFlight Alpha group has been renamed Internal.
+
+## Recording and delivery
+
+The camera and microphone warm up before Record. No preroll is persisted. Record attaches
+one continuous H.264/AAC encoder to a local fragmented MP4 writer. Approximately four-second
+segments are committed atomically. Upload starts after capture and never gates the Record button.
+A persisted job binds each recording to its user and destination camp or response. Uploads are
+sequential, retry the same immutable filenames, and resume while the app is open. App backgrounding
+ends capture and finalizes the local recording. An OS-terminated process can recover complete
+fragments; the unfinished final fragment cannot be recovered.
+
+Convex creates normal Bondfire/response rows using existing entitlement, moderation and membership
+checks. A trusted Worker validates bounded MP4 data and records idempotent upload receipts.
+A growing EVENT HLS playlist exposes only the contiguous received prefix. Eight seconds of received
+media makes an ongoing recording watchable. Finalization adds ENDLIST when every declared segment
+is present. The immutable 15-second target duration allows up to 45 seconds of ordinary HLS holdback;
+actual playback startup and live lag need device measurement. Slow uplinks can exceed that delay.
+
+The first implementation uses one 720p H.264 rendition and mono AAC at 128 kbps. It does not yet
+provide adaptive bitrate renditions, generated captions, Mux thumbnails, or server-side loudness
+normalization. Local capture should prevent transport disruption from corrupting recorded audio;
+microphone routing and perceived loudness still require listening tests on real devices.
+
+Android internal capture applies bounded speech gain to mono PCM16 before AAC encoding.
+Quiet speech approaches -22 dBFS RMS with at most 30 dB of gain; healthy inputs remain
+at unity, input below -55 dBFS does not build gain, and a peak limiter retains 1 dB
+of headroom. Gain spans preview, recording, camera changes and segment boundaries.
+This changes new Android recordings only; it is not server-side LUFS normalization
+and cannot recover detail absent from a quiet recording. iOS audio is unchanged.
+Real-device comparisons remain necessary for noise, pumping and headset transitions.
+
+Camera switching is available both before and during recording. The capture queue
+serializes swaps and Stop (including background and duration-limit stops). Switching
+changes the camera input while retaining the audio source, encoder and writer. The
+Android native regression switches front/back/front during a single capture and
+checks encoder identity, both tracks, continuous audio and independently readable
+fragments. iOS retains its existing mixer camera-switch implementation.
+
+Android also requests an IDR once per second of incoming capture time. The codec's
+configured GOP alone can stretch under low frame rates; delayed keyframes let the
+audio accumulating in Media3 produce a fragment beyond the 15-second ingest limit.
+The native test deliberately uses a 30-second encoder GOP at 6 FPS and requires
+short fragments during capture and across both flips. Decode offsets use Media3
+1.8's fixed 48 kHz audio timebase independently of the AAC sample rate.
+
+## Isolated resources
+
+- Convex: `lovely-malamute-525`, named deployment `bondfires:bondfires:internal-video`.
+- Video: private R2 bucket `bondfires-internal-video` in Transcend Systems.
+- Worker: `https://bondfires-internal-media.yooweb.workers.dev`.
+- Store build: EAS profile `internal`, channel `internal`, EAS environment `preview`.
+- No user or video data is copied from production. Testers create internal accounts.
+
+The mobile build validates the registered internal Convex URL. Backend media functions additionally
+check the deployment URL and `INTERNAL_SEGMENT_MEDIA=1`. Worker credentials are independent random
+secrets. Signed playback capabilities last 12 hours; every playlist and segment request also checks
+current authorization. Membership removal, moderation, expiry, account deletion and deleted parent
+records revoke playback without waiting for token expiry. Invocation logs are disabled to avoid
+storing bearer tokens embedded in playlist URLs.
+
+A cleanup job revokes orphaned/expired recordings and deletes their R2 prefixes. It retains a tombstone
+for an hour and deletes again before removing metadata, covering uploads already in flight at
+revocation. Unfinished uploads expire after seven days. Local media is removed after server-confirmed
+completion. iOS excludes the local recording directory from backups.
+
+## Release and rollback
+
+Do **not** use `scripts/release.sh`: it deploys the production backend. Deploy this backend with
+`convex deploy --env-file .env.internal-video.local`; deploy the Worker from `infrastructure/media`.
+Secrets live in ignored local files and deployed secret stores, never source control.
+
+Build and submit with the `internal` profile. Verify TestFlight Beta has no automatic access to the
+new build before upload, and assign the processed build only to Internal. Do not promote the Play
+internal release to another track. Internal currently has automatic access to all TestFlight builds,
+so omit EAS Submit `--groups`: Apple rejects redundant manual assignments to that group. Confirm
+its build list and `internalBuildState` after upload. Rollback is an older store build; internal media stays isolated
+and does not need a production data migration.
+
+## Internal release evidence — 2026-09-20
+
+Version 1.0.88, build 103 was built from `2001c4a` and distributed to both stores.
+The packaged JavaScript on both platforms contains the internal Convex URL and no production URL.
+App Store Connect reports build `817ca30c-fe1d-4e7c-b9e1-6294a1fb41a1` as VALID and
+IN_BETA_TESTING; the Internal group includes 103, while Beta remains on 102. Google Play reports
+internal version code 103 as completed; alpha remains on 102. Later commits update repository
+impact rules and documentation only.
+
+Repository validation passes with 493 tests, and both store builds succeeded. The deployed service
+smoke test verifies ordered uploads, exact retry/conflict handling, private playback, growing and
+finalized playlists, byte ranges, deletion revocation and R2 cleanup. A synthetic capture through
+the actual iOS writer decodes continuously as H.264/AAC with a normalized timeline. These checks
+do not substitute for the device checks below.
+
+## Required device checks
+
+Measure tap-to-first-captured-frame and confirm the first spoken word is retained. Record on iOS and
+Android and play each on the other platform, both while recording and after completion. Test short
+clips, maximum duration, silence, speech, Bluetooth and wired microphones, low storage, incoming
+calls, backgrounding, force quit, airplane mode, Wi-Fi/cellular changes, sign-out during upload,
+retry conflicts, deletion, and camp membership removal. Compare audio loudness and artifacts with
+the prior Mux build. Store distribution is a test release, not evidence these checks passed.
+
+## Android preview regression
+
+Android build 103 rejected preview because a `UriMediaDescriptor` inferred its container type
+from `file:///dev/null`, which has no supported extension. The replacement uses an explicitly
+typed virtual MP4 descriptor, waits for the combined endpoint's open state, and obtains codec
+capabilities without opening a real file. Preview still persists no preroll and opens no transport.
+Empty encoded buffers are discarded, and a video keyframe only marks the track as started after
+its timestamp is accepted. Startup failures release the camera and report their native cause;
+the internal recording UI also sends stage-specific errors to the existing scrubbed telemetry.
+
+Run the native regression with an Android device or emulator attached:
+
+```sh
+cd apps/mobile/android
+./gradlew :bondfire-live-publisher:connectedDebugAndroidTest
+```
+
+It exercises the same warm-up helper as the production bridge, records locally, and checks
+both tracks, initial timestamps, sample continuity, finalization and absence of capture errors.
+An Android 16 emulator recording also decoded without errors with FFmpeg. Physical-device audio
+quality and timing remain part of internal testing.
+
+The Android writer's file-oriented fMP4 output also needs adaptation for HLS: each exported fragment
+now carries `tfdt` decode times and uses moof-relative addressing, and initialization advertises
+ISO6 compatibility. Decode clocks advance from the actual sample durations independently per track,
+including their initial timestamp offsets. This preserves timing when fragments are fetched as
+separate objects. The native test opens each fragment independently; the resulting segments also
+pass the shared upload parser and decode through an HLS playlist with FFmpeg.
+
+
+## Shared-link and recording lifecycle
+
+Audience authorization and playback availability are separate. A share link can
+be claimed before a video exists, using the existing login, invitation, age,
+blocking, and membership checks. It does not make the Bondfire public. Authorized
+invitees keep the same destination throughout these transitions:
+
+| State | Creator | Invited link visitor | Other users' feeds |
+| --- | --- | --- | --- |
+| Awaiting recording (`pending`, draft) | Start recording / discard | Existing waiting screen | Hidden |
+| Uploading (`waiting_for_upload`) | Upload progress / recovery | Waiting for the first playable portion | Hidden |
+| Watchable and growing (`live`) | Recording or upload catch-up | Growing HLS playback | Visible to authorized viewers |
+| Complete (`ready`) | Playback | On-demand playback | Visible to authorized viewers |
+| Failed / revoked | Error state; local media retained | Unavailable/error state | Hidden |
+| Empty draft expired/deleted | Unavailable | Link unavailable | Hidden |
+
+`convex/lib/videoLifecycle.ts` defines these states and the common feed predicate.
+Only ordered, validated upload receipts can advance segmented playback: init plus
+at least eight seconds of media becomes `live`; a finished shorter clip goes
+straight to `ready`. Local Record taps and share-link creation never publish a
+feed item. Convex subscriptions move waiting visitors into playback without
+reopening the link. “Live” means a watchable, potentially growing playlist, which
+can include upload catch-up after capture stops; it is not a camera heartbeat.
+
+The owner resumes the exact draft ID, preserving its title, audience and link.
+Preview failures and init-only captures leave it resumable. The device checks its
+journal for active capture or a durable first fragment before starting again or
+discarding through either draft entry point. Saved fragments go through upload
+recovery, never replacement. On the server, attaching a recording is atomic and
+idempotent by owner/local ID; a second local ID cannot replace the draft's first
+attached recording. Its 24-hour draft cleanup no longer applies after attachment.
+Expiry is also enforced on reads, invite redemption and activation, independently
+of the hourly deletion tick. Notifications are scheduled once on first playback
+availability, not on preparation, and remain subject to delivery deduplication
+and existing audience checks. Explicit pre-recording invitations still work.
+
+After seven days, an interrupted upload with received media finalizes its durable
+contiguous prefix instead of deleting it. Empty abandoned uploads become failed;
+revocation removes playback eligibility before storage cleanup. Revoked responses
+are uncounted. Retention, user deletion and access revocation still take precedence.
+
+The server cannot observe media recorded entirely offline. Until the first
+fragment can attach, the server still sees a draft and its existing 24-hour
+expiry applies. Local files are retained if attachment fails (including expiry or
+another device winning the attachment), but automatic creation of a replacement
+Bondfire is deliberately not attempted: that would silently break a shared link.
+This remains a recovery limitation to exercise in internal testing.
+
+Regression coverage exercises invite redemption before capture, the same detail
+query through upload/live/ready, feed exclusion before playback, short clips,
+repeat receipts/finalization, competing attempts, expiry, revocation, retained
+interrupted prefixes, and saved local journals.

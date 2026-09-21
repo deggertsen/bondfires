@@ -131,8 +131,8 @@ export const listByBondfire = query({
         }
         const status = video.videoStatus ?? 'ready'
         return (
-          (status === 'ready' && video.muxPlaybackId) ||
-          (status === 'live' && video.muxLivePlaybackId)
+          (status === 'ready' && (video.muxPlaybackId || video.segmentRecordingId)) ||
+          (status === 'live' && (video.muxLivePlaybackId || video.segmentRecordingId))
         )
       }),
     )

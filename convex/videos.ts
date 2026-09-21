@@ -56,6 +56,7 @@ import {
   localIngestSource,
 } from './lib/liveIngest'
 import { shouldReapLiveSession } from './lib/liveSessionStaleness'
+import { canResumeUnrecordedDraft, isPlayableVideoRecord } from './lib/videoLifecycle'
 import { assessLiveSessionProgress } from './liveSessionProgress'
 import {
   assertCanRespondToPersonalBondfire,
@@ -671,7 +672,7 @@ async function assertCanCreatePersonalBondfire(
   return personalCamp
 }
 
-async function assertCanViewBondfire(
+export async function assertCanViewBondfire(
   ctx: QueryCtx,
   args: { userId: Id<'users'> | null; bondfire: Doc<'bondfires'> },
 ) {
@@ -685,7 +686,7 @@ async function assertCanViewBondfire(
   }
 }
 
-async function assertCanViewResponse(
+export async function assertCanViewResponse(
   ctx: QueryCtx,
   args: {
     userId: Id<'users'> | null
@@ -1115,23 +1116,6 @@ async function disableMuxLiveStream(liveStreamId: string): Promise<'disabled' | 
   } finally {
     clearTimeout(timer)
   }
-}
-
-function isPlayableVideoRecord(record: {
-  videoStatus?: string
-  muxPlaybackId?: string
-  muxLivePlaybackId?: string
-  expiresAt?: number
-}) {
-  if (record.expiresAt !== undefined && record.expiresAt <= Date.now()) {
-    return false
-  }
-
-  const status = record.videoStatus ?? 'ready'
-  return (
-    (status === 'ready' && !!record.muxPlaybackId) ||
-    (status === 'live' && !!record.muxLivePlaybackId)
-  )
 }
 
 async function findMuxRecordByUpload(ctx: QueryCtx, uploadId: string): Promise<MuxRecord | null> {
@@ -4217,6 +4201,203 @@ export const validatePlaybackAccess = internalQuery({
   },
 })
 
+export type PendingVideoArgs = {
+  userId: Id<'users'>
+  uploadId?: string
+  segmentRecordingId?: Id<'segmentRecordings'>
+  isResponse: boolean
+  bondfireId?: Id<'bondfires'>
+  campId?: Id<'camps'>
+  personalCamp?: boolean
+  tags?: string[]
+  playbackPolicy: PlaybackPolicy
+  durationMs?: number
+  width?: number
+  height?: number
+  draftBondfireId?: Id<'bondfires'>
+}
+export async function createPendingVideoRecord(ctx: MutationCtx, args: PendingVideoArgs) {
+  assertClientMediaMetadataBounds(args)
+  if (!!args.uploadId === !!args.segmentRecordingId)
+    throw new Error('Exactly one media source is required')
+  const mediaFields = args.segmentRecordingId
+    ? { segmentRecordingId: args.segmentRecordingId }
+    : {
+        muxUploadId: args.uploadId,
+        muxPlaybackPolicy: args.playbackPolicy,
+        muxAssetStatus: 'waiting_for_upload',
+      }
+  const now = Date.now()
+  const user = await ctx.db.get(args.userId)
+  if (!user || user.accountDeletionStatus) {
+    throwUserError('This account is being deleted')
+  }
+
+  if (args.isResponse) {
+    if (!args.bondfireId) {
+      throwUserError('A bondfire ID is required when creating a pending response upload')
+    }
+
+    const bondfire = await assertCanRespondToBondfire(ctx, {
+      userId: args.userId,
+      bondfireId: args.bondfireId,
+      durationMs: args.durationMs,
+    })
+    const responseCamp = bondfire.campId ? await ctx.db.get(bondfire.campId) : null
+    if (bondfire.personalCampId && args.playbackPolicy !== 'signed') {
+      throw new Error('Personal fire responses must use signed Mux playback')
+    }
+
+    const existingVideos = await ctx.db
+      .query('bondfireVideos')
+      .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId as Id<'bondfires'>))
+      .collect()
+    const sequenceNumber = existingVideos.length + 1
+    const recordId = await ctx.db.insert('bondfireVideos', {
+      bondfireId: args.bondfireId,
+      userId: args.userId,
+      creatorName: user?.displayName ?? user?.name,
+      moderationStatus: initialModerationStatus(responseCamp, !!bondfire.personalCampId),
+      sequenceNumber,
+      videoStatus: 'waiting_for_upload',
+      ...mediaFields,
+      durationMs: args.durationMs,
+      width: args.width,
+      height: args.height,
+      tags: args.tags,
+      expiresAt: bondfire.expiresAt,
+      createdAt: now,
+    })
+
+    return { recordId, recordType: 'response' as const }
+  }
+
+  // Personal camp bondfire creation
+  if (args.personalCamp) {
+    if (args.playbackPolicy === 'public') {
+      throw new Error('Personal fire videos must use signed playback.')
+    }
+
+    // When a draft bondfire exists (pre-recording invite flow), activate it
+    // instead of creating a new row. Same entitlement gate as fresh creation
+    // — the subscription may have lapsed (or the recording may exceed the
+    // tier's duration limit) since the draft was created.
+    if (args.draftBondfireId) {
+      const draft = await ctx.db.get(args.draftBondfireId)
+      if (!draft) {
+        throwUserError('Draft bondfire not found')
+      }
+      if (draft.userId !== args.userId) {
+        throwUserError('Only the draft owner can activate it.')
+      }
+      if (!canResumeUnrecordedDraft(draft)) {
+        throwUserError('This draft has expired or already has a recording.')
+      }
+      await assertCanCreatePersonalBondfire(ctx, {
+        userId: args.userId,
+        durationMs: args.durationMs,
+      })
+
+      // draftExpiresAt is intentionally kept: it marks the row as draft-born
+      // so cancel/error paths can revert it to 'draft' (see
+      // bondfireFailureCleanup.revertBondfireToDraft). Only `status` gates
+      // the cleanup cron.
+      await ctx.db.patch(args.draftBondfireId, {
+        status: 'live',
+        videoStatus: 'waiting_for_upload',
+        ...mediaFields,
+        durationMs: args.durationMs,
+        width: args.width,
+        height: args.height,
+        tags: args.tags,
+        updatedAt: now,
+      })
+
+      // Drafts don't count toward bondfireCount until they hold a recording.
+      await ctx.db.patch(args.userId, {
+        bondfireCount: (user?.bondfireCount ?? 0) + 1,
+        updatedAt: now,
+      })
+
+      return { recordId: args.draftBondfireId, recordType: 'bondfire' as const }
+    }
+
+    const personalCamp = await assertCanCreatePersonalBondfire(ctx, {
+      userId: args.userId,
+      durationMs: args.durationMs,
+    })
+
+    const recordId = await ctx.db.insert('bondfires', {
+      userId: args.userId,
+      creatorName: user?.displayName ?? user?.name,
+      moderationStatus: 'approved',
+      personalCampId: personalCamp._id,
+      frozen: false,
+      videoStatus: 'waiting_for_upload',
+      ...mediaFields,
+      durationMs: args.durationMs,
+      width: args.width,
+      height: args.height,
+      tags: args.tags,
+      videoCount: 1,
+      viewCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    // Add the owner as a participant.
+    await ctx.db.insert('personalBondfireParticipants', {
+      bondfireId: recordId,
+      userId: args.userId,
+      status: 'active',
+      joinedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    // Update user's bondfire count.
+    await ctx.db.patch(args.userId, {
+      bondfireCount: (user?.bondfireCount ?? 0) + 1,
+      updatedAt: now,
+    })
+
+    return { recordId, recordType: 'bondfire' as const }
+  }
+
+  if (!args.campId) {
+    throwUserError('Choose a camp before sparking a Bondfire')
+  }
+
+  const camp = await assertCanCreateInCamp(ctx, {
+    userId: args.userId,
+    campId: args.campId,
+    durationMs: args.durationMs,
+    tags: args.tags,
+  })
+  const expiresAt = await getPrivateCampExpiresAt(ctx, camp, now)
+
+  const recordId = await ctx.db.insert('bondfires', {
+    userId: args.userId,
+    creatorName: user?.displayName ?? user?.name,
+    moderationStatus: initialModerationStatus(camp, false),
+    campId: args.campId,
+    frozen: false,
+    videoStatus: 'waiting_for_upload',
+    ...mediaFields,
+    durationMs: args.durationMs,
+    width: args.width,
+    height: args.height,
+    tags: args.tags,
+    expiresAt,
+    videoCount: 1,
+    viewCount: 0,
+    createdAt: now,
+    updatedAt: now,
+  })
+
+  return { recordId, recordType: 'bondfire' as const }
+}
+
 export const createPendingMuxVideo = internalMutation({
   args: {
     userId: v.id('users'),
@@ -4232,185 +4413,7 @@ export const createPendingMuxVideo = internalMutation({
     height: v.optional(v.number()),
     draftBondfireId: v.optional(v.id('bondfires')),
   },
-  handler: async (ctx, args) => {
-    const now = Date.now()
-    const user = await ctx.db.get(args.userId)
-    if (!user || user.accountDeletionStatus) {
-      throwUserError('This account is being deleted')
-    }
-
-    if (args.isResponse) {
-      if (!args.bondfireId) {
-        throwUserError('A bondfire ID is required when creating a pending response upload')
-      }
-
-      const bondfire = await assertCanRespondToBondfire(ctx, {
-        userId: args.userId,
-        bondfireId: args.bondfireId,
-        durationMs: args.durationMs,
-      })
-      const responseCamp = bondfire.campId ? await ctx.db.get(bondfire.campId) : null
-      if (bondfire.personalCampId && args.playbackPolicy !== 'signed') {
-        throw new Error('Personal fire responses must use signed Mux playback')
-      }
-
-      const existingVideos = await ctx.db
-        .query('bondfireVideos')
-        .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId as Id<'bondfires'>))
-        .collect()
-      const sequenceNumber = existingVideos.length + 1
-      const recordId = await ctx.db.insert('bondfireVideos', {
-        bondfireId: args.bondfireId,
-        userId: args.userId,
-        creatorName: user?.displayName ?? user?.name,
-        moderationStatus: initialModerationStatus(responseCamp, !!bondfire.personalCampId),
-        sequenceNumber,
-        videoStatus: 'waiting_for_upload',
-        muxUploadId: args.uploadId,
-        muxPlaybackPolicy: args.playbackPolicy,
-        muxAssetStatus: 'waiting_for_upload',
-        durationMs: args.durationMs,
-        width: args.width,
-        height: args.height,
-        tags: args.tags,
-        expiresAt: bondfire.expiresAt,
-        createdAt: now,
-      })
-
-      return { recordId, recordType: 'response' as const }
-    }
-
-    // Personal camp bondfire creation
-    if (args.personalCamp) {
-      if (args.playbackPolicy === 'public') {
-        throw new Error('Personal fire videos must use signed playback.')
-      }
-
-      // When a draft bondfire exists (pre-recording invite flow), activate it
-      // instead of creating a new row. Same entitlement gate as fresh creation
-      // — the subscription may have lapsed (or the recording may exceed the
-      // tier's duration limit) since the draft was created.
-      if (args.draftBondfireId) {
-        const draft = await ctx.db.get(args.draftBondfireId)
-        if (!draft) {
-          throwUserError('Draft bondfire not found')
-        }
-        if (draft.userId !== args.userId) {
-          throwUserError('Only the draft owner can activate it.')
-        }
-        if (draft.status !== 'draft') {
-          throwUserError('This bondfire is no longer a draft.')
-        }
-        await assertCanCreatePersonalBondfire(ctx, {
-          userId: args.userId,
-          durationMs: args.durationMs,
-        })
-
-        // draftExpiresAt is intentionally kept: it marks the row as draft-born
-        // so cancel/error paths can revert it to 'draft' (see
-        // bondfireFailureCleanup.revertBondfireToDraft). Only `status` gates
-        // the cleanup cron.
-        await ctx.db.patch(args.draftBondfireId, {
-          status: 'live',
-          videoStatus: 'waiting_for_upload',
-          muxUploadId: args.uploadId,
-          muxPlaybackPolicy: args.playbackPolicy ?? 'signed',
-          muxAssetStatus: 'waiting_for_upload',
-          durationMs: args.durationMs,
-          width: args.width,
-          height: args.height,
-          tags: args.tags,
-          updatedAt: now,
-        })
-
-        // Drafts don't count toward bondfireCount until they hold a recording.
-        await ctx.db.patch(args.userId, {
-          bondfireCount: (user?.bondfireCount ?? 0) + 1,
-          updatedAt: now,
-        })
-
-        return { recordId: args.draftBondfireId, recordType: 'bondfire' as const }
-      }
-
-      const personalCamp = await assertCanCreatePersonalBondfire(ctx, {
-        userId: args.userId,
-        durationMs: args.durationMs,
-      })
-
-      const recordId = await ctx.db.insert('bondfires', {
-        userId: args.userId,
-        creatorName: user?.displayName ?? user?.name,
-        moderationStatus: 'approved',
-        personalCampId: personalCamp._id,
-        frozen: false,
-        videoStatus: 'waiting_for_upload',
-        muxUploadId: args.uploadId,
-        muxPlaybackPolicy: args.playbackPolicy ?? 'signed',
-        muxAssetStatus: 'waiting_for_upload',
-        durationMs: args.durationMs,
-        width: args.width,
-        height: args.height,
-        tags: args.tags,
-        videoCount: 1,
-        viewCount: 0,
-        createdAt: now,
-        updatedAt: now,
-      })
-
-      // Add the owner as a participant.
-      await ctx.db.insert('personalBondfireParticipants', {
-        bondfireId: recordId,
-        userId: args.userId,
-        status: 'active',
-        joinedAt: now,
-        createdAt: now,
-        updatedAt: now,
-      })
-
-      // Update user's bondfire count.
-      await ctx.db.patch(args.userId, {
-        bondfireCount: (user?.bondfireCount ?? 0) + 1,
-        updatedAt: now,
-      })
-
-      return { recordId, recordType: 'bondfire' as const }
-    }
-
-    if (!args.campId) {
-      throwUserError('Choose a camp before sparking a Bondfire')
-    }
-
-    const camp = await assertCanCreateInCamp(ctx, {
-      userId: args.userId,
-      campId: args.campId,
-      durationMs: args.durationMs,
-      tags: args.tags,
-    })
-    const expiresAt = await getPrivateCampExpiresAt(ctx, camp, now)
-
-    const recordId = await ctx.db.insert('bondfires', {
-      userId: args.userId,
-      creatorName: user?.displayName ?? user?.name,
-      moderationStatus: initialModerationStatus(camp, false),
-      campId: args.campId,
-      frozen: false,
-      videoStatus: 'waiting_for_upload',
-      muxUploadId: args.uploadId,
-      muxPlaybackPolicy: args.playbackPolicy,
-      muxAssetStatus: 'waiting_for_upload',
-      durationMs: args.durationMs,
-      width: args.width,
-      height: args.height,
-      tags: args.tags,
-      expiresAt,
-      videoCount: 1,
-      viewCount: 0,
-      createdAt: now,
-      updatedAt: now,
-    })
-
-    return { recordId, recordType: 'bondfire' as const }
-  },
+  handler: createPendingVideoRecord,
 })
 
 export const deleteLegacyVideoOnDemandContent = internalMutation({
@@ -4423,11 +4426,16 @@ export const deleteLegacyVideoOnDemandContent = internalMutation({
       ctx.db.query('bondfireVideos').collect(),
     ])
     const legacyBondfires = bondfires.filter(
-      (bondfire) => !bondfire.muxUploadId && !bondfire.muxAssetId && !bondfire.muxPlaybackId,
+      (bondfire) =>
+        !bondfire.segmentRecordingId &&
+        !bondfire.muxUploadId &&
+        !bondfire.muxAssetId &&
+        !bondfire.muxPlaybackId,
     )
     const legacyBondfireIds = new Set(legacyBondfires.map((bondfire) => bondfire._id))
     const legacyResponseVideos = responseVideos.filter(
       (video) =>
+        !video.segmentRecordingId &&
         !video.muxUploadId &&
         !video.muxAssetId &&
         !video.muxPlaybackId &&
@@ -5460,6 +5468,7 @@ export const listStuckMuxRecords = internalQuery({
         .withIndex('by_video_status', (q) => q.eq('videoStatus', status).lte('updatedAt', cutoff))
         .take(limit)
       for (const bondfire of bondfires) {
+        if (bondfire.segmentRecordingId) continue
         results.push({
           table: 'bondfires',
           recordId: bondfire._id,
@@ -5479,6 +5488,7 @@ export const listStuckMuxRecords = internalQuery({
         .withIndex('by_video_status', (q) => q.eq('videoStatus', status).lte('createdAt', cutoff))
         .take(limit)
       for (const video of responses) {
+        if (video.segmentRecordingId) continue
         results.push({
           table: 'bondfireVideos',
           recordId: video._id,

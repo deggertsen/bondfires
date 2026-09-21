@@ -160,6 +160,12 @@
       "actions": ["validate", "recording-smoke", "device-smoke"]
     },
     {
+      "id": "internal-segment-media",
+      "description": "Shared media protocol and internal R2 delivery Worker",
+      "patterns": ["packages/media/**", "infrastructure/media/**"],
+      "actions": ["validate", "external-contract-review", "recording-smoke", "device-smoke"]
+    },
+    {
       "id": "shared-app",
       "description": "Shared state, hooks, services, and policies consumed by mobile",
       "patterns": ["packages/app/**"],
@@ -223,6 +229,7 @@
       "id": "legacy-infrastructure",
       "description": "Deprecated website infrastructure retained for reference",
       "patterns": ["infrastructure/**"],
+      "excludePatterns": ["infrastructure/media/**"],
       "actions": ["validate", "legacy-infrastructure-review"]
     }
   ],
@@ -443,6 +450,36 @@
       "environmentKeys": ["NODE_ENV"],
       "documents": ["apps/mobile/README.md"],
       "actions": ["dependency-review"]
+    },
+    {
+      "id": "internal-segment-media",
+      "description": "Internal-only local capture, durable segment upload, R2 storage, and authenticated HLS delivery.",
+      "owner": "Bondfires release owner",
+      "triggerPatterns": [
+        "packages/media/**",
+        "infrastructure/media/**",
+        "convex/segmentMedia.ts",
+        "apps/mobile/lib/media/**",
+        "apps/mobile/components/create/SegmentRecordScreen.tsx"
+      ],
+      "environmentKeys": [
+        "CONVEX_CLOUD_URL",
+        "EXPO_PUBLIC_SEGMENT_MEDIA",
+        "INTERNAL_SEGMENT_MEDIA",
+        "SEGMENT_MEDIA_ENABLED",
+        "MEDIA_TOKEN_SECRET",
+        "MEDIA_WORKER_SECRET",
+        "MEDIA_WORKER_URL"
+      ],
+      "documents": [
+        "docs/internal-segment-video.md",
+        "docs/alpha-video-rollout.md"
+      ],
+      "actions": [
+        "validate",
+        "external-contract-review",
+        "device-smoke"
+      ]
     }
   ]
 }

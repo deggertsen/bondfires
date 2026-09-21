@@ -6,7 +6,7 @@ Video sharing social app — users create "bondfires" (video posts), others resp
 
 ## Tech Stack
 
-React Native (Expo) + Tamagui + Legend State + Convex (backend/DB/auth/file storage) + Mux Video + Turborepo monorepo + Yarn.
+React Native (Expo) + Tamagui + Legend State + Convex (backend/DB/auth/file storage) + private R2 video + legacy Mux playback + Turborepo monorepo + Yarn.
 
 ## Structure
 
@@ -14,6 +14,8 @@ React Native (Expo) + Tamagui + Legend State + Convex (backend/DB/auth/file stor
 apps/mobile/                    — Expo mobile app
 convex/                         — Convex backend, auth, and HTTP actions
 infrastructure/terraform/       — Legacy AWS website infra (deprecated)
+infrastructure/media/           — Cloudflare media Workers: private segmented video ingest/serve
+packages/media/                 — Shared media wire protocol + MP4 segment parsing (Convex ↔ media Worker)
 packages/ui/                    — Shared Tamagui components
 packages/app/                   — Features, hooks, Legend State stores
 packages/config/                — Tamagui configuration
@@ -55,7 +57,8 @@ yarn validate         # Typecheck, tests, generated code, invariants, and Biome
 ## Patterns
 
 - Convex for all backend logic (mutations, queries, actions)
-- Mux for bondfire video upload/playback
+- Local fragmented MP4 recording and private R2/HLS for new videos; preserve Mux playback for legacy videos
+- Main backend: production build profile; isolated video testing: internal profile. See docs/alpha-video-rollout.md.
 - Tamagui for UI components (shared via packages/ui/)
 - Legend State for client state management
 - Expo Router for navigation

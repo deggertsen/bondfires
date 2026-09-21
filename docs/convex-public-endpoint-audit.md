@@ -68,6 +68,19 @@ checked. Invite codes are bearer capabilities but redemption is authenticated.
 - `storeBilling.billingHealth`: authenticated admin only; bounded, redacted operational counters.
 - `storeBillingActions.prepareStorePurchase`: authenticated, non-deleting account; creates only a server-generated store binding, never an entitlement.
 
+## Segmented video
+
+| Endpoint | Authorization and validation |
+| --- | --- |
+| `segmentMedia.begin` | Explicitly enabled registered deployment only; authenticated active user; existing camp/response creation, UGC, entitlement and draft ownership checks; owner-scoped idempotency key. |
+| `segmentMedia.getOwnRecording` | Explicitly enabled registered deployment only; authenticated active owner-scoped lookup; returns linked destination IDs/status only, never media credentials; cancelled/deleted/detached recordings return null. |
+| `segmentMedia.capability` | Explicitly enabled registered deployment only; current linked-record visibility; upload requires recording owner; signed capabilities bind recording, user, operation, audience and expiry. |
+| `segmentMedia.finish` | Explicitly enabled registered deployment only; active recording owner and linked-record access; immutable bounded final count; ready only after all trusted receipts. |
+
+The `/internal-media` HTTP route requires a separate Worker shared secret and a signed capability.
+Only internal functions accept segment receipts; upload duration and checksums come from the Worker,
+not client JSON. Playback rechecks current visibility on every resource. Cleanup revokes access before
+deleting R2 objects and retains a tombstone to cover in-flight uploads.
 ### Social registration
 
 | Endpoint | Access and validation |

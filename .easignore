@@ -86,3 +86,10 @@ infrastructure/terraform/.terraform.lock.hcl
 # Misc
 *.pem
 Thumbs.db
+
+# Cloudflare state and local secrets
+.wrangler/
+.dev.vars*
+
+# Separate video service is deployed independently of the mobile archive
+/infrastructure/media/

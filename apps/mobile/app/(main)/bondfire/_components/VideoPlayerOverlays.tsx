@@ -21,9 +21,11 @@ import { shouldShowRespondCTA, type VideoPlayerState$ } from '../_lib/videoPlaye
 export function LoadingOverlay({
   state$,
   currentUrl,
+  isProcessing = false,
 }: {
   state$: VideoPlayerState$
   currentUrl: string | null
+  isProcessing?: boolean
 }) {
   const isLoading = useValue(state$.isLoading)
   if (!isLoading || !currentUrl) return null
@@ -42,6 +44,11 @@ export function LoadingOverlay({
       pointerEvents="none"
     >
       <Spinner size="large" color={'$primary'} />
+      {isProcessing && (
+        <Text color={OVERLAY_COLORS.textPrimary} marginTop="$3">
+          Video still processing…
+        </Text>
+      )}
     </YStack>
   )
 }
@@ -49,9 +56,11 @@ export function LoadingOverlay({
 export function PlaybackErrorOverlay({
   state$,
   onRetry,
+  isProcessing = false,
 }: {
   state$: VideoPlayerState$
   onRetry: () => void
+  isProcessing?: boolean
 }) {
   const hasError = useValue(state$.hasError)
   if (!hasError) return null
@@ -71,7 +80,9 @@ export function PlaybackErrorOverlay({
       paddingHorizontal={32}
     >
       <Text color={OVERLAY_COLORS.textPrimary} fontSize={15} textAlign="center">
-        This video couldn't be played. Check your connection and try again.
+        {isProcessing
+          ? 'The rest of this video is still uploading. Try again in a moment.'
+          : "This video couldn't be played. Check your connection and try again."}
       </Text>
       <Button size="$3" icon={RotateCcw} onPress={onRetry}>
         Try Again
@@ -143,7 +154,13 @@ export function PlayPauseIndicator({ state$ }: { state$: VideoPlayerState$ }) {
  * anchored at bottom:100 and grows ~48px upward). Text comes from
  * state$.captionText, kept in sync by VideoPlayer's timeUpdate listener.
  */
-export function CaptionOverlay({ state$ }: { state$: VideoPlayerState$ }) {
+export function CaptionOverlay({
+  state$,
+  bottomOffset = 0,
+}: {
+  state$: VideoPlayerState$
+  bottomOffset?: number
+}) {
   const captionText = useValue(state$.captionText)
   const insets = useSafeAreaInsets()
   if (!captionText) return null
@@ -151,7 +168,7 @@ export function CaptionOverlay({ state$ }: { state$: VideoPlayerState$ }) {
   return (
     <YStack
       position="absolute"
-      bottom={152 + insets.bottom}
+      bottom={152 + insets.bottom + bottomOffset}
       // 76px insets keep captions clear of the round side controls (44px wide,
       // inset 16px): the mute/emoji stack on the right and the paused report
       // button on the left both sit within 60px of their edge.

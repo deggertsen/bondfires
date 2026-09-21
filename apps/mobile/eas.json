@@ -58,12 +58,38 @@
         "EXPO_PUBLIC_APP_ENV": "production",
         "EXPO_PUBLIC_LOCAL_BACKUP_RECORDING": "1",
         "EXPO_PUBLIC_CONVEX_URL": "https://ideal-akita-27.convex.cloud",
-        "EXPO_PUBLIC_MUX_DATA_ENV_KEY": "ffl7ni4n12b1dkfs4dt6b0i6q"
+        "EXPO_PUBLIC_MUX_DATA_ENV_KEY": "ffl7ni4n12b1dkfs4dt6b0i6q",
+        "EXPO_PUBLIC_SEGMENT_MEDIA": "1"
+      }
+    },
+    "internal": {
+      "environment": "preview",
+      "distribution": "store",
+      "channel": "internal",
+      "ios": {
+        "resourceClass": "m-medium"
+      },
+      "env": {
+        "APP_VARIANT": "internal",
+        "EXPO_PUBLIC_APP_ENV": "internal",
+        "EXPO_PUBLIC_CONVEX_URL": "https://lovely-malamute-525.convex.cloud",
+        "EXPO_PUBLIC_SEGMENT_MEDIA": "1"
       }
     }
   },
   "submit": {
     "production": {
+      "ios": {
+        "appleTeamId": "A9BJ2VA78M",
+        "ascAppId": "6755933598"
+      },
+      "android": {
+        "serviceAccountKeyPath": "./google-services-key.json",
+        "track": "internal",
+        "releaseStatus": "completed"
+      }
+    },
+    "internal": {
       "ios": {
         "appleTeamId": "A9BJ2VA78M",
         "ascAppId": "6755933598"

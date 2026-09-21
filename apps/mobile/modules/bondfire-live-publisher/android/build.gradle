@@ -8,15 +8,25 @@ version = '0.1.0'
 
 android {
   namespace 'org.bondfires.livepublisher'
-  compileSdk 35
+  compileSdk rootProject.ext.compileSdkVersion
 
   defaultConfig {
     minSdk 24
+    testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
   }
 }
 
 dependencies {
+  androidTestImplementation 'androidx.test:runner:1.6.2'
+  androidTestImplementation 'androidx.test:rules:1.6.1'
+  androidTestImplementation 'androidx.test.ext:junit:1.2.1'
   implementation project(':expo-modules-core')
+  // Match expo-video's Media3 1.8.0 implementation of LoadControl. A newer
+  // muxer aligns the whole Media3 family upward and can compile successfully
+  // while crashing playback with AbstractMethodError. Upgrade them together.
+  implementation('androidx.media3:media3-muxer') {
+    version { strictly '1.8.0' }
+  }
   implementation 'io.github.thibaultbee.streampack:streampack-core:3.1.2'
   implementation 'io.github.thibaultbee.streampack:streampack-rtmp:3.1.2'
   implementation 'io.github.thibaultbee.streampack:streampack-ui:3.1.2'

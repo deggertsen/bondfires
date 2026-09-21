@@ -21,7 +21,7 @@ import { ChevronLeft, Flame } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera'
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AppState, Platform, Pressable, StatusBar } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { XStack, YStack } from 'tamagui'
@@ -32,7 +32,9 @@ import { CampPickerScreen } from '../../components/create/CampPickerScreen'
 import { LegacyRecordScreen } from '../../components/create/LegacyRecordScreen'
 import { LiveRecordScreen } from '../../components/create/LiveRecordScreen'
 import { PreRecordingInviteScreen } from '../../components/create/PreRecordingInviteScreen'
+import { SegmentRecordScreen } from '../../components/create/SegmentRecordScreen'
 import type { TradeTag } from '../../components/create/shared'
+import { segmentMediaEnabled } from '../../lib/media/segmentUploads'
 import { goBackOrReplace } from '../../lib/navigation'
 import { routes } from '../../lib/routes'
 import { BondfireLivePublisher } from '../../modules/bondfire-live-publisher'
@@ -70,16 +72,23 @@ export default function CreateScreen() {
   const insets = useSafeAreaInsets()
   const router = useRouter()
   const navigation = useNavigation()
-  const { campId, respondTo, personalCamp } = useLocalSearchParams<{
+  const { campId, respondTo, personalCamp, resumeDraft } = useLocalSearchParams<{
     campId?: string
     respondTo?: string
     personalCamp?: string
+    resumeDraft?: string
   }>()
   const isPersonalCamp = personalCamp === '1'
+  // Each attempt mounts a fresh recorder with its own durable upload journal.
+  const [nextResponse, setNextResponse] = useState<{
+    bondfireId: Id<'bondfires'>
+    attempt: number
+  } | null>(null)
   const isFocused = useIsFocused()
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions()
   const [micPermission, requestMicPermission] = useMicrophonePermissions()
+  const requestingPermissions = useRef(false)
 
   // Subscription gating for Spark/create actions
   const { canCreate, showPaywall } = useSubscription()
@@ -188,6 +197,13 @@ export default function CreateScreen() {
     api.personalBondfires.getMyDraftBondfire,
     isPersonalCamp ? {} : 'skip',
   )
+  useEffect(() => {
+    // Resolve the exact owner draft before bypassing audience setup. Retain the
+    // selection when uploading activates it and getMyDraftBondfire becomes null.
+    if (resumeDraft && existingDraft?._id === resumeDraft && !draftBondfireId) {
+      draftBondfireId$.set(existingDraft._id)
+    }
+  }, [resumeDraft, existingDraft, draftBondfireId, draftBondfireId$])
   const joinCamp = useMutation(api.camps.join)
   const persistedCampId = currentCampId as Id<'camps'> | null
   const effectiveCampId = respondTo
@@ -355,17 +371,23 @@ export default function CreateScreen() {
   }, [liveCompletionMissingRecord, isPersonalCamp, isFocused])
 
   const requestPermissions = useCallback(async () => {
-    if (!cameraPermission?.granted) {
-      await requestCameraPermission()
-    }
-    if (!micPermission?.granted) {
-      await requestMicPermission()
+    // Wait for the permission reads before requesting. Re-requesting already
+    // granted permissions can briefly background Android's warmed camera.
+    if (!cameraPermission || !micPermission || requestingPermissions.current) return
+    requestingPermissions.current = true
+    try {
+      if (!cameraPermission.granted) await requestCameraPermission()
+      if (!micPermission.granted) await requestMicPermission()
+    } finally {
+      requestingPermissions.current = false
     }
   }, [cameraPermission, micPermission, requestCameraPermission, requestMicPermission])
 
   useEffect(() => {
-    requestPermissions()
-  }, [requestPermissions])
+    if (cameraPermission?.status === 'undetermined' || micPermission?.status === 'undetermined') {
+      void requestPermissions()
+    }
+  }, [cameraPermission?.status, micPermission?.status, requestPermissions])
 
   // Track camera permission state changes for live path
   useEffect(() => {
@@ -461,6 +483,7 @@ export default function CreateScreen() {
   }, [])
 
   const startPendingUploads = useCallback(async () => {
+    if (segmentMediaEnabled) return
     await resumePendingUploads({
       isResponse: false,
       createMuxDirectUpload: async (args) => {
@@ -834,6 +857,23 @@ export default function CreateScreen() {
     )
   }
 
+  if (resumeDraft && !draftBondfireId) {
+    return (
+      <YStack flex={1} backgroundColor="$background" justifyContent="center" padding="$4" gap="$3">
+        {existingDraft === undefined || existingDraft?._id === resumeDraft ? (
+          <Spinner />
+        ) : (
+          <>
+            <Text>This draft has expired or already has a recording.</Text>
+            <Button onPress={() => router.replace(routes.bondfire(resumeDraft))}>
+              View Bondfire
+            </Button>
+          </>
+        )}
+      </YStack>
+    )
+  }
+
   // Pre-recording invite screen for Hearth (personal camp) bondfires.
   // Shown before the recording screen so the audience is established first.
   if (isPersonalCamp && !respondTo && !draftBondfireId && !inviteSkipped) {
@@ -870,6 +910,41 @@ export default function CreateScreen() {
             router.dismissAll()
           }
           router.replace(routes.feed)
+        }}
+      />
+    )
+  }
+
+  if (segmentMediaEnabled) {
+    if (!currentUser)
+      return (
+        <YStack flex={1} backgroundColor="$background" justifyContent="center">
+          <Spinner />
+        </YStack>
+      )
+    return (
+      <SegmentRecordScreen
+        key={nextResponse?.attempt ?? 0}
+        userId={currentUser._id}
+        campName={selectedCamp?.name}
+        isScreenFocused={isFocused}
+        isAppActive={isAppActive}
+        onContinue={() => {
+          if (router.canDismiss()) router.dismissAll()
+          router.replace(routes.feed)
+        }}
+        onRecordAnother={(bondfireId) =>
+          setNextResponse((previous) => ({ bondfireId, attempt: (previous?.attempt ?? 0) + 1 }))
+        }
+        maxDuration={Math.min(3600, effectiveMaxRecordingSeconds ?? 3600)}
+        onBack={handleBack}
+        options={{
+          isResponse: !!nextResponse || !!respondTo,
+          bondfireId: nextResponse?.bondfireId ?? (respondTo as Id<'bondfires'> | undefined),
+          campId: effectiveCampId,
+          personalCamp: isPersonalCamp,
+          tags: selectedCampTags,
+          draftBondfireId: nextResponse ? null : (draftBondfireId as Id<'bondfires'> | null),
         }}
       />
     )

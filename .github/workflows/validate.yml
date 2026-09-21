@@ -44,3 +44,21 @@ jobs:
             --base "${{ github.event.pull_request.base.sha }}" \
             --head "${{ github.event.pull_request.head.sha }}" \
             --format github >> "$GITHUB_STEP_SUMMARY"
+
+  internal-media:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install isolated media service dependencies
+        run: npm ci --prefix infrastructure/media
+      - name: Generate Worker bindings and check types
+        run: npm run typecheck --prefix infrastructure/media
+      - name: Validate Worker bundle without deploying
+        working-directory: infrastructure/media
+        run: |
+          npx wrangler deploy --dry-run
+          npx wrangler deploy --env production --dry-run

@@ -32,6 +32,7 @@ import {
   isSecureInviteCode,
   normalizeInviteCode,
 } from './inviteCodes'
+import { getVideoLifecycle } from './lib/videoLifecycle'
 import {
   canViewPersonalBondfire,
   ensureActivePersonalBondfireParticipant,
@@ -73,7 +74,7 @@ export async function isPersonalInviteAvailable(
   bondfire: Doc<'bondfires'>,
   userId: Id<'users'>,
 ) {
-  if (bondfire.expiresAt !== undefined && bondfire.expiresAt <= Date.now()) return false
+  if (getVideoLifecycle(bondfire) === 'expired') return false
   const owner = await ctx.db.get(bondfire.userId)
   if (!owner || owner.moderationStatus === 'suspended') return false
   if (

@@ -225,6 +225,7 @@ export function BondfirePlaybackScreen({
               isMainVideo={item.isMainVideo}
               responseIndex={item.responseIndex}
               isLive={item.isLive}
+              isSegmented={item.isSegmented}
               onRespondAfterPlayback={
                 shouldOfferResponseAfterPlayback({
                   videoIndex: index,
