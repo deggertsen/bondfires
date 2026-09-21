@@ -67,6 +67,9 @@ class SegmentPreviewTest {
             reader.selectTrack(track)
             reader.seekTo(0, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
             assertTrue("Segment $i track $track must be independently readable", reader.readSampleData(ByteBuffer.allocate(1024 * 1024), 0) > 0)
+            if (reader.getTrackFormat(track).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true) {
+              assertTrue("AAC must start with a sync sample or ExoPlayer drops it", reader.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0)
+            }
             // MediaExtractor can rebase a standalone file's first timestamp.
             assertTrue("Fragment must expose a valid sample timestamp", reader.sampleTime >= 0)
             reader.unselectTrack(track)

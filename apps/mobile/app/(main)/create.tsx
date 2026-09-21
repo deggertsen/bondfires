@@ -21,7 +21,7 @@ import { ChevronLeft, Flame } from '@tamagui/lucide-icons'
 import { useAction, useMutation, useQuery } from 'convex/react'
 import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera'
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AppState, Platform, Pressable, StatusBar } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { XStack, YStack } from 'tamagui'
@@ -79,6 +79,11 @@ export default function CreateScreen() {
     resumeDraft?: string
   }>()
   const isPersonalCamp = personalCamp === '1'
+  // Each attempt mounts a fresh recorder with its own durable upload journal.
+  const [nextResponse, setNextResponse] = useState<{
+    bondfireId: Id<'bondfires'>
+    attempt: number
+  } | null>(null)
   const isFocused = useIsFocused()
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions()
@@ -919,23 +924,27 @@ export default function CreateScreen() {
       )
     return (
       <SegmentRecordScreen
+        key={nextResponse?.attempt ?? 0}
         userId={currentUser._id}
         campName={selectedCamp?.name}
         isScreenFocused={isFocused}
         isAppActive={isAppActive}
-        onContinue={(bondfireId, responseId) => {
+        onContinue={() => {
           if (router.canDismiss()) router.dismissAll()
-          router.replace(bondfireId ? routes.bondfire(bondfireId, responseId) : routes.feed)
+          router.replace(routes.feed)
         }}
+        onRecordAnother={(bondfireId) =>
+          setNextResponse((previous) => ({ bondfireId, attempt: (previous?.attempt ?? 0) + 1 }))
+        }
         maxDuration={Math.min(3600, effectiveMaxRecordingSeconds ?? 3600)}
         onBack={handleBack}
         options={{
-          isResponse: !!respondTo,
-          bondfireId: respondTo as Id<'bondfires'> | undefined,
+          isResponse: !!nextResponse || !!respondTo,
+          bondfireId: nextResponse?.bondfireId ?? (respondTo as Id<'bondfires'> | undefined),
           campId: effectiveCampId,
           personalCamp: isPersonalCamp,
           tags: selectedCampTags,
-          draftBondfireId: draftBondfireId as Id<'bondfires'> | null,
+          draftBondfireId: nextResponse ? null : (draftBondfireId as Id<'bondfires'> | null),
         }}
       />
     )

@@ -112,7 +112,11 @@ class SegmentEndpoint(private val context: Context, private val delegate: IEndpo
         // Its video timebase is 90kHz; audio uses the configured sample rate.
         val timescale = if (isVideo) 90000 else requireNotNull(formats[streamPid]).sampleRate
         decodeTimes.putIfAbsent(track + 1, pts * timescale / 1_000_000)
-        writer.writeSampleData(track, frame.rawBuffer.duplicate(), BufferInfo(pts, frame.rawBuffer.remaining(), if (frame.isKeyFrame) C.BUFFER_FLAG_KEY_FRAME else 0))
+        // AAC frames are independently decodable. MediaCodec does not mark
+        // them as video keyframes; forwarding that flag verbatim makes every
+        // AAC sample non-sync and ExoPlayer discards the entire audio track.
+        val sampleFlags = if (!isVideo || frame.isKeyFrame) C.BUFFER_FLAG_KEY_FRAME else 0
+        writer.writeSampleData(track, frame.rawBuffer.duplicate(), BufferInfo(pts, frame.rawBuffer.remaining(), sampleFlags))
         exportCompleteBoxes()
       }
     } catch (error: Throwable) {

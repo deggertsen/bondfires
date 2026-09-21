@@ -109,3 +109,58 @@ export function inspectSegment(bytes: Uint8Array, tracks: readonly Track[]): num
     throw new Error('Invalid segment duration')
   return duration
 }
+
+/**
+ * Early Android captures labelled AAC as non-sync video samples. ExoPlayer
+ * drops those samples while waiting for the first sync sample. Correct only
+ * the audio sample flags on delivery; stored uploads and checksums stay intact.
+ * The internal capture contract is H.264 + independently decodable AAC-LC.
+ */
+export function normalizeAacSampleFlags(bytes: Uint8Array, tracks: readonly Track[]): Uint8Array {
+  inspectSegment(bytes, tracks)
+  let result = bytes
+  const source = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const normalize = (box: Box, offset: number) => {
+    const flags = u32(source, box, offset)
+    const corrected = ((flags & ~0x03010000) | 0x02000000) >>> 0
+    if (corrected === flags) return
+    if (result === bytes) result = bytes.slice()
+    new DataView(result.buffer, result.byteOffset, result.byteLength).setUint32(offset, corrected)
+  }
+  const moof = required(boxes(bytes), 'moof')
+  for (const traf of boxes(bytes, moof.data, moof.end).filter((box) => box.type === 'traf')) {
+    const children = boxes(bytes, traf.data, traf.end)
+    const tfhd = required(children, 'tfhd')
+    const trackId = u32(source, tfhd, tfhd.data + 4)
+    if (tracks.find((track) => track.id === trackId)?.type !== 'soun') continue
+    const flags = u32(source, tfhd, tfhd.data) & 0xffffff
+    if (flags & 0x20) {
+      const offset =
+        tfhd.data +
+        8 +
+        (flags & 1 ? 8 : 0) +
+        (flags & 2 ? 4 : 0) +
+        (flags & 8 ? 4 : 0) +
+        (flags & 0x10 ? 4 : 0)
+      normalize(tfhd, offset)
+    }
+    for (const trun of children.filter((box) => box.type === 'trun')) {
+      const flags = u32(source, trun, trun.data) & 0xffffff
+      const count = u32(source, trun, trun.data + 4)
+      let offset = trun.data + 8 + (flags & 1 ? 4 : 0)
+      if (flags & 4) {
+        normalize(trun, offset)
+        offset += 4
+      }
+      for (let i = 0; i < count; i++) {
+        offset += (flags & 0x100 ? 4 : 0) + (flags & 0x200 ? 4 : 0)
+        if (flags & 0x400) {
+          normalize(trun, offset)
+          offset += 4
+        }
+        offset += flags & 0x800 ? 4 : 0
+      }
+    }
+  }
+  return result
+}

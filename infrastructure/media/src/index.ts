@@ -1,4 +1,8 @@
-import { inspectInit, inspectSegment } from '../../../packages/media/src/mp4'
+import {
+  inspectInit,
+  inspectSegment,
+  normalizeAacSampleFlags,
+} from '../../../packages/media/src/mp4'
 import {
   buildPlaylist,
   equalSecret,
@@ -8,6 +12,7 @@ import {
   SEGMENT_NAME,
   verifyCapability,
 } from '../../../packages/media/src/protocol'
+import { mediaResponse } from './mediaResponse'
 
 async function readBounded(request: Request): Promise<Uint8Array> {
   const length = Number(request.headers.get('content-length'))
@@ -150,6 +155,18 @@ export default {
             },
           },
         )
+      }
+      if (filename !== 'init.mp4') {
+        // Complete fragments are bounded on ingest. Normalize before applying
+        // ranges so old recordings work without rewriting immutable R2 objects.
+        const object = await env.VIDEO.get(key)
+        if (!object) return new Response('Not found', { status: 404 })
+        if (object.size > MAX_SEGMENT_BYTES) throw new Error('Segment too large')
+        const init = await env.VIDEO.get(`${recordingId}/init.mp4`)
+        if (!init || init.size > 256 * 1024) throw new Error('Invalid initialization')
+        const tracks = inspectInit(new Uint8Array(await init.arrayBuffer()))
+        const bytes = normalizeAacSampleFlags(new Uint8Array(await object.arrayBuffer()), tracks)
+        return mediaResponse(request, bytes, `"aac-sync-v1-${object.etag}"`)
       }
       const object = await env.VIDEO.get(key, { range: request.headers })
       if (!object) return new Response('Not found', { status: 404 })

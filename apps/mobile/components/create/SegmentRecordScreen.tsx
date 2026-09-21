@@ -38,6 +38,7 @@ export function SegmentRecordScreen({
   isAppActive,
   onBack,
   onContinue,
+  onRecordAnother,
 }: {
   userId: string
   options: Omit<FunctionArgs<typeof api.segmentMedia.begin>, 'localId'>
@@ -47,6 +48,7 @@ export function SegmentRecordScreen({
   isAppActive: boolean
   onBack: () => void
   onContinue: (bondfireId?: Id<'bondfires'>, responseId?: Id<'bondfireVideos'>) => void
+  onRecordAnother: (bondfireId: Id<'bondfires'>) => void
 }) {
   const client = useConvex()
   const insets = useSafeAreaInsets()
@@ -305,6 +307,7 @@ export function SegmentRecordScreen({
               : 'Your recording is saved. You can keep using the app while it finishes uploading.'
         }
         onContinue={() => onContinue(bondfireId, destination?.responseId)}
+        onRecordAnother={bondfireId ? () => onRecordAnother(bondfireId) : undefined}
       />
     )
   }

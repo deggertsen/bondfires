@@ -22,6 +22,7 @@ const MAX_TITLE_LENGTH = 80
 
 interface CompletionScreenProps {
   onContinue?: () => void
+  onRecordAnother?: () => void
   detail?: string
   /**
    * The just-created bondfire, when the user owns it (live-publish camp and
@@ -43,6 +44,7 @@ interface CompletionScreenProps {
 export function CompletionScreen({
   detail,
   onContinue,
+  onRecordAnother,
   bondfireId,
   campName,
   inviteMode = 'bondfire',
@@ -105,6 +107,14 @@ export function CompletionScreen({
     setIsSaving(false)
     handleContinue()
   }, [handleContinue, isSaving, saveTitle])
+
+  const handleRecordAnother = useCallback(async () => {
+    if (isSaving || !onRecordAnother) return
+    setIsSaving(true)
+    await saveTitle()
+    setIsSaving(false)
+    onRecordAnother()
+  }, [isSaving, onRecordAnother, saveTitle])
 
   const handleInvite = useCallback(() => {
     // Fire-and-forget: don't gate the sheet on the network.
@@ -221,6 +231,20 @@ export function CompletionScreen({
             <Button variant="primary" size="$lg" onPress={handleDone} icon={Check}>
               <Text color={'$color'}>Done</Text>
             </Button>
+          )}
+          {onRecordAnother && (
+            <Text
+              accessibilityRole="link"
+              accessibilityState={{ disabled: isSaving }}
+              color="$primary"
+              fontSize={14}
+              textAlign="center"
+              marginTop={20}
+              paddingVertical={12}
+              onPress={isSaving ? undefined : handleRecordAnother}
+            >
+              Not finished? Record another response.
+            </Text>
           )}
         </YStack>
       </KeyboardAvoidingView>
