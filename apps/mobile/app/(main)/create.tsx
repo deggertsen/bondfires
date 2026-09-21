@@ -913,6 +913,13 @@ export default function CreateScreen() {
     return (
       <SegmentRecordScreen
         userId={currentUser._id}
+        campName={selectedCamp?.name}
+        isScreenFocused={isFocused}
+        isAppActive={isAppActive}
+        onContinue={(bondfireId, responseId) => {
+          if (router.canDismiss()) router.dismissAll()
+          router.replace(bondfireId ? routes.bondfire(bondfireId, responseId) : routes.feed)
+        }}
         maxDuration={Math.min(3600, effectiveMaxRecordingSeconds ?? 3600)}
         onBack={handleBack}
         options={{

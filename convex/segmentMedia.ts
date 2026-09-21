@@ -17,6 +17,7 @@ import {
   type MutationCtx,
   mutation,
   type QueryCtx,
+  query,
 } from './_generated/server'
 import { auth } from './auth'
 import { getEntitlementSubscriptionTier, getTierMaxVideoDurationMs } from './entitlements'
@@ -127,6 +128,31 @@ export const begin = mutation({
         : { bondfireId: result.recordId as Id<'bondfires'> },
     )
     return { recordingId, recordId: result.recordId, maxDuration }
+  },
+})
+/** Observe an upload's destination without putting a network request before capture. */
+export const getOwnRecording = query({
+  args: { localId: v.string() },
+  handler: async (ctx, { localId }) => {
+    requireInternalMedia()
+    const userId = await auth.getUserId(ctx)
+    const user = userId && (await ctx.db.get(userId))
+    if (!user || user.accountDeletionStatus) return null
+    const recording = await ctx.db
+      .query('segmentRecordings')
+      .withIndex('by_owner_local', (q) => q.eq('userId', user._id).eq('localId', localId))
+      .unique()
+    if (!recording || recording.status === 'cancelled') return null
+    const response = recording.responseId ? await ctx.db.get(recording.responseId) : null
+    const bondfireId = response?.bondfireId ?? recording.bondfireId
+    const bondfire = bondfireId ? await ctx.db.get(bondfireId) : null
+    const linked = recording.responseId ? response : bondfire
+    if (!bondfire || !linked || linked.segmentRecordingId !== recording._id) return null
+    return {
+      bondfireId: bondfire._id,
+      responseId: response?._id,
+      videoStatus: linked.videoStatus,
+    }
   },
 })
 export const authorize = internalQuery({

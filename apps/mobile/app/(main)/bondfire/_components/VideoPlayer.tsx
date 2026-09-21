@@ -11,7 +11,8 @@ import {
 } from '@bondfires/app'
 import { Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { useMutation, useQuery } from 'convex/react'
+import { useMutation, useQueries, useQuery } from 'convex/react'
+import type { FunctionReturnType } from 'convex/server'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { LinearGradient } from 'expo-linear-gradient'
 import {
@@ -175,18 +176,46 @@ export function VideoPlayer({
   })
 
   const currentUser = useQuery(api.users.current, shouldHandleVodReactions ? {} : 'skip')
-  const recentEmojis = useQuery(
-    api.videoReactions.getRecentEmojis,
-    isPaid && shouldHandleVodReactions ? {} : 'skip',
-  )
-  const reactionsData = useQuery(
-    api.videoReactions.getReactions,
-    shouldHandleVodReactions && (bondfireId || bondfireVideoId)
-      ? isMainVideo
-        ? { bondfireId }
-        : { bondfireVideoId }
-      : 'skip',
-  )
+  // Reactions are optional decoration. A failed subscription must never
+  // replace the video screen with the route's error boundary.
+  const reactionArgs: Record<string, string> | undefined = isMainVideo
+    ? bondfireId
+      ? { bondfireId }
+      : undefined
+    : bondfireVideoId
+      ? { bondfireVideoId }
+      : undefined
+  const reactionQueries = useQueries({
+    ...(isPaid && shouldHandleVodReactions
+      ? { recent: { query: api.videoReactions.getRecentEmojis, args: {} } }
+      : {}),
+    ...(shouldHandleVodReactions && reactionArgs
+      ? {
+          reactions: {
+            query: api.videoReactions.getReactions,
+            args: reactionArgs,
+          },
+        }
+      : {}),
+  })
+  const recentError = reactionQueries.recent instanceof Error ? reactionQueries.recent : null
+  const reactionsError =
+    reactionQueries.reactions instanceof Error ? reactionQueries.reactions : null
+  const recentEmojis = (recentError ? undefined : reactionQueries.recent) as
+    | FunctionReturnType<typeof api.videoReactions.getRecentEmojis>
+    | undefined
+  const reactionsData = (reactionsError ? undefined : reactionQueries.reactions) as
+    | FunctionReturnType<typeof api.videoReactions.getReactions>
+    | undefined
+  useEffect(() => {
+    if (recentError || reactionsError) {
+      telemetry.error('video:reactions:query', 'Unable to load video reactions', {
+        videoReactionKey,
+        recentError: recentError?.message,
+        reactionsError: reactionsError?.message,
+      })
+    }
+  }, [recentError, reactionsError, videoReactionKey])
   const reactionsDataRef = useRef<typeof reactionsData>(reactionsData)
 
   useEffect(() => {

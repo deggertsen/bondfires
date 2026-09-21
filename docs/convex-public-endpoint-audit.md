@@ -73,6 +73,7 @@ checked. Invite codes are bearer capabilities but redemption is authenticated.
 | Endpoint | Authorization and validation |
 | --- | --- |
 | `segmentMedia.begin` | Registered internal deployment only; authenticated active user; existing camp/response creation, UGC, entitlement and draft ownership checks; owner-scoped idempotency key. |
+| `segmentMedia.getOwnRecording` | Registered internal deployment only; authenticated active owner-scoped lookup; returns linked destination IDs/status only, never media credentials; cancelled/deleted/detached recordings return null. |
 | `segmentMedia.capability` | Registered internal deployment only; current linked-record visibility; upload requires recording owner; signed capabilities bind recording, user, operation, audience and expiry. |
 | `segmentMedia.finish` | Registered internal deployment only; active recording owner and linked-record access; immutable bounded final count; ready only after all trusted receipts. |
 

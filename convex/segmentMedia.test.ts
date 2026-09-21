@@ -70,6 +70,23 @@ beforeEach(() => {
 })
 afterEach(() => vi.unstubAllEnvs())
 describe('internal recording lifecycle', () => {
+  it('reveals upload destinations only to their owner and handles deleted records', async () => {
+    const { t, owner, fixture, args, record } = await setup()
+    expect(await owner.query(api.segmentMedia.getOwnRecording, { localId: args.localId })).toEqual({
+      bondfireId: record.recordId,
+      videoStatus: 'waiting_for_upload',
+    })
+    expect(await t.query(api.segmentMedia.getOwnRecording, { localId: args.localId })).toBeNull()
+    expect(
+      await t
+        .withIdentity({ subject: fixture.viewer })
+        .query(api.segmentMedia.getOwnRecording, { localId: args.localId }),
+    ).toBeNull()
+    await t.run((ctx) => ctx.db.delete(record.recordId))
+    expect(
+      await owner.query(api.segmentMedia.getOwnRecording, { localId: args.localId }),
+    ).toBeNull()
+  })
   it('is idempotent, exposes only complete prefixes, and finalizes after all receipts', async () => {
     const { t, owner, args, record, receipt } = await setup()
     expect((await owner.mutation(api.segmentMedia.begin, args)).recordingId).toBe(

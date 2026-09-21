@@ -251,7 +251,12 @@ class LayoutErrorBoundary extends Component<
 
 // Override expo-router's default ErrorBoundary.
 export function ErrorBoundary(props: { error: Error; retry: () => void }) {
-  useEffect(() => captureUnhandledException(props.error), [props.error])
+  useEffect(() => {
+    captureUnhandledException(props.error)
+    telemetry.error('error:route', props.error.message ?? 'Unknown route error', {
+      stack: props.error.stack,
+    })
+  }, [props.error])
   return (
     <TamaguiProvider config={config}>
       <Theme name="dark">
