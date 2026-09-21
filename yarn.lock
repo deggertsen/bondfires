@@ -6678,6 +6678,7 @@ __metadata:
     "@convex-dev/auth": "npm:^0.0.95"
     "@types/node": "npm:^22.20.1"
     convex: "npm:^1.45.0"
+    convex-test: "npm:^0.0.59"
     google-auth-library: "npm:10.9.1"
     turbo: "npm:^2.10.12"
     typescript: "npm:^6.0.0"
@@ -7172,6 +7173,15 @@ __metadata:
   version: 2.0.0
   resolution: "convert-source-map@npm:2.0.0"
   checksum: 10c0/8f2f7a27a1a011cc6cc88cc4da2d7d0cfa5ee0369508baae3d98c260bb3ac520691464e5bbe4ae7cdf09860c1d69ecc6f70c63c6e7c7f7e3f18ec08484dc7d9b
+  languageName: node
+  linkType: hard
+
+"convex-test@npm:^0.0.59":
+  version: 0.0.59
+  resolution: "convex-test@npm:0.0.59"
+  peerDependencies:
+    convex: ^1.43.0
+  checksum: 10c0/321063f47d0a2188c63bc0be035b1b64493276513d4a8e853e70df91e99dac175576ba2983f4601461474f6939f48d1ce89d55abdf20f2c1d5ceb435d6b92b60
   languageName: node
   linkType: hard
 

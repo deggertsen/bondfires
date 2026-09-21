@@ -102,6 +102,12 @@ export default defineSchema({
   // Include auth tables from @convex-dev/auth
   ...authTables,
 
+  // Provider tokens are server-only and never part of a public user profile.
+  oauthCredentials: defineTable({ userId: v.id('users'), refreshToken: v.string() }).index(
+    'by_user',
+    ['userId'],
+  ),
+
   // Users table - extends auth with profile info
   users: defineTable({
     // Auth fields (managed by @convex-dev/auth)
@@ -117,6 +123,7 @@ export default defineSchema({
     photoUrl: v.optional(v.string()),
     photoStorageId: v.optional(v.id('_storage')),
     gender: userGender,
+    registrationPending: v.optional(v.boolean()),
     birthDate: v.optional(v.string()), // ISO date string (YYYY-MM-DD), private
     // Opaque UUID sent to StoreKit/Play Billing to bind new purchases to this
     // authenticated account. It is never accepted as proof without a verified

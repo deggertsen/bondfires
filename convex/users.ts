@@ -2,7 +2,7 @@ import { v } from 'convex/values'
 import type { Doc } from './_generated/dataModel'
 import { mutation, query } from './_generated/server'
 import { calculateAgeAt } from './agePolicy'
-import { auth } from './auth'
+import { auth, getUserIdIncludingDeleting } from './auth'
 import { throwUserError } from './errors'
 import { getBlockedUserIds } from './userSafety'
 
@@ -40,6 +40,7 @@ function publicUser(user: Doc<'users'>) {
 function currentUser(user: Doc<'users'>) {
   return {
     _id: user._id,
+    registrationPending: user.registrationPending === true,
     email: user.email,
     emailVerified: user.emailVerified,
     name: user.name,
@@ -63,12 +64,12 @@ function currentUser(user: Doc<'users'>) {
 export const current = query({
   args: {},
   handler: async (ctx) => {
-    const userId = await auth.getUserId(ctx)
+    const userId = await getUserIdIncludingDeleting(ctx)
     if (!userId) {
       return null
     }
     const user = await ctx.db.get(userId)
-    return user ? currentUser(user) : null
+    return user && !user.accountDeletionStatus ? currentUser(user) : null
   },
 })
 

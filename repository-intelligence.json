@@ -381,6 +381,15 @@
       "actions": ["external-contract-review", "client-compatibility-review"]
     },
     {
+      "id": "social-auth",
+      "description": "Apple and Google OAuth credentials, HTTPS callbacks, native return routing, and Apple token revocation must agree.",
+      "owner": "Bondfires maintainers",
+      "triggerPatterns": ["convex/auth.ts", "convex/registration.ts", "convex/oauthCredentials.ts", "convex/lib/authProfiles.ts", "apps/mobile/lib/socialAuth.ts", "apps/mobile/app/auth-callback.tsx"],
+      "environmentKeys": ["AUTH_APPLE_ID", "AUTH_APPLE_SECRET", "AUTH_GOOGLE_ID", "AUTH_GOOGLE_SECRET"],
+      "documents": ["docs/social-sign-in.md"],
+      "actions": ["external-contract-review", "client-compatibility-review"]
+    },
+    {
       "id": "email-and-ai",
       "description": "Transactional email and AI actions depend on externally managed providers and credentials.",
       "owner": "Bondfires maintainers",

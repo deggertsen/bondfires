@@ -8,7 +8,7 @@ import { ConvexReactClient, useConvexAuth, useMutation, useQuery } from 'convex/
 import Constants from 'expo-constants'
 import { useFonts } from 'expo-font'
 import type { NotificationResponse } from 'expo-notifications'
-import { Stack, useRouter } from 'expo-router'
+import { Stack, useRouter, useSegments } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
 import {
   Component,
@@ -48,6 +48,7 @@ import * as Clipboard from 'expo-clipboard'
 import { api } from '../../../convex/_generated/api'
 import { resolveNotificationRoute } from '../lib/notificationRouting'
 import { routes } from '../lib/routes'
+import { registrationDestination } from '../lib/socialAuth'
 
 export const unstable_settings = {
   // Ensure that reloading keeps proper navigation state
@@ -316,7 +317,19 @@ function AppContent() {
   const toasts = useValue(toastStore$.toasts)
   // Unlike the persisted app store, Convex only reports authenticated after
   // the server has confirmed the current token. Use that as the mutation gate.
-  const { isAuthenticated: isServerAuthenticated } = useConvexAuth()
+  const { isAuthenticated } = useConvexAuth()
+  const currentUser = useQuery(api.users.current)
+  const segments = useSegments()
+  useEffect(() => {
+    if (
+      currentUser?.registrationPending &&
+      !segments.includes('complete-profile') &&
+      !segments.includes('auth-callback')
+    ) {
+      router.replace(routes.completeProfile(registrationDestination()))
+    }
+  }, [currentUser?.registrationPending, segments, router])
+  const isServerAuthenticated = isAuthenticated && !!currentUser && !currentUser.registrationPending
   const serverAuthRef = useRef(isServerAuthenticated)
   serverAuthRef.current = isServerAuthenticated
   const hasCompletedInviteCheck = useValue(appStore$.hasCompletedInviteCheck)

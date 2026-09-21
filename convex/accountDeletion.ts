@@ -1188,6 +1188,8 @@ export const run = internalAction({
     try {
       let job = await ctx.runQuery(internal.accountDeletion.getJob, args)
       if (!job || job.status === 'completed') return
+      if (job.userId)
+        await ctx.runAction(internal.oauthCredentials.revokeForDeletion, { userId: job.userId })
       if (job.status === 'retrying') {
         await ctx.runMutation(internal.accountDeletion.resume, args)
         job = await ctx.runQuery(internal.accountDeletion.getJob, args)

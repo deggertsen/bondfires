@@ -9,10 +9,14 @@ import {
 } from '@bondfires/app'
 import { SubscriptionPaywall } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
-import { Stack } from 'expo-router'
+import { useQuery } from 'convex/react'
+import { Redirect, Stack } from 'expo-router'
 import { useMemo } from 'react'
+import { api } from '../../../../convex/_generated/api'
 import { CommunityAcceptanceGate } from '../../components/CommunityAcceptanceGate'
 import { FreeCapabilitiesExplainer } from '../../components/FreeCapabilitiesExplainer'
+import { routes } from '../../lib/routes'
+import { registrationDestination } from '../../lib/socialAuth'
 
 function GlobalPaywall() {
   const {
@@ -124,6 +128,14 @@ function GlobalPaywall() {
 }
 
 export default function MainLayout() {
+  const user = useQuery(api.users.current)
+  if (user?.registrationPending)
+    return <Redirect href={routes.completeProfile(registrationDestination())} />
+  if (user === undefined) return null
+  return <MainContent />
+}
+
+function MainContent() {
   useRecordingWatchdog()
   // One-shot launch sweep for orphaned local backup recordings (gated on the
   // recording resource lock, same as upload resume).
