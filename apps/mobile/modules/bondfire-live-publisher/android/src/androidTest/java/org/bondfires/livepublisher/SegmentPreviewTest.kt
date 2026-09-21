@@ -4,12 +4,17 @@ import android.Manifest
 import android.media.AudioFormat
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.media.MediaRecorder
+import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CameraCharacteristics
+import android.content.Context
 import android.util.Size
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import io.github.thibaultbee.streampack.core.elements.encoders.AudioCodecConfig
 import io.github.thibaultbee.streampack.core.elements.encoders.VideoCodecConfig
+import io.github.thibaultbee.streampack.core.elements.sources.video.camera.CameraSourceFactory
 import io.github.thibaultbee.streampack.core.streamers.single.cameraSingleStreamer
 import java.io.File
 import java.util.UUID
@@ -30,7 +35,10 @@ class SegmentPreviewTest {
     val context = InstrumentationRegistry.getInstrumentation().targetContext
     val localId = UUID.randomUUID().toString()
     val directory = File(context.filesDir, "segments/$localId")
-    val streamer = cameraSingleStreamer(context, endpointFactory = CaptureTransportEndpointFactory(true))
+    val cameras = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+    val front = cameras.cameraIdList.first { cameras.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_FRONT }
+    val back = cameras.cameraIdList.first { cameras.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK }
+    val streamer = cameraSingleStreamer(context, cameraId = front, audioSourceFactory = NormalizedMicrophoneSourceFactory(MediaRecorder.AudioSource.VOICE_COMMUNICATION), endpointFactory = CaptureTransportEndpointFactory(true))
     try {
       streamer.setAudioConfig(AudioCodecConfig(mimeType = MediaFormat.MIMETYPE_AUDIO_AAC, startBitrate = 128000, sampleRate = 44100, channelConfig = AudioFormat.CHANNEL_IN_MONO, byteFormat = AudioFormat.ENCODING_PCM_16BIT))
       streamer.setVideoConfig(VideoCodecConfig(mimeType = MediaFormat.MIMETYPE_VIDEO_AVC, startBitrate = 1500000, resolution = Size(640, 480), fps = 24, gopDurationInS = 2.0f))
@@ -48,6 +56,15 @@ class SegmentPreviewTest {
       withTimeout(20000) {
         while (!File(directory, "segment-000000.m4s").exists()) delay(100)
       }
+      val originalEncoder = streamer.videoEncoder
+      // Both camera switches must retain the encoder, writer and audio clock.
+      streamer.setVideoSource(CameraSourceFactory(back))
+      streamer.videoEncoder?.requestKeyFrame()
+      assertSame(originalEncoder, streamer.videoEncoder)
+      delay(2000)
+      streamer.setVideoSource(CameraSourceFactory(front))
+      streamer.videoEncoder?.requestKeyFrame()
+      assertSame(originalEncoder, streamer.videoEncoder)
       delay(2000)
       assertNull("Capture must not silently lose frames", sink.throwableFlow.value)
       val count = sink.finish()
@@ -103,7 +120,9 @@ class SegmentPreviewTest {
             lastSampleTime = extractor.sampleTime
           } while (extractor.advance())
           android.util.Log.i("SegmentPreviewTest", "track=$track samples=$samples lastUs=$lastSampleTime maxGapUs=$maxGapUs")
-          assertTrue("Track $track must remain continuous ($samples samples, $maxGapUs gap)", samples >= 10 && maxGapUs < 500000)
+          val isAudio = mimes[track]?.startsWith("audio/") == true
+          val gapLimit = if (isAudio) 500000 else 2000000
+          assertTrue("Track $track must remain continuous across camera switches ($samples samples, $maxGapUs gap)", samples >= 10 && maxGapUs < gapLimit)
           assertTrue("Track $track must cover the recording", lastSampleTime > 5000000)
           extractor.unselectTrack(track)
           extractor.seekTo(0, MediaExtractor.SEEK_TO_CLOSEST_SYNC)

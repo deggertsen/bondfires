@@ -457,9 +457,11 @@ class BondfireLivePublisherModule : Module() {
 
     AsyncFunction("swapCamera") Coroutine { ->
       val s = streamer ?: return@Coroutine
-      currentFacing = if (currentFacing == "front") "back" else "front"
-      s.setVideoSource(CameraSourceFactory(findCameraIdForFacing(currentFacing)))
+      val nextFacing = if (currentFacing == "front") "back" else "front"
+      s.setVideoSource(CameraSourceFactory(findCameraIdForFacing(nextFacing)))
+      currentFacing = nextFacing
       previewView?.setVideoSourceProvider(s)
+      s.videoEncoder?.requestKeyFrame()
     }
 
     AsyncFunction("setMuted") Coroutine { muted: Boolean ->
@@ -723,7 +725,8 @@ class BondfireLivePublisherModule : Module() {
     val newStreamer = cameraSingleStreamer(
       context,
       cameraId = cameraId,
-      audioSourceFactory = MicrophoneSourceFactory(audioRouting.audioSource),
+      audioSourceFactory = if (segmented) NormalizedMicrophoneSourceFactory(audioRouting.audioSource)
+        else MicrophoneSourceFactory(audioRouting.audioSource),
       endpointFactory = CaptureTransportEndpointFactory(segmented),
     )
     streamer = newStreamer

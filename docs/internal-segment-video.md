@@ -26,6 +26,21 @@ provide adaptive bitrate renditions, generated captions, Mux thumbnails, or serv
 normalization. Local capture should prevent transport disruption from corrupting recorded audio;
 microphone routing and perceived loudness still require listening tests on real devices.
 
+Android internal capture applies bounded speech gain to mono PCM16 before AAC encoding.
+Quiet speech approaches -22 dBFS RMS with at most 30 dB of gain; healthy inputs remain
+at unity, input below -55 dBFS does not build gain, and a peak limiter retains 1 dB
+of headroom. Gain spans preview, recording, camera changes and segment boundaries.
+This changes new Android recordings only; it is not server-side LUFS normalization
+and cannot recover detail absent from a quiet recording. iOS audio is unchanged.
+Real-device comparisons remain necessary for noise, pumping and headset transitions.
+
+Camera switching is available both before and during recording. The capture queue
+serializes swaps and Stop (including background and duration-limit stops). Switching
+changes the camera input while retaining the audio source, encoder and writer. The
+Android native regression switches front/back/front during a single capture and
+checks encoder identity, both tracks, continuous audio and independently readable
+fragments. iOS retains its existing mixer camera-switch implementation.
+
 ## Isolated resources
 
 - Convex: `lovely-malamute-525`, named deployment `bondfires:bondfires:internal-video`.

@@ -223,7 +223,9 @@ export function SegmentRecordScreen({
     }
   }
   async function stop() {
-    if (!recording.current || busy.current) return
+    // A camera swap may be queued/running. Stop must still queue behind it,
+    // including the duration limit and background interruption paths.
+    if (!recording.current) return
     busy.current = true
     recording.current = false
     setPhase('saving')
@@ -281,11 +283,13 @@ export function SegmentRecordScreen({
     }
   }
   async function switchCamera() {
-    if (busy.current || phase !== 'ready') return
+    if (busy.current || (phase !== 'ready' && phase !== 'recording')) return
     busy.current = true
     setSwitchingCamera(true)
     try {
-      await enqueue(() => BondfireLivePublisher.swapCamera())
+      await enqueue(async () => {
+        if (mounted.current && !interrupted.current) await BondfireLivePublisher.swapCamera()
+      })
     } catch (e) {
       reportError('flip', e)
     } finally {
@@ -313,7 +317,7 @@ export function SegmentRecordScreen({
   }
   const isRecording = phase === 'recording'
   const isBusy = phase === 'warming' || phase === 'starting' || phase === 'saving'
-  const recordDisabled = switchingCamera || (phase !== 'ready' && !isRecording)
+  const recordDisabled = !isRecording && (switchingCamera || phase !== 'ready')
   const remaining = Math.max(0, Math.ceil(maxDuration - elapsed))
   const countdown = isRecording && remaining <= 30
   const timerSeconds = countdown ? remaining : Math.floor(elapsed)
@@ -377,7 +381,7 @@ export function SegmentRecordScreen({
         )}
         <RecordingHeaderActions
           onSwitchCamera={() => void switchCamera()}
-          cameraSwitchDisabled={phase !== 'ready' || switchingCamera}
+          cameraSwitchDisabled={(phase !== 'ready' && phase !== 'recording') || switchingCamera}
           cameraSwitchInProgress={switchingCamera}
           onOpenNotes={options.isResponse ? () => setShowNotes(true) : undefined}
         />
