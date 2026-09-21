@@ -94,7 +94,7 @@ export default {
       })
     try {
       if (new URL(request.url).pathname.startsWith('/imports/'))
-        return await importRequest(request, env, readBounded)
+        return await importRequest(request, env)
       const deletion = /^\/v1\/([a-z0-9]+)$/.exec(url.pathname)
       if (deletion && request.method === 'DELETE') {
         if (

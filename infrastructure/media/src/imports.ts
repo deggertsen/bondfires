@@ -10,11 +10,7 @@ const publicFile =
   /^(index\.m3u8|init\.mp4|segment-\d{6}\.m4s|captions\.vtt|thumbnail\.jpg|preview\.gif)$/
 const storedFile =
   /^(index\.m3u8|init\.mp4|segment-\d{6}\.m4s|captions\.vtt|thumbnail\.jpg|preview\.gif|manifest\.json|archive-\d{6}\.bin)$/
-export async function importRequest(
-  request: Request,
-  env: Env,
-  readBounded: (request: Request) => Promise<Uint8Array>,
-): Promise<Response> {
+export async function importRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url)
   const match = url.pathname.match(/^\/imports\/([a-z0-9]+)(?:\/([^/]+))?$/)
   if (!match) return new Response('Not found', { status: 404 })
@@ -36,12 +32,17 @@ export async function importRequest(
   if (!file || !storedFile.test(file)) return new Response('Not found', { status: 404 })
   const key = prefix + file
   if (request.method === 'PUT' && admin) {
-    const bytes = await readBounded(request)
-    const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), (b) =>
-      b.toString(16).padStart(2, '0'),
-    ).join('')
-    if (request.headers.get('x-content-sha256') !== digest)
-      return new Response('Checksum mismatch', { status: 400 })
+    const length = Number(request.headers.get('content-length'))
+    const digest = request.headers.get('x-content-sha256') ?? ''
+    if (
+      !request.body ||
+      !Number.isSafeInteger(length) ||
+      length <= 0 ||
+      length > MAX_SEGMENT_BYTES ||
+      !/^[a-f0-9]{64}$/.test(digest)
+    )
+      return new Response('Invalid upload', { status: 400 })
+    const body = request.body
     const stored = await putImmutable(
       digest,
       async () => {
@@ -49,7 +50,9 @@ export async function importRequest(
         return object ? (object.customMetadata?.checksum ?? '') : null
       },
       () =>
-        env.VIDEO.put(key, bytes, {
+        env.VIDEO.put(key, body, {
+          sha256: Uint8Array.from(digest.match(/../g) ?? [], (hex) => Number.parseInt(hex, 16))
+            .buffer,
           onlyIf: { etagDoesNotMatch: '*' },
           customMetadata: { checksum: digest },
         }),
@@ -91,6 +94,19 @@ export async function importRequest(
   const object = await env.VIDEO.get(key)
   if (!object) return new Response('Not found', { status: 404 })
   if (object.size > MAX_SEGMENT_BYTES) return new Response('Invalid media', { status: 503 })
+  if (admin) {
+    // Archive verification streams through R2, avoiding one buffer per concurrent upload/read.
+    return new Response(request.method === 'HEAD' ? null : object.body, {
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': String(object.size),
+        'Cache-Control': 'private, no-store',
+        'x-content-sha256': object.customMetadata?.checksum ?? '',
+        ETag: object.httpEtag,
+      },
+    })
+  }
+
   let bytes: Uint8Array = new Uint8Array(await object.arrayBuffer())
   if (file === 'index.m3u8' && !admin) {
     const query = `?token=${encodeURIComponent(token)}`
