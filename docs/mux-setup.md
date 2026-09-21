@@ -19,9 +19,19 @@ MUX_SIGNING_PRIVATE_KEY=...
 MUX_LIVE_LATENCY_MODE=low
 MUX_LIVE_RECONNECT_WINDOW_SECONDS=30
 MUX_LIVE_RECONNECT_SLATE_URL=https://<public-host>/mux-live-slate.png
+# Loudness normalization for direct-upload assets (default on).
+MUX_NORMALIZE_AUDIO=true
 ```
 
-`MUX_PLAYBACK_POLICY`, `MUX_VIDEO_QUALITY`, and `MUX_UPLOAD_CORS_ORIGIN` keep their existing meanings for VOD uploads.
+`MUX_PLAYBACK_POLICY`, `MUX_VIDEO_QUALITY`, `MUX_UPLOAD_CORS_ORIGIN`, and
+`MUX_NORMALIZE_AUDIO` keep their existing meanings for VOD uploads.
+
+> **Live recordings are not covered by `MUX_NORMALIZE_AUDIO`.** Mux silently
+> drops `normalize_audio` from a live stream's `new_asset_settings` (verified
+> against the API), so live-sourced VODs — which are nearly all Bondfires —
+> keep their original capture levels in the current pipeline. For the proposed
+> post-recording normalization approach, see
+> [docs/audio-levels-investigation.md](./audio-levels-investigation.md).
 
 ### Reconnect slate (branded placeholder)
 

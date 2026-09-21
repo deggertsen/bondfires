@@ -24,6 +24,12 @@ export interface LivePublisherStartOptions {
   localBackupFileName?: string
   /** Native recording cap; 0/absent leaves the native timer disabled. */
   maxDurationSeconds?: number
+  /**
+   * Android-only mic source experiment knob. Values map to MediaRecorder
+   * AudioSource names ('voice_communication' | 'camcorder' | 'mic' |
+   * 'voice_recognition'). Absent on iOS.
+   */
+  audioSource?: string
 }
 
 export interface LivePublisherStartResult {
@@ -38,6 +44,8 @@ export interface LivePublisherPreviewOptions {
   videoBitrate?: number
   audioBitrate?: number
   initialCamera?: 'front' | 'back'
+  /** See LivePublisherStartOptions.audioSource — Android-only mic source knob. */
+  audioSource?: string
 }
 
 // Keep in sync with LivePublisherStats in
@@ -53,6 +61,11 @@ export interface LivePublisherStats {
   statsSupported?: number
   /** Mic route for the session: 'wired' | 'bluetooth' | 'builtin'. */
   audioRoute?: 'builtin' | 'wired' | 'bluetooth'
+  /**
+   * Resolved Android mic source ('voice_communication' | 'camcorder' | 'mic' |
+   * 'voice_recognition'). Absent on iOS and on pre-experiment builds.
+   */
+  audioSource?: string
 }
 
 export interface LivePublisherVideoQualityResult {
