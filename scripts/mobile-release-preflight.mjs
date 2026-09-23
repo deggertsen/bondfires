@@ -37,10 +37,6 @@ try {
     requireUrl: true,
   })
 
-  if (!env.EXPO_PUBLIC_MUX_DATA_ENV_KEY?.trim()) {
-    throw new Error(`${appEnvironment} requires EXPO_PUBLIC_MUX_DATA_ENV_KEY`)
-  }
-
   if (appEnvironment === 'production') {
     validateMonitoringEnvironment({
       appEnvironment,

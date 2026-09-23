@@ -127,9 +127,6 @@ function validateMobileConfiguration() {
   if (!/^https:\/\/[a-z0-9-]+\.convex\.cloud$/.test(convexUrl ?? '')) {
     fail('Production EXPO_PUBLIC_CONVEX_URL must be a canonical https://*.convex.cloud URL')
   }
-  if (!productionEnvironment.EXPO_PUBLIC_MUX_DATA_ENV_KEY) {
-    fail('Production EXPO_PUBLIC_MUX_DATA_ENV_KEY is required')
-  }
 
   const iosDomains = new Set(
     (app.ios?.associatedDomains ?? []).map((value) => value.replace('applinks:', '')),

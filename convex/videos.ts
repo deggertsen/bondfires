@@ -173,7 +173,6 @@ const MUX_UPLOAD_TIMEOUT_MAX_SECONDS = 7 * 24 * 60 * 60
 const DEFAULT_MUX_UPLOAD_TIMEOUT_SECONDS = 60 * 60
 const MUX_READY_STATUSES = new Set(['ready'])
 const MUX_FAILED_STATUSES = new Set(['errored', 'cancelled', 'timed_out'])
-const MUX_LIVE_RTMPS_ENDPOINT = 'rtmps://global-live.mux.com:443/app'
 // The client now reconnects a dropped RTMP session in place (network switch
 // mid-recording re-opens the socket against the same stream key), so Mux must
 // hold the stream open long enough for that to land. 60s covers a WiFi ↔
@@ -1764,127 +1763,12 @@ export const createMuxDirectUpload = action({
     height: v.optional(v.number()),
     draftBondfireId: v.optional(v.id('bondfires')),
   },
-  handler: async (ctx, args): Promise<MuxDirectUploadResult> => {
-    const userId = await auth.getUserId(ctx)
-    if (!userId) {
-      throwUserError('Not authenticated')
-    }
-    assertClientMediaMetadataBounds(args)
-
-    let playbackPolicy: PlaybackPolicy
-    if (args.isResponse) {
-      if (!args.bondfireId) {
-        throwUserError('A bondfire ID is required when uploading a response')
-      }
-
-      const policy = await ctx.runQuery(internal.videos.getMuxPlaybackPolicyForNewRecord, {
-        userId,
-        isResponse: args.isResponse,
-        bondfireId: args.bondfireId,
-        durationMs: args.durationMs,
-      })
-      playbackPolicy = policy.playbackPolicy
-    } else if (args.personalCamp) {
-      await ctx.runQuery(internal.videos.validatePersonalCreateForUser, {
-        userId,
-        durationMs: args.durationMs,
-      })
-      playbackPolicy = 'signed'
-    } else {
-      if (!args.campId) {
-        throwUserError('Choose a camp before sparking a Bondfire')
-      }
-
-      const policy = await ctx.runQuery(internal.videos.getMuxPlaybackPolicyForNewRecord, {
-        userId,
-        isResponse: args.isResponse,
-        campId: args.campId,
-        durationMs: args.durationMs,
-        tags: args.tags,
-      })
-      playbackPolicy = policy.playbackPolicy
-    }
-
-    const config = getMuxConfig()
-    const uploadTimeout = readMuxSeconds(
-      process.env.MUX_UPLOAD_TIMEOUT_SECONDS,
-      DEFAULT_MUX_UPLOAD_TIMEOUT_SECONDS,
-      MUX_UPLOAD_TIMEOUT_MIN_SECONDS,
-      MUX_UPLOAD_TIMEOUT_MAX_SECONDS,
-    )
-    const payload = {
-      cors_origin: config.uploadCorsOrigin,
-      timeout: uploadTimeout,
-      new_asset_settings: {
-        playback_policies: [playbackPolicy],
-        video_quality: config.videoQuality,
-        // Mux normalizes on-demand assets to -24 LUFS. This does not cover
-        // assets produced by live ingest; see docs/audio-levels-investigation.md.
-        normalize_audio: config.normalizeAudio,
-        // Auto-generated captions: viewers get CC, and the track.ready webhook
-        // feeds the transcript → summary/tags pipeline in ai.ts. Included in
-        // standard Mux encoding charges. Live recordings can't request this at
-        // creation; markRecordReady covers them via requestGeneratedSubtitles.
-        inputs: [{ generated_subtitles: [GENERATED_SUBTITLES_SETTINGS] }],
-        passthrough: JSON.stringify({
-          userId,
-          isResponse: args.isResponse,
-          bondfireId: args.bondfireId,
-          campId: args.campId,
-          tags: args.tags,
-          filename: args.filename,
-          contentType: args.contentType,
-        }),
-      },
-    }
-
-    const data = parseMuxData(
-      await muxRequest('/uploads', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      }),
-    )
-    const uploadId = readString(data.id, 'upload id')
-    const uploadUrl = readString(data.url, 'upload url')
-    const expiresIn = readOptionalNumber(data.timeout) ?? payload.timeout
-
-    let pendingRecord: {
-      recordId: Id<'bondfires'> | Id<'bondfireVideos'>
-      recordType: 'bondfire' | 'response'
-    }
-    try {
-      pendingRecord = await ctx.runMutation(internal.videos.createPendingMuxVideo, {
-        userId,
-        uploadId,
-        isResponse: args.isResponse,
-        bondfireId: args.bondfireId,
-        campId: args.campId,
-        personalCamp: args.personalCamp,
-        tags: args.tags,
-        playbackPolicy,
-        durationMs: args.durationMs,
-        width: args.width,
-        height: args.height,
-        draftBondfireId: args.draftBondfireId,
-      })
-    } catch (error) {
-      // Retention/account deletion can win while Mux provisions the upload.
-      // Durable compensation also checks for a successfully linked record
-      // before cancelling, in case the mutation's response was ambiguous.
-      await ctx.runMutation(internal.retentionMedia.enqueueUnlinked, {
-        kind: 'direct_upload',
-        externalId: uploadId,
-      })
-      throw error
-    }
-
-    return {
-      uploadId,
-      uploadUrl,
-      recordId: pendingRecord.recordId,
-      recordType: pendingRecord.recordType,
-      expiresIn,
-    }
+  handler: async (ctx): Promise<MuxDirectUploadResult> => {
+    if (!(await auth.getUserId(ctx))) throwUserError('Not authenticated')
+    // Keep the endpoint and response type for already-installed clients.
+    // New capture must use segmentMedia; only existing backup recovery may
+    // still create a legacy upload while that queue drains.
+    throwUserError('Please update Bondfires to record a new video.')
   },
 })
 
@@ -2263,158 +2147,13 @@ export const createLiveStream = action({
     pending: v.optional(v.boolean()),
     draftBondfireId: v.optional(v.id('bondfires')),
   },
-  handler: (ctx, args): Promise<MuxLiveStreamResult> =>
-    withUserFacingActionErrors(
-      ctx,
-      'videos.createLiveStream',
-      'Something went wrong starting your recording. Please try again.',
-      async () => {
-        const userId = await auth.getUserId(ctx)
-        if (!userId) {
-          throwUserError('Not authenticated')
-        }
-        assertClientMediaMetadataBounds(args)
-
-        const resolvePlaybackPolicy = async (): Promise<PlaybackPolicy> => {
-          if (args.isResponse) {
-            if (!args.bondfireId) {
-              throwUserError('A bondfire ID is required when creating a live response')
-            }
-
-            const policy = await ctx.runQuery(internal.videos.getMuxPlaybackPolicyForNewRecord, {
-              userId,
-              isResponse: args.isResponse,
-              bondfireId: args.bondfireId,
-            })
-            return policy.playbackPolicy
-          }
-          if (args.personalCamp) {
-            await ctx.runQuery(internal.videos.validatePersonalCreateForUser, { userId })
-            return 'signed'
-          }
-          if (!args.campId) {
-            throwUserError('Choose a camp before sparking a Bondfire')
-          }
-
-          const policy = await ctx.runQuery(internal.videos.getMuxPlaybackPolicyForNewRecord, {
-            userId,
-            isResponse: args.isResponse,
-            campId: args.campId,
-            tags: args.tags,
-          })
-          return policy.playbackPolicy
-        }
-
-        // The three pre-flight reads are independent — run them concurrently.
-        // This action sits on the record-tap critical path, so every serial
-        // round-trip here is user-visible latency before recording starts.
-        const [playbackPolicy, existingActive, maxContinuousDuration] = await Promise.all([
-          resolvePlaybackPolicy(),
-          // Refuse to provision a billable Mux live stream while the user
-          // already has one in flight. The cron will sweep abandoned sessions,
-          // but this prevents a runaway loop from creating an unbounded number
-          // of them.
-          ctx.runQuery(internal.videos.getActiveMuxLiveSessionForUser, { userId }),
-          ctx.runQuery(internal.videos.getLiveMaxContinuousDurationSeconds, { userId }),
-        ])
-        if (existingActive) {
-          throwUserError(
-            'You already have an active live stream. End it before starting a new one.',
-          )
-        }
-
-        const config = getMuxConfig()
-        const reconnectWindow = config.reconnectWindowSeconds
-        const data = parseMuxData(
-          await muxRequest('/live-streams', {
-            method: 'POST',
-            body: JSON.stringify({
-              playback_policies: [playbackPolicy],
-              latency_mode: config.liveLatencyMode,
-              reconnect_window: reconnectWindow,
-              max_continuous_duration: maxContinuousDuration,
-              // Slate policy (product call 2026-07): freeze-frame where Mux
-              // allows it, branded slate where it doesn't, Mux's default
-              // slate NEVER.
-              // - standard latency: use_slate_for_standard_latency stays at
-              //   Mux's default false → no slate at all. Live players hold
-              //   the last received frame during a gap (our player overlays
-              //   its own spinner) and the recording gets the gap cut
-              //   instead of placeholder frames baked in forever.
-              // - low/reduced latency (opt-in via MUX_LIVE_LATENCY_MODE): Mux inserts
-              //   slate during reconnect gaps unconditionally, so the only
-              //   control we have is WHICH image — always send the branded
-              //   URL (hard code fallback, see DEFAULT_MUX_RECONNECT_SLATE_URL)
-              //   so the Mux default can never appear.
-              ...(reconnectWindow > 0 ? { reconnect_slate_url: config.reconnectSlateUrl } : {}),
-              passthrough: JSON.stringify({
-                userId,
-                isResponse: args.isResponse,
-                bondfireId: args.bondfireId,
-                personalCamp: args.personalCamp,
-                source: 'bondfires-live',
-              }),
-              new_asset_settings: {
-                playback_policies: [playbackPolicy],
-                video_quality: config.videoQuality,
-              },
-            }),
-          }),
-        )
-        const liveStreamId = readString(data.id, 'live stream id')
-        const streamKey = readString(data.stream_key, 'stream key')
-        const playbackId = getMuxPlaybackId(data)
-
-        let pendingRecord: {
-          liveSessionId: Id<'liveSessions'>
-          recordId: Id<'bondfires'> | Id<'bondfireVideos'>
-          recordType: 'bondfire' | 'response'
-        }
-
-        try {
-          pendingRecord = await ctx.runMutation(internal.videos.createLinkedMuxLiveSession, {
-            userId,
-            liveStreamId,
-            playbackId,
-            isResponse: args.isResponse,
-            bondfireId: args.bondfireId,
-            campId: args.campId,
-            personalCamp: args.personalCamp,
-            playbackPolicy,
-            latencyMode: config.liveLatencyMode,
-            tags: args.tags,
-            width: args.width,
-            height: args.height,
-            title: args.title,
-            pending: args.pending,
-            draftBondfireId: args.draftBondfireId,
-          })
-        } catch (error) {
-          await ctx.runMutation(internal.retentionMedia.enqueueUnlinked, {
-            kind: 'live_stream',
-            externalId: liveStreamId,
-          })
-          throw error
-        }
-
-        return {
-          liveStreamId,
-          liveSessionId: pendingRecord.liveSessionId,
-          playbackId,
-          ingest: {
-            rtmpsUrl: MUX_LIVE_RTMPS_ENDPOINT,
-            streamKey,
-            // How long Mux keeps this stream resumable after a socket drop.
-            // The client's reconnect loop budgets its retries from this.
-            reconnectWindowSeconds: reconnectWindow,
-          },
-          playbackUrl:
-            playbackPolicy === 'public' && playbackId ? getMuxPlaybackUrl(playbackId) : undefined,
-          recordId: pendingRecord.recordId,
-          recordType: pendingRecord.recordType,
-        }
-      },
-    ),
+  handler: async (ctx): Promise<MuxLiveStreamResult> => {
+    if (!(await auth.getUserId(ctx))) throwUserError('Not authenticated')
+    // Keep the endpoint and response type for already-installed clients.
+    // New capture must use segmentMedia; only existing backup recovery may
+    // still create a legacy upload while that queue drains.
+    throwUserError('Please update Bondfires to record a new video.')
+  },
 })
 
 // Ask Mux directly. Mux's API often knows ingest happened before the

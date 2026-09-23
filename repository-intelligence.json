@@ -299,7 +299,6 @@
         "packages/app/src/utils/live*.ts"
       ],
       "environmentKeys": [
-        "EXPO_PUBLIC_MUX_DATA_ENV_KEY",
         "EXPO_PUBLIC_LOCAL_BACKUP_RECORDING",
         "EXPO_PUBLIC_LIVE_AUDIO_SOURCE",
         "MUX_LIVE_LATENCY_MODE",

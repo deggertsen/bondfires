@@ -1,11 +1,9 @@
 import {
   appActions,
   appStore$,
-  type MuxDataVideoMetadata,
   safelyUseCurrentPlayer,
   telemetry,
   tierMeetsRequirement,
-  useMuxData,
   usePresence,
   useSubscription,
 } from '@bondfires/app'
@@ -574,40 +572,6 @@ export function VideoPlayer({
     videoId,
     withCurrentPlayer,
   ])
-
-  const muxPlaybackId = useMemo(() => {
-    if (!videoUrl) return null
-    const match = videoUrl.match(/stream\.mux\.com\/([^/?#]+)\.m3u8(?:[?#]|$)/)
-    return match ? match[1] : null
-  }, [videoUrl])
-
-  const muxDataVideoMetadata: MuxDataVideoMetadata | null = useMemo(() => {
-    if (!muxPlaybackId) return null
-    return {
-      video_id: muxPlaybackId,
-      video_title: creatorName
-        ? isMainVideo
-          ? `${creatorName}'s Spark`
-          : `${creatorName}'s Response #${(responseIndex ?? 0) + 1}`
-        : undefined,
-      video_stream_type: isLive ? 'live' : 'on-demand',
-      video_series: bondfireId,
-      custom_1: creatorName,
-      custom_2: isMainVideo ? 'spark' : 'response',
-      custom_3: isMainVideo ? 'true' : 'false',
-    }
-  }, [muxPlaybackId, creatorName, isMainVideo, responseIndex, isLive, bondfireId])
-
-  useMuxData({
-    player,
-    sourceUrl: currentUrl,
-    videoMetadata: muxDataVideoMetadata,
-    viewerMetadata: useMemo(
-      () => ({ viewer_user_id: currentUserId ?? undefined }),
-      [currentUserId],
-    ),
-    isActive: ownsPlaybackSession,
-  })
 
   useEffect(() => {
     // Keep the system media session attached to the real native player. Only
