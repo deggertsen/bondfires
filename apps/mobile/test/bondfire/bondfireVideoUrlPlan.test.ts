@@ -221,3 +221,20 @@ describe('urlPrefetchWindow', () => {
     expect(urlPrefetchWindow(-1, 3)).toEqual({ start: 0, end: 2 })
   })
 })
+
+it('enables finished R2 captions without changing the playing video URL', () => {
+  const cache = new Map([
+    [
+      'segment:recording',
+      {
+        url: 'https://media/index.m3u8?token=test',
+        captionsUrl: 'https://media/captions.vtt?token=test',
+      },
+    ],
+  ])
+  const target = { cacheKey: 'segment:recording', request: null, isLive: false, isSegmented: true }
+  expect(urlsFromCache([target], cache)[0]?.captionsUrl).toBeUndefined()
+  const ready = urlsFromCache([{ ...target, captionsReadyAt: 123 }], cache)[0]
+  expect(ready?.url).toBe('https://media/index.m3u8?token=test')
+  expect(ready?.captionsUrl).toBe('https://media/captions.vtt?token=test&v=123')
+})

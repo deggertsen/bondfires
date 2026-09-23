@@ -93,7 +93,7 @@ export function useBondfireVideoUrls({
             })
             return {
               hdUrl: `${grant.baseUrl}/index.m3u8?token=${encodeURIComponent(grant.token)}`,
-              captionsUrl: undefined,
+              captionsUrl: `${grant.baseUrl}/captions.vtt?token=${encodeURIComponent(grant.token)}`,
             }
           }
           return legacyResults[legacy.findIndex((item) => item.cacheKey === entry.cacheKey)]

@@ -207,4 +207,11 @@ crons.daily(
   {},
 )
 
+crons.interval(
+  'recover caption processing',
+  { minutes: 5 },
+  internal.segmentTranscription.recover,
+  {},
+)
+
 export default crons

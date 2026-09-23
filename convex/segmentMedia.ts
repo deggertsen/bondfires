@@ -23,6 +23,7 @@ import { auth } from './auth'
 import { getEntitlementSubscriptionTier, getTierMaxVideoDurationMs } from './entitlements'
 import { getSegmentVideoStatus, isPlayableVideoRecord } from './lib/videoLifecycle'
 import { countResponse, uncountResponse } from './responseCounts'
+import { enqueueTranscription } from './segmentTranscription'
 import { assertCanViewBondfire, assertCanViewResponse, createPendingVideoRecord } from './videos'
 
 function isMediaEnabled() {
@@ -237,7 +238,10 @@ async function updatePlayable(ctx: MutationCtx, recording: Doc<'segmentRecording
       })
     }
   }
-  if (complete) await ctx.db.patch(recording._id, { status: 'ready' })
+  if (complete) {
+    await ctx.db.patch(recording._id, { status: 'ready' })
+    await enqueueTranscription(ctx, recording._id)
+  }
 }
 export const receipt = internalMutation({
   args: {
@@ -479,5 +483,31 @@ export const cleanup = internalAction({
     }
     if (page.cursor)
       await ctx.scheduler.runAfter(0, internal.segmentMedia.cleanup, { cursor: page.cursor })
+  },
+})
+
+/** Private caption delivery uses the same current membership/deletion checks as video. */
+export const captions = internalQuery({
+  args: { recordingId: v.id('segmentRecordings'), userId: v.id('users') },
+  handler: async (ctx, args) => {
+    requireSegmentMedia()
+    const recording = await ctx.db.get(args.recordingId)
+    if (!recording) throw new Error('Forbidden')
+    await linkedAccess(ctx, recording, args.userId)
+    const id = recording.responseId ?? recording.bondfireId
+    const record = id ? await ctx.db.get(id) : null
+    if (!record?.captionsReadyAt) return { captionsVtt: null }
+    const row = recording.responseId
+      ? await ctx.db
+          .query('videoTranscripts')
+          .withIndex('by_bondfire_video', (q) => q.eq('bondfireVideoId', recording.responseId))
+          .first()
+      : await ctx.db
+          .query('videoTranscripts')
+          .withIndex('by_bondfire', (q) => q.eq('bondfireId', recording.bondfireId))
+          .first()
+    return {
+      captionsVtt: row?.segmentRecordingId === recording._id ? (row.captionsVtt ?? null) : null,
+    }
   },
 })

@@ -62,6 +62,11 @@ http.route({
       const recordingId =
         claims.recordingId as import('./_generated/dataModel').Id<'segmentRecordings'>
       const userId = claims.userId as import('./_generated/dataModel').Id<'users'>
+      if (body.operation === 'readCaptions' && claims.operation === 'read') {
+        return Response.json(
+          await ctx.runQuery(internal.segmentMedia.captions, { recordingId, userId }),
+        )
+      }
       if (body.operation === 'read' && claims.operation === 'read') {
         return Response.json(
           await ctx.runQuery(internal.segmentMedia.timeline, {
