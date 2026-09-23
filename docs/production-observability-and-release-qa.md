@@ -17,8 +17,8 @@ Before release, the owner must:
    Remove obsolete Sentry variables if previously added; no Sentry account,
    DSN, upload token, organization or project is needed.
 3. Keep distinct Convex deployments for development/preview and production.
-   Set `EXPO_PUBLIC_APP_ENV`, `EXPO_PUBLIC_CONVEX_URL` and
-   `EXPO_PUBLIC_MUX_DATA_ENV_KEY` in the matching EAS environment. Provision a
+   Set `EXPO_PUBLIC_APP_ENV` and `EXPO_PUBLIC_CONVEX_URL` in the matching
+   EAS environment. Provision a
    staging account; never copy production credentials into staging smoke tests.
 4. Build new native binaries: existing development clients do not contain RNFB.
    Preview uses the same Firebase project, with an `environment=preview` custom
@@ -46,7 +46,7 @@ reports copy only scrubbed error text and bounded frames. RNFB's unsanitized JS
 handlers are replaced while preserving the app's original fatal-error handling.
 Hermes rejection tracking and application breadcrumbs remain in Convex telemetry.
 Manually recorded JS errors appear as non-fatal reports; a genuine native fatal
-may also appear separately. Crashlytics is not a replacement for backend/Mux logs.
+may also appear separately. Crashlytics is not a replacement for backend/media Worker logs.
 
 Native crash/ANR payloads bypass JavaScript scrubbing. Review actual iOS/Android
 preview payloads, installation identifiers, device data and retention against

@@ -88,7 +88,6 @@
     "expo-task-manager": "~14.0.9",
     "expo-video": "patch:expo-video@npm%3A3.0.16#~/.yarn/patches/expo-video-npm-3.0.16-8037695497.patch",
     "expo-web-browser": "~15.0.11",
-    "mux-embed": "5.18.1",
     "promise": "8.3.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",

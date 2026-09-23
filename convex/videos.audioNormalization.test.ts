@@ -4,25 +4,19 @@ import type { ActionCtx } from './_generated/server'
 
 vi.mock('./auth', () => ({ auth: { getUserId: vi.fn().mockResolvedValue('owner') } }))
 
-import { createLiveBackupDirectUpload, createMuxDirectUpload } from './videos'
+import { createLiveBackupDirectUpload } from './videos'
 
 function handler<Args>(fn: unknown) {
   return (fn as { _handler: (ctx: ActionCtx, args: Args) => Promise<unknown> })._handler
 }
 
-const createUpload = handler<{
-  filename: string
-  contentType: string
-  isResponse: boolean
-  personalCamp: boolean
-}>(createMuxDirectUpload)
 const createBackup = handler<{
   filename: string
   contentType: string
   liveSessionId: Id<'liveSessions'>
 }>(createLiveBackupDirectUpload)
 
-describe.each(['direct', 'live backup'] as const)('%s upload audio normalization', (path) => {
+describe('legacy backup upload audio normalization', () => {
   beforeEach(() => {
     vi.stubEnv('MUX_TOKEN_ID', 'test')
     vi.stubEnv('MUX_TOKEN_SECRET', 'test')
@@ -64,11 +58,7 @@ describe.each(['direct', 'live backup'] as const)('%s upload audio normalization
       } as unknown as ActionCtx
       const file = { filename: 'recording.mp4', contentType: 'video/mp4' }
 
-      if (path === 'direct') {
-        await createUpload(ctx, { ...file, isResponse: false, personalCamp: true })
-      } else {
-        await createBackup(ctx, { ...file, liveSessionId: 'session' as Id<'liveSessions'> })
-      }
+      await createBackup(ctx, { ...file, liveSessionId: 'session' as Id<'liveSessions'> })
 
       expect(fetch).toHaveBeenCalledOnce()
       const [url, request] = fetch.mock.calls[0]
