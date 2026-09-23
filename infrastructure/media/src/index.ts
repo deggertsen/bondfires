@@ -17,6 +17,7 @@ import {
 } from '../../../packages/media/src/protocol'
 import { importRequest } from './imports'
 import { mediaResponse } from './mediaResponse'
+import { transcribeRequest } from './transcription'
 
 async function readBounded(request: Request): Promise<Uint8Array> {
   const length = Number(request.headers.get('content-length'))
@@ -60,7 +61,11 @@ async function backend(env: Env, body: Record<string, unknown>) {
         ? 'Forbidden'
         : 'Media service unavailable',
     )
-  return response.json() as Promise<{ complete: boolean; segments: MediaSegment[] }>
+  return response.json() as Promise<{
+    complete: boolean
+    segments: MediaSegment[]
+    captionsVtt?: string | null
+  }>
 }
 /** Preserve immutable uploaded bytes/checksums; normalize only validation and delivery. */
 async function normalizeTiming(
@@ -93,6 +98,7 @@ export default {
         version: 1,
       })
     try {
+      if (url.pathname === '/internal/transcribe') return await transcribeRequest(request, env)
       if (new URL(request.url).pathname.startsWith('/imports/'))
         return await importRequest(request, env)
       const deletion = /^\/v1\/([a-z0-9]+)$/.exec(url.pathname)
@@ -112,9 +118,10 @@ export default {
         } while (cursor)
         return new Response(null, { status: 204 })
       }
-      const match = /^\/v1\/([a-z0-9]+)\/(init\.mp4|segment-\d{6}\.m4s|index\.m3u8)$/.exec(
-        url.pathname,
-      )
+      const match =
+        /^\/v1\/([a-z0-9]+)\/(init\.mp4|segment-\d{6}\.m4s|index\.m3u8|captions\.vtt)$/.exec(
+          url.pathname,
+        )
       if (!match) return new Response('Not found', { status: 404 })
       const [, recordingId, filename] = match
       const token =
@@ -123,6 +130,22 @@ export default {
         ''
       const claims = await verifyCapability(token, env.MEDIA_TOKEN_SECRET)
       if (claims.recordingId !== recordingId) throw new Error('Forbidden')
+      if (filename === 'captions.vtt') {
+        if (claims.operation !== 'read' || !['GET', 'HEAD'].includes(request.method))
+          throw new Error('Forbidden')
+        const state = await backend(env, { operation: 'readCaptions', token })
+        if (state.captionsVtt === null || state.captionsVtt === undefined)
+          return new Response('Captions pending', {
+            status: 404,
+            headers: { 'Cache-Control': 'no-store' },
+          })
+        return new Response(request.method === 'HEAD' ? null : state.captionsVtt, {
+          headers: {
+            'Content-Type': 'text/vtt; charset=utf-8',
+            'Cache-Control': 'private, no-store',
+          },
+        })
+      }
       const key = `${recordingId}/${filename}`
       const index = filename === 'init.mp4' ? -1 : Number(SEGMENT_NAME.exec(filename)?.[1])
       if (request.method === 'PUT') {

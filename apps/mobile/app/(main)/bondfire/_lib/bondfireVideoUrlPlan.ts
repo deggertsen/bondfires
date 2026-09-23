@@ -38,6 +38,8 @@ export type VideoUrlTarget = {
       }
     | null
   isLive: boolean
+  captionsReadyAt?: number
+  isSegmented?: boolean
 }
 
 type PlayableVideoFields = Pick<
@@ -66,6 +68,8 @@ export function buildVideoUrlTargets(bondfireData: BondfireDetailData): VideoUrl
           cacheKey: `segment:${bondfireData.segmentRecordingId}`,
           request: { segmentRecordingId: bondfireData.segmentRecordingId },
           isLive: mainIsLive,
+          isSegmented: true,
+          captionsReadyAt: bondfireData.captionsReadyAt,
         }
       : mainPlaybackId
         ? {
@@ -89,6 +93,8 @@ export function buildVideoUrlTargets(bondfireData: BondfireDetailData): VideoUrl
             cacheKey: `segment:${video.segmentRecordingId}`,
             request: { segmentRecordingId: video.segmentRecordingId },
             isLive,
+            isSegmented: true,
+            captionsReadyAt: video.captionsReadyAt,
           }
         : playbackId
           ? {
@@ -114,7 +120,17 @@ export function urlsFromCache(
   return targets.map((target) => {
     if (!target.cacheKey) return null
     const cached = cache.get(target.cacheKey)
-    return cached ? { ...cached, url: withLiveDvrStart(cached.url, target.isLive) } : null
+    return cached
+      ? {
+          ...cached,
+          url: withLiveDvrStart(cached.url, target.isLive),
+          captionsUrl: target.isSegmented
+            ? target.captionsReadyAt && cached.captionsUrl
+              ? `${cached.captionsUrl}&v=${target.captionsReadyAt}`
+              : undefined
+            : cached.captionsUrl,
+        }
+      : null
   })
 }
 

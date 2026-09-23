@@ -239,6 +239,8 @@ export const getRecordForInsights = internalQuery({
       const document = await ctx.db.get(args.recordId as Id<'bondfires'>)
       if (!document) return null
       return {
+        muxAssetId: document.muxAssetId,
+        segmentRecordingId: document.segmentRecordingId,
         muxPlaybackId: document.muxPlaybackId,
         muxPlaybackPolicy: document.muxPlaybackPolicy,
         summary: document.summary,
@@ -249,6 +251,8 @@ export const getRecordForInsights = internalQuery({
     const document = await ctx.db.get(args.recordId as Id<'bondfireVideos'>)
     if (!document) return null
     return {
+      muxAssetId: document.muxAssetId,
+      segmentRecordingId: document.segmentRecordingId,
       muxPlaybackId: document.muxPlaybackId,
       muxPlaybackPolicy: document.muxPlaybackPolicy,
       summary: document.summary,
@@ -316,7 +320,9 @@ export const getStoredTranscript = internalQuery({
   args: { table: recordTable, recordId },
   handler: async (ctx, args) => {
     const row = await findTranscriptRow(ctx, args.table, args.recordId)
-    return row ? { text: row.text } : null
+    return row
+      ? { text: row.text, muxAssetId: row.muxAssetId, segmentRecordingId: row.segmentRecordingId }
+      : null
   },
 })
 
@@ -367,13 +373,21 @@ export const saveVideoInsights = internalMutation({
   args: {
     table: recordTable,
     recordId,
+    expectedMuxAssetId: v.optional(v.string()),
+    expectedSegmentRecordingId: v.optional(v.id('segmentRecordings')),
     summary: v.optional(v.string()),
     aiTags: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
-    const id = args.recordId as Id<'bondfires'> & Id<'bondfireVideos'>
+    const id = args.recordId
     const document = await ctx.db.get(id)
-    if (!document) return
+    if (!document || !(await retainedVideoExists(ctx, id))) return
+    if (
+      args.expectedSegmentRecordingId &&
+      document.segmentRecordingId !== args.expectedSegmentRecordingId
+    )
+      return
+    if (args.expectedMuxAssetId && document.muxAssetId !== args.expectedMuxAssetId) return
 
     // Patching an explicit undefined would DELETE the field — a partial LLM
     // result (tags without summary) must not clear a previously saved value.
@@ -534,7 +548,11 @@ export const listTranscriptsForInsightsRepair = internalQuery({
     for (const transcript of page.page) {
       if (transcript.bondfireId) {
         const bondfire = await ctx.db.get(transcript.bondfireId)
-        if (bondfire?.summary !== undefined && bondfire.muxAssetId === transcript.muxAssetId) {
+        if (
+          transcript.muxAssetId &&
+          bondfire?.summary !== undefined &&
+          bondfire.muxAssetId === transcript.muxAssetId
+        ) {
           items.push({
             table: 'bondfires',
             recordId: transcript.bondfireId,
@@ -546,7 +564,11 @@ export const listTranscriptsForInsightsRepair = internalQuery({
 
       if (transcript.bondfireVideoId) {
         const video = await ctx.db.get(transcript.bondfireVideoId)
-        if (video?.summary !== undefined && video.muxAssetId === transcript.muxAssetId) {
+        if (
+          transcript.muxAssetId &&
+          video?.summary !== undefined &&
+          video.muxAssetId === transcript.muxAssetId
+        ) {
           items.push({
             table: 'bondfireVideos',
             recordId: transcript.bondfireVideoId,
@@ -582,7 +604,8 @@ export const processVideoTranscript = internalAction({
   args: {
     table: recordTable,
     recordId,
-    muxAssetId: v.string(),
+    muxAssetId: v.optional(v.string()),
+    segmentRecordingId: v.optional(v.id('segmentRecordings')),
     muxTrackId: v.optional(v.string()),
     languageCode: v.optional(v.string()),
     attempt: v.optional(v.number()),
@@ -593,7 +616,12 @@ export const processVideoTranscript = internalAction({
       table: args.table,
       recordId: args.recordId,
     })
-    if (!record) {
+    if (
+      !record ||
+      (args.segmentRecordingId
+        ? record.segmentRecordingId !== args.segmentRecordingId
+        : !args.muxAssetId || record.muxAssetId !== args.muxAssetId)
+    ) {
       return { processed: false, reason: 'record_not_found' }
     }
     // Both the track.ready webhook and markRecordReady's re-drive can schedule
@@ -616,12 +644,17 @@ export const processVideoTranscript = internalAction({
       return { processed: false, reason }
     }
 
-    let transcript = (
-      await ctx.runQuery(internal.ai.getStoredTranscript, {
-        table: args.table,
-        recordId: args.recordId,
-      })
-    )?.text
+    const stored = await ctx.runQuery(internal.ai.getStoredTranscript, {
+      table: args.table,
+      recordId: args.recordId,
+    })
+    let transcript =
+      stored &&
+      (args.segmentRecordingId
+        ? stored.segmentRecordingId === args.segmentRecordingId
+        : stored.muxAssetId === args.muxAssetId)
+        ? stored.text
+        : undefined
 
     // A stored-but-empty transcript (from an early fetch of a still-empty
     // caption file) must not satisfy the lookup or it would block re-fetching
@@ -631,6 +664,8 @@ export const processVideoTranscript = internalAction({
     }
 
     if (transcript === undefined) {
+      if (!args.muxAssetId || args.segmentRecordingId)
+        throw new Error('Stored R2 transcript missing')
       if (!record.muxPlaybackId && args.muxTrackId) {
         // track.ready can race ahead of asset.ready, in which case the record
         // has a muxAssetId (patched at upload.asset_created) but no playback
@@ -688,7 +723,10 @@ export const processVideoTranscript = internalAction({
       return { processed: false, reason: 'transcript_too_short' }
     }
 
-    const raw = await callOpenRouterJson(videoInsightsPrompt(transcript), 300)
+    const raw = await callOpenRouterJson(
+      videoInsightsPrompt(transcript.slice(0, MAX_TRANSCRIPT_CHARS)),
+      300,
+    )
     const summary = cleanSummary(raw.summary)
     const aiTags = cleanTags(raw.tags)
     if (!summary && !aiTags) {
@@ -700,6 +738,8 @@ export const processVideoTranscript = internalAction({
       recordId: args.recordId,
       summary,
       aiTags,
+      expectedMuxAssetId: args.muxAssetId,
+      expectedSegmentRecordingId: args.segmentRecordingId,
     })
 
     await ctx.scheduler.runAfter(0, internal.ai.generateThreadTitle, {

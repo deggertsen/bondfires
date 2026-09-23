@@ -636,6 +636,7 @@ export default defineSchema({
       ),
     ),
     segmentRecordingId: v.optional(v.id('segmentRecordings')),
+    captionsReadyAt: v.optional(v.number()),
     liveSessionId: v.optional(v.id('liveSessions')),
     muxUploadId: v.optional(v.string()),
     muxCompletionCheckStartedAt: v.optional(v.number()),
@@ -721,6 +722,7 @@ export default defineSchema({
       ),
     ),
     segmentRecordingId: v.optional(v.id('segmentRecordings')),
+    captionsReadyAt: v.optional(v.number()),
     liveSessionId: v.optional(v.id('liveSessions')),
     muxUploadId: v.optional(v.string()),
     muxCompletionCheckStartedAt: v.optional(v.number()),
@@ -779,7 +781,9 @@ export default defineSchema({
   videoTranscripts: defineTable({
     bondfireId: v.optional(v.id('bondfires')),
     bondfireVideoId: v.optional(v.id('bondfireVideos')),
-    muxAssetId: v.string(),
+    muxAssetId: v.optional(v.string()),
+    segmentRecordingId: v.optional(v.id('segmentRecordings')),
+    captionsVtt: v.optional(v.string()),
     muxTrackId: v.optional(v.string()),
     languageCode: v.optional(v.string()),
     text: v.string(),
@@ -1222,6 +1226,25 @@ export default defineSchema({
   })
     .index('by_owner_local', ['userId', 'localId'])
     .index('by_updated', ['updatedAt']),
+  segmentTranscriptionJobs: defineTable({
+    recordingId: v.id('segmentRecordings'),
+    status: v.union(
+      v.literal('queued'),
+      v.literal('running'),
+      v.literal('ready'),
+      v.literal('failed'),
+    ),
+    cursor: v.number(),
+    attempts: v.number(),
+    leaseUntil: v.number(),
+    updatedAt: v.number(),
+    insightsAttempts: v.optional(v.number()),
+    insightsStatus: v.optional(
+      v.union(v.literal('queued'), v.literal('ready'), v.literal('failed')),
+    ),
+  })
+    .index('by_recording', ['recordingId'])
+    .index('by_status_lease', ['status', 'leaseUntil']),
   mediaImports: defineTable({
     recordId: v.union(v.id('bondfires'), v.id('bondfireVideos')),
     muxAssetId: v.string(),

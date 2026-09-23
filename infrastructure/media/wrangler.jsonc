@@ -16,6 +16,7 @@
   "vars": {
     "CONVEX_SITE_URL": "https://lovely-malamute-525.convex.site"
   },
+  "ai": { "binding": "AI" },
   "r2_buckets": [
     {
       "binding": "VIDEO",
@@ -31,6 +32,7 @@
       "vars": {
         "CONVEX_SITE_URL": "https://ideal-akita-27.convex.site"
       },
+      "ai": { "binding": "AI" },
       "r2_buckets": [
         {
           "binding": "VIDEO",
