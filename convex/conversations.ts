@@ -31,6 +31,12 @@ type ThreadSummary = Doc<'bondfires'> & {
   latestResponseBondfireVideoId?: Id<'bondfireVideos'>
   latestResponseMuxPlaybackId?: string
   latestResponseMuxPlaybackPolicy?: 'public' | 'signed'
+  /**
+   * Creator of the first video in the thread (spark first, then responses in
+   * ascending order) the viewer has not watched yet. Null when everything in
+   * the scanned window is watched. Never the viewer themselves.
+   */
+  firstUnwatchedResponder: PublicUser | null
 }
 
 type PublicUser = {
@@ -46,6 +52,10 @@ const THREAD_CANDIDATE_MULTIPLIER = 4
 const CLOSE_CIRCLE_LIMIT = 8
 const CLOSE_CIRCLE_THREAD_CANDIDATE_LIMIT = 80
 const THREAD_RESPONSE_SUMMARY_LIMIT = 250
+// Responses scanned per thread when resolving the first unwatched video. The
+// read marker is pushed into the index so this stays a short prefix of the
+// thread rather than the whole conversation.
+const FIRST_UNWATCHED_RESPONSE_SCAN_LIMIT = 25
 
 function toPublicUser(user: Doc<'users'>): PublicUser {
   return {
@@ -106,6 +116,75 @@ async function getParticipantMap(
   }
 
   return { participants, latestResponsePlayback }
+}
+
+async function hasViewerWatchEvent(ctx: QueryCtx, viewerId: Id<'users'>, videoId: string) {
+  const event = await ctx.db
+    .query('watchEvents')
+    .withIndex('by_user_video', (q) => q.eq('userId', viewerId).eq('videoId', videoId))
+    .first()
+  return event !== null
+}
+
+/**
+ * Resolve the creator of the first video in a thread the viewer has not watched.
+ *
+ * Mirrors the detail screen's opening position: the spark comes first (only
+ * when the viewer is not its creator), then responses ascending by createdAt.
+ * The viewer's own videos always count as watched. Responses hidden from the
+ * viewer (moderation, lifecycle, blocks) are skipped the same way
+ * getParticipantMap skips them. Returns null when nothing unwatched is found in
+ * the bounded scan window.
+ */
+export async function getFirstUnwatchedResponder(
+  ctx: QueryCtx,
+  args: {
+    bondfire: Doc<'bondfires'>
+    viewerId: Id<'users'>
+    viewer: ViewerVisibilityContext
+    lastReadAt: number
+  },
+): Promise<PublicUser | null> {
+  const { bondfire, viewerId, viewer } = args
+
+  let responderId: Id<'users'> | null = null
+  if (
+    bondfire.userId !== viewerId &&
+    isPlayableVideoRecord(bondfire) &&
+    !(await hasViewerWatchEvent(ctx, viewerId, bondfire._id))
+  ) {
+    responderId = bondfire.userId
+  }
+
+  if (!responderId) {
+    const responses = await ctx.db
+      .query('bondfireVideos')
+      .withIndex('by_bondfire_created', (q) =>
+        q.eq('bondfireId', bondfire._id).gt('createdAt', args.lastReadAt),
+      )
+      .order('asc')
+      .take(FIRST_UNWATCHED_RESPONSE_SCAN_LIMIT)
+
+    for (const response of responses) {
+      if (response.userId === viewerId) continue
+      if (
+        response.moderationStatus === 'removed' ||
+        (response.moderationStatus === 'pending_review' && !viewer.isAdmin)
+      ) {
+        continue
+      }
+      if (!isPlayableVideoRecord(response)) continue
+      if (!(await isUserContentVisibleToViewer(ctx, response.userId, viewer))) continue
+      if (await hasViewerWatchEvent(ctx, viewerId, response._id)) continue
+
+      responderId = response.userId
+      break
+    }
+  }
+
+  if (!responderId) return null
+  const user = await ctx.db.get(responderId)
+  return user ? toPublicUser(user) : null
 }
 
 async function getParticipantThreadIds(ctx: QueryCtx, userId: Id<'users'>, candidateLimit: number) {
@@ -203,6 +282,15 @@ async function buildThreadSummary(
   const unread =
     lastActivityAt > (readMarker?.lastReadAt ?? 0) && lastActivityAt > lastViewerActivityAt
   const camp = args.bondfire.campId ? await ctx.db.get(args.bondfire.campId) : null
+  // Only unread rows surface this name, so skip the extra reads otherwise.
+  const firstUnwatchedResponder = unread
+    ? await getFirstUnwatchedResponder(ctx, {
+        bondfire: args.bondfire,
+        viewerId: args.viewerId,
+        viewer: args.viewer,
+        lastReadAt: readMarker?.lastReadAt ?? 0,
+      })
+    : null
 
   return {
     ...args.bondfire,
@@ -214,6 +302,7 @@ async function buildThreadSummary(
     latestResponseBondfireVideoId: latestResponsePlayback?.bondfireVideoId,
     latestResponseMuxPlaybackId: latestResponsePlayback?.muxPlaybackId,
     latestResponseMuxPlaybackPolicy: latestResponsePlayback?.muxPlaybackPolicy,
+    firstUnwatchedResponder,
   }
 }
 

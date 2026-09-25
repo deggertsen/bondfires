@@ -93,6 +93,8 @@ type MyFire = Doc<'bondfires'> &
     unread: boolean
     participants: ThreadParticipant[]
     badge?: 'sparked' | 'invited' | 'kindled' | null
+    /** Creator of the first video the viewer has not watched yet (see listMyFires). */
+    firstUnwatchedResponder?: PublicUser | null
   }
 
 type ViewMode = 'discover' | 'recent' | 'active' | 'unseen'
@@ -205,6 +207,18 @@ function toBondfireRowProps(
 }
 
 /**
+ * Name shown on the secondary line of a My Fires row. Unread threads name the
+ * person whose video is waiting to be watched (the responder), never the
+ * viewer; otherwise fall back to the Bondfire's creator.
+ */
+function getMyFireRowCreatorName(thread: MyFire): string {
+  const responder = thread.unread ? thread.firstUnwatchedResponder : null
+  const responderName = responder?.displayName ?? responder?.name
+  if (responderName) return responderName
+  return thread.creatorName ?? 'Anonymous'
+}
+
+/**
  * Map a MyFire thread to BondfireRow props for the "New responses" section.
  * Mirrors the My Fires screen's mapping (lastActivityAt timestamp, server-side
  * unread label, real participants) minus the owner-only edit swipe action.
@@ -225,7 +239,7 @@ function toMyFireRowProps(
 
   return {
     title: thread.title,
-    creatorName: thread.creatorName ?? 'Anonymous',
+    creatorName: getMyFireRowCreatorName(thread),
     timestamp: thread.lastActivityAt,
     videoCount: thread.videoCount,
     campLabel: thread.camp?.name,
