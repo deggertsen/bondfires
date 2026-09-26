@@ -58,6 +58,7 @@ import {
 } from '../../../lib/bondfireSwipeActions'
 import type { BondfireThumbnailFields } from '../../../lib/bondfireThumbnails'
 import { type FeedPageState, getHomeFeedEmptyState } from '../../../lib/homeFeedState'
+import { getMyFireRowCreatorName } from '../../../lib/myFireRow'
 import { shouldLoadSparsePage, uniqueById } from '../../../lib/pagination'
 import { routes } from '../../../lib/routes'
 import { useBondfireThumbnails } from '../../../lib/useBondfireThumbnails'
@@ -93,6 +94,11 @@ type MyFire = Doc<'bondfires'> &
     unread: boolean
     participants: ThreadParticipant[]
     badge?: 'sparked' | 'invited' | 'kindled' | null
+    /**
+     * Who an unread row names (see listMyFires): the creator of the video the
+     * thread opens on, else the latest other participant. Never the viewer.
+     */
+    firstUnwatchedResponder: PublicUser | null
   }
 
 type ViewMode = 'discover' | 'recent' | 'active' | 'unseen'
@@ -225,7 +231,7 @@ function toMyFireRowProps(
 
   return {
     title: thread.title,
-    creatorName: thread.creatorName ?? 'Anonymous',
+    creatorName: getMyFireRowCreatorName(thread, currentUserId),
     timestamp: thread.lastActivityAt,
     videoCount: thread.videoCount,
     campLabel: thread.camp?.name,

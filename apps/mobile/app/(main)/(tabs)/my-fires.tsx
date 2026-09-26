@@ -30,6 +30,7 @@ import {
   getSwipeReportComment,
 } from '../../../lib/bondfireSwipeActions'
 import type { BondfireThumbnailFields } from '../../../lib/bondfireThumbnails'
+import { getMyFireRowCreatorName } from '../../../lib/myFireRow'
 import { routes } from '../../../lib/routes'
 import { useBondfireThumbnails } from '../../../lib/useBondfireThumbnails'
 
@@ -54,6 +55,11 @@ type MyFire = Doc<'bondfires'> &
     unread: boolean
     participants: ThreadParticipant[]
     badge?: 'sparked' | 'invited' | 'kindled' | null
+    /**
+     * Who an unread row names (see listMyFires): the creator of the video the
+     * thread opens on, else the latest other participant. Never the viewer.
+     */
+    firstUnwatchedResponder: PublicUser | null
   }
 
 type InviteRow = {
@@ -160,7 +166,7 @@ function toBondfireRowProps(
 
   return {
     title: thread.title,
-    creatorName: thread.creatorName ?? 'Anonymous',
+    creatorName: getMyFireRowCreatorName(thread, currentUserId),
     timestamp: thread.lastActivityAt,
     videoCount: thread.videoCount,
     campLabel: thread.camp?.name,
@@ -260,6 +266,9 @@ export default function MyFiresScreen() {
             unread: true,
             participants: [],
             badge: 'invited' as const,
+            // Invite rows name the inviter (the Bondfire creator), who is
+            // never the viewer.
+            firstUnwatchedResponder: null,
           },
         ]
       }),

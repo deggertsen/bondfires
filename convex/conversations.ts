@@ -13,6 +13,7 @@ import { throwUserError } from './errors'
 import { addInviteBadgesToBondfires, type BondfireBadge } from './inviteBadges'
 import { getPlayableVideoPlayback, type VideoPlaybackReference } from './lib/latestResponsePlayback'
 import { isPlayableVideoRecord } from './lib/videoLifecycle'
+import { isVideoWatchedByViewer } from './lib/viewerWatchState'
 import { assertUsersMayInteract } from './userSafety'
 
 type ThreadParticipant = {
@@ -31,6 +32,14 @@ type ThreadSummary = Doc<'bondfires'> & {
   latestResponseBondfireVideoId?: Id<'bondfireVideos'>
   latestResponseMuxPlaybackId?: string
   latestResponseMuxPlaybackPolicy?: 'public' | 'signed'
+  /**
+   * Who an unread row names: the creator of the video the detail screen will
+   * open on (the first unwatched one, in the detail screen's order), falling
+   * back to the latest participant other than the viewer when everything is
+   * watched. Never the viewer themselves. Only listMyFires resolves this, after
+   * sorting and limiting the rows; other callers return null without scanning.
+   */
+  firstUnwatchedResponder: PublicUser | null
 }
 
 type PublicUser = {
@@ -106,6 +115,47 @@ async function getParticipantMap(
   }
 
   return { participants, latestResponsePlayback }
+}
+
+/**
+ * Walk the detail screen's order (spark, then sequenceNumber), stopping at the
+ * first playable, visible, unwatched video. A thread read marker does not mean
+ * every video was watched. Iterate lazily so early matches avoid reading the
+ * rest of the thread, without silently skipping responses beyond a fixed cap.
+ * Callers must check the bondfire's visibility before invoking this helper.
+ */
+export async function getFirstUnwatchedResponder(
+  ctx: QueryCtx,
+  args: {
+    bondfire: Doc<'bondfires'>
+    viewerId: Id<'users'>
+    viewer: ViewerVisibilityContext
+  },
+): Promise<PublicUser | null> {
+  const { bondfire, viewerId, viewer } = args
+  if (isPlayableVideoRecord(bondfire) && !(await isVideoWatchedByViewer(ctx, viewerId, bondfire))) {
+    const user = await ctx.db.get(bondfire.userId)
+    return user ? toPublicUser(user) : null
+  }
+
+  const responses = ctx.db
+    .query('bondfireVideos')
+    .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
+    .order('asc')
+
+  for await (const response of responses) {
+    if (response.userId === viewerId || !isPlayableVideoRecord(response)) continue
+    if (
+      response.moderationStatus === 'removed' ||
+      (response.moderationStatus === 'pending_review' && !viewer.isAdmin)
+    )
+      continue
+    if (!(await isUserContentVisibleToViewer(ctx, response.userId, viewer))) continue
+    if (await isVideoWatchedByViewer(ctx, viewerId, response)) continue
+    const user = await ctx.db.get(response.userId)
+    return user ? toPublicUser(user) : null
+  }
+  return null
 }
 
 async function getParticipantThreadIds(ctx: QueryCtx, userId: Id<'users'>, candidateLimit: number) {
@@ -203,17 +253,19 @@ async function buildThreadSummary(
   const unread =
     lastActivityAt > (readMarker?.lastReadAt ?? 0) && lastActivityAt > lastViewerActivityAt
   const camp = args.bondfire.campId ? await ctx.db.get(args.bondfire.campId) : null
+  participants.sort((a, b) => b.latestAt - a.latestAt)
 
   return {
     ...args.bondfire,
     camp,
     lastActivityAt,
     unread,
-    participants: participants.sort((a, b) => b.latestAt - a.latestAt),
+    participants,
     badge: null,
     latestResponseBondfireVideoId: latestResponsePlayback?.bondfireVideoId,
     latestResponseMuxPlaybackId: latestResponsePlayback?.muxPlaybackId,
     latestResponseMuxPlaybackPolicy: latestResponsePlayback?.muxPlaybackPolicy,
+    firstUnwatchedResponder: null,
   }
 }
 
@@ -361,7 +413,16 @@ export const listMyFires = query({
       threads.sort((a, b) => b.lastActivityAt - a.lastActivityAt)
     }
 
-    return await addInviteBadgesToBondfires(ctx, userId, threads.slice(0, limit))
+    // Resolve names only for returned unread rows; candidate summaries need no watch lookups.
+    const visibleThreads = threads.slice(0, limit)
+    for (const thread of visibleThreads) {
+      if (!thread.unread) continue
+      thread.firstUnwatchedResponder =
+        (await getFirstUnwatchedResponder(ctx, { bondfire: thread, viewerId: userId, viewer })) ??
+        thread.participants.find((participant) => participant.user._id !== userId)?.user ??
+        null
+    }
+    return await addInviteBadgesToBondfires(ctx, userId, visibleThreads)
   },
 })
 
