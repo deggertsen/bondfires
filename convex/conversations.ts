@@ -35,9 +35,9 @@ type ThreadSummary = Doc<'bondfires'> & {
   /**
    * Who an unread row names: the creator of the video the detail screen will
    * open on (the first unwatched one, in the detail screen's order), falling
-   * back to the latest participant other than the viewer when everything in
-   * the scanned window is already watched. Never the viewer themselves. Only
-   * listMyFires resolves this; other callers return null without scanning.
+   * back to the latest participant other than the viewer when everything is
+   * watched. Never the viewer themselves. Only listMyFires resolves this, after
+   * sorting and limiting the rows; other callers return null without scanning.
    */
   firstUnwatchedResponder: PublicUser | null
 }
@@ -55,10 +55,6 @@ const THREAD_CANDIDATE_MULTIPLIER = 4
 const CLOSE_CIRCLE_LIMIT = 8
 const CLOSE_CIRCLE_THREAD_CANDIDATE_LIMIT = 80
 const THREAD_RESPONSE_SUMMARY_LIMIT = 250
-// Watch-state point lookups issued at once while walking a thread for its
-// first unwatched video. Small so threads the viewer never opened (spark
-// unwatched) cost one round instead of one lookup per response.
-const WATCH_LOOKUP_BATCH_SIZE = 10
 
 function toPublicUser(user: Doc<'users'>): PublicUser {
   return {
@@ -122,17 +118,11 @@ async function getParticipantMap(
 }
 
 /**
- * Resolve the creator of the video the detail screen opens on: the first one
- * the viewer has not watched.
- *
- * Mirrors bondfires.getWithVideos + getInitialVideoIndex exactly: the spark
- * first (a candidate only when the viewer did not create it), then responses
- * in `by_bondfire` (sequenceNumber ascending) order — not createdAt, which can
- * disagree after retries or recovery uploads. The thread read marker plays no
- * part: a viewer who opened the thread but skipped an older response still
- * opens on that response. Hidden responses (moderation, lifecycle, blocks) are
- * skipped the same way the detail screen hides them. Returns null when nothing
- * unwatched is found in the bounded window.
+ * Walk the detail screen's order (spark, then sequenceNumber), stopping at the
+ * first playable, visible, unwatched video. A thread read marker does not mean
+ * every video was watched. Iterate lazily so early matches avoid reading the
+ * rest of the thread, without silently skipping responses beyond a fixed cap.
+ * Callers must check the bondfire's visibility before invoking this helper.
  */
 export async function getFirstUnwatchedResponder(
   ctx: QueryCtx,
@@ -143,55 +133,29 @@ export async function getFirstUnwatchedResponder(
   },
 ): Promise<PublicUser | null> {
   const { bondfire, viewerId, viewer } = args
+  if (isPlayableVideoRecord(bondfire) && !(await isVideoWatchedByViewer(ctx, viewerId, bondfire))) {
+    const user = await ctx.db.get(bondfire.userId)
+    return user ? toPublicUser(user) : null
+  }
 
-  // Same window (and index) buildThreadSummary already reads for participants,
-  // so a long thread does not become unbounded here.
-  const responses = await ctx.db
+  const responses = ctx.db
     .query('bondfireVideos')
     .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
     .order('asc')
-    .take(THREAD_RESPONSE_SUMMARY_LIMIT)
 
-  const responseVisibility = await Promise.all(
-    responses.map(async (response) => {
-      if (response.userId === viewerId) return false
-      if (
-        response.moderationStatus === 'removed' ||
-        (response.moderationStatus === 'pending_review' && !viewer.isAdmin)
-      ) {
-        return false
-      }
-      if (!isPlayableVideoRecord(response)) return false
-      return await isUserContentVisibleToViewer(ctx, response.userId, viewer)
-    }),
-  )
-
-  const candidates: Array<{ _id: string; userId: Id<'users'> }> = []
-  if (bondfire.userId !== viewerId && isPlayableVideoRecord(bondfire)) {
-    candidates.push(bondfire)
-  }
-  for (const [index, response] of responses.entries()) {
-    if (responseVisibility[index]) candidates.push(response)
-  }
-
-  // `by_user_video` is keyed (userId, videoId), so one thread's videos are not
-  // a contiguous range and a single range read cannot resolve the watched set.
-  // Instead, walk the candidate window in small parallel batches and stop at
-  // the first unwatched video: reads stay proportional to how far into the
-  // thread the viewer has watched, capped by the window above.
-  let responderId: Id<'users'> | null = null
-  for (let start = 0; start < candidates.length && !responderId; start += WATCH_LOOKUP_BATCH_SIZE) {
-    const batch = candidates.slice(start, start + WATCH_LOOKUP_BATCH_SIZE)
-    const watched = await Promise.all(
-      batch.map((candidate) => isVideoWatchedByViewer(ctx, viewerId, candidate)),
+  for await (const response of responses) {
+    if (response.userId === viewerId || !isPlayableVideoRecord(response)) continue
+    if (
+      response.moderationStatus === 'removed' ||
+      (response.moderationStatus === 'pending_review' && !viewer.isAdmin)
     )
-    const firstUnwatched = watched.indexOf(false)
-    if (firstUnwatched !== -1) responderId = batch[firstUnwatched].userId
+      continue
+    if (!(await isUserContentVisibleToViewer(ctx, response.userId, viewer))) continue
+    if (await isVideoWatchedByViewer(ctx, viewerId, response)) continue
+    const user = await ctx.db.get(response.userId)
+    return user ? toPublicUser(user) : null
   }
-
-  if (!responderId) return null
-  const user = await ctx.db.get(responderId)
-  return user ? toPublicUser(user) : null
+  return null
 }
 
 async function getParticipantThreadIds(ctx: QueryCtx, userId: Id<'users'>, candidateLimit: number) {
@@ -237,32 +201,6 @@ function getThreadActivityAt(
   )
 }
 
-/**
- * Name for an unread My Fires row. Prefers the creator of the video the thread
- * opens on; when the viewer has already watched everything in the window (the
- * row is unread only because of activity they did not play, or the scan window
- * ended) it names the latest participant other than the viewer. It is never
- * the viewer: an unread row on the viewer's own thread must not print their
- * own name under the "New" badge.
- */
-async function resolveUnreadRowResponder(
-  ctx: QueryCtx,
-  args: { bondfire: Doc<'bondfires'>; viewerId: Id<'users'>; viewer: ViewerVisibilityContext },
-  participantsByLatest: ThreadParticipant[],
-): Promise<PublicUser | null> {
-  const firstUnwatched = await getFirstUnwatchedResponder(ctx, {
-    bondfire: args.bondfire,
-    viewerId: args.viewerId,
-    viewer: args.viewer,
-  })
-  if (firstUnwatched) return firstUnwatched
-
-  const latestOther = participantsByLatest.find(
-    (participant) => participant.user._id !== args.viewerId,
-  )
-  return latestOther?.user ?? null
-}
-
 async function buildThreadSummary(
   ctx: QueryCtx,
   args: {
@@ -270,11 +208,6 @@ async function buildThreadSummary(
     viewerId: Id<'users'>
     viewer: ViewerVisibilityContext
     pinnedUserIds: Set<Id<'users'>>
-    /**
-     * Resolve `firstUnwatchedResponder`. Only listMyFires renders it, so the
-     * Close Circle and private-camp callers leave this off and pay nothing.
-     */
-    includeFirstUnwatchedResponder?: boolean
   },
 ): Promise<ThreadSummary | null> {
   const { participants: participantMap, latestResponsePlayback } = await getParticipantMap(
@@ -322,13 +255,6 @@ async function buildThreadSummary(
   const camp = args.bondfire.campId ? await ctx.db.get(args.bondfire.campId) : null
   participants.sort((a, b) => b.latestAt - a.latestAt)
 
-  // Only unread rows on My Fires surface this name, so read rows and other
-  // callers skip the scan entirely.
-  const firstUnwatchedResponder =
-    unread && args.includeFirstUnwatchedResponder
-      ? await resolveUnreadRowResponder(ctx, args, participants)
-      : null
-
   return {
     ...args.bondfire,
     camp,
@@ -339,7 +265,7 @@ async function buildThreadSummary(
     latestResponseBondfireVideoId: latestResponsePlayback?.bondfireVideoId,
     latestResponseMuxPlaybackId: latestResponsePlayback?.muxPlaybackId,
     latestResponseMuxPlaybackPolicy: latestResponsePlayback?.muxPlaybackPolicy,
-    firstUnwatchedResponder,
+    firstUnwatchedResponder: null,
   }
 }
 
@@ -470,7 +396,6 @@ export const listMyFires = query({
         viewerId: userId,
         viewer,
         pinnedUserIds,
-        includeFirstUnwatchedResponder: true,
       })
       if (summary) {
         threads.push(summary)
@@ -488,7 +413,16 @@ export const listMyFires = query({
       threads.sort((a, b) => b.lastActivityAt - a.lastActivityAt)
     }
 
-    return await addInviteBadgesToBondfires(ctx, userId, threads.slice(0, limit))
+    // Resolve names only for returned unread rows; candidate summaries need no watch lookups.
+    const visibleThreads = threads.slice(0, limit)
+    for (const thread of visibleThreads) {
+      if (!thread.unread) continue
+      thread.firstUnwatchedResponder =
+        (await getFirstUnwatchedResponder(ctx, { bondfire: thread, viewerId: userId, viewer })) ??
+        thread.participants.find((participant) => participant.user._id !== userId)?.user ??
+        null
+    }
+    return await addInviteBadgesToBondfires(ctx, userId, visibleThreads)
   },
 })
 

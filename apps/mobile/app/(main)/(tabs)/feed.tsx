@@ -58,6 +58,7 @@ import {
 } from '../../../lib/bondfireSwipeActions'
 import type { BondfireThumbnailFields } from '../../../lib/bondfireThumbnails'
 import { type FeedPageState, getHomeFeedEmptyState } from '../../../lib/homeFeedState'
+import { getMyFireRowCreatorName } from '../../../lib/myFireRow'
 import { shouldLoadSparsePage, uniqueById } from '../../../lib/pagination'
 import { routes } from '../../../lib/routes'
 import { useBondfireThumbnails } from '../../../lib/useBondfireThumbnails'
@@ -207,22 +208,6 @@ function toBondfireRowProps(
     onOpen,
     onRespond,
   }
-}
-
-/**
- * Name shown on the secondary line of a My Fires row. Unread threads name the
- * person whose video is waiting to be watched (the responder), never the
- * viewer; read threads keep the Bondfire's creator.
- */
-function getMyFireRowCreatorName(thread: MyFire, currentUserId: string | null): string {
-  if (!thread.unread) return thread.creatorName ?? 'Anonymous'
-  const responder = thread.firstUnwatchedResponder
-  const responderName = responder?.displayName ?? responder?.name
-  if (responderName) return responderName
-  // The server never names the viewer, so this only runs when the responder's
-  // account is gone. Still never print the viewer's own name under "New".
-  if (thread.userId === currentUserId) return 'Anonymous'
-  return thread.creatorName ?? 'Anonymous'
 }
 
 /**

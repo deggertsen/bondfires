@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from 'convex-test'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { api } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import { buildViewerVisibilityContext } from './bondfireVisibility'
@@ -212,6 +212,61 @@ describe('getFirstUnwatchedResponder', () => {
     expect(await detailScreenOpensOn(t, ids.bondfireId, ids.creator)).toBe(ids.responder)
   })
 
+  it('does not read responses when the spark is unwatched', async () => {
+    const { t, ids } = await fixture()
+    await t.run(async (ctx) => {
+      const bondfire = await ctx.db.get(ids.bondfireId)
+      if (!bondfire) throw new Error('Missing fixture bondfire')
+      const viewer = await buildViewerVisibilityContext(ctx, ids.responder)
+      const query = vi.spyOn(ctx.db, 'query')
+      const result = await getFirstUnwatchedResponder(ctx, {
+        bondfire,
+        viewerId: ids.responder,
+        viewer,
+      })
+      expect(result?._id).toBe(ids.creator)
+      expect(query.mock.calls.some(([table]) => table === 'bondfireVideos')).toBe(false)
+      query.mockRestore()
+    })
+  })
+
+  it.each(['blocked', 'suspended', 'processing', 'pending_review'] as const)(
+    'skips %s responses just like the detail screen',
+    async (state) => {
+      const { t, ids } = await fixture()
+      await t.run(async (ctx) => {
+        if (state === 'blocked') {
+          await ctx.db.insert('userBlocks', {
+            blockerId: ids.responder,
+            blockedUserId: ids.creator,
+            createdAt: 2_000,
+          })
+        } else if (state === 'suspended') {
+          await ctx.db.patch(ids.responder, { moderationStatus: 'suspended' })
+        } else if (state === 'processing') {
+          await ctx.db.patch(ids.responderVideoId, {
+            videoStatus: 'processing',
+            muxPlaybackId: undefined,
+          })
+        } else {
+          await ctx.db.patch(ids.responderVideoId, { moderationStatus: state })
+        }
+      })
+      expect((await resolveResponder(t, ids.bondfireId, ids.creator))?._id).toBe(ids.other)
+      expect(await detailScreenOpensOn(t, ids.bondfireId, ids.creator)).toBe(ids.other)
+    },
+  )
+
+  it('includes pending-review responses for admins just like the detail screen', async () => {
+    const { t, ids } = await fixture()
+    await t.run(async (ctx) => {
+      await ctx.db.patch(ids.creator, { isAdmin: true })
+      await ctx.db.patch(ids.responderVideoId, { moderationStatus: 'pending_review' })
+    })
+    expect((await resolveResponder(t, ids.bondfireId, ids.creator))?._id).toBe(ids.responder)
+    expect(await detailScreenOpensOn(t, ids.bondfireId, ids.creator)).toBe(ids.responder)
+  })
+
   it('skips removed and pending-review responses', async () => {
     const { t, ids } = await fixture()
     await t.run(async (ctx) => {
@@ -248,6 +303,33 @@ describe('listMyFires firstUnwatchedResponder', () => {
     expect(thread?.firstUnwatchedResponder).not.toBeNull()
     expect(thread?.firstUnwatchedResponder?._id).toBe(ids.other)
     expect(thread?.firstUnwatchedResponder?._id).not.toBe(ids.creator)
+  })
+
+  it('names the first unwatched responder beyond 250 responses instead of the latest participant', async () => {
+    const { t, ids } = await fixture()
+    await markWatched(t, ids.creator, ids.responderVideoId, 'response')
+    await markWatched(t, ids.creator, ids.otherVideoId, 'response')
+    await t.run(async (ctx) => {
+      for (let sequenceNumber = 4; sequenceNumber <= 252; sequenceNumber++) {
+        const userId =
+          sequenceNumber === 251 ? ids.responder : sequenceNumber === 252 ? ids.other : ids.creator
+        await ctx.db.insert('bondfireVideos', {
+          bondfireId: ids.bondfireId,
+          userId,
+          sequenceNumber,
+          videoStatus: 'ready',
+          muxPlaybackId: `response-${sequenceNumber}`,
+          createdAt: 1_000 + sequenceNumber * 100,
+        })
+      }
+    })
+    const threads = await t
+      .withIdentity({ subject: ids.creator })
+      .query(api.conversations.listMyFires, {})
+    const thread = threads.find((entry) => entry._id === ids.bondfireId)
+    expect(thread?.unread).toBe(true)
+    expect(thread?.firstUnwatchedResponder?._id).toBe(ids.responder)
+    expect(await detailScreenOpensOn(t, ids.bondfireId, ids.creator)).toBe(ids.responder)
   })
 
   it('stays null on read threads', async () => {
