@@ -61,6 +61,23 @@ describe('watch target safety authorization', () => {
   it('accepts a visible response', async () => {
     expect(await resolveVisibleWatchTarget(ctx, target, viewerId)).toEqual({ durationMs: 10000 })
   })
+  it('accepts a ready segmented response that has no Mux playback id', async () => {
+    // Local-first segmented recordings carry segmentRecordingId and never get a
+    // muxPlaybackId. Watch events must still record, or they never mark watched.
+    response.muxPlaybackId = undefined
+    response.segmentRecordingId = 'recording' as Id<'segmentRecordings'>
+    expect(await resolveVisibleWatchTarget(ctx, target, viewerId)).toEqual({ durationMs: 10000 })
+  })
+  it('accepts a live segmented response that has no Mux live playback id', async () => {
+    response.muxPlaybackId = undefined
+    response.segmentRecordingId = 'recording' as Id<'segmentRecordings'>
+    response.videoStatus = 'live'
+    expect(await resolveVisibleWatchTarget(ctx, target, viewerId)).toEqual({ durationMs: 10000 })
+  })
+  it('rejects a response with no playable media', async () => {
+    response.muxPlaybackId = undefined
+    expect(await resolveVisibleWatchTarget(ctx, target, viewerId)).toBeNull()
+  })
   it.each(['pending_review', 'removed'] as const)(
     'rejects %s responses even when the parent is visible',
     async (status) => {
