@@ -29,6 +29,7 @@ import { addInviteBadgesToBondfires } from './inviteBadges'
 import { getLatestResponsePlayback } from './lib/latestResponsePlayback'
 import { boundedInteger, boundedScanSize } from './lib/queryBounds'
 import { getVideoLifecycle, isPlayableVideoRecord } from './lib/videoLifecycle'
+import { isVideoWatchedByViewer } from './lib/viewerWatchState'
 import { incrementProfileViews } from './watchEvents'
 
 type ExpiredPrivateCampVideoCleanupResult = {
@@ -503,22 +504,12 @@ export const getWithVideos = query({
     const visibleVideos = videos.filter((_, index) => responseVisibility[index])
 
     // Watched flags drive the initial scroll position (first unwatched video).
-    // The viewer's own videos always count as watched.
-    const hasWatchEvent = async (videoId: string) => {
-      if (!viewerId) return false
-      const event = await ctx.db
-        .query('watchEvents')
-        .withIndex('by_user_video', (q) => q.eq('userId', viewerId).eq('videoId', videoId))
-        .first()
-      return event !== null
-    }
-
+    // conversations.listMyFires names the creator of that same video, so both
+    // share one definition of "watched".
     const playableVideos = visibleVideos.filter(isPlayableVideoRecord)
     const [mainWatched, ...videosWatched] = await Promise.all([
-      bondfire.userId === viewerId ? true : hasWatchEvent(bondfire._id),
-      ...playableVideos.map((video) =>
-        video.userId === viewerId ? true : hasWatchEvent(video._id),
-      ),
+      isVideoWatchedByViewer(ctx, viewerId, bondfire),
+      ...playableVideos.map((video) => isVideoWatchedByViewer(ctx, viewerId, video)),
     ])
 
     const readyVideos = playableVideos.map((video, index) => ({

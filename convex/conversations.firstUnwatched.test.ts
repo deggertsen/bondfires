@@ -18,8 +18,9 @@ const profile = {
 }
 
 /**
- * A creator sparks a Bondfire, a responder replies, then the creator replies
- * back. Timestamps ascend so `by_bondfire_created` ordering is deterministic.
+ * A creator sparks a Bondfire, a responder replies, the creator replies back,
+ * then a third person replies. sequenceNumber and createdAt both ascend here;
+ * individual tests patch createdAt when they need the two to disagree.
  */
 async function fixture() {
   const t = convexTest(schema, modules)
@@ -88,18 +89,53 @@ async function markWatched(
   })
 }
 
+async function markThreadRead(
+  t: ReturnType<typeof convexTest>,
+  userId: Id<'users'>,
+  bondfireId: Id<'bondfires'>,
+  lastReadAt: number,
+) {
+  await t.run(async (ctx) => {
+    await ctx.db.insert('bondfireThreadReads', {
+      userId,
+      bondfireId,
+      lastReadAt,
+      createdAt: lastReadAt,
+      updatedAt: lastReadAt,
+    })
+  })
+}
+
 async function resolveResponder(
   t: ReturnType<typeof convexTest>,
   bondfireId: Id<'bondfires'>,
   viewerId: Id<'users'>,
-  lastReadAt = 0,
 ) {
   return await t.run(async (ctx) => {
     const bondfire = await ctx.db.get(bondfireId)
     if (!bondfire) throw new Error('Missing fixture bondfire')
     const viewer = await buildViewerVisibilityContext(ctx, viewerId)
-    return await getFirstUnwatchedResponder(ctx, { bondfire, viewerId, viewer, lastReadAt })
+    return await getFirstUnwatchedResponder(ctx, { bondfire, viewerId, viewer })
   })
+}
+
+/**
+ * The creator of the video the detail screen opens on, computed the way the
+ * app does it: getWithVideos order (spark, then responses by sequenceNumber),
+ * first entry whose watchedByViewer is false (getInitialVideoIndex).
+ */
+async function detailScreenOpensOn(
+  t: ReturnType<typeof convexTest>,
+  bondfireId: Id<'bondfires'>,
+  viewerId: Id<'users'>,
+) {
+  const detail = await t
+    .withIdentity({ subject: viewerId })
+    .query(api.bondfires.getWithVideos, { bondfireId })
+  if (!detail) throw new Error('Detail screen returned null')
+  const ordered = [detail, ...detail.videos]
+  const opensOn = ordered.find((video) => !video.watchedByViewer)
+  return opensOn?.userId ?? null
 }
 
 describe('getFirstUnwatchedResponder', () => {
@@ -108,6 +144,7 @@ describe('getFirstUnwatchedResponder', () => {
     const result = await resolveResponder(t, ids.bondfireId, ids.responder)
     expect(result?._id).toBe(ids.creator)
     expect(result?.displayName).toBe('Creator')
+    expect(await detailScreenOpensOn(t, ids.bondfireId, ids.responder)).toBe(ids.creator)
   })
 
   it('names the responder of the first unwatched response once the spark is watched', async () => {
@@ -116,6 +153,7 @@ describe('getFirstUnwatchedResponder', () => {
     const result = await resolveResponder(t, ids.bondfireId, ids.other)
     expect(result?._id).toBe(ids.responder)
     expect(result?.displayName).toBe('Responder')
+    expect(await detailScreenOpensOn(t, ids.bondfireId, ids.other)).toBe(ids.responder)
   })
 
   it("skips the viewer's own videos and never names the viewer", async () => {
@@ -131,6 +169,7 @@ describe('getFirstUnwatchedResponder', () => {
     const next = await resolveResponder(t, ids.bondfireId, ids.creator)
     expect(next?._id).toBe(ids.other)
     expect(next?._id).not.toBe(ids.creator)
+    expect(await detailScreenOpensOn(t, ids.bondfireId, ids.creator)).toBe(ids.other)
   })
 
   it('returns null when every video in the thread is watched', async () => {
@@ -141,11 +180,36 @@ describe('getFirstUnwatchedResponder', () => {
     expect(result).toBeNull()
   })
 
-  it('only scans responses newer than the thread read marker', async () => {
+  it('names the older unwatched response even when newer ones are watched', async () => {
     const { t, ids } = await fixture()
-    // Read marker sits after the responder's video but before Other's.
-    const result = await resolveResponder(t, ids.bondfireId, ids.creator, 1_250)
-    expect(result?._id).toBe(ids.other)
+    // The creator opened the thread and watched Other's newer reply but never
+    // played the responder's older one. The detail screen opens on the older
+    // one, so that is the name the row must show.
+    await markWatched(t, ids.creator, ids.otherVideoId, 'response')
+    const result = await resolveResponder(t, ids.bondfireId, ids.creator)
+    expect(result?._id).toBe(ids.responder)
+    expect(await detailScreenOpensOn(t, ids.bondfireId, ids.creator)).toBe(ids.responder)
+  })
+
+  it('ignores the thread read marker when choosing the video', async () => {
+    const { t, ids } = await fixture()
+    // Read marker sits after the responder's video. The old scan skipped it;
+    // the detail screen never did.
+    await markThreadRead(t, ids.creator, ids.bondfireId, 1_250)
+    const result = await resolveResponder(t, ids.bondfireId, ids.creator)
+    expect(result?._id).toBe(ids.responder)
+    expect(await detailScreenOpensOn(t, ids.bondfireId, ids.creator)).toBe(ids.responder)
+  })
+
+  it('orders responses by sequenceNumber, not createdAt, when they disagree', async () => {
+    const { t, ids } = await fixture()
+    // A retried upload lands with a later createdAt but keeps sequence 1.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(ids.responderVideoId, { createdAt: 1_350 })
+    })
+    const result = await resolveResponder(t, ids.bondfireId, ids.creator)
+    expect(result?._id).toBe(ids.responder)
+    expect(await detailScreenOpensOn(t, ids.bondfireId, ids.creator)).toBe(ids.responder)
   })
 
   it('skips removed and pending-review responses', async () => {
@@ -168,5 +232,53 @@ describe('listMyFires firstUnwatchedResponder', () => {
     expect(thread?.unread).toBe(true)
     expect(thread?.firstUnwatchedResponder?._id).toBe(ids.responder)
     expect(thread?.firstUnwatchedResponder?._id).not.toBe(ids.creator)
+  })
+
+  it('falls back to the latest responder, never the viewer, when nothing is unwatched', async () => {
+    const { t, ids } = await fixture()
+    // The creator watched every reply but the thread still counts as unread
+    // (no read marker, latest activity is not theirs). The row must not print
+    // the creator's own name under "New".
+    await markWatched(t, ids.creator, ids.responderVideoId, 'response')
+    await markWatched(t, ids.creator, ids.otherVideoId, 'response')
+    const creator = t.withIdentity({ subject: ids.creator })
+    const threads = await creator.query(api.conversations.listMyFires, {})
+    const thread = threads.find((entry) => entry._id === ids.bondfireId)
+    expect(thread?.unread).toBe(true)
+    expect(thread?.firstUnwatchedResponder).not.toBeNull()
+    expect(thread?.firstUnwatchedResponder?._id).toBe(ids.other)
+    expect(thread?.firstUnwatchedResponder?._id).not.toBe(ids.creator)
+  })
+
+  it('stays null on read threads', async () => {
+    const { t, ids } = await fixture()
+    await markThreadRead(t, ids.creator, ids.bondfireId, 2_000)
+    const creator = t.withIdentity({ subject: ids.creator })
+    const threads = await creator.query(api.conversations.listMyFires, {})
+    const thread = threads.find((entry) => entry._id === ids.bondfireId)
+    expect(thread?.unread).toBe(false)
+    expect(thread?.firstUnwatchedResponder).toBeNull()
+  })
+})
+
+describe('listCloseCircle firstUnwatchedResponder', () => {
+  it('stays null even on unread threads because only listMyFires renders it', async () => {
+    const { t, ids } = await fixture()
+    await t.run(async (ctx) => {
+      await ctx.db.insert('closeCirclePins', {
+        ownerId: ids.creator,
+        pinnedUserId: ids.responder,
+        order: 0,
+        createdAt: 5_000,
+        updatedAt: 5_000,
+      })
+    })
+    const creator = t.withIdentity({ subject: ids.creator })
+    const entries = await creator.query(api.conversations.listCloseCircle, {})
+    const thread = entries
+      .flatMap((entry) => entry.sharedThreads)
+      .find((entry) => entry._id === ids.bondfireId)
+    expect(thread?.unread).toBe(true)
+    expect(thread?.firstUnwatchedResponder).toBeNull()
   })
 })

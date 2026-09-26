@@ -54,8 +54,11 @@ type MyFire = Doc<'bondfires'> &
     unread: boolean
     participants: ThreadParticipant[]
     badge?: 'sparked' | 'invited' | 'kindled' | null
-    /** Creator of the first video the viewer has not watched yet (see listMyFires). */
-    firstUnwatchedResponder?: PublicUser | null
+    /**
+     * Who an unread row names (see listMyFires): the creator of the video the
+     * thread opens on, else the latest other participant. Never the viewer.
+     */
+    firstUnwatchedResponder: PublicUser | null
   }
 
 type InviteRow = {
@@ -148,12 +151,16 @@ function getMyFireStatusLabel(thread: MyFire): string {
 /**
  * Name shown on the secondary line of a My Fires row. Unread threads name the
  * person whose video is waiting to be watched (the responder), never the
- * viewer; otherwise fall back to the Bondfire's creator.
+ * viewer; read threads keep the Bondfire's creator.
  */
-function getMyFireRowCreatorName(thread: MyFire): string {
-  const responder = thread.unread ? thread.firstUnwatchedResponder : null
+function getMyFireRowCreatorName(thread: MyFire, currentUserId: string | null): string {
+  if (!thread.unread) return thread.creatorName ?? 'Anonymous'
+  const responder = thread.firstUnwatchedResponder
   const responderName = responder?.displayName ?? responder?.name
   if (responderName) return responderName
+  // The server never names the viewer, so this only runs when the responder's
+  // account is gone. Still never print the viewer's own name under "New".
+  if (thread.userId === currentUserId) return 'Anonymous'
   return thread.creatorName ?? 'Anonymous'
 }
 
@@ -174,7 +181,7 @@ function toBondfireRowProps(
 
   return {
     title: thread.title,
-    creatorName: getMyFireRowCreatorName(thread),
+    creatorName: getMyFireRowCreatorName(thread, currentUserId),
     timestamp: thread.lastActivityAt,
     videoCount: thread.videoCount,
     campLabel: thread.camp?.name,
@@ -274,6 +281,9 @@ export default function MyFiresScreen() {
             unread: true,
             participants: [],
             badge: 'invited' as const,
+            // Invite rows name the inviter (the Bondfire creator), who is
+            // never the viewer.
+            firstUnwatchedResponder: null,
           },
         ]
       }),
