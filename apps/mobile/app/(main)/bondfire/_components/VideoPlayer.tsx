@@ -50,10 +50,11 @@ import {
   type PendingScrubSeek,
   PICTURE_IN_PICTURE_STOP_PAUSE_GRACE_MS,
   type ProgressBarMetrics,
+  pictureInPictureStopAction,
   resetReactionState,
   shouldLoadVideoSource,
   shouldOwnPlaybackSession,
-  shouldPauseAfterPictureInPictureStop,
+  shouldResumeAfterPictureInPictureStop,
   suppressOwnerReplay,
   syncReactionPlaybackAfterSeek,
 } from '../_lib/videoPlayerState'
@@ -264,7 +265,7 @@ export function VideoPlayer({
   const isPlaying = useValue(state$.isPlaying)
   const videoViewRef = useRef<VideoView>(null)
   const isInPictureInPictureRef = useRef(false)
-  const pictureInPictureStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pictureInPictureStoppedAtRef = useRef<number | null>(null)
 
   const resetLocalReactionState = useCallback(() => {
     triggeredReactionIdsRef.current = {}
@@ -349,6 +350,7 @@ export function VideoPlayer({
     stallRecoveryGenerationRef.current += 1
     hasRecordedPlaybackStartRef.current = false
     userPausedRef.current = false
+    pictureInPictureStoppedAtRef.current = null
     state$.hasError.set(false)
     return () => {
       stallRecoveryGenerationRef.current += 1
@@ -394,6 +396,7 @@ export function VideoPlayer({
           errorRetryRef.current.timer = null
         }
         userPausedRef.current = true
+        pictureInPictureStoppedAtRef.current = null
         const replacePromise = withCurrentPlayer((currentPlayer) => {
           currentPlayer.pause()
           return currentPlayer.replaceAsync(null)
@@ -1023,43 +1026,97 @@ export function VideoPlayer({
     return undefined
   }, [isActive, isScreenFocused, isPlaying, videoId, isLive])
 
-  const clearPictureInPictureStopTimer = useCallback(() => {
-    if (pictureInPictureStopTimerRef.current) {
-      clearTimeout(pictureInPictureStopTimerRef.current)
-      pictureInPictureStopTimerRef.current = null
-    }
-  }, [])
-
   useEffect(() => {
+    const subscription = AppState.addEventListener('change', (appState) => {
+      const stoppedAt = pictureInPictureStoppedAtRef.current
+      if (stoppedAt === null) return
+
+      const elapsedMs = Date.now() - stoppedAt
+      // Intermediate inactive/background events must not consume the return window.
+      if (
+        appState !== 'active' &&
+        elapsedMs >= 0 &&
+        elapsedMs <= PICTURE_IN_PICTURE_STOP_PAUSE_GRACE_MS
+      ) {
+        return
+      }
+      pictureInPictureStoppedAtRef.current = null
+      if (
+        !shouldResumeAfterPictureInPictureStop({
+          appState,
+          elapsedMs,
+          graceMs: PICTURE_IN_PICTURE_STOP_PAUSE_GRACE_MS,
+        })
+      ) {
+        return
+      }
+      if (!ownsPlaybackSession || shouldSuppressPlayback || isScrubbingRef.current) return
+      if (!(autoplayVideos || state$.userInitiatedPlay.peek())) return
+
+      withCurrentPlayer((currentPlayer) => {
+        currentPlayer.play()
+        userPausedRef.current = false
+        state$.isPlaying.set(true)
+        telemetry.info(
+          'video:pip_resumed',
+          'Video resumed after returning from picture-in-picture',
+          {
+            videoId,
+            isLive,
+            appState,
+            elapsedMs,
+          },
+        )
+      })
+    })
     return () => {
-      clearPictureInPictureStopTimer()
+      subscription.remove()
+      pictureInPictureStoppedAtRef.current = null
     }
-  }, [clearPictureInPictureStopTimer])
+  }, [
+    autoplayVideos,
+    isLive,
+    ownsPlaybackSession,
+    shouldSuppressPlayback,
+    state$,
+    videoId,
+    withCurrentPlayer,
+  ])
 
   const handlePictureInPictureStart = useCallback(() => {
-    clearPictureInPictureStopTimer()
+    pictureInPictureStoppedAtRef.current = null
     isInPictureInPictureRef.current = true
     telemetry.info('video:pip_start', 'Video entered picture-in-picture', { videoId, isLive })
-  }, [clearPictureInPictureStopTimer, isLive, videoId])
+  }, [isLive, videoId])
 
   const handlePictureInPictureStop = useCallback(() => {
+    const appState = AppState.currentState
+    const action = pictureInPictureStopAction(appState)
     isInPictureInPictureRef.current = false
+    pictureInPictureStoppedAtRef.current = null
     telemetry.info('video:pip_stop', 'Video exited picture-in-picture', {
       videoId,
       isLive,
-      appState: AppState.currentState,
+      appState,
+      action,
     })
-    clearPictureInPictureStopTimer()
-    pictureInPictureStopTimerRef.current = setTimeout(() => {
-      pictureInPictureStopTimerRef.current = null
-      if (!shouldPauseAfterPictureInPictureStop(AppState.currentState)) return
-      userPausedRef.current = true
-      withCurrentPlayer((currentPlayer) => {
-        currentPlayer.pause()
-      })
-      state$.isPlaying.set(false)
-    }, PICTURE_IN_PICTURE_STOP_PAUSE_GRACE_MS)
-  }, [clearPictureInPictureStopTimer, isLive, state$, videoId, withCurrentPlayer])
+    if (action === 'keep-playing') return
+
+    // Background JS timers can freeze. Pause now; only undo it for a prompt return.
+    const stoppedAt = Date.now()
+    pictureInPictureStoppedAtRef.current = stoppedAt
+    userPausedRef.current = true
+    withCurrentPlayer((currentPlayer) => {
+      currentPlayer.pause()
+    })
+    state$.isPlaying.set(false)
+    telemetry.info('video:pip_paused', 'Video paused after picture-in-picture dismissal', {
+      videoId,
+      isLive,
+      appState,
+      elapsedMs: Date.now() - stoppedAt,
+    })
+  }, [isLive, state$, videoId, withCurrentPlayer])
 
   const togglePlayPause = useCallback(() => {
     const action = withCurrentPlayer((currentPlayer) => {
@@ -1075,6 +1132,7 @@ export function VideoPlayer({
       return 'play' as const
     })
     if (!action) return
+    pictureInPictureStoppedAtRef.current = null
     setPlayIntentVersion((version) => version + 1)
 
     if (action === 'replay') {
