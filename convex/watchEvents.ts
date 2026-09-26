@@ -106,7 +106,6 @@ export async function resolveVisibleWatchTarget(
     })
   )
     return null
-  if (response.expiresAt !== undefined && response.expiresAt <= Date.now()) return null
   const bondfire = await ctx.db.get(response.bondfireId)
   if (!bondfire || !(await isBondfireVisibleToViewer(ctx, bondfire, viewer))) return null
   return { durationMs: response.durationMs }
