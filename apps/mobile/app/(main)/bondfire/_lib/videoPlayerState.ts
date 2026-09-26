@@ -33,7 +33,7 @@ export type VideoPlayerState = {
 
 export type VideoPlayerState$ = Observable<VideoPlayerState>
 
-/** Delay before pausing after PiP closes, so returning to the app is not treated as a dismiss. */
+/** Wall-clock window for resuming a PiP dismissal pause when returning to the app. */
 export const PICTURE_IN_PICTURE_STOP_PAUSE_GRACE_MS = 1_000
 
 export function shouldOwnPlaybackSession({
@@ -66,8 +66,20 @@ export function shouldLoadVideoSource({
   )
 }
 
-export function shouldPauseAfterPictureInPictureStop(appState: AppStateStatus) {
-  return appState !== 'active'
+export function pictureInPictureStopAction(appState: AppStateStatus) {
+  return appState === 'active' ? 'keep-playing' : 'pause-then-maybe-resume'
+}
+
+export function shouldResumeAfterPictureInPictureStop({
+  appState,
+  elapsedMs,
+  graceMs,
+}: {
+  appState: AppStateStatus
+  elapsedMs: number
+  graceMs: number
+}) {
+  return appState === 'active' && elapsedMs >= 0 && elapsedMs <= graceMs
 }
 
 export function shouldShowRespondCTA({
