@@ -66,6 +66,7 @@ import type * as lib_reportPolicy from "../lib/reportPolicy.js";
 import type * as lib_storeBillingPolicy from "../lib/storeBillingPolicy.js";
 import type * as lib_videoLifecycle from "../lib/videoLifecycle.js";
 import type * as lib_videoReactions from "../lib/videoReactions.js";
+import type * as lib_viewerWatchState from "../lib/viewerWatchState.js";
 import type * as liveSessionProgress from "../liveSessionProgress.js";
 import type * as liveSessions from "../liveSessions.js";
 import type * as mediaImports from "../mediaImports.js";
@@ -162,6 +163,7 @@ declare const fullApi: ApiFromModules<{
   "lib/storeBillingPolicy": typeof lib_storeBillingPolicy;
   "lib/videoLifecycle": typeof lib_videoLifecycle;
   "lib/videoReactions": typeof lib_videoReactions;
+  "lib/viewerWatchState": typeof lib_viewerWatchState;
   liveSessionProgress: typeof liveSessionProgress;
   liveSessions: typeof liveSessions;
   mediaImports: typeof mediaImports;
