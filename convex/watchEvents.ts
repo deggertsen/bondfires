@@ -10,6 +10,7 @@ import {
   isUserContentVisibleToViewer,
 } from './bondfireVisibility'
 import { isModeratedContentVisible } from './contentSafety'
+import { isPlayableVideoRecord } from './lib/videoLifecycle'
 
 type WatchVideoType = 'bondfire' | 'response'
 type WatchEventType = 'start' | 'milestone_25' | 'milestone_50' | 'milestone_75' | 'complete'
@@ -78,18 +79,6 @@ export function validateWatchEventState(args: {
   return null
 }
 
-function isPlayable(record: {
-  videoStatus?: string
-  muxPlaybackId?: string
-  muxLivePlaybackId?: string
-}) {
-  const status = record.videoStatus ?? 'ready'
-  return (
-    (status === 'ready' && !!record.muxPlaybackId) ||
-    (status === 'live' && !!record.muxLivePlaybackId)
-  )
-}
-
 export async function resolveVisibleWatchTarget(
   ctx: MutationCtx,
   args: { videoType: WatchVideoType; videoId: string },
@@ -100,7 +89,7 @@ export async function resolveVisibleWatchTarget(
     const id = ctx.db.normalizeId('bondfires', args.videoId)
     if (!id) return null
     const bondfire = await ctx.db.get(id)
-    if (!bondfire || !isPlayable(bondfire)) return null
+    if (!bondfire || !isPlayableVideoRecord(bondfire)) return null
     if (!(await isBondfireVisibleToViewer(ctx, bondfire, viewer))) return null
     return { durationMs: bondfire.durationMs }
   }
@@ -108,7 +97,7 @@ export async function resolveVisibleWatchTarget(
   const id = ctx.db.normalizeId('bondfireVideos', args.videoId)
   if (!id) return null
   const response = await ctx.db.get(id)
-  if (!response || !isPlayable(response)) return null
+  if (!response || !isPlayableVideoRecord(response)) return null
   if (!(await isUserContentVisibleToViewer(ctx, response.userId, viewer))) return null
   if (
     !isModeratedContentVisible(response.moderationStatus, {
