@@ -1,9 +1,11 @@
 import { observable } from '@legendapp/state'
 import { describe, expect, it } from 'vitest'
 import {
+  PICTURE_IN_PICTURE_STOP_PAUSE_GRACE_MS,
+  pictureInPictureStopAction,
   shouldLoadVideoSource,
   shouldOwnPlaybackSession,
-  shouldPauseAfterPictureInPictureStop,
+  shouldResumeAfterPictureInPictureStop,
   shouldShowRespondCTA,
   suppressOwnerReplay,
   syncReactionPlaybackAfterSeek,
@@ -121,13 +123,55 @@ describe('videoPlayerState', () => {
     expect(shouldOwnPlaybackSession({ ...base, shouldSuppressPlayback: true })).toBe(false)
   })
 
-  it('pauses after PiP closes only when the app is still in the background', () => {
-    expect(shouldPauseAfterPictureInPictureStop('background')).toBe(true)
-    expect(shouldPauseAfterPictureInPictureStop('inactive')).toBe(true)
-    expect(shouldPauseAfterPictureInPictureStop('unknown')).toBe(true)
-    expect(shouldPauseAfterPictureInPictureStop('extension')).toBe(true)
-    expect(shouldPauseAfterPictureInPictureStop('active')).toBe(false)
+  it('keeps playing when PiP stops after the app is already active', () => {
+    expect(pictureInPictureStopAction('active')).toBe('keep-playing')
   })
+
+  it.each(['background', 'inactive', 'unknown', 'extension'] as const)(
+    'pauses immediately when PiP stops while %s',
+    (appState) => {
+      expect(pictureInPictureStopAction(appState)).toBe('pause-then-maybe-resume')
+    },
+  )
+
+  it.each([0, 500, PICTURE_IN_PICTURE_STOP_PAUSE_GRACE_MS])(
+    'resumes on return to active within the grace window (%i ms)',
+    (elapsedMs) => {
+      expect(
+        shouldResumeAfterPictureInPictureStop({
+          appState: 'active',
+          elapsedMs,
+          graceMs: PICTURE_IN_PICTURE_STOP_PAUSE_GRACE_MS,
+        }),
+      ).toBe(true)
+    },
+  )
+
+  it.each([PICTURE_IN_PICTURE_STOP_PAUSE_GRACE_MS + 1, 60_000, -1])(
+    'keeps the dismissal pause when returning outside the wall-clock window (%i ms)',
+    (elapsedMs) => {
+      expect(
+        shouldResumeAfterPictureInPictureStop({
+          appState: 'active',
+          elapsedMs,
+          graceMs: PICTURE_IN_PICTURE_STOP_PAUSE_GRACE_MS,
+        }),
+      ).toBe(false)
+    },
+  )
+
+  it.each(['background', 'inactive', 'unknown', 'extension'] as const)(
+    'does not resume while %s even within the grace window',
+    (appState) => {
+      expect(
+        shouldResumeAfterPictureInPictureStop({
+          appState,
+          elapsedMs: 500,
+          graceMs: PICTURE_IN_PICTURE_STOP_PAUSE_GRACE_MS,
+        }),
+      ).toBe(false)
+    },
+  )
 
   it('shows the response CTA only in the settled ended state', () => {
     expect(shouldShowRespondCTA({ hasEnded: true, isPlaying: false, isLoading: false })).toBe(true)

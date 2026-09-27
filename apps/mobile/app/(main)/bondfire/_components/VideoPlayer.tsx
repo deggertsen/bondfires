@@ -43,17 +43,17 @@ import {
   SCREEN_WIDTH,
   SCRUB_SEEK_THROTTLE_MS,
 } from '../_lib/bondfireDetailHelpers'
+import { createPictureInPicturePlayback } from '../_lib/pictureInPicturePlayback'
 import { usePlaybackQuality } from '../_lib/usePlaybackQuality'
 import { type CaptionCue, fetchCaptionCues, findCaptionText } from '../_lib/videoCaptions'
 import {
   clearActiveReactions,
   type PendingScrubSeek,
-  PICTURE_IN_PICTURE_STOP_PAUSE_GRACE_MS,
   type ProgressBarMetrics,
+  pictureInPictureStopAction,
   resetReactionState,
   shouldLoadVideoSource,
   shouldOwnPlaybackSession,
-  shouldPauseAfterPictureInPictureStop,
   suppressOwnerReplay,
   syncReactionPlaybackAfterSeek,
 } from '../_lib/videoPlayerState'
@@ -264,7 +264,6 @@ export function VideoPlayer({
   const isPlaying = useValue(state$.isPlaying)
   const videoViewRef = useRef<VideoView>(null)
   const isInPictureInPictureRef = useRef(false)
-  const pictureInPictureStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const resetLocalReactionState = useCallback(() => {
     triggeredReactionIdsRef.current = {}
@@ -384,6 +383,59 @@ export function VideoPlayer({
   // Deliberate user pause — auto-recovery must never play over it.
   const userPausedRef = useRef(false)
 
+  const pictureInPicturePlayback = useMemo(
+    () =>
+      createPictureInPicturePlayback({
+        getPlayback: () =>
+          withCurrentPlayer((currentPlayer) => ({
+            isPlaying: currentPlayer.playing && !userPausedRef.current,
+            canResume:
+              ownsPlaybackSession &&
+              !isScrubbingRef.current &&
+              !state$.hasEnded.peek() &&
+              !state$.hasError.peek() &&
+              (autoplayVideos || state$.userInitiatedPlay.peek()),
+          })),
+        pause: (appState) => {
+          const pauseStartedAt = Date.now()
+          // Block autoplay and async recovery before touching the native player.
+          userPausedRef.current = true
+          withCurrentPlayer((currentPlayer) => currentPlayer.pause())
+          state$.isPlaying.set(false)
+          telemetry.info('video:pip_paused', 'Video paused after picture-in-picture dismissal', {
+            videoId,
+            isLive,
+            appState,
+            elapsedMs: Date.now() - pauseStartedAt,
+          })
+        },
+        resume: (elapsedMs) => {
+          withCurrentPlayer((currentPlayer) => {
+            currentPlayer.play()
+            userPausedRef.current = false
+            state$.isPlaying.set(true)
+            // The AppState watchdog listener may have run while we were paused.
+            setPlayIntentVersion((version) => version + 1)
+            telemetry.info(
+              'video:pip_resumed',
+              'Video resumed after returning from picture-in-picture',
+              {
+                videoId,
+                isLive,
+                appState: 'active',
+                elapsedMs,
+              },
+            )
+          })
+        },
+      }),
+    [autoplayVideos, isLive, ownsPlaybackSession, state$, videoId, withCurrentPlayer],
+  )
+
+  useLayoutEffect(() => {
+    return pictureInPicturePlayback.cancel
+  }, [pictureInPicturePlayback])
+
   useImperativeHandle(
     ref,
     () => ({
@@ -393,6 +445,7 @@ export function VideoPlayer({
           clearTimeout(errorRetryRef.current.timer)
           errorRetryRef.current.timer = null
         }
+        pictureInPicturePlayback.cancel()
         userPausedRef.current = true
         const replacePromise = withCurrentPlayer((currentPlayer) => {
           currentPlayer.pause()
@@ -421,7 +474,7 @@ export function VideoPlayer({
         }
       },
     }),
-    [isLive, state$, videoId, withCurrentPlayer],
+    [isLive, pictureInPicturePlayback, state$, videoId, withCurrentPlayer],
   )
 
   const resumePlaybackAfterRecovery = useCallback(() => {
@@ -439,6 +492,7 @@ export function VideoPlayer({
 
   const retryPlayback = useCallback(() => {
     if (!currentSource) return
+    pictureInPicturePlayback.cancel()
     setPlayIntentVersion((version) => version + 1)
     telemetry.info('video:playback_retry', 'User retried video after playback failure', {
       videoId,
@@ -467,7 +521,15 @@ export function VideoPlayer({
         // Failure surfaces through the statusChange 'error' path, or this
         // player was released while replacement was in flight.
       })
-  }, [currentSource, state$, videoId, isLive, resumePlaybackAfterRecovery, withCurrentPlayer])
+  }, [
+    currentSource,
+    pictureInPicturePlayback,
+    state$,
+    videoId,
+    isLive,
+    resumePlaybackAfterRecovery,
+    withCurrentPlayer,
+  ])
 
   // One mid-playback reload per source/user retry. Fatal-error retries retain
   // their separate budget. Never reload an initial load, live stream or pause.
@@ -1023,43 +1085,34 @@ export function VideoPlayer({
     return undefined
   }, [isActive, isScreenFocused, isPlaying, videoId, isLive])
 
-  const clearPictureInPictureStopTimer = useCallback(() => {
-    if (pictureInPictureStopTimerRef.current) {
-      clearTimeout(pictureInPictureStopTimerRef.current)
-      pictureInPictureStopTimerRef.current = null
-    }
-  }, [])
-
   useEffect(() => {
+    const subscription = AppState.addEventListener(
+      'change',
+      pictureInPicturePlayback.onAppStateChange,
+    )
     return () => {
-      clearPictureInPictureStopTimer()
+      subscription.remove()
+      pictureInPicturePlayback.cancel()
     }
-  }, [clearPictureInPictureStopTimer])
+  }, [pictureInPicturePlayback])
 
   const handlePictureInPictureStart = useCallback(() => {
-    clearPictureInPictureStopTimer()
+    pictureInPicturePlayback.cancel()
     isInPictureInPictureRef.current = true
     telemetry.info('video:pip_start', 'Video entered picture-in-picture', { videoId, isLive })
-  }, [clearPictureInPictureStopTimer, isLive, videoId])
+  }, [pictureInPicturePlayback, isLive, videoId])
 
   const handlePictureInPictureStop = useCallback(() => {
+    const appState = AppState.currentState
     isInPictureInPictureRef.current = false
     telemetry.info('video:pip_stop', 'Video exited picture-in-picture', {
       videoId,
       isLive,
-      appState: AppState.currentState,
+      appState,
+      action: pictureInPictureStopAction(appState),
     })
-    clearPictureInPictureStopTimer()
-    pictureInPictureStopTimerRef.current = setTimeout(() => {
-      pictureInPictureStopTimerRef.current = null
-      if (!shouldPauseAfterPictureInPictureStop(AppState.currentState)) return
-      userPausedRef.current = true
-      withCurrentPlayer((currentPlayer) => {
-        currentPlayer.pause()
-      })
-      state$.isPlaying.set(false)
-    }, PICTURE_IN_PICTURE_STOP_PAUSE_GRACE_MS)
-  }, [clearPictureInPictureStopTimer, isLive, state$, videoId, withCurrentPlayer])
+    pictureInPicturePlayback.stop(appState)
+  }, [pictureInPicturePlayback, isLive, videoId])
 
   const togglePlayPause = useCallback(() => {
     const action = withCurrentPlayer((currentPlayer) => {
@@ -1075,6 +1128,7 @@ export function VideoPlayer({
       return 'play' as const
     })
     if (!action) return
+    pictureInPicturePlayback.cancel()
     setPlayIntentVersion((version) => version + 1)
 
     if (action === 'replay') {
@@ -1096,7 +1150,7 @@ export function VideoPlayer({
       userPausedRef.current = false
       state$.isPlaying.set(true)
     }
-  }, [state$, withCurrentPlayer])
+  }, [pictureInPicturePlayback, state$, withCurrentPlayer])
 
   const toggleMute = useCallback(() => {
     if (withCurrentPlayer(() => true)) {
@@ -1180,6 +1234,7 @@ export function VideoPlayer({
       if (videoDuration === undefined || !Number.isFinite(videoDuration) || videoDuration <= 0)
         return
 
+      pictureInPicturePlayback.cancel()
       const { width } = progressBarRef.current
 
       if (width > 0) {
@@ -1199,7 +1254,13 @@ export function VideoPlayer({
         state$.userInitiatedPlay.set(true)
       }
     },
-    [state$, syncCaptionText, syncLocalReactionPlaybackAfterSeek, withCurrentPlayer],
+    [
+      pictureInPicturePlayback,
+      state$,
+      syncCaptionText,
+      syncLocalReactionPlaybackAfterSeek,
+      withCurrentPlayer,
+    ],
   )
 
   const canSeekProgress = Number.isFinite(player?.duration) && (player?.duration ?? 0) > 0
