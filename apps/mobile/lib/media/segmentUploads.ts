@@ -86,6 +86,13 @@ async function save(job: Job) {
   await FileSystem.writeAsStringAsync(`${path}.tmp`, JSON.stringify(job))
   await FileSystem.moveAsync({ from: `${path}.tmp`, to: path })
 }
+async function readFinalCount(dir: string): Promise<number | undefined> {
+  const marker = await FileSystem.getInfoAsync(`${dir}finished.json`)
+  if (!marker.exists) return undefined
+  const count = JSON.parse(await FileSystem.readAsStringAsync(marker.uri)).segmentCount
+  if (!Number.isSafeInteger(count) || count < 1) throw new UploadFailure('invalid_finish_marker')
+  return count
+}
 /** An empty preview journal is resumable; actual local media must upload, never be overwritten. */
 export async function hasSavedDraftCapture(userId: string, draftBondfireId: string) {
   if (!(await FileSystem.getInfoAsync(root)).exists) return false
@@ -150,12 +157,10 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
           job.recordId = created.recordId
           await save(job)
         }
-        const marker = await FileSystem.getInfoAsync(`${dir}finished.json`)
-        let finalCount: number | undefined
-        if (marker.exists) {
-          finalCount = JSON.parse(await FileSystem.readAsStringAsync(marker.uri)).segmentCount
-          if (!Number.isSafeInteger(finalCount) || !finalCount || finalCount < 1)
-            throw new UploadFailure('invalid_finish_marker')
+        stage = 'finish'
+        const initialFinalCount = await readFinalCount(dir)
+        let finalCount = initialFinalCount
+        if (finalCount !== undefined) {
           // Tell the server capture ended even if the tail is still uploading.
           // Never remove local files until every PUT and finalization is acknowledged.
           stage = 'finish'
@@ -205,8 +210,14 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
           await save(job)
         }
         if (uploadOwner !== userId) return
+        // Capture may have stopped while a PUT was in flight. Its request to
+        // run the queue is skipped while `running` is true, so observe the
+        // durable marker again before yielding to the next timer tick (which
+        // may never run if the app is backgrounded after Stop).
+        stage = 'finish'
+        finalCount ??= await readFinalCount(dir)
         if (
-          !marker.exists &&
+          finalCount === undefined &&
           !active.has(job.args.localId) &&
           job.nextIndex > 0 &&
           !(
@@ -218,7 +229,7 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
           // After process death, only atomically committed fragments are recoverable.
           finalCount = job.nextIndex
         }
-        if (finalCount && job.nextIndex === finalCount) {
+        if (finalCount && (job.nextIndex === finalCount || initialFinalCount === undefined)) {
           stage = 'finish'
           const result = await bounded(
             client.finish({
@@ -226,7 +237,7 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
               segmentCount: finalCount,
             }),
           )
-          if (result.complete) {
+          if (result.complete && job.nextIndex === finalCount) {
             telemetry.info('segment:upload:complete', 'Video upload completed', {
               localId: job.args.localId,
               recordingId: job.recordingId,
