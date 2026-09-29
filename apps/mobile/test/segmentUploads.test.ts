@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
   cancel: vi.fn(async () => {}),
   warn: vi.fn(),
   uploaded: [] as string[],
+  onUpload: async (_path: string) => {},
 }))
 vi.mock('../../../packages/app/src/services/telemetry', () => ({
   telemetry: { warn: state.warn, info: vi.fn() },
@@ -49,6 +50,7 @@ vi.mock('expo-file-system/legacy', () => ({
     cancelAsync: state.cancel,
     uploadAsync: async () => {
       state.uploaded.push(path.split('/').pop() ?? '')
+      await state.onUpload(path)
       if (state.hangSegment && path.endsWith('.m4s')) return new Promise(() => {})
       return { status: state.failSegment && path.endsWith('.m4s') ? 503 : 204 }
     },
@@ -79,6 +81,7 @@ beforeEach(() => {
   state.uploaded = []
   state.failSegment = false
   state.hangSegment = false
+  state.onUpload = async () => {}
   vi.clearAllMocks()
   vi.stubEnv('EXPO_PUBLIC_SEGMENT_MEDIA', '1')
   vi.stubEnv('EXPO_PUBLIC_APP_ENV', 'internal')
@@ -169,6 +172,43 @@ function seedCapture(count = 1) {
     state.files.set(dir + `segment-${String(i).padStart(6, '0')}.m4s`, 'media')
   state.files.set(dir + 'finished.json', JSON.stringify({ segmentCount: count }))
 }
+
+it('finishes in the current pass when capture stops during the last upload', async () => {
+  const queue = await import('../lib/media/segmentUploads')
+  const convex = client()
+  queue.setSegmentUploadOwner('owner')
+  await queue.prepareSegmentJob('owner', { localId: id, isResponse: false })
+  seedCapture()
+  state.files.delete(dir + 'finished.json')
+  queue.markSegmentCapture(id, true)
+  state.onUpload = async (path) => {
+    if (!path.endsWith('.m4s')) return
+    state.files.set(dir + 'finished.json', '{"segmentCount":1}')
+    // Stop can request an upload pass while the current pass owns the queue.
+    await queue.runSegmentUploads(convex, 'owner')
+  }
+  await queue.runSegmentUploads(convex, 'owner')
+  expect(convex.finish).toHaveBeenCalledWith({ recordingId: 'recording1', segmentCount: 1 })
+  expect(state.files.has(root + id + '.json')).toBe(false)
+})
+
+it('announces a newly finished capture even when its tail needs another upload pass', async () => {
+  const queue = await import('../lib/media/segmentUploads')
+  const convex = client()
+  convex.finish.mockResolvedValue({ complete: false })
+  queue.setSegmentUploadOwner('owner')
+  await queue.prepareSegmentJob('owner', { localId: id, isResponse: false })
+  seedCapture(5)
+  state.files.delete(dir + 'finished.json')
+  queue.markSegmentCapture(id, true)
+  state.onUpload = async () => {
+    state.files.set(dir + 'finished.json', '{"segmentCount":5}')
+  }
+  await queue.runSegmentUploads(convex, 'owner')
+  expect(convex.finish).toHaveBeenCalledWith({ recordingId: 'recording1', segmentCount: 5 })
+  expect(state.files.has(root + id + '.json')).toBe(true)
+  expect(state.files.has(dir + 'segment-000004.m4s')).toBe(true)
+})
 
 it('announces the final count before uploading the tail, but retains it until acknowledged', async () => {
   const queue = await import('../lib/media/segmentUploads')
