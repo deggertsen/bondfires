@@ -127,6 +127,14 @@ const accessValidator = v.union(v.literal('open'), v.literal('approval'), v.lite
 const accessVisibilityModeValidator = v.union(v.literal('hide'), v.literal('gate'))
 
 const ALL_TIERS: readonly SubscriptionTier[] = ['free', 'plus', 'premium', 'pro']
+
+/**
+ * Max video duration enforced by the built-in launch camps.
+ * Tier limits still apply on top of this, so the effective cap is the lower
+ * of the camp rule and the member's tier limit.
+ */
+const LAUNCH_CAMP_MAX_VIDEO_DURATION_MS = 5 * 60 * 1000
+
 const BASE_LAUNCH_CAMPS = [
   {
     slug: 'welcome-fires',
@@ -833,7 +841,7 @@ async function ensureCamp(
         },
       },
       participation: {
-        maxDurationMs: 30 * 60 * 1000,
+        maxDurationMs: LAUNCH_CAMP_MAX_VIDEO_DURATION_MS,
       },
       advisory: {
         guidelines: [...seed.advisoryGuidelines],
@@ -1804,6 +1812,46 @@ export const resetAndReseedAdmin = internalMutation({
 })
 
 /**
+ * One-shot backfill: apply the launch-camp max video duration to existing
+ * launch camps without touching bondfires, memberships, or invites.
+ * Deployment-safe CLI path: npx convex run internal:camps:setLaunchCampMaxDurationAdmin
+ */
+export const setLaunchCampMaxDurationAdmin = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now()
+    const camps = await ctx.db.query('camps').collect()
+
+    let patched = 0
+    let skipped = 0
+
+    for (const camp of camps) {
+      if (camp.isLaunchCamp !== true) {
+        skipped += 1
+        continue
+      }
+      if (camp.rules?.participation.maxDurationMs === LAUNCH_CAMP_MAX_VIDEO_DURATION_MS) {
+        skipped += 1
+        continue
+      }
+      await ctx.db.patch(camp._id, {
+        rules: {
+          ...camp.rules,
+          participation: {
+            ...camp.rules.participation,
+            maxDurationMs: LAUNCH_CAMP_MAX_VIDEO_DURATION_MS,
+          },
+        },
+        updatedAt: now,
+      })
+      patched += 1
+    }
+
+    return { patched, skipped, maxDurationMs: LAUNCH_CAMP_MAX_VIDEO_DURATION_MS }
+  },
+})
+
+/**
  * Create a public camp. Requires Pro subscription and at least 1 kindling.
  * Immediately consumes 1 kindling for the first month.
  */
@@ -1915,7 +1963,7 @@ export const createPublicCamp = mutation({
               : undefined,
         },
         participation: {
-          maxDurationMs: 30 * 60 * 1000,
+          maxDurationMs: LAUNCH_CAMP_MAX_VIDEO_DURATION_MS,
         },
         advisory: {
           guidelines: args.rules?.advisory?.guidelines ?? [],
