@@ -172,6 +172,7 @@ Tap calls a new `retryPendingUploads()` in `packages/app` that: (a) kicks `runSe
 - **Legacy cold-launch resume gap (Open Question 5): folded in.** `useLegacyUploadResume` mounts the unused `useResumeUploads` in `LegacyRecordingMaintenance`. Without it the strip would say "uploading" for work that isn't running.
 - **Tapping the strip** retries only in the paused and failed states. While an upload is healthy there's nothing to do, so there's no button. "Try again" re-queues failed legacy tasks with a fresh retry ladder.
 - **Completed** adds a "View" action that opens the bondfire when its id is known, and dismisses the confirmation.
+- **Swipe right to hide.** This hides the strip for the rest of the app session. It never stops or pauses the upload, and the next launch shows it again. The one exception is a failure *after* the hide: that upload can't finish without the user, so the strip comes back. Screen readers get the same thing as a "Hide" action.
 - **Background completion (Open Question 3):** still foreground-only. The sheet copy doesn't promise otherwise.
 
 ## Open Questions

@@ -15,6 +15,8 @@ interface UploadStatusStoreState {
   segmentJobs: SegmentJobStatus[]
   lastCompletion: UploadCompletion | null
   completionDismissedAt: number
+  /** Set when the user swipes the banner away; cleared only by an app restart. */
+  hiddenAt: number | null
   /** True only where the legacy queue actually runs (non-segmented builds). */
   queueEnabled: boolean
   /** Re-evaluation clock for the completion hold. */
@@ -27,6 +29,7 @@ export const uploadStatusStore$ = observable<UploadStatusStoreState>({
   segmentJobs: [],
   lastCompletion: null,
   completionDismissedAt: 0,
+  hiddenAt: null,
   queueEnabled: false,
   clock: Date.now(),
   bannerHeight: 0,
@@ -56,6 +59,9 @@ export const uploadStatusActions = {
   },
 
   dismissCompletion: () => uploadStatusStore$.completionDismissedAt.set(Date.now()),
+
+  /** Hide the banner for this app session. Uploads keep running. */
+  hideForSession: () => uploadStatusStore$.hiddenAt.set(Date.now()),
 
   setQueueEnabled: (enabled: boolean) => uploadStatusStore$.queueEnabled.set(enabled),
 

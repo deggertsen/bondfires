@@ -1,6 +1,21 @@
 import { AlertTriangle, CheckCircle2, CloudUpload, RefreshCw, WifiOff } from '@tamagui/lucide-icons'
 import { useEffect, useRef, useState } from 'react'
-import { AccessibilityInfo, Animated, type LayoutChangeEvent, Pressable } from 'react-native'
+import {
+  type AccessibilityActionEvent,
+  AccessibilityInfo,
+  Animated,
+  type LayoutChangeEvent,
+  Pressable,
+} from 'react-native'
+import { Gesture, GestureDetector } from 'react-native-gesture-handler'
+import Reanimated, {
+  interpolate,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated'
 import { XStack, YStack } from 'tamagui'
 import { Spinner } from './Spinner'
 import { Text } from './Text'
@@ -21,6 +36,8 @@ export interface UploadStatusBannerProps {
   /** Status-bar inset; the banner owns that area while visible. */
   topInset: number
   onLayout?: (event: LayoutChangeEvent) => void
+  /** Swipe right (or the screen-reader "Hide" action) calls this. */
+  onDismiss?: () => void
 }
 
 const TONE_COLOR = {
@@ -39,6 +56,9 @@ const ICONS = {
 } as const
 
 const SEGMENT_FRACTION = 0.35
+/** Swipe past this share of the width, or fling, to hide. */
+const DISMISS_FRACTION = 0.35
+const DISMISS_VELOCITY = 800
 
 function IndeterminateBar() {
   const [width, setWidth] = useState(0)
@@ -111,11 +131,43 @@ export function UploadStatusBanner({
   onAction,
   topInset,
   onLayout,
+  onDismiss,
 }: UploadStatusBannerProps) {
   const toneColor = TONE_COLOR[tone]
   const Icon = ICONS[icon]
   const hasAction = Boolean(actionLabel && onAction)
   const percent = typeof progress === 'number' ? progress : undefined
+
+  const width = useSharedValue(0)
+  const translateX = useSharedValue(0)
+  const dismiss = () => onDismiss?.()
+  // Right only, and only once the drag is clearly horizontal, so taps and
+  // vertical scrolls underneath keep working.
+  const swipe = Gesture.Pan()
+    .enabled(Boolean(onDismiss))
+    .activeOffsetX(12)
+    .failOffsetX(-12)
+    .failOffsetY([-12, 12])
+    .onUpdate((event) => {
+      translateX.value = Math.max(0, event.translationX)
+    })
+    .onEnd((event) => {
+      if (translateX.value > width.value * DISMISS_FRACTION || event.velocityX > DISMISS_VELOCITY) {
+        translateX.value = withTiming(width.value, { duration: 180 }, (finished) => {
+          if (finished) runOnJS(dismiss)()
+        })
+      } else {
+        translateX.value = withSpring(0, { damping: 20, stiffness: 240 })
+      }
+    })
+  const swipeStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+    opacity: width.value ? interpolate(translateX.value, [0, width.value], [1, 0.2], 'clamp') : 1,
+  }))
+  const accessibilityActions = onDismiss ? [{ name: 'dismiss', label: 'Hide' }] : undefined
+  const handleAccessibilityAction = (event: AccessibilityActionEvent) => {
+    if (event.nativeEvent.actionName === 'dismiss') dismiss()
+  }
 
   const content = (
     <XStack
@@ -176,41 +228,52 @@ export function UploadStatusBanner({
   )
 
   return (
-    <YStack
-      onLayout={onLayout}
-      paddingTop={topInset}
-      backgroundColor="$backgroundStrong"
-      borderBottomWidth={1}
-      borderBottomColor={tone === 'error' ? '$error' : '$borderColor'}
-    >
-      {tone === 'error' ? (
-        <YStack position="absolute" fullscreen backgroundColor="$error" opacity={0.1} />
-      ) : null}
-      {hasAction ? (
-        <Pressable
-          onPress={onAction}
-          accessibilityRole="button"
-          accessibilityLabel={`${title}. ${message}`}
-          accessibilityHint={actionLabel}
-        >
-          {content}
-        </Pressable>
-      ) : (
+    <GestureDetector gesture={swipe}>
+      <Reanimated.View style={swipeStyle}>
         <YStack
-          accessible
-          accessibilityLabel={`${title}. ${message}`}
-          accessibilityLiveRegion="polite"
+          onLayout={(event) => {
+            width.value = event.nativeEvent.layout.width
+            onLayout?.(event)
+          }}
+          paddingTop={topInset}
+          backgroundColor="$backgroundStrong"
+          borderBottomWidth={1}
+          borderBottomColor={tone === 'error' ? '$error' : '$borderColor'}
         >
-          {content}
+          {tone === 'error' ? (
+            <YStack position="absolute" fullscreen backgroundColor="$error" opacity={0.1} />
+          ) : null}
+          {hasAction ? (
+            <Pressable
+              onPress={onAction}
+              accessibilityRole="button"
+              accessibilityLabel={`${title}. ${message}`}
+              accessibilityHint={actionLabel}
+              accessibilityActions={accessibilityActions}
+              onAccessibilityAction={handleAccessibilityAction}
+            >
+              {content}
+            </Pressable>
+          ) : (
+            <YStack
+              accessible
+              accessibilityLabel={`${title}. ${message}`}
+              accessibilityLiveRegion="polite"
+              accessibilityActions={accessibilityActions}
+              onAccessibilityAction={handleAccessibilityAction}
+            >
+              {content}
+            </YStack>
+          )}
+          {percent !== undefined ? (
+            <YStack position="absolute" left={0} bottom={0} height={2} width={`${percent}%`}>
+              <YStack flex={1} backgroundColor="$primary" />
+            </YStack>
+          ) : progress === 'indeterminate' ? (
+            <IndeterminateBar />
+          ) : null}
         </YStack>
-      )}
-      {percent !== undefined ? (
-        <YStack position="absolute" left={0} bottom={0} height={2} width={`${percent}%`}>
-          <YStack flex={1} backgroundColor="$primary" />
-        </YStack>
-      ) : progress === 'indeterminate' ? (
-        <IndeterminateBar />
-      ) : null}
-    </YStack>
+      </Reanimated.View>
+    </GestureDetector>
   )
 }

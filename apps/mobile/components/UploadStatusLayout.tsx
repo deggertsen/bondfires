@@ -1,9 +1,11 @@
 import {
   describeUploadStatus,
+  isUploadStatusHidden,
   retryPendingUploads,
   type UploadStatusState,
   uploadStatus$,
   uploadStatusActions,
+  uploadStatusStore$,
   useRecordingResourceLock,
 } from '@bondfires/app'
 import { UploadStatusBanner, type UploadStatusBannerProps } from '@bondfires/ui'
@@ -47,7 +49,8 @@ function isCreateRoute(pathname: string) {
 /**
  * Mounts the app-wide upload status strip above every (main) screen. It sits in
  * flow — pushing content down rather than covering headers — and never shows
- * over the camera, the completion screen, or an active recording.
+ * over the camera, the completion screen, or an active recording. Swiping it
+ * right hides it for the rest of the app session; uploads keep running.
  */
 export function UploadStatusLayout({ children }: { children: ReactNode }) {
   const router = useRouter()
@@ -55,8 +58,13 @@ export function UploadStatusLayout({ children }: { children: ReactNode }) {
   const insets = useSafeAreaInsets()
   const recordingLocked = useRecordingResourceLock()
   const status = useValue(uploadStatus$)
+  const hiddenAt = useValue(uploadStatusStore$.hiddenAt)
 
-  const visible = status.kind !== 'idle' && !recordingLocked && !isCreateRoute(pathname)
+  const visible =
+    status.kind !== 'idle' &&
+    !isUploadStatusHidden(status, hiddenAt) &&
+    !recordingLocked &&
+    !isCreateRoute(pathname)
 
   // Let a held "is live" confirmation expire back to idle.
   useObserveEffect((e) => {
@@ -91,6 +99,7 @@ export function UploadStatusLayout({ children }: { children: ReactNode }) {
             {...bannerVisual(status)}
             {...describeUploadStatus(status)}
             onAction={handleAction}
+            onDismiss={uploadStatusActions.hideForSession}
             topInset={insets.top}
             onLayout={(event) =>
               uploadStatusActions.setBannerHeight(event.nativeEvent.layout.height)

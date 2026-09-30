@@ -49,7 +49,13 @@ export type UploadStatusState =
       /** 1-based attempt about to run, when the legacy queue knows it. */
       attempt?: number
     }
-  | { kind: 'failed'; count: number; subject: UploadSubject }
+  | {
+      kind: 'failed'
+      count: number
+      subject: UploadSubject
+      /** When the most recent task gave up; lets a new failure outrank a hide. */
+      failedAt: number
+    }
   | {
       kind: 'completed'
       subject: UploadSubject
@@ -76,6 +82,7 @@ type Job = {
   state: 'uploading' | 'retrying' | 'failed'
   progress?: number
   attempt?: number
+  failedAt?: number
 }
 
 function taskSubject(task: UploadTask): UploadSubject {
@@ -92,7 +99,11 @@ function taskBondfireId(task: UploadTask): string | undefined {
 function taskJob(task: UploadTask): Job | null {
   switch (task.status) {
     case 'failed':
-      return { subject: taskSubject(task), state: 'failed' }
+      return {
+        subject: taskSubject(task),
+        state: 'failed',
+        failedAt: task.lastAttemptAt ?? task.updatedAt ?? task.createdAt,
+      }
     case 'pending':
       // A pending task with prior attempts is sitting out an exponential backoff.
       if (task.attemptCount > 0) {
@@ -147,7 +158,12 @@ export function deriveUploadStatus(input: UploadStatusInput): UploadStatusState 
 
   const failed = jobs.filter((job) => job.state === 'failed')
   if (failed.length > 0) {
-    return { kind: 'failed', count: failed.length, subject: sharedSubject(failed) }
+    return {
+      kind: 'failed',
+      count: failed.length,
+      subject: sharedSubject(failed),
+      failedAt: Math.max(...failed.map((job) => job.failedAt ?? 0)),
+    }
   }
 
   if (jobs.length > 0) {
@@ -189,6 +205,16 @@ export function deriveUploadStatus(input: UploadStatusInput): UploadStatusState 
   }
 
   return { kind: 'idle' }
+}
+
+/**
+ * Whether a banner the user swiped away should stay hidden. A hide lasts for
+ * the app session and never stops the upload. The one exception is a failure
+ * that happens after the hide: that upload can't finish without the user.
+ */
+export function isUploadStatusHidden(state: UploadStatusState, hiddenAt: number | null): boolean {
+  if (hiddenAt === null) return false
+  return !(state.kind === 'failed' && state.failedAt > hiddenAt)
 }
 
 export interface UploadStatusCopy {

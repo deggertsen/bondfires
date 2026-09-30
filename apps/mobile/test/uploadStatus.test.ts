@@ -3,6 +3,7 @@ import type { UploadTask } from '../../../packages/app/src/store/uploadQueue.sto
 import {
   deriveUploadStatus,
   describeUploadStatus,
+  isUploadStatusHidden,
   type SegmentJobStatus,
   UPLOAD_COMPLETION_HOLD_MS,
   type UploadStatusInput,
@@ -101,6 +102,7 @@ describe('deriveUploadStatus', () => {
       kind: 'failed',
       count: 1,
       subject: 'bondfire',
+      failedAt: now - 1000,
     })
     expect(
       deriveUploadStatus(input({ tasks: [tasks[1]], segmentJobs: [segment()] })),
@@ -183,5 +185,32 @@ describe('deriveUploadStatus', () => {
         }),
       ),
     ).toMatchObject({ kind: 'uploading' })
+  })
+})
+
+describe('isUploadStatusHidden', () => {
+  const uploading = deriveUploadStatus(input({ segmentJobs: [segment()] }))
+
+  it('shows everything until the user swipes it away', () => {
+    expect(isUploadStatusHidden(uploading, null)).toBe(false)
+  })
+
+  it('keeps in-flight, paused and completed states hidden for the session', () => {
+    expect(isUploadStatusHidden(uploading, now - 60_000)).toBe(true)
+    const offline = deriveUploadStatus(input({ segmentJobs: [segment()], isOnline: false }))
+    expect(isUploadStatusHidden(offline, now - 60_000)).toBe(true)
+    const completed = deriveUploadStatus(
+      input({ lastCompletion: { subject: 'response', at: now - 100 } }),
+    )
+    expect(isUploadStatusHidden(completed, now - 60_000)).toBe(true)
+  })
+
+  it('brings the banner back for a failure that happens after the hide', () => {
+    const failed = deriveUploadStatus(
+      input({ tasks: [task({ status: 'failed', attemptCount: 5, lastAttemptAt: now })] }),
+    )
+    expect(isUploadStatusHidden(failed, now - 1)).toBe(false)
+    // A failure the user already saw and swiped away stays hidden.
+    expect(isUploadStatusHidden(failed, now + 1)).toBe(true)
   })
 })
