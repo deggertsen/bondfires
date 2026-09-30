@@ -3,7 +3,10 @@ import {
   EXTRA_CAMP_ADD_ON_DEFINITION,
   subscriptionStore$,
   TIER_DEFINITIONS,
+  uploadStatusActions,
+  useLegacyUploadResume,
   useLocalBackupSweep,
+  useNetworkStatusSync,
   useRecordingWatchdog,
   useSubscription,
 } from '@bondfires/app'
@@ -15,10 +18,12 @@ import { useEffect, useMemo } from 'react'
 import { api } from '../../../../convex/_generated/api'
 import { CommunityAcceptanceGate } from '../../components/CommunityAcceptanceGate'
 import { FreeCapabilitiesExplainer } from '../../components/FreeCapabilitiesExplainer'
+import { UploadStatusLayout } from '../../components/UploadStatusLayout'
 import {
   runSegmentUploads,
   segmentMediaEnabled,
   segmentUploadClient,
+  setSegmentUploadObserver,
   setSegmentUploadOwner,
 } from '../../lib/media/segmentUploads'
 
@@ -138,6 +143,20 @@ function SegmentUploadResume() {
   const client = useConvex()
   const user = useQuery(api.users.current)
   useEffect(() => {
+    setSegmentUploadObserver({
+      onJobs: uploadStatusActions.setSegmentJobs,
+      onComplete: (job) =>
+        uploadStatusActions.recordCompletion({
+          subject: job.isResponse ? 'response' : 'bondfire',
+          bondfireId: job.bondfireId,
+        }),
+    })
+    return () => {
+      setSegmentUploadObserver(null)
+      uploadStatusActions.setSegmentJobs([])
+    }
+  }, [])
+  useEffect(() => {
     setSegmentUploadOwner(user?._id ?? null)
     if (!user) return
     const tick = () => {
@@ -145,8 +164,10 @@ function SegmentUploadResume() {
     }
     tick()
     const timer = setInterval(tick, 2000)
+    const unregisterRetry = uploadStatusActions.registerRetryHandler('segment', tick)
     return () => {
       clearInterval(timer)
+      unregisterRetry()
       setSegmentUploadOwner(null)
     }
   }, [client, user])
@@ -155,6 +176,7 @@ function SegmentUploadResume() {
 
 function LegacyRecordingMaintenance() {
   useRecordingWatchdog()
+  useLegacyUploadResume()
   // One-shot launch sweep for orphaned local backup recordings (gated on the
   // recording resource lock, same as upload resume).
   useLocalBackupSweep()
@@ -170,24 +192,27 @@ export default function MainLayout() {
 }
 
 function MainContent() {
+  useNetworkStatusSync()
   return (
     <>
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        {/* Create lives in the stack (not the tab bar) so it mounts on push and
+      <UploadStatusLayout>
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          {/* Create lives in the stack (not the tab bar) so it mounts on push and
             fully unmounts on navigate-away — preventing a lingering duplicate
             instance and any orphaned, still-billing Mux live session. The Flame
             tab-bar entry just pushes this route. */}
-        <Stack.Screen name="create" options={{ headerShown: false }} />
-        <Stack.Screen name="bondfire/[id]" options={{ headerShown: false }} />
-        <Stack.Screen name="camp/[id]" options={{ headerShown: false }} />
-        <Stack.Screen
-          name="personal-bondfire/[bondfireId]/[code]"
-          options={{ headerShown: false }}
-        />
-        <Stack.Screen name="personal-camp" options={{ headerShown: false }} />
-        <Stack.Screen name="family-connections" options={{ headerShown: false }} />
-      </Stack>
+          <Stack.Screen name="create" options={{ headerShown: false }} />
+          <Stack.Screen name="bondfire/[id]" options={{ headerShown: false }} />
+          <Stack.Screen name="camp/[id]" options={{ headerShown: false }} />
+          <Stack.Screen
+            name="personal-bondfire/[bondfireId]/[code]"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen name="personal-camp" options={{ headerShown: false }} />
+          <Stack.Screen name="family-connections" options={{ headerShown: false }} />
+        </Stack>
+      </UploadStatusLayout>
       {segmentMediaEnabled ? <SegmentUploadResume /> : <LegacyRecordingMaintenance />}
       <GlobalPaywall />
       <FreeCapabilitiesExplainer />

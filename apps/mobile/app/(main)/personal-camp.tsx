@@ -17,6 +17,7 @@ import type { Doc, Id } from '../../../../convex/_generated/dataModel'
 import { BondfireThumbnailRow } from '../../components/BondfireThumbnail'
 import { EditTitleSheet, useEditTitleSheet } from '../../components/EditTitleSheet'
 import { InviteSheet } from '../../components/InviteSheet'
+import { useHeaderTopPadding } from '../../components/UploadStatusLayout'
 import {
   BONDFIRE_REPORT_OPTIONS,
   getBondfireRightSwipeActions,
@@ -35,6 +36,7 @@ type BondfireData = Doc<'bondfires'> &
   }
 
 export default function PersonalCampScreen() {
+  const headerTopPadding = useHeaderTopPadding(58)
   const { statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const navigation = useNavigation()
@@ -323,7 +325,7 @@ export default function PersonalCampScreen() {
       <YStack
         flex={1}
         backgroundColor={'$backgroundPress'}
-        paddingTop={58}
+        paddingTop={headerTopPadding}
         paddingHorizontal={16}
         gap={16}
       >
@@ -365,7 +367,7 @@ export default function PersonalCampScreen() {
       <StatusBar barStyle={statusBarStyle} />
 
       {/* Header */}
-      <YStack paddingTop={58} paddingHorizontal={16} paddingBottom={18} gap={14}>
+      <YStack paddingTop={headerTopPadding} paddingHorizontal={16} paddingBottom={18} gap={14}>
         <XStack alignItems="center" justifyContent="space-between">
           <Pressable onPress={handleBack}>
             <YStack

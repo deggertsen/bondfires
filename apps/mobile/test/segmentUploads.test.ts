@@ -276,3 +276,78 @@ it('retries a lost finish acknowledgement without exposing network credentials i
   await queue.runSegmentUploads(convex, 'owner')
   expect(state.files.has(root + id + '.json')).toBe(false)
 })
+
+describe('upload status reporting', () => {
+  function observe(queue: typeof import('../lib/media/segmentUploads')) {
+    const jobs: Array<Array<{ localId: string; paused: boolean; bondfireId?: string }>> = []
+    const completed: Array<{ localId: string; isResponse: boolean; bondfireId?: string }> = []
+    queue.setSegmentUploadObserver({
+      onJobs: (next) => jobs.push(next),
+      onComplete: (job) => completed.push(job),
+    })
+    return { jobs, completed, latest: () => jobs.at(-1) ?? [] }
+  }
+
+  it('reports a paused job without flickering back to uploading until it makes progress', async () => {
+    const queue = await import('../lib/media/segmentUploads')
+    const convex = client()
+    const seen = observe(queue)
+    queue.setSegmentUploadOwner('owner')
+    await queue.prepareSegmentJob('owner', { localId: id, isResponse: false })
+    seedCapture(2)
+    state.failSegment = true
+    await queue.runSegmentUploads(convex, 'owner')
+    expect(seen.latest()).toEqual([
+      { localId: id, isResponse: false, bondfireId: 'bondfire1', paused: true },
+    ])
+    const reportsWhilePaused = seen.jobs.length
+    await queue.runSegmentUploads(convex, 'owner')
+    // A second failing pass must not publish an intermediate "uploading" state.
+    expect(seen.jobs.slice(reportsWhilePaused).every((jobs) => jobs[0]?.paused)).toBe(true)
+
+    state.failSegment = false
+    await queue.runSegmentUploads(convex, 'owner')
+    expect(seen.completed).toEqual([
+      { localId: id, isResponse: false, bondfireId: 'bondfire1', paused: false },
+    ])
+    expect(seen.latest()).toEqual([])
+  })
+
+  it('points a response at its parent bondfire and ignores captures still recording', async () => {
+    const queue = await import('../lib/media/segmentUploads')
+    const convex = client()
+    convex.finish.mockResolvedValue({ complete: false })
+    const seen = observe(queue)
+    queue.setSegmentUploadOwner('owner')
+    await queue.prepareSegmentJob('owner', {
+      localId: id,
+      isResponse: true,
+      bondfireId: 'parent' as Id<'bondfires'>,
+    })
+    seedCapture()
+    queue.markSegmentCapture(id, true)
+    await queue.runSegmentUploads(convex, 'owner')
+    expect(seen.latest()).toEqual([])
+    queue.markSegmentCapture(id, false)
+    await queue.runSegmentUploads(convex, 'owner')
+    expect(seen.latest()).toEqual([
+      { localId: id, isResponse: true, bondfireId: 'parent', paused: false },
+    ])
+  })
+
+  it('never reports another account’s job and clears when the owner changes', async () => {
+    const queue = await import('../lib/media/segmentUploads')
+    const convex = client()
+    convex.finish.mockResolvedValue({ complete: false })
+    const seen = observe(queue)
+    queue.setSegmentUploadOwner('owner')
+    await queue.prepareSegmentJob('owner', { localId: id, isResponse: false })
+    seedCapture()
+    await queue.runSegmentUploads(convex, 'owner')
+    expect(seen.latest()).toHaveLength(1)
+    queue.setSegmentUploadOwner('different')
+    expect(seen.latest()).toEqual([])
+    await queue.runSegmentUploads(convex, 'different')
+    expect(seen.latest()).toEqual([])
+  })
+})

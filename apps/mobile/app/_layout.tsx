@@ -40,6 +40,7 @@ import {
   telemetry,
   toastActions,
   toastStore$,
+  uploadStatusStore$,
   useAppTheme,
   usePushNotifications,
 } from '@bondfires/app'
@@ -320,6 +321,7 @@ function AppContent() {
   const { themeName } = useAppTheme()
   const router = useRouter()
   const toasts = useValue(toastStore$.toasts)
+  const uploadBannerHeight = useValue(uploadStatusStore$.bannerHeight)
   // Unlike the persisted app store, Convex only reports authenticated after
   // the server has confirmed the current token. Use that as the mutation gate.
   const { isAuthenticated } = useConvexAuth()
@@ -608,7 +610,11 @@ function AppContent() {
             <Stack.Screen name="(auth)" options={{ headerShown: false }} />
             <Stack.Screen name="(main)" options={{ headerShown: false }} />
           </Stack>
-          <ToastContainer toasts={toasts} onDismiss={toastActions.dismiss} />
+          <ToastContainer
+            toasts={toasts}
+            onDismiss={toastActions.dismiss}
+            top={uploadBannerHeight > 0 ? uploadBannerHeight + 8 : undefined}
+          />
           <ThemeTransitionOverlay themeName={themeName} />
         </YStack>
       </Theme>

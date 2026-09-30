@@ -7,8 +7,10 @@ import { Alert, Pressable, ScrollView, StatusBar } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
+import { useHeaderTopPadding } from '../../components/UploadStatusLayout'
 
 export default function FamilyConnectionsScreen() {
+  const headerTopPadding = useHeaderTopPadding(58)
   const router = useRouter()
   const { colors, statusBarStyle } = useAppThemeColors()
   const connections = useQuery(api.familyConnections.listMine)
@@ -49,7 +51,7 @@ export default function FamilyConnectionsScreen() {
         <XStack
           alignItems="center"
           gap={14}
-          paddingTop={58}
+          paddingTop={headerTopPadding}
           paddingHorizontal={20}
           paddingBottom={18}
         >

@@ -23,6 +23,7 @@ import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { BondfireThumbnailRow } from '../../../components/BondfireThumbnail'
 import { EditTitleSheet, useEditTitleSheet } from '../../../components/EditTitleSheet'
+import { useHeaderTopPadding } from '../../../components/UploadStatusLayout'
 import {
   BONDFIRE_REPORT_OPTIONS,
   getBondfireRightSwipeActions,
@@ -227,6 +228,7 @@ function toInvitedBondfireRowProps(
 }
 
 export default function MyFiresScreen() {
+  const headerTopPadding = useHeaderTopPadding(62)
   const { colors, statusBarStyle } = useAppThemeColors()
   const theme = useTheme()
   const primaryColor = variableToString(theme.primary)
@@ -517,7 +519,7 @@ export default function MyFiresScreen() {
           <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
         )}
         ListHeaderComponent={
-          <YStack paddingTop={62} paddingHorizontal={16} paddingBottom={14} gap={10}>
+          <YStack paddingTop={headerTopPadding} paddingHorizontal={16} paddingBottom={14} gap={10}>
             <XStack alignItems="center" justifyContent="space-between">
               <XStack alignItems="center" gap={8}>
                 <Pressable

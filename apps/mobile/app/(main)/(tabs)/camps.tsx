@@ -17,6 +17,7 @@ import { Alert, FlatList, Pressable, RefreshControl, StatusBar } from 'react-nat
 import { Image, Separator, Sheet, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc } from '../../../../../convex/_generated/dataModel'
+import { useHeaderTopPadding } from '../../../components/UploadStatusLayout'
 import { isAuthSessionErrorMessage, redirectToCampJoinLogin } from '../../../lib/campJoinAuth'
 import { shouldLoadSparsePage, uniqueById } from '../../../lib/pagination'
 import { routes } from '../../../lib/routes'
@@ -385,6 +386,7 @@ function PersonalCampCard({
 }
 
 export default function CampsScreen() {
+  const headerTopPadding = useHeaderTopPadding(68)
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const {
@@ -668,7 +670,7 @@ export default function CampsScreen() {
           <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
         )}
         ListHeaderComponent={
-          <YStack paddingTop={68} paddingBottom={14} paddingHorizontal={16} gap={14}>
+          <YStack paddingTop={headerTopPadding} paddingBottom={14} paddingHorizontal={16} gap={14}>
             <YStack gap={4}>
               <Text fontSize={28} fontWeight="900">
                 Camps
