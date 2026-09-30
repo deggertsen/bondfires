@@ -8,6 +8,7 @@ import { Alert, Pressable, ScrollView } from 'react-native'
 import { Image as TamaguiImage, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../../convex/_generated/api'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
+import { useHeaderTopPadding } from '../../../../components/UploadStatusLayout'
 import { isAuthSessionErrorMessage, redirectToCampJoinLogin } from '../../../../lib/campJoinAuth'
 import { resolveExternalRoute, routes } from '../../../../lib/routes'
 
@@ -46,6 +47,7 @@ function getAccessLabel(camp: { access: string }) {
 }
 
 export default function CampJoinGateScreen() {
+  const headerTopPadding = useHeaderTopPadding(50)
   const router = useRouter()
   const { id, redirect } = useLocalSearchParams<{
     id: string
@@ -165,7 +167,13 @@ export default function CampJoinGateScreen() {
           </YStack>
         ) : null}
 
-        <YStack paddingHorizontal={20} paddingTop={50} paddingBottom={28} gap={18} flex={1}>
+        <YStack
+          paddingHorizontal={20}
+          paddingTop={headerTopPadding}
+          paddingBottom={28}
+          gap={18}
+          flex={1}
+        >
           {/* Back button */}
           <Pressable
             onPress={handleBack}

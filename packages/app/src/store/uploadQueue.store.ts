@@ -94,6 +94,27 @@ export const uploadQueueActions = {
     }
   },
 
+  /** Give failed tasks a fresh retry ladder so resumePendingUploads picks them up. */
+  requeueFailed: () => {
+    const tasks = uploadQueueStore$.tasks.get()
+    if (!tasks.some((t) => t.status === 'failed')) return
+    uploadQueueStore$.tasks.set(
+      tasks.map(
+        (t): UploadTask =>
+          t.status === 'failed'
+            ? {
+                ...t,
+                status: 'pending',
+                attemptCount: 0,
+                errorMessage: undefined,
+                stage: 'Queued',
+                updatedAt: Date.now(),
+              }
+            : t,
+      ),
+    )
+  },
+
   removeTask: (taskId: string) => {
     const tasks = uploadQueueStore$.tasks.get()
     const filtered = tasks.filter((t) => t.id !== taskId)

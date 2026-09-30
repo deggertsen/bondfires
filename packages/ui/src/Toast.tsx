@@ -131,9 +131,12 @@ function ToastItem({ entry, onDismiss }: { entry: ToastEntry; onDismiss: (id: st
 export function ToastContainer({
   toasts,
   onDismiss,
+  top = 60,
 }: {
   toasts: ToastEntry[]
   onDismiss: (id: string) => void
+  /** Distance from the top of the window; pushed down below a visible status banner. */
+  top?: number
 }) {
   if (toasts.length === 0) return null
 
@@ -142,7 +145,7 @@ export function ToastContainer({
       pointerEvents="box-none"
       style={{
         position: 'absolute',
-        top: 60,
+        top,
         left: 12,
         right: 12,
         zIndex: 9999,

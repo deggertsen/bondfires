@@ -45,7 +45,58 @@ const active = new Set<string>()
 let running = false
 let uploadOwner: string | null = null
 export function setSegmentUploadOwner(userId: string | null) {
+  if (userId !== uploadOwner) clearSnapshot()
   uploadOwner = userId
+}
+
+/** What the upload status banner needs to know about one finished-capture job. */
+export type SegmentUploadJob = {
+  localId: string
+  isResponse: boolean
+  /** Parent bondfire for responses, the spark's own row otherwise. */
+  bondfireId?: string
+  /** A pass failed; stays true until a later pass makes progress. */
+  paused: boolean
+}
+export type SegmentUploadObserver = {
+  onJobs: (jobs: SegmentUploadJob[]) => void
+  onComplete: (job: SegmentUploadJob) => void
+}
+let observer: SegmentUploadObserver | null = null
+const snapshot = new Map<string, SegmentUploadJob>()
+export function setSegmentUploadObserver(next: SegmentUploadObserver | null) {
+  observer = next
+  next?.onJobs([...snapshot.values()])
+}
+function publish() {
+  observer?.onJobs([...snapshot.values()])
+}
+function clearSnapshot() {
+  if (snapshot.size === 0) return
+  snapshot.clear()
+  publish()
+}
+function reportJob(job: Job, paused?: boolean) {
+  // The capture still recording is the create screen's concern, not the banner's.
+  if (active.has(job.args.localId)) return
+  const previous = snapshot.get(job.args.localId)
+  const next: SegmentUploadJob = {
+    localId: job.args.localId,
+    isResponse: job.args.isResponse,
+    bondfireId: job.args.isResponse ? job.args.bondfireId : job.recordId,
+    // Keep a paused job paused until it makes progress, so the banner doesn't
+    // flicker to "uploading" at the start of every retry pass.
+    paused: paused ?? previous?.paused ?? false,
+  }
+  if (
+    previous &&
+    previous.paused === next.paused &&
+    previous.bondfireId === next.bondfireId &&
+    previous.isResponse === next.isResponse
+  )
+    return
+  snapshot.set(next.localId, next)
+  publish()
 }
 const failures = new Map<string, { message: string; reportedAt: number }>()
 export function segmentUploadError(localId: string) {
@@ -123,8 +174,14 @@ export function markSegmentCapture(localId: string, recording: boolean) {
 export async function runSegmentUploads(client: SegmentUploadClient, userId: string) {
   if (!segmentMediaEnabled || running) return
   running = true
+  // Jobs this pass found with durable media; anything else leaves the banner.
+  const seen = new Set<string>()
+  let scanComplete = false
   try {
-    if (!(await FileSystem.getInfoAsync(root)).exists) return
+    if (!(await FileSystem.getInfoAsync(root)).exists) {
+      scanComplete = true
+      return
+    }
     const names = new Set(
       (await FileSystem.readDirectoryAsync(root)).map((name) => name.replace(/\.tmp$/, '')),
     )
@@ -150,12 +207,15 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
         // An init alone contains no video. Don't consume a shared draft until
         // an actual fragment is durable; failed empty captures can be retried.
         if (!(await FileSystem.getInfoAsync(`${dir}segment-000000.m4s`)).exists) continue
+        seen.add(job.args.localId)
+        reportJob(job)
         if (!job.recordingId) {
           stage = 'begin'
           const created = await bounded(client.begin(job.args))
           job.recordingId = created.recordingId
           job.recordId = created.recordId
           await save(job)
+          reportJob(job)
         }
         stage = 'finish'
         const initialFinalCount = await readFinalCount(dir)
@@ -208,6 +268,7 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
           uploadedThisPass += 1
           job.nextIndex += 1
           await save(job)
+          reportJob(job, false)
         }
         if (uploadOwner !== userId) return
         // Capture may have stopped while a PUT was in flight. Its request to
@@ -246,11 +307,22 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
             await FileSystem.deleteAsync(`${root}${name}`, { idempotent: true })
             await FileSystem.deleteAsync(`${root}${name}.tmp`, { idempotent: true })
             await FileSystem.deleteAsync(dir, { idempotent: true })
+            const reported = snapshot.get(job.args.localId)
+            if (reported) {
+              snapshot.delete(job.args.localId)
+              publish()
+              observer?.onComplete({ ...reported, paused: false })
+            }
+            seen.delete(job.args.localId)
+            failures.delete(job.args.localId)
+            continue
           }
         }
         failures.delete(job.args.localId)
+        reportJob(job, false)
       } catch (error) {
         if (uploadOwner !== userId) return
+        if (job && seen.has(job.args.localId)) reportJob(job, true)
         const localId = job?.args.localId ?? name.slice(0, 36)
         const previous = failures.get(localId)
         const now = Date.now()
@@ -272,9 +344,19 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
         }
       }
     }
+    scanComplete = true
   } catch {
     telemetry.warn('segment:queue:failed', 'Could not read the video upload queue')
   } finally {
     running = false
+    if (scanComplete) {
+      let pruned = false
+      for (const localId of snapshot.keys()) {
+        if (seen.has(localId)) continue
+        snapshot.delete(localId)
+        pruned = true
+      }
+      if (pruned) publish()
+    }
   }
 }

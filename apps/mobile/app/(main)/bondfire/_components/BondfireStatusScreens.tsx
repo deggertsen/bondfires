@@ -4,6 +4,7 @@ import { Stack } from 'expo-router'
 import type { Animated as AnimatedType } from 'react-native'
 import { Animated, Pressable, StatusBar, type StatusBarStyle } from 'react-native'
 import { XStack, YStack } from 'tamagui'
+import { useHeaderTopPadding } from '../../../../components/UploadStatusLayout'
 import type { BondfireDetailData } from '../_lib/bondfireDetailHelpers'
 
 type BackProps = {
@@ -20,13 +21,14 @@ function StatusShell({
 }: BackProps & {
   children: React.ReactNode
 }) {
+  const headerTopPadding = useHeaderTopPadding(50)
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
       <StatusBar barStyle={statusBarStyle} backgroundColor={backgroundColor} />
       <YStack flex={1} backgroundColor={'$background'} paddingHorizontal={24}>
         <Pressable onPress={onBackPress}>
-          <XStack alignItems="center" gap={6} paddingTop={50} paddingBottom={12}>
+          <XStack alignItems="center" gap={6} paddingTop={headerTopPadding} paddingBottom={12}>
             <ChevronLeft size={22} color={'$color'} />
             <Text color={'$color'} fontWeight="800">
               Campground

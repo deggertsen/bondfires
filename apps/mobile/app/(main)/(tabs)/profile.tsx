@@ -56,6 +56,7 @@ import { ModerationAdminPanel } from '../../../components/ModerationAdminPanel'
 import { NotificationPreferencesSection } from '../../../components/NotificationPreferencesSection'
 import { SafetySettings } from '../../../components/SafetySettings'
 import { UploadProgressCard } from '../../../components/UploadProgressCard'
+import { useHeaderTopPadding } from '../../../components/UploadStatusLayout'
 import { routes } from '../../../lib/routes'
 
 type UserBondfireData = Doc<'bondfires'>
@@ -197,6 +198,7 @@ function ThemeSelector() {
 }
 
 export default function ProfileScreen() {
+  const headerTopPadding = useHeaderTopPadding(60)
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const { signOut } = useAuthActions()
@@ -529,7 +531,7 @@ export default function ProfileScreen() {
       <XStack
         justifyContent="space-between"
         alignItems="center"
-        paddingTop={60}
+        paddingTop={headerTopPadding}
         paddingHorizontal={20}
         paddingBottom={16}
       >

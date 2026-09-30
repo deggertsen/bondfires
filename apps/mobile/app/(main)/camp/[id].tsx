@@ -47,6 +47,7 @@ import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { EditTitleSheet, useEditTitleSheet } from '../../../components/EditTitleSheet'
 import { InviteSheet } from '../../../components/InviteSheet'
+import { useHeaderTopPadding } from '../../../components/UploadStatusLayout'
 import { getBondfireRightSwipeActions } from '../../../lib/bondfireSwipeActions'
 import { isAuthSessionErrorMessage, redirectToCampJoinLogin } from '../../../lib/campJoinAuth'
 import { goBackOrReplace } from '../../../lib/navigation'
@@ -300,6 +301,7 @@ function CampHeader({
   onArchive: () => void
   currentUserId?: string
 }) {
+  const headerTopPadding = useHeaderTopPadding(58)
   const isActiveMember = camp.membership?.status === 'active'
   const isPending = camp.membership?.status === 'pending'
   const isRejected = camp.membership?.status === 'rejected'
@@ -331,7 +333,7 @@ function CampHeader({
   const coverImageUrl = camp.coverImageUrl
 
   return (
-    <YStack paddingTop={58} paddingHorizontal={16} paddingBottom={18} gap={18}>
+    <YStack paddingTop={headerTopPadding} paddingHorizontal={16} paddingBottom={18} gap={18}>
       {coverImageUrl ? (
         <YStack height={180} marginHorizontal={-16} marginTop={-58} overflow="hidden">
           <TamaguiImage
