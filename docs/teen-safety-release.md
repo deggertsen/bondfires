@@ -25,8 +25,10 @@ Deploy backend enforcement before releasing a client that admits teen users.
    `npx convex run --prod internal:ageSafetyMaintenance:backfillPersonalCampAgeBands`.
    Existing camps and Hearths intentionally become adult-only. This is fail-safe and must happen
    before teen discovery is enabled; do not infer a historical audience from an owner's current age.
-3. Run `npx convex run --prod internal:camps:seedTeenCampsAdmin` to create/update the three default
-   13–17 camps.
+3. Run `npx convex run --prod internal:camps:seedTeenCampsAdmin` to create/update the default 13–17
+   camps: Teen Welcome Fires, Teen Victory Fires, Teen Support Fires, plus the gender-separated
+   Rising Kings (guys) and Rising Queens (girls). Teen Support Fires stays mixed and remains the
+   fallback for teens who are not in a gender-separated camp.
 4. Run `reconcileCampMemberships` and `reconcileHearthParticipants` once, then confirm each finishes
    all pages. Daily crons keep the rows reconciled after rollout. Reconciliation preserves a Hearth
    participant only when the participant is in the owner's current age band or that participant row
