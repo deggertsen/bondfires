@@ -54,6 +54,23 @@ async function setup() {
   })
   return { t, ...ids }
 }
+/** Drive a recording's caption job to the terminal `failed` state. */
+async function driveToFailure(
+  t: Awaited<ReturnType<typeof setup>>['t'],
+  recordingId: Awaited<ReturnType<typeof setup>>['recordingId'],
+) {
+  for (let i = 0; i < 5; i++) {
+    const claim = await t.mutation(internal.segmentTranscription.claim, { recordingId })
+    assert(claim)
+    await t.mutation(internal.segmentTranscription.failedChunk, {
+      jobId: claim.jobId,
+      leaseUntil: claim.leaseUntil,
+    })
+    await t.run((ctx) => ctx.db.patch(claim.jobId, { leaseUntil: 0 }))
+  }
+  // One more claim observes attempts >= MAX_ATTEMPTS and marks the job terminal.
+  expect(await t.mutation(internal.segmentTranscription.claim, { recordingId })).toBeNull()
+}
 describe('R2 transcription jobs', () => {
   it('claims once, resumes after lease expiry, and rejects stale completion', async () => {
     const { t, recordingId } = await setup()
@@ -143,6 +160,42 @@ describe('R2 transcription jobs', () => {
       await t.run((ctx) => ctx.db.patch(claim.jobId, { leaseUntil: 0 }))
     }
     expect(await t.mutation(internal.segmentTranscription.claim, { recordingId })).toBeNull()
+  })
+  it('auto-revives a terminal failure once, then leaves it terminal', async () => {
+    const { t, recordingId } = await setup()
+    await driveToFailure(t, recordingId)
+    const job = await t.run((ctx) =>
+      ctx.db
+        .query('segmentTranscriptionJobs')
+        .withIndex('by_recording', (q) => q.eq('recordingId', recordingId))
+        .unique(),
+    )
+    assert(job)
+    expect(job.status).toBe('failed')
+    await t.mutation(internal.segmentTranscription.recover, {})
+    const revived = await t.run((ctx) => ctx.db.get(job._id))
+    expect(revived?.status).toBe('queued')
+    expect(revived?.attempts).toBe(0)
+    expect(revived?.autoRetriedAt).toBeTypeOf('number')
+    await driveToFailure(t, recordingId)
+    await t.mutation(internal.segmentTranscription.recover, {})
+    expect((await t.run((ctx) => ctx.db.get(job._id)))?.status).toBe('failed')
+  })
+  it('requeues a terminal failure through the operator tool', async () => {
+    const { t, recordingId } = await setup()
+    await driveToFailure(t, recordingId)
+    expect(await t.mutation(internal.segmentTranscription.requeueFailed, { recordingId })).toEqual({
+      requeued: 1,
+    })
+    const job = await t.run((ctx) =>
+      ctx.db
+        .query('segmentTranscriptionJobs')
+        .withIndex('by_recording', (q) => q.eq('recordingId', recordingId))
+        .unique(),
+    )
+    expect(job?.status).toBe('queued')
+    expect(job?.attempts).toBe(0)
+    expect(job?.autoRetriedAt).toBeUndefined()
   })
 })
 describe('caption timing', () => {
