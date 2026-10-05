@@ -17,8 +17,7 @@ afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllEnvs()
 })
-async function setup() {
-  const t = convexTest(schema, modules)
+async function setup(t = convexTest(schema, modules)) {
   const ids = await t.run(async (ctx) => {
     const userId = await ctx.db.insert('users', { gender: 'other' })
     const recordingId = await ctx.db.insert('segmentRecordings', {
@@ -70,6 +69,34 @@ async function driveToFailure(
   }
   // One more claim observes attempts >= MAX_ATTEMPTS and marks the job terminal.
   expect(await t.mutation(internal.segmentTranscription.claim, { recordingId })).toBeNull()
+}
+async function seedFailedBacklog(
+  t: Awaited<ReturnType<typeof setup>>['t'],
+  count: number,
+  kind: 'already-retried' | 'dead-destination',
+) {
+  const jobIds = []
+  for (let i = 0; i < count; i++) {
+    const { recordingId, bondfireId } = await setup(t)
+    jobIds.push(
+      await t.run(async (ctx) => {
+        const job = await ctx.db
+          .query('segmentTranscriptionJobs')
+          .withIndex('by_recording', (q) => q.eq('recordingId', recordingId))
+          .unique()
+        assert(job)
+        await ctx.db.patch(job._id, {
+          status: 'failed',
+          attempts: 5,
+          leaseUntil: 0,
+          autoRetriedAt: kind === 'already-retried' ? Date.now() : undefined,
+        })
+        if (kind === 'dead-destination') await ctx.db.delete(bondfireId)
+        return job._id
+      }),
+    )
+  }
+  return jobIds
 }
 describe('R2 transcription jobs', () => {
   it('claims once, resumes after lease expiry, and rejects stale completion', async () => {
@@ -184,6 +211,18 @@ describe('R2 transcription jobs', () => {
   it('requeues a terminal failure through the operator tool', async () => {
     const { t, recordingId } = await setup()
     await driveToFailure(t, recordingId)
+    await t.mutation(internal.segmentTranscription.recover, {})
+    await driveToFailure(t, recordingId)
+    await t.mutation(internal.segmentTranscription.recover, {})
+    const failed = await t.run((ctx) =>
+      ctx.db
+        .query('segmentTranscriptionJobs')
+        .withIndex('by_recording', (q) => q.eq('recordingId', recordingId))
+        .unique(),
+    )
+    assert(failed)
+    expect(failed.status).toBe('failed')
+    expect(failed.autoRetriedAt).toBeTypeOf('number')
     expect(await t.mutation(internal.segmentTranscription.requeueFailed, { recordingId })).toEqual({
       requeued: 1,
     })
@@ -196,6 +235,76 @@ describe('R2 transcription jobs', () => {
     expect(job?.status).toBe('queued')
     expect(job?.attempts).toBe(0)
     expect(job?.autoRetriedAt).toBeUndefined()
+    await driveToFailure(t, recordingId)
+    await t.mutation(internal.segmentTranscription.recover, {})
+    const revived = await t.run((ctx) => ctx.db.get(failed._id))
+    expect(revived?.status).toBe('queued')
+    expect(revived?.attempts).toBe(0)
+    expect(revived?.autoRetriedAt).toBeTypeOf('number')
+    await driveToFailure(t, recordingId)
+    await t.mutation(internal.segmentTranscription.recover, {})
+    expect((await t.run((ctx) => ctx.db.get(failed._id)))?.status).toBe('failed')
+  })
+  it.each(['already-retried', 'dead-destination'] as const)(
+    'recovers an eligible failure behind 50 %s failures across repeated runs',
+    async (kind) => {
+      const { t, recordingId } = await setup()
+      const skippedIds = await seedFailedBacklog(t, 50, kind)
+      await driveToFailure(t, recordingId)
+      const eligible = await t.run(async (ctx) => {
+        const job = await ctx.db
+          .query('segmentTranscriptionJobs')
+          .withIndex('by_recording', (q) => q.eq('recordingId', recordingId))
+          .unique()
+        assert(job)
+        // Sort after the skipped rows regardless of their creation order.
+        await ctx.db.patch(job._id, { leaseUntil: 1 })
+        return job._id
+      })
+      await t.mutation(internal.segmentTranscription.recover, {})
+      expect((await t.run((ctx) => ctx.db.get(eligible)))?.status).toBe('failed')
+      for (const id of skippedIds) {
+        const skipped = await t.run((ctx) => ctx.db.get(id))
+        if (kind === 'dead-destination') expect(skipped).toBeNull()
+        else {
+          expect(skipped?.status).toBe('failed')
+          expect(skipped?.leaseUntil).toBe(Number.MAX_SAFE_INTEGER)
+        }
+      }
+      await t.mutation(internal.segmentTranscription.recover, {})
+      const revived = await t.run((ctx) => ctx.db.get(eligible))
+      expect(revived?.status).toBe('queued')
+      expect(revived?.attempts).toBe(0)
+      expect(revived?.autoRetriedAt).toBeTypeOf('number')
+    },
+  )
+  it('requeues an eligible failure behind 200 dead destinations across repeated calls', async () => {
+    const { t, recordingId } = await setup()
+    const skippedIds = await seedFailedBacklog(t, 200, 'dead-destination')
+    await driveToFailure(t, recordingId)
+    const eligible = await t.run(async (ctx) => {
+      const job = await ctx.db
+        .query('segmentTranscriptionJobs')
+        .withIndex('by_recording', (q) => q.eq('recordingId', recordingId))
+        .unique()
+      assert(job)
+      await ctx.db.patch(job._id, { leaseUntil: 1 })
+      return job._id
+    })
+    expect(await t.mutation(internal.segmentTranscription.requeueFailed, {})).toEqual({
+      requeued: 0,
+    })
+    expect((await t.run((ctx) => ctx.db.get(eligible)))?.status).toBe('failed')
+    for (const id of skippedIds) expect(await t.run((ctx) => ctx.db.get(id))).toBeNull()
+    expect(await t.mutation(internal.segmentTranscription.requeueFailed, {})).toEqual({
+      requeued: 1,
+    })
+    const requeued = await t.run((ctx) => ctx.db.get(eligible))
+    expect(requeued?.status).toBe('queued')
+    expect(requeued?.attempts).toBe(0)
+    expect(await t.mutation(internal.segmentTranscription.requeueFailed, {})).toEqual({
+      requeued: 0,
+    })
   })
 })
 describe('caption timing', () => {

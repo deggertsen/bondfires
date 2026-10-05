@@ -372,8 +372,15 @@ async function reviveFailedJob(
   ctx: MutationCtx,
   job: Doc<'segmentTranscriptionJobs'>,
 ): Promise<boolean> {
-  if (job.autoRetriedAt !== undefined) return false
-  if (!(await destination(ctx, job.recordingId))) return false
+  if (!(await destination(ctx, job.recordingId))) {
+    await ctx.db.delete(job._id)
+    return false
+  }
+  if (job.autoRetriedAt !== undefined) {
+    // Keep terminal jobs available to operators without blocking the next batch.
+    await ctx.db.patch(job._id, { leaseUntil: Number.MAX_SAFE_INTEGER })
+    return false
+  }
   await ctx.db.patch(job._id, {
     status: 'queued',
     attempts: 0,
@@ -385,7 +392,9 @@ async function reviveFailedJob(
 }
 /**
  * Operator tool: clear terminal failures so the pipeline picks those recordings
- * back up. Pass `recordingId` for one video, or omit it to sweep every failure.
+ * back up. Pass `recordingId` for one video, or omit it to process up to 200
+ * failures per call. Dead destinations are deleted so repeated calls advance
+ * through the backlog, even when a batch returns zero requeued jobs.
  * Safe once the underlying cause is fixed (for example after a worker deploy).
  */
 export const requeueFailed = internalMutation({
@@ -405,7 +414,10 @@ export const requeueFailed = internalMutation({
           .take(200)
     let requeued = 0
     for (const job of jobs) {
-      if (!(await destination(ctx, job.recordingId))) continue
+      if (!(await destination(ctx, job.recordingId))) {
+        await ctx.db.delete(job._id)
+        continue
+      }
       await ctx.db.patch(job._id, {
         status: 'queued',
         attempts: 0,
