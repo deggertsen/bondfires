@@ -10,7 +10,7 @@ const BASE64_TABLE = Uint8Array.from(
  * previously pushed the Worker over the CPU limit. Writes into a preallocated
  * ASCII buffer and decodes once with the native TextDecoder.
  */
-function encodeBase64(bytes: Uint8Array): string {
+export function encodeBase64(bytes: Uint8Array): string {
   const out = new Uint8Array(Math.ceil(bytes.length / 3) * 4)
   let o = 0
   let i = 0

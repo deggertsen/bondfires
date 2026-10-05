@@ -10,6 +10,7 @@ export default defineConfig({
       'convex/**/*.test.ts',
       'apps/mobile/test/**/*.test.ts',
       'scripts/**/*.test.mjs',
+      'infrastructure/media/src/**/*.test.ts',
     ],
     environment: 'node',
   },
