@@ -22,19 +22,31 @@ async function fixture() {
   if (!tokenId) throw new Error('Registration failed')
   const registration = await t.run((ctx) => ctx.db.get(tokenId))
   if (!registration) throw new Error('Missing registration')
-  let attemptedAt = Date.now()
-  const record = async (outcome: PushTokenOutcome) => {
-    return t.mutation(internal.notifications.recordPushResults, {
-      attemptedAt: ++attemptedAt,
-      results: [{ tokenId, registeredAt: registration.updatedAt, outcome }],
-    })
+  const begin = async () => {
+    const tokens = await t.mutation(internal.notifications.beginPushDelivery, { userId })
+    const token = tokens.find((token) => token._id === tokenId)
+    if (!token) throw new Error('No eligible token')
+    return async (outcome: PushTokenOutcome) =>
+      t.mutation(internal.notifications.recordPushResults, {
+        results: [
+          {
+            tokenId,
+            registeredAt: token.updatedAt,
+            attemptSequence: token.pushAttemptSequence,
+            outcome,
+          },
+        ],
+      })
   }
-  return { t, client, userId, tokenId, registration, record }
+  const record = async (outcome: PushTokenOutcome) => (await begin())(outcome)
+
+  return { t, client, userId, tokenId, registration, begin, record }
 }
 
 describe('durable push token health', () => {
   it('quarantines on the third consecutive ambiguous failure, retains the row, and recovers on registration', async () => {
-    const { t, client, userId, tokenId, record } = await fixture()
+    const { t, client, userId, tokenId, registration, record } = await fixture()
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now())
     for (let n = 1; n <= 3; n++) {
       const result = await record('token_failure')
       expect(result.quarantinedCount).toBe(n === 3 ? 1 : 0)
@@ -46,6 +58,12 @@ describe('durable push token health', () => {
       consecutiveTokenFailures: 3,
       quarantinedAt: expect.any(Number),
     })
+    const staleResult = {
+      tokenId,
+      registeredAt: registration.updatedAt,
+      attemptSequence: 3,
+      outcome: 'invalid' as const,
+    }
     await client.mutation(api.notifications.registerDevice, {
       token: 'opaque-fcm-token',
       platform: 'android',
@@ -54,7 +72,7 @@ describe('durable push token health', () => {
     expect(await t.query(internal.notifications.getTokensForUser, { userId })).toHaveLength(1)
     expect((await t.run((ctx) => ctx.db.get(tokenId)))?.consecutiveTokenFailures).toBeUndefined()
     // A response from the old registration cannot delete the recovered row.
-    await record('invalid')
+    await t.mutation(internal.notifications.recordPushResults, { results: [staleResult] })
     expect(await t.run((ctx) => ctx.db.get(tokenId))).not.toBeNull()
   })
 
@@ -80,14 +98,58 @@ describe('durable push token health', () => {
     expect(token?.quarantinedAt).toBeUndefined()
   })
 
-  it('ignores out-of-order failures after a newer success', async () => {
-    const { t, tokenId, registration, record } = await fixture()
-    await record('success')
-    await t.mutation(internal.notifications.recordPushResults, {
-      attemptedAt: 0,
-      results: [{ tokenId, registeredAt: registration.updatedAt, outcome: 'invalid' }],
+  it('ignores older failures after a newer success even when sends start in the same millisecond', async () => {
+    const { t, tokenId, begin } = await fixture()
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now())
+    const older = await begin()
+    const newer = await begin()
+    await newer('success')
+    await older('invalid')
+    expect(await t.run((ctx) => ctx.db.get(tokenId))).toMatchObject({
+      consecutiveTokenFailures: 0,
+      lastPushResultSequence: 2,
     })
+  })
+
+  it('applies each delivery result only once', async () => {
+    const { t, tokenId, begin } = await fixture()
+    const result = await begin()
+    for (let n = 0; n < 3; n++) await result('token_failure')
+    expect(await t.run((ctx) => ctx.db.get(tokenId))).toMatchObject({
+      consecutiveTokenFailures: 1,
+    })
+    expect((await t.run((ctx) => ctx.db.get(tokenId)))?.quarantinedAt).toBeUndefined()
+  })
+
+  it.each(['success', 'other_failure'] as const)(
+    'an in-flight %s cannot clear quarantine',
+    async (outcome) => {
+      const { t, tokenId, begin, record } = await fixture()
+      await record('token_failure')
+      await record('token_failure')
+      const third = await begin()
+      const inFlight = await begin()
+      await third('token_failure')
+      await inFlight(outcome)
+      expect(await t.run((ctx) => ctx.db.get(tokenId))).toMatchObject({
+        consecutiveTokenFailures: 3,
+        quarantinedAt: expect.any(Number),
+      })
+    },
+  )
+
+  it('ignores an in-flight result after re-registration even when its sequence is reused', async () => {
+    const { t, client, tokenId, begin } = await fixture()
+    const oldResult = await begin()
+    await client.mutation(api.notifications.registerDevice, {
+      token: 'opaque-fcm-token',
+      platform: 'android',
+      tokenType: 'fcm',
+    })
+    const newResult = await begin()
+    await oldResult('invalid')
     expect(await t.run((ctx) => ctx.db.get(tokenId))).not.toBeNull()
+    await newResult('success')
   })
 
   it('deletes an explicitly invalid token immediately', async () => {

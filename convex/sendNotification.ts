@@ -349,8 +349,8 @@ export const sendToUser = internalAction({
       }
     }
 
-    // Get all device tokens for the user
-    const tokens: DeviceToken[] = await ctx.runQuery(internal.notifications.getTokensForUser, {
+    // Reserve ordered attempts for the user’s eligible device registrations.
+    const tokens = await ctx.runMutation(internal.notifications.beginPushDelivery, {
       userId: args.userId,
     })
 
@@ -403,7 +403,6 @@ export const sendToUser = internalAction({
     }
 
     try {
-      const attemptedAt = Date.now()
       const result = await deliverNativePush(tokens, payload)
       let cleanup: { deletedCount: number; quarantinedCount: number } | undefined
       try {
@@ -411,10 +410,10 @@ export const sendToUser = internalAction({
           result.tokenResults.map((result) => [result.token, result.outcome]),
         )
         cleanup = await ctx.runMutation(internal.notifications.recordPushResults, {
-          attemptedAt,
           results: tokens.map((token) => ({
             tokenId: token._id,
             registeredAt: token.updatedAt,
+            attemptSequence: token.pushAttemptSequence,
             outcome: outcomes.get(token.token) ?? 'other_failure',
           })),
         })

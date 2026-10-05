@@ -85,7 +85,8 @@ export const registerDevice = mutation({
         updatedAt: Math.max(now, existing.updatedAt + 1),
         consecutiveTokenFailures: undefined,
         quarantinedAt: undefined,
-        lastPushResultAt: undefined,
+        pushAttemptSequence: undefined,
+        lastPushResultSequence: undefined,
       })
       await logServerEvent(ctx, {
         level: 'breadcrumb',
@@ -164,21 +165,25 @@ export const unregisterDevice = mutation({
   },
 })
 
-/** Internal cleanup for invalid/expired tokens reported by APNs/FCM. */
-export const deleteTokensByValue = internalMutation({
-  args: {
-    tokens: v.array(v.string()),
-  },
+/** Reserve an ordered attempt for each eligible registration before contacting providers.
+ * Allocation in a mutation gives concurrent sends distinct sequence numbers, even
+ * within the same millisecond. Registration versions still fence old responses.
+ */
+export const beginPushDelivery = internalMutation({
+  args: { userId: v.id('users') },
   handler: async (ctx, args) => {
-    for (const token of args.tokens) {
-      const existing = await ctx.db
-        .query('deviceTokens')
-        .withIndex('by_token', (q) => q.eq('token', token))
-        .first()
-      if (existing) {
-        await ctx.db.delete(existing._id)
-      }
-    }
+    const tokens = await ctx.db
+      .query('deviceTokens')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .filter((q) => q.eq(q.field('quarantinedAt'), undefined))
+      .collect()
+    return await Promise.all(
+      tokens.map(async (token) => {
+        const pushAttemptSequence = (token.pushAttemptSequence ?? 0) + 1
+        await ctx.db.patch(token._id, { pushAttemptSequence })
+        return { ...token, pushAttemptSequence }
+      }),
+    )
   },
 })
 
@@ -188,11 +193,11 @@ export const deleteTokensByValue = internalMutation({
  */
 export const recordPushResults = internalMutation({
   args: {
-    attemptedAt: v.number(),
     results: v.array(
       v.object({
         tokenId: v.id('deviceTokens'),
         registeredAt: v.number(),
+        attemptSequence: v.number(),
         outcome: v.union(
           v.literal('success'),
           v.literal('invalid'),
@@ -207,11 +212,13 @@ export const recordPushResults = internalMutation({
     let quarantinedCount = 0
     for (const result of args.results) {
       const token = await ctx.db.get(result.tokenId)
-      // Ignore late responses after re-registration or a newer delivery result.
+      // Ignore stale or duplicate responses. Only re-registration clears quarantine.
       if (
         !token ||
         token.updatedAt !== result.registeredAt ||
-        (token.lastPushResultAt !== undefined && token.lastPushResultAt > args.attemptedAt)
+        token.quarantinedAt !== undefined ||
+        result.attemptSequence > (token.pushAttemptSequence ?? 0) ||
+        result.attemptSequence <= (token.lastPushResultSequence ?? 0)
       )
         continue
       if (result.outcome === 'invalid') {
@@ -222,11 +229,11 @@ export const recordPushResults = internalMutation({
       const failures =
         result.outcome === 'token_failure' ? (token.consecutiveTokenFailures ?? 0) + 1 : 0
       const quarantine = failures >= 3
-      if (quarantine && token.quarantinedAt === undefined) quarantinedCount++
+      if (quarantine) quarantinedCount++
       await ctx.db.patch(token._id, {
         consecutiveTokenFailures: failures,
-        lastPushResultAt: args.attemptedAt,
-        quarantinedAt: quarantine ? (token.quarantinedAt ?? Date.now()) : undefined,
+        lastPushResultSequence: result.attemptSequence,
+        quarantinedAt: quarantine ? Date.now() : undefined,
       })
     }
     return { deletedCount, quarantinedCount }

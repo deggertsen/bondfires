@@ -899,7 +899,9 @@ export default defineSchema({
     // Repeated ambiguous token failures pause delivery until the device registers again.
     consecutiveTokenFailures: v.optional(v.number()),
     quarantinedAt: v.optional(v.number()),
-    lastPushResultAt: v.optional(v.number()),
+    // Mutation-allocated ordering; wall-clock timestamps can collide across sends.
+    pushAttemptSequence: v.optional(v.number()),
+    lastPushResultSequence: v.optional(v.number()),
 
     // Device identifier (for managing multiple devices per user)
     deviceId: v.optional(v.string()),
