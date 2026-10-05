@@ -4,6 +4,7 @@ import {
   isTerminalTranscriptionFailure,
   type MediaProbe,
   normalizeTranscriptionFailure,
+  readMediaProbe,
   readTranscriptionFailure,
   readTranscriptionFailureResponse,
   type SpeechSegment,
@@ -316,10 +317,7 @@ export const run = internalAction({
         duration?: number
         probe?: MediaProbe
       }
-      probe =
-        readTranscriptionFailure({
-          failure: { reason: 'probe', name: '', message: '', probe: result.probe },
-        })?.probe ?? probe
+      probe = readMediaProbe(result.probe) ?? probe
       if (
         typeof result.text !== 'string' ||
         !Array.isArray(result.segments) ||

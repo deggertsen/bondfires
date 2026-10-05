@@ -139,43 +139,9 @@ function diagnosticText(value: string, limit: number) {
     .trim()
     .slice(0, limit)
 }
-export function normalizeTranscriptionFailure(
-  error: unknown,
-  probe: MediaProbe = { status: 'not_probed' },
-): TranscriptionFailure {
-  return {
-    reason: error instanceof TranscriptionError ? error.reason : 'transcription_error',
-    name: diagnosticText(error instanceof Error ? error.name : 'UnknownError', 64),
-    message: diagnosticText(
-      error instanceof Error ? error.message : 'Unknown transcription failure',
-      240,
-    ),
-    probe: error instanceof TranscriptionError ? error.probe : probe,
-  }
-}
-/** Treat only the Worker's small, structured envelope as diagnostic evidence. */
-export function readTranscriptionFailure(value: unknown): TranscriptionFailure | undefined {
-  if (!value || typeof value !== 'object' || !('failure' in value)) return
-  const failure = value.failure
-  if (
-    !failure ||
-    typeof failure !== 'object' ||
-    !('reason' in failure) ||
-    !('name' in failure) ||
-    !('message' in failure) ||
-    !('probe' in failure)
-  )
-    return
-  const probe = failure.probe
-  if (
-    typeof failure.reason !== 'string' ||
-    typeof failure.name !== 'string' ||
-    typeof failure.message !== 'string' ||
-    !probe ||
-    typeof probe !== 'object' ||
-    !('status' in probe)
-  )
-    return
+/** Both successful responses and failures use the same bounded probe contract. */
+export function readMediaProbe(probe: unknown): MediaProbe | undefined {
+  if (!probe || typeof probe !== 'object' || !('status' in probe)) return
   const status = probe.status
   if (
     status !== 'not_probed' &&
@@ -193,19 +159,62 @@ export function readTranscriptionFailure(value: unknown): TranscriptionFailure |
     'duration' in probe &&
     typeof probe.duration === 'number' &&
     Number.isFinite(probe.duration) &&
-    probe.duration >= 0
+    probe.duration >= 0 &&
+    probe.duration <= Number.MAX_SAFE_INTEGER / 1000
   )
     result.duration = Math.round(probe.duration * 1000) / 1000
-  // A generic HTTP/provider error must never become terminal merely from its text.
-  const reason =
-    isTerminalTranscriptionFailure(failure.reason) && failure.reason !== status
-      ? 'transcription_error'
-      : diagnosticText(failure.reason, 64)
+  return result
+}
+function failureReason(reason: string, probe: MediaProbe) {
+  const normalized = diagnosticText(reason, 64)
+  // Check the final value: trimming must not promote unconfirmed text to terminal evidence.
+  return isTerminalTranscriptionFailure(normalized) && normalized !== probe.status
+    ? 'transcription_error'
+    : normalized
+}
+export function normalizeTranscriptionFailure(
+  error: unknown,
+  probe: MediaProbe = { status: 'not_probed' },
+): TranscriptionFailure {
+  const media = readMediaProbe(error instanceof TranscriptionError ? error.probe : probe) ?? {
+    status: 'not_probed',
+  }
   return {
-    reason,
+    reason: failureReason(
+      error instanceof TranscriptionError ? error.reason : 'transcription_error',
+      media,
+    ),
+    name: diagnosticText(error instanceof Error ? error.name : 'UnknownError', 64),
+    message: diagnosticText(
+      error instanceof Error ? error.message : 'Unknown transcription failure',
+      240,
+    ),
+    probe: media,
+  }
+}
+/** Treat only the Worker's small, structured envelope as diagnostic evidence. */
+export function readTranscriptionFailure(value: unknown): TranscriptionFailure | undefined {
+  if (!value || typeof value !== 'object' || !('failure' in value)) return
+  const failure = value.failure
+  if (
+    !failure ||
+    typeof failure !== 'object' ||
+    !('reason' in failure) ||
+    typeof failure.reason !== 'string' ||
+    !('name' in failure) ||
+    typeof failure.name !== 'string' ||
+    !('message' in failure) ||
+    typeof failure.message !== 'string' ||
+    !('probe' in failure)
+  )
+    return
+  const probe = readMediaProbe(failure.probe)
+  if (!probe) return
+  return {
+    reason: failureReason(failure.reason, probe),
     name: diagnosticText(failure.name, 64),
     message: diagnosticText(failure.message, 240),
-    probe: result,
+    probe,
   }
 }
 
@@ -227,6 +236,13 @@ export async function readTranscriptionFailureResponse(response: Response) {
   } catch {
     return undefined
   } finally {
-    await reader.cancel()
+    // An errored stream rejects cancel too; cleanup must not replace the HTTP failure.
+    try {
+      await reader.cancel()
+    } catch {
+      // Diagnostic evidence is optional when the upstream response is interrupted.
+    } finally {
+      reader.releaseLock()
+    }
   }
 }

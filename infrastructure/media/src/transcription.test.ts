@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import {
   normalizeTranscriptionFailure,
+  readMediaProbe,
   readTranscriptionFailureResponse,
+  TranscriptionError,
 } from '../../../packages/media/src/transcription'
 import { encodeBase64, transcribeRequest } from './transcription'
 
@@ -217,6 +219,24 @@ describe('transcription media diagnosis', () => {
     expect(failure.message).not.toMatch(/private|secret|credential|x{64}/)
     expect(failure).not.toHaveProperty('stack')
   })
+  it('normalizes local errors with the same evidence checks as remote failures', () => {
+    expect(
+      normalizeTranscriptionFailure(new TranscriptionError(' missing_audio ', 'Unconfirmed')),
+    ).toMatchObject({ reason: 'transcription_error', probe: { status: 'not_probed' } })
+  })
+  it('bounds successful probes and discards duration values that overflow normalization', () => {
+    expect(
+      readMediaProbe({
+        status: 'ok',
+        audioCodec: 'mp4a',
+        duration: 1.23456,
+        transcript: 'private',
+      }),
+    ).toEqual({ status: 'ok', audioCodec: 'mp4a', duration: 1.235 })
+    for (const duration of [-1, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_VALUE])
+      expect(readMediaProbe({ status: 'ok', duration })).toEqual({ status: 'ok' })
+    expect(readMediaProbe({ status: 'unknown' })).toBeUndefined()
+  })
   it('ignores oversized, malformed and unstructured HTTP error responses', async () => {
     for (const response of [
       Response.json({ failure: 'x'.repeat(3000) }),
@@ -225,5 +245,32 @@ describe('transcription media diagnosis', () => {
     ]) {
       expect(await readTranscriptionFailureResponse(response)).toBeUndefined()
     }
+  })
+  it('treats an errored response body as unavailable diagnostics', async () => {
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.error(new Error('Upstream disconnected'))
+        },
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    )
+    await expect(readTranscriptionFailureResponse(response)).resolves.toBeUndefined()
+  })
+  it('cancels an oversized stream even if cancellation rejects', async () => {
+    const cancel = vi.fn(async () => {
+      throw new Error('Cancellation failed')
+    })
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array(2049))
+        },
+        cancel,
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    )
+    await expect(readTranscriptionFailureResponse(response)).resolves.toBeUndefined()
+    expect(cancel).toHaveBeenCalledOnce()
   })
 })

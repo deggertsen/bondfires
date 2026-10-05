@@ -310,6 +310,54 @@ describe('R2 transcription jobs', () => {
       },
     })
   })
+  it.each(['missing_audio', 'zero_duration', 'unsupported_codec'])(
+    'does not promote normalized %s text to a terminal failure without matching probe evidence',
+    async (reason) => {
+      const { t, recordingId } = await setup()
+      const claim = await t.mutation(internal.segmentTranscription.claim, { recordingId })
+      assert(claim)
+      await t.mutation(internal.segmentTranscription.failedChunk, {
+        jobId: claim.jobId,
+        leaseUntil: claim.leaseUntil,
+        failure: {
+          reason: ` ${reason}\n`,
+          name: 'Error',
+          message: 'Unconfirmed failure',
+          probe: { status: 'not_probed' },
+        },
+      })
+      expect(await t.run((ctx) => ctx.db.query('segmentTranscriptionJobs').first())).toMatchObject({
+        status: 'queued',
+        failureReason: 'transcription_error',
+      })
+      expect(await t.run((ctx) => ctx.db.query('clientLogs').first())).toMatchObject({
+        data: { terminal: false, probe: { status: 'not_probed' } },
+      })
+    },
+  )
+  it('preserves HTTP diagnostics when the response stream fails', async () => {
+    vi.stubEnv('MEDIA_WORKER_URL', 'https://media.example')
+    vi.stubEnv('MEDIA_WORKER_SECRET', 'test')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.error(new Error('Private upstream stream failure'))
+              },
+            }),
+            { status: 503, headers: { 'Content-Type': 'application/json' } },
+          ),
+      ),
+    )
+    const { t, recordingId } = await setup()
+    await t.action(internal.segmentTranscription.run, { recordingId })
+    expect(await t.run((ctx) => ctx.db.query('clientLogs').first())).toMatchObject({
+      data: { message: 'Transcription HTTP 503', terminal: false },
+    })
+  })
   it('counts invalid timeline failures instead of rolling back the retry budget', async () => {
     const { t, recordingId } = await setup()
     const job = await t.run(async (ctx) => {
