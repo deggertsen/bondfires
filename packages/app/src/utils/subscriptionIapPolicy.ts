@@ -84,7 +84,7 @@ interface IapCatalogRecoveryInput<T> {
   reconnect: () => Promise<void>
   getRecoveryError?: (error: unknown) => unknown
   getRecoveryErrorFromResult?: (result: T) => unknown
-  onRecovery?: (error: unknown) => void
+  onRecovery?: (error: unknown, result?: T) => void
 }
 
 /** One reconnect/reload for Android readiness or a possibly transient iOS empty response. */
@@ -108,7 +108,7 @@ export async function loadIapCatalogWithRecovery<T>(input: IapCatalogRecoveryInp
 
   const recoveryError = input.getRecoveryErrorFromResult?.(result)
   if (shouldRecoverIapCatalogConnection(input.platform, recoveryError)) {
-    input.onRecovery?.(recoveryError)
+    input.onRecovery?.(recoveryError, result)
     return await reconnectAndReload()
   }
   return result
