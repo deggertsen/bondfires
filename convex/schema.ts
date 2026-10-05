@@ -1239,6 +1239,7 @@ export default defineSchema({
     leaseUntil: v.number(),
     updatedAt: v.number(),
     autoRetriedAt: v.optional(v.number()),
+    failureReason: v.optional(v.string()),
     insightsAttempts: v.optional(v.number()),
     insightsStatus: v.optional(
       v.union(v.literal('queued'), v.literal('ready'), v.literal('failed')),

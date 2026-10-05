@@ -30,7 +30,7 @@ function u32(view: DataView, box: Box, offset: number): number {
   return view.getUint32(offset)
 }
 export type Track = { id: number; timescale: number; type: string; defaultDuration: number }
-export function inspectInit(bytes: Uint8Array): Track[] {
+export function inspectTracks(bytes: Uint8Array): Track[] {
   if (bytes.length > 256 * 1024) throw new Error('Initialization too large')
   const root = boxes(bytes)
   required(root, 'ftyp')
@@ -61,6 +61,10 @@ export function inspectInit(bytes: Uint8Array): Track[] {
       return { id, timescale, type, defaultDuration: defaults.get(id) ?? 0 }
     })
   if (new Set(tracks.map((t) => t.id)).size !== tracks.length) throw new Error('Duplicate track')
+  return tracks
+}
+export function inspectInit(bytes: Uint8Array): Track[] {
+  const tracks = inspectTracks(bytes)
   if (
     tracks.length !== 2 ||
     !tracks.some((t) => t.type === 'vide') ||
@@ -69,18 +73,39 @@ export function inspectInit(bytes: Uint8Array): Track[] {
     throw new Error('Audio and video tracks required')
   return tracks
 }
+/** Read sample-entry FourCCs, without decoding or exposing media payloads. */
+export function inspectAudioCodecs(bytes: Uint8Array): string[] {
+  const moov = required(boxes(bytes), 'moov')
+  const codecs: string[] = []
+  for (const trak of boxes(bytes, moov.data, moov.end).filter((b) => b.type === 'trak')) {
+    const mdia = required(boxes(bytes, trak.data, trak.end), 'mdia')
+    const media = boxes(bytes, mdia.data, mdia.end)
+    const hdlr = required(media, 'hdlr')
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    if (u32(view, hdlr, hdlr.data + 8) !== 0x736f756e) continue
+    const minf = required(media, 'minf')
+    const stbl = required(boxes(bytes, minf.data, minf.end), 'stbl')
+    const stsd = required(boxes(bytes, stbl.data, stbl.end), 'stsd')
+    const count = u32(view, stsd, stsd.data + 4)
+    const entries = boxes(bytes, stsd.data + 8, stsd.end)
+    if (!count || count !== entries.length) throw Error('Invalid audio sample descriptions')
+    codecs.push(...entries.map((entry) => entry.type))
+  }
+  return codecs
+}
 export class InvalidSegmentDuration extends Error {
   constructor(readonly duration: number) {
     super('Invalid segment duration')
   }
 }
-export function inspectSegment(bytes: Uint8Array, tracks: readonly Track[]): number {
+export function inspectSegmentTiming(bytes: Uint8Array, tracks: readonly Track[]) {
   const root = boxes(bytes)
   const moof = required(root, 'moof')
   required(root, 'mdat')
   if (root.filter((b) => b.type === 'moof').length !== 1) throw new Error('One fragment required')
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  let duration = 0
+  let duration = 0,
+    audioDuration = 0
   for (const traf of boxes(bytes, moof.data, moof.end).filter((b) => b.type === 'traf')) {
     const children = boxes(bytes, traf.data, traf.end)
     const tfhd = required(children, 'tfhd')
@@ -109,10 +134,14 @@ export function inspectSegment(bytes: Uint8Array, tracks: readonly Track[]): num
       if (offset !== trun.end) throw new Error('Invalid sample table')
     }
     duration = Math.max(duration, ticks / track.timescale)
+    if (track.type === 'soun') audioDuration = Math.max(audioDuration, ticks / track.timescale)
   }
   if (!Number.isFinite(duration) || duration <= 0 || duration > 15)
     throw new InvalidSegmentDuration(duration)
-  return duration
+  return { duration, audioDuration }
+}
+export function inspectSegment(bytes: Uint8Array, tracks: readonly Track[]): number {
+  return inspectSegmentTiming(bytes, tracks).duration
 }
 
 /**

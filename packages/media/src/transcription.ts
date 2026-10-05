@@ -98,3 +98,135 @@ export function cuesToVtt(cues: readonly CaptionCue[]) {
     )
     .join('')
 }
+
+export type MediaProbe = {
+  status:
+    | 'not_probed'
+    | 'ok'
+    | 'invalid_mp4'
+    | 'missing_audio'
+    | 'zero_duration'
+    | 'unsupported_codec'
+  audioCodec?: string
+  duration?: number
+}
+export type TranscriptionFailure = {
+  reason: string
+  name: string
+  message: string
+  probe: MediaProbe
+}
+export class TranscriptionError extends Error {
+  constructor(
+    readonly reason: string,
+    message: string,
+    readonly probe: MediaProbe = { status: 'not_probed' },
+  ) {
+    super(message)
+    this.name = 'TranscriptionError'
+  }
+}
+export function isTerminalTranscriptionFailure(reason: string) {
+  return ['missing_audio', 'zero_duration', 'unsupported_codec'].includes(reason)
+}
+/** No stacks, URLs, credentials, transcripts, or unbounded provider response bodies. */
+function diagnosticText(value: string, limit: number) {
+  return value
+    .replace(/https?:\/\/\S+/gi, '[url]')
+    .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
+    .replace(/[A-Za-z0-9+/=_-]{64,}/g, '[redacted]')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, limit)
+}
+export function normalizeTranscriptionFailure(
+  error: unknown,
+  probe: MediaProbe = { status: 'not_probed' },
+): TranscriptionFailure {
+  return {
+    reason: error instanceof TranscriptionError ? error.reason : 'transcription_error',
+    name: diagnosticText(error instanceof Error ? error.name : 'UnknownError', 64),
+    message: diagnosticText(
+      error instanceof Error ? error.message : 'Unknown transcription failure',
+      240,
+    ),
+    probe: error instanceof TranscriptionError ? error.probe : probe,
+  }
+}
+/** Treat only the Worker's small, structured envelope as diagnostic evidence. */
+export function readTranscriptionFailure(value: unknown): TranscriptionFailure | undefined {
+  if (!value || typeof value !== 'object' || !('failure' in value)) return
+  const failure = value.failure
+  if (
+    !failure ||
+    typeof failure !== 'object' ||
+    !('reason' in failure) ||
+    !('name' in failure) ||
+    !('message' in failure) ||
+    !('probe' in failure)
+  )
+    return
+  const probe = failure.probe
+  if (
+    typeof failure.reason !== 'string' ||
+    typeof failure.name !== 'string' ||
+    typeof failure.message !== 'string' ||
+    !probe ||
+    typeof probe !== 'object' ||
+    !('status' in probe)
+  )
+    return
+  const status = probe.status
+  if (
+    status !== 'not_probed' &&
+    status !== 'ok' &&
+    status !== 'invalid_mp4' &&
+    status !== 'missing_audio' &&
+    status !== 'zero_duration' &&
+    status !== 'unsupported_codec'
+  )
+    return
+  const result: MediaProbe = { status }
+  if ('audioCodec' in probe && typeof probe.audioCodec === 'string')
+    result.audioCodec = diagnosticText(probe.audioCodec, 32)
+  if (
+    'duration' in probe &&
+    typeof probe.duration === 'number' &&
+    Number.isFinite(probe.duration) &&
+    probe.duration >= 0
+  )
+    result.duration = Math.round(probe.duration * 1000) / 1000
+  // A generic HTTP/provider error must never become terminal merely from its text.
+  const reason =
+    isTerminalTranscriptionFailure(failure.reason) && failure.reason !== status
+      ? 'transcription_error'
+      : diagnosticText(failure.reason, 64)
+  return {
+    reason,
+    name: diagnosticText(failure.name, 64),
+    message: diagnosticText(failure.message, 240),
+    probe: result,
+  }
+}
+
+/** Proxy errors may be HTML, chunked, or huge. Inspect at most 2 KiB of JSON. */
+export async function readTranscriptionFailureResponse(response: Response) {
+  if (!response.headers.get('content-type')?.includes('application/json') || !response.body) return
+  const reader = response.body.getReader()
+  const bytes = new Uint8Array(2048)
+  let length = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (length + value.length > bytes.length) return
+      bytes.set(value, length)
+      length += value.length
+    }
+    return readTranscriptionFailure(JSON.parse(new TextDecoder().decode(bytes.subarray(0, length))))
+  } catch {
+    return undefined
+  } finally {
+    await reader.cancel()
+  }
+}
