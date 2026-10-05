@@ -296,6 +296,40 @@ const TEEN_LAUNCH_CAMPS: CampSeed[] = [
       'Do not ask for or share private contact, school, or location information.',
     ],
   },
+  {
+    slug: 'rising-kings',
+    name: 'Rising Kings',
+    theme: "Guys' Club",
+    purpose:
+      'A 13–17 room for guys to hang out, celebrate wins, and talk through hard days — just the guys.',
+    icon: 'crown',
+    color: '#1E3A8A',
+    defaultPrompt: "What's on your mind, and what would the guys here get?",
+    gender: 'male',
+    ageBand: 'teen',
+    advisoryGuidelines: [
+      'Keep what is shared here in the room — this camp is for the guys only.',
+      'Protect personal information such as your school, address, and exact location.',
+      'This camp is not emergency or professional support; contact a trusted adult in a crisis.',
+    ],
+  },
+  {
+    slug: 'rising-queens',
+    name: 'Rising Queens',
+    theme: "Girls' Club",
+    purpose:
+      'A 13–17 room for girls to hang out, celebrate wins, and talk through hard days — just the girls.',
+    icon: 'crown',
+    color: '#7E22CE',
+    defaultPrompt: "What's on your mind, and what would the girls here get?",
+    gender: 'female',
+    ageBand: 'teen',
+    advisoryGuidelines: [
+      'Keep what is shared here in the room — this camp is for the girls only.',
+      'Protect personal information such as your school, address, and exact location.',
+      'This camp is not emergency or professional support; contact a trusted adult in a crisis.',
+    ],
+  },
 ]
 
 function variantName(baseName: string, gender: Exclude<CampGender, 'any'>) {

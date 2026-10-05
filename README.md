@@ -12,7 +12,7 @@ A video sharing social app where users create "bondfires" (video posts) and othe
 | Backend/Database | Convex |
 | Authentication | Convex Auth |
 | Navigation | Expo Router |
-| Video Streaming | Mux Video |
+| Video Streaming | Private R2/HLS (legacy Mux playback for migrated videos) |
 | Profile Photo Storage | Convex File Storage |
 | Video Metadata | react-native-compressor |
 | Monorepo | Turborepo |
