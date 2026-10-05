@@ -6,7 +6,7 @@ import {
   transcriptionWindow,
 } from '../packages/media/src/transcription'
 import { internal } from './_generated/api'
-import type { Id } from './_generated/dataModel'
+import type { Doc, Id } from './_generated/dataModel'
 import {
   internalAction,
   internalMutation,
@@ -367,6 +367,72 @@ export const backfill = internalMutation({
     return { queued, done: page.isDone }
   },
 })
+/** Revive a terminal failure once when the recording still has a destination. */
+async function reviveFailedJob(
+  ctx: MutationCtx,
+  job: Doc<'segmentTranscriptionJobs'>,
+): Promise<boolean> {
+  if (!(await destination(ctx, job.recordingId))) {
+    await ctx.db.delete(job._id)
+    return false
+  }
+  if (job.autoRetriedAt !== undefined) {
+    // Keep terminal jobs available to operators without blocking the next batch.
+    await ctx.db.patch(job._id, { leaseUntil: Number.MAX_SAFE_INTEGER })
+    return false
+  }
+  await ctx.db.patch(job._id, {
+    status: 'queued',
+    attempts: 0,
+    leaseUntil: 0,
+    autoRetriedAt: Date.now(),
+    updatedAt: Date.now(),
+  })
+  return true
+}
+/**
+ * Operator tool: clear terminal failures so the pipeline picks those recordings
+ * back up. Pass `recordingId` for one video, or omit it to process up to 200
+ * failures per call. Dead destinations are deleted so repeated calls advance
+ * through the backlog, even when a batch returns zero requeued jobs.
+ * Safe once the underlying cause is fixed (for example after a worker deploy).
+ */
+export const requeueFailed = internalMutation({
+  args: { recordingId: v.optional(v.id('segmentRecordings')) },
+  handler: async (ctx, args) => {
+    const recordingId = args.recordingId
+    const jobs = recordingId
+      ? (
+          await ctx.db
+            .query('segmentTranscriptionJobs')
+            .withIndex('by_recording', (q) => q.eq('recordingId', recordingId))
+            .collect()
+        ).filter((job) => job.status === 'failed')
+      : await ctx.db
+          .query('segmentTranscriptionJobs')
+          .withIndex('by_status_lease', (q) => q.eq('status', 'failed'))
+          .take(200)
+    let requeued = 0
+    for (const job of jobs) {
+      if (!(await destination(ctx, job.recordingId))) {
+        await ctx.db.delete(job._id)
+        continue
+      }
+      await ctx.db.patch(job._id, {
+        status: 'queued',
+        attempts: 0,
+        leaseUntil: 0,
+        autoRetriedAt: undefined,
+        updatedAt: Date.now(),
+      })
+      await ctx.scheduler.runAfter(0, internal.segmentTranscription.run, {
+        recordingId: job.recordingId,
+      })
+      requeued++
+    }
+    return { requeued }
+  },
+})
 /** Recover interrupted actions after the lease, without duplicate transcript appends. */
 export const recover = internalMutation({
   args: {},
@@ -387,5 +453,18 @@ export const recover = internalMutation({
           },
         )
     }
+    // A terminal `failed` job was previously unrecoverable even after the cause
+    // was fixed (for example an oversized transcription window). Revive each
+    // stale failure exactly once so already-stuck captions heal without a manual
+    // DB edit; any second failure stays terminal until an operator requeues it.
+    const failures = await ctx.db
+      .query('segmentTranscriptionJobs')
+      .withIndex('by_status_lease', (q) => q.eq('status', 'failed').lte('leaseUntil', Date.now()))
+      .take(50)
+    for (const job of failures)
+      if (await reviveFailedJob(ctx, job))
+        await ctx.scheduler.runAfter(0, internal.segmentTranscription.run, {
+          recordingId: job.recordingId,
+        })
   },
 })
