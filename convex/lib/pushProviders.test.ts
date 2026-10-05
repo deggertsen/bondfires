@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildApnsPayload,
   buildFcmMessage,
+  isMalformedNativePushToken,
   sendApnsPushNotification,
   sendFcmPushNotification,
 } from './pushProviders'
@@ -132,6 +133,11 @@ describe('provider delivery results', () => {
     expect(result.failureCount).toBe(2)
     expect(result.invalidTokens).toEqual(['stale-token'])
     expect(result.error).toContain('BadDeviceToken')
+    expect(result.tokenResults).toEqual([
+      { token: 'ok-token', outcome: 'success' },
+      { token: 'stale-token', outcome: 'invalid' },
+      { token: 'wrong-environment-token', outcome: 'token_failure' },
+    ])
   })
 
   it('reports exact FCM successes without deleting tokens for payload errors', async () => {
@@ -180,5 +186,127 @@ describe('provider delivery results', () => {
     expect(result.failureCount).toBe(2)
     expect(result.invalidTokens).toEqual(['stale-token'])
     expect(result.error).toContain('INVALID_ARGUMENT')
+  })
+})
+
+describe('FCM INVALID_ARGUMENT classification', () => {
+  const tokenMessage = 'The registration token is not a valid FCM registration token'
+  const fcmDetail = {
+    '@type': 'type.googleapis.com/google.firebase.fcm.v1.FcmError',
+    errorCode: 'INVALID_ARGUMENT',
+  }
+  const payloadDetail = {
+    '@type': 'type.googleapis.com/google.rpc.BadRequest',
+    fieldViolations: [{ field: 'message.data[0].value', description: 'Expected string' }],
+  }
+  it.each([
+    {
+      name: 'explicit FCM token rejection',
+      message: tokenMessage,
+      details: [fcmDetail],
+      outcome: 'invalid',
+    },
+    {
+      name: 'token message without details',
+      message: tokenMessage,
+      details: [],
+      outcome: 'invalid',
+    },
+    {
+      name: 'token field violation',
+      message: '',
+      details: [
+        {
+          ...payloadDetail,
+          fieldViolations: [{ field: 'message.token', description: 'Invalid token' }],
+        },
+      ],
+      outcome: 'invalid',
+    },
+    {
+      name: 'payload field violation',
+      message: 'Invalid value',
+      details: [payloadDetail],
+      outcome: 'other_failure',
+    },
+    {
+      name: 'payload evidence overrides FCM code',
+      message: tokenMessage,
+      details: [fcmDetail, payloadDetail],
+      outcome: 'other_failure',
+    },
+    {
+      name: 'payload message without details',
+      message: 'Message too big',
+      details: [fcmDetail],
+      outcome: 'other_failure',
+    },
+    { name: 'bare FCM code', message: '', details: [fcmDetail], outcome: 'token_failure' },
+    { name: 'bare status', message: '', details: [], outcome: 'token_failure' },
+  ])('$name', async ({ message, details, outcome }) => {
+    const privateKey = await generatePrivateKeyPem('RS256')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        if (String(input).includes('oauth2.googleapis.com')) {
+          return Response.json({ access_token: 'access-token', expires_in: 3600 })
+        }
+        return Response.json(
+          { error: { status: 'INVALID_ARGUMENT', message, details } },
+          { status: 400 },
+        )
+      }),
+    )
+    const result = await sendFcmPushNotification(
+      ['registration-token'],
+      { title: 'Hello', body: 'World', channelId: 'bondfires-default' },
+      { projectId: 'classification-test', clientEmail: 'push@example.com', privateKey },
+    )
+    expect(result.invalidTokens).toEqual(outcome === 'invalid' ? ['registration-token'] : [])
+    expect(result.tokenResults).toEqual([{ token: 'registration-token', outcome }])
+    expect(result.failureCount).toBe(1)
+  })
+
+  it('does not delete or strike tokens for project, auth, quota, server, or network failures', async () => {
+    const privateKey = await generatePrivateKeyPem('RS256')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).includes('oauth2.googleapis.com'))
+          return Response.json({ access_token: 'access-token' })
+        const { message } = JSON.parse(String(init?.body)) as { message: { token: string } }
+        if (message.token === 'network') throw new Error('Network unavailable')
+        return Response.json({ error: { status: message.token } }, { status: 500 })
+      }),
+    )
+    const tokens = ['NOT_FOUND', 'UNAUTHENTICATED', 'QUOTA_EXCEEDED', 'UNAVAILABLE', 'network']
+    const result = await sendFcmPushNotification(
+      tokens,
+      { title: 'Hello', body: 'World', channelId: 'bondfires-default' },
+      { projectId: 'classification-test', clientEmail: 'push@example.com', privateKey },
+    )
+    expect(result.invalidTokens).toEqual([])
+    expect(result.tokenResults).toEqual(
+      tokens.map((token) => ({ token, outcome: 'other_failure' })),
+    )
+  })
+})
+
+describe('native token shapes', () => {
+  it.each([
+    'ExponentPushToken[legacy]',
+    'ExpoPushToken[legacy]',
+    '',
+    'token with spaces',
+    '{unknown}',
+  ])('rejects %s before native delivery', (token) => {
+    expect(isMalformedNativePushToken(token, 'fcm')).toBe(true)
+    expect(isMalformedNativePushToken(token, 'apns')).toBe(true)
+  })
+  it('accepts opaque FCM tokens and variable-length APNs bytes', () => {
+    expect(isMalformedNativePushToken('opaque_FCM:token-123', 'fcm')).toBe(false)
+    expect(isMalformedNativePushToken('a1'.repeat(32), 'apns')).toBe(false)
+    expect(isMalformedNativePushToken('a1'.repeat(64), 'apns')).toBe(false)
+    expect(isMalformedNativePushToken('unknown-shape', 'apns')).toBe(true)
   })
 })

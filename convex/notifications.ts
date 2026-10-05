@@ -82,7 +82,10 @@ export const registerDevice = mutation({
         tokenType,
         deviceId: args.deviceId,
         timezone: args.timezone ?? existing.timezone,
-        updatedAt: now,
+        updatedAt: Math.max(now, existing.updatedAt + 1),
+        consecutiveTokenFailures: undefined,
+        quarantinedAt: undefined,
+        lastPushResultAt: undefined,
       })
       await logServerEvent(ctx, {
         level: 'breadcrumb',
@@ -179,6 +182,57 @@ export const deleteTokensByValue = internalMutation({
   },
 })
 
+/** Apply results atomically to the registration that was actually sent to.
+ * Explicit invalidity deletes; three consecutive ambiguous token failures
+ * quarantine reversibly. Payload/auth/network failures break the streak.
+ */
+export const recordPushResults = internalMutation({
+  args: {
+    attemptedAt: v.number(),
+    results: v.array(
+      v.object({
+        tokenId: v.id('deviceTokens'),
+        registeredAt: v.number(),
+        outcome: v.union(
+          v.literal('success'),
+          v.literal('invalid'),
+          v.literal('token_failure'),
+          v.literal('other_failure'),
+        ),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    let deletedCount = 0
+    let quarantinedCount = 0
+    for (const result of args.results) {
+      const token = await ctx.db.get(result.tokenId)
+      // Ignore late responses after re-registration or a newer delivery result.
+      if (
+        !token ||
+        token.updatedAt !== result.registeredAt ||
+        (token.lastPushResultAt !== undefined && token.lastPushResultAt > args.attemptedAt)
+      )
+        continue
+      if (result.outcome === 'invalid') {
+        await ctx.db.delete(token._id)
+        deletedCount++
+        continue
+      }
+      const failures =
+        result.outcome === 'token_failure' ? (token.consecutiveTokenFailures ?? 0) + 1 : 0
+      const quarantine = failures >= 3
+      if (quarantine && token.quarantinedAt === undefined) quarantinedCount++
+      await ctx.db.patch(token._id, {
+        consecutiveTokenFailures: failures,
+        lastPushResultAt: args.attemptedAt,
+        quarantinedAt: quarantine ? (token.quarantinedAt ?? Date.now()) : undefined,
+      })
+    }
+    return { deletedCount, quarantinedCount }
+  },
+})
+
 // Get user's registered devices
 export const getDevices = query({
   args: {},
@@ -240,6 +294,7 @@ export const getTokensForUser = internalQuery({
     return await ctx.db
       .query('deviceTokens')
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .filter((q) => q.eq(q.field('quarantinedAt'), undefined))
       .collect()
   },
 })

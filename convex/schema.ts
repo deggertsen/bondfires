@@ -896,6 +896,11 @@ export default defineSchema({
     // Token type — native APNs/FCM preferred; 'expo' retained for legacy cleanup
     tokenType: v.optional(v.union(v.literal('apns'), v.literal('fcm'), v.literal('expo'))),
 
+    // Repeated ambiguous token failures pause delivery until the device registers again.
+    consecutiveTokenFailures: v.optional(v.number()),
+    quarantinedAt: v.optional(v.number()),
+    lastPushResultAt: v.optional(v.number()),
+
     // Device identifier (for managing multiple devices per user)
     deviceId: v.optional(v.string()),
 
