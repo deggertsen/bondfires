@@ -16,6 +16,7 @@ afterEach(() => {
   vi.clearAllTimers()
   vi.useRealTimers()
   vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
 })
 async function setup(t = convexTest(schema, modules)) {
   const ids = await t.run(async (ctx) => {
@@ -208,42 +209,222 @@ describe('R2 transcription jobs', () => {
     await t.mutation(internal.segmentTranscription.recover, {})
     expect((await t.run((ctx) => ctx.db.get(job._id)))?.status).toBe('failed')
   })
-  it('requeues a terminal failure through the operator tool', async () => {
+  it.each(['operator', 'recover'] as const)(
+    'shares a single revival budget when %s requeues first',
+    async (first) => {
+      const { t, recordingId } = await setup()
+      await driveToFailure(t, recordingId)
+      if (first === 'operator')
+        expect(
+          await t.mutation(internal.segmentTranscription.requeueFailed, { recordingId }),
+        ).toEqual({ requeued: 1 })
+      else await t.mutation(internal.segmentTranscription.recover, {})
+      const job = await t.run((ctx) => ctx.db.query('segmentTranscriptionJobs').first())
+      assert(job)
+      expect(job).toMatchObject({ status: 'queued', attempts: 0 })
+      expect(job.autoRetriedAt).toBeTypeOf('number')
+      await driveToFailure(t, recordingId)
+      for (let i = 0; i < 3; i++) {
+        await t.mutation(internal.segmentTranscription.recover, {})
+        expect(
+          await t.mutation(internal.segmentTranscription.requeueFailed, { recordingId }),
+        ).toEqual({ requeued: 0 })
+        expect(await t.mutation(internal.segmentTranscription.requeueFailed, {})).toEqual({
+          requeued: 0,
+        })
+        await t.mutation(internal.segmentTranscription.backfill, {})
+        expect(await t.mutation(internal.segmentTranscription.claim, { recordingId })).toBeNull()
+      }
+      expect(await t.run((ctx) => ctx.db.get(job._id))).toMatchObject({
+        status: 'failed',
+        attempts: 5,
+        autoRetriedAt: job.autoRetriedAt,
+      })
+    },
+  )
+  it.each(['missing_audio', 'zero_duration', 'unsupported_codec'] as const)(
+    'marks %s terminal on its first attempt and records compact diagnostics',
+    async (reason) => {
+      vi.stubEnv('MEDIA_WORKER_URL', 'https://media.example')
+      vi.stubEnv('MEDIA_WORKER_SECRET', 'test')
+      const failure = {
+        reason,
+        name: 'TranscriptionError',
+        message: 'Media cannot be transcribed',
+        probe: { status: reason, duration: 0, audioCodec: 'mp4a' },
+      }
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => Response.json({ failure }, { status: 422 })),
+      )
+      const { t, recordingId } = await setup()
+      await t.action(internal.segmentTranscription.run, { recordingId })
+      const job = await t.run((ctx) => ctx.db.query('segmentTranscriptionJobs').first())
+      expect(job).toMatchObject({
+        status: 'failed',
+        attempts: 1,
+        failureReason: reason,
+        leaseUntil: Number.MAX_SAFE_INTEGER,
+      })
+      const logs = await t.run((ctx) => ctx.db.query('clientLogs').collect())
+      expect(logs).toHaveLength(1)
+      expect(logs[0]).toMatchObject({
+        event: 'media:transcription:failed',
+        level: 'error',
+        data: { recordingId, attempt: 1, cursor: 0, terminal: true, ...failure },
+      })
+      expect(JSON.stringify(logs[0].data).length).toBeLessThan(700)
+      for (let i = 0; i < 3; i++) {
+        await t.mutation(internal.segmentTranscription.recover, {})
+        expect(
+          await t.mutation(internal.segmentTranscription.requeueFailed, { recordingId }),
+        ).toEqual({ requeued: 0 })
+        expect(await t.mutation(internal.segmentTranscription.claim, { recordingId })).toBeNull()
+      }
+      const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect())
+      // Only the original enqueue exists; failure did not schedule any retries.
+      expect(scheduled).toHaveLength(1)
+    },
+  )
+  it('keeps transient HTTP/provider errors retryable and records their bounded reason', async () => {
+    vi.stubEnv('MEDIA_WORKER_URL', 'https://media.example')
+    vi.stubEnv('MEDIA_WORKER_SECRET', 'test')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('private upstream body', { status: 503 })),
+    )
     const { t, recordingId } = await setup()
-    await driveToFailure(t, recordingId)
-    await t.mutation(internal.segmentTranscription.recover, {})
-    await driveToFailure(t, recordingId)
-    await t.mutation(internal.segmentTranscription.recover, {})
-    const failed = await t.run((ctx) =>
-      ctx.db
-        .query('segmentTranscriptionJobs')
-        .withIndex('by_recording', (q) => q.eq('recordingId', recordingId))
-        .unique(),
-    )
-    assert(failed)
-    expect(failed.status).toBe('failed')
-    expect(failed.autoRetriedAt).toBeTypeOf('number')
-    expect(await t.mutation(internal.segmentTranscription.requeueFailed, { recordingId })).toEqual({
-      requeued: 1,
+    await t.action(internal.segmentTranscription.run, { recordingId })
+    expect(await t.run((ctx) => ctx.db.query('segmentTranscriptionJobs').first())).toMatchObject({
+      status: 'queued',
+      attempts: 1,
     })
-    const job = await t.run((ctx) =>
-      ctx.db
-        .query('segmentTranscriptionJobs')
-        .withIndex('by_recording', (q) => q.eq('recordingId', recordingId))
-        .unique(),
+    expect(await t.run((ctx) => ctx.db.query('clientLogs').first())).toMatchObject({
+      level: 'warn',
+      data: {
+        reason: 'transcription_error',
+        name: 'Error',
+        message: 'Transcription HTTP 503',
+        probe: { status: 'not_probed' },
+        terminal: false,
+      },
+    })
+  })
+  it.each(['missing_audio', 'zero_duration', 'unsupported_codec'])(
+    'does not promote normalized %s text to a terminal failure without matching probe evidence',
+    async (reason) => {
+      const { t, recordingId } = await setup()
+      const claim = await t.mutation(internal.segmentTranscription.claim, { recordingId })
+      assert(claim)
+      await t.mutation(internal.segmentTranscription.failedChunk, {
+        jobId: claim.jobId,
+        leaseUntil: claim.leaseUntil,
+        failure: {
+          reason: ` ${reason}\n`,
+          name: 'Error',
+          message: 'Unconfirmed failure',
+          probe: { status: 'not_probed' },
+        },
+      })
+      expect(await t.run((ctx) => ctx.db.query('segmentTranscriptionJobs').first())).toMatchObject({
+        status: 'queued',
+        failureReason: 'transcription_error',
+      })
+      expect(await t.run((ctx) => ctx.db.query('clientLogs').first())).toMatchObject({
+        data: { terminal: false, probe: { status: 'not_probed' } },
+      })
+    },
+  )
+  it('preserves HTTP diagnostics when the response stream fails', async () => {
+    vi.stubEnv('MEDIA_WORKER_URL', 'https://media.example')
+    vi.stubEnv('MEDIA_WORKER_SECRET', 'test')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.error(new Error('Private upstream stream failure'))
+              },
+            }),
+            { status: 503, headers: { 'Content-Type': 'application/json' } },
+          ),
+      ),
     )
-    expect(job?.status).toBe('queued')
-    expect(job?.attempts).toBe(0)
-    expect(job?.autoRetriedAt).toBeUndefined()
-    await driveToFailure(t, recordingId)
-    await t.mutation(internal.segmentTranscription.recover, {})
-    const revived = await t.run((ctx) => ctx.db.get(failed._id))
-    expect(revived?.status).toBe('queued')
-    expect(revived?.attempts).toBe(0)
-    expect(revived?.autoRetriedAt).toBeTypeOf('number')
-    await driveToFailure(t, recordingId)
-    await t.mutation(internal.segmentTranscription.recover, {})
-    expect((await t.run((ctx) => ctx.db.get(failed._id)))?.status).toBe('failed')
+    const { t, recordingId } = await setup()
+    await t.action(internal.segmentTranscription.run, { recordingId })
+    expect(await t.run((ctx) => ctx.db.query('clientLogs').first())).toMatchObject({
+      data: { message: 'Transcription HTTP 503', terminal: false },
+    })
+  })
+  it('counts invalid timeline failures instead of rolling back the retry budget', async () => {
+    const { t, recordingId } = await setup()
+    const job = await t.run(async (ctx) => {
+      const segment = await ctx.db.query('mediaSegments').first()
+      assert(segment)
+      await ctx.db.patch(segment._id, { duration: 0 })
+      return ctx.db.query('segmentTranscriptionJobs').first()
+    })
+    assert(job)
+    for (let i = 0; i < 5; i++) {
+      expect(await t.mutation(internal.segmentTranscription.claim, { recordingId })).toBeNull()
+      await t.run((ctx) => ctx.db.patch(job._id, { leaseUntil: 0 }))
+    }
+    expect(await t.run((ctx) => ctx.db.get(job._id))).toMatchObject({
+      status: 'failed',
+      attempts: 5,
+    })
+    const logs = await t.run((ctx) => ctx.db.query('clientLogs').collect())
+    expect(logs).toHaveLength(5)
+    expect(logs[0].data).toMatchObject({ message: 'Invalid timeline' })
+  })
+  it('marks a wholly zero-duration timeline terminal before requesting transcription', async () => {
+    const { t, recordingId } = await setup()
+    await t.run(async (ctx) => {
+      for (const segment of await ctx.db.query('mediaSegments').collect())
+        await ctx.db.patch(segment._id, { duration: 0 })
+    })
+    expect(await t.mutation(internal.segmentTranscription.claim, { recordingId })).toBeNull()
+    expect(await t.run((ctx) => ctx.db.query('segmentTranscriptionJobs').first())).toMatchObject({
+      status: 'failed',
+      attempts: 1,
+      failureReason: 'zero_duration',
+    })
+  })
+  it('ignores a stale failure from an expired lease', async () => {
+    const { t, recordingId } = await setup()
+    const first = await t.mutation(internal.segmentTranscription.claim, { recordingId })
+    assert(first)
+    vi.setSystemTime(Date.now() + 180001)
+    const newer = await t.mutation(internal.segmentTranscription.claim, { recordingId })
+    assert(newer)
+    await t.mutation(internal.segmentTranscription.failedChunk, {
+      jobId: first.jobId,
+      leaseUntil: first.leaseUntil,
+      failure: {
+        reason: 'missing_audio',
+        name: 'TranscriptionError',
+        message: 'stale',
+        probe: { status: 'missing_audio' },
+      },
+    })
+    expect(await t.run((ctx) => ctx.db.get(newer.jobId))).toMatchObject({
+      status: 'running',
+      leaseUntil: newer.leaseUntil,
+      attempts: 2,
+    })
+    expect(await t.run((ctx) => ctx.db.query('clientLogs').collect())).toHaveLength(0)
+  })
+  it('does not reset attempts when an interrupted action lease expires', async () => {
+    const { t, recordingId } = await setup()
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const claim = await t.mutation(internal.segmentTranscription.claim, { recordingId })
+      assert(claim)
+      expect((await t.run((ctx) => ctx.db.get(claim.jobId)))?.attempts).toBe(attempt)
+      await t.run((ctx) => ctx.db.patch(claim.jobId, { leaseUntil: 0 }))
+    }
+    expect(await t.mutation(internal.segmentTranscription.claim, { recordingId })).toBeNull()
   })
   it.each(['already-retried', 'dead-destination'] as const)(
     'recovers an eligible failure behind 50 %s failures across repeated runs',
@@ -278,34 +459,42 @@ describe('R2 transcription jobs', () => {
       expect(revived?.autoRetriedAt).toBeTypeOf('number')
     },
   )
-  it('requeues an eligible failure behind 200 dead destinations across repeated calls', async () => {
-    const { t, recordingId } = await setup()
-    const skippedIds = await seedFailedBacklog(t, 200, 'dead-destination')
-    await driveToFailure(t, recordingId)
-    const eligible = await t.run(async (ctx) => {
-      const job = await ctx.db
-        .query('segmentTranscriptionJobs')
-        .withIndex('by_recording', (q) => q.eq('recordingId', recordingId))
-        .unique()
-      assert(job)
-      await ctx.db.patch(job._id, { leaseUntil: 1 })
-      return job._id
-    })
-    expect(await t.mutation(internal.segmentTranscription.requeueFailed, {})).toEqual({
-      requeued: 0,
-    })
-    expect((await t.run((ctx) => ctx.db.get(eligible)))?.status).toBe('failed')
-    for (const id of skippedIds) expect(await t.run((ctx) => ctx.db.get(id))).toBeNull()
-    expect(await t.mutation(internal.segmentTranscription.requeueFailed, {})).toEqual({
-      requeued: 1,
-    })
-    const requeued = await t.run((ctx) => ctx.db.get(eligible))
-    expect(requeued?.status).toBe('queued')
-    expect(requeued?.attempts).toBe(0)
-    expect(await t.mutation(internal.segmentTranscription.requeueFailed, {})).toEqual({
-      requeued: 0,
-    })
-  })
+  it.each(['already-retried', 'dead-destination'] as const)(
+    'requeues an eligible failure behind 200 %s jobs across repeated calls',
+    async (kind) => {
+      const { t, recordingId } = await setup()
+      const skippedIds = await seedFailedBacklog(t, 200, kind)
+      await driveToFailure(t, recordingId)
+      const eligible = await t.run(async (ctx) => {
+        const job = await ctx.db
+          .query('segmentTranscriptionJobs')
+          .withIndex('by_recording', (q) => q.eq('recordingId', recordingId))
+          .unique()
+        assert(job)
+        await ctx.db.patch(job._id, { leaseUntil: 1 })
+        return job._id
+      })
+      expect(await t.mutation(internal.segmentTranscription.requeueFailed, {})).toEqual({
+        requeued: 0,
+      })
+      expect((await t.run((ctx) => ctx.db.get(eligible)))?.status).toBe('failed')
+      for (const id of skippedIds) {
+        const skipped = await t.run((ctx) => ctx.db.get(id))
+        if (kind === 'dead-destination') expect(skipped).toBeNull()
+        else
+          expect(skipped).toMatchObject({ status: 'failed', leaseUntil: Number.MAX_SAFE_INTEGER })
+      }
+      expect(await t.mutation(internal.segmentTranscription.requeueFailed, {})).toEqual({
+        requeued: 1,
+      })
+      const requeued = await t.run((ctx) => ctx.db.get(eligible))
+      expect(requeued?.status).toBe('queued')
+      expect(requeued?.attempts).toBe(0)
+      expect(await t.mutation(internal.segmentTranscription.requeueFailed, {})).toEqual({
+        requeued: 0,
+      })
+    },
+  )
 })
 describe('caption timing', () => {
   it('covers every segment with bounded overlap and no gaps', () => {

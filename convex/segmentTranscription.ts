@@ -1,8 +1,16 @@
 import { v } from 'convex/values'
 import {
   cuesToVtt,
+  isTerminalTranscriptionFailure,
+  type MediaProbe,
+  normalizeTranscriptionFailure,
+  readMediaProbe,
+  readTranscriptionFailure,
+  readTranscriptionFailureResponse,
   type SpeechSegment,
   speechCues,
+  TranscriptionError,
+  type TranscriptionFailure,
   transcriptionWindow,
 } from '../packages/media/src/transcription'
 import { internal } from './_generated/api'
@@ -15,6 +23,7 @@ import {
 } from './_generated/server'
 import { retainedVideoExists } from './retentionCleanup'
 import { requireSegmentMedia } from './segmentMedia'
+import { logServerEvent } from './serverTelemetry'
 
 const LEASE_MS = 180_000
 const MAX_ATTEMPTS = 5
@@ -92,14 +101,22 @@ export const claim = internalMutation({
       return null
     }
     if (job.attempts >= MAX_ATTEMPTS) {
-      await ctx.db.patch(job._id, { status: 'failed', updatedAt: Date.now() })
+      await recordChunkFailure(
+        ctx,
+        job,
+        normalizeTranscriptionFailure(
+          new TranscriptionError(
+            'lease_expired',
+            'Transcription action exhausted its lease attempts',
+          ),
+        ),
+      )
       return null
     }
     const segments = await ctx.db
       .query('mediaSegments')
       .withIndex('by_recording_index', (q) => q.eq('recordingId', recordingId))
       .collect()
-    const window = transcriptionWindow(segments, job.cursor)
     const leaseUntil = Date.now() + LEASE_MS
     await ctx.db.patch(job._id, {
       status: 'running',
@@ -107,7 +124,24 @@ export const claim = internalMutation({
       attempts: job.attempts + 1,
       updatedAt: Date.now(),
     })
-    return { jobId: job._id, cursor: job.cursor, leaseUntil, ...window }
+    try {
+      const media = segments.filter((segment) => segment.index >= 0)
+      if (media.length > 0 && media.every((segment) => segment.duration === 0))
+        throw new TranscriptionError('zero_duration', 'Media timeline has zero duration', {
+          status: 'zero_duration',
+          duration: 0,
+        })
+      const window = transcriptionWindow(segments, job.cursor)
+      return { jobId: job._id, cursor: job.cursor, leaseUntil, ...window }
+    } catch (error) {
+      // Persist attempts even if window construction fails before the action starts.
+      await recordChunkFailure(
+        ctx,
+        { ...job, attempts: job.attempts + 1 },
+        normalizeTranscriptionFailure(error),
+      )
+      return null
+    }
   },
 })
 export const completeChunk = internalMutation({
@@ -171,6 +205,7 @@ export const completeChunk = internalMutation({
       status: done ? 'ready' : 'queued',
       attempts: 0,
       leaseUntil: 0,
+      failureReason: undefined,
       updatedAt: Date.now(),
       ...(done ? { insightsStatus: 'queued' as const } : {}),
     })
@@ -186,28 +221,68 @@ export const completeChunk = internalMutation({
     return true
   },
 })
+async function recordChunkFailure(
+  ctx: MutationCtx,
+  job: Doc<'segmentTranscriptionJobs'>,
+  failure: TranscriptionFailure,
+) {
+  const terminal = isTerminalTranscriptionFailure(failure.reason)
+  const exhausted = job.attempts >= MAX_ATTEMPTS
+  const stopped = terminal || exhausted
+  const delay = Math.min(300_000, 15_000 * 2 ** job.attempts)
+  await ctx.db.patch(job._id, {
+    status: stopped ? 'failed' : 'queued',
+    leaseUntil: terminal ? Number.MAX_SAFE_INTEGER : Date.now() + delay,
+    failureReason: failure.reason,
+    updatedAt: Date.now(),
+  })
+  if (!stopped)
+    await ctx.scheduler.runAfter(delay, internal.segmentTranscription.run, {
+      recordingId: job.recordingId,
+    })
+  await logServerEvent(ctx, {
+    level: stopped ? 'error' : 'warn',
+    event: 'media:transcription:failed',
+    message: terminal
+      ? 'Media cannot be transcribed'
+      : exhausted
+        ? 'Caption generation exhausted retries'
+        : 'Caption generation will retry',
+    data: {
+      recordingId: job.recordingId,
+      cursor: job.cursor,
+      attempt: job.attempts,
+      terminal,
+      exhausted,
+      ...failure,
+    },
+  })
+}
 export const failedChunk = internalMutation({
-  args: { jobId: v.id('segmentTranscriptionJobs'), leaseUntil: v.number() },
+  args: {
+    jobId: v.id('segmentTranscriptionJobs'),
+    leaseUntil: v.number(),
+    // Optional for already-scheduled actions from the previous deployment.
+    failure: v.optional(
+      v.object({
+        reason: v.string(),
+        name: v.string(),
+        message: v.string(),
+        probe: v.object({
+          status: v.string(),
+          audioCodec: v.optional(v.string()),
+          duration: v.optional(v.number()),
+        }),
+      }),
+    ),
+  },
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobId)
     if (!job || job.status !== 'running' || job.leaseUntil !== args.leaseUntil) return
-    const exhausted = job.attempts >= MAX_ATTEMPTS
-    const delay = Math.min(300_000, 15_000 * 2 ** job.attempts)
-    await ctx.db.patch(job._id, {
-      status: exhausted ? 'failed' : 'queued',
-      leaseUntil: Date.now() + delay,
-      updatedAt: Date.now(),
-    })
-    if (!exhausted)
-      await ctx.scheduler.runAfter(delay, internal.segmentTranscription.run, {
-        recordingId: job.recordingId,
-      })
-    await ctx.scheduler.runAfter(0, internal.serverTelemetry.recordServerEvent, {
-      level: exhausted ? 'error' : 'warn',
-      event: 'media:transcription:failed',
-      message: exhausted ? 'Caption generation exhausted retries' : 'Caption generation will retry',
-      data: { recordingId: job.recordingId, attempt: job.attempts },
-    })
+    const failure =
+      readTranscriptionFailure({ failure: args.failure }) ??
+      normalizeTranscriptionFailure(undefined)
+    await recordChunkFailure(ctx, job, failure)
   },
 })
 export const run = internalAction({
@@ -215,6 +290,8 @@ export const run = internalAction({
   handler: async (ctx, args) => {
     const window = await ctx.runMutation(internal.segmentTranscription.claim, args)
     if (!window) return
+    let failure: TranscriptionFailure | undefined
+    let probe: MediaProbe = { status: 'not_probed' }
     try {
       const base = process.env.MEDIA_WORKER_URL,
         secret = process.env.MEDIA_WORKER_SECRET
@@ -229,13 +306,18 @@ export const run = internalAction({
         }),
         signal: AbortSignal.timeout(120_000),
       })
-      if (!response.ok) throw Error(`Transcription HTTP ${response.status}`)
+      if (!response.ok) {
+        failure = await readTranscriptionFailureResponse(response)
+        throw Error(`Transcription HTTP ${response.status}`)
+      }
       const result = (await response.json()) as {
         text: string
         segments: SpeechSegment[]
         language?: string
         duration?: number
+        probe?: MediaProbe
       }
+      probe = readMediaProbe(result.probe) ?? probe
       if (
         typeof result.text !== 'string' ||
         !Array.isArray(result.segments) ||
@@ -256,10 +338,11 @@ export const run = internalAction({
         vtt: cuesToVtt(cues),
         language: result.language,
       })
-    } catch {
+    } catch (error) {
       await ctx.runMutation(internal.segmentTranscription.failedChunk, {
         jobId: window.jobId,
         leaseUntil: window.leaseUntil,
+        failure: failure ?? normalizeTranscriptionFailure(error, probe),
       })
     }
   },
@@ -376,7 +459,7 @@ async function reviveFailedJob(
     await ctx.db.delete(job._id)
     return false
   }
-  if (job.autoRetriedAt !== undefined) {
+  if (job.autoRetriedAt !== undefined || isTerminalTranscriptionFailure(job.failureReason ?? '')) {
     // Keep terminal jobs available to operators without blocking the next batch.
     await ctx.db.patch(job._id, { leaseUntil: Number.MAX_SAFE_INTEGER })
     return false
@@ -393,9 +476,10 @@ async function reviveFailedJob(
 /**
  * Operator tool: clear terminal failures so the pipeline picks those recordings
  * back up. Pass `recordingId` for one video, or omit it to process up to 200
- * failures per call. Dead destinations are deleted so repeated calls advance
- * through the backlog, even when a batch returns zero requeued jobs.
- * Safe once the underlying cause is fixed (for example after a worker deploy).
+ * failures per call. Shares the ONE lifetime revival allowance with recovery;
+ * operator calls cannot replenish the budget for unchanged, immutable media.
+ * Confirmed un-transcribable media is never revived. Dead destinations are
+ * deleted and spent jobs are parked so repeated calls advance the backlog.
  */
 export const requeueFailed = internalMutation({
   args: { recordingId: v.optional(v.id('segmentRecordings')) },
@@ -410,21 +494,13 @@ export const requeueFailed = internalMutation({
         ).filter((job) => job.status === 'failed')
       : await ctx.db
           .query('segmentTranscriptionJobs')
-          .withIndex('by_status_lease', (q) => q.eq('status', 'failed'))
+          .withIndex('by_status_lease', (q) =>
+            q.eq('status', 'failed').lt('leaseUntil', Number.MAX_SAFE_INTEGER),
+          )
           .take(200)
     let requeued = 0
     for (const job of jobs) {
-      if (!(await destination(ctx, job.recordingId))) {
-        await ctx.db.delete(job._id)
-        continue
-      }
-      await ctx.db.patch(job._id, {
-        status: 'queued',
-        attempts: 0,
-        leaseUntil: 0,
-        autoRetriedAt: undefined,
-        updatedAt: Date.now(),
-      })
+      if (!(await reviveFailedJob(ctx, job))) continue
       await ctx.scheduler.runAfter(0, internal.segmentTranscription.run, {
         recordingId: job.recordingId,
       })
@@ -456,7 +532,7 @@ export const recover = internalMutation({
     // A terminal `failed` job was previously unrecoverable even after the cause
     // was fixed (for example an oversized transcription window). Revive each
     // stale failure exactly once so already-stuck captions heal without a manual
-    // DB edit; any second failure stays terminal until an operator requeues it.
+    // DB edit; any second failure stays terminal, including for operator requeues.
     const failures = await ctx.db
       .query('segmentTranscriptionJobs')
       .withIndex('by_status_lease', (q) => q.eq('status', 'failed').lte('leaseUntil', Date.now()))
