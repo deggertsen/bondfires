@@ -15,6 +15,12 @@ re-arms a fresh 10-second window. Missing fields, native mute, unchanged PCM sam
 counts, capture restarts, failed polls, and sampling gaps over 750 ms reset the
 window. The rule applies to the smoothed level, so smoothing and poll cadence add
 some latency. It does not infer continuity from the legacy five-second stats tick.
+Recovery is timed from the first above-threshold poll through the next low poll;
+an excursion lasting exactly 500 ms starts a new low window even if that poll is
+already quiet again. Pending native requests do not suspend expiry: the next JS
+tick after measurements age past 750 ms clears the warning. Only one native poll
+can be pending at a time, and replies taking over 750 ms are discarded. Accepted
+samples use request time so bridge latency cannot count toward the low window.
 
 Measurements follow the existing leveler's capture lifetime and survive camera
 swaps. iOS owns them in the segmented recorder; Android owns them in the capture

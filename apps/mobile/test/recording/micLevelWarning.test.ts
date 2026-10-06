@@ -52,8 +52,15 @@ describe('pre-gain mic warning continuity', () => {
     const detector = createMicLevelWarning()
     feed(detector, 0, 4000)
     feed(detector, 4250, 4750, -120)
-    feed(detector, 5000, 5250, threshold + 1)
-    expect(feed(detector, 5500, 10_000)).toBe(true)
+    feed(detector, 5000, 5000, threshold + 1)
+    expect(feed(detector, 5250, 10_000)).toBe(true)
+  })
+  it('re-arms when a low poll ends an excursion lasting 500ms', () => {
+    const detector = createMicLevelWarning()
+    expect(feed(detector, 0, 10_000)).toBe(true)
+    expect(feed(detector, 10_250, 10_500, -18)).toBe(true)
+    expect(feed(detector, 10_750, 20_500)).toBe(false)
+    expect(feed(detector, 20_750, 20_750)).toBe(true)
   })
   it('clears after 500ms recovery and re-arms with a fresh ten-second window', () => {
     const detector = createMicLevelWarning()

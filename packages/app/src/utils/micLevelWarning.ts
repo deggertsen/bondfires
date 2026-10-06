@@ -63,16 +63,18 @@ export function createMicLevelWarning() {
       }
       lastAt = now
       lastCount = count
+      // Close the previous excursion before consuming the current reading.
+      // A low poll can be the first observation at the recovery deadline.
+      if (recoverySince !== null && now - recoverySince >= MIC_RECOVERY_MS) {
+        lowSince = null
+        visible = false
+      }
       if (level <= threshold) {
         recoverySince = null
         lowSince ??= now
         visible = now - lowSince >= MIC_LOW_WINDOW_MS
       } else {
         recoverySince ??= now
-        if (now - recoverySince >= MIC_RECOVERY_MS) {
-          lowSince = null
-          visible = false
-        }
       }
       return visible
     },

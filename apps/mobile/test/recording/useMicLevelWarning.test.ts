@@ -90,3 +90,113 @@ it('polls only active recording, suppresses mute, emits once per warning, and ig
     await act(async () => renderer?.unmount())
   }
 })
+
+// Keep a native request pending while the JS interval continues running.
+// Expiry must not depend on that request ever resolving or rejecting.
+it('expires a visible warning during a hung poll and discards the delayed reply', async () => {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] })
+  ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+  let visible = false
+  let resolvePending: ((stats: MicLevelStats) => void) | undefined
+  let delayed = false
+  const lowStats = (): MicLevelStats => ({
+    micLevelDb: -54,
+    micLowThresholdDb: -50,
+    micSampleCount: performance.now() * 48 + 1,
+    micMuted: false,
+  })
+  const publisher = {
+    getStats: vi.fn(async () => {
+      if (delayed)
+        return new Promise<MicLevelStats>((resolve) => {
+          resolvePending = resolve
+        })
+      return lowStats()
+    }),
+  }
+  function Harness() {
+    visible = useMicLevelWarning({ publisher, recording: true, recordingId: 'test-recording' })
+    return null
+  }
+  let renderer: ReturnType<typeof create>
+  const advance = (ms: number) =>
+    act(async () => {
+      await vi.advanceTimersByTimeAsync(ms)
+    })
+  try {
+    await act(async () => {
+      renderer = create(createElement(Harness))
+    })
+    await advance(10_000)
+    expect(visible).toBe(true)
+    delayed = true
+    await advance(250)
+    const calls = publisher.getStats.mock.calls.length
+    await advance(750)
+    expect(visible).toBe(false)
+    await advance(5000)
+    expect(publisher.getStats).toHaveBeenCalledTimes(calls)
+    delayed = false
+    await act(async () => {
+      resolvePending?.(lowStats())
+    })
+    expect(visible).toBe(false)
+    // The delayed reply cannot seed the new window, even with fresh-looking PCM.
+    await advance(10_000)
+    expect(visible).toBe(false)
+    await advance(250)
+    expect(visible).toBe(true)
+    expect(events.info).toHaveBeenCalledTimes(2)
+  } finally {
+    await act(async () => renderer?.unmount())
+  }
+})
+
+it('does not count native reply latency toward ten seconds of quiet input', async () => {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] })
+  ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+  let visible = false
+  let resolvePending: (() => void) | undefined
+  const publisher = {
+    getStats: vi.fn(async () => {
+      const now = performance.now()
+      const stats: MicLevelStats = {
+        micLevelDb: -54,
+        micLowThresholdDb: -50,
+        micSampleCount: now * 48 + 1,
+        micMuted: false,
+      }
+      if (now === 9750) {
+        return new Promise<MicLevelStats>((resolve) => {
+          resolvePending = () => resolve(stats)
+        })
+      }
+      return stats
+    }),
+  }
+  function Harness() {
+    visible = useMicLevelWarning({ publisher, recording: true, recordingId: 'test-recording' })
+    return null
+  }
+  let renderer: ReturnType<typeof create>
+  const advance = (ms: number) =>
+    act(async () => {
+      await vi.advanceTimersByTimeAsync(ms)
+    })
+  try {
+    await act(async () => {
+      renderer = create(createElement(Harness))
+    })
+    await advance(10_250)
+    await act(async () => {
+      resolvePending?.()
+    })
+    expect(visible).toBe(false)
+    expect(events.info).not.toHaveBeenCalled()
+    await advance(250)
+    expect(visible).toBe(true)
+    expect(events.info).toHaveBeenCalledTimes(1)
+  } finally {
+    await act(async () => renderer?.unmount())
+  }
+})

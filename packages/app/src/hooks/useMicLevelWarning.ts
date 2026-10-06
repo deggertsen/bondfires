@@ -3,6 +3,7 @@ import { telemetry } from '../services/telemetry'
 import {
   createMicLevelWarning,
   MIC_LOW_WINDOW_MS,
+  MIC_MAX_SAMPLE_GAP_MS,
   MIC_SAMPLE_INTERVAL_MS,
   type MicLevelStats,
 } from '../utils/micLevelWarning'
@@ -25,15 +26,33 @@ export function useMicLevelWarning({
     let disposed = false
     let inFlight = false
     let wasVisible = false
+    let lastSampleAt: number | null = null
     let lastBreadcrumb: number | null = null
+    const reset = () => {
+      detector.reset()
+      lastSampleAt = null
+      wasVisible = false
+      setVisible(false)
+    }
     const poll = async () => {
+      const requestedAt = performance.now()
+      // A stuck native request must not keep an old warning on screen. Keep
+      // one request in flight, but expire its evidence independently of replies.
+      if (lastSampleAt !== null && requestedAt - lastSampleAt > MIC_MAX_SAMPLE_GAP_MS) reset()
       if (inFlight) return
       inFlight = true
       try {
         const stats = await publisher.getStats()
         if (disposed) return
         const now = performance.now()
-        const next = detector.sample(stats, now, true)
+        if (now - requestedAt > MIC_MAX_SAMPLE_GAP_MS) {
+          reset()
+          return
+        }
+        // Native may snapshot PCM before resolving. Use the request time so
+        // bridge latency cannot extend the period of observed quiet input.
+        const next = detector.sample(stats, requestedAt, true)
+        lastSampleAt = requestedAt
         const fields = {
           recordingId,
           micLevelDb: stats.micLevelDb,
@@ -56,9 +75,7 @@ export function useMicLevelWarning({
         setVisible(next)
       } catch {
         if (disposed) return
-        detector.reset()
-        wasVisible = false
-        setVisible(false)
+        reset()
       } finally {
         inFlight = false
       }
