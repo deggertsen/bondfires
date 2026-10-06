@@ -11,12 +11,24 @@ import {
 import { UploadStatusBanner, type UploadStatusBannerProps } from '@bondfires/ui'
 import { useObserveEffect, useValue } from '@legendapp/state/react'
 import { usePathname, useRouter } from 'expo-router'
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo } from 'react'
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { SafeAreaInsetsContext, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { YStack } from 'tamagui'
 import { routes } from '../lib/routes'
 
 const UploadBannerVisibleContext = createContext(false)
+
+/** Keep the strip mounted this long after it starts collapsing, as a safety net. */
+const BANNER_EXIT_FALLBACK_MS = 400
 
 /**
  * For screens with a fixed top padding that assumes they start under the status
@@ -44,6 +56,11 @@ function bannerVisual(state: Exclude<UploadStatusState, { kind: 'idle' }>): Bann
 
 function isCreateRoute(pathname: string) {
   return pathname === '/create' || pathname.startsWith('/create/')
+}
+
+function bannerFromState(state: UploadStatusState) {
+  if (state.kind === 'idle') return null
+  return { visual: bannerVisual(state), copy: describeUploadStatus(state) }
 }
 
 /**
@@ -74,6 +91,43 @@ export function UploadStatusLayout({ children }: { children: ReactNode }) {
     e.onCleanup = () => clearTimeout(timer)
   })
 
+  // Remember the last non-idle content so the strip can keep rendering while it
+  // collapses, after the underlying status has already gone idle.
+  const banner = useMemo(() => bannerFromState(status), [status])
+  const lastBanner = useRef(banner)
+  if (banner) lastBanner.current = banner
+
+  // The strip stays mounted while it animates away; `visible` is the target
+  // state, `mounted`/`exiting` drive the collapse and the final unmount.
+  const [mounted, setMounted] = useState(visible)
+  const [exiting, setExiting] = useState(false)
+  useEffect(() => {
+    if (visible) {
+      setMounted(true)
+      setExiting(false)
+      return
+    }
+    if (!mounted) return
+    // Camera/recording and the create route hide it immediately; only the
+    // status-driven hides animate.
+    if (recordingLocked || isCreateRoute(pathname)) {
+      setMounted(false)
+      setExiting(false)
+      return
+    }
+    setExiting(true)
+    const timer = setTimeout(() => {
+      setMounted(false)
+      setExiting(false)
+    }, BANNER_EXIT_FALLBACK_MS)
+    return () => clearTimeout(timer)
+  }, [visible, mounted, recordingLocked, pathname])
+
+  const handleExitComplete = useCallback(() => {
+    setMounted(false)
+    setExiting(false)
+  }, [])
+
   useEffect(() => {
     if (!visible) uploadStatusActions.setBannerHeight(0)
   }, [visible])
@@ -94,10 +148,12 @@ export function UploadStatusLayout({ children }: { children: ReactNode }) {
   return (
     <UploadBannerVisibleContext.Provider value={visible}>
       <YStack flex={1}>
-        {visible ? (
+        {mounted && lastBanner.current ? (
           <UploadStatusBanner
-            {...bannerVisual(status)}
-            {...describeUploadStatus(status)}
+            {...lastBanner.current.visual}
+            {...lastBanner.current.copy}
+            dismissing={exiting}
+            onExitComplete={handleExitComplete}
             onAction={handleAction}
             onDismiss={uploadStatusActions.hideForSession}
             topInset={insets.top}

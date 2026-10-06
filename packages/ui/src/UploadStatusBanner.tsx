@@ -1,5 +1,5 @@
 import { AlertTriangle, CheckCircle2, CloudUpload, RefreshCw, WifiOff } from '@tamagui/lucide-icons'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   type AccessibilityActionEvent,
   AccessibilityInfo,
@@ -9,6 +9,7 @@ import {
 } from 'react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Reanimated, {
+  Easing,
   interpolate,
   runOnJS,
   useAnimatedStyle,
@@ -38,6 +39,10 @@ export interface UploadStatusBannerProps {
   onLayout?: (event: LayoutChangeEvent) => void
   /** Swipe right (or the screen-reader "Hide" action) calls this. */
   onDismiss?: () => void
+  /** True while the strip is animating away; drives the collapse/exit. */
+  dismissing?: boolean
+  /** Fired once the exit animation has finished; the parent then unmounts. */
+  onExitComplete?: () => void
 }
 
 const TONE_COLOR = {
@@ -60,10 +65,8 @@ const SEGMENT_FRACTION = 0.35
 const DISMISS_FRACTION = 0.35
 const DISMISS_VELOCITY = 800
 
-function IndeterminateBar() {
-  const [width, setWidth] = useState(0)
+function useReduceMotion() {
   const [reduceMotion, setReduceMotion] = useState(false)
-  const position = useRef(new Animated.Value(0)).current
 
   useEffect(() => {
     let mounted = true
@@ -78,6 +81,14 @@ function IndeterminateBar() {
       subscription.remove()
     }
   }, [])
+
+  return reduceMotion
+}
+
+function IndeterminateBar() {
+  const [width, setWidth] = useState(0)
+  const reduceMotion = useReduceMotion()
+  const position = useRef(new Animated.Value(0)).current
 
   useEffect(() => {
     if (!width || reduceMotion) return
@@ -132,14 +143,55 @@ export function UploadStatusBanner({
   topInset,
   onLayout,
   onDismiss,
+  dismissing = false,
+  onExitComplete,
 }: UploadStatusBannerProps) {
   const toneColor = TONE_COLOR[tone]
   const Icon = ICONS[icon]
   const hasAction = Boolean(actionLabel && onAction)
   const percent = typeof progress === 'number' ? progress : undefined
+  const reduceMotion = useReduceMotion()
 
   const width = useSharedValue(0)
   const translateX = useSharedValue(0)
+  /** 0 = fully shown, 1 = fully collapsed; drives the exit collapse. */
+  const collapse = useSharedValue(0)
+  /** Natural height of the strip, including the status-bar inset. */
+  const totalHeight = useSharedValue(0)
+  const exitHandler = useRef(onExitComplete)
+  exitHandler.current = onExitComplete
+  const notifyExit = useCallback(() => exitHandler.current?.(), [])
+
+  useEffect(() => {
+    if (reduceMotion) {
+      collapse.value = dismissing ? 1 : 0
+      if (dismissing) notifyExit()
+      return
+    }
+    collapse.value = withTiming(
+      dismissing ? 1 : 0,
+      {
+        duration: dismissing ? 260 : 0,
+        easing: Easing.in(Easing.cubic),
+      },
+      (finished) => {
+        if (finished && dismissing) runOnJS(notifyExit)()
+      },
+    )
+  }, [collapse, dismissing, notifyExit, reduceMotion])
+
+  const collapseStyle = useAnimatedStyle(() => {
+    const p = Math.min(1, Math.max(0, collapse.value))
+    if (totalHeight.value === 0) return { opacity: 1 - p }
+    // Collapse toward the status-bar inset, not zero: the screens below give up
+    // their compact top padding at the same moment the strip unmounts, so the
+    // hand-off to the normal header offset stays continuous.
+    return {
+      height: totalHeight.value * (1 - p) + topInset * p,
+      opacity: 1 - p,
+    }
+  })
+
   const dismiss = () => onDismiss?.()
   // Right only, and only once the drag is clearly horizontal, so taps and
   // vertical scrolls underneath keep working.
@@ -161,7 +213,11 @@ export function UploadStatusBanner({
       }
     })
   const swipeStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: translateX.value }],
+    transform: [
+      { translateX: translateX.value },
+      // Drift the strip up as it collapses so the exit reads as motion, not a vanish.
+      { translateY: -(totalHeight.value - topInset) * collapse.value },
+    ],
     opacity: width.value ? interpolate(translateX.value, [0, width.value], [1, 0.2], 'clamp') : 1,
   }))
   const accessibilityActions = onDismiss ? [{ name: 'dismiss', label: 'Hide' }] : undefined
@@ -228,52 +284,56 @@ export function UploadStatusBanner({
   )
 
   return (
-    <GestureDetector gesture={swipe}>
-      <Reanimated.View style={swipeStyle}>
-        <YStack
-          onLayout={(event) => {
-            width.value = event.nativeEvent.layout.width
-            onLayout?.(event)
-          }}
-          paddingTop={topInset}
-          backgroundColor="$backgroundStrong"
-          borderBottomWidth={1}
-          borderBottomColor={tone === 'error' ? '$error' : '$borderColor'}
-        >
-          {tone === 'error' ? (
-            <YStack position="absolute" fullscreen backgroundColor="$error" opacity={0.1} />
-          ) : null}
-          {hasAction ? (
-            <Pressable
-              onPress={onAction}
-              accessibilityRole="button"
-              accessibilityLabel={`${title}. ${message}`}
-              accessibilityHint={actionLabel}
-              accessibilityActions={accessibilityActions}
-              onAccessibilityAction={handleAccessibilityAction}
-            >
-              {content}
-            </Pressable>
-          ) : (
-            <YStack
-              accessible
-              accessibilityLabel={`${title}. ${message}`}
-              accessibilityLiveRegion="polite"
-              accessibilityActions={accessibilityActions}
-              onAccessibilityAction={handleAccessibilityAction}
-            >
-              {content}
-            </YStack>
-          )}
-          {percent !== undefined ? (
-            <YStack position="absolute" left={0} bottom={0} height={2} width={`${percent}%`}>
-              <YStack flex={1} backgroundColor="$primary" />
-            </YStack>
-          ) : progress === 'indeterminate' ? (
-            <IndeterminateBar />
-          ) : null}
-        </YStack>
-      </Reanimated.View>
-    </GestureDetector>
+    <Reanimated.View style={[collapseStyle, { overflow: 'hidden' }]}>
+      <GestureDetector gesture={swipe}>
+        <Reanimated.View style={swipeStyle}>
+          <YStack
+            onLayout={(event) => {
+              const { width: measuredWidth, height: measuredHeight } = event.nativeEvent.layout
+              width.value = measuredWidth
+              if (measuredHeight > 0) totalHeight.value = measuredHeight
+              onLayout?.(event)
+            }}
+            paddingTop={topInset}
+            backgroundColor="$backgroundStrong"
+            borderBottomWidth={1}
+            borderBottomColor={tone === 'error' ? '$error' : '$borderColor'}
+          >
+            {tone === 'error' ? (
+              <YStack position="absolute" fullscreen backgroundColor="$error" opacity={0.1} />
+            ) : null}
+            {hasAction ? (
+              <Pressable
+                onPress={onAction}
+                accessibilityRole="button"
+                accessibilityLabel={`${title}. ${message}`}
+                accessibilityHint={actionLabel}
+                accessibilityActions={accessibilityActions}
+                onAccessibilityAction={handleAccessibilityAction}
+              >
+                {content}
+              </Pressable>
+            ) : (
+              <YStack
+                accessible
+                accessibilityLabel={`${title}. ${message}`}
+                accessibilityLiveRegion="polite"
+                accessibilityActions={accessibilityActions}
+                onAccessibilityAction={handleAccessibilityAction}
+              >
+                {content}
+              </YStack>
+            )}
+            {percent !== undefined ? (
+              <YStack position="absolute" left={0} bottom={0} height={2} width={`${percent}%`}>
+                <YStack flex={1} backgroundColor="$primary" />
+              </YStack>
+            ) : progress === 'indeterminate' ? (
+              <IndeterminateBar />
+            ) : null}
+          </YStack>
+        </Reanimated.View>
+      </GestureDetector>
+    </Reanimated.View>
   )
 }
