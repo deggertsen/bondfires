@@ -35,17 +35,25 @@ or stored fragment changes in this PR.
 
 `node scripts/audio/normalize-completed.mjs local-completed.m3u8 output.mp4`
 implements a separate-compute prototype (Node 22.18+ and FFmpeg). It accepts only
-a local, ordered fMP4 playlist with ENDLIST, bounded segment counts/sizes and
-recording duration. A trusted future scheduler must obtain the authoritative
-completion state from Convex; a local ENDLIST alone is not production authorization.
+a local, ordered fMP4 playlist with a final ENDLIST, adjacent duration/fragment
+pairs, and bounded segment counts/sizes and declared recording duration. Only the
+simple EVENT/VOD metadata used by local downloads and the fixture is allowed; byte
+ranges, gaps, keys, alternate playlists, and discontinuities are rejected. Source
+files must be nonempty regular files (no symlinks). Use a trusted, quiescent local
+download directory; this prototype does not snapshot files against concurrent
+modification or authenticate fragment contents. A trusted future scheduler must
+obtain the authoritative completion state from Convex; a local ENDLIST alone is not production authorization.
 
 It measures the entire program with FFmpeg `loudnorm` (EBU R128), computes
 `min(30, -16 - integratedLUFS, -1.5 - truePeak)` dB, decodes/re-encodes audio with
 that constant gain, copies video, then measures the encoded AAC output. Silence,
 nonfinite measurements, and programs below -55 LUFS are rejected. The output is
 accepted only if its loudness matches the predicted level within 0.5 LU and its
-true peak does not exceed -1.5 dBTP. Existing output files are never overwritten.
-Temporary candidates remain in the OS temporary directory for inspection.
+true peak does not exceed -1.5 dBTP. Existing output files (including dangling
+symlinks) are rejected before decoding, and an exclusive copy at publication
+protects against an output created during processing. Decoder errors abort the
+job rather than normalizing only the surviving media. Temporary candidates are
+removed on success or failure.
 
 This bounded linear approach preserves dynamics. Peak-limited or gain-limited
 programs can remain below -16 LUFS; the prototype does not claim to compress them
@@ -89,6 +97,19 @@ This is the remaining lever-3 server follow-up, not a deployed delivery feature.
 References: [Worker limits](https://developers.cloudflare.com/workers/platform/limits/),
 [Worker best practices](https://developers.cloudflare.com/workers/best-practices/workers-best-practices/),
 [FFmpeg loudnorm](https://ffmpeg.org/ffmpeg-filters.html#loudnorm).
+
+## Automated FFmpeg verification
+
+`yarn test:audio:ffmpeg` (Node 22.18+ and FFmpeg/ffprobe with libx264) generates a
+local eight-second, multi-segment H.264/AAC fixture and exercises the actual CLI
+pipeline. It checks decoded output loudness/true peak, unchanged encoded video,
+source hashes, audio/video duration and start alignment, existing-output refusal,
+empty-fragment rejection, corrupted-payload failure, and silence rejection. The
+`audio-prototype` CI job runs this independently of the pure Vitest suite. No
+production or downloaded media is used. Temporary test fixtures are removed.
+
+The pure suite covers playlist ordering, unsupported directives, duration/count/
+size bounds, non-regular files, and existing/dangling output paths before decoding.
 
 ## Reproducible whole-program verification
 

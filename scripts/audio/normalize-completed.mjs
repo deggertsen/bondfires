@@ -3,7 +3,7 @@
  * Writes only a separate local derivative; never rewrites source fragments or publishes.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
-import { constants, copyFileSync, mkdtempSync, readFileSync, statSync } from 'node:fs'
+import { constants, copyFileSync, lstatSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -12,9 +12,10 @@ import {
   verifyNormalizedAudio,
 } from '../../infrastructure/media/src/normalization.ts'
 import { LOUDNESS, programGain } from '../../packages/media/src/loudness.ts'
+import { readCompletedPlaylist } from './completed-playlist.mjs'
 
 export function ffmpeg(args) {
-  return execFileSync('ffmpeg', ['-hide_banner', '-nostdin', ...args], {
+  return execFileSync('ffmpeg', ['-hide_banner', '-nostdin', '-xerror', ...args], {
     encoding: 'utf8',
     timeout: 120_000,
     maxBuffer: 1024 * 1024,
@@ -29,8 +30,9 @@ function runWithMeasurement(path) {
     [
       '-hide_banner',
       '-nostdin',
+      '-xerror',
       '-protocol_whitelist',
-      'file,crypto',
+      'file',
       '-i',
       path,
       '-map',
@@ -53,73 +55,49 @@ function runWithMeasurement(path) {
 
 export function normalizeCompleted(playlist, output) {
   const input = resolve(playlist)
-  const manifest = readFileSync(input, 'utf8')
-  if (!manifest.split(/\r?\n/).includes('#EXT-X-ENDLIST'))
-    throw new Error('Recording is still growing')
-  // Accept only our downloaded local fMP4 layout, never remote/nested playlists.
-  const lines = manifest.split(/\r?\n/)
-  const segments = lines.filter((line) => line && !line.startsWith('#'))
-  if (
-    !segments.length ||
-    segments.length > 1800 ||
-    segments.some((line, index) => line !== `segment-${String(index).padStart(6, '0')}.m4s`) ||
-    lines.filter((line) => line.startsWith('#EXT-X-MAP:')).join('') !==
-      '#EXT-X-MAP:URI="init.mp4"' ||
-    lines.some((line) => line.startsWith('#EXT-X-KEY:'))
-  )
-    throw new Error('Expected local completed fMP4 playlist')
-  const durations = lines
-    .filter((line) => line.startsWith('#EXTINF:'))
-    .map((line) => Number(line.slice(8).replace(/,$/, '')))
-  if (
-    durations.length !== segments.length ||
-    durations.some((value) => !Number.isFinite(value) || value <= 0 || value > 15) ||
-    durations.reduce((sum, value) => sum + value, 0) > 3615
-  )
-    throw new Error('Invalid recording duration')
-  for (const name of ['init.mp4', ...segments]) {
-    if (
-      statSync(join(resolve(input, '..'), name)).size >
-      (name === 'init.mp4' ? 256 * 1024 : 8 * 1024 * 1024)
-    )
-      throw new Error('Oversized source fragment')
-  }
+  readCompletedPlaylist(input)
+  // Fail before expensive decode/encode, including dangling output symlinks.
+  if (lstatSync(resolve(output), { throwIfNoEntry: false }))
+    throw new Error('Output already exists')
   const before = runWithMeasurement(input)
   const filter = normalizationFilter(before, true)
   const scratch = mkdtempSync(join(tmpdir(), 'bondfires-normalization-'))
   const candidate = join(scratch, 'normalized.mp4')
-  ffmpeg([
-    '-n',
-    '-protocol_whitelist',
-    'file,crypto',
-    '-i',
-    input,
-    '-map',
-    '0:v:0?',
-    '-map',
-    '0:a:0',
-    '-c:v',
-    'copy',
-    '-af',
-    filter,
-    '-c:a',
-    'aac',
-    '-b:a',
-    '128k',
-    '-ar',
-    '48000',
-    candidate,
-  ])
-  const after = runWithMeasurement(candidate)
-  if (!verifyNormalizedAudio(before, after))
-    throw new Error(`Encoded audio failed verification; candidate retained at ${candidate}`)
-  copyFileSync(candidate, resolve(output), constants.COPYFILE_EXCL)
-  return {
-    before,
-    after,
-    gainDb: programGain(before, true),
-    target: LOUDNESS,
-    output: resolve(output),
+  try {
+    ffmpeg([
+      '-n',
+      '-protocol_whitelist',
+      'file',
+      '-i',
+      input,
+      '-map',
+      '0:v:0?',
+      '-map',
+      '0:a:0',
+      '-c:v',
+      'copy',
+      '-af',
+      filter,
+      '-c:a',
+      'aac',
+      '-b:a',
+      '128k',
+      '-ar',
+      '48000',
+      candidate,
+    ])
+    const after = runWithMeasurement(candidate)
+    if (!verifyNormalizedAudio(before, after)) throw new Error('Encoded audio failed verification')
+    copyFileSync(candidate, resolve(output), constants.COPYFILE_EXCL)
+    return {
+      before,
+      after,
+      gainDb: programGain(before, true),
+      target: LOUDNESS,
+      output: resolve(output),
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true })
   }
 }
 
