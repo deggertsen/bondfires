@@ -43,6 +43,11 @@ import {
   SCREEN_WIDTH,
   SCRUB_SEEK_THROTTLE_MS,
 } from '../_lib/bondfireDetailHelpers'
+import {
+  decideLiveEdgeStall,
+  LIVE_EDGE_BUFFER_HOLD_MS,
+  resolveEffectivePlaybackRate,
+} from '../_lib/liveEdgePlayback'
 import { createPictureInPicturePlayback } from '../_lib/pictureInPicturePlayback'
 import { usePlaybackQuality } from '../_lib/usePlaybackQuality'
 import { type CaptionCue, fetchCaptionCues, findCaptionText } from '../_lib/videoCaptions'
@@ -323,6 +328,25 @@ export function VideoPlayer({
     [player],
   )
 
+  // The live-edge fallback outranks the stored speed preference; every path
+  // that assigns a rate goes through here so the two can never disagree.
+  const applyPlaybackRate = useCallback(() => {
+    withCurrentPlayer((currentPlayer) => {
+      currentPlayer.playbackRate = resolveEffectivePlaybackRate(
+        isLive,
+        liveEdgeRealtimeRef.current,
+        playbackSpeed,
+      )
+    })
+  }, [isLive, playbackSpeed, withCurrentPlayer])
+
+  // Picking a new speed in settings is an explicit override: drop any live-edge
+  // fallback so the user's choice takes effect again.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: playbackSpeed/videoId are the reset triggers, not read inside
+  useEffect(() => {
+    liveEdgeRealtimeRef.current = false
+  }, [playbackSpeed, videoId])
+
   // Fatal-error recovery: bounded automatic reloads before surfacing the
   // retry overlay. Reset whenever the source changes — a new URL is a new
   // playback attempt with a fresh budget.
@@ -335,6 +359,12 @@ export function VideoPlayer({
   // new source resets the recovery budget.
   const stallRecoverySourceKeyRef = useRef<string | null>(null)
   const stallRecoveryGenerationRef = useRef(0)
+  // Live-edge pacing. Once a live stream falls back to realtime at the upload
+  // edge it stays there for the rest of the session (see liveEdgePlayback) — a
+  // faster speed would just outrun the upload again. The timer holds a
+  // deliberate extra pause when the stream is already at realtime.
+  const liveEdgeRealtimeRef = useRef(false)
+  const liveEdgeHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [playIntentVersion, setPlayIntentVersion] = useState(0)
   const hasRecordedPlaybackStartRef = useRef(false)
 
@@ -348,12 +378,21 @@ export function VideoPlayer({
     stallRecoveryGenerationRef.current += 1
     hasRecordedPlaybackStartRef.current = false
     userPausedRef.current = false
+    liveEdgeRealtimeRef.current = false
+    if (liveEdgeHoldTimerRef.current) {
+      clearTimeout(liveEdgeHoldTimerRef.current)
+      liveEdgeHoldTimerRef.current = null
+    }
     state$.hasError.set(false)
     return () => {
       stallRecoveryGenerationRef.current += 1
       if (errorRetryRef.current.timer) {
         clearTimeout(errorRetryRef.current.timer)
         errorRetryRef.current.timer = null
+      }
+      if (liveEdgeHoldTimerRef.current) {
+        clearTimeout(liveEdgeHoldTimerRef.current)
+        liveEdgeHoldTimerRef.current = null
       }
     }
   }, [currentUrl, state$])
@@ -581,6 +620,73 @@ export function VideoPlayer({
     withCurrentPlayer,
   ])
 
+  // Live-edge pacing. A live stream cannot be reloaded into media the
+  // broadcaster has not uploaded yet, so the recovery is to stop outrunning
+  // the upload head: drop to realtime on the first edge stall, then hold the
+  // buffer for a few extra seconds if it stalls at realtime again. Resuming is
+  // gated through liveEdgeHoldTimerRef so a user pause, a blur, a source change
+  // or the give-up timer all cancel the delayed play.
+  const handleLiveEdgeStall = useCallback(() => {
+    if (!isLive) return
+    if (!(appStore$.preferences.autoplayVideos.peek() || state$.userInitiatedPlay.peek())) return
+    if (decideLiveEdgeStall(true, playbackSpeed) === 'switch-to-realtime') {
+      liveEdgeRealtimeRef.current = true
+      applyPlaybackRate()
+      telemetry.info('video:live_edge_fallback', 'Dropped live playback to 1x at the upload edge', {
+        videoId,
+        fromRate: playbackSpeed,
+      })
+      return
+    }
+
+    const currentPlayer = withCurrentPlayer((player) => player)
+    if (!currentPlayer) return
+    const positionMs = Math.round(currentPlayer.currentTime * 1000)
+    // Cancel any in-flight hold, and pin a generation so only this hold may
+    // resume playback once its delay elapses.
+    if (liveEdgeHoldTimerRef.current) clearTimeout(liveEdgeHoldTimerRef.current)
+    const generation = ++stallRecoveryGenerationRef.current
+    currentPlayer.pause()
+    state$.isPlaying.set(false)
+    telemetry.warn(
+      'video:live_edge_buffer_hold',
+      'Holding live playback to let the stream buffer',
+      {
+        videoId,
+        holdMs: LIVE_EDGE_BUFFER_HOLD_MS,
+        positionMs,
+      },
+    )
+    liveEdgeHoldTimerRef.current = setTimeout(() => {
+      liveEdgeHoldTimerRef.current = null
+      if (stallRecoveryGenerationRef.current !== generation) return
+      const gate = playbackGateRef.current
+      if (
+        !gate.isActive ||
+        !gate.isScreenFocused ||
+        AppState.currentState !== 'active' ||
+        shouldSuppressPlayback ||
+        userPausedRef.current ||
+        state$.hasError.peek() ||
+        !(appStore$.preferences.autoplayVideos.peek() || state$.userInitiatedPlay.peek())
+      ) {
+        return
+      }
+      withCurrentPlayer((player) => {
+        player.play()
+        state$.isPlaying.set(true)
+      })
+    }, LIVE_EDGE_BUFFER_HOLD_MS)
+  }, [
+    isLive,
+    playbackSpeed,
+    applyPlaybackRate,
+    shouldSuppressPlayback,
+    state$,
+    videoId,
+    withCurrentPlayer,
+  ])
+
   // Caption cues, fetched lazily when captions are on and this video has a
   // caption track. Cue matching happens in the timeUpdate listener below.
   const captionsEnabled = useValue(appStore$.preferences.captionsEnabled)
@@ -780,10 +886,10 @@ export function VideoPlayer({
 
   useEffect(() => {
     if (player && isActive && isScreenFocused) {
-      player.playbackRate = playbackSpeed
+      applyPlaybackRate()
       player.timeUpdateEventInterval = PROGRESS_TIME_UPDATE_INTERVAL_SECONDS
     }
-  }, [player, isActive, isScreenFocused, playbackSpeed])
+  }, [player, isActive, isScreenFocused, applyPlaybackRate])
 
   useEffect(() => {
     if (player) {
@@ -797,7 +903,7 @@ export function VideoPlayer({
     const shouldPlay = isActive && isScreenFocused && !shouldSuppressPlayback
 
     if (shouldPlay) {
-      player.playbackRate = playbackSpeed
+      applyPlaybackRate()
       if (!userPausedRef.current && (autoplayVideos || state$.userInitiatedPlay.get())) {
         player.play()
       }
@@ -817,7 +923,7 @@ export function VideoPlayer({
     isActive,
     isScreenFocused,
     autoplayVideos,
-    playbackSpeed,
+    applyPlaybackRate,
     state$,
     shouldSuppressPlayback,
   ])
@@ -843,6 +949,13 @@ export function VideoPlayer({
         if (errorRetryRef.current.timer) {
           clearTimeout(errorRetryRef.current.timer)
           errorRetryRef.current.timer = null
+        }
+        // Natural recovery outranks a pending live-edge hold: the stream caught
+        // up on its own, so resume now instead of waiting out the extra delay.
+        if (liveEdgeHoldTimerRef.current) {
+          clearTimeout(liveEdgeHoldTimerRef.current)
+          liveEdgeHoldTimerRef.current = null
+          state$.isPlaying.set(true)
         }
         if (player.duration) {
           state$.duration.set(player.duration * 1000)
@@ -1022,6 +1135,15 @@ export function VideoPlayer({
       onWarn: () => {
         const currentTime = withCurrentPlayer((player) => player.currentTime)
         if (currentTime === undefined) return
+        // A live stream that has spent 15s buffering is at the upload head. Live
+        // recovery is pacing, not reloading — reloading cannot expose media the
+        // broadcaster hasn't uploaded yet, and reloading a live HLS URL restarts
+        // at the live edge (snapping the viewer forward). VOD keeps reload
+        // recovery via onRecover.
+        if (isLive) {
+          handleLiveEdgeStall()
+          return
+        }
         telemetry.warn('video:playback_stall', 'Video stuck buffering', {
           videoId,
           isLive,
@@ -1068,6 +1190,7 @@ export function VideoPlayer({
     videoId,
     isLive,
     scheduleStallRecovery,
+    handleLiveEdgeStall,
     stallGiveUpMs,
   ])
 
