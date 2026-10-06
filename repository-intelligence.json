@@ -153,6 +153,7 @@
         "convex/http.ts",
         "convex/lib/live*.ts",
         "apps/mobile/modules/bondfire-live-publisher/**",
+        "scripts/test-speech-leveler*",
         "apps/mobile/components/create/*RecordScreen.tsx",
         "packages/app/src/hooks/useLivePublisher.ts",
         "packages/app/src/utils/live*.ts"
@@ -162,7 +163,7 @@
     {
       "id": "internal-segment-media",
       "description": "Shared media protocol and internal R2 delivery Worker",
-      "patterns": ["packages/media/**", "infrastructure/media/**"],
+      "patterns": ["packages/media/**", "infrastructure/media/**", "scripts/audio/**"],
       "actions": ["validate", "external-contract-review", "recording-smoke", "device-smoke"]
     },
     {

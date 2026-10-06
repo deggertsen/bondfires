@@ -13,6 +13,8 @@
     "typecheck": "turbo typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:audio:ffmpeg": "node --test scripts/audio/normalize-completed.integration.mjs",
+    "test:audio:swift": "bash scripts/test-speech-leveler.sh",
     "lint": "npx biome check .",
     "lint:fix": "npx biome check --write .",
     "format": "npx biome format --write .",

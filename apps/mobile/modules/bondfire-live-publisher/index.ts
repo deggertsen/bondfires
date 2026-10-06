@@ -51,6 +51,14 @@ export interface LivePublisherPreviewOptions {
 // Keep in sync with the getStats payloads in the Swift/Kotlin modules
 // (livePublisherZeroStats / STATS_ZEROS).
 export interface LivePublisherStats {
+  /** Smoothed pre-gain dBFS; absent when capture cannot measure. */
+  micLevelDb?: number
+  appliedGainDb?: number
+  /** Native target - max gain - 2 dB, derived from the leveler constants. */
+  micLowThresholdDb?: number
+  micSampleCount?: number
+  micMuted?: boolean
+
   bitrateBps: number
   rttMs: number
   droppedFrames: number

@@ -20,9 +20,9 @@ Mux assets or credentials as part of this change.
 App-side only. No server contract, schema field, or index is touched.
 
 - Delete the non-segmented recorder screens `LiveRecordScreen` and
-  `LegacyRecordScreen`, and route enabled builds to `SegmentRecordScreen`. Builds without segmented
-  uploads show an unavailable screen before requesting permissions or creating
-  drafts. Production already only rendered the segmented path;
+  `LegacyRecordScreen`, and route enabled builds to `SegmentRecordScreen`.
+  Builds without segmented uploads show an unavailable screen before requesting
+  permissions or creating drafts. Production already only rendered the segmented path;
   the other two were unreachable dead code.
 - Delete the client live-publisher hook `useLivePublisher` and its
   transport policy (`liveStallDetector`, `liveAbrPrior`, `liveBitratePolicy`,
@@ -39,14 +39,16 @@ App-side only. No server contract, schema field, or index is touched.
   The segmented recorder owns its lifecycle locally; background tab work
   remains gated by screen focus.
 - Simplify the app-wide upload status banner to segmented-only
-  (`uploadStatus`), dropping the legacy-queue branch, terminal failure state and progress %.
+  (`uploadStatus`), dropping the legacy-queue branch, terminal failure state
+  and progress %.
 - Remove the Live Publisher developer toggle and its preference/action; it no
   longer selects a recording path.
 
 `docs/mux-retirement.md` gate 4 ("remove the old live/direct recorder screens,
 hooks and persistent upload queue") is therefore complete for the client. The
 native RTMP module in `modules/bondfire-live-publisher` still ships; it backs
-segmented capture, so it stays until its shared capture pipeline can be separated from the unused RTMP APIs.
+segmented capture, so it stays until its shared capture pipeline can be
+separated from the unused RTMP APIs.
 
 ## What still remains (server-side, later phases)
 
@@ -106,6 +108,6 @@ shipped separately; thumbnails, previews and adaptive quality remain open).
 Run `yarn format` and `yarn validate` before committing. Retirement tests verify
 that old creation calls cannot create records or contact Mux and retain the auth
 boundary. Import tests cover ledger-based URL resolution, access, revocation and
-rollback. The create availability regression test verifies that a disabled uploader cannot
-lead into permissions, draft setup or recording. No production deployment, new
+rollback. The create availability regression test verifies that a disabled
+uploader cannot lead into permissions, draft setup or recording. No production deployment, new
 binary, remote asset deletion or credential change is included.

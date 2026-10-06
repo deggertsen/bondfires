@@ -15,7 +15,8 @@ Capture operations are serialized through `lib/media/segmentCapture.ts` so
 teardown finishes before the next attempt takes the camera. The screen stops
 capture on background/interruption and subscribes to native `error` events.
 `{ code, message, reason?, elapsedMs? }` carries error details; the optional
-numeric fields describe iOS capture interruptions.
+numeric fields describe iOS capture interruptions. The segmented screen also
+reads microphone level/gain fields from `getStats()` for the low-input warning.
 
 The durable journal and R2 uploads live in `lib/media/segmentUploads.ts`.
 Capture does not wait for network availability. Keep this native module and
@@ -24,8 +25,8 @@ unused RTMP implementation. See `docs/mux-retirement.md` for the removal scope.
 
 ## Retained legacy APIs
 
-`startPreview`, `startCapture`, `start`, RTMP status events, throughput stats,
-thermal quality controls and picture-in-picture support belong to the retired
+`startPreview`, `startCapture`, `start`, RTMP status events, thermal quality
+controls and picture-in-picture support belong to the retired
 client publishing flow. Their wrapper types remain in `index.ts` and their
 implementations remain in Swift/Kotlin. There is no longer a JS live-publisher
 store, stall watchdog or thermal polling loop consuming them.
