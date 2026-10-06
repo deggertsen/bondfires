@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   buildIapCatalogTelemetryData,
+  EmptySubscriptionCatalogError,
   isBillingClientNotReadyError,
   isUserCancelledPurchase,
   loadIapCatalogWithRecovery,
@@ -93,7 +94,7 @@ describe('isBillingClientNotReadyError', () => {
     expect(reconnectCount).toBe(1)
   })
 
-  it('does not reconnect on iOS or for unrelated Android failures', async () => {
+  it('does not apply the Android readiness recovery to iOS or unrelated failures', async () => {
     let reconnectCount = 0
     const reconnect = async () => {
       reconnectCount += 1
@@ -126,6 +127,9 @@ describe('IAP catalog telemetry', () => {
     expect(
       buildIapCatalogTelemetryData({
         phase: 'manual_retry',
+        stage: 'reload',
+        outcome: 'partial',
+        failureKind: 'optional_fetch_rejected',
         platform: 'android',
         requestedSubscriptionProductIds: ['plus.monthly', 'plus.annual'],
         returnedProductIds: ['plus.monthly', 'kindling.3pack'],
@@ -135,11 +139,16 @@ describe('IAP catalog telemetry', () => {
       }),
     ).toEqual({
       phase: 'manual_retry',
+      stage: 'reload',
+      outcome: 'partial',
+      failureKind: 'optional_fetch_rejected',
       platform: 'android',
       requestedSubscriptionProductIds: ['plus.monthly', 'plus.annual'],
       requestedSubscriptionProductCount: 2,
       returnedProductIds: ['plus.monthly', 'kindling.3pack'],
       returnedProductCount: 2,
+      returnedSubscriptionProductIds: ['plus.monthly'],
+      returnedSubscriptionProductCount: 1,
       missingSubscriptionProductIds: ['plus.annual'],
       missingSubscriptionProductCount: 1,
       reconnectStatus: 'succeeded',
@@ -152,6 +161,89 @@ describe('IAP catalog telemetry', () => {
     expect(serializeIapError(new Error('Catalog unavailable'))).toMatchObject({
       name: 'Error',
       message: 'Catalog unavailable',
+    })
+  })
+})
+
+describe('iOS catalog recovery', () => {
+  it('reconnects and reloads once for a transient empty response', async () => {
+    const empty = new EmptySubscriptionCatalogError()
+    const loadCatalog = vi.fn().mockRejectedValueOnce(empty).mockResolvedValue(['plus.monthly'])
+    const reconnect = vi.fn().mockResolvedValue(undefined)
+    const onRecovery = vi.fn()
+
+    await expect(
+      loadIapCatalogWithRecovery({ platform: 'ios', loadCatalog, reconnect, onRecovery }),
+    ).resolves.toEqual(['plus.monthly'])
+    expect(loadCatalog).toHaveBeenCalledTimes(2)
+    expect(reconnect).toHaveBeenCalledTimes(1)
+    expect(onRecovery).toHaveBeenCalledExactlyOnceWith(empty)
+  })
+
+  it('propagates a persistent empty response after exactly one reconnect', async () => {
+    const empty = new EmptySubscriptionCatalogError()
+    const loadCatalog = vi.fn().mockRejectedValue(empty)
+    const reconnect = vi.fn().mockResolvedValue(undefined)
+
+    await expect(
+      loadIapCatalogWithRecovery({ platform: 'ios', loadCatalog, reconnect }),
+    ).rejects.toBe(empty)
+    expect(loadCatalog).toHaveBeenCalledTimes(2)
+    expect(reconnect).toHaveBeenCalledTimes(1)
+  })
+
+  it('propagates reconnect failure without reloading and retains the recovery cause', async () => {
+    const empty = new EmptySubscriptionCatalogError()
+    const connectionError = new Error('StoreKit connection failed')
+    const loadCatalog = vi.fn().mockRejectedValue(empty)
+    const reconnect = vi.fn().mockRejectedValue(connectionError)
+    const onRecovery = vi.fn()
+
+    await expect(
+      loadIapCatalogWithRecovery({ platform: 'ios', loadCatalog, reconnect, onRecovery }),
+    ).rejects.toBe(connectionError)
+    expect(loadCatalog).toHaveBeenCalledTimes(1)
+    expect(reconnect).toHaveBeenCalledTimes(1)
+    expect(onRecovery).toHaveBeenCalledExactlyOnceWith(empty)
+  })
+
+  it.each(['android', 'web'])('does not recover an empty response on %s', async (platform) => {
+    const empty = new EmptySubscriptionCatalogError()
+    const loadCatalog = vi.fn().mockRejectedValue(empty)
+    const reconnect = vi.fn()
+
+    await expect(loadIapCatalogWithRecovery({ platform, loadCatalog, reconnect })).rejects.toBe(
+      empty,
+    )
+    expect(loadCatalog).toHaveBeenCalledTimes(1)
+    expect(reconnect).not.toHaveBeenCalled()
+  })
+
+  it('does not recover ordinary StoreKit rejections, including empty-looking messages', async () => {
+    const error = { code: 'query-product', message: 'The store returned no subscription products.' }
+    const loadCatalog = vi.fn().mockRejectedValue(error)
+    const reconnect = vi.fn()
+
+    await expect(
+      loadIapCatalogWithRecovery({ platform: 'ios', loadCatalog, reconnect }),
+    ).rejects.toBe(error)
+    expect(loadCatalog).toHaveBeenCalledTimes(1)
+    expect(reconnect).not.toHaveBeenCalled()
+  })
+
+  it('preserves StoreKit diagnostic fields on Error instances through JSON serialization', () => {
+    const error = Object.assign(new Error('Failed to query products'), {
+      code: 'query-product',
+      underlyingErrorMessage: 'StoreKit underlying failure',
+      productId: 'bondfires.plus.monthly',
+      description: 'StoreKit diagnostic description',
+    })
+    expect(JSON.parse(JSON.stringify(serializeIapError(error)))).toMatchObject({
+      message: error.message,
+      code: error.code,
+      underlyingErrorMessage: error.underlyingErrorMessage,
+      productId: error.productId,
+      description: error.description,
     })
   })
 })

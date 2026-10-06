@@ -34,12 +34,11 @@ import {
   tierMeetsRequirement,
 } from '../store/subscription.store'
 import { createIapConnectionCoordinator } from '../utils/iapConnectionCoordinator'
+import { runSubscriptionCatalogAttempt } from '../utils/subscriptionIapAttempt'
+import { loadSubscriptionCatalog } from '../utils/subscriptionIapCatalog'
 import {
-  buildIapCatalogTelemetryData,
   type IapCatalogAttemptPhase,
-  type IapCatalogReconnectStatus,
   isUserCancelledPurchase,
-  loadIapCatalogWithRecovery,
   serializeIapError,
 } from '../utils/subscriptionIapPolicy'
 
@@ -86,173 +85,30 @@ let purchaseUpdateSub: { remove: () => void } | undefined
 let purchaseErrorSub: { remove: () => void } | undefined
 let syncPurchaseForUpdates: ((purchase: Purchase) => Promise<StorePurchaseSyncResult>) | undefined
 const iapConnection = createIapConnectionCoordinator({ initConnection, endConnection })
-const IAP_CATALOG_ATTEMPT_CANCELLED = Symbol('IAP_CATALOG_ATTEMPT_CANCELLED')
-
-class IapCatalogLoadError extends Error {
-  constructor(
-    message: string,
-    readonly underlyingError: unknown,
-    readonly returnedProductIds: string[],
-    readonly missingSubscriptionProductIds: string[],
-  ) {
-    super(message)
-    this.name = 'IapCatalogLoadError'
-  }
-}
-
-async function loadSubscriptionProducts() {
-  // Fetch subscriptions and in-app products separately.
-  // Billing 8.x + openiap-google 2.2.1 throws on ProductQueryType.All if
-  // either product type query fails (e.g., no INAPP products configured in
-  // Play Console), so we avoid 'all' and query each type independently.
-  const [subsProducts, inappProducts] = await Promise.allSettled([
-    fetchProducts({ skus: ALL_SUBSCRIPTION_PRODUCT_IDS, type: 'subs' }),
-    fetchProducts({
-      skus: [
-        KINDLING_PACK_PRODUCT_IDS.campKindling3Pack,
-        KINDLING_PACK_PRODUCT_IDS.campKindling10Pack,
-      ],
-      type: 'in-app',
-    }),
-  ])
-
-  const returnedInAppProducts =
-    inappProducts.status === 'fulfilled'
-      ? Array.isArray(inappProducts.value)
-        ? inappProducts.value
-        : [inappProducts.value]
-      : []
-  const returnedInAppProductIds = returnedInAppProducts
-    .filter((product): product is StoreProduct => !!product?.id)
-    .map((product) => product.id)
-
-  // Subscription pricing is required for the paywall. Kindling packs are an
-  // optional add-on, so their failure is logged without blocking subscriptions.
-  if (subsProducts.status === 'rejected') {
-    throw new IapCatalogLoadError(
-      'Failed to fetch subscription products.',
-      subsProducts.reason,
-      returnedInAppProductIds,
-      [...ALL_SUBSCRIPTION_PRODUCT_IDS],
-    )
-  }
-
-  const subsList = Array.isArray(subsProducts.value) ? subsProducts.value : [subsProducts.value]
-  const availableSubscriptionProducts = subsList.filter(
-    (product): product is StoreProduct => !!product?.id,
-  )
-  if (availableSubscriptionProducts.length === 0) {
-    throw new IapCatalogLoadError(
-      'The store returned no subscription products.',
-      new Error('The store returned no subscription products.'),
-      returnedInAppProductIds,
-      [...ALL_SUBSCRIPTION_PRODUCT_IDS],
-    )
-  }
-
-  const allProducts = [...availableSubscriptionProducts, ...returnedInAppProducts]
-  const availableProducts = allProducts.filter((product): product is StoreProduct => !!product?.id)
-  const returnedSubscriptionProductIds = new Set(
-    availableSubscriptionProducts.map((product) => product.id),
-  )
-  const missingSubscriptionProductIds = ALL_SUBSCRIPTION_PRODUCT_IDS.filter(
-    (productId) => !returnedSubscriptionProductIds.has(productId),
-  )
-
-  return {
-    products: availableProducts,
-    returnedProductIds: availableProducts.map((product) => product.id),
-    missingSubscriptionProductIds,
-    optionalProductError: inappProducts.status === 'rejected' ? inappProducts.reason : undefined,
-  }
-}
-
-function getCatalogFailure(error: unknown) {
-  if (error instanceof IapCatalogLoadError) {
-    return {
-      error: error.underlyingError,
-      returnedProductIds: error.returnedProductIds,
-      missingSubscriptionProductIds: error.missingSubscriptionProductIds,
-    }
-  }
-  return {
-    error,
-    returnedProductIds: [] as string[],
-    missingSubscriptionProductIds: [] as string[],
-  }
-}
-
 async function runCatalogAttempt(phase: IapCatalogAttemptPhase, isActive: () => boolean) {
-  let reconnectStatus: IapCatalogReconnectStatus = 'not_attempted'
-
-  try {
-    await iapConnection.ensureConnected()
-    if (!isActive()) return
-
-    const result = await loadIapCatalogWithRecovery({
-      platform: Platform.OS,
-      loadCatalog: loadSubscriptionProducts,
-      getRecoveryError: (error) => getCatalogFailure(error).error,
-      getRecoveryErrorFromResult: (result) => result.optionalProductError,
-      reconnect: async () => {
-        if (!isActive()) throw IAP_CATALOG_ATTEMPT_CANCELLED
-        reconnectStatus = 'failed'
-        await iapConnection.reconnect()
-        reconnectStatus = 'succeeded'
-      },
-    })
-    if (!isActive()) return
-
-    subscriptionActions.setProducts(
-      result.products.map((product) => ({
-        productId: product.id,
-        price: product.displayPrice,
-        offerToken: getAndroidOfferToken(product),
-      })),
-    )
-
-    if (
-      result.optionalProductError !== undefined ||
-      result.missingSubscriptionProductIds.length > 0
-    ) {
-      const warningError =
-        result.optionalProductError ??
-        new Error(
-          `The store omitted ${result.missingSubscriptionProductIds.length} requested subscription products.`,
-        )
-      telemetry.warn(
-        'iap:catalog',
-        'IAP catalog loaded partially',
-        buildIapCatalogTelemetryData({
-          phase,
-          platform: Platform.OS,
-          requestedSubscriptionProductIds: ALL_SUBSCRIPTION_PRODUCT_IDS,
-          returnedProductIds: result.returnedProductIds,
-          missingSubscriptionProductIds: result.missingSubscriptionProductIds,
-          reconnectStatus,
-          error: warningError,
-        }),
-      )
-    }
-  } catch (error) {
-    if (error === IAP_CATALOG_ATTEMPT_CANCELLED || !isActive()) return
-
-    const failure = getCatalogFailure(error)
-    telemetry.warn(
-      'iap:catalog',
-      'Failed to load IAP catalog',
-      buildIapCatalogTelemetryData({
-        phase,
-        platform: Platform.OS,
-        requestedSubscriptionProductIds: ALL_SUBSCRIPTION_PRODUCT_IDS,
-        returnedProductIds: failure.returnedProductIds,
-        missingSubscriptionProductIds: failure.missingSubscriptionProductIds,
-        reconnectStatus,
-        error: failure.error,
+  await runSubscriptionCatalogAttempt({
+    phase,
+    platform: Platform.OS,
+    requestedSubscriptionProductIds: ALL_SUBSCRIPTION_PRODUCT_IDS,
+    isActive,
+    connection: iapConnection,
+    loadCatalog: () =>
+      loadSubscriptionCatalog({
+        fetchProducts,
+        subscriptionProductIds: ALL_SUBSCRIPTION_PRODUCT_IDS,
+        inAppProductIds: Object.values(KINDLING_PACK_PRODUCT_IDS),
       }),
-    )
-    throw error
-  }
+    onLoaded: (result) => {
+      subscriptionActions.setProducts(
+        result.products.map((product) => ({
+          productId: product.id,
+          price: product.displayPrice,
+          offerToken: getAndroidOfferToken(product),
+        })),
+      )
+    },
+    telemetry,
+  })
 }
 
 function getPurchaseField(purchase: Purchase, field: string) {
