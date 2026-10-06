@@ -9,9 +9,9 @@ import kotlin.math.sqrt
 
 /** Bounded mono PCM16 gain before AAC, independent of vendor AGC availability.
  *
- * Quiet speech approaches -22 dBFS RMS with at most 30 dB of gain. Healthy
+ * Quiet speech approaches -18 dBFS RMS with at most 30 dB of gain. Healthy
  * input stays at unity. Below -55 dBFS we release toward unity rather than
- * chasing the noise floor. A fast peak limiter reserves 1 dB of headroom.
+ * chasing the noise floor. A fast peak limiter reserves 0.5 dB of headroom.
  * State spans buffers/segments, including preview, and resets per capture.
  * This is capture level control, not whole-program LUFS normalization.
  */
@@ -42,10 +42,10 @@ internal class SpeechLeveler(private val sampleRate: Int) {
         index += 2
       }
       val rms = sqrt(power / ((end - offset) / 2))
-      val target = if (rms >= 0.001778) (0.079433 / rms).coerceIn(1.0, 31.6228) else 1.0
+      val target = if (rms >= 0.001778) (0.125893 / rms).coerceIn(1.0, 31.6228) else 1.0
       // Use the whole 10 ms block's peak for immediate protection, so a
       // sudden loud word after quiet speech cannot hit the PCM rails.
-      val peakGain = if (peak > 0) 0.891251 / peak else Double.POSITIVE_INFINITY
+      val peakGain = if (peak > 0) 0.944061 / peak else Double.POSITIVE_INFINITY
       index = offset
       while (index < end) {
         gain += (target - gain) * if (target > gain) rise else fall

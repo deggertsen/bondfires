@@ -24,7 +24,7 @@ class SpeechLevelerTest {
     val leveler = SpeechLeveler(rate)
     var last = tone(-48.0)
     repeat(150) { last = tone(-48.0); leveler.process(last) }
-    assertEquals(-22.0, rms(last), 1.0)
+    assertEquals(-18.0, rms(last), 1.0)
     assertEquals(0, last.position())
     assertEquals(last.capacity(), last.limit())
   }
@@ -32,7 +32,7 @@ class SpeechLevelerTest {
   @Test fun healthyHeadsetLevelsRemainUnchanged() {
     val leveler = SpeechLeveler(rate)
     repeat(100) {
-      val buffer = tone(-20.0)
+      val buffer = tone(-16.0)
       val original = buffer.array().clone()
       leveler.process(buffer)
       assertArrayEquals(original, buffer.array())
@@ -60,7 +60,7 @@ class SpeechLevelerTest {
     repeat(30) {
       val loud = tone(-5.0)
       leveler.process(loud)
-      for (i in 0 until loud.limit() step 2) assertTrue(abs(loud.getShort(i).toInt()) <= 29205)
+      for (i in 0 until loud.limit() step 2) assertTrue(abs(loud.getShort(i).toInt()) <= 30935)
     }
   }
 

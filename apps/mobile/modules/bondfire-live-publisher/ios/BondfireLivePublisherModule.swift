@@ -406,6 +406,7 @@ final class LivePublisher {
   func startSegmentRecording(localId: String, maxDuration: Int) async throws {
     guard segmentRecorder == nil else { throw LivePublisherException(message: "Already recording") }
     guard isCaptureRunning else { throw LivePublisherException(message: "Camera is not ready") }
+    // Recorder owns pre-AAC PCM gain; mixer track volume is capped at unity.
     let recorder = try SegmentedRecorder(localId: localId, maxDuration: maxDuration) { [weak self] message in
       Task { @MainActor in self?.eventHandler(.error("segment_capture_failed", message)) }
     }
