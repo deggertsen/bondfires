@@ -22,13 +22,15 @@ export function LoadingOverlay({
   state$,
   currentUrl,
   isProcessing = false,
+  isHoldingLiveEdge = false,
 }: {
   state$: VideoPlayerState$
   currentUrl: string | null
   isProcessing?: boolean
+  isHoldingLiveEdge?: boolean
 }) {
   const isLoading = useValue(state$.isLoading)
-  if (!isLoading || !currentUrl) return null
+  if (!(isLoading || isHoldingLiveEdge) || !currentUrl) return null
 
   return (
     <YStack
@@ -112,12 +114,18 @@ export function ReactionPresenceLayer({
   )
 }
 
-export function PlayPauseIndicator({ state$ }: { state$: VideoPlayerState$ }) {
+export function PlayPauseIndicator({
+  state$,
+  isHoldingLiveEdge = false,
+}: {
+  state$: VideoPlayerState$
+  isHoldingLiveEdge?: boolean
+}) {
   const isPlaying = useValue(state$.isPlaying)
   const isLoading = useValue(state$.isLoading)
   const hasEnded = useValue(state$.hasEnded)
 
-  if (isPlaying || isLoading) return null
+  if (isPlaying || isLoading || isHoldingLiveEdge) return null
 
   return (
     <YStack
@@ -244,12 +252,18 @@ export function VideoProgressBar({
   )
 }
 
-export function PausedReportButton({ state$ }: { state$: VideoPlayerState$ }) {
+export function PausedReportButton({
+  state$,
+  isHoldingLiveEdge = false,
+}: {
+  state$: VideoPlayerState$
+  isHoldingLiveEdge?: boolean
+}) {
   const isPlaying = useValue(state$.isPlaying)
   const isLoading = useValue(state$.isLoading)
   const insets = useSafeAreaInsets()
 
-  if (isPlaying || isLoading) return null
+  if (isPlaying || isLoading || isHoldingLiveEdge) return null
 
   return (
     <YStack position="absolute" left={16} bottom={160 + insets.bottom} zIndex={3}>
