@@ -52,7 +52,12 @@ accepted only if its loudness matches the predicted level within 0.5 LU and its
 true peak does not exceed -1.5 dBTP. Existing output files (including dangling
 symlinks) are rejected before decoding, and an exclusive copy at publication
 protects against an output created during processing. Decoder errors abort the
-job rather than normalizing only the surviving media. Temporary candidates are
+job rather than normalizing only the surviving media. Decoded sample counts at
+48 kHz must match the declared program duration (and the encoded result must match
+the decoded source) within 100 ms. This also catches silent packet loss when a
+decoder exits successfully. The tolerance allows AAC priming/padding and small
+track endpoint differences; recordings with larger gaps or cumulative timeline
+drift are intentionally rejected by this prototype. Temporary candidates are
 removed on success or failure.
 
 This bounded linear approach preserves dynamics. Peak-limited or gain-limited
@@ -104,7 +109,8 @@ References: [Worker limits](https://developers.cloudflare.com/workers/platform/l
 local eight-second, multi-segment H.264/AAC fixture and exercises the actual CLI
 pipeline. It checks decoded output loudness/true peak, unchanged encoded video,
 source hashes, audio/video duration and start alignment, existing-output refusal,
-empty-fragment rejection, corrupted-payload failure, and silence rejection. The
+empty-fragment rejection, corrupted-payload failure, false playlist durations,
+and silence rejection. The
 `audio-prototype` CI job runs this independently of the pure Vitest suite. No
 production or downloaded media is used. Temporary test fixtures are removed.
 

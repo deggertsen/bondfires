@@ -123,6 +123,19 @@ test('fails closed on decoder errors instead of normalizing the surviving media'
   assert.ok(payload > 4)
   bytes.fill(0xff, payload)
   writeFileSync(fragment, bytes)
-  assert.throws(() => normalizeCompleted(input, output), /FFmpeg measurement failed/)
+  assert.throws(
+    () => normalizeCompleted(input, output),
+    /FFmpeg measurement failed|Decoded audio duration/,
+  )
+  assert.equal(existsSync(output), false)
+})
+
+test('checks decoded duration instead of trusting playlist timing', (t) => {
+  const { input, output } = fixture(t)
+  writeFileSync(
+    input,
+    readFileSync(input, 'utf8').replaceAll('#EXTINF:4.000000,', '#EXTINF:1.000000,'),
+  )
+  assert.throws(() => normalizeCompleted(input, output), /Decoded audio duration/)
   assert.equal(existsSync(output), false)
 })

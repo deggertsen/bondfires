@@ -78,7 +78,7 @@ describe('offline completed-recording guard', () => {
       const headers = `#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:15\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:${type}\n#EXT-X-START:TIME-OFFSET=0,PRECISE=YES`
       expect(
         parseCompletedPlaylist(manifest.replace('#EXTM3U', headers).replaceAll('\n', '\r\n')),
-      ).toEqual(['segment-000000.m4s'])
+      ).toEqual({ segments: ['segment-000000.m4s'], duration: 4 })
     }
   })
 

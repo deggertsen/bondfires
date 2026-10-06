@@ -40,7 +40,7 @@ export function parseCompletedPlaylist(manifest) {
   }
   if (!segments.length || segments.length > 1800) throw invalid()
   if (duration > 3615) throw new Error('Invalid recording duration')
-  return segments
+  return { segments, duration }
 }
 
 function checkFile(path, maxBytes) {
@@ -51,7 +51,8 @@ function checkFile(path, maxBytes) {
 
 export function readCompletedPlaylist(input) {
   checkFile(input, 256 * 1024)
-  const segments = parseCompletedPlaylist(readFileSync(input, 'utf8'))
+  const { segments, duration } = parseCompletedPlaylist(readFileSync(input, 'utf8'))
   for (const name of ['init.mp4', ...segments])
     checkFile(join(dirname(input), name), name === 'init.mp4' ? 256 * 1024 : 8 * 1024 * 1024)
+  return { duration }
 }

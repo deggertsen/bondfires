@@ -23,7 +23,7 @@ export function ffmpeg(args) {
   })
 }
 
-function runWithMeasurement(path) {
+function runWithMeasurement(path, expectedDuration) {
   // spawnSync retains stderr on successful executions too.
   const result = spawnSync(
     'ffmpeg',
@@ -38,7 +38,7 @@ function runWithMeasurement(path) {
       '-map',
       '0:a:0',
       '-af',
-      `loudnorm=I=${LOUDNESS.integratedLufs}:TP=${LOUDNESS.truePeakDbtp}:print_format=json`,
+      `aresample=48000,astats=measure_perchannel=none:measure_overall=Number_of_samples,loudnorm=I=${LOUDNESS.integratedLufs}:TP=${LOUDNESS.truePeakDbtp}:print_format=json`,
       '-f',
       'null',
       '-',
@@ -50,16 +50,27 @@ function runWithMeasurement(path) {
   const json = /\{[^{}]*"input_i"[^{}]*\}/.exec(result.stderr)?.[0]
   if (!json) throw new Error('Missing loudness measurement')
   const data = JSON.parse(json)
-  return { integratedLufs: Number(data.input_i), truePeakDbtp: Number(data.input_tp) }
+  // Some decoders can drop damaged/empty AAC packets with a successful exit.
+  // Count decoded samples, not container timestamps (which can span holes).
+  const samples = Number(/Number of samples: (\d+)/.exec(result.stderr)?.[1])
+  const durationSeconds = samples / 48000
+  // Allow AAC priming/padding and a small audio/video endpoint difference.
+  if (!Number.isFinite(durationSeconds) || Math.abs(durationSeconds - expectedDuration) > 0.1)
+    throw new Error('Decoded audio duration does not match the completed program')
+  return {
+    integratedLufs: Number(data.input_i),
+    truePeakDbtp: Number(data.input_tp),
+    durationSeconds,
+  }
 }
 
 export function normalizeCompleted(playlist, output) {
   const input = resolve(playlist)
-  readCompletedPlaylist(input)
+  const { duration } = readCompletedPlaylist(input)
   // Fail before expensive decode/encode, including dangling output symlinks.
   if (lstatSync(resolve(output), { throwIfNoEntry: false }))
     throw new Error('Output already exists')
-  const before = runWithMeasurement(input)
+  const before = runWithMeasurement(input, duration)
   const filter = normalizationFilter(before, true)
   const scratch = mkdtempSync(join(tmpdir(), 'bondfires-normalization-'))
   const candidate = join(scratch, 'normalized.mp4')
@@ -86,7 +97,7 @@ export function normalizeCompleted(playlist, output) {
       '48000',
       candidate,
     ])
-    const after = runWithMeasurement(candidate)
+    const after = runWithMeasurement(candidate, before.durationSeconds)
     if (!verifyNormalizedAudio(before, after)) throw new Error('Encoded audio failed verification')
     copyFileSync(candidate, resolve(output), constants.COPYFILE_EXCL)
     return {
