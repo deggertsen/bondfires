@@ -28,6 +28,7 @@ export function createLiveEdgePlayback({
   setRate,
   pause,
   resume,
+  onHoldingChange,
   onAction,
 }: {
   isLive: boolean
@@ -37,6 +38,7 @@ export function createLiveEdgePlayback({
   setRate: (rate: number) => void
   pause: () => void
   resume: () => void
+  onHoldingChange?: (isHolding: boolean) => void
   onAction?: (action: 'switch-to-realtime' | 'extend-buffer') => void
 }) {
   let realtime = false
@@ -50,6 +52,7 @@ export function createLiveEdgePlayback({
     if (timer === null) return
     clearTimeout(timer)
     timer = null
+    onHoldingChange?.(false)
     if (resumeHeldPlayback && canResume()) resume()
   }
   return {
@@ -71,8 +74,10 @@ export function createLiveEdgePlayback({
       timer = setTimeout(() => {
         if (pendingGeneration !== generation) return
         timer = null
+        onHoldingChange?.(false)
         if (canResume()) resume()
       }, LIVE_EDGE_BUFFER_HOLD_MS)
+      onHoldingChange?.(true)
       pause()
       onAction?.('extend-buffer')
     },

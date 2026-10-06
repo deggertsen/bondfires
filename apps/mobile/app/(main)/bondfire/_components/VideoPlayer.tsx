@@ -383,6 +383,7 @@ export function VideoPlayer({
   playbackGateRef.current = { isActive, isScreenFocused, shouldSuppressPlayback }
   // Deliberate user pause — auto-recovery must never play over it.
   const userPausedRef = useRef(false)
+  const [isHoldingLiveEdge, setIsHoldingLiveEdge] = useState(false)
 
   const liveEdgePlayback = useMemo(() => {
     const canResume = () => {
@@ -402,6 +403,7 @@ export function VideoPlayer({
     return createLiveEdgePlayback({
       isLive,
       preferredRate: playbackSpeed,
+      onHoldingChange: setIsHoldingLiveEdge,
       canResume,
       canPace: () =>
         canResume() && hasRecordedPlaybackStartRef.current && AppState.currentState === 'active',
@@ -1069,8 +1071,10 @@ export function VideoPlayer({
   ])
 
   const keepAwakeTag = `video-playback-${videoId}`
+  const shouldKeepAwake =
+    isScreenFocused && isAppActive && isActive && (isPlaying || isHoldingLiveEdge)
   useEffect(() => {
-    if (isScreenFocused && isAppActive && isActive && isPlaying) {
+    if (shouldKeepAwake) {
       activateKeepAwakeAsync(keepAwakeTag)
     } else {
       deactivateKeepAwake(keepAwakeTag)
@@ -1079,7 +1083,7 @@ export function VideoPlayer({
     return () => {
       deactivateKeepAwake(keepAwakeTag)
     }
-  }, [isScreenFocused, isAppActive, isActive, isPlaying, keepAwakeTag])
+  }, [shouldKeepAwake, keepAwakeTag])
 
   // Buffering-stall watchdog. Warn once after 15s of continuous loading so
   // stalls show up in telemetry, and give up into the retry overlay instead
@@ -1201,13 +1205,16 @@ export function VideoPlayer({
   }, [pictureInPicturePlayback, isLive, videoId])
 
   const togglePlayPause = useCallback(() => {
+    // A pacing hold is still play intent. Capture it before cancelling its timer
+    // so a tap pauses instead of undoing the hold and unexpectedly playing.
+    const wasHolding = liveEdgePlayback.isHolding()
     liveEdgePlayback.cancel()
     const action = withCurrentPlayer((currentPlayer) => {
       if (state$.hasEnded.get()) {
         currentPlayer.replay()
         return 'replay' as const
       }
-      if (currentPlayer.playing) {
+      if (currentPlayer.playing || wasHolding) {
         currentPlayer.pause()
         return 'pause' as const
       }
@@ -1531,7 +1538,7 @@ export function VideoPlayer({
           nativeControls={false}
           fullscreenOptions={{ enable: false }}
           allowsPictureInPicture
-          startsPictureInPictureAutomatically={isPlaying || liveEdgePlayback.isHolding()}
+          startsPictureInPictureAutomatically={isPlaying || isHoldingLiveEdge}
           onPictureInPictureStart={handlePictureInPictureStart}
           onPictureInPictureStop={handlePictureInPictureStop}
         />
@@ -1555,6 +1562,7 @@ export function VideoPlayer({
 
       <LoadingOverlay
         state$={state$}
+        isHoldingLiveEdge={isHoldingLiveEdge}
         currentUrl={currentUrl}
         isProcessing={isLive && isSegmented}
       />
@@ -1571,7 +1579,7 @@ export function VideoPlayer({
         onReactionExpired={handleReactionExpired}
       />
 
-      <PlayPauseIndicator state$={state$} />
+      <PlayPauseIndicator state$={state$} isHoldingLiveEdge={isHoldingLiveEdge} />
 
       <LinearGradient
         colors={OVERLAY_COLORS.gradientBottom}
@@ -1618,7 +1626,7 @@ export function VideoPlayer({
         panHandlers={progressBarPanResponder.panHandlers}
       />
 
-      <PausedReportButton state$={state$} />
+      <PausedReportButton state$={state$} isHoldingLiveEdge={isHoldingLiveEdge} />
 
       <RightSideControls
         state$={state$}
