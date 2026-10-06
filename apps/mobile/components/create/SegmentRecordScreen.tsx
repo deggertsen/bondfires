@@ -1,4 +1,5 @@
 import { telemetry, usePresence } from '@bondfires/app'
+import { useMicLevelWarning } from '@bondfires/app/src/hooks/useMicLevelWarning'
 import { Spinner, Text } from '@bondfires/ui'
 import { Flame, X } from '@tamagui/lucide-icons'
 import { useConvex } from 'convex/react'
@@ -27,6 +28,7 @@ import { InviteSheet } from '../InviteSheet'
 import { NotepadOverlay } from '../NotepadOverlay'
 import { ViewerPresenceStack } from '../ViewerPresenceStack'
 import { VIDEO_OVERLAY_COLORS } from '../videoOverlayColors'
+import { LowMicLevelIndicator } from './LowMicLevelIndicator'
 import { RecordingHeaderActions } from './RecordingHeaderActions'
 
 export function SegmentRecordScreen({
@@ -63,6 +65,11 @@ export function SegmentRecordScreen({
   const durationLimit = useRef(maxDuration)
   durationLimit.current = maxDuration
   const localId = useRef(Crypto.randomUUID().toLowerCase())
+  const micLevelWarning = useMicLevelWarning({
+    publisher: BondfireLivePublisher,
+    recording: phase === 'recording' && isAppActive && isScreenFocused,
+    recordingId: localId.current,
+  })
   // This subscription follows the uploader; recording never waits on it.
   const { data: destination, error: destinationError } = useOptionalQuery(
     api.segmentMedia.getOwnRecording,
@@ -461,6 +468,7 @@ export function SegmentRecordScreen({
         bottom={Math.max(insets.bottom + 16, 40)}
         alignItems="center"
       >
+        {micLevelWarning && <LowMicLevelIndicator />}
         {ownedBondfireId && (phase === 'ready' || isRecording) && (
           <Pressable
             accessibilityRole="button"

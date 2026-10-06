@@ -406,6 +406,7 @@ final class LivePublisher {
   func startSegmentRecording(localId: String, maxDuration: Int) async throws {
     guard segmentRecorder == nil else { throw LivePublisherException(message: "Already recording") }
     guard isCaptureRunning else { throw LivePublisherException(message: "Camera is not ready") }
+    // Recorder owns pre-AAC PCM gain; mixer track volume is capped at unity.
     let recorder = try SegmentedRecorder(localId: localId, maxDuration: maxDuration) { [weak self] message in
       Task { @MainActor in self?.eventHandler(.error("segment_capture_failed", message)) }
     }
@@ -1119,6 +1120,10 @@ final class LivePublisher {
     // statsSupported=1 marks bitrateBps as a real measurement.
     var stats = livePublisherZeroStats
     stats["audioRoute"] = audioRouteName
+    if let recorder = segmentRecorder {
+      for (key, value) in recorder.audioStats() { stats[key] = value }
+      stats["micMuted"] = (await mixer.audioMixerSettings).isMuted
+    }
     guard let session else {
       return stats
     }

@@ -62,3 +62,16 @@ jobs:
         run: |
           npx wrangler deploy --dry-run
           npx wrangler deploy --env production --dry-run
+
+  audio-prototype:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Verify completed-recording normalization with real audio and video
+        run: node --test scripts/audio/normalize-completed.integration.mjs

@@ -13,6 +13,7 @@ final class SegmentedRecorder: NSObject, MediaMixerOutput, AVAssetWriterDelegate
   private let writer: AVAssetWriter
   private let video: AVAssetWriterInput
   private let audio: AVAssetWriterInput
+  private let leveledAudio = LeveledAudioBuffer()
   private var startTime: CMTime?
   private var accepting = true
   private var segmentCount = 0
@@ -58,14 +59,28 @@ final class SegmentedRecorder: NSObject, MediaMixerOutput, AVAssetWriterDelegate
     writer.add(audio)
   }
 
+  func audioStats() -> [String: Double] { leveledAudio.audioStats() }
+
   func selectTrack(_ id: UInt8?, mediaType: CMFormatDescription.MediaType) async {}
 
   func mixer(_ mixer: MediaMixer, didOutput sampleBuffer: CMSampleBuffer) {
     queue.async { self.append(sampleBuffer, input: self.video) }
   }
 
-  func mixer(_ mixer: MediaMixer, didOutput buffer: AVAudioPCMBuffer, when: AVAudioTime) {
-    // Copy PCM into a CMBlockBuffer before the mixer reuses its audio buffer.
+  func mixer(_ mixer: MediaMixer, didOutput source: AVAudioPCMBuffer, when: AVAudioTime) {
+    guard source.frameLength > 0 else { return }
+    // Own and level mono PCM16 before AAC encoding; the mixer buffer is shared.
+    let buffer: AVAudioPCMBuffer
+    do { buffer = try leveledAudio.copyAndProcess(source) }
+    catch {
+      queue.async {
+        guard self.accepting else { return }
+        self.accepting = false
+        self.onFailure(error.localizedDescription)
+      }
+      return
+    }
+    // Copy PCM into a CMBlockBuffer before returning from the mixer callback.
     var sample: CMSampleBuffer?
     let pts = CMTime(seconds: AVAudioTime.seconds(forHostTime: when.hostTime), preferredTimescale: 1_000_000_000)
     guard CMAudioSampleBufferCreateWithPacketDescriptions(allocator: kCFAllocatorDefault,
