@@ -1,13 +1,11 @@
 import {
   appActions,
-  deleteAllLocalBackups,
   getBondfireVideoIndex,
   parseError,
   requestPushPermission,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
   telemetry,
-  uploadQueueActions,
   useAppTheme,
   useAppThemeColors,
   useKindlingBalance,
@@ -55,7 +53,6 @@ import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
 import { ModerationAdminPanel } from '../../../components/ModerationAdminPanel'
 import { NotificationPreferencesSection } from '../../../components/NotificationPreferencesSection'
 import { SafetySettings } from '../../../components/SafetySettings'
-import { UploadProgressCard } from '../../../components/UploadProgressCard'
 import { useHeaderTopPadding } from '../../../components/UploadStatusLayout'
 import { routes } from '../../../lib/routes'
 
@@ -264,7 +261,6 @@ export default function ProfileScreen() {
   }, [])
 
   const handleRefresh = useCallback(() => {
-    uploadQueueActions.cleanupForRefresh()
     setIsRefreshing(true)
     setRefreshKey((current) => current + 1)
 
@@ -305,15 +301,7 @@ export default function ProfileScreen() {
         text: 'Sign Out',
         style: 'destructive',
         onPress: async () => {
-          try {
-            await deleteAllLocalBackups()
-          } catch (error) {
-            telemetry.warn('backup:cleanup', 'Could not clear local backups during sign out', {
-              error: parseError(error).message,
-            })
-          }
           await signOut()
-          uploadQueueActions.clear()
           appActions.logout()
           router.replace(routes.login())
         },
@@ -429,8 +417,7 @@ export default function ProfileScreen() {
                     state$.isDeleting.set(true)
                     try {
                       await deleteAccountMutation()
-                      await Promise.allSettled([deleteAllLocalBackups(), signOut()])
-                      uploadQueueActions.clear()
+                      await Promise.allSettled([signOut()])
                       appActions.logout()
                       router.replace(routes.login())
                     } catch (error) {
@@ -667,8 +654,6 @@ export default function ProfileScreen() {
               </YStack>
             </XStack>
           </Card>
-
-          <UploadProgressCard />
 
           <SafetySettings />
 

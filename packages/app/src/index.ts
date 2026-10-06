@@ -7,8 +7,6 @@ export * from './features'
 // Hooks
 export * from './hooks'
 // Services
-export * from './services/backgroundUpload'
-export * from './services/localBackupSweep'
 export {
   isSensitiveTelemetryKey,
   redactSensitiveText,

@@ -4,10 +4,7 @@ import {
   subscriptionStore$,
   TIER_DEFINITIONS,
   uploadStatusActions,
-  useLegacyUploadResume,
-  useLocalBackupSweep,
   useNetworkStatusSync,
-  useRecordingWatchdog,
   useSubscription,
 } from '@bondfires/app'
 import { SubscriptionPaywall } from '@bondfires/ui'
@@ -21,7 +18,6 @@ import { FreeCapabilitiesExplainer } from '../../components/FreeCapabilitiesExpl
 import { UploadStatusLayout } from '../../components/UploadStatusLayout'
 import {
   runSegmentUploads,
-  segmentMediaEnabled,
   segmentUploadClient,
   setSegmentUploadObserver,
   setSegmentUploadOwner,
@@ -174,15 +170,6 @@ function SegmentUploadResume() {
   return null
 }
 
-function LegacyRecordingMaintenance() {
-  useRecordingWatchdog()
-  useLegacyUploadResume()
-  // One-shot launch sweep for orphaned local backup recordings (gated on the
-  // recording resource lock, same as upload resume).
-  useLocalBackupSweep()
-  return null
-}
-
 export default function MainLayout() {
   const user = useQuery(api.users.current)
   if (user?.registrationPending)
@@ -213,7 +200,7 @@ function MainContent() {
           <Stack.Screen name="family-connections" options={{ headerShown: false }} />
         </Stack>
       </UploadStatusLayout>
-      {segmentMediaEnabled ? <SegmentUploadResume /> : <LegacyRecordingMaintenance />}
+      <SegmentUploadResume />
       <GlobalPaywall />
       <FreeCapabilitiesExplainer />
       <CommunityAcceptanceGate />

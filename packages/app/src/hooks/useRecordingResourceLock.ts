@@ -1,5 +1,4 @@
 import { useValue } from '@legendapp/state/react'
-import { livePublishStore$ } from '../store/livePublish.store'
 import { recordingStore$ } from '../store/recording.store'
 import { isRecordingResourceLocked } from '../utils/recordingResourceLock'
 
@@ -12,9 +11,8 @@ import { isRecordingResourceLocked } from '../utils/recordingResourceLock'
  */
 export function useRecordingResourceLock() {
   const recordingPhase = useValue(recordingStore$.phase)
-  const liveStatus = useValue(livePublishStore$.status)
 
-  return isRecordingResourceLocked({ recordingPhase, liveStatus })
+  return isRecordingResourceLocked({ recordingPhase })
 }
 
 /**

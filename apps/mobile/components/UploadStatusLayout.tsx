@@ -32,7 +32,7 @@ type BannerVisual = Pick<UploadStatusBannerProps, 'tone' | 'icon' | 'progress'>
 function bannerVisual(state: Exclude<UploadStatusState, { kind: 'idle' }>): BannerVisual {
   switch (state.kind) {
     case 'uploading':
-      return { tone: 'progress', icon: 'upload', progress: state.progress ?? 'indeterminate' }
+      return { tone: 'progress', icon: 'upload', progress: 'indeterminate' }
     case 'paused':
       return { tone: 'warning', icon: state.reason === 'offline' ? 'offline' : 'retry' }
     case 'failed':
