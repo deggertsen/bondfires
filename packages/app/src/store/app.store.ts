@@ -21,7 +21,6 @@ export interface AppState {
     notificationsEnabled: boolean
     playbackQuality: 720 | 1080
     playbackSpeed: number // 1.0 to 2.0
-    livePublishEnabled: boolean
     captionsEnabled: boolean
   }
 
@@ -62,7 +61,6 @@ const defaultState: AppState = {
     notificationsEnabled: true,
     playbackQuality: 720,
     playbackSpeed: 1.0,
-    livePublishEnabled: true,
     // On by default: videos default to muted (videoMuted above), and captions
     // make muted watching actually work.
     captionsEnabled: true,
@@ -111,18 +109,6 @@ when(syncState(appStore$).isPersistLoaded, () => {
     return
   }
 
-  // v1 — live publishing became the default recording path. It originally
-  // shipped as an opt-in dev toggle defaulting to `false`, so early installs
-  // (David's included) persisted `livePublishEnabled: false`. That stale value
-  // silently forced everyone back onto the legacy upload flow: queued Mux
-  // direct uploads stuck at 0%, bondfires missing from the feed until the
-  // asset finished processing, and the plain completion screen with no title
-  // or invite. Clear it once; the dev toggle still sticks afterward because the
-  // migration never runs again.
-  if (persistedVersion < 1) {
-    appStore$.preferences.livePublishEnabled.set(true)
-  }
-
   // v2 — captions were introduced as an on-by-default preference. Persisted
   // preference objects from existing installs predate the key, so seed it
   // explicitly after hydration instead of relying on the in-code default.
@@ -161,10 +147,6 @@ export const appActions = {
 
   setPlaybackSpeed: (speed: number) => {
     appStore$.preferences.playbackSpeed.set(speed)
-  },
-
-  setLivePublishEnabled: (enabled: boolean) => {
-    appStore$.preferences.livePublishEnabled.set(enabled)
   },
 
   setCaptionsEnabled: (enabled: boolean) => {

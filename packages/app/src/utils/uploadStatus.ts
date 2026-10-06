@@ -42,13 +42,6 @@ export type UploadStatusState =
       reason: 'offline' | 'retrying'
     }
   | {
-      kind: 'failed'
-      count: number
-      subject: UploadSubject
-      /** When the most recent job gave up; lets a new failure outrank a hide. */
-      failedAt: number
-    }
-  | {
       kind: 'completed'
       subject: UploadSubject
       bondfireId?: string
@@ -69,7 +62,7 @@ function sharedSubject(jobs: SegmentJobStatus[]): UploadSubject {
   return jobs.length === 1 ? (jobs[0].isResponse ? 'response' : 'bondfire') : 'recording'
 }
 
-/** Priority: failed > paused > uploading > completed (held ~5s) > idle. */
+/** Priority: paused > uploading > completed (held ~5s) > idle. */
 export function deriveUploadStatus(input: UploadStatusInput): UploadStatusState {
   const jobs = input.segmentJobs
   const uploading = jobs.filter((job) => !job.paused)
@@ -104,16 +97,6 @@ export function deriveUploadStatus(input: UploadStatusInput): UploadStatusState 
   }
 
   return { kind: 'idle' }
-}
-
-/**
- * Whether a banner the user swiped away should stay hidden. A hide lasts for
- * the app session and never stops the upload. The one exception is a failure
- * that happens after the hide: that upload can't finish without the user.
- */
-export function isUploadStatusHidden(state: UploadStatusState, hiddenAt: number | null): boolean {
-  if (hiddenAt === null) return false
-  return !(state.kind === 'failed' && state.failedAt > hiddenAt)
 }
 
 export interface UploadStatusCopy {
@@ -162,15 +145,6 @@ export function describeUploadStatus(
         title: 'Upload paused — retrying',
         message: 'Saved on this phone · retrying automatically',
         actionLabel: 'Retry now',
-      }
-    case 'failed':
-      return {
-        title: "Upload didn't finish",
-        message:
-          state.count > 1
-            ? 'Your videos are still saved on this phone.'
-            : 'Your video is still saved on this phone.',
-        actionLabel: 'Try again',
       }
     case 'completed':
       return {

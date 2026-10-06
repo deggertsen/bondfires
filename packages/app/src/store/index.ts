@@ -1,7 +1,6 @@
 export * from './app.store'
 export * from './freeUpgrade.store'
 export * from './notepad.store'
-export * from './recording.store'
 export * from './subscription.store'
 export * from './toast.store'
 export * from './ui.store'

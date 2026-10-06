@@ -1,12 +1,10 @@
 import {
   describeUploadStatus,
-  isUploadStatusHidden,
   retryPendingUploads,
   type UploadStatusState,
   uploadStatus$,
   uploadStatusActions,
   uploadStatusStore$,
-  useRecordingResourceLock,
 } from '@bondfires/app'
 import { UploadStatusBanner, type UploadStatusBannerProps } from '@bondfires/ui'
 import { useObserveEffect, useValue } from '@legendapp/state/react'
@@ -35,8 +33,6 @@ function bannerVisual(state: Exclude<UploadStatusState, { kind: 'idle' }>): Bann
       return { tone: 'progress', icon: 'upload', progress: 'indeterminate' }
     case 'paused':
       return { tone: 'warning', icon: state.reason === 'offline' ? 'offline' : 'retry' }
-    case 'failed':
-      return { tone: 'error', icon: 'failed' }
     case 'completed':
       return { tone: 'success', icon: 'done' }
   }
@@ -56,15 +52,10 @@ export function UploadStatusLayout({ children }: { children: ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
   const insets = useSafeAreaInsets()
-  const recordingLocked = useRecordingResourceLock()
   const status = useValue(uploadStatus$)
   const hiddenAt = useValue(uploadStatusStore$.hiddenAt)
 
-  const visible =
-    status.kind !== 'idle' &&
-    !isUploadStatusHidden(status, hiddenAt) &&
-    !recordingLocked &&
-    !isCreateRoute(pathname)
+  const visible = status.kind !== 'idle' && hiddenAt === null && !isCreateRoute(pathname)
 
   // Let a held "is live" confirmation expire back to idle.
   useObserveEffect((e) => {

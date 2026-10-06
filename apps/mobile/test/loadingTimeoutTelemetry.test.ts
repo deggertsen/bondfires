@@ -12,10 +12,6 @@ const telemetry = vi.hoisted(() => ({
 }))
 
 vi.mock('../../../packages/app/src/services/telemetry', () => ({ telemetry }))
-vi.mock('../../../packages/app/src/store', () => ({
-  livePublishStore$: { status: { peek: () => 'idle' } },
-  recordingStore$: { phase: { peek: () => 'idle' } },
-}))
 
 type LoadingTimeoutResult = ReturnType<typeof useLoadingTimeoutTelemetry>
 

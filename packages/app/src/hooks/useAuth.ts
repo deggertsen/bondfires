@@ -30,6 +30,5 @@ export function usePreferences() {
     setPlaybackQuality: appActions.setPlaybackQuality,
     setAutoplayVideos: appActions.setAutoplayVideos,
     setNotificationsEnabled: appActions.setNotificationsEnabled,
-    setLivePublishEnabled: appActions.setLivePublishEnabled,
   }
 }

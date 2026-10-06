@@ -1,9 +1,4 @@
-import {
-  subscriptionActions,
-  telemetry,
-  useAppThemeColors,
-  useCanRunRecordingBackgroundWork,
-} from '@bondfires/app'
+import { subscriptionActions, telemetry, useAppThemeColors } from '@bondfires/app'
 import { type BondfireRowProps, Button, closeOpenSwipeableRow, Spinner, Text } from '@bondfires/ui'
 import { useIsFocused } from '@react-navigation/native'
 import { ArrowLeft, Flame, Lock, Plus } from '@tamagui/lucide-icons'
@@ -41,7 +36,7 @@ export default function PersonalCampScreen() {
   const router = useRouter()
   const navigation = useNavigation()
   const isFocused = useIsFocused()
-  const shouldRunBackgroundWork = useCanRunRecordingBackgroundWork(isFocused)
+  const shouldRunBackgroundWork = isFocused
   const { newFire, createdAfter } = useLocalSearchParams<{
     newFire?: string
     createdAfter?: string

@@ -16,10 +16,32 @@ import { CampPickerScreen } from '../../components/create/CampPickerScreen'
 import { PreRecordingInviteScreen } from '../../components/create/PreRecordingInviteScreen'
 import { SegmentRecordScreen } from '../../components/create/SegmentRecordScreen'
 import type { TradeTag } from '../../components/create/shared'
+import { segmentMediaEnabled } from '../../lib/media/segmentUploads'
 import { goBackOrReplace } from '../../lib/navigation'
 import { routes } from '../../lib/routes'
 
 export default function CreateScreen() {
+  return segmentMediaEnabled ? <EnabledCreateScreen /> : <RecordingUnavailableScreen />
+}
+
+function RecordingUnavailableScreen() {
+  const { colors, statusBarStyle } = useAppThemeColors()
+  const router = useRouter()
+  return (
+    <YStack flex={1} backgroundColor="$background" justifyContent="center" padding="$4" gap="$3">
+      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+      <Text fontSize={20} fontWeight="600">
+        Recording unavailable
+      </Text>
+      <Text color="$placeholderColor">Recording is not available in this version of the app.</Text>
+      <Button onPress={() => router.replace(routes.feed)}>Back to feed</Button>
+    </YStack>
+  )
+}
+
+// Keep permissions, draft creation and capture behind the same availability
+// gate as the uploader so disabled builds cannot accumulate unsendable videos.
+function EnabledCreateScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
   const insets = useSafeAreaInsets()
   const router = useRouter()

@@ -13,8 +13,6 @@ import {
   subscriptionStore$,
   telemetry,
   useAppThemeColors,
-  useCanLoadTabData,
-  useCanRunRecordingBackgroundWork,
   useLoadingTimeoutTelemetry,
   useSubscription,
 } from '@bondfires/app'
@@ -500,8 +498,8 @@ export default function HomeScreen() {
   const router = useRouter()
   const insets = useSafeAreaInsets()
   const isFocused = useIsFocused()
-  const canLoadTabData = useCanLoadTabData(isFocused)
-  const shouldRunBackgroundWork = useCanRunRecordingBackgroundWork(isFocused)
+  const canLoadTabData = isFocused
+  const shouldRunBackgroundWork = isFocused
   const { canCreate } = useSubscription()
   const subscriptionResolved = useValue(subscriptionStore$.subscriptionResolved)
   const summaryDismissed = useValue(freeSummaryDismissed$.dismissed)

@@ -8,7 +8,6 @@ import {
   setLastLocation,
   telemetry,
   useAppThemeColors,
-  useCanLoadTabData,
 } from '@bondfires/app'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused, useNavigation } from '@react-navigation/native'
@@ -89,7 +88,7 @@ export default function BondfireDetailScreen() {
   const navigation = useNavigation()
   const flatListRef = useRef<FlatList<BondfireVideoItem>>(null)
   const isFocused = useIsFocused()
-  const canLoadScreenData = useCanLoadTabData(isFocused)
+  const canLoadScreenData = isFocused
 
   const screenState$ = useObservable({
     currentVideoIndex: 0,

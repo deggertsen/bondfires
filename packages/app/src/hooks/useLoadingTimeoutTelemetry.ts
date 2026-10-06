@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { telemetry } from '../services/telemetry'
-import { recordingStore$ } from '../store'
 
 const DEFAULT_SLOW_LOAD_THRESHOLD_MS = 5_000
 const DEFAULT_LOADING_TIMEOUT_MS = 15_000
@@ -59,7 +58,6 @@ export function useLoadingTimeoutTelemetry({
       elapsedMs,
       ...(contextRef.current ?? {}),
       ...(getContextRef.current?.() ?? {}),
-      recordingPhase: recordingStore$.phase.peek(),
     }),
     [],
   )

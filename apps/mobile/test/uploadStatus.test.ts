@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   deriveUploadStatus,
   describeUploadStatus,
-  isUploadStatusHidden,
   type SegmentJobStatus,
   UPLOAD_COMPLETION_HOLD_MS,
   type UploadStatusInput,
@@ -107,23 +106,5 @@ describe('deriveUploadStatus', () => {
         }),
       ),
     ).toMatchObject({ kind: 'uploading' })
-  })
-})
-
-describe('isUploadStatusHidden', () => {
-  const uploading = deriveUploadStatus(input({ segmentJobs: [segment()] }))
-
-  it('shows everything until the user swipes it away', () => {
-    expect(isUploadStatusHidden(uploading, null)).toBe(false)
-  })
-
-  it('keeps in-flight, paused and completed states hidden for the session', () => {
-    expect(isUploadStatusHidden(uploading, now - 60_000)).toBe(true)
-    const offline = deriveUploadStatus(input({ segmentJobs: [segment()], isOnline: false }))
-    expect(isUploadStatusHidden(offline, now - 60_000)).toBe(true)
-    const completed = deriveUploadStatus(
-      input({ lastCompletion: { subject: 'response', at: now - 100 } }),
-    )
-    expect(isUploadStatusHidden(completed, now - 60_000)).toBe(true)
   })
 })
