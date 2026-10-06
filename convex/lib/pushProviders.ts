@@ -479,9 +479,9 @@ function classifyFcmError(error: FcmErrorBody | undefined): PushTokenOutcome {
   ) {
     return 'invalid'
   }
-  // A bare INVALID_ARGUMENT (even in FcmError) is insufficient for deletion.
-  // Persist a strike and quarantine after repeated failures instead.
-  return 'token_failure'
+  // INVALID_ARGUMENT also covers payload errors. Repeating an ambiguous response
+  // does not establish token invalidity, so it must not quarantine a registration.
+  return 'other_failure'
 }
 
 export async function sendFcmPushNotification(

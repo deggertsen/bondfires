@@ -10,14 +10,14 @@ const modules = import.meta.glob('./**/*.ts')
 
 afterEach(() => vi.restoreAllMocks())
 
-async function fixture() {
+async function fixture(tokenType: 'apns' | 'fcm' = 'fcm') {
   const t = convexTest(schema, modules)
   const userId = await t.run((ctx) => ctx.db.insert('users', { gender: 'other' }))
   const client = t.withIdentity({ subject: userId })
   const tokenId = await client.mutation(api.notifications.registerDevice, {
-    token: 'opaque-fcm-token',
-    platform: 'android',
-    tokenType: 'fcm',
+    token: tokenType === 'apns' ? 'a1'.repeat(32) : 'opaque-fcm-token',
+    platform: tokenType === 'apns' ? 'ios' : 'android',
+    tokenType,
   })
   if (!tokenId) throw new Error('Registration failed')
   const registration = await t.run((ctx) => ctx.db.get(tokenId))
@@ -120,6 +120,27 @@ describe('durable push token health', () => {
     })
     expect((await t.run((ctx) => ctx.db.get(tokenId)))?.quarantinedAt).toBeUndefined()
   })
+
+  it.each(['success', 'other_failure', 'token_failure'] as const)(
+    'does not extend a failure streak across a pending %s',
+    async (outcome) => {
+      const { t, userId, tokenId, begin, record } = await fixture()
+      await record('token_failure')
+      await record('token_failure')
+      const delayed = await begin()
+      const newer = await begin()
+      expect((await newer('token_failure')).quarantinedCount).toBe(0)
+      expect(await t.run((ctx) => ctx.db.get(tokenId))).toMatchObject({
+        consecutiveTokenFailures: 1,
+        lastPushResultSequence: 4,
+      })
+      // The skipped result is stale now, regardless of its eventual outcome.
+      await delayed(outcome)
+      expect(await t.query(internal.notifications.getTokensForUser, { userId })).toHaveLength(1)
+      expect((await record('token_failure')).quarantinedCount).toBe(0)
+      expect((await record('token_failure')).quarantinedCount).toBe(1)
+    },
+  )
 
   it.each(['success', 'other_failure'] as const)(
     'an in-flight %s cannot clear quarantine',
@@ -225,12 +246,18 @@ describe('sendToUser cleanup', () => {
   })
 
   it('persists ambiguous provider results and stops sending once quarantined', async () => {
-    const { t, userId, registration } = await fixture()
+    const { t, userId, registration } = await fixture('apns')
     vi.spyOn(providers, 'getPushProviderConfig').mockReturnValue({
-      apns: null,
-      fcm: { projectId: 'test', clientEmail: 'test@example.com', privateKey: 'unused' },
+      apns: {
+        keyP8: 'unused',
+        keyId: 'test',
+        teamId: 'test',
+        bundleId: 'org.bondfires',
+        production: true,
+      },
+      fcm: null,
     })
-    const send = vi.spyOn(providers, 'sendFcmPushNotification').mockResolvedValue({
+    const send = vi.spyOn(providers, 'sendApnsPushNotification').mockResolvedValue({
       successCount: 0,
       failureCount: 1,
       invalidTokens: [],

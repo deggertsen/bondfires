@@ -226,8 +226,11 @@ export const recordPushResults = internalMutation({
         deletedCount++
         continue
       }
-      const failures =
-        result.outcome === 'token_failure' ? (token.consecutiveTokenFailures ?? 0) + 1 : 0
+      // A skipped attempt may have succeeded (or never returned). Only extend
+      // a streak across adjacent results; late responses remain stale above.
+      const followsPrevious = result.attemptSequence === (token.lastPushResultSequence ?? 0) + 1
+      const priorFailures = followsPrevious ? (token.consecutiveTokenFailures ?? 0) : 0
+      const failures = result.outcome === 'token_failure' ? priorFailures + 1 : 0
       const quarantine = failures >= 3
       if (quarantine) quarantinedCount++
       await ctx.db.patch(token._id, {

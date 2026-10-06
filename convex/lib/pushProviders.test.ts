@@ -241,8 +241,14 @@ describe('FCM INVALID_ARGUMENT classification', () => {
       details: [fcmDetail],
       outcome: 'other_failure',
     },
-    { name: 'bare FCM code', message: '', details: [fcmDetail], outcome: 'token_failure' },
-    { name: 'bare status', message: '', details: [], outcome: 'token_failure' },
+    { name: 'bare FCM code', message: '', details: [fcmDetail], outcome: 'other_failure' },
+    { name: 'bare status', message: '', details: [], outcome: 'other_failure' },
+    {
+      name: 'unrecognized request error',
+      message: 'Request contains an invalid argument.',
+      details: [fcmDetail],
+      outcome: 'other_failure',
+    },
   ])('$name', async ({ message, details, outcome }) => {
     const privateKey = await generatePrivateKeyPem('RS256')
     vi.stubGlobal(
