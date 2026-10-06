@@ -1,7 +1,10 @@
 import {
   describeUploadStatus,
   isUploadStatusHidden,
+  nextBannerPresence,
   retryPendingUploads,
+  UPLOAD_BANNER_HIDDEN,
+  type UploadBannerPresence,
   type UploadStatusState,
   uploadStatus$,
   uploadStatusActions,
@@ -68,6 +71,10 @@ function bannerFromState(state: UploadStatusState) {
  * flow — pushing content down rather than covering headers — and never shows
  * over the camera, the completion screen, or an active recording. Swiping it
  * right hides it for the rest of the app session; uploads keep running.
+ *
+ * On hide the strip animates its own height away. Screens below are held at
+ * their compact top padding for the whole time the strip occupies space
+ * (`presence.mounted`), so they move up smoothly with it instead of snapping.
  */
 export function UploadStatusLayout({ children }: { children: ReactNode }) {
   const router = useRouter()
@@ -77,11 +84,12 @@ export function UploadStatusLayout({ children }: { children: ReactNode }) {
   const status = useValue(uploadStatus$)
   const hiddenAt = useValue(uploadStatusStore$.hiddenAt)
 
+  // Camera/recording and the create route hide the strip instantly — it must
+  // never animate over the camera or the completion screen.
+  const immediateHide = recordingLocked || isCreateRoute(pathname)
+
   const visible =
-    status.kind !== 'idle' &&
-    !isUploadStatusHidden(status, hiddenAt) &&
-    !recordingLocked &&
-    !isCreateRoute(pathname)
+    status.kind !== 'idle' && !isUploadStatusHidden(status, hiddenAt) && !immediateHide
 
   // Let a held "is live" confirmation expire back to idle.
   useObserveEffect((e) => {
@@ -91,46 +99,50 @@ export function UploadStatusLayout({ children }: { children: ReactNode }) {
     e.onCleanup = () => clearTimeout(timer)
   })
 
+  // The strip stays mounted while it animates away. `presence.mounted` is "is
+  // the strip occupying space right now" — the signal the screens below follow.
+  const [presence, setPresence] = useState<UploadBannerPresence>(() =>
+    nextBannerPresence(UPLOAD_BANNER_HIDDEN, { visible, immediateHide }),
+  )
+  const exitingRef = useRef(presence.exiting)
+  exitingRef.current = presence.exiting
+
+  useEffect(() => {
+    setPresence((prev) => nextBannerPresence(prev, { visible, immediateHide }))
+  }, [visible, immediateHide])
+
+  // Safety net: if the exit animation never reports completion, still unmount.
+  useEffect(() => {
+    if (!presence.mounted || !presence.exiting) return
+    const timer = setTimeout(
+      () => setPresence({ mounted: false, exiting: false }),
+      BANNER_EXIT_FALLBACK_MS,
+    )
+    return () => clearTimeout(timer)
+  }, [presence.mounted, presence.exiting])
+
   // Remember the last non-idle content so the strip can keep rendering while it
   // collapses, after the underlying status has already gone idle.
   const banner = useMemo(() => bannerFromState(status), [status])
   const lastBanner = useRef(banner)
-  if (banner) lastBanner.current = banner
-
-  // The strip stays mounted while it animates away; `visible` is the target
-  // state, `mounted`/`exiting` drive the collapse and the final unmount.
-  const [mounted, setMounted] = useState(visible)
-  const [exiting, setExiting] = useState(false)
-  useEffect(() => {
-    if (visible) {
-      setMounted(true)
-      setExiting(false)
-      return
-    }
-    if (!mounted) return
-    // Camera/recording and the create route hide it immediately; only the
-    // status-driven hides animate.
-    if (recordingLocked || isCreateRoute(pathname)) {
-      setMounted(false)
-      setExiting(false)
-      return
-    }
-    setExiting(true)
-    const timer = setTimeout(() => {
-      setMounted(false)
-      setExiting(false)
-    }, BANNER_EXIT_FALLBACK_MS)
-    return () => clearTimeout(timer)
-  }, [visible, mounted, recordingLocked, pathname])
+  lastBanner.current = banner ?? lastBanner.current
 
   const handleExitComplete = useCallback(() => {
-    setMounted(false)
-    setExiting(false)
+    // A re-show clears `exiting` first; ignore a late callback then so it can't
+    // force the strip to unmount and flash back in.
+    if (!exitingRef.current) return
+    setPresence({ mounted: false, exiting: false })
   }, [])
 
+  // `bannerShown` — not `visible` — is what the rest of the app keys off, so the
+  // compact-padding hand-off happens when the strip actually leaves the tree,
+  // at the end of the animation, not when the upload status goes idle.
+  const currentBanner = lastBanner.current
+  const bannerShown = presence.mounted && currentBanner !== null
+
   useEffect(() => {
-    if (!visible) uploadStatusActions.setBannerHeight(0)
-  }, [visible])
+    if (!bannerShown) uploadStatusActions.setBannerHeight(0)
+  }, [bannerShown])
   useEffect(() => () => uploadStatusActions.setBannerHeight(0), [])
 
   const handleAction = useCallback(() => {
@@ -143,16 +155,19 @@ export function UploadStatusLayout({ children }: { children: ReactNode }) {
     retryPendingUploads()
   }, [router])
 
-  const childInsets = useMemo(() => (visible ? { ...insets, top: 0 } : insets), [insets, visible])
+  const childInsets = useMemo(
+    () => (bannerShown ? { ...insets, top: 0 } : insets),
+    [insets, bannerShown],
+  )
 
   return (
-    <UploadBannerVisibleContext.Provider value={visible}>
+    <UploadBannerVisibleContext.Provider value={bannerShown}>
       <YStack flex={1}>
-        {mounted && lastBanner.current ? (
+        {bannerShown && currentBanner ? (
           <UploadStatusBanner
-            {...lastBanner.current.visual}
-            {...lastBanner.current.copy}
-            dismissing={exiting}
+            {...currentBanner.visual}
+            {...currentBanner.copy}
+            dismissing={presence.exiting}
             onExitComplete={handleExitComplete}
             onAction={handleAction}
             onDismiss={uploadStatusActions.hideForSession}

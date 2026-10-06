@@ -183,9 +183,9 @@ export function UploadStatusBanner({
   const collapseStyle = useAnimatedStyle(() => {
     const p = Math.min(1, Math.max(0, collapse.value))
     if (totalHeight.value === 0) return { opacity: 1 - p }
-    // Collapse toward the status-bar inset, not zero: the screens below give up
-    // their compact top padding at the same moment the strip unmounts, so the
-    // hand-off to the normal header offset stays continuous.
+    // Collapse toward the status-bar inset, not zero: the screens below hold
+    // their compact top padding for the whole exit and only reclaim it once the
+    // strip unmounts, so the hand-off to the normal header offset is continuous.
     return {
       height: totalHeight.value * (1 - p) + topInset * p,
       opacity: 1 - p,
@@ -194,9 +194,11 @@ export function UploadStatusBanner({
 
   const dismiss = () => onDismiss?.()
   // Right only, and only once the drag is clearly horizontal, so taps and
-  // vertical scrolls underneath keep working.
+  // vertical scrolls underneath keep working. Disabled while the status-driven
+  // exit plays: the content is already stale, and a tap or swipe then would act
+  // on a strip the store has moved past.
   const swipe = Gesture.Pan()
-    .enabled(Boolean(onDismiss))
+    .enabled(Boolean(onDismiss) && !dismissing)
     .activeOffsetX(12)
     .failOffsetX(-12)
     .failOffsetY([-12, 12])
@@ -215,8 +217,10 @@ export function UploadStatusBanner({
   const swipeStyle = useAnimatedStyle(() => ({
     transform: [
       { translateX: translateX.value },
-      // Drift the strip up as it collapses so the exit reads as motion, not a vanish.
-      { translateY: -(totalHeight.value - topInset) * collapse.value },
+      // Drift the strip up as it collapses so the exit reads as motion, not a
+      // vanish. Clamped at 0 so an exit before the first layout (totalHeight 0)
+      // doesn't drift it down by the inset.
+      { translateY: -Math.max(0, totalHeight.value - topInset) * collapse.value },
     ],
     opacity: width.value ? interpolate(translateX.value, [0, width.value], [1, 0.2], 'clamp') : 1,
   }))
@@ -284,7 +288,12 @@ export function UploadStatusBanner({
   )
 
   return (
-    <Reanimated.View style={[collapseStyle, { overflow: 'hidden' }]}>
+    <Reanimated.View
+      style={[collapseStyle, { overflow: 'hidden' }]}
+      pointerEvents={dismissing ? 'none' : 'auto'}
+      accessibilityElementsHidden={dismissing}
+      importantForAccessibility={dismissing ? 'no-hide-descendants' : 'auto'}
+    >
       <GestureDetector gesture={swipe}>
         <Reanimated.View style={swipeStyle}>
           <YStack
