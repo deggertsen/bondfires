@@ -27,8 +27,16 @@ export async function normalizeTiming(
     const previous = await env.VIDEO.get(
       `${recordingId}/segment-${String(index - 1).padStart(6, '0')}.m4s`,
     )
-    if (!previous || previous.size > MAX_SEGMENT_BYTES) throw error
+    if (!previous || previous.size > MAX_SEGMENT_BYTES)
+      throw new Error('Timing repair predecessor unavailable')
     const previousBytes = new Uint8Array(await previous.arrayBuffer())
+    // Failure to obtain valid repair evidence does not prove the current
+    // fragment unrepairable. Keep it within transcription's retry budget.
+    try {
+      inspectSegment(previousBytes, tracks)
+    } catch {
+      throw new Error('Invalid timing repair predecessor')
+    }
     try {
       return repairSingleSampleDuration(bytes, tracks, previousBytes)
     } catch {

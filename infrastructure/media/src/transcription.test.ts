@@ -108,7 +108,7 @@ function segment(ticks: number, audio = true) {
     ]),
   )
 }
-async function transcribe(parts: Uint8Array[], startIndex = 0, aiError?: Error) {
+async function transcribe(parts: (Uint8Array | undefined)[], startIndex = 0, aiError?: Error) {
   const run = vi.fn<Env['AI']['run']>()
   if (aiError) run.mockRejectedValue(aiError)
   else run.mockResolvedValue({ text: '', segments: [] })
@@ -167,8 +167,22 @@ describe('transcription media diagnosis', () => {
     )
     expect(raw).toEqual(segment(0))
   })
-  it('keeps an unrepairable zero-duration closing fragment terminal', async () => {
-    const { response, run } = await transcribe([init(), segment(0), segment(0)], 1)
+  it.each([
+    { kind: 'missing', previous: undefined },
+    { kind: 'malformed', previous: new Uint8Array(8) },
+    { kind: 'zero-duration', previous: segment(0) },
+  ])('keeps a $kind timing predecessor retryable', async ({ previous }) => {
+    const { response, run } = await transcribe([init(), previous, segment(0)], 1)
+    expect(response.status).toBe(502)
+    expect(await readTranscriptionFailureResponse(response)).toMatchObject({
+      reason: 'transcription_error',
+      probe: { status: 'invalid_mp4' },
+    })
+    expect(run).not.toHaveBeenCalled()
+  })
+  it('keeps an unrepairable zero-duration fragment terminal with a valid predecessor', async () => {
+    // The fragment needs audio timing, which this valid video-only predecessor lacks.
+    const { response, run } = await transcribe([init(), segment(1024, false), segment(0)], 1)
     expect(await readTranscriptionFailureResponse(response)).toMatchObject({
       reason: 'zero_duration',
       probe: { status: 'zero_duration', duration: 0 },
