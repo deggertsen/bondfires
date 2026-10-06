@@ -1,7 +1,11 @@
 import {
+  completeBannerExit,
   describeUploadStatus,
   isUploadStatusHidden,
+  nextBannerPresence,
   retryPendingUploads,
+  UPLOAD_BANNER_HIDDEN,
+  type UploadBannerPresence,
   type UploadStatusState,
   uploadStatus$,
   uploadStatusActions,
@@ -11,12 +15,27 @@ import {
 import { UploadStatusBanner, type UploadStatusBannerProps } from '@bondfires/ui'
 import { useObserveEffect, useValue } from '@legendapp/state/react'
 import { usePathname, useRouter } from 'expo-router'
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo } from 'react'
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { SafeAreaInsetsContext, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { YStack } from 'tamagui'
 import { routes } from '../lib/routes'
 
 const UploadBannerVisibleContext = createContext(false)
+
+/**
+ * Safety net: unmount the strip this long after its exit starts even if the
+ * animation never reports completion (the collapse itself takes 260ms).
+ */
+const BANNER_EXIT_FALLBACK_MS = 400
 
 /**
  * For screens with a fixed top padding that assumes they start under the status
@@ -46,11 +65,46 @@ function isCreateRoute(pathname: string) {
   return pathname === '/create' || pathname.startsWith('/create/')
 }
 
+function bannerFromState(state: UploadStatusState) {
+  if (state.kind === 'idle') return null
+  return { visual: bannerVisual(state), copy: describeUploadStatus(state) }
+}
+
+/**
+ * Keeps the strip mounted while it animates away. `mounted` is "is the strip
+ * occupying space right now" — the signal the screens below follow — and
+ * `exiting` drives the strip's collapse. `finishExit` is what the strip calls
+ * when its animation completes; it is safe to call late (after a re-show).
+ */
+function useUploadBannerPresence(visible: boolean, immediateHide: boolean) {
+  const [presence, setPresence] = useState<UploadBannerPresence>(() =>
+    nextBannerPresence(UPLOAD_BANNER_HIDDEN, { visible, immediateHide }),
+  )
+
+  useEffect(() => {
+    setPresence((prev) => nextBannerPresence(prev, { visible, immediateHide }))
+  }, [visible, immediateHide])
+
+  const finishExit = useCallback(() => setPresence(completeBannerExit), [])
+
+  useEffect(() => {
+    if (!presence.exiting) return
+    const timer = setTimeout(finishExit, BANNER_EXIT_FALLBACK_MS)
+    return () => clearTimeout(timer)
+  }, [presence.exiting, finishExit])
+
+  return { ...presence, finishExit }
+}
+
 /**
  * Mounts the app-wide upload status strip above every (main) screen. It sits in
  * flow — pushing content down rather than covering headers — and never shows
  * over the camera, the completion screen, or an active recording. Swiping it
  * right hides it for the rest of the app session; uploads keep running.
+ *
+ * On hide the strip animates its own height away. Screens below are held at
+ * their compact top padding for the whole time the strip occupies space
+ * so they move up smoothly with it instead of snapping.
  */
 export function UploadStatusLayout({ children }: { children: ReactNode }) {
   const router = useRouter()
@@ -60,11 +114,12 @@ export function UploadStatusLayout({ children }: { children: ReactNode }) {
   const status = useValue(uploadStatus$)
   const hiddenAt = useValue(uploadStatusStore$.hiddenAt)
 
+  // Camera/recording and the create route hide the strip instantly — it must
+  // never animate over the camera or the completion screen.
+  const immediateHide = recordingLocked || isCreateRoute(pathname)
+
   const visible =
-    status.kind !== 'idle' &&
-    !isUploadStatusHidden(status, hiddenAt) &&
-    !recordingLocked &&
-    !isCreateRoute(pathname)
+    status.kind !== 'idle' && !isUploadStatusHidden(status, hiddenAt) && !immediateHide
 
   // Let a held "is live" confirmation expire back to idle.
   useObserveEffect((e) => {
@@ -74,9 +129,25 @@ export function UploadStatusLayout({ children }: { children: ReactNode }) {
     e.onCleanup = () => clearTimeout(timer)
   })
 
+  const { mounted, exiting, finishExit } = useUploadBannerPresence(visible, immediateHide)
+
+  // Remember the last non-idle content so the strip can keep rendering while it
+  // collapses, after the underlying status has already gone idle.
+  const banner = useMemo(() => bannerFromState(status), [status])
+  const lastBanner = useRef(banner)
   useEffect(() => {
-    if (!visible) uploadStatusActions.setBannerHeight(0)
-  }, [visible])
+    if (banner) lastBanner.current = banner
+  }, [banner])
+  const currentBanner = banner ?? lastBanner.current
+
+  // `bannerShown` — not `visible` — is what the rest of the app keys off, so the
+  // compact-padding hand-off happens when the strip actually leaves the tree,
+  // at the end of the animation, not when the upload status goes idle.
+  const bannerShown = mounted && currentBanner !== null
+
+  useEffect(() => {
+    if (!bannerShown) uploadStatusActions.setBannerHeight(0)
+  }, [bannerShown])
   useEffect(() => () => uploadStatusActions.setBannerHeight(0), [])
 
   const handleAction = useCallback(() => {
@@ -89,15 +160,20 @@ export function UploadStatusLayout({ children }: { children: ReactNode }) {
     retryPendingUploads()
   }, [router])
 
-  const childInsets = useMemo(() => (visible ? { ...insets, top: 0 } : insets), [insets, visible])
+  const childInsets = useMemo(
+    () => (bannerShown ? { ...insets, top: 0 } : insets),
+    [insets, bannerShown],
+  )
 
   return (
-    <UploadBannerVisibleContext.Provider value={visible}>
+    <UploadBannerVisibleContext.Provider value={bannerShown}>
       <YStack flex={1}>
-        {visible ? (
+        {bannerShown && currentBanner ? (
           <UploadStatusBanner
-            {...bannerVisual(status)}
-            {...describeUploadStatus(status)}
+            {...currentBanner.visual}
+            {...currentBanner.copy}
+            exiting={exiting}
+            onExitComplete={finishExit}
             onAction={handleAction}
             onDismiss={uploadStatusActions.hideForSession}
             topInset={insets.top}
