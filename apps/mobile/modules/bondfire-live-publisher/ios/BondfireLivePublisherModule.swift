@@ -1120,6 +1120,10 @@ final class LivePublisher {
     // statsSupported=1 marks bitrateBps as a real measurement.
     var stats = livePublisherZeroStats
     stats["audioRoute"] = audioRouteName
+    if let recorder = segmentRecorder {
+      for (key, value) in recorder.audioStats() { stats[key] = value }
+      stats["micMuted"] = (await mixer.audioMixerSettings).isMuted
+    }
     guard let session else {
       return stats
     }

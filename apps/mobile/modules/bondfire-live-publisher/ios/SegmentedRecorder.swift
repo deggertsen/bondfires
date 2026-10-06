@@ -59,6 +59,8 @@ final class SegmentedRecorder: NSObject, MediaMixerOutput, AVAssetWriterDelegate
     writer.add(audio)
   }
 
+  func audioStats() -> [String: Double] { leveledAudio.audioStats() }
+
   func selectTrack(_ id: UInt8?, mediaType: CMFormatDescription.MediaType) async {}
 
   func mixer(_ mixer: MediaMixer, didOutput sampleBuffer: CMSampleBuffer) {

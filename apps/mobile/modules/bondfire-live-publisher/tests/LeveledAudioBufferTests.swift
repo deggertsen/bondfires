@@ -17,7 +17,12 @@ struct LeveledAudioBufferTests {
           }
         }
         let pipeline = LeveledAudioBuffer()
+        precondition(pipeline.audioStats().isEmpty, "Unmeasurable before capture")
         let output = try pipeline.copyAndProcess(source)
+        let stats = pipeline.audioStats()
+        precondition(abs(stats["micLevelDb"]! - 20 * log10(1000.0 / 32768)) < 0.01, "Raw input exposure")
+        precondition(stats["micSampleCount"] == 960 && stats["appliedGainDb"]! > 0)
+        precondition(stats["micLowThresholdDb"] == SpeechLeveler.lowThresholdDb)
         precondition(output.frameLength == 960 && source.frameLength == 960)
         precondition(output.format.channelCount == 1 && output.format.commonFormat == .pcmFormatInt16)
         precondition(output.format.sampleRate == source.format.sampleRate)

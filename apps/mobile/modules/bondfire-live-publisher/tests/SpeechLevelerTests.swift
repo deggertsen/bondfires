@@ -14,12 +14,17 @@ struct SpeechLevelerTests {
   static func main() throws {
     for rate in [44100, 48000] {
       let leveler = SpeechLeveler()
+      precondition(leveler.micLevelDb == nil && leveler.sampleCount == 0, "No fabricated measurements")
+      precondition(abs(SpeechLeveler.lowThresholdDb + 50) < 0.01, "Derived rescue floor margin")
       var quiet = [Int16]()
       for _ in 0..<150 {
         quiet = tone(-48, rate: rate)
         quiet.withUnsafeMutableBufferPointer { leveler.process($0, sampleRate: rate) }
       }
       precondition(abs(rms(quiet) + 18) < 1, "Quiet speech target")
+      precondition(abs(leveler.micLevelDb! + 48) < 0.1, "Measured before gain")
+      precondition(abs(leveler.appliedGainDb - 30) < 0.1, "Applied gain exposed")
+      precondition(leveler.sampleCount == rate * 3, "PCM freshness counter")
       for _ in 0..<30 {
         var loud = tone(-5, rate: rate)
         loud.withUnsafeMutableBufferPointer { leveler.process($0, sampleRate: rate) }
@@ -48,6 +53,9 @@ struct SpeechLevelerTests {
       var silence = [Int16](repeating: 0, count: rate)
       silence.withUnsafeMutableBufferPointer { bounded.process($0, sampleRate: rate) }
       precondition(silence.allSatisfy { $0 == 0 }, "Silence")
+      let empty = SpeechLeveler()
+      silence.withUnsafeMutableBufferPointer { empty.process($0, sampleRate: rate) }
+      precondition(empty.micLevelDb == -120 && empty.appliedGainDb == 0, "Finite silence measurement")
       // Buffer/segment boundaries do not reset gain or limiter state.
       var whole = tone(-40, rate: rate, seconds: 1)
       var split = whole

@@ -10,8 +10,12 @@ import io.github.thibaultbee.streampack.core.elements.utils.pool.IReadOnlyRawFra
 
 /** Decorates capture, before mute/encoding; camera swaps never reset gain. */
 internal class NormalizedMicrophoneSourceFactory(private val audioSource: Int) : IAudioSourceInternal.Factory {
+  // Immutable snapshot published from the audio thread, scoped to this capture.
+  @Volatile var audioStats: Map<String, Double> = emptyMap()
+    private set
+
   override suspend fun create(context: Context): IAudioSourceInternal = NormalizedMicrophoneSource(
-    MicrophoneSourceFactory(audioSource).create(context), audioSource
+    MicrophoneSourceFactory(audioSource).create(context), audioSource, { audioStats = it }
   )
 
   override fun isSourceEquals(source: IAudioSourceInternal?) =
@@ -21,6 +25,7 @@ internal class NormalizedMicrophoneSourceFactory(private val audioSource: Int) :
 private class NormalizedMicrophoneSource(
   private val delegate: IAudioSourceInternal,
   val audioSource: Int,
+  private val onStats: (Map<String, Double>) -> Unit,
 ) : IAudioSourceInternal by delegate {
   private var leveler: SpeechLeveler? = null
 
@@ -28,6 +33,7 @@ private class NormalizedMicrophoneSource(
     require(config.byteFormat == AudioFormat.ENCODING_PCM_16BIT && config.channelConfig == AudioFormat.CHANNEL_IN_MONO)
     delegate.configure(config)
     leveler = SpeechLeveler(config.sampleRate)
+    onStats(emptyMap())
   }
 
   override fun fillAudioFrame(frame: RawFrame): RawFrame = normalize(delegate.fillAudioFrame(frame))
@@ -35,7 +41,9 @@ private class NormalizedMicrophoneSource(
 
   private fun normalize(frame: RawFrame): RawFrame {
     try {
-      checkNotNull(leveler).process(frame.rawBuffer)
+      val activeLeveler = checkNotNull(leveler)
+      activeLeveler.process(frame.rawBuffer)
+      onStats(activeLeveler.audioStats())
       return frame
     } catch (error: Throwable) {
       frame.close()
