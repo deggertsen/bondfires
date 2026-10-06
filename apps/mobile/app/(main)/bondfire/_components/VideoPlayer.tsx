@@ -43,11 +43,7 @@ import {
   SCREEN_WIDTH,
   SCRUB_SEEK_THROTTLE_MS,
 } from '../_lib/bondfireDetailHelpers'
-import {
-  decideLiveEdgeStall,
-  LIVE_EDGE_BUFFER_HOLD_MS,
-  resolveEffectivePlaybackRate,
-} from '../_lib/liveEdgePlayback'
+import { createLiveEdgePlayback, LIVE_EDGE_BUFFER_HOLD_MS } from '../_lib/liveEdgePlayback'
 import { createPictureInPicturePlayback } from '../_lib/pictureInPicturePlayback'
 import { usePlaybackQuality } from '../_lib/usePlaybackQuality'
 import { type CaptionCue, fetchCaptionCues, findCaptionText } from '../_lib/videoCaptions'
@@ -328,25 +324,6 @@ export function VideoPlayer({
     [player],
   )
 
-  // The live-edge fallback outranks the stored speed preference; every path
-  // that assigns a rate goes through here so the two can never disagree.
-  const applyPlaybackRate = useCallback(() => {
-    withCurrentPlayer((currentPlayer) => {
-      currentPlayer.playbackRate = resolveEffectivePlaybackRate(
-        isLive,
-        liveEdgeRealtimeRef.current,
-        playbackSpeed,
-      )
-    })
-  }, [isLive, playbackSpeed, withCurrentPlayer])
-
-  // Picking a new speed in settings is an explicit override: drop any live-edge
-  // fallback so the user's choice takes effect again.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: playbackSpeed/videoId are the reset triggers, not read inside
-  useEffect(() => {
-    liveEdgeRealtimeRef.current = false
-  }, [playbackSpeed, videoId])
-
   // Fatal-error recovery: bounded automatic reloads before surfacing the
   // retry overlay. Reset whenever the source changes — a new URL is a new
   // playback attempt with a fresh budget.
@@ -359,12 +336,6 @@ export function VideoPlayer({
   // new source resets the recovery budget.
   const stallRecoverySourceKeyRef = useRef<string | null>(null)
   const stallRecoveryGenerationRef = useRef(0)
-  // Live-edge pacing. Once a live stream falls back to realtime at the upload
-  // edge it stays there for the rest of the session (see liveEdgePlayback) — a
-  // faster speed would just outrun the upload again. The timer holds a
-  // deliberate extra pause when the stream is already at realtime.
-  const liveEdgeRealtimeRef = useRef(false)
-  const liveEdgeHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [playIntentVersion, setPlayIntentVersion] = useState(0)
   const hasRecordedPlaybackStartRef = useRef(false)
 
@@ -378,21 +349,12 @@ export function VideoPlayer({
     stallRecoveryGenerationRef.current += 1
     hasRecordedPlaybackStartRef.current = false
     userPausedRef.current = false
-    liveEdgeRealtimeRef.current = false
-    if (liveEdgeHoldTimerRef.current) {
-      clearTimeout(liveEdgeHoldTimerRef.current)
-      liveEdgeHoldTimerRef.current = null
-    }
     state$.hasError.set(false)
     return () => {
       stallRecoveryGenerationRef.current += 1
       if (errorRetryRef.current.timer) {
         clearTimeout(errorRetryRef.current.timer)
         errorRetryRef.current.timer = null
-      }
-      if (liveEdgeHoldTimerRef.current) {
-        clearTimeout(liveEdgeHoldTimerRef.current)
-        liveEdgeHoldTimerRef.current = null
       }
     }
   }, [currentUrl, state$])
@@ -417,17 +379,79 @@ export function VideoPlayer({
   // helper runs after an async replaceAsync resolves, by which time the user
   // may have swiped away — a stale closure would start audio on a page that
   // should be paused. Backgrounding is allowed: PiP keeps this session alive.
-  const playbackGateRef = useRef({ isActive, isScreenFocused })
-  playbackGateRef.current = { isActive, isScreenFocused }
+  const playbackGateRef = useRef({ isActive, isScreenFocused, shouldSuppressPlayback })
+  playbackGateRef.current = { isActive, isScreenFocused, shouldSuppressPlayback }
   // Deliberate user pause — auto-recovery must never play over it.
   const userPausedRef = useRef(false)
+
+  const liveEdgePlayback = useMemo(() => {
+    const canResume = () => {
+      const gate = playbackGateRef.current
+      return (
+        gate.isActive &&
+        gate.isScreenFocused &&
+        !gate.shouldSuppressPlayback &&
+        !userPausedRef.current &&
+        !isScrubbingRef.current &&
+        !state$.hasError.peek() &&
+        !state$.hasEnded.peek() &&
+        !!withCurrentPlayer(() => true) &&
+        (appStore$.preferences.autoplayVideos.peek() || state$.userInitiatedPlay.peek())
+      )
+    }
+    return createLiveEdgePlayback({
+      isLive,
+      preferredRate: playbackSpeed,
+      canResume,
+      canPace: () =>
+        canResume() && hasRecordedPlaybackStartRef.current && AppState.currentState === 'active',
+      setRate: (rate) => {
+        withCurrentPlayer((currentPlayer) => {
+          currentPlayer.playbackRate = rate
+        })
+      },
+      pause: () => {
+        withCurrentPlayer((currentPlayer) => currentPlayer.pause())
+        state$.isPlaying.set(false)
+      },
+      resume: () => {
+        withCurrentPlayer((currentPlayer) => currentPlayer.play())
+      },
+      onAction: (action) => {
+        telemetry.info(
+          action === 'switch-to-realtime'
+            ? 'video:live_edge_fallback'
+            : 'video:live_edge_buffer_hold',
+          action === 'switch-to-realtime'
+            ? 'Dropped live playback to 1x at the upload edge'
+            : 'Holding live playback to let the stream buffer',
+          { videoId, preferredRate: playbackSpeed, holdMs: LIVE_EDGE_BUFFER_HOLD_MS },
+        )
+      },
+    })
+  }, [isLive, playbackSpeed, state$, videoId, withCurrentPlayer])
+  const liveEdgePlaybackRef = useRef(liveEdgePlayback)
+  liveEdgePlaybackRef.current = liveEdgePlayback
+  const applyPlaybackRate = liveEdgePlayback.applyRate
+
+  useLayoutEffect(() => () => liveEdgePlayback.cancel(), [liveEdgePlayback])
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (appState) => {
+      // Restore playback before JS timers can be suspended, preserving PiP and
+      // background audio. Current pause/ownership gates still take precedence.
+      if (appState !== 'active') liveEdgePlayback.cancel(true)
+    })
+    return () => subscription.remove()
+  }, [liveEdgePlayback])
 
   const pictureInPicturePlayback = useMemo(
     () =>
       createPictureInPicturePlayback({
         getPlayback: () =>
           withCurrentPlayer((currentPlayer) => ({
-            isPlaying: currentPlayer.playing && !userPausedRef.current,
+            isPlaying:
+              (currentPlayer.playing || liveEdgePlayback.isHolding()) && !userPausedRef.current,
             canResume:
               ownsPlaybackSession &&
               !isScrubbingRef.current &&
@@ -438,6 +462,7 @@ export function VideoPlayer({
         pause: (appState) => {
           const pauseStartedAt = Date.now()
           // Block autoplay and async recovery before touching the native player.
+          liveEdgePlayback.cancel()
           userPausedRef.current = true
           withCurrentPlayer((currentPlayer) => currentPlayer.pause())
           state$.isPlaying.set(false)
@@ -468,7 +493,15 @@ export function VideoPlayer({
           })
         },
       }),
-    [autoplayVideos, isLive, ownsPlaybackSession, state$, videoId, withCurrentPlayer],
+    [
+      autoplayVideos,
+      isLive,
+      liveEdgePlayback,
+      ownsPlaybackSession,
+      state$,
+      videoId,
+      withCurrentPlayer,
+    ],
   )
 
   useLayoutEffect(() => {
@@ -479,6 +512,7 @@ export function VideoPlayer({
     ref,
     () => ({
       releaseSourceForRecorder: async () => {
+        liveEdgePlayback.cancel()
         stallRecoveryGenerationRef.current += 1
         if (errorRetryRef.current.timer) {
           clearTimeout(errorRetryRef.current.timer)
@@ -513,7 +547,7 @@ export function VideoPlayer({
         }
       },
     }),
-    [isLive, pictureInPicturePlayback, state$, videoId, withCurrentPlayer],
+    [isLive, liveEdgePlayback, pictureInPicturePlayback, state$, videoId, withCurrentPlayer],
   )
 
   const resumePlaybackAfterRecovery = useCallback(() => {
@@ -531,6 +565,7 @@ export function VideoPlayer({
 
   const retryPlayback = useCallback(() => {
     if (!currentSource) return
+    liveEdgePlayback.cancel()
     pictureInPicturePlayback.cancel()
     setPlayIntentVersion((version) => version + 1)
     telemetry.info('video:playback_retry', 'User retried video after playback failure', {
@@ -562,6 +597,7 @@ export function VideoPlayer({
       })
   }, [
     currentSource,
+    liveEdgePlayback,
     pictureInPicturePlayback,
     state$,
     videoId,
@@ -614,73 +650,6 @@ export function VideoPlayer({
     currentSource,
     currentUrl,
     isLive,
-    shouldSuppressPlayback,
-    state$,
-    videoId,
-    withCurrentPlayer,
-  ])
-
-  // Live-edge pacing. A live stream cannot be reloaded into media the
-  // broadcaster has not uploaded yet, so the recovery is to stop outrunning
-  // the upload head: drop to realtime on the first edge stall, then hold the
-  // buffer for a few extra seconds if it stalls at realtime again. Resuming is
-  // gated through liveEdgeHoldTimerRef so a user pause, a blur, a source change
-  // or the give-up timer all cancel the delayed play.
-  const handleLiveEdgeStall = useCallback(() => {
-    if (!isLive) return
-    if (!(appStore$.preferences.autoplayVideos.peek() || state$.userInitiatedPlay.peek())) return
-    if (decideLiveEdgeStall(true, playbackSpeed) === 'switch-to-realtime') {
-      liveEdgeRealtimeRef.current = true
-      applyPlaybackRate()
-      telemetry.info('video:live_edge_fallback', 'Dropped live playback to 1x at the upload edge', {
-        videoId,
-        fromRate: playbackSpeed,
-      })
-      return
-    }
-
-    const currentPlayer = withCurrentPlayer((player) => player)
-    if (!currentPlayer) return
-    const positionMs = Math.round(currentPlayer.currentTime * 1000)
-    // Cancel any in-flight hold, and pin a generation so only this hold may
-    // resume playback once its delay elapses.
-    if (liveEdgeHoldTimerRef.current) clearTimeout(liveEdgeHoldTimerRef.current)
-    const generation = ++stallRecoveryGenerationRef.current
-    currentPlayer.pause()
-    state$.isPlaying.set(false)
-    telemetry.warn(
-      'video:live_edge_buffer_hold',
-      'Holding live playback to let the stream buffer',
-      {
-        videoId,
-        holdMs: LIVE_EDGE_BUFFER_HOLD_MS,
-        positionMs,
-      },
-    )
-    liveEdgeHoldTimerRef.current = setTimeout(() => {
-      liveEdgeHoldTimerRef.current = null
-      if (stallRecoveryGenerationRef.current !== generation) return
-      const gate = playbackGateRef.current
-      if (
-        !gate.isActive ||
-        !gate.isScreenFocused ||
-        AppState.currentState !== 'active' ||
-        shouldSuppressPlayback ||
-        userPausedRef.current ||
-        state$.hasError.peek() ||
-        !(appStore$.preferences.autoplayVideos.peek() || state$.userInitiatedPlay.peek())
-      ) {
-        return
-      }
-      withCurrentPlayer((player) => {
-        player.play()
-        state$.isPlaying.set(true)
-      })
-    }, LIVE_EDGE_BUFFER_HOLD_MS)
-  }, [
-    isLive,
-    playbackSpeed,
-    applyPlaybackRate,
     shouldSuppressPlayback,
     state$,
     videoId,
@@ -904,10 +873,15 @@ export function VideoPlayer({
 
     if (shouldPlay) {
       applyPlaybackRate()
-      if (!userPausedRef.current && (autoplayVideos || state$.userInitiatedPlay.get())) {
+      if (
+        !liveEdgePlayback.isHolding() &&
+        !userPausedRef.current &&
+        (autoplayVideos || state$.userInitiatedPlay.get())
+      ) {
         player.play()
       }
     } else {
+      liveEdgePlayback.cancel()
       if (isInPictureInPictureRef.current) {
         isInPictureInPictureRef.current = false
         videoViewRef.current?.stopPictureInPicture().catch(() => {})
@@ -924,6 +898,7 @@ export function VideoPlayer({
     isScreenFocused,
     autoplayVideos,
     applyPlaybackRate,
+    liveEdgePlayback,
     state$,
     shouldSuppressPlayback,
   ])
@@ -933,6 +908,8 @@ export function VideoPlayer({
 
     const statusSubscription = player.addListener('statusChange', (status) => {
       if (!withCurrentPlayer(() => true)) return
+
+      liveEdgePlayback.onStatus(status.status)
 
       if (status.status === 'readyToPlay') {
         errorRetryRef.current.retry = playbackRetryTransition(
@@ -949,13 +926,6 @@ export function VideoPlayer({
         if (errorRetryRef.current.timer) {
           clearTimeout(errorRetryRef.current.timer)
           errorRetryRef.current.timer = null
-        }
-        // Natural recovery outranks a pending live-edge hold: the stream caught
-        // up on its own, so resume now instead of waiting out the extra delay.
-        if (liveEdgeHoldTimerRef.current) {
-          clearTimeout(liveEdgeHoldTimerRef.current)
-          liveEdgeHoldTimerRef.current = null
-          state$.isPlaying.set(true)
         }
         if (player.duration) {
           state$.duration.set(player.duration * 1000)
@@ -1034,6 +1004,7 @@ export function VideoPlayer({
     const endSubscription = player.addListener('playToEnd', () => {
       if (!ownsPlaybackSession || !withCurrentPlayer(() => true)) return
 
+      liveEdgePlayback.cancel()
       state$.hasEnded.set(true)
       state$.progress.set(1)
       state$.isPlaying.set(false)
@@ -1091,6 +1062,7 @@ export function VideoPlayer({
     syncCaptionText,
     updatePlaybackProgress,
     currentSource,
+    liveEdgePlayback,
     videoId,
     isLive,
     withCurrentPlayer,
@@ -1135,15 +1107,6 @@ export function VideoPlayer({
       onWarn: () => {
         const currentTime = withCurrentPlayer((player) => player.currentTime)
         if (currentTime === undefined) return
-        // A live stream that has spent 15s buffering is at the upload head. Live
-        // recovery is pacing, not reloading — reloading cannot expose media the
-        // broadcaster hasn't uploaded yet, and reloading a live HLS URL restarts
-        // at the live edge (snapping the viewer forward). VOD keeps reload
-        // recovery via onRecover.
-        if (isLive) {
-          handleLiveEdgeStall()
-          return
-        }
         telemetry.warn('video:playback_stall', 'Video stuck buffering', {
           videoId,
           isLive,
@@ -1155,6 +1118,7 @@ export function VideoPlayer({
       onGiveUp: () => {
         const currentTime = withCurrentPlayer((player) => player.currentTime)
         if (currentTime === undefined) return
+        liveEdgePlaybackRef.current.cancel()
         stallRecoveryGenerationRef.current += 1
         errorRetryRef.current.retry.blocked = true
         if (errorRetryRef.current.timer) clearTimeout(errorRetryRef.current.timer)
@@ -1190,7 +1154,6 @@ export function VideoPlayer({
     videoId,
     isLive,
     scheduleStallRecovery,
-    handleLiveEdgeStall,
     stallGiveUpMs,
   ])
 
@@ -1238,6 +1201,7 @@ export function VideoPlayer({
   }, [pictureInPicturePlayback, isLive, videoId])
 
   const togglePlayPause = useCallback(() => {
+    liveEdgePlayback.cancel()
     const action = withCurrentPlayer((currentPlayer) => {
       if (state$.hasEnded.get()) {
         currentPlayer.replay()
@@ -1273,7 +1237,7 @@ export function VideoPlayer({
       userPausedRef.current = false
       state$.isPlaying.set(true)
     }
-  }, [pictureInPicturePlayback, state$, withCurrentPlayer])
+  }, [liveEdgePlayback, pictureInPicturePlayback, state$, withCurrentPlayer])
 
   const toggleMute = useCallback(() => {
     if (withCurrentPlayer(() => true)) {
@@ -1499,6 +1463,7 @@ export function VideoPlayer({
       onPanResponderTerminationRequest: () => false,
 
       onPanResponderGrant: (evt) => {
+        liveEdgePlaybackRef.current.cancel(true)
         isScrubbingRef.current = true
         onScrubbingChangeRef.current?.(true)
         clearPendingScrubSeek()
@@ -1566,7 +1531,7 @@ export function VideoPlayer({
           nativeControls={false}
           fullscreenOptions={{ enable: false }}
           allowsPictureInPicture
-          startsPictureInPictureAutomatically={isPlaying}
+          startsPictureInPictureAutomatically={isPlaying || liveEdgePlayback.isHolding()}
           onPictureInPictureStart={handlePictureInPictureStart}
           onPictureInPictureStop={handlePictureInPictureStop}
         />
