@@ -1,166 +1,43 @@
 # bondfire-live-publisher
 
-Expo native module that runs the camera capture pipeline and publishes RTMPS
-to Mux. iOS uses HaishinKit; Android uses StreamPack.
+Expo native module backing segmented camera capture. iOS uses HaishinKit;
+Android uses StreamPack. The native RTMP APIs remain in this module, but the
+app no longer calls them to publish to Mux.
 
-## Event contract
+## Current app lifecycle
 
-The JS source of truth is `packages/app/src/store/livePublisherContract.ts`
-(`NATIVE_PUBLISHER_STATUSES`, `NATIVE_PUBLISHER_ERROR_CODES`). Each native
-module mirrors it with a `PublisherStatus` enum. **Any new status or error
-code must be added in all three places.** JS rejects unknown statuses with a
-`live:contract` telemetry error instead of accepting them.
+`SegmentRecordScreen` uses `startSegmentPreview()` for camera preview,
+`startSegmentRecording()` to write local fragmented MP4 media, and
+`stopSegmentRecording()` to finalize the recording. `stop()` releases the
+native pipeline. Preview does not publish or record media.
 
-### Status events (`statusChange`)
+Capture operations are serialized through `lib/media/segmentCapture.ts` so
+teardown finishes before the next attempt takes the camera. The screen stops
+capture on background/interruption and subscribes to native `error` events.
+`{ code, message, reason?, elapsedMs? }` carries error details; the optional
+numeric fields describe iOS capture interruptions. The segmented screen also
+reads microphone level/gain fields from `getStats()` for the low-input warning.
 
-| Status | Meaning | iOS emits | Android emits |
-|---|---|---|---|
-| `connecting` | RTMP connection opening | ✅ (module `start`) | ✅ |
-| `live` | Publishing / recording running | ✅ | ✅ |
-| `reconnecting` | Transient drop, retrying | — (reserved) | — (reserved) |
-| `ended` | Intentional stop completed | ✅ | ✅ |
-| `errored` | Start/connect failed | ✅ | ✅ |
-| `stream_stopped_unexpectedly` | Encoder/stream died without stop() | — (JS stall watchdog emits) | ✅ (`isStreamingFlow`) |
-| `endpoint_closed` | Socket closed without stop() | ✅ (isConnected poll) | ✅ (`isOpenFlow`) |
+The durable journal and R2 uploads live in `lib/media/segmentUploads.ts`.
+Capture does not wait for network availability. Keep this native module and
+its dependencies until the shared capture pipeline can be separated from the
+unused RTMP implementation. See `docs/mux-retirement.md` for the removal scope.
 
-### Health monitoring parity
+## Retained legacy APIs
 
-| Signal | iOS | Android |
-|---|---|---|
-| Internal encoder/camera errors | capture-session interruption + runtime-error observers | `throwableFlow` |
-| Stream stopped | JS zero-throughput watchdog (via real getStats) | `isStreamingFlow` |
-| Connection dropped | `Session.isConnected` poll (3s) | `isOpenFlow` |
-| Intentional-stop suppression | `isStopping` | `isStoppingIntentionally` |
-| Real throughput stats | ✅ (`RTMPStream.info`) | ✅ (`TrafficStats` UID TX-byte deltas) |
+`startPreview`, `startCapture`, `start`, RTMP status events, thermal quality
+controls and picture-in-picture support belong to the retired
+client publishing flow. Their wrapper types remain in `index.ts` and their
+implementations remain in Swift/Kotlin. There is no longer a JS live-publisher
+store, stall watchdog or thermal polling loop consuming them.
 
-### Picture-in-Picture events (`pictureInPictureChange`)
+When changing native event payloads, keep the wrapper types and both native
+implementations consistent. These retained APIs do not imply that the app can
+switch back to Mux ingest; those server creation endpoints are retired.
 
-iOS emits `{ active: boolean }` when the recording's video-call PiP window
-starts or stops. The create screen uses it to distinguish supported background
-capture from an interrupted/paused camera session. Android uses its foreground
-service notification instead and does not emit this event.
+## Device validation
 
-`getStats()` marks real measurements with `statsSupported: 1`; the JS stall
-watchdog ignores samples without it, so builds that can't measure (or
-Android's first baseline-establishing poll) can never false-positive. The
-watchdog detects both an encoder that stalls after healthy throughput and a
-pipeline that never delivers a first frame (the dominant camera-freeze mode
-found in the July 2026 telemetry investigation).
-
-False-positive guards, because Android's measurement is app-wide rather than
-per-stream: iOS uses exact-zero semantics (a genuinely low-bitrate stream is
-healthy); Android reports samples unmeasurable while the per-UID counter has
-never advanced in the session (stale/broken OEM counters) and the JS side
-ignores Android samples while a queue upload is in flight (foreign traffic
-would otherwise mask a frozen pipeline). The destructive never-started cancel
-in LiveRecordScreen is additionally capped at 60s — beyond that the stop path
-relies on Mux's authoritative `recordingStarted` flag.
-
-### Thermal mitigation contract
-
-`LiveRecordScreen` polls the native thermal state every 10 seconds and applies
-the shared 30 fps / 2.5 Mbps → 24 fps / 1.5 Mbps → 15 fps / 800 Kbps ladder.
-The call must travel through all four layers: screen → `useLivePublisher` →
-the Expo module wrapper in `index.ts` → the native module. Keep
-`setVideoQuality` required in the TypeScript publisher contract; making it
-optional can turn a missing wrapper method into a successful no-op.
-
-Both native implementations return `configuredVideoBitrate`, `configuredFps`,
-and `fpsChangeSupported` only after the native update finishes. Those values
-are included in `live:thermal_mitigation`, so production telemetry proves the
-native bridge call completed instead of recording only JS's requested values.
-They are configuration acknowledgements, not hardware measurements: neither
-HaishinKit nor StreamPack exposes a reliable live encoder read-back API.
-
-- iOS: HaishinKit applies the bitrate change to the running
-  `VTCompressionSession` and `MediaMixer.setFrameRate` updates capture-device
-  frame durations. Both calls are awaited before resolving.
-- Android: `videoEncoder.bitrate` uses MediaCodec's dynamic bitrate parameter.
-  FPS remains fixed because replacing the video configuration mid-stream
-  reconfigures MediaCodec and risks a visible glitch or native crash;
-  `fpsChangeSupported` is therefore `false`.
-
-The other sustained heat sources are the camera sensor/ISP, the preview render
-surface (Metal on iOS, StreamPack's surface pipeline on Android), the lit
-keep-awake display, microphone capture, and Wi-Fi/cellular transmission.
-Reducing FPS lowers camera, preview, and encoder work together; reducing
-resolution would lower ISP, scaling/GPU, and encoder work, but requires its own
-physical-device validation. The 3-second iOS connection check, 5-second stats
-sample, 10-second thermal check, 1-second UI clock, and 2-minute backend
-heartbeat are low-frequency bookkeeping and should
-not materially affect thermals. Do not relax the health checks without device
-energy traces showing they are significant; display brightness and cellular
-uplink quality are more likely remaining contributors.
-
-### Microphone routing
-
-iOS routes headset mics through the shared `AVAudioSession`
-(`.allowBluetooth` + `.playAndRecord`). A route-change observer prefers newly
-connected Bluetooth inputs and falls back through wired and built-in inputs
-when a device disconnects. Teardown clears the preferred input and deactivates
-the recording session so playback can resume on the current system output.
-Android uses `VOICE_COMMUNICATION` instead of StreamPack's default `CAMCORDER`
-to support the module's headset routing policy. At streamer creation the module
-picks a route from the connected input devices:
-
-| Route | Audio source | Extra routing |
-|---|---|---|
-| Wired / USB headset | `VOICE_COMMUNICATION` | none |
-| Bluetooth (LE audio or SCO) | `VOICE_COMMUNICATION` | `setCommunicationDevice` (API 31+) / legacy SCO |
-| None connected | `VOICE_COMMUNICATION` (built-in) | none |
-
-#### Android mic source experiment
-
-The built-in-mic source is overridable per session via the `audioSource`
-start/preview option (JS `EXPO_PUBLIC_LIVE_AUDIO_SOURCE`, default
-`voice_communication`). Accepted values are MediaRecorder source names:
-`voice_communication`, `camcorder`, `mic`, `voice_recognition`. Unknown values
-fall back to `voice_communication`.
-
-This is a capture comparison, not an automatic loudness fix. Android chooses
-physical inputs, gain, and preprocessing through device-specific audio policy;
-`CAMCORDER`/`MIC` do not guarantee that AGC or noise suppression is disabled.
-The override applies only when no headset is connected at capture start, so
-headsets retain our existing `VOICE_COMMUNICATION` routing policy. Sessions
-using a non-default source skip the app's mid-session Bluetooth reroute callback;
-keep headsets disconnected during those A/B recordings.
-
-The resolved source reaches `live:stats_sample.audioSource` via `getStats()`;
-it is absent on iOS and older native builds. It identifies the configured
-AudioSource, not the physical mic or measured gain. `audioRoute` is the route
-selected by the app; it does not verify OS-driven route changes in experiments.
-Native changes require rebuilding the app, and Expo flag changes require a new
-JS bundle. Attaching RTMP to existing local capture preserves its source.
-
-The Bluetooth claim and prior `AudioManager` mode are restored in
-`cleanupStreamer`. The chosen route is
-reported as `audioRoute` in `getStats()` payloads. For the default Android
-source, an `AudioDeviceCallback` handles Bluetooth connects and routed-device
-disconnects without rebuilding capture. Route selection updates the
-`bluetooth`, `wired`, or `builtin` label for later stats samples; verify actual
-microphone use on devices as part of audio QA.
-
-### Error events (`error`)
-
-`{ code, message, reason?, elapsedMs? }`. The optional numeric fields carry
-structured iOS capture-interruption context. Known codes are listed in
-`NATIVE_PUBLISHER_ERROR_CODES`; emitting a new code works (JS treats the
-event itself as the signal) but add it to the contract for telemetry
-greppability.
-
-## Lifecycle
-
-`startPreview()` runs camera+mic+preview with **no network connection** —
-nothing is published or recorded during pre-roll. `startCapture()` arms the
-durable file first; `start()` attaches RTMP afterward. Android's custom
-`CaptureTransportEndpoint` and iOS's mixer outputs both preserve local capture
-while transport reconnects. This split is a product requirement (pre-roll
-must never reach viewers); preserve it in any refactor.
-
-`maxDurationSeconds` is passed with the start options and enforced natively on
-both platforms, so the recording cap still stops and finalizes capture while
-React Native timers are suspended. It is an elapsed wall-time cap: on iOS
-devices that pause capture in the background, the paused interval still counts
-toward the limit. Android keeps its camera/microphone
-foreground service alive until finalization completes, including notification,
-recents-swipe, thermal, and duration-limit stops.
+Native changes require new binaries. Validate preview, start/stop, camera
+switching, interruptions, duration limits and microphone/headset routes on
+both platforms. The unit tests cannot establish physical microphone routing,
+video quality or successful native capture.

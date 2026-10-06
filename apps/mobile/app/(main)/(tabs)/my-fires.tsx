@@ -6,8 +6,6 @@ import {
   setFeedActiveBondfireId,
   telemetry,
   useAppThemeColors,
-  useCanLoadTabData,
-  useCanRunRecordingBackgroundWork,
   useCurrentUserId,
   useLoadingTimeoutTelemetry,
 } from '@bondfires/app'
@@ -234,8 +232,8 @@ export default function MyFiresScreen() {
   const primaryColor = variableToString(theme.primary)
   const router = useRouter()
   const isFocused = useIsFocused()
-  const canLoadTabData = useCanLoadTabData(isFocused)
-  const shouldRunBackgroundWork = useCanRunRecordingBackgroundWork(isFocused)
+  const canLoadTabData = isFocused
+  const shouldRunBackgroundWork = isFocused
   const { userId: currentUserId, isLoading: isUserLoading, currentUser } = useCurrentUserId()
   const [refreshKey, setRefreshKey] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)

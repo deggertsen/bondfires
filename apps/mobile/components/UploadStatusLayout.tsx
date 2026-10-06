@@ -1,7 +1,6 @@
 import {
   completeBannerExit,
   describeUploadStatus,
-  isUploadStatusHidden,
   nextBannerPresence,
   retryPendingUploads,
   UPLOAD_BANNER_HIDDEN,
@@ -10,7 +9,6 @@ import {
   uploadStatus$,
   uploadStatusActions,
   uploadStatusStore$,
-  useRecordingResourceLock,
 } from '@bondfires/app'
 import { UploadStatusBanner, type UploadStatusBannerProps } from '@bondfires/ui'
 import { useObserveEffect, useValue } from '@legendapp/state/react'
@@ -51,11 +49,9 @@ type BannerVisual = Pick<UploadStatusBannerProps, 'tone' | 'icon' | 'progress'>
 function bannerVisual(state: Exclude<UploadStatusState, { kind: 'idle' }>): BannerVisual {
   switch (state.kind) {
     case 'uploading':
-      return { tone: 'progress', icon: 'upload', progress: state.progress ?? 'indeterminate' }
+      return { tone: 'progress', icon: 'upload', progress: 'indeterminate' }
     case 'paused':
       return { tone: 'warning', icon: state.reason === 'offline' ? 'offline' : 'retry' }
-    case 'failed':
-      return { tone: 'error', icon: 'failed' }
     case 'completed':
       return { tone: 'success', icon: 'done' }
   }
@@ -110,16 +106,13 @@ export function UploadStatusLayout({ children }: { children: ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
   const insets = useSafeAreaInsets()
-  const recordingLocked = useRecordingResourceLock()
   const status = useValue(uploadStatus$)
   const hiddenAt = useValue(uploadStatusStore$.hiddenAt)
 
-  // Camera/recording and the create route hide the strip instantly — it must
-  // never animate over the camera or the completion screen.
-  const immediateHide = recordingLocked || isCreateRoute(pathname)
-
-  const visible =
-    status.kind !== 'idle' && !isUploadStatusHidden(status, hiddenAt) && !immediateHide
+  // The create route hides the strip instantly so it never animates over
+  // camera preview, recording or completion.
+  const immediateHide = isCreateRoute(pathname)
+  const visible = status.kind !== 'idle' && hiddenAt === null && !immediateHide
 
   // Let a held "is live" confirmation expire back to idle.
   useObserveEffect((e) => {

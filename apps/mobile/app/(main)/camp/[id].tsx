@@ -9,7 +9,6 @@ import {
   telemetry,
   useAppThemeColors,
   useAuth,
-  useCanLoadTabData,
   useLoadingTimeoutTelemetry,
   useSubscription,
 } from '@bondfires/app'
@@ -835,7 +834,7 @@ export default function CampDetailScreen() {
   const { canCreate } = useSubscription()
   const navigation = useNavigation()
   const isFocused = useIsFocused()
-  const canLoadScreenData = useCanLoadTabData(isFocused)
+  const canLoadScreenData = isFocused
   const { id } = useLocalSearchParams<{ id?: string }>()
   const campId = id as Id<'camps'> | undefined
   const camp = useQuery(api.camps.get, canLoadScreenData && campId ? { campId } : 'skip')

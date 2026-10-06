@@ -48,9 +48,8 @@ export interface LivePublisherPreviewOptions {
   audioSource?: string
 }
 
-// Keep in sync with LivePublisherStats in
-// packages/app/src/hooks/useLivePublisher.ts and the getStats payloads in the
-// Swift/Kotlin modules (livePublisherZeroStats / STATS_ZEROS).
+// Keep in sync with the getStats payloads in the Swift/Kotlin modules
+// (livePublisherZeroStats / STATS_ZEROS).
 export interface LivePublisherStats {
   /** Smoothed pre-gain dBFS; absent when capture cannot measure. */
   micLevelDb?: number
@@ -86,9 +85,8 @@ export interface LivePublisherVideoQualityResult {
 
 export interface LivePublisherViewProps extends ViewProps {}
 
-// Keep in sync with NATIVE_PUBLISHER_STATUSES in
-// packages/app/src/store/livePublisherContract.ts and the PublisherStatus
-// enums in the Swift/Kotlin modules (see README.md).
+// Keep in sync with the PublisherStatus enums in the Swift/Kotlin modules
+// (see README.md).
 type Status =
   | 'connecting'
   | 'live'

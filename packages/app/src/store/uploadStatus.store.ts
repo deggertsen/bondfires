@@ -7,18 +7,15 @@ import {
   type UploadStatusState,
 } from '../utils/uploadStatus'
 import { uiStore$ } from './ui.store'
-import { uploadQueueStore$ } from './uploadQueue.store'
 
 // Transient (not persisted): segmented jobs are re-reported from the durable
-// journal within one upload tick, and the legacy queue persists on its own.
+// journal within one upload tick.
 interface UploadStatusStoreState {
   segmentJobs: SegmentJobStatus[]
   lastCompletion: UploadCompletion | null
   completionDismissedAt: number
   /** Set when the user swipes the banner away; cleared only by an app restart. */
   hiddenAt: number | null
-  /** True only where the legacy queue actually runs (non-segmented builds). */
-  queueEnabled: boolean
   /** Re-evaluation clock for the completion hold. */
   clock: number
   /** Measured height of the banner, 0 while hidden; offsets toasts below it. */
@@ -30,7 +27,6 @@ export const uploadStatusStore$ = observable<UploadStatusStoreState>({
   lastCompletion: null,
   completionDismissedAt: 0,
   hiddenAt: null,
-  queueEnabled: false,
   clock: Date.now(),
   bannerHeight: 0,
 })
@@ -38,8 +34,6 @@ export const uploadStatusStore$ = observable<UploadStatusStoreState>({
 export const uploadStatus$ = observable<UploadStatusState>(() =>
   deriveUploadStatus({
     segmentJobs: uploadStatusStore$.segmentJobs.get(),
-    tasks: uploadQueueStore$.tasks.get() ?? [],
-    queueEnabled: uploadStatusStore$.queueEnabled.get(),
     isOnline: uiStore$.isOnline.get(),
     lastCompletion: uploadStatusStore$.lastCompletion.get(),
     completionDismissedAt: uploadStatusStore$.completionDismissedAt.get(),
@@ -62,8 +56,6 @@ export const uploadStatusActions = {
 
   /** Hide the banner for this app session. Uploads keep running. */
   hideForSession: () => uploadStatusStore$.hiddenAt.set(Date.now()),
-
-  setQueueEnabled: (enabled: boolean) => uploadStatusStore$.queueEnabled.set(enabled),
 
   /** Advance the clock so a held completion can expire back to idle. */
   tick: () => uploadStatusStore$.clock.set(Date.now()),
