@@ -22,9 +22,17 @@ class SpeechLevelerTest {
 
   @Test fun quietSpeechReachesTargetWithoutChangingBufferBounds() {
     val leveler = SpeechLeveler(rate)
+    assertTrue(leveler.audioStats().isEmpty())
+    assertEquals(-50.0, SpeechLeveler.LOW_THRESHOLD_DB, 0.01)
     var last = tone(-48.0)
     repeat(150) { last = tone(-48.0); leveler.process(last) }
     assertEquals(-18.0, rms(last), 1.0)
+    val stats = leveler.audioStats()
+    assertEquals(-48.0, stats.getValue("micLevelDb"), 0.1)
+    assertEquals(30.0, stats.getValue("appliedGainDb"), 0.1)
+    assertEquals((rate * 3).toDouble(), stats.getValue("micSampleCount"), 0.0)
+    assertEquals(SpeechLeveler.LOW_THRESHOLD_DB, stats.getValue("micLowThresholdDb"), 0.0)
+    assertTrue(SpeechLeveler(rate).audioStats().isEmpty())
     assertEquals(0, last.position())
     assertEquals(last.capacity(), last.limit())
   }

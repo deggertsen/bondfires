@@ -83,6 +83,14 @@ export interface LivePublisherStartResult {
 // apps/mobile/modules/bondfire-live-publisher/index.ts and the getStats
 // payloads in the Swift/Kotlin modules (livePublisherZeroStats / STATS_ZEROS).
 export interface LivePublisherStats {
+  /** Smoothed pre-gain dBFS; absent when capture cannot measure. */
+  micLevelDb?: number
+  appliedGainDb?: number
+  /** Native target - max gain - 2 dB, derived from the leveler constants. */
+  micLowThresholdDb?: number
+  micSampleCount?: number
+  micMuted?: boolean
+
   bitrateBps: number
   rttMs: number
   droppedFrames: number
@@ -782,6 +790,8 @@ export function useLivePublisher(options: {
                 statsSupported: stats.statsSupported,
                 audioRoute: stats.audioRoute,
                 audioSource: stats.audioSource,
+                micLevelDb: stats.micLevelDb,
+                appliedGainDb: stats.appliedGainDb,
                 networkBitrateCap: networkBitrateCapRef.current,
                 networkAbrTier: networkAbrRef.current?.tier() ?? 0,
                 elapsedMs: startedAt ? Date.now() - startedAt : undefined,

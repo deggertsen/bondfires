@@ -8,6 +8,16 @@ final class LeveledAudioBuffer {
   private let leveler = SpeechLeveler()
   private var converter: AVAudioConverter?
 
+  // Accessed by getStats on a different queue from the PCM callback.
+  func audioStats() -> [String: Double] {
+    lock.lock()
+    defer { lock.unlock() }
+    guard let level = leveler.micLevelDb else { return [:] }
+    return ["micLevelDb": level, "appliedGainDb": leveler.appliedGainDb,
+      "micLowThresholdDb": SpeechLeveler.lowThresholdDb,
+      "micSampleCount": Double(leveler.sampleCount)]
+  }
+
   func copyAndProcess(_ source: AVAudioPCMBuffer) throws -> AVAudioPCMBuffer {
     lock.lock()
     defer { lock.unlock() }

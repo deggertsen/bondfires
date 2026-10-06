@@ -153,7 +153,8 @@ class BondfireLivePublisherModule : Module() {
   // box in stop(), so release() alone would leave the file unplayable.
   @Volatile
   private var backupMuxerEndpoint: IEndpointInternal? = null
-  private var isMuted = false
+  @Volatile private var isMuted = false
+  @Volatile private var normalizedMicrophone: NormalizedMicrophoneSourceFactory? = null
   private var currentFacing: String = "front"
   // Which mic this session records from ("wired" | "bluetooth" | "builtin").
   // Reported in getStats() so live:stats_sample telemetry carries the route.
@@ -530,7 +531,8 @@ class BondfireLivePublisherModule : Module() {
         val sessionZeros = STATS_ZEROS + mapOf(
           "audioRoute" to audioRouteName,
           "audioSource" to audioSourceNameResolved,
-        )
+          "micMuted" to isMuted,
+        ) + (normalizedMicrophone?.audioStats ?: emptyMap())
         // The counter read happens inside the lock so the read + baseline
         // commit is atomic — overlapping polls could otherwise commit an
         // older reading over a newer baseline and emit a spurious
@@ -746,12 +748,12 @@ class BondfireLivePublisherModule : Module() {
       registerAudioDeviceCallback(context)
     }
 
+    normalizedMicrophone = if (segmented) NormalizedMicrophoneSourceFactory(audioRouting.audioSource) else null
     // Create camera + microphone streamer
     val newStreamer = cameraSingleStreamer(
       context,
       cameraId = cameraId,
-      audioSourceFactory = if (segmented) NormalizedMicrophoneSourceFactory(audioRouting.audioSource)
-        else MicrophoneSourceFactory(audioRouting.audioSource),
+      audioSourceFactory = normalizedMicrophone ?: MicrophoneSourceFactory(audioRouting.audioSource),
       endpointFactory = CaptureTransportEndpointFactory(segmented),
     )
     streamer = newStreamer
@@ -1538,6 +1540,7 @@ class BondfireLivePublisherModule : Module() {
     val claimed = synchronized(teardownLock) {
       val current = streamer ?: return
       streamer = null
+      normalizedMicrophone = null
       durationLimitJob?.cancel()
       durationLimitJob = null
       isStoppingIntentionally = true
