@@ -15,7 +15,7 @@
 export interface UploadBannerPresence {
   /** True while the strip is rendered, including while it animates away. */
   mounted: boolean
-  /** True while the strip is playing its exit animation. */
+  /** True while the strip is playing its exit animation. Implies `mounted`. */
   exiting: boolean
 }
 
@@ -53,4 +53,14 @@ export function nextBannerPresence(
   if (input.immediateHide) return { mounted: false, exiting: false }
   if (prev.exiting) return prev
   return { mounted: true, exiting: true }
+}
+
+/**
+ * The exit animation (or its safety-net timer) reported completion. Only an
+ * in-flight exit unmounts: a completion that lands after a re-show has already
+ * cancelled the exit is ignored, so it cannot unmount a strip that is meant to
+ * stay and flash it back in.
+ */
+export function completeBannerExit(prev: UploadBannerPresence): UploadBannerPresence {
+  return prev.exiting ? UPLOAD_BANNER_HIDDEN : prev
 }

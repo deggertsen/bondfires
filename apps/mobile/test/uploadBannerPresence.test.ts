@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  completeBannerExit,
   nextBannerPresence,
   UPLOAD_BANNER_HIDDEN,
   type UploadBannerPresence,
@@ -44,5 +45,24 @@ describe('nextBannerPresence', () => {
 
   it('cancels an in-flight exit when the strip is shown again', () => {
     expect(nextBannerPresence(exiting, show)).toEqual({ mounted: true, exiting: false })
+  })
+})
+
+describe('completeBannerExit', () => {
+  it('unmounts once an in-flight exit finishes', () => {
+    expect(completeBannerExit(exiting)).toBe(UPLOAD_BANNER_HIDDEN)
+  })
+
+  it('ignores a late completion after a re-show cancelled the exit', () => {
+    expect(completeBannerExit(shown)).toBe(shown)
+  })
+
+  it('is a no-op when already hidden', () => {
+    expect(completeBannerExit(UPLOAD_BANNER_HIDDEN)).toBe(UPLOAD_BANNER_HIDDEN)
+  })
+
+  it('composes with a re-show: show during exit, then late completion, stays mounted', () => {
+    const reshown = nextBannerPresence(exiting, show)
+    expect(completeBannerExit(reshown)).toBe(reshown)
   })
 })

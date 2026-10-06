@@ -39,8 +39,11 @@ export interface UploadStatusBannerProps {
   onLayout?: (event: LayoutChangeEvent) => void
   /** Swipe right (or the screen-reader "Hide" action) calls this. */
   onDismiss?: () => void
-  /** True while the strip is animating away; drives the collapse/exit. */
-  dismissing?: boolean
+  /**
+   * True while the strip is animating away (status-driven exit, as opposed to
+   * the user swiping it off). Drives the collapse; the strip goes inert.
+   */
+  exiting?: boolean
   /** Fired once the exit animation has finished; the parent then unmounts. */
   onExitComplete?: () => void
 }
@@ -143,7 +146,7 @@ export function UploadStatusBanner({
   topInset,
   onLayout,
   onDismiss,
-  dismissing = false,
+  exiting = false,
   onExitComplete,
 }: UploadStatusBannerProps) {
   const toneColor = TONE_COLOR[tone]
@@ -164,21 +167,21 @@ export function UploadStatusBanner({
 
   useEffect(() => {
     if (reduceMotion) {
-      collapse.value = dismissing ? 1 : 0
-      if (dismissing) notifyExit()
+      collapse.value = exiting ? 1 : 0
+      if (exiting) notifyExit()
       return
     }
     collapse.value = withTiming(
-      dismissing ? 1 : 0,
+      exiting ? 1 : 0,
       {
-        duration: dismissing ? 260 : 0,
+        duration: exiting ? 260 : 0,
         easing: Easing.in(Easing.cubic),
       },
       (finished) => {
-        if (finished && dismissing) runOnJS(notifyExit)()
+        if (finished && exiting) runOnJS(notifyExit)()
       },
     )
-  }, [collapse, dismissing, notifyExit, reduceMotion])
+  }, [collapse, exiting, notifyExit, reduceMotion])
 
   const collapseStyle = useAnimatedStyle(() => {
     const p = Math.min(1, Math.max(0, collapse.value))
@@ -198,7 +201,7 @@ export function UploadStatusBanner({
   // exit plays: the content is already stale, and a tap or swipe then would act
   // on a strip the store has moved past.
   const swipe = Gesture.Pan()
-    .enabled(Boolean(onDismiss) && !dismissing)
+    .enabled(Boolean(onDismiss) && !exiting)
     .activeOffsetX(12)
     .failOffsetX(-12)
     .failOffsetY([-12, 12])
@@ -290,9 +293,9 @@ export function UploadStatusBanner({
   return (
     <Reanimated.View
       style={[collapseStyle, { overflow: 'hidden' }]}
-      pointerEvents={dismissing ? 'none' : 'auto'}
-      accessibilityElementsHidden={dismissing}
-      importantForAccessibility={dismissing ? 'no-hide-descendants' : 'auto'}
+      pointerEvents={exiting ? 'none' : 'auto'}
+      accessibilityElementsHidden={exiting}
+      importantForAccessibility={exiting ? 'no-hide-descendants' : 'auto'}
     >
       <GestureDetector gesture={swipe}>
         <Reanimated.View style={swipeStyle}>
