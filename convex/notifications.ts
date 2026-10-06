@@ -82,7 +82,11 @@ export const registerDevice = mutation({
         tokenType,
         deviceId: args.deviceId,
         timezone: args.timezone ?? existing.timezone,
-        updatedAt: now,
+        updatedAt: Math.max(now, existing.updatedAt + 1),
+        consecutiveTokenFailures: undefined,
+        quarantinedAt: undefined,
+        pushAttemptSequence: undefined,
+        lastPushResultSequence: undefined,
       })
       await logServerEvent(ctx, {
         level: 'breadcrumb',
@@ -161,21 +165,81 @@ export const unregisterDevice = mutation({
   },
 })
 
-/** Internal cleanup for invalid/expired tokens reported by APNs/FCM. */
-export const deleteTokensByValue = internalMutation({
+/** Reserve an ordered attempt for each eligible registration before contacting providers.
+ * Allocation in a mutation gives concurrent sends distinct sequence numbers, even
+ * within the same millisecond. Registration versions still fence old responses.
+ */
+export const beginPushDelivery = internalMutation({
+  args: { userId: v.id('users') },
+  handler: async (ctx, args) => {
+    const tokens = await ctx.db
+      .query('deviceTokens')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .filter((q) => q.eq(q.field('quarantinedAt'), undefined))
+      .collect()
+    return await Promise.all(
+      tokens.map(async (token) => {
+        const pushAttemptSequence = (token.pushAttemptSequence ?? 0) + 1
+        await ctx.db.patch(token._id, { pushAttemptSequence })
+        return { ...token, pushAttemptSequence }
+      }),
+    )
+  },
+})
+
+/** Apply results atomically to the registration that was actually sent to.
+ * Explicit invalidity deletes; three consecutive ambiguous token failures
+ * quarantine reversibly. Payload/auth/network failures break the streak.
+ */
+export const recordPushResults = internalMutation({
   args: {
-    tokens: v.array(v.string()),
+    results: v.array(
+      v.object({
+        tokenId: v.id('deviceTokens'),
+        registeredAt: v.number(),
+        attemptSequence: v.number(),
+        outcome: v.union(
+          v.literal('success'),
+          v.literal('invalid'),
+          v.literal('token_failure'),
+          v.literal('other_failure'),
+        ),
+      }),
+    ),
   },
   handler: async (ctx, args) => {
-    for (const token of args.tokens) {
-      const existing = await ctx.db
-        .query('deviceTokens')
-        .withIndex('by_token', (q) => q.eq('token', token))
-        .first()
-      if (existing) {
-        await ctx.db.delete(existing._id)
+    let deletedCount = 0
+    let quarantinedCount = 0
+    for (const result of args.results) {
+      const token = await ctx.db.get(result.tokenId)
+      // Ignore stale or duplicate responses. Only re-registration clears quarantine.
+      if (
+        !token ||
+        token.updatedAt !== result.registeredAt ||
+        token.quarantinedAt !== undefined ||
+        result.attemptSequence > (token.pushAttemptSequence ?? 0) ||
+        result.attemptSequence <= (token.lastPushResultSequence ?? 0)
+      )
+        continue
+      if (result.outcome === 'invalid') {
+        await ctx.db.delete(token._id)
+        deletedCount++
+        continue
       }
+      // A skipped attempt may have succeeded (or never returned). Only extend
+      // a streak across adjacent results; late responses remain stale above.
+      const followsPrevious = result.attemptSequence === (token.lastPushResultSequence ?? 0) + 1
+      const priorFailures = followsPrevious ? (token.consecutiveTokenFailures ?? 0) : 0
+      const failures = result.outcome === 'token_failure' ? priorFailures + 1 : 0
+      const quarantine = failures >= 3
+      if (quarantine) quarantinedCount++
+      await ctx.db.patch(token._id, {
+        consecutiveTokenFailures: failures,
+        lastPushResultSequence: result.attemptSequence,
+        quarantinedAt: quarantine ? Date.now() : undefined,
+      })
     }
+    return { deletedCount, quarantinedCount }
   },
 })
 
@@ -240,6 +304,7 @@ export const getTokensForUser = internalQuery({
     return await ctx.db
       .query('deviceTokens')
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .filter((q) => q.eq(q.field('quarantinedAt'), undefined))
       .collect()
   },
 })

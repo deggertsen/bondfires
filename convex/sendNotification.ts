@@ -21,7 +21,10 @@ import {
 } from './lib/notificationCopy'
 import {
   getPushProviderConfig,
+  isMalformedNativePushToken,
   type PushPayload,
+  type PushSendResult,
+  type PushTokenResult,
   sendApnsPushNotification,
   sendFcmPushNotification,
 } from './lib/pushProviders'
@@ -79,11 +82,7 @@ export const isCategoryEnabledForUser = internalQuery({
   },
 })
 
-interface DeviceToken {
-  token: string
-  platform: 'ios' | 'android'
-  tokenType?: 'apns' | 'fcm' | 'expo'
-}
+type DeviceToken = Doc<'deviceTokens'>
 
 /** Map notification category → Android channel ID. Must match the client-side
  * mapping in usePushNotifications.ts. iOS uses threadId (below) for grouping. */
@@ -123,7 +122,11 @@ function uniqueUserIds(userIds: Array<Id<'users'>>) {
 }
 
 function resolveTokenType(token: DeviceToken): 'apns' | 'fcm' | null {
-  if (token.tokenType === 'apns' || token.tokenType === 'fcm') return token.tokenType
+  if (
+    (token.tokenType === 'apns' || token.tokenType === 'fcm') &&
+    !isMalformedNativePushToken(token.token, token.tokenType)
+  )
+    return token.tokenType
   return null
 }
 
@@ -235,25 +238,29 @@ function escapeHtml(value: string) {
 async function deliverNativePush(
   tokens: DeviceToken[],
   payload: PushPayload,
-): Promise<{
-  success: boolean
-  successCount: number
-  failureCount: number
-  invalidTokens: string[]
-  error?: string
-}> {
+): Promise<PushSendResult & { success: boolean }> {
   const config = getPushProviderConfig()
   const apnsTokens = tokens.filter((t) => resolveTokenType(t) === 'apns').map((t) => t.token)
   const fcmTokens = tokens.filter((t) => resolveTokenType(t) === 'fcm').map((t) => t.token)
 
-  const invalidTokens: string[] = []
+  const invalidTokens = tokens
+    .filter((token) => resolveTokenType(token) === null)
+    .map((token) => token.token)
+  const tokenResults: PushTokenResult[] = invalidTokens.map((token) => ({
+    token,
+    outcome: 'invalid',
+  }))
   let successCount = 0
-  let failureCount = 0
+  let failureCount = invalidTokens.length
   const errors: string[] = []
+  if (invalidTokens.length > 0) errors.push('Unsupported or malformed native push token')
 
   if (apnsTokens.length > 0) {
     if (!config.apns) {
       failureCount += apnsTokens.length
+      tokenResults.push(
+        ...apnsTokens.map((token): PushTokenResult => ({ token, outcome: 'other_failure' })),
+      )
       errors.push('APNs credentials not configured (APNS_KEY_P8 / APNS_KEY_ID / APNS_TEAM_ID)')
     } else {
       try {
@@ -261,9 +268,13 @@ async function deliverNativePush(
         successCount += result.successCount
         failureCount += result.failureCount
         invalidTokens.push(...result.invalidTokens)
+        tokenResults.push(...result.tokenResults)
         if (result.error) errors.push(result.error)
       } catch (error) {
         failureCount += apnsTokens.length
+        tokenResults.push(
+          ...apnsTokens.map((token): PushTokenResult => ({ token, outcome: 'other_failure' })),
+        )
         errors.push(`APNs: ${error instanceof Error ? error.message : String(error)}`)
       }
     }
@@ -272,6 +283,9 @@ async function deliverNativePush(
   if (fcmTokens.length > 0) {
     if (!config.fcm) {
       failureCount += fcmTokens.length
+      tokenResults.push(
+        ...fcmTokens.map((token): PushTokenResult => ({ token, outcome: 'other_failure' })),
+      )
       errors.push('FCM credentials not configured (FCM_SERVICE_ACCOUNT_JSON)')
     } else {
       try {
@@ -279,9 +293,13 @@ async function deliverNativePush(
         successCount += result.successCount
         failureCount += result.failureCount
         invalidTokens.push(...result.invalidTokens)
+        tokenResults.push(...result.tokenResults)
         if (result.error) errors.push(result.error)
       } catch (error) {
         failureCount += fcmTokens.length
+        tokenResults.push(
+          ...fcmTokens.map((token): PushTokenResult => ({ token, outcome: 'other_failure' })),
+        )
         errors.push(`FCM: ${error instanceof Error ? error.message : String(error)}`)
       }
     }
@@ -292,6 +310,7 @@ async function deliverNativePush(
     successCount,
     failureCount,
     invalidTokens,
+    tokenResults,
     error: errors.length > 0 ? errors.join('; ') : undefined,
   }
 }
@@ -330,8 +349,8 @@ export const sendToUser = internalAction({
       }
     }
 
-    // Get all device tokens for the user
-    const tokens: DeviceToken[] = await ctx.runQuery(internal.notifications.getTokensForUser, {
+    // Reserve ordered attempts for the user’s eligible device registrations.
+    const tokens = await ctx.runMutation(internal.notifications.beginPushDelivery, {
       userId: args.userId,
     })
 
@@ -347,26 +366,6 @@ export const sendToUser = internalAction({
         },
       })
       return { success: false, error: 'No device tokens found for user' }
-    }
-
-    // Prefer native APNs/FCM tokens. Legacy Expo tokens are ignored after migration.
-    const nativeTokens = tokens.filter((token) => resolveTokenType(token) !== null)
-
-    if (nativeTokens.length === 0) {
-      await recordPushSendEvent(ctx, {
-        userId: args.userId,
-        level: 'breadcrumb',
-        event: 'push:sendToUser:no_native_tokens',
-        message: 'No native APNs/FCM tokens found for recipient',
-        data: {
-          totalTokens: tokens.length,
-          tokenTypes: tokens.map((t) => ({
-            tokenType: t.tokenType ?? 'unknown',
-            prefix: t.token.slice(0, 20),
-          })),
-        },
-      })
-      return { success: false, error: 'No native push tokens found for user' }
     }
 
     // Route to the Android notification channel matching the push category.
@@ -386,7 +385,7 @@ export const sendToUser = internalAction({
       data: {
         category: args.category ?? 'uncategorized',
         title: args.title,
-        tokenCount: nativeTokens.length,
+        tokenCount: tokens.length,
         channelId,
         hasAvatar: Boolean(avatarUrl),
         ...(threadId ? { threadId } : {}),
@@ -404,16 +403,27 @@ export const sendToUser = internalAction({
     }
 
     try {
-      const result = await deliverNativePush(nativeTokens, payload)
-
-      if (result.invalidTokens.length > 0) {
-        try {
-          await ctx.runMutation(internal.notifications.deleteTokensByValue, {
-            tokens: result.invalidTokens,
-          })
-        } catch {
-          // Token cleanup is best-effort.
-        }
+      const result = await deliverNativePush(tokens, payload)
+      let cleanup: { deletedCount: number; quarantinedCount: number } | undefined
+      try {
+        const outcomes = new Map(
+          result.tokenResults.map((result) => [result.token, result.outcome]),
+        )
+        cleanup = await ctx.runMutation(internal.notifications.recordPushResults, {
+          results: tokens.map((token) => ({
+            tokenId: token._id,
+            registeredAt: token.updatedAt,
+            attemptSequence: token.pushAttemptSequence,
+            outcome: outcomes.get(token.token) ?? 'other_failure',
+          })),
+        })
+      } catch (error) {
+        await recordPushSendEvent(ctx, {
+          userId: args.userId,
+          level: 'error',
+          event: 'push:sendToUser:cleanup_failed',
+          message: error instanceof Error ? error.message : String(error),
+        })
       }
 
       await recordPushSendEvent(ctx, {
@@ -426,6 +436,8 @@ export const sendToUser = internalAction({
           successCount: result.successCount,
           failureCount: result.failureCount,
           invalidTokenCount: result.invalidTokens.length,
+          tokenCount: tokens.length,
+          ...(cleanup ?? {}),
           ...(result.error ? { error: result.error } : {}),
         },
       })

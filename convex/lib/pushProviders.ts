@@ -22,11 +22,28 @@ export interface PushPayload {
   highPriority?: boolean
 }
 
+export type PushTokenOutcome = 'success' | 'invalid' | 'token_failure' | 'other_failure'
+
+export interface PushTokenResult {
+  token: string
+  outcome: PushTokenOutcome
+}
+
+/** Reject only known-incompatible shapes. FCM tokens are otherwise opaque. */
+export function isMalformedNativePushToken(token: string, type: NativeTokenType): boolean {
+  if (!token || /\s/.test(token) || /^(ExponentPushToken|ExpoPushToken)\[/.test(token)) {
+    return true
+  }
+  if (type === 'apns') return !/^(?:[a-fA-F0-9]{2})+$/.test(token)
+  return /[\[\]{}]/.test(token)
+}
+
 export interface PushSendResult {
   successCount: number
   failureCount: number
   /** Tokens that should be deleted (unregistered / invalid). */
   invalidTokens: string[]
+  tokenResults: PushTokenResult[]
   error?: string
 }
 
@@ -227,13 +244,14 @@ export async function sendApnsPushNotification(
   config: ApnsConfig,
 ): Promise<PushSendResult> {
   if (tokens.length === 0) {
-    return { successCount: 0, failureCount: 0, invalidTokens: [] }
+    return { successCount: 0, failureCount: 0, invalidTokens: [], tokenResults: [] }
   }
 
   const jwt = await getApnsJwt(config)
   const host = config.production ? 'api.push.apple.com' : 'api.sandbox.push.apple.com'
   const body = buildApnsPayload(payload)
   const invalidTokens: string[] = []
+  const tokenResults: PushTokenResult[] = []
   let successCount = 0
   const errors: string[] = []
 
@@ -272,13 +290,20 @@ export async function sendApnsPushNotification(
           // mismatch. Only delete tokens APNs explicitly reports as inactive.
           const invalid = response.status === 410 || reason === 'Unregistered'
 
-          return { token, ok: false as const, reason, invalid }
+          return {
+            token,
+            ok: false as const,
+            reason,
+            invalid,
+            tokenFailure: reason === 'BadDeviceToken' || reason === 'DeviceTokenNotForTopic',
+          }
         } catch (error) {
           return {
             token,
             ok: false as const,
             reason: error instanceof Error ? error.message : String(error),
             invalid: false,
+            tokenFailure: false,
           }
         }
       }),
@@ -287,9 +312,14 @@ export async function sendApnsPushNotification(
     for (const result of results) {
       if (result.ok) {
         successCount++
+        tokenResults.push({ token: result.token, outcome: 'success' })
       } else {
         errors.push(`${result.token.slice(0, 12)}…: ${result.reason}`)
         if (result.invalid) invalidTokens.push(result.token)
+        let outcome: PushTokenOutcome = 'other_failure'
+        if (result.tokenFailure) outcome = 'token_failure'
+        if (result.invalid) outcome = 'invalid'
+        tokenResults.push({ token: result.token, outcome })
       }
     }
   }
@@ -298,6 +328,7 @@ export async function sendApnsPushNotification(
     successCount,
     failureCount: tokens.length - successCount,
     invalidTokens,
+    tokenResults,
     error: errors.length > 0 ? errors.slice(0, 5).join('; ') : undefined,
   }
 }
@@ -406,18 +437,66 @@ export function buildFcmMessage(token: string, payload: PushPayload): Record<str
   }
 }
 
+interface FcmErrorBody {
+  status?: string
+  message?: string
+  details?: Array<{
+    '@type'?: string
+    errorCode?: string
+    fieldViolations?: Array<{ field?: string; description?: string }>
+  }>
+}
+
+function classifyFcmError(error: FcmErrorBody | undefined): PushTokenOutcome {
+  const details = error?.details ?? []
+  const fcmCodes = details
+    .filter(
+      (detail) =>
+        !detail['@type'] ||
+        detail['@type'] === 'type.googleapis.com/google.firebase.fcm.v1.FcmError',
+    )
+    .map((detail) => detail.errorCode)
+  if (fcmCodes.includes('UNREGISTERED')) return 'invalid'
+  // NOT_FOUND alone can refer to the project, not the registration.
+  if (error?.status !== 'INVALID_ARGUMENT' && !fcmCodes.includes('INVALID_ARGUMENT')) {
+    return 'other_failure'
+  }
+
+  const fields = details.flatMap((detail) => detail.fieldViolations ?? [])
+  // Payload evidence takes precedence, even if FcmError also says INVALID_ARGUMENT.
+  if (fields.some((violation) => violation.field !== 'message.token')) return 'other_failure'
+
+  const message = error?.message ?? ''
+  if (
+    /payload|message\.(?!token)|data key|message too (?:big|large)|ttl|package name/i.test(message)
+  ) {
+    return 'other_failure'
+  }
+  if (fields.length > 0) return 'invalid'
+  if (
+    /^(?:The )?registration token is not a valid FCM registration token[.!]?$/i.test(message) ||
+    /^(?:Invalid registration token|Invalid value at ['"]message\.token['"])/i.test(message)
+  ) {
+    return 'invalid'
+  }
+  // INVALID_ARGUMENT also covers payload errors. Repeating an ambiguous response
+  // does not establish token invalidity, so it must not quarantine a registration.
+  return 'other_failure'
+}
+
 export async function sendFcmPushNotification(
   tokens: string[],
   payload: PushPayload,
   config: FcmConfig,
 ): Promise<PushSendResult> {
   if (tokens.length === 0) {
-    return { successCount: 0, failureCount: 0, invalidTokens: [] }
+    return { successCount: 0, failureCount: 0, invalidTokens: [], tokenResults: [] }
   }
 
   const accessToken = await getFcmAccessToken(config)
   const url = `https://fcm.googleapis.com/v1/projects/${config.projectId}/messages:send`
   const invalidTokens: string[] = []
+  const tokenResults: PushTokenResult[] = []
   let successCount = 0
   const errors: string[] = []
 
@@ -434,29 +513,29 @@ export async function sendFcmPushNotification(
 
       if (response.ok) {
         successCount++
+        tokenResults.push({ token, outcome: 'success' })
         continue
       }
 
       const text = await response.text()
       let reason = `HTTP ${response.status}`
-      let invalid = false
+      let outcome: PushTokenOutcome = 'other_failure'
       try {
-        const json = JSON.parse(text) as {
-          error?: { status?: string; details?: Array<{ errorCode?: string }> }
-        }
-        reason = json.error?.status ?? reason
-        const errorCode = json.error?.details?.find((d) => d.errorCode)?.errorCode
-        // INVALID_ARGUMENT can describe a malformed payload, so deleting the
-        // token on that status can wipe valid registrations.
-        invalid = errorCode === 'UNREGISTERED' || reason === 'NOT_FOUND'
+        const json = JSON.parse(text) as { error?: FcmErrorBody }
+        const status = json.error?.status ?? reason
+        const errorCode = json.error?.details?.find((detail) => detail.errorCode)?.errorCode
+        reason = [status, errorCode, json.error?.message].filter(Boolean).join(': ')
+        outcome = classifyFcmError(json.error)
       } catch {
         // keep text reason
         reason = text.slice(0, 200) || reason
       }
 
       errors.push(`${token.slice(0, 12)}…: ${reason}`)
-      if (invalid) invalidTokens.push(token)
+      if (outcome === 'invalid') invalidTokens.push(token)
+      tokenResults.push({ token, outcome })
     } catch (error) {
+      tokenResults.push({ token, outcome: 'other_failure' })
       errors.push(
         `${token.slice(0, 12)}…: ${error instanceof Error ? error.message : String(error)}`,
       )
@@ -467,6 +546,7 @@ export async function sendFcmPushNotification(
     successCount,
     failureCount: tokens.length - successCount,
     invalidTokens,
+    tokenResults,
     error: errors.length > 0 ? errors.slice(0, 5).join('; ') : undefined,
   }
 }
