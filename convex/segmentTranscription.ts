@@ -28,6 +28,7 @@ import { logServerEvent } from './serverTelemetry'
 
 const LEASE_MS = 180_000
 const MAX_ATTEMPTS = 5
+const TIMING_BACKFILL_SEGMENTS = 256
 const jobArgs = { recordingId: v.id('segmentRecordings') }
 async function destination(ctx: QueryCtx | MutationCtx, recordingId: Id<'segmentRecordings'>) {
   const recording = await ctx.db.get(recordingId)
@@ -127,7 +128,7 @@ export const claim = internalMutation({
           .withIndex('by_recording_index', (q) =>
             q.eq('recordingId', recordingId).gte('index', timing.index).lt('index', job.cursor),
           )
-          .take(256)
+          .take(TIMING_BACKFILL_SEGMENTS)
         if (
           !prefix.length ||
           prefix.some(
@@ -140,16 +141,16 @@ export const claim = internalMutation({
           index: timing.index + prefix.length,
           time: timing.time + prefix.reduce((sum, s) => sum + s.duration, 0),
         }
-        if (timing.index < job.cursor) {
-          await ctx.db.patch(job._id, {
-            timing,
-            status: 'queued',
-            leaseUntil: 0,
-            updatedAt: Date.now(),
-          })
-          await ctx.scheduler.runAfter(0, internal.segmentTranscription.run, { recordingId })
-          return null
-        }
+        // Checkpoint even the final batch separately from window construction:
+        // a failed window must not discard timing or rescan the prefix on retry.
+        await ctx.db.patch(job._id, {
+          timing,
+          status: 'queued',
+          leaseUntil: 0,
+          updatedAt: Date.now(),
+        })
+        await ctx.scheduler.runAfter(0, internal.segmentTranscription.run, { recordingId })
+        return null
       }
       const segments = await ctx.db
         .query('mediaSegments')
