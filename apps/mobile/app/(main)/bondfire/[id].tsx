@@ -40,11 +40,13 @@ import {
   clampVideoIndex,
   getInitialVideoIndex,
   getResponseVideoScrollIndex,
+  getViewerWatchedFlags,
   SCREEN_WIDTH,
   type ScrollToIndexFailedInfo,
   STUCK_PROCESSING_TELEMETRY_THRESHOLD_MS,
 } from './_lib/bondfireDetailHelpers'
 import type { VideoPlaybackUrls } from './_lib/bondfireVideoUrlPlan'
+import { getThreadCatchUp, type ThreadCatchUp } from './_lib/threadCatchUp'
 import { useBondfireVideoUrls } from './_lib/useBondfireVideoUrls'
 
 type WatchEventType = 'start' | 'milestone_25' | 'milestone_50' | 'milestone_75' | 'complete'
@@ -95,6 +97,11 @@ export default function BondfireDetailScreen() {
     videoUrls: [] as (VideoPlaybackUrls | null)[],
     isAppActive: AppState.currentState === 'active',
     isScrubbing: false,
+    // Per arrival (a new deep link re-arms it), not per mount: the playback
+    // screen unmounts while the recorder is open, and coming back from
+    // recording a response should not pop the browser open again.
+    catchUp: null as ThreadCatchUp | null,
+    catchUpAutoOpenPending: false,
   })
   const pendingPulse = useRef(new Animated.Value(0.55)).current
 
@@ -102,6 +109,8 @@ export default function BondfireDetailScreen() {
   const videoUrls = useValue(screenState$.videoUrls)
   const isAppActive = useValue(screenState$.isAppActive)
   const isScrubbing = useValue(screenState$.isScrubbing)
+  const catchUp = useValue(screenState$.catchUp)
+  const catchUpAutoOpenPending = useValue(screenState$.catchUpAutoOpenPending)
   const currentUserId = useValue(appStore$.userId)
 
   const bondfireId = id as Id<'bondfires'>
@@ -329,17 +338,23 @@ export default function BondfireDetailScreen() {
       ? `${bondfireId}:${deepLinkVideoId}:${deepLinkIndex ?? 'pending'}`
       : `${bondfireId}:saved`
 
+    const total = 1 + bondfireData.videos.length
+
     if (restoreTargetRef.current?.key !== restoreTargetKey) {
-      restoreTargetRef.current = {
-        key: restoreTargetKey,
-        savedIndex: deepLinkIndex ?? getInitialVideoIndex(bondfireData),
-      }
+      const savedIndex = deepLinkIndex ?? getInitialVideoIndex(bondfireData)
+      restoreTargetRef.current = { key: restoreTargetKey, savedIndex }
       restoredPositionKeyRef.current = null
+
+      const arrivalCatchUp = getThreadCatchUp(
+        getViewerWatchedFlags(bondfireData),
+        clampVideoIndex(savedIndex, total),
+      )
+      screenState$.catchUp.set(arrivalCatchUp)
+      screenState$.catchUpAutoOpenPending.set(arrivalCatchUp.autoOpen)
     }
 
     setFeedActiveBondfireId(bondfireId)
 
-    const total = 1 + bondfireData.videos.length
     const clamped = clampVideoIndex(restoreTargetRef.current.savedIndex, total)
     const restoredPositionKey = `${bondfireId}:${clamped}`
     if (restoredPositionKeyRef.current === restoredPositionKey) return
@@ -455,6 +470,10 @@ export default function BondfireDetailScreen() {
     },
     [bondfireData, currentVideoIndex, recordWatchEventOnce],
   )
+
+  const handleCatchUpAutoOpened = useCallback(() => {
+    screenState$.catchUpAutoOpenPending.set(false)
+  }, [screenState$])
 
   const handleVideoIndexChange = useCallback(
     (index: number) => {
@@ -600,6 +619,10 @@ export default function BondfireDetailScreen() {
       onScrubbingChange={handleScrubbingChange}
       onVideoIndexChange={handleVideoIndexChange}
       initialVideoIndex={initialVideoIndex}
+      catchUp={catchUp}
+      catchUpAutoOpenPending={catchUpAutoOpenPending}
+      onCatchUpAutoOpened={handleCatchUpAutoOpened}
+      linkedVideoKey={deepLinkVideoId}
       onScrollToIndexFailed={handleScrollToIndexFailed}
     />
   )

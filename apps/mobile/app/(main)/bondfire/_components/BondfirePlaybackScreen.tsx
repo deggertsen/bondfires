@@ -20,6 +20,7 @@ import type {
   ScrollToIndexFailedInfo,
 } from '../_lib/bondfireDetailHelpers'
 import { SCREEN_WIDTH, shouldOfferResponseAfterPlayback } from '../_lib/bondfireDetailHelpers'
+import type { ThreadCatchUp } from '../_lib/threadCatchUp'
 import { ThreadBrowser } from './ThreadBrowser'
 import { VideoPlayer, type VideoPlayerHandle } from './VideoPlayer'
 
@@ -52,6 +53,10 @@ export function BondfirePlaybackScreen({
   onScrubbingChange,
   onVideoIndexChange,
   initialVideoIndex,
+  catchUp,
+  catchUpAutoOpenPending,
+  onCatchUpAutoOpened,
+  linkedVideoKey,
   onScrollToIndexFailed,
 }: {
   statusBarStyle: StatusBarStyle
@@ -72,6 +77,10 @@ export function BondfirePlaybackScreen({
   onScrubbingChange: (scrubbing: boolean) => void
   onVideoIndexChange: (index: number) => void
   initialVideoIndex: number
+  catchUp: ThreadCatchUp | null
+  catchUpAutoOpenPending: boolean
+  onCatchUpAutoOpened: () => void
+  linkedVideoKey?: string
   onScrollToIndexFailed: (info: ScrollToIndexFailedInfo) => void
 }) {
   const router = useRouter()
@@ -277,6 +286,7 @@ export function BondfirePlaybackScreen({
         )}
 
         <ThreadBrowser
+          key={bondfireId}
           title={
             // || not ??: an empty-string user title must fall through, matching
             // the Boolean(title) gate the backend uses for aiTitle generation.
@@ -286,6 +296,10 @@ export function BondfirePlaybackScreen({
           }
           videoItems={videoItems}
           currentVideoIndex={currentVideoIndex}
+          catchUp={catchUp}
+          catchUpAutoOpenPending={catchUpAutoOpenPending}
+          onCatchUpAutoOpened={onCatchUpAutoOpened}
+          linkedVideoKey={linkedVideoKey}
           participants={bondfireData.participants}
           processingCount={processingResponseCount}
           canRespond={canRespond}
