@@ -93,7 +93,7 @@ describe.each(['bondfire', 'response'] as const)('%s watch event persistence', (
     expect(events.every((event) => event.durationMs === 60000)).toBe(true)
   })
 
-  it.each(['missing', 'cancelled', 'unlinked'] as const)(
+  it.each(['missing', 'cancelled', 'unlinked', 'wrong_destination'] as const)(
     'does not accept live completion using a %s recording',
     async (state) => {
       const { t, viewer, ids } = await fixture('segment', 'live')
@@ -109,6 +109,11 @@ describe.each(['bondfire', 'response'] as const)('%s watch event persistence', (
       await t.run(async (ctx) => {
         if (state === 'missing') await ctx.db.delete(recordingId)
         else if (state === 'cancelled') await ctx.db.patch(recordingId, { status: 'cancelled' })
+        else if (state === 'wrong_destination')
+          await ctx.db.patch(recordingId, {
+            bondfireId: videoType === 'response' ? ids.bondfireId : undefined,
+            responseId: videoType === 'bondfire' ? ids.responseId : undefined,
+          })
         else await ctx.db.patch(recordingId, { bondfireId: undefined, responseId: undefined })
       })
       expect(
@@ -117,6 +122,7 @@ describe.each(['bondfire', 'response'] as const)('%s watch event persistence', (
           videoId,
           eventType: 'complete',
           positionMs: 9000,
+          durationMs: 10000,
         }),
       ).toEqual({ recorded: false, reason: 'duration_unavailable' })
     },

@@ -70,9 +70,14 @@ beforeEach(() => {
 })
 afterEach(() => vi.unstubAllEnvs())
 describe('internal recording lifecycle', () => {
-  it.each([false, true])(
-    'keeps live parent metadata stable while the playback timeline grows (response=%s)',
-    async (isResponse) => {
+  it.each([
+    { isResponse: false, finishEarly: false },
+    { isResponse: true, finishEarly: false },
+    { isResponse: false, finishEarly: true },
+    { isResponse: true, finishEarly: true },
+  ])(
+    'keeps live parent metadata stable (response=$isResponse, finishEarly=$finishEarly)',
+    async ({ isResponse, finishEarly }) => {
       const { t, owner, fixture, args, record: root, receipt: rootReceipt } = await setup(60000)
       if (isResponse) {
         await rootReceipt(-1, 0)
@@ -90,22 +95,49 @@ describe('internal recording lifecycle', () => {
             bondfireId: root.recordId as import('./_generated/dataModel').Id<'bondfires'>,
           })
         : root
-      const receipt = (index: number) =>
-        t.mutation(internal.segmentMedia.receipt, {
-          recordingId: record.recordingId,
-          userId: fixture.owner,
-          index,
-          duration: index === -1 ? 0 : 4,
-          size: 1000,
-          checksum: 'a'.repeat(64),
-        })
+      const receipt = (index: number, documentsWritten?: number) =>
+        t.mutation((ctx) =>
+          ctx.runMutation(
+            internal.segmentMedia.receipt,
+            {
+              recordingId: record.recordingId,
+              userId: fixture.owner,
+              index,
+              duration: index === -1 ? 0 : 4,
+              size: 1000,
+              checksum: 'a'.repeat(64),
+            },
+            { transactionLimits: { documentsWritten } },
+          ),
+        )
+      const finish = (documentsWritten?: number) =>
+        owner.mutation((ctx) =>
+          ctx.runMutation(
+            api.segmentMedia.finish,
+            { recordingId: record.recordingId, segmentCount: 10 },
+            { transactionLimits: { documentsWritten } },
+          ),
+        )
       await receipt(-1)
       await receipt(0)
       await receipt(1)
       const live = await t.run((ctx) => ctx.db.get(record.recordId))
       expect(live).toMatchObject({ videoStatus: 'live', durationMs: 8000 })
       const ownerAtLive = await t.run((ctx) => ctx.db.get(fixture.owner))
-      for (let index = 2; index < 10; index++) await receipt(index)
+      const rootAtLive = await t.run((ctx) => ctx.db.get(root.recordId))
+      if (isResponse) {
+        expect(rootAtLive).toMatchObject({ videoCount: 2 })
+        expect(ownerAtLive).toMatchObject({ responseCount: 1 })
+      }
+      await receipt(-1, 0)
+      if (finishEarly) {
+        expect(await finish()).toEqual({ complete: false })
+        await finish(0)
+      }
+      // A growing receipt may insert its segment and update its recording only.
+      // Equal-value parent patches also invalidate subscriptions, so comparing
+      // documents alone would not protect the bandwidth optimization.
+      for (let index = 2; index < 9; index++) await receipt(index, 2)
       expect(await t.run((ctx) => ctx.db.get(record.recordId))).toEqual(live)
       expect(await t.run((ctx) => ctx.db.get(fixture.owner))).toEqual(ownerAtLive)
       const timeline = await t.query(internal.segmentMedia.timeline, {
@@ -114,22 +146,19 @@ describe('internal recording lifecycle', () => {
         index: null,
       })
       expect(timeline.complete).toBe(false)
-      expect(timeline.segments.reduce((sum, segment) => sum + segment.duration, 0)).toBe(40)
-      await owner.mutation(api.segmentMedia.finish, {
-        recordingId: record.recordingId,
-        segmentCount: 10,
-      })
+      expect(timeline.segments.reduce((sum, segment) => sum + segment.duration, 0)).toBe(36)
+      await receipt(9, finishEarly ? undefined : 2)
+      if (!finishEarly) expect(await finish()).toEqual({ complete: true })
       const ready = await t.run((ctx) => ctx.db.get(record.recordId))
       const finishedRecording = await t.run((ctx) => ctx.db.get(record.recordingId))
       expect(ready).toMatchObject({ videoStatus: 'ready', durationMs: 40000 })
-      await receipt(-1)
-      await receipt(9)
-      await owner.mutation(api.segmentMedia.finish, {
-        recordingId: record.recordingId,
-        segmentCount: 10,
-      })
+      await receipt(-1, 0)
+      await receipt(9, 0)
+      expect(await finish(0)).toEqual({ complete: true })
       expect(await t.run((ctx) => ctx.db.get(record.recordId))).toEqual(ready)
       expect(await t.run((ctx) => ctx.db.get(record.recordingId))).toEqual(finishedRecording)
+      expect(await t.run((ctx) => ctx.db.get(fixture.owner))).toEqual(ownerAtLive)
+      if (isResponse) expect(await t.run((ctx) => ctx.db.get(root.recordId))).toEqual(rootAtLive)
       const jobs = await t.run((ctx) =>
         ctx.db
           .query('segmentTranscriptionJobs')
@@ -393,15 +422,23 @@ describe('shared draft to growing playback', () => {
 })
 
 it('retains a watchable prefix after the upload recovery window instead of deleting it', async () => {
-  const { t, record, receipt } = await setup()
+  const { t, record, receipt } = await setup(60000)
   await receipt(-1, 0)
   await receipt(0, 4)
   await receipt(1, 4)
+  await receipt(2, 4)
+  expect(await t.run((ctx) => ctx.db.get(record.recordId))).toMatchObject({
+    videoStatus: 'live',
+    durationMs: 8000,
+  })
   await t.run((ctx) => ctx.db.patch(record.recordingId, { createdAt: Date.now() - 8 * 86400_000 }))
   const page = await t.query(internal.segmentMedia.cleanupPage, { cursor: null })
   expect(page.ids).not.toContain(record.recordingId)
   expect(page.interrupted).toContain(record.recordingId)
   await t.mutation(internal.segmentMedia.finalizeInterrupted, { recordingId: record.recordingId })
-  expect((await t.run((ctx) => ctx.db.get(record.recordId)))?.videoStatus).toBe('ready')
-  expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.finalCount).toBe(2)
+  expect(await t.run((ctx) => ctx.db.get(record.recordId))).toMatchObject({
+    videoStatus: 'ready',
+    durationMs: 12000,
+  })
+  expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.finalCount).toBe(3)
 })
