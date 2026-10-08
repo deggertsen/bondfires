@@ -367,11 +367,12 @@ export const timeline = internalQuery({
 export const cleanupPage = internalQuery({
   args: {
     cursor: v.union(v.string(), v.null()),
+    cutoff: v.optional(v.number()),
     mode: v.optional(
       v.union(v.literal('uploading'), v.literal('cancelled'), v.literal('reconcile')),
     ),
   },
-  handler: async (ctx, { cursor, mode }) => {
+  handler: async (ctx, { cursor, mode, cutoff }) => {
     requireSegmentMedia()
     // Pre-deployment continuations carry only a full-table cursor. Keep that
     // query shape until their chain finishes; new cron runs start indexed.
@@ -385,7 +386,7 @@ export const cleanupPage = internalQuery({
         ? recordings
         : recordings.withIndex('by_status_created', (q) =>
             cleanupMode === 'uploading'
-              ? q.eq('status', 'uploading').lt('createdAt', now - 7 * 86400_000)
+              ? q.eq('status', 'uploading').lt('createdAt', cutoff ?? now - 7 * 86400_000)
               : q.eq('status', 'cancelled'),
           )
     const page = await candidates.paginate({ cursor, numItems: 50 })
@@ -486,16 +487,20 @@ export const purge = internalMutation({
 export const cleanup = internalAction({
   args: {
     cursor: v.optional(v.string()),
+    cutoff: v.optional(v.number()),
     mode: v.optional(
       v.union(v.literal('uploading'), v.literal('cancelled'), v.literal('reconcile')),
     ),
   },
-  handler: async (ctx, { cursor, mode }) => {
+  handler: async (ctx, { cursor, mode, cutoff }) => {
     if (!isMediaEnabled()) return
     const cleanupMode = mode ?? (cursor ? 'reconcile' : 'uploading')
+    // Convex pagination cursors require identical index bounds on every page.
+    const cleanupCutoff = cutoff ?? Date.now() - 7 * 86400_000
     const page = await ctx.runQuery(internal.segmentMedia.cleanupPage, {
       cursor: cursor ?? null,
       mode: cleanupMode,
+      cutoff: cleanupCutoff,
     })
     for (const recordingId of page.interrupted) {
       await ctx.runMutation(internal.segmentMedia.finalizeInterrupted, { recordingId })
@@ -514,6 +519,7 @@ export const cleanup = internalAction({
       await ctx.scheduler.runAfter(0, internal.segmentMedia.cleanup, {
         cursor: page.cursor,
         mode: cleanupMode,
+        cutoff: cleanupCutoff,
       })
     else if (cleanupMode === 'uploading')
       await ctx.scheduler.runAfter(0, internal.segmentMedia.cleanup, { mode: 'cancelled' })

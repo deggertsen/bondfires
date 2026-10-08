@@ -2,9 +2,11 @@
 import { convexTest } from 'convex-test'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, internal } from './_generated/api'
+import type { ActionCtx } from './_generated/server'
 import { CURRENT_COMMUNITY_GUIDELINES_VERSION, CURRENT_TERMS_VERSION } from './contentSafety'
 import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
 import schema from './schema'
+import { cleanup } from './segmentMedia'
 
 const modules = import.meta.glob('./**/*.ts')
 async function setup() {
@@ -427,4 +429,76 @@ describe('indexed media cleanup', () => {
       record.recordingId,
     ])
   })
+})
+
+it('keeps the uploading index cutoff fixed across delayed cleanup pages', async () => {
+  const runQuery = vi.fn(async (_reference: unknown, _args: unknown) => ({
+    ids: [],
+    interrupted: [],
+    cursor: 'next-page',
+  }))
+  const runAfter = vi.fn()
+  const ctx = { runQuery, scheduler: { runAfter } } as unknown as ActionCtx
+  const handler = (
+    cleanup as unknown as {
+      _handler: (
+        ctx: ActionCtx,
+        args: { cursor?: string; mode?: string; cutoff?: number },
+      ) => Promise<void>
+    }
+  )._handler
+  await handler(ctx, {})
+  const firstArgs = runQuery.mock.calls[0]?.[1] as unknown as { cutoff: number }
+  const continuation = runAfter.mock.calls[0]?.[2]
+  expect(continuation).toEqual({ cursor: 'next-page', mode: 'uploading', cutoff: firstArgs.cutoff })
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 60_000)
+  try {
+    await handler(ctx, continuation)
+    expect(runQuery).toHaveBeenLastCalledWith(internal.segmentMedia.cleanupPage, {
+      cursor: 'next-page',
+      mode: 'uploading',
+      cutoff: firstArgs.cutoff,
+    })
+    expect(runAfter.mock.calls[1]?.[2]).toEqual(continuation)
+  } finally {
+    clock.mockRestore()
+  }
+})
+
+it('paginates more than fifty old uploads without expanding the cutoff between pages', async () => {
+  const { t, fixture, record } = await setup()
+  const cutoff = Date.now() - 7 * 86400_000
+  await t.run(async (ctx) => {
+    for (let i = 0; i < 52; i++)
+      await ctx.db.insert('segmentRecordings', {
+        userId: fixture.owner,
+        localId: `old-upload-${i}`,
+        bondfireId: record.recordId as import('./_generated/dataModel').Id<'bondfires'>,
+        status: 'uploading',
+        segmentCount: 0,
+        duration: 0,
+        maxDuration: 10,
+        createdAt: i === 51 ? cutoff + 1 : cutoff - 1,
+        updatedAt: Date.now(),
+      })
+  })
+  const first = await t.query(internal.segmentMedia.cleanupPage, {
+    cursor: null,
+    mode: 'uploading',
+    cutoff,
+  })
+  expect(first.ids).toHaveLength(50)
+  expect(first.cursor).not.toBeNull()
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 60_000)
+  try {
+    const rest = await t.query(internal.segmentMedia.cleanupPage, {
+      cursor: first.cursor,
+      mode: 'uploading',
+      cutoff,
+    })
+    expect(rest.ids).toHaveLength(1)
+    expect(rest.cursor).toBeNull()
+  } finally {
+    clock.mockRestore()
+  }
 })
