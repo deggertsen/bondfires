@@ -2,6 +2,7 @@
 import { convexTest } from 'convex-test'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, internal } from './_generated/api'
+import type { Id } from './_generated/dataModel'
 import type { ActionCtx } from './_generated/server'
 import { CURRENT_COMMUNITY_GUIDELINES_VERSION, CURRENT_TERMS_VERSION } from './contentSafety'
 import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
@@ -71,7 +72,11 @@ beforeEach(() => {
   vi.stubEnv('CONVEX_CLOUD_URL', 'https://lovely-malamute-525.convex.cloud')
   vi.stubEnv('INTERNAL_SEGMENT_MEDIA', '1')
 })
-afterEach(() => vi.unstubAllEnvs())
+afterEach(() => {
+  vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
 describe('internal recording lifecycle', () => {
   it('recovers persisted null-draft uploads for both new Bondfires and responses', async () => {
     const { t, owner, args, record, receipt } = await setup()
@@ -501,4 +506,133 @@ it('paginates more than fifty old uploads without expanding the cutoff between p
   } finally {
     clock.mockRestore()
   }
+})
+
+describe('independent media cleanup jobs', () => {
+  it.each([null, 'next-page'])(
+    'dispatches every candidate and the continuation (%s) before deletion runs',
+    async (cursor) => {
+      const ids = ['failed-recording', 'healthy-recording'] as Id<'segmentRecordings'>[]
+      const interrupted = ['playable-recording'] as Id<'segmentRecordings'>[]
+      const runQuery = vi.fn(async () => ({ ids, interrupted, cursor }))
+      const runAfter = vi.fn()
+      const handler = (
+        cleanup as unknown as {
+          _handler: (ctx: ActionCtx, args: { cutoff: number }) => Promise<void>
+        }
+      )._handler
+      // No network or mutation API: discovery cannot wait on individual workers.
+      await handler({ runQuery, scheduler: { runAfter } } as unknown as ActionCtx, { cutoff: 123 })
+      expect(runAfter).toHaveBeenCalledTimes(4)
+      for (const recordingId of ids)
+        expect(runAfter).toHaveBeenCalledWith(0, internal.segmentMedia.cleanupRecording, {
+          recordingId,
+        })
+      expect(runAfter).toHaveBeenCalledWith(0, internal.segmentMedia.finalizeInterrupted, {
+        recordingId: interrupted[0],
+      })
+      expect(runAfter).toHaveBeenLastCalledWith(
+        0,
+        internal.segmentMedia.cleanup,
+        cursor ? { cursor, mode: 'uploading', cutoff: 123 } : { mode: 'cancelled' },
+      )
+    },
+  )
+
+  it.each(['http', 'network'] as const)(
+    'keeps a failed %s deletion retryable while another recording is purged',
+    async (failure) => {
+      const { t, record, fixture } = await setup()
+      const cancelledAt = Date.now() - 3600_001
+      const otherId = await t.run(async (ctx) => {
+        await ctx.db.patch(record.recordingId, { status: 'cancelled', updatedAt: cancelledAt })
+        return ctx.db.insert('segmentRecordings', {
+          userId: fixture.owner,
+          localId: 'other-cancelled',
+          status: 'cancelled',
+          segmentCount: 0,
+          duration: 0,
+          maxDuration: 10,
+          createdAt: cancelledAt,
+          updatedAt: cancelledAt,
+        })
+      })
+      const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
+      if (failure === 'http') fetchMock.mockResolvedValueOnce(new Response(null, { status: 503 }))
+      else fetchMock.mockRejectedValueOnce(new Error('network unavailable'))
+      vi.stubGlobal('fetch', fetchMock)
+      await expect(
+        t.action(internal.segmentMedia.cleanupRecording, {
+          recordingId: record.recordingId,
+        }),
+      ).rejects.toThrow()
+      await t.action(internal.segmentMedia.cleanupRecording, { recordingId: otherId })
+      expect(await t.run((ctx) => ctx.db.get(otherId))).toBeNull()
+      expect(await t.run((ctx) => ctx.db.get(record.recordingId))).toMatchObject({
+        status: 'cancelled',
+        updatedAt: cancelledAt,
+      })
+      expect(
+        (
+          await t.query(internal.segmentMedia.cleanupPage, {
+            cursor: null,
+            mode: 'cancelled',
+          })
+        ).ids,
+      ).toEqual([record.recordingId])
+      await t.action(internal.segmentMedia.cleanupRecording, { recordingId: record.recordingId })
+      expect(await t.run((ctx) => ctx.db.get(record.recordingId))).toBeNull()
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+    },
+  )
+
+  it('rechecks stale empty-upload candidates before deleting a recovered prefix or completed recording', async () => {
+    const { t, owner, record, receipt } = await setup()
+    await t.run((ctx) =>
+      ctx.db.patch(record.recordingId, { createdAt: Date.now() - 8 * 86400_000 }),
+    )
+    expect((await t.query(internal.segmentMedia.cleanupPage, { cursor: null })).ids).toEqual([
+      record.recordingId,
+    ])
+    // A receipt already in flight can commit after discovery and before revocation.
+    await receipt(-1, 0)
+    await receipt(0, 4)
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    await t.action(internal.segmentMedia.cleanupRecording, { recordingId: record.recordingId })
+    expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.status).toBe('uploading')
+    expect(
+      (await t.query(internal.segmentMedia.cleanupPage, { cursor: null })).interrupted,
+    ).toEqual([record.recordingId])
+    await owner.mutation(api.segmentMedia.finish, {
+      recordingId: record.recordingId,
+      segmentCount: 1,
+    })
+    await t.action(internal.segmentMedia.cleanupRecording, { recordingId: record.recordingId })
+    expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.status).toBe('ready')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('revokes access before external deletion and retains a fresh tombstone for late uploads', async () => {
+    const { t, fixture, record } = await setup()
+    await t.run((ctx) =>
+      ctx.db.patch(record.recordingId, { createdAt: Date.now() - 8 * 86400_000 }),
+    )
+    const fetchMock = vi.fn(async () => {
+      await expect(
+        t.query(internal.segmentMedia.authorize, {
+          recordingId: record.recordingId,
+          userId: fixture.owner,
+          operation: 'upload',
+        }),
+      ).rejects.toThrow('Forbidden')
+      expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.status).toBe('cancelled')
+      return new Response(null, { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    await t.action(internal.segmentMedia.cleanupRecording, { recordingId: record.recordingId })
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.status).toBe('cancelled')
+    expect((await t.run((ctx) => ctx.db.get(record.recordId)))?.videoStatus).toBe('errored')
+  })
 })

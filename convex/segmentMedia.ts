@@ -364,6 +364,33 @@ export const timeline = internalQuery({
   },
 })
 
+/** Recheck destructive eligibility in the revocation transaction as well as discovery. */
+async function cleanupDisposition(
+  ctx: QueryCtx,
+  recording: Doc<'segmentRecordings'>,
+  now: number,
+): Promise<'delete' | 'finalize' | null> {
+  if (recording.status === 'cancelled') return 'delete'
+  const owner = await ctx.db.get(recording.userId)
+  const response = recording.responseId ? await ctx.db.get(recording.responseId) : null
+  const source = recording.bondfireId
+    ? await ctx.db.get(recording.bondfireId)
+    : response
+      ? await ctx.db.get(response.bondfireId)
+      : null
+  if (
+    !owner ||
+    owner.accountDeletionStatus ||
+    !source ||
+    (recording.responseId && !response) ||
+    (source.expiresAt !== undefined && source.expiresAt <= now)
+  )
+    return 'delete'
+  if (recording.status === 'uploading' && recording.createdAt < now - 7 * 86400_000)
+    return recording.initChecksum && recording.segmentCount > 0 ? 'finalize' : 'delete'
+  return null
+}
+
 export const cleanupPage = internalQuery({
   args: {
     cursor: v.union(v.string(), v.null()),
@@ -393,29 +420,9 @@ export const cleanupPage = internalQuery({
     const ids: Id<'segmentRecordings'>[] = []
     const interrupted: Id<'segmentRecordings'>[] = []
     for (const recording of page.page) {
-      if (recording.status === 'cancelled') {
-        ids.push(recording._id)
-        continue
-      }
-      const owner = await ctx.db.get(recording.userId)
-      const response = recording.responseId ? await ctx.db.get(recording.responseId) : null
-      const source = recording.bondfireId
-        ? await ctx.db.get(recording.bondfireId)
-        : response
-          ? await ctx.db.get(response.bondfireId)
-          : null
-      if (
-        !owner ||
-        owner.accountDeletionStatus ||
-        !source ||
-        (recording.responseId && !response) ||
-        (source.expiresAt !== undefined && source.expiresAt <= now)
-      )
-        ids.push(recording._id)
-      else if (recording.status === 'uploading' && recording.createdAt < now - 7 * 86400_000) {
-        if (recording.initChecksum && recording.segmentCount > 0) interrupted.push(recording._id)
-        else ids.push(recording._id)
-      }
+      const disposition = await cleanupDisposition(ctx, recording, now)
+      if (disposition === 'delete') ids.push(recording._id)
+      else if (disposition === 'finalize') interrupted.push(recording._id)
     }
     return { ids, interrupted, cursor: page.isDone ? null : page.continueCursor }
   },
@@ -449,11 +456,17 @@ export const finalizeInterrupted = internalMutation({
 })
 
 export const revoke = internalMutation({
-  args: { recordingId: v.id('segmentRecordings') },
-  handler: async (ctx, { recordingId }) => {
+  args: {
+    recordingId: v.id('segmentRecordings'),
+    onlyIfCleanupEligible: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { recordingId, onlyIfCleanupEligible }) => {
     requireSegmentMedia()
     const record = await ctx.db.get(recordingId)
-    if (record && record.status !== 'cancelled') {
+    if (!record) return false
+    if (onlyIfCleanupEligible && (await cleanupDisposition(ctx, record, Date.now())) !== 'delete')
+      return false
+    if (record.status !== 'cancelled') {
       await ctx.db.patch(recordingId, { status: 'cancelled', updatedAt: Date.now() })
       const sourceId = record.responseId ?? record.bondfireId
       const source = sourceId && (await ctx.db.get(sourceId))
@@ -462,6 +475,7 @@ export const revoke = internalMutation({
         await ctx.db.patch(source._id, { videoStatus: 'errored' })
       }
     }
+    return true
   },
 })
 export const purge = internalMutation({
@@ -484,6 +498,28 @@ export const purge = internalMutation({
   },
 })
 
+/** One failed/slow R2 deletion must not block other candidates or later pages. */
+export const cleanupRecording = internalAction({
+  args: { recordingId: v.id('segmentRecordings') },
+  handler: async (ctx, { recordingId }) => {
+    if (!isMediaEnabled()) return
+    const revoked = await ctx.runMutation(internal.segmentMedia.revoke, {
+      recordingId,
+      onlyIfCleanupEligible: true,
+    })
+    if (!revoked) return
+    const response = await fetch(`${process.env.MEDIA_WORKER_URL}/v1/${recordingId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${process.env.MEDIA_WORKER_SECRET}` },
+      signal: AbortSignal.timeout(15000),
+    })
+    // Scheduled actions are not automatically retried. A failed attempt leaves
+    // the tombstone in the cancelled index for the next five-minute sweep.
+    if (!response.ok) throw new Error('Media cleanup will retry')
+    await ctx.runMutation(internal.segmentMedia.purge, { recordingId })
+  },
+})
+
 export const cleanup = internalAction({
   args: {
     cursor: v.optional(v.string()),
@@ -503,17 +539,10 @@ export const cleanup = internalAction({
       cutoff: cleanupCutoff,
     })
     for (const recordingId of page.interrupted) {
-      await ctx.runMutation(internal.segmentMedia.finalizeInterrupted, { recordingId })
+      await ctx.scheduler.runAfter(0, internal.segmentMedia.finalizeInterrupted, { recordingId })
     }
     for (const recordingId of page.ids) {
-      await ctx.runMutation(internal.segmentMedia.revoke, { recordingId })
-      const response = await fetch(`${process.env.MEDIA_WORKER_URL}/v1/${recordingId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${process.env.MEDIA_WORKER_SECRET}` },
-        signal: AbortSignal.timeout(15000),
-      })
-      if (!response.ok) throw new Error('Media cleanup will retry')
-      await ctx.runMutation(internal.segmentMedia.purge, { recordingId })
+      await ctx.scheduler.runAfter(0, internal.segmentMedia.cleanupRecording, { recordingId })
     }
     if (page.cursor)
       await ctx.scheduler.runAfter(0, internal.segmentMedia.cleanup, {
