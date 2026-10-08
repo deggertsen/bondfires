@@ -11,36 +11,38 @@
 export type ThreadCatchUp = {
   /** Open the browser on arrival. */
   autoOpen: boolean
-  /** Leading videos folded into one "earlier" row; 0 means nothing is folded. */
-  foldedCount: number
-  /** Label the first unfolded video as the start of what's new. */
-  showsNewLabel: boolean
+  /** Identities, not positions: live queries can remove or insert earlier videos. */
+  foldedVideoKeys: string[]
+  newVideoKeys: string[]
 }
 
 // Folding a single video would swap one row for another of the same height.
 export const MIN_FOLDED_VIDEOS = 2
 
-const NO_CATCH_UP: ThreadCatchUp = { autoOpen: false, foldedCount: 0, showsNewLabel: false }
+type CatchUpVideo = { key: string; watchedByViewer: boolean }
 
-/**
- * `watched` is in thread order (main video first); `startIndex` is the video
- * the viewer lands on — the first unwatched one, or a push's video.
- */
-export function getThreadCatchUp(watched: boolean[], startIndex: number): ThreadCatchUp {
-  const autoOpen = watched.some((isWatched, index) => !isWatched && index !== startIndex)
-  if (!autoOpen) return NO_CATCH_UP
-
-  // Fold the watched run before the first unwatched video, but never past the
-  // video that's playing (a push can land on an already-watched video).
-  const firstUnwatched = watched.indexOf(false)
+/** Snapshot the arrival before playback changes the watched flags. */
+export function getThreadCatchUp(videos: CatchUpVideo[], startIndex: number): ThreadCatchUp {
+  const autoOpen = videos.some((video, index) => !video.watchedByViewer && index !== startIndex)
+  const firstUnwatched = videos.findIndex((video) => !video.watchedByViewer)
+  // Never fold the video a push lands on, even if it is already watched.
   const boundary = Math.min(firstUnwatched, startIndex)
-  const foldedCount = boundary >= MIN_FOLDED_VIDEOS ? boundary : 0
-
   return {
     autoOpen,
-    foldedCount,
-    showsNewLabel: foldedCount > 0 && !watched[foldedCount],
+    foldedVideoKeys:
+      autoOpen && boundary >= MIN_FOLDED_VIDEOS
+        ? videos.slice(0, boundary).map((video) => video.key)
+        : [],
+    newVideoKeys: videos.filter((video) => !video.watchedByViewer).map((video) => video.key),
   }
+}
+
+/** Only surviving arrival-folded videos at the head may be hidden. */
+export function getThreadFoldedCount(videoKeys: string[], catchUp: ThreadCatchUp | null): number {
+  const foldedKeys = new Set(catchUp?.foldedVideoKeys)
+  const boundary = videoKeys.findIndex((key) => !foldedKeys.has(key))
+  const count = boundary === -1 ? videoKeys.length : boundary
+  return count >= MIN_FOLDED_VIDEOS ? count : 0
 }
 
 export const THREAD_SECTION_HEIGHTS = {
@@ -73,7 +75,9 @@ export function buildThreadBrowserLayout({
   catchUp: ThreadCatchUp | null
   earlierExpanded: boolean
 }) {
-  const foldedCount = catchUp?.foldedCount ?? 0
+  const foldedCount = getThreadFoldedCount(videoKeys, catchUp)
+  const newKeys = new Set(catchUp?.newVideoKeys)
+  const firstNewIndex = videoKeys.findIndex((key) => newKeys.has(key))
   const entries: ThreadBrowserEntry[] = []
   const videoOffsets: (number | undefined)[] = []
   let offset = 0
@@ -92,7 +96,7 @@ export function buildThreadBrowserLayout({
   }
 
   videoKeys.forEach((key, index) => {
-    if (index === foldedCount && catchUp?.showsNewLabel) {
+    if (foldedCount > 0 && index === firstNewIndex) {
       push({ kind: 'newLabel', key: 'new-label' }, THREAD_SECTION_HEIGHTS.newLabel)
     }
     if (index < foldedCount && !earlierExpanded) {

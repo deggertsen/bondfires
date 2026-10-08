@@ -2,29 +2,20 @@ import type { Id } from '../_generated/dataModel'
 import type { QueryCtx } from '../_generated/server'
 
 /**
- * Watch events from before "watched" required finishing a video. Until then
- * any event (even a bare start) counted, so those keep counting: otherwise
- * every video a viewer ever opened and swiped past would turn unwatched at
- * once, flooding old threads with "new" videos.
- */
-export const WATCH_COMPLETION_REQUIRED_SINCE = Date.UTC(2026, 9, 8)
-
-/**
  * Whether a viewer's watch events for one video mean they watched it: a
  * `complete` event (recorded once playback reaches the last stretch; the
  * server accepts it from 85% of the duration). A video with no known duration,
  * such as one still live, can never record `complete`, so any event counts.
+ * Events written before this rule was deployed have no completionRequired
+ * marker and retain their original meaning, regardless of the deployment date.
  */
 export function isWatchedFromEvents(
-  events: { eventType: string; createdAt: number }[],
+  events: { eventType: string; completionRequired?: boolean }[],
   durationMs: number | undefined,
 ): boolean {
   const canComplete = durationMs !== undefined && Number.isFinite(durationMs) && durationMs > 0
   return events.some(
-    (event) =>
-      event.eventType === 'complete' ||
-      !canComplete ||
-      event.createdAt < WATCH_COMPLETION_REQUIRED_SINCE,
+    (event) => event.eventType === 'complete' || !canComplete || event.completionRequired !== true,
   )
 }
 

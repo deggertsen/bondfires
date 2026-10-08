@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { isWatchedFromEvents, WATCH_COMPLETION_REQUIRED_SINCE } from './viewerWatchState'
+import { isWatchedFromEvents } from './viewerWatchState'
 
-const AFTER = WATCH_COMPLETION_REQUIRED_SINCE + 60_000
-const BEFORE = WATCH_COMPLETION_REQUIRED_SINCE - 60_000
 const DURATION = 30_000
 
 describe('isWatchedFromEvents', () => {
@@ -11,24 +9,37 @@ describe('isWatchedFromEvents', () => {
     expect(isWatchedFromEvents([], undefined)).toBe(false)
   })
 
-  it('needs a complete event once completion is required', () => {
+  it('needs a complete event for newly recorded views', () => {
     const started = [
-      { eventType: 'start', createdAt: AFTER },
-      { eventType: 'milestone_75', createdAt: AFTER },
+      { eventType: 'start', completionRequired: true },
+      { eventType: 'milestone_75', completionRequired: true },
     ]
     expect(isWatchedFromEvents(started, DURATION)).toBe(false)
     expect(
-      isWatchedFromEvents([...started, { eventType: 'complete', createdAt: AFTER }], DURATION),
+      isWatchedFromEvents(
+        [...started, { eventType: 'complete', completionRequired: true }],
+        DURATION,
+      ),
     ).toBe(true)
   })
 
-  it('keeps counting any event recorded before completion was required', () => {
-    expect(isWatchedFromEvents([{ eventType: 'start', createdAt: BEFORE }], DURATION)).toBe(true)
+  it('preserves legacy views even when new events are added', () => {
+    const legacy = { eventType: 'start' }
+    expect(isWatchedFromEvents([legacy], DURATION)).toBe(true)
+    expect(
+      isWatchedFromEvents(
+        [legacy, { eventType: 'milestone_25', completionRequired: true }],
+        DURATION,
+      ),
+    ).toBe(true)
   })
 
-  it('counts any event for a video that cannot record complete', () => {
-    const started = [{ eventType: 'start', createdAt: AFTER }]
-    expect(isWatchedFromEvents(started, undefined)).toBe(true)
-    expect(isWatchedFromEvents(started, 0)).toBe(true)
-  })
+  it.each([undefined, 0, Number.NaN, Number.POSITIVE_INFINITY])(
+    'counts a new event when duration %s cannot support completion',
+    (duration) => {
+      expect(
+        isWatchedFromEvents([{ eventType: 'start', completionRequired: true }], duration),
+      ).toBe(true)
+    },
+  )
 })

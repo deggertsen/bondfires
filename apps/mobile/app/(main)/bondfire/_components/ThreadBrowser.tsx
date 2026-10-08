@@ -9,6 +9,7 @@ import { VIDEO_OVERLAY_COLORS as OVERLAY_COLORS } from '../../../../components/v
 import type { BondfireVideoItem, ThreadParticipant } from '../_lib/bondfireDetailHelpers'
 import {
   buildThreadBrowserLayout,
+  getThreadFoldedCount,
   THREAD_SECTION_HEIGHTS,
   type ThreadBrowserEntry,
   type ThreadCatchUp,
@@ -266,7 +267,7 @@ function EarlierVideosRow({
 }
 
 /** Sticky header over the unfolded watched videos; Hide folds them back up. */
-function EarlierVideosHeader({ count, onPress }: { count: number; onPress: () => void }) {
+function EarlierVideosHeader({ count, onPress }: { count: number; onPress?: () => void }) {
   return (
     <XStack
       alignItems="center"
@@ -286,14 +287,16 @@ function EarlierVideosHeader({ count, onPress }: { count: number; onPress: () =>
       >
         EARLIER · {count} WATCHED
       </Text>
-      <Pressable onPress={onPress} hitSlop={10}>
-        <XStack alignItems="center" gap={4}>
-          <Text fontSize={11} color={'$placeholderColor'}>
-            Hide
-          </Text>
-          <ChevronUp size={14} color={'$placeholderColor'} />
-        </XStack>
-      </Pressable>
+      {onPress ? (
+        <Pressable onPress={onPress} hitSlop={10}>
+          <XStack alignItems="center" gap={4}>
+            <Text fontSize={11} color={'$placeholderColor'}>
+              Hide
+            </Text>
+            <ChevronUp size={14} color={'$placeholderColor'} />
+          </XStack>
+        </Pressable>
+      ) : null}
     </XStack>
   )
 }
@@ -356,7 +359,7 @@ export function ThreadBrowser({
 }) {
   const state$ = useObservable({ open: false, earlierExpanded: false })
   const open = useValue(state$.open)
-  const earlierExpanded = useValue(state$.earlierExpanded)
+  const earlierExpandedByUser = useValue(state$.earlierExpanded)
   const listRef = useRef<FlatList<ThreadBrowserEntry>>(null)
   const pendingListOffsetRef = useRef<number | null>(null)
   const listHeightRef = useRef(0)
@@ -374,8 +377,10 @@ export function ThreadBrowser({
     ? COMPACT_ROW_HEIGHT_WITH_SUMMARY
     : COMPACT_ROW_HEIGHT
 
-  const foldedCount = catchUp?.foldedCount ?? 0
   const videoKeys = useMemo(() => videoItems.map((item) => item.key), [videoItems])
+  const foldedCount = getThreadFoldedCount(videoKeys, catchUp)
+  const playingEarlier = currentVideoIndex < foldedCount
+  const earlierExpanded = earlierExpandedByUser || playingEarlier
   const layout = useMemo(
     () => buildThreadBrowserLayout({ videoKeys, rowHeight, catchUp, earlierExpanded }),
     [videoKeys, rowHeight, catchUp, earlierExpanded],
@@ -414,14 +419,24 @@ export function ThreadBrowser({
     return () => clearTimeout(timer)
   }, [catchUpAutoOpenPending, onCatchUpAutoOpened, state$])
 
-  // Swiping back into the folded videos unfolds them, so the playing row is
-  // never hidden inside the fold.
+  // A new arrival gets its own fold preference, including a second deep link
+  // into this same thread. Playback always reveals its row synchronously.
   useEffect(() => {
-    if (currentVideoIndex < foldedCount) state$.earlierExpanded.set(true)
-  }, [currentVideoIndex, foldedCount, state$])
+    if (!catchUp) return
+    state$.earlierExpanded.set(false)
+    pendingListOffsetRef.current = null
+  }, [catchUp, state$])
+
+  const changeOpen = (isOpen: boolean) => {
+    state$.open.set(isOpen)
+    // Manual interaction consumes the pending arrival too; dismissing a sheet
+    // during the delay must not let the timer pop it open again.
+    if (catchUpAutoOpenPending) onCatchUpAutoOpened()
+  }
 
   const toggleEarlier = () => {
-    const expanding = !state$.earlierExpanded.get()
+    if (playingEarlier) return
+    const expanding = !earlierExpanded
     // Unfolding expands in place: land with the newest watched videos just
     // above the new section (under the sticky header) and older ones a scroll
     // up. Folding returns to the top, where the fold row is.
@@ -445,7 +460,7 @@ export function ThreadBrowser({
     <>
       {!open && (
         <Pressable
-          onPress={() => state$.open.set(true)}
+          onPress={() => changeOpen(true)}
           style={{
             position: 'absolute',
             bottom: 28 + insets.bottom,
@@ -495,7 +510,7 @@ export function ThreadBrowser({
 
       <Sheet
         open={open}
-        onOpenChange={(isOpen: boolean) => state$.open.set(isOpen)}
+        onOpenChange={changeOpen}
         snapPoints={[catchUp?.autoOpen ? CATCH_UP_SHEET_SNAP_PERCENT : SHEET_SNAP_PERCENT]}
         dismissOnSnapToBottom
       >
@@ -556,7 +571,12 @@ export function ThreadBrowser({
                     />
                   )
                 case 'earlierHeader':
-                  return <EarlierVideosHeader count={foldedCount} onPress={toggleEarlier} />
+                  return (
+                    <EarlierVideosHeader
+                      count={foldedCount}
+                      onPress={playingEarlier ? undefined : toggleEarlier}
+                    />
+                  )
                 case 'newLabel':
                   return <NewSectionLabel />
                 case 'video': {

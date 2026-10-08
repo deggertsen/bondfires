@@ -284,6 +284,7 @@ export const record = mutation({
       // Duration is authoritative media metadata. The optional client field is
       // retained in the API only for compatibility with deployed builds.
       durationMs: target.durationMs,
+      completionRequired: true,
       createdAt: Date.now(),
     })
 

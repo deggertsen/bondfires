@@ -876,6 +876,8 @@ export default defineSchema({
     ),
     positionMs: v.number(), // Position when event occurred
     durationMs: v.optional(v.number()), // Total video duration
+    // Missing on legacy events, which retain the old any-event watched rule.
+    completionRequired: v.optional(v.boolean()),
 
     // Timestamp
     createdAt: v.number(),

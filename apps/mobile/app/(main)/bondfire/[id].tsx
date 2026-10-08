@@ -40,7 +40,6 @@ import {
   clampVideoIndex,
   getInitialVideoIndex,
   getResponseVideoScrollIndex,
-  getViewerWatchedFlags,
   SCREEN_WIDTH,
   type ScrollToIndexFailedInfo,
   STUCK_PROCESSING_TELEMETRY_THRESHOLD_MS,
@@ -339,7 +338,7 @@ export default function BondfireDetailScreen() {
 
     const deepLinkIndex = getResponseVideoScrollIndex(bondfireData, deepLinkVideoId)
     const restoreTargetKey = deepLinkVideoId
-      ? `${bondfireId}:${deepLinkVideoId}:${deepLinkIndex ?? 'pending'}`
+      ? `${bondfireId}:${deepLinkVideoId}:${deepLinkIndex === null ? 'pending' : 'resolved'}`
       : `${bondfireId}:saved`
 
     const total = 1 + bondfireData.videos.length
@@ -350,7 +349,10 @@ export default function BondfireDetailScreen() {
       restoredPositionKeyRef.current = null
 
       const arrivalCatchUp = getThreadCatchUp(
-        getViewerWatchedFlags(bondfireData),
+        [bondfireData, ...bondfireData.videos].map((video) => ({
+          key: video._id,
+          watchedByViewer: video.watchedByViewer ?? false,
+        })),
         clampVideoIndex(savedIndex, total),
       )
       screenState$.catchUp.set(arrivalCatchUp)
