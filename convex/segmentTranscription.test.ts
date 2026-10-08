@@ -18,17 +18,17 @@ afterEach(() => {
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
 })
-async function setup(t = convexTest(schema, modules)) {
+async function setup(t = convexTest(schema, modules), segmentCount = 8) {
   const ids = await t.run(async (ctx) => {
     const userId = await ctx.db.insert('users', { gender: 'other' })
     const recordingId = await ctx.db.insert('segmentRecordings', {
       userId,
       localId: 'caption-test',
       status: 'ready',
-      segmentCount: 8,
-      duration: 32,
-      finalCount: 8,
-      maxDuration: 60,
+      segmentCount,
+      duration: segmentCount * 4,
+      finalCount: segmentCount,
+      maxDuration: Math.max(60, segmentCount * 4),
       createdAt: Date.now(),
       updatedAt: Date.now(),
     })
@@ -41,7 +41,7 @@ async function setup(t = convexTest(schema, modules)) {
       updatedAt: Date.now(),
     })
     await ctx.db.patch(recordingId, { bondfireId })
-    for (let index = 0; index < 8; index++)
+    for (let index = 0; index < segmentCount; index++)
       await ctx.db.insert('mediaSegments', {
         recordingId,
         index,
@@ -100,6 +100,259 @@ async function seedFailedBacklog(
   return jobIds
 }
 describe('R2 transcription jobs', () => {
+  it('keeps reads bounded at the beginning and end of a long recording, including retries', async () => {
+    // Fails on a full recording/prefix scan, even though 2,000 segments exist.
+    const { t, recordingId } = await setup(
+      convexTest({
+        schema,
+        modules,
+        transactionLimits: { documentsRead: 50 },
+      }),
+      2000,
+    )
+    const first = await t.mutation(internal.segmentTranscription.claim, { recordingId })
+    assert(first)
+    expect(first).toMatchObject({ startTime: 0, ownedStart: 0, ownedEnd: 24, nextIndex: 6 })
+    await t.run((ctx) =>
+      ctx.db.patch(first.jobId, {
+        cursor: 1990,
+        timing: { index: 1990, time: 7960 },
+        leaseUntil: 0,
+      }),
+    )
+    const late = await t.mutation(internal.segmentTranscription.claim, { recordingId })
+    assert(late)
+    expect(late).toMatchObject({
+      startIndex: 1989,
+      startTime: 7956,
+      ownedStart: 7960,
+      ownedEnd: 7980,
+    })
+    await t.mutation(internal.segmentTranscription.failedChunk, {
+      jobId: late.jobId,
+      leaseUntil: late.leaseUntil,
+    })
+    vi.setSystemTime(Date.now() + 300001)
+    const retry = await t.mutation(internal.segmentTranscription.claim, { recordingId })
+    assert(retry)
+    expect(retry).toMatchObject({
+      startIndex: late.startIndex,
+      endIndex: late.endIndex,
+      nextIndex: late.nextIndex,
+      startTime: late.startTime,
+      ownedStart: late.ownedStart,
+      ownedEnd: late.ownedEnd,
+    })
+    await t.mutation(internal.segmentTranscription.completeChunk, {
+      recordingId,
+      jobId: retry.jobId,
+      cursor: retry.cursor,
+      leaseUntil: retry.leaseUntil,
+      nextIndex: retry.nextIndex,
+      text: 'late',
+      vtt: '',
+    })
+    const last = await t.mutation(internal.segmentTranscription.claim, { recordingId })
+    expect(last).toMatchObject({ cursor: 1995, ownedStart: 7980, ownedEnd: 8000, nextIndex: 2000 })
+  })
+  it('persists variable-duration timing across every window, a retry, and duplicate completions', async () => {
+    const { t, recordingId } = await setup(undefined, 48)
+    const times = [0]
+    await t.run(async (ctx) => {
+      const segments = await ctx.db
+        .query('mediaSegments')
+        .withIndex('by_recording_index', (q) => q.eq('recordingId', recordingId))
+        .collect()
+      let totalDuration = 0
+      for (const segment of segments) {
+        const duration = ((segment.index % 7) + 1) / 3
+        totalDuration += duration
+        times.push(totalDuration)
+        await ctx.db.patch(segment._id, {
+          duration,
+          size: segment.index % 3 === 0 ? 8 * 1024 * 1024 : 1000,
+        })
+      }
+      await ctx.db.patch(recordingId, { duration: totalDuration })
+    })
+    const acceptedText: string[] = []
+    let cursor = 0
+    while (cursor < 48) {
+      const claim = await t.mutation(internal.segmentTranscription.claim, { recordingId })
+      assert(claim)
+      expect(claim.cursor).toBe(cursor)
+      expect(claim.nextIndex).toBeGreaterThan(cursor)
+      expect(claim.startTime).toBeCloseTo(times[claim.startIndex], 8)
+      expect(claim.ownedStart).toBeCloseTo(times[cursor], 8)
+      expect(claim.ownedEnd).toBeCloseTo(times[claim.nextIndex], 8)
+      const args = {
+        recordingId,
+        jobId: claim.jobId,
+        cursor,
+        leaseUntil: claim.leaseUntil,
+        nextIndex: claim.nextIndex,
+        text: `Window ${cursor}.`,
+        vtt: '',
+      }
+      if (acceptedText.length === 1) {
+        vi.setSystemTime(Date.now() + 180001)
+        const retry = await t.mutation(internal.segmentTranscription.claim, { recordingId })
+        assert(retry)
+        expect(retry).toMatchObject({
+          cursor,
+          startTime: claim.startTime,
+          ownedStart: claim.ownedStart,
+          ownedEnd: claim.ownedEnd,
+          nextIndex: claim.nextIndex,
+        })
+        expect(await t.mutation(internal.segmentTranscription.completeChunk, args)).toBe(false)
+        args.leaseUntil = retry.leaseUntil
+      }
+      expect(await t.mutation(internal.segmentTranscription.completeChunk, args)).toBe(true)
+      expect(await t.mutation(internal.segmentTranscription.completeChunk, args)).toBe(false)
+      acceptedText.push(args.text)
+      cursor = claim.nextIndex
+      const job = await t.run((ctx) => ctx.db.get(claim.jobId))
+      expect(job?.timing?.index).toBe(cursor)
+      expect(job?.timing?.time).toBeCloseTo(times[cursor], 8)
+      expect(job?.pendingTiming).toBeUndefined()
+      expect(job?.status).toBe(cursor === 48 ? 'ready' : 'queued')
+    }
+    expect(acceptedText.length).toBeGreaterThan(2)
+    expect(await t.run((ctx) => ctx.db.query('videoTranscripts').first())).toMatchObject({
+      text: acceptedText.join(' '),
+    })
+  })
+  it('rebuilds legacy cursor timing in bounded batches without replaying completed captions', async () => {
+    const { t, recordingId, bondfireId } = await setup(
+      convexTest({
+        schema,
+        modules,
+        transactionLimits: { documentsRead: 300 },
+      }),
+      800,
+    )
+    const jobId = await t.run(async (ctx) => {
+      const job = await ctx.db.query('segmentTranscriptionJobs').first()
+      assert(job)
+      await ctx.db.patch(job._id, { cursor: 600, timing: undefined, attempts: 2 })
+      await ctx.db.insert('videoTranscripts', {
+        bondfireId,
+        segmentRecordingId: recordingId,
+        text: 'Existing captions.',
+        createdAt: Date.now(),
+      })
+      return job._id
+    })
+    for (const index of [256, 512, 600]) {
+      expect(await t.mutation(internal.segmentTranscription.claim, { recordingId })).toBeNull()
+      expect(await t.run((ctx) => ctx.db.get(jobId))).toMatchObject({
+        cursor: 600,
+        timing: { index, time: index * 4 },
+        attempts: 2,
+        status: 'queued',
+      })
+    }
+    const claim = await t.mutation(internal.segmentTranscription.claim, { recordingId })
+    assert(claim)
+    expect(claim).toMatchObject({ cursor: 600, startTime: 2396, ownedStart: 2400, ownedEnd: 2420 })
+    await t.mutation(internal.segmentTranscription.completeChunk, {
+      recordingId,
+      jobId,
+      cursor: 600,
+      leaseUntil: claim.leaseUntil,
+      nextIndex: claim.nextIndex,
+      text: 'Next captions.',
+      vtt: '',
+    })
+    expect(await t.run((ctx) => ctx.db.query('videoTranscripts').first())).toMatchObject({
+      text: 'Existing captions. Next captions.',
+    })
+  })
+  it('checkpoints the final legacy batch before a failed window and keeps retries bounded', async () => {
+    const { t, recordingId } = await setup(
+      convexTest({ schema, modules, transactionLimits: { documentsRead: 50 } }),
+      100,
+    )
+    const jobId = await t.run(async (ctx) => {
+      const job = await ctx.db.query('segmentTranscriptionJobs').first()
+      assert(job)
+      await ctx.db.patch(job._id, { cursor: 40, timing: undefined, attempts: 2 })
+      const segment = await ctx.db
+        .query('mediaSegments')
+        .withIndex('by_recording_index', (q) => q.eq('recordingId', recordingId).eq('index', 40))
+        .unique()
+      assert(segment)
+      await ctx.db.patch(segment._id, { duration: 0 })
+      return job._id
+    })
+    // The 40-row prefix and 33-row window each fit, but cannot share this budget.
+    expect(await t.mutation(internal.segmentTranscription.claim, { recordingId })).toBeNull()
+    expect(await t.run((ctx) => ctx.db.get(jobId))).toMatchObject({
+      cursor: 40,
+      timing: { index: 40, time: 160 },
+      attempts: 2,
+      status: 'queued',
+    })
+    for (const attempts of [3, 4, 5]) {
+      expect(await t.mutation(internal.segmentTranscription.claim, { recordingId })).toBeNull()
+      expect(await t.run((ctx) => ctx.db.get(jobId))).toMatchObject({
+        cursor: 40,
+        timing: { index: 40, time: 160 },
+        attempts,
+        status: attempts === 5 ? 'failed' : 'queued',
+      })
+      vi.setSystemTime(Date.now() + 300001)
+    }
+    expect(await t.run((ctx) => ctx.db.query('videoTranscripts').first())).toBeNull()
+  })
+  it('accepts a pre-deployment completion and initializes timing on the next claim', async () => {
+    const { t, recordingId } = await setup()
+    const jobId = await t.run(async (ctx) => {
+      const job = await ctx.db.query('segmentTranscriptionJobs').first()
+      assert(job)
+      await ctx.db.patch(job._id, { status: 'running', timing: undefined, leaseUntil: 123 })
+      return job._id
+    })
+    expect(
+      await t.mutation(internal.segmentTranscription.completeChunk, {
+        recordingId,
+        jobId,
+        cursor: 0,
+        leaseUntil: 123,
+        nextIndex: 6,
+        text: 'Old action.',
+        vtt: '',
+      }),
+    ).toBe(true)
+    expect(await t.mutation(internal.segmentTranscription.claim, { recordingId })).toBeNull()
+    expect(await t.mutation(internal.segmentTranscription.claim, { recordingId })).toMatchObject({
+      cursor: 6,
+      startTime: 20,
+      ownedStart: 24,
+      ownedEnd: 32,
+    })
+  })
+  it('rejects progress outside the claimed window without advancing its timestamp', async () => {
+    const { t, recordingId } = await setup()
+    const claim = await t.mutation(internal.segmentTranscription.claim, { recordingId })
+    assert(claim)
+    await expect(
+      t.mutation(internal.segmentTranscription.completeChunk, {
+        recordingId,
+        jobId: claim.jobId,
+        cursor: 0,
+        leaseUntil: claim.leaseUntil,
+        nextIndex: 7,
+        text: 'wrong boundary',
+        vtt: '',
+      }),
+    ).rejects.toThrow('Invalid transcript window progress')
+    expect(await t.run((ctx) => ctx.db.get(claim.jobId))).toMatchObject({
+      cursor: 0,
+      timing: { index: 0, time: 0 },
+    })
+  })
   it('claims once, resumes after lease expiry, and rejects stale completion', async () => {
     const { t, recordingId } = await setup()
     const first = await t.mutation(internal.segmentTranscription.claim, { recordingId })
@@ -392,6 +645,37 @@ describe('R2 transcription jobs', () => {
       failureReason: 'zero_duration',
     })
   })
+  it('parks a long zero-duration recording using its aggregate without an unbounded scan', async () => {
+    const { t, recordingId } = await setup(
+      convexTest({
+        schema,
+        modules,
+        transactionLimits: { documentsRead: 50 },
+      }),
+      100,
+    )
+    await t.run((ctx) => ctx.db.patch(recordingId, { duration: 0 }))
+    for (let index = 0; index < 100; index += 16) {
+      await t.run(async (ctx) => {
+        for (const segment of await ctx.db
+          .query('mediaSegments')
+          .withIndex('by_recording_index', (q) =>
+            q
+              .eq('recordingId', recordingId)
+              .gte('index', index)
+              .lt('index', index + 16),
+          )
+          .collect())
+          await ctx.db.patch(segment._id, { duration: 0 })
+      })
+    }
+    expect(await t.mutation(internal.segmentTranscription.claim, { recordingId })).toBeNull()
+    expect(await t.run((ctx) => ctx.db.query('segmentTranscriptionJobs').first())).toMatchObject({
+      status: 'failed',
+      attempts: 1,
+      failureReason: 'zero_duration',
+    })
+  })
   it('ignores a stale failure from an expired lease', async () => {
     const { t, recordingId } = await setup()
     const first = await t.mutation(internal.segmentTranscription.claim, { recordingId })
@@ -506,7 +790,10 @@ describe('caption timing', () => {
     let cursor = 0,
       end = 0
     while (cursor < segments.length) {
-      const w = transcriptionWindow(segments, cursor)
+      const w = transcriptionWindow(segments.slice(Math.max(0, cursor - 1), cursor + 32), cursor, {
+        cursorTime: end,
+        segmentCount: segments.length,
+      })
       expect(w.ownedStart).toBe(end)
       expect(w.nextIndex).toBeGreaterThan(cursor)
       expect(w.duration).toBeLessThanOrEqual(30)
@@ -521,11 +808,60 @@ describe('caption timing', () => {
       duration: 4,
       size: 8 * 1024 * 1024,
     }))
-    expect(transcriptionWindow(segments, 1)).toMatchObject({
+    expect(transcriptionWindow(segments, 1, { cursorTime: 4, segmentCount: 4 })).toMatchObject({
       startIndex: 1,
       endIndex: 2,
       nextIndex: 2,
     })
+  })
+  it('preserves absolute time and ownership with variable durations and byte-limited windows', () => {
+    const segments = Array.from({ length: 300 }, (_, index) => ({
+      index,
+      duration: ((index % 7) + 1) / 3,
+      size: index % 3 === 0 ? 8 * 1024 * 1024 : 1000,
+    }))
+    let cursor = 0,
+      cursorTime = 0
+    while (cursor < segments.length) {
+      const window = transcriptionWindow(
+        segments.slice(Math.max(0, cursor - 1), cursor + 32),
+        cursor,
+        {
+          cursorTime,
+          segmentCount: segments.length,
+        },
+      )
+      const prefixTime = (index: number) =>
+        segments.slice(0, index).reduce((sum, s) => sum + s.duration, 0)
+      expect(window.ownedStart).toBeCloseTo(prefixTime(cursor), 8)
+      expect(window.startTime).toBeCloseTo(prefixTime(window.startIndex), 8)
+      expect(window.ownedEnd).toBeCloseTo(prefixTime(window.nextIndex), 8)
+      expect(window.nextIndex).toBeGreaterThan(cursor)
+      cursor = window.nextIndex
+      cursorTime = window.ownedEnd
+    }
+  })
+  it('uses the 32-fragment bound and retains right context when a short-fragment range fills it', () => {
+    const segments = Array.from({ length: 100 }, (_, index) => ({
+      index,
+      duration: 0.1,
+      size: 1000,
+    }))
+    expect(
+      transcriptionWindow(segments.slice(49, 82), 50, { cursorTime: 5, segmentCount: 100 }),
+    ).toMatchObject({ startIndex: 49, endIndex: 81, nextIndex: 80, ownedStart: 5 })
+  })
+  it('rejects a missing fragment instead of shifting absolute timestamps', () => {
+    expect(() =>
+      transcriptionWindow(
+        [
+          { index: 5, duration: 4, size: 1000 },
+          { index: 7, duration: 4, size: 1000 },
+        ],
+        6,
+        { cursorTime: 24, segmentCount: 8 },
+      ),
+    ).toThrow('Invalid timeline')
   })
   it('offsets later windows, excludes context words and escapes caption markup', () => {
     const cues = speechCues(

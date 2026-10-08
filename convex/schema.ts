@@ -1245,6 +1245,9 @@ export default defineSchema({
       v.literal('failed'),
     ),
     cursor: v.number(),
+    // Optional while jobs/actions from before bounded timeline reads finish.
+    timing: v.optional(v.object({ index: v.number(), time: v.number() })),
+    pendingTiming: v.optional(v.object({ index: v.number(), time: v.number() })),
     attempts: v.number(),
     leaseUntil: v.number(),
     updatedAt: v.number(),

@@ -1,37 +1,63 @@
 /** Bound AI calls by actual fragment boundaries, bytes, and duration. */
+export const TRANSCRIPTION_WINDOW_SEGMENTS = 32
 export function transcriptionWindow(
   segments: readonly { index: number; duration: number; size: number }[],
   cursor: number,
+  // The absolute time at cursor replaces rescanning every preceding segment.
+  timing: { cursorTime: number; segmentCount: number },
 ) {
-  const media = segments.filter((s) => s.index >= 0).sort((a, b) => a.index - b.index)
-  if (!Number.isInteger(cursor) || cursor < 0 || cursor >= media.length)
+  const { cursorTime, segmentCount } = timing
+  if (
+    !Number.isInteger(cursor) ||
+    cursor < 0 ||
+    cursor >= segmentCount ||
+    !Number.isFinite(cursorTime) ||
+    cursorTime < 0
+  )
     throw Error('Invalid cursor')
-  if (media.some((s, i) => s.index !== i || s.duration <= 0 || s.size <= 0))
+  const base = Math.max(0, cursor - 1)
+  const limit = Math.min(segmentCount, cursor + TRANSCRIPTION_WINDOW_SEGMENTS)
+  // The caller supplies one previous fragment plus at most 32 forward fragments.
+  // Requiring a contiguous range prevents missing fragments from shifting captions.
+  if (
+    segments.length !== limit - base ||
+    segments.some(
+      (s, i) =>
+        s.index !== base + i ||
+        !Number.isFinite(s.duration) ||
+        s.duration <= 0 ||
+        !Number.isFinite(s.size) ||
+        s.size <= 0,
+    )
+  )
     throw Error('Invalid timeline')
+  const at = (index: number) => segments[index - base]
   // Include context on both sides; each word belongs to only one window.
   const start =
-    cursor > 0 && media[cursor - 1].size + media[cursor].size <= 12 * 1024 * 1024
-      ? cursor - 1
-      : cursor
+    cursor > 0 && at(cursor - 1).size + at(cursor).size <= 12 * 1024 * 1024 ? cursor - 1 : cursor
   let end = start,
     bytes = 0,
     seconds = 0
-  while (end < media.length && end - start < 32) {
-    const next = media[end]
+  while (end < segmentCount && end - start < TRANSCRIPTION_WINDOW_SEGMENTS) {
+    const next = at(end)
     if (end > cursor && (bytes + next.size > 12 * 1024 * 1024 || seconds + next.duration > 30))
       break
     bytes += next.size
     seconds += next.duration
     end++
   }
-  const nextIndex = end < media.length && end > cursor + 1 ? end - 1 : end
-  const timeAt = (index: number) => media.slice(0, index).reduce((sum, s) => sum + s.duration, 0)
+  const nextIndex = end < segmentCount && end > cursor + 1 ? end - 1 : end
+  const timeAt = (index: number) =>
+    cursorTime +
+    segments
+      .filter((s) => s.index >= cursor && s.index < index)
+      .reduce((sum, s) => sum + s.duration, 0)
   return {
     startIndex: start,
     endIndex: end,
     nextIndex,
-    startTime: timeAt(start),
-    ownedStart: timeAt(cursor),
+    startTime: cursorTime - (start < cursor ? at(start).duration : 0),
+    ownedStart: cursorTime,
     ownedEnd: timeAt(nextIndex),
     duration: seconds,
   }
