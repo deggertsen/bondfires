@@ -5,6 +5,8 @@ import { mutation, query } from './_generated/server'
 import { auth } from './auth'
 import {
   buildViewerVisibilityContext,
+  getCampCached,
+  getUserCached,
   isBondfireVisibleToViewer,
   isUserContentVisibleToViewer,
   type ViewerVisibilityContext,
@@ -134,7 +136,7 @@ export async function getFirstUnwatchedResponder(
 ): Promise<PublicUser | null> {
   const { bondfire, viewerId, viewer } = args
   if (isPlayableVideoRecord(bondfire) && !(await isVideoWatchedByViewer(ctx, viewerId, bondfire))) {
-    const user = await ctx.db.get(bondfire.userId)
+    const user = await getUserCached(ctx, viewer, bondfire.userId)
     return user ? toPublicUser(user) : null
   }
 
@@ -152,7 +154,7 @@ export async function getFirstUnwatchedResponder(
       continue
     if (!(await isUserContentVisibleToViewer(ctx, response.userId, viewer))) continue
     if (await isVideoWatchedByViewer(ctx, viewerId, response)) continue
-    const user = await ctx.db.get(response.userId)
+    const user = await getUserCached(ctx, viewer, response.userId)
     return user ? toPublicUser(user) : null
   }
   return null
@@ -220,7 +222,7 @@ async function buildThreadSummary(
     },
   )
   const participantUsers = await Promise.all(
-    [...participantMap.keys()].map((userId) => ctx.db.get(userId)),
+    [...participantMap.keys()].map((userId) => getUserCached(ctx, args.viewer, userId)),
   )
   const participants = participantUsers.flatMap((user) => {
     if (!user) {
@@ -252,7 +254,9 @@ async function buildThreadSummary(
   const lastViewerActivityAt = participantMap.get(args.viewerId)?.latestAt ?? 0
   const unread =
     lastActivityAt > (readMarker?.lastReadAt ?? 0) && lastActivityAt > lastViewerActivityAt
-  const camp = args.bondfire.campId ? await ctx.db.get(args.bondfire.campId) : null
+  const camp = args.bondfire.campId
+    ? await getCampCached(ctx, args.viewer, args.bondfire.campId)
+    : null
   participants.sort((a, b) => b.latestAt - a.latestAt)
 
   return {
@@ -488,6 +492,30 @@ export const listCloseCircle = query({
   },
 })
 
+/** Match the existing participant rules, reading only this user's responses. */
+export async function isThreadParticipant(
+  ctx: QueryCtx,
+  bondfire: Doc<'bondfires'>,
+  userId: Id<'users'>,
+): Promise<boolean> {
+  if (bondfire.userId === userId) return true
+  const responses = ctx.db
+    .query('bondfireVideos')
+    .withIndex('by_bondfire_user', (q) => q.eq('bondfireId', bondfire._id).eq('userId', userId))
+  // Stop at the first qualifying response; do not cap the search, as an older
+  // playable response still grants participation after failed/expired uploads.
+  for await (const response of responses) {
+    if (
+      response.moderationStatus !== 'removed' &&
+      response.moderationStatus !== 'pending_review' &&
+      isPlayableVideoRecord(response)
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
 export const markThreadRead = mutation({
   args: {
     bondfireId: v.id('bondfires'),
@@ -503,8 +531,7 @@ export const markThreadRead = mutation({
       throwUserError('Bondfire not found')
     }
 
-    const { participants: participantMap } = await getParticipantMap(ctx, bondfire)
-    if (!participantMap.has(userId)) {
+    if (!(await isThreadParticipant(ctx, bondfire, userId))) {
       throwUserError('Only thread participants can mark this Bondfire read')
     }
 

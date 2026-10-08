@@ -11,6 +11,8 @@ import {
   buildViewerVisibilityContext,
   ensureViewerCampMembership,
   filterVisibleBondfiresForViewer,
+  getCampCached,
+  getUserCached,
   isBondfireVisibleToViewer,
   isCampContentVisibleToViewer,
   isUserContentVisibleToViewer,
@@ -131,6 +133,7 @@ async function getThreadParticipants(
   ctx: QueryCtx,
   bondfire: Doc<'bondfires'>,
   viewer: ViewerVisibilityContext,
+  playableVisibleVideos: Doc<'bondfireVideos'>[],
 ) {
   const userId = viewer.userId
   const pinnedUserIds = new Set<Id<'users'>>()
@@ -147,21 +150,8 @@ async function getThreadParticipants(
   const participantMap = new Map<Id<'users'>, { latestAt: number; videoCount: number }>()
   participantMap.set(bondfire.userId, { latestAt: bondfire.createdAt, videoCount: 1 })
 
-  const videos = await ctx.db
-    .query('bondfireVideos')
-    .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
-    .collect()
-
-  for (const video of videos.filter(isPlayableVideoRecord)) {
-    if (!(await isUserContentVisibleToViewer(ctx, video.userId, viewer))) continue
-    if (
-      video.moderationStatus === 'removed' ||
-      (video.moderationStatus === 'pending_review' &&
-        viewer.userId !== video.userId &&
-        !viewer.isAdmin)
-    ) {
-      continue
-    }
+  // These responses have already passed the detail query's visibility and playback checks.
+  for (const video of playableVisibleVideos) {
     const current = participantMap.get(video.userId)
     participantMap.set(video.userId, {
       latestAt: Math.max(current?.latestAt ?? 0, video.createdAt),
@@ -170,7 +160,7 @@ async function getThreadParticipants(
   }
 
   const users = await Promise.all(
-    [...participantMap.keys()].map((participantId) => ctx.db.get(participantId)),
+    [...participantMap.keys()].map((participantId) => getUserCached(ctx, viewer, participantId)),
   )
   return users
     .flatMap((participant) => {
@@ -481,8 +471,9 @@ export const getWithVideos = query({
     ) {
       return null
     }
-    const camp = bondfire.campId ? await ctx.db.get(bondfire.campId) : null
-    const campName = await resolveCampLabel(ctx, bondfire)
+    const camp = bondfire.campId ? await getCampCached(ctx, viewer, bondfire.campId) : null
+    const personalCamp = bondfire.personalCampId ? await ctx.db.get(bondfire.personalCampId) : null
+    const campName = personalCamp?.name ?? camp?.name
 
     const videos = await ctx.db
       .query('bondfireVideos')
@@ -532,7 +523,7 @@ export const getWithVideos = query({
       campName,
       videos: readyVideos,
       processingResponses,
-      participants: await getThreadParticipants(ctx, bondfire, viewer),
+      participants: await getThreadParticipants(ctx, bondfire, viewer, playableVideos),
     }
   },
 })
