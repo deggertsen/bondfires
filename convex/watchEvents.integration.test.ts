@@ -76,7 +76,8 @@ describe.each(['bondfire', 'response'] as const)('%s watch event persistence', (
             positionMs: 0,
           }),
         ).toEqual({ recorded: true, profileViewCounted: true })
-        expect(await threadWatched()).toBe(true)
+        // Starting a video no longer marks it watched; finishing it does.
+        expect(await threadWatched()).toBe(false)
         expect(
           await viewer.mutation(api.watchEvents.record, {
             videoType,
@@ -91,9 +92,51 @@ describe.each(['bondfire', 'response'] as const)('%s watch event persistence', (
             eventType: 'milestone_25',
           }),
         ).toBe(true)
+        expect(await threadWatched()).toBe(false)
+        expect(
+          await viewer.mutation(api.watchEvents.record, {
+            videoType,
+            videoId,
+            eventType: 'complete',
+            positionMs: 9000,
+          }),
+        ).toEqual({ recorded: true, profileViewCounted: false })
+        expect(await threadWatched()).toBe(true)
       },
     )
   }
+
+  it('preserves a legacy start when a new milestone is recorded', async () => {
+    const { t, viewer, ids } = await fixture('segment', 'ready')
+    const videoId = videoType === 'bondfire' ? ids.bondfireId : ids.responseId
+    await t.run((ctx) =>
+      ctx.db.insert('watchEvents', {
+        userId: ids.viewerId,
+        videoType,
+        videoId,
+        eventType: 'start',
+        positionMs: 0,
+        // A late deployment must preserve all pre-deployment views too.
+        createdAt: Date.UTC(2027, 0, 1),
+      }),
+    )
+    expect(
+      await viewer.mutation(api.watchEvents.record, {
+        videoType,
+        videoId,
+        eventType: 'milestone_25',
+        positionMs: 2500,
+      }),
+    ).toEqual({ recorded: true, profileViewCounted: false })
+    const thread = await viewer.query(api.bondfires.getWithVideos, { bondfireId: ids.bondfireId })
+    expect(
+      videoType === 'bondfire' ? thread?.watchedByViewer : thread?.videos[0].watchedByViewer,
+    ).toBe(true)
+    const events = await t.run((ctx) => ctx.db.query('watchEvents').collect())
+    expect(events.find((event) => event.eventType === 'milestone_25')?.completionRequired).toBe(
+      true,
+    )
+  })
 
   const unavailable: { name: string; patch: Partial<Doc<'bondfireVideos'>> }[] = [
     { name: 'missing media', patch: { segmentRecordingId: undefined } },
@@ -115,5 +158,16 @@ describe.each(['bondfire', 'response'] as const)('%s watch event persistence', (
       }),
     ).toEqual({ recorded: false, reason: 'unavailable' })
     expect(await viewer.query(api.watchEvents.hasWatched, { videoId })).toBe(false)
+  })
+})
+
+describe('legacy incrementViews endpoint', () => {
+  it('records a start that does not mark the spark watched', async () => {
+    const { viewer, ids } = await fixture('segment', 'ready')
+    expect(
+      await viewer.mutation(api.bondfires.incrementViews, { bondfireId: ids.bondfireId }),
+    ).toEqual({ recorded: true })
+    const thread = await viewer.query(api.bondfires.getWithVideos, { bondfireId: ids.bondfireId })
+    expect(thread?.watchedByViewer).toBe(false)
   })
 })

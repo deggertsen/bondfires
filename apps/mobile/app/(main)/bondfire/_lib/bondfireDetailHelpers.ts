@@ -102,6 +102,14 @@ export function formatTime(ms: number): string {
 
 export { withLiveDvrStart } from './bondfireVideoUrlPlan'
 
+/** Watched flags in thread order (main video first); a missing flag is unwatched. */
+export function getViewerWatchedFlags(bondfireData: BondfireDetailData): boolean[] {
+  return [
+    bondfireData.watchedByViewer ?? false,
+    ...bondfireData.videos.map((video) => video.watchedByViewer ?? false),
+  ]
+}
+
 /**
  * Where a bondfire opens: the first video the viewer has not watched yet, so
  * swiping forward walks through everything new. Falls back to the last video
@@ -110,10 +118,7 @@ export { withLiveDvrStart } from './bondfireVideoUrlPlan'
  * missing flag counts as unwatched. Deep links override this at the call site.
  */
 export function getInitialVideoIndex(bondfireData: BondfireDetailData): number {
-  const watched = [
-    bondfireData.watchedByViewer ?? false,
-    ...bondfireData.videos.map((video) => video.watchedByViewer ?? false),
-  ]
+  const watched = getViewerWatchedFlags(bondfireData)
   const firstUnwatched = watched.indexOf(false)
   return firstUnwatched === -1 ? watched.length - 1 : firstUnwatched
 }

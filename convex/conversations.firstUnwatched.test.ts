@@ -82,7 +82,7 @@ async function markWatched(
       userId,
       videoType,
       videoId,
-      eventType: 'start',
+      eventType: 'complete',
       positionMs: 0,
       createdAt: Date.now(),
     })
