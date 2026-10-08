@@ -1234,6 +1234,7 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_owner_local', ['userId', 'localId'])
+    .index('by_status_created', ['status', 'createdAt'])
     .index('by_updated', ['updatedAt']),
   segmentTranscriptionJobs: defineTable({
     recordingId: v.id('segmentRecordings'),

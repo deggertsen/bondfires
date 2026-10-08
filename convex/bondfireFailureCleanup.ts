@@ -1,3 +1,4 @@
+import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
 import { isPlayableVideoRecord } from './lib/videoLifecycle'
 /**
  * Centralized failure handling for bondfires whose video is broken or abandoned.
@@ -168,6 +169,7 @@ export async function purgeBondfireConvexRecords(
       const liveSession = await ctx.db.get(response.liveSessionId)
       if (liveSession) await ctx.db.delete(response.liveSessionId)
     }
+    await cancelSegmentMedia(ctx, response)
     await ctx.db.delete(response._id)
   }
 
@@ -216,6 +218,7 @@ export async function purgeBondfireConvexRecords(
     })
   }
 
+  await cancelSegmentMedia(ctx, bondfire)
   await ctx.db.delete(bondfireId)
 
   // Recount affected users by re-querying playable records (matches retention).

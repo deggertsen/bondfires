@@ -32,6 +32,7 @@ import {
   isSecureInviteCode,
   normalizeInviteCode,
 } from './inviteCodes'
+import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
 import { getVideoLifecycle } from './lib/videoLifecycle'
 import {
   canViewPersonalBondfire,
@@ -195,6 +196,8 @@ async function deleteDraftBondfireCascade(ctx: MutationCtx, bondfire: Doc<'bondf
   if (bondfire.liveSessionId) {
     await ctx.db.delete(bondfire.liveSessionId)
   }
+
+  await cancelSegmentMedia(ctx, bondfire)
 
   await ctx.db.delete(bondfire._id)
 
@@ -875,6 +878,7 @@ export const deleteBondfire = mutation({
       if (response.liveSessionId) {
         await ctx.db.delete(response.liveSessionId)
       }
+      await cancelSegmentMedia(ctx, response)
       await ctx.db.delete(response._id)
     }
 
@@ -883,6 +887,7 @@ export const deleteBondfire = mutation({
     }
 
     // Delete the bondfire itself.
+    await cancelSegmentMedia(ctx, bondfire)
     await ctx.db.delete(args.bondfireId)
     await ctx.db.patch(user._id, {
       bondfireCount: Math.max(0, (user.bondfireCount ?? 1) - 1),

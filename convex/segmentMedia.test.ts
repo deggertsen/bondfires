@@ -2,8 +2,12 @@
 import { convexTest } from 'convex-test'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, internal } from './_generated/api'
+import type { Id } from './_generated/dataModel'
+import type { ActionCtx } from './_generated/server'
 import { CURRENT_COMMUNITY_GUIDELINES_VERSION, CURRENT_TERMS_VERSION } from './contentSafety'
+import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
 import schema from './schema'
+import { cleanup } from './segmentMedia'
 
 const modules = import.meta.glob('./**/*.ts')
 async function setup(maxDurationMs = 10000) {
@@ -68,7 +72,11 @@ beforeEach(() => {
   vi.stubEnv('CONVEX_CLOUD_URL', 'https://lovely-malamute-525.convex.cloud')
   vi.stubEnv('INTERNAL_SEGMENT_MEDIA', '1')
 })
-afterEach(() => vi.unstubAllEnvs())
+afterEach(() => {
+  vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
 describe('internal recording lifecycle', () => {
   it.each([
     { isResponse: false, finishEarly: false },
@@ -441,4 +449,303 @@ it('retains a watchable prefix after the upload recovery window instead of delet
     durationMs: 12000,
   })
   expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.finalCount).toBe(3)
+})
+
+describe('indexed media cleanup', () => {
+  it('skips ready and recoverable uploads on frequent sweeps but reconciles legacy orphans', async () => {
+    const { t, record, fixture } = await setup()
+    await t.run(async (ctx) => {
+      // More than one page of healthy ready videos must not hide due work.
+      for (let i = 0; i < 55; i++)
+        await ctx.db.insert('segmentRecordings', {
+          userId: fixture.owner,
+          localId: `legacy-${i}`,
+          status: 'ready',
+          segmentCount: 1,
+          duration: 4,
+          maxDuration: 10,
+          createdAt: Date.now() - 8 * 86400_000,
+          updatedAt: Date.now(),
+          bondfireId: record.recordId as import('./_generated/dataModel').Id<'bondfires'>,
+        })
+    })
+    expect(await t.query(internal.segmentMedia.cleanupPage, { cursor: null })).toEqual({
+      ids: [],
+      interrupted: [],
+      cursor: null,
+    })
+    await t.run((ctx) => ctx.db.patch(record.recordingId, { status: 'cancelled' }))
+    expect(
+      await t.query(internal.segmentMedia.cleanupPage, { cursor: null, mode: 'cancelled' }),
+    ).toEqual({
+      ids: [record.recordingId],
+      interrupted: [],
+      cursor: null,
+    })
+    await t.run((ctx) => ctx.db.delete(record.recordId))
+    const page = await t.query(internal.segmentMedia.cleanupPage, {
+      cursor: null,
+      mode: 'reconcile',
+    })
+    expect(page.ids).toHaveLength(50)
+    expect(page.cursor).not.toBeNull()
+    const rest = await t.query(internal.segmentMedia.cleanupPage, {
+      // Pre-deployment continuations used a full-table cursor without mode.
+      cursor: page.cursor,
+    })
+    expect(rest.ids).toHaveLength(6)
+    expect(rest.cursor).toBeNull()
+  })
+
+  it.each(['owner deleted', 'owner deleting', 'root expired', 'root deleted'] as const)(
+    'reconciles ready recordings when %s',
+    async (reason) => {
+      const { t, record, fixture } = await setup()
+      await t.run(async (ctx) => {
+        await ctx.db.patch(record.recordingId, { status: 'ready' })
+        if (reason === 'owner deleted') await ctx.db.delete(fixture.owner)
+        if (reason === 'owner deleting')
+          await ctx.db.patch(fixture.owner, { accountDeletionStatus: 'processing' })
+        if (reason === 'root expired')
+          await ctx.db.patch(record.recordId, { expiresAt: Date.now() - 1 })
+        if (reason === 'root deleted') await ctx.db.delete(record.recordId)
+      })
+      expect(
+        (await t.query(internal.segmentMedia.cleanupPage, { cursor: null, mode: 'reconcile' })).ids,
+      ).toContain(record.recordingId)
+    },
+  )
+
+  it('queues explicit deletion immediately and keeps the original one-hour tombstone', async () => {
+    const { t, owner, record } = await setup()
+    await owner.mutation(api.bondfires.deleteBondfire, {
+      bondfireId: record.recordId as import('./_generated/dataModel').Id<'bondfires'>,
+    })
+    const cancelled = await t.run((ctx) => ctx.db.get(record.recordingId))
+    expect(cancelled?.status).toBe('cancelled')
+    await t.mutation(internal.segmentMedia.purge, { recordingId: record.recordingId })
+    expect(await t.run((ctx) => ctx.db.get(record.recordingId))).not.toBeNull()
+    const originalCancellation = Date.now() - 3600_001
+    await t.run(async (ctx) => {
+      await ctx.db.patch(record.recordingId, { updatedAt: originalCancellation })
+      await cancelSegmentMedia(ctx, { segmentRecordingId: record.recordingId })
+    })
+    expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.updatedAt).toBe(
+      originalCancellation,
+    )
+    await t.mutation(internal.segmentMedia.purge, { recordingId: record.recordingId })
+    expect(await t.run((ctx) => ctx.db.get(record.recordingId))).toBeNull()
+  })
+
+  it('deletes abandoned empty uploads only after the recovery window', async () => {
+    const { t, record } = await setup()
+    expect((await t.query(internal.segmentMedia.cleanupPage, { cursor: null })).ids).toEqual([])
+    await t.run((ctx) =>
+      ctx.db.patch(record.recordingId, { createdAt: Date.now() - 7 * 86400_000 - 1 }),
+    )
+    expect((await t.query(internal.segmentMedia.cleanupPage, { cursor: null })).ids).toEqual([
+      record.recordingId,
+    ])
+  })
+})
+
+it('keeps the uploading index cutoff fixed across delayed cleanup pages', async () => {
+  const runQuery = vi.fn(async (_reference: unknown, _args: unknown) => ({
+    ids: [],
+    interrupted: [],
+    cursor: 'next-page',
+  }))
+  const runAfter = vi.fn()
+  const ctx = { runQuery, scheduler: { runAfter } } as unknown as ActionCtx
+  const handler = (
+    cleanup as unknown as {
+      _handler: (
+        ctx: ActionCtx,
+        args: { cursor?: string; mode?: string; cutoff?: number },
+      ) => Promise<void>
+    }
+  )._handler
+  await handler(ctx, {})
+  const firstArgs = runQuery.mock.calls[0]?.[1] as unknown as { cutoff: number }
+  const continuation = runAfter.mock.calls[0]?.[2]
+  expect(continuation).toEqual({ cursor: 'next-page', mode: 'uploading', cutoff: firstArgs.cutoff })
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 60_000)
+  try {
+    await handler(ctx, continuation)
+    expect(runQuery).toHaveBeenLastCalledWith(internal.segmentMedia.cleanupPage, {
+      cursor: 'next-page',
+      mode: 'uploading',
+      cutoff: firstArgs.cutoff,
+    })
+    expect(runAfter.mock.calls[1]?.[2]).toEqual(continuation)
+  } finally {
+    clock.mockRestore()
+  }
+})
+
+it('paginates more than fifty old uploads without expanding the cutoff between pages', async () => {
+  const { t, fixture, record } = await setup()
+  const cutoff = Date.now() - 7 * 86400_000
+  await t.run(async (ctx) => {
+    for (let i = 0; i < 52; i++)
+      await ctx.db.insert('segmentRecordings', {
+        userId: fixture.owner,
+        localId: `old-upload-${i}`,
+        bondfireId: record.recordId as import('./_generated/dataModel').Id<'bondfires'>,
+        status: 'uploading',
+        segmentCount: 0,
+        duration: 0,
+        maxDuration: 10,
+        createdAt: i === 51 ? cutoff + 1 : cutoff - 1,
+        updatedAt: Date.now(),
+      })
+  })
+  const first = await t.query(internal.segmentMedia.cleanupPage, {
+    cursor: null,
+    mode: 'uploading',
+    cutoff,
+  })
+  expect(first.ids).toHaveLength(50)
+  expect(first.cursor).not.toBeNull()
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 60_000)
+  try {
+    const rest = await t.query(internal.segmentMedia.cleanupPage, {
+      cursor: first.cursor,
+      mode: 'uploading',
+      cutoff,
+    })
+    expect(rest.ids).toHaveLength(1)
+    expect(rest.cursor).toBeNull()
+  } finally {
+    clock.mockRestore()
+  }
+})
+
+describe('independent media cleanup jobs', () => {
+  it.each([null, 'next-page'])(
+    'dispatches every candidate and the continuation (%s) before deletion runs',
+    async (cursor) => {
+      const ids = ['failed-recording', 'healthy-recording'] as Id<'segmentRecordings'>[]
+      const interrupted = ['playable-recording'] as Id<'segmentRecordings'>[]
+      const runQuery = vi.fn(async () => ({ ids, interrupted, cursor }))
+      const runAfter = vi.fn()
+      const handler = (
+        cleanup as unknown as {
+          _handler: (ctx: ActionCtx, args: { cutoff: number }) => Promise<void>
+        }
+      )._handler
+      // No network or mutation API: discovery cannot wait on individual workers.
+      await handler({ runQuery, scheduler: { runAfter } } as unknown as ActionCtx, { cutoff: 123 })
+      expect(runAfter).toHaveBeenCalledTimes(4)
+      for (const recordingId of ids)
+        expect(runAfter).toHaveBeenCalledWith(0, internal.segmentMedia.cleanupRecording, {
+          recordingId,
+        })
+      expect(runAfter).toHaveBeenCalledWith(0, internal.segmentMedia.finalizeInterrupted, {
+        recordingId: interrupted[0],
+      })
+      expect(runAfter).toHaveBeenLastCalledWith(
+        0,
+        internal.segmentMedia.cleanup,
+        cursor ? { cursor, mode: 'uploading', cutoff: 123 } : { mode: 'cancelled' },
+      )
+    },
+  )
+
+  it.each(['http', 'network'] as const)(
+    'keeps a failed %s deletion retryable while another recording is purged',
+    async (failure) => {
+      const { t, record, fixture } = await setup()
+      const cancelledAt = Date.now() - 3600_001
+      const otherId = await t.run(async (ctx) => {
+        await ctx.db.patch(record.recordingId, { status: 'cancelled', updatedAt: cancelledAt })
+        return ctx.db.insert('segmentRecordings', {
+          userId: fixture.owner,
+          localId: 'other-cancelled',
+          status: 'cancelled',
+          segmentCount: 0,
+          duration: 0,
+          maxDuration: 10,
+          createdAt: cancelledAt,
+          updatedAt: cancelledAt,
+        })
+      })
+      const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
+      if (failure === 'http') fetchMock.mockResolvedValueOnce(new Response(null, { status: 503 }))
+      else fetchMock.mockRejectedValueOnce(new Error('network unavailable'))
+      vi.stubGlobal('fetch', fetchMock)
+      await expect(
+        t.action(internal.segmentMedia.cleanupRecording, {
+          recordingId: record.recordingId,
+        }),
+      ).rejects.toThrow()
+      await t.action(internal.segmentMedia.cleanupRecording, { recordingId: otherId })
+      expect(await t.run((ctx) => ctx.db.get(otherId))).toBeNull()
+      expect(await t.run((ctx) => ctx.db.get(record.recordingId))).toMatchObject({
+        status: 'cancelled',
+        updatedAt: cancelledAt,
+      })
+      expect(
+        (
+          await t.query(internal.segmentMedia.cleanupPage, {
+            cursor: null,
+            mode: 'cancelled',
+          })
+        ).ids,
+      ).toEqual([record.recordingId])
+      await t.action(internal.segmentMedia.cleanupRecording, { recordingId: record.recordingId })
+      expect(await t.run((ctx) => ctx.db.get(record.recordingId))).toBeNull()
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+    },
+  )
+
+  it('rechecks stale empty-upload candidates before deleting a recovered prefix or completed recording', async () => {
+    const { t, owner, record, receipt } = await setup()
+    await t.run((ctx) =>
+      ctx.db.patch(record.recordingId, { createdAt: Date.now() - 8 * 86400_000 }),
+    )
+    expect((await t.query(internal.segmentMedia.cleanupPage, { cursor: null })).ids).toEqual([
+      record.recordingId,
+    ])
+    // A receipt already in flight can commit after discovery and before revocation.
+    await receipt(-1, 0)
+    await receipt(0, 4)
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    await t.action(internal.segmentMedia.cleanupRecording, { recordingId: record.recordingId })
+    expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.status).toBe('uploading')
+    expect(
+      (await t.query(internal.segmentMedia.cleanupPage, { cursor: null })).interrupted,
+    ).toEqual([record.recordingId])
+    await owner.mutation(api.segmentMedia.finish, {
+      recordingId: record.recordingId,
+      segmentCount: 1,
+    })
+    await t.action(internal.segmentMedia.cleanupRecording, { recordingId: record.recordingId })
+    expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.status).toBe('ready')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('revokes access before external deletion and retains a fresh tombstone for late uploads', async () => {
+    const { t, fixture, record } = await setup()
+    await t.run((ctx) =>
+      ctx.db.patch(record.recordingId, { createdAt: Date.now() - 8 * 86400_000 }),
+    )
+    const fetchMock = vi.fn(async () => {
+      await expect(
+        t.query(internal.segmentMedia.authorize, {
+          recordingId: record.recordingId,
+          userId: fixture.owner,
+          operation: 'upload',
+        }),
+      ).rejects.toThrow('Forbidden')
+      expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.status).toBe('cancelled')
+      return new Response(null, { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    await t.action(internal.segmentMedia.cleanupRecording, { recordingId: record.recordingId })
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.status).toBe('cancelled')
+    expect((await t.run((ctx) => ctx.db.get(record.recordId)))?.videoStatus).toBe('errored')
+  })
 })

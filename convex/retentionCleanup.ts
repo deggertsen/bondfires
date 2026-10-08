@@ -3,6 +3,7 @@ import { internal } from './_generated/api'
 import type { Doc, Id, TableNames } from './_generated/dataModel'
 import { internalMutation, type MutationCtx, type QueryCtx } from './_generated/server'
 import { collectMuxDeletionTargets } from './lib/accountDeletionPolicy'
+import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
 import { uncountResponse } from './responseCounts'
 import { enqueueRetentionMedia } from './retentionMedia'
 
@@ -80,6 +81,7 @@ async function inventoryVideo(ctx: MutationCtx, video: Doc<'bondfires'> | Doc<'b
 export async function claimBondfire(ctx: MutationCtx, bondfire: Doc<'bondfires'>) {
   await inventoryVideo(ctx, bondfire)
   await enqueueJob(ctx, 'bondfire', bondfire._id)
+  await cancelSegmentMedia(ctx, bondfire)
   await ctx.db.delete(bondfire._id)
   if (bondfire.status !== 'draft') {
     const user = await ctx.db.get(bondfire.userId)
@@ -113,6 +115,7 @@ async function claimResponse(ctx: MutationCtx, response: Doc<'bondfireVideos'>) 
     ctx,
     legacyCounted ? { ...response, countedAt: response.createdAt } : response,
   )
+  await cancelSegmentMedia(ctx, response)
   await ctx.db.delete(response._id)
 }
 

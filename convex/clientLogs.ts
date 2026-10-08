@@ -483,9 +483,8 @@ export const purgeOld = internalMutation({
         const oldEntries = await ctx.db
           .query('clientLogs')
           .withIndex('by_log_retention_level', (q) =>
-            q.eq('retention', retention).eq('level', level),
+            q.eq('retention', retention).eq('level', level).lt('createdAt', cutoff),
           )
-          .filter((q) => q.lt(q.field('createdAt'), cutoff))
           .take(500)
 
         for (const entry of oldEntries) {
