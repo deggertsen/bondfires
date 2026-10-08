@@ -160,3 +160,14 @@ describe.each(['bondfire', 'response'] as const)('%s watch event persistence', (
     expect(await viewer.query(api.watchEvents.hasWatched, { videoId })).toBe(false)
   })
 })
+
+describe('legacy incrementViews endpoint', () => {
+  it('records a start that does not mark the spark watched', async () => {
+    const { viewer, ids } = await fixture('segment', 'ready')
+    expect(
+      await viewer.mutation(api.bondfires.incrementViews, { bondfireId: ids.bondfireId }),
+    ).toEqual({ recorded: true })
+    const thread = await viewer.query(api.bondfires.getWithVideos, { bondfireId: ids.bondfireId })
+    expect(thread?.watchedByViewer).toBe(false)
+  })
+})

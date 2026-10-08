@@ -864,6 +864,9 @@ export const incrementViews = mutation({
       eventType: 'start',
       positionMs: 0,
       durationMs: bondfire.durationMs,
+      // Without the marker this start would read as a legacy event and mark
+      // the spark watched (see isWatchedFromEvents).
+      completionRequired: true,
       createdAt: now,
     })
 
