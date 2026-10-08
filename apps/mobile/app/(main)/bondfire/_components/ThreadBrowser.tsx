@@ -1,7 +1,7 @@
 import { Button, Text, UserAvatar } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { Bell, Check, ChevronDown, ChevronUp, Flame, Share2 } from '@tamagui/lucide-icons'
-import { useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { FlatList, Pressable } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Sheet, XStack, YStack } from 'tamagui'
@@ -391,22 +391,39 @@ export function ThreadBrowser({
   const videoOffsetsRef = useRef(layout.videoOffsets)
   videoOffsetsRef.current = layout.videoOffsets
 
-  // Imperative FlatList scroll (external object) — keeps the playing row in
-  // view when it changes via row taps or swipes on the video above the sheet.
-  useEffect(() => {
-    if (!open) return
-    const timer = setTimeout(() => {
+  // Imperative FlatList scroll (external object) to the playing row — the
+  // most recent video when the whole thread is watched, since that is where
+  // playback starts.
+  const scrollToPlayingRow = useCallback(
+    (animated: boolean) => {
       const playingOffset = videoOffsetsRef.current[currentVideoIndex] ?? 0
       // Stay at the top while the playing row already fits there, so a
       // catch-up arrival shows the fold row and the start of what's new.
       const fitsFromTop = playingOffset + rowHeight <= listHeightRef.current
       listRef.current?.scrollToOffset({
         offset: fitsFromTop ? 0 : Math.max(0, playingOffset - rowHeight * 1.5),
-        animated: true,
+        animated,
       })
-    }, 60)
+    },
+    [currentVideoIndex, rowHeight],
+  )
+
+  // While the sheet is closed, keep the list on the playing row without
+  // animation (the list stays mounted behind the closed sheet), so it opens
+  // already in place. Relying only on the scroll below, which races the
+  // open animation, left the list at the top: the oldest video.
+  useEffect(() => {
+    if (state$.open.peek()) return
+    scrollToPlayingRow(false)
+  }, [scrollToPlayingRow, state$])
+
+  // While open, follow the playing row as it changes via row taps or swipes
+  // on the video above the sheet.
+  useEffect(() => {
+    if (!open) return
+    const timer = setTimeout(() => scrollToPlayingRow(true), 60)
     return () => clearTimeout(timer)
-  }, [open, currentVideoIndex, rowHeight])
+  }, [open, scrollToPlayingRow])
 
   // Catch-up arrival: open once, then hand the flag back so returning from the
   // recorder (which remounts this screen) does not open it again.
@@ -552,11 +569,16 @@ export function ThreadBrowser({
             })}
             onLayout={(event) => {
               listHeightRef.current = event.nativeEvent.layout.height
+              if (!state$.open.peek()) scrollToPlayingRow(false)
             }}
             stickyHeaderIndices={foldedCount > 0 && earlierExpanded ? [0] : undefined}
             onContentSizeChange={() => {
               const offset = pendingListOffsetRef.current
-              if (offset === null) return
+              if (offset === null) {
+                // Rows render in batches after mount; re-apply until opened.
+                if (!state$.open.peek()) scrollToPlayingRow(false)
+                return
+              }
               pendingListOffsetRef.current = null
               listRef.current?.scrollToOffset({ offset, animated: false })
             }}

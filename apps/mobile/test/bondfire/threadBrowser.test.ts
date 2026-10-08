@@ -147,3 +147,46 @@ describe('ThreadBrowser catch-up interactions', () => {
     expect(text('Show')).toBeDefined()
   })
 })
+
+describe('ThreadBrowser list position', () => {
+  // A fully watched thread opens on its most recent video.
+  const watchedThread: BondfireVideoItem[] = Array.from({ length: 12 }, (_, index) => ({
+    ...videos[0],
+    key: `watched-${index}`,
+    isMainVideo: index === 0,
+    watchedByViewer: true,
+  }))
+  const lastIndex = watchedThread.length - 1
+  const compactRowHeight = 54
+
+  it('keeps the closed list on the most recent video so the menu opens at the bottom', async () => {
+    const scrollToOffset = vi.fn()
+    let renderer: ReturnType<typeof create> | undefined
+    await act(async () => {
+      renderer = create(
+        createElement(ThreadBrowser, {
+          title: 'Thread',
+          videoItems: watchedThread,
+          currentVideoIndex: lastIndex,
+          catchUp: getThreadCatchUp(watchedThread, lastIndex),
+          catchUpAutoOpenPending: false,
+          onCatchUpAutoOpened: vi.fn(),
+          processingCount: 0,
+          canRespond: false,
+          canShare: false,
+          onSelectVideo: vi.fn(),
+          onRespond: vi.fn(),
+          onShare: vi.fn(),
+        }),
+        { createNodeMock: () => ({ scrollToOffset }) },
+      )
+    })
+    const sheet = renderer?.root.findByType('Sheet')
+    expect(sheet?.props.open).toBe(false)
+    expect(scrollToOffset).toHaveBeenLastCalledWith({
+      offset: lastIndex * compactRowHeight - compactRowHeight * 1.5,
+      animated: false,
+    })
+    await act(async () => renderer?.unmount())
+  })
+})
