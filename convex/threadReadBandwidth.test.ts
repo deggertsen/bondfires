@@ -8,7 +8,7 @@ import type { QueryCtx } from './_generated/server'
 import { auth } from './auth'
 import { getWithVideos } from './bondfires'
 import { CURRENT_COMMUNITY_GUIDELINES_VERSION, CURRENT_TERMS_VERSION } from './contentSafety'
-import { isThreadParticipant, listMyFires } from './conversations'
+import { isThreadParticipant, listCloseCircle, listMyFires } from './conversations'
 import schema from './schema'
 
 const modules = import.meta.glob('./**/*.ts')
@@ -25,8 +25,32 @@ async function fixture() {
     const owner = await ctx.db.insert('users', { ...profile, displayName: 'Owner' })
     const responder = await ctx.db.insert('users', { ...profile, displayName: 'Responder' })
     const outsider = await ctx.db.insert('users', { ...profile, displayName: 'Outsider' })
+    const campId = await ctx.db.insert('camps', {
+      slug: 'thread-reads',
+      name: 'Thread reads',
+      purpose: 'Test',
+      access: 'invite',
+      status: 'active',
+      ageBand: 'adult',
+      ownerId: owner,
+      rules: { access: {}, participation: { maxDurationMs: 10000 }, advisory: {} },
+      createdAt: 100,
+      updatedAt: 100,
+    })
+    for (const userId of [owner, responder]) {
+      await ctx.db.insert('campMembers', {
+        userId,
+        campId,
+        role: userId === owner ? 'owner' : 'member',
+        status: 'active',
+        muted: true,
+        createdAt: 100,
+        updatedAt: 100,
+      })
+    }
     const bondfireId = await ctx.db.insert('bondfires', {
       userId: owner,
+      campId,
       videoStatus: 'ready',
       muxPlaybackId: 'spark',
       videoCount: 1,
@@ -42,7 +66,7 @@ async function fixture() {
       muxPlaybackId: 'response',
       createdAt: 200,
     })
-    return { owner, responder, outsider, bondfireId, responseId }
+    return { owner, responder, outsider, campId, bondfireId, responseId }
   })
   return { t, ids }
 }
@@ -72,11 +96,33 @@ describe('thread read bandwidth', () => {
       ])
       expect(query.mock.calls.filter(([table]) => table === 'bondfireVideos')).toHaveLength(1)
       expect(get.mock.calls.filter(([id]) => id === ids.responder)).toHaveLength(1)
+      expect(get.mock.calls.filter(([id]) => id === ids.campId)).toHaveLength(1)
+      expect(detail?.campName).toBe('Thread reads')
     })
   })
 
   it('reuses participant users across list summaries and first-unwatched resolution', async () => {
     const { t, ids } = await fixture()
+    await t.run(async (ctx) => {
+      const bondfireId = await ctx.db.insert('bondfires', {
+        userId: ids.owner,
+        campId: ids.campId,
+        videoStatus: 'ready',
+        muxPlaybackId: 'second-spark',
+        videoCount: 1,
+        viewCount: 0,
+        createdAt: 300,
+        updatedAt: 300,
+      })
+      await ctx.db.insert('bondfireVideos', {
+        bondfireId,
+        userId: ids.responder,
+        sequenceNumber: 1,
+        videoStatus: 'ready',
+        muxPlaybackId: 'second-response',
+        createdAt: 400,
+      })
+    })
     await t.run(async (ctx) => {
       vi.spyOn(auth, 'getUserId').mockResolvedValue(ids.owner)
       const get = vi.spyOn(ctx.db, 'get')
@@ -89,10 +135,88 @@ describe('thread read bandwidth', () => {
         }
       )._handler
       const threads = await handler(ctx, {})
-      expect(threads[0]?.firstUnwatchedResponder?._id).toBe(ids.responder)
+      expect(threads.map((thread) => thread.firstUnwatchedResponder?._id)).toEqual([
+        ids.responder,
+        ids.responder,
+      ])
       expect(get.mock.calls.filter(([id]) => id === ids.responder)).toHaveLength(1)
+      expect(get.mock.calls.filter(([id]) => id === ids.campId)).toHaveLength(1)
     })
   })
+
+  it('shares cached users and camps across concurrent Close Circle summaries', async () => {
+    const { t, ids } = await fixture()
+    await t.run(async (ctx) => {
+      await ctx.db.insert('closeCirclePins', {
+        ownerId: ids.responder,
+        pinnedUserId: ids.owner,
+        order: 0,
+        createdAt: 300,
+        updatedAt: 300,
+      })
+      vi.spyOn(auth, 'getUserId').mockResolvedValue(ids.responder)
+      const get = vi.spyOn(ctx.db, 'get')
+      const handler = (
+        listCloseCircle as unknown as {
+          _handler: (
+            ctx: QueryCtx,
+            args: Record<string, never>,
+          ) => Promise<FunctionReturnType<typeof api.conversations.listCloseCircle>>
+        }
+      )._handler
+      const entries = await handler(ctx, {})
+      expect(entries).toHaveLength(1)
+      expect(entries[0]?.sharedThreads.map((thread) => thread._id)).toEqual([ids.bondfireId])
+      expect(entries[0]?.privateCampThreads.map((thread) => thread._id)).toEqual([ids.bondfireId])
+      expect(get.mock.calls.filter(([id]) => id === ids.owner)).toHaveLength(1)
+      expect(get.mock.calls.filter(([id]) => id === ids.campId)).toHaveLength(1)
+    })
+  })
+
+  it.each([
+    { moderationStatus: 'removed' },
+    { moderationStatus: 'pending_review' },
+    { videoStatus: 'pending' },
+    { videoStatus: 'errored' },
+    { videoStatus: 'awaiting_recovery' },
+    { expiresAt: 1 },
+  ] satisfies Partial<Doc<'bondfireVideos'>>[])(
+    'skips author and block lookups for excluded responses %j',
+    async (patch) => {
+      const { t, ids } = await fixture()
+      await t.run(async (ctx) => {
+        await ctx.db.patch(ids.responseId, patch)
+        vi.spyOn(auth, 'getUserId').mockResolvedValue(ids.owner)
+        const get = vi.spyOn(ctx.db, 'get')
+        const query = vi.spyOn(ctx.db, 'query')
+        const detailHandler = (
+          getWithVideos as unknown as {
+            _handler: (
+              ctx: QueryCtx,
+              args: { bondfireId: string },
+            ) => Promise<FunctionReturnType<typeof api.bondfires.getWithVideos>>
+          }
+        )._handler
+        const detail = await detailHandler(ctx, { bondfireId: ids.bondfireId })
+        expect(detail?.videos).toEqual([])
+        expect(detail?.processingResponses).toEqual([])
+        expect(detail?.participants.map((entry) => entry.user._id)).toEqual([ids.owner])
+
+        const listHandler = (
+          listMyFires as unknown as {
+            _handler: (
+              ctx: QueryCtx,
+              args: Record<string, never>,
+            ) => Promise<FunctionReturnType<typeof api.conversations.listMyFires>>
+          }
+        )._handler
+        const threads = await listHandler(ctx, {})
+        expect(threads[0]?.participants.map((entry) => entry.user._id)).toEqual([ids.owner])
+        expect(get.mock.calls.filter(([id]) => id === ids.responder)).toHaveLength(0)
+        expect(query.mock.calls.filter(([table]) => table === 'userBlocks')).toHaveLength(0)
+      })
+    },
+  )
 
   it('does not query responses for the thread owner', async () => {
     const { t, ids } = await fixture()

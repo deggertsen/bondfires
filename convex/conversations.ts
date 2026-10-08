@@ -94,9 +94,6 @@ async function getParticipantMap(
 
   let latestResponsePlayback: VideoPlaybackReference | null = null
   for (const response of responses) {
-    if (args?.viewer && !(await isUserContentVisibleToViewer(ctx, response.userId, args.viewer))) {
-      continue
-    }
     if (
       response.moderationStatus === 'removed' ||
       (response.moderationStatus === 'pending_review' &&
@@ -106,6 +103,10 @@ async function getParticipantMap(
       continue
     }
     if (!isPlayableVideoRecord(response)) continue
+    // Reject unusable responses before reading their authors or block relationships.
+    if (args?.viewer && !(await isUserContentVisibleToViewer(ctx, response.userId, args.viewer))) {
+      continue
+    }
     const playback = getPlayableVideoPlayback(response)
     latestResponsePlayback ??= playback
 
@@ -337,7 +338,7 @@ async function listVisiblePrivateCampThreadsByUser(
       continue
     }
 
-    const camp = await ctx.db.get(bondfire.campId)
+    const camp = await getCampCached(ctx, args.viewer, bondfire.campId)
     if (!camp || camp.access !== 'invite' || !args.viewer.memberCampIds.has(camp._id)) {
       continue
     }
@@ -450,7 +451,7 @@ export const listCloseCircle = query({
     const entries = []
     for (const pin of pins) {
       if (!(await isUserContentVisibleToViewer(ctx, pin.pinnedUserId, viewer))) continue
-      const user = await ctx.db.get(pin.pinnedUserId)
+      const user = await getUserCached(ctx, viewer, pin.pinnedUserId)
       if (!user) {
         continue
       }

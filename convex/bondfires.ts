@@ -483,13 +483,18 @@ export const getWithVideos = query({
 
     const responseVisibility = await Promise.all(
       videos.map(async (video) => {
-        if (!(await isUserContentVisibleToViewer(ctx, video.userId, viewer))) return false
-        return !(
+        if (
           video.moderationStatus === 'removed' ||
           (video.moderationStatus === 'pending_review' &&
             viewerId !== video.userId &&
             !viewer.isAdmin)
-        )
+        ) {
+          return false
+        }
+        // Only displayed responses need author and block checks. Processing
+        // responses still require the same audience checks as playable ones.
+        if (!isPlayableVideoRecord(video) && !isProcessingVideoRecord(video)) return false
+        return await isUserContentVisibleToViewer(ctx, video.userId, viewer)
       }),
     )
     const visibleVideos = videos.filter((_, index) => responseVisibility[index])
