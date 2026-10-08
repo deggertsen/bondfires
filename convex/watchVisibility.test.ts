@@ -52,7 +52,9 @@ describe('watch target safety authorization', () => {
               ? creator
               : id === bondfireId
                 ? { _id: bondfireId, userId: viewerId }
-                : null,
+                : id === 'recording'
+                  ? { responseId, status: 'uploading', duration: 15 }
+                  : null,
       },
     } as unknown as MutationCtx
   })
@@ -72,7 +74,7 @@ describe('watch target safety authorization', () => {
     response.muxPlaybackId = undefined
     response.segmentRecordingId = 'recording' as Id<'segmentRecordings'>
     response.videoStatus = 'live'
-    expect(await resolveVisibleWatchTarget(ctx, target, viewerId)).toEqual({ durationMs: 10000 })
+    expect(await resolveVisibleWatchTarget(ctx, target, viewerId)).toEqual({ durationMs: 15000 })
   })
   it('rejects a response with no playable media', async () => {
     response.muxPlaybackId = undefined

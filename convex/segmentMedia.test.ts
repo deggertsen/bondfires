@@ -6,7 +6,7 @@ import { CURRENT_COMMUNITY_GUIDELINES_VERSION, CURRENT_TERMS_VERSION } from './c
 import schema from './schema'
 
 const modules = import.meta.glob('./**/*.ts')
-async function setup() {
+async function setup(maxDurationMs = 10000) {
   const t = convexTest(schema, modules)
   const fixture = await t.run(async (ctx) => {
     const profile = {
@@ -27,7 +27,7 @@ async function setup() {
       status: 'active',
       ageBand: 'adult',
       ownerId: owner,
-      rules: { access: {}, participation: { maxDurationMs: 10000 }, advisory: {} },
+      rules: { access: {}, participation: { maxDurationMs }, advisory: {} },
       createdAt: Date.now(),
       updatedAt: Date.now(),
     })
@@ -70,6 +70,82 @@ beforeEach(() => {
 })
 afterEach(() => vi.unstubAllEnvs())
 describe('internal recording lifecycle', () => {
+  it.each([false, true])(
+    'keeps live parent metadata stable while the playback timeline grows (response=%s)',
+    async (isResponse) => {
+      const { t, owner, fixture, args, record: root, receipt: rootReceipt } = await setup(60000)
+      if (isResponse) {
+        await rootReceipt(-1, 0)
+        await rootReceipt(0)
+        await owner.mutation(api.segmentMedia.finish, {
+          recordingId: root.recordingId,
+          segmentCount: 1,
+        })
+      }
+      const record = isResponse
+        ? await owner.mutation(api.segmentMedia.begin, {
+            ...args,
+            localId: '00000000-0000-4000-8000-000000000002',
+            isResponse: true,
+            bondfireId: root.recordId as import('./_generated/dataModel').Id<'bondfires'>,
+          })
+        : root
+      const receipt = (index: number) =>
+        t.mutation(internal.segmentMedia.receipt, {
+          recordingId: record.recordingId,
+          userId: fixture.owner,
+          index,
+          duration: index === -1 ? 0 : 4,
+          size: 1000,
+          checksum: 'a'.repeat(64),
+        })
+      await receipt(-1)
+      await receipt(0)
+      await receipt(1)
+      const live = await t.run((ctx) => ctx.db.get(record.recordId))
+      expect(live).toMatchObject({ videoStatus: 'live', durationMs: 8000 })
+      const ownerAtLive = await t.run((ctx) => ctx.db.get(fixture.owner))
+      for (let index = 2; index < 10; index++) await receipt(index)
+      expect(await t.run((ctx) => ctx.db.get(record.recordId))).toEqual(live)
+      expect(await t.run((ctx) => ctx.db.get(fixture.owner))).toEqual(ownerAtLive)
+      const timeline = await t.query(internal.segmentMedia.timeline, {
+        recordingId: record.recordingId,
+        userId: fixture.viewer,
+        index: null,
+      })
+      expect(timeline.complete).toBe(false)
+      expect(timeline.segments.reduce((sum, segment) => sum + segment.duration, 0)).toBe(40)
+      await owner.mutation(api.segmentMedia.finish, {
+        recordingId: record.recordingId,
+        segmentCount: 10,
+      })
+      const ready = await t.run((ctx) => ctx.db.get(record.recordId))
+      const finishedRecording = await t.run((ctx) => ctx.db.get(record.recordingId))
+      expect(ready).toMatchObject({ videoStatus: 'ready', durationMs: 40000 })
+      await receipt(-1)
+      await receipt(9)
+      await owner.mutation(api.segmentMedia.finish, {
+        recordingId: record.recordingId,
+        segmentCount: 10,
+      })
+      expect(await t.run((ctx) => ctx.db.get(record.recordId))).toEqual(ready)
+      expect(await t.run((ctx) => ctx.db.get(record.recordingId))).toEqual(finishedRecording)
+      const jobs = await t.run((ctx) =>
+        ctx.db
+          .query('segmentTranscriptionJobs')
+          .withIndex('by_recording', (q) => q.eq('recordingId', record.recordingId))
+          .collect(),
+      )
+      expect(jobs).toHaveLength(1)
+      const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect())
+      expect(
+        scheduled.filter((f) =>
+          f.name.includes(isResponse ? 'notifyBondfireResponse' : 'notifyCampBondfire'),
+        ),
+      ).toHaveLength(1)
+    },
+  )
+
   it('recovers persisted null-draft uploads for both new Bondfires and responses', async () => {
     const { t, owner, args, record, receipt } = await setup()
     const root = await owner.mutation(api.segmentMedia.begin, {

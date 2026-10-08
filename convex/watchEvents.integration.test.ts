@@ -13,16 +13,17 @@ async function fixture(provider: 'segment' | 'mux', videoStatus: 'ready' | 'live
     const ownerId = await ctx.db.insert('users', { gender: 'other' })
     const viewerId = await ctx.db.insert('users', { gender: 'other' })
     const now = Date.now()
-    const segmentRecordingId = await ctx.db.insert('segmentRecordings', {
+    const recording = {
       userId: ownerId,
       localId: 'watch-test',
-      status: videoStatus === 'ready' ? 'ready' : 'uploading',
+      status: videoStatus === 'ready' ? ('ready' as const) : ('uploading' as const),
       segmentCount: 1,
       duration: 10,
       maxDuration: 60,
       createdAt: now,
       updatedAt: now,
-    })
+    }
+    const segmentRecordingId = await ctx.db.insert('segmentRecordings', recording)
     const media =
       provider === 'segment'
         ? { segmentRecordingId }
@@ -41,17 +42,86 @@ async function fixture(provider: 'segment' | 'mux', videoStatus: 'ready' | 'live
       videoCount: 2,
       updatedAt: now,
     })
+    const responseRecordingId = await ctx.db.insert('segmentRecordings', {
+      ...recording,
+      localId: 'watch-response-test',
+    })
     const responseId = await ctx.db.insert('bondfireVideos', {
       ...video,
+      ...(provider === 'segment' ? { segmentRecordingId: responseRecordingId } : {}),
       bondfireId,
       sequenceNumber: 1,
     })
-    return { bondfireId, responseId, viewerId }
+    await ctx.db.patch(segmentRecordingId, { bondfireId })
+    await ctx.db.patch(responseRecordingId, { responseId })
+    return { bondfireId, responseId, viewerId, segmentRecordingId, responseRecordingId }
   })
   return { t, ids, viewer: t.withIdentity({ subject: ids.viewerId }) }
 }
 
 describe.each(['bondfire', 'response'] as const)('%s watch event persistence', (videoType) => {
+  it('validates live progress against the growing recording instead of a stale parent duration', async () => {
+    const { t, viewer, ids } = await fixture('segment', 'live')
+    const videoId = videoType === 'bondfire' ? ids.bondfireId : ids.responseId
+    const recordingId = videoType === 'bondfire' ? ids.segmentRecordingId : ids.responseRecordingId
+    await t.run((ctx) => ctx.db.patch(recordingId, { duration: 60, segmentCount: 15 }))
+    await viewer.mutation(api.watchEvents.record, {
+      videoType,
+      videoId,
+      eventType: 'start',
+      positionMs: 0,
+    })
+    expect(
+      await viewer.mutation(api.watchEvents.record, {
+        videoType,
+        videoId,
+        eventType: 'complete',
+        positionMs: 9000,
+        durationMs: 10000,
+      }),
+    ).toEqual({ recorded: false, reason: 'position_too_early' })
+    expect(
+      await viewer.mutation(api.watchEvents.record, {
+        videoType,
+        videoId,
+        eventType: 'complete',
+        positionMs: 55000,
+        durationMs: 10000,
+      }),
+    ).toEqual({ recorded: true, profileViewCounted: false })
+    const events = await t.run((ctx) => ctx.db.query('watchEvents').collect())
+    expect(events.every((event) => event.durationMs === 60000)).toBe(true)
+  })
+
+  it.each(['missing', 'cancelled', 'unlinked'] as const)(
+    'does not accept live completion using a %s recording',
+    async (state) => {
+      const { t, viewer, ids } = await fixture('segment', 'live')
+      const videoId = videoType === 'bondfire' ? ids.bondfireId : ids.responseId
+      const recordingId =
+        videoType === 'bondfire' ? ids.segmentRecordingId : ids.responseRecordingId
+      await viewer.mutation(api.watchEvents.record, {
+        videoType,
+        videoId,
+        eventType: 'start',
+        positionMs: 0,
+      })
+      await t.run(async (ctx) => {
+        if (state === 'missing') await ctx.db.delete(recordingId)
+        else if (state === 'cancelled') await ctx.db.patch(recordingId, { status: 'cancelled' })
+        else await ctx.db.patch(recordingId, { bondfireId: undefined, responseId: undefined })
+      })
+      expect(
+        await viewer.mutation(api.watchEvents.record, {
+          videoType,
+          videoId,
+          eventType: 'complete',
+          positionMs: 9000,
+        }),
+      ).toEqual({ recorded: false, reason: 'duration_unavailable' })
+    },
+  )
+
   for (const provider of ['segment', 'mux'] as const) {
     it.each(['ready', 'live'] as const)(
       `records %s ${provider} playback and exposes watched state in the thread`,
