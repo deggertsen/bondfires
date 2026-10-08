@@ -759,6 +759,7 @@ export default defineSchema({
   })
     // Get all videos for a bondfire in order
     .index('by_bondfire', ['bondfireId', 'sequenceNumber'])
+    .index('by_bondfire_user', ['bondfireId', 'userId'])
     .index('by_bondfire_created', ['bondfireId', 'createdAt'])
     .index('by_bondfire_video_status', ['bondfireId', 'videoStatus'])
     // User's response videos

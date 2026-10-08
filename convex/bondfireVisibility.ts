@@ -91,7 +91,7 @@ export async function buildViewerVisibilityContext(
   }
 }
 
-function getCampCached(
+export function getCampCached(
   ctx: QueryCtx,
   viewer: ViewerVisibilityContext,
   campId: Id<'camps'>,
@@ -104,7 +104,7 @@ function getCampCached(
   return campPromise
 }
 
-function getUserCached(
+export function getUserCached(
   ctx: QueryCtx,
   viewer: ViewerVisibilityContext,
   userId: Id<'users'>,
