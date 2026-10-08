@@ -9,6 +9,7 @@ import {
   readTranscriptionFailureResponse,
   type SpeechSegment,
   speechCues,
+  TRANSCRIPTION_WINDOW_SEGMENTS,
   TranscriptionError,
   type TranscriptionFailure,
   transcriptionWindow,
@@ -79,6 +80,7 @@ export async function enqueueTranscription(ctx: MutationCtx, recordingId: Id<'se
     recordingId,
     status: 'queued',
     cursor: 0,
+    timing: { index: 0, time: 0 },
     attempts: 0,
     leaseUntil: 0,
     updatedAt: Date.now(),
@@ -113,25 +115,78 @@ export const claim = internalMutation({
       )
       return null
     }
-    const segments = await ctx.db
-      .query('mediaSegments')
-      .withIndex('by_recording_index', (q) => q.eq('recordingId', recordingId))
-      .collect()
     const leaseUntil = Date.now() + LEASE_MS
-    await ctx.db.patch(job._id, {
-      status: 'running',
-      leaseUntil,
-      attempts: job.attempts + 1,
-      updatedAt: Date.now(),
-    })
     try {
-      const media = segments.filter((segment) => segment.index >= 0)
-      if (media.length > 0 && media.every((segment) => segment.duration === 0))
+      let timing = job.timing ?? { index: 0, time: 0 }
+      if (timing.index > job.cursor) throw Error('Invalid transcript timing')
+      if (timing.index < job.cursor) {
+        // Legacy jobs have no accumulated timestamp. Rebuild it once in bounded
+        // mutations without replaying speech or appending duplicate transcript text.
+        const prefix = await ctx.db
+          .query('mediaSegments')
+          .withIndex('by_recording_index', (q) =>
+            q.eq('recordingId', recordingId).gte('index', timing.index).lt('index', job.cursor),
+          )
+          .take(256)
+        if (
+          !prefix.length ||
+          prefix.some(
+            (s, i) =>
+              s.index !== timing.index + i || !Number.isFinite(s.duration) || s.duration <= 0,
+          )
+        )
+          throw Error('Invalid timeline')
+        timing = {
+          index: timing.index + prefix.length,
+          time: timing.time + prefix.reduce((sum, s) => sum + s.duration, 0),
+        }
+        if (timing.index < job.cursor) {
+          await ctx.db.patch(job._id, {
+            timing,
+            status: 'queued',
+            leaseUntil: 0,
+            updatedAt: Date.now(),
+          })
+          await ctx.scheduler.runAfter(0, internal.segmentTranscription.run, { recordingId })
+          return null
+        }
+      }
+      const segments = await ctx.db
+        .query('mediaSegments')
+        .withIndex('by_recording_index', (q) =>
+          q
+            .eq('recordingId', recordingId)
+            .gte('index', Math.max(0, job.cursor - 1))
+            .lt(
+              'index',
+              Math.min(source.recording.segmentCount, job.cursor + TRANSCRIPTION_WINDOW_SEGMENTS),
+            ),
+        )
+        .take(TRANSCRIPTION_WINDOW_SEGMENTS + 1)
+      // A ready recording's aggregate duration also confirms a zero-duration
+      // timeline without reading every fragment. A partial range alone does not.
+      if (
+        job.cursor === 0 &&
+        (segments.length === source.recording.segmentCount || source.recording.duration === 0) &&
+        segments.length > 0 &&
+        segments.every((segment) => segment.duration === 0)
+      )
         throw new TranscriptionError('zero_duration', 'Media timeline has zero duration', {
           status: 'zero_duration',
           duration: 0,
         })
-      const window = transcriptionWindow(segments, job.cursor)
+      const window = transcriptionWindow(segments, job.cursor, {
+        cursorTime: timing.time,
+        segmentCount: source.recording.segmentCount,
+      })
+      await ctx.db.patch(job._id, {
+        status: 'running',
+        leaseUntil,
+        attempts: job.attempts + 1,
+        updatedAt: Date.now(),
+        timing,
+        pendingTiming: { index: window.nextIndex, time: window.ownedEnd },
+      })
       return { jobId: job._id, cursor: job.cursor, leaseUntil, ...window }
     } catch (error) {
       // Persist attempts even if window construction fails before the action starts.
@@ -177,6 +232,8 @@ export const completeChunk = internalMutation({
       args.nextIndex > recording.segmentCount
     )
       throw Error('Invalid transcript progress')
+    if (job.pendingTiming && args.nextIndex !== job.pendingTiming.index)
+      throw Error('Invalid transcript window progress')
     const existing = await transcript(ctx, recording)
     const matches = existing?.segmentRecordingId === recording._id
     const text = `${matches ? existing.text : ''}${args.text ? ` ${args.text}` : ''}`.trim()
@@ -202,6 +259,9 @@ export const completeChunk = internalMutation({
     const done = args.nextIndex === recording.segmentCount
     await ctx.db.patch(job._id, {
       cursor: args.nextIndex,
+      // Old in-flight actions have no pending timing; the next claim rebuilds it.
+      timing: job.pendingTiming,
+      pendingTiming: undefined,
       status: done ? 'ready' : 'queued',
       attempts: 0,
       leaseUntil: 0,
@@ -232,6 +292,7 @@ async function recordChunkFailure(
   const delay = Math.min(300_000, 15_000 * 2 ** job.attempts)
   await ctx.db.patch(job._id, {
     status: stopped ? 'failed' : 'queued',
+    attempts: job.attempts,
     leaseUntil: terminal ? Number.MAX_SAFE_INTEGER : Date.now() + delay,
     failureReason: failure.reason,
     updatedAt: Date.now(),
