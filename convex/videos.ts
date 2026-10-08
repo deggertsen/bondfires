@@ -56,6 +56,7 @@ import {
   localIngestSource,
 } from './lib/liveIngest'
 import { shouldReapLiveSession } from './lib/liveSessionStaleness'
+import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
 import { canResumeUnrecordedDraft, isPlayableVideoRecord } from './lib/videoLifecycle'
 import { assessLiveSessionProgress } from './liveSessionProgress'
 import { importedUrls } from './mediaImports'
@@ -2040,11 +2041,13 @@ export const deleteExpiredPrivateCampVideoRecords = internalMutation({
 
       for (const response of responses) {
         affectedUsers.add(response.userId)
+        await cancelSegmentMedia(ctx, response)
         await ctx.db.delete(response._id)
         deletedResponses += 1
       }
 
       await deleteBondfireInviteArtifacts(ctx, bondfire._id)
+      await cancelSegmentMedia(ctx, bondfire)
       await ctx.db.delete(bondfire._id)
       deletedBondfires += 1
     }
@@ -4199,6 +4202,7 @@ export const deleteLegacyVideoOnDemandContent = internalMutation({
     for (const video of legacyResponseVideos) {
       affectedUsers.add(video.userId)
       affectedBondfires.add(video.bondfireId)
+      await cancelSegmentMedia(ctx, video)
       await ctx.db.delete(video._id)
     }
 
@@ -4212,10 +4216,12 @@ export const deleteLegacyVideoOnDemandContent = internalMutation({
 
       for (const response of responses) {
         affectedUsers.add(response.userId)
+        await cancelSegmentMedia(ctx, response)
         await ctx.db.delete(response._id)
       }
 
       await deleteBondfireInviteArtifacts(ctx, bondfire._id)
+      await cancelSegmentMedia(ctx, bondfire)
       await ctx.db.delete(bondfire._id)
     }
 

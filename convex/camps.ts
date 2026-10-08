@@ -35,6 +35,7 @@ import {
   normalizeInviteCode,
 } from './inviteCodes'
 import { boundedInteger } from './lib/queryBounds'
+import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
 import { isEitherUserBlocked } from './userSafety'
 
 type CampAccess = 'open' | 'approval' | 'invite'
@@ -1742,9 +1743,11 @@ export const resetAndReseed = mutation({
           .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
           .collect()
         for (const video of videos) {
+          await cancelSegmentMedia(ctx, video)
           await ctx.db.delete(video._id)
         }
         await deleteBondfireInviteArtifacts(ctx, bondfire._id)
+        await cancelSegmentMedia(ctx, bondfire)
         await ctx.db.delete(bondfire._id)
       }
 
@@ -1803,9 +1806,11 @@ export const resetAndReseedAdmin = internalMutation({
           .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
           .collect()
         for (const video of videos) {
+          await cancelSegmentMedia(ctx, video)
           await ctx.db.delete(video._id)
         }
         await deleteBondfireInviteArtifacts(ctx, bondfire._id)
+        await cancelSegmentMedia(ctx, bondfire)
         await ctx.db.delete(bondfire._id)
       }
       const memberships = await ctx.db

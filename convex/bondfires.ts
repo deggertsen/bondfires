@@ -28,6 +28,7 @@ import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 import { addInviteBadgesToBondfires } from './inviteBadges'
 import { getLatestResponsePlayback } from './lib/latestResponsePlayback'
 import { boundedInteger, boundedScanSize } from './lib/queryBounds'
+import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
 import { getVideoLifecycle, isPlayableVideoRecord } from './lib/videoLifecycle'
 import { isVideoWatchedByViewer } from './lib/viewerWatchState'
 import { incrementProfileViews } from './watchEvents'
@@ -982,6 +983,7 @@ export const deleteBondfire = mutation({
       if (response.liveSessionId) {
         await ctx.db.delete(response.liveSessionId)
       }
+      await cancelSegmentMedia(ctx, response)
       await ctx.db.delete(response._id)
     }
 
@@ -1019,6 +1021,7 @@ export const deleteBondfire = mutation({
       await ctx.db.delete(bondfire.liveSessionId)
     }
 
+    await cancelSegmentMedia(ctx, bondfire)
     await ctx.db.delete(args.bondfireId)
 
     // Decrement the creator's bondfire count.

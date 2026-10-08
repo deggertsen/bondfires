@@ -365,13 +365,37 @@ export const timeline = internalQuery({
 })
 
 export const cleanupPage = internalQuery({
-  args: { cursor: v.union(v.string(), v.null()) },
-  handler: async (ctx, { cursor }) => {
+  args: {
+    cursor: v.union(v.string(), v.null()),
+    mode: v.optional(
+      v.union(v.literal('uploading'), v.literal('cancelled'), v.literal('reconcile')),
+    ),
+  },
+  handler: async (ctx, { cursor, mode }) => {
     requireSegmentMedia()
-    const page = await ctx.db.query('segmentRecordings').paginate({ cursor, numItems: 50 })
+    // Pre-deployment continuations carry only a full-table cursor. Keep that
+    // query shape until their chain finishes; new cron runs start indexed.
+    const cleanupMode = mode ?? (cursor ? 'reconcile' : 'uploading')
+    const now = Date.now()
+    // Ready videos only need the hourly orphan/expiry reconciliation. These
+    // index ranges also cover pre-deployment rows without a backfill.
+    const recordings = ctx.db.query('segmentRecordings')
+    const candidates =
+      cleanupMode === 'reconcile'
+        ? recordings
+        : recordings.withIndex('by_status_created', (q) =>
+            cleanupMode === 'uploading'
+              ? q.eq('status', 'uploading').lt('createdAt', now - 7 * 86400_000)
+              : q.eq('status', 'cancelled'),
+          )
+    const page = await candidates.paginate({ cursor, numItems: 50 })
     const ids: Id<'segmentRecordings'>[] = []
     const interrupted: Id<'segmentRecordings'>[] = []
     for (const recording of page.page) {
+      if (recording.status === 'cancelled') {
+        ids.push(recording._id)
+        continue
+      }
       const owner = await ctx.db.get(recording.userId)
       const response = recording.responseId ? await ctx.db.get(recording.responseId) : null
       const source = recording.bondfireId
@@ -384,14 +408,10 @@ export const cleanupPage = internalQuery({
         owner.accountDeletionStatus ||
         !source ||
         (recording.responseId && !response) ||
-        (source.expiresAt !== undefined && source.expiresAt <= Date.now()) ||
-        recording.status === 'cancelled'
+        (source.expiresAt !== undefined && source.expiresAt <= now)
       )
         ids.push(recording._id)
-      else if (
-        recording.status === 'uploading' &&
-        recording.createdAt < Date.now() - 7 * 86400_000
-      ) {
+      else if (recording.status === 'uploading' && recording.createdAt < now - 7 * 86400_000) {
         if (recording.initChecksum && recording.segmentCount > 0) interrupted.push(recording._id)
         else ids.push(recording._id)
       }
@@ -464,10 +484,19 @@ export const purge = internalMutation({
 })
 
 export const cleanup = internalAction({
-  args: { cursor: v.optional(v.string()) },
-  handler: async (ctx, { cursor }) => {
+  args: {
+    cursor: v.optional(v.string()),
+    mode: v.optional(
+      v.union(v.literal('uploading'), v.literal('cancelled'), v.literal('reconcile')),
+    ),
+  },
+  handler: async (ctx, { cursor, mode }) => {
     if (!isMediaEnabled()) return
-    const page = await ctx.runQuery(internal.segmentMedia.cleanupPage, { cursor: cursor ?? null })
+    const cleanupMode = mode ?? (cursor ? 'reconcile' : 'uploading')
+    const page = await ctx.runQuery(internal.segmentMedia.cleanupPage, {
+      cursor: cursor ?? null,
+      mode: cleanupMode,
+    })
     for (const recordingId of page.interrupted) {
       await ctx.runMutation(internal.segmentMedia.finalizeInterrupted, { recordingId })
     }
@@ -482,7 +511,12 @@ export const cleanup = internalAction({
       await ctx.runMutation(internal.segmentMedia.purge, { recordingId })
     }
     if (page.cursor)
-      await ctx.scheduler.runAfter(0, internal.segmentMedia.cleanup, { cursor: page.cursor })
+      await ctx.scheduler.runAfter(0, internal.segmentMedia.cleanup, {
+        cursor: page.cursor,
+        mode: cleanupMode,
+      })
+    else if (cleanupMode === 'uploading')
+      await ctx.scheduler.runAfter(0, internal.segmentMedia.cleanup, { mode: 'cancelled' })
   },
 })
 

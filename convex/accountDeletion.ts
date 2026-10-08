@@ -22,6 +22,7 @@ import {
   collectMuxDeletionTargets,
   nextAccountDeletionStage,
 } from './lib/accountDeletionPolicy'
+import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
 import { uncountResponse } from './responseCounts'
 
 const BATCH_SIZE = ACCOUNT_DELETION_BATCH_SIZE
@@ -594,6 +595,7 @@ export const deleteContentBatch = internalMutation({
         await uncountResponse(ctx, video)
         if (video.liveSessionId && (await ctx.db.get(video.liveSessionId)))
           await ctx.db.delete(video.liveSessionId)
+        await cancelSegmentMedia(ctx, video)
         await ctx.db.delete(video._id)
         await ctx.db.patch(content._id, { databaseStatus: 'deleted', updatedAt: now })
       } else {
@@ -711,6 +713,7 @@ export const deleteContentBatch = internalMutation({
     if (stage === 'row') {
       if (bondfire.liveSessionId && (await ctx.db.get(bondfire.liveSessionId)))
         await ctx.db.delete(bondfire.liveSessionId)
+      await cancelSegmentMedia(ctx, bondfire)
       await ctx.db.delete(bondfire._id)
       await ctx.db.patch(content._id, { databaseStatus: 'deleted', updatedAt: now })
     } else {
