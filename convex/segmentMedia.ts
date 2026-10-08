@@ -206,13 +206,15 @@ async function updatePlayable(ctx: MutationCtx, recording: Doc<'segmentRecording
   const videoStatus = getSegmentVideoStatus(recording)
   if (videoStatus !== 'ready' && videoStatus !== 'live') return
   const complete = videoStatus === 'ready'
+  const durationMs = Math.round(recording.duration * 1000)
+  // The recording and HLS timeline carry the growing duration. Updating the
+  // feed/thread document for every fragment invalidates its subscribers.
+  // Publish only lifecycle transitions and the authoritative final duration.
   if (recording.responseId) {
     const video = await ctx.db.get(recording.responseId)
     if (!video) throw new Error('Forbidden')
-    await ctx.db.patch(video._id, {
-      videoStatus,
-      durationMs: Math.round(recording.duration * 1000),
-    })
+    if (video.videoStatus !== videoStatus || (complete && video.durationMs !== durationMs))
+      await ctx.db.patch(video._id, { videoStatus, durationMs })
     await countResponse(ctx, video)
     if (!isPlayableVideoRecord(video)) {
       await ctx.scheduler.runAfter(0, internal.sendNotification.notifyBondfireResponse, {
@@ -225,11 +227,12 @@ async function updatePlayable(ctx: MutationCtx, recording: Doc<'segmentRecording
   } else if (recording.bondfireId) {
     const bondfire = await ctx.db.get(recording.bondfireId)
     if (!bondfire) throw new Error('Forbidden')
-    await ctx.db.patch(recording.bondfireId, {
-      videoStatus,
-      durationMs: Math.round(recording.duration * 1000),
-      updatedAt: Date.now(),
-    })
+    if (bondfire.videoStatus !== videoStatus || (complete && bondfire.durationMs !== durationMs))
+      await ctx.db.patch(recording.bondfireId, {
+        videoStatus,
+        durationMs,
+        updatedAt: Date.now(),
+      })
     if (!isPlayableVideoRecord(bondfire)) {
       await ctx.scheduler.runAfter(0, internal.sendNotification.notifyCampBondfire, {
         bondfireId: bondfire._id,
@@ -239,7 +242,7 @@ async function updatePlayable(ctx: MutationCtx, recording: Doc<'segmentRecording
     }
   }
   if (complete) {
-    await ctx.db.patch(recording._id, { status: 'ready' })
+    if (recording.status !== 'ready') await ctx.db.patch(recording._id, { status: 'ready' })
     await enqueueTranscription(ctx, recording._id)
   }
 }
@@ -271,6 +274,7 @@ export const receipt = internalMutation({
     if (index === -1) {
       if (recording.initChecksum && recording.initChecksum !== checksum)
         throw new Error('Conflicting initialization')
+      if (recording.initChecksum === checksum) return
       await ctx.db.patch(recording._id, { initChecksum: checksum, updatedAt: Date.now() })
       return
     }
@@ -329,7 +333,8 @@ export const finish = mutation({
       (recording.finalCount !== undefined && recording.finalCount !== args.segmentCount)
     )
       throw new Error('Invalid final segment count')
-    await ctx.db.patch(recording._id, { finalCount: args.segmentCount, updatedAt: Date.now() })
+    if (recording.finalCount !== args.segmentCount)
+      await ctx.db.patch(recording._id, { finalCount: args.segmentCount, updatedAt: Date.now() })
     await updatePlayable(ctx, { ...recording, finalCount: args.segmentCount })
     return { complete: recording.segmentCount === args.segmentCount }
   },

@@ -1,5 +1,5 @@
 import { v } from 'convex/values'
-import type { Id } from './_generated/dataModel'
+import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import { enforceWatchEventLimit } from './abuseLimits'
@@ -79,6 +79,21 @@ export function validateWatchEventState(args: {
   return null
 }
 
+async function watchDurationMs(ctx: MutationCtx, video: Doc<'bondfires'> | Doc<'bondfireVideos'>) {
+  if (video.videoStatus !== 'live' || !video.segmentRecordingId) return video.durationMs
+  // Live parent documents only change at playback lifecycle transitions.
+  // Validate progress against the current durable prefix, never that snapshot
+  // or the optional duration supplied by a client.
+  const recording = await ctx.db.get(video.segmentRecordingId)
+  if (
+    !recording ||
+    recording.status === 'cancelled' ||
+    (recording.responseId ?? recording.bondfireId) !== video._id
+  )
+    return undefined
+  return Math.round(recording.duration * 1000)
+}
+
 export async function resolveVisibleWatchTarget(
   ctx: MutationCtx,
   args: { videoType: WatchVideoType; videoId: string },
@@ -91,7 +106,7 @@ export async function resolveVisibleWatchTarget(
     const bondfire = await ctx.db.get(id)
     if (!bondfire || !isPlayableVideoRecord(bondfire)) return null
     if (!(await isBondfireVisibleToViewer(ctx, bondfire, viewer))) return null
-    return { durationMs: bondfire.durationMs }
+    return { durationMs: await watchDurationMs(ctx, bondfire) }
   }
 
   const id = ctx.db.normalizeId('bondfireVideos', args.videoId)
@@ -108,7 +123,7 @@ export async function resolveVisibleWatchTarget(
     return null
   const bondfire = await ctx.db.get(response.bondfireId)
   if (!bondfire || !(await isBondfireVisibleToViewer(ctx, bondfire, viewer))) return null
-  return { durationMs: response.durationMs }
+  return { durationMs: await watchDurationMs(ctx, response) }
 }
 
 export function getProfileViewCountChanges({
