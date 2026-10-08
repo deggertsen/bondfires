@@ -4,8 +4,8 @@
  * with the already-watched head of the thread folded into one row, so the
  * viewer can see what is new and where they are in it.
  *
- * Taken once per arrival from the watched flags as they were on open: a watch
- * event lands as soon as a video starts, so the live flags quickly stop
+ * Taken once per arrival from the watched flags as they were on open: a video
+ * turns watched as soon as the viewer finishes it, so the live flags stop
  * describing what was new when the viewer arrived.
  */
 export type ThreadCatchUp = {

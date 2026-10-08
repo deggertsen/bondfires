@@ -76,7 +76,8 @@ describe.each(['bondfire', 'response'] as const)('%s watch event persistence', (
             positionMs: 0,
           }),
         ).toEqual({ recorded: true, profileViewCounted: true })
-        expect(await threadWatched()).toBe(true)
+        // Starting a video no longer marks it watched; finishing it does.
+        expect(await threadWatched()).toBe(false)
         expect(
           await viewer.mutation(api.watchEvents.record, {
             videoType,
@@ -91,6 +92,16 @@ describe.each(['bondfire', 'response'] as const)('%s watch event persistence', (
             eventType: 'milestone_25',
           }),
         ).toBe(true)
+        expect(await threadWatched()).toBe(false)
+        expect(
+          await viewer.mutation(api.watchEvents.record, {
+            videoType,
+            videoId,
+            eventType: 'complete',
+            positionMs: 9000,
+          }),
+        ).toEqual({ recorded: true, profileViewCounted: false })
+        expect(await threadWatched()).toBe(true)
       },
     )
   }

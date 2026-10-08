@@ -60,6 +60,10 @@ const WATCH_MILESTONES = [
   { progress: 0.25, eventType: 'milestone_25' },
   { progress: 0.5, eventType: 'milestone_50' },
   { progress: 0.75, eventType: 'milestone_75' },
+  // `complete` is what marks a video watched. Recording it in the last stretch
+  // (the server accepts it from 85%) means swiping away during the final
+  // seconds still counts; reaching the end sends it again (handleVideoComplete).
+  { progress: 0.9, eventType: 'complete' },
 ] as const
 
 function getWatchTarget(
@@ -426,7 +430,10 @@ export default function BondfireDetailScreen() {
       const target = getWatchTarget(bondfireData, currentVideoIndex)
       if (!target) return
 
-      recordWatchEventOnce(target, 'complete', Math.round(positionMs), durationMs)
+      // Not deduped like the progress milestones: if the 90% `complete` was
+      // rejected (the player's duration can differ from the server's), the
+      // end of playback is the retry. The server drops a true duplicate.
+      submitWatchEvent(target, 'complete', Math.round(positionMs), durationMs)
 
       const lastVideoIndex = bondfireData.videos.length
       if (currentVideoIndex < lastVideoIndex) {
@@ -436,7 +443,7 @@ export default function BondfireDetailScreen() {
         })
       }
     },
-    [bondfireData, currentVideoIndex, recordWatchEventOnce],
+    [bondfireData, currentVideoIndex, submitWatchEvent],
   )
 
   const handleVideoStart = useCallback(() => {
