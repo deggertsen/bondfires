@@ -1,7 +1,12 @@
 /// <reference types="vite/client" />
 import { convexTest } from 'convex-test'
 import { afterEach, assert, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cuesToVtt, speechCues, transcriptionWindow } from '../packages/media/src/transcription'
+import {
+  cuesToVtt,
+  type MediaProbe,
+  speechCues,
+  transcriptionWindow,
+} from '../packages/media/src/transcription'
 import { internal } from './_generated/api'
 import schema from './schema'
 import { enqueueTranscription } from './segmentTranscription'
@@ -539,13 +544,252 @@ describe('R2 transcription jobs', () => {
       expect(scheduled).toHaveLength(1)
     },
   )
-  it('keeps transient HTTP/provider errors retryable and records their bounded reason', async () => {
+  it('compares provider audio with the audio probe when a fragment has a longer video track', async () => {
+    vi.stubEnv('MEDIA_WORKER_URL', 'https://media.example')
+    vi.stubEnv('MEDIA_WORKER_SECRET', 'test')
+    const { t, recordingId, bondfireId } = await setup()
+    await t.run(async (ctx) => {
+      const segment = await ctx.db
+        .query('mediaSegments')
+        .withIndex('by_recording_index', (q) => q.eq('recordingId', recordingId).eq('index', 2))
+        .unique()
+      assert(segment)
+      // Like production segment 16: video includes a stall, but audio remains 4s.
+      await ctx.db.patch(segment._id, { duration: 8.825 })
+      await ctx.db.patch(recordingId, { duration: 36.825 })
+    })
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          text: 'Before the stall.',
+          segments: [{ start: 0, end: 2, text: 'Before the stall.' }],
+          duration: 24,
+          probe: { status: 'ok', duration: 24, audioCodec: 'mp4a' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          text: 'After the stall.',
+          segments: [{ start: 4, end: 6, text: 'After the stall.' }],
+          duration: 16,
+          probe: { status: 'ok', duration: 16 },
+        }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+    await t.action(internal.segmentTranscription.run, { recordingId })
+    expect(await t.run((ctx) => ctx.db.query('segmentTranscriptionJobs').first())).toMatchObject({
+      cursor: 5,
+      status: 'queued',
+      attempts: 0,
+      timing: { index: 5, time: 24.825 },
+    })
+    await t.action(internal.segmentTranscription.run, { recordingId })
+    expect(await t.run((ctx) => ctx.db.query('segmentTranscriptionJobs').first())).toMatchObject({
+      cursor: 8,
+      status: 'ready',
+      attempts: 0,
+      timing: { index: 8, time: 36.825 },
+    })
+    const transcript = await t.run((ctx) => ctx.db.query('videoTranscripts').first())
+    expect(transcript?.text).toBe('Before the stall. After the stall.')
+    expect(transcript?.captionsVtt).toContain('00:00:24.825 --> 00:00:26.825')
+    expect(transcript?.captionsVtt).not.toContain('NOTE')
+    expect(await t.run((ctx) => ctx.db.query('clientLogs').collect())).toHaveLength(0)
+    expect((await t.run((ctx) => ctx.db.get(bondfireId)))?.captionsReadyAt).toBeTypeOf('number')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+  it.each<{ probe?: MediaProbe; expectedDuration: number; durationSource: string }>([
+    { probe: { status: 'ok', duration: 20 }, expectedDuration: 20, durationSource: 'audio_probe' },
+    { expectedDuration: 28, durationSource: 'stored_window' },
+    {
+      probe: { status: 'not_probed', duration: 12 },
+      expectedDuration: 28,
+      durationSource: 'stored_window',
+    },
+    { probe: { status: 'ok' }, expectedDuration: 28, durationSource: 'stored_window' },
+  ])(
+    'skips a mismatched window using $durationSource and completes later captions',
+    async ({ probe, expectedDuration, durationSource }) => {
+      vi.stubEnv('MEDIA_WORKER_URL', 'https://media.example')
+      vi.stubEnv('MEDIA_WORKER_SECRET', 'test')
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json({
+            text: 'Untrusted timing.',
+            segments: [{ start: 0, end: 2, text: 'Untrusted timing.' }],
+            duration: 12,
+            probe,
+          }),
+        )
+        .mockResolvedValueOnce(
+          Response.json({
+            text: 'Remaining captions.',
+            segments: [{ start: 4, end: 6, text: 'Remaining captions.' }],
+            duration: 12,
+            probe: { status: 'ok', duration: 12 },
+          }),
+        )
+      vi.stubGlobal('fetch', fetchMock)
+      const { t, recordingId, bondfireId } = await setup()
+      await t.action(internal.segmentTranscription.run, { recordingId })
+      expect(await t.run((ctx) => ctx.db.query('segmentTranscriptionJobs').first())).toMatchObject({
+        cursor: 6,
+        status: 'queued',
+        attempts: 0,
+        leaseUntil: 0,
+        timing: { index: 6, time: 24 },
+      })
+      expect((await t.run((ctx) => ctx.db.get(bondfireId)))?.captionsReadyAt).toBeUndefined()
+      await t.action(internal.segmentTranscription.run, { recordingId })
+      expect(await t.run((ctx) => ctx.db.query('segmentTranscriptionJobs').first())).toMatchObject({
+        cursor: 8,
+        status: 'ready',
+        attempts: 0,
+        insightsStatus: 'queued',
+        timing: { index: 8, time: 32 },
+      })
+      expect(await t.run((ctx) => ctx.db.query('videoTranscripts').first())).toMatchObject({
+        text: 'Remaining captions.',
+        captionsVtt:
+          'WEBVTT\n\nNOTE caption gap: timing_mismatch; start=0s; end=24s\n\n00:00:24.000 --> 00:00:26.000\nRemaining captions.\n\n',
+      })
+      const logs = await t.run((ctx) => ctx.db.query('clientLogs').collect())
+      expect(logs).toHaveLength(1)
+      expect(logs[0]).toMatchObject({
+        level: 'warn',
+        event: 'media:transcription:skipped',
+        message: `Transcription timing mismatch: provider=12s expected=${expectedDuration}s source=${durationSource} stored=28s`,
+        data: {
+          recordingId,
+          cursor: 0,
+          nextIndex: 6,
+          attempt: 1,
+          reason: 'timing_mismatch',
+          start: 0,
+          end: 24,
+          providerDuration: 12,
+          expectedDuration,
+          storedDuration: 28,
+          durationSource,
+        },
+      })
+      expect(logs[0].message.length).toBeLessThanOrEqual(240)
+      expect(JSON.stringify(logs[0].data).length).toBeLessThan(700)
+      expect(JSON.stringify(logs)).not.toContain('Untrusted timing.')
+      expect((await t.run((ctx) => ctx.db.get(bondfireId)))?.captionsReadyAt).toBeTypeOf('number')
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    },
+  )
+  it('finishes with an explicit gap when the final window mismatches', async () => {
+    vi.stubEnv('MEDIA_WORKER_URL', 'https://media.example')
+    vi.stubEnv('MEDIA_WORKER_SECRET', 'test')
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          text: 'Earlier captions.',
+          segments: [{ start: 0, end: 2, text: 'Earlier captions.' }],
+          duration: 28,
+          probe: { status: 'ok', duration: 28 },
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          text: '',
+          segments: [],
+          duration: 12,
+          probe: { status: 'ok', duration: 8 },
+        }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+    const { t, recordingId } = await setup()
+    await t.action(internal.segmentTranscription.run, { recordingId })
+    await t.action(internal.segmentTranscription.run, { recordingId })
+    expect(await t.run((ctx) => ctx.db.query('segmentTranscriptionJobs').first())).toMatchObject({
+      cursor: 8,
+      status: 'ready',
+      attempts: 0,
+      timing: { index: 8, time: 32 },
+    })
+    expect(await t.run((ctx) => ctx.db.query('videoTranscripts').first())).toMatchObject({
+      text: 'Earlier captions.',
+      captionsVtt:
+        'WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nEarlier captions.\n\nNOTE caption gap: timing_mismatch; start=24s; end=32s\n\n',
+    })
+  })
+  it('ignores a timing mismatch returned after another action has claimed the lease', async () => {
+    vi.stubEnv('MEDIA_WORKER_URL', 'https://media.example')
+    vi.stubEnv('MEDIA_WORKER_SECRET', 'test')
+    const { t, recordingId } = await setup()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        vi.setSystemTime(Date.now() + 180001)
+        assert(await t.mutation(internal.segmentTranscription.claim, { recordingId }))
+        return Response.json({
+          text: '',
+          segments: [],
+          duration: 2,
+          probe: { status: 'ok', duration: 28 },
+        })
+      }),
+    )
+    await t.action(internal.segmentTranscription.run, { recordingId })
+    expect(await t.run((ctx) => ctx.db.query('segmentTranscriptionJobs').first())).toMatchObject({
+      cursor: 0,
+      status: 'running',
+      attempts: 2,
+      timing: { index: 0, time: 0 },
+    })
+    expect(await t.run((ctx) => ctx.db.query('videoTranscripts').collect())).toHaveLength(0)
+    expect(await t.run((ctx) => ctx.db.query('clientLogs').collect())).toHaveLength(0)
+  })
+  it.each([
+    { text: 'Missing timestamps', segments: [], duration: 2 },
+    { text: '', segments: null, duration: 2 },
+    { text: '', segments: [null], duration: 2 },
+    ...['2', null, -2, Number.MAX_VALUE].map((duration) => ({ text: '', segments: [], duration })),
+    { text: '', segments: [], duration: 2, language: 42 },
+  ])('retries invalid 2xx responses without recording a gap: %j', async (result) => {
     vi.stubEnv('MEDIA_WORKER_URL', 'https://media.example')
     vi.stubEnv('MEDIA_WORKER_SECRET', 'test')
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response('private upstream body', { status: 503 })),
+      vi.fn(async () => Response.json({ ...result, probe: { status: 'ok', duration: 28 } })),
     )
+    const { t, recordingId } = await setup()
+    await t.action(internal.segmentTranscription.run, { recordingId })
+    const job = await t.run((ctx) => ctx.db.query('segmentTranscriptionJobs').first())
+    expect(job).toMatchObject({
+      cursor: 0,
+      status: 'queued',
+      attempts: 1,
+      failureReason: 'transcription_error',
+    })
+    expect(job?.leaseUntil).toBeGreaterThan(Date.now())
+    expect(await t.run((ctx) => ctx.db.query('videoTranscripts').collect())).toHaveLength(0)
+    expect(await t.run((ctx) => ctx.db.query('clientLogs').first())).toMatchObject({
+      event: 'media:transcription:failed',
+      data: { terminal: false },
+    })
+  })
+  it('keeps transient HTTP/provider errors retryable and records their bounded reason', async () => {
+    vi.stubEnv('MEDIA_WORKER_URL', 'https://media.example')
+    vi.stubEnv('MEDIA_WORKER_SECRET', 'test')
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('private upstream body', { status: 503 }))
+      .mockResolvedValueOnce(
+        Response.json({
+          text: 'Recovered.',
+          segments: [{ start: 0, end: 2, text: 'Recovered.' }],
+          duration: 28,
+          probe: { status: 'ok', duration: 28 },
+        }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
     const { t, recordingId } = await setup()
     await t.action(internal.segmentTranscription.run, { recordingId })
     expect(await t.run((ctx) => ctx.db.query('segmentTranscriptionJobs').first())).toMatchObject({
@@ -561,6 +805,21 @@ describe('R2 transcription jobs', () => {
         probe: { status: 'not_probed' },
         terminal: false,
       },
+    })
+    expect(await t.run((ctx) => ctx.db.query('videoTranscripts').collect())).toHaveLength(0)
+    // The backoff blocks immediate replay; a later attempt can recover the same window.
+    await t.action(internal.segmentTranscription.run, { recordingId })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    vi.setSystemTime(Date.now() + 30001)
+    await t.action(internal.segmentTranscription.run, { recordingId })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(await t.run((ctx) => ctx.db.query('segmentTranscriptionJobs').first())).toMatchObject({
+      cursor: 6,
+      status: 'queued',
+      attempts: 0,
+    })
+    expect(await t.run((ctx) => ctx.db.query('videoTranscripts').first())).toMatchObject({
+      text: 'Recovered.',
     })
   })
   it.each(['missing_audio', 'zero_duration', 'unsupported_codec'])(
