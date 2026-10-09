@@ -15,5 +15,6 @@
     ".expo/types/**/*.ts",
     "expo-env.d.ts",
     "../../convex/**/*.ts"
-  ]
+  ],
+  "exclude": ["node_modules", "build", "dist"]
 }
