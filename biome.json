@@ -16,7 +16,8 @@
       "!**/out",
       "!**/.next",
       "!**/Pods",
-      "!**/node_modules"
+      "!**/node_modules",
+      "!**/.claude"
     ]
   },
   "assist": { "actions": { "source": { "organizeImports": "on" } } },
