@@ -30,6 +30,41 @@ const LEASE_MS = 180_000
 const MAX_ATTEMPTS = 5
 const TIMING_BACKFILL_SEGMENTS = 256
 const jobArgs = { recordingId: v.id('segmentRecordings') }
+
+// speechCues intentionally filters silence and context. Validate the provider's
+// timestamp structure first so malformed speech cannot become a permanent gap.
+function validSpeechSegments(value: unknown): value is SpeechSegment[] {
+  if (!Array.isArray(value) || value.length > 2000) return false
+  const timedText = (item: unknown, textKey: 'text' | 'word') => {
+    if (!item || typeof item !== 'object') return false
+    const cue = item as Record<string, unknown>
+    return (
+      typeof cue[textKey] === 'string' &&
+      typeof cue.start === 'number' &&
+      Number.isFinite(cue.start) &&
+      cue.start >= 0 &&
+      typeof cue.end === 'number' &&
+      Number.isFinite(cue.end) &&
+      cue.end >= cue.start
+    )
+  }
+  return value.every((segment) => {
+    if (!segment || typeof segment !== 'object') return false
+    if (
+      segment.no_speech_prob !== undefined &&
+      (typeof segment.no_speech_prob !== 'number' ||
+        !Number.isFinite(segment.no_speech_prob) ||
+        segment.no_speech_prob < 0 ||
+        segment.no_speech_prob > 1)
+    )
+      return false
+    if (segment.words !== undefined && !Array.isArray(segment.words)) return false
+    return segment.words?.length
+      ? segment.words.every((word: unknown) => timedText(word, 'word'))
+      : timedText(segment, 'text')
+  })
+}
+
 async function destination(ctx: QueryCtx | MutationCtx, recordingId: Id<'segmentRecordings'>) {
   const recording = await ctx.db.get(recordingId)
   const id = recording?.responseId ?? recording?.bondfireId
@@ -261,7 +296,7 @@ export const completeChunk = internalMutation({
       segmentRecordingId: recording._id,
       muxAssetId: undefined,
       muxTrackId: undefined,
-      languageCode: args.language ?? existing?.languageCode,
+      languageCode: (args.timingMismatch ? undefined : args.language) ?? existing?.languageCode,
       text,
       captionsVtt,
     }
@@ -419,8 +454,7 @@ export const run = internalAction({
       probe = readMediaProbe(result.probe) ?? probe
       if (
         typeof result.text !== 'string' ||
-        !Array.isArray(result.segments) ||
-        result.segments.length > 2000 ||
+        !validSpeechSegments(result.segments) ||
         (result.duration !== undefined &&
           (typeof result.duration !== 'number' ||
             !Number.isFinite(result.duration) ||

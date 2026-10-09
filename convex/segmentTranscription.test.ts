@@ -621,6 +621,7 @@ describe('R2 transcription jobs', () => {
             segments: [{ start: 0, end: 2, text: 'Untrusted timing.' }],
             duration: 12,
             probe,
+            language: 'es',
           }),
         )
         .mockResolvedValueOnce(
@@ -641,6 +642,9 @@ describe('R2 transcription jobs', () => {
         leaseUntil: 0,
         timing: { index: 6, time: 24 },
       })
+      expect(
+        (await t.run((ctx) => ctx.db.query('videoTranscripts').first()))?.languageCode,
+      ).toBeUndefined()
       expect((await t.run((ctx) => ctx.db.get(bondfireId)))?.captionsReadyAt).toBeUndefined()
       await t.action(internal.segmentTranscription.run, { recordingId })
       expect(await t.run((ctx) => ctx.db.query('segmentTranscriptionJobs').first())).toMatchObject({
@@ -693,6 +697,7 @@ describe('R2 transcription jobs', () => {
           segments: [{ start: 0, end: 2, text: 'Earlier captions.' }],
           duration: 28,
           probe: { status: 'ok', duration: 28 },
+          language: 'en',
         }),
       )
       .mockResolvedValueOnce(
@@ -701,6 +706,7 @@ describe('R2 transcription jobs', () => {
           segments: [],
           duration: 12,
           probe: { status: 'ok', duration: 8 },
+          language: 'es',
         }),
       )
     vi.stubGlobal('fetch', fetchMock)
@@ -715,6 +721,7 @@ describe('R2 transcription jobs', () => {
     })
     expect(await t.run((ctx) => ctx.db.query('videoTranscripts').first())).toMatchObject({
       text: 'Earlier captions.',
+      languageCode: 'en',
       captionsVtt:
         'WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nEarlier captions.\n\nNOTE caption gap: timing_mismatch; start=24s; end=32s\n\n',
     })
@@ -750,6 +757,19 @@ describe('R2 transcription jobs', () => {
     { text: 'Missing timestamps', segments: [], duration: 2 },
     { text: '', segments: null, duration: 2 },
     { text: '', segments: [null], duration: 2 },
+    ...[
+      {},
+      { text: 'Missing timestamps' },
+      { start: '0', end: 2, text: 'String timestamp' },
+      { start: -1, end: 2, text: 'Negative timestamp' },
+      { start: 2, end: 1, text: 'Reversed timestamps' },
+      { start: 0, end: 2 },
+      { start: 0, end: 2, text: 42 },
+      { start: 0, end: 2, text: 'Invalid probability', no_speech_prob: '0.9' },
+      { start: 0, end: 2, text: 'Invalid words', words: {} },
+      { words: [{ word: 'Missing word timestamps' }] },
+      { words: [null] },
+    ].map((segment) => ({ text: 'Malformed speech', segments: [segment], duration: 2 })),
     ...['2', null, -2, Number.MAX_VALUE].map((duration) => ({ text: '', segments: [], duration })),
     { text: '', segments: [], duration: 2, language: 42 },
   ])('retries invalid 2xx responses without recording a gap: %j', async (result) => {
@@ -773,6 +793,43 @@ describe('R2 transcription jobs', () => {
     expect(await t.run((ctx) => ctx.db.query('clientLogs').first())).toMatchObject({
       event: 'media:transcription:failed',
       data: { terminal: false },
+    })
+  })
+  it('accepts word timestamps while filtering silence and overlap context', async () => {
+    vi.stubEnv('MEDIA_WORKER_URL', 'https://media.example')
+    vi.stubEnv('MEDIA_WORKER_SECRET', 'test')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          text: 'Hello world. Silence. Context.',
+          segments: [
+            {
+              words: [
+                { start: 0, end: 1, word: 'Hello' },
+                { start: 1, end: 2, word: 'world.' },
+              ],
+            },
+            { start: 3, end: 4, text: 'Silence.', no_speech_prob: 0.9 },
+            { start: 25, end: 26, text: 'Context.', words: [] },
+          ],
+          duration: 28,
+          probe: { status: 'ok', duration: 28 },
+          language: 'en',
+        }),
+      ),
+    )
+    const { t, recordingId } = await setup()
+    await t.action(internal.segmentTranscription.run, { recordingId })
+    expect(await t.run((ctx) => ctx.db.query('videoTranscripts').first())).toMatchObject({
+      text: 'Hello world.',
+      languageCode: 'en',
+      captionsVtt: 'WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello world.\n\n',
+    })
+    expect(await t.run((ctx) => ctx.db.query('segmentTranscriptionJobs').first())).toMatchObject({
+      cursor: 6,
+      attempts: 0,
+      status: 'queued',
     })
   })
   it('keeps transient HTTP/provider errors retryable and records their bounded reason', async () => {
