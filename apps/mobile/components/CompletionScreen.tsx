@@ -1,7 +1,7 @@
 import {
-  getRandomCompletionMessage,
   telemetry,
   useAppThemeColors,
+  useCompletionMessage,
   useDefaultBondfireTitle,
 } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
@@ -51,7 +51,7 @@ export function CompletionScreen({
 }: CompletionScreenProps) {
   const { colors, statusBarStyle } = useAppThemeColors()
   const router = useRouter()
-  const [message] = useState(() => getRandomCompletionMessage())
+  const message = useCompletionMessage()
   const [isInviteSheetOpen, setIsInviteSheetOpen] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   // null = untouched; render the (async-loading) default until the user types.

@@ -1,5 +1,6 @@
 export * from './useAppTheme'
 export * from './useAuth'
+export * from './useCompletionMessage'
 export * from './useCurrentUserId'
 export * from './useDefaultBondfireTitle'
 export * from './useForceUpdate'
