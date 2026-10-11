@@ -21,6 +21,12 @@ export const neutralCompletionMessages: CompletionMessage[] = [
   { message: 'Top tier!', emoji: '⭐' },
   { message: 'Respect!', emoji: '🙏' },
   { message: "That's how it's done!", emoji: '🏆' },
+  { message: 'Great job!', emoji: '👍' },
+  { message: 'You did it!', emoji: '✅' },
+  { message: 'Awesome!', emoji: '🤩' },
+  { message: 'Fantastic!', emoji: '🌟' },
+  { message: 'So good!', emoji: '👌' },
+  { message: 'Right on!', emoji: '🎉' },
 ]
 
 export const masculineCompletionMessages: CompletionMessage[] = [
@@ -30,6 +36,15 @@ export const masculineCompletionMessages: CompletionMessage[] = [
   { message: 'Crushed it!', emoji: '💥' },
   { message: 'Absolute legend!', emoji: '👑' },
   { message: 'Straight fire!', emoji: '🔥' },
+  { message: 'Built for this.', emoji: '🏗️' },
+  { message: 'That took courage.', emoji: '🫡' },
+  { message: 'Straight from the heart.', emoji: '❤️🔥' },
+  { message: 'Honest and strong.', emoji: '🧱' },
+  { message: "You're a Leader.", emoji: '🧭' },
+  { message: 'You show real strength.', emoji: '🦁' },
+  { message: 'Respect, man.', emoji: '🤜' },
+  { message: 'Way to show up.', emoji: '🫂' },
+  { message: 'Solid.', emoji: '🪨' },
 ]
 
 export const feminineCompletionMessages: CompletionMessage[] = [
