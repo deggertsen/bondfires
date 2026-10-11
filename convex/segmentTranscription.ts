@@ -30,6 +30,41 @@ const LEASE_MS = 180_000
 const MAX_ATTEMPTS = 5
 const TIMING_BACKFILL_SEGMENTS = 256
 const jobArgs = { recordingId: v.id('segmentRecordings') }
+
+// speechCues intentionally filters silence and context. Validate the provider's
+// timestamp structure first so malformed speech cannot become a permanent gap.
+function validSpeechSegments(value: unknown): value is SpeechSegment[] {
+  if (!Array.isArray(value) || value.length > 2000) return false
+  const timedText = (item: unknown, textKey: 'text' | 'word') => {
+    if (!item || typeof item !== 'object') return false
+    const cue = item as Record<string, unknown>
+    return (
+      typeof cue[textKey] === 'string' &&
+      typeof cue.start === 'number' &&
+      Number.isFinite(cue.start) &&
+      cue.start >= 0 &&
+      typeof cue.end === 'number' &&
+      Number.isFinite(cue.end) &&
+      cue.end >= cue.start
+    )
+  }
+  return value.every((segment) => {
+    if (!segment || typeof segment !== 'object') return false
+    if (
+      segment.no_speech_prob !== undefined &&
+      (typeof segment.no_speech_prob !== 'number' ||
+        !Number.isFinite(segment.no_speech_prob) ||
+        segment.no_speech_prob < 0 ||
+        segment.no_speech_prob > 1)
+    )
+      return false
+    if (segment.words !== undefined && !Array.isArray(segment.words)) return false
+    return segment.words?.length
+      ? segment.words.every((word: unknown) => timedText(word, 'word'))
+      : timedText(segment, 'text')
+  })
+}
+
 async function destination(ctx: QueryCtx | MutationCtx, recordingId: Id<'segmentRecordings'>) {
   const recording = await ctx.db.get(recordingId)
   const id = recording?.responseId ?? recording?.bondfireId
@@ -210,6 +245,16 @@ export const completeChunk = internalMutation({
     text: v.string(),
     vtt: v.string(),
     language: v.optional(v.string()),
+    timingMismatch: v.optional(
+      v.object({
+        start: v.number(),
+        end: v.number(),
+        providerDuration: v.number(),
+        expectedDuration: v.number(),
+        storedDuration: v.number(),
+        durationSource: v.union(v.literal('audio_probe'), v.literal('stored_window')),
+      }),
+    ),
   },
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobId)
@@ -237,15 +282,21 @@ export const completeChunk = internalMutation({
       throw Error('Invalid transcript window progress')
     const existing = await transcript(ctx, recording)
     const matches = existing?.segmentRecordingId === recording._id
-    const text = `${matches ? existing.text : ''}${args.text ? ` ${args.text}` : ''}`.trim()
-    const captionsVtt = `${matches ? (existing.captionsVtt ?? 'WEBVTT\n\n') : 'WEBVTT\n\n'}${args.vtt}`
+    // A NOTE records the owned gap without displaying untrusted captions or
+    // inventing speech. Keep the stored media timeline for subsequent windows.
+    const chunkText = args.timingMismatch ? '' : args.text
+    const chunkVtt = args.timingMismatch
+      ? `NOTE caption gap: timing_mismatch; start=${args.timingMismatch.start}s; end=${args.timingMismatch.end}s\n\n`
+      : args.vtt
+    const text = `${matches ? existing.text : ''}${chunkText ? ` ${chunkText}` : ''}`.trim()
+    const captionsVtt = `${matches ? (existing.captionsVtt ?? 'WEBVTT\n\n') : 'WEBVTT\n\n'}${chunkVtt}`
     if (text.length > 150_000 || captionsVtt.length > 500_000)
       throw Error('Transcript exceeds bounds')
     const fields = {
       segmentRecordingId: recording._id,
       muxAssetId: undefined,
       muxTrackId: undefined,
-      languageCode: args.language ?? existing?.languageCode,
+      languageCode: (args.timingMismatch ? undefined : args.language) ?? existing?.languageCode,
       text,
       captionsVtt,
     }
@@ -270,6 +321,27 @@ export const completeChunk = internalMutation({
       updatedAt: Date.now(),
       ...(done ? { insightsStatus: 'queued' as const } : {}),
     })
+    if (args.timingMismatch) {
+      const { providerDuration, expectedDuration, storedDuration, durationSource } =
+        args.timingMismatch
+      await logServerEvent(ctx, {
+        level: 'warn',
+        event: 'media:transcription:skipped',
+        message: normalizeTranscriptionFailure(
+          Error(
+            `Transcription timing mismatch: provider=${providerDuration}s expected=${expectedDuration}s source=${durationSource} stored=${storedDuration}s`,
+          ),
+        ).message,
+        data: {
+          recordingId: args.recordingId,
+          cursor: args.cursor,
+          nextIndex: args.nextIndex,
+          attempt: job.attempts,
+          reason: 'timing_mismatch',
+          ...args.timingMismatch,
+        },
+      })
+    }
     if (done) {
       await ctx.db.patch(record._id, { captionsReadyAt: Date.now() })
       await ctx.scheduler.runAfter(0, internal.segmentTranscription.summarize, {
@@ -382,14 +454,33 @@ export const run = internalAction({
       probe = readMediaProbe(result.probe) ?? probe
       if (
         typeof result.text !== 'string' ||
-        !Array.isArray(result.segments) ||
-        result.segments.length > 2000
+        !validSpeechSegments(result.segments) ||
+        (result.duration !== undefined &&
+          (typeof result.duration !== 'number' ||
+            !Number.isFinite(result.duration) ||
+            result.duration < 0 ||
+            result.duration > Number.MAX_SAFE_INTEGER / 1000)) ||
+        (result.language !== undefined && typeof result.language !== 'string')
       )
         throw Error('Invalid transcription result')
-      if (result.duration !== undefined && Math.abs(result.duration - window.duration) > 1.5)
-        throw Error('Transcription timing mismatch')
       const cues = speechCues(result.segments, window)
       if (result.text.trim() && !result.segments.length) throw Error('Missing caption timestamps')
+      // Stored durations include video stalls; Whisper only measures audio.
+      const audioDuration = probe.status === 'ok' ? probe.duration : undefined
+      const expectedDuration = audioDuration ?? window.duration
+      const durationSource =
+        audioDuration !== undefined ? ('audio_probe' as const) : ('stored_window' as const)
+      const timingMismatch =
+        result.duration !== undefined && Math.abs(result.duration - expectedDuration) > 1.5
+          ? {
+              start: window.ownedStart,
+              end: window.ownedEnd,
+              providerDuration: result.duration,
+              expectedDuration,
+              storedDuration: window.duration,
+              durationSource,
+            }
+          : undefined
       await ctx.runMutation(internal.segmentTranscription.completeChunk, {
         recordingId: args.recordingId,
         jobId: window.jobId,
@@ -399,6 +490,7 @@ export const run = internalAction({
         text: cues.map((c) => c.text).join(' '),
         vtt: cuesToVtt(cues),
         language: result.language,
+        timingMismatch,
       })
     } catch (error) {
       await ctx.runMutation(internal.segmentTranscription.failedChunk, {
