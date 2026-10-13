@@ -64,6 +64,8 @@ import { getMyFireRowCreatorName } from '../../../lib/myFireRow'
 import { shouldLoadSparsePage, uniqueById } from '../../../lib/pagination'
 import { routes } from '../../../lib/routes'
 import { useBondfireThumbnails } from '../../../lib/useBondfireThumbnails'
+import { useHomeFeedScrollRestoration } from '../../../lib/useHomeFeedScrollRestoration'
+import { useHomeFeedSnapshot } from '../../../lib/useHomeFeedSnapshot'
 
 type BondfireData = Doc<'bondfires'> &
   BondfireThumbnailFields & {
@@ -547,18 +549,16 @@ export default function HomeScreen() {
   // Threads the user participates in — powers the Ember Rail and the
   // "New responses" section. Convex keeps this live, so unread state and new
   // responses appear without a manual refresh.
-  const myFires = useQuery(
+  const railQueryEnabled = canLoadTabData && !!currentUserId
+  const liveMyFires = useQuery(
     api.conversations.listMyFires,
-    canLoadTabData && currentUserId ? { limit: 80, pinnedFirst: false } : 'skip',
+    railQueryEnabled ? { limit: 80, pinnedFirst: false } : 'skip',
   ) as MyFire[] | undefined
+  const myFires = useHomeFeedSnapshot(currentUserId, liveMyFires)
   const myFireIdSet = useMemo(() => new Set((myFires ?? []).map((t) => t._id)), [myFires])
 
-  // Discover is deduped against the threads above, but `listMyFires` is the
-  // heavier of the two queries and loses the race on a cold load. Painting
-  // between the two showed the viewer's own fires as Discover rows and then
-  // reflowed them into the rail. Hold one paint until both settle, unless the
-  // thread query is skipped (blurred tab / unresolved auth) and cannot resolve.
-  const railQueryEnabled = canLoadTabData && !!currentUserId
+  // Discover and the rail need the same thread snapshot before first paint.
+  // Retaining it across blur/refocus keeps the list mounted while queries resume.
   const isLoading = isHomeFeedLoading({
     feedResolved: bondfires !== undefined,
     railQueryEnabled,
@@ -640,7 +640,6 @@ export default function HomeScreen() {
 
   const listRef = useRef<FlatList<BondfireData> | null>(null)
   const filteredRef = useRef<BondfireData[]>([])
-  const didRestoreScrollRef = useRef(false)
   const persistActiveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { timedOut, resetLoadTracking } = useLoadingTimeoutTelemetry({
@@ -656,6 +655,7 @@ export default function HomeScreen() {
       activeCampResolving: activeCampId === undefined,
       railQueryEnabled,
       railResolved: myFires !== undefined,
+      railLiveResolved: liveMyFires !== undefined,
     },
   })
 
@@ -779,35 +779,20 @@ export default function HomeScreen() {
 
   filteredRef.current = filtered ?? []
 
-  // Restore last camp (conversation) position.
-  useEffect(() => {
-    const items = filtered ?? []
-    if (items.length === 0) return
-    if (didRestoreScrollRef.current) return
-    didRestoreScrollRef.current = true
-
+  const getSavedBondfireId = useCallback(() => {
     const lastLocation = getLastLocation()
-    const savedBondfireId =
+    return (
       getFeedActiveBondfireId() ??
       (lastLocation?.type === 'feed' ? lastLocation.activeBondfireId : undefined) ??
       (lastLocation?.type === 'bondfire' ? lastLocation.bondfireId : undefined)
-
-    if (!savedBondfireId) return
-
-    if (!items.some((b) => b._id === savedBondfireId)) return
-
-    // Re-resolve against the *current* data when the timer fires. `filtered`
-    // can shrink between this effect and the timeout (a transient empty pass
-    // while the feed subscription re-settles after sign-in), and scrollToIndex
-    // throws synchronously on an out-of-range index — onScrollToIndexFailed
-    // only covers unmeasured layout, not a stale index.
-    const timer = setTimeout(() => {
-      const index = filteredRef.current.findIndex((b) => b._id === savedBondfireId)
-      if (index < 0) return
-      listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0.2 })
-    }, 0)
-    return () => clearTimeout(timer)
-  }, [filtered])
+    )
+  }, [])
+  useHomeFeedScrollRestoration({
+    ready: canLoadTabData && !isLoading,
+    items: filtered,
+    listRef,
+    getSavedBondfireId,
+  })
 
   useEffect(() => {
     if (!shouldRunBackgroundWork || !filtered) return
@@ -1013,8 +998,7 @@ export default function HomeScreen() {
     viewMode,
   })
 
-  // `bondfires === undefined` cannot happen here (the gate above covers it),
-  // but the explicit check is what narrows the type for the render below.
+  // The explicit feed check also narrows its type for the render below.
   if (isLoading || bondfires === undefined) {
     return (
       <YStack flex={1}>
