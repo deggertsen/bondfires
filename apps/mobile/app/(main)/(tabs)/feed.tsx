@@ -55,7 +55,11 @@ import {
   getSwipeReportComment,
 } from '../../../lib/bondfireSwipeActions'
 import type { BondfireThumbnailFields } from '../../../lib/bondfireThumbnails'
-import { type FeedPageState, getHomeFeedEmptyState } from '../../../lib/homeFeedState'
+import {
+  type FeedPageState,
+  getHomeFeedEmptyState,
+  isHomeFeedLoading,
+} from '../../../lib/homeFeedState'
 import { getMyFireRowCreatorName } from '../../../lib/myFireRow'
 import { shouldLoadSparsePage, uniqueById } from '../../../lib/pagination'
 import { routes } from '../../../lib/routes'
@@ -549,6 +553,18 @@ export default function HomeScreen() {
   ) as MyFire[] | undefined
   const myFireIdSet = useMemo(() => new Set((myFires ?? []).map((t) => t._id)), [myFires])
 
+  // Discover is deduped against the threads above, but `listMyFires` is the
+  // heavier of the two queries and loses the race on a cold load. Painting
+  // between the two showed the viewer's own fires as Discover rows and then
+  // reflowed them into the rail. Hold one paint until both settle, unless the
+  // thread query is skipped (blurred tab / unresolved auth) and cannot resolve.
+  const railQueryEnabled = canLoadTabData && !!currentUserId
+  const isLoading = isHomeFeedLoading({
+    feedResolved: bondfires !== undefined,
+    railQueryEnabled,
+    railResolved: myFires !== undefined,
+  })
+
   // Rail order: unread first, quiet after, pinned hoisted within each group.
   const sortedMyFires = useMemo(() => {
     const byPinnedThenActivity = (a: MyFire, b: MyFire) => {
@@ -630,7 +646,7 @@ export default function HomeScreen() {
   const { timedOut, resetLoadTracking } = useLoadingTimeoutTelemetry({
     eventName: 'feed',
     label: 'Feed',
-    isLoading: bondfires === undefined,
+    isLoading,
     loadedCount: bondfires?.length,
     context: {
       canLoadTabData,
@@ -638,6 +654,8 @@ export default function HomeScreen() {
       hasCurrentUserId: !!currentUserId,
       activeCampId: activeCampId ?? null,
       activeCampResolving: activeCampId === undefined,
+      railQueryEnabled,
+      railResolved: myFires !== undefined,
     },
   })
 
@@ -995,7 +1013,9 @@ export default function HomeScreen() {
     viewMode,
   })
 
-  if (bondfires === undefined) {
+  // `bondfires === undefined` cannot happen here (the gate above covers it),
+  // but the explicit check is what narrows the type for the render below.
+  if (isLoading || bondfires === undefined) {
     return (
       <YStack flex={1}>
         <FeedSubscription
