@@ -854,7 +854,7 @@ describe('R2 transcription jobs', () => {
       attempts: 1,
     })
     expect(await t.run((ctx) => ctx.db.query('clientLogs').first())).toMatchObject({
-      level: 'warn',
+      level: 'info',
       data: {
         reason: 'transcription_error',
         name: 'Error',

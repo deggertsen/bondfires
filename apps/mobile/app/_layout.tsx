@@ -146,10 +146,16 @@ async function readFirstLaunchInviteCode() {
 
 // Monitor Convex WebSocket connection state for debugging
 convex.subscribeToConnectionState((state) => {
-  if (!state.isWebSocketConnected) {
-    telemetry.warn('convex:connection', 'WebSocket disconnected', {
-      hasInflightRequests: state.hasInflightRequests,
+  if (state.isWebSocketConnected) return
+  // Routine mobile background/foreground churn drops and reconnects the socket
+  // by design. Only a drop that strands in-flight requests signals a real
+  // outage; an idle drop is a breadcrumb so it stays traceable without a warn.
+  if (state.hasInflightRequests) {
+    telemetry.warn('convex:connection', 'WebSocket disconnected with in-flight requests', {
+      hasInflightRequests: true,
     })
+  } else {
+    telemetry.breadcrumb('convex:connection', { hasInflightRequests: false })
   }
 })
 

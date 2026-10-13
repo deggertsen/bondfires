@@ -375,7 +375,9 @@ async function recordChunkFailure(
       recordingId: job.recordingId,
     })
   await logServerEvent(ctx, {
-    level: stopped ? 'error' : 'warn',
+    // A scheduled retry is routine backoff, not a failure triage should page on;
+    // only a stopped job (terminal provider error or exhausted attempts) is error-level.
+    level: stopped ? 'error' : 'info',
     event: 'media:transcription:failed',
     message: terminal
       ? 'Media cannot be transcribed'
