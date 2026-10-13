@@ -47,6 +47,7 @@ import {
 import { useObserve, useValue } from '@legendapp/state/react'
 import * as Clipboard from 'expo-clipboard'
 import { api } from '../../../convex/_generated/api'
+import { createConnectionStateLogger } from '../lib/convexConnectionTelemetry'
 import { resolveNotificationRoute } from '../lib/notificationRouting'
 import { routes } from '../lib/routes'
 import { registrationDestination } from '../lib/socialAuth'
@@ -144,14 +145,8 @@ async function readFirstLaunchInviteCode() {
   return null
 }
 
-// Monitor Convex WebSocket connection state for debugging
-convex.subscribeToConnectionState((state) => {
-  if (!state.isWebSocketConnected) {
-    telemetry.warn('convex:connection', 'WebSocket disconnected', {
-      hasInflightRequests: state.hasInflightRequests,
-    })
-  }
-})
+// Keep idle disconnects traceable without repeatedly warning during reconnects.
+convex.subscribeToConnectionState(createConnectionStateLogger(telemetry))
 
 // ---------------------------------------------------------------------------
 // Telemetry initializer — runs inside Convex context

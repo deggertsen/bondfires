@@ -529,7 +529,7 @@ describe('R2 transcription jobs', () => {
       expect(logs[0]).toMatchObject({
         event: 'media:transcription:failed',
         level: 'error',
-        data: { recordingId, attempt: 1, cursor: 0, terminal: true, ...failure },
+        data: { recordingId, attempt: 1, cursor: 0, terminal: true, exhausted: false, ...failure },
       })
       expect(JSON.stringify(logs[0].data).length).toBeLessThan(700)
       for (let i = 0; i < 3; i++) {
@@ -854,7 +854,7 @@ describe('R2 transcription jobs', () => {
       attempts: 1,
     })
     expect(await t.run((ctx) => ctx.db.query('clientLogs').first())).toMatchObject({
-      level: 'warn',
+      level: 'info',
       data: {
         reason: 'transcription_error',
         name: 'Error',
@@ -878,6 +878,42 @@ describe('R2 transcription jobs', () => {
     expect(await t.run((ctx) => ctx.db.query('videoTranscripts').first())).toMatchObject({
       text: 'Recovered.',
     })
+  })
+  it('logs retryable provider failures at info until the retry budget is exhausted', async () => {
+    vi.stubEnv('MEDIA_WORKER_URL', 'https://media.example')
+    vi.stubEnv('MEDIA_WORKER_SECRET', 'test')
+    const fetchMock = vi.fn(async () => new Response('Unavailable', { status: 503 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { t, recordingId } = await setup()
+
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      await t.action(internal.segmentTranscription.run, { recordingId })
+      const job = await t.run((ctx) => ctx.db.query('segmentTranscriptionJobs').first())
+      assert(job)
+      expect(job).toMatchObject({
+        status: attempt === 5 ? 'failed' : 'queued',
+        attempts: attempt,
+        cursor: 0,
+      })
+      const logs = await t.run((ctx) => ctx.db.query('clientLogs').collect())
+      expect(logs).toHaveLength(attempt)
+      expect(logs[attempt - 1]).toMatchObject({
+        event: 'media:transcription:failed',
+        level: attempt === 5 ? 'error' : 'info',
+        message:
+          attempt === 5 ? 'Caption generation exhausted retries' : 'Caption generation will retry',
+        data: { attempt, terminal: false, exhausted: attempt === 5 },
+      })
+      vi.setSystemTime(job.leaseUntil + 1)
+    }
+
+    await t.action(internal.segmentTranscription.run, { recordingId })
+    expect(fetchMock).toHaveBeenCalledTimes(5)
+    expect(await t.run((ctx) => ctx.db.query('clientLogs').collect())).toHaveLength(5)
+    // Initial enqueue plus four retries; the exhausted attempt schedules nothing.
+    expect(
+      await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect()),
+    ).toHaveLength(5)
   })
   it.each(['missing_audio', 'zero_duration', 'unsupported_codec'])(
     'does not promote normalized %s text to a terminal failure without matching probe evidence',

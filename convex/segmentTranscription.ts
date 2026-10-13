@@ -375,7 +375,8 @@ async function recordChunkFailure(
       recordingId: job.recordingId,
     })
   await logServerEvent(ctx, {
-    level: stopped ? 'error' : 'warn',
+    // Retried chunks stay informational; stopped jobs need failure triage.
+    level: stopped ? 'error' : 'info',
     event: 'media:transcription:failed',
     message: terminal
       ? 'Media cannot be transcribed'
