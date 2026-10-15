@@ -54,6 +54,10 @@ type PublicUser = {
 const DEFAULT_FEED_LIMIT = 20
 const MAX_FEED_LIMIT = 50
 const MAX_CLEANUP_LIMIT = 100
+// Bound both response documents and their visibility/watch lookups on detail
+// subscriptions. The window is the first 300 responses in sequence order;
+// hidden and unfinished responses also consume a slot in this read budget.
+const MAX_DETAIL_RESPONSES = 300
 
 export function normalizeFeedLimit(limit: number | undefined) {
   if (limit === undefined || !Number.isFinite(limit)) return DEFAULT_FEED_LIMIT
@@ -452,7 +456,7 @@ export const getForNotification = internalQuery({
   },
 })
 
-// Get a bondfire with all its response videos
+// Get the spark with a bounded window of response videos.
 export const getWithVideos = query({
   args: { bondfireId: v.string() },
   handler: async (ctx, args) => {
@@ -480,7 +484,7 @@ export const getWithVideos = query({
       .query('bondfireVideos')
       .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfireId))
       .order('asc')
-      .collect()
+      .take(MAX_DETAIL_RESPONSES)
 
     const responseVisibility = await Promise.all(
       videos.map(async (video) => {

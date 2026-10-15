@@ -9,6 +9,7 @@ import { auth } from './auth'
 import { getWithVideos } from './bondfires'
 import { CURRENT_COMMUNITY_GUIDELINES_VERSION, CURRENT_TERMS_VERSION } from './contentSafety'
 import { isThreadParticipant, listCloseCircle, listMyFires } from './conversations'
+import * as viewerWatchState from './lib/viewerWatchState'
 import schema from './schema'
 
 const modules = import.meta.glob('./**/*.ts')
@@ -100,6 +101,124 @@ describe('thread read bandwidth', () => {
       expect(detail?.campName).toBe('Thread reads')
     })
   })
+
+  it('keeps detail reads constant as a thread grows beyond the 300-response window', async () => {
+    const { t, ids } = await fixture()
+    const processingId = await t.run(async (ctx) => {
+      await ctx.db.patch(ids.responseId, { durationMs: 10000 })
+      await ctx.db.insert('watchEvents', {
+        userId: ids.owner,
+        videoType: 'response',
+        videoId: ids.responseId,
+        eventType: 'complete',
+        positionMs: 10000,
+        createdAt: 300,
+      })
+      await ctx.db.insert('closeCirclePins', {
+        ownerId: ids.owner,
+        pinnedUserId: ids.responder,
+        order: 0,
+        createdAt: 300,
+        updatedAt: 300,
+      })
+      for (let sequenceNumber = 2; sequenceNumber <= 299; sequenceNumber++) {
+        await ctx.db.insert('bondfireVideos', {
+          bondfireId: ids.bondfireId,
+          userId: ids.responder,
+          sequenceNumber,
+          videoStatus: 'ready',
+          moderationStatus: sequenceNumber === 299 ? 'removed' : undefined,
+          muxPlaybackId: `response-${sequenceNumber}`,
+          durationMs: 10000,
+          // Creation order deliberately disagrees with playback sequence.
+          createdAt: 1000 - sequenceNumber,
+        })
+      }
+      return ctx.db.insert('bondfireVideos', {
+        bondfireId: ids.bondfireId,
+        userId: ids.responder,
+        creatorName: 'Responder',
+        sequenceNumber: 300,
+        videoStatus: 'processing',
+        muxAssetId: 'private-processing-asset',
+        createdAt: 1000,
+      })
+    })
+    const watch = vi.spyOn(viewerWatchState, 'isVideoWatchedByViewer')
+    const readDetail = () =>
+      t.withIdentity({ subject: ids.owner }).query(async (ctx) => {
+        const detail = await ctx.runQuery(
+          api.bondfires.getWithVideos,
+          { bondfireId: ids.bondfireId },
+          {
+            transactionLimits: { documentsRead: 350, bytesRead: 200000 },
+          },
+        )
+        return { detail, metrics: await ctx.meta.getTransactionMetrics() }
+      })
+    const before = await readDetail()
+    expect(before.detail?.videos.map((video) => video.sequenceNumber)).toEqual(
+      Array.from({ length: 298 }, (_, i) => i + 1),
+    )
+    expect(before.detail?.watchedByViewer).toBe(true)
+    expect(before.detail?.videos[0]?.watchedByViewer).toBe(true)
+    expect(before.detail?.videos.slice(1).every((video) => !video.watchedByViewer)).toBe(true)
+    expect(before.detail?.processingResponses).toEqual([
+      {
+        _id: processingId,
+        userId: ids.responder,
+        creatorName: 'Responder',
+        createdAt: 1000,
+      },
+    ])
+    expect(before.detail?.participants).toMatchObject([
+      { user: { _id: ids.responder }, videoCount: 298, latestAt: 998, isPinned: true },
+      { user: { _id: ids.owner }, videoCount: 1, latestAt: 100, isPinned: false },
+    ])
+    expect(watch).toHaveBeenCalledTimes(299) // Spark + displayed playable responses only.
+    watch.mockClear()
+    await t.run(async (ctx) => {
+      for (let sequenceNumber = 301; sequenceNumber <= 1500; sequenceNumber++) {
+        const videoId = await ctx.db.insert('bondfireVideos', {
+          bondfireId: ids.bondfireId,
+          userId: ids.outsider,
+          sequenceNumber,
+          videoStatus: 'ready',
+          muxPlaybackId: `overflow-${sequenceNumber}`,
+          summary: 'x'.repeat(1000),
+          createdAt: sequenceNumber,
+        })
+        await ctx.db.insert('watchEvents', {
+          userId: ids.owner,
+          videoType: 'response',
+          videoId,
+          eventType: 'complete',
+          positionMs: 10000,
+          createdAt: 2000,
+        })
+      }
+    })
+    const after = await readDetail()
+    expect(after.detail).toEqual(before.detail)
+    expect(after.metrics.documentsRead.used).toBe(before.metrics.documentsRead.used)
+    expect(after.metrics.bytesRead.used).toBe(before.metrics.bytesRead.used)
+    expect(after.metrics.documentsRead.used).toBeGreaterThanOrEqual(300)
+    const unbounded = await t.query(async (ctx) => {
+      // Compare with the old response scan alone, excluding its extra author
+      // and watch reads. The cap saves at least 75% of bytes in this fixture.
+      await ctx.db
+        .query('bondfireVideos')
+        .withIndex('by_bondfire', (q) => q.eq('bondfireId', ids.bondfireId))
+        .collect()
+      return ctx.meta.getTransactionMetrics()
+    })
+    expect(after.metrics.bytesRead.used).toBeLessThan(unbounded.bytesRead.used / 4)
+    expect(watch).toHaveBeenCalledTimes(299)
+    expect(watch.mock.calls.map(([, , video]) => video._id)).toEqual([
+      ids.bondfireId,
+      ...(after.detail?.videos.map((video) => video._id) ?? []),
+    ])
+  }, 15000)
 
   it('reuses participant users across list summaries and first-unwatched resolution', async () => {
     const { t, ids } = await fixture()

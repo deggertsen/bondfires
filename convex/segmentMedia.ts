@@ -403,25 +403,25 @@ export const cleanupPage = internalQuery({
     mode: v.optional(
       v.union(v.literal('uploading'), v.literal('cancelled'), v.literal('reconcile')),
     ),
+    reconcileStatus: v.optional(v.union(v.literal('ready'), v.literal('uploading'))),
   },
-  handler: async (ctx, { cursor, mode, cutoff }) => {
+  handler: async (ctx, { cursor, mode, cutoff, reconcileStatus }) => {
     requireSegmentMedia()
-    // Pre-deployment continuations carry only a full-table cursor. Keep that
-    // query shape until their chain finishes; new cron runs start indexed.
     const cleanupMode = mode ?? (cursor ? 'reconcile' : 'uploading')
     const now = Date.now()
-    // Ready videos only need the hourly orphan/expiry reconciliation. These
-    // index ranges also cover pre-deployment rows without a backfill.
-    const recordings = ctx.db.query('segmentRecordings')
-    const candidates =
-      cleanupMode === 'reconcile'
-        ? recordings
-        : recordings.withIndex('by_status_created', (q) =>
-            cleanupMode === 'uploading'
-              ? q.eq('status', 'uploading').lt('createdAt', cutoff ?? now - 7 * 86400_000)
-              : q.eq('status', 'cancelled'),
-          )
-    const page = await candidates.paginate({ cursor, numItems: 50 })
+    // Reconciliation visits ready and uploading indexes once daily. Cancelled
+    // recordings remain covered by the unchanged five-minute indexed sweep.
+    const candidates = ctx.db.query('segmentRecordings').withIndex('by_status_created', (q) => {
+      if (cleanupMode === 'reconcile') return q.eq('status', reconcileStatus ?? 'ready')
+      if (cleanupMode === 'uploading')
+        return q.eq('status', 'uploading').lt('createdAt', cutoff ?? now - 7 * 86400_000)
+      return q.eq('status', 'cancelled')
+    })
+    // Old scheduled continuations (with reconcile mode or no mode) contain a
+    // full-table cursor. Restart them on the ready index instead of reusing an
+    // incompatible cursor. New continuations always carry their index status.
+    const indexedCursor = cleanupMode === 'reconcile' && !reconcileStatus ? null : cursor
+    const page = await candidates.paginate({ cursor: indexedCursor, numItems: 50 })
     const ids: Id<'segmentRecordings'>[] = []
     const interrupted: Id<'segmentRecordings'>[] = []
     for (const recording of page.page) {
@@ -532,16 +532,20 @@ export const cleanup = internalAction({
     mode: v.optional(
       v.union(v.literal('uploading'), v.literal('cancelled'), v.literal('reconcile')),
     ),
+    reconcileStatus: v.optional(v.union(v.literal('ready'), v.literal('uploading'))),
   },
-  handler: async (ctx, { cursor, mode, cutoff }) => {
+  handler: async (ctx, { cursor, mode, cutoff, reconcileStatus }) => {
     if (!isMediaEnabled()) return
     const cleanupMode = mode ?? (cursor ? 'reconcile' : 'uploading')
     // Convex pagination cursors require identical index bounds on every page.
     const cleanupCutoff = cutoff ?? Date.now() - 7 * 86400_000
+    const status = cleanupMode === 'reconcile' ? (reconcileStatus ?? 'ready') : undefined
+    const indexedCursor = cleanupMode === 'reconcile' && !reconcileStatus ? null : (cursor ?? null)
     const page = await ctx.runQuery(internal.segmentMedia.cleanupPage, {
-      cursor: cursor ?? null,
+      cursor: indexedCursor,
       mode: cleanupMode,
       cutoff: cleanupCutoff,
+      ...(status ? { reconcileStatus: status } : {}),
     })
     for (const recordingId of page.interrupted) {
       await ctx.scheduler.runAfter(0, internal.segmentMedia.finalizeInterrupted, { recordingId })
@@ -554,9 +558,15 @@ export const cleanup = internalAction({
         cursor: page.cursor,
         mode: cleanupMode,
         cutoff: cleanupCutoff,
+        ...(status ? { reconcileStatus: status } : {}),
       })
     else if (cleanupMode === 'uploading')
       await ctx.scheduler.runAfter(0, internal.segmentMedia.cleanup, { mode: 'cancelled' })
+    else if (status === 'ready')
+      await ctx.scheduler.runAfter(0, internal.segmentMedia.cleanup, {
+        mode: 'reconcile',
+        reconcileStatus: 'uploading',
+      })
   },
 })
 
