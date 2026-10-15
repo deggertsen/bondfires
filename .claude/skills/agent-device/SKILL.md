@@ -266,7 +266,7 @@ config — `xcodebuild ... -configuration Release` bundles the JS into the binar
 (`main.jsbundle`), so the installed app just runs: no Metro, no dev launcher, no
 tunnel, no URL to type. This is the most reliable loop and avoids every gotcha
 below. Install with `devicectl ... install app` then `... process launch`, and
-read results from prod Convex telemetry (`clientLogs:_debugTriage`). Recording
+read results from the authenticated admin client telemetry viewer. Recording
 in a personal camp is safe; just reaching the record screen fires
 `live:availability` / `live:camera_list`, which is enough to confirm a native
 registration fix without creating prod data.

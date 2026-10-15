@@ -469,7 +469,15 @@ describe('indexed media cleanup', () => {
           bondfireId: record.recordId as import('./_generated/dataModel').Id<'bondfires'>,
         })
     })
-    expect(await t.query(internal.segmentMedia.cleanupPage, { cursor: null })).toEqual({
+    expect(
+      await t.query((ctx) =>
+        ctx.runQuery(
+          internal.segmentMedia.cleanupPage,
+          { cursor: null },
+          { transactionLimits: { documentsRead: 0 } },
+        ),
+      ),
+    ).toEqual({
       ids: [],
       interrupted: [],
       cursor: null,
@@ -490,10 +498,11 @@ describe('indexed media cleanup', () => {
     expect(page.ids).toHaveLength(50)
     expect(page.cursor).not.toBeNull()
     const rest = await t.query(internal.segmentMedia.cleanupPage, {
-      // Pre-deployment continuations used a full-table cursor without mode.
       cursor: page.cursor,
+      mode: 'reconcile',
+      reconcileStatus: 'ready',
     })
-    expect(rest.ids).toHaveLength(6)
+    expect(rest.ids).toHaveLength(5)
     expect(rest.cursor).toBeNull()
   })
 
@@ -513,6 +522,91 @@ describe('indexed media cleanup', () => {
       expect(
         (await t.query(internal.segmentMedia.cleanupPage, { cursor: null, mode: 'reconcile' })).ids,
       ).toContain(record.recordingId)
+    },
+  )
+
+  it.each([undefined, 'reconcile'] as const)(
+    'restarts a legacy full-table continuation (mode=%s) on indexed status pages',
+    async (mode) => {
+      const { t, record, fixture } = await setup()
+      const { cursor, readyId } = await t.run(async (ctx) => {
+        // Simulate a cursor queued by either version of the old full scan.
+        const oldPage = await ctx.db
+          .query('segmentRecordings')
+          .paginate({ cursor: null, numItems: 1 })
+        const readyId = await ctx.db.insert('segmentRecordings', {
+          userId: fixture.owner,
+          localId: 'legacy-ready',
+          status: 'ready',
+          segmentCount: 1,
+          duration: 4,
+          maxDuration: 10,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        })
+        return { cursor: oldPage.continueCursor, readyId }
+      })
+      expect(await t.query(internal.segmentMedia.cleanupPage, { cursor, mode })).toEqual({
+        ids: [readyId],
+        interrupted: [],
+        cursor: null,
+      })
+      // Recent uploads with missing parents must still be reconciled daily.
+      await t.run((ctx) => ctx.db.delete(record.recordId))
+      expect(
+        await t.query(internal.segmentMedia.cleanupPage, {
+          cursor: null,
+          mode: 'reconcile',
+          reconcileStatus: 'uploading',
+        }),
+      ).toEqual({ ids: [record.recordingId], interrupted: [], cursor: null })
+    },
+  )
+
+  it.each([undefined, 'reconcile'] as const)(
+    'drains restarted legacy cleanup (mode=%s) through ready and uploading indexes',
+    async (mode) => {
+      vi.useFakeTimers()
+      try {
+        const { t, record, fixture } = await setup()
+        const readyIds = await t.run(async (ctx) => {
+          const ids: Id<'segmentRecordings'>[] = []
+          for (let i = 0; i < 55; i++) {
+            ids.push(
+              await ctx.db.insert('segmentRecordings', {
+                userId: fixture.owner,
+                localId: `orphan-ready-${i}`,
+                status: 'ready',
+                segmentCount: 1,
+                duration: 4,
+                maxDuration: 10,
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+              }),
+            )
+          }
+          await ctx.db.delete(record.recordId)
+          return ids
+        })
+        // A deliberately invalid cursor proves it never reaches pagination.
+        await t.action(internal.segmentMedia.cleanup, { cursor: 'legacy-full-table-cursor', mode })
+        const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
+        vi.stubGlobal('fetch', fetchMock)
+        await t.finishAllScheduledFunctions(vi.runAllTimers)
+        expect(fetchMock).toHaveBeenCalledTimes(56)
+        const statuses = await t.run(async (ctx) =>
+          Promise.all(
+            [...readyIds, record.recordingId].map(async (id) => (await ctx.db.get(id))?.status),
+          ),
+        )
+        expect(statuses.every((status) => status === 'cancelled')).toBe(true)
+        const scheduled = await t.run((ctx) =>
+          ctx.db.system.query('_scheduled_functions').collect(),
+        )
+        expect(scheduled.every((job) => job.state.kind === 'success')).toBe(true)
+      } finally {
+        vi.useRealTimers()
+      }
     },
   )
 

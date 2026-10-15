@@ -452,7 +452,7 @@ export const getForNotification = internalQuery({
   },
 })
 
-// Get a bondfire with all its response videos
+// Get a bondfire with all its response videos.
 export const getWithVideos = query({
   args: { bondfireId: v.string() },
   handler: async (ctx, args) => {
@@ -476,6 +476,9 @@ export const getWithVideos = query({
     const personalCamp = bondfire.personalCampId ? await ctx.db.get(bondfire.personalCampId) : null
     const campName = personalCamp?.name ?? camp?.name
 
+    // The detail screen needs the full thread for first-unwatched playback,
+    // response deep links, and participant counts. Bounding this read requires
+    // a paginated client/API contract; a silent cap makes later replies unreachable.
     const videos = await ctx.db
       .query('bondfireVideos')
       .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfireId))

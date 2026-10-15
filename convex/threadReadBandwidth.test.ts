@@ -9,6 +9,7 @@ import { auth } from './auth'
 import { getWithVideos } from './bondfires'
 import { CURRENT_COMMUNITY_GUIDELINES_VERSION, CURRENT_TERMS_VERSION } from './contentSafety'
 import { isThreadParticipant, listCloseCircle, listMyFires } from './conversations'
+import * as viewerWatchState from './lib/viewerWatchState'
 import schema from './schema'
 
 const modules = import.meta.glob('./**/*.ts')
@@ -99,6 +100,149 @@ describe('thread read bandwidth', () => {
       expect(get.mock.calls.filter(([id]) => id === ids.campId)).toHaveLength(1)
       expect(detail?.campName).toBe('Thread reads')
     })
+  })
+
+  it('keeps later replies, processing entries, and participants accessible beyond 300 responses', async () => {
+    const { t, ids } = await fixture()
+    const processingId = await t.run(async (ctx) => {
+      await ctx.db.patch(ids.responseId, { durationMs: 10000 })
+      await ctx.db.insert('watchEvents', {
+        userId: ids.owner,
+        videoType: 'response',
+        videoId: ids.responseId,
+        eventType: 'complete',
+        positionMs: 10000,
+        createdAt: 300,
+      })
+      await ctx.db.insert('closeCirclePins', {
+        ownerId: ids.owner,
+        pinnedUserId: ids.responder,
+        order: 0,
+        createdAt: 300,
+        updatedAt: 300,
+      })
+      for (let sequenceNumber = 2; sequenceNumber <= 299; sequenceNumber++) {
+        await ctx.db.insert('bondfireVideos', {
+          bondfireId: ids.bondfireId,
+          userId: ids.responder,
+          sequenceNumber,
+          videoStatus: 'ready',
+          moderationStatus: sequenceNumber === 299 ? 'removed' : undefined,
+          muxPlaybackId: `response-${sequenceNumber}`,
+          durationMs: 10000,
+          // Creation order deliberately disagrees with playback sequence.
+          createdAt: 1000 - sequenceNumber,
+        })
+      }
+      return ctx.db.insert('bondfireVideos', {
+        bondfireId: ids.bondfireId,
+        userId: ids.responder,
+        creatorName: 'Responder',
+        sequenceNumber: 300,
+        videoStatus: 'processing',
+        muxAssetId: 'private-processing-asset',
+        createdAt: 1000,
+      })
+    })
+    const watch = vi.spyOn(viewerWatchState, 'isVideoWatchedByViewer')
+    const readDetail = () =>
+      t.withIdentity({ subject: ids.owner }).query(api.bondfires.getWithVideos, {
+        bondfireId: ids.bondfireId,
+      })
+    const before = await readDetail()
+    expect(before?.videos.map((video) => video.sequenceNumber)).toEqual(
+      Array.from({ length: 298 }, (_, i) => i + 1),
+    )
+    expect(before?.watchedByViewer).toBe(true)
+    expect(before?.videos[0]?.watchedByViewer).toBe(true)
+    expect(before?.videos.slice(1).every((video) => !video.watchedByViewer)).toBe(true)
+    expect(before?.processingResponses).toEqual([
+      {
+        _id: processingId,
+        userId: ids.responder,
+        creatorName: 'Responder',
+        createdAt: 1000,
+      },
+    ])
+    expect(before?.participants).toMatchObject([
+      { user: { _id: ids.responder }, videoCount: 298, latestAt: 998, isPinned: true },
+      { user: { _id: ids.owner }, videoCount: 1, latestAt: 100, isPinned: false },
+    ])
+    expect(watch).toHaveBeenCalledTimes(299) // Spark + displayed playable responses only.
+    watch.mockClear()
+    const late = await t.run(async (ctx) => {
+      const watchedId = await ctx.db.insert('bondfireVideos', {
+        bondfireId: ids.bondfireId,
+        userId: ids.outsider,
+        sequenceNumber: 301,
+        videoStatus: 'ready',
+        muxPlaybackId: 'late-watched',
+        durationMs: 10000,
+        createdAt: 2000,
+      })
+      await ctx.db.insert('watchEvents', {
+        userId: ids.owner,
+        videoType: 'response',
+        videoId: watchedId,
+        eventType: 'complete',
+        positionMs: 10000,
+        createdAt: 3000,
+      })
+      const processingId = await ctx.db.insert('bondfireVideos', {
+        bondfireId: ids.bondfireId,
+        userId: ids.outsider,
+        creatorName: 'Late responder',
+        sequenceNumber: 302,
+        videoStatus: 'processing',
+        muxAssetId: 'late-private-processing-asset',
+        createdAt: 2100,
+      })
+      await ctx.db.insert('bondfireVideos', {
+        bondfireId: ids.bondfireId,
+        userId: ids.outsider,
+        sequenceNumber: 303,
+        videoStatus: 'ready',
+        moderationStatus: 'removed',
+        muxPlaybackId: 'late-hidden',
+        createdAt: 2200,
+      })
+      const unwatchedId = await ctx.db.insert('bondfireVideos', {
+        bondfireId: ids.bondfireId,
+        userId: ids.outsider,
+        sequenceNumber: 304,
+        videoStatus: 'ready',
+        muxPlaybackId: 'late-unwatched',
+        durationMs: 10000,
+        // Sequence, not creation time, determines playback/deep-link order.
+        createdAt: 1900,
+      })
+      return { watchedId, processingId, unwatchedId }
+    })
+    const after = await readDetail()
+    expect(after?.videos.slice(0, 298)).toEqual(before?.videos)
+    expect(after?.videos.slice(298)).toMatchObject([
+      { _id: late.watchedId, sequenceNumber: 301, watchedByViewer: true },
+      { _id: late.unwatchedId, sequenceNumber: 304, watchedByViewer: false },
+    ])
+    expect(after?.processingResponses).toEqual([
+      ...(before?.processingResponses ?? []),
+      {
+        _id: late.processingId,
+        userId: ids.outsider,
+        creatorName: 'Late responder',
+        createdAt: 2100,
+      },
+    ])
+    expect(after?.participants).toMatchObject([
+      { user: { _id: ids.outsider }, videoCount: 2, latestAt: 2000, isPinned: false },
+      { user: { _id: ids.responder }, videoCount: 298, latestAt: 998, isPinned: true },
+      { user: { _id: ids.owner }, videoCount: 1, latestAt: 100, isPinned: false },
+    ])
+    expect(watch).toHaveBeenCalledTimes(301)
+    expect(watch.mock.calls.map(([, , video]) => video._id)).toEqual([
+      ids.bondfireId,
+      ...(after?.videos.map((video) => video._id) ?? []),
+    ])
   })
 
   it('reuses participant users across list summaries and first-unwatched resolution', async () => {
