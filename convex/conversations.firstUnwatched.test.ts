@@ -305,32 +305,39 @@ describe('listMyFires firstUnwatchedResponder', () => {
     expect(thread?.firstUnwatchedResponder?._id).not.toBe(ids.creator)
   })
 
-  it('names the first unwatched responder beyond 250 responses instead of the latest participant', async () => {
-    const { t, ids } = await fixture()
-    await markWatched(t, ids.creator, ids.responderVideoId, 'response')
-    await markWatched(t, ids.creator, ids.otherVideoId, 'response')
-    await t.run(async (ctx) => {
-      for (let sequenceNumber = 4; sequenceNumber <= 252; sequenceNumber++) {
-        const userId =
-          sequenceNumber === 251 ? ids.responder : sequenceNumber === 252 ? ids.other : ids.creator
-        await ctx.db.insert('bondfireVideos', {
-          bondfireId: ids.bondfireId,
-          userId,
-          sequenceNumber,
-          videoStatus: 'ready',
-          muxPlaybackId: `response-${sequenceNumber}`,
-          createdAt: 1_000 + sequenceNumber * 100,
-        })
-      }
-    })
-    const threads = await t
-      .withIdentity({ subject: ids.creator })
-      .query(api.conversations.listMyFires, {})
-    const thread = threads.find((entry) => entry._id === ids.bondfireId)
-    expect(thread?.unread).toBe(true)
-    expect(thread?.firstUnwatchedResponder?._id).toBe(ids.responder)
-    expect(await detailScreenOpensOn(t, ids.bondfireId, ids.creator)).toBe(ids.responder)
-  })
+  it.each([250, 300])(
+    'names the first unwatched responder beyond %s responses instead of the latest participant',
+    async (boundary) => {
+      const { t, ids } = await fixture()
+      await markWatched(t, ids.creator, ids.responderVideoId, 'response')
+      await markWatched(t, ids.creator, ids.otherVideoId, 'response')
+      await t.run(async (ctx) => {
+        for (let sequenceNumber = 4; sequenceNumber <= boundary + 2; sequenceNumber++) {
+          const userId =
+            sequenceNumber === boundary + 1
+              ? ids.responder
+              : sequenceNumber === boundary + 2
+                ? ids.other
+                : ids.creator
+          await ctx.db.insert('bondfireVideos', {
+            bondfireId: ids.bondfireId,
+            userId,
+            sequenceNumber,
+            videoStatus: 'ready',
+            muxPlaybackId: `response-${sequenceNumber}`,
+            createdAt: 1_000 + sequenceNumber * 100,
+          })
+        }
+      })
+      const threads = await t
+        .withIdentity({ subject: ids.creator })
+        .query(api.conversations.listMyFires, {})
+      const thread = threads.find((entry) => entry._id === ids.bondfireId)
+      expect(thread?.unread).toBe(true)
+      expect(thread?.firstUnwatchedResponder?._id).toBe(ids.responder)
+      expect(await detailScreenOpensOn(t, ids.bondfireId, ids.creator)).toBe(ids.responder)
+    },
+  )
 
   it('stays null on read threads', async () => {
     const { t, ids } = await fixture()
