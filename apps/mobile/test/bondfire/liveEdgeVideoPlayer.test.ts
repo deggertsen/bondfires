@@ -13,6 +13,7 @@ const native = vi.hoisted(() => ({
   listeners: new Map<string, Set<(event: never) => void>>(),
   play: vi.fn(),
   pause: vi.fn(),
+  replay: vi.fn(),
   activateKeepAwake: vi.fn(),
   deactivateKeepAwake: vi.fn(),
 }))
@@ -36,6 +37,7 @@ const { store, player } = await vi.hoisted(async () => {
     playbackRate: 1,
     play: native.play,
     pause: native.pause,
+    replay: native.replay,
     addListener: (name: string, listener: (event: never) => void) => {
       const listeners = native.listeners.get(name) ?? new Set()
       listeners.add(listener)
@@ -196,6 +198,46 @@ describe('live-edge VideoPlayer integration', () => {
     native.play.mockClear()
     await tick()
     expect(native.play).not.toHaveBeenCalled()
+  })
+
+  it('pauses a still-playing video instead of replaying when the end flag is stale', async () => {
+    // Reaching the end leaves hasEnded set; playback can then resume on the
+    // same player (autoplay effect, re-issued source). A tap must pause where
+    // the viewer is, not replay from the beginning behind a stale end flag.
+    await act(async () => {
+      player.currentTime = 60
+      player.playing = false
+      emit('playToEnd', {})
+    })
+    expect(host('PlayPauseIndicator').props.state$.hasEnded.peek()).toBe(true)
+
+    await act(async () => native.play())
+    native.play.mockClear()
+
+    await act(async () => host('Pressable').props.onPress())
+    expect(native.pause).toHaveBeenCalledOnce()
+    expect(native.replay).not.toHaveBeenCalled()
+  })
+
+  it('clears the end flag when the source is re-issued, so the next tap pauses', async () => {
+    await act(async () => {
+      player.currentTime = 60
+      player.playing = false
+      emit('playToEnd', {})
+    })
+    expect(host('PlayPauseIndicator').props.state$.hasEnded.peek()).toBe(true)
+
+    // A refreshed/re-issued URL mounts a fresh native player at t=0. The old
+    // end flag must not survive into that playback and hijack the first tap.
+    await act(async () =>
+      renderer.update(
+        createElement(VideoPlayer, {
+          ...props,
+          videoUrl: 'https://example.com/reissued.m3u8',
+        }),
+      ),
+    )
+    expect(host('PlayPauseIndicator').props.state$.hasEnded.peek()).toBe(false)
   })
 
   it('cancels a hold when the player loses focus', async () => {

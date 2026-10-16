@@ -90,6 +90,42 @@ export function shouldShowRespondCTA({
   return hasEnded && !isPlaying && !isLoading
 }
 
+/** How close to the end counts as "finished" when deciding to replay. */
+export const PLAYBACK_END_TOLERANCE_SECONDS = 0.25
+
+export type PlayPauseAction = 'pause' | 'replay' | 'play'
+
+/**
+ * What the single tap-to-play/pause control should do.
+ *
+ * The ordering here is the fix for the "pressing pause restarts the video"
+ * report: a playing (or live-edge-held) player always pauses in place, no
+ * matter what a stale end flag says. Only a player that is stopped *and*
+ * actually sitting at its end replays; a stale `hasEnded` on a mid-video player
+ * must not turn a pause press into a restart-from-zero.
+ */
+export function resolvePlayPauseAction({
+  isPlaying,
+  isHolding,
+  hasEnded,
+  currentTime,
+  duration,
+}: {
+  isPlaying: boolean
+  isHolding: boolean
+  hasEnded: boolean
+  currentTime: number
+  duration: number
+}): PlayPauseAction {
+  if (isPlaying || isHolding) return 'pause'
+  const atEnd =
+    Number.isFinite(duration) && duration > 0
+      ? currentTime >= duration - PLAYBACK_END_TOLERANCE_SECONDS
+      : true
+  if (hasEnded && atEnd) return 'replay'
+  return 'play'
+}
+
 type ReactionPlaybackMarker = {
   _id: string
   timestampMs: number

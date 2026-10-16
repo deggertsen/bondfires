@@ -2,7 +2,9 @@ import { observable } from '@legendapp/state'
 import { describe, expect, it } from 'vitest'
 import {
   PICTURE_IN_PICTURE_STOP_PAUSE_GRACE_MS,
+  PLAYBACK_END_TOLERANCE_SECONDS,
   pictureInPictureStopAction,
+  resolvePlayPauseAction,
   shouldLoadVideoSource,
   shouldOwnPlaybackSession,
   shouldResumeAfterPictureInPictureStop,
@@ -180,6 +182,47 @@ describe('videoPlayerState', () => {
     )
     expect(shouldShowRespondCTA({ hasEnded: true, isPlaying: true, isLoading: false })).toBe(false)
     expect(shouldShowRespondCTA({ hasEnded: true, isPlaying: false, isLoading: true })).toBe(false)
+  })
+
+  describe('resolvePlayPauseAction', () => {
+    const base = {
+      isPlaying: false,
+      isHolding: false,
+      hasEnded: false,
+      currentTime: 5,
+      duration: 60,
+    }
+
+    it('pauses a playing video even when a stale end flag is set', () => {
+      // The reported bug: pressing pause on a playing video restarted it.
+      expect(resolvePlayPauseAction({ ...base, isPlaying: true, hasEnded: true })).toBe('pause')
+    })
+
+    it('pauses a live-edge hold so the tap is not read as play', () => {
+      expect(resolvePlayPauseAction({ ...base, isHolding: true })).toBe('pause')
+    })
+
+    it('replays only when the stopped player is actually at its end', () => {
+      expect(
+        resolvePlayPauseAction({
+          ...base,
+          hasEnded: true,
+          currentTime: 60 - PLAYBACK_END_TOLERANCE_SECONDS,
+        }),
+      ).toBe('replay')
+    })
+
+    it('plays a mid-video player with an end flag that is stale', () => {
+      expect(resolvePlayPauseAction({ ...base, hasEnded: true, currentTime: 12 })).toBe('play')
+    })
+
+    it('treats an unknown duration as at-end and resumes rather than re-seeking', () => {
+      expect(resolvePlayPauseAction({ ...base, hasEnded: true, duration: 0 })).toBe('replay')
+    })
+
+    it('plays a paused, not-yet-ended video', () => {
+      expect(resolvePlayPauseAction(base)).toBe('play')
+    })
   })
 })
 

@@ -53,6 +53,7 @@ import {
   type ProgressBarMetrics,
   pictureInPictureStopAction,
   resetReactionState,
+  resolvePlayPauseAction,
   shouldLoadVideoSource,
   shouldOwnPlaybackSession,
   suppressOwnerReplay,
@@ -350,6 +351,10 @@ export function VideoPlayer({
     hasRecordedPlaybackStartRef.current = false
     userPausedRef.current = false
     state$.hasError.set(false)
+    // A re-issued source (live→ready, refreshed token, new segment version)
+    // starts at zero on a fresh native player; the old end flag must not
+    // survive into that playback and turn the next pause tap into a replay.
+    state$.hasEnded.set(false)
     return () => {
       stallRecoveryGenerationRef.current += 1
       if (errorRetryRef.current.timer) {
@@ -1025,6 +1030,12 @@ export function VideoPlayer({
 
     const playingSubscription = player.addListener('playingChange', ({ isPlaying }) => {
       if (!withCurrentPlayer(() => true)) return
+      // A playing video is not an ended video. Clearing here keeps a stale end
+      // flag (from a previous end on this player) from turning the next pause
+      // tap into a replay — the first tap pauses, a later tap resumes in place.
+      if (isPlaying && state$.hasEnded.peek()) {
+        state$.hasEnded.set(false)
+      }
       state$.isPlaying.set(ownsPlaybackSession ? isPlaying : false)
       if (ownsPlaybackSession && isPlaying) {
         recordPlaybackStart()
@@ -1210,16 +1221,26 @@ export function VideoPlayer({
     const wasHolding = liveEdgePlayback.isHolding()
     liveEdgePlayback.cancel()
     const action = withCurrentPlayer((currentPlayer) => {
-      if (state$.hasEnded.get()) {
-        currentPlayer.replay()
-        return 'replay' as const
-      }
-      if (currentPlayer.playing || wasHolding) {
+      // Pause wins over replay: a player that is actually advancing must pause
+      // where the viewer tapped even if `hasEnded` is stale (an earlier end,
+      // then autoplay/rewatch or a re-issued source URL). Testing `hasEnded`
+      // first turned that pause tap into a replay, restarting the video from
+      // the beginning before it could pause — the reported bug.
+      const resolved = resolvePlayPauseAction({
+        isPlaying: currentPlayer.playing,
+        isHolding: wasHolding,
+        hasEnded: state$.hasEnded.get(),
+        currentTime: currentPlayer.currentTime ?? 0,
+        duration: currentPlayer.duration ?? 0,
+      })
+      if (resolved === 'pause') {
         currentPlayer.pause()
-        return 'pause' as const
+      } else if (resolved === 'replay') {
+        currentPlayer.replay()
+      } else {
+        currentPlayer.play()
       }
-      currentPlayer.play()
-      return 'play' as const
+      return resolved
     })
     if (!action) return
     pictureInPicturePlayback.cancel()
@@ -1237,6 +1258,9 @@ export function VideoPlayer({
       userPausedRef.current = false
     } else if (action === 'pause') {
       state$.isPlaying.set(false)
+      // A video the viewer just paused mid-playback is not an ended video. Clear
+      // any stale end flag so the next tap resumes in place instead of replaying.
+      if (state$.hasEnded.peek()) state$.hasEnded.set(false)
       // Deliberate pause — error auto-recovery must not resume over it.
       userPausedRef.current = true
     } else {
