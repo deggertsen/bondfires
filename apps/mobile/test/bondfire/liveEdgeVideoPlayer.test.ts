@@ -1,4 +1,4 @@
-import { createElement } from 'react'
+import { createElement, useMemo } from 'react'
 // @ts-expect-error react-test-renderer does not ship TypeScript declarations.
 import { act, create } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -18,7 +18,7 @@ const native = vi.hoisted(() => ({
   deactivateKeepAwake: vi.fn(),
 }))
 
-const { store, player } = await vi.hoisted(async () => {
+const { store, playback } = await vi.hoisted(async () => {
   const { observable } = await import('@legendapp/state')
   const store = observable({
     preferences: {
@@ -45,7 +45,7 @@ const { store, player } = await vi.hoisted(async () => {
       return { remove: () => listeners.delete(listener) }
     },
   }
-  return { store, player }
+  return { store, playback: { player } }
 })
 
 vi.mock('@bondfires/app', () => ({
@@ -75,7 +75,20 @@ vi.mock('expo-keep-awake', () => ({
   deactivateKeepAwake: native.deactivateKeepAwake,
 }))
 vi.mock('expo-linear-gradient', () => ({ LinearGradient: 'LinearGradient' }))
-vi.mock('expo-video', () => ({ useVideoPlayer: () => player, VideoView: 'VideoView' }))
+vi.mock('expo-video', () => ({
+  useVideoPlayer: (source: unknown, setup: (player: typeof playback.player) => void) => {
+    // Expo recreates its native player when the serialized source (including metadata) changes.
+    const sourceKey = JSON.stringify(source)
+    // biome-ignore lint/correctness/useExhaustiveDependencies: Match Expo: source changes recreate the player; setup identity does not.
+    return useMemo(() => {
+      const player = { ...playback.player, playing: false, currentTime: 0, duration: 60 }
+      playback.player = player
+      setup(player)
+      return player
+    }, [sourceKey])
+  },
+  VideoView: 'VideoView',
+}))
 vi.mock('react-native', () => ({
   AppState: { currentState: 'active', addEventListener: () => ({ remove: vi.fn() }) },
   Dimensions: { get: () => ({ width: 400, height: 800 }) },
@@ -123,7 +136,7 @@ describe('live-edge VideoPlayer integration', () => {
   }
   const status = async (value: string) => {
     await act(async () => {
-      player.status = value
+      playback.player.status = value
       emit('statusChange', { status: value })
     })
   }
@@ -133,15 +146,20 @@ describe('live-edge VideoPlayer integration', () => {
     vi.useFakeTimers()
     vi.clearAllMocks()
     native.listeners.clear()
+    store.preferences.autoplayVideos.set(true)
     store.preferences.playbackSpeed.set(1)
-    player.playing = false
-    player.status = 'readyToPlay'
+    playback.player.playing = false
+    playback.player.status = 'readyToPlay'
     native.play.mockImplementation(() => {
-      player.playing = true
+      playback.player.playing = true
       emit('playingChange', { isPlaying: true })
     })
+    native.replay.mockImplementation(() => {
+      playback.player.currentTime = 0
+      native.play()
+    })
     native.pause.mockImplementation(() => {
-      player.playing = false
+      playback.player.playing = false
       emit('playingChange', { isPlaying: false })
     })
     ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -162,7 +180,7 @@ describe('live-edge VideoPlayer integration', () => {
     native.deactivateKeepAwake.mockClear()
     await status('loading')
     await status('readyToPlay')
-    expect(player.playing).toBe(false)
+    expect(playback.player.playing).toBe(false)
     expect(host('LoadingOverlay').props.state$.isLoading.peek()).toBe(false)
     for (const overlay of ['LoadingOverlay', 'PlayPauseIndicator', 'PausedReportButton']) {
       expect(host(overlay).props.isHoldingLiveEdge).toBe(true)
@@ -183,7 +201,7 @@ describe('live-edge VideoPlayer integration', () => {
     expect(host('VideoView').props.startsPictureInPictureAutomatically).toBe(false)
     await tick()
     expect(native.play).not.toHaveBeenCalled()
-    expect(player.playing).toBe(false)
+    expect(playback.player.playing).toBe(false)
     await act(async () => host('Pressable').props.onPress())
     expect(native.play).toHaveBeenCalledOnce()
   })
@@ -192,52 +210,89 @@ describe('live-edge VideoPlayer integration', () => {
     await status('loading')
     await status('readyToPlay')
     await act(async () => store.preferences.playbackSpeed.set(1.5))
-    expect(player.playbackRate).toBe(1.5)
-    expect(player.playing).toBe(true)
+    expect(playback.player.playbackRate).toBe(1.5)
+    expect(playback.player.playing).toBe(true)
     expect(host('LoadingOverlay').props.isHoldingLiveEdge).toBe(false)
     native.play.mockClear()
     await tick()
     expect(native.play).not.toHaveBeenCalled()
   })
 
-  it('pauses a still-playing video instead of replaying when the end flag is stale', async () => {
-    // Reaching the end leaves hasEnded set; playback can then resume on the
-    // same player (autoplay effect, re-issued source). A tap must pause where
-    // the viewer is, not replay from the beginning behind a stale end flag.
+  const finish = async () => {
     await act(async () => {
-      player.currentTime = 60
-      player.playing = false
+      playback.player.currentTime = 60
+      playback.player.playing = false
       emit('playToEnd', {})
     })
     expect(host('PlayPauseIndicator').props.state$.hasEnded.peek()).toBe(true)
+  }
 
-    await act(async () => native.play())
-    native.play.mockClear()
+  it('pauses in place with a stale end flag, then resumes without replaying', async () => {
+    await finish()
+    // Native properties may advance before the corresponding JS event arrives.
+    playback.player.currentTime = 12
+    playback.player.playing = true
+    expect(host('PlayPauseIndicator').props.state$.hasEnded.peek()).toBe(true)
 
     await act(async () => host('Pressable').props.onPress())
     expect(native.pause).toHaveBeenCalledOnce()
+    expect(playback.player.playing).toBe(false)
+    expect(playback.player.currentTime).toBe(12)
+    expect(host('PlayPauseIndicator').props.state$.hasEnded.peek()).toBe(false)
+
+    await act(async () => host('Pressable').props.onPress())
+    expect(native.play).toHaveBeenCalledOnce()
+    expect(playback.player.currentTime).toBe(12)
     expect(native.replay).not.toHaveBeenCalled()
   })
 
-  it('clears the end flag when the source is re-issued, so the next tap pauses', async () => {
-    await act(async () => {
-      player.currentTime = 60
-      player.playing = false
-      emit('playToEnd', {})
-    })
-    expect(host('PlayPauseIndicator').props.state$.hasEnded.peek()).toBe(true)
-
-    // A refreshed/re-issued URL mounts a fresh native player at t=0. The old
-    // end flag must not survive into that playback and hijack the first tap.
-    await act(async () =>
-      renderer.update(
-        createElement(VideoPlayer, {
-          ...props,
-          videoUrl: 'https://example.com/reissued.m3u8',
-        }),
-      ),
-    )
+  it('clears completion when native playback resumes', async () => {
+    await finish()
+    playback.player.currentTime = 12
+    await act(async () => native.play())
     expect(host('PlayPauseIndicator').props.state$.hasEnded.peek()).toBe(false)
+  })
+
+  it('clears stale completion on resume before a native event arrives', async () => {
+    await finish()
+    playback.player.currentTime = 12
+    native.play.mockImplementationOnce(() => {
+      playback.player.playing = true
+    })
+    await act(async () => host('Pressable').props.onPress())
+    expect(native.play).toHaveBeenCalledOnce()
+    expect(native.replay).not.toHaveBeenCalled()
+    expect(playback.player.currentTime).toBe(12)
+    expect(host('PlayPauseIndicator').props.state$.hasEnded.peek()).toBe(false)
+  })
+
+  it('replays from zero after genuine completion', async () => {
+    await act(async () => renderer.update(createElement(VideoPlayer, { ...props, isLive: false })))
+    await finish()
+    await act(async () => host('Pressable').props.onPress())
+    expect(native.replay).toHaveBeenCalledOnce()
+    expect(playback.player.currentTime).toBe(0)
+    expect(playback.player.playing).toBe(true)
+    expect(host('PlayPauseIndicator').props.state$.hasEnded.peek()).toBe(false)
+  })
+
+  it.each([
+    ['URL', { videoUrl: 'https://example.com/reissued.m3u8' }],
+    ['metadata', { bondfireTitle: 'Updated title' }],
+  ])('clears completion on a %s replacement with autoplay disabled', async (_, changedProps) => {
+    await act(async () => store.preferences.autoplayVideos.set(false))
+    await finish()
+    const oldPlayer = playback.player
+    await act(async () =>
+      renderer.update(createElement(VideoPlayer, { ...props, ...changedProps })),
+    )
+    expect(playback.player).not.toBe(oldPlayer)
+    expect(playback.player.currentTime).toBe(0)
+    expect(playback.player.playing).toBe(false)
+    expect(host('PlayPauseIndicator').props.state$.hasEnded.peek()).toBe(false)
+    await act(async () => host('Pressable').props.onPress())
+    expect(native.play).toHaveBeenCalledOnce()
+    expect(native.replay).not.toHaveBeenCalled()
   })
 
   it('cancels a hold when the player loses focus', async () => {

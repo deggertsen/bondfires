@@ -216,9 +216,13 @@ describe('videoPlayerState', () => {
       expect(resolvePlayPauseAction({ ...base, hasEnded: true, currentTime: 12 })).toBe('play')
     })
 
-    it('treats an unknown duration as at-end and resumes rather than re-seeking', () => {
-      expect(resolvePlayPauseAction({ ...base, hasEnded: true, duration: 0 })).toBe('replay')
-    })
+    it.each([0, Number.NaN, Number.POSITIVE_INFINITY])(
+      'trusts completion when native duration is unavailable (%s)',
+      (duration) => {
+        expect(resolvePlayPauseAction({ ...base, hasEnded: true, duration })).toBe('replay')
+        expect(resolvePlayPauseAction({ ...base, duration })).toBe('play')
+      },
+    )
 
     it('plays a paused, not-yet-ended video', () => {
       expect(resolvePlayPauseAction(base)).toBe('play')
