@@ -53,6 +53,7 @@ import {
   type ProgressBarMetrics,
   pictureInPictureStopAction,
   resetReactionState,
+  resolvePlayPauseAction,
   shouldLoadVideoSource,
   shouldOwnPlaybackSession,
   suppressOwnerReplay,
@@ -311,12 +312,14 @@ export function VideoPlayer({
   activePlayerRef.current = player
 
   useLayoutEffect(() => {
+    // Completion belongs to this native player, including metadata-only replacements.
+    state$.hasEnded.set(false)
     return () => {
       if (activePlayerRef.current === player) {
         activePlayerRef.current = null
       }
     }
-  }, [player])
+  }, [player, state$])
 
   const withCurrentPlayer = useCallback(
     <T,>(operation: (currentPlayer: ExpoVideoPlayer) => T) =>
@@ -1025,6 +1028,10 @@ export function VideoPlayer({
 
     const playingSubscription = player.addListener('playingChange', ({ isPlaying }) => {
       if (!withCurrentPlayer(() => true)) return
+      // Also handle playback resumed through native controls.
+      if (isPlaying) {
+        state$.hasEnded.set(false)
+      }
       state$.isPlaying.set(ownsPlaybackSession ? isPlaying : false)
       if (ownsPlaybackSession && isPlaying) {
         recordPlaybackStart()
@@ -1210,18 +1217,26 @@ export function VideoPlayer({
     const wasHolding = liveEdgePlayback.isHolding()
     liveEdgePlayback.cancel()
     const action = withCurrentPlayer((currentPlayer) => {
-      if (state$.hasEnded.get()) {
-        currentPlayer.replay()
-        return 'replay' as const
-      }
-      if (currentPlayer.playing || wasHolding) {
+      const resolved = resolvePlayPauseAction({
+        isPlaying: currentPlayer.playing,
+        isHolding: wasHolding,
+        hasEnded: state$.hasEnded.get(),
+        currentTime: currentPlayer.currentTime ?? 0,
+        duration: currentPlayer.duration ?? 0,
+      })
+      if (resolved === 'pause') {
         currentPlayer.pause()
-        return 'pause' as const
+      } else if (resolved === 'replay') {
+        currentPlayer.replay()
+      } else {
+        currentPlayer.play()
       }
-      currentPlayer.play()
-      return 'play' as const
+      return resolved
     })
     if (!action) return
+    // A successful pause, resume or replay invalidates the previous completion.
+    // Do not wait for an asynchronous native playingChange event to clear it.
+    state$.hasEnded.set(false)
     pictureInPicturePlayback.cancel()
     setPlayIntentVersion((version) => version + 1)
 
@@ -1231,7 +1246,6 @@ export function VideoPlayer({
       state$.triggeredReactionIds.set(triggeredReactionIdsRef.current)
       state$.lastReactionPlaybackMs.set(lastReactionPlaybackMsRef.current)
       clearActiveReactions(state$)
-      state$.hasEnded.set(false)
       state$.isPlaying.set(true)
       state$.userInitiatedPlay.set(true)
       userPausedRef.current = false

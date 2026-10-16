@@ -90,6 +90,35 @@ export function shouldShowRespondCTA({
   return hasEnded && !isPlaying && !isLoading
 }
 
+/** How close to the end counts as "finished" when deciding to replay. */
+export const PLAYBACK_END_TOLERANCE_SECONDS = 0.25
+
+export type PlayPauseAction = 'pause' | 'replay' | 'play'
+
+/** Pause active playback first; only replay a stopped player with evidence of completion. */
+export function resolvePlayPauseAction({
+  isPlaying,
+  isHolding,
+  hasEnded,
+  currentTime,
+  duration,
+}: {
+  isPlaying: boolean
+  isHolding: boolean
+  hasEnded: boolean
+  currentTime: number
+  duration: number
+}): PlayPauseAction {
+  if (isPlaying || isHolding) return 'pause'
+  // If native duration is unavailable (for example, a live playlist), trust playToEnd.
+  const atEnd =
+    Number.isFinite(duration) && duration > 0
+      ? currentTime >= duration - PLAYBACK_END_TOLERANCE_SECONDS
+      : true
+  if (hasEnded && atEnd) return 'replay'
+  return 'play'
+}
+
 type ReactionPlaybackMarker = {
   _id: string
   timestampMs: number
