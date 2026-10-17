@@ -1,5 +1,7 @@
+import type { FunctionReturnType } from 'convex/server'
 import type { FlatListProps } from 'react-native'
 import { Dimensions } from 'react-native'
+import type { api } from '../../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../../convex/_generated/dataModel'
 import type { VideoPlaybackUrls } from './bondfireVideoUrlPlan'
 
@@ -35,6 +37,7 @@ export type BondfireDetailData = Doc<'bondfires'> & {
     userId: Id<'users'>
     creatorName?: string
     createdAt: number
+    sequenceNumber?: number
   }>
   participants?: ThreadParticipant[]
 }
@@ -111,9 +114,12 @@ export function getViewerWatchedFlags(bondfireData: BondfireDetailData): boolean
 }
 
 /**
- * Where a bondfire opens: the first video the viewer has not watched yet, so
- * swiping forward walks through everything new. Falls back to the last video
- * when the whole thread has been seen. The viewer's own videos count as
+ * Where a bondfire opens: the first unwatched LOADED video (spark + newest
+ * page by default). Unloaded history is unknown, never implicitly watched.
+ * Swiping forward walks through the loaded new videos; older history is an
+ * explicit browser action. My Fires still names the global first unwatched
+ * responder using the same server-side watch definition. Falls back to the
+ * last loaded video when this window has been seen. The viewer's own videos count as
  * watched (watchedByViewer is computed server-side in getWithVideos). A
  * missing flag counts as unwatched. Deep links override this at the call site.
  */
@@ -168,4 +174,64 @@ export function buildBondfireVideoItems(
       captionsUrl: videoUrls[index + 1]?.captionsUrl,
     })),
   ]
+}
+
+/** Merge reactive pages by identity, in ascending thread order. Counts describe
+ * loaded videos only; the spark is always present exactly once, before responses. */
+export function mergeBondfireResponsePages(
+  metadata: BondfireDetailData,
+  pages: FunctionReturnType<typeof api.bondfires.getResponsePage>['page'],
+): BondfireDetailData {
+  const rows = [...new Map(pages.map((row) => [row.video._id, row])).values()].sort(
+    (a, b) =>
+      a.video.sequenceNumber - b.video.sequenceNumber ||
+      String(a.video._id).localeCompare(String(b.video._id)),
+  )
+  const participants = new Map(
+    (metadata.participants ?? []).map((entry) => [entry.user._id, { ...entry }]),
+  )
+  const videos: BondfireDetailData['videos'] = []
+  const processingResponses: NonNullable<BondfireDetailData['processingResponses']> = []
+  for (const row of rows) {
+    if (row.kind === 'processing') {
+      processingResponses.push(row.video)
+      continue
+    }
+    videos.push(row.video)
+    if (!row.participant) continue
+    const previous = participants.get(row.video.userId)
+    participants.set(row.video.userId, {
+      ...row.participant,
+      videoCount: (previous?.videoCount ?? 0) + 1,
+      latestAt: Math.max(previous?.latestAt ?? 0, row.video.createdAt),
+    })
+  }
+  return {
+    ...metadata,
+    videos,
+    processingResponses,
+    participants: [...participants.values()].sort((a, b) => b.latestAt - a.latestAt),
+  }
+}
+
+/** A missing target is pending until every older page has been tried. Never
+ * silently fall back to first-unwatched while a deep link can still resolve. */
+export function getResponseDeepLinkState(
+  data: BondfireDetailData,
+  responseId: string | undefined,
+  hasOlder: boolean,
+) {
+  if (!responseId) return 'none'
+  if (getResponseVideoScrollIndex(data, responseId) !== null) return 'resolved'
+  return hasOlder ? 'loading' : 'unavailable'
+}
+
+/** Preserve the playing identity when older pages prepend or live rows change. */
+export function getRetainedVideoIndex(
+  previousKeys: string[],
+  nextKeys: string[],
+  currentIndex: number,
+) {
+  const nextIndex = nextKeys.indexOf(previousKeys[currentIndex])
+  return nextIndex < 0 ? clampVideoIndex(currentIndex, nextKeys.length) : nextIndex
 }

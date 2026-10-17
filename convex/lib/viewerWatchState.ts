@@ -24,7 +24,8 @@ export function isWatchedFromEvents(
  *
  * Shared by the detail screen's initial scroll position
  * (`bondfires.getWithVideos`) and the name on unread My Fires rows
- * (`conversations.listMyFires`) so the two cannot drift. The viewer's own
+ * (`conversations.listMyFires`) so watch semantics cannot drift. Detail starts
+ * within the loaded window; My Fires still searches the whole thread. The viewer's own
  * videos always count as watched; anything else is watched once the viewer has
  * finished it (see `isWatchedFromEvents`). Signed-out viewers have watched
  * nothing.
