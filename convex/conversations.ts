@@ -56,7 +56,11 @@ const MAX_THREAD_LIMIT = 80
 const THREAD_CANDIDATE_MULTIPLIER = 4
 const CLOSE_CIRCLE_LIMIT = 8
 const CLOSE_CIRCLE_THREAD_CANDIDATE_LIMIT = 80
-const THREAD_RESPONSE_SUMMARY_LIMIT = 250
+// Twenty recent responses normally cover the four avatars in BondfireRow.
+// Sparse/hidden participants and timestamp ties may require the old bounded scan.
+const THREAD_RESPONSE_SUMMARY_LIMIT = 20
+const THREAD_RESPONSE_SCAN_LIMIT = 250
+const THREAD_AVATAR_LIMIT = 4
 
 function toPublicUser(user: Doc<'users'>): PublicUser {
   return {
@@ -75,46 +79,96 @@ function clampLimit(limit: number | undefined) {
 async function getParticipantMap(
   ctx: QueryCtx,
   bondfire: Doc<'bondfires'>,
-  args?: {
-    responseLimit?: number
-    viewer?: ViewerVisibilityContext
-    viewerId?: Id<'users'>
+  args: {
+    viewer: ViewerVisibilityContext
+    viewerId: Id<'users'>
   },
 ) {
   const participants = new Map<Id<'users'>, { latestAt: number; videoCount: number }>()
   participants.set(bondfire.userId, { latestAt: bondfire.createdAt, videoCount: 1 })
 
-  const responseQuery = ctx.db
-    .query('bondfireVideos')
-    .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
-    .order('desc')
-  const responses = args?.responseLimit
-    ? await responseQuery.take(args.responseLimit)
-    : await responseQuery.collect()
-
-  let latestResponsePlayback: VideoPlaybackReference | null = null
-  for (const response of responses) {
+  const isVisible = async (response: Doc<'bondfireVideos'>) => {
     if (
       response.moderationStatus === 'removed' ||
       (response.moderationStatus === 'pending_review' &&
-        args?.viewerId !== response.userId &&
-        !args?.viewer?.isAdmin)
+        args.viewerId !== response.userId &&
+        !args.viewer.isAdmin) ||
+      !isPlayableVideoRecord(response)
     ) {
-      continue
+      return false
     }
-    if (!isPlayableVideoRecord(response)) continue
-    // Reject unusable responses before reading their authors or block relationships.
-    if (args?.viewer && !(await isUserContentVisibleToViewer(ctx, response.userId, args.viewer))) {
-      continue
-    }
-    const playback = getPlayableVideoPlayback(response)
-    latestResponsePlayback ??= playback
+    return await isUserContentVisibleToViewer(ctx, response.userId, args.viewer)
+  }
 
+  const addParticipant = (response: Doc<'bondfireVideos'>) => {
     const current = participants.get(response.userId)
     participants.set(response.userId, {
       latestAt: Math.max(current?.latestAt ?? 0, response.createdAt),
       videoCount: (current?.videoCount ?? 0) + 1,
     })
+  }
+
+  // Thumbnails use sequence order, independently of chronological activity.
+  // Short threads need only this walk. If the small probe cannot fill the
+  // avatars or finds no playback (e.g. R2-only threads), finish the original
+  // summary here instead of paying for two full scans.
+  let latestResponsePlayback: VideoPlaybackReference | null = null
+  let playbackScanned = 0
+  let useSmallWindow = false
+  const playbackResponses = ctx.db
+    .query('bondfireVideos')
+    .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
+    .order('desc')
+  for await (const response of playbackResponses) {
+    playbackScanned++
+    if (await isVisible(response)) {
+      addParticipant(response)
+      latestResponsePlayback ??= getPlayableVideoPlayback(response)
+    }
+    if (
+      playbackScanned === THREAD_RESPONSE_SUMMARY_LIMIT &&
+      latestResponsePlayback &&
+      participants.size > THREAD_AVATAR_LIMIT
+    ) {
+      useSmallWindow = true
+      break
+    }
+    if (playbackScanned === THREAD_RESPONSE_SCAN_LIMIT) break
+  }
+  if (!useSmallWindow) {
+    return { participants, latestResponsePlayback }
+  }
+
+  // Sequence numbers can disagree with createdAt after retries. Chronological
+  // order lets us stop once the displayed avatars and maximum activity are known.
+  participants.clear()
+  participants.set(bondfire.userId, { latestAt: bondfire.createdAt, videoCount: 1 })
+  const responses = ctx.db
+    .query('bondfireVideos')
+    .withIndex('by_bondfire_created', (q) => q.eq('bondfireId', bondfire._id))
+    .order('desc')
+  let scanned = 0
+  let newestVisibleAt = bondfire.createdAt
+  const responseAuthors = new Set<Id<'users'>>()
+  for await (const response of responses) {
+    // Finish the newest timestamp's ties: the viewer may have posted at exactly
+    // that time, which suppresses unread even if their avatar is not in the four.
+    if (
+      scanned >= THREAD_RESPONSE_SUMMARY_LIMIT &&
+      responseAuthors.size >= THREAD_AVATAR_LIMIT &&
+      response.createdAt < newestVisibleAt
+    ) {
+      break
+    }
+    scanned++
+    if (await isVisible(response)) {
+      newestVisibleAt = Math.max(newestVisibleAt, response.createdAt)
+      if (await getUserCached(ctx, args.viewer, response.userId)) {
+        responseAuthors.add(response.userId)
+      }
+      addParticipant(response)
+    }
+    if (scanned === THREAD_RESPONSE_SCAN_LIMIT) break
   }
 
   return { participants, latestResponsePlayback }
@@ -204,7 +258,7 @@ function getThreadActivityAt(
   )
 }
 
-async function buildThreadSummary(
+export async function buildThreadSummary(
   ctx: QueryCtx,
   args: {
     bondfire: Doc<'bondfires'>
@@ -217,7 +271,6 @@ async function buildThreadSummary(
     ctx,
     args.bondfire,
     {
-      responseLimit: THREAD_RESPONSE_SUMMARY_LIMIT,
       viewer: args.viewer,
       viewerId: args.viewerId,
     },

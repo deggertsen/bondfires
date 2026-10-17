@@ -5,7 +5,8 @@ import { api } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import { buildViewerVisibilityContext } from './bondfireVisibility'
 import { CURRENT_COMMUNITY_GUIDELINES_VERSION, CURRENT_TERMS_VERSION } from './contentSafety'
-import { getFirstUnwatchedResponder } from './conversations'
+import { buildThreadSummary, getFirstUnwatchedResponder } from './conversations'
+import * as viewerWatchState from './lib/viewerWatchState'
 import schema from './schema'
 
 const modules = import.meta.glob('./**/*.ts')
@@ -339,6 +340,44 @@ describe('listMyFires firstUnwatchedResponder', () => {
     },
   )
 
+  it('resolves watch state only after sorting and slicing candidate threads', async () => {
+    const { t, ids } = await fixture()
+    const newest = await t.run(async (ctx) => {
+      const bondfireId = await ctx.db.insert('bondfires', {
+        userId: ids.creator,
+        videoStatus: 'ready',
+        muxPlaybackId: 'new-spark',
+        videoCount: 2,
+        viewCount: 0,
+        createdAt: 10_000,
+        updatedAt: 10_000,
+      })
+      const responseId = await ctx.db.insert('bondfireVideos', {
+        bondfireId,
+        userId: ids.other,
+        sequenceNumber: 1,
+        createdAt: 11_000,
+        videoStatus: 'ready',
+        muxPlaybackId: 'new-response',
+      })
+      return { bondfireId, responseId }
+    })
+    const watch = vi.spyOn(viewerWatchState, 'isVideoWatchedByViewer')
+    try {
+      const threads = await t
+        .withIdentity({ subject: ids.creator })
+        .query(api.conversations.listMyFires, { limit: 1 })
+      expect(threads.map((t) => t._id)).toEqual([newest.bondfireId])
+      expect(threads[0].firstUnwatchedResponder?._id).toBe(ids.other)
+      expect(watch.mock.calls.map(([, , video]) => video._id)).toEqual([
+        newest.bondfireId,
+        newest.responseId,
+      ])
+    } finally {
+      watch.mockRestore()
+    }
+  })
+
   it('stays null on read threads', async () => {
     const { t, ids } = await fixture()
     await markThreadRead(t, ids.creator, ids.bondfireId, 2_000)
@@ -369,5 +408,254 @@ describe('listCloseCircle firstUnwatchedResponder', () => {
       .find((entry) => entry._id === ids.bondfireId)
     expect(thread?.unread).toBe(true)
     expect(thread?.firstUnwatchedResponder).toBeNull()
+  })
+})
+
+describe('bounded thread summaries', () => {
+  async function longThread() {
+    const { t, ids } = await fixture()
+    const authors = await t.run(async (ctx) => {
+      const fourth = await ctx.db.insert('users', { ...profile, displayName: 'Fourth' })
+      const fifth = await ctx.db.insert('users', { ...profile, displayName: 'Fifth' })
+      const authors = [ids.responder, ids.other, fourth, fifth]
+      for (let sequenceNumber = 4; sequenceNumber <= 300; sequenceNumber++) {
+        await ctx.db.insert('bondfireVideos', {
+          bondfireId: ids.bondfireId,
+          userId: authors[sequenceNumber % authors.length],
+          sequenceNumber,
+          videoStatus: 'ready',
+          muxPlaybackId: `response-${sequenceNumber}`,
+          createdAt: 1_000 + sequenceNumber * 100,
+        })
+      }
+      await ctx.db.patch(ids.bondfireId, { videoCount: 301 })
+      return authors
+    })
+    return { t, ids, authors }
+  }
+
+  it.each([
+    { playback: 'mux', expectedReads: 41 },
+    { playback: 'r2', expectedReads: 250 },
+  ] as const)(
+    'bounds $playback summary reads to $expectedReads for a 300-response thread',
+    async ({ playback, expectedReads }) => {
+      const { t, ids, authors } = await longThread()
+      await t.run(async (ctx) => {
+        const bondfire = await ctx.db.get(ids.bondfireId)
+        if (!bondfire) throw new Error('Missing fixture')
+        if (playback === 'r2') {
+          const responses = await ctx.db
+            .query('bondfireVideos')
+            .withIndex('by_bondfire', (q) => q.eq('bondfireId', ids.bondfireId))
+            .collect()
+          for (const response of responses)
+            await ctx.db.patch(response._id, {
+              muxPlaybackId: undefined,
+              segmentRecordingId: await ctx.db.insert('segmentRecordings', {
+                userId: response.userId,
+                localId: `recording-${response.sequenceNumber}`,
+                responseId: response._id,
+                status: 'ready',
+                segmentCount: 1,
+                duration: 10,
+                maxDuration: 60,
+                createdAt: response.createdAt,
+                updatedAt: response.createdAt,
+              }),
+            })
+        }
+        const viewer = await buildViewerVisibilityContext(ctx, ids.creator)
+        let responseReads = 0
+        // Wrap real query builders, counting documents yielded by their iterators.
+        function instrument<T extends object>(target: T): T {
+          return new Proxy(target, {
+            get(target, property) {
+              const value: unknown = Reflect.get(target, property, target)
+              if (typeof value !== 'function') return value
+              if (property === Symbol.asyncIterator) {
+                return async function* () {
+                  const iterator = Reflect.apply(
+                    value,
+                    target,
+                    [],
+                  ) as AsyncIterableIterator<unknown>
+                  try {
+                    while (true) {
+                      const next = await iterator.next()
+                      if (next.done) break
+                      responseReads++
+                      yield next.value
+                    }
+                  } finally {
+                    await iterator.return?.()
+                  }
+                }
+              }
+              return (...args: unknown[]) => {
+                const result: unknown = Reflect.apply(value, target, args)
+                if (
+                  typeof result === 'object' &&
+                  result !== null &&
+                  Symbol.asyncIterator in result
+                ) {
+                  return instrument(result)
+                }
+                return result
+              }
+            },
+          })
+        }
+        const original = ctx.db.query.bind(ctx.db)
+        const query = vi.spyOn(ctx.db, 'query').mockImplementation((...args) => {
+          const result = original(...args)
+          return args[0] === 'bondfireVideos' ? instrument(result) : result
+        })
+        try {
+          const summary = await buildThreadSummary(ctx, {
+            bondfire,
+            viewer,
+            viewerId: ids.creator,
+            pinnedUserIds: new Set(),
+          })
+          expect(responseReads).toBe(expectedReads) // Mux: 20 in sequence order + 20 chronological + lookahead.
+          expect(summary?.participants.slice(0, 4).map((p) => p.user._id)).toEqual([
+            authors[0],
+            authors[3],
+            authors[2],
+            authors[1],
+          ])
+          expect(summary?.videoCount).toBe(301)
+          expect(summary?.lastActivityAt).toBe(31_000)
+          expect(summary?.unread).toBe(true)
+          expect(summary?.latestResponseMuxPlaybackId).toBe(
+            playback === 'mux' ? 'response-300' : undefined,
+          )
+        } finally {
+          query.mockRestore()
+        }
+      })
+    },
+  )
+
+  it.each(['read', 'unread', 'own-latest'] as const)(
+    'keeps chronological activity and %s state when sequence order disagrees',
+    async (state) => {
+      const { t, ids } = await longThread()
+      await t.run(async (ctx) => {
+        await ctx.db.patch(ids.responderVideoId, {
+          createdAt: 50_000,
+          userId: state === 'own-latest' ? ids.creator : ids.responder,
+        })
+        // updatedAt may reflect metadata/repair writes, not visible activity.
+        await ctx.db.patch(ids.bondfireId, { updatedAt: 90_000 })
+      })
+      await markThreadRead(t, ids.creator, ids.bondfireId, state === 'read' ? 60_000 : 40_000)
+      const [thread] = await t
+        .withIdentity({ subject: ids.creator })
+        .query(api.conversations.listMyFires, {})
+      expect(thread.lastActivityAt).toBe(50_000)
+      expect(thread.unread).toBe(state === 'unread')
+      expect(thread.latestResponseMuxPlaybackId).toBe('response-300')
+      expect(thread.videoCount).toBe(301)
+    },
+  )
+
+  it('keeps an older fourth avatar after a window dominated by one author', async () => {
+    const { t, ids, authors } = await longThread()
+    await t.run(async (ctx) => {
+      const responses = await ctx.db
+        .query('bondfireVideos')
+        .withIndex('by_bondfire', (q) => q.eq('bondfireId', ids.bondfireId))
+        .order('desc')
+        .take(40)
+      for (const response of responses) await ctx.db.patch(response._id, { userId: authors[0] })
+    })
+    const [thread] = await t
+      .withIdentity({ subject: ids.creator })
+      .query(api.conversations.listMyFires, {})
+    expect(thread.participants.slice(0, 4).map((p) => p.user._id)).toEqual([
+      authors[0],
+      authors[3],
+      authors[2],
+      authors[1],
+    ])
+    expect(thread.lastActivityAt).toBe(31_000)
+    expect(thread.unread).toBe(true)
+  })
+
+  it.each(['blocked', 'suspended', 'removed', 'pending_review', 'processing'] as const)(
+    'looks past a full window of %s responses without making activity stale',
+    async (state) => {
+      const { t, ids, authors } = await longThread()
+      await t.run(async (ctx) => {
+        const hidden = await ctx.db.insert('users', {
+          ...profile,
+          displayName: 'Hidden',
+          ...(state === 'suspended' ? { moderationStatus: 'suspended' as const } : {}),
+        })
+        if (state === 'blocked')
+          await ctx.db.insert('userBlocks', {
+            blockerId: hidden,
+            blockedUserId: ids.creator,
+            createdAt: 40_000,
+          })
+        const responses = await ctx.db
+          .query('bondfireVideos')
+          .withIndex('by_bondfire', (q) => q.eq('bondfireId', ids.bondfireId))
+          .order('desc')
+          .take(25)
+        for (const response of responses)
+          await ctx.db.patch(response._id, {
+            userId: hidden,
+            ...(state === 'removed' || state === 'pending_review'
+              ? { moderationStatus: state }
+              : {}),
+            ...(state === 'processing' ? { videoStatus: state } : {}),
+          })
+        await ctx.db.insert('closeCirclePins', {
+          ownerId: ids.creator,
+          pinnedUserId: authors[0],
+          order: 0,
+          createdAt: 100,
+          updatedAt: 100,
+        })
+      })
+      await markThreadRead(t, ids.creator, ids.bondfireId, 28_000)
+      const viewer = t.withIdentity({ subject: ids.creator })
+      const [thread] = await viewer.query(api.conversations.listMyFires, {})
+      const [circle] = await viewer.query(api.conversations.listCloseCircle, {})
+      for (const summary of [thread, circle.sharedThreads[0]]) {
+        expect(summary.lastActivityAt).toBe(28_500)
+        expect(summary.unread).toBe(true)
+        expect(summary.videoCount).toBe(301)
+        expect(summary.latestResponseMuxPlaybackId).toBe('response-275')
+        expect(summary.participants.slice(0, 4).map((p) => p.user._id)).toEqual([
+          authors[3],
+          authors[2],
+          authors[1],
+          authors[0],
+        ])
+      }
+    },
+  )
+
+  it('finishes activity timestamp ties before deciding whether the viewer has read the row', async () => {
+    const { t, ids } = await longThread()
+    await t.run(async (ctx) => {
+      const responses = await ctx.db
+        .query('bondfireVideos')
+        .withIndex('by_bondfire', (q) => q.eq('bondfireId', ids.bondfireId))
+        .order('desc')
+        .take(25)
+      for (const response of responses) await ctx.db.patch(response._id, { createdAt: 50_000 })
+      await ctx.db.patch(responses[24]._id, { userId: ids.creator })
+    })
+    const [thread] = await t
+      .withIdentity({ subject: ids.creator })
+      .query(api.conversations.listMyFires, {})
+    expect(thread.lastActivityAt).toBe(50_000)
+    expect(thread.unread).toBe(false)
+    expect(thread.firstUnwatchedResponder).toBeNull()
   })
 })
