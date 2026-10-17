@@ -57,6 +57,9 @@ export function BondfirePlaybackScreen({
   catchUpAutoOpenPending,
   onCatchUpAutoOpened,
   linkedVideoKey,
+  hasOlderResponses,
+  loadingOlderResponses,
+  onLoadOlderResponses,
   onScrollToIndexFailed,
 }: {
   statusBarStyle: StatusBarStyle
@@ -81,6 +84,9 @@ export function BondfirePlaybackScreen({
   catchUpAutoOpenPending: boolean
   onCatchUpAutoOpened: () => void
   linkedVideoKey?: string
+  hasOlderResponses: boolean
+  loadingOlderResponses: boolean
+  onLoadOlderResponses: () => void
   onScrollToIndexFailed: (info: ScrollToIndexFailedInfo) => void
 }) {
   const router = useRouter()
@@ -300,6 +306,9 @@ export function BondfirePlaybackScreen({
           catchUpAutoOpenPending={catchUpAutoOpenPending}
           onCatchUpAutoOpened={onCatchUpAutoOpened}
           linkedVideoKey={linkedVideoKey}
+          hasOlderResponses={hasOlderResponses}
+          loadingOlderResponses={loadingOlderResponses}
+          onLoadOlderResponses={onLoadOlderResponses}
           participants={bondfireData.participants}
           processingCount={processingResponseCount}
           canRespond={canRespond}

@@ -1,4 +1,7 @@
 /**
+ * Arrival catch-up for the LOADED thread window. Unloaded older responses are
+ * unknown, not watched, and have their own load row. Newly loaded identities
+ * are never folded by this arrival snapshot.
  * Arrival catch-up for the thread browser. When a bondfire opens and something
  * unwatched is not the video that starts playing, the browser opens on its own
  * with the already-watched head of the thread folded into one row, so the
@@ -52,6 +55,7 @@ export const THREAD_SECTION_HEIGHTS = {
 } as const
 
 type ThreadBrowserRow =
+  | { kind: 'loadOlder'; key: 'load-older' }
   | { kind: 'earlier'; key: 'earlier' }
   | { kind: 'earlierHeader'; key: 'earlier' }
   | { kind: 'newLabel'; key: 'new-label' }
@@ -69,11 +73,13 @@ export function buildThreadBrowserLayout({
   rowHeight,
   catchUp,
   earlierExpanded,
+  hasOlder = false,
 }: {
   videoKeys: string[]
   rowHeight: number
   catchUp: ThreadCatchUp | null
   earlierExpanded: boolean
+  hasOlder?: boolean
 }) {
   const foldedCount = getThreadFoldedCount(videoKeys, catchUp)
   const newKeys = new Set(catchUp?.newVideoKeys)
@@ -85,6 +91,10 @@ export function buildThreadBrowserLayout({
   const push = (row: ThreadBrowserRow, height: number) => {
     entries.push({ ...row, offset, height })
     offset += height
+  }
+
+  if (hasOlder) {
+    push({ kind: 'loadOlder', key: 'load-older' }, THREAD_SECTION_HEIGHTS.earlierRow)
   }
 
   if (foldedCount > 0) {

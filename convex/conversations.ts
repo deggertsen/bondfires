@@ -35,8 +35,8 @@ type ThreadSummary = Doc<'bondfires'> & {
   latestResponseMuxPlaybackId?: string
   latestResponseMuxPlaybackPolicy?: 'public' | 'signed'
   /**
-   * Who an unread row names: the creator of the video the detail screen will
-   * open on (the first unwatched one, in the detail screen's order), falling
+   * Who an unread row names: the global first unwatched creator in thread
+   * order. Detail starts within its loaded window, which may be newer. Falls
    * back to the latest participant other than the viewer when everything is
    * watched. Never the viewer themselves. Only listMyFires resolves this, after
    * sorting and limiting the rows; other callers return null without scanning.
@@ -520,6 +520,9 @@ export async function isThreadParticipant(
 export const markThreadRead = mutation({
   args: {
     bondfireId: v.id('bondfires'),
+    // Paginated detail cannot infer membership from its loaded participants.
+    // Keep the indexed server check authoritative, with a no-op for observers.
+    skipNonParticipant: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = await auth.getUserId(ctx)
@@ -533,6 +536,7 @@ export const markThreadRead = mutation({
     }
 
     if (!(await isThreadParticipant(ctx, bondfire, userId))) {
+      if (args.skipNonParticipant) return null
       throwUserError('Only thread participants can mark this Bondfire read')
     }
 
