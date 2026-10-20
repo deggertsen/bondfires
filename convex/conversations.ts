@@ -56,9 +56,8 @@ const MAX_THREAD_LIMIT = 80
 const THREAD_CANDIDATE_MULTIPLIER = 4
 const CLOSE_CIRCLE_LIMIT = 8
 const CLOSE_CIRCLE_THREAD_CANDIDATE_LIMIT = 80
-// Twenty recent responses normally cover the four avatars in BondfireRow.
-// Sparse/hidden participants and timestamp ties may require the old bounded scan.
-const THREAD_RESPONSE_SUMMARY_LIMIT = 20
+// Each summary walk is bounded; sparse/hidden participants and legacy thumbnail
+// fallbacks can still require the full scan.
 const THREAD_RESPONSE_SCAN_LIMIT = 250
 const THREAD_AVATAR_LIMIT = 4
 
@@ -76,7 +75,7 @@ function clampLimit(limit: number | undefined) {
   return Math.min(Math.max(Math.trunc(limit), 1), MAX_THREAD_LIMIT)
 }
 
-async function getParticipantMap(
+async function getThreadResponseSummary(
   ctx: QueryCtx,
   bondfire: Doc<'bondfires'>,
   args: {
@@ -100,49 +99,8 @@ async function getParticipantMap(
     return await isUserContentVisibleToViewer(ctx, response.userId, args.viewer)
   }
 
-  const addParticipant = (response: Doc<'bondfireVideos'>) => {
-    const current = participants.get(response.userId)
-    participants.set(response.userId, {
-      latestAt: Math.max(current?.latestAt ?? 0, response.createdAt),
-      videoCount: (current?.videoCount ?? 0) + 1,
-    })
-  }
-
-  // Thumbnails use sequence order, independently of chronological activity.
-  // Short threads need only this walk. If the small probe cannot fill the
-  // avatars or finds no playback (e.g. R2-only threads), finish the original
-  // summary here instead of paying for two full scans.
-  let latestResponsePlayback: VideoPlaybackReference | null = null
-  let playbackScanned = 0
-  let useSmallWindow = false
-  const playbackResponses = ctx.db
-    .query('bondfireVideos')
-    .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
-    .order('desc')
-  for await (const response of playbackResponses) {
-    playbackScanned++
-    if (await isVisible(response)) {
-      addParticipant(response)
-      latestResponsePlayback ??= getPlayableVideoPlayback(response)
-    }
-    if (
-      playbackScanned === THREAD_RESPONSE_SUMMARY_LIMIT &&
-      latestResponsePlayback &&
-      participants.size > THREAD_AVATAR_LIMIT
-    ) {
-      useSmallWindow = true
-      break
-    }
-    if (playbackScanned === THREAD_RESPONSE_SCAN_LIMIT) break
-  }
-  if (!useSmallWindow) {
-    return { participants, latestResponsePlayback }
-  }
-
-  // Sequence numbers can disagree with createdAt after retries. Chronological
-  // order lets us stop once the displayed avatars and maximum activity are known.
-  participants.clear()
-  participants.set(bondfire.userId, { latestAt: bondfire.createdAt, videoCount: 1 })
+  // Activity and avatars always use chronological order, including sparse and
+  // R2-only threads. Sequence numbers can disagree with createdAt after retries.
   const responses = ctx.db
     .query('bondfireVideos')
     .withIndex('by_bondfire_created', (q) => q.eq('bondfireId', bondfire._id))
@@ -153,11 +111,7 @@ async function getParticipantMap(
   for await (const response of responses) {
     // Finish the newest timestamp's ties: the viewer may have posted at exactly
     // that time, which suppresses unread even if their avatar is not in the four.
-    if (
-      scanned >= THREAD_RESPONSE_SUMMARY_LIMIT &&
-      responseAuthors.size >= THREAD_AVATAR_LIMIT &&
-      response.createdAt < newestVisibleAt
-    ) {
+    if (responseAuthors.size >= THREAD_AVATAR_LIMIT && response.createdAt < newestVisibleAt) {
       break
     }
     scanned++
@@ -166,9 +120,33 @@ async function getParticipantMap(
       if (await getUserCached(ctx, args.viewer, response.userId)) {
         responseAuthors.add(response.userId)
       }
-      addParticipant(response)
+      const current = participants.get(response.userId)
+      participants.set(response.userId, {
+        latestAt: Math.max(current?.latestAt ?? 0, response.createdAt),
+        // This is a sample count, not the row total (bondfire.videoCount).
+        videoCount: (current?.videoCount ?? 0) + 1,
+      })
     }
     if (scanned === THREAD_RESPONSE_SCAN_LIMIT) break
+  }
+
+  // Legacy thumbnails follow sequence order. Stop at the first usable one;
+  // requiring a thumbnail before summarizing activity couples correctness to
+  // the media provider. R2-only threads may exhaust this bounded fallback.
+  let latestResponsePlayback: VideoPlaybackReference | null = null
+  let playbackScanned = 0
+  const playbackResponses = ctx.db
+    .query('bondfireVideos')
+    .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
+    .order('desc')
+  for await (const response of playbackResponses) {
+    playbackScanned++
+    const playback = getPlayableVideoPlayback(response)
+    if (playback && (await isVisible(response))) {
+      latestResponsePlayback = playback
+      break
+    }
+    if (playbackScanned === THREAD_RESPONSE_SCAN_LIMIT) break
   }
 
   return { participants, latestResponsePlayback }
@@ -267,7 +245,7 @@ export async function buildThreadSummary(
     pinnedUserIds: Set<Id<'users'>>
   },
 ): Promise<ThreadSummary | null> {
-  const { participants: participantMap, latestResponsePlayback } = await getParticipantMap(
+  const { participants: participantMap, latestResponsePlayback } = await getThreadResponseSummary(
     ctx,
     args.bondfire,
     {
