@@ -130,6 +130,37 @@ describe('durable segment upload recovery', () => {
   })
 })
 
+it('backs off after begin fails instead of calling it on every queue pass', async () => {
+  vi.useFakeTimers()
+  const queue = await import('../lib/media/segmentUploads')
+  const convex = client()
+  convex.begin.mockRejectedValue(new Error('Server Error'))
+  queue.setSegmentUploadOwner('owner')
+  await queue.prepareSegmentJob('owner', {
+    localId: id,
+    isResponse: true,
+    bondfireId: 'parent' as Id<'bondfires'>,
+  })
+  state.files.set(`${dir}init.mp4`, 'init')
+  state.files.set(`${dir}segment-000000.m4s`, 'media')
+  await queue.runSegmentUploads(convex, 'owner')
+  await queue.runSegmentUploads(convex, 'owner')
+  expect(convex.begin).toHaveBeenCalledTimes(1)
+  await vi.advanceTimersByTimeAsync(4_001)
+  await queue.runSegmentUploads(convex, 'owner')
+  expect(convex.begin).toHaveBeenCalledTimes(2)
+  expect(state.warn).toHaveBeenCalledWith(
+    'segment:upload:paused',
+    expect.any(String),
+    expect.objectContaining({
+      stage: 'begin',
+      reason: 'operation_failed',
+      isResponse: true,
+      bondfireId: 'parent',
+    }),
+  )
+})
+
 it('allows retrying an empty preview, but protects saved drafts and interrupted journals by owner', async () => {
   const queue = await import('../lib/media/segmentUploads')
   await queue.prepareSegmentJob('owner', {
@@ -248,7 +279,7 @@ it('cancels a hung PUT, retains the media, and allows the next pass to resume', 
   expect(state.warn).toHaveBeenCalledWith(
     'segment:upload:paused',
     expect.any(String),
-    expect.objectContaining({ stage: 'upload', code: 'timeout', nextIndex: 0 }),
+    expect.objectContaining({ stage: 'upload', reason: 'timeout', nextIndex: 0 }),
   )
   state.hangSegment = false
   await queue.runSegmentUploads(convex, 'owner')

@@ -1,7 +1,6 @@
-import { v } from 'convex/values'
+import { ConvexError, v } from 'convex/values'
 import { mediaBackendEnabled } from '../packages/media/src/environment'
 import {
-  MAX_RECORDING_SECONDS,
   MAX_SEGMENT_BYTES,
   MAX_SEGMENTS,
   MEDIA_AUDIENCE,
@@ -21,6 +20,8 @@ import {
 } from './_generated/server'
 import { auth } from './auth'
 import { getEntitlementSubscriptionTier, getTierMaxVideoDurationMs } from './entitlements'
+import { throwUserError } from './errors'
+import { recordingMaxDurationSeconds } from './lib/recordingLimits'
 import { getSegmentVideoStatus, isPlayableVideoRecord } from './lib/videoLifecycle'
 import { countResponse, uncountResponse } from './responseCounts'
 import { enqueueTranscription } from './segmentTranscription'
@@ -34,13 +35,13 @@ function isMediaEnabled() {
   )
 }
 export function requireSegmentMedia() {
-  if (!isMediaEnabled()) throw new Error('Segment media is disabled')
+  if (!isMediaEnabled()) throwUserError('Segment media is disabled')
 }
 async function requireUser(ctx: QueryCtx | MutationCtx) {
   requireSegmentMedia()
   const userId = await auth.getUserId(ctx)
   const user = userId && (await ctx.db.get(userId))
-  if (!user || user.accountDeletionStatus) throw new Error('Sign in required')
+  if (!user || user.accountDeletionStatus) throwUserError('Sign in required')
   return user._id
 }
 async function linkedAccess(
@@ -57,16 +58,16 @@ async function linkedAccess(
     owner.accountDeletionStatus ||
     recording.status === 'cancelled'
   )
-    throw new Error('Forbidden')
+    throwUserError('Forbidden')
   if (recording.responseId) {
     const response = await ctx.db.get(recording.responseId)
     const bondfire = response && (await ctx.db.get(response.bondfireId))
     if (!response || !bondfire || response.segmentRecordingId !== recording._id)
-      throw new Error('Forbidden')
+      throwUserError('Forbidden')
     await assertCanViewResponse(ctx, { userId, bondfire, response })
   } else {
     const bondfire = recording.bondfireId && (await ctx.db.get(recording.bondfireId))
-    if (!bondfire || bondfire.segmentRecordingId !== recording._id) throw new Error('Forbidden')
+    if (!bondfire || bondfire.segmentRecordingId !== recording._id) throwUserError('Forbidden')
     await assertCanViewBondfire(ctx, { userId, bondfire })
   }
 }
@@ -83,60 +84,91 @@ export const begin = mutation({
     draftBondfireId: v.optional(v.union(v.id('bondfires'), v.null())),
   },
   handler: async (ctx, args) => {
-    const userId = await requireUser(ctx)
-    if (!/^[a-f0-9-]{36}$/.test(args.localId)) throw new Error('Invalid recording identifier')
-    const existing = await ctx.db
-      .query('segmentRecordings')
-      .withIndex('by_owner_local', (q) => q.eq('userId', userId).eq('localId', args.localId))
-      .unique()
-    if (existing) {
-      await linkedAccess(ctx, existing, userId)
-      const recordId = existing.responseId ?? existing.bondfireId
-      if (!recordId) throw new Error('Missing recording destination')
-      return {
-        recordingId: existing._id,
-        recordId,
-        maxDuration: existing.maxDuration,
-      }
+    try {
+      return await beginRecording(ctx, args)
+    } catch (error) {
+      if (error instanceof ConvexError) throw error
+      // Prod redacts raw throws to "Server Error", and this mutation rolls
+      // back, so the console line is the only copy of the real cause.
+      console.error('[segmentMedia:begin] unexpected error', {
+        localId: args.localId,
+        isResponse: args.isResponse,
+        personalCamp: args.personalCamp === true,
+        campId: args.campId,
+        bondfireId: args.bondfireId,
+        draftBondfireId: args.draftBondfireId,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      })
+      throwUserError('Could not start this upload. It will retry.')
     }
-    const parent = args.bondfireId ? await ctx.db.get(args.bondfireId) : null
-    const campId = args.campId ?? parent?.campId
-    const camp = campId ? await ctx.db.get(campId) : null
-    const maxDuration = Math.min(
-      (camp?.rules.participation.maxDurationMs ?? MAX_RECORDING_SECONDS * 1000) / 1000,
-      MAX_RECORDING_SECONDS,
-      (getTierMaxVideoDurationMs(await getEntitlementSubscriptionTier(ctx, userId)) ??
-        MAX_RECORDING_SECONDS * 1000) / 1000,
-    )
-    const now = Date.now()
-    const recordingId = await ctx.db.insert('segmentRecordings', {
-      userId,
-      localId: args.localId,
-      status: 'uploading',
-      segmentCount: 0,
-      duration: 0,
-      maxDuration,
-      createdAt: now,
-      updatedAt: now,
-    })
-    const result = await createPendingVideoRecord(ctx, {
-      ...args,
-      draftBondfireId: args.draftBondfireId ?? undefined,
-      userId,
-      segmentRecordingId: recordingId,
-      playbackPolicy: 'signed',
-      width: 720,
-      height: 1280,
-    })
-    await ctx.db.patch(
-      recordingId,
-      result.recordType === 'response'
-        ? { responseId: result.recordId as Id<'bondfireVideos'> }
-        : { bondfireId: result.recordId as Id<'bondfires'> },
-    )
-    return { recordingId, recordId: result.recordId, maxDuration }
   },
 })
+
+async function beginRecording(
+  ctx: MutationCtx,
+  args: {
+    localId: string
+    isResponse: boolean
+    bondfireId?: Id<'bondfires'>
+    campId?: Id<'camps'>
+    personalCamp?: boolean
+    tags?: string[]
+    draftBondfireId?: Id<'bondfires'> | null
+  },
+) {
+  const userId = await requireUser(ctx)
+  if (!/^[a-f0-9-]{36}$/.test(args.localId)) throwUserError('Invalid recording identifier')
+  const existing = await ctx.db
+    .query('segmentRecordings')
+    .withIndex('by_owner_local', (q) => q.eq('userId', userId).eq('localId', args.localId))
+    .unique()
+  if (existing) {
+    await linkedAccess(ctx, existing, userId)
+    const recordId = existing.responseId ?? existing.bondfireId
+    if (!recordId) throwUserError('Missing recording destination')
+    return {
+      recordingId: existing._id,
+      recordId,
+      maxDuration: existing.maxDuration,
+    }
+  }
+  const parent = args.bondfireId ? await ctx.db.get(args.bondfireId) : null
+  const campId = args.campId ?? parent?.campId
+  const camp = campId ? await ctx.db.get(campId) : null
+  const maxDuration = recordingMaxDurationSeconds(
+    camp,
+    getTierMaxVideoDurationMs(await getEntitlementSubscriptionTier(ctx, userId)),
+  )
+  const now = Date.now()
+  const recordingId = await ctx.db.insert('segmentRecordings', {
+    userId,
+    localId: args.localId,
+    status: 'uploading',
+    segmentCount: 0,
+    duration: 0,
+    maxDuration,
+    createdAt: now,
+    updatedAt: now,
+  })
+  const result = await createPendingVideoRecord(ctx, {
+    ...args,
+    draftBondfireId: args.draftBondfireId ?? undefined,
+    userId,
+    segmentRecordingId: recordingId,
+    playbackPolicy: 'signed',
+    width: 720,
+    height: 1280,
+  })
+  await ctx.db.patch(
+    recordingId,
+    result.recordType === 'response'
+      ? { responseId: result.recordId as Id<'bondfireVideos'> }
+      : { bondfireId: result.recordId as Id<'bondfires'> },
+  )
+  return { recordingId, recordId: result.recordId, maxDuration }
+}
+
 /** Observe an upload's destination without putting a network request before capture. */
 export const getOwnRecording = query({
   args: { localId: v.string() },

@@ -99,6 +99,19 @@ function reportJob(job: Job, paused?: boolean) {
   publish()
 }
 const failures = new Map<string, { message: string; reportedAt: number }>()
+const beginFailures = new Map<string, number>()
+const beginNotBefore = new Map<string, number>()
+function noteBeginFailure(localId: string) {
+  const attempts = (beginFailures.get(localId) ?? 0) + 1
+  beginFailures.set(localId, attempts)
+  // A deterministic begin failure used to retry every 2s for hours.
+  const delay = Math.min(5 * 60_000, 2_000 * 2 ** Math.min(attempts, 7))
+  beginNotBefore.set(localId, Date.now() + delay)
+}
+function clearBeginFailure(localId: string) {
+  beginFailures.delete(localId)
+  beginNotBefore.delete(localId)
+}
 export function segmentUploadError(localId: string) {
   return failures.get(localId)?.message ?? null
 }
@@ -210,8 +223,14 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
         seen.add(job.args.localId)
         reportJob(job)
         if (!job.recordingId) {
+          const notBefore = beginNotBefore.get(job.args.localId)
+          if (notBefore !== undefined && Date.now() < notBefore) {
+            reportJob(job, true)
+            continue
+          }
           stage = 'begin'
           const created = await bounded(client.begin(job.args))
+          clearBeginFailure(job.args.localId)
           job.recordingId = created.recordingId
           job.recordId = created.recordId
           await save(job)
@@ -324,18 +343,27 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
         if (uploadOwner !== userId) return
         if (job && seen.has(job.args.localId)) reportJob(job, true)
         const localId = job?.args.localId ?? name.slice(0, 36)
+        if (stage === 'begin' && !(error instanceof UploadFailure && error.code === 'timeout')) {
+          noteBeginFailure(localId)
+        }
         const previous = failures.get(localId)
         const now = Date.now()
         if (!previous || now - previous.reportedAt >= 60_000) {
           // Native/network errors may contain signed URLs. Log only controlled
           // codes and identifiers, never the raw exception, token or response body.
+          // `reason` is intentional: the telemetry scrubber redacts a `code` key.
           telemetry.warn('segment:upload:paused', 'Video upload will retry', {
             localId,
             recordingId: job?.recordingId,
             stage,
             nextIndex: job?.nextIndex,
-            code: error instanceof UploadFailure ? error.code : 'operation_failed',
+            reason: error instanceof UploadFailure ? error.code : 'operation_failed',
             status: error instanceof UploadFailure ? error.status : undefined,
+            isResponse: job?.args.isResponse,
+            campId: job?.args.campId,
+            bondfireId: job?.args.bondfireId,
+            personalCamp: job?.args.personalCamp === true,
+            hasDraft: job?.args.draftBondfireId != null,
           })
           failures.set(localId, {
             message: 'Video upload paused; it will retry automatically.',
