@@ -40,6 +40,8 @@ type Job = {
   recordId?: string
   nextIndex: number
   createdAt: number
+  /** Durable so relaunching the app does not restart a failing begin loop. */
+  beginRetry?: { attempts: number; notBefore: number }
 }
 const active = new Set<string>()
 let running = false
@@ -99,19 +101,6 @@ function reportJob(job: Job, paused?: boolean) {
   publish()
 }
 const failures = new Map<string, { message: string; reportedAt: number }>()
-const beginFailures = new Map<string, number>()
-const beginNotBefore = new Map<string, number>()
-function noteBeginFailure(localId: string) {
-  const attempts = (beginFailures.get(localId) ?? 0) + 1
-  beginFailures.set(localId, attempts)
-  // A deterministic begin failure used to retry every 2s for hours.
-  const delay = Math.min(5 * 60_000, 2_000 * 2 ** Math.min(attempts, 7))
-  beginNotBefore.set(localId, Date.now() + delay)
-}
-function clearBeginFailure(localId: string) {
-  beginFailures.delete(localId)
-  beginNotBefore.delete(localId)
-}
 export function segmentUploadError(localId: string) {
   return failures.get(localId)?.message ?? null
 }
@@ -221,18 +210,33 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
         // an actual fragment is durable; failed empty captures can be retried.
         if (!(await FileSystem.getInfoAsync(`${dir}segment-000000.m4s`)).exists) continue
         seen.add(job.args.localId)
-        reportJob(job)
+        reportJob(job, job.beginRetry ? true : undefined)
         if (!job.recordingId) {
-          const notBefore = beginNotBefore.get(job.args.localId)
+          const notBefore = job.beginRetry?.notBefore
           if (notBefore !== undefined && Date.now() < notBefore) {
             reportJob(job, true)
             continue
           }
           stage = 'begin'
-          const created = await bounded(client.begin(job.args))
-          clearBeginFailure(job.args.localId)
+          let created: FunctionReturnType<typeof api.segmentMedia.begin>
+          try {
+            created = await bounded(client.begin(job.args))
+          } catch (error) {
+            // A timeout may only be a lost acknowledgement; retry it on the next pass.
+            if (!(error instanceof UploadFailure && error.code === 'timeout')) {
+              const attempts = Math.min((job.beginRetry?.attempts ?? 0) + 1, 8)
+              const delay = Math.min(5 * 60_000, 2_000 * 2 ** attempts)
+              job.beginRetry = { attempts, notBefore: Date.now() + delay }
+              stage = 'journal'
+              await save(job)
+              stage = 'begin'
+            }
+            throw error
+          }
+          delete job.beginRetry
           job.recordingId = created.recordingId
           job.recordId = created.recordId
+          stage = 'journal'
           await save(job)
           reportJob(job)
         }
@@ -343,9 +347,6 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
         if (uploadOwner !== userId) return
         if (job && seen.has(job.args.localId)) reportJob(job, true)
         const localId = job?.args.localId ?? name.slice(0, 36)
-        if (stage === 'begin' && !(error instanceof UploadFailure && error.code === 'timeout')) {
-          noteBeginFailure(localId)
-        }
         const previous = failures.get(localId)
         const now = Date.now()
         if (!previous || now - previous.reportedAt >= 60_000) {
