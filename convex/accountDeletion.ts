@@ -24,6 +24,7 @@ import {
 } from './lib/accountDeletionPolicy'
 import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
 import { uncountResponse } from './responseCounts'
+import { enqueueRetentionMedia } from './retentionMedia'
 
 const BATCH_SIZE = ACCOUNT_DELETION_BATCH_SIZE
 const MEDIA_BATCH_SIZE = ACCOUNT_DELETION_MEDIA_BATCH_SIZE
@@ -290,77 +291,31 @@ export const inventoryContentMedia = internalMutation({
   },
 })
 
-export const listPendingMedia = internalQuery({
+// Archival and the job's completion marker commit together. This phase no
+// longer performs network I/O, so it needs only one bounded transaction.
+export const retireMediaBatch = internalMutation({
   args: { jobId: v.id('accountDeletionJobs') },
-  handler: async (ctx, args) =>
-    await ctx.db
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
       .query('accountDeletionMedia')
       .withIndex('by_job_status', (q) => q.eq('jobId', args.jobId).eq('status', 'pending'))
-      .take(MEDIA_BATCH_SIZE),
-})
-
-export const markMediaResult = internalMutation({
-  args: {
-    mediaId: v.id('accountDeletionMedia'),
-    result: v.union(
-      v.literal('deleted'),
-      v.literal('missing'),
-      v.literal('failed'),
-      v.literal('retired'),
-    ),
-    error: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const row = await ctx.db.get(args.mediaId)
-    if (!row) return
-    await ctx.db.patch(row._id, {
-      status: args.result === 'failed' ? 'pending' : args.result,
-      attempts: row.attempts + 1,
-      lastError: args.error,
-      updatedAt: Date.now(),
-    })
-  },
-})
-
-export const deleteMediaBatch = internalAction({
-  args: { jobId: v.id('accountDeletionJobs') },
-  handler: async (ctx, args): Promise<{ processed: number; failures: number }> => {
-    const rows: Doc<'accountDeletionMedia'>[] = await ctx.runQuery(
-      internal.accountDeletion.listPendingMedia,
-      args,
-    )
-    let failures = 0
+      .take(MEDIA_BATCH_SIZE)
+    const confirmed = process.env.LEGACY_MEDIA_RETIREMENT_CONFIRMED === '1'
     for (const row of rows) {
-      try {
-        // Retain a durable operator cleanup item after the account job removes
-        // its own ledger. Retirement is not evidence of external deletion.
-        await ctx.runMutation(internal.retentionMedia.enqueueUnlinked, {
-          kind: row.kind,
-          externalId: row.externalId,
-        })
-        // The old provider kept rollback copies. Until an operator confirms
-        // those copies are gone, keep deletion pending rather than report a
-        // completed account deletion while external user media still exists.
-        if (process.env.LEGACY_MEDIA_RETIREMENT_CONFIRMED !== '1') {
-          throw new Error('External legacy media retirement has not been confirmed')
-        }
-        await ctx.runMutation(internal.accountDeletion.markMediaResult, {
-          mediaId: row._id,
-          result: 'retired',
-        })
-      } catch (error) {
-        failures += 1
-        await ctx.runMutation(internal.accountDeletion.markMediaResult, {
-          mediaId: row._id,
-          result: 'failed',
-          error:
-            error instanceof Error
-              ? error.message.slice(0, 500)
-              : 'Could not archive retired media',
-        })
-      }
+      // The account's temporary queue is deleted when the job completes; this
+      // ledger survives for operator reconciliation. Never infer external
+      // deletion merely from removal of the provider integration.
+      await enqueueRetentionMedia(ctx, row.kind, row.externalId)
+      await ctx.db.patch(row._id, {
+        status: confirmed ? 'retired' : 'pending',
+        attempts: row.attempts + 1,
+        lastError: confirmed
+          ? undefined
+          : 'External legacy media retirement has not been confirmed',
+        updatedAt: Date.now(),
+      })
     }
-    return { processed: rows.length, failures }
+    return { processed: rows.length, awaitingConfirmation: confirmed ? 0 : rows.length }
   },
 })
 
@@ -1171,8 +1126,9 @@ export const run = internalAction({
           args,
         )
         if (!inventoried.found) {
-          const media = await ctx.runAction(internal.accountDeletion.deleteMediaBatch, args)
-          if (media.failures > 0) throw new Error(`${media.failures} Mux deletion(s) failed`)
+          const media = await ctx.runMutation(internal.accountDeletion.retireMediaBatch, args)
+          if (media.awaitingConfirmation > 0)
+            throw new Error('External legacy media retirement has not been confirmed')
           if (media.processed === 0)
             await ctx.runMutation(internal.accountDeletion.transitionToDatabase, args)
         }

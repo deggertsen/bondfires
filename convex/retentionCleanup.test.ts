@@ -15,7 +15,7 @@ import { CURRENT_COMMUNITY_GUIDELINES_VERSION, CURRENT_TERMS_VERSION } from './c
 import { claimUserDeliveries } from './digest'
 import { BONDFIRE_RETENTION_MS } from './entitlements'
 import { claimBondfire, resumeStale, retainedVideoExists, runBatch } from './retentionCleanup'
-import { claimBatch, drain, enqueueUnlinked, finishAttempt, rememberAssets } from './retentionMedia'
+import { drain } from './retentionMedia'
 import { claimDeliveries } from './sendNotification'
 import { createPendingVideoRecord } from './videos'
 
@@ -55,14 +55,10 @@ describe('retention transactions and resumable cleanup', () => {
   const functions: Record<string, unknown> = {
     'retentionCleanup:runBatch': runBatch,
     'bondfireRetention:scanPage': scanPage,
-    'retentionMedia:claimBatch': claimBatch,
-    'retentionMedia:finishAttempt': finishAttempt,
-    'retentionMedia:rememberAssets': rememberAssets,
   }
   async function runDatabaseQueue() {
     for (let i = 0; scheduled.length && i < 10_000; i++) {
       const task = required(scheduled.shift())
-      if (task.name === 'retentionMedia:drain') continue // Never contact real Mux.
       expect(functions[task.name], task.name).toBeDefined()
       await handler<MutationCtx>(functions[task.name])(ctx, task.args)
     }
@@ -545,33 +541,6 @@ describe('retention transactions and resumable cleanup', () => {
     ).toEqual([])
     expect(tables.videoTranscripts ?? []).toHaveLength(0)
     expect(tables.notificationDeliveries ?? []).toHaveLength(0)
-  })
-
-  it('keeps failed media retryable and fences stale attempts; referenced resources are never claimed', async () => {
-    await claimSweep()
-    await handler<MutationCtx>(enqueueUnlinked)(ctx, {
-      kind: 'direct_upload',
-      externalId: 'attached-upload',
-    })
-    tables.bondfireVideos[0].muxUploadId = 'attached-upload'
-    const rows = (await handler<MutationCtx>(claimBatch)(ctx, {})) as Doc<'retentionMedia'>[]
-    expect(rows.map((row) => row.externalId)).toEqual(['root-asset'])
-    const row = rows[0]
-    await handler<MutationCtx>(finishAttempt)(ctx, {
-      mediaId: row._id,
-      attempt: row.attempts,
-      error: '503',
-    })
-    expect(await get(row._id)).toMatchObject({ lastError: '503' })
-    Object.assign(required(await get(row._id)), { nextAttemptAt: now })
-    const retried = (await handler<MutationCtx>(claimBatch)(ctx, {})) as Doc<'retentionMedia'>[]
-    await handler<MutationCtx>(finishAttempt)(ctx, { mediaId: row._id, attempt: row.attempts })
-    expect(await get(row._id)).not.toBeNull()
-    await handler<MutationCtx>(finishAttempt)(ctx, {
-      mediaId: row._id,
-      attempt: retried[0].attempts,
-    })
-    expect(await get(row._id)).toBeNull()
   })
 
   it('preserves retired external cleanup work without credentials, calls or rescheduling', async () => {

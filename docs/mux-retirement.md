@@ -72,8 +72,11 @@ Do not drop historical IDs, import ledgers, R2 objects, or cleanup records.
    user-media copies have been removed**. Until then, account deletion archives the
    provider resource IDs and stays pending instead of falsely reporting external
    deletion. Once confirmed, those items become `retired` and the R2/database
-   deletion workflow proceeds. The durable `retentionMedia` ledger remains for
+   deletion workflow proceeds. Each bounded batch archives IDs and updates its
+   completion markers in one transaction. The durable `retentionMedia` ledger remains for
    operator reconciliation; the runtime no longer contacts Mux or retries its API.
+   Unused Mux recovery helpers and API-deletion lease/retry functions are removed;
+   native R2 recovery and the legacy client upgrade responses remain.
 
 Native segment cleanup and imported-media cleanup still revoke access immediately
 through their existing authorization checks and remove R2 objects through their
