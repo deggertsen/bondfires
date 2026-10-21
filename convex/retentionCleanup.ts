@@ -4,6 +4,7 @@ import type { Doc, Id, TableNames } from './_generated/dataModel'
 import { internalMutation, type MutationCtx, type QueryCtx } from './_generated/server'
 import { collectMuxDeletionTargets } from './lib/accountDeletionPolicy'
 import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
+import { uncountReaction } from './lib/videoReactions'
 import { uncountResponse } from './responseCounts'
 import { enqueueRetentionMedia } from './retentionMedia'
 
@@ -300,6 +301,10 @@ export const runBatch = internalMutation({
     } else {
       page = await videoRows(ctx, job.kind, job.recordId, stage)
     }
+    // A retained response's reactions leave its surviving thread's rollup.
+    // A retained bondfire's own reactions need no accounting: it goes too.
+    if (stage === 'reactions' && job.kind === 'response')
+      for (const row of page.page) await uncountReaction(ctx, row as Doc<'videoReactions'>)
     for (const row of page.page) await ctx.db.delete(row._id)
     const nextStage = more || !page.isDone ? job.stage : job.stage + 1
     if (nextStage === stages.length) {

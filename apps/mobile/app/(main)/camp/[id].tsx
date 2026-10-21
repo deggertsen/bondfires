@@ -15,6 +15,7 @@ import {
 import {
   Button,
   closeOpenSwipeableRow,
+  ReactionChip,
   Spinner,
   type SwipeAction,
   SwipeableRow,
@@ -50,6 +51,7 @@ import { useHeaderTopPadding } from '../../../components/UploadStatusLayout'
 import { getBondfireRightSwipeActions } from '../../../lib/bondfireSwipeActions'
 import { isAuthSessionErrorMessage, redirectToCampJoinLogin } from '../../../lib/campJoinAuth'
 import { goBackOrReplace } from '../../../lib/navigation'
+import { getThreadReactionRowProps } from '../../../lib/reactionChipProps'
 import { routes } from '../../../lib/routes'
 import { OwnerCampSections } from './OwnerCampSections'
 
@@ -101,6 +103,7 @@ type BannedMember = {
 type BondfireData = Doc<'bondfires'> & {
   isLive?: boolean
   livePlaybackId?: string
+  hasNewReactions?: boolean
 }
 
 const REJECTION_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000
@@ -767,6 +770,7 @@ function BondfireRow({
   rightActions?: SwipeAction[]
 }) {
   const responses = Math.max(0, bondfire.videoCount - 1)
+  const reaction = getThreadReactionRowProps(bondfire)
 
   // Swipe-to-reveal is invisible to screen readers — expose the same actions
   // through the accessibility actions menu (VoiceOver rotor / TalkBack).
@@ -807,11 +811,19 @@ function BondfireRow({
           </Text>
         </YStack>
 
-        <XStack alignItems="center" gap={6}>
-          <MessageCircle size={15} color={'$placeholderColor'} />
-          <Text fontSize={13} color={'$placeholderColor'}>
-            {responses}
-          </Text>
+        <XStack alignItems="center" gap={10}>
+          <ReactionChip
+            counts={reaction.reactionCounts}
+            total={reaction.reactionTotal}
+            isNew={reaction.hasNewReactions}
+            onRequestFlyIn={reaction.onRequestReactionFlyIn}
+          />
+          <XStack alignItems="center" gap={6}>
+            <MessageCircle size={15} color={'$placeholderColor'} />
+            <Text fontSize={13} color={'$placeholderColor'}>
+              {responses}
+            </Text>
+          </XStack>
         </XStack>
       </XStack>
     </Pressable>

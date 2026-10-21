@@ -60,6 +60,9 @@ export type BondfireVideoItem = {
   summary?: string
   aiTags?: string[]
   captionsUrl?: string
+  /** This video's own reactions, not the thread's. */
+  reactionCounts?: Array<{ emoji: string; count: number }>
+  reactionTotal?: number
 }
 
 export function clampVideoIndex(index: number | null | undefined, totalVideos: number) {
@@ -147,6 +150,8 @@ export function buildBondfireVideoItems(
       summary: bondfireData.summary,
       aiTags: bondfireData.aiTags,
       captionsUrl: videoUrls[0]?.captionsUrl,
+      reactionCounts: bondfireData.reactionCounts,
+      reactionTotal: bondfireData.reactionTotal,
     },
     ...bondfireData.videos.map((video, index) => ({
       key: video._id,
@@ -166,6 +171,8 @@ export function buildBondfireVideoItems(
       summary: video.summary,
       aiTags: video.aiTags,
       captionsUrl: videoUrls[index + 1]?.captionsUrl,
+      reactionCounts: video.reactionCounts,
+      reactionTotal: video.reactionTotal,
     })),
   ]
 }

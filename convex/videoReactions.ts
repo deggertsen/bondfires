@@ -1,7 +1,8 @@
 import { v } from 'convex/values'
+import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
-import { mutation, query } from './_generated/server'
+import { internalMutation, mutation, query } from './_generated/server'
 import { auth } from './auth'
 import {
   buildViewerVisibilityContext,
@@ -13,7 +14,12 @@ import { getEntitlementSubscriptionTier, TIER_RANK } from './entitlements'
 import { throwUserError, withUserFacingErrors } from './errors'
 import { isFreeEmoji, isReactionEmoji } from './lib/emojis'
 import { getVideoLifecycle } from './lib/videoLifecycle'
-import { rankRecentEmojis } from './lib/videoReactions'
+import {
+  countReaction,
+  type ReactionCount,
+  rankRecentEmojis,
+  tallyReactionCounts,
+} from './lib/videoReactions'
 
 type VideoReference =
   | { bondfireId: Id<'bondfires'>; bondfireVideoId?: undefined }
@@ -138,7 +144,7 @@ export const addReaction = mutation({
           throwUserError('Please wait before adding more reactions')
         }
 
-        const reactionId = await ctx.db.insert('videoReactions', {
+        const row = {
           bondfireId: args.bondfireId,
           bondfireVideoId: args.bondfireVideoId,
           userId,
@@ -147,7 +153,9 @@ export const addReaction = mutation({
           emoji: args.emoji,
           timestampMs: args.timestampMs,
           createdAt: Date.now(),
-        })
+        }
+        const reactionId = await ctx.db.insert('videoReactions', row)
+        await countReaction(ctx, row)
 
         const reaction = await ctx.db.get(reactionId)
         return reaction ?? null
@@ -223,5 +231,122 @@ export const getRecentEmojis = query({
       .collect()
 
     return rankRecentEmojis(reactions.filter((reaction) => isReactionEmoji(reaction.emoji)))
+  },
+})
+
+// ── Reaction summary repair / backfill ──────────────────────────────────────
+//
+// Recomputes every video's reaction summary and each thread's rollup from the
+// videoReactions rows, patching only what disagrees. It writes absolute values,
+// so it is safe to rerun and cannot double-count rows the incremental helpers
+// already counted. Run once after deploying the summary fields (dashboard →
+// videoReactions:repairReactionSummaries {}); it self-paginates.
+
+const REPAIR_BATCH_SIZE = 10
+
+type Summary = { total: number; counts: ReactionCount[]; lastAt?: number; lastUserId?: Id<'users'> }
+
+function summarize(reactions: Doc<'videoReactions'>[]): Summary {
+  const counts = tallyReactionCounts(reactions)
+  const latest = reactions.reduce<Doc<'videoReactions'> | null>(
+    (best, reaction) => (!best || reaction.createdAt >= best.createdAt ? reaction : best),
+    null,
+  )
+  return {
+    total: reactions.length,
+    counts,
+    lastAt: latest?.createdAt,
+    lastUserId: latest?.userId,
+  }
+}
+
+function sameCounts(stored: ReactionCount[] | undefined, expected: ReactionCount[]) {
+  const byEmoji = new Map((stored ?? []).map((entry) => [entry.emoji, entry.count]))
+  return (
+    byEmoji.size === expected.length &&
+    expected.every((entry) => byEmoji.get(entry.emoji) === entry.count)
+  )
+}
+
+function ownSummaryDrifted(
+  doc: Pick<Doc<'bondfireVideos'>, 'reactionTotal' | 'reactionCounts' | 'lastReactionAt'>,
+  expected: Summary,
+) {
+  return (
+    (doc.reactionTotal ?? 0) !== expected.total ||
+    !sameCounts(doc.reactionCounts, expected.counts) ||
+    doc.lastReactionAt !== expected.lastAt
+  )
+}
+
+export const repairReactionSummaries = internalMutation({
+  args: {
+    cursor: v.optional(v.string()),
+    batchSize: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const batchSize = args.batchSize ?? REPAIR_BATCH_SIZE
+    const page = await ctx.db
+      .query('bondfires')
+      .paginate({ numItems: batchSize, cursor: args.cursor ?? null })
+
+    let repaired = 0
+    for (const bondfire of page.page) {
+      const sparkReactions = await ctx.db
+        .query('videoReactions')
+        .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
+        .collect()
+      const responses = await ctx.db
+        .query('bondfireVideos')
+        .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
+        .collect()
+
+      const threadReactions = [...sparkReactions]
+      for (const response of responses) {
+        const responseReactions = await ctx.db
+          .query('videoReactions')
+          .withIndex('by_bondfire_video', (q) => q.eq('bondfireVideoId', response._id))
+          .collect()
+        threadReactions.push(...responseReactions)
+        const expected = summarize(responseReactions)
+        if (ownSummaryDrifted(response, expected)) {
+          repaired += 1
+          await ctx.db.patch(response._id, {
+            reactionTotal: expected.total,
+            reactionCounts: expected.counts,
+            lastReactionAt: expected.lastAt,
+          })
+        }
+      }
+
+      const spark = summarize(sparkReactions)
+      const thread = summarize(threadReactions)
+      const threadDrifted =
+        (bondfire.threadReactionTotal ?? 0) !== thread.total ||
+        !sameCounts(bondfire.threadReactionCounts, thread.counts) ||
+        bondfire.threadLastReactionAt !== thread.lastAt ||
+        bondfire.threadLastReactorId !== thread.lastUserId
+      if (ownSummaryDrifted(bondfire, spark) || threadDrifted) {
+        repaired += 1
+        await ctx.db.patch(bondfire._id, {
+          reactionTotal: spark.total,
+          reactionCounts: spark.counts,
+          lastReactionAt: spark.lastAt,
+          threadReactionTotal: thread.total,
+          threadReactionCounts: thread.counts,
+          threadLastReactionAt: thread.lastAt,
+          threadLastReactorId: thread.lastUserId,
+        })
+      }
+    }
+
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.videoReactions.repairReactionSummaries, {
+        cursor: page.continueCursor,
+        batchSize,
+      })
+    }
+
+    return { processed: page.page.length, repaired, isDone: page.isDone }
   },
 })

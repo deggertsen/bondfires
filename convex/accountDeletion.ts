@@ -23,6 +23,7 @@ import {
   nextAccountDeletionStage,
 } from './lib/accountDeletionPolicy'
 import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
+import { uncountReaction } from './lib/videoReactions'
 import { uncountResponse } from './responseCounts'
 
 const BATCH_SIZE = ACCOUNT_DELETION_BATCH_SIZE
@@ -569,11 +570,15 @@ export const deleteContentBatch = internalMutation({
           .query('reports')
           .withIndex('by_bondfire_video', (q) => q.eq('bondfireVideoId', video._id))
           .take(BATCH_SIZE)
-      if (stage === 'reactions')
-        rows = await ctx.db
+      if (stage === 'reactions') {
+        const reactions = await ctx.db
           .query('videoReactions')
           .withIndex('by_bondfire_video', (q) => q.eq('bondfireVideoId', video._id))
           .take(BATCH_SIZE)
+        // The response is going away, but its parent thread's rollup survives.
+        for (const reaction of reactions) await uncountReaction(ctx, reaction)
+        rows = reactions
+      }
       if (stage === 'presence')
         rows = await ctx.db
           .query('presence')
@@ -1037,11 +1042,14 @@ export const cleanupUserBatch = internalMutation({
         .query('userBlocks')
         .withIndex('by_blocked', (q) => q.eq('blockedUserId', userId))
         .take(BATCH_SIZE)
-    if (stage === 'reactions')
-      rows = await ctx.db
+    if (stage === 'reactions') {
+      const reactions = await ctx.db
         .query('videoReactions')
         .withIndex('by_user_created', (q) => q.eq('userId', userId))
         .take(BATCH_SIZE)
+      for (const reaction of reactions) await uncountReaction(ctx, reaction)
+      rows = reactions
+    }
     if (stage === 'presence')
       rows = await ctx.db
         .query('presence')

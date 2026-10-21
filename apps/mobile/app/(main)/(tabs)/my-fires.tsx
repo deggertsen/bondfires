@@ -30,6 +30,7 @@ import {
 } from '../../../lib/bondfireSwipeActions'
 import type { BondfireThumbnailFields } from '../../../lib/bondfireThumbnails'
 import { getMyFireRowCreatorName } from '../../../lib/myFireRow'
+import { getThreadReactionRowProps } from '../../../lib/reactionChipProps'
 import { routes } from '../../../lib/routes'
 import { useBondfireThumbnails } from '../../../lib/useBondfireThumbnails'
 
@@ -52,6 +53,7 @@ type MyFire = Doc<'bondfires'> &
     camp: Doc<'camps'> | null
     lastActivityAt: number
     unread: boolean
+    hasNewReactions?: boolean
     participants: ThreadParticipant[]
     badge?: 'sparked' | 'invited' | 'kindled' | null
     /**
@@ -177,6 +179,7 @@ function toBondfireRowProps(
       displayName: participant.user.displayName ?? participant.user.name,
       photoUrl: participant.user.photoUrl,
     })),
+    ...getThreadReactionRowProps(thread),
     actions: getBondfireSwipeActions({
       isOwner,
       isPinned,
@@ -210,6 +213,7 @@ function toInvitedBondfireRowProps(
     statusLabel: 'Invited',
     badge: 'invited',
     participants: [],
+    ...getThreadReactionRowProps(thread),
     actions: [
       {
         key: 'dismiss',

@@ -29,6 +29,8 @@ type ThreadSummary = Doc<'bondfires'> & {
   camp: Doc<'camps'> | null
   lastActivityAt: number
   unread: boolean
+  /** Someone else reacted after the viewer last opened the thread. */
+  hasNewReactions: boolean
   participants: ThreadParticipant[]
   badge: BondfireBadge | null
   latestResponseBondfireVideoId?: Id<'bondfireVideos'>
@@ -255,6 +257,12 @@ async function buildThreadSummary(
   const lastViewerActivityAt = participantMap.get(args.viewerId)?.latestAt ?? 0
   const unread =
     lastActivityAt > (readMarker?.lastReadAt ?? 0) && lastActivityAt > lastViewerActivityAt
+  const hasNewReactions = await hasNewReactionsForViewer(
+    ctx,
+    args.bondfire,
+    args.viewerId,
+    readMarker ?? null,
+  )
   const camp = args.bondfire.campId
     ? await getCampCached(ctx, args.viewer, args.bondfire.campId)
     : null
@@ -265,6 +273,7 @@ async function buildThreadSummary(
     camp,
     lastActivityAt,
     unread,
+    hasNewReactions,
     participants,
     badge: null,
     latestResponseBondfireVideoId: latestResponsePlayback?.bondfireVideoId,
@@ -492,6 +501,34 @@ export const listCloseCircle = query({
     return entries
   },
 })
+
+/**
+ * Whether a thread participant should see its reactions as new: someone else
+ * reacted after the viewer last opened the thread (no read marker counts as
+ * never opened). Non-participants never see it. Pass `readMarker` when the
+ * caller already loaded it; `undefined` means "look it up".
+ */
+export async function hasNewReactionsForViewer(
+  ctx: QueryCtx,
+  bondfire: Doc<'bondfires'>,
+  viewerId: Id<'users'> | null,
+  readMarker?: Doc<'bondfireThreadReads'> | null,
+): Promise<boolean> {
+  const lastReactionAt = bondfire.threadLastReactionAt
+  if (!viewerId || !lastReactionAt || !bondfire.threadReactionTotal) return false
+  if (bondfire.threadLastReactorId === viewerId) return false
+  const marker =
+    readMarker !== undefined
+      ? readMarker
+      : await ctx.db
+          .query('bondfireThreadReads')
+          .withIndex('by_user_bondfire', (q) =>
+            q.eq('userId', viewerId).eq('bondfireId', bondfire._id),
+          )
+          .first()
+  if (marker && marker.lastReadAt >= lastReactionAt) return false
+  return await isThreadParticipant(ctx, bondfire, viewerId)
+}
 
 /** Match the existing participant rules, reading only this user's responses. */
 export async function isThreadParticipant(

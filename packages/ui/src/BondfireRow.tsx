@@ -3,6 +3,7 @@ import { Image } from 'expo-image'
 import { Pressable } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 import { Button } from './Button'
+import { ReactionChip, type ReactionChipCount } from './ReactionChip'
 import { type SwipeAction, SwipeableRow } from './SwipeableRow'
 import { Text } from './Text'
 import { UserAvatar } from './UserAvatar'
@@ -36,6 +37,14 @@ export type BondfireRowProps = {
   badge?: 'sparked' | 'invited' | 'kindled' | null
   /** Participant avatars to show */
   participants: BondfireParticipant[]
+  /** Thread-wide reaction counts, highest first. */
+  reactionCounts?: ReactionChipCount[]
+  /** Thread-wide reaction total. No chip renders when this is 0 or absent. */
+  reactionTotal?: number
+  /** Someone else reacted since the viewer last opened the thread. */
+  hasNewReactions?: boolean
+  /** See ReactionChip: decides whether the chip plays its fly-in. */
+  onRequestReactionFlyIn?: (total: number) => number | null
   /** Swipe actions revealed by swiping LEFT (destructive / admin) */
   actions: SwipeAction[]
   /** Swipe actions revealed by swiping RIGHT (e.g. Edit — owner only) */
@@ -126,6 +135,10 @@ export function BondfireRow({
   statusLabel,
   badge,
   participants,
+  reactionCounts,
+  reactionTotal,
+  hasNewReactions,
+  onRequestReactionFlyIn,
   actions,
   rightActions,
   onOpen,
@@ -227,6 +240,12 @@ export function BondfireRow({
                 {responses} {responses === 1 ? 'response' : 'responses'}
               </Text>
             </XStack>
+            <ReactionChip
+              counts={reactionCounts}
+              total={reactionTotal}
+              isNew={hasNewReactions}
+              onRequestFlyIn={onRequestReactionFlyIn}
+            />
             {campLabel ? (
               <YStack
                 flexShrink={1}

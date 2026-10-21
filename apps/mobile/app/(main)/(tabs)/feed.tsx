@@ -62,6 +62,7 @@ import {
 } from '../../../lib/homeFeedState'
 import { getMyFireRowCreatorName } from '../../../lib/myFireRow'
 import { shouldLoadSparsePage, uniqueById } from '../../../lib/pagination'
+import { getThreadReactionRowProps } from '../../../lib/reactionChipProps'
 import { routes } from '../../../lib/routes'
 import { useBondfireThumbnails } from '../../../lib/useBondfireThumbnails'
 import { useHomeFeedScrollRestoration } from '../../../lib/useHomeFeedScrollRestoration'
@@ -73,6 +74,7 @@ type BondfireData = Doc<'bondfires'> &
     livePlaybackId?: string
     campLabel?: string
     badge?: 'sparked' | 'invited' | 'kindled' | null
+    hasNewReactions?: boolean
   }
 type JoinedCamp = Doc<'camps'> & { membership: Doc<'campMembers'> }
 
@@ -96,6 +98,7 @@ type MyFire = Doc<'bondfires'> &
     camp: Doc<'camps'> | null
     lastActivityAt: number
     unread: boolean
+    hasNewReactions?: boolean
     participants: ThreadParticipant[]
     badge?: 'sparked' | 'invited' | 'kindled' | null
     /**
@@ -201,6 +204,7 @@ function toBondfireRowProps(
     statusLabel: hasViewedToday(bondfire._id) ? 'Viewed' : 'New',
     badge: bondfire.badge,
     participants: [], // Feed doesn't load participants yet — empty for now
+    ...getThreadReactionRowProps(bondfire),
     actions: getBondfireSwipeActions({
       isOwner,
       isPinned,
@@ -252,6 +256,7 @@ function toMyFireRowProps(
       displayName: participant.user.displayName ?? participant.user.name,
       photoUrl: participant.user.photoUrl,
     })),
+    ...getThreadReactionRowProps(thread),
     actions: getBondfireSwipeActions({
       isOwner,
       isPinned,

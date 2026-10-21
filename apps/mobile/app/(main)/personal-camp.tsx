@@ -21,6 +21,7 @@ import {
 } from '../../lib/bondfireSwipeActions'
 import type { BondfireThumbnailFields } from '../../lib/bondfireThumbnails'
 import { goBackOrReplace } from '../../lib/navigation'
+import { getThreadReactionRowProps } from '../../lib/reactionChipProps'
 import { routes } from '../../lib/routes'
 import { useBondfireThumbnails } from '../../lib/useBondfireThumbnails'
 
@@ -263,6 +264,7 @@ export default function PersonalCampScreen() {
         isLive: bondfire.videoStatus === 'live',
         statusLabel: bondfire.status === 'draft' ? 'Draft — not recorded yet' : '',
         participants: [],
+        ...getThreadReactionRowProps(bondfire),
         actions: getBondfireSwipeActions({
           isOwner,
           isPinned,
