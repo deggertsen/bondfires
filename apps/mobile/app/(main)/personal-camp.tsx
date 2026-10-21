@@ -5,7 +5,7 @@ import { ArrowLeft, Flame, Lock, Plus } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, FlatList, Pressable, StatusBar } from 'react-native'
+import { Alert, FlatList, Pressable, StatusBar, type ViewToken } from 'react-native'
 import { Separator, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../convex/_generated/dataModel'
@@ -21,13 +21,16 @@ import {
 } from '../../lib/bondfireSwipeActions'
 import type { BondfireThumbnailFields } from '../../lib/bondfireThumbnails'
 import { goBackOrReplace } from '../../lib/navigation'
+import { getThreadReactionRowProps } from '../../lib/reactionChipProps'
 import { routes } from '../../lib/routes'
 import { useBondfireThumbnails } from '../../lib/useBondfireThumbnails'
+import { useReactionRowVisibility } from '../../lib/useReactionRowVisibility'
 
 type BondfireData = Doc<'bondfires'> &
   BondfireThumbnailFields & {
     participantCount: number
     campLabel?: string
+    hasNewReactions?: boolean
   }
 
 export default function PersonalCampScreen() {
@@ -121,9 +124,12 @@ export default function PersonalCampScreen() {
     ensureThumbnailUrls(enrichedBondfires.slice(0, 10))
   }, [enrichedBondfires, ensureThumbnailUrls, shouldRunBackgroundWork])
 
+  const { visibleRows$: reactionVisibility$, updateVisibleRows } = useReactionRowVisibility()
+
   // Preload thumbnails for visible items
   const handleViewableChanged = useCallback(
-    ({ viewableItems }: { viewableItems: { index: number | null }[] }) => {
+    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      updateVisibleRows(viewableItems)
       if (!shouldRunBackgroundWork || !enrichedBondfires) return
       const indices = viewableItems
         .map((v) => v.index)
@@ -134,7 +140,7 @@ export default function PersonalCampScreen() {
       const maxIdx = Math.min(enrichedBondfires.length - 1, Math.max(...indices) + 8)
       ensureThumbnailUrls(enrichedBondfires.slice(minIdx, maxIdx + 1))
     },
-    [enrichedBondfires, ensureThumbnailUrls, shouldRunBackgroundWork],
+    [enrichedBondfires, ensureThumbnailUrls, shouldRunBackgroundWork, updateVisibleRows],
   )
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 10 }).current
 
@@ -263,6 +269,7 @@ export default function PersonalCampScreen() {
         isLive: bondfire.videoStatus === 'live',
         statusLabel: bondfire.status === 'draft' ? 'Draft — not recorded yet' : '',
         participants: [],
+        ...getThreadReactionRowProps(bondfire),
         actions: getBondfireSwipeActions({
           isOwner,
           isPinned,
@@ -487,6 +494,7 @@ export default function PersonalCampScreen() {
               {...toBondfireRowProps(item)}
               bondfire={item}
               thumbnailUrls$={thumbnailUrls$}
+              reactionVisibility$={reactionVisibility$}
             />
           )}
           onViewableItemsChanged={handleViewableChanged}

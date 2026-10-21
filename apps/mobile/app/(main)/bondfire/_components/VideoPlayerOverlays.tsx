@@ -2,9 +2,16 @@ import type { Viewer } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
 import { Flame, Play, RotateCcw, Volume2, VolumeX } from '@tamagui/lucide-icons'
-import type { RefObject } from 'react'
+import { type RefObject, useEffect, useState } from 'react'
 import type { LayoutChangeEvent, PanResponderInstance } from 'react-native'
 import { Pressable, View } from 'react-native'
+import Animated, {
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withSequence,
+  withTiming,
+} from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { XStack, YStack } from 'tamagui'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
@@ -16,6 +23,7 @@ import type { ActiveReaction } from '../../../../components/ViewerPresenceStack'
 import { ViewerPresenceStack } from '../../../../components/ViewerPresenceStack'
 import { VIDEO_OVERLAY_COLORS as OVERLAY_COLORS } from '../../../../components/videoOverlayColors'
 import { formatTime } from '../_lib/bondfireDetailHelpers'
+import type { HeatmapPeak, ReactionHeatmap } from '../_lib/reactionHeatmap'
 import { shouldShowRespondCTA, type VideoPlayerState$ } from '../_lib/videoPlayerState'
 
 export function LoadingOverlay({
@@ -159,7 +167,8 @@ export function PlayPauseIndicator({
 
 /**
  * Closed captions, rendered just above the scrub bar (whose container is
- * anchored at bottom:100 and grows ~48px upward). Text comes from
+ * anchored at bottom:100 and grows ~48px upward, plus HEATMAP_STRIP_HEIGHT
+ * when the reaction heatmap is shown; callers pass that in bottomOffset). Text comes from
  * state$.captionText, kept in sync by VideoPlayer's timeUpdate listener.
  */
 export function CaptionOverlay({
@@ -200,16 +209,150 @@ export function CaptionOverlay({
   )
 }
 
+/** Height the reaction heatmap adds above the scrub bar; overlays above it shift up by this. */
+export const HEATMAP_STRIP_HEIGHT = 44
+const HEATMAP_MARKER_ROW_HEIGHT = 24
+const HEATMAP_BARS_HEIGHT = 16
+const HEATMAP_MARKER_WIDTH = 56
+
+function HeatmapMarker({
+  state$,
+  peak,
+  left,
+  onSeekMs,
+}: {
+  state$: VideoPlayerState$
+  peak: HeatmapPeak
+  left: number
+  onSeekMs: (positionMs: number) => void
+}) {
+  const reduceMotion = useReducedMotion()
+  // Re-renders only when the playhead crosses this marker, not on every tick.
+  const passed = useValue(() => state$.progress.get() >= peak.position)
+  const scale = useSharedValue(1)
+
+  useEffect(() => {
+    if (!passed || reduceMotion) return
+    scale.value = withSequence(
+      withTiming(1.45, { duration: 120 }),
+      withTiming(1, { duration: 220 }),
+    )
+  }, [passed, reduceMotion, scale])
+
+  const popStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }))
+
+  return (
+    <Pressable
+      onPress={() => onSeekMs(peak.seekMs)}
+      hitSlop={{ top: 12, bottom: 4, left: 4, right: 4 }}
+      accessibilityRole="button"
+      accessibilityLabel={`${peak.count} ${peak.emoji} reactions here. Jump to ${formatTime(peak.firstTimestampMs)}`}
+      style={{
+        position: 'absolute',
+        top: 0,
+        left,
+        width: HEATMAP_MARKER_WIDTH,
+        height: HEATMAP_MARKER_ROW_HEIGHT,
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <Animated.View style={popStyle}>
+        <XStack
+          height={22}
+          paddingHorizontal={6}
+          borderRadius={11}
+          backgroundColor={OVERLAY_COLORS.pillBackground}
+          borderWidth={1}
+          borderColor={'$secondary'}
+          alignItems="center"
+          gap={3}
+        >
+          <Text fontSize={12}>{peak.emoji}</Text>
+          <Text fontSize={10} fontWeight="800" color={OVERLAY_COLORS.textPrimary}>
+            {peak.count}
+          </Text>
+        </XStack>
+      </Animated.View>
+    </Pressable>
+  )
+}
+
+/**
+ * Where this video's reactions cluster: a density strip with the top emoji
+ * pinned over each peak. Sits above the scrub bar's pan area, so a marker tap
+ * seeks instead of starting a drag.
+ */
+function ReactionHeatmapStrip({
+  state$,
+  heatmap,
+  onSeekMs,
+}: {
+  state$: VideoPlayerState$
+  heatmap: ReactionHeatmap
+  onSeekMs: (positionMs: number) => void
+}) {
+  const [width, setWidth] = useState(0)
+
+  return (
+    <YStack
+      height={HEATMAP_STRIP_HEIGHT}
+      justifyContent="flex-end"
+      onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
+    >
+      <View style={{ height: HEATMAP_MARKER_ROW_HEIGHT }}>
+        {width > 0
+          ? heatmap.peaks.map((peak) => (
+              <HeatmapMarker
+                key={`${peak.position}-${peak.emoji}`}
+                state$={state$}
+                peak={peak}
+                left={Math.min(
+                  Math.max(0, peak.position * width - HEATMAP_MARKER_WIDTH / 2),
+                  Math.max(0, width - HEATMAP_MARKER_WIDTH),
+                )}
+                onSeekMs={onSeekMs}
+              />
+            ))
+          : null}
+      </View>
+      <XStack
+        height={HEATMAP_BARS_HEIGHT}
+        marginTop={4}
+        alignItems="flex-end"
+        gap={2}
+        pointerEvents="none"
+      >
+        {heatmap.bins.map((bin, index) => (
+          <YStack
+            // biome-ignore lint/suspicious/noArrayIndexKey: bins are fixed positions along the bar
+            key={index}
+            flex={1}
+            height={2 + bin * (HEATMAP_BARS_HEIGHT - 2)}
+            borderRadius={1}
+            backgroundColor={'$secondary'}
+            opacity={0.25 + bin * 0.75}
+          />
+        ))}
+      </XStack>
+    </YStack>
+  )
+}
+
 export function VideoProgressBar({
   state$,
   progressBarViewRef,
   onLayout,
   panHandlers,
+  heatmap,
+  onSeekMs,
 }: {
   state$: VideoPlayerState$
   progressBarViewRef: RefObject<View | null>
   onLayout: (event: LayoutChangeEvent) => void
   panHandlers: PanResponderInstance['panHandlers']
+  heatmap?: ReactionHeatmap | null
+  onSeekMs?: (positionMs: number) => void
 }) {
   const progress = useValue(state$.progress)
   const duration = useValue(state$.duration)
@@ -218,6 +361,9 @@ export function VideoProgressBar({
 
   return (
     <YStack position="absolute" bottom={100 + insets.bottom} left={20} right={20} zIndex={3}>
+      {heatmap && onSeekMs ? (
+        <ReactionHeatmapStrip state$={state$} heatmap={heatmap} onSeekMs={onSeekMs} />
+      ) : null}
       <View ref={progressBarViewRef} onLayout={onLayout} {...panHandlers}>
         <YStack paddingVertical={10}>
           <YStack height={4} backgroundColor={OVERLAY_COLORS.progressTrack} borderRadius={2}>
@@ -255,9 +401,11 @@ export function VideoProgressBar({
 export function PausedReportButton({
   state$,
   isHoldingLiveEdge = false,
+  bottomOffset = 0,
 }: {
   state$: VideoPlayerState$
   isHoldingLiveEdge?: boolean
+  bottomOffset?: number
 }) {
   const isPlaying = useValue(state$.isPlaying)
   const isLoading = useValue(state$.isLoading)
@@ -266,10 +414,36 @@ export function PausedReportButton({
   if (isPlaying || isLoading || isHoldingLiveEdge) return null
 
   return (
-    <YStack position="absolute" left={16} bottom={160 + insets.bottom} zIndex={3}>
+    <YStack position="absolute" left={16} bottom={160 + insets.bottom + bottomOffset} zIndex={3}>
       <ReportButton onPress={() => state$.showReport.set(true)} />
     </YStack>
   )
+}
+
+const RIGHT_CONTROLS_RIGHT = 16
+const RIGHT_CONTROLS_BOTTOM = 160
+const RIGHT_CONTROLS_GAP = 16
+const RIGHT_CONTROL_SIZE = 44
+
+/**
+ * Where floating reactions start: just above the right-side stack (react
+ * button over mute, or mute alone while live), centered on it.
+ */
+export function getFloatingReactionsAnchor({
+  isLive,
+  bottomInset,
+  bottomOffset,
+}: {
+  isLive: boolean
+  bottomInset: number
+  bottomOffset: number
+}) {
+  const buttons = isLive ? 1 : 2
+  const stackHeight = buttons * RIGHT_CONTROL_SIZE + (buttons - 1) * RIGHT_CONTROLS_GAP
+  return {
+    right: RIGHT_CONTROLS_RIGHT,
+    bottom: RIGHT_CONTROLS_BOTTOM + bottomInset + bottomOffset + stackHeight + 8,
+  }
 }
 
 export function RightSideControls({
@@ -280,6 +454,7 @@ export function RightSideControls({
   isMuted,
   onEmojiSelect,
   onToggleMute,
+  bottomOffset = 0,
 }: {
   state$: VideoPlayerState$
   isLive: boolean
@@ -288,6 +463,7 @@ export function RightSideControls({
   isMuted: boolean
   onEmojiSelect: (emoji: string) => boolean
   onToggleMute: () => void
+  bottomOffset?: number
 }) {
   const emojiGridOpen = useValue(state$.emojiGridOpen)
   const insets = useSafeAreaInsets()
@@ -295,9 +471,9 @@ export function RightSideControls({
   return (
     <YStack
       position="absolute"
-      right={16}
-      bottom={160 + insets.bottom}
-      gap={16}
+      right={RIGHT_CONTROLS_RIGHT}
+      bottom={RIGHT_CONTROLS_BOTTOM + insets.bottom + bottomOffset}
+      gap={RIGHT_CONTROLS_GAP}
       alignItems="center"
       zIndex={3}
     >

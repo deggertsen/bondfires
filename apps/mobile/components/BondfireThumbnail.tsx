@@ -5,12 +5,18 @@ import { Image } from 'expo-image'
 import type { BondfireThumbnailFields } from '../lib/bondfireThumbnails'
 import { getBondfireThumbnailPlayback } from '../lib/bondfireThumbnails'
 import type { BondfireThumbnailUrls$ } from '../lib/useBondfireThumbnails'
+import type { ReactionRowVisibility$ } from '../lib/useReactionRowVisibility'
 
 type ThumbnailBondfire = BondfireThumbnailFields & { _id: string }
 
 type BondfireThumbnailSubscriptionProps = {
   bondfire: ThumbnailBondfire
   thumbnailUrls$: BondfireThumbnailUrls$
+}
+
+type ReactionVisibilityProps = {
+  /** List viewability, so a prefetched row flies in once it is scrolled to. */
+  reactionVisibility$?: ReactionRowVisibility$
 }
 
 function useBondfireThumbnailUrl({ bondfire, thumbnailUrls$ }: BondfireThumbnailSubscriptionProps) {
@@ -21,11 +27,23 @@ function useBondfireThumbnailUrl({ bondfire, thumbnailUrls$ }: BondfireThumbnail
 export function BondfireThumbnailRow({
   bondfire,
   thumbnailUrls$,
+  reactionVisibility$,
   ...rowProps
-}: Omit<BondfireRowProps, 'thumbnailUrl'> & BondfireThumbnailSubscriptionProps) {
+}: Omit<BondfireRowProps, 'thumbnailUrl'> &
+  BondfireThumbnailSubscriptionProps &
+  ReactionVisibilityProps) {
+  const hasPendingFlyIn = !!rowProps.onRequestReactionFlyIn
+  // Only rows with a pending fly-in subscribe, and only to their own entry, so
+  // scrolling re-renders nothing else.
+  const reactionChipVisible = useValue(() =>
+    reactionVisibility$ && hasPendingFlyIn
+      ? reactionVisibility$[bondfire._id].get() === true
+      : undefined,
+  )
   return (
     <BondfireRow
       {...rowProps}
+      reactionChipVisible={reactionChipVisible}
       thumbnailUrl={null}
       thumbnailContent={
         <BondfireThumbnailContent

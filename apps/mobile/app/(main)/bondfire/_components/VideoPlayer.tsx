@@ -34,6 +34,7 @@ import { YStack } from 'tamagui'
 import { api } from '../../../../../../convex/_generated/api'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
 import { playbackSize } from '../../../../../../packages/app/src/utils/playbackQualityPolicy'
+import { FloatingReactionsLayer } from '../../../../components/FloatingReactionsLayer'
 import type { ActiveReaction } from '../../../../components/ViewerPresenceStack'
 import { VIDEO_OVERLAY_COLORS as OVERLAY_COLORS } from '../../../../components/videoOverlayColors'
 import { useOptionalQuery } from '../../../../lib/media/useOptionalQuery'
@@ -45,6 +46,7 @@ import {
 } from '../_lib/bondfireDetailHelpers'
 import { createLiveEdgePlayback, LIVE_EDGE_BUFFER_HOLD_MS } from '../_lib/liveEdgePlayback'
 import { createPictureInPicturePlayback } from '../_lib/pictureInPicturePlayback'
+import { buildReactionHeatmap } from '../_lib/reactionHeatmap'
 import { usePlaybackQuality } from '../_lib/usePlaybackQuality'
 import { type CaptionCue, fetchCaptionCues, findCaptionText } from '../_lib/videoCaptions'
 import {
@@ -66,6 +68,8 @@ import {
 } from '../_lib/videoStallRecovery'
 import {
   CaptionOverlay,
+  getFloatingReactionsAnchor,
+  HEATMAP_STRIP_HEIGHT,
   LoadingOverlay,
   PausedReportButton,
   PlaybackErrorOverlay,
@@ -264,6 +268,14 @@ export function VideoPlayer({
   const lastProgressStateUpdateAtRef = useRef(0)
 
   const isPlaying = useValue(state$.isPlaying)
+  const durationMs = useValue(state$.duration)
+  // Built from the visibility-filtered rows playback already replays, so the
+  // markers never point at a reaction the viewer cannot see.
+  const reactionHeatmap = useMemo(
+    () => (isLive ? null : buildReactionHeatmap(reactionsData, durationMs)),
+    [durationMs, isLive, reactionsData],
+  )
+  const heatmapOffset = reactionHeatmap ? HEATMAP_STRIP_HEIGHT : 0
   const videoViewRef = useRef<VideoView>(null)
   const isInPictureInPictureRef = useRef(false)
 
@@ -1371,6 +1383,36 @@ export function VideoPlayer({
     ],
   )
 
+  // Heatmap marker tap: jump to just before the reactions and keep watching.
+  const seekToPlaybackMs = useCallback(
+    (positionMs: number) => {
+      const videoDuration = withCurrentPlayer((currentPlayer) => currentPlayer.duration)
+      if (videoDuration === undefined || !Number.isFinite(videoDuration) || videoDuration <= 0)
+        return
+
+      pictureInPicturePlayback.cancel()
+      const seekTime = Math.min(videoDuration, Math.max(0, positionMs / 1000))
+      const wasPlaying = withCurrentPlayer((currentPlayer) => {
+        currentPlayer.currentTime = seekTime
+        return currentPlayer.playing
+      })
+      if (wasPlaying === undefined) return
+      syncLocalReactionPlaybackAfterSeek(seekTime * 1000)
+      syncCaptionText(seekTime * 1000)
+      state$.progress.set(seekTime / videoDuration)
+      state$.hasEnded.set(false)
+      if (!wasPlaying) togglePlayPause()
+    },
+    [
+      pictureInPicturePlayback,
+      state$,
+      syncCaptionText,
+      syncLocalReactionPlaybackAfterSeek,
+      togglePlayPause,
+      withCurrentPlayer,
+    ],
+  )
+
   const canSeekProgress = Number.isFinite(player?.duration) && (player?.duration ?? 0) > 0
   const canSeekProgressRef = useRef(canSeekProgress)
   const seekToProgressLocationRef = useRef(seekToProgressLocation)
@@ -1593,6 +1635,15 @@ export function VideoPlayer({
         onReactionExpired={handleReactionExpired}
       />
 
+      <FloatingReactionsLayer
+        activeReactions$={state$.activeReactions}
+        {...getFloatingReactionsAnchor({
+          isLive,
+          bottomInset: insets.bottom,
+          bottomOffset: heatmapOffset,
+        })}
+      />
+
       <PlayPauseIndicator state$={state$} isHoldingLiveEdge={isHoldingLiveEdge} />
 
       <LinearGradient
@@ -1631,16 +1682,22 @@ export function VideoPlayer({
         </YStack>
       ) : null}
 
-      <CaptionOverlay state$={state$} bottomOffset={isLive ? 48 : 0} />
+      <CaptionOverlay state$={state$} bottomOffset={(isLive ? 48 : 0) + heatmapOffset} />
 
       <VideoProgressBar
         state$={state$}
         progressBarViewRef={progressBarViewRef}
         onLayout={handleProgressBarLayout}
         panHandlers={progressBarPanResponder.panHandlers}
+        heatmap={reactionHeatmap}
+        onSeekMs={seekToPlaybackMs}
       />
 
-      <PausedReportButton state$={state$} isHoldingLiveEdge={isHoldingLiveEdge} />
+      <PausedReportButton
+        state$={state$}
+        isHoldingLiveEdge={isHoldingLiveEdge}
+        bottomOffset={heatmapOffset}
+      />
 
       <RightSideControls
         state$={state$}
@@ -1650,6 +1707,7 @@ export function VideoPlayer({
         isMuted={isMuted}
         onEmojiSelect={handleEmojiSelect}
         onToggleMute={toggleMute}
+        bottomOffset={heatmapOffset}
       />
 
       <ReportOverlayGate

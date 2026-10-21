@@ -1,7 +1,8 @@
 import { v } from 'convex/values'
+import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
-import { mutation, query } from './_generated/server'
+import { internalMutation, mutation, query } from './_generated/server'
 import { auth } from './auth'
 import {
   buildViewerVisibilityContext,
@@ -13,7 +14,11 @@ import { getEntitlementSubscriptionTier, TIER_RANK } from './entitlements'
 import { throwUserError, withUserFacingErrors } from './errors'
 import { isFreeEmoji, isReactionEmoji } from './lib/emojis'
 import { getVideoLifecycle } from './lib/videoLifecycle'
-import { rankRecentEmojis } from './lib/videoReactions'
+import {
+  rankRecentEmojis,
+  recomputeThreadReactionSummaries,
+  requestReactionSummaryFlush,
+} from './lib/videoReactions'
 
 type VideoReference =
   | { bondfireId: Id<'bondfires'>; bondfireVideoId?: undefined }
@@ -138,7 +143,7 @@ export const addReaction = mutation({
           throwUserError('Please wait before adding more reactions')
         }
 
-        const reactionId = await ctx.db.insert('videoReactions', {
+        const row = {
           bondfireId: args.bondfireId,
           bondfireVideoId: args.bondfireVideoId,
           userId,
@@ -147,7 +152,9 @@ export const addReaction = mutation({
           emoji: args.emoji,
           timestampMs: args.timestampMs,
           createdAt: Date.now(),
-        })
+        }
+        const reactionId = await ctx.db.insert('videoReactions', row)
+        await requestReactionSummaryFlush(ctx, row)
 
         const reaction = await ctx.db.get(reactionId)
         return reaction ?? null
@@ -223,5 +230,59 @@ export const getRecentEmojis = query({
       .collect()
 
     return rankRecentEmojis(reactions.filter((reaction) => isReactionEmoji(reaction.emoji)))
+  },
+})
+
+// ── Reaction summary flush and repair ───────────────────────────────────────
+//
+// See lib/videoReactions.ts. flushReactionSummaries is the coalesced write a
+// reaction insert or delete schedules for its thread. repairReactionSummaries
+// runs the same recompute over every thread, patching only what disagrees: it
+// writes absolute values, so it is safe to rerun. Run it once after deploying
+// the summary fields (dashboard → videoReactions:repairReactionSummaries {});
+// it self-paginates.
+
+export const flushReactionSummaries = internalMutation({
+  args: { bondfireId: v.id('bondfires') },
+  handler: async (ctx, args) => {
+    // Clear the marker first: a reaction that commits after this flush schedules
+    // the next one, and one that committed before it is in the rows read below.
+    const pending = await ctx.db
+      .query('reactionSummaryFlushes')
+      .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
+      .collect()
+    for (const marker of pending) await ctx.db.delete(marker._id)
+    const bondfire = await ctx.db.get(args.bondfireId)
+    if (!bondfire) return { patched: 0 }
+    return { patched: await recomputeThreadReactionSummaries(ctx, bondfire) }
+  },
+})
+
+const REPAIR_BATCH_SIZE = 10
+
+export const repairReactionSummaries = internalMutation({
+  args: {
+    cursor: v.optional(v.string()),
+    batchSize: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const batchSize = args.batchSize ?? REPAIR_BATCH_SIZE
+    const page = await ctx.db
+      .query('bondfires')
+      .paginate({ numItems: batchSize, cursor: args.cursor ?? null })
+
+    let repaired = 0
+    for (const bondfire of page.page) {
+      repaired += await recomputeThreadReactionSummaries(ctx, bondfire)
+    }
+
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.videoReactions.repairReactionSummaries, {
+        cursor: page.continueCursor,
+        batchSize,
+      })
+    }
+
+    return { processed: page.page.length, repaired, isDone: page.isDone }
   },
 })

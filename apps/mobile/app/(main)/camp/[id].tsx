@@ -15,11 +15,13 @@ import {
 import {
   Button,
   closeOpenSwipeableRow,
+  ReactionChip,
   Spinner,
   type SwipeAction,
   SwipeableRow,
   Text,
 } from '@bondfires/ui'
+import { useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
 import {
   AlertTriangle,
@@ -38,8 +40,16 @@ import {
 } from '@tamagui/lucide-icons'
 import { useConvex, useMutation, useQuery } from 'convex/react'
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
-import { useCallback, useState } from 'react'
-import { Alert, FlatList, Modal, Pressable, StatusBar, TextInput } from 'react-native'
+import { useCallback, useRef, useState } from 'react'
+import {
+  Alert,
+  FlatList,
+  Modal,
+  Pressable,
+  StatusBar,
+  TextInput,
+  type ViewToken,
+} from 'react-native'
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
 import { Separator, Image as TamaguiImage, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
@@ -50,7 +60,12 @@ import { useHeaderTopPadding } from '../../../components/UploadStatusLayout'
 import { getBondfireRightSwipeActions } from '../../../lib/bondfireSwipeActions'
 import { isAuthSessionErrorMessage, redirectToCampJoinLogin } from '../../../lib/campJoinAuth'
 import { goBackOrReplace } from '../../../lib/navigation'
+import { getThreadReactionRowProps } from '../../../lib/reactionChipProps'
 import { routes } from '../../../lib/routes'
+import {
+  type ReactionRowVisibility$,
+  useReactionRowVisibility,
+} from '../../../lib/useReactionRowVisibility'
 import { OwnerCampSections } from './OwnerCampSections'
 
 /** Threshold (ms) after which camp loading is considered "slow". */
@@ -101,6 +116,7 @@ type BannedMember = {
 type BondfireData = Doc<'bondfires'> & {
   isLive?: boolean
   livePlaybackId?: string
+  hasNewReactions?: boolean
 }
 
 const REJECTION_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000
@@ -761,12 +777,19 @@ function BondfireRow({
   bondfire,
   onOpen,
   rightActions,
+  reactionVisibility$,
 }: {
   bondfire: BondfireData
   onOpen: () => void
   rightActions?: SwipeAction[]
+  reactionVisibility$: ReactionRowVisibility$
 }) {
   const responses = Math.max(0, bondfire.videoCount - 1)
+  const reaction = getThreadReactionRowProps(bondfire)
+  const hasPendingFlyIn = !!reaction.onRequestReactionFlyIn
+  const reactionChipVisible = useValue(() =>
+    hasPendingFlyIn ? reactionVisibility$[bondfire._id].get() === true : undefined,
+  )
 
   // Swipe-to-reveal is invisible to screen readers — expose the same actions
   // through the accessibility actions menu (VoiceOver rotor / TalkBack).
@@ -807,11 +830,20 @@ function BondfireRow({
           </Text>
         </YStack>
 
-        <XStack alignItems="center" gap={6}>
-          <MessageCircle size={15} color={'$placeholderColor'} />
-          <Text fontSize={13} color={'$placeholderColor'}>
-            {responses}
-          </Text>
+        <XStack alignItems="center" gap={10}>
+          <ReactionChip
+            counts={reaction.reactionCounts}
+            total={reaction.reactionTotal}
+            isNew={reaction.hasNewReactions}
+            onRequestFlyIn={reaction.onRequestReactionFlyIn}
+            isVisible={reactionChipVisible}
+          />
+          <XStack alignItems="center" gap={6}>
+            <MessageCircle size={15} color={'$placeholderColor'} />
+            <Text fontSize={13} color={'$placeholderColor'}>
+              {responses}
+            </Text>
+          </XStack>
         </XStack>
       </XStack>
     </Pressable>
@@ -881,6 +913,12 @@ export default function CampDetailScreen() {
   const { editingBondfire, openEditTitleSheet, closeEditTitleSheet } = useEditTitleSheet()
 
   const convex = useConvex()
+  const { visibleRows$: reactionVisibility$, updateVisibleRows } = useReactionRowVisibility()
+  const handleReactionRowsViewable = useCallback(
+    ({ viewableItems }: { viewableItems: ViewToken[] }) => updateVisibleRows(viewableItems),
+    [updateVisibleRows],
+  )
+  const reactionViewabilityConfig = useRef({ itemVisiblePercentThreshold: 10 }).current
   const [campRetryCount, setCampRetryCount] = useState(0)
   const isCampLoading =
     canLoadScreenData && !!campId && (camp === undefined || bondfires === undefined)
@@ -1184,11 +1222,14 @@ export default function CampDetailScreen() {
         data={bondfires ?? []}
         keyExtractor={(item) => item._id}
         onScrollBeginDrag={closeOpenSwipeableRow}
+        onViewableItemsChanged={handleReactionRowsViewable}
+        viewabilityConfig={reactionViewabilityConfig}
         renderItem={({ item }) => {
           const isBondfireOwner = item.userId === camp.membership?.userId
           return (
             <BondfireRow
               bondfire={item}
+              reactionVisibility$={reactionVisibility$}
               onOpen={() => handleOpenBondfire(item._id)}
               rightActions={getBondfireRightSwipeActions({
                 isOwner: isBondfireOwner,

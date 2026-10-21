@@ -101,8 +101,13 @@ vi.mock('../../app/(main)/bondfire/_lib/usePlaybackQuality', () => ({
   usePlaybackQuality: vi.fn(),
 }))
 // Keep the real player/controller wiring; expose overlay inputs as host props.
+vi.mock('../../components/FloatingReactionsLayer', () => ({
+  FloatingReactionsLayer: 'FloatingReactionsLayer',
+}))
 vi.mock('../../app/(main)/bondfire/_components/VideoPlayerOverlays', () => ({
   CaptionOverlay: 'CaptionOverlay',
+  getFloatingReactionsAnchor: () => ({ bottom: 0, right: 0 }),
+  HEATMAP_STRIP_HEIGHT: 44,
   LoadingOverlay: 'LoadingOverlay',
   PausedReportButton: 'PausedReportButton',
   PlaybackErrorOverlay: 'PlaybackErrorOverlay',
