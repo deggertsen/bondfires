@@ -109,25 +109,74 @@ function isOnScreen(x: number, y: number, width: number, height: number) {
   return width > 0 && y + height > 0 && y < window.height && x < window.width && x + width > 0
 }
 
-/**
- * The reaction summary pill on Bondfire rows and thread-sheet rows: up to
- * three emojis and the total. New reactions tint it with the secondary color.
- * Renders nothing when there are no reactions.
- */
-export function ReactionChip({
-  counts = [],
-  total = 0,
-  isNew = false,
-  size = 'md',
-  onRequestFlyIn,
-}: ReactionChipProps) {
+type ChipBodyProps = {
+  counts: ReactionChipCount[]
+  count: number
+  isNew: boolean
+  size: 'md' | 'sm'
+}
+
+function ReactionChipBody({ counts, count, isNew, size }: ChipBodyProps) {
   const metrics = SIZES[size]
+  return (
+    <XStack
+      height={metrics.height}
+      paddingHorizontal={metrics.paddingX}
+      borderRadius={metrics.height / 2}
+      borderWidth={1}
+      borderColor={isNew ? '$secondary' : '$borderColor'}
+      backgroundColor="$backgroundHover"
+      alignItems="center"
+      gap={4}
+      overflow="hidden"
+    >
+      {isNew ? (
+        <YStack
+          position="absolute"
+          top={0}
+          left={0}
+          right={0}
+          bottom={0}
+          backgroundColor="$secondary"
+          opacity={0.14}
+        />
+      ) : null}
+      <Text fontSize={metrics.emoji} lineHeight={metrics.height - 4}>
+        {counts
+          .slice(0, MAX_SHOWN_EMOJIS)
+          .map((entry) => entry.emoji)
+          .join('')}
+      </Text>
+      <Text
+        fontSize={metrics.count}
+        fontWeight="800"
+        color={isNew ? '$secondary' : '$color'}
+        style={{ fontVariant: ['tabular-nums'] }}
+      >
+        {count}
+      </Text>
+    </XStack>
+  )
+}
+
+function chipLabel(total: number, isNew: boolean) {
+  return `${total} ${total === 1 ? 'reaction' : 'reactions'}${isNew ? ', new' : ''}`
+}
+
+function AnimatedReactionChip({
+  counts,
+  total,
+  isNew,
+  size,
+  onRequestFlyIn,
+}: Required<Omit<ReactionChipProps, 'onRequestFlyIn'>> &
+  Pick<ReactionChipProps, 'onRequestFlyIn'>) {
   const reduceMotion = useReducedMotion()
   const ref = useRef<View>(null)
   const requestedTotal = useRef<number | null>(null)
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
-  const [shownCount, setShownCount] = useState<number | null>(null)
   const playCount = useRef(0)
+  const [shownCount, setShownCount] = useState<number | null>(null)
   const [flights, setFlights] = useState<Flight[]>([])
   const scale = useSharedValue(1)
   const opacity = useSharedValue(1)
@@ -209,54 +258,16 @@ export function ReactionChip({
     if (requestedTotal.current !== null) maybePlay()
   }, [maybePlay])
 
-  if (total <= 0) return null
-
-  const shown = counts.slice(0, MAX_SHOWN_EMOJIS)
-  const label = `${total} ${total === 1 ? 'reaction' : 'reactions'}${isNew ? ', new' : ''}`
-
   return (
     <View
       ref={ref}
       onLayout={maybePlay}
       accessible
-      accessibilityLabel={label}
+      accessibilityLabel={chipLabel(total, isNew)}
       style={{ flexShrink: 0 }}
     >
       <Animated.View style={chipStyle}>
-        <XStack
-          height={metrics.height}
-          paddingHorizontal={metrics.paddingX}
-          borderRadius={metrics.height / 2}
-          borderWidth={1}
-          borderColor={isNew ? '$secondary' : '$borderColor'}
-          backgroundColor="$backgroundHover"
-          alignItems="center"
-          gap={4}
-          overflow="hidden"
-        >
-          {isNew ? (
-            <YStack
-              position="absolute"
-              top={0}
-              left={0}
-              right={0}
-              bottom={0}
-              backgroundColor="$secondary"
-              opacity={0.14}
-            />
-          ) : null}
-          <Text fontSize={metrics.emoji} lineHeight={metrics.height - 4}>
-            {shown.map((entry) => entry.emoji).join('')}
-          </Text>
-          <Text
-            fontSize={metrics.count}
-            fontWeight="800"
-            color={isNew ? '$secondary' : '$color'}
-            style={{ fontVariant: ['tabular-nums'] }}
-          >
-            {shownCount ?? total}
-          </Text>
-        </XStack>
+        <ReactionChipBody counts={counts} count={shownCount ?? total} isNew={isNew} size={size} />
       </Animated.View>
       {flights.map((flight) => (
         <FlyingEmoji
@@ -266,6 +277,47 @@ export function ReactionChip({
           delay={flight.delay}
         />
       ))}
+    </View>
+  )
+}
+
+/**
+ * The reaction summary pill on Bondfire rows and thread-sheet rows: up to
+ * three emojis and the total. New reactions tint it with the secondary color.
+ * Renders nothing when there are no reactions.
+ *
+ * Only a chip that has been offered a fly-in (`onRequestFlyIn`) pays for the
+ * Reanimated hooks and the on-screen measurement; every other chip is a plain
+ * view. Once offered, it stays animated so a fly-in is never cut off when the
+ * offer is withdrawn on the next render.
+ */
+export function ReactionChip({
+  counts = [],
+  total = 0,
+  isNew = false,
+  size = 'md',
+  onRequestFlyIn,
+}: ReactionChipProps) {
+  const animated = useRef(false)
+  if (onRequestFlyIn) animated.current = true
+
+  if (total <= 0) return null
+
+  if (animated.current) {
+    return (
+      <AnimatedReactionChip
+        counts={counts}
+        total={total}
+        isNew={isNew}
+        size={size}
+        onRequestFlyIn={onRequestFlyIn}
+      />
+    )
+  }
+
+  return (
+    <View accessible accessibilityLabel={chipLabel(total, isNew)} style={{ flexShrink: 0 }}>
+      <ReactionChipBody counts={counts} count={total} isNew={isNew} size={size} />
     </View>
   )
 }
