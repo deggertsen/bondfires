@@ -29,6 +29,8 @@ type ThreadSummary = Doc<'bondfires'> & {
   camp: Doc<'camps'> | null
   lastActivityAt: number
   unread: boolean
+  /** Someone else reacted after the viewer last opened the thread. */
+  hasNewReactions: boolean
   participants: ThreadParticipant[]
   badge: BondfireBadge | null
   latestResponseBondfireVideoId?: Id<'bondfireVideos'>
@@ -56,7 +58,9 @@ const MAX_THREAD_LIMIT = 80
 const THREAD_CANDIDATE_MULTIPLIER = 4
 const CLOSE_CIRCLE_LIMIT = 8
 const CLOSE_CIRCLE_THREAD_CANDIDATE_LIMIT = 80
-const THREAD_RESPONSE_SUMMARY_LIMIT = 250
+// Sparse/hidden participants and equal-time activity can require the full scan.
+const THREAD_RESPONSE_SCAN_LIMIT = 250
+const THREAD_AVATAR_LIMIT = 4
 
 function toPublicUser(user: Doc<'users'>): PublicUser {
   return {
@@ -72,49 +76,61 @@ function clampLimit(limit: number | undefined) {
   return Math.min(Math.max(Math.trunc(limit), 1), MAX_THREAD_LIMIT)
 }
 
-async function getParticipantMap(
+async function getThreadResponseSummary(
   ctx: QueryCtx,
   bondfire: Doc<'bondfires'>,
-  args?: {
-    responseLimit?: number
-    viewer?: ViewerVisibilityContext
-    viewerId?: Id<'users'>
+  args: {
+    viewer: ViewerVisibilityContext
+    viewerId: Id<'users'>
   },
 ) {
   const participants = new Map<Id<'users'>, { latestAt: number; videoCount: number }>()
   participants.set(bondfire.userId, { latestAt: bondfire.createdAt, videoCount: 1 })
 
-  const responseQuery = ctx.db
-    .query('bondfireVideos')
-    .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
-    .order('desc')
-  const responses = args?.responseLimit
-    ? await responseQuery.take(args.responseLimit)
-    : await responseQuery.collect()
-
-  let latestResponsePlayback: VideoPlaybackReference | null = null
-  for (const response of responses) {
+  const isVisible = async (response: Doc<'bondfireVideos'>) => {
     if (
       response.moderationStatus === 'removed' ||
       (response.moderationStatus === 'pending_review' &&
-        args?.viewerId !== response.userId &&
-        !args?.viewer?.isAdmin)
+        args.viewerId !== response.userId &&
+        !args.viewer.isAdmin) ||
+      !isPlayableVideoRecord(response)
     ) {
-      continue
+      return false
     }
-    if (!isPlayableVideoRecord(response)) continue
-    // Reject unusable responses before reading their authors or block relationships.
-    if (args?.viewer && !(await isUserContentVisibleToViewer(ctx, response.userId, args.viewer))) {
-      continue
-    }
-    const playback = getPlayableVideoPlayback(response)
-    latestResponsePlayback ??= playback
+    return await isUserContentVisibleToViewer(ctx, response.userId, args.viewer)
+  }
 
-    const current = participants.get(response.userId)
-    participants.set(response.userId, {
-      latestAt: Math.max(current?.latestAt ?? 0, response.createdAt),
-      videoCount: (current?.videoCount ?? 0) + 1,
-    })
+  // Activity and avatars always use chronological order, including sparse and
+  // R2-only threads. Sequence numbers can disagree with createdAt after retries.
+  const responses = ctx.db
+    .query('bondfireVideos')
+    .withIndex('by_bondfire_created', (q) => q.eq('bondfireId', bondfire._id))
+    .order('desc')
+  let scanned = 0
+  let newestVisibleAt = bondfire.createdAt
+  let latestResponsePlayback: VideoPlaybackReference | null = null
+  const responseAuthors = new Set<Id<'users'>>()
+  for await (const response of responses) {
+    // Finish the newest timestamp's ties: the viewer may have posted at exactly
+    // that time, which suppresses unread even if their avatar is not in the four.
+    if (responseAuthors.size >= THREAD_AVATAR_LIMIT && response.createdAt < newestVisibleAt) {
+      break
+    }
+    scanned++
+    if (await isVisible(response)) {
+      latestResponsePlayback ??= getPlayableVideoPlayback(response)
+      newestVisibleAt = Math.max(newestVisibleAt, response.createdAt)
+      if (await getUserCached(ctx, args.viewer, response.userId)) {
+        responseAuthors.add(response.userId)
+      }
+      const current = participants.get(response.userId)
+      participants.set(response.userId, {
+        latestAt: Math.max(current?.latestAt ?? 0, response.createdAt),
+        // This is a sample count, not the row total (bondfire.videoCount).
+        videoCount: (current?.videoCount ?? 0) + 1,
+      })
+    }
+    if (scanned === THREAD_RESPONSE_SCAN_LIMIT) break
   }
 
   return { participants, latestResponsePlayback }
@@ -204,7 +220,7 @@ function getThreadActivityAt(
   )
 }
 
-async function buildThreadSummary(
+export async function buildThreadSummary(
   ctx: QueryCtx,
   args: {
     bondfire: Doc<'bondfires'>
@@ -213,11 +229,10 @@ async function buildThreadSummary(
     pinnedUserIds: Set<Id<'users'>>
   },
 ): Promise<ThreadSummary | null> {
-  const { participants: participantMap, latestResponsePlayback } = await getParticipantMap(
+  const { participants: participantMap, latestResponsePlayback } = await getThreadResponseSummary(
     ctx,
     args.bondfire,
     {
-      responseLimit: THREAD_RESPONSE_SUMMARY_LIMIT,
       viewer: args.viewer,
       viewerId: args.viewerId,
     },
@@ -255,6 +270,12 @@ async function buildThreadSummary(
   const lastViewerActivityAt = participantMap.get(args.viewerId)?.latestAt ?? 0
   const unread =
     lastActivityAt > (readMarker?.lastReadAt ?? 0) && lastActivityAt > lastViewerActivityAt
+  const hasNewReactions = await hasNewReactionsForViewer(
+    ctx,
+    args.bondfire,
+    args.viewerId,
+    readMarker ?? null,
+  )
   const camp = args.bondfire.campId
     ? await getCampCached(ctx, args.viewer, args.bondfire.campId)
     : null
@@ -265,6 +286,7 @@ async function buildThreadSummary(
     camp,
     lastActivityAt,
     unread,
+    hasNewReactions,
     participants,
     badge: null,
     latestResponseBondfireVideoId: latestResponsePlayback?.bondfireVideoId,
@@ -339,7 +361,7 @@ async function listVisiblePrivateCampThreadsByUser(
     }
 
     const camp = await getCampCached(ctx, args.viewer, bondfire.campId)
-    if (!camp || camp.access !== 'invite' || !args.viewer.memberCampIds.has(camp._id)) {
+    if (camp?.access !== 'invite' || !args.viewer.memberCampIds.has(camp._id)) {
       continue
     }
 
@@ -492,6 +514,34 @@ export const listCloseCircle = query({
     return entries
   },
 })
+
+/**
+ * Whether a thread participant should see its reactions as new: someone else
+ * reacted after the viewer last opened the thread (no read marker counts as
+ * never opened). Non-participants never see it. Pass `readMarker` when the
+ * caller already loaded it; `undefined` means "look it up".
+ */
+export async function hasNewReactionsForViewer(
+  ctx: QueryCtx,
+  bondfire: Doc<'bondfires'>,
+  viewerId: Id<'users'> | null,
+  readMarker?: Doc<'bondfireThreadReads'> | null,
+): Promise<boolean> {
+  const lastReactionAt = bondfire.threadLastReactionAt
+  if (!viewerId || !lastReactionAt || !bondfire.threadReactionTotal) return false
+  if (bondfire.threadLastReactorId === viewerId) return false
+  const marker =
+    readMarker !== undefined
+      ? readMarker
+      : await ctx.db
+          .query('bondfireThreadReads')
+          .withIndex('by_user_bondfire', (q) =>
+            q.eq('userId', viewerId).eq('bondfireId', bondfire._id),
+          )
+          .first()
+  if (marker && marker.lastReadAt >= lastReactionAt) return false
+  return await isThreadParticipant(ctx, bondfire, viewerId)
+}
 
 /** Match the existing participant rules, reading only this user's responses. */
 export async function isThreadParticipant(

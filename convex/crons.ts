@@ -33,22 +33,6 @@ crons.interval('resume stale account deletions', { hours: 1 }, internal.accountD
 
 crons.interval('resume retention cleanup', { minutes: 5 }, internal.retentionCleanup.resumeStale)
 
-crons.interval(
-  'disable stale Mux live streams',
-  { minutes: 5 },
-  internal.videos.disableStaleLiveStreams,
-)
-
-// Recover videos stuck in 'processing' / 'waiting_for_upload' when a Mux
-// webhook was missed or unmatched. Queries Mux directly as the source of
-// truth and promotes records to 'ready' or marks them 'errored'.
-crons.interval(
-  'reconcile stuck Mux videos',
-  { minutes: 15 },
-  internal.videos.reconcileStuckMuxVideos,
-  {},
-)
-
 // Store webhooks are the fast path; bounded authoritative re-verification is
 // the backstop for missed, delayed, or out-of-order notifications.
 crons.interval(
@@ -56,15 +40,6 @@ crons.interval(
   { hours: 6 },
   internal.storeBillingActions.reconcileSubscriptions,
   { limit: 20 },
-)
-
-// Give up on live-linked records waiting for a local backup recovery upload
-// after the 7-day window (matches client LOCAL_BACKUP_RETENTION_MS).
-crons.interval(
-  'give up awaiting backup recovery',
-  { hours: 6 },
-  internal.videos.giveUpAwaitingRecovery,
-  {},
 )
 
 // Process frozen camps whose 30-day reclaim window has expired.
@@ -104,15 +79,6 @@ crons.daily(
 // Purge client telemetry logs older than 30 days.
 // Runs daily at 12:00 UTC.
 crons.daily('purge old client logs', { hourUTC: 12, minuteUTC: 0 }, internal.clientLogs.purgeOld)
-
-// Purge muxWebhookEvents older than 30 days.
-// These rows are only used for near-term webhook dedup; safe to delete after 30d.
-// Runs daily at 12:15 UTC, between client log purge and invite code cleanup.
-crons.daily(
-  'purge old mux webhook events',
-  { hourUTC: 12, minuteUTC: 15 },
-  internal.videos.purgeOldWebhookEvents,
-)
 
 crons.daily(
   'cleanup stale abuse windows',

@@ -1,4 +1,4 @@
-import { Button, Text, UserAvatar } from '@bondfires/ui'
+import { Button, ReactionChip, Text, UserAvatar } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { Bell, Check, ChevronDown, ChevronUp, Flame, Share2 } from '@tamagui/lucide-icons'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
@@ -167,6 +167,7 @@ function ThreadBrowserRow({
           chipBackground={'$backgroundPress'}
           headerTrailing={
             <>
+              <ReactionChip counts={item.reactionCounts} total={item.reactionTotal} size="sm" />
               {/* The video a push (or other deep link) opened the thread on. */}
               {isLinked ? <Bell size={12} color={'$secondary'} /> : null}
               {isPlaying ? (
@@ -537,6 +538,11 @@ export function ThreadBrowser({
               chipBackground="rgba(255,255,255,0.14)"
               headerTrailing={
                 <>
+                  <ReactionChip
+                    counts={currentItem.reactionCounts}
+                    total={currentItem.reactionTotal}
+                    size="sm"
+                  />
                   {otherUnwatchedCount > 0 ? (
                     <NewBadge label={`${otherUnwatchedCount} NEW`} />
                   ) : null}

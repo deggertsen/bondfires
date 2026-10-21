@@ -9,6 +9,10 @@ const subscriptionTier = v.union(
   v.literal('pro'),
 )
 
+// Per-emoji reaction counts, highest first, only emojis with a count above
+// zero. Maintained with the reaction rows (see lib/videoReactions.ts).
+const reactionCounts = v.array(v.object({ emoji: v.string(), count: v.number() }))
+
 const storePlatform = v.union(v.literal('ios'), v.literal('android'))
 const storeEntitlementStatus = v.union(
   v.literal('pending_verification'),
@@ -671,6 +675,16 @@ export default defineSchema({
     videoCount: v.number(), // Total videos including responses (for feed ordering)
     viewCount: v.optional(v.number()),
 
+    // Reaction summaries. The first three are the spark video's own reactions;
+    // the thread* fields roll up the spark and every response. Absent means zero.
+    reactionTotal: v.optional(v.number()),
+    reactionCounts: v.optional(reactionCounts),
+    lastReactionAt: v.optional(v.number()),
+    threadReactionTotal: v.optional(v.number()),
+    threadReactionCounts: v.optional(reactionCounts),
+    threadLastReactionAt: v.optional(v.number()),
+    threadLastReactorId: v.optional(v.id('users')),
+
     // Timestamps
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -753,6 +767,11 @@ export default defineSchema({
     // user.responseCount (see responseCounts.ts). Single source of truth for
     // idempotent count/uncount across webhooks, reapers, and cancels.
     countedAt: v.optional(v.number()),
+
+    // This response's own reaction summary. Absent means zero.
+    reactionTotal: v.optional(v.number()),
+    reactionCounts: v.optional(reactionCounts),
+    lastReactionAt: v.optional(v.number()),
 
     // Timestamps
     createdAt: v.number(),
@@ -1110,6 +1129,13 @@ export default defineSchema({
     .index('by_bondfire_video', ['bondfireVideoId', 'timestampMs'])
     .index('by_user_created', ['userId', 'createdAt']),
 
+  // One row per thread whose reaction summaries have a flush scheduled (see
+  // lib/videoReactions.ts). Lets a burst of reactions share one summary write.
+  reactionSummaryFlushes: defineTable({
+    bondfireId: v.id('bondfires'),
+    requestedAt: v.number(),
+  }).index('by_bondfire', ['bondfireId']),
+
   // Presence — real-time viewer tracking
   presence: defineTable({
     videoType: v.union(v.literal('bondfire'), v.literal('response')),
@@ -1212,7 +1238,12 @@ export default defineSchema({
     jobId: v.id('accountDeletionJobs'),
     kind: v.union(v.literal('asset'), v.literal('live_stream'), v.literal('direct_upload')),
     externalId: v.string(),
-    status: v.union(v.literal('pending'), v.literal('deleted'), v.literal('missing')),
+    status: v.union(
+      v.literal('pending'),
+      v.literal('deleted'),
+      v.literal('missing'),
+      v.literal('retired'),
+    ),
     attempts: v.number(),
     lastError: v.optional(v.string()),
     createdAt: v.number(),

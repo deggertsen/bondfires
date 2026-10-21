@@ -7,7 +7,12 @@ import { ThreadBrowser } from '../../app/(main)/bondfire/_components/ThreadBrows
 import type { BondfireVideoItem } from '../../app/(main)/bondfire/_lib/bondfireDetailHelpers'
 import { getThreadCatchUp } from '../../app/(main)/bondfire/_lib/threadCatchUp'
 
-vi.mock('@bondfires/ui', () => ({ Button: 'Button', Text: 'Text', UserAvatar: 'UserAvatar' }))
+vi.mock('@bondfires/ui', () => ({
+  Button: 'Button',
+  ReactionChip: 'ReactionChip',
+  Text: 'Text',
+  UserAvatar: 'UserAvatar',
+}))
 vi.mock('@tamagui/lucide-icons', () => ({
   Bell: 'Bell',
   Check: 'Check',

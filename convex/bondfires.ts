@@ -24,6 +24,7 @@ import {
 } from './bondfireVisibility'
 import { isCampParticipableStatus } from './campLifecycle'
 import { initialModerationStatus, requireUgcPermission } from './contentSafety'
+import { hasNewReactionsForViewer } from './conversations'
 import {
   assertCanCreateBondfire,
   assertVideoDurationWithinTierLimit,
@@ -238,13 +239,15 @@ async function decorateFeedPage(ctx: QueryCtx, bondfires: Doc<'bondfires'>[], li
     limit === undefined ? visibleBondfires : visibleBondfires.slice(0, limit)
   const withCampLabels = await Promise.all(
     selectedBondfires.map(async (bondfire) => {
-      const [campLabel, latestResponse] = await Promise.all([
+      const [campLabel, latestResponse, hasNewReactions] = await Promise.all([
         resolveCampLabel(ctx, bondfire),
         getLatestResponsePlayback(ctx, bondfire._id, viewer),
+        hasNewReactionsForViewer(ctx, bondfire, userId),
       ])
       return {
         ...withLiveFlags(bondfire),
         campLabel,
+        hasNewReactions,
         latestResponseBondfireVideoId: latestResponse?.bondfireVideoId,
         latestResponseMuxPlaybackId: latestResponse?.muxPlaybackId,
         latestResponseMuxPlaybackPolicy: latestResponse?.muxPlaybackPolicy,
@@ -340,10 +343,14 @@ export const listByCamp = query({
 
     const withCampLabels = await Promise.all(
       filtered.map(async (bondfire) => {
-        const latestResponse = await getLatestResponsePlayback(ctx, bondfire._id, viewer)
+        const [latestResponse, hasNewReactions] = await Promise.all([
+          getLatestResponsePlayback(ctx, bondfire._id, viewer),
+          hasNewReactionsForViewer(ctx, bondfire, userId),
+        ])
         return {
           ...withLiveFlags(bondfire),
           campLabel: camp.name,
+          hasNewReactions,
           latestResponseBondfireVideoId: latestResponse?.bondfireVideoId,
           latestResponseMuxPlaybackId: latestResponse?.muxPlaybackId,
           latestResponseMuxPlaybackPolicy: latestResponse?.muxPlaybackPolicy,

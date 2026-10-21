@@ -27,7 +27,7 @@ function makeResponse(overrides: Record<string, unknown> = {}) {
     _id: 'resp1',
     userId: 'user2',
     videoStatus: 'ready',
-    muxPlaybackId: 'resp1-playback',
+    muxPlaybackId: 'resp1',
     muxPlaybackPolicy: 'signed',
     ...overrides,
   }
@@ -46,15 +46,15 @@ describe('buildVideoUrlTargets', () => {
     const targets = buildVideoUrlTargets(bondfire)
 
     expect(targets).toHaveLength(4)
-    expect(targets[1].request?.muxPlaybackId).toBe('resp1-playback')
+    expect(targets[1].request).toEqual({ bondfireVideoId: 'resp1' })
     // The unplayable video holds its slot instead of shifting later videos up
     expect(targets[2].cacheKey).toBeNull()
     expect(targets[2].request).toBeNull()
-    expect(targets[3].request?.muxPlaybackId).toBe('resp3-playback')
+    expect(targets[3].request).toEqual({ bondfireVideoId: 'resp3' })
     expect(targets[3].request?.bondfireVideoId).toBe('resp3')
   })
 
-  it('uses the live playback id for live videos', () => {
+  it('resolves imported media by record ID without requiring provider IDs', () => {
     const bondfire = makeBondfire({
       videoStatus: 'live',
       muxLivePlaybackId: 'main-live-playback',
@@ -70,9 +70,9 @@ describe('buildVideoUrlTargets', () => {
 
     const targets = buildVideoUrlTargets(bondfire)
 
-    expect(targets[0].request?.muxPlaybackId).toBe('main-live-playback')
+    expect(targets[0].request).toEqual({ bondfireId: 'bf1' })
     expect(targets[0].isLive).toBe(true)
-    expect(targets[1].request?.muxPlaybackId).toBe('resp1-live-playback')
+    expect(targets[1].request).toEqual({ bondfireVideoId: 'resp1' })
     expect(targets[1].isLive).toBe(true)
   })
 
@@ -98,23 +98,23 @@ describe('urlsFromCache', () => {
       [
         targets[0].cacheKey as string,
         {
-          url: 'https://stream.mux.com/main.m3u8',
-          captionsUrl: 'https://stream.mux.com/main/text/track.vtt',
+          url: 'https://media.test/imports/main.m3u8',
+          captionsUrl: 'https://media.test/imports/main/text/track.vtt',
         },
       ],
     ])
 
     expect(urlsFromCache(targets, cache)).toEqual([
       {
-        url: 'https://stream.mux.com/main.m3u8',
-        captionsUrl: 'https://stream.mux.com/main/text/track.vtt',
+        url: 'https://media.test/imports/main.m3u8',
+        captionsUrl: 'https://media.test/imports/main/text/track.vtt',
       },
       null,
       null,
     ])
   })
 
-  it('preserves other videos when one video changes status (no blanking)', () => {
+  it('keeps imported media cached when only legacy provider hints change', () => {
     const before = makeBondfire({
       videos: [
         makeResponse({ _id: 'resp1' }),
@@ -135,10 +135,13 @@ describe('urlsFromCache', () => {
     })
     const afterTargets = buildVideoUrlTargets(after)
 
-    expect(urlsFromCache(afterTargets, cache)).toEqual([{ url: 'url-0' }, { url: 'url-1' }, null])
+    expect(urlsFromCache(afterTargets, cache)).toEqual([
+      { url: 'url-0' },
+      { url: 'url-1' },
+      { url: 'url-2' },
+    ])
     const missing = missingUrlRequests(afterTargets, cache)
-    expect(missing).toHaveLength(1)
-    expect(missing[0].request.muxPlaybackId).toBe('resp2-vod')
+    expect(missing).toHaveLength(0)
   })
 
   it('appends the DVR start parameter for live videos', () => {
@@ -148,11 +151,14 @@ describe('urlsFromCache', () => {
     })
     const targets = buildVideoUrlTargets(bondfire)
     const cache = new Map([
-      [targets[0].cacheKey as string, { url: 'https://stream.mux.com/main-live.m3u8?token=abc' }],
+      [
+        targets[0].cacheKey as string,
+        { url: 'https://media.test/imports/main-live.m3u8?token=abc' },
+      ],
     ])
 
     expect(urlsFromCache(targets, cache)).toEqual([
-      { url: 'https://stream.mux.com/main-live.m3u8?token=abc&start=0' },
+      { url: 'https://media.test/imports/main-live.m3u8?token=abc&start=0' },
     ])
   })
 })
@@ -172,7 +178,7 @@ describe('missingUrlRequests', () => {
 
     const missing = missingUrlRequests(targets, cache, inFlight)
 
-    expect(missing.map((entry) => entry.request.muxPlaybackId)).toEqual(['main-playback'])
+    expect(missing.map((entry) => entry.request)).toEqual([{ bondfireId: 'bf1' }])
   })
 
   it('fetches only targets inside the prefetch window', () => {
@@ -190,14 +196,14 @@ describe('missingUrlRequests', () => {
       urlPrefetchWindow(10, targets.length),
     )
 
-    expect(missing.map((entry) => entry.request.muxPlaybackId)).toEqual([
-      'resp8-playback',
-      'resp9-playback',
-      'resp10-playback',
-      'resp11-playback',
-      'resp12-playback',
-      'resp13-playback',
-      'resp14-playback',
+    expect(missing.map((entry) => entry.request.bondfireVideoId)).toEqual([
+      'resp8',
+      'resp9',
+      'resp10',
+      'resp11',
+      'resp12',
+      'resp13',
+      'resp14',
     ])
   })
 })

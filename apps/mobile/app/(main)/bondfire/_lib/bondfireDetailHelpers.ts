@@ -63,6 +63,9 @@ export type BondfireVideoItem = {
   summary?: string
   aiTags?: string[]
   captionsUrl?: string
+  /** This video's own reactions, not the thread's. */
+  reactionCounts?: Array<{ emoji: string; count: number }>
+  reactionTotal?: number
 }
 
 export function clampVideoIndex(index: number | null | undefined, totalVideos: number) {
@@ -153,6 +156,8 @@ export function buildBondfireVideoItems(
       summary: bondfireData.summary,
       aiTags: bondfireData.aiTags,
       captionsUrl: videoUrls[0]?.captionsUrl,
+      reactionCounts: bondfireData.reactionCounts,
+      reactionTotal: bondfireData.reactionTotal,
     },
     ...bondfireData.videos.map((video, index) => ({
       key: video._id,
@@ -172,6 +177,8 @@ export function buildBondfireVideoItems(
       summary: video.summary,
       aiTags: video.aiTags,
       captionsUrl: videoUrls[index + 1]?.captionsUrl,
+      reactionCounts: video.reactionCounts,
+      reactionTotal: video.reactionTotal,
     })),
   ]
 }
@@ -212,26 +219,4 @@ export function mergeBondfireResponsePages(
     processingResponses,
     participants: [...participants.values()].sort((a, b) => b.latestAt - a.latestAt),
   }
-}
-
-/** A missing target is pending until every older page has been tried. Never
- * silently fall back to first-unwatched while a deep link can still resolve. */
-export function getResponseDeepLinkState(
-  data: BondfireDetailData,
-  responseId: string | undefined,
-  hasOlder: boolean,
-) {
-  if (!responseId) return 'none'
-  if (getResponseVideoScrollIndex(data, responseId) !== null) return 'resolved'
-  return hasOlder ? 'loading' : 'unavailable'
-}
-
-/** Preserve the playing identity when older pages prepend or live rows change. */
-export function getRetainedVideoIndex(
-  previousKeys: string[],
-  nextKeys: string[],
-  currentIndex: number,
-) {
-  const nextIndex = nextKeys.indexOf(previousKeys[currentIndex])
-  return nextIndex < 0 ? clampVideoIndex(currentIndex, nextKeys.length) : nextIndex
 }

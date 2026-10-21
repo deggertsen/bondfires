@@ -11,6 +11,7 @@ import {
 import { getUserAgeBand } from './agePolicy'
 import { auth } from './auth'
 import { isModeratedContentVisible, requireUgcPermission } from './contentSafety'
+import { hasNewReactionsForViewer } from './conversations'
 import {
   assertVideoDurationWithinTierLimit,
   getEntitlementSubscriptionTier,
@@ -1236,10 +1237,13 @@ export const listMyPersonalBondfires = query({
       .collect()
 
     return await Promise.all(
-      bondfires.map(async (bondfire) => ({
-        ...bondfire,
-        participantCount: await getActivePersonalBondfireParticipantCount(ctx, bondfire._id),
-      })),
+      bondfires.map(async (bondfire) => {
+        const [participantCount, hasNewReactions] = await Promise.all([
+          getActivePersonalBondfireParticipantCount(ctx, bondfire._id),
+          hasNewReactionsForViewer(ctx, bondfire, userId),
+        ])
+        return { ...bondfire, participantCount, hasNewReactions }
+      }),
     )
   },
 })

@@ -62,10 +62,12 @@ import {
 } from '../../../lib/homeFeedState'
 import { getMyFireRowCreatorName } from '../../../lib/myFireRow'
 import { shouldLoadSparsePage, uniqueById } from '../../../lib/pagination'
+import { getThreadReactionRowProps } from '../../../lib/reactionChipProps'
 import { routes } from '../../../lib/routes'
 import { useBondfireThumbnails } from '../../../lib/useBondfireThumbnails'
 import { useHomeFeedScrollRestoration } from '../../../lib/useHomeFeedScrollRestoration'
 import { useHomeFeedSnapshot } from '../../../lib/useHomeFeedSnapshot'
+import { useReactionRowVisibility } from '../../../lib/useReactionRowVisibility'
 
 type BondfireData = Doc<'bondfires'> &
   BondfireThumbnailFields & {
@@ -73,6 +75,7 @@ type BondfireData = Doc<'bondfires'> &
     livePlaybackId?: string
     campLabel?: string
     badge?: 'sparked' | 'invited' | 'kindled' | null
+    hasNewReactions?: boolean
   }
 type JoinedCamp = Doc<'camps'> & { membership: Doc<'campMembers'> }
 
@@ -96,6 +99,7 @@ type MyFire = Doc<'bondfires'> &
     camp: Doc<'camps'> | null
     lastActivityAt: number
     unread: boolean
+    hasNewReactions?: boolean
     participants: ThreadParticipant[]
     badge?: 'sparked' | 'invited' | 'kindled' | null
     /**
@@ -201,6 +205,7 @@ function toBondfireRowProps(
     statusLabel: hasViewedToday(bondfire._id) ? 'Viewed' : 'New',
     badge: bondfire.badge,
     participants: [], // Feed doesn't load participants yet — empty for now
+    ...getThreadReactionRowProps(bondfire),
     actions: getBondfireSwipeActions({
       isOwner,
       isPinned,
@@ -252,6 +257,7 @@ function toMyFireRowProps(
       displayName: participant.user.displayName ?? participant.user.name,
       photoUrl: participant.user.photoUrl,
     })),
+    ...getThreadReactionRowProps(thread),
     actions: getBondfireSwipeActions({
       isOwner,
       isPinned,
@@ -947,8 +953,10 @@ export default function HomeScreen() {
     [reportBondfire],
   )
 
+  const { visibleRows$: reactionVisibility$, updateVisibleRows } = useReactionRowVisibility()
   const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      updateVisibleRows(viewableItems)
       const items = filteredRef.current
       if (!shouldRunBackgroundWork) return
       if (items.length === 0) return
@@ -974,7 +982,7 @@ export default function HomeScreen() {
 
       ensureThumbnailUrls(items.slice(minIndex, maxIndex + 1))
     },
-    [ensureThumbnailUrls, shouldRunBackgroundWork],
+    [ensureThumbnailUrls, shouldRunBackgroundWork, updateVisibleRows],
   )
 
   useEffect(() => {
@@ -1064,7 +1072,14 @@ export default function HomeScreen() {
             () => handleUnpin(item._id),
             () => handleReport(item._id, item.userId),
           )
-          return <BondfireThumbnailRow {...props} bondfire={item} thumbnailUrls$={thumbnailUrls$} />
+          return (
+            <BondfireThumbnailRow
+              {...props}
+              bondfire={item}
+              thumbnailUrls$={thumbnailUrls$}
+              reactionVisibility$={reactionVisibility$}
+            />
+          )
         }}
         ItemSeparatorComponent={() => (
           <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />

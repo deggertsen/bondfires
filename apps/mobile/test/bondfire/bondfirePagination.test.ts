@@ -9,6 +9,7 @@ import { api } from '../../../../convex/_generated/api'
 import schema from '../../../../convex/schema'
 import {
   type BondfireDetailData,
+  buildBondfireVideoItems,
   getInitialVideoIndex,
   mergeBondfireResponsePages,
 } from '../../app/(main)/bondfire/_lib/bondfireDetailHelpers'
@@ -18,6 +19,11 @@ import {
   getThreadFoldedCount,
 } from '../../app/(main)/bondfire/_lib/threadCatchUp'
 import { useBondfireThreadPosition } from '../../app/(main)/bondfire/_lib/useBondfireThreadPosition'
+import { useBondfireVideoUrls } from '../../app/(main)/bondfire/_lib/useBondfireVideoUrls'
+
+vi.mock('@bondfires/app', () => ({ telemetry: { warn: vi.fn(), error: vi.fn() } }))
+vi.mock('convex/react', () => ({ useAction: () => getCapability }))
+const getCapability = vi.fn()
 
 vi.mock('react-native', () => ({ Dimensions: { get: () => ({ width: 390 }) } }))
 const modules = import.meta.glob('../../../../convex/**/*.ts')
@@ -71,27 +77,24 @@ describe('paginated thread arrival', () => {
     const loadOlder = vi.fn()
     const scrollToIndex = vi.fn()
     const onArrival = vi.fn()
-    let state: ReturnType<typeof useBondfireThreadPosition> | undefined
+    let state: ReturnType<typeof useBondfireThreadPosition>['state'] | undefined
     function Harness({
       data,
       hasOlder,
-      currentVideoIndex = 0,
       responseId = ids.responseIds[35],
     }: {
       data: BondfireDetailData
       hasOlder: boolean
-      currentVideoIndex?: number
       responseId?: string
     }) {
       state = useBondfireThreadPosition({
         data,
         responseId,
         hasOlder,
-        currentVideoIndex,
         loadOlder,
         scrollToIndex,
         onArrival,
-      })
+      }).state
       return null
     }
     const newest = await page()
@@ -115,9 +118,7 @@ describe('paginated thread arrival', () => {
     const oldest = await page(older.continueCursor)
     rows.push(...oldest.page)
     data = mergeBondfireResponsePages(metadata, rows)
-    await act(async () =>
-      renderer.update(createElement(Harness, { data, hasOlder: false, currentVideoIndex: 16 })),
-    )
+    await act(async () => renderer.update(createElement(Harness, { data, hasOlder: false })))
     expect(scrollToIndex).toHaveBeenLastCalledWith(36)
     expect(data.videos[35]._id).toBe(ids.responseIds[35])
     expect(onArrival).toHaveBeenCalledTimes(1) // Loading history is not a new arrival.
@@ -127,6 +128,134 @@ describe('paginated thread arrival', () => {
       renderer.update(createElement(Harness, { data, hasOlder: false, responseId: 'missing' })),
     )
     expect(state).toBe('unavailable')
+    await act(async () => renderer.unmount())
+  })
+
+  it('keeps the selected identity in every render and reloads it after a subscription reset', async () => {
+    ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+    const { ids, metadata, page } = await fixture()
+    const newest = await page()
+    const older = await page(newest.continueCursor)
+    const oldest = await page(older.continueCursor)
+    const tail = mergeBondfireResponsePages(metadata, newest.page)
+    const all = mergeBondfireResponsePages(metadata, [
+      ...newest.page,
+      ...older.page,
+      ...oldest.page,
+    ])
+    const loadOlder = vi.fn()
+    const scrollToIndex = vi.fn()
+    const onArrival = vi.fn()
+    const renderedKeys: (string | undefined)[] = []
+    let position: ReturnType<typeof useBondfireThreadPosition> | undefined
+    function Harness({ data, hasOlder }: { data?: BondfireDetailData; hasOlder: boolean }) {
+      position = useBondfireThreadPosition({
+        data,
+        responseId: undefined,
+        hasOlder,
+        loadOlder,
+        scrollToIndex,
+        onArrival,
+      })
+      if (data && position.state !== 'loading') {
+        renderedKeys.push(
+          [data._id, ...data.videos.map((video) => video._id)][position.currentVideoIndex],
+        )
+      }
+      return null
+    }
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(createElement(Harness, { data: tail, hasOlder: true }))
+    })
+    expect(position?.currentVideoIndex).toBe(1)
+    renderedKeys.length = 0
+    await act(async () => renderer.update(createElement(Harness, { data: all, hasOlder: false })))
+    expect(new Set(renderedKeys)).toEqual(new Set([ids.responseIds[70]]))
+    expect(position?.currentVideoIndex).toBe(71)
+    expect(scrollToIndex).toHaveBeenLastCalledWith(71)
+
+    // Select old history, then skip queries while the recorder is open.
+    scrollToIndex.mockClear()
+    await act(async () => position?.onVideoIndexChange(10))
+    expect(scrollToIndex).not.toHaveBeenCalled() // Native swipes already moved the list.
+    await act(async () => renderer.update(createElement(Harness, { hasOlder: true })))
+    expect(position?.state).toBe('loading')
+    renderedKeys.length = 0
+    await act(async () => renderer.update(createElement(Harness, { data: tail, hasOlder: true })))
+    expect(position?.state).toBe('loading')
+    expect(loadOlder).toHaveBeenCalled()
+    expect(renderedKeys).toEqual([])
+    await act(async () => renderer.update(createElement(Harness, { data: all, hasOlder: false })))
+    expect(new Set(renderedKeys)).toEqual(new Set([ids.responseIds[9]]))
+    expect(scrollToIndex).toHaveBeenLastCalledWith(10)
+    expect(onArrival).toHaveBeenCalledTimes(1)
+
+    // Deletion falls back only after history is exhausted, without a new arrival.
+    const removed = {
+      ...all,
+      videos: all.videos.filter((video) => video._id !== ids.responseIds[9]),
+    }
+    await act(async () =>
+      renderer.update(createElement(Harness, { data: removed, hasOlder: false })),
+    )
+    expect(position?.state).toBe('none')
+    expect(position?.currentVideoIndex).toBe(10)
+    expect(renderedKeys.at(-1)).toBe(ids.responseIds[10])
+    expect(onArrival).toHaveBeenCalledTimes(1)
+    await act(async () => renderer.unmount())
+  })
+
+  it('never assigns a cached URL to another video while pages prepend or requests finish', async () => {
+    ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+    const { metadata, page } = await fixture()
+    const newest = await page()
+    const older = await page(newest.continueCursor)
+    const tail = mergeBondfireResponsePages(metadata, newest.page)
+    const expanded = mergeBondfireResponsePages(metadata, [...newest.page, ...older.page])
+    const requests: {
+      items: { bondfireId?: string; bondfireVideoId?: string }[]
+      resolve: (urls: { hdUrl: string }[]) => void
+    }[] = []
+    const getVideoUrlsBatch = vi.fn(
+      ({ items }) =>
+        new Promise<{ hdUrl: string }[]>((resolve) => requests.push({ items, resolve })),
+    )
+    const frames: ReturnType<typeof buildBondfireVideoItems>[] = []
+    function Harness({ data, index }: { data: BondfireDetailData; index: number }) {
+      const urls = useBondfireVideoUrls({
+        bondfireData: data,
+        currentVideoIndex: index,
+        getVideoUrlsBatch,
+      })
+      frames.push(buildBondfireVideoItems(data, urls))
+      return null
+    }
+    const finish = async (request: (typeof requests)[number]) =>
+      act(async () =>
+        request.resolve(
+          request.items.map((item) => ({
+            hdUrl: `https://video.test/${item.bondfireVideoId ?? item.bondfireId}`,
+          })),
+        ),
+      )
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(createElement(Harness, { data: tail, index: 1 }))
+    })
+    await finish(requests[0])
+    // Start fetching older history, then change the window before it finishes.
+    await act(async () => renderer.update(createElement(Harness, { data: expanded, index: 1 })))
+    const pending = requests[1]
+    await act(async () => renderer.update(createElement(Harness, { data: tail, index: 1 })))
+    await finish(pending)
+    await act(async () => renderer.update(createElement(Harness, { data: expanded, index: 51 })))
+    for (const frame of frames) {
+      for (const video of frame) {
+        if (video.url) expect(video.url).toBe(`https://video.test/${video.key}`)
+      }
+    }
+    expect(frames.at(-1)?.[51].url).toBe(`https://video.test/${tail.videos[0]._id}`)
     await act(async () => renderer.unmount())
   })
 

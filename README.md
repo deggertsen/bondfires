@@ -12,7 +12,7 @@ A video sharing social app where users create "bondfires" (video posts) and othe
 | Backend/Database | Convex |
 | Authentication | Convex Auth |
 | Navigation | Expo Router |
-| Video Streaming | Private R2/HLS (legacy Mux playback for migrated videos) |
+| Video Streaming | Private R2/HLS (including migrated historical videos) |
 | Profile Photo Storage | Convex File Storage |
 | Video Metadata | react-native-compressor |
 | Monorepo | Turborepo |
@@ -91,23 +91,14 @@ Set these in the Convex dashboard for video and image storage:
 RESEND_API_KEY=your-resend-api-key
 EMAIL_FROM=Bondfires <support@bondfires.org>
 
-# Mux Video for new bondfire videos
-MUX_TOKEN_ID=your-mux-token-id
-MUX_TOKEN_SECRET=your-mux-token-secret
-MUX_WEBHOOK_SECRET=your-mux-webhook-secret
-MUX_PLAYBACK_POLICY=public
-MUX_SIGNING_KEY_ID=your-mux-signing-key-id
-MUX_SIGNING_PRIVATE_KEY=your-mux-private-key
-MUX_UPLOAD_CORS_ORIGIN=*
-MUX_VIDEO_QUALITY=basic
-MUX_LIVE_RECONNECT_WINDOW_SECONDS=30
-MUX_LIVE_RECONNECT_SLATE_URL=https://bondfires.app/images/mux-live-slate.png
+# Private R2/HLS media service; secrets must match the media Worker
+MEDIA_WORKER_URL=https://your-media-worker.example.com
+MEDIA_TOKEN_SECRET=your-media-token-secret
+MEDIA_WORKER_SECRET=your-media-worker-secret
 
 # AI thread insights (convex/ai.ts): per-video summaries/tags + thread titles
-# from Mux auto-generated captions. When unset, transcripts still store but
-# summary generation fails (logged); recover after setting the key with
-# `npx convex run videos:backfillVideoInsights`. OPENROUTER_MODEL is optional
-# (default z-ai/glm-4.5-air).
+# from stored transcripts. OPENROUTER_MODEL is optional
+# (default z-ai/glm-4.5-air). Captions do not require this key.
 OPENROUTER_API_KEY=your-openrouter-api-key
 OPENROUTER_MODEL=z-ai/glm-4.5-air
 ```
@@ -117,13 +108,10 @@ configuration. The complete key inventory and provider setup are documented in
 [`docs/store-billing-lifecycle.md`](docs/store-billing-lifecycle.md); never copy those credentials
 into `apps/mobile/.env`.
 
-Configure the Mux webhook endpoint to point at the Convex HTTP action path
-`https://<your-convex-deployment>.convex.site/mux/webhook`.
-Signing key variables are required for private camp video playback and any other
-video created with a signed Mux playback policy. The private key can be stored as
-raw PEM with escaped newlines or as a base64-encoded PEM.
-`MUX_LIVE_RECONNECT_SLATE_URL` must be publicly downloadable by Mux when each
-live recording starts; otherwise Mux falls back to its default slate.
+The runtime requires no Mux credentials or webhook. See
+[`docs/alpha-video-rollout.md`](docs/alpha-video-rollout.md) for media Worker setup and
+[`docs/mux-retirement.md`](docs/mux-retirement.md) for migrated playback compatibility,
+external asset retirement, and the account-deletion confirmation gate.
 
 ### Development Setup
 

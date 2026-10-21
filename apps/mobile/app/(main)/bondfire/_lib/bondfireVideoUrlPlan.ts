@@ -8,7 +8,7 @@ export function withLiveDvrStart(url: string, isLive: boolean): string {
 }
 
 export type VideoUrlRequest = {
-  muxPlaybackId: string
+  muxPlaybackId?: string
   muxPlaybackPolicy?: 'public' | 'signed'
   bondfireId?: Id<'bondfires'>
   bondfireVideoId?: Id<'bondfireVideos'>
@@ -42,15 +42,6 @@ export type VideoUrlTarget = {
   isSegmented?: boolean
 }
 
-type PlayableVideoFields = Pick<
-  BondfireDetailData,
-  'videoStatus' | 'muxLivePlaybackId' | 'muxPlaybackId'
->
-
-export function getPlaybackIdForVideo(video: PlayableVideoFields) {
-  return (video.videoStatus ?? 'ready') === 'live' ? video.muxLivePlaybackId : video.muxPlaybackId
-}
-
 export function shouldLoadMainVideoUrls(bondfireData: BondfireDetailData) {
   const status = bondfireData.videoStatus ?? 'ready'
   return status === 'ready' || status === 'live'
@@ -58,9 +49,7 @@ export function shouldLoadMainVideoUrls(bondfireData: BondfireDetailData) {
 
 export function buildVideoUrlTargets(bondfireData: BondfireDetailData): VideoUrlTarget[] {
   const mainIsLive = bondfireData.videoStatus === 'live'
-  const mainPlaybackId = shouldLoadMainVideoUrls(bondfireData)
-    ? getPlaybackIdForVideo(bondfireData)
-    : null
+  const mainPlayable = shouldLoadMainVideoUrls(bondfireData)
 
   const targets: VideoUrlTarget[] = [
     bondfireData.segmentRecordingId && shouldLoadMainVideoUrls(bondfireData)
@@ -71,12 +60,10 @@ export function buildVideoUrlTargets(bondfireData: BondfireDetailData): VideoUrl
           isSegmented: true,
           captionsReadyAt: bondfireData.captionsReadyAt,
         }
-      : mainPlaybackId
+      : mainPlayable
         ? {
-            cacheKey: `${mainPlaybackId}|${bondfireData.muxPlaybackPolicy ?? 'public'}|bondfire:${bondfireData._id}`,
+            cacheKey: `import:bondfire:${bondfireData._id}`,
             request: {
-              muxPlaybackId: mainPlaybackId,
-              muxPlaybackPolicy: bondfireData.muxPlaybackPolicy,
               bondfireId: bondfireData._id,
             },
             isLive: mainIsLive,
@@ -86,7 +73,7 @@ export function buildVideoUrlTargets(bondfireData: BondfireDetailData): VideoUrl
 
   for (const video of bondfireData.videos) {
     const isLive = video.videoStatus === 'live'
-    const playbackId = getPlaybackIdForVideo(video)
+    const playable = ['ready', 'live'].includes(video.videoStatus ?? 'ready')
     targets.push(
       video.segmentRecordingId && ['ready', 'live'].includes(video.videoStatus ?? '')
         ? {
@@ -96,12 +83,10 @@ export function buildVideoUrlTargets(bondfireData: BondfireDetailData): VideoUrl
             isSegmented: true,
             captionsReadyAt: video.captionsReadyAt,
           }
-        : playbackId
+        : playable
           ? {
-              cacheKey: `${playbackId}|${video.muxPlaybackPolicy ?? 'public'}|response:${video._id}`,
+              cacheKey: `import:response:${video._id}`,
               request: {
-                muxPlaybackId: playbackId,
-                muxPlaybackPolicy: video.muxPlaybackPolicy,
                 bondfireVideoId: video._id,
               },
               isLive,
