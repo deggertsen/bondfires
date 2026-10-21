@@ -11,9 +11,9 @@ import {
 } from '@bondfires/app'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused, useNavigation } from '@react-navigation/native'
-import { useAction, useMutation, useQuery } from 'convex/react'
+import { useAction, useMutation, usePaginatedQuery, useQuery } from 'convex/react'
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { Alert, Animated, AppState, type FlatList, InteractionManager } from 'react-native'
 import { api } from '../../../../../convex/_generated/api'
 import type { Id } from '../../../../../convex/_generated/dataModel'
@@ -37,15 +37,13 @@ import {
   type BondfireDetailData,
   type BondfireVideoItem,
   buildBondfireVideoItems,
-  clampVideoIndex,
-  getInitialVideoIndex,
-  getResponseVideoScrollIndex,
+  mergeBondfireResponsePages,
   SCREEN_WIDTH,
   type ScrollToIndexFailedInfo,
   STUCK_PROCESSING_TELEMETRY_THRESHOLD_MS,
 } from './_lib/bondfireDetailHelpers'
-import type { VideoPlaybackUrls } from './_lib/bondfireVideoUrlPlan'
-import { getThreadCatchUp, type ThreadCatchUp } from './_lib/threadCatchUp'
+import type { ThreadCatchUp } from './_lib/threadCatchUp'
+import { useBondfireThreadPosition } from './_lib/useBondfireThreadPosition'
 import { useBondfireVideoUrls } from './_lib/useBondfireVideoUrls'
 
 type WatchEventType = 'start' | 'milestone_25' | 'milestone_50' | 'milestone_75' | 'complete'
@@ -96,8 +94,6 @@ export default function BondfireDetailScreen() {
   const canLoadScreenData = isFocused
 
   const screenState$ = useObservable({
-    currentVideoIndex: 0,
-    videoUrls: [] as (VideoPlaybackUrls | null)[],
     isAppActive: AppState.currentState === 'active',
     isScrubbing: false,
     // Per arrival (a new deep link re-arms it), not per mount: the playback
@@ -108,8 +104,6 @@ export default function BondfireDetailScreen() {
   })
   const pendingPulse = useRef(new Animated.Value(0.55)).current
 
-  const currentVideoIndex = useValue(screenState$.currentVideoIndex)
-  const videoUrls = useValue(screenState$.videoUrls)
   const isAppActive = useValue(screenState$.isAppActive)
   const isScrubbing = useValue(screenState$.isScrubbing)
   const catchUp = useValue(screenState$.catchUp)
@@ -117,10 +111,29 @@ export default function BondfireDetailScreen() {
   const currentUserId = useValue(appStore$.userId)
 
   const bondfireId = id as Id<'bondfires'>
-  const bondfireData = useQuery(
+  const bondfireMetadata = useQuery(
     api.bondfires.getWithVideos,
-    canLoadScreenData ? { bondfireId } : 'skip',
-  ) as BondfireDetailData | null | undefined
+    canLoadScreenData ? { bondfireId, metadataOnly: true } : 'skip',
+  )
+  const {
+    results: responsePages,
+    status: pageStatus,
+    loadMore,
+  } = usePaginatedQuery(
+    api.bondfires.getResponsePage,
+    canLoadScreenData && bondfireMetadata ? { bondfireId } : 'skip',
+    { initialNumItems: 50 },
+  )
+  const hasOlder = pageStatus !== 'Exhausted'
+  const loadingOlder = pageStatus === 'LoadingMore' || pageStatus === 'LoadingFirstPage'
+  const bondfireData = useMemo(() => {
+    if (!bondfireMetadata) return bondfireMetadata
+    if (pageStatus === 'LoadingFirstPage') return undefined
+    return mergeBondfireResponsePages(bondfireMetadata, responsePages)
+  }, [bondfireMetadata, responsePages, pageStatus])
+  const loadOlderResponses = useCallback(() => {
+    if (pageStatus === 'CanLoadMore') loadMore(50)
+  }, [pageStatus, loadMore])
   const unavailableReason = useQuery(
     api.bondfires.getUnavailableReason,
     canLoadScreenData && bondfireData === null ? { bondfireId } : 'skip',
@@ -134,13 +147,6 @@ export default function BondfireDetailScreen() {
   const markThreadRead = useMutation(api.conversations.markThreadRead)
   const discardDraft = useMutation(api.personalBondfires.discardDraftBondfire)
   const markInviteSeen = useMutation(api.inviteClaims.markInviteSeen)
-  const setVideoUrls = useCallback(
-    (urls: (VideoPlaybackUrls | null)[]) => {
-      screenState$.videoUrls.set(urls)
-    },
-    [screenState$],
-  )
-
   const hasRedirectedToJoinGate = useRef(false)
   useEffect(() => {
     if (hasRedirectedToJoinGate.current) return
@@ -182,8 +188,6 @@ export default function BondfireDetailScreen() {
     typeof InteractionManager.runAfterInteractions
   > | null>(null)
   const restoreRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const restoreTargetRef = useRef<{ key: string; savedIndex: number } | null>(null)
-  const restoredPositionKeyRef = useRef<string | null>(null)
   const recordedWatchEventsRef = useRef<Set<string>>(new Set())
 
   const loggedPlaybackStateRef = useRef<string | null>(null)
@@ -283,8 +287,6 @@ export default function BondfireDetailScreen() {
     (index: number) => {
       clearScheduledRestoreScroll()
 
-      if (index === 0) return
-
       restoreScrollTaskRef.current = InteractionManager.runAfterInteractions(() => {
         restoreScrollTaskRef.current = null
         scrollToVideoIndex(index, false)
@@ -296,8 +298,6 @@ export default function BondfireDetailScreen() {
   useEffect(() => {
     return clearScheduledRestoreScroll
   }, [clearScheduledRestoreScroll])
-
-  useBondfireVideoUrls({ bondfireData, currentVideoIndex, getVideoUrlsBatch, setVideoUrls })
 
   useEffect(() => {
     if (!bondfireId || !currentUserId || !bondfireData) return
@@ -319,59 +319,65 @@ export default function BondfireDetailScreen() {
     markViewed(bondfireId)
   }, [bondfireId, bondfireData, currentUserId])
 
+  const markedThreadReadRef = useRef<string | null>(null)
   useEffect(() => {
     if (!bondfireId || !bondfireData || !currentUserId) return
-    const isParticipant = (bondfireData.participants ?? []).some(
-      (participant) => participant.user._id === currentUserId,
-    )
-    if (!isParticipant) return
-
-    markThreadRead({ bondfireId }).catch((error) => {
+    // Loaded participants are only a window: an earlier responder must still
+    // clear their unread marker. The existing indexed server check decides.
+    // Older-page loads and watch-flag updates do not need another write.
+    const key = `${bondfireId}:${currentUserId}:${bondfireData.videos.at(-1)?._id ?? 'spark'}`
+    if (markedThreadReadRef.current === key) return
+    markedThreadReadRef.current = key
+    markThreadRead({ bondfireId, skipNonParticipant: true }).catch((error) => {
+      markedThreadReadRef.current = null
       telemetry.error('bondfire:thread', 'Failed to mark Bondfire thread read', {
         error: String(error),
       })
     })
   }, [bondfireData, bondfireId, currentUserId, markThreadRead])
 
+  const restoreThreadPosition = useCallback(
+    (index: number) => {
+      setFeedActiveBondfireId(bondfireId)
+      scheduleRestoreScroll(index)
+    },
+    [bondfireId, scheduleRestoreScroll],
+  )
+  const snapshotArrival = useCallback(
+    (arrival: ThreadCatchUp) => {
+      screenState$.catchUp.set(arrival)
+      screenState$.catchUpAutoOpenPending.set(arrival.autoOpen)
+    },
+    [screenState$],
+  )
+  const {
+    state: deepLinkState,
+    currentVideoIndex,
+    onVideoIndexChange: handleVideoIndexChange,
+  } = useBondfireThreadPosition({
+    data: bondfireData,
+    responseId: deepLinkVideoId,
+    hasOlder,
+    loadOlder: loadOlderResponses,
+    scrollToIndex: restoreThreadPosition,
+    onArrival: snapshotArrival,
+  })
+
+  const unavailableLinkRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!bondfireData) return
-
-    const deepLinkIndex = getResponseVideoScrollIndex(bondfireData, deepLinkVideoId)
-    const restoreTargetKey = deepLinkVideoId
-      ? `${bondfireId}:${deepLinkVideoId}:${deepLinkIndex === null ? 'pending' : 'resolved'}`
-      : `${bondfireId}:saved`
-
-    const total = 1 + bondfireData.videos.length
-
-    if (restoreTargetRef.current?.key !== restoreTargetKey) {
-      const savedIndex = deepLinkIndex ?? getInitialVideoIndex(bondfireData)
-      restoreTargetRef.current = { key: restoreTargetKey, savedIndex }
-      restoredPositionKeyRef.current = null
-
-      const arrivalCatchUp = getThreadCatchUp(
-        [bondfireData, ...bondfireData.videos].map((video) => ({
-          key: video._id,
-          watchedByViewer: video.watchedByViewer ?? false,
-        })),
-        clampVideoIndex(savedIndex, total),
-      )
-      screenState$.catchUp.set(arrivalCatchUp)
-      screenState$.catchUpAutoOpenPending.set(arrivalCatchUp.autoOpen)
-    }
-
-    setFeedActiveBondfireId(bondfireId)
-
-    const clamped = clampVideoIndex(restoreTargetRef.current.savedIndex, total)
-    const restoredPositionKey = `${bondfireId}:${clamped}`
-    if (restoredPositionKeyRef.current === restoredPositionKey) return
-    restoredPositionKeyRef.current = restoredPositionKey
-
-    screenState$.currentVideoIndex.set(clamped)
-    scheduleRestoreScroll(clamped)
-  }, [bondfireData, bondfireId, deepLinkVideoId, scheduleRestoreScroll, screenState$])
+    const key = `${bondfireId}:${deepLinkVideoId}`
+    if (deepLinkState !== 'unavailable' || unavailableLinkRef.current === key) return
+    unavailableLinkRef.current = key
+    Alert.alert('Response unavailable', 'This response is no longer available to play.')
+  }, [bondfireId, deepLinkVideoId, deepLinkState])
+  const videoUrls = useBondfireVideoUrls({
+    bondfireData: deepLinkState === 'loading' ? undefined : bondfireData,
+    currentVideoIndex,
+    getVideoUrlsBatch,
+  })
 
   useEffect(() => {
-    if (!bondfireId) return
+    if (!bondfireId || deepLinkState === 'loading') return
     const indexToPersist = currentVideoIndex
 
     if (persistPositionTimerRef.current) {
@@ -388,7 +394,7 @@ export default function BondfireDetailScreen() {
         persistPositionTimerRef.current = null
       }
     }
-  }, [bondfireId, currentVideoIndex])
+  }, [bondfireId, currentVideoIndex, deepLinkState])
 
   const handleBackPress = useCallback(() => {
     goBackOrReplace(router, navigation, routes.feed)
@@ -484,13 +490,6 @@ export default function BondfireDetailScreen() {
     screenState$.catchUpAutoOpenPending.set(false)
   }, [screenState$])
 
-  const handleVideoIndexChange = useCallback(
-    (index: number) => {
-      screenState$.currentVideoIndex.set(index)
-    },
-    [screenState$],
-  )
-
   const handleScrollToIndexFailed = useCallback(
     ({ index, averageItemLength }: ScrollToIndexFailedInfo) => {
       if (index < 0) return
@@ -516,7 +515,7 @@ export default function BondfireDetailScreen() {
     [scrollToVideoIndex],
   )
 
-  if (bondfireData === undefined) {
+  if (bondfireData === undefined || (bondfireData && deepLinkState === 'loading')) {
     return <BondfireLoadingScreen />
   }
 
@@ -600,12 +599,6 @@ export default function BondfireDetailScreen() {
     return <BondfireErroredScreen {...statusScreenProps} bondfireData={bondfireData} />
   }
 
-  const totalVideos = 1 + bondfireData.videos.length
-  const initialVideoIndex = clampVideoIndex(
-    getResponseVideoScrollIndex(bondfireData, deepLinkVideoId) ??
-      getInitialVideoIndex(bondfireData),
-    totalVideos,
-  )
   const videoItems = buildBondfireVideoItems(bondfireData, videoUrls)
 
   return (
@@ -627,11 +620,14 @@ export default function BondfireDetailScreen() {
       onProgress={handleProgress}
       onScrubbingChange={handleScrubbingChange}
       onVideoIndexChange={handleVideoIndexChange}
-      initialVideoIndex={initialVideoIndex}
+      initialVideoIndex={currentVideoIndex}
       catchUp={catchUp}
       catchUpAutoOpenPending={catchUpAutoOpenPending}
       onCatchUpAutoOpened={handleCatchUpAutoOpened}
       linkedVideoKey={deepLinkVideoId}
+      hasOlderResponses={hasOlder}
+      loadingOlderResponses={loadingOlder}
+      onLoadOlderResponses={loadOlderResponses}
       onScrollToIndexFailed={handleScrollToIndexFailed}
     />
   )

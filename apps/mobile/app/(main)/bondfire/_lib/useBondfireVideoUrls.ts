@@ -1,6 +1,6 @@
 import { telemetry } from '@bondfires/app'
 import { useAction } from 'convex/react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useReducer, useRef } from 'react'
 import { api } from '../../../../../../convex/_generated/api'
 import type { BondfireDetailData } from './bondfireDetailHelpers'
 import {
@@ -11,7 +11,6 @@ import {
   urlsFromCache,
   type VideoPlaybackUrls,
   type VideoUrlRequest,
-  type VideoUrlTarget,
 } from './bondfireVideoUrlPlan'
 
 type GetVideoUrlsBatch = (args: {
@@ -22,12 +21,10 @@ export function useBondfireVideoUrls({
   bondfireData,
   currentVideoIndex,
   getVideoUrlsBatch,
-  setVideoUrls,
 }: {
   bondfireData: BondfireDetailData | null | undefined
   currentVideoIndex: number
   getVideoUrlsBatch: GetVideoUrlsBatch
-  setVideoUrls: (urls: (VideoPlaybackUrls | null)[]) => void
 }) {
   const getCapability = useAction(api.segmentMedia.capability)
   // URLs live for the whole screen visit (signed tokens last 12h). Keyed per
@@ -35,7 +32,11 @@ export function useBondfireVideoUrls({
   // refetches only that video instead of blanking the whole set mid-playback.
   const cacheRef = useRef<Map<string, VideoPlaybackUrls>>(new Map())
   const inFlightRef = useRef<Set<string>>(new Set())
-  const latestTargetsRef = useRef<VideoUrlTarget[]>([])
+  const [, refreshUrls] = useReducer((version: number) => version + 1, 0)
+  const targets = useMemo(
+    () => (bondfireData ? buildVideoUrlTargets(bondfireData) : []),
+    [bondfireData],
+  )
   const warnedMissingPlaybackIdRef = useRef<string | null>(null)
   const disposedRef = useRef(false)
 
@@ -47,15 +48,7 @@ export function useBondfireVideoUrls({
   }, [])
 
   useEffect(() => {
-    if (!bondfireData) {
-      latestTargetsRef.current = []
-      setVideoUrls([])
-      return
-    }
-
-    const targets = buildVideoUrlTargets(bondfireData)
-    latestTargetsRef.current = targets
-    setVideoUrls(urlsFromCache(targets, cacheRef.current))
+    if (!bondfireData) return
 
     if (!shouldLoadMainVideoUrls(bondfireData)) return
 
@@ -111,10 +104,7 @@ export function useBondfireVideoUrls({
           }
         })
         if (disposedRef.current) return
-        // Resolve against the latest targets, not this effect run's: a newer
-        // run may have already replaced them (and skipped these in-flight
-        // keys), and its own batch won't re-deliver these URLs.
-        setVideoUrls(urlsFromCache(latestTargetsRef.current, cacheRef.current))
+        refreshUrls()
       })
       .catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error)
@@ -126,5 +116,9 @@ export function useBondfireVideoUrls({
       .finally(() => {
         for (const entry of missing) inFlightRef.current.delete(entry.cacheKey)
       })
-  }, [bondfireData, currentVideoIndex, getVideoUrlsBatch, getCapability, setVideoUrls])
+  }, [bondfireData, targets, currentVideoIndex, getVideoUrlsBatch, getCapability])
+
+  // Resolve during render, never publish an index-based array from an effect:
+  // prepending a page must not briefly attach the old URLs to different videos.
+  return urlsFromCache(targets, cacheRef.current)
 }

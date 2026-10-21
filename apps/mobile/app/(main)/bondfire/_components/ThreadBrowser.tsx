@@ -335,6 +335,9 @@ export function ThreadBrowser({
   catchUpAutoOpenPending,
   onCatchUpAutoOpened,
   linkedVideoKey,
+  hasOlderResponses,
+  loadingOlderResponses,
+  onLoadOlderResponses,
   participants,
   processingCount,
   canRespond,
@@ -350,6 +353,9 @@ export function ThreadBrowser({
   catchUpAutoOpenPending: boolean
   onCatchUpAutoOpened: () => void
   linkedVideoKey?: string
+  hasOlderResponses: boolean
+  loadingOlderResponses: boolean
+  onLoadOlderResponses: () => void
   participants?: ThreadParticipant[]
   processingCount: number
   canRespond: boolean
@@ -363,6 +369,7 @@ export function ThreadBrowser({
   const earlierExpandedByUser = useValue(state$.earlierExpanded)
   const listRef = useRef<FlatList<ThreadBrowserEntry>>(null)
   const pendingListOffsetRef = useRef<number | null>(null)
+  const olderLoadPlayingKeyRef = useRef<string | null>(null)
   const listHeightRef = useRef(0)
   const insets = useSafeAreaInsets()
 
@@ -383,8 +390,15 @@ export function ThreadBrowser({
   const playingEarlier = currentVideoIndex < foldedCount
   const earlierExpanded = earlierExpandedByUser || playingEarlier
   const layout = useMemo(
-    () => buildThreadBrowserLayout({ videoKeys, rowHeight, catchUp, earlierExpanded }),
-    [videoKeys, rowHeight, catchUp, earlierExpanded],
+    () =>
+      buildThreadBrowserLayout({
+        videoKeys,
+        rowHeight,
+        catchUp,
+        earlierExpanded,
+        hasOlder: hasOlderResponses,
+      }),
+    [videoKeys, rowHeight, catchUp, earlierExpanded, hasOlderResponses],
   )
   // Read at scroll time rather than as an effect dependency: the playing-row
   // scroll should follow the sheet opening and the playing video, while
@@ -395,8 +409,11 @@ export function ThreadBrowser({
   // Imperative FlatList scroll (external object) to the playing row — the
   // most recent video when the whole thread is watched, since that is where
   // playback starts.
+  const playingKey = videoItems[currentVideoIndex]?.key
   const scrollToPlayingRow = useCallback(
     (animated: boolean) => {
+      if (state$.open.peek() && olderLoadPlayingKeyRef.current === playingKey) return
+      olderLoadPlayingKeyRef.current = null
       const playingOffset = videoOffsetsRef.current[currentVideoIndex] ?? 0
       // Stay at the top while the playing row already fits there, so a
       // catch-up arrival shows the fold row and the start of what's new.
@@ -406,7 +423,7 @@ export function ThreadBrowser({
         animated,
       })
     },
-    [currentVideoIndex, rowHeight],
+    [currentVideoIndex, rowHeight, playingKey, state$],
   )
 
   // While the sheet is closed, keep the list on the playing row without
@@ -459,7 +476,16 @@ export function ThreadBrowser({
     // above the new section (under the sticky header) and older ones a scroll
     // up. Folding returns to the top, where the fold row is.
     pendingListOffsetRef.current = expanding
-      ? Math.max(0, (foldedCount - EARLIER_ROWS_SHOWN_ON_EXPAND) * rowHeight)
+      ? Math.max(
+          0,
+          buildThreadBrowserLayout({
+            videoKeys,
+            rowHeight,
+            catchUp,
+            earlierExpanded: true,
+            hasOlder: hasOlderResponses,
+          }).videoOffsets[foldedCount - EARLIER_ROWS_SHOWN_ON_EXPAND] ?? 0,
+        )
       : 0
     state$.earlierExpanded.set(expanding)
   }
@@ -559,13 +585,17 @@ export function ThreadBrowser({
               {title}
             </Text>
             <Text fontSize={11} color={'$placeholderColor'}>
-              {totalVideos} {totalVideos === 1 ? 'video' : 'videos'}
+              {totalVideos}
+              {hasOlderResponses ? ' loaded' : ''} {totalVideos === 1 ? 'video' : 'videos'}
               {unwatchedCount > 0 ? ` · ${unwatchedCount} new` : ''}
               {processingCount > 0 ? ` · ${processingCount} processing` : ''}
             </Text>
           </XStack>
           <FlatList
             ref={listRef}
+            windowSize={5}
+            initialNumToRender={12}
+            maxToRenderPerBatch={12}
             data={layout.entries}
             keyExtractor={(entry) => entry.key}
             getItemLayout={(data, index) => ({
@@ -577,7 +607,9 @@ export function ThreadBrowser({
               listHeightRef.current = event.nativeEvent.layout.height
               if (!state$.open.peek()) scrollToPlayingRow(false)
             }}
-            stickyHeaderIndices={foldedCount > 0 && earlierExpanded ? [0] : undefined}
+            stickyHeaderIndices={
+              foldedCount > 0 && earlierExpanded ? [hasOlderResponses ? 1 : 0] : undefined
+            }
             onContentSizeChange={() => {
               const offset = pendingListOffsetRef.current
               if (offset === null) {
@@ -590,6 +622,39 @@ export function ThreadBrowser({
             }}
             renderItem={({ item: entry }) => {
               switch (entry.kind) {
+                case 'loadOlder':
+                  return (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="See older responses"
+                      disabled={loadingOlderResponses}
+                      onPress={() => {
+                        olderLoadPlayingKeyRef.current = playingKey ?? null
+                        pendingListOffsetRef.current = 0
+                        onLoadOlderResponses()
+                      }}
+                    >
+                      <XStack
+                        height={THREAD_SECTION_HEIGHTS.earlierRow}
+                        paddingHorizontal={8}
+                        alignItems="center"
+                        gap={10}
+                      >
+                        <YStack flex={1}>
+                          <Text fontSize={13} fontWeight="700" color={'$color'}>
+                            See older responses
+                          </Text>
+                          <Text fontSize={11} color={'$placeholderColor'}>
+                            Older history may include unwatched videos
+                          </Text>
+                        </YStack>
+                        <Text fontSize={11} color={'$placeholderColor'}>
+                          {loadingOlderResponses ? 'Loading…' : 'Show'}
+                        </Text>
+                        <ChevronUp size={14} color={'$placeholderColor'} />
+                      </XStack>
+                    </Pressable>
+                  )
                 case 'earlier':
                   return (
                     <EarlierVideosRow
