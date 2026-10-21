@@ -191,6 +191,6 @@ Because the heatmap uses the filtered rows, its counts can be lower than the lis
 - [ ] Counts on list rows are visible to everyone who can see the row, not only the video owner. Owner: David. Change this before implementation if the pill should be owner-only.
 - [ ] No reaction notification in this slice. Owner: David. Confirm that stays deferred.
 - [ ] The new-reactions marker is for every thread participant, not only the creator. Owner: David. Narrow it if only the creator should see it.
-- [ ] Fly-in trigger: once per increase in the thread total, per device, at most 4 rows per 1.5s burst. Owner: David. The alternative is to play it on every feed open for threads with unread reactions.
-- [ ] Should thread-sheet chips also fly in when the sheet opens, or stay settled as drafted? Owner: David.
-- [ ] The separate pop-out "Burst" for live arrivals: is the replayed fly-in enough? Owner: David.
+- [ ] Fly-in trigger: provisionally accepted (David, 2026-10-21) as built: it plays once each time the thread total grows on a device, for at most 4 rows per 1.5s burst. Playing it every time would get annoying. Revisit after device testing; the knobs are `REACTION_FLY_IN_BURST_LIMIT` and `REACTION_FLY_IN_BURST_WINDOW_MS` in `packages/app/src/utils/reactionFlyIn.ts`. Owner: David.
+- [x] Thread-sheet chips stay settled; they don't fly in when the sheet opens (David, 2026-10-21).
+- [x] No separate pop-out "Burst" for live arrivals. Replaying the fly-in for reactions that land while a row is on screen is enough (David, 2026-10-21).
