@@ -24,11 +24,17 @@ export type ReactionChipProps = {
   isNew?: boolean
   size?: 'md' | 'sm'
   /**
-   * Asked when the chip is first laid out on screen, and again when its total
-   * grows while on screen. Return the total this device last showed (0 when
-   * never) to play the fly-in from there, or null to render settled.
+   * Asked when the chip is on screen, and again when its total grows while on
+   * screen. Return the total this device last showed (0 when never) to play
+   * the fly-in from there, or null to render settled.
    */
   onRequestFlyIn?: (total: number) => number | null
+  /**
+   * Whether the row is on screen, from the list's viewability. Pass it for
+   * FlatList rows, which mount ahead of the viewport; when omitted, the chip
+   * measures itself on layout instead.
+   */
+  isVisible?: boolean
 }
 
 const MAX_SHOWN_EMOJIS = 3
@@ -169,8 +175,9 @@ function AnimatedReactionChip({
   isNew,
   size,
   onRequestFlyIn,
-}: Required<Omit<ReactionChipProps, 'onRequestFlyIn'>> &
-  Pick<ReactionChipProps, 'onRequestFlyIn'>) {
+  isVisible,
+}: Required<Omit<ReactionChipProps, 'onRequestFlyIn' | 'isVisible'>> &
+  Pick<ReactionChipProps, 'onRequestFlyIn' | 'isVisible'>) {
   const reduceMotion = useReducedMotion()
   const ref = useRef<View>(null)
   const requestedTotal = useRef<number | null>(null)
@@ -245,18 +252,29 @@ function AnimatedReactionChip({
   const maybePlay = useCallback(() => {
     if (!onRequestFlyIn || reduceMotion || total <= 0) return
     if (requestedTotal.current !== null && total <= requestedTotal.current) return
-    ref.current?.measureInWindow((x, y, width, height) => {
-      if (!isOnScreen(x, y, width, height)) return
+    const claim = () => {
       requestedTotal.current = total
       const fromTotal = onRequestFlyIn(total)
       if (fromTotal !== null && fromTotal < total) play(fromTotal)
+    }
+    if (isVisible !== undefined) {
+      if (isVisible) claim()
+      return
+    }
+    ref.current?.measureInWindow((x, y, width, height) => {
+      if (isOnScreen(x, y, width, height)) claim()
     })
-  }, [onRequestFlyIn, play, reduceMotion, total])
+  }, [isVisible, onRequestFlyIn, play, reduceMotion, total])
 
-  // A total that grows while the chip is mounted (a live reaction) asks again.
+  // Ask again when the row scrolls into view or its total grows (a live
+  // reaction). A chip that was off screen at layout keeps asking until it is
+  // seen; one that already played asks only when its total grows past that.
+  const maybePlayRef = useRef(maybePlay)
+  maybePlayRef.current = maybePlay
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-ask only when these change
   useEffect(() => {
-    if (requestedTotal.current !== null) maybePlay()
-  }, [maybePlay])
+    maybePlayRef.current()
+  }, [total, isVisible])
 
   return (
     <View
@@ -297,6 +315,7 @@ export function ReactionChip({
   isNew = false,
   size = 'md',
   onRequestFlyIn,
+  isVisible,
 }: ReactionChipProps) {
   const animated = useRef(false)
   if (onRequestFlyIn) animated.current = true
@@ -311,6 +330,7 @@ export function ReactionChip({
         isNew={isNew}
         size={size}
         onRequestFlyIn={onRequestFlyIn}
+        isVisible={isVisible}
       />
     )
   }

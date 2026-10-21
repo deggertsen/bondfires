@@ -67,6 +67,7 @@ import { routes } from '../../../lib/routes'
 import { useBondfireThumbnails } from '../../../lib/useBondfireThumbnails'
 import { useHomeFeedScrollRestoration } from '../../../lib/useHomeFeedScrollRestoration'
 import { useHomeFeedSnapshot } from '../../../lib/useHomeFeedSnapshot'
+import { useReactionRowVisibility } from '../../../lib/useReactionRowVisibility'
 
 type BondfireData = Doc<'bondfires'> &
   BondfireThumbnailFields & {
@@ -952,8 +953,10 @@ export default function HomeScreen() {
     [reportBondfire],
   )
 
+  const { visibleRows$: reactionVisibility$, updateVisibleRows } = useReactionRowVisibility()
   const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      updateVisibleRows(viewableItems)
       const items = filteredRef.current
       if (!shouldRunBackgroundWork) return
       if (items.length === 0) return
@@ -979,7 +982,7 @@ export default function HomeScreen() {
 
       ensureThumbnailUrls(items.slice(minIndex, maxIndex + 1))
     },
-    [ensureThumbnailUrls, shouldRunBackgroundWork],
+    [ensureThumbnailUrls, shouldRunBackgroundWork, updateVisibleRows],
   )
 
   useEffect(() => {
@@ -1069,7 +1072,14 @@ export default function HomeScreen() {
             () => handleUnpin(item._id),
             () => handleReport(item._id, item.userId),
           )
-          return <BondfireThumbnailRow {...props} bondfire={item} thumbnailUrls$={thumbnailUrls$} />
+          return (
+            <BondfireThumbnailRow
+              {...props}
+              bondfire={item}
+              thumbnailUrls$={thumbnailUrls$}
+              reactionVisibility$={reactionVisibility$}
+            />
+          )
         }}
         ItemSeparatorComponent={() => (
           <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />

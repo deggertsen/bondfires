@@ -45,6 +45,8 @@ export type BondfireRowProps = {
   hasNewReactions?: boolean
   /** See ReactionChip: decides whether the chip plays its fly-in. */
   onRequestReactionFlyIn?: (total: number) => number | null
+  /** See ReactionChip: the row's on-screen state from list viewability. */
+  reactionChipVisible?: boolean
   /** Swipe actions revealed by swiping LEFT (destructive / admin) */
   actions: SwipeAction[]
   /** Swipe actions revealed by swiping RIGHT (e.g. Edit — owner only) */
@@ -139,6 +141,7 @@ export function BondfireRow({
   reactionTotal,
   hasNewReactions,
   onRequestReactionFlyIn,
+  reactionChipVisible,
   actions,
   rightActions,
   onOpen,
@@ -245,6 +248,7 @@ export function BondfireRow({
               total={reactionTotal}
               isNew={hasNewReactions}
               onRequestFlyIn={onRequestReactionFlyIn}
+              isVisible={reactionChipVisible}
             />
             {campLabel ? (
               <YStack

@@ -14,8 +14,8 @@ import { useIsFocused } from '@react-navigation/native'
 import { AlertTriangle, ChevronLeft, Flame, Pin, RefreshCw } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Alert, FlatList, Pressable, RefreshControl, StatusBar } from 'react-native'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Alert, FlatList, Pressable, RefreshControl, StatusBar, type ViewToken } from 'react-native'
 import { Separator, useTheme, variableToString, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
@@ -33,6 +33,7 @@ import { getMyFireRowCreatorName } from '../../../lib/myFireRow'
 import { getThreadReactionRowProps } from '../../../lib/reactionChipProps'
 import { routes } from '../../../lib/routes'
 import { useBondfireThumbnails } from '../../../lib/useBondfireThumbnails'
+import { useReactionRowVisibility } from '../../../lib/useReactionRowVisibility'
 
 type ThreadParticipant = {
   user: PublicUser
@@ -242,6 +243,12 @@ export default function MyFiresScreen() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [pinnedFirst, setPinnedFirst] = useState(false)
+  const { visibleRows$: reactionVisibility$, updateVisibleRows } = useReactionRowVisibility()
+  const handleViewableItemsChanged = useCallback(
+    ({ viewableItems }: { viewableItems: ViewToken[] }) => updateVisibleRows(viewableItems),
+    [updateVisibleRows],
+  )
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 10 }).current
   const [threads, setThreads] = useState<MyFire[] | undefined>(undefined)
   const invitedRows = useQuery(api.inviteClaims.listUnseenInvites, canLoadTabData ? {} : 'skip') as
     | InviteRow[]
@@ -515,8 +522,17 @@ export default function MyFiresScreen() {
             () => handleReport(item._id, item.userId),
             () => openEditTitleSheet(item._id, item.title ?? '', item.creatorName ?? undefined),
           )
-          return <BondfireThumbnailRow {...props} bondfire={item} thumbnailUrls$={thumbnailUrls$} />
+          return (
+            <BondfireThumbnailRow
+              {...props}
+              bondfire={item}
+              thumbnailUrls$={thumbnailUrls$}
+              reactionVisibility$={reactionVisibility$}
+            />
+          )
         }}
+        onViewableItemsChanged={handleViewableItemsChanged}
+        viewabilityConfig={viewabilityConfig}
         ItemSeparatorComponent={() => (
           <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
         )}
