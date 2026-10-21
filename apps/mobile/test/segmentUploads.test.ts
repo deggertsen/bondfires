@@ -239,8 +239,9 @@ it('cancels a hung PUT, retains the media, and allows the next pass to resume', 
   seedCapture()
   state.hangSegment = true
   const pass = queue.runSegmentUploads(convex, 'owner')
+  expect(await queue.runSegmentUploads(convex, 'owner')).toBe('busy')
   await vi.advanceTimersByTimeAsync(120_001)
-  await pass
+  expect(await pass).toBe('started')
   expect(state.cancel).toHaveBeenCalledOnce()
   expect(state.files.has(root + id + '.json')).toBe(true)
   expect(queue.segmentUploadError(id)).toBeTruthy()
@@ -298,7 +299,13 @@ describe('upload status reporting', () => {
     state.failSegment = true
     await queue.runSegmentUploads(convex, 'owner')
     expect(seen.latest()).toEqual([
-      { localId: id, isResponse: false, bondfireId: 'bondfire1', paused: true },
+      {
+        localId: id,
+        isResponse: false,
+        bondfireId: 'bondfire1',
+        paused: true,
+        failure: 'unavailable',
+      },
     ])
     const reportsWhilePaused = seen.jobs.length
     await queue.runSegmentUploads(convex, 'owner')

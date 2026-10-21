@@ -268,6 +268,7 @@ export function UploadStatusBanner({
           paddingHorizontal={16}
           borderRadius={999}
           alignItems="center"
+          justifyContent="center"
           backgroundColor={tone === 'error' ? '$primary' : 'transparent'}
           borderWidth={tone === 'error' ? 0 : 1}
           borderColor="$borderColor"
@@ -276,6 +277,7 @@ export function UploadStatusBanner({
             fontSize={13}
             fontWeight={tone === 'error' ? '700' : '600'}
             color={tone === 'error' ? '$background' : '$color'}
+            numberOfLines={1}
           >
             {actionLabel}
           </Text>
@@ -320,8 +322,10 @@ export function UploadStatusBanner({
                 accessibilityRole="button"
                 accessibilityLabel={`${title}. ${message}`}
                 accessibilityHint={actionLabel}
+                accessibilityLiveRegion="polite"
                 accessibilityActions={accessibilityActions}
                 onAccessibilityAction={handleAccessibilityAction}
+                style={({ pressed }) => ({ opacity: pressed ? 0.72 : 1 })}
               >
                 {content}
               </Pressable>

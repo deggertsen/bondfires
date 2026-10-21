@@ -12,6 +12,12 @@ export const UPLOAD_COMPLETION_HOLD_MS = 5_000
 /** What kind of video is in flight; decides "response" vs "Bondfire" copy. */
 export type UploadSubject = 'response' | 'bondfire' | 'recording'
 
+/** Why the latest upload pass failed. User-facing copy is derived from this, never from raw errors. */
+export type UploadFailureKind = 'unavailable' | 'timeout' | 'unauthorized' | 'server' | 'network'
+
+/** Acknowledgement for a Retry tap. Cleared by the banner once it has been readable. */
+export type UploadRetryNotice = 'started' | 'busy'
+
 /** One segmented capture job as reported by the segment upload loop. */
 export interface SegmentJobStatus {
   localId: string
@@ -20,6 +26,8 @@ export interface SegmentJobStatus {
   bondfireId?: string
   /** True after an upload pass failed, until a later pass makes progress. */
   paused: boolean
+  /** Set with `paused` and cleared on the next segment that actually uploads. */
+  failure?: UploadFailureKind
 }
 
 export interface UploadCompletion {
@@ -40,6 +48,10 @@ export type UploadStatusState =
       count: number
       subject: UploadSubject
       reason: 'offline' | 'retrying'
+      /** Present while a Retry tap is being acknowledged. */
+      notice?: UploadRetryNotice
+      /** Why the latest pass failed, when the queue reported one. */
+      failure?: UploadFailureKind
     }
   | {
       kind: 'completed'
@@ -55,11 +67,43 @@ export interface UploadStatusInput {
   lastCompletion: UploadCompletion | null
   /** Completions at or before this time were dismissed by the user. */
   completionDismissedAt: number
+  /** Set while Retry now should visibly acknowledge the tap. */
+  retryNotice?: UploadRetryNotice | null
   now: number
 }
 
 function sharedSubject(jobs: SegmentJobStatus[]): UploadSubject {
   return jobs.length === 1 ? (jobs[0].isResponse ? 'response' : 'bondfire') : 'recording'
+}
+
+const FAILURE_PRIORITY: UploadFailureKind[] = [
+  'unavailable',
+  'unauthorized',
+  'timeout',
+  'server',
+  'network',
+]
+
+function dominantFailure(jobs: SegmentJobStatus[]): UploadFailureKind | undefined {
+  const present = new Set(jobs.flatMap((job) => (job.failure ? [job.failure] : [])))
+  return FAILURE_PRIORITY.find((kind) => present.has(kind))
+}
+
+function pausedState(
+  input: UploadStatusInput,
+  jobs: SegmentJobStatus[],
+  reason: 'offline' | 'retrying',
+): Extract<UploadStatusState, { kind: 'paused' }> {
+  const failure = reason === 'retrying' ? dominantFailure(jobs) : undefined
+  const notice = input.retryNotice || undefined
+  return {
+    kind: 'paused',
+    count: jobs.length,
+    subject: sharedSubject(jobs),
+    reason,
+    ...(failure ? { failure } : {}),
+    ...(notice ? { notice } : {}),
+  }
 }
 
 /** Priority: paused > uploading > completed (held ~5s) > idle. */
@@ -68,17 +112,8 @@ export function deriveUploadStatus(input: UploadStatusInput): UploadStatusState 
   const uploading = jobs.filter((job) => !job.paused)
 
   if (jobs.length > 0) {
-    if (!input.isOnline) {
-      return { kind: 'paused', count: jobs.length, subject: sharedSubject(jobs), reason: 'offline' }
-    }
-    if (uploading.length === 0) {
-      return {
-        kind: 'paused',
-        count: jobs.length,
-        subject: sharedSubject(jobs),
-        reason: 'retrying',
-      }
-    }
+    if (!input.isOnline) return pausedState(input, jobs, 'offline')
+    if (uploading.length === 0) return pausedState(input, jobs, 'retrying')
     return { kind: 'uploading', count: jobs.length, subject: sharedSubject(jobs) }
   }
 
@@ -117,6 +152,33 @@ function noun(subject: UploadSubject): string {
   }
 }
 
+function offlineMessage(state: Extract<UploadStatusState, { kind: 'paused' }>): string {
+  return state.count > 1
+    ? 'Your recordings are saved on this phone and will upload automatically.'
+    : `Your ${noun(state.subject)} is saved on this phone and will upload automatically.`
+}
+
+function failureMessage(failure: UploadFailureKind | undefined): string {
+  switch (failure) {
+    case 'unavailable':
+      return 'Server unavailable, still saved on this phone.'
+    case 'timeout':
+      return 'The connection timed out, still saved on this phone.'
+    case 'unauthorized':
+      return "The upload couldn't be authorized, still saved on this phone."
+    case 'server':
+      return 'The server rejected the upload, still saved on this phone.'
+    case 'network':
+      return "Couldn't reach the server, still saved on this phone."
+    default:
+      return 'Saved on this phone · retrying automatically'
+  }
+}
+
+function pausedMessage(state: Extract<UploadStatusState, { kind: 'paused' }>): string {
+  return state.reason === 'offline' ? offlineMessage(state) : failureMessage(state.failure)
+}
+
 /** Banner copy for a non-idle state. */
 export function describeUploadStatus(
   state: Exclude<UploadStatusState, { kind: 'idle' }>,
@@ -130,22 +192,19 @@ export function describeUploadStatus(
             : `Uploading your ${noun(state.subject)}`,
         message: "Keep using the app — we'll finish in the background.",
       }
-    case 'paused':
+    case 'paused': {
+      const message = pausedMessage(state)
+      if (state.notice === 'started') {
+        return { title: 'Retrying now…', message, actionLabel: 'Retrying…' }
+      }
+      if (state.notice === 'busy') {
+        return { title: 'Retry already in progress', message, actionLabel: 'Retrying…' }
+      }
       if (state.reason === 'offline') {
-        return {
-          title: 'Waiting for a connection',
-          message:
-            state.count > 1
-              ? 'Your recordings are saved on this phone and will upload automatically.'
-              : `Your ${noun(state.subject)} is saved on this phone and will upload automatically.`,
-          actionLabel: 'Retry',
-        }
+        return { title: 'Waiting for a connection', message, actionLabel: 'Retry' }
       }
-      return {
-        title: 'Upload paused — retrying',
-        message: 'Saved on this phone · retrying automatically',
-        actionLabel: 'Retry now',
-      }
+      return { title: 'Retrying upload', message, actionLabel: 'Retry now' }
+    }
     case 'completed':
       return {
         title: `Your ${noun(state.subject)} is live`,

@@ -4,6 +4,7 @@ import {
   deriveUploadStatus,
   type SegmentJobStatus,
   type UploadCompletion,
+  type UploadRetryNotice,
   type UploadStatusState,
 } from '../utils/uploadStatus'
 import { uiStore$ } from './ui.store'
@@ -20,6 +21,8 @@ interface UploadStatusStoreState {
   clock: number
   /** Measured height of the banner, 0 while hidden; offsets toasts below it. */
   bannerHeight: number
+  /** Visible acknowledgement of a Retry tap. The banner clears it. */
+  retryNotice: UploadRetryNotice | null
 }
 
 export const uploadStatusStore$ = observable<UploadStatusStoreState>({
@@ -29,6 +32,7 @@ export const uploadStatusStore$ = observable<UploadStatusStoreState>({
   hiddenAt: null,
   clock: Date.now(),
   bannerHeight: 0,
+  retryNotice: null,
 })
 
 export const uploadStatus$ = observable<UploadStatusState>(() =>
@@ -37,11 +41,14 @@ export const uploadStatus$ = observable<UploadStatusState>(() =>
     isOnline: uiStore$.isOnline.get(),
     lastCompletion: uploadStatusStore$.lastCompletion.get(),
     completionDismissedAt: uploadStatusStore$.completionDismissedAt.get(),
+    retryNotice: uploadStatusStore$.retryNotice.get(),
     now: uploadStatusStore$.clock.get(),
   }),
 )
 
-type RetryHandler = () => void | Promise<void>
+export type UploadRetryOutcome = 'started' | 'busy' | 'skipped'
+
+type RetryHandler = () => undefined | Promise<UploadRetryOutcome | undefined>
 const retryHandlers = new Map<string, RetryHandler>()
 
 export const uploadStatusActions = {
@@ -62,6 +69,11 @@ export const uploadStatusActions = {
 
   setBannerHeight: (height: number) => uploadStatusStore$.bannerHeight.set(height),
 
+  /** Show that Retry now was tapped. `busy` means a pass was already running. */
+  showRetryNotice: (notice: UploadRetryNotice) => uploadStatusStore$.retryNotice.set(notice),
+
+  clearRetryNotice: () => uploadStatusStore$.retryNotice.set(null),
+
   /** Register how one upload system restarts its work; returns an unregister. */
   registerRetryHandler: (key: string, handler: RetryHandler) => {
     retryHandlers.set(key, handler)
@@ -72,16 +84,23 @@ export const uploadStatusActions = {
 }
 
 /** Kick every upload system now. Each handler is idempotent and lock-gated. */
-export function retryPendingUploads() {
+export async function retryPendingUploads(): Promise<UploadRetryOutcome> {
   telemetry.breadcrumb('upload:banner:retry', { handlers: retryHandlers.size })
-  for (const [key, handler] of retryHandlers) {
-    Promise.resolve()
-      .then(handler)
-      .catch((error) => {
+  if (retryHandlers.size === 0) return 'skipped'
+  const results = await Promise.all(
+    [...retryHandlers.entries()].map(async ([key, handler]) => {
+      try {
+        return (await handler()) ?? 'started'
+      } catch (error) {
         telemetry.warn('upload:banner:retry_failed', 'Upload retry failed', {
           source: key,
           error: String(error),
         })
-      })
-  }
+        return 'skipped' as const
+      }
+    }),
+  )
+  if (results.includes('started')) return 'started'
+  if (results.includes('busy')) return 'busy'
+  return 'skipped'
 }
