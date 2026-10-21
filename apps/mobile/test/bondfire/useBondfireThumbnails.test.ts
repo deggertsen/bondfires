@@ -27,7 +27,7 @@ describe('thumbnail batch lifecycle', () => {
     expect(hook.thumbnailUrls$.peek()).toEqual({})
     expect(onBatchError).toHaveBeenCalledOnce()
     await hook.ensureThumbnailUrls([fire])
-    expect(hook.thumbnailUrls$.peek()).toEqual({ 'fire:vod': 'recovered' })
+    expect(hook.thumbnailUrls$.peek()).toEqual({ 'bondfire:fire': 'recovered' })
     expect(request).toHaveBeenCalledTimes(2)
   })
 
@@ -47,7 +47,7 @@ describe('thumbnail batch lifecycle', () => {
     await first
     await hook.ensureThumbnailUrls([fire])
     expect(request).toHaveBeenCalledOnce()
-    expect(hook.thumbnailUrls$.peek()).toEqual({ 'fire:vod': null })
+    expect(hook.thumbnailUrls$.peek()).toEqual({ 'bondfire:fire': null })
   })
 
   it('does not let an old generation repopulate the cache or unlock newer requests', async () => {
@@ -77,6 +77,6 @@ describe('thumbnail batch lifecycle', () => {
     expect(request).toHaveBeenCalledTimes(2)
     newDone([{ thumbnailUrl: 'fresh' }])
     await fresh
-    expect(hook.thumbnailUrls$.peek()).toEqual({ 'fire:vod': 'fresh' })
+    expect(hook.thumbnailUrls$.peek()).toEqual({ 'bondfire:fire': 'fresh' })
   })
 })

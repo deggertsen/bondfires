@@ -6,139 +6,50 @@ import {
   getPendingBondfireThumbnails,
 } from '../../lib/bondfireThumbnails'
 
-describe('getBondfireThumbnailPlayback', () => {
-  it('resolves a live-only spark with its signed policy and parent authorization ID', () => {
-    const fire = {
-      _id: 'bondfire-1',
-      videoStatus: 'live',
-      muxLivePlaybackId: 'live-id',
-      muxPlaybackPolicy: 'signed' as const,
-    }
-    expect(getBondfireThumbnailPlayback(fire)).toEqual({
-      cacheKey: 'bondfire-1:live-id',
-      muxPlaybackId: 'live-id',
-      muxPlaybackPolicy: 'signed',
-    })
-    expect(getPendingBondfireThumbnails([fire], {}, new Set())[0].request).toMatchObject({
+describe('R2 thumbnail references', () => {
+  it('requests a spark by record ID without provider credentials or IDs', () => {
+    const fire = { _id: 'bondfire-1', videoStatus: 'ready' }
+    expect(getBondfireThumbnailPlayback(fire)).toEqual({ cacheKey: 'bondfire:bondfire-1' })
+    expect(getPendingBondfireThumbnails([fire], {}, new Set())[0].request).toEqual({
       bondfireId: 'bondfire-1',
-      muxPlaybackId: 'live-id',
-      muxPlaybackPolicy: 'signed',
     })
     expect(getBondfireThumbnailPlayback({ ...fire, videoStatus: 'processing' })).toBeNull()
-    expect(getBondfireThumbnailPlayback({ ...fire, muxPlaybackId: 'vod-id' })?.muxPlaybackId).toBe(
-      'vod-id',
-    )
   })
-  it('prefers the latest response and keeps its playback policy', () => {
-    expect(
-      getBondfireThumbnailPlayback({
-        _id: 'bondfire-1',
-        muxPlaybackId: 'spark-id',
-        muxPlaybackPolicy: 'signed',
-        latestResponseBondfireVideoId: 'response-1' as Id<'bondfireVideos'>,
-        latestResponseMuxPlaybackId: 'response-id',
-      }),
-    ).toEqual({
-      bondfireVideoId: 'response-1',
-      cacheKey: 'bondfire-1:response-id',
-      muxPlaybackId: 'response-id',
-      muxPlaybackPolicy: undefined,
-    })
-  })
-
-  it('falls back to the spark when there is no playable response', () => {
-    expect(
-      getBondfireThumbnailPlayback({
-        _id: 'bondfire-1',
-        muxPlaybackId: 'spark-id',
-        muxPlaybackPolicy: 'signed',
-      }),
-    ).toEqual({
-      cacheKey: 'bondfire-1:spark-id',
-      muxPlaybackId: 'spark-id',
-      muxPlaybackPolicy: 'signed',
-    })
-  })
-
-  it('changes the cache entry when a newer response arrives', () => {
-    const urls = {
-      'bondfire-1:old-response': 'old-thumbnail',
-      'bondfire-1:new-response': 'new-thumbnail',
+  it('keeps both the response reference and the spark fallback', () => {
+    const fire = {
+      _id: 'bondfire-1',
+      latestResponseBondfireVideoId: 'response-1' as Id<'bondfireVideos'>,
     }
-
-    expect(
-      getCachedBondfireThumbnail(
-        { _id: 'bondfire-1', latestResponseMuxPlaybackId: 'old-response' },
-        urls,
-      ),
-    ).toBe('old-thumbnail')
-    expect(
-      getCachedBondfireThumbnail(
-        { _id: 'bondfire-1', latestResponseMuxPlaybackId: 'new-response' },
-        urls,
-      ),
-    ).toBe('new-thumbnail')
+    expect(getPendingBondfireThumbnails([fire], {}, new Set())[0]).toEqual({
+      bondfireId: 'bondfire-1',
+      cacheKey: 'bondfire-1:response:response-1',
+      request: { bondfireId: 'bondfire-1', bondfireVideoId: 'response-1' },
+    })
   })
-})
-
-describe('getPendingBondfireThumbnails', () => {
-  it('builds one ordered request batch for the visible window', () => {
-    expect(
-      getPendingBondfireThumbnails(
-        [
-          {
-            _id: 'bondfire-1',
-            muxPlaybackId: 'spark-id',
-            muxPlaybackPolicy: 'signed',
-          },
-          {
-            _id: 'bondfire-2',
-            latestResponseBondfireVideoId: 'response-2' as Id<'bondfireVideos'>,
-            latestResponseMuxPlaybackId: 'response-id',
-          },
-        ],
-        {},
-        new Set(),
-      ),
-    ).toEqual([
-      {
-        bondfireId: 'bondfire-1',
-        cacheKey: 'bondfire-1:spark-id',
-        request: {
-          muxPlaybackId: 'spark-id',
-          muxPlaybackPolicy: 'signed',
-          bondfireId: 'bondfire-1',
-          bondfireVideoId: undefined,
-        },
-      },
-      {
-        bondfireId: 'bondfire-2',
-        cacheKey: 'bondfire-2:response-id',
-        request: {
-          muxPlaybackId: 'response-id',
-          muxPlaybackPolicy: undefined,
-          bondfireId: undefined,
-          bondfireVideoId: 'response-2',
-        },
-      },
-    ])
+  it('changes cache entries when a new response arrives', () => {
+    const urls = { 'fire:response:old': 'old-thumbnail', 'fire:response:new': 'new-thumbnail' }
+    for (const id of ['old', 'new'])
+      expect(
+        getCachedBondfireThumbnail(
+          { _id: 'fire', latestResponseBondfireVideoId: id as Id<'bondfireVideos'> },
+          urls,
+        ),
+      ).toBe(`${id}-thumbnail`)
   })
-
-  it('skips cached, loading, missing, and duplicate playback entries', () => {
-    const duplicate = { _id: 'bondfire-1', muxPlaybackId: 'playback-1' }
-
+  it('skips cached, loading, unplayable and duplicate references', () => {
+    const duplicate = { _id: 'one' }
     expect(
       getPendingBondfireThumbnails(
         [
           duplicate,
           duplicate,
-          { _id: 'bondfire-2', muxPlaybackId: 'playback-2' },
-          { _id: 'bondfire-3', muxPlaybackId: 'playback-3' },
-          { _id: 'bondfire-4' },
+          { _id: 'two' },
+          { _id: 'three' },
+          { _id: 'four', videoStatus: 'processing' },
         ],
-        { 'bondfire-2:playback-2': null },
-        new Set(['bondfire-3:playback-3']),
+        { 'bondfire:two': null },
+        new Set(['bondfire:three']),
       ).map((item) => item.cacheKey),
-    ).toEqual(['bondfire-1:playback-1'])
+    ).toEqual(['bondfire:one'])
   })
 })

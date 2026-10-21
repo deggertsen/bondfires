@@ -47,7 +47,7 @@ for (const endpoint of documented) {
 const requiredSourceEvidence = [
   ['convex/camps.ts', /seedLaunchCamps[\s\S]*isAdmin\(user\)/],
   ['convex/personalBondfires.ts', /checkInvite\s*=\s*query\([\s\S]*isSecureInviteCode\(code\)/],
-  ['convex/videos.ts', /getMuxUploadStatus[\s\S]*userOwnsMuxUpload/],
+  ['convex/videos.ts', /getMuxUploadStatus[\s\S]*auth.getUserId[\s\S]*Please update Bondfires/],
   ['convex/watchEvents.ts', /record[\s\S]*resolveVisibleWatchTarget[\s\S]*serverDurationMs/],
 ]
 for (const [file, pattern] of requiredSourceEvidence) {

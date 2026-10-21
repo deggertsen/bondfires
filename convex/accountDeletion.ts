@@ -24,6 +24,7 @@ import {
 } from './lib/accountDeletionPolicy'
 import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
 import { uncountResponse } from './responseCounts'
+import { enqueueRetentionMedia } from './retentionMedia'
 
 const BATCH_SIZE = ACCOUNT_DELETION_BATCH_SIZE
 const MEDIA_BATCH_SIZE = ACCOUNT_DELETION_MEDIA_BATCH_SIZE
@@ -290,112 +291,31 @@ export const inventoryContentMedia = internalMutation({
   },
 })
 
-export const listPendingMedia = internalQuery({
+// Archival and the job's completion marker commit together. This phase no
+// longer performs network I/O, so it needs only one bounded transaction.
+export const retireMediaBatch = internalMutation({
   args: { jobId: v.id('accountDeletionJobs') },
-  handler: async (ctx, args) =>
-    await ctx.db
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
       .query('accountDeletionMedia')
       .withIndex('by_job_status', (q) => q.eq('jobId', args.jobId).eq('status', 'pending'))
-      .take(MEDIA_BATCH_SIZE),
-})
-
-export const markMediaResult = internalMutation({
-  args: {
-    mediaId: v.id('accountDeletionMedia'),
-    result: v.union(v.literal('deleted'), v.literal('missing'), v.literal('failed')),
-    error: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const row = await ctx.db.get(args.mediaId)
-    if (!row) return
-    await ctx.db.patch(row._id, {
-      status: args.result === 'failed' ? 'pending' : args.result,
-      attempts: row.attempts + 1,
-      lastError: args.error,
-      updatedAt: Date.now(),
-    })
-  },
-})
-
-function muxConfig() {
-  const tokenId = process.env.MUX_TOKEN_ID
-  const tokenSecret = process.env.MUX_TOKEN_SECRET
-  if (!tokenId || !tokenSecret) throw new Error('Mux credentials are not configured')
-  return { authorization: `Basic ${btoa(`${tokenId}:${tokenSecret}`)}` }
-}
-
-async function muxRequest(path: string, method: 'GET' | 'DELETE' | 'PUT') {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 15_000)
-  try {
-    return await fetch(`https://api.mux.com/video/v1/${path}`, {
-      method,
-      signal: controller.signal,
-      headers: { Accept: 'application/json', Authorization: muxConfig().authorization },
-    })
-  } finally {
-    clearTimeout(timeout)
-  }
-}
-
-async function deleteMux(kind: MediaKind, externalId: string) {
-  if (kind === 'direct_upload') {
-    const cancelled = await muxRequest(`uploads/${externalId}/cancel`, 'PUT')
-    if (cancelled.ok) return 'deleted' as const
-    if (cancelled.status === 404) return 'missing' as const
-
-    // Cancellation only succeeds while waiting. If the upload won the race,
-    // resolve the asset it created and delete that asset before proceeding.
-    const lookup = await muxRequest(`uploads/${externalId}`, 'GET')
-    if (lookup.status === 404) return 'missing' as const
-    if (!lookup.ok) throw new Error(`Mux upload lookup failed (${lookup.status})`)
-    const payload = (await lookup.json()) as {
-      data?: { status?: string; asset_id?: string }
-    }
-    if (payload.data?.asset_id) {
-      const asset = await muxRequest(`assets/${payload.data.asset_id}`, 'DELETE')
-      if (!asset.ok && asset.status !== 404)
-        throw new Error(`Mux asset deletion failed (${asset.status})`)
-      return 'deleted' as const
-    }
-    if (['cancelled', 'timed_out', 'errored'].includes(payload.data?.status ?? '')) {
-      return 'missing' as const
-    }
-    throw new Error(`Mux upload could not be cancelled (${payload.data?.status ?? 'unknown'})`)
-  }
-  const resource = kind === 'asset' ? 'assets' : 'live-streams'
-  const response = await muxRequest(`${resource}/${externalId}`, 'DELETE')
-  if (response.status === 404) return 'missing' as const
-  if (!response.ok) throw new Error(`Mux ${resource} deletion failed (${response.status})`)
-  return 'deleted' as const
-}
-
-export const deleteMediaBatch = internalAction({
-  args: { jobId: v.id('accountDeletionJobs') },
-  handler: async (ctx, args): Promise<{ processed: number; failures: number }> => {
-    const rows: Doc<'accountDeletionMedia'>[] = await ctx.runQuery(
-      internal.accountDeletion.listPendingMedia,
-      args,
-    )
-    let failures = 0
+      .take(MEDIA_BATCH_SIZE)
+    const confirmed = process.env.LEGACY_MEDIA_RETIREMENT_CONFIRMED === '1'
     for (const row of rows) {
-      try {
-        const result = await deleteMux(row.kind, row.externalId)
-        await ctx.runMutation(internal.accountDeletion.markMediaResult, {
-          mediaId: row._id,
-          result,
-        })
-      } catch (error) {
-        failures += 1
-        await ctx.runMutation(internal.accountDeletion.markMediaResult, {
-          mediaId: row._id,
-          result: 'failed',
-          error:
-            error instanceof Error ? error.message.slice(0, 500) : 'Unknown Mux deletion error',
-        })
-      }
+      // The account's temporary queue is deleted when the job completes; this
+      // ledger survives for operator reconciliation. Never infer external
+      // deletion merely from removal of the provider integration.
+      await enqueueRetentionMedia(ctx, row.kind, row.externalId)
+      await ctx.db.patch(row._id, {
+        status: confirmed ? 'retired' : 'pending',
+        attempts: row.attempts + 1,
+        lastError: confirmed
+          ? undefined
+          : 'External legacy media retirement has not been confirmed',
+        updatedAt: Date.now(),
+      })
     }
-    return { processed: rows.length, failures }
+    return { processed: rows.length, awaitingConfirmation: confirmed ? 0 : rows.length }
   },
 })
 
@@ -1176,7 +1096,7 @@ export const resume = internalMutation({
   args: { jobId: v.id('accountDeletionJobs') },
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobId)
-    if (!job || job.status !== 'retrying') return
+    if (job?.status !== 'retrying') return
     await ctx.db.patch(job._id, {
       status: job.retryPhase ?? 'inventory',
       retryPhase: undefined,
@@ -1206,8 +1126,9 @@ export const run = internalAction({
           args,
         )
         if (!inventoried.found) {
-          const media = await ctx.runAction(internal.accountDeletion.deleteMediaBatch, args)
-          if (media.failures > 0) throw new Error(`${media.failures} Mux deletion(s) failed`)
+          const media = await ctx.runMutation(internal.accountDeletion.retireMediaBatch, args)
+          if (media.awaitingConfirmation > 0)
+            throw new Error('External legacy media retirement has not been confirmed')
           if (media.processed === 0)
             await ctx.runMutation(internal.accountDeletion.transitionToDatabase, args)
         }

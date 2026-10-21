@@ -18,8 +18,7 @@ export const stage = internalMutation({
   handler: async (ctx, args) => {
     const record = await ctx.db.get(args.recordId)
     if (
-      !record ||
-      record.videoStatus !== 'ready' ||
+      record?.videoStatus !== 'ready' ||
       record.segmentRecordingId ||
       record.muxAssetId !== args.muxAssetId ||
       record.muxPlaybackId !== args.muxPlaybackId
@@ -78,20 +77,23 @@ export const rollback = internalMutation({
     ctx.db.patch(args.importId, { status: 'rollback', updatedAt: Date.now() }),
 })
 export const lookup = internalQuery({
-  args: { recordId, muxPlaybackId: v.string() },
+  args: { recordId, muxPlaybackId: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const item = await ctx.db
       .query('mediaImports')
       .withIndex('by_record', (q) => q.eq('recordId', args.recordId))
       .unique()
-    return item?.status === 'ready' && item.muxPlaybackId === args.muxPlaybackId ? item : null
+    return item?.status === 'ready' &&
+      (args.muxPlaybackId === undefined || item.muxPlaybackId === args.muxPlaybackId)
+      ? item
+      : null
   },
 })
 export const authorize = internalQuery({
   args: { importId: v.id('mediaImports'), userId: v.optional(v.id('users')) },
   handler: async (ctx, args) => {
     const item = await ctx.db.get(args.importId)
-    if (!item || item.status !== 'ready') throw new Error('Forbidden')
+    if (item?.status !== 'ready') throw new Error('Forbidden')
     const record = await ctx.db.get(item.recordId)
     if (
       !record ||
@@ -120,7 +122,7 @@ export const authorize = internalQuery({
 export async function importedUrls(
   ctx: ActionCtx,
   args: {
-    muxPlaybackId: string
+    muxPlaybackId?: string
     bondfireId?: Id<'bondfires'>
     bondfireVideoId?: Id<'bondfireVideos'>
   },

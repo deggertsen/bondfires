@@ -58,7 +58,10 @@ async function fixture() {
     })
   return { t, ...data, args, importId, activate }
 }
-afterEach(() => vi.unstubAllEnvs())
+afterEach(() => {
+  vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
+})
 describe('historical media imports', () => {
   it('stages idempotently, switches without modifying records or sending notifications, and rolls back', async () => {
     const { t, args, recordId, importId, activate } = await fixture()
@@ -121,5 +124,88 @@ describe('historical media imports', () => {
     await expect(
       t.query(internal.mediaImports.authorize, { importId, userId: viewer }),
     ).rejects.toThrow()
+  })
+  it('supports record-only and installed-client requests without contacting Mux', async () => {
+    vi.stubEnv('MEDIA_TOKEN_SECRET', 'x'.repeat(32))
+    vi.stubEnv('MEDIA_WORKER_URL', 'https://media.test')
+    const fetch = vi.fn(() => {
+      throw new Error('Unexpected provider request')
+    })
+    vi.stubGlobal('fetch', fetch)
+    const { t, viewer, recordId, importId, activate } = await fixture()
+    await activate()
+    const client = t.withIdentity({ subject: viewer })
+    for (const request of [
+      { bondfireId: recordId },
+      { bondfireId: recordId, muxPlaybackId: 'playback' },
+    ]) {
+      const result = await client.action(api.videos.getVideoUrls, request)
+      expect(result.hdUrl).toContain(`/imports/${importId}/index.m3u8?token=`)
+      expect(result.captionsUrl).toContain(`/imports/${importId}/captions.vtt?token=`)
+      const thumbnail = await client.action(api.videos.getThumbnailUrl, request)
+      expect(thumbnail.thumbnailUrl).toContain(`/imports/${importId}/thumbnail.jpg?token=`)
+    }
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('fails closed for absent, stale, rolled-back, and unauthorized imports in mixed batches', async () => {
+    vi.stubEnv('MEDIA_TOKEN_SECRET', 'x'.repeat(32))
+    vi.stubEnv('MEDIA_WORKER_URL', 'https://media.test')
+    const fetch = vi.fn(() => {
+      throw new Error('Unexpected provider request')
+    })
+    vi.stubGlobal('fetch', fetch)
+    const { t, viewer, recordId, importId, activate, memberId } = await fixture()
+    const client = t.withIdentity({ subject: viewer })
+    expect((await client.action(api.videos.getVideoUrls, { bondfireId: recordId })).hdUrl).toBe('')
+    await activate()
+    const results = await client.action(api.videos.getVideoUrlsBatch, {
+      items: [
+        { bondfireId: recordId, muxPlaybackId: 'stale' },
+        { muxPlaybackId: 'no-record' },
+        { bondfireId: recordId },
+      ],
+    })
+    expect(results.map((r) => Boolean(r.hdUrl))).toEqual([false, false, true])
+    if (!memberId) throw new Error('Missing membership')
+    await t.run((ctx) => ctx.db.delete(memberId))
+    expect((await client.action(api.videos.getVideoUrls, { bondfireId: recordId })).hdUrl).toBe('')
+    expect(
+      (await client.action(api.videos.getThumbnailUrl, { bondfireId: recordId })).thumbnailUrl,
+    ).toBe('')
+    await t.mutation(internal.mediaImports.rollback, { importId })
+    expect((await client.action(api.videos.getVideoUrls, { bondfireId: recordId })).hdUrl).toBe('')
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('falls back to an authorized imported spark thumbnail for a native R2 response', async () => {
+    vi.stubEnv('MEDIA_TOKEN_SECRET', 'x'.repeat(32))
+    vi.stubEnv('MEDIA_WORKER_URL', 'https://media.test')
+    const { t, owner, viewer, recordId, importId, activate } = await fixture()
+    await activate()
+    const responseId = await t.run(async (ctx) =>
+      ctx.db.insert('bondfireVideos', {
+        bondfireId: recordId,
+        userId: owner,
+        sequenceNumber: 1,
+        videoStatus: 'ready',
+        createdAt: 3,
+        segmentRecordingId: await ctx.db.insert('segmentRecordings', {
+          userId: owner,
+          localId: 'native',
+          status: 'ready',
+          segmentCount: 1,
+          duration: 3,
+          maxDuration: 60,
+          createdAt: 3,
+          updatedAt: 3,
+        }),
+      }),
+    )
+    const result = await t.withIdentity({ subject: viewer }).action(api.videos.getThumbnailUrl, {
+      bondfireId: recordId,
+      bondfireVideoId: responseId,
+    })
+    expect(result.thumbnailUrl).toContain(`/imports/${importId}/thumbnail.jpg?token=`)
   })
 })

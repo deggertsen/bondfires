@@ -7,10 +7,11 @@ import {
   type ViewerVisibilityContext,
 } from '../bondfireVisibility'
 import { isModeratedContentVisible } from '../contentSafety'
+import { getVideoLifecycle } from './videoLifecycle'
 
 export type VideoPlaybackReference = {
   bondfireVideoId?: Id<'bondfireVideos'>
-  muxPlaybackId: string
+  muxPlaybackId?: string
   muxPlaybackPolicy?: 'public' | 'signed'
 }
 
@@ -20,6 +21,7 @@ type VideoPlaybackRecord = {
   muxPlaybackId?: string
   muxPlaybackPolicy?: 'public' | 'signed'
   muxLivePlaybackId?: string
+  segmentRecordingId?: Id<'segmentRecordings'>
   expiresAt?: number
 }
 
@@ -31,21 +33,16 @@ export function getPlayableVideoPlayback(
     return null
   }
 
-  const status = record.videoStatus ?? 'ready'
-  if (status === 'ready' && record.muxPlaybackId) {
+  const lifecycle = getVideoLifecycle(record, now)
+  if (lifecycle === 'ready' || lifecycle === 'live') {
     return {
       bondfireVideoId: record._id,
-      muxPlaybackId: record.muxPlaybackId,
+      // Compatibility hints for older clients. Delivery resolves by record ID.
+      muxPlaybackId: lifecycle === 'live' ? record.muxLivePlaybackId : record.muxPlaybackId,
       muxPlaybackPolicy: record.muxPlaybackPolicy,
     }
   }
-  if (status === 'live' && record.muxLivePlaybackId) {
-    return {
-      bondfireVideoId: record._id,
-      muxPlaybackId: record.muxLivePlaybackId,
-      muxPlaybackPolicy: record.muxPlaybackPolicy,
-    }
-  }
+
   return null
 }
 

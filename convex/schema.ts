@@ -1212,7 +1212,12 @@ export default defineSchema({
     jobId: v.id('accountDeletionJobs'),
     kind: v.union(v.literal('asset'), v.literal('live_stream'), v.literal('direct_upload')),
     externalId: v.string(),
-    status: v.union(v.literal('pending'), v.literal('deleted'), v.literal('missing')),
+    status: v.union(
+      v.literal('pending'),
+      v.literal('deleted'),
+      v.literal('missing'),
+      v.literal('retired'),
+    ),
     attempts: v.number(),
     lastError: v.optional(v.string()),
     createdAt: v.number(),
