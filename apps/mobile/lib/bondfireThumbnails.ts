@@ -14,12 +14,12 @@ export type BondfireThumbnailFields = {
 export type BondfireThumbnailPlayback = {
   bondfireVideoId?: Id<'bondfireVideos'>
   cacheKey: string
-  muxPlaybackId: string
+  muxPlaybackId?: string
   muxPlaybackPolicy?: 'public' | 'signed'
 }
 
 export type BondfireThumbnailRequest = {
-  muxPlaybackId: string
+  muxPlaybackId?: string
   muxPlaybackPolicy?: 'public' | 'signed'
   bondfireId?: Id<'bondfires'>
   bondfireVideoId?: Id<'bondfireVideos'>
@@ -34,28 +34,11 @@ export type PendingBondfireThumbnail = {
 export function getBondfireThumbnailPlayback(
   bondfire: BondfireThumbnailFields & { _id: string },
 ): BondfireThumbnailPlayback | null {
-  if (bondfire.latestResponseMuxPlaybackId) {
-    return {
-      bondfireVideoId: bondfire.latestResponseBondfireVideoId,
-      cacheKey: `${bondfire._id}:${bondfire.latestResponseMuxPlaybackId}`,
-      muxPlaybackId: bondfire.latestResponseMuxPlaybackId,
-      muxPlaybackPolicy: bondfire.latestResponseMuxPlaybackPolicy,
-    }
-  }
-  if (!bondfire.muxPlaybackId) {
-    // Live fires have no VOD playback id yet — fall back to the live stream's
-    // playback id so the rail shows the live frame instead of a plain flame.
-    if (bondfire.videoStatus !== 'live' || !bondfire.muxLivePlaybackId) return null
-    return {
-      cacheKey: `${bondfire._id}:${bondfire.muxLivePlaybackId}`,
-      muxPlaybackId: bondfire.muxLivePlaybackId,
-      muxPlaybackPolicy: bondfire.muxPlaybackPolicy,
-    }
-  }
+  if (bondfire.videoStatus && !['ready', 'live'].includes(bondfire.videoStatus)) return null
+  const responseId = bondfire.latestResponseBondfireVideoId
   return {
-    cacheKey: `${bondfire._id}:${bondfire.muxPlaybackId}`,
-    muxPlaybackId: bondfire.muxPlaybackId,
-    muxPlaybackPolicy: bondfire.muxPlaybackPolicy,
+    bondfireVideoId: responseId,
+    cacheKey: responseId ? `${bondfire._id}:response:${responseId}` : `bondfire:${bondfire._id}`,
   }
 }
 
@@ -90,9 +73,7 @@ export function getPendingBondfireThumbnails(
       bondfireId: bondfire._id,
       cacheKey: playback.cacheKey,
       request: {
-        muxPlaybackId: playback.muxPlaybackId,
-        muxPlaybackPolicy: playback.muxPlaybackPolicy,
-        bondfireId: playback.bondfireVideoId ? undefined : (bondfire._id as Id<'bondfires'>),
+        bondfireId: bondfire._id as Id<'bondfires'>,
         bondfireVideoId: playback.bondfireVideoId,
       },
     })

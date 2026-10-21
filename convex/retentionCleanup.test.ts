@@ -15,16 +15,9 @@ import { CURRENT_COMMUNITY_GUIDELINES_VERSION, CURRENT_TERMS_VERSION } from './c
 import { claimUserDeliveries } from './digest'
 import { BONDFIRE_RETENTION_MS } from './entitlements'
 import { claimBondfire, resumeStale, retainedVideoExists, runBatch } from './retentionCleanup'
-import {
-  claimBatch,
-  deleteRetentionResource,
-  drain,
-  enqueueUnlinked,
-  finishAttempt,
-  rememberAssets,
-} from './retentionMedia'
+import { claimBatch, drain, enqueueUnlinked, finishAttempt, rememberAssets } from './retentionMedia'
 import { claimDeliveries } from './sendNotification'
-import { createPendingMuxVideo } from './videos'
+import { createPendingVideoRecord } from './videos'
 
 type Row = Record<string, unknown> & { _id: string }
 function required<T>(value: T | null | undefined): T {
@@ -240,11 +233,11 @@ describe('retention transactions and resumable cleanup', () => {
     await handler<MutationCtx>(scanPage)(ctx, task.args)
     expect(tables.users[0].bondfireCount).toBe(0)
     await expect(
-      handler<MutationCtx>(createPendingMuxVideo)(ctx, {
+      createPendingVideoRecord(ctx, {
         userId,
         isResponse: true,
         bondfireId: rootId,
-        uploadId: 'late-upload',
+        segmentRecordingId: 'segments' as Id<'segmentRecordings'>,
         playbackPolicy: 'public',
       }),
     ).rejects.toThrow(/Bondfire not found/)
@@ -581,76 +574,17 @@ describe('retention transactions and resumable cleanup', () => {
     expect(await get(row._id)).toBeNull()
   })
 
-  it('keeps the outbox through an external outage, then accepts a missing asset on retry', async () => {
+  it('preserves retired external cleanup work without credentials, calls or rescheduling', async () => {
     await claimSweep()
-    vi.stubEnv('MUX_TOKEN_ID', 'test')
-    vi.stubEnv('MUX_TOKEN_SECRET', 'test')
-    vi.mocked(fetch).mockResolvedValueOnce(new Response('', { status: 503 }))
+    const before = structuredClone(tables.retentionMedia)
+    const scheduledBefore = scheduled.length
     expect(await handler<ActionCtx>(drain)(ctx as unknown as ActionCtx, {})).toEqual({
-      processed: 1,
-      failed: 1,
-    })
-    const row = tables.retentionMedia[0]
-    expect(row.lastError).toContain('503')
-    row.nextAttemptAt = now
-    vi.mocked(fetch).mockResolvedValueOnce(new Response('', { status: 404 }))
-    expect(await handler<ActionCtx>(drain)(ctx as unknown as ActionCtx, {})).toEqual({
-      processed: 1,
+      processed: 0,
       failed: 0,
+      retired: true,
     })
-    expect(tables.retentionMedia).toHaveLength(0)
-  })
-})
-
-describe('Mux retention cleanup protocol', () => {
-  beforeEach(() => {
-    vi.stubEnv('MUX_TOKEN_ID', 'test')
-    vi.stubEnv('MUX_TOKEN_SECRET', 'test')
-    vi.stubGlobal('fetch', vi.fn())
-  })
-  afterEach(() => {
-    vi.unstubAllGlobals()
-    vi.unstubAllEnvs()
-  })
-  it('persists a completed direct upload asset before dropping its upload work item', async () => {
-    vi.mocked(fetch)
-      .mockResolvedValueOnce(new Response('', { status: 412 }))
-      .mockResolvedValueOnce(Response.json({ data: { status: 'asset_created', asset_id: 'late' } }))
-    const remember = vi.fn(async () => true)
-    await deleteRetentionResource({ kind: 'direct_upload', externalId: 'upload' }, remember)
-    expect(remember).toHaveBeenCalledWith(['late'])
-    expect(fetch).toHaveBeenCalledTimes(2)
-  })
-  it('does not acknowledge an upload that is still in flight', async () => {
-    vi.mocked(fetch)
-      .mockResolvedValueOnce(new Response('', { status: 412 }))
-      .mockResolvedValueOnce(Response.json({ data: { status: 'waiting' } }))
-    await expect(
-      deleteRetentionResource({ kind: 'direct_upload', externalId: 'upload' }, async () => true),
-    ).rejects.toThrow(/still in flight/)
-  })
-  it('disables a stream and durably inventories its recordings before deletion', async () => {
-    const order: string[] = []
-    vi.mocked(fetch).mockImplementation(async (url, options) => {
-      order.push(`${options?.method} ${String(url).split('/').at(-1)}`)
-      return options?.method === 'GET'
-        ? Response.json({ data: { recent_asset_ids: ['old'], active_asset_id: 'late' } })
-        : new Response('')
-    })
-    await deleteRetentionResource({ kind: 'live_stream', externalId: 'stream' }, async (assets) => {
-      expect(assets).toEqual(['old', 'late'])
-      order.push('persist')
-      return true
-    })
-    expect(order).toEqual(['PUT disable', 'GET stream', 'persist', 'DELETE stream'])
-  })
-  it('does not delete a stream when its durable asset checkpoint fails', async () => {
-    vi.mocked(fetch)
-      .mockResolvedValueOnce(new Response(''))
-      .mockResolvedValueOnce(Response.json({ data: { active_asset_id: 'late' } }))
-    await expect(
-      deleteRetentionResource({ kind: 'live_stream', externalId: 'stream' }, async () => false),
-    ).rejects.toThrow(/lease lost/)
-    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(tables.retentionMedia).toEqual(before)
+    expect(scheduled).toHaveLength(scheduledBefore)
+    expect(fetch).not.toHaveBeenCalled()
   })
 })

@@ -1,5 +1,9 @@
 # Alpha video rollout
 
+The capture rollout and historical migration below are historical context. See
+[Mux retirement](mux-retirement.md) for the current R2-only runtime, compatibility
+contracts, deployment audit, and external asset retirement requirement.
+
 ## Deployment ownership
 
 The `production` EAS build profile connects to the existing main database at

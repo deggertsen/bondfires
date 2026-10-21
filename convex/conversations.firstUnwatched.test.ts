@@ -459,10 +459,10 @@ describe('bounded thread summaries', () => {
   }
 
   it.each([
-    { playback: 'mux', sparse: false, expectedReads: 6 },
-    { playback: 'r2', sparse: false, expectedReads: 255 },
-    { playback: 'mux', sparse: true, expectedReads: 251 },
-    { playback: 'r2', sparse: true, expectedReads: 500 },
+    { playback: 'mux', sparse: false, expectedReads: 5 },
+    { playback: 'r2', sparse: false, expectedReads: 5 },
+    { playback: 'mux', sparse: true, expectedReads: 250 },
+    { playback: 'r2', sparse: true, expectedReads: 250 },
   ] as const)(
     'bounds $playback summary reads to $expectedReads (sparse=$sparse)',
     async ({ playback, sparse, expectedReads }) => {
@@ -520,7 +520,7 @@ describe('bounded thread summaries', () => {
         .query(api.conversations.listMyFires, {})
       expect(thread.lastActivityAt).toBe(50_000)
       expect(thread.unread).toBe(state === 'unread')
-      expect(thread.latestResponseMuxPlaybackId).toBe(mode === 'r2' ? undefined : 'response-300')
+      expect(thread.latestResponseMuxPlaybackId).toBe(mode === 'r2' ? undefined : 'response-1')
       expect(thread.videoCount).toBe(301)
     },
   )
@@ -606,7 +606,7 @@ describe('bounded thread summaries', () => {
   )
 
   it.each([51, 50])(
-    'keeps the legacy thumbnail fallback bounded at sequence %s',
+    'uses the newest response without scanning for an old import at sequence %s',
     async (sequenceNumber) => {
       const { t, ids } = await longThread()
       await useR2(t, ids.bondfireId)
@@ -628,10 +628,9 @@ describe('bounded thread summaries', () => {
       const [thread] = await t
         .withIdentity({ subject: ids.creator })
         .query(api.conversations.listMyFires, {})
-      const withinLimit = sequenceNumber === 51
-      expect(thread.latestResponseBondfireVideoId).toBe(withinLimit ? legacyId : undefined)
-      expect(thread.latestResponseMuxPlaybackId).toBe(withinLimit ? 'legacy-response' : undefined)
-      expect(thread.latestResponseMuxPlaybackPolicy).toBe(withinLimit ? 'signed' : undefined)
+      expect(thread.latestResponseBondfireVideoId).toBeDefined()
+      expect(thread.latestResponseBondfireVideoId).not.toBe(legacyId)
+      expect(thread.latestResponseMuxPlaybackId).toBeUndefined()
       expect(thread.lastActivityAt).toBe(31_000)
     },
   )

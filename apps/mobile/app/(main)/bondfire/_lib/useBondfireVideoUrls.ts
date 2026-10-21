@@ -77,12 +77,12 @@ export function useBondfireVideoUrls({
 
     for (const entry of missing) inFlightRef.current.add(entry.cacheKey)
     void (async () => {
-      const legacy = missing.filter(
+      const imported = missing.filter(
         (entry): entry is { cacheKey: string; request: VideoUrlRequest } =>
-          'muxPlaybackId' in entry.request,
+          !('segmentRecordingId' in entry.request),
       )
-      const legacyResults = legacy.length
-        ? await getVideoUrlsBatch({ items: legacy.map((entry) => entry.request) })
+      const importedResults = imported.length
+        ? await getVideoUrlsBatch({ items: imported.map((entry) => entry.request) })
         : []
       return Promise.all(
         missing.map(async (entry) => {
@@ -96,7 +96,7 @@ export function useBondfireVideoUrls({
               captionsUrl: `${grant.baseUrl}/captions.vtt?token=${encodeURIComponent(grant.token)}`,
             }
           }
-          return legacyResults[legacy.findIndex((item) => item.cacheKey === entry.cacheKey)]
+          return importedResults[imported.findIndex((item) => item.cacheKey === entry.cacheKey)]
         }),
       )
     })()

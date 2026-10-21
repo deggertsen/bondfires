@@ -1,5 +1,6 @@
 import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
 import { isPlayableVideoRecord } from './lib/videoLifecycle'
+import { enqueueRetentionMedia } from './retentionMedia'
 /**
  * Centralized failure handling for bondfires whose video is broken or abandoned.
  *
@@ -19,7 +20,7 @@ import { isPlayableVideoRecord } from './lib/videoLifecycle'
 
 import { v } from 'convex/values'
 import type { Doc, Id } from './_generated/dataModel'
-import { internalAction, type MutationCtx } from './_generated/server'
+import { internalMutation, type MutationCtx } from './_generated/server'
 import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 
 export type BondfireFailureReason =
@@ -37,7 +38,7 @@ export type BondfireFailureReason =
  *
  * Keep this `false` until the `bondfire:failed:*` forensic telemetry confirms
  * our detection only fires on genuinely-broken bondfires. Flipping to `true`
- * makes the same code paths delete the bondfire (spark + responses + Mux assets)
+ * makes the same code paths delete the bondfire (spark + responses; R2 cleanup follows)
  * after the forensic record is written.
  */
 export const HARD_DELETE_FAILED_BONDFIRES = false
@@ -130,8 +131,7 @@ async function deleteWatchEventsForVideo(ctx: MutationCtx, videoId: string) {
  * sessions), then repair the creator/camp counters and pinned lists.
  *
  * Mirrors the per-bondfire cascade in `bondfireRetention.deleteExpiredBondfireRecords`.
- * Returns the Mux asset IDs that the caller should delete from Mux (HTTP, so it
- * must happen in an action, not here).
+ * Returns historical provider asset IDs for the durable retirement ledger.
  *
  * `preserveLiveSessionId` keeps that one live session row alive so the caller
  * can still stamp its cancel/end forensics on it afterwards.
@@ -277,8 +277,7 @@ export function isDraftBornPersonalBondfire(bondfire: Doc<'bondfires'>): boolean
  * `draftExpiresAt` still stands, so an abandoned draft is cleaned up on the
  * original 24h schedule.
  *
- * Returns any Mux asset IDs that were attached, so the caller can schedule
- * their deletion (HTTP, so it must happen in an action).
+ * Returns historical provider asset IDs for the durable retirement ledger.
  */
 export async function revertBondfireToDraft(
   ctx: MutationCtx,
@@ -338,8 +337,8 @@ export async function revertBondfireToDraft(
  * retry recording. Otherwise, only when `HARD_DELETE_FAILED_BONDFIRES` is
  * enabled, cascade-deletes the bondfire.
  *
- * Returns the Mux asset IDs the caller must delete from Mux (in an action)
- * whenever `deleted` or `reverted` is true.
+ * Returns historical provider asset IDs to archive whenever `deleted` or
+ * `reverted` is true.
  *
  * No-ops for non-spark records — only bondfire (spark) failures orphan a
  * reachable detail route; response failures are handled by their own paths.
@@ -365,39 +364,11 @@ export async function handleFailedBondfire(
   return { deleted: true, reverted: false, muxAssetIds }
 }
 
-const MUX_API_BASE_URL = 'https://api.mux.com/video/v1'
-
-function getMuxAuthorizationHeader(): string {
-  const tokenId = process.env.MUX_TOKEN_ID
-  const tokenSecret = process.env.MUX_TOKEN_SECRET
-  if (!tokenId || !tokenSecret) {
-    throw new Error('Mux is not configured (MUX_TOKEN_ID / MUX_TOKEN_SECRET).')
-  }
-  return `Basic ${btoa(`${tokenId}:${tokenSecret}`)}`
-}
-
-/**
- * Best-effort deletion of Mux assets left behind by a purged failed bondfire.
- * Scheduled from the mutation paths (which can't make HTTP calls) only when a
- * hard delete actually removed records. A 404 is expected and ignored.
- */
-export const deleteFailedBondfireMuxAssets = internalAction({
+// Old scheduled jobs only archive provider IDs. R2 revocation and deletion are
+// handled by cancelSegmentMedia and mediaImports.cleanup.
+export const deleteFailedBondfireMuxAssets = internalMutation({
   args: { assetIds: v.array(v.string()) },
-  handler: async (_ctx, args) => {
-    for (const assetId of args.assetIds) {
-      try {
-        const response = await fetch(`${MUX_API_BASE_URL}/assets/${assetId}`, {
-          method: 'DELETE',
-          headers: { Accept: 'application/json', Authorization: getMuxAuthorizationHeader() },
-        })
-        if (!response.ok && response.status !== 404) {
-          console.error(
-            `[bondfireFailureCleanup] Mux asset delete failed ${assetId}: ${response.status}`,
-          )
-        }
-      } catch (err) {
-        console.error(`[bondfireFailureCleanup] Mux asset delete threw ${assetId}:`, err)
-      }
-    }
+  handler: async (ctx, { assetIds }) => {
+    for (const id of new Set(assetIds)) await enqueueRetentionMedia(ctx, 'asset', id)
   },
 })

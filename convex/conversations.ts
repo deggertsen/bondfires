@@ -56,8 +56,7 @@ const MAX_THREAD_LIMIT = 80
 const THREAD_CANDIDATE_MULTIPLIER = 4
 const CLOSE_CIRCLE_LIMIT = 8
 const CLOSE_CIRCLE_THREAD_CANDIDATE_LIMIT = 80
-// Each summary walk is bounded; sparse/hidden participants and legacy thumbnail
-// fallbacks can still require the full scan.
+// Sparse/hidden participants and equal-time activity can require the full scan.
 const THREAD_RESPONSE_SCAN_LIMIT = 250
 const THREAD_AVATAR_LIMIT = 4
 
@@ -107,6 +106,7 @@ async function getThreadResponseSummary(
     .order('desc')
   let scanned = 0
   let newestVisibleAt = bondfire.createdAt
+  let latestResponsePlayback: VideoPlaybackReference | null = null
   const responseAuthors = new Set<Id<'users'>>()
   for await (const response of responses) {
     // Finish the newest timestamp's ties: the viewer may have posted at exactly
@@ -116,6 +116,7 @@ async function getThreadResponseSummary(
     }
     scanned++
     if (await isVisible(response)) {
+      latestResponsePlayback ??= getPlayableVideoPlayback(response)
       newestVisibleAt = Math.max(newestVisibleAt, response.createdAt)
       if (await getUserCached(ctx, args.viewer, response.userId)) {
         responseAuthors.add(response.userId)
@@ -128,25 +129,6 @@ async function getThreadResponseSummary(
       })
     }
     if (scanned === THREAD_RESPONSE_SCAN_LIMIT) break
-  }
-
-  // Legacy thumbnails follow sequence order. Stop at the first usable one;
-  // requiring a thumbnail before summarizing activity couples correctness to
-  // the media provider. R2-only threads may exhaust this bounded fallback.
-  let latestResponsePlayback: VideoPlaybackReference | null = null
-  let playbackScanned = 0
-  const playbackResponses = ctx.db
-    .query('bondfireVideos')
-    .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
-    .order('desc')
-  for await (const response of playbackResponses) {
-    playbackScanned++
-    const playback = getPlayableVideoPlayback(response)
-    if (playback && (await isVisible(response))) {
-      latestResponsePlayback = playback
-      break
-    }
-    if (playbackScanned === THREAD_RESPONSE_SCAN_LIMIT) break
   }
 
   return { participants, latestResponsePlayback }
@@ -370,7 +352,7 @@ async function listVisiblePrivateCampThreadsByUser(
     }
 
     const camp = await getCampCached(ctx, args.viewer, bondfire.campId)
-    if (!camp || camp.access !== 'invite' || !args.viewer.memberCampIds.has(camp._id)) {
+    if (camp?.access !== 'invite' || !args.viewer.memberCampIds.has(camp._id)) {
       continue
     }
 

@@ -4,17 +4,13 @@ import type { Id } from './_generated/dataModel'
 import type { QueryCtx } from './_generated/server'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
 import { retainedVideoExists } from './retentionCleanup'
-import { buildMuxTranscriptUrl } from './videos'
 
 /**
- * AI thread insights: Mux auto-generated captions → per-video summary + tags,
+ * AI thread insights: stored R2 captions → per-video summary + tags,
  * plus an LLM-written title for the whole thread.
  *
- * Flow: video.asset.track.ready webhook (videos.ts) schedules
- * processVideoTranscript → fetch transcript text from stream.mux.com → one
- * OpenRouter call for {summary, tags} → patch the video record → regenerate
- * the thread title from all summaries. Transcript text is stored in the
- * videoTranscripts table so it never rides along in feed queries.
+ * R2 transcription schedules processVideoTranscript after storing the text.
+ * Insights and titles reuse stored transcripts, including historical imports.
  *
  * Uses a cheap OpenRouter model (default z-ai/glm-4.5-air), deliberately not
  * the Anthropic API: this runs once per uploaded video, so per-call price
@@ -24,14 +20,9 @@ import { buildMuxTranscriptUrl } from './videos'
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 const DEFAULT_OPENROUTER_MODEL = 'z-ai/glm-4.5-air'
 const OPENROUTER_TIMEOUT_MS = 60_000
-const TRANSCRIPT_FETCH_TIMEOUT_MS = 15_000
 // Page size for the orphaned-transcript sweep: rows carry multi-KB caption
 // text, so each page stays far below Convex's per-transaction read limits.
 const SWEEP_PAGE_SIZE = 100
-// Mux serves the transcript from its CDN; right after track.ready it can 404
-// briefly, so failed fetches reschedule instead of dying.
-const TRANSCRIPT_FETCH_MAX_ATTEMPTS = 5
-const TRANSCRIPT_FETCH_RETRY_DELAY_MS = 30_000
 // ~10 minutes of speech. Longer videos are summarized from the head; the tail
 // of a rambling video rarely changes the one-line summary.
 const MAX_TRANSCRIPT_CHARS = 16_000
@@ -61,7 +52,7 @@ function getOpenRouterConfig() {
 
 /**
  * A hung fetch in a Convex action surfaces to the client as an opaque timeout
- * (see the MUX_REQUEST_TIMEOUT_MS rationale in videos.ts). The error message
+ * unless requests have a bounded timeout. The error message
  * strips the query string so signed playback tokens never land in logs.
  */
 async function fetchWithTimeout(
@@ -593,13 +584,8 @@ export function shouldSkipVideoInsights(
   return summary !== undefined && force !== true
 }
 
-/**
- * Fetch a video's transcript and turn it into a one-line summary and topic
- * tags, then refresh the thread's AI title. Scheduled from the
- * video.asset.track.ready webhook; also the workhorse for backfill (when a
- * stored transcript already exists the Mux fetch is skipped, so muxTrackId is
- * optional).
- */
+/** Summarize stored R2 transcripts and historical imported transcripts, then
+ * refresh the thread title. Old scheduled argument fields remain accepted. */
 export const processVideoTranscript = internalAction({
   args: {
     table: recordTable,
@@ -630,25 +616,11 @@ export const processVideoTranscript = internalAction({
       return { processed: false, reason: 'already_summarized' }
     }
 
-    // Reschedules this action with attempt+1; null once attempts are spent.
-    const retryLater = async (reason: string) => {
-      const attempt = args.attempt ?? 0
-      if (attempt + 1 >= TRANSCRIPT_FETCH_MAX_ATTEMPTS) {
-        return null
-      }
-      await ctx.scheduler.runAfter(
-        TRANSCRIPT_FETCH_RETRY_DELAY_MS,
-        internal.ai.processVideoTranscript,
-        { ...args, attempt: attempt + 1 },
-      )
-      return { processed: false, reason }
-    }
-
     const stored = await ctx.runQuery(internal.ai.getStoredTranscript, {
       table: args.table,
       recordId: args.recordId,
     })
-    let transcript =
+    const transcript =
       stored &&
       (args.segmentRecordingId
         ? stored.segmentRecordingId === args.segmentRecordingId
@@ -656,68 +628,9 @@ export const processVideoTranscript = internalAction({
         ? stored.text
         : undefined
 
-    // A stored-but-empty transcript (from an early fetch of a still-empty
-    // caption file) must not satisfy the lookup or it would block re-fetching
-    // forever.
-    if (transcript !== undefined && transcript.length < MIN_TRANSCRIPT_CHARS && args.muxTrackId) {
-      transcript = undefined
-    }
-
-    if (transcript === undefined) {
-      if (!args.muxAssetId || args.segmentRecordingId)
-        throw new Error('Stored R2 transcript missing')
-      if (!record.muxPlaybackId && args.muxTrackId) {
-        // track.ready can race ahead of asset.ready, in which case the record
-        // has a muxAssetId (patched at upload.asset_created) but no playback
-        // ID yet. markRecordReady's requestGeneratedSubtitles re-drive also
-        // covers this deterministically; the retry is belt and suspenders.
-        const retried = await retryLater('awaiting_playback_id')
-        if (retried) return retried
-      }
-
-      if (!record.muxPlaybackId || !args.muxTrackId) {
-        await ctx.runMutation(internal.serverTelemetry.recordServerEvent, {
-          level: 'warn',
-          event: 'ai:transcript:missing_playback_or_track',
-          message:
-            'AI insights skipped: no playback ID or caption track to fetch a transcript with',
-          data: { table: args.table, recordId: args.recordId, muxAssetId: args.muxAssetId },
-        })
-        return { processed: false, reason: 'missing_playback_or_track' }
-      }
-
-      const url = await buildMuxTranscriptUrl({
-        playbackId: record.muxPlaybackId,
-        trackId: args.muxTrackId,
-        playbackPolicy: record.muxPlaybackPolicy,
-      })
-      const response = await fetchWithTimeout(url, {}, TRANSCRIPT_FETCH_TIMEOUT_MS)
-      const body = response.ok ? (await response.text()).trim().slice(0, MAX_TRANSCRIPT_CHARS) : ''
-
-      // Right after track.ready the CDN can 404 — or 200 with an empty body.
-      // Neither may be persisted: a saved empty transcript would be reused on
-      // every later attempt and the video would never get its summary.
-      if (!response.ok || body.length < MIN_TRANSCRIPT_CHARS) {
-        const retried = await retryLater('transcript_fetch_retrying')
-        if (retried) return retried
-        if (!response.ok) {
-          throw new Error(
-            `Transcript fetch failed after ${TRANSCRIPT_FETCH_MAX_ATTEMPTS} attempts: ${response.status} ${url.split('?')[0]}`,
-          )
-        }
-        return { processed: false, reason: 'transcript_too_short' }
-      }
-
-      transcript = body
-      await ctx.runMutation(internal.ai.saveTranscript, {
-        table: args.table,
-        recordId: args.recordId,
-        muxAssetId: args.muxAssetId,
-        muxTrackId: args.muxTrackId,
-        languageCode: args.languageCode,
-        text: transcript,
-      })
-    }
+    // Native R2 transcription stores text before scheduling insights. Migrated
+    // videos retain their stored transcript; never fall back to a retired CDN.
+    if (transcript === undefined) return { processed: false, reason: 'missing_stored_transcript' }
 
     if (transcript.length < MIN_TRANSCRIPT_CHARS) {
       return { processed: false, reason: 'transcript_too_short' }

@@ -302,7 +302,12 @@ export const listPendingMedia = internalQuery({
 export const markMediaResult = internalMutation({
   args: {
     mediaId: v.id('accountDeletionMedia'),
-    result: v.union(v.literal('deleted'), v.literal('missing'), v.literal('failed')),
+    result: v.union(
+      v.literal('deleted'),
+      v.literal('missing'),
+      v.literal('failed'),
+      v.literal('retired'),
+    ),
     error: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -317,59 +322,6 @@ export const markMediaResult = internalMutation({
   },
 })
 
-function muxConfig() {
-  const tokenId = process.env.MUX_TOKEN_ID
-  const tokenSecret = process.env.MUX_TOKEN_SECRET
-  if (!tokenId || !tokenSecret) throw new Error('Mux credentials are not configured')
-  return { authorization: `Basic ${btoa(`${tokenId}:${tokenSecret}`)}` }
-}
-
-async function muxRequest(path: string, method: 'GET' | 'DELETE' | 'PUT') {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 15_000)
-  try {
-    return await fetch(`https://api.mux.com/video/v1/${path}`, {
-      method,
-      signal: controller.signal,
-      headers: { Accept: 'application/json', Authorization: muxConfig().authorization },
-    })
-  } finally {
-    clearTimeout(timeout)
-  }
-}
-
-async function deleteMux(kind: MediaKind, externalId: string) {
-  if (kind === 'direct_upload') {
-    const cancelled = await muxRequest(`uploads/${externalId}/cancel`, 'PUT')
-    if (cancelled.ok) return 'deleted' as const
-    if (cancelled.status === 404) return 'missing' as const
-
-    // Cancellation only succeeds while waiting. If the upload won the race,
-    // resolve the asset it created and delete that asset before proceeding.
-    const lookup = await muxRequest(`uploads/${externalId}`, 'GET')
-    if (lookup.status === 404) return 'missing' as const
-    if (!lookup.ok) throw new Error(`Mux upload lookup failed (${lookup.status})`)
-    const payload = (await lookup.json()) as {
-      data?: { status?: string; asset_id?: string }
-    }
-    if (payload.data?.asset_id) {
-      const asset = await muxRequest(`assets/${payload.data.asset_id}`, 'DELETE')
-      if (!asset.ok && asset.status !== 404)
-        throw new Error(`Mux asset deletion failed (${asset.status})`)
-      return 'deleted' as const
-    }
-    if (['cancelled', 'timed_out', 'errored'].includes(payload.data?.status ?? '')) {
-      return 'missing' as const
-    }
-    throw new Error(`Mux upload could not be cancelled (${payload.data?.status ?? 'unknown'})`)
-  }
-  const resource = kind === 'asset' ? 'assets' : 'live-streams'
-  const response = await muxRequest(`${resource}/${externalId}`, 'DELETE')
-  if (response.status === 404) return 'missing' as const
-  if (!response.ok) throw new Error(`Mux ${resource} deletion failed (${response.status})`)
-  return 'deleted' as const
-}
-
 export const deleteMediaBatch = internalAction({
   args: { jobId: v.id('accountDeletionJobs') },
   handler: async (ctx, args): Promise<{ processed: number; failures: number }> => {
@@ -380,10 +332,21 @@ export const deleteMediaBatch = internalAction({
     let failures = 0
     for (const row of rows) {
       try {
-        const result = await deleteMux(row.kind, row.externalId)
+        // Retain a durable operator cleanup item after the account job removes
+        // its own ledger. Retirement is not evidence of external deletion.
+        await ctx.runMutation(internal.retentionMedia.enqueueUnlinked, {
+          kind: row.kind,
+          externalId: row.externalId,
+        })
+        // The old provider kept rollback copies. Until an operator confirms
+        // those copies are gone, keep deletion pending rather than report a
+        // completed account deletion while external user media still exists.
+        if (process.env.LEGACY_MEDIA_RETIREMENT_CONFIRMED !== '1') {
+          throw new Error('External legacy media retirement has not been confirmed')
+        }
         await ctx.runMutation(internal.accountDeletion.markMediaResult, {
           mediaId: row._id,
-          result,
+          result: 'retired',
         })
       } catch (error) {
         failures += 1
@@ -391,7 +354,9 @@ export const deleteMediaBatch = internalAction({
           mediaId: row._id,
           result: 'failed',
           error:
-            error instanceof Error ? error.message.slice(0, 500) : 'Unknown Mux deletion error',
+            error instanceof Error
+              ? error.message.slice(0, 500)
+              : 'Could not archive retired media',
         })
       }
     }
@@ -1176,7 +1141,7 @@ export const resume = internalMutation({
   args: { jobId: v.id('accountDeletionJobs') },
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobId)
-    if (!job || job.status !== 'retrying') return
+    if (job?.status !== 'retrying') return
     await ctx.db.patch(job._id, {
       status: job.retryPhase ?? 'inventory',
       retryPhase: undefined,

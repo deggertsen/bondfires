@@ -4,7 +4,14 @@ import type { ActionCtx } from './_generated/server'
 vi.mock('./auth', () => ({ auth: { getUserId: vi.fn().mockResolvedValue('owner') } }))
 
 import { auth } from './auth'
-import { createLiveStream, createMuxDirectUpload } from './videos'
+import {
+  createLiveBackupDirectUpload,
+  createLiveStream,
+  createMuxDirectUpload,
+  endLiveStream,
+  getMuxUploadStatus,
+  monitorUploadCompletion,
+} from './videos'
 
 function handler(fn: unknown) {
   return (fn as { _handler: (ctx: ActionCtx, args: unknown) => Promise<unknown> })._handler
@@ -17,6 +24,14 @@ describe.each([
     { filename: 'video.mp4', contentType: 'video/mp4', isResponse: false },
   ],
   ['live stream', createLiveStream, { isResponse: false }],
+  [
+    'backup recovery',
+    createLiveBackupDirectUpload,
+    { liveSessionId: 'old-session', filename: 'backup.mp4', contentType: 'video/mp4' },
+  ],
+  ['upload status', getMuxUploadStatus, { uploadId: 'old-upload' }],
+  ['upload polling', monitorUploadCompletion, { uploadId: 'old-upload' }],
+  ['stream ending', endLiveStream, { liveSessionId: 'old-session' }],
 ])('retired Mux %s', (_name, fn, args) => {
   afterEach(() => {
     vi.unstubAllGlobals()

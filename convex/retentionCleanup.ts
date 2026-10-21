@@ -343,6 +343,5 @@ export const resumeStale = internalMutation({
         })
       }
     }
-    await ctx.scheduler.runAfter(0, internal.retentionMedia.drain, {})
   },
 })

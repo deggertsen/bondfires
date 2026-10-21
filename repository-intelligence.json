@@ -288,11 +288,14 @@
     },
     {
       "id": "mux-video",
-      "description": "Mux APIs, webhooks, playback signing, and native publishing form one recording contract.",
+      "description": "Native R2 recording, imported historical playback, and external legacy-media retirement must remain compatible.",
       "owner": "Bondfires maintainers",
       "triggerPatterns": [
         "convex/videos.ts",
         "convex/http.ts",
+        "convex/mediaImports.ts",
+        "convex/accountDeletion.ts",
+        "convex/retentionMedia.ts",
         "convex/bondfireRetention.ts",
         "apps/mobile/modules/bondfire-live-publisher/**",
         "apps/mobile/components/create/*RecordScreen.tsx",
@@ -300,6 +303,7 @@
         "packages/app/src/utils/live*.ts"
       ],
       "environmentKeys": [
+        "LEGACY_MEDIA_RETIREMENT_CONFIRMED",
         "EXPO_PUBLIC_LOCAL_BACKUP_RECORDING",
         "EXPO_PUBLIC_LIVE_AUDIO_SOURCE",
         "MUX_LIVE_LATENCY_MODE",
@@ -317,7 +321,7 @@
         "MUX_WEBHOOK_SECRET",
         "RETENTION_CLAIMS_ENABLED"
       ],
-      "documents": ["docs/mux-setup.md", "docs/plans/mux-live-streaming.md", "docs/retention-cleanup.md"],
+      "documents": ["docs/mux-retirement.md", "docs/retention-cleanup.md"],
       "actions": ["external-contract-review", "recording-smoke"]
     },
     {
