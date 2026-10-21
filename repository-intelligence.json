@@ -147,7 +147,7 @@
     },
     {
       "id": "recording-stack",
-      "description": "Mux and live-recording behavior across backend, JavaScript, Swift, and Kotlin",
+      "description": "R2 and live-recording behavior across backend, JavaScript, Swift, and Kotlin",
       "patterns": [
         "convex/videos.ts",
         "convex/http.ts",
@@ -192,6 +192,7 @@
         "scripts/check-*.mjs",
         "scripts/repo-impact.mjs",
         "scripts/repository-intelligence.test.mjs",
+        "scripts/retired-media.test.mjs",
         "scripts/lib/**"
       ],
       "actions": ["validate", "dependency-review"]
