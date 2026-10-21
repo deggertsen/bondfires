@@ -15,10 +15,9 @@ import { throwUserError, withUserFacingErrors } from './errors'
 import { isFreeEmoji, isReactionEmoji } from './lib/emojis'
 import { getVideoLifecycle } from './lib/videoLifecycle'
 import {
-  countReaction,
-  type ReactionCount,
   rankRecentEmojis,
-  tallyReactionCounts,
+  recomputeThreadReactionSummaries,
+  requestReactionSummaryFlush,
 } from './lib/videoReactions'
 
 type VideoReference =
@@ -155,7 +154,7 @@ export const addReaction = mutation({
           createdAt: Date.now(),
         }
         const reactionId = await ctx.db.insert('videoReactions', row)
-        await countReaction(ctx, row)
+        await requestReactionSummaryFlush(ctx, row)
 
         const reaction = await ctx.db.get(reactionId)
         return reaction ?? null
@@ -234,50 +233,32 @@ export const getRecentEmojis = query({
   },
 })
 
-// ── Reaction summary repair / backfill ──────────────────────────────────────
+// ── Reaction summary flush and repair ───────────────────────────────────────
 //
-// Recomputes every video's reaction summary and each thread's rollup from the
-// videoReactions rows, patching only what disagrees. It writes absolute values,
-// so it is safe to rerun and cannot double-count rows the incremental helpers
-// already counted. Run once after deploying the summary fields (dashboard →
-// videoReactions:repairReactionSummaries {}); it self-paginates.
+// See lib/videoReactions.ts. flushReactionSummaries is the coalesced write a
+// reaction insert or delete schedules for its thread. repairReactionSummaries
+// runs the same recompute over every thread, patching only what disagrees: it
+// writes absolute values, so it is safe to rerun. Run it once after deploying
+// the summary fields (dashboard → videoReactions:repairReactionSummaries {});
+// it self-paginates.
+
+export const flushReactionSummaries = internalMutation({
+  args: { bondfireId: v.id('bondfires') },
+  handler: async (ctx, args) => {
+    // Clear the marker first: a reaction that commits after this flush schedules
+    // the next one, and one that committed before it is in the rows read below.
+    const pending = await ctx.db
+      .query('reactionSummaryFlushes')
+      .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
+      .collect()
+    for (const marker of pending) await ctx.db.delete(marker._id)
+    const bondfire = await ctx.db.get(args.bondfireId)
+    if (!bondfire) return { patched: 0 }
+    return { patched: await recomputeThreadReactionSummaries(ctx, bondfire) }
+  },
+})
 
 const REPAIR_BATCH_SIZE = 10
-
-type Summary = { total: number; counts: ReactionCount[]; lastAt?: number; lastUserId?: Id<'users'> }
-
-function summarize(reactions: Doc<'videoReactions'>[]): Summary {
-  const counts = tallyReactionCounts(reactions)
-  const latest = reactions.reduce<Doc<'videoReactions'> | null>(
-    (best, reaction) => (!best || reaction.createdAt >= best.createdAt ? reaction : best),
-    null,
-  )
-  return {
-    total: reactions.length,
-    counts,
-    lastAt: latest?.createdAt,
-    lastUserId: latest?.userId,
-  }
-}
-
-function sameCounts(stored: ReactionCount[] | undefined, expected: ReactionCount[]) {
-  const byEmoji = new Map((stored ?? []).map((entry) => [entry.emoji, entry.count]))
-  return (
-    byEmoji.size === expected.length &&
-    expected.every((entry) => byEmoji.get(entry.emoji) === entry.count)
-  )
-}
-
-function ownSummaryDrifted(
-  doc: Pick<Doc<'bondfireVideos'>, 'reactionTotal' | 'reactionCounts' | 'lastReactionAt'>,
-  expected: Summary,
-) {
-  return (
-    (doc.reactionTotal ?? 0) !== expected.total ||
-    !sameCounts(doc.reactionCounts, expected.counts) ||
-    doc.lastReactionAt !== expected.lastAt
-  )
-}
 
 export const repairReactionSummaries = internalMutation({
   args: {
@@ -292,52 +273,7 @@ export const repairReactionSummaries = internalMutation({
 
     let repaired = 0
     for (const bondfire of page.page) {
-      const sparkReactions = await ctx.db
-        .query('videoReactions')
-        .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
-        .collect()
-      const responses = await ctx.db
-        .query('bondfireVideos')
-        .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
-        .collect()
-
-      const threadReactions = [...sparkReactions]
-      for (const response of responses) {
-        const responseReactions = await ctx.db
-          .query('videoReactions')
-          .withIndex('by_bondfire_video', (q) => q.eq('bondfireVideoId', response._id))
-          .collect()
-        threadReactions.push(...responseReactions)
-        const expected = summarize(responseReactions)
-        if (ownSummaryDrifted(response, expected)) {
-          repaired += 1
-          await ctx.db.patch(response._id, {
-            reactionTotal: expected.total,
-            reactionCounts: expected.counts,
-            lastReactionAt: expected.lastAt,
-          })
-        }
-      }
-
-      const spark = summarize(sparkReactions)
-      const thread = summarize(threadReactions)
-      const threadDrifted =
-        (bondfire.threadReactionTotal ?? 0) !== thread.total ||
-        !sameCounts(bondfire.threadReactionCounts, thread.counts) ||
-        bondfire.threadLastReactionAt !== thread.lastAt ||
-        bondfire.threadLastReactorId !== thread.lastUserId
-      if (ownSummaryDrifted(bondfire, spark) || threadDrifted) {
-        repaired += 1
-        await ctx.db.patch(bondfire._id, {
-          reactionTotal: spark.total,
-          reactionCounts: spark.counts,
-          lastReactionAt: spark.lastAt,
-          threadReactionTotal: thread.total,
-          threadReactionCounts: thread.counts,
-          threadLastReactionAt: thread.lastAt,
-          threadLastReactorId: thread.lastUserId,
-        })
-      }
+      repaired += await recomputeThreadReactionSummaries(ctx, bondfire)
     }
 
     if (!page.isDone) {

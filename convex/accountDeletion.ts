@@ -23,7 +23,7 @@ import {
   nextAccountDeletionStage,
 } from './lib/accountDeletionPolicy'
 import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
-import { uncountReaction } from './lib/videoReactions'
+import { requestReactionSummaryFlush } from './lib/videoReactions'
 import { uncountResponse } from './responseCounts'
 
 const BATCH_SIZE = ACCOUNT_DELETION_BATCH_SIZE
@@ -576,7 +576,7 @@ export const deleteContentBatch = internalMutation({
           .withIndex('by_bondfire_video', (q) => q.eq('bondfireVideoId', video._id))
           .take(BATCH_SIZE)
         // The response is going away, but its parent thread's rollup survives.
-        for (const reaction of reactions) await uncountReaction(ctx, reaction)
+        if (reactions[0]) await requestReactionSummaryFlush(ctx, reactions[0])
         rows = reactions
       }
       if (stage === 'presence')
@@ -1047,7 +1047,8 @@ export const cleanupUserBatch = internalMutation({
         .query('videoReactions')
         .withIndex('by_user_created', (q) => q.eq('userId', userId))
         .take(BATCH_SIZE)
-      for (const reaction of reactions) await uncountReaction(ctx, reaction)
+      // One flush per affected thread; requests for a pending thread are no-ops.
+      for (const reaction of reactions) await requestReactionSummaryFlush(ctx, reaction)
       rows = reactions
     }
     if (stage === 'presence')

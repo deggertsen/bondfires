@@ -1129,6 +1129,13 @@ export default defineSchema({
     .index('by_bondfire_video', ['bondfireVideoId', 'timestampMs'])
     .index('by_user_created', ['userId', 'createdAt']),
 
+  // One row per thread whose reaction summaries have a flush scheduled (see
+  // lib/videoReactions.ts). Lets a burst of reactions share one summary write.
+  reactionSummaryFlushes: defineTable({
+    bondfireId: v.id('bondfires'),
+    requestedAt: v.number(),
+  }).index('by_bondfire', ['bondfireId']),
+
   // Presence — real-time viewer tracking
   presence: defineTable({
     videoType: v.union(v.literal('bondfire'), v.literal('response')),

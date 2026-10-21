@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from 'convex-test'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import { CURRENT_COMMUNITY_GUIDELINES_VERSION, CURRENT_TERMS_VERSION } from './contentSafety'
@@ -72,12 +72,23 @@ async function fixture() {
       bondfire: await ctx.db.get(ids.bondfireId),
       response: await ctx.db.get(ids.responseId),
     }))
-  return { t, ids, as, docs }
+  // Run the coalesced summary flush the reaction writes scheduled.
+  const settle = () => t.finishAllScheduledFunctions(vi.runAllTimers)
+  const flush = () =>
+    t.mutation(internal.videoReactions.flushReactionSummaries, { bondfireId: ids.bondfireId })
+  return { t, ids, as, docs, settle, flush }
 }
+
+beforeEach(() => {
+  vi.useFakeTimers()
+})
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe('reaction summaries', () => {
   it('counts a spark reaction on the spark and the thread, a response reaction on the response and the thread', async () => {
-    const { ids, as, docs } = await fixture()
+    const { ids, as, docs, settle } = await fixture()
     const viewer = as(ids.viewer)
     await viewer.mutation(api.videoReactions.addReaction, {
       bondfireId: ids.bondfireId,
@@ -94,6 +105,7 @@ describe('reaction summaries', () => {
       emoji: '🔥',
       timestampMs: 300,
     })
+    await settle()
 
     const { bondfire, response } = await docs()
     expect(bondfire?.reactionTotal).toBe(1)
@@ -110,7 +122,7 @@ describe('reaction summaries', () => {
   })
 
   it('leaves summaries untouched when a reaction is rejected', async () => {
-    const { t, ids, as, docs } = await fixture()
+    const { t, ids, as, docs, settle } = await fixture()
     const viewer = as(ids.viewer)
     const before = await docs()
     await expect(
@@ -133,6 +145,7 @@ describe('reaction summaries', () => {
         emoji: '🔥',
         timestampMs: i,
       })
+    await settle()
     const afterTen = await docs()
     await expect(
       viewer.mutation(api.videoReactions.addReaction, {
@@ -150,13 +163,14 @@ describe('reaction summaries', () => {
       }),
     ).rejects.toThrow()
 
+    await settle()
     expect(before.bondfire?.threadReactionTotal).toBeUndefined()
     expect(afterTen.bondfire?.threadReactionTotal).toBe(10)
     expect((await docs()).bondfire?.threadReactionTotal).toBe(10)
   })
 
   it('marks reactions new for participants until they open the thread', async () => {
-    const { t, ids, as } = await fixture()
+    const { t, ids, as, settle } = await fixture()
     const check = (userId: Id<'users'>) =>
       t.run(async (ctx) => {
         const bondfire = await ctx.db.get(ids.bondfireId)
@@ -170,6 +184,7 @@ describe('reaction summaries', () => {
       emoji: '🙏',
       timestampMs: 100,
     })
+    await settle()
     expect(await check(ids.owner)).toBe(true)
     expect(await check(ids.responder)).toBe(true)
     // The reactor's own reaction is not news to them, and outsiders never see it.
@@ -182,7 +197,7 @@ describe('reaction summaries', () => {
   })
 
   it('removes a deleted reactor’s counts from the video and the thread, and a rerun cannot go negative', async () => {
-    const { t, ids, as, docs } = await fixture()
+    const { t, ids, as, docs, settle, flush } = await fixture()
     await as(ids.viewer).mutation(api.videoReactions.addReaction, {
       bondfireVideoId: ids.responseId,
       emoji: '🔥',
@@ -193,6 +208,8 @@ describe('reaction summaries', () => {
       emoji: '🔥',
       timestampMs: 200,
     })
+    await settle()
+    expect((await docs()).bondfire?.threadReactionTotal).toBe(2)
     const jobId = await t.run((ctx) =>
       ctx.db.insert('accountDeletionJobs', {
         userId: ids.viewer,
@@ -206,6 +223,9 @@ describe('reaction summaries', () => {
     await t.mutation(internal.accountDeletion.cleanupUserBatch, { jobId })
     await t.run((ctx) => ctx.db.patch(jobId, { cleanupStage: 'reactions' }))
     await t.mutation(internal.accountDeletion.cleanupUserBatch, { jobId })
+    // Run the flush the deletion requested directly; settling would also run
+    // the rest of the account-deletion pipeline.
+    await flush()
 
     const { bondfire, response } = await docs()
     const remaining = await t.run((ctx) =>
@@ -221,7 +241,7 @@ describe('reaction summaries', () => {
   })
 
   it('subtracts a retained response’s reactions from the surviving thread', async () => {
-    const { t, ids, as, docs } = await fixture()
+    const { t, ids, as, docs, settle, flush } = await fixture()
     const viewer = as(ids.viewer)
     await viewer.mutation(api.videoReactions.addReaction, {
       bondfireId: ids.bondfireId,
@@ -233,6 +253,7 @@ describe('reaction summaries', () => {
       emoji: '🔥',
       timestampMs: 100,
     })
+    await settle()
     const jobId = await t.run((ctx) =>
       ctx.db.insert('retentionCleanupJobs', {
         kind: 'response',
@@ -243,6 +264,7 @@ describe('reaction summaries', () => {
       }),
     )
     await t.mutation(internal.retentionCleanup.runBatch, { jobId, revision: 0 })
+    await flush()
 
     const { bondfire } = await docs()
     expect(bondfire?.threadReactionTotal).toBe(1)
@@ -293,12 +315,13 @@ describe('reaction summaries', () => {
   })
 
   it('keeps the list count even when playback hides a blocked reactor', async () => {
-    const { t, ids, as, docs } = await fixture()
+    const { t, ids, as, docs, settle } = await fixture()
     await as(ids.viewer).mutation(api.videoReactions.addReaction, {
       bondfireId: ids.bondfireId,
       emoji: '🔥',
       timestampMs: 100,
     })
+    await settle()
     await t.run((ctx) =>
       ctx.db.insert('userBlocks', {
         blockerId: ids.owner,
@@ -310,5 +333,40 @@ describe('reaction summaries', () => {
       await as(ids.owner).query(api.videoReactions.getReactions, { bondfireId: ids.bondfireId }),
     ).toEqual([])
     expect((await docs()).bondfire?.threadReactionTotal).toBe(1)
+  })
+  it('coalesces a burst of reactions into one scheduled summary write per thread', async () => {
+    const { t, ids, as, docs, settle } = await fixture()
+    const viewer = as(ids.viewer)
+    for (let i = 0; i < 5; i++)
+      await viewer.mutation(api.videoReactions.addReaction, {
+        bondfireVideoId: ids.responseId,
+        emoji: i % 2 ? '🔥' : '❤️',
+        timestampMs: i * 100,
+      })
+
+    const pending = await t.run((ctx) => ctx.db.query('reactionSummaryFlushes').collect())
+    const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect())
+    expect(pending).toHaveLength(1)
+    expect(scheduled).toHaveLength(1)
+    // Lists keep their previous counts until the flush runs.
+    expect((await docs()).bondfire?.threadReactionTotal).toBeUndefined()
+
+    await settle()
+    const { bondfire, response } = await docs()
+    expect(bondfire?.threadReactionTotal).toBe(5)
+    expect(response?.reactionCounts).toEqual([
+      { emoji: '❤️', count: 3 },
+      { emoji: '🔥', count: 2 },
+    ])
+    expect(await t.run((ctx) => ctx.db.query('reactionSummaryFlushes').collect())).toEqual([])
+
+    // The next reaction after a flush schedules a fresh one.
+    await viewer.mutation(api.videoReactions.addReaction, {
+      bondfireId: ids.bondfireId,
+      emoji: '🙏',
+      timestampMs: 0,
+    })
+    await settle()
+    expect((await docs()).bondfire?.threadReactionTotal).toBe(6)
   })
 })

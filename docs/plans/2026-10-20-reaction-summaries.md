@@ -40,7 +40,7 @@ Evidence is from the current code, not from analytics. Confidence is high on the
 
 ## Solution
 
-Keep `videoReactions` as the source of truth for playback. Maintain a small denormalized summary next to the video, updated in the same mutation that inserts or deletes a reaction row. Lists read the summary off the document they already load.
+Keep `videoReactions` as the source of truth for playback. Maintain a small denormalized summary next to the video, recomputed from the reaction rows shortly after any reaction row is inserted or deleted (see "Coalesced summary writes" below). Lists read the summary off the document they already load.
 
 Two scopes, because feed rows are threads and thread-sheet rows are single videos:
 
@@ -52,9 +52,17 @@ Two scopes, because feed rows are threads and thread-sheet rows are single video
 
 "New" does not get its own seen-state table. For a participant, the thread is new when `threadLastReactionAt` is greater than that viewer's `bondfireThreadReads.lastReadAt` (missing read means new, once a reaction exists), unless the latest reactor (`threadLastReactorId`) is the viewer. Without that exception, reacting while you watch would mark your own thread new as soon as you back out. Opening the thread already calls `markThreadRead`. Non-participants do not see the new marker. This reuses the catch-up read, so opening a thread to watch a new video also clears the reaction marker. That coupling is intentional for this slice.
 
-This matches the existing `countResponse` / `uncountResponse` idea: one helper applies a signed count change, and deletion paths call it instead of a second accounting scheme. The helper is a no-op when the stored count is already zero, so cleanup can retry.
+### Coalesced summary writes
 
-Absent summary fields mean zero. A paginated backfill walks existing `videoReactions` and applies the same helper before the UI depends on old threads looking correct. Shipping the UI before backfill is safe; those threads simply show no pill until the backfill reaches them.
+Writing the summary on every reaction would make every open feed, camp, My Fires, and thread query that reads the Bondfire re-run once per reaction. A burst from one person tapping emojis would cause up to 10 re-runs in 10 seconds for each viewer. Instead:
+
+- Every path that inserts or deletes a reaction row (`addReaction`, account deletion of the reactor or of a response, retention cleanup of a response) calls one helper, `requestReactionSummaryFlush`, in the same mutation.
+- The helper records a per-thread marker in `reactionSummaryFlushes` and schedules `flushReactionSummaries` 2s later, unless that thread already has a flush pending.
+- The flush clears the marker, then recomputes the spark, each response, and the thread rollup from the rows. It patches only the documents whose stored summary disagrees.
+- A burst therefore costs at most one summary write per thread every ~2s. Because the flush recomputes absolute values, an interrupted or missed request heals on the next flush or repair instead of drifting.
+- Counts on lists lag the rows by up to 2s. Playback reads the rows directly and is unaffected.
+
+Absent summary fields mean zero. A paginated repair job (`repairReactionSummaries`) runs the same per-thread recompute over every Bondfire, as backfill and as a drift check. Shipping the UI before backfill is safe; those threads simply show no pill until the backfill reaches them.
 
 Alternatives considered:
 
@@ -98,7 +106,7 @@ Because the heatmap uses the filtered rows, its counts can be lower than the lis
 
 ### Must Have
 
-- [ ] A saved reaction increases exactly one video summary and the parent thread rollup by one for that emoji.
+- [ ] A saved reaction, once its thread's flush runs, increases exactly one video summary and the parent thread rollup by one for that emoji. A burst schedules exactly one flush.
   - Verify by: convex test that inserts a spark reaction and a response reaction through `addReaction`, then reads `bondfires` and `bondfireVideos`. Spark reaction changes both spark fields and thread fields. Response reaction changes the response fields and thread fields, not the spark fields.
 - [ ] A rejected reaction does not change any summary.
   - Verify by: convex test for an unsupported emoji, a negative timestamp, a missing video, and the existing 10-per-10-seconds limit. Documents are unchanged after each rejection.
@@ -112,7 +120,7 @@ Because the heatmap uses the filtered rows, its counts can be lower than the lis
   - Verify by: convex test that creates reactions, runs the account-deletion reactions stage, and asserts the row is gone and both summaries decreased. A second run does not drive a count below zero.
 - [ ] Deleting a response subtracts that response's reactions from the surviving Bondfire rollup. Deleting the Bondfire itself does not need a surviving rollup.
   - Verify by: convex test through the response retention/cleanup reactions stage. Parent `threadReactionTotal` drops by the deleted response's count. Spark summary on the parent stays put.
-- [ ] Backfill reproduces the summaries that incremental writes would have produced.
+- [ ] Backfill reproduces the summaries the flushes would have produced, and a rerun changes nothing.
   - Verify by: insert raw `videoReactions` without going through the helper, run the backfill page until done, and compare totals and per-emoji counts to a direct count of the rows.
 - [ ] Playback still replays stored reactions at `timestampMs`, still hides reactions from users the viewer cannot see, and still ignores the new summary fields.
   - Verify by: existing `convex/videoReactions.test.ts` cases plus one case where the summary count is 1 but the only reactor is not visible to the viewer. `getReactions` returns an empty list. The list pill may still show 1.
@@ -173,15 +181,16 @@ Because the heatmap uses the filtered rows, its counts can be lower than the lis
 - A reaction references exactly one of `bondfireId` or `bondfireVideoId`.
 - There is no user-facing reaction delete. The only removals found are account deletion of the reactor and video retention/cleanup.
 - Summary fields should be optional so existing documents stay valid. Readers treat missing as zero.
-- Convex mutations are transactional. The reaction insert and the summary patch belong in one mutation so a failed write does not leave a row without a count, or a count without a row.
+- Convex mutations are transactional. The reaction insert (or delete) and its flush request belong in one mutation, so a failed write never leaves a row change without a scheduled recompute.
 - Do not call `getReactions` from list queries.
 
 ### Risks
 
-- Summary drift if a new delete path forgets the helper. Mitigation: one helper used by `addReaction`, account deletion, and retention cleanup; tests cover each caller.
+- A new reaction delete path that forgets to request a flush leaves counts stale until something else flushes that thread or the repair runs. Mitigation: one helper used by `addReaction`, account deletion, and retention cleanup; tests cover each caller.
+- Each flush reads all of one thread's reaction rows. That is fine for today's threads; a thread with thousands of reactions would want incremental counting again.
 - The list count can be higher than the reactions playback shows after a block or deletion race. Accepted above. Do not "fix" it by filtering inside the list query.
 - Reusing `lastReadAt` means catching up on videos clears the reaction marker, and opening the thread for reactions marks videos read too. Acceptable for this slice; a separate reactions watermark is only worth it if that coupling shows up in use.
-- Backfill on a large table must be paginated. It should be rerunnable and must not double-apply if the incremental helper already counted a row. Mitigation: backfill computes from reaction rows and writes absolute summaries for the videos it touches, or it only fills documents whose summary is still absent. Pick one and test the rerun.
+- Backfill on a large table must be paginated. It should be rerunnable and must not double-apply if the incremental helper already counted a row. Mitigation (chosen): it computes from reaction rows and writes absolute summaries, so a rerun is a no-op; tested.
 - Animation cost on long feeds. Mitigation: Reanimated on the UI thread, a per-mount cap, a visibility trigger, and at most 6 flying emojis per row.
 - The fly-in store is per device, so the same new reactions animate once on each device. Acceptable; it is decoration, not state.
 - Heatmap markers and the scrub bar compete for touches. Mitigation: markers sit outside the pan responder's area; covered by the scrub regression check.
