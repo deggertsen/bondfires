@@ -158,7 +158,9 @@ function SegmentUploadResume() {
     const tick = () => runSegmentUploads(segmentUploadClient(client), user._id)
     tick()
     const timer = setInterval(tick, 2000)
-    const unregisterRetry = uploadStatusActions.registerRetryHandler('segment', tick)
+    const unregisterRetry = uploadStatusActions.registerRetryHandler('segment', () =>
+      runSegmentUploads(segmentUploadClient(client), user._id, { retryNow: true }),
+    )
     return () => {
       clearInterval(timer)
       unregisterRetry()

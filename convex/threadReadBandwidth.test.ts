@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import type { FunctionReturnType } from 'convex/server'
+import type { FunctionReturnType, PaginationOptions } from 'convex/server'
 import { convexTest } from 'convex-test'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from './_generated/api'
@@ -102,147 +102,175 @@ describe('thread read bandwidth', () => {
     })
   })
 
-  it('keeps later replies, processing entries, and participants accessible beyond 300 responses', async () => {
+  it('pages every response beyond 300 with at most 50 response watch lookups per call', async () => {
     const { t, ids } = await fixture()
-    const processingId = await t.run(async (ctx) => {
-      await ctx.db.patch(ids.responseId, { durationMs: 10000 })
-      await ctx.db.insert('watchEvents', {
-        userId: ids.owner,
-        videoType: 'response',
-        videoId: ids.responseId,
-        eventType: 'complete',
-        positionMs: 10000,
-        createdAt: 300,
-      })
-      await ctx.db.insert('closeCirclePins', {
-        ownerId: ids.owner,
-        pinnedUserId: ids.responder,
-        order: 0,
-        createdAt: 300,
-        updatedAt: 300,
-      })
-      for (let sequenceNumber = 2; sequenceNumber <= 299; sequenceNumber++) {
+    await t.run(async (ctx) => {
+      for (let sequenceNumber = 2; sequenceNumber <= 304; sequenceNumber++) {
         await ctx.db.insert('bondfireVideos', {
           bondfireId: ids.bondfireId,
           userId: ids.responder,
           sequenceNumber,
           videoStatus: 'ready',
-          moderationStatus: sequenceNumber === 299 ? 'removed' : undefined,
           muxPlaybackId: `response-${sequenceNumber}`,
-          durationMs: 10000,
-          // Creation order deliberately disagrees with playback sequence.
           createdAt: 1000 - sequenceNumber,
+        })
+      }
+    })
+    const viewer = t.withIdentity({ subject: ids.owner })
+    const watch = vi.spyOn(viewerWatchState, 'isVideoWatchedByViewer')
+    let cursor: string | null = null
+    const sequences: number[][] = []
+    for (let pageNumber = 0; pageNumber < 7; pageNumber++) {
+      watch.mockClear()
+      const detail: FunctionReturnType<typeof api.bondfires.getWithVideos> = await viewer.query(
+        api.bondfires.getWithVideos,
+        {
+          bondfireId: ids.bondfireId,
+          ...(cursor ? { paginationOpts: { cursor, numItems: 50 } } : {}),
+        },
+      )
+      if (!detail) throw new Error('Missing detail')
+      sequences.push(detail.videos.map((video) => video.sequenceNumber))
+      expect(detail.videos.length).toBe(pageNumber === 6 ? 4 : 50)
+      expect(detail.isDone).toBe(pageNumber === 6)
+      expect(watch).toHaveBeenCalledTimes(1 + detail.videos.length)
+      expect(watch.mock.calls.map(([, , video]) => video._id)).toEqual([
+        ids.bondfireId,
+        ...detail.videos.map((video) => video._id),
+      ])
+      expect(
+        detail.participants.find((entry) => entry.user._id === ids.responder)?.videoCount,
+      ).toBe(detail.videos.length)
+      cursor = detail.continueCursor
+    }
+    expect(sequences[0]).toEqual(Array.from({ length: 50 }, (_, i) => 255 + i))
+    expect(sequences[1]).toEqual(Array.from({ length: 50 }, (_, i) => 205 + i))
+    expect(sequences.reverse().flat()).toEqual(Array.from({ length: 304 }, (_, i) => i + 1))
+  })
+
+  it('bounds source reads before visibility, even with a pinned reactive end cursor', async () => {
+    const { t, ids } = await fixture()
+    await t.run(async (ctx) => {
+      for (let sequenceNumber = 2; sequenceNumber <= 120; sequenceNumber++) {
+        await ctx.db.insert('bondfireVideos', {
+          bondfireId: ids.bondfireId,
+          userId: ids.outsider,
+          sequenceNumber,
+          videoStatus: 'ready',
+          moderationStatus: 'removed',
+          muxPlaybackId: 'hidden',
+          createdAt: sequenceNumber,
+        })
+      }
+    })
+    const viewer = t.withIdentity({ subject: ids.owner })
+    const watch = vi.spyOn(viewerWatchState, 'isVideoWatchedByViewer')
+    // Spy on the real query implementation, not a substitute that assumes the
+    // handler's bounds. Verify the source scan options as well as hydration.
+    const paginations: PaginationOptions[] = []
+    await t.run(async (ctx) => {
+      const ordered = ctx.db.query('bondfireVideos').order('desc')
+      const prototype: typeof ordered = Object.getPrototypeOf(ordered)
+      const original = prototype.paginate
+      vi.spyOn(prototype, 'paginate').mockImplementation(function (this: typeof ordered, options) {
+        paginations.push(options)
+        return original.call(this, options)
+      })
+    })
+    const first = await viewer.query(api.bondfires.getResponsePage, {
+      bondfireId: ids.bondfireId,
+      paginationOpts: { cursor: null, numItems: 500, maximumRowsRead: 5000 },
+    })
+    expect(first.page).toEqual([])
+    expect(first.isDone).toBe(false)
+    expect(watch).toHaveBeenCalledTimes(1) // Spark only; never hydrate the hidden head.
+    expect(paginations.at(-1)).toEqual(
+      expect.objectContaining({ numItems: 50, maximumRowsRead: 50 }),
+    )
+    const second = await viewer.query(api.bondfires.getResponsePage, {
+      bondfireId: ids.bondfireId,
+      paginationOpts: { cursor: first.continueCursor, numItems: 50 },
+    })
+    const pinned = await viewer.query(api.bondfires.getResponsePage, {
+      bondfireId: ids.bondfireId,
+      paginationOpts: { cursor: null, endCursor: second.continueCursor, numItems: 500 },
+    })
+    expect(paginations.at(-1)).toEqual(
+      expect.objectContaining({
+        endCursor: second.continueCursor,
+        numItems: 50,
+        maximumRowsRead: 50,
+      }),
+    )
+    expect(pinned.page.length).toBeLessThanOrEqual(50)
+    expect(pinned.pageStatus).toBe('SplitRequired')
+    expect(pinned.splitCursor).toBeTruthy()
+    const last = await viewer.query(api.bondfires.getResponsePage, {
+      bondfireId: ids.bondfireId,
+      paginationOpts: { cursor: second.continueCursor, numItems: 50 },
+    })
+    expect(last.isDone).toBe(true)
+    expect(last.page.map((row) => row.video._id)).toEqual([ids.responseId])
+  })
+
+  it('does not read responses or their watch state for the metadata subscription', async () => {
+    const { t, ids } = await fixture()
+    const watch = vi.spyOn(viewerWatchState, 'isVideoWatchedByViewer')
+    const paginations: PaginationOptions[] = []
+    await t.run(async (ctx) => {
+      const ordered = ctx.db.query('bondfireVideos').order('desc')
+      const prototype: typeof ordered = Object.getPrototypeOf(ordered)
+      const original = prototype.paginate
+      vi.spyOn(prototype, 'paginate').mockImplementation(function (this: typeof ordered, options) {
+        paginations.push(options)
+        return original.call(this, options)
+      })
+    })
+    const detail = await t.withIdentity({ subject: ids.owner }).query(api.bondfires.getWithVideos, {
+      bondfireId: ids.bondfireId,
+      metadataOnly: true,
+    })
+    expect(detail?.videos).toEqual([])
+    expect(detail?.participants.map((entry) => entry.user._id)).toEqual([ids.owner])
+    expect(watch.mock.calls.map(([, , video]) => video._id)).toEqual([ids.bondfireId])
+    expect(paginations).toEqual([])
+  })
+
+  it('keeps processing projections and late replies reachable without exposing private media fields', async () => {
+    const { t, ids } = await fixture()
+    const processingId = await t.run(async (ctx) => {
+      for (let sequenceNumber = 2; sequenceNumber <= 301; sequenceNumber++) {
+        await ctx.db.insert('bondfireVideos', {
+          bondfireId: ids.bondfireId,
+          userId: ids.responder,
+          sequenceNumber,
+          videoStatus: 'ready',
+          muxPlaybackId: `response-${sequenceNumber}`,
+          createdAt: sequenceNumber,
         })
       }
       return ctx.db.insert('bondfireVideos', {
         bondfireId: ids.bondfireId,
-        userId: ids.responder,
-        creatorName: 'Responder',
-        sequenceNumber: 300,
-        videoStatus: 'processing',
-        muxAssetId: 'private-processing-asset',
-        createdAt: 1000,
-      })
-    })
-    const watch = vi.spyOn(viewerWatchState, 'isVideoWatchedByViewer')
-    const readDetail = () =>
-      t.withIdentity({ subject: ids.owner }).query(api.bondfires.getWithVideos, {
-        bondfireId: ids.bondfireId,
-      })
-    const before = await readDetail()
-    expect(before?.videos.map((video) => video.sequenceNumber)).toEqual(
-      Array.from({ length: 298 }, (_, i) => i + 1),
-    )
-    expect(before?.watchedByViewer).toBe(true)
-    expect(before?.videos[0]?.watchedByViewer).toBe(true)
-    expect(before?.videos.slice(1).every((video) => !video.watchedByViewer)).toBe(true)
-    expect(before?.processingResponses).toEqual([
-      {
-        _id: processingId,
-        userId: ids.responder,
-        creatorName: 'Responder',
-        createdAt: 1000,
-      },
-    ])
-    expect(before?.participants).toMatchObject([
-      { user: { _id: ids.responder }, videoCount: 298, latestAt: 998, isPinned: true },
-      { user: { _id: ids.owner }, videoCount: 1, latestAt: 100, isPinned: false },
-    ])
-    expect(watch).toHaveBeenCalledTimes(299) // Spark + displayed playable responses only.
-    watch.mockClear()
-    const late = await t.run(async (ctx) => {
-      const watchedId = await ctx.db.insert('bondfireVideos', {
-        bondfireId: ids.bondfireId,
         userId: ids.outsider,
-        sequenceNumber: 301,
-        videoStatus: 'ready',
-        muxPlaybackId: 'late-watched',
-        durationMs: 10000,
-        createdAt: 2000,
-      })
-      await ctx.db.insert('watchEvents', {
-        userId: ids.owner,
-        videoType: 'response',
-        videoId: watchedId,
-        eventType: 'complete',
-        positionMs: 10000,
-        createdAt: 3000,
-      })
-      const processingId = await ctx.db.insert('bondfireVideos', {
-        bondfireId: ids.bondfireId,
-        userId: ids.outsider,
-        creatorName: 'Late responder',
         sequenceNumber: 302,
         videoStatus: 'processing',
-        muxAssetId: 'late-private-processing-asset',
-        createdAt: 2100,
+        muxAssetId: 'private',
+        createdAt: 302,
       })
-      await ctx.db.insert('bondfireVideos', {
-        bondfireId: ids.bondfireId,
-        userId: ids.outsider,
-        sequenceNumber: 303,
-        videoStatus: 'ready',
-        moderationStatus: 'removed',
-        muxPlaybackId: 'late-hidden',
-        createdAt: 2200,
-      })
-      const unwatchedId = await ctx.db.insert('bondfireVideos', {
-        bondfireId: ids.bondfireId,
-        userId: ids.outsider,
-        sequenceNumber: 304,
-        videoStatus: 'ready',
-        muxPlaybackId: 'late-unwatched',
-        durationMs: 10000,
-        // Sequence, not creation time, determines playback/deep-link order.
-        createdAt: 1900,
-      })
-      return { watchedId, processingId, unwatchedId }
     })
-    const after = await readDetail()
-    expect(after?.videos.slice(0, 298)).toEqual(before?.videos)
-    expect(after?.videos.slice(298)).toMatchObject([
-      { _id: late.watchedId, sequenceNumber: 301, watchedByViewer: true },
-      { _id: late.unwatchedId, sequenceNumber: 304, watchedByViewer: false },
-    ])
-    expect(after?.processingResponses).toEqual([
-      ...(before?.processingResponses ?? []),
+    const result = await t
+      .withIdentity({ subject: ids.owner })
+      .query(api.bondfires.getWithVideos, { bondfireId: ids.bondfireId })
+    expect(result?.videos.at(-1)?.sequenceNumber).toBe(301)
+    expect(result?.processingResponses).toEqual([
       {
-        _id: late.processingId,
+        _id: processingId,
         userId: ids.outsider,
-        creatorName: 'Late responder',
-        createdAt: 2100,
+        createdAt: 302,
+        sequenceNumber: 302,
       },
     ])
-    expect(after?.participants).toMatchObject([
-      { user: { _id: ids.outsider }, videoCount: 2, latestAt: 2000, isPinned: false },
-      { user: { _id: ids.responder }, videoCount: 298, latestAt: 998, isPinned: true },
-      { user: { _id: ids.owner }, videoCount: 1, latestAt: 100, isPinned: false },
-    ])
-    expect(watch).toHaveBeenCalledTimes(301)
-    expect(watch.mock.calls.map(([, , video]) => video._id)).toEqual([
-      ids.bondfireId,
-      ...(after?.videos.map((video) => video._id) ?? []),
-    ])
+    expect(result?.participants.map((entry) => entry.user._id)).not.toContain(ids.outsider)
   })
 
   it('reuses participant users across list summaries and first-unwatched resolution', async () => {
@@ -361,6 +389,39 @@ describe('thread read bandwidth', () => {
       })
     },
   )
+
+  it('marks an older-page participant read and safely skips observers', async () => {
+    const { t, ids } = await fixture()
+    await t.run(async (ctx) => {
+      for (let sequenceNumber = 2; sequenceNumber <= 60; sequenceNumber++) {
+        await ctx.db.insert('bondfireVideos', {
+          bondfireId: ids.bondfireId,
+          userId: ids.owner,
+          sequenceNumber,
+          videoStatus: 'ready',
+          muxPlaybackId: 'newer',
+          createdAt: sequenceNumber,
+        })
+      }
+    })
+    const responder = t.withIdentity({ subject: ids.responder })
+    const detail = await responder.query(api.bondfires.getWithVideos, {
+      bondfireId: ids.bondfireId,
+    })
+    expect(detail?.participants.map((entry) => entry.user._id)).not.toContain(ids.responder)
+    expect(
+      await responder.mutation(api.conversations.markThreadRead, {
+        bondfireId: ids.bondfireId,
+        skipNonParticipant: true,
+      }),
+    ).toBeTruthy()
+    expect(
+      await t.withIdentity({ subject: ids.outsider }).mutation(api.conversations.markThreadRead, {
+        bondfireId: ids.bondfireId,
+        skipNonParticipant: true,
+      }),
+    ).toBeNull()
+  })
 
   it('does not query responses for the thread owner', async () => {
     const { t, ids } = await fixture()

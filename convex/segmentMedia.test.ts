@@ -1,4 +1,6 @@
 /// <reference types="vite/client" />
+
+import { ConvexError } from 'convex/values'
 import { convexTest } from 'convex-test'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, internal } from './_generated/api'
@@ -8,6 +10,7 @@ import { CURRENT_COMMUNITY_GUIDELINES_VERSION, CURRENT_TERMS_VERSION } from './c
 import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
 import schema from './schema'
 import { cleanup } from './segmentMedia'
+import * as videos from './videos'
 
 const modules = import.meta.glob('./**/*.ts')
 async function setup(maxDurationMs = 10000) {
@@ -76,6 +79,51 @@ afterEach(() => {
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+})
+describe('begin failure diagnostics', () => {
+  it('preserves expected errors without logging them as unexpected failures', async () => {
+    const { t, owner, args } = await setup()
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(t.mutation(api.segmentMedia.begin, args)).rejects.toThrow('Sign in required')
+    await expect(
+      owner.mutation(api.segmentMedia.begin, { ...args, localId: 'invalid' }),
+    ).rejects.toThrow('Invalid recording identifier')
+    const expected = new ConvexError('This camp is no longer active')
+    vi.spyOn(videos, 'createPendingVideoRecord').mockRejectedValueOnce(expected)
+    await expect(
+      owner.mutation(api.segmentMedia.begin, {
+        ...args,
+        localId: '00000000-0000-4000-8000-000000000002',
+      }),
+    ).rejects.toThrow('This camp is no longer active')
+    expect(log).not.toHaveBeenCalled()
+  })
+
+  it('logs the cause and destination, returns a safe error, and rolls back partial writes', async () => {
+    const { t, owner, args } = await setup()
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const failure = new Error('Unexpected destination failure')
+    vi.spyOn(videos, 'createPendingVideoRecord').mockRejectedValueOnce(failure)
+    const retryArgs = { ...args, localId: '00000000-0000-4000-8000-000000000002' }
+    await expect(owner.mutation(api.segmentMedia.begin, retryArgs)).rejects.toThrow(
+      'Could not start this upload. It will retry.',
+    )
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[segmentMedia:begin] unexpected error',
+      expect.objectContaining({
+        localId: retryArgs.localId,
+        campId: args.campId,
+        isResponse: false,
+        message: failure.message,
+        stack: failure.stack,
+      }),
+    )
+    const recordings = await t.run((ctx) => ctx.db.query('segmentRecordings').collect())
+    expect(recordings).toHaveLength(1)
+    expect(recordings[0].localId).toBe(args.localId)
+    const recovered = await owner.mutation(api.segmentMedia.begin, retryArgs)
+    expect(await owner.mutation(api.segmentMedia.begin, retryArgs)).toEqual(recovered)
+  })
 })
 describe('internal recording lifecycle', () => {
   it.each([

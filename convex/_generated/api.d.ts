@@ -58,6 +58,7 @@ import type * as lib_notificationCopy from "../lib/notificationCopy.js";
 import type * as lib_presence from "../lib/presence.js";
 import type * as lib_pushProviders from "../lib/pushProviders.js";
 import type * as lib_queryBounds from "../lib/queryBounds.js";
+import type * as lib_recordingLimits from "../lib/recordingLimits.js";
 import type * as lib_registrationPolicy from "../lib/registrationPolicy.js";
 import type * as lib_reportPolicy from "../lib/reportPolicy.js";
 import type * as lib_segmentMediaCleanup from "../lib/segmentMediaCleanup.js";
@@ -152,6 +153,7 @@ declare const fullApi: ApiFromModules<{
   "lib/presence": typeof lib_presence;
   "lib/pushProviders": typeof lib_pushProviders;
   "lib/queryBounds": typeof lib_queryBounds;
+  "lib/recordingLimits": typeof lib_recordingLimits;
   "lib/registrationPolicy": typeof lib_registrationPolicy;
   "lib/reportPolicy": typeof lib_reportPolicy;
   "lib/segmentMediaCleanup": typeof lib_segmentMediaCleanup;

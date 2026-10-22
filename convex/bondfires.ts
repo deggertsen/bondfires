@@ -1,4 +1,8 @@
-import { paginationOptsValidator } from 'convex/server'
+import {
+  type PaginationOptions,
+  type PaginationResult,
+  paginationOptsValidator,
+} from 'convex/server'
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
@@ -459,87 +463,150 @@ export const getForNotification = internalQuery({
   },
 })
 
-// Get a bondfire with all its response videos.
+// The spark is outside response pagination and always remains item zero.
+// Both entry points share access checks, projections, and the watched definition.
+async function getDetailPage(
+  ctx: QueryCtx,
+  args: { bondfireId: string; metadataOnly?: boolean; paginationOpts?: PaginationOptions },
+) {
+  const bondfireId = ctx.db.normalizeId('bondfires', args.bondfireId)
+  if (!bondfireId) return null
+  const bondfire = await ctx.db.get(bondfireId)
+  if (!bondfire || !isDetailVisibleVideoRecord(bondfire)) {
+    return null
+  }
+
+  const viewerId = await auth.getUserId(ctx)
+  const viewer = await buildViewerVisibilityContext(ctx, viewerId)
+  if (
+    !(await isBondfireVisibleToViewer(ctx, bondfire, viewer, {
+      allowAdminModerationReview: true,
+    }))
+  ) {
+    return null
+  }
+  const camp = bondfire.campId ? await getCampCached(ctx, viewer, bondfire.campId) : null
+  const personalCamp = bondfire.personalCampId ? await ctx.db.get(bondfire.personalCampId) : null
+  const campName = personalCamp?.name ?? camp?.name
+
+  // Bound SOURCE rows, before visibility checks: hidden/processing rows can
+  // make a page short (or empty), but must never cause an unbounded scan.
+  // Convex's opaque index cursor also disambiguates equal sequence numbers.
+  // maximumRowsRead applies even when reactive pagination pins endCursor;
+  // forwarding split metadata lets usePaginatedQuery split growing ranges.
+  const responsePage: PaginationResult<Doc<'bondfireVideos'>> = args.metadataOnly
+    ? { page: [], isDone: true, continueCursor: '' }
+    : await ctx.db
+        .query('bondfireVideos')
+        .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfireId))
+        .order('desc')
+        .paginate({
+          ...args.paginationOpts,
+          cursor: args.paginationOpts?.cursor ?? null,
+          numItems: Math.min(50, Math.max(1, args.paginationOpts?.numItems ?? 50)),
+          maximumRowsRead: 50,
+        })
+  const videos = [...responsePage.page].reverse()
+
+  const responseVisibility = await Promise.all(
+    videos.map(async (video) => {
+      if (
+        video.moderationStatus === 'removed' ||
+        (video.moderationStatus === 'pending_review' &&
+          viewerId !== video.userId &&
+          !viewer.isAdmin)
+      ) {
+        return false
+      }
+      // Only displayed responses need author and block checks. Processing
+      // responses still require the same audience checks as playable ones.
+      if (!isPlayableVideoRecord(video) && !isProcessingVideoRecord(video)) return false
+      return await isUserContentVisibleToViewer(ctx, video.userId, viewer)
+    }),
+  )
+  const visibleVideos = videos.filter((_, index) => responseVisibility[index])
+
+  // Detail chooses the first unwatched loaded video; My Fires searches the
+  // whole thread. Both use the same definition of watched, without scanning
+  // unloaded history in the detail query.
+  const playableVideos = visibleVideos.filter(isPlayableVideoRecord)
+  const [mainWatched, ...videosWatched] = await Promise.all([
+    isVideoWatchedByViewer(ctx, viewerId, bondfire),
+    ...playableVideos.map((video) => isVideoWatchedByViewer(ctx, viewerId, video)),
+  ])
+
+  const readyVideos = playableVideos.map((video, index) => ({
+    ...withLiveFlags(video),
+    watchedByViewer: videosWatched[index],
+  }))
+
+  // Lightweight projection only — no Mux IDs leak for unfinished videos.
+  const processingResponses = visibleVideos.filter(isProcessingVideoRecord).map((video) => ({
+    _id: video._id,
+    userId: video.userId,
+    creatorName: video.creatorName,
+    createdAt: video.createdAt,
+    sequenceNumber: video.sequenceNumber,
+  }))
+
+  const participants = await getThreadParticipants(ctx, bondfire, viewer, playableVideos)
+  // Per-response public author data lets the client aggregate only loaded
+  // participants, without a second full-thread read for counts/avatars.
+  const page = readyVideos.map((video) => ({
+    kind: 'video' as const,
+    video,
+    participant: participants.find((entry) => entry.user._id === video.userId),
+  }))
+  const processingPage = processingResponses.map((video) => ({
+    kind: 'processing' as const,
+    video,
+  }))
+
+  return {
+    ...withLiveFlags(bondfire),
+    watchedByViewer: mainWatched,
+    campStatus: camp?.status,
+    campName,
+    videos: readyVideos,
+    processingResponses,
+    participants,
+    page: [...page, ...processingPage].sort(
+      (a, b) => a.video.sequenceNumber - b.video.sequenceNumber,
+    ),
+    isDone: responsePage.isDone,
+    continueCursor: responsePage.continueCursor,
+    splitCursor: responsePage.splitCursor,
+    pageStatus: responsePage.pageStatus,
+  }
+}
+
+// Existing callers get the newest page in ascending thread order by default.
+// The mobile screen subscribes to metadata separately so loading older pages
+// never expands the metadata query into a whole-thread read.
 export const getWithVideos = query({
-  args: { bondfireId: v.string() },
+  args: {
+    bondfireId: v.string(),
+    metadataOnly: v.optional(v.boolean()),
+    paginationOpts: v.optional(paginationOptsValidator),
+  },
   handler: async (ctx, args) => {
-    const bondfireId = ctx.db.normalizeId('bondfires', args.bondfireId)
-    if (!bondfireId) return null
-    const bondfire = await ctx.db.get(bondfireId)
-    if (!bondfire || !isDetailVisibleVideoRecord(bondfire)) {
-      return null
-    }
+    const result = await getDetailPage(ctx, args)
+    if (!result) return null
+    const { page: _page, ...detail } = result
+    return detail
+  },
+})
 
-    const viewerId = await auth.getUserId(ctx)
-    const viewer = await buildViewerVisibilityContext(ctx, viewerId)
-    if (
-      !(await isBondfireVisibleToViewer(ctx, bondfire, viewer, {
-        allowAdminModerationReview: true,
-      }))
-    ) {
-      return null
-    }
-    const camp = bondfire.campId ? await getCampCached(ctx, viewer, bondfire.campId) : null
-    const personalCamp = bondfire.personalCampId ? await ctx.db.get(bondfire.personalCampId) : null
-    const campName = personalCamp?.name ?? camp?.name
-
-    // The detail screen needs the full thread for first-unwatched playback,
-    // response deep links, and participant counts. Bounding this read requires
-    // a paginated client/API contract; a silent cap makes later replies unreachable.
-    const videos = await ctx.db
-      .query('bondfireVideos')
-      .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfireId))
-      .order('asc')
-      .collect()
-
-    const responseVisibility = await Promise.all(
-      videos.map(async (video) => {
-        if (
-          video.moderationStatus === 'removed' ||
-          (video.moderationStatus === 'pending_review' &&
-            viewerId !== video.userId &&
-            !viewer.isAdmin)
-        ) {
-          return false
-        }
-        // Only displayed responses need author and block checks. Processing
-        // responses still require the same audience checks as playable ones.
-        if (!isPlayableVideoRecord(video) && !isProcessingVideoRecord(video)) return false
-        return await isUserContentVisibleToViewer(ctx, video.userId, viewer)
-      }),
-    )
-    const visibleVideos = videos.filter((_, index) => responseVisibility[index])
-
-    // Watched flags drive the initial scroll position (first unwatched video).
-    // conversations.listMyFires names the creator of that same video, so both
-    // share one definition of "watched".
-    const playableVideos = visibleVideos.filter(isPlayableVideoRecord)
-    const [mainWatched, ...videosWatched] = await Promise.all([
-      isVideoWatchedByViewer(ctx, viewerId, bondfire),
-      ...playableVideos.map((video) => isVideoWatchedByViewer(ctx, viewerId, video)),
-    ])
-
-    const readyVideos = playableVideos.map((video, index) => ({
-      ...withLiveFlags(video),
-      watchedByViewer: videosWatched[index],
-    }))
-
-    // Lightweight projection only — no Mux IDs leak for unfinished videos.
-    const processingResponses = visibleVideos.filter(isProcessingVideoRecord).map((video) => ({
-      _id: video._id,
-      userId: video.userId,
-      creatorName: video.creatorName,
-      createdAt: video.createdAt,
-    }))
-
+export const getResponsePage = query({
+  args: { bondfireId: v.string(), paginationOpts: paginationOptsValidator },
+  handler: async (ctx, args) => {
+    const detail = await getDetailPage(ctx, args)
     return {
-      ...withLiveFlags(bondfire),
-      watchedByViewer: mainWatched,
-      campStatus: camp?.status,
-      campName,
-      videos: readyVideos,
-      processingResponses,
-      participants: await getThreadParticipants(ctx, bondfire, viewer, playableVideos),
+      page: detail?.page ?? [],
+      isDone: detail?.isDone ?? true,
+      continueCursor: detail?.continueCursor ?? '',
+      splitCursor: detail?.splitCursor,
+      pageStatus: detail?.pageStatus,
     }
   },
 })

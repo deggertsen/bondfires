@@ -132,6 +132,155 @@ describe('durable segment upload recovery', () => {
   })
 })
 
+it('backs off after begin fails instead of calling it on every queue pass', async () => {
+  vi.useFakeTimers()
+  const queue = await import('../lib/media/segmentUploads')
+  const convex = client()
+  convex.begin.mockRejectedValue(new Error('Server Error'))
+  queue.setSegmentUploadOwner('owner')
+  await queue.prepareSegmentJob('owner', {
+    localId: id,
+    isResponse: true,
+    bondfireId: 'parent' as Id<'bondfires'>,
+  })
+  state.files.set(`${dir}init.mp4`, 'init')
+  state.files.set(`${dir}segment-000000.m4s`, 'media')
+  await queue.runSegmentUploads(convex, 'owner')
+  await queue.runSegmentUploads(convex, 'owner')
+  expect(convex.begin).toHaveBeenCalledTimes(1)
+  await vi.advanceTimersByTimeAsync(4_001)
+  await queue.runSegmentUploads(convex, 'owner')
+  expect(convex.begin).toHaveBeenCalledTimes(2)
+  expect(state.warn).toHaveBeenCalledWith(
+    'segment:upload:paused',
+    expect.any(String),
+    expect.objectContaining({
+      stage: 'begin',
+      reason: 'operation_failed',
+      isResponse: true,
+      bondfireId: 'parent',
+    }),
+  )
+})
+
+it('retries immediately on a manual tap while retaining backoff for automatic ticks', async () => {
+  vi.useFakeTimers()
+  const queue = await import('../lib/media/segmentUploads')
+  const convex = client()
+  convex.begin.mockRejectedValueOnce(new Error('Server Error'))
+  convex.begin.mockRejectedValueOnce(new Error('Server Error'))
+  queue.setSegmentUploadOwner('owner')
+  await queue.prepareSegmentJob('owner', { localId: id, isResponse: false })
+  seedCapture()
+
+  await queue.runSegmentUploads(convex, 'owner')
+  await queue.runSegmentUploads(convex, 'owner')
+  expect(convex.begin).toHaveBeenCalledTimes(1)
+  expect(await queue.runSegmentUploads(convex, 'owner', { retryNow: true })).toBe('started')
+  expect(convex.begin).toHaveBeenCalledTimes(2)
+  const journal = JSON.parse(state.files.get(root + id + '.json') ?? '{}')
+  expect(journal.beginRetry).toEqual({ attempts: 2, notBefore: Date.now() + 8000 })
+  await queue.runSegmentUploads(convex, 'owner')
+  expect(convex.begin).toHaveBeenCalledTimes(2)
+
+  await queue.runSegmentUploads(convex, 'owner', { retryNow: true })
+  expect(convex.begin).toHaveBeenCalledTimes(3)
+  expect(state.files.has(root + id + '.json')).toBe(false)
+})
+
+it('persists exponential begin backoff across restarts and caps it at five minutes', async () => {
+  vi.useFakeTimers()
+  let queue = await import('../lib/media/segmentUploads')
+  const convex = client()
+  convex.begin.mockRejectedValue(new Error('Server Error'))
+  queue.setSegmentUploadOwner('owner')
+  await queue.prepareSegmentJob('owner', { localId: id, isResponse: false })
+  seedCapture()
+  await queue.runSegmentUploads(convex, 'owner')
+
+  let attempts = 1
+  for (const delay of [4_000, 8_000, 16_000, 32_000, 64_000, 128_000, 256_000, 300_000, 300_000]) {
+    vi.resetModules()
+    queue = await import('../lib/media/segmentUploads')
+    queue.setSegmentUploadOwner('owner')
+    const onJobs = vi.fn()
+    queue.setSegmentUploadObserver({ onJobs, onComplete: vi.fn() })
+    onJobs.mockClear()
+    await vi.advanceTimersByTimeAsync(delay - 1)
+    await queue.runSegmentUploads(convex, 'owner')
+    expect(convex.begin).toHaveBeenCalledTimes(attempts)
+    expect(onJobs).toHaveBeenCalledExactlyOnceWith([
+      expect.objectContaining({ localId: id, paused: true }),
+    ])
+    await vi.advanceTimersByTimeAsync(1)
+    await queue.runSegmentUploads(convex, 'owner')
+    expect(convex.begin).toHaveBeenCalledTimes(++attempts)
+    expect(state.files.has(dir + 'segment-000000.m4s')).toBe(true)
+  }
+})
+
+it('keeps a backed-off job paused while allowing another recording to upload', async () => {
+  vi.useFakeTimers()
+  const queue = await import('../lib/media/segmentUploads')
+  const convex = client()
+  convex.begin.mockRejectedValueOnce(new Error('Server Error'))
+  const onJobs = vi.fn()
+  queue.setSegmentUploadObserver({ onJobs, onComplete: vi.fn() })
+  queue.setSegmentUploadOwner('owner')
+  await queue.prepareSegmentJob('owner', { localId: id, isResponse: false })
+  seedCapture()
+  await queue.runSegmentUploads(convex, 'owner')
+  onJobs.mockClear()
+
+  const otherId = '00000000-0000-4000-8000-000000000002'
+  await queue.prepareSegmentJob('owner', { localId: otherId, isResponse: false })
+  state.files.set(queue.segmentDirectory(otherId) + 'init.mp4', 'init')
+  state.files.set(queue.segmentDirectory(otherId) + 'segment-000000.m4s', 'media')
+  await queue.runSegmentUploads(convex, 'owner')
+  expect(convex.begin).toHaveBeenCalledTimes(2)
+  expect(convex.begin).toHaveBeenLastCalledWith({ localId: otherId, isResponse: false })
+  expect(state.files.has(root + otherId + '.json')).toBe(false)
+  expect(
+    onJobs.mock.calls.every(
+      ([jobs]) => jobs.find((job: { localId: string }) => job.localId === id)?.paused,
+    ),
+  ).toBe(true)
+
+  // A successful begin removes its retry state even if uploading later fails.
+  await vi.advanceTimersByTimeAsync(4_000)
+  state.failSegment = true
+  await queue.runSegmentUploads(convex, 'owner')
+  const journal = JSON.parse(state.files.get(root + id + '.json') ?? '{}')
+  expect(journal.recordingId).toBe('recording1')
+  expect(journal.beginRetry).toBeUndefined()
+  state.failSegment = false
+  await queue.runSegmentUploads(convex, 'owner')
+  expect(convex.begin).toHaveBeenCalledTimes(3)
+  expect(state.files.has(root + id + '.json')).toBe(false)
+})
+
+it('retries a timed-out begin on the next pass without losing the recording', async () => {
+  vi.useFakeTimers()
+  const queue = await import('../lib/media/segmentUploads')
+  const convex = client()
+  convex.begin.mockImplementationOnce(() => new Promise(() => {}))
+  queue.setSegmentUploadOwner('owner')
+  await queue.prepareSegmentJob('owner', { localId: id, isResponse: false })
+  seedCapture()
+  const pass = queue.runSegmentUploads(convex, 'owner')
+  await vi.advanceTimersByTimeAsync(30_000)
+  await pass
+  expect(state.files.has(dir + 'segment-000000.m4s')).toBe(true)
+  expect(state.warn).toHaveBeenCalledWith(
+    'segment:upload:paused',
+    expect.any(String),
+    expect.objectContaining({ stage: 'begin', reason: 'timeout' }),
+  )
+  await queue.runSegmentUploads(convex, 'owner')
+  expect(convex.begin).toHaveBeenCalledTimes(2)
+  expect(state.files.has(root + id + '.json')).toBe(false)
+})
+
 it('allows retrying an empty preview, but protects saved drafts and interrupted journals by owner', async () => {
   const queue = await import('../lib/media/segmentUploads')
   await queue.prepareSegmentJob('owner', {
@@ -242,6 +391,7 @@ it('cancels a hung PUT, retains the media, and allows the next pass to resume', 
   state.hangSegment = true
   const pass = queue.runSegmentUploads(convex, 'owner')
   expect(await queue.runSegmentUploads(convex, 'owner')).toBe('busy')
+  expect(await queue.runSegmentUploads(convex, 'owner', { retryNow: true })).toBe('busy')
   await vi.advanceTimersByTimeAsync(120_001)
   expect(await pass).toBe('started')
   expect(state.cancel).toHaveBeenCalledOnce()
@@ -251,7 +401,7 @@ it('cancels a hung PUT, retains the media, and allows the next pass to resume', 
   expect(state.warn).toHaveBeenCalledWith(
     'segment:upload:paused',
     expect.any(String),
-    expect.objectContaining({ stage: 'upload', code: 'timeout', nextIndex: 0 }),
+    expect.objectContaining({ stage: 'upload', reason: 'timeout', nextIndex: 0 }),
   )
   state.hangSegment = false
   await queue.runSegmentUploads(convex, 'owner')

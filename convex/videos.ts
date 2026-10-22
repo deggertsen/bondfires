@@ -95,10 +95,8 @@ function assertDurationWithinCampRules(camp: Doc<'camps'>, durationMs: number | 
     return
   }
 
-  if (
-    camp.rules?.participation.maxDurationMs &&
-    durationMs > camp.rules.participation.maxDurationMs
-  ) {
+  const maxDurationMs = camp.rules?.participation?.maxDurationMs
+  if (maxDurationMs && durationMs > maxDurationMs) {
     throwUserError('This recording is longer than the camp allows')
   }
 }
@@ -215,7 +213,7 @@ async function assertUserCanParticipateInCamp(
     throwUserError('Only the private camp owner can spark here')
   }
 
-  const campGender = camp.rules?.access.gender?.value
+  const campGender = camp.rules?.access?.gender?.value
   if (campGender && campGender !== 'any' && user.gender !== campGender) {
     throwUserError('This camp is limited to members who match its gender setting')
   }
@@ -235,7 +233,7 @@ async function assertUserCanParticipateInCamp(
     await assertVideoDurationWithinTierLimit(ctx, args.userId, args.durationMs)
   }
 
-  if (args.operation === 'spark' && camp.rules?.advisory.requiresTradeTags) {
+  if (args.operation === 'spark' && camp.rules?.advisory?.requiresTradeTags) {
     const tags = args.tags ?? []
     if (!tags.includes('need') && !tags.includes('offer')) {
       throwUserError('The Trading Post requires a need or offer tag')
@@ -284,13 +282,14 @@ async function assertCanRespondToBondfire(
     durationMs: args.durationMs,
   })
 
-  if (camp.rules?.participation.maxResponses !== undefined) {
+  const maxResponses = camp.rules?.participation?.maxResponses
+  if (maxResponses !== undefined) {
     const existingVideos = await ctx.db
       .query('bondfireVideos')
       .withIndex('by_bondfire', (q) => q.eq('bondfireId', args.bondfireId))
       .collect()
     const activeResponses = existingVideos.filter((video) => video.videoStatus !== 'errored')
-    if (activeResponses.length >= camp.rules.participation.maxResponses) {
+    if (activeResponses.length >= maxResponses) {
       throwUserError('This Bondfire already has the maximum number of responses')
     }
   }

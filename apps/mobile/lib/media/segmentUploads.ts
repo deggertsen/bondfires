@@ -41,6 +41,8 @@ type Job = {
   recordId?: string
   nextIndex: number
   createdAt: number
+  /** Durable so relaunching the app does not restart a failing begin loop. */
+  beginRetry?: { attempts: number; notBefore: number }
 }
 const active = new Set<string>()
 let running = false
@@ -201,6 +203,7 @@ function failureKind(error: unknown): UploadFailureKind | null {
 export async function runSegmentUploads(
   client: SegmentUploadClient,
   userId: string,
+  { retryNow = false }: { retryNow?: boolean } = {},
 ): Promise<'busy' | 'started' | 'skipped'> {
   if (!segmentMediaEnabled) return 'skipped'
   if (running) return 'busy'
@@ -239,12 +242,35 @@ export async function runSegmentUploads(
         // an actual fragment is durable; failed empty captures can be retried.
         if (!(await FileSystem.getInfoAsync(`${dir}segment-000000.m4s`)).exists) continue
         seen.add(job.args.localId)
-        reportJob(job)
+        reportJob(job, job.beginRetry ? true : undefined)
         if (!job.recordingId) {
+          const notBefore = job.beginRetry?.notBefore
+          // An explicit retry bypasses the delay, but still shares the queue lock
+          // and records a new backoff on failure for subsequent automatic ticks.
+          if (!retryNow && notBefore !== undefined && Date.now() < notBefore) {
+            reportJob(job, true)
+            continue
+          }
           stage = 'begin'
-          const created = await bounded(client.begin(job.args))
+          let created: FunctionReturnType<typeof api.segmentMedia.begin>
+          try {
+            created = await bounded(client.begin(job.args))
+          } catch (error) {
+            // A timeout may only be a lost acknowledgement; retry it on the next pass.
+            if (!(error instanceof UploadFailure && error.code === 'timeout')) {
+              const attempts = Math.min((job.beginRetry?.attempts ?? 0) + 1, 8)
+              const delay = Math.min(5 * 60_000, 2_000 * 2 ** attempts)
+              job.beginRetry = { attempts, notBefore: Date.now() + delay }
+              stage = 'journal'
+              await save(job)
+              stage = 'begin'
+            }
+            throw error
+          }
+          delete job.beginRetry
           job.recordingId = created.recordingId
           job.recordId = created.recordId
+          stage = 'journal'
           await save(job)
           reportJob(job)
         }
@@ -365,13 +391,19 @@ export async function runSegmentUploads(
         if (!previous || now - previous.reportedAt >= 60_000) {
           // Native/network errors may contain signed URLs. Log only controlled
           // codes and identifiers, never the raw exception, token or response body.
+          // `reason` is intentional: the telemetry scrubber redacts a `code` key.
           telemetry.warn('segment:upload:paused', 'Video upload will retry', {
             localId,
             recordingId: job?.recordingId,
             stage,
             nextIndex: job?.nextIndex,
-            code: error instanceof UploadFailure ? error.code : 'operation_failed',
+            reason: error instanceof UploadFailure ? error.code : 'operation_failed',
             status: error instanceof UploadFailure ? error.status : undefined,
+            isResponse: job?.args.isResponse,
+            campId: job?.args.campId,
+            bondfireId: job?.args.bondfireId,
+            personalCamp: job?.args.personalCamp === true,
+            hasDraft: job?.args.draftBondfireId != null,
           })
           failures.set(localId, {
             message: 'Video upload paused; it will retry automatically.',

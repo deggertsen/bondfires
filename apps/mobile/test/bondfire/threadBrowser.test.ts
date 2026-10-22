@@ -68,10 +68,19 @@ const videos: BondfireVideoItem[] = [true, true, true, false, false].map(
 )
 const arrival = getThreadCatchUp(videos, 4)
 const acknowledged = vi.fn()
-function Harness({ currentVideoIndex = 4, catchUp = arrival }) {
+const loadOlder = vi.fn()
+function Harness({
+  currentVideoIndex = 4,
+  catchUp = arrival,
+  hasOlder = false,
+  loadingOlder = false,
+}) {
   const [pending, setPending] = useState(true)
   return createElement(ThreadBrowser, {
     title: 'Thread',
+    hasOlderResponses: hasOlder,
+    loadingOlderResponses: loadingOlder,
+    onLoadOlderResponses: loadOlder,
     videoItems: videos,
     currentVideoIndex,
     catchUp,
@@ -107,6 +116,29 @@ describe('ThreadBrowser catch-up interactions', () => {
   afterEach(async () => {
     await act(async () => renderer.unmount())
     vi.useRealTimers()
+  })
+
+  it('loads older responses with the existing Show vocabulary, disables while loading, and disappears at the end', async () => {
+    await act(async () => renderer.update(createElement(Harness, { hasOlder: true })))
+    const olderButton = () =>
+      renderer.root
+        .findAllByType('Pressable')
+        .find(
+          (node: { props: { accessibilityLabel?: string } }) =>
+            node.props.accessibilityLabel === 'See older responses',
+        )
+    expect(renderer.root.findAllByType('Row')[0].children[0].props.accessibilityLabel).toBe(
+      'See older responses',
+    )
+    await act(async () => olderButton().props.onPress())
+    expect(loadOlder).toHaveBeenCalledTimes(1)
+    await act(async () =>
+      renderer.update(createElement(Harness, { hasOlder: true, loadingOlder: true })),
+    )
+    expect(olderButton().props.disabled).toBe(true)
+    expect(text('Loading…')).toBeDefined()
+    await act(async () => renderer.update(createElement(Harness, { hasOlder: false })))
+    expect(olderButton()).toBeUndefined()
   })
 
   it('opens once and stays dismissed through playback updates', async () => {
@@ -171,6 +203,9 @@ describe('ThreadBrowser list position', () => {
       renderer = create(
         createElement(ThreadBrowser, {
           title: 'Thread',
+          hasOlderResponses: false,
+          loadingOlderResponses: false,
+          onLoadOlderResponses: vi.fn(),
           videoItems: watchedThread,
           currentVideoIndex: lastIndex,
           catchUp: getThreadCatchUp(watchedThread, lastIndex),
