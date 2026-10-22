@@ -150,7 +150,7 @@ export function UploadStatusLayout({ children }: { children: ReactNode }) {
       if (current.bondfireId) router.push(routes.bondfire(current.bondfireId))
       return
     }
-    retryPendingUploads()
+    if (current.kind === 'paused') void retryPendingUploads()
   }, [router])
 
   const childInsets = useMemo(

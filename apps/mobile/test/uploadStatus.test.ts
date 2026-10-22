@@ -45,10 +45,41 @@ describe('deriveUploadStatus', () => {
   })
 
   it('treats a paused segmented job as retrying', () => {
-    expect(deriveUploadStatus(input({ segmentJobs: [segment({ paused: true })] }))).toMatchObject({
-      kind: 'paused',
-      reason: 'retrying',
+    const state = deriveUploadStatus(input({ segmentJobs: [segment({ paused: true })] }))
+    expect(state).toMatchObject({ kind: 'paused', reason: 'retrying' })
+    if (state.kind !== 'paused') throw new Error('expected paused')
+    expect(describeUploadStatus(state)).toEqual({
+      title: 'Retrying upload',
+      message: 'Saved on this phone · retrying automatically',
+      actionLabel: 'Retry now',
     })
+  })
+
+  it('says why a retrying upload is stuck, without looking idle', () => {
+    const state = deriveUploadStatus(
+      input({ segmentJobs: [segment({ paused: true, failure: 'unavailable' })] }),
+    )
+    expect(state).toMatchObject({ kind: 'paused', reason: 'retrying', failure: 'unavailable' })
+    if (state.kind !== 'paused') throw new Error('expected paused')
+    expect(describeUploadStatus(state)).toEqual({
+      title: 'Retrying upload',
+      message: 'Server unavailable, still saved on this phone.',
+      actionLabel: 'Retry now',
+    })
+  })
+
+  it('acknowledges a Retry tap, including when a pass is already running', () => {
+    const paused = segment({ paused: true, failure: 'unavailable' })
+    const started = deriveUploadStatus(input({ segmentJobs: [paused], retryNotice: 'started' }))
+    const busy = deriveUploadStatus(input({ segmentJobs: [paused], retryNotice: 'busy' }))
+    if (started.kind !== 'paused' || busy.kind !== 'paused') throw new Error('expected paused')
+    expect(describeUploadStatus(started)).toEqual({
+      title: 'Retrying now…',
+      message: 'Server unavailable, still saved on this phone.',
+      actionLabel: 'Retrying…',
+    })
+    expect(describeUploadStatus(busy).title).toBe('Retry already in progress')
+    expect(describeUploadStatus(busy).actionLabel).toBe('Retrying…')
   })
 
   it('keeps uploading while at least one job is still making progress', () => {

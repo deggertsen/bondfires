@@ -5,6 +5,7 @@ import type { SegmentUploadClient } from '../lib/media/segmentUploads'
 const state = vi.hoisted(() => ({
   files: new Map<string, string>(),
   failSegment: false,
+  failureStatus: 503 as number | undefined,
   hangSegment: false,
   cancel: vi.fn(async () => {}),
   warn: vi.fn(),
@@ -52,7 +53,7 @@ vi.mock('expo-file-system/legacy', () => ({
       state.uploaded.push(path.split('/').pop() ?? '')
       await state.onUpload(path)
       if (state.hangSegment && path.endsWith('.m4s')) return new Promise(() => {})
-      return { status: state.failSegment && path.endsWith('.m4s') ? 503 : 204 }
+      return { status: state.failSegment && path.endsWith('.m4s') ? state.failureStatus : 204 }
     },
   })),
 }))
@@ -80,6 +81,7 @@ beforeEach(() => {
   state.files.clear()
   state.uploaded = []
   state.failSegment = false
+  state.failureStatus = 503
   state.hangSegment = false
   state.onUpload = async () => {}
   vi.clearAllMocks()
@@ -159,6 +161,31 @@ it('backs off after begin fails instead of calling it on every queue pass', asyn
       bondfireId: 'parent',
     }),
   )
+})
+
+it('retries immediately on a manual tap while retaining backoff for automatic ticks', async () => {
+  vi.useFakeTimers()
+  const queue = await import('../lib/media/segmentUploads')
+  const convex = client()
+  convex.begin.mockRejectedValueOnce(new Error('Server Error'))
+  convex.begin.mockRejectedValueOnce(new Error('Server Error'))
+  queue.setSegmentUploadOwner('owner')
+  await queue.prepareSegmentJob('owner', { localId: id, isResponse: false })
+  seedCapture()
+
+  await queue.runSegmentUploads(convex, 'owner')
+  await queue.runSegmentUploads(convex, 'owner')
+  expect(convex.begin).toHaveBeenCalledTimes(1)
+  expect(await queue.runSegmentUploads(convex, 'owner', { retryNow: true })).toBe('started')
+  expect(convex.begin).toHaveBeenCalledTimes(2)
+  const journal = JSON.parse(state.files.get(root + id + '.json') ?? '{}')
+  expect(journal.beginRetry).toEqual({ attempts: 2, notBefore: Date.now() + 8000 })
+  await queue.runSegmentUploads(convex, 'owner')
+  expect(convex.begin).toHaveBeenCalledTimes(2)
+
+  await queue.runSegmentUploads(convex, 'owner', { retryNow: true })
+  expect(convex.begin).toHaveBeenCalledTimes(3)
+  expect(state.files.has(root + id + '.json')).toBe(false)
 })
 
 it('persists exponential begin backoff across restarts and caps it at five minutes', async () => {
@@ -363,8 +390,10 @@ it('cancels a hung PUT, retains the media, and allows the next pass to resume', 
   seedCapture()
   state.hangSegment = true
   const pass = queue.runSegmentUploads(convex, 'owner')
+  expect(await queue.runSegmentUploads(convex, 'owner')).toBe('busy')
+  expect(await queue.runSegmentUploads(convex, 'owner', { retryNow: true })).toBe('busy')
   await vi.advanceTimersByTimeAsync(120_001)
-  await pass
+  expect(await pass).toBe('started')
   expect(state.cancel).toHaveBeenCalledOnce()
   expect(state.files.has(root + id + '.json')).toBe(true)
   expect(queue.segmentUploadError(id)).toBeTruthy()
@@ -412,6 +441,50 @@ describe('upload status reporting', () => {
     return { jobs, completed, latest: () => jobs.at(-1) ?? [] }
   }
 
+  it.each([
+    [401, 'unauthorized'],
+    [403, 'unauthorized'],
+    [408, 'timeout'],
+    [502, 'unavailable'],
+    [503, 'unavailable'],
+    [504, 'unavailable'],
+    [500, 'server'],
+    [undefined, undefined],
+  ] as const)('reports HTTP %s as %s and clears the cause on progress', async (status, failure) => {
+    const queue = await import('../lib/media/segmentUploads')
+    const convex = client()
+    const seen = observe(queue)
+    queue.setSegmentUploadOwner('owner')
+    await queue.prepareSegmentJob('owner', { localId: id, isResponse: false })
+    seedCapture(5)
+    state.failSegment = true
+    state.failureStatus = status
+    await queue.runSegmentUploads(convex, 'owner')
+    expect(seen.latest()[0]).toMatchObject({ paused: true })
+    if (failure) expect(seen.latest()[0]).toMatchObject({ failure })
+    else expect(seen.latest()[0]).not.toHaveProperty('failure')
+    state.failSegment = false
+    await queue.runSegmentUploads(convex, 'owner')
+    expect(seen.latest()[0]).toMatchObject({ paused: false })
+    expect(seen.latest()[0]).not.toHaveProperty('failure')
+  })
+
+  it('clears the previous cause instead of blaming the network for a corrupt local marker', async () => {
+    const queue = await import('../lib/media/segmentUploads')
+    const convex = client()
+    const seen = observe(queue)
+    queue.setSegmentUploadOwner('owner')
+    await queue.prepareSegmentJob('owner', { localId: id, isResponse: false })
+    seedCapture()
+    state.failSegment = true
+    await queue.runSegmentUploads(convex, 'owner')
+    expect(seen.latest()[0]).toMatchObject({ failure: 'unavailable' })
+    state.files.set(`${dir}finished.json`, JSON.stringify({ segmentCount: -1 }))
+    await queue.runSegmentUploads(convex, 'owner')
+    expect(seen.latest()[0]).toMatchObject({ paused: true })
+    expect(seen.latest()[0]).not.toHaveProperty('failure')
+  })
+
   it('reports a paused job without flickering back to uploading until it makes progress', async () => {
     const queue = await import('../lib/media/segmentUploads')
     const convex = client()
@@ -422,7 +495,13 @@ describe('upload status reporting', () => {
     state.failSegment = true
     await queue.runSegmentUploads(convex, 'owner')
     expect(seen.latest()).toEqual([
-      { localId: id, isResponse: false, bondfireId: 'bondfire1', paused: true },
+      {
+        localId: id,
+        isResponse: false,
+        bondfireId: 'bondfire1',
+        paused: true,
+        failure: 'unavailable',
+      },
     ])
     const reportsWhilePaused = seen.jobs.length
     await queue.runSegmentUploads(convex, 'owner')

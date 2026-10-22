@@ -4,6 +4,7 @@ import * as FileSystem from 'expo-file-system/legacy'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
 import { telemetry } from '../../../../packages/app/src/services/telemetry'
+import type { UploadFailureKind } from '../../../../packages/app/src/utils/uploadStatus'
 import { mediaClientEnabled } from '../../../../packages/media/src/environment'
 
 export type SegmentUploadClient = {
@@ -59,6 +60,8 @@ export type SegmentUploadJob = {
   bondfireId?: string
   /** A pass failed; stays true until a later pass makes progress. */
   paused: boolean
+  /** Why the latest pass failed. Cleared when a segment makes progress. */
+  failure?: UploadFailureKind
 }
 export type SegmentUploadObserver = {
   onJobs: (jobs: SegmentUploadJob[]) => void
@@ -78,23 +81,32 @@ function clearSnapshot() {
   snapshot.clear()
   publish()
 }
-function reportJob(job: Job, paused?: boolean) {
+function reportJob(job: Job, paused?: boolean, failure?: UploadFailureKind | null) {
   // The capture still recording is the create screen's concern, not the banner's.
   if (active.has(job.args.localId)) return
   const previous = snapshot.get(job.args.localId)
+  // Keep a paused job paused until it makes progress, so the banner doesn't
+  // flicker to "uploading" at the start of every retry pass. The failure stays
+  // until that progress so the banner can say why it stopped.
+  const nextPaused = paused ?? previous?.paused ?? false
+  const nextFailure = nextPaused
+    ? failure === undefined
+      ? previous?.failure
+      : failure || undefined
+    : undefined
   const next: SegmentUploadJob = {
     localId: job.args.localId,
     isResponse: job.args.isResponse,
     bondfireId: job.args.isResponse ? job.args.bondfireId : job.recordId,
-    // Keep a paused job paused until it makes progress, so the banner doesn't
-    // flicker to "uploading" at the start of every retry pass.
-    paused: paused ?? previous?.paused ?? false,
+    paused: nextPaused,
+    ...(nextFailure ? { failure: nextFailure } : {}),
   }
   if (
     previous &&
     previous.paused === next.paused &&
     previous.bondfireId === next.bondfireId &&
-    previous.isResponse === next.isResponse
+    previous.isResponse === next.isResponse &&
+    previous.failure === next.failure
   )
     return
   snapshot.set(next.localId, next)
@@ -173,8 +185,28 @@ export function markSegmentCapture(localId: string, recording: boolean) {
   if (recording) active.add(localId)
   else active.delete(localId)
 }
-export async function runSegmentUploads(client: SegmentUploadClient, userId: string) {
-  if (!segmentMediaEnabled || running) return
+function failureKind(error: unknown): UploadFailureKind | null {
+  if (error instanceof UploadFailure) {
+    if (error.code === 'timeout') return 'timeout'
+    if (error.code === 'http') {
+      if (error.status === undefined) return null
+      if (error.status === 401 || error.status === 403) return 'unauthorized'
+      if (error.status === 408) return 'timeout'
+      if (error.status === 502 || error.status === 503 || error.status === 504) return 'unavailable'
+      return 'server'
+    }
+  }
+  // Filesystem, journal and Convex errors do not reliably identify a network
+  // failure. Clear any previous cause and use neutral copy for unknown errors.
+  return null
+}
+export async function runSegmentUploads(
+  client: SegmentUploadClient,
+  userId: string,
+  { retryNow = false }: { retryNow?: boolean } = {},
+): Promise<'busy' | 'started' | 'skipped'> {
+  if (!segmentMediaEnabled) return 'skipped'
+  if (running) return 'busy'
   running = true
   // Jobs this pass found with durable media; anything else leaves the banner.
   const seen = new Set<string>()
@@ -182,7 +214,7 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
   try {
     if (!(await FileSystem.getInfoAsync(root)).exists) {
       scanComplete = true
-      return
+      return 'started'
     }
     const names = new Set(
       (await FileSystem.readDirectoryAsync(root)).map((name) => name.replace(/\.tmp$/, '')),
@@ -202,7 +234,7 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
           await FileSystem.readAsStringAsync(`${root}${name}${committed.exists ? '' : '.tmp'}`),
         )
         if (!job) continue
-        if (uploadOwner !== userId) return
+        if (uploadOwner !== userId) return 'started'
         if (job.userId !== userId) continue
         const dir = segmentDirectory(job.args.localId)
         if (!(await FileSystem.getInfoAsync(`${dir}init.mp4`)).exists) continue
@@ -213,7 +245,9 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
         reportJob(job, job.beginRetry ? true : undefined)
         if (!job.recordingId) {
           const notBefore = job.beginRetry?.notBefore
-          if (notBefore !== undefined && Date.now() < notBefore) {
+          // An explicit retry bypasses the delay, but still shares the queue lock
+          // and records a new backoff on failure for subsequent automatic ticks.
+          if (!retryNow && notBefore !== undefined && Date.now() < notBefore) {
             reportJob(job, true)
             continue
           }
@@ -274,7 +308,7 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
               }),
             )
           }
-          if (uploadOwner !== userId) return
+          if (uploadOwner !== userId) return 'started'
           stage = 'upload'
           const task = FileSystem.createUploadTask(
             `${grant.baseUrl}/${filename}`,
@@ -293,7 +327,7 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
           await save(job)
           reportJob(job, false)
         }
-        if (uploadOwner !== userId) return
+        if (uploadOwner !== userId) return 'started'
         // Capture may have stopped while a PUT was in flight. Its request to
         // run the queue is skipped while `running` is true, so observe the
         // durable marker again before yielding to the next timer tick (which
@@ -334,7 +368,12 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
             if (reported) {
               snapshot.delete(job.args.localId)
               publish()
-              observer?.onComplete({ ...reported, paused: false })
+              observer?.onComplete({
+                localId: reported.localId,
+                isResponse: reported.isResponse,
+                bondfireId: reported.bondfireId,
+                paused: false,
+              })
             }
             seen.delete(job.args.localId)
             failures.delete(job.args.localId)
@@ -344,8 +383,8 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
         failures.delete(job.args.localId)
         reportJob(job, false)
       } catch (error) {
-        if (uploadOwner !== userId) return
-        if (job && seen.has(job.args.localId)) reportJob(job, true)
+        if (uploadOwner !== userId) return 'started'
+        if (job && seen.has(job.args.localId)) reportJob(job, true, failureKind(error))
         const localId = job?.args.localId ?? name.slice(0, 36)
         const previous = failures.get(localId)
         const now = Date.now()
@@ -388,4 +427,5 @@ export async function runSegmentUploads(client: SegmentUploadClient, userId: str
       if (pruned) publish()
     }
   }
+  return 'started'
 }

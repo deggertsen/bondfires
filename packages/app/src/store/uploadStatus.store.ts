@@ -4,6 +4,7 @@ import {
   deriveUploadStatus,
   type SegmentJobStatus,
   type UploadCompletion,
+  type UploadRetryNotice,
   type UploadStatusState,
 } from '../utils/uploadStatus'
 import { uiStore$ } from './ui.store'
@@ -20,6 +21,8 @@ interface UploadStatusStoreState {
   clock: number
   /** Measured height of the banner, 0 while hidden; offsets toasts below it. */
   bannerHeight: number
+  /** Visible acknowledgement of a Retry tap, owned by the retry lifecycle below. */
+  retryNotice: UploadRetryNotice | null
 }
 
 export const uploadStatusStore$ = observable<UploadStatusStoreState>({
@@ -29,6 +32,7 @@ export const uploadStatusStore$ = observable<UploadStatusStoreState>({
   hiddenAt: null,
   clock: Date.now(),
   bannerHeight: 0,
+  retryNotice: null,
 })
 
 export const uploadStatus$ = observable<UploadStatusState>(() =>
@@ -37,15 +41,39 @@ export const uploadStatus$ = observable<UploadStatusState>(() =>
     isOnline: uiStore$.isOnline.get(),
     lastCompletion: uploadStatusStore$.lastCompletion.get(),
     completionDismissedAt: uploadStatusStore$.completionDismissedAt.get(),
+    retryNotice: uploadStatusStore$.retryNotice.get(),
     now: uploadStatusStore$.clock.get(),
   }),
 )
 
-type RetryHandler = () => void | Promise<void>
+export type UploadRetryOutcome = 'started' | 'busy' | 'skipped'
+
+type RetryHandler = () => UploadRetryOutcome | Promise<UploadRetryOutcome>
 const retryHandlers = new Map<string, RetryHandler>()
 
+type RetryAttempt = { pending: boolean; visibleUntil: number }
+let retryAttempt: RetryAttempt | null = null
+let retryTimer: ReturnType<typeof setTimeout> | undefined
+
+function clearRetryNotice() {
+  clearTimeout(retryTimer)
+  retryTimer = undefined
+  retryAttempt = null
+  uploadStatusStore$.retryNotice.set(null)
+}
+
+function showRetryNotice(attempt: RetryAttempt, notice: UploadRetryNotice) {
+  attempt.visibleUntil = Date.now() + (notice === 'started' ? 1200 : 3200)
+  uploadStatusStore$.retryNotice.set(notice)
+}
+
 export const uploadStatusActions = {
-  setSegmentJobs: (jobs: SegmentJobStatus[]) => uploadStatusStore$.segmentJobs.set(jobs),
+  setSegmentJobs: (jobs: SegmentJobStatus[]) => {
+    // Completion, sign-out and observer teardown end this queue's feedback.
+    // A late handler result must not restore it for a different queue/account.
+    if (jobs.length === 0) clearRetryNotice()
+    uploadStatusStore$.segmentJobs.set(jobs)
+  },
 
   recordCompletion: (completion: Omit<UploadCompletion, 'at'>) => {
     const at = Date.now()
@@ -71,17 +99,44 @@ export const uploadStatusActions = {
   },
 }
 
-/** Kick every upload system now. Each handler is idempotent and lock-gated. */
-export function retryPendingUploads() {
+/** Acknowledge every tap, but keep following the original pass on repeated taps. */
+export async function retryPendingUploads(): Promise<UploadRetryOutcome> {
   telemetry.breadcrumb('upload:banner:retry', { handlers: retryHandlers.size })
-  for (const [key, handler] of retryHandlers) {
-    Promise.resolve()
-      .then(handler)
-      .catch((error) => {
+  if (retryAttempt?.pending) {
+    showRetryNotice(retryAttempt, 'busy')
+    return 'busy'
+  }
+
+  clearRetryNotice()
+  const attempt: RetryAttempt = { pending: true, visibleUntil: 0 }
+  retryAttempt = attempt
+  showRetryNotice(attempt, 'started')
+  const outcome = await runRetryHandlers()
+  if (retryAttempt !== attempt) return outcome
+
+  attempt.pending = false
+  if (outcome !== 'started') showRetryNotice(attempt, outcome)
+  // Keep fast failures readable and slow passes acknowledged until they settle.
+  // A newer tap or a cleared queue cancels this timer and invalidates the attempt.
+  retryTimer = setTimeout(clearRetryNotice, Math.max(0, attempt.visibleUntil - Date.now()))
+  return outcome
+}
+
+/** Each upload system is independently lock-gated, including its automatic retries. */
+async function runRetryHandlers(): Promise<UploadRetryOutcome> {
+  const results = await Promise.all(
+    [...retryHandlers.entries()].map(async ([key, handler]) => {
+      try {
+        return await handler()
+      } catch {
         telemetry.warn('upload:banner:retry_failed', 'Upload retry failed', {
           source: key,
-          error: String(error),
         })
-      })
-  }
+        return 'skipped' as const
+      }
+    }),
+  )
+  if (results.includes('started')) return 'started'
+  if (results.includes('busy')) return 'busy'
+  return 'skipped'
 }
