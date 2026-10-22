@@ -5,6 +5,7 @@ import type { SegmentUploadClient } from '../lib/media/segmentUploads'
 const state = vi.hoisted(() => ({
   files: new Map<string, string>(),
   failSegment: false,
+  failureStatus: 503 as number | undefined,
   hangSegment: false,
   cancel: vi.fn(async () => {}),
   warn: vi.fn(),
@@ -52,7 +53,7 @@ vi.mock('expo-file-system/legacy', () => ({
       state.uploaded.push(path.split('/').pop() ?? '')
       await state.onUpload(path)
       if (state.hangSegment && path.endsWith('.m4s')) return new Promise(() => {})
-      return { status: state.failSegment && path.endsWith('.m4s') ? 503 : 204 }
+      return { status: state.failSegment && path.endsWith('.m4s') ? state.failureStatus : 204 }
     },
   })),
 }))
@@ -80,6 +81,7 @@ beforeEach(() => {
   state.files.clear()
   state.uploaded = []
   state.failSegment = false
+  state.failureStatus = 503
   state.hangSegment = false
   state.onUpload = async () => {}
   vi.clearAllMocks()
@@ -288,6 +290,50 @@ describe('upload status reporting', () => {
     })
     return { jobs, completed, latest: () => jobs.at(-1) ?? [] }
   }
+
+  it.each([
+    [401, 'unauthorized'],
+    [403, 'unauthorized'],
+    [408, 'timeout'],
+    [502, 'unavailable'],
+    [503, 'unavailable'],
+    [504, 'unavailable'],
+    [500, 'server'],
+    [undefined, undefined],
+  ] as const)('reports HTTP %s as %s and clears the cause on progress', async (status, failure) => {
+    const queue = await import('../lib/media/segmentUploads')
+    const convex = client()
+    const seen = observe(queue)
+    queue.setSegmentUploadOwner('owner')
+    await queue.prepareSegmentJob('owner', { localId: id, isResponse: false })
+    seedCapture(5)
+    state.failSegment = true
+    state.failureStatus = status
+    await queue.runSegmentUploads(convex, 'owner')
+    expect(seen.latest()[0]).toMatchObject({ paused: true })
+    if (failure) expect(seen.latest()[0]).toMatchObject({ failure })
+    else expect(seen.latest()[0]).not.toHaveProperty('failure')
+    state.failSegment = false
+    await queue.runSegmentUploads(convex, 'owner')
+    expect(seen.latest()[0]).toMatchObject({ paused: false })
+    expect(seen.latest()[0]).not.toHaveProperty('failure')
+  })
+
+  it('clears the previous cause instead of blaming the network for a corrupt local marker', async () => {
+    const queue = await import('../lib/media/segmentUploads')
+    const convex = client()
+    const seen = observe(queue)
+    queue.setSegmentUploadOwner('owner')
+    await queue.prepareSegmentJob('owner', { localId: id, isResponse: false })
+    seedCapture()
+    state.failSegment = true
+    await queue.runSegmentUploads(convex, 'owner')
+    expect(seen.latest()[0]).toMatchObject({ failure: 'unavailable' })
+    state.files.set(`${dir}finished.json`, JSON.stringify({ segmentCount: -1 }))
+    await queue.runSegmentUploads(convex, 'owner')
+    expect(seen.latest()[0]).toMatchObject({ paused: true })
+    expect(seen.latest()[0]).not.toHaveProperty('failure')
+  })
 
   it('reports a paused job without flickering back to uploading until it makes progress', async () => {
     const queue = await import('../lib/media/segmentUploads')

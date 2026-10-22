@@ -143,7 +143,6 @@ export function UploadStatusLayout({ children }: { children: ReactNode }) {
   }, [bannerShown])
   useEffect(() => () => uploadStatusActions.setBannerHeight(0), [])
 
-  const retryGeneration = useRef(0)
   const handleAction = useCallback(() => {
     const current = uploadStatus$.peek()
     if (current.kind === 'completed') {
@@ -151,31 +150,8 @@ export function UploadStatusLayout({ children }: { children: ReactNode }) {
       if (current.bondfireId) router.push(routes.bondfire(current.bondfireId))
       return
     }
-    const token = ++retryGeneration.current
-    const startedAt = Date.now()
-    uploadStatusActions.showRetryNotice('started')
-    void (async () => {
-      let outcome: 'started' | 'busy' | 'skipped' = 'skipped'
-      try {
-        outcome = await retryPendingUploads()
-        if (retryGeneration.current !== token) return
-        if (outcome === 'busy') uploadStatusActions.showRetryNotice('busy')
-      } finally {
-        // A failing pass can return immediately. Keep the acknowledgement on
-        // screen long enough to read, and for the whole pass when it is slower.
-        const hold = outcome === 'busy' ? 3200 : 1200
-        const wait = Math.max(0, hold - (Date.now() - startedAt))
-        await new Promise((resolve) => setTimeout(resolve, wait))
-        if (retryGeneration.current === token) uploadStatusActions.clearRetryNotice()
-      }
-    })()
+    if (current.kind === 'paused') void retryPendingUploads()
   }, [router])
-  useEffect(() => {
-    return () => {
-      retryGeneration.current += 1
-      uploadStatusActions.clearRetryNotice()
-    }
-  }, [])
 
   const childInsets = useMemo(
     () => (bannerShown ? { ...insets, top: 0 } : insets),

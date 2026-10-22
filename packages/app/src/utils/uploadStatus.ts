@@ -13,10 +13,10 @@ export const UPLOAD_COMPLETION_HOLD_MS = 5_000
 export type UploadSubject = 'response' | 'bondfire' | 'recording'
 
 /** Why the latest upload pass failed. User-facing copy is derived from this, never from raw errors. */
-export type UploadFailureKind = 'unavailable' | 'timeout' | 'unauthorized' | 'server' | 'network'
+export type UploadFailureKind = 'unavailable' | 'timeout' | 'unauthorized' | 'server'
 
-/** Acknowledgement for a Retry tap. Cleared by the banner once it has been readable. */
-export type UploadRetryNotice = 'started' | 'busy'
+/** Acknowledgement for a Retry tap. Cleared by the store once it has been readable. */
+export type UploadRetryNotice = 'started' | 'busy' | 'skipped'
 
 /** One segmented capture job as reported by the segment upload loop. */
 export interface SegmentJobStatus {
@@ -76,13 +76,7 @@ function sharedSubject(jobs: SegmentJobStatus[]): UploadSubject {
   return jobs.length === 1 ? (jobs[0].isResponse ? 'response' : 'bondfire') : 'recording'
 }
 
-const FAILURE_PRIORITY: UploadFailureKind[] = [
-  'unavailable',
-  'unauthorized',
-  'timeout',
-  'server',
-  'network',
-]
+const FAILURE_PRIORITY: UploadFailureKind[] = ['unavailable', 'unauthorized', 'timeout', 'server']
 
 function dominantFailure(jobs: SegmentJobStatus[]): UploadFailureKind | undefined {
   const present = new Set(jobs.flatMap((job) => (job.failure ? [job.failure] : [])))
@@ -168,8 +162,6 @@ function failureMessage(failure: UploadFailureKind | undefined): string {
       return "The upload couldn't be authorized, still saved on this phone."
     case 'server':
       return 'The server rejected the upload, still saved on this phone.'
-    case 'network':
-      return "Couldn't reach the server, still saved on this phone."
     default:
       return 'Saved on this phone · retrying automatically'
   }
@@ -199,6 +191,9 @@ export function describeUploadStatus(
       }
       if (state.notice === 'busy') {
         return { title: 'Retry already in progress', message, actionLabel: 'Retrying…' }
+      }
+      if (state.notice === 'skipped') {
+        return { title: "Couldn't start retry", message, actionLabel: 'Retry now' }
       }
       if (state.reason === 'offline') {
         return { title: 'Waiting for a connection', message, actionLabel: 'Retry' }

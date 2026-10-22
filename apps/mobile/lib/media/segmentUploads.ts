@@ -183,17 +183,20 @@ export function markSegmentCapture(localId: string, recording: boolean) {
   if (recording) active.add(localId)
   else active.delete(localId)
 }
-function failureKind(error: unknown): UploadFailureKind {
+function failureKind(error: unknown): UploadFailureKind | null {
   if (error instanceof UploadFailure) {
     if (error.code === 'timeout') return 'timeout'
     if (error.code === 'http') {
+      if (error.status === undefined) return null
       if (error.status === 401 || error.status === 403) return 'unauthorized'
       if (error.status === 408) return 'timeout'
       if (error.status === 502 || error.status === 503 || error.status === 504) return 'unavailable'
       return 'server'
     }
   }
-  return 'network'
+  // Filesystem, journal and Convex errors do not reliably identify a network
+  // failure. Clear any previous cause and use neutral copy for unknown errors.
+  return null
 }
 export async function runSegmentUploads(
   client: SegmentUploadClient,
