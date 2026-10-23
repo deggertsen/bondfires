@@ -442,7 +442,7 @@ export const cleanupPage = internalQuery({
     const cleanupMode = mode ?? (cursor ? 'reconcile' : 'uploading')
     const now = Date.now()
     // Reconciliation visits ready and uploading indexes once daily. Cancelled
-    // recordings remain covered by the unchanged five-minute indexed sweep.
+    // recordings remain covered by the hourly indexed tombstone retry.
     const candidates = ctx.db.query('segmentRecordings').withIndex('by_status_created', (q) => {
       if (cleanupMode === 'reconcile') return q.eq('status', reconcileStatus ?? 'ready')
       if (cleanupMode === 'uploading')
@@ -551,7 +551,7 @@ export const cleanupRecording = internalAction({
       signal: AbortSignal.timeout(15000),
     })
     // Scheduled actions are not automatically retried. A failed attempt leaves
-    // the tombstone in the cancelled index for the next five-minute sweep.
+    // the tombstone in the cancelled index for the next hourly retry.
     if (!response.ok) throw new Error('Media cleanup will retry')
     await ctx.runMutation(internal.segmentMedia.purge, { recordingId })
   },
@@ -592,8 +592,6 @@ export const cleanup = internalAction({
         cutoff: cleanupCutoff,
         ...(status ? { reconcileStatus: status } : {}),
       })
-    else if (cleanupMode === 'uploading')
-      await ctx.scheduler.runAfter(0, internal.segmentMedia.cleanup, { mode: 'cancelled' })
     else if (status === 'ready')
       await ctx.scheduler.runAfter(0, internal.segmentMedia.cleanup, {
         mode: 'reconcile',

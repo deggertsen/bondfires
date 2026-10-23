@@ -764,21 +764,35 @@ it('paginates more than fifty old uploads without expanding the cutoff between p
 })
 
 describe('independent media cleanup jobs', () => {
-  it.each([null, 'next-page'])(
-    'dispatches every candidate and the continuation (%s) before deletion runs',
-    async (cursor) => {
+  it.each([
+    { mode: undefined, cursor: null },
+    { mode: undefined, cursor: 'next-page' },
+    { mode: 'cancelled' as const, cursor: null },
+    { mode: 'cancelled' as const, cursor: 'next-page' },
+  ])(
+    'dispatches every candidate and the continuation (mode=$mode, cursor=$cursor) before deletion runs',
+    async ({ mode, cursor }) => {
       const ids = ['failed-recording', 'healthy-recording'] as Id<'segmentRecordings'>[]
       const interrupted = ['playable-recording'] as Id<'segmentRecordings'>[]
       const runQuery = vi.fn(async () => ({ ids, interrupted, cursor }))
       const runAfter = vi.fn()
-      const handler = (
-        cleanup as unknown as {
-          _handler: (ctx: ActionCtx, args: { cutoff: number }) => Promise<void>
-        }
-      )._handler
+      if (!('_handler' in cleanup) || typeof cleanup._handler !== 'function')
+        throw new Error('Missing cleanup action handler')
       // No network or mutation API: discovery cannot wait on individual workers.
-      await handler({ runQuery, scheduler: { runAfter } } as unknown as ActionCtx, { cutoff: 123 })
-      expect(runAfter).toHaveBeenCalledTimes(4)
+      await cleanup._handler(
+        { runQuery, scheduler: { runAfter } },
+        {
+          cutoff: 123,
+          mode,
+          ...(mode === 'cancelled' ? { cursor: 'current-page' } : {}),
+        },
+      )
+      expect(runQuery).toHaveBeenCalledWith(internal.segmentMedia.cleanupPage, {
+        cursor: mode === 'cancelled' ? 'current-page' : null,
+        mode: mode ?? 'uploading',
+        cutoff: 123,
+      })
+      expect(runAfter).toHaveBeenCalledTimes(cursor ? 4 : 3)
       for (const recordingId of ids)
         expect(runAfter).toHaveBeenCalledWith(0, internal.segmentMedia.cleanupRecording, {
           recordingId,
@@ -786,11 +800,12 @@ describe('independent media cleanup jobs', () => {
       expect(runAfter).toHaveBeenCalledWith(0, internal.segmentMedia.finalizeInterrupted, {
         recordingId: interrupted[0],
       })
-      expect(runAfter).toHaveBeenLastCalledWith(
-        0,
-        internal.segmentMedia.cleanup,
-        cursor ? { cursor, mode: 'uploading', cutoff: 123 } : { mode: 'cancelled' },
-      )
+      if (cursor)
+        expect(runAfter).toHaveBeenLastCalledWith(0, internal.segmentMedia.cleanup, {
+          cursor,
+          mode: mode ?? 'uploading',
+          cutoff: 123,
+        })
     },
   )
 

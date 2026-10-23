@@ -2,10 +2,18 @@ import { cronJobs } from 'convex/server'
 import { internal } from './_generated/api'
 
 const crons = cronJobs()
-// Frequent indexed work handles cancelled and abandoned uploads. Reconciliation
-// catches legacy orphans, parent expiry, and deletion paths missed by producers
-// once daily; explicit deletion/revocation remains immediate.
+// Frequent indexed work handles abandoned uploads; cancelled tombstones retry hourly.
+// Reconciliation catches legacy orphans, parent expiry, and deletion paths missed
+// by producers once daily; explicit deletion/revocation remains immediate.
 crons.interval('cleanup internal segment media', { minutes: 5 }, internal.segmentMedia.cleanup, {})
+crons.interval(
+  'retry cancelled segment media tombstones',
+  { hours: 1 },
+  internal.segmentMedia.cleanup,
+  {
+    mode: 'cancelled',
+  },
+)
 crons.interval('reconcile segment media', { hours: 24 }, internal.segmentMedia.cleanup, {
   mode: 'reconcile',
 })
