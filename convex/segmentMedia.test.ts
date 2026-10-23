@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 
+import { getFunctionName } from 'convex/server'
 import { ConvexError } from 'convex/values'
 import { convexTest } from 'convex-test'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,6 +8,7 @@ import { api, internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import type { ActionCtx } from './_generated/server'
 import { CURRENT_COMMUNITY_GUIDELINES_VERSION, CURRENT_TERMS_VERSION } from './contentSafety'
+import crons from './crons'
 import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
 import schema from './schema'
 import { cleanup } from './segmentMedia'
@@ -500,6 +502,82 @@ it('retains a watchable prefix after the upload recovery window instead of delet
 })
 
 describe('indexed media cleanup', () => {
+  it('schedules uploading, cancelled retries, and reconciliation independently', () => {
+    const jobs = Object.values(crons.crons).filter(
+      (job) => job.name === getFunctionName(internal.segmentMedia.cleanup),
+    )
+    expect(jobs).toEqual([
+      {
+        name: getFunctionName(internal.segmentMedia.cleanup),
+        args: [{}],
+        schedule: { type: 'interval', minutes: 5 },
+      },
+      {
+        name: getFunctionName(internal.segmentMedia.cleanup),
+        args: [{ mode: 'cancelled' }],
+        schedule: { type: 'interval', hours: 1 },
+      },
+      {
+        name: getFunctionName(internal.segmentMedia.cleanup),
+        args: [{ mode: 'reconcile' }],
+        schedule: { type: 'interval', hours: 24 },
+      },
+    ])
+  })
+
+  it('drains cancelled pages only on their own sweep and retains fresh tombstones until a later retry', async () => {
+    vi.useFakeTimers()
+    try {
+      const { t, fixture, record } = await setup()
+      const cancelledAt = Date.now() - 3600_001
+      const matureIds = await t.run(async (ctx) => {
+        const ids: Id<'segmentRecordings'>[] = []
+        for (let i = 0; i < 55; i++)
+          ids.push(
+            await ctx.db.insert('segmentRecordings', {
+              userId: fixture.owner,
+              localId: `cancelled-${i}`,
+              status: 'cancelled',
+              segmentCount: 0,
+              duration: 0,
+              maxDuration: 10,
+              // Both sides of the uploading cutoff must be retried, including
+              // recent recordings on the second page of the cancelled index.
+              createdAt: Date.now() - (i < 27 ? 8 * 86400_000 : 2 * 3600_000),
+              updatedAt: cancelledAt,
+            }),
+          )
+        await ctx.db.patch(record.recordingId, { status: 'cancelled' })
+        return ids
+      })
+      const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
+      vi.stubGlobal('fetch', fetchMock)
+
+      await t.action(internal.segmentMedia.cleanup, {})
+      await t.finishAllScheduledFunctions(vi.runAllTimers)
+      expect(fetchMock).not.toHaveBeenCalled()
+
+      await t.action(internal.segmentMedia.cleanup, { mode: 'cancelled' })
+      await t.finishAllScheduledFunctions(vi.runAllTimers)
+      expect(fetchMock).toHaveBeenCalledTimes(56)
+      expect(await t.run((ctx) => Promise.all(matureIds.map((id) => ctx.db.get(id))))).toEqual(
+        matureIds.map(() => null),
+      )
+      const freshTombstone = await t.run((ctx) => ctx.db.get(record.recordingId))
+      expect(freshTombstone?.status).toBe('cancelled')
+
+      vi.advanceTimersByTime(3600_000)
+      await t.action(internal.segmentMedia.cleanup, { mode: 'cancelled' })
+      await t.finishAllScheduledFunctions(vi.runAllTimers)
+      expect(fetchMock).toHaveBeenCalledTimes(57)
+      expect(await t.run((ctx) => ctx.db.get(record.recordingId))).toBeNull()
+      const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect())
+      expect(scheduled.every((job) => job.state.kind === 'success')).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('skips ready and recoverable uploads on frequent sweeps but reconciles legacy orphans', async () => {
     const { t, record, fixture } = await setup()
     await t.run(async (ctx) => {
