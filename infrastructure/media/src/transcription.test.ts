@@ -10,6 +10,25 @@ import {
 import { encodeBase64, transcribeRequest } from './transcription'
 
 describe('encodeBase64', () => {
+  it('encodes only the requested view, excluding neighboring bytes', () => {
+    const backing = Uint8Array.of(255, 255, 0, 1, 2, 253, 254, 255, 255, 255)
+    const original = backing.slice()
+    expect(encodeBase64(backing.subarray(2, 8))).toBe('AAEC/f7/')
+    expect(encodeBase64(backing.subarray(2, 7))).toBe('AAEC/f4=')
+    expect(encodeBase64(backing.subarray(2, 6))).toBe('AAEC/Q==')
+    expect(encodeBase64(backing.subarray(4, 4))).toBe('')
+    expect(backing).toEqual(original)
+  })
+
+  it('round-trips the maximum window plus initialization bytes', () => {
+    const bytes = new Uint8Array(12 * 1024 * 1024 + 256 * 1024).fill(0xa5)
+    bytes[0] = 0
+    bytes[bytes.length - 1] = 255
+    const encoded = encodeBase64(bytes)
+    expect(encoded.length).toBe(4 * Math.ceil(bytes.length / 3))
+    expect(Buffer.compare(Buffer.from(encoded, 'base64'), bytes)).toBe(0)
+  })
+
   it('matches Buffer for empty input', () => {
     const bytes = new Uint8Array()
     expect(encodeBase64(bytes)).toBe(Buffer.from(bytes).toString('base64'))
