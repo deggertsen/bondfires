@@ -25,6 +25,12 @@ struct CameraMicrophoneSelectionTests {
         "Prefer the first upper matching source")
       precondition(cameraMicrophoneDataSourceIndex(in: Array(matching.prefix(1)), cameraIsFront: cameraIsFront) == 0,
         "Matching orientation remains usable without an upper location")
+      let mixedLocations: [Source] = [
+        .init(orientation: cameraIsFront ? .back : .front, isUpper: true),
+        .init(orientation: orientation, isUpper: false),
+      ]
+      precondition(cameraMicrophoneDataSourceIndex(in: mixedLocations, cameraIsFront: cameraIsFront) == 1,
+        "Camera orientation takes precedence over an opposite-facing upper mic")
       precondition(cameraMicrophoneDataSourceIndex(in: [], cameraIsFront: cameraIsFront) == nil)
       let noMatch: [Source] = [
         .init(orientation: .none, isUpper: true),
