@@ -68,6 +68,8 @@ export interface LivePublisherStats {
   statsSupported?: number
   /** Mic route for the session: 'wired' | 'bluetooth' | 'builtin'. */
   audioRoute?: 'builtin' | 'wired' | 'bluetooth'
+  /** iOS selected built-in mic orientation; absent on external input routes. */
+  micDataSource?: 'front' | 'back' | 'bottom' | 'none'
   /**
    * Resolved Android mic source ('voice_communication' | 'camcorder' | 'mic' |
    * 'voice_recognition'). Absent on iOS and on pre-experiment builds.
