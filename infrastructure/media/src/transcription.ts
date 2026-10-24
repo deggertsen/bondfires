@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import {
   InvalidSegmentDuration,
   inspectAudioCodecs,
@@ -13,42 +14,9 @@ import {
 } from '../../../packages/media/src/transcription'
 import { normalizeTiming, type TranscriptionStorage } from './segmentTiming'
 
-const BASE64_TABLE = Uint8Array.from(
-  'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/',
-  (c) => c.charCodeAt(0),
-)
-
-/**
- * Encode bytes to base64 without the per-chunk spread + giant string join that
- * previously pushed the Worker over the CPU limit. Writes into a preallocated
- * ASCII buffer and decodes once with the native TextDecoder.
- */
+/** Encode the exact view with the Worker's native encoder, without copying its backing buffer. */
 export function encodeBase64(bytes: Uint8Array): string {
-  const out = new Uint8Array(Math.ceil(bytes.length / 3) * 4)
-  let o = 0
-  let i = 0
-  for (; i + 2 < bytes.length; i += 3) {
-    const n = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2]
-    out[o++] = BASE64_TABLE[(n >> 18) & 63]
-    out[o++] = BASE64_TABLE[(n >> 12) & 63]
-    out[o++] = BASE64_TABLE[(n >> 6) & 63]
-    out[o++] = BASE64_TABLE[n & 63]
-  }
-  const remaining = bytes.length - i
-  if (remaining === 1) {
-    const n = bytes[i] << 16
-    out[o++] = BASE64_TABLE[(n >> 18) & 63]
-    out[o++] = BASE64_TABLE[(n >> 12) & 63]
-    out[o++] = 0x3d
-    out[o++] = 0x3d
-  } else if (remaining === 2) {
-    const n = (bytes[i] << 16) | (bytes[i + 1] << 8)
-    out[o++] = BASE64_TABLE[(n >> 18) & 63]
-    out[o++] = BASE64_TABLE[(n >> 12) & 63]
-    out[o++] = BASE64_TABLE[(n >> 6) & 63]
-    out[o++] = 0x3d
-  }
-  return new TextDecoder().decode(out.subarray(0, o))
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('base64')
 }
 
 /** Server-only, bounded transcription; video bytes never leave our Cloudflare account. */
