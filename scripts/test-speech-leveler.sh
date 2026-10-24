@@ -8,3 +8,6 @@ swiftc "$module/ios/SpeechLeveler.swift" "$module/tests/SpeechLevelerTests.swift
 swiftc "$module/ios/SpeechLeveler.swift" "$module/ios/LeveledAudioBuffer.swift" \
   "$module/tests/LeveledAudioBufferTests.swift" -o "$output_dir/conversion"
 "$output_dir/conversion"
+swiftc "$module/ios/CameraMicrophoneSelection.swift" "$module/tests/CameraMicrophoneSelectionTests.swift" \
+  -o "$output_dir/microphone-selection"
+"$output_dir/microphone-selection"

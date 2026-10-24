@@ -15,6 +15,28 @@ below do not identify their OS, device, mic route, or physical mic. They cannot
 establish that Android communication processing caused the problem. Capture
 quality and delivery loudness need separate evaluation.
 
+## iOS capture follow-up (2026-10-24)
+
+iOS capture now uses `.playAndRecord` / `.videoRecording` with the existing
+speaker/Bluetooth options and a camera-matched built-in microphone data source
+at setup, camera swap, and input-route changes (including headset disconnect).
+Capture-session automatic audio configuration is disabled so it cannot overwrite
+the publisher's mode or input preferences. Missing matches clear the previous
+camera's preference; rejected preferences leave capture running. Bluetooth and
+wired microphones retain their priority. Preferences are cleared at teardown.
+Route-change handling compares the requested data source, avoiding repeated
+reconfiguration if iOS selects a different source.
+`getStats().micDataSource` reports the selected built-in orientation (absent for
+external microphones); `audioRoute` is read from the same current-route snapshot.
+This is **not voice processing**; SpeechLeveler, LOUDNESS,
+and the silence-gate threshold are unchanged.
+
+Android stays `voice_communication`. If noisy iOS rooms still sound bad, the next
+experiment is voice processing. The Android noisy-room A/B is
+`EXPO_PUBLIC_LIVE_AUDIO_SOURCE=voice_recognition` versus the current default;
+neither experiment is enabled by this follow-up. The original investigation
+below is retained as historical context.
+
 ## Measurements
 
 Reported by the original investigation (not remeasured during this review):

@@ -453,7 +453,6 @@ final class LivePublisher {
   private var backupRecorder: HKStreamRecorder?
   private var publishingCaptureInterruptionPending = false
   private var audioRouteChangeObserver: NSObjectProtocol?
-  private var audioRouteName = "builtin"
 
   /// MTHKView registered as a mixer output — HaishinKit 2.x preview approach
   private lazy var previewView: MTHKView = {
@@ -489,6 +488,11 @@ final class LivePublisher {
     let position: AVCaptureDevice.Position = options.initialCamera == "back" ? .back : .front
     currentCameraPosition = position
 
+    // This publisher owns the session mode, headset priority, and built-in mic
+    // preference. Do not let capture startup/camera changes overwrite them.
+    await mixer.configuration { session in
+      session.automaticallyConfiguresApplicationAudioSession = false
+    }
     setupAudioSession()
     addCaptureObservers()
 
@@ -1065,6 +1069,7 @@ final class LivePublisher {
         videoUnit.isVideoMirrored = newPosition == .front
       }
       currentCameraPosition = newPosition
+      selectCameraMicrophoneDataSource(AVAudioSession.sharedInstance())
     } catch {
       throw LivePublisherException(message: "Camera swap to \(positionLabel) failed: \(error.localizedDescription)")
     }
@@ -1119,7 +1124,13 @@ final class LivePublisher {
     // statsSupported=0 zeros are ignored by the JS stall watchdog;
     // statsSupported=1 marks bitrateBps as a real measurement.
     var stats = livePublisherZeroStats
-    stats["audioRoute"] = audioRouteName
+    let input = AVAudioSession.sharedInstance().currentRoute.inputs.first
+    stats["audioRoute"] = routeName(for: input)
+    if let input, input.portType == .builtInMic {
+      stats["micDataSource"] = input.selectedDataSource.map {
+        CameraMicrophoneDataSource($0).orientation.rawValue
+      } ?? "none"
+    }
     if let recorder = segmentRecorder {
       for (key, value) in recorder.audioStats() { stats[key] = value }
       stats["micMuted"] = (await mixer.audioMixerSettings).isMuted
@@ -1146,10 +1157,10 @@ final class LivePublisher {
   private func setupAudioSession() {
     let audioSession = AVAudioSession.sharedInstance()
     do {
-      try audioSession.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
+      try audioSession.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetooth])
       try audioSession.setActive(true)
-      routeToPreferredAudioInput(audioSession)
       installAudioRouteChangeObserver()
+      routeToPreferredAudioInput(audioSession)
     } catch {
       emitError("audio_session_failed", error.localizedDescription)
     }
@@ -1171,7 +1182,7 @@ final class LivePublisher {
       switch reason {
       case .newDeviceAvailable, .oldDeviceUnavailable, .routeConfigurationChange:
         Task { @MainActor [weak self] in
-          guard let self, !self.isStopping else { return }
+          guard let self, !self.isStopping, self.audioRouteChangeObserver != nil else { return }
           self.routeToPreferredAudioInput(audioSession)
         }
       default:
@@ -1188,9 +1199,13 @@ final class LivePublisher {
 
   private func tearDownAudioSession() {
     let audioSession = AVAudioSession.sharedInstance()
+    // The shared session outlives this publisher, including its input preferences.
+    if let input = audioSession.availableInputs?.first(where: { $0.portType == .builtInMic }),
+       input.preferredDataSource != nil {
+      try? input.setPreferredDataSource(nil)
+    }
     try? audioSession.setPreferredInput(nil)
     try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
-    audioRouteName = "builtin"
   }
 
   private func routeToPreferredAudioInput(_ audioSession: AVAudioSession) {
@@ -1203,11 +1218,34 @@ final class LivePublisher {
       if audioSession.preferredInput?.uid != preferredInput?.uid {
         try audioSession.setPreferredInput(preferredInput)
       }
-      audioRouteName = routeName(for: audioSession.currentRoute.inputs.first)
     } catch {
       // A device can disappear between availableInputs and setPreferredInput.
-      // Keep capture running and report the route AVAudioSession actually chose.
-      audioRouteName = routeName(for: audioSession.currentRoute.inputs.first)
+      // Keep capture running on the route AVAudioSession actually chose.
+    }
+    // Also runs when a headset disconnects or a pending route becomes active.
+    selectCameraMicrophoneDataSource(audioSession)
+  }
+
+  private func selectCameraMicrophoneDataSource(_ audioSession: AVAudioSession) {
+    // Do not touch a headset route, including one whose preferred input is still
+    // being applied. This changes only the built-in port's data source, not input priority.
+    guard audioSession.preferredInput == nil || audioSession.preferredInput?.portType == .builtInMic,
+          let input = audioSession.currentRoute.inputs.first,
+          input.portType == .builtInMic else { return }
+    let sources = input.dataSources ?? []
+    let index = cameraMicrophoneDataSourceIndex(
+      in: sources.map { CameraMicrophoneDataSource($0) },
+      cameraIsFront: currentCameraPosition == .front
+    )
+    // nil releases a previous camera's preference when no matching source exists.
+    let source = index.map { sources[$0] }
+    // Compare the requested preference, not the actual selection: iOS may choose
+    // another source. Retrying on its route notification would reconfigure again.
+    guard input.preferredDataSource?.dataSourceID != source?.dataSourceID else { return }
+    do {
+      try input.setPreferredDataSource(source)
+    } catch {
+      // Unsupported or disappearing sources are non-fatal; retain the system route.
     }
   }
 
