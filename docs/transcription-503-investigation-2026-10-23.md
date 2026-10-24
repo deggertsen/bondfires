@@ -68,8 +68,9 @@ already contains #247's ASCII-buffer encoder. This change replaces that remainin
 JavaScript loop and ASCII allocation/decoding with the native `node:buffer`
 base64 encoder. `Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)`
 uses the exact view without another input copy. The existing `nodejs_compat`
-flag supports this API; TypeScript now includes the repository's existing Node
-types. No dependency, CPU-limit, AI-model, window, or retry-policy change is needed.
+flag supports this API; TypeScript now includes Node types, declared as a direct
+development dependency of the standalone media package. No runtime dependency,
+CPU-limit, AI-model, window, or retry-policy change is needed.
 
 This is an additional measured CPU reduction, **not a replay of #247 and not a
 confirmed fix for the historical 503 cause**. It does not resolve the deployment
@@ -97,6 +98,13 @@ runtime compatibility and directional evidence, not a production latency promise
 Regression tests cover nonzero-offset views with all padding cases, neighboring
 bytes remaining unchanged, and byte-exact round-trip encoding at the maximum
 window plus initialization size. Existing randomized/padding tests remain.
+
+The initial PR's isolated `internal-media` CI job exposed a build dependency gap:
+`tsconfig.json` requested Node types, but only the repository root declared
+`@types/node`. Local checks with root dependencies installed hid the missing
+declaration; CI installs only `infrastructure/media`. The media package now
+declares `@types/node` directly and locks it in its own npm lockfile, so its
+existing standalone typecheck and bundle checks can run independently.
 
 ## Follow-up after review
 
