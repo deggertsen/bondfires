@@ -1065,6 +1065,7 @@ final class LivePublisher {
         videoUnit.isVideoMirrored = newPosition == .front
       }
       currentCameraPosition = newPosition
+      selectCameraMicrophoneDataSource(AVAudioSession.sharedInstance())
     } catch {
       throw LivePublisherException(message: "Camera swap to \(positionLabel) failed: \(error.localizedDescription)")
     }
@@ -1120,6 +1121,12 @@ final class LivePublisher {
     // statsSupported=1 marks bitrateBps as a real measurement.
     var stats = livePublisherZeroStats
     stats["audioRoute"] = audioRouteName
+    if let input = AVAudioSession.sharedInstance().currentRoute.inputs.first,
+       input.portType == .builtInMic {
+      stats["micDataSource"] = input.selectedDataSource.map {
+        CameraMicrophoneDataSource($0).orientation.rawValue
+      } ?? "none"
+    }
     if let recorder = segmentRecorder {
       for (key, value) in recorder.audioStats() { stats[key] = value }
       stats["micMuted"] = (await mixer.audioMixerSettings).isMuted
@@ -1146,9 +1153,10 @@ final class LivePublisher {
   private func setupAudioSession() {
     let audioSession = AVAudioSession.sharedInstance()
     do {
-      try audioSession.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
+      try audioSession.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetooth])
       try audioSession.setActive(true)
       routeToPreferredAudioInput(audioSession)
+      selectCameraMicrophoneDataSource(audioSession)
       installAudioRouteChangeObserver()
     } catch {
       emitError("audio_session_failed", error.localizedDescription)
@@ -1208,6 +1216,26 @@ final class LivePublisher {
       // A device can disappear between availableInputs and setPreferredInput.
       // Keep capture running and report the route AVAudioSession actually chose.
       audioRouteName = routeName(for: audioSession.currentRoute.inputs.first)
+    }
+  }
+
+  private func selectCameraMicrophoneDataSource(_ audioSession: AVAudioSession) {
+    // Do not touch a headset route, including one whose preferred input is still
+    // being applied. This changes only the built-in port's data source, not input priority.
+    guard audioSession.preferredInput == nil || audioSession.preferredInput?.portType == .builtInMic,
+          let input = audioSession.currentRoute.inputs.first,
+          input.portType == .builtInMic,
+          let sources = input.dataSources,
+          let index = cameraMicrophoneDataSourceIndex(
+            in: sources.map { CameraMicrophoneDataSource($0) },
+            cameraIsFront: currentCameraPosition == .front
+          ) else { return }
+    let source = sources[index]
+    guard input.selectedDataSource?.dataSourceID != source.dataSourceID else { return }
+    do {
+      try input.setPreferredDataSource(source)
+    } catch {
+      // Unsupported or disappearing sources are non-fatal; retain the system route.
     }
   }
 
