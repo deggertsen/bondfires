@@ -23,7 +23,7 @@ apps/mobile/modules/bondfire-live-publisher/  — Live streaming publisher modul
 scripts/                        — Release, provisioning, dev helpers
 ```
 
-Marketing website: separate repo at https://github.com/deggertsen/bondfires-website (Cloudflare Pages).
+Marketing website: separate repo at https://github.com/deggertsen/bondfires-website (Cloudflare Workers with static assets).
 
 ## How to Run
 
