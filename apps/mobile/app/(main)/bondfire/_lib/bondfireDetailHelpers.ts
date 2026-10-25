@@ -57,6 +57,8 @@ export type BondfireVideoItem = {
   responseIndex?: number
   isLive: boolean
   isSegmented?: boolean
+  segmentRecordingId?: Id<'segmentRecordings'>
+  recordingStopped?: boolean
   createdAt: number
   watchedByViewer: boolean
   durationMs?: number
@@ -150,6 +152,8 @@ export function buildBondfireVideoItems(
         bondfireData.videoStatus === 'live' &&
         !!(bondfireData.muxLivePlaybackId || bondfireData.segmentRecordingId),
       isSegmented: !!bondfireData.segmentRecordingId,
+      segmentRecordingId: bondfireData.segmentRecordingId,
+      recordingStopped: bondfireData.recordingStopped,
       createdAt: bondfireData._creationTime,
       watchedByViewer: bondfireData.watchedByViewer ?? false,
       durationMs: bondfireData.durationMs,
@@ -171,6 +175,8 @@ export function buildBondfireVideoItems(
       isLive:
         video.videoStatus === 'live' && !!(video.muxLivePlaybackId || video.segmentRecordingId),
       isSegmented: !!video.segmentRecordingId,
+      segmentRecordingId: video.segmentRecordingId,
+      recordingStopped: video.recordingStopped,
       createdAt: video._creationTime,
       watchedByViewer: video.watchedByViewer ?? false,
       durationMs: video.durationMs,

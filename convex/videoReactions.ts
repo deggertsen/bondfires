@@ -13,7 +13,7 @@ import { requireUgcPermission } from './contentSafety'
 import { getEntitlementSubscriptionTier, TIER_RANK } from './entitlements'
 import { throwUserError, withUserFacingErrors } from './errors'
 import { isFreeEmoji, isReactionEmoji } from './lib/emojis'
-import { getVideoLifecycle } from './lib/videoLifecycle'
+import { isPlayableVideoRecord } from './lib/videoLifecycle'
 import {
   rankRecentEmojis,
   recomputeThreadReactionSummaries,
@@ -31,17 +31,17 @@ function hasExactlyOneVideoReference(args: {
   return !!args.bondfireId !== !!args.bondfireVideoId
 }
 
-function isVodRecordReady(record: Doc<'bondfires'> | Doc<'bondfireVideos'> | null) {
-  return record !== null && getVideoLifecycle(record) === 'ready'
+function isReactionRecordPlayable(record: Doc<'bondfires'> | Doc<'bondfireVideos'> | null) {
+  return record !== null && isPlayableVideoRecord(record)
 }
 
-async function getVodVideo(ctx: MutationCtx | QueryCtx, video: VideoReference) {
+async function getReactionVideo(ctx: MutationCtx | QueryCtx, video: VideoReference) {
   if (video.bondfireId !== undefined) {
     const bondfire = await ctx.db.get(video.bondfireId)
-    return bondfire && isVodRecordReady(bondfire) ? { bondfire, response: null } : null
+    return bondfire && isReactionRecordPlayable(bondfire) ? { bondfire, response: null } : null
   }
   const response = await ctx.db.get(video.bondfireVideoId)
-  if (!response || !isVodRecordReady(response)) return null
+  if (!response || !isReactionRecordPlayable(response)) return null
   const bondfire = await ctx.db.get(response.bondfireId)
   return bondfire ? { bondfire, response } : null
 }
@@ -51,7 +51,7 @@ async function getReactionViewer(
   video: VideoReference,
   userId: Id<'users'> | null,
 ) {
-  const target = await getVodVideo(ctx, video)
+  const target = await getReactionVideo(ctx, video)
   if (!target) return null
   const viewer = await buildViewerVisibilityContext(ctx, userId)
   if (
@@ -78,7 +78,7 @@ async function getReactionViewer(
 }
 
 /**
- * Add a timestamped emoji reaction to a VOD video.
+ * Add a timestamped emoji reaction to a live or ready video.
  *
  * Exactly one of `bondfireId` or `bondfireVideoId` must be provided.
  * Denormalizes the reactor's displayName + photoUrl at creation time so

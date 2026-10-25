@@ -1,10 +1,12 @@
-import { createElement, useMemo } from 'react'
+import { getFunctionName } from 'convex/server'
+import { createElement, createRef, useMemo } from 'react'
 // @ts-expect-error react-test-renderer does not ship TypeScript declarations.
 import { act, create } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Id } from '../../../../convex/_generated/dataModel'
 import {
   VideoPlayer,
+  type VideoPlayerHandle,
   type VideoPlayerProps,
 } from '../../app/(main)/bondfire/_components/VideoPlayer'
 import { LIVE_EDGE_BUFFER_HOLD_MS } from '../../app/(main)/bondfire/_lib/liveEdgePlayback'
@@ -16,6 +18,15 @@ const native = vi.hoisted(() => ({
   replay: vi.fn(),
   activateKeepAwake: vi.fn(),
   deactivateKeepAwake: vi.fn(),
+  serverDuration: undefined as number | undefined,
+  query: vi.fn(),
+  reactions: [] as {
+    _id: string
+    userId: string
+    emoji: string
+    timestampMs: number
+    createdAt: number
+  }[],
 }))
 
 const { store, playback } = await vi.hoisted(async () => {
@@ -69,7 +80,16 @@ vi.mock('@bondfires/app', () => ({
 }))
 vi.mock('@bondfires/ui', () => ({ Spinner: 'Spinner', Text: 'Text' }))
 vi.mock('tamagui', () => ({ YStack: 'YStack' }))
-vi.mock('convex/react', () => ({ useMutation: () => vi.fn(), useQuery: () => undefined }))
+vi.mock('convex/react', () => ({
+  useMutation: () => vi.fn(),
+  useQuery: (query: Parameters<typeof getFunctionName>[0], args: unknown) => {
+    const name = getFunctionName(query)
+    native.query(name, args)
+    return name === 'segmentMedia:playbackDuration' && args !== 'skip'
+      ? native.serverDuration
+      : undefined
+  },
+}))
 vi.mock('expo-keep-awake', () => ({
   activateKeepAwakeAsync: native.activateKeepAwake,
   deactivateKeepAwake: native.deactivateKeepAwake,
@@ -96,7 +116,16 @@ vi.mock('react-native', () => ({
   Pressable: 'Pressable',
 }))
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }))
-vi.mock('../../lib/media/useOptionalQuery', () => ({ useOptionalQuery: () => ({}) }))
+vi.mock('../../lib/media/useOptionalQuery', () => ({
+  useOptionalQuery: (query: Parameters<typeof getFunctionName>[0], args: unknown) => {
+    const name = getFunctionName(query)
+    native.query(name, args)
+    return {
+      data:
+        name === 'videoReactions:getReactions' && args !== 'skip' ? native.reactions : undefined,
+    }
+  },
+}))
 vi.mock('../../app/(main)/bondfire/_lib/usePlaybackQuality', () => ({
   usePlaybackQuality: vi.fn(),
 }))
@@ -150,6 +179,8 @@ describe('live-edge VideoPlayer integration', () => {
   beforeEach(async () => {
     vi.useFakeTimers()
     vi.clearAllMocks()
+    native.serverDuration = undefined
+    native.reactions = []
     native.listeners.clear()
     store.preferences.autoplayVideos.set(true)
     store.preferences.playbackSpeed.set(1)
@@ -224,6 +255,10 @@ describe('live-edge VideoPlayer integration', () => {
   })
 
   const finish = async () => {
+    // Completion tests use a finished video; a live upload head is not the end.
+    await act(async () => renderer.update(createElement(VideoPlayer, { ...props, isLive: false })))
+    native.play.mockClear()
+    native.pause.mockClear()
     await act(async () => {
       playback.player.currentTime = 60
       playback.player.playing = false
@@ -298,6 +333,84 @@ describe('live-edge VideoPlayer integration', () => {
     await act(async () => host('Pressable').props.onPress())
     expect(native.play).toHaveBeenCalledOnce()
     expect(native.replay).not.toHaveBeenCalled()
+  })
+
+  it('latches without loading, reports 1x, survives replacement, and honors an explicit same-speed choice', async () => {
+    const onEffectiveRateChange = vi.fn()
+    const ref = createRef<VideoPlayerHandle>()
+    const watchProps = { ...props, ref, onEffectiveRateChange }
+    await act(async () => {
+      store.preferences.playbackSpeed.set(2)
+      renderer.update(createElement(VideoPlayer, watchProps))
+    })
+    await act(async () => vi.advanceTimersByTime(1500))
+    expect(playback.player.status).toBe('readyToPlay')
+    expect(playback.player.playbackRate).toBe(1)
+    expect(onEffectiveRateChange).toHaveBeenLastCalledWith('fire', 1)
+    expect(store.preferences.playbackSpeed.peek()).toBe(2)
+    const oldPlayer = playback.player
+    await act(async () =>
+      renderer.update(createElement(VideoPlayer, { ...watchProps, bondfireTitle: 'New metadata' })),
+    )
+    expect(playback.player).not.toBe(oldPlayer)
+    expect(playback.player.playbackRate).toBe(1)
+    await act(async () => ref.current?.choosePlaybackSpeed(2))
+    expect(playback.player.playbackRate).toBe(2)
+    expect(onEffectiveRateChange).toHaveBeenLastCalledWith('fire', 2)
+    await act(async () =>
+      renderer.update(
+        createElement(VideoPlayer, { ...watchProps, bondfireId: 'next' as Id<'bondfires'> }),
+      ),
+    )
+    expect(playback.player.playbackRate).toBe(2)
+  })
+
+  it('updates the clock from receipts while stalled and subscribes only for the active video', async () => {
+    const watchProps = { ...props, segmentRecordingId: 'recording' as Id<'segmentRecordings'> }
+    native.serverDuration = 64
+    await act(async () => renderer.update(createElement(VideoPlayer, watchProps)))
+    await act(async () => {
+      vi.advanceTimersByTime(300)
+      playback.player.currentTime = 62
+      emit('timeUpdate', { currentTime: 62 })
+    })
+    const state = host('VideoProgressBar').props.state$
+    expect(state.elapsedMs.peek()).toBe(62000)
+    expect(state.duration.peek()).toBe(64000)
+    native.serverDuration = 72
+    await act(async () => renderer.update(createElement(VideoPlayer, watchProps)))
+    expect(state.duration.peek()).toBe(72000)
+    expect(state.elapsedMs.peek()).toBe(62000)
+    native.query.mockClear()
+    await act(async () =>
+      renderer.update(createElement(VideoPlayer, { ...watchProps, isActive: false })),
+    )
+    expect(native.query).toHaveBeenCalledWith('segmentMedia:playbackDuration', 'skip')
+  })
+
+  it('subscribes to live reactions and replays only the seek window when joining mid-recording', async () => {
+    native.reactions = [
+      { _id: 'old', userId: 'other', emoji: '🔥', timestampMs: 1000, createdAt: 1 },
+      { _id: 'near', userId: 'other', emoji: '❤️', timestampMs: 39950, createdAt: 2 },
+      { _id: 'next', userId: 'other', emoji: '🙏', timestampMs: 40050, createdAt: 3 },
+    ]
+    await act(async () => renderer.update(createElement(VideoPlayer, props)))
+    expect(native.query).toHaveBeenCalledWith('videoReactions:getReactions', { bondfireId: 'fire' })
+    await act(async () => emit('timeUpdate', { currentTime: 40 }))
+    const state = host('ReactionPresenceLayer').props.state$
+    expect(
+      state.activeReactions.peek().map((reaction: { emoji: string }) => reaction.emoji),
+    ).toEqual(['❤️'])
+    await act(async () => emit('timeUpdate', { currentTime: 40.1 }))
+    expect(
+      state.activeReactions.peek().map((reaction: { emoji: string }) => reaction.emoji),
+    ).toEqual(['❤️', '🙏'])
+  })
+
+  it('treats a live playToEnd as the upload head, not completed playback', async () => {
+    await act(async () => emit('playToEnd', {}))
+    expect(host('PlayPauseIndicator').props.state$.hasEnded.peek()).toBe(false)
+    expect(host('LoadingOverlay').props.isHoldingLiveEdge).toBe(true)
   })
 
   it('cancels a hold when the player loses focus', async () => {

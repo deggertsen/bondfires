@@ -44,7 +44,13 @@ import {
   SCREEN_WIDTH,
   SCRUB_SEEK_THROTTLE_MS,
 } from '../_lib/bondfireDetailHelpers'
-import { createLiveEdgePlayback, LIVE_EDGE_BUFFER_HOLD_MS } from '../_lib/liveEdgePlayback'
+import {
+  applyWatchPlaybackRate,
+  createLiveEdgePlayback,
+  createWatchPlaybackRate,
+  LIVE_EDGE_BUFFER_HOLD_MS,
+} from '../_lib/liveEdgePlayback'
+import { liveWatchLabel, playbackClock } from '../_lib/liveWatch'
 import { createPictureInPicturePlayback } from '../_lib/pictureInPicturePlayback'
 import { buildReactionHeatmap } from '../_lib/reactionHeatmap'
 import { usePlaybackQuality } from '../_lib/usePlaybackQuality'
@@ -104,6 +110,7 @@ function getFirstReactionAfter<T extends { timestampMs: number }>(
 }
 
 export interface VideoPlayerHandle {
+  choosePlaybackSpeed: (rate: number) => void
   releaseSourceForRecorder: () => Promise<void>
 }
 
@@ -128,6 +135,9 @@ export interface VideoPlayerProps {
   responseIndex?: number
   isLive?: boolean
   isSegmented?: boolean
+  segmentRecordingId?: Id<'segmentRecordings'>
+  recordingStopped?: boolean
+  onEffectiveRateChange?: (videoId: string, rate: number) => void
   onRespondAfterPlayback?: () => void
 }
 
@@ -152,6 +162,9 @@ export function VideoPlayer({
   responseIndex,
   isLive = false,
   isSegmented = false,
+  segmentRecordingId,
+  recordingStopped = false,
+  onEffectiveRateChange,
   onRespondAfterPlayback,
 }: VideoPlayerProps) {
   const videoId = bondfireId || bondfireVideoId || ''
@@ -159,6 +172,19 @@ export function VideoPlayer({
   const isMuted = useValue(appStore$.preferences.videoMuted)
   const playbackQuality = useValue(appStore$.preferences.playbackQuality) ?? 720
   const playbackSpeed = useValue(appStore$.preferences.playbackSpeed)
+  // Replacements keep this watch's latch; a new video starts with the saved preference.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only video identity creates a new watch.
+  const watchRate = useMemo(() => createWatchPlaybackRate(playbackSpeed), [videoId])
+  watchRate.syncPreference(playbackSpeed)
+  const liveLabel = liveWatchLabel(isLive, recordingStopped)
+  const serverDuration = useQuery(
+    api.segmentMedia.playbackDuration,
+    isActive && isScreenFocused && isLive && segmentRecordingId
+      ? { recordingId: segmentRecordingId }
+      : 'skip',
+  )
+  const serverDurationRef = useRef(0)
+  serverDurationRef.current = serverDuration ?? 0
   const currentUserId = useValue(appStore$.userId)
   const shouldSuppressPlayback = suppressOwnerReplay(
     isLive,
@@ -182,7 +208,7 @@ export function VideoPlayer({
 
   const { currentTier } = useSubscription()
   const isPaid = tierMeetsRequirement(currentTier, 'plus')
-  const shouldHandleVodReactions = !isLive && isActive && isScreenFocused && isAppActive
+  const shouldHandleReactions = isActive && isScreenFocused && isAppActive
   // The focused player owns the system playback session even while the app is
   // backgrounded. Foreground-only UI and presence keep their isAppActive gate.
   const ownsPlaybackSession = shouldOwnPlaybackSession({
@@ -191,16 +217,16 @@ export function VideoPlayer({
     shouldSuppressPlayback,
   })
 
-  const currentUser = useQuery(api.users.current, shouldHandleVodReactions ? {} : 'skip')
+  const currentUser = useQuery(api.users.current, shouldHandleReactions ? {} : 'skip')
   // Reactions are optional decoration. A failed subscription must never
   // replace the video screen with the route's error boundary.
   const { data: recentEmojis, error: recentError } = useOptionalQuery(
     api.videoReactions.getRecentEmojis,
-    isPaid && shouldHandleVodReactions ? {} : 'skip',
+    isPaid && shouldHandleReactions ? {} : 'skip',
   )
   const { data: reactionsData, error: reactionsError } = useOptionalQuery(
     api.videoReactions.getReactions,
-    shouldHandleVodReactions && (isMainVideo ? bondfireId : bondfireVideoId)
+    shouldHandleReactions && (isMainVideo ? bondfireId : bondfireVideoId)
       ? isMainVideo
         ? { bondfireId }
         : { bondfireVideoId }
@@ -250,6 +276,7 @@ export function VideoPlayer({
     showReport: false,
     progress: 0,
     duration: 0,
+    elapsedMs: 0,
     captionText: '',
     isLoading: true,
     hasError: false,
@@ -306,7 +333,7 @@ export function VideoPlayer({
     player.maxVideoSize = playbackSize(playbackQuality)
     player.loop = false
     player.muted = isMuted
-    player.playbackRate = playbackSpeed
+    applyWatchPlaybackRate(player, watchRate.getRate())
     player.preservesPitch = true
     player.timeUpdateEventInterval = PROGRESS_TIME_UPDATE_INTERVAL_SECONDS
     // Scope background playback to the one player eligible for automatic PiP.
@@ -418,13 +445,15 @@ export function VideoPlayer({
     return createLiveEdgePlayback({
       isLive,
       preferredRate: playbackSpeed,
+      watchRate,
       onHoldingChange: setIsHoldingLiveEdge,
       canResume,
       canPace: () =>
         canResume() && hasRecordedPlaybackStartRef.current && AppState.currentState === 'active',
       setRate: (rate) => {
+        if (playbackGateRef.current.isActive) onEffectiveRateChange?.(videoId, rate)
         withCurrentPlayer((currentPlayer) => {
-          currentPlayer.playbackRate = rate
+          applyWatchPlaybackRate(currentPlayer, rate)
         })
       },
       pause: () => {
@@ -446,12 +475,19 @@ export function VideoPlayer({
         )
       },
     })
-  }, [isLive, playbackSpeed, state$, videoId, withCurrentPlayer])
+  }, [isLive, playbackSpeed, state$, videoId, withCurrentPlayer, watchRate, onEffectiveRateChange])
   const liveEdgePlaybackRef = useRef(liveEdgePlayback)
   liveEdgePlaybackRef.current = liveEdgePlayback
   const applyPlaybackRate = liveEdgePlayback.applyRate
 
   useLayoutEffect(() => () => liveEdgePlayback.cancel(), [liveEdgePlayback])
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (liveEdgePlayback.checkForStall()) state$.isLoading.set(true)
+    }, 500)
+    return () => clearInterval(timer)
+  }, [liveEdgePlayback, state$])
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (appState) => {
@@ -528,6 +564,11 @@ export function VideoPlayer({
   useImperativeHandle(
     ref,
     () => ({
+      choosePlaybackSpeed: (rate) => {
+        watchRate.choose(rate)
+        liveEdgePlayback.cancel(true)
+        liveEdgePlayback.applyRate()
+      },
       releaseSourceForRecorder: async () => {
         liveEdgePlayback.cancel()
         stallRecoveryGenerationRef.current += 1
@@ -564,7 +605,15 @@ export function VideoPlayer({
         }
       },
     }),
-    [isLive, liveEdgePlayback, pictureInPicturePlayback, state$, videoId, withCurrentPlayer],
+    [
+      isLive,
+      liveEdgePlayback,
+      pictureInPicturePlayback,
+      state$,
+      videoId,
+      withCurrentPlayer,
+      watchRate,
+    ],
   )
 
   const resumePlaybackAfterRecovery = useCallback(() => {
@@ -600,6 +649,13 @@ export function VideoPlayer({
     // Tapping "Try Again" is explicit play intent.
     state$.userInitiatedPlay.set(true)
     userPausedRef.current = false
+    if (isLive) {
+      // A retry at the upload head waits in place; replacing cannot reveal new media.
+      liveEdgePlayback.onTimeUpdate()
+      applyPlaybackRate()
+      resumePlaybackAfterRecovery()
+      return
+    }
     const replacePromise = withCurrentPlayer((currentPlayer) =>
       currentPlayer.replaceAsync(currentSource),
     )
@@ -620,6 +676,7 @@ export function VideoPlayer({
     videoId,
     isLive,
     resumePlaybackAfterRecovery,
+    applyPlaybackRate,
     withCurrentPlayer,
   ])
 
@@ -754,9 +811,15 @@ export function VideoPlayer({
       duration: number
       force?: boolean
     }) => {
-      const currentProgress = currentTime / duration
-      const positionMs = currentTime * 1000
-      const durationMs = duration * 1000
+      const clock = playbackClock(
+        currentTime,
+        duration,
+        withCurrentPlayer((currentPlayer) => currentPlayer.bufferedPosition) ?? 0,
+        serverDurationRef.current,
+      )
+      const currentProgress = clock.progress
+      const positionMs = clock.elapsedMs
+      const durationMs = clock.totalMs
       const now = Date.now()
 
       if (
@@ -765,15 +828,17 @@ export function VideoPlayer({
         now - lastProgressStateUpdateAtRef.current >= PROGRESS_STATE_UPDATE_INTERVAL_MS
       ) {
         lastProgressStateUpdateAtRef.current = now
+        state$.duration.set(durationMs)
+        state$.elapsedMs.set(positionMs)
         state$.progress.set(currentProgress)
         onProgress(currentProgress, positionMs, durationMs)
       }
 
-      if (currentTime >= duration - 0.1) {
+      if (!isLive && duration > 0 && currentTime >= duration - 0.1) {
         onComplete(positionMs, durationMs)
       }
     },
-    [onComplete, onProgress, state$],
+    [onComplete, onProgress, state$, isLive, withCurrentPlayer],
   )
 
   const syncLocalReactionPlaybackAfterSeek = useCallback(
@@ -799,7 +864,7 @@ export function VideoPlayer({
       }
 
       const currentReactionsData = reactionsDataRef.current
-      if (isLive || !currentReactionsData) return
+      if (!currentReactionsData) return
 
       const currentMs = currentTime * 1000
       const previousMs = lastReactionPlaybackMsRef.current
@@ -861,7 +926,7 @@ export function VideoPlayer({
 
       lastReactionPlaybackMsRef.current = currentMs
     },
-    [isLive, player, state$, syncLocalReactionPlaybackAfterSeek, updatePlaybackProgress],
+    [player, state$, syncLocalReactionPlaybackAfterSeek, updatePlaybackProgress],
   )
 
   const recordPlaybackStart = useCallback(() => {
@@ -944,9 +1009,6 @@ export function VideoPlayer({
           clearTimeout(errorRetryRef.current.timer)
           errorRetryRef.current.timer = null
         }
-        if (player.duration) {
-          state$.duration.set(player.duration * 1000)
-        }
       } else if (status.status === 'loading') {
         if (!state$.hasError.peek()) state$.isLoading.set(true)
       } else if (status.status === 'error') {
@@ -963,7 +1025,7 @@ export function VideoPlayer({
         })
         const decision = playbackRetryTransition(errorRetryRef.current.retry, 'error')
         errorRetryRef.current.retry = decision.state
-        if (currentSource && decision.delayMs !== null) {
+        if (!isLive && currentSource && decision.delayMs !== null) {
           const delayMs = decision.delayMs
           // A rapid second error must not orphan the previous timer — the
           // single-slot ref is the only handle cleanup paths can clear.
@@ -1020,6 +1082,10 @@ export function VideoPlayer({
 
     const endSubscription = player.addListener('playToEnd', () => {
       if (!ownsPlaybackSession || !withCurrentPlayer(() => true)) return
+      if (isLive) {
+        liveEdgePlayback.onStatus('loading')
+        return
+      }
 
       liveEdgePlayback.cancel()
       state$.hasEnded.set(true)
@@ -1055,12 +1121,13 @@ export function VideoPlayer({
         !ownsPlaybackSession ||
         isScrubbingRef.current ||
         !withCurrentPlayer(() => true) ||
-        player.status !== 'readyToPlay' ||
-        !player.duration
+        player.status !== 'readyToPlay'
       ) {
         return
       }
 
+      liveEdgePlayback.onTimeUpdate()
+      if (!state$.hasError.peek()) state$.isLoading.set(false)
       recordPlaybackStart()
       processTimedPlaybackUpdate(currentTime, player.duration)
 
@@ -1088,6 +1155,18 @@ export function VideoPlayer({
     isLive,
     withCurrentPlayer,
   ])
+
+  // A receipt can advance the total while native playback is stalled.
+  useEffect(() => {
+    if (!ownsPlaybackSession || serverDuration === undefined) return
+    withCurrentPlayer((currentPlayer) =>
+      updatePlaybackProgress({
+        currentTime: currentPlayer.currentTime,
+        duration: currentPlayer.duration,
+        force: true,
+      }),
+    )
+  }, [serverDuration, ownsPlaybackSession, withCurrentPlayer, updatePlaybackProgress])
 
   const keepAwakeTag = `video-playback-${videoId}`
   const shouldKeepAwake =
@@ -1369,6 +1448,7 @@ export function VideoPlayer({
           syncLocalReactionPlaybackAfterSeek(seekTime * 1000)
           syncCaptionText(seekTime * 1000)
         }
+        state$.elapsedMs.set(seekTime * 1000)
         state$.progress.set(seekProgress)
         state$.hasEnded.set(false)
         state$.userInitiatedPlay.set(true)
@@ -1399,6 +1479,7 @@ export function VideoPlayer({
       if (wasPlaying === undefined) return
       syncLocalReactionPlaybackAfterSeek(seekTime * 1000)
       syncCaptionText(seekTime * 1000)
+      state$.elapsedMs.set(seekTime * 1000)
       state$.progress.set(seekTime / videoDuration)
       state$.hasEnded.set(false)
       if (!wasPlaying) togglePlayPause()
@@ -1620,13 +1701,13 @@ export function VideoPlayer({
         state$={state$}
         isHoldingLiveEdge={isHoldingLiveEdge}
         currentUrl={currentUrl}
-        isProcessing={isLive && isSegmented}
+        isProcessing={liveLabel === 'PROCESSING'}
       />
 
       <PlaybackErrorOverlay
         state$={state$}
         onRetry={retryPlayback}
-        isProcessing={isLive && isSegmented}
+        isProcessing={liveLabel === 'PROCESSING'}
       />
 
       <ReactionPresenceLayer
@@ -1638,7 +1719,6 @@ export function VideoPlayer({
       <FloatingReactionsLayer
         activeReactions$={state$.activeReactions}
         {...getFloatingReactionsAnchor({
-          isLive,
           bottomInset: insets.bottom,
           bottomOffset: heatmapOffset,
         })}
@@ -1676,7 +1756,7 @@ export function VideoPlayer({
             borderRadius={16}
           >
             <Text color={'$color'} fontSize={12} fontWeight="900">
-              {isSegmented ? 'PROCESSING' : 'LIVE'}
+              {liveLabel}
             </Text>
           </YStack>
         </YStack>
@@ -1701,7 +1781,6 @@ export function VideoPlayer({
 
       <RightSideControls
         state$={state$}
-        isLive={isLive}
         isPaid={isPaid}
         recentEmojis={recentEmojis ?? []}
         isMuted={isMuted}

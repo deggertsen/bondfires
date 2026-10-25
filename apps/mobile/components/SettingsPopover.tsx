@@ -6,15 +6,23 @@ import { VIDEO_OVERLAY_COLORS } from './videoOverlayColors'
 
 interface SettingsPopoverProps {
   onClose: () => void
+  effectivePlaybackSpeed?: number
+  onPlaybackSpeedChange?: (rate: number) => void
 }
 
-export function SettingsPopover({ onClose }: SettingsPopoverProps) {
-  const playbackSpeed = useValue(appStore$.preferences.playbackSpeed)
+export function SettingsPopover({
+  onClose,
+  effectivePlaybackSpeed,
+  onPlaybackSpeedChange,
+}: SettingsPopoverProps) {
+  const savedPlaybackSpeed = useValue(appStore$.preferences.playbackSpeed)
+  const playbackSpeed = effectivePlaybackSpeed ?? savedPlaybackSpeed
   const captionsEnabled = useValue(appStore$.preferences.captionsEnabled)
 
   const handleSpeedChange = (value: number) => {
     // Round to nearest 0.25 increment (1.0, 1.25, 1.5, 1.75, 2.0)
     const rounded = Math.round(value * 4) / 4
+    onPlaybackSpeedChange?.(rounded)
     appActions.setPlaybackSpeed(rounded)
   }
 

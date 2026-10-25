@@ -20,6 +20,7 @@ function createVideoPlayerState() {
     showReport: false,
     progress: 0,
     duration: 0,
+    elapsedMs: 0,
     captionText: '',
     isLoading: false,
     hasError: false,

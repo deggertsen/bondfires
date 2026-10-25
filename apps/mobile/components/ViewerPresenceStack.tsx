@@ -3,6 +3,7 @@ import { UserAvatar } from '@bondfires/ui'
 import { useEffect, useMemo, useRef } from 'react'
 import { Animated, ScrollView, type StyleProp, type ViewStyle } from 'react-native'
 import { AnimatePresence, Text, YStack } from 'tamagui'
+import { PRESENCE_LABEL } from '../app/(main)/bondfire/_lib/liveWatch'
 import { VIDEO_OVERLAY_COLORS } from './videoOverlayColors'
 
 export interface ActiveReaction {
@@ -37,7 +38,7 @@ const EMOJI_FONT_SIZE = 20
  * Unified avatar stack for the video player's left side.
  *
  * Renders two layers:
- * 1. Persistent/live viewers — avatars with "watching" labels
+ * 1. Persistent/live viewers — avatars with "here" labels
  * 2. Transient reactions — avatars with emoji overlays, no label
  *
  * Merge logic:
@@ -46,7 +47,7 @@ const EMOJI_FONT_SIZE = 20
  * - If no match: render a transient avatar + emoji
  * - Live viewers always rendered first (on top)
  * - Transient reactions below, ordered by timestampMs/createdAt
- * - No "watching" label on transient reaction avatars
+ * - No "here" label on transient reaction avatars
  */
 export function ViewerPresenceStack({
   liveViewers,
@@ -148,13 +149,13 @@ export function ViewerPresenceStack({
                 ))}
               </YStack>
               <Text fontSize={9} color={VIDEO_OVERLAY_COLORS.textPrimary} fontWeight="500">
-                watching
+                {PRESENCE_LABEL}
               </Text>
             </YStack>
           )
         })}
 
-        {/* Transient reactions below (no "watching" label) */}
+        {/* Transient reactions below (no "here" label) */}
         {transientReactions.map((reaction) => (
           <TransientReactionAvatar
             key={reaction.id}
@@ -169,7 +170,7 @@ export function ViewerPresenceStack({
 }
 
 /**
- * Transient reaction avatar — avatar + emoji overlay, no "watching" label.
+ * Transient reaction avatar — avatar + emoji overlay, no "here" label.
  * Uses Tamagui AnimatePresence for enter/exit.
  */
 function TransientReactionAvatar({

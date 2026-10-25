@@ -128,6 +128,24 @@ describe('begin failure diagnostics', () => {
   })
 })
 describe('internal recording lifecycle', () => {
+  it('exposes growing duration only to authorized recording viewers', async () => {
+    const { t, fixture, record, receipt } = await setup(60000)
+    const args = { recordingId: record.recordingId }
+    const viewer = t.withIdentity({ subject: fixture.viewer })
+    await receipt(-1, 0)
+    await receipt(0)
+    await receipt(1)
+    expect(await viewer.query(api.segmentMedia.playbackDuration, args)).toBe(8)
+    await receipt(2)
+    expect(await viewer.query(api.segmentMedia.playbackDuration, args)).toBe(12)
+    await expect(t.query(api.segmentMedia.playbackDuration, args)).rejects.toThrow()
+    await expect(
+      t.withIdentity({ subject: fixture.outsider }).query(api.segmentMedia.playbackDuration, args),
+    ).rejects.toThrow()
+    await t.run((ctx) => ctx.db.delete(fixture.members[1]))
+    await expect(viewer.query(api.segmentMedia.playbackDuration, args)).rejects.toThrow()
+  })
+
   it.each([
     { isResponse: false, finishEarly: false },
     { isResponse: true, finishEarly: false },
@@ -181,6 +199,7 @@ describe('internal recording lifecycle', () => {
       await receipt(1)
       const live = await t.run((ctx) => ctx.db.get(record.recordId))
       expect(live).toMatchObject({ videoStatus: 'live', durationMs: 8000 })
+      expect(live).not.toHaveProperty('recordingStopped')
       const ownerAtLive = await t.run((ctx) => ctx.db.get(fixture.owner))
       const rootAtLive = await t.run((ctx) => ctx.db.get(root.recordId))
       if (isResponse) {
@@ -189,14 +208,16 @@ describe('internal recording lifecycle', () => {
       }
       await receipt(-1, 0)
       if (finishEarly) {
-        expect(await finish()).toEqual({ complete: false })
+        expect(await finish(2)).toEqual({ complete: false })
         await finish(0)
       }
       // A growing receipt may insert its segment and update its recording only.
       // Equal-value parent patches also invalidate subscriptions, so comparing
       // documents alone would not protect the bandwidth optimization.
       for (let index = 2; index < 9; index++) await receipt(index, 2)
-      expect(await t.run((ctx) => ctx.db.get(record.recordId))).toEqual(live)
+      expect(await t.run((ctx) => ctx.db.get(record.recordId))).toEqual(
+        finishEarly ? { ...live, recordingStopped: true } : live,
+      )
       expect(await t.run((ctx) => ctx.db.get(fixture.owner))).toEqual(ownerAtLive)
       const timeline = await t.query(internal.segmentMedia.timeline, {
         recordingId: record.recordingId,

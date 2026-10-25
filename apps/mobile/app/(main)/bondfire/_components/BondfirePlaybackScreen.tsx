@@ -3,7 +3,7 @@ import { useObservable, useValue } from '@legendapp/state/react'
 import { ChevronLeft, ChevronRight, FileText, Settings } from '@tamagui/lucide-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { Stack, useRouter } from 'expo-router'
-import { type RefObject, useCallback, useEffect, useRef } from 'react'
+import { type RefObject, useCallback, useEffect, useRef, useState } from 'react'
 import type { StatusBarStyle, ViewToken } from 'react-native'
 import { FlatList, Pressable, StatusBar } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -20,6 +20,11 @@ import type {
   ScrollToIndexFailedInfo,
 } from '../_lib/bondfireDetailHelpers'
 import { SCREEN_WIDTH, shouldOfferResponseAfterPlayback } from '../_lib/bondfireDetailHelpers'
+import {
+  PLAYBACK_HEADER_BOTTOM_PADDING,
+  PLAYBACK_HEADER_HEIGHT,
+  PLAYBACK_HEADER_TOP_PADDING,
+} from '../_lib/liveWatch'
 import type { ThreadCatchUp } from '../_lib/threadCatchUp'
 import { ThreadBrowser } from './ThreadBrowser'
 import { VideoPlayer, type VideoPlayerHandle } from './VideoPlayer'
@@ -101,6 +106,12 @@ export function BondfirePlaybackScreen({
   const showNotepad = useValue(overlayState$.showNotepad)
   const isInviteSheetOpen = useValue(overlayState$.isInviteSheetOpen)
   const suppressPlayback = useValue(overlayState$.suppressPlayback)
+  const [effectiveRate, setEffectiveRate] = useState<{ videoId: string; rate: number } | null>(null)
+  const onEffectiveRateChange = useCallback((videoId: string, rate: number) => {
+    setEffectiveRate((previous) =>
+      previous?.videoId === videoId && previous.rate === rate ? previous : { videoId, rate },
+    )
+  }, [])
   const activeVideoPlayerRef = useRef<VideoPlayerHandle>(null)
   const respondNavigationPendingRef = useRef(false)
   const totalVideos = videoItems.length
@@ -150,9 +161,9 @@ export function BondfirePlaybackScreen({
           left={0}
           right={0}
           zIndex={100}
-          paddingTop={insets.top + 10}
+          paddingTop={insets.top + PLAYBACK_HEADER_TOP_PADDING}
           paddingHorizontal={16}
-          paddingBottom={12}
+          paddingBottom={PLAYBACK_HEADER_BOTTOM_PADDING}
         >
           <LinearGradient
             colors={OVERLAY_COLORS.gradientTop}
@@ -168,7 +179,7 @@ export function BondfirePlaybackScreen({
             <Pressable onPress={onBackPress}>
               <XStack
                 paddingHorizontal={12}
-                height={40}
+                height={PLAYBACK_HEADER_HEIGHT}
                 borderRadius={20}
                 backgroundColor={OVERLAY_COLORS.pillBackground}
                 alignItems="center"
@@ -187,7 +198,7 @@ export function BondfirePlaybackScreen({
               >
                 <YStack
                   width={40}
-                  height={40}
+                  height={PLAYBACK_HEADER_HEIGHT}
                   borderRadius={20}
                   backgroundColor={showSettings ? '$primary' : OVERLAY_COLORS.pillBackground}
                   alignItems="center"
@@ -201,7 +212,7 @@ export function BondfirePlaybackScreen({
               >
                 <YStack
                   width={40}
-                  height={40}
+                  height={PLAYBACK_HEADER_HEIGHT}
                   borderRadius={20}
                   backgroundColor={showNotepad ? '$primary' : OVERLAY_COLORS.pillBackground}
                   alignItems="center"
@@ -241,6 +252,9 @@ export function BondfirePlaybackScreen({
               responseIndex={item.responseIndex}
               isLive={item.isLive}
               isSegmented={item.isSegmented}
+              segmentRecordingId={item.segmentRecordingId}
+              recordingStopped={item.recordingStopped}
+              onEffectiveRateChange={onEffectiveRateChange}
               onRespondAfterPlayback={
                 shouldOfferResponseAfterPlayback({
                   videoIndex: index,
@@ -320,7 +334,19 @@ export function BondfirePlaybackScreen({
           onShare={() => overlayState$.isInviteSheetOpen.set(true)}
         />
 
-        {showSettings && <SettingsPopover onClose={() => overlayState$.showSettings.set(false)} />}
+        {showSettings && (
+          <SettingsPopover
+            effectivePlaybackSpeed={
+              effectiveRate?.videoId === videoItems[currentVideoIndex]?.key
+                ? effectiveRate.rate
+                : undefined
+            }
+            onPlaybackSpeedChange={(rate) =>
+              activeVideoPlayerRef.current?.choosePlaybackSpeed(rate)
+            }
+            onClose={() => overlayState$.showSettings.set(false)}
+          />
+        )}
         {showNotepad && <NotepadOverlay onClose={() => overlayState$.showNotepad.set(false)} />}
 
         <InviteSheet

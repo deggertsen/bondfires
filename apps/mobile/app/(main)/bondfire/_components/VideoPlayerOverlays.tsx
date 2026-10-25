@@ -23,6 +23,7 @@ import type { ActiveReaction } from '../../../../components/ViewerPresenceStack'
 import { ViewerPresenceStack } from '../../../../components/ViewerPresenceStack'
 import { VIDEO_OVERLAY_COLORS as OVERLAY_COLORS } from '../../../../components/videoOverlayColors'
 import { formatTime } from '../_lib/bondfireDetailHelpers'
+import { presenceTop } from '../_lib/liveWatch'
 import type { HeatmapPeak, ReactionHeatmap } from '../_lib/reactionHeatmap'
 import { shouldShowRespondCTA, type VideoPlayerState$ } from '../_lib/videoPlayerState'
 
@@ -111,13 +112,14 @@ export function ReactionPresenceLayer({
   onReactionExpired: (id: string) => void
 }) {
   const activeReactions = useValue(state$.activeReactions)
+  const insets = useSafeAreaInsets()
 
   return (
     <ViewerPresenceStack
       liveViewers={liveViewers}
       activeReactions={activeReactions}
       onReactionExpired={onReactionExpired}
-      style={{ top: 100, left: 16 }}
+      style={{ top: presenceTop(insets.top), left: 16 }}
     />
   )
 }
@@ -356,7 +358,8 @@ export function VideoProgressBar({
 }) {
   const progress = useValue(state$.progress)
   const duration = useValue(state$.duration)
-  const progressPercent = `${progress * 100}%`
+  const elapsedMs = useValue(state$.elapsedMs)
+  const progressPercent = `${Math.min(1, Math.max(0, progress)) * 100}%`
   const insets = useSafeAreaInsets()
 
   return (
@@ -388,10 +391,10 @@ export function VideoProgressBar({
       </View>
       <XStack justifyContent="space-between" marginTop={4}>
         <Text fontSize={12} color={OVERLAY_COLORS.textSecondary}>
-          {formatTime(progress * duration)}
+          {formatTime(elapsedMs)}
         </Text>
         <Text fontSize={12} color={OVERLAY_COLORS.textSecondary}>
-          {formatTime(duration)}
+          {formatTime(Math.max(duration, elapsedMs))}
         </Text>
       </XStack>
     </YStack>
@@ -427,18 +430,16 @@ const RIGHT_CONTROL_SIZE = 44
 
 /**
  * Where floating reactions start: just above the right-side stack (react
- * button over mute, or mute alone while live), centered on it.
+ * button over mute), centered on it.
  */
 export function getFloatingReactionsAnchor({
-  isLive,
   bottomInset,
   bottomOffset,
 }: {
-  isLive: boolean
   bottomInset: number
   bottomOffset: number
 }) {
-  const buttons = isLive ? 1 : 2
+  const buttons = 2
   const stackHeight = buttons * RIGHT_CONTROL_SIZE + (buttons - 1) * RIGHT_CONTROLS_GAP
   return {
     right: RIGHT_CONTROLS_RIGHT,
@@ -448,7 +449,6 @@ export function getFloatingReactionsAnchor({
 
 export function RightSideControls({
   state$,
-  isLive,
   isPaid,
   recentEmojis,
   isMuted,
@@ -457,7 +457,6 @@ export function RightSideControls({
   bottomOffset = 0,
 }: {
   state$: VideoPlayerState$
-  isLive: boolean
   isPaid: boolean
   recentEmojis: string[]
   isMuted: boolean
@@ -477,21 +476,19 @@ export function RightSideControls({
       alignItems="center"
       zIndex={3}
     >
-      {!isLive && (
-        <YStack>
-          <EmojiReactionButton
-            onPress={() => state$.emojiGridOpen.set(!state$.emojiGridOpen.get())}
+      <YStack>
+        <EmojiReactionButton
+          onPress={() => state$.emojiGridOpen.set(!state$.emojiGridOpen.get())}
+        />
+        {emojiGridOpen && (
+          <EmojiReactionGrid
+            isPaid={isPaid}
+            recentEmojis={recentEmojis}
+            onSelect={onEmojiSelect}
+            onClose={() => state$.emojiGridOpen.set(false)}
           />
-          {emojiGridOpen && (
-            <EmojiReactionGrid
-              isPaid={isPaid}
-              recentEmojis={recentEmojis}
-              onSelect={onEmojiSelect}
-              onClose={() => state$.emojiGridOpen.set(false)}
-            />
-          )}
-        </YStack>
-      )}
+        )}
+      </YStack>
       <Pressable onPress={onToggleMute}>
         <YStack
           width={44}
