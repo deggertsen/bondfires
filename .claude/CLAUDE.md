@@ -10,7 +10,7 @@ This project uses Legend State v3 for state management. Follow these patterns co
 - State that persists across app restarts (preferences, auth state)
 - State shared between multiple screens/components
 - State that needs to survive component unmount
-- Examples: `appStore$`, `uiStore$`, `uploadQueueStore$`
+- Examples: `appStore$`, `uiStore$`, `uploadStatusStore$`
 
 **Use `useObservable` (local component state):**
 - UI-only state scoped to a single component
@@ -208,7 +208,10 @@ packages/app/src/
 │   ├── app.store.ts       # App-wide persistent state
 │   ├── ui.store.ts        # Transient UI state (not persisted)
 │   ├── notepad.store.ts   # Notepad content (persisted)
-│   ├── uploadQueue.store.ts  # Upload queue (persisted)
+│   ├── freeUpgrade.store.ts  # Free-tier upgrade flow state
+│   ├── subscription.store.ts # Subscription state (persisted)
+│   ├── toast.store.ts     # Toast notifications
+│   ├── uploadStatus.store.ts  # App-wide upload status strip state (persisted)
 │   └── viewedBondfires.store.ts  # Viewed tracking (persisted)
 └── hooks/
     ├── useAuth.ts         # Auth-related hooks using stores
