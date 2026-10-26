@@ -244,7 +244,7 @@ describe('watch-scoped upload-head latch', () => {
       })
     const first = build()
     first.onStatus('readyToPlay')
-    first.onTimeUpdate()
+    first.onTimeUpdate(10)
     vi.advanceTimersByTime(LIVE_EDGE_SILENCE_MS - 1)
     expect(first.checkForStall()).toBe(false)
     vi.advanceTimersByTime(1)
@@ -268,7 +268,7 @@ describe('watch-scoped upload-head latch', () => {
     const { controller, gates, player } = fixture()
     for (let i = 0; i < 10; i++) {
       vi.advanceTimersByTime(500)
-      controller.onTimeUpdate()
+      controller.onTimeUpdate(i / 2)
       expect(controller.checkForStall()).toBe(false)
     }
     gates.canResume = false

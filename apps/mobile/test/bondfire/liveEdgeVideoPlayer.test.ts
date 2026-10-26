@@ -16,6 +16,7 @@ const native = vi.hoisted(() => ({
   play: vi.fn(),
   pause: vi.fn(),
   replay: vi.fn(),
+  replaceAsync: vi.fn(),
   activateKeepAwake: vi.fn(),
   deactivateKeepAwake: vi.fn(),
   serverDuration: undefined as number | undefined,
@@ -49,6 +50,7 @@ const { store, playback } = await vi.hoisted(async () => {
     play: native.play,
     pause: native.pause,
     replay: native.replay,
+    replaceAsync: native.replaceAsync,
     addListener: (name: string, listener: (event: never) => void) => {
       const listeners = native.listeners.get(name) ?? new Set()
       listeners.add(listener)
@@ -112,7 +114,7 @@ vi.mock('expo-video', () => ({
 vi.mock('react-native', () => ({
   AppState: { currentState: 'active', addEventListener: () => ({ remove: vi.fn() }) },
   Dimensions: { get: () => ({ width: 400, height: 800 }) },
-  PanResponder: { create: () => ({ panHandlers: {} }) },
+  PanResponder: { create: (handlers: unknown) => ({ panHandlers: handlers }) },
   Pressable: 'Pressable',
 }))
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }))
@@ -198,6 +200,11 @@ describe('live-edge VideoPlayer integration', () => {
       playback.player.playing = false
       emit('playingChange', { isPlaying: false })
     })
+    native.replaceAsync.mockImplementation(async () => {
+      playback.player.currentTime = 0
+      playback.player.status = 'readyToPlay'
+      emit('statusChange', { status: 'readyToPlay' })
+    })
     ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
     await act(async () => {
       renderer = create(createElement(VideoPlayer, props))
@@ -217,7 +224,7 @@ describe('live-edge VideoPlayer integration', () => {
     await status('loading')
     await status('readyToPlay')
     expect(playback.player.playing).toBe(false)
-    expect(host('LoadingOverlay').props.state$.isLoading.peek()).toBe(false)
+    expect(host('LoadingOverlay').props.state$.isLoading.peek()).toBe(true)
     for (const overlay of ['LoadingOverlay', 'PlayPauseIndicator', 'PausedReportButton']) {
       expect(host(overlay).props.isHoldingLiveEdge).toBe(true)
     }
@@ -365,6 +372,60 @@ describe('live-edge VideoPlayer integration', () => {
     expect(playback.player.playbackRate).toBe(2)
   })
 
+  it('detects a frozen playhead despite periodic native time events', async () => {
+    await act(async () => store.preferences.playbackSpeed.set(2))
+    await act(async () => emit('timeUpdate', { currentTime: 10 }))
+    for (let i = 0; i < 6; i++) {
+      await act(async () => {
+        vi.advanceTimersByTime(250)
+        emit('timeUpdate', { currentTime: 10 })
+      })
+    }
+    expect(playback.player.playbackRate).toBe(1)
+    expect(host('LoadingOverlay').props.state$.isLoading.peek()).toBe(true)
+    expect(native.replaceAsync).not.toHaveBeenCalled()
+    await act(async () => emit('timeUpdate', { currentTime: 10.25 }))
+    expect(host('LoadingOverlay').props.state$.isLoading.peek()).toBe(false)
+  })
+
+  it('times out a live stall despite ready events and stationary ticks, then retries in place', async () => {
+    await act(async () => emit('timeUpdate', { currentTime: 10 }))
+    await status('loading')
+    for (let i = 0; i < 15; i++) {
+      await status('readyToPlay')
+      await act(async () => {
+        vi.advanceTimersByTime(5000)
+        emit('timeUpdate', { currentTime: 10 })
+      })
+    }
+    expect(host('PlaybackErrorOverlay').props.state$.hasError.peek()).toBe(true)
+    await act(async () => host('PlaybackErrorOverlay').props.onRetry())
+    expect(host('PlaybackErrorOverlay').props.state$.hasError.peek()).toBe(false)
+    expect(playback.player.playing).toBe(true)
+    expect(native.replaceAsync).not.toHaveBeenCalled()
+  })
+
+  it('recovers fatal live errors with bounded reloads and a usable manual retry', async () => {
+    await act(async () => store.preferences.playbackSpeed.set(2))
+    await status('loading')
+    expect(playback.player.playbackRate).toBe(1)
+    playback.player.currentTime = 23
+    for (const delay of [2000, 4000]) {
+      await status('error')
+      await act(async () => vi.advanceTimersByTime(delay))
+      expect(playback.player.currentTime).toBe(23)
+      expect(playback.player.playing).toBe(true)
+    }
+    expect(native.replaceAsync).toHaveBeenCalledTimes(2)
+    await status('error')
+    expect(host('PlaybackErrorOverlay').props.state$.hasError.peek()).toBe(true)
+    await act(async () => host('PlaybackErrorOverlay').props.onRetry())
+    expect(native.replaceAsync).toHaveBeenCalledTimes(3)
+    expect(playback.player.currentTime).toBe(23)
+    expect(playback.player.playbackRate).toBe(1)
+    expect(playback.player.playing).toBe(true)
+  })
+
   it('updates the clock from receipts while stalled and subscribes only for the active video', async () => {
     const watchProps = { ...props, segmentRecordingId: 'recording' as Id<'segmentRecordings'> }
     native.serverDuration = 64
@@ -386,6 +447,31 @@ describe('live-edge VideoPlayer integration', () => {
       renderer.update(createElement(VideoPlayer, { ...watchProps, isActive: false })),
     )
     expect(native.query).toHaveBeenCalledWith('segmentMedia:playbackDuration', 'skip')
+  })
+
+  it('seeks on the displayed timeline while staying inside the native duration', async () => {
+    native.serverDuration = 120
+    await act(async () =>
+      renderer.update(
+        createElement(VideoPlayer, {
+          ...props,
+          segmentRecordingId: 'recording' as Id<'segmentRecordings'>,
+        }),
+      ),
+    )
+    const bar = host('VideoProgressBar').props
+    bar.progressBarViewRef.current = {
+      measure: (callback: (...values: number[]) => void) => callback(0, 0, 400, 20, 0),
+    }
+    await act(async () => bar.onLayout({ nativeEvent: { layout: { width: 400 } } }))
+    await act(async () => bar.panHandlers.onPanResponderGrant({ nativeEvent: { pageX: 100 } }))
+    expect(playback.player.currentTime).toBe(30)
+    expect(bar.state$.elapsedMs.peek()).toBe(30000)
+    expect(bar.state$.progress.peek()).toBe(0.25)
+    await act(async () => bar.panHandlers.onPanResponderRelease({}, { moveX: 400 }))
+    expect(playback.player.currentTime).toBe(60)
+    expect(bar.state$.elapsedMs.peek()).toBe(60000)
+    expect(bar.state$.progress.peek()).toBe(0.5)
   })
 
   it('subscribes to live reactions and replays only the seek window when joining mid-recording', async () => {

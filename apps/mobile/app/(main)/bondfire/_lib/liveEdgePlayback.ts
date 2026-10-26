@@ -74,7 +74,9 @@ export function createLiveEdgePlayback({
   onHoldingChange?: (isHolding: boolean) => void
   onAction?: (action: 'switch-to-realtime' | 'extend-buffer') => void
 }) {
-  let lastTimeUpdateAt = Date.now()
+  let lastProgressAt = Date.now()
+  let lastPosition: number | null = null
+  let waitingForProgress = false
   let timer: ReturnType<typeof setTimeout> | null = null
   let generation = 0
   const applyRate = () => setRate(watchRate.getRate())
@@ -90,6 +92,7 @@ export function createLiveEdgePlayback({
   }
   const onEdge = () => {
     if (!isLive || !canPace() || timer !== null) return
+    waitingForProgress = true
     if (watchRate.latch()) {
       applyRate()
       onAction?.('switch-to-realtime')
@@ -99,7 +102,7 @@ export function createLiveEdgePlayback({
     timer = setTimeout(() => {
       if (pendingGeneration !== generation) return
       timer = null
-      lastTimeUpdateAt = Date.now()
+      lastProgressAt = Date.now()
       onHoldingChange?.(false)
       if (canResume()) resume()
     }, LIVE_EDGE_BUFFER_HOLD_MS)
@@ -111,16 +114,28 @@ export function createLiveEdgePlayback({
     applyRate,
     cancel,
     isHolding: () => timer !== null,
-    onTimeUpdate() {
-      lastTimeUpdateAt = Date.now()
+    isWaitingForProgress: () => waitingForProgress,
+    resetProgress() {
+      lastProgressAt = Date.now()
+      lastPosition = null
+      waitingForProgress = false
+    },
+    onTimeUpdate(position: number) {
+      // Android emits on a timer even while the playhead is stationary. A
+      // ready status or another identical tick is not evidence of recovery.
+      if (!Number.isFinite(position) || position === lastPosition) return false
+      lastPosition = position
+      lastProgressAt = Date.now()
+      waitingForProgress = false
+      return true
     },
     checkForStall() {
       if (!isLive || !canPace() || timer !== null) {
-        lastTimeUpdateAt = Date.now()
+        lastProgressAt = Date.now()
         return false
       }
-      if (Date.now() - lastTimeUpdateAt < LIVE_EDGE_SILENCE_MS) return false
-      lastTimeUpdateAt = Date.now()
+      if (Date.now() - lastProgressAt < LIVE_EDGE_SILENCE_MS) return false
+      lastProgressAt = Date.now()
       onEdge()
       return true
     },

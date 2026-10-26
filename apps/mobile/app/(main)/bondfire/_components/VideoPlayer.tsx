@@ -449,7 +449,10 @@ export function VideoPlayer({
       onHoldingChange: setIsHoldingLiveEdge,
       canResume,
       canPace: () =>
-        canResume() && hasRecordedPlaybackStartRef.current && AppState.currentState === 'active',
+        canResume() &&
+        hasRecordedPlaybackStartRef.current &&
+        AppState.currentState === 'active' &&
+        withCurrentPlayer((currentPlayer) => currentPlayer.status !== 'error') === true,
       setRate: (rate) => {
         if (playbackGateRef.current.isActive) onEffectiveRateChange?.(videoId, rate)
         withCurrentPlayer((currentPlayer) => {
@@ -483,11 +486,12 @@ export function VideoPlayer({
   useLayoutEffect(() => () => liveEdgePlayback.cancel(), [liveEdgePlayback])
 
   useEffect(() => {
+    if (!isLive || !ownsPlaybackSession || !isAppActive) return
     const timer = setInterval(() => {
       if (liveEdgePlayback.checkForStall()) state$.isLoading.set(true)
     }, 500)
     return () => clearInterval(timer)
-  }, [liveEdgePlayback, state$])
+  }, [isLive, ownsPlaybackSession, isAppActive, liveEdgePlayback, state$])
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (appState) => {
@@ -616,18 +620,18 @@ export function VideoPlayer({
     ],
   )
 
-  const resumePlaybackAfterRecovery = useCallback(() => {
+  const canResumePlaybackAfterRecovery = useCallback(() => {
     const gate = playbackGateRef.current
-    if (
+    return (
       gate.isActive &&
       gate.isScreenFocused &&
-      !shouldSuppressPlayback &&
+      !gate.shouldSuppressPlayback &&
       !userPausedRef.current &&
+      !isScrubbingRef.current &&
+      !state$.hasError.peek() &&
       (appStore$.preferences.autoplayVideos.peek() || state$.userInitiatedPlay.peek())
-    ) {
-      withCurrentPlayer((currentPlayer) => currentPlayer.play())
-    }
-  }, [shouldSuppressPlayback, state$, withCurrentPlayer])
+    )
+  }, [state$])
 
   const retryPlayback = useCallback(() => {
     if (!currentSource) return
@@ -649,25 +653,27 @@ export function VideoPlayer({
     // Tapping "Try Again" is explicit play intent.
     state$.userInitiatedPlay.set(true)
     userPausedRef.current = false
-    if (isLive) {
-      // A retry at the upload head waits in place; replacing cannot reveal new media.
-      liveEdgePlayback.onTimeUpdate()
+    liveEdgePlayback.resetProgress()
+    const currentPlayer = withCurrentPlayer((currentPlayer) => currentPlayer)
+    if (!currentPlayer) return
+    if (isLive && currentPlayer.status !== 'error') {
+      // Wait in place at the upload head. A fatal native error, however,
+      // requires reloading the source before play() can recover it.
       applyPlaybackRate()
-      resumePlaybackAfterRecovery()
+      if (canResumePlaybackAfterRecovery()) currentPlayer.play()
       return
     }
-    const replacePromise = withCurrentPlayer((currentPlayer) =>
-      currentPlayer.replaceAsync(currentSource),
-    )
-    if (!replacePromise) return
-    replacePromise
-      .then(() => {
-        resumePlaybackAfterRecovery()
-      })
-      .catch(() => {
-        // Failure surfaces through the statusChange 'error' path, or this
-        // player was released while replacement was in flight.
-      })
+    const generation = stallRecoveryGenerationRef.current
+    void reloadVideoAtPosition({
+      player: currentPlayer,
+      source: currentSource,
+      isCurrent: () =>
+        stallRecoveryGenerationRef.current === generation && !!withCurrentPlayer(() => true),
+      shouldResume: canResumePlaybackAfterRecovery,
+    }).catch(() => {
+      // Failure surfaces through the statusChange 'error' path, or this
+      // player was released while replacement was in flight.
+    })
   }, [
     currentSource,
     liveEdgePlayback,
@@ -675,7 +681,7 @@ export function VideoPlayer({
     state$,
     videoId,
     isLive,
-    resumePlaybackAfterRecovery,
+    canResumePlaybackAfterRecovery,
     applyPlaybackRate,
     withCurrentPlayer,
   ])
@@ -1002,7 +1008,7 @@ export function VideoPlayer({
           player.pause()
           return
         }
-        state$.isLoading.set(false)
+        state$.isLoading.set(liveEdgePlayback.isWaitingForProgress())
         // The player self-recovered — a still-pending auto-retry would force
         // a pointless reload that interrupts playback mid-watch.
         if (errorRetryRef.current.timer) {
@@ -1025,7 +1031,7 @@ export function VideoPlayer({
         })
         const decision = playbackRetryTransition(errorRetryRef.current.retry, 'error')
         errorRetryRef.current.retry = decision.state
-        if (!isLive && currentSource && decision.delayMs !== null) {
+        if (currentSource && decision.delayMs !== null) {
           const delayMs = decision.delayMs
           // A rapid second error must not orphan the previous timer — the
           // single-slot ref is the only handle cleanup paths can clear.
@@ -1044,16 +1050,7 @@ export function VideoPlayer({
               isCurrent: () =>
                 stallRecoveryGenerationRef.current === generation &&
                 !!withCurrentPlayer(() => true),
-              shouldResume: () => {
-                const gate = playbackGateRef.current
-                return (
-                  gate.isActive &&
-                  gate.isScreenFocused &&
-                  !userPausedRef.current &&
-                  !state$.hasError.peek() &&
-                  (appStore$.preferences.autoplayVideos.peek() || state$.userInitiatedPlay.peek())
-                )
-              },
+              shouldResume: canResumePlaybackAfterRecovery,
             }).catch(() => {})
           }, delayMs)
         } else {
@@ -1084,6 +1081,7 @@ export function VideoPlayer({
       if (!ownsPlaybackSession || !withCurrentPlayer(() => true)) return
       if (isLive) {
         liveEdgePlayback.onStatus('loading')
+        if (!state$.hasError.peek()) state$.isLoading.set(true)
         return
       }
 
@@ -1126,8 +1124,8 @@ export function VideoPlayer({
         return
       }
 
-      liveEdgePlayback.onTimeUpdate()
-      if (!state$.hasError.peek()) state$.isLoading.set(false)
+      const madeProgress = liveEdgePlayback.onTimeUpdate(currentTime)
+      if (madeProgress && !state$.hasError.peek()) state$.isLoading.set(false)
       recordPlaybackStart()
       processTimedPlaybackUpdate(currentTime, player.duration)
 
@@ -1154,6 +1152,7 @@ export function VideoPlayer({
     videoId,
     isLive,
     withCurrentPlayer,
+    canResumePlaybackAfterRecovery,
   ])
 
   // A receipt can advance the total while native playback is stalled.
@@ -1438,7 +1437,10 @@ export function VideoPlayer({
 
       if (width > 0) {
         const seekProgress = Math.max(0, Math.min(1, locationX / width))
-        const seekTime = seekProgress * videoDuration
+        // Receipts can extend the displayed total ahead of native metadata.
+        // Map the touch to that same clock, then cap to the native seek range.
+        const displayedDuration = Math.max(videoDuration, state$.duration.peek() / 1000)
+        const seekTime = Math.min(videoDuration, seekProgress * displayedDuration)
         if (shouldSeek) {
           const didSeek = withCurrentPlayer((currentPlayer) => {
             currentPlayer.currentTime = seekTime
@@ -1448,8 +1450,9 @@ export function VideoPlayer({
           syncLocalReactionPlaybackAfterSeek(seekTime * 1000)
           syncCaptionText(seekTime * 1000)
         }
+        state$.duration.set(displayedDuration * 1000)
         state$.elapsedMs.set(seekTime * 1000)
-        state$.progress.set(seekProgress)
+        state$.progress.set(seekTime / displayedDuration)
         state$.hasEnded.set(false)
         state$.userInitiatedPlay.set(true)
       }
