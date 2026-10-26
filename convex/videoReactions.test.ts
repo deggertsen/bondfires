@@ -82,36 +82,46 @@ async function fixture(provider: 'mux' | 'segment', response: boolean) {
 describe('VOD reactions across media providers', () => {
   for (const provider of ['mux', 'segment'] as const)
     for (const response of [false, true]) {
-      it(`reads and writes ${provider} ${response ? 'responses' : 'Bondfires'} and handles revoked access`, async () => {
-        const { t, ids, viewer, ref } = await fixture(provider, response)
-        expect(await viewer.query(api.videoReactions.getReactions, ref)).toEqual([])
-        await viewer.mutation(api.videoReactions.addReaction, {
-          ...ref,
-          emoji: '🔥',
-          timestampMs: 100,
+      for (const videoStatus of ['live', 'ready'] as const) {
+        it(`reads and writes ${videoStatus} ${provider} ${response ? 'responses' : 'Bondfires'} and handles revoked access`, async () => {
+          const { t, ids, viewer, ref, targetId } = await fixture(provider, response)
+          await t.run((ctx) =>
+            ctx.db.patch(targetId, {
+              videoStatus,
+              ...(provider === 'mux' && videoStatus === 'live'
+                ? { muxLivePlaybackId: 'live' }
+                : {}),
+            }),
+          )
+          expect(await viewer.query(api.videoReactions.getReactions, ref)).toEqual([])
+          await viewer.mutation(api.videoReactions.addReaction, {
+            ...ref,
+            emoji: '🔥',
+            timestampMs: 100,
+          })
+          expect(await viewer.query(api.videoReactions.getReactions, ref)).toHaveLength(1)
+          const outsider = t.withIdentity({ subject: ids.outsider })
+          expect(await outsider.query(api.videoReactions.getReactions, ref)).toEqual([])
+          await expect(
+            outsider.mutation(api.videoReactions.addReaction, {
+              ...ref,
+              emoji: '🔥',
+              timestampMs: 100,
+            }),
+          ).rejects.toThrow()
+          await t.run((ctx) => ctx.db.delete(ids.membership))
+          expect(await viewer.query(api.videoReactions.getReactions, ref)).toEqual([])
+          await expect(
+            viewer.mutation(api.videoReactions.addReaction, {
+              ...ref,
+              emoji: '🔥',
+              timestampMs: 100,
+            }),
+          ).rejects.toThrow()
         })
-        expect(await viewer.query(api.videoReactions.getReactions, ref)).toHaveLength(1)
-        const outsider = t.withIdentity({ subject: ids.outsider })
-        expect(await outsider.query(api.videoReactions.getReactions, ref)).toEqual([])
-        await expect(
-          outsider.mutation(api.videoReactions.addReaction, {
-            ...ref,
-            emoji: '🔥',
-            timestampMs: 100,
-          }),
-        ).rejects.toThrow()
-        await t.run((ctx) => ctx.db.delete(ids.membership))
-        expect(await viewer.query(api.videoReactions.getReactions, ref)).toEqual([])
-        await expect(
-          viewer.mutation(api.videoReactions.addReaction, {
-            ...ref,
-            emoji: '🔥',
-            timestampMs: 100,
-          }),
-        ).rejects.toThrow()
-      })
+      }
     }
-  it.each(['pending', 'waiting_for_upload', 'live', 'errored'] as const)(
+  it.each(['pending', 'waiting_for_upload', 'processing', 'errored'] as const)(
     'does not crash a read subscription in %s, but rejects writes',
     async (videoStatus) => {
       const { t, viewer, ref, targetId } = await fixture('segment', false)
@@ -122,6 +132,21 @@ describe('VOD reactions across media providers', () => {
       ).rejects.toThrow()
     },
   )
+  it('keeps live authentication, Plus emoji gating and the rolling rate limit', async () => {
+    const { t, ids, viewer, ref, targetId } = await fixture('segment', false)
+    await t.run((ctx) => ctx.db.patch(targetId, { videoStatus: 'live' }))
+    const reaction = { ...ref, emoji: '🔥', timestampMs: 100 }
+    await expect(t.mutation(api.videoReactions.addReaction, reaction)).rejects.toThrow()
+    await expect(
+      viewer.mutation(api.videoReactions.addReaction, { ...reaction, emoji: '😂' }),
+    ).rejects.toThrow('Plus')
+    await t.run((ctx) => ctx.db.patch(ids.viewer, { forcedTier: 'plus' }))
+    await viewer.mutation(api.videoReactions.addReaction, { ...reaction, emoji: '😂' })
+    for (let i = 0; i < 9; i++) await viewer.mutation(api.videoReactions.addReaction, reaction)
+    await expect(viewer.mutation(api.videoReactions.addReaction, reaction)).rejects.toThrow(
+      'Please wait',
+    )
+  })
   it('returns no reactions for expired or deleted videos', async () => {
     const { t, viewer, ref, targetId } = await fixture('segment', true)
     await t.run((ctx) => ctx.db.patch(targetId, { expiresAt: Date.now() - 1 }))

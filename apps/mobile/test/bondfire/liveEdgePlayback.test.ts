@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  applyWatchPlaybackRate,
   createLiveEdgePlayback,
+  createWatchPlaybackRate,
   LIVE_EDGE_BUFFER_HOLD_MS,
+  LIVE_EDGE_SILENCE_MS,
 } from '../../app/(main)/bondfire/_lib/liveEdgePlayback'
 import { createPictureInPicturePlayback } from '../../app/(main)/bondfire/_lib/pictureInPicturePlayback'
 import { createStallWatchdog } from '../../app/(main)/bondfire/_lib/videoStallRecovery'
@@ -220,5 +223,59 @@ describe('live-edge playback lifecycle', () => {
     expect(resume).toHaveBeenCalledOnce()
     watchdog.stop()
     expect(vi.getTimerCount()).toBe(0)
+  })
+})
+
+describe('watch-scoped upload-head latch', () => {
+  it('detects missing events while still readyToPlay and preserves 1x across replacement', () => {
+    vi.useFakeTimers()
+    const rate = createWatchPlaybackRate(2)
+    const native = { playbackRate: 2 }
+    const build = () =>
+      createLiveEdgePlayback({
+        isLive: true,
+        preferredRate: 2,
+        watchRate: rate,
+        canPace: () => true,
+        canResume: () => true,
+        setRate: (speed) => applyWatchPlaybackRate(native, speed),
+        pause: vi.fn(),
+        resume: vi.fn(),
+      })
+    const first = build()
+    first.onStatus('readyToPlay')
+    first.onTimeUpdate(10)
+    vi.advanceTimersByTime(LIVE_EDGE_SILENCE_MS - 1)
+    expect(first.checkForStall()).toBe(false)
+    vi.advanceTimersByTime(1)
+    expect(first.checkForStall()).toBe(true)
+    expect(native.playbackRate).toBe(1)
+    first.cancel()
+    // Constructor and rebuilt controller both use the watch's effective rate.
+    applyWatchPlaybackRate(native, rate.getRate())
+    const replacement = build()
+    replacement.applyRate()
+    expect(native.playbackRate).toBe(1)
+    rate.choose(2) // Explicitly picking even the SAME saved preference wins.
+    replacement.applyRate()
+    expect(native.playbackRate).toBe(2)
+    replacement.onStatus('loading')
+    expect(native.playbackRate).toBe(2)
+    replacement.cancel()
+    expect(createWatchPlaybackRate(2).getRate()).toBe(2)
+  })
+  it('does not detect an edge during user pause or regular time events', () => {
+    const { controller, gates, player } = fixture()
+    for (let i = 0; i < 10; i++) {
+      vi.advanceTimersByTime(500)
+      controller.onTimeUpdate(i / 2)
+      expect(controller.checkForStall()).toBe(false)
+    }
+    gates.canResume = false
+    vi.advanceTimersByTime(90_000)
+    expect(controller.checkForStall()).toBe(false)
+    expect(player.rate).toBe(2)
+    gates.canResume = true
+    expect(controller.checkForStall()).toBe(false)
   })
 })

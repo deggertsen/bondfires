@@ -19,10 +19,42 @@ export const LIVE_EDGE_FALLBACK_RATE = 1
 /** Give the upload head five seconds to advance before consuming more media. */
 export const LIVE_EDGE_BUFFER_HOLD_MS = 5_000
 
-/** One controller per player, video, live/VOD mode and explicit speed choice. */
+/** Rate state belongs to the watch, not a native player/controller instance. */
+export function createWatchPlaybackRate(preferredRate: number) {
+  let preference = preferredRate
+  let rate = preferredRate
+  let caughtHead = false
+  return {
+    getRate: () => rate,
+    choose(next: number) {
+      preference = next
+      rate = next
+    },
+    syncPreference(next: number) {
+      if (next !== preference) this.choose(next)
+    },
+    latch() {
+      if (caughtHead) return false
+      caughtHead = true
+      if (rate <= LIVE_EDGE_FALLBACK_RATE) return false
+      rate = LIVE_EDGE_FALLBACK_RATE
+      return true
+    },
+  }
+}
+
+/** All native rate writes, including initialization, go through this funnel. */
+export function applyWatchPlaybackRate(player: { playbackRate: number }, rate: number) {
+  player.playbackRate = rate
+}
+
+export const LIVE_EDGE_SILENCE_MS = 1_500
+
+/** One controller per native player; the watch rate survives replacement. */
 export function createLiveEdgePlayback({
   isLive,
   preferredRate,
+  watchRate = createWatchPlaybackRate(preferredRate),
   canPace,
   canResume,
   setRate,
@@ -33,6 +65,7 @@ export function createLiveEdgePlayback({
 }: {
   isLive: boolean
   preferredRate: number
+  watchRate?: ReturnType<typeof createWatchPlaybackRate>
   canPace: () => boolean
   canResume: () => boolean
   setRate: (rate: number) => void
@@ -41,10 +74,12 @@ export function createLiveEdgePlayback({
   onHoldingChange?: (isHolding: boolean) => void
   onAction?: (action: 'switch-to-realtime' | 'extend-buffer') => void
 }) {
-  let realtime = false
+  let lastProgressAt = Date.now()
+  let lastPosition: number | null = null
+  let waitingForProgress = false
   let timer: ReturnType<typeof setTimeout> | null = null
   let generation = 0
-  const applyRate = () => setRate(isLive && realtime ? LIVE_EDGE_FALLBACK_RATE : preferredRate)
+  const applyRate = () => setRate(watchRate.getRate())
   // Only undo a pause owned by this controller. Callers can instead discard it
   // on pause, error, source replacement, timeout or unmount.
   const cancel = (resumeHeldPlayback = false) => {
@@ -55,31 +90,58 @@ export function createLiveEdgePlayback({
     onHoldingChange?.(false)
     if (resumeHeldPlayback && canResume()) resume()
   }
+  const onEdge = () => {
+    if (!isLive || !canPace() || timer !== null) return
+    waitingForProgress = true
+    if (watchRate.latch()) {
+      applyRate()
+      onAction?.('switch-to-realtime')
+      return
+    }
+    const pendingGeneration = ++generation
+    timer = setTimeout(() => {
+      if (pendingGeneration !== generation) return
+      timer = null
+      lastProgressAt = Date.now()
+      onHoldingChange?.(false)
+      if (canResume()) resume()
+    }, LIVE_EDGE_BUFFER_HOLD_MS)
+    onHoldingChange?.(true)
+    pause()
+    onAction?.('extend-buffer')
+  }
   return {
     applyRate,
     cancel,
     isHolding: () => timer !== null,
+    isWaitingForProgress: () => waitingForProgress,
+    resetProgress() {
+      lastProgressAt = Date.now()
+      lastPosition = null
+      waitingForProgress = false
+    },
+    onTimeUpdate(position: number) {
+      // Android emits on a timer even while the playhead is stationary. A
+      // ready status or another identical tick is not evidence of recovery.
+      if (!Number.isFinite(position) || position === lastPosition) return false
+      lastPosition = position
+      lastProgressAt = Date.now()
+      waitingForProgress = false
+      return true
+    },
+    checkForStall() {
+      if (!isLive || !canPace() || timer !== null) {
+        lastProgressAt = Date.now()
+        return false
+      }
+      if (Date.now() - lastProgressAt < LIVE_EDGE_SILENCE_MS) return false
+      lastProgressAt = Date.now()
+      onEdge()
+      return true
+    },
     onStatus(status: string) {
       if (status === 'error') cancel()
-      // Readiness is not playback: keep our deliberate pause until its deadline.
-      // React to short buffering cycles too, not just the watchdog's 15s warning.
-      if (status !== 'loading' || !isLive || !canPace() || timer !== null) return
-      if (!realtime && preferredRate > LIVE_EDGE_FALLBACK_RATE) {
-        realtime = true
-        applyRate()
-        onAction?.('switch-to-realtime')
-        return
-      }
-      const pendingGeneration = ++generation
-      timer = setTimeout(() => {
-        if (pendingGeneration !== generation) return
-        timer = null
-        onHoldingChange?.(false)
-        if (canResume()) resume()
-      }, LIVE_EDGE_BUFFER_HOLD_MS)
-      onHoldingChange?.(true)
-      pause()
-      onAction?.('extend-buffer')
+      if (status === 'loading') onEdge()
     },
   }
 }

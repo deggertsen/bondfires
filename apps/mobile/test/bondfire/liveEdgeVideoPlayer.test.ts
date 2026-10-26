@@ -1,10 +1,12 @@
-import { createElement, useMemo } from 'react'
+import { getFunctionName } from 'convex/server'
+import { createElement, createRef, useMemo } from 'react'
 // @ts-expect-error react-test-renderer does not ship TypeScript declarations.
 import { act, create } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Id } from '../../../../convex/_generated/dataModel'
 import {
   VideoPlayer,
+  type VideoPlayerHandle,
   type VideoPlayerProps,
 } from '../../app/(main)/bondfire/_components/VideoPlayer'
 import { LIVE_EDGE_BUFFER_HOLD_MS } from '../../app/(main)/bondfire/_lib/liveEdgePlayback'
@@ -14,8 +16,18 @@ const native = vi.hoisted(() => ({
   play: vi.fn(),
   pause: vi.fn(),
   replay: vi.fn(),
+  replaceAsync: vi.fn(),
   activateKeepAwake: vi.fn(),
   deactivateKeepAwake: vi.fn(),
+  serverDuration: undefined as number | undefined,
+  query: vi.fn(),
+  reactions: [] as {
+    _id: string
+    userId: string
+    emoji: string
+    timestampMs: number
+    createdAt: number
+  }[],
 }))
 
 const { store, playback } = await vi.hoisted(async () => {
@@ -38,6 +50,7 @@ const { store, playback } = await vi.hoisted(async () => {
     play: native.play,
     pause: native.pause,
     replay: native.replay,
+    replaceAsync: native.replaceAsync,
     addListener: (name: string, listener: (event: never) => void) => {
       const listeners = native.listeners.get(name) ?? new Set()
       listeners.add(listener)
@@ -69,7 +82,16 @@ vi.mock('@bondfires/app', () => ({
 }))
 vi.mock('@bondfires/ui', () => ({ Spinner: 'Spinner', Text: 'Text' }))
 vi.mock('tamagui', () => ({ YStack: 'YStack' }))
-vi.mock('convex/react', () => ({ useMutation: () => vi.fn(), useQuery: () => undefined }))
+vi.mock('convex/react', () => ({
+  useMutation: () => vi.fn(),
+  useQuery: (query: Parameters<typeof getFunctionName>[0], args: unknown) => {
+    const name = getFunctionName(query)
+    native.query(name, args)
+    return name === 'segmentMedia:playbackDuration' && args !== 'skip'
+      ? native.serverDuration
+      : undefined
+  },
+}))
 vi.mock('expo-keep-awake', () => ({
   activateKeepAwakeAsync: native.activateKeepAwake,
   deactivateKeepAwake: native.deactivateKeepAwake,
@@ -92,11 +114,20 @@ vi.mock('expo-video', () => ({
 vi.mock('react-native', () => ({
   AppState: { currentState: 'active', addEventListener: () => ({ remove: vi.fn() }) },
   Dimensions: { get: () => ({ width: 400, height: 800 }) },
-  PanResponder: { create: () => ({ panHandlers: {} }) },
+  PanResponder: { create: (handlers: unknown) => ({ panHandlers: handlers }) },
   Pressable: 'Pressable',
 }))
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }))
-vi.mock('../../lib/media/useOptionalQuery', () => ({ useOptionalQuery: () => ({}) }))
+vi.mock('../../lib/media/useOptionalQuery', () => ({
+  useOptionalQuery: (query: Parameters<typeof getFunctionName>[0], args: unknown) => {
+    const name = getFunctionName(query)
+    native.query(name, args)
+    return {
+      data:
+        name === 'videoReactions:getReactions' && args !== 'skip' ? native.reactions : undefined,
+    }
+  },
+}))
 vi.mock('../../app/(main)/bondfire/_lib/usePlaybackQuality', () => ({
   usePlaybackQuality: vi.fn(),
 }))
@@ -150,6 +181,8 @@ describe('live-edge VideoPlayer integration', () => {
   beforeEach(async () => {
     vi.useFakeTimers()
     vi.clearAllMocks()
+    native.serverDuration = undefined
+    native.reactions = []
     native.listeners.clear()
     store.preferences.autoplayVideos.set(true)
     store.preferences.playbackSpeed.set(1)
@@ -166,6 +199,11 @@ describe('live-edge VideoPlayer integration', () => {
     native.pause.mockImplementation(() => {
       playback.player.playing = false
       emit('playingChange', { isPlaying: false })
+    })
+    native.replaceAsync.mockImplementation(async () => {
+      playback.player.currentTime = 0
+      playback.player.status = 'readyToPlay'
+      emit('statusChange', { status: 'readyToPlay' })
     })
     ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
     await act(async () => {
@@ -186,7 +224,7 @@ describe('live-edge VideoPlayer integration', () => {
     await status('loading')
     await status('readyToPlay')
     expect(playback.player.playing).toBe(false)
-    expect(host('LoadingOverlay').props.state$.isLoading.peek()).toBe(false)
+    expect(host('LoadingOverlay').props.state$.isLoading.peek()).toBe(true)
     for (const overlay of ['LoadingOverlay', 'PlayPauseIndicator', 'PausedReportButton']) {
       expect(host(overlay).props.isHoldingLiveEdge).toBe(true)
     }
@@ -224,6 +262,10 @@ describe('live-edge VideoPlayer integration', () => {
   })
 
   const finish = async () => {
+    // Completion tests use a finished video; a live upload head is not the end.
+    await act(async () => renderer.update(createElement(VideoPlayer, { ...props, isLive: false })))
+    native.play.mockClear()
+    native.pause.mockClear()
     await act(async () => {
       playback.player.currentTime = 60
       playback.player.playing = false
@@ -298,6 +340,163 @@ describe('live-edge VideoPlayer integration', () => {
     await act(async () => host('Pressable').props.onPress())
     expect(native.play).toHaveBeenCalledOnce()
     expect(native.replay).not.toHaveBeenCalled()
+  })
+
+  it('latches without loading, reports 1x, survives replacement, and honors an explicit same-speed choice', async () => {
+    const onEffectiveRateChange = vi.fn()
+    const ref = createRef<VideoPlayerHandle>()
+    const watchProps = { ...props, ref, onEffectiveRateChange }
+    await act(async () => {
+      store.preferences.playbackSpeed.set(2)
+      renderer.update(createElement(VideoPlayer, watchProps))
+    })
+    await act(async () => vi.advanceTimersByTime(1500))
+    expect(playback.player.status).toBe('readyToPlay')
+    expect(playback.player.playbackRate).toBe(1)
+    expect(onEffectiveRateChange).toHaveBeenLastCalledWith('fire', 1)
+    expect(store.preferences.playbackSpeed.peek()).toBe(2)
+    const oldPlayer = playback.player
+    await act(async () =>
+      renderer.update(createElement(VideoPlayer, { ...watchProps, bondfireTitle: 'New metadata' })),
+    )
+    expect(playback.player).not.toBe(oldPlayer)
+    expect(playback.player.playbackRate).toBe(1)
+    await act(async () => ref.current?.choosePlaybackSpeed(2))
+    expect(playback.player.playbackRate).toBe(2)
+    expect(onEffectiveRateChange).toHaveBeenLastCalledWith('fire', 2)
+    await act(async () =>
+      renderer.update(
+        createElement(VideoPlayer, { ...watchProps, bondfireId: 'next' as Id<'bondfires'> }),
+      ),
+    )
+    expect(playback.player.playbackRate).toBe(2)
+  })
+
+  it('detects a frozen playhead despite periodic native time events', async () => {
+    await act(async () => store.preferences.playbackSpeed.set(2))
+    await act(async () => emit('timeUpdate', { currentTime: 10 }))
+    for (let i = 0; i < 6; i++) {
+      await act(async () => {
+        vi.advanceTimersByTime(250)
+        emit('timeUpdate', { currentTime: 10 })
+      })
+    }
+    expect(playback.player.playbackRate).toBe(1)
+    expect(host('LoadingOverlay').props.state$.isLoading.peek()).toBe(true)
+    expect(native.replaceAsync).not.toHaveBeenCalled()
+    await act(async () => emit('timeUpdate', { currentTime: 10.25 }))
+    expect(host('LoadingOverlay').props.state$.isLoading.peek()).toBe(false)
+  })
+
+  it('times out a live stall despite ready events and stationary ticks, then retries in place', async () => {
+    await act(async () => emit('timeUpdate', { currentTime: 10 }))
+    await status('loading')
+    for (let i = 0; i < 15; i++) {
+      await status('readyToPlay')
+      await act(async () => {
+        vi.advanceTimersByTime(5000)
+        emit('timeUpdate', { currentTime: 10 })
+      })
+    }
+    expect(host('PlaybackErrorOverlay').props.state$.hasError.peek()).toBe(true)
+    await act(async () => host('PlaybackErrorOverlay').props.onRetry())
+    expect(host('PlaybackErrorOverlay').props.state$.hasError.peek()).toBe(false)
+    expect(playback.player.playing).toBe(true)
+    expect(native.replaceAsync).not.toHaveBeenCalled()
+  })
+
+  it('recovers fatal live errors with bounded reloads and a usable manual retry', async () => {
+    await act(async () => store.preferences.playbackSpeed.set(2))
+    await status('loading')
+    expect(playback.player.playbackRate).toBe(1)
+    playback.player.currentTime = 23
+    for (const delay of [2000, 4000]) {
+      await status('error')
+      await act(async () => vi.advanceTimersByTime(delay))
+      expect(playback.player.currentTime).toBe(23)
+      expect(playback.player.playing).toBe(true)
+    }
+    expect(native.replaceAsync).toHaveBeenCalledTimes(2)
+    await status('error')
+    expect(host('PlaybackErrorOverlay').props.state$.hasError.peek()).toBe(true)
+    await act(async () => host('PlaybackErrorOverlay').props.onRetry())
+    expect(native.replaceAsync).toHaveBeenCalledTimes(3)
+    expect(playback.player.currentTime).toBe(23)
+    expect(playback.player.playbackRate).toBe(1)
+    expect(playback.player.playing).toBe(true)
+  })
+
+  it('updates the clock from receipts while stalled and subscribes only for the active video', async () => {
+    const watchProps = { ...props, segmentRecordingId: 'recording' as Id<'segmentRecordings'> }
+    native.serverDuration = 64
+    await act(async () => renderer.update(createElement(VideoPlayer, watchProps)))
+    await act(async () => {
+      vi.advanceTimersByTime(300)
+      playback.player.currentTime = 62
+      emit('timeUpdate', { currentTime: 62 })
+    })
+    const state = host('VideoProgressBar').props.state$
+    expect(state.elapsedMs.peek()).toBe(62000)
+    expect(state.duration.peek()).toBe(64000)
+    native.serverDuration = 72
+    await act(async () => renderer.update(createElement(VideoPlayer, watchProps)))
+    expect(state.duration.peek()).toBe(72000)
+    expect(state.elapsedMs.peek()).toBe(62000)
+    native.query.mockClear()
+    await act(async () =>
+      renderer.update(createElement(VideoPlayer, { ...watchProps, isActive: false })),
+    )
+    expect(native.query).toHaveBeenCalledWith('segmentMedia:playbackDuration', 'skip')
+  })
+
+  it('seeks on the displayed timeline while staying inside the native duration', async () => {
+    native.serverDuration = 120
+    await act(async () =>
+      renderer.update(
+        createElement(VideoPlayer, {
+          ...props,
+          segmentRecordingId: 'recording' as Id<'segmentRecordings'>,
+        }),
+      ),
+    )
+    const bar = host('VideoProgressBar').props
+    bar.progressBarViewRef.current = {
+      measure: (callback: (...values: number[]) => void) => callback(0, 0, 400, 20, 0),
+    }
+    await act(async () => bar.onLayout({ nativeEvent: { layout: { width: 400 } } }))
+    await act(async () => bar.panHandlers.onPanResponderGrant({ nativeEvent: { pageX: 100 } }))
+    expect(playback.player.currentTime).toBe(30)
+    expect(bar.state$.elapsedMs.peek()).toBe(30000)
+    expect(bar.state$.progress.peek()).toBe(0.25)
+    await act(async () => bar.panHandlers.onPanResponderRelease({}, { moveX: 400 }))
+    expect(playback.player.currentTime).toBe(60)
+    expect(bar.state$.elapsedMs.peek()).toBe(60000)
+    expect(bar.state$.progress.peek()).toBe(0.5)
+  })
+
+  it('subscribes to live reactions and replays only the seek window when joining mid-recording', async () => {
+    native.reactions = [
+      { _id: 'old', userId: 'other', emoji: '🔥', timestampMs: 1000, createdAt: 1 },
+      { _id: 'near', userId: 'other', emoji: '❤️', timestampMs: 39950, createdAt: 2 },
+      { _id: 'next', userId: 'other', emoji: '🙏', timestampMs: 40050, createdAt: 3 },
+    ]
+    await act(async () => renderer.update(createElement(VideoPlayer, props)))
+    expect(native.query).toHaveBeenCalledWith('videoReactions:getReactions', { bondfireId: 'fire' })
+    await act(async () => emit('timeUpdate', { currentTime: 40 }))
+    const state = host('ReactionPresenceLayer').props.state$
+    expect(
+      state.activeReactions.peek().map((reaction: { emoji: string }) => reaction.emoji),
+    ).toEqual(['❤️'])
+    await act(async () => emit('timeUpdate', { currentTime: 40.1 }))
+    expect(
+      state.activeReactions.peek().map((reaction: { emoji: string }) => reaction.emoji),
+    ).toEqual(['❤️', '🙏'])
+  })
+
+  it('treats a live playToEnd as the upload head, not completed playback', async () => {
+    await act(async () => emit('playToEnd', {}))
+    expect(host('PlayPauseIndicator').props.state$.hasEnded.peek()).toBe(false)
+    expect(host('LoadingOverlay').props.isHoldingLiveEdge).toBe(true)
   })
 
   it('cancels a hold when the player loses focus', async () => {

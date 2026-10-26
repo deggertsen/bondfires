@@ -17,6 +17,7 @@ export type VideoPlayerState = {
   showReport: boolean
   progress: number
   duration: number
+  elapsedMs: number
   captionText: string
   isLoading: boolean
   /** Player hit a fatal error or buffered past the give-up timeout; retry UI shown. */

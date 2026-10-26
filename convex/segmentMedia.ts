@@ -194,6 +194,17 @@ export const getOwnRecording = query({
     }
   },
 })
+/** Only the active player subscribes to this growing timeline. */
+export const playbackDuration = query({
+  args: { recordingId: v.id('segmentRecordings') },
+  handler: async (ctx, { recordingId }) => {
+    const userId = await requireUser(ctx)
+    const recording = await ctx.db.get(recordingId)
+    if (!recording) throwUserError('Video unavailable')
+    await linkedAccess(ctx, recording, userId)
+    return recording.duration
+  },
+})
 export const authorize = internalQuery({
   args: {
     recordingId: v.id('segmentRecordings'),
@@ -365,8 +376,14 @@ export const finish = mutation({
       (recording.finalCount !== undefined && recording.finalCount !== args.segmentCount)
     )
       throw new Error('Invalid final segment count')
-    if (recording.finalCount !== args.segmentCount)
+    if (recording.finalCount !== args.segmentCount) {
       await ctx.db.patch(recording._id, { finalCount: args.segmentCount, updatedAt: Date.now() })
+      // One stop signal on the thread row, never a per-fragment duration write.
+      const targetId = recording.responseId ?? recording.bondfireId
+      if (targetId && recording.segmentCount < args.segmentCount) {
+        await ctx.db.patch(targetId, { recordingStopped: true })
+      }
+    }
     await updatePlayable(ctx, { ...recording, finalCount: args.segmentCount })
     return { complete: recording.segmentCount === args.segmentCount }
   },
