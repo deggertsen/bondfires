@@ -6,7 +6,7 @@ Video sharing social app — users create "bondfires" (video posts), others resp
 
 ## Tech Stack
 
-React Native (Expo) + Tamagui + Legend State + Convex (backend/DB/auth/file storage) + private R2 video + legacy Mux playback + Turborepo monorepo + Yarn.
+React Native (Expo) + Tamagui + Legend State + Convex (backend/DB/auth/file storage) + private R2/HLS video + Turborepo monorepo + Yarn.
 
 ## Structure
 
@@ -23,7 +23,7 @@ apps/mobile/modules/bondfire-live-publisher/  — Live streaming publisher modul
 scripts/                        — Release, provisioning, dev helpers
 ```
 
-Marketing website: separate repo at https://github.com/deggertsen/bondfires-website (Cloudflare Pages).
+Marketing website: separate repo at https://github.com/deggertsen/bondfires-website (Cloudflare Workers with static assets).
 
 ## How to Run
 
@@ -57,7 +57,7 @@ yarn validate         # Typecheck, tests, generated code, invariants, and Biome
 ## Patterns
 
 - Convex for all backend logic (mutations, queries, actions)
-- Local fragmented MP4 recording and private R2/HLS for new videos; preserve Mux playback for legacy videos
+- Local fragmented MP4 recording and private R2/HLS playback for all videos; Mux is fully retired (PR #268, Oct 2026) — no Mux URLs, credentials, or client fetches remain. See docs/mux-retirement.md
 - Main backend: production build profile; isolated video testing: internal profile. See docs/alpha-video-rollout.md.
 - Tamagui for UI components (shared via packages/ui/)
 - Legend State for client state management
