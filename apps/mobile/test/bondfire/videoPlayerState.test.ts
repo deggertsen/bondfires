@@ -4,11 +4,14 @@ import {
   PICTURE_IN_PICTURE_STOP_PAUSE_GRACE_MS,
   PLAYBACK_END_TOLERANCE_SECONDS,
   pictureInPictureStopAction,
+  RESPOND_NUDGE_MIN_DURATION_MS,
+  RESPOND_NUDGE_WINDOW_MS,
   resolvePlayPauseAction,
   shouldLoadVideoSource,
   shouldOwnPlaybackSession,
   shouldResumeAfterPictureInPictureStop,
   shouldShowRespondCTA,
+  shouldShowRespondNudge,
   suppressOwnerReplay,
   syncReactionPlaybackAfterSeek,
   type VideoPlayerState,
@@ -176,13 +179,76 @@ describe('videoPlayerState', () => {
     },
   )
 
-  it('shows the response CTA only in the settled ended state', () => {
-    expect(shouldShowRespondCTA({ hasEnded: true, isPlaying: false, isLoading: false })).toBe(true)
-    expect(shouldShowRespondCTA({ hasEnded: false, isPlaying: false, isLoading: false })).toBe(
-      false,
-    )
-    expect(shouldShowRespondCTA({ hasEnded: true, isPlaying: true, isLoading: false })).toBe(false)
-    expect(shouldShowRespondCTA({ hasEnded: true, isPlaying: false, isLoading: true })).toBe(false)
+  describe('shouldShowRespondCTA', () => {
+    const stopped = {
+      hasEnded: false,
+      isPlaying: false,
+      isLoading: false,
+      hasError: false,
+      hasProgress: true,
+      isHoldingLiveEdge: false,
+      advancesOnEnd: false,
+    }
+
+    it('shows when paused partway through or finished', () => {
+      expect(shouldShowRespondCTA(stopped)).toBe(true)
+      expect(shouldShowRespondCTA({ ...stopped, hasEnded: true })).toBe(true)
+      expect(shouldShowRespondCTA({ ...stopped, hasEnded: true, hasProgress: false })).toBe(true)
+    })
+
+    it('stays hidden before the first frame plays', () => {
+      expect(shouldShowRespondCTA({ ...stopped, hasProgress: false })).toBe(false)
+    })
+
+    it('skips the end of a video that advances, but not a pause on it', () => {
+      expect(shouldShowRespondCTA({ ...stopped, hasEnded: true, advancesOnEnd: true })).toBe(false)
+      expect(shouldShowRespondCTA({ ...stopped, advancesOnEnd: true })).toBe(true)
+    })
+
+    it('stays hidden while playing, loading, errored or holding the live edge', () => {
+      expect(shouldShowRespondCTA({ ...stopped, isPlaying: true })).toBe(false)
+      expect(shouldShowRespondCTA({ ...stopped, isLoading: true })).toBe(false)
+      expect(shouldShowRespondCTA({ ...stopped, hasError: true })).toBe(false)
+      expect(shouldShowRespondCTA({ ...stopped, isHoldingLiveEdge: true })).toBe(false)
+    })
+  })
+
+  describe('shouldShowRespondNudge', () => {
+    const ending = {
+      isPlaying: true,
+      hasEnded: false,
+      duration: 60_000,
+      elapsedMs: 60_000 - RESPOND_NUDGE_WINDOW_MS,
+      isLive: false,
+    }
+
+    it('shows over the last few seconds of a playing video', () => {
+      expect(shouldShowRespondNudge(ending)).toBe(true)
+      expect(shouldShowRespondNudge({ ...ending, elapsedMs: 59_900 })).toBe(true)
+    })
+
+    it('stays hidden before the window and once the video ends', () => {
+      expect(shouldShowRespondNudge({ ...ending, elapsedMs: 54_000 })).toBe(false)
+      expect(shouldShowRespondNudge({ ...ending, elapsedMs: 60_000 })).toBe(false)
+      expect(shouldShowRespondNudge({ ...ending, hasEnded: true })).toBe(false)
+    })
+
+    it('stays hidden while paused (the centered button takes over)', () => {
+      expect(shouldShowRespondNudge({ ...ending, isPlaying: false })).toBe(false)
+    })
+
+    it('skips live, short and unknown-length videos', () => {
+      expect(shouldShowRespondNudge({ ...ending, isLive: true })).toBe(false)
+      expect(
+        shouldShowRespondNudge({
+          ...ending,
+          duration: RESPOND_NUDGE_MIN_DURATION_MS - 1,
+          elapsedMs: RESPOND_NUDGE_MIN_DURATION_MS - 1_000,
+        }),
+      ).toBe(false)
+      expect(shouldShowRespondNudge({ ...ending, duration: 0, elapsedMs: 0 })).toBe(false)
+      expect(shouldShowRespondNudge({ ...ending, duration: Number.NaN })).toBe(false)
+    })
   })
 
   describe('resolvePlayPauseAction', () => {

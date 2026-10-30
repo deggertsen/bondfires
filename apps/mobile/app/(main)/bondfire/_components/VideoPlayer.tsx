@@ -64,6 +64,7 @@ import {
   resolvePlayPauseAction,
   shouldLoadVideoSource,
   shouldOwnPlaybackSession,
+  shouldShowRespondNudge,
   suppressOwnerReplay,
   syncReactionPlaybackAfterSeek,
 } from '../_lib/videoPlayerState'
@@ -80,9 +81,11 @@ import {
   PausedReportButton,
   PlaybackErrorOverlay,
   PlayPauseIndicator,
+  RESPOND_NUDGE_HEIGHT,
   ReactionPresenceLayer,
   ReportOverlayGate,
   RespondCTAOverlay,
+  RespondNudgeCard,
   RightSideControls,
   VideoProgressBar,
 } from './VideoPlayerOverlays'
@@ -138,7 +141,10 @@ export interface VideoPlayerProps {
   segmentRecordingId?: Id<'segmentRecordings'>
   recordingStopped?: boolean
   onEffectiveRateChange?: (videoId: string, rate: number) => void
-  onRespondAfterPlayback?: () => void
+  /** Present when the viewer can respond; shows Respond on pause, at the end, and near the end. */
+  onRespond?: () => void
+  /** Who plays after this video, for the near-end Respond card. */
+  nextCreatorName?: string
 }
 
 export function VideoPlayer({
@@ -165,7 +171,8 @@ export function VideoPlayer({
   segmentRecordingId,
   recordingStopped = false,
   onEffectiveRateChange,
-  onRespondAfterPlayback,
+  onRespond,
+  nextCreatorName,
 }: VideoPlayerProps) {
   const videoId = bondfireId || bondfireVideoId || ''
   const autoplayVideos = useValue(appStore$.preferences.autoplayVideos)
@@ -303,6 +310,18 @@ export function VideoPlayer({
     [durationMs, isLive, reactionsData],
   )
   const heatmapOffset = reactionHeatmap ? HEATMAP_STRIP_HEIGHT : 0
+  // Derived here, not in the card, so captions can lift above it.
+  const showRespondNudge = useValue(
+    () =>
+      !!onRespond &&
+      shouldShowRespondNudge({
+        isPlaying: state$.isPlaying.get(),
+        hasEnded: state$.hasEnded.get(),
+        duration: state$.duration.get(),
+        elapsedMs: state$.elapsedMs.get(),
+        isLive,
+      }),
+  )
   const videoViewRef = useRef<VideoView>(null)
   const isInPictureInPictureRef = useRef(false)
 
@@ -1765,7 +1784,12 @@ export function VideoPlayer({
         </YStack>
       ) : null}
 
-      <CaptionOverlay state$={state$} bottomOffset={(isLive ? 48 : 0) + heatmapOffset} />
+      <CaptionOverlay
+        state$={state$}
+        bottomOffset={
+          (isLive ? 48 : 0) + heatmapOffset + (showRespondNudge ? RESPOND_NUDGE_HEIGHT + 8 : 0)
+        }
+      />
 
       <VideoProgressBar
         state$={state$}
@@ -1799,8 +1823,21 @@ export function VideoPlayer({
         videoOwnerId={videoOwnerId}
       />
 
-      {onRespondAfterPlayback ? (
-        <RespondCTAOverlay state$={state$} onRespond={onRespondAfterPlayback} />
+      {onRespond && isActive ? (
+        <RespondCTAOverlay
+          state$={state$}
+          isHoldingLiveEdge={isHoldingLiveEdge}
+          advancesOnEnd={!!nextCreatorName}
+          onRespond={onRespond}
+        />
+      ) : null}
+
+      {onRespond && showRespondNudge ? (
+        <RespondNudgeCard
+          nextCreatorName={nextCreatorName}
+          onRespond={onRespond}
+          bottomOffset={heatmapOffset}
+        />
       ) : null}
     </YStack>
   )
