@@ -347,6 +347,17 @@ export const receipt = internalMutation({
       size,
       checksum,
     })
+    // Append-only once seeded. Receipts arrive in strict order (index ===
+    // segmentCount is enforced above), so seed at index 0 and append after;
+    // mid-stream legacy rows keep no partial array (a padded playlist would be
+    // invalid) and are materialized by finalization or daily reconciliation.
+    const existingDurations = recording.durations
+    const durations =
+      index === 0
+        ? [duration]
+        : existingDurations && existingDurations.length === index
+          ? [...existingDurations, duration]
+          : undefined
     const next = {
       ...recording,
       segmentCount: index + 1,
@@ -356,6 +367,7 @@ export const receipt = internalMutation({
     await ctx.db.patch(recording._id, {
       segmentCount: next.segmentCount,
       duration: next.duration,
+      ...(durations ? { durations } : {}),
       updatedAt: next.updatedAt,
     })
     await updatePlayable(ctx, next)
@@ -404,26 +416,49 @@ export const timeline = internalQuery({
       (args.index < -1 || !Number.isInteger(args.index) || args.index >= recording.segmentCount)
     )
       throw new Error('Forbidden')
+    // A query cannot persist the legacy fallback. Until reconciliation writes
+    // the cache, serve the original fragment indexes and durations unchanged.
     const segments =
-      args.index === null
-        ? await ctx.db
-            .query('mediaSegments')
-            .withIndex('by_recording_index', (q) => q.eq('recordingId', recording._id))
-            .take(MAX_SEGMENTS)
-        : []
+      args.index !== null
+        ? []
+        : recording.durations?.length === recording.segmentCount
+          ? recording.durations.map((duration, index) => ({ index, duration }))
+          : await readTimelineSegments(ctx, recording._id)
     return {
       complete: recording.status === 'ready',
-      segments: segments.map(({ index, duration }) => ({ index, duration })),
+      segments,
     }
   },
 })
+
+async function readTimelineSegments(ctx: QueryCtx, recordingId: Id<'segmentRecordings'>) {
+  const segments = await ctx.db
+    .query('mediaSegments')
+    .withIndex('by_recording_index', (q) => q.eq('recordingId', recordingId))
+    .take(MAX_SEGMENTS)
+  return segments.map(({ index, duration }) => ({ index, duration }))
+}
+
+/** Only a complete, contiguous timeline can be represented by an index-aligned cache. */
+async function backfillDurations(
+  ctx: QueryCtx,
+  recording: Doc<'segmentRecordings'>,
+): Promise<number[] | undefined> {
+  const segments = await readTimelineSegments(ctx, recording._id)
+  if (
+    segments.length !== recording.segmentCount ||
+    segments.some((segment, index) => segment.index !== index)
+  )
+    return undefined
+  return segments.map(({ duration }) => duration)
+}
 
 /** Recheck destructive eligibility in the revocation transaction as well as discovery. */
 async function cleanupDisposition(
   ctx: QueryCtx,
   recording: Doc<'segmentRecordings'>,
   now: number,
-): Promise<'delete' | 'finalize' | null> {
+): Promise<'delete' | 'finalize' | 'materialize' | null> {
   if (recording.status === 'cancelled') return 'delete'
   const owner = await ctx.db.get(recording.userId)
   const response = recording.responseId ? await ctx.db.get(recording.responseId) : null
@@ -440,9 +475,26 @@ async function cleanupDisposition(
     (source.expiresAt !== undefined && source.expiresAt <= now)
   )
     return 'delete'
-  if (recording.status === 'uploading' && recording.createdAt < now - 7 * 86400_000)
-    return recording.initChecksum && recording.segmentCount > 0 ? 'finalize' : 'delete'
-  return null
+  if (recording.status !== 'uploading') {
+    // Ready rows on the daily reconcile pass also materialize durations for
+    // recordings that predate that field.
+    if (
+      recording.status === 'ready' &&
+      recording.segmentCount > 0 &&
+      (!recording.durations || recording.durations.length !== recording.segmentCount)
+    )
+      return 'materialize'
+    return null
+  }
+  // Fresh uploads are owned by their receipts; nothing is due yet.
+  if (recording.createdAt >= now - 7 * 86400_000) return null
+  // Past the recovery window, a destination no longer pointing at this
+  // recording can never resume: it was replaced by a retry, re-attach, or a
+  // finalize elsewhere. Leaving it uploading keeps it in the 5-minute sweep
+  // forever, re-reading owner and destination every pass.
+  const destination = response ?? source
+  if (destination.segmentRecordingId !== recording._id) return 'delete'
+  return recording.initChecksum && recording.segmentCount > 0 ? 'finalize' : 'delete'
 }
 
 export const cleanupPage = internalQuery({
@@ -473,12 +525,19 @@ export const cleanupPage = internalQuery({
     const page = await candidates.paginate({ cursor: indexedCursor, numItems: 50 })
     const ids: Id<'segmentRecordings'>[] = []
     const interrupted: Id<'segmentRecordings'>[] = []
+    const materialize: Id<'segmentRecordings'>[] = []
     for (const recording of page.page) {
       const disposition = await cleanupDisposition(ctx, recording, now)
       if (disposition === 'delete') ids.push(recording._id)
       else if (disposition === 'finalize') interrupted.push(recording._id)
+      else if (disposition === 'materialize') materialize.push(recording._id)
     }
-    return { ids, interrupted, cursor: page.isDone ? null : page.continueCursor }
+    return {
+      ids,
+      interrupted,
+      materialize,
+      cursor: page.isDone ? null : page.continueCursor,
+    }
   },
 })
 /** End a long-interrupted recording at its durable prefix instead of deleting playable video. */
@@ -496,16 +555,42 @@ export const finalizeInterrupted = internalMutation({
     )
       return
     try {
+      // linkedAccess checks the destination's recording ID for roots and responses.
       await linkedAccess(ctx, record, record.userId)
     } catch {
       return // Deletion/revocation is handled by the next cleanup scan.
     }
+    // Materialize denormalized durations once here so post-finalize playlist
+    // polls read only this row (legacy uploads never got receipt-seeded ones).
+    const durations =
+      record.durations && record.durations.length === record.segmentCount
+        ? record.durations
+        : await backfillDurations(ctx, record)
     const finished = { ...record, finalCount: record.segmentCount, updatedAt: Date.now() }
     await ctx.db.patch(record._id, {
       finalCount: finished.finalCount,
+      ...(durations && durations.length === record.segmentCount ? { durations } : {}),
       updatedAt: finished.updatedAt,
     })
     await updatePlayable(ctx, finished)
+  },
+})
+
+/**
+ * Materialize denormalized durations for a legacy recording that predates the
+ * field. Idempotent; the daily reconcile discovers candidates, not the
+ * frequent sweep.
+ */
+export const backfillRecordingDurations = internalMutation({
+  args: { recordingId: v.id('segmentRecordings') },
+  handler: async (ctx, { recordingId }) => {
+    requireSegmentMedia()
+    const record = await ctx.db.get(recordingId)
+    if (!record || record.status === 'cancelled' || record.segmentCount === 0) return
+    if (record.durations && record.durations.length === record.segmentCount) return
+    const durations = await backfillDurations(ctx, record)
+    if (!durations) return
+    await ctx.db.patch(recordingId, { durations })
   },
 })
 
@@ -601,6 +686,13 @@ export const cleanup = internalAction({
     }
     for (const recordingId of page.ids) {
       await ctx.scheduler.runAfter(0, internal.segmentMedia.cleanupRecording, { recordingId })
+    }
+    for (const recordingId of page.materialize) {
+      // Ready legacy rows get denormalized durations once; the daily reconcile
+      // pass discovers them, not the frequent sweep.
+      await ctx.scheduler.runAfter(0, internal.segmentMedia.backfillRecordingDurations, {
+        recordingId,
+      })
     }
     if (page.cursor)
       await ctx.scheduler.runAfter(0, internal.segmentMedia.cleanup, {
