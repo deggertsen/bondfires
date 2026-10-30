@@ -348,10 +348,9 @@ export const receipt = internalMutation({
       checksum,
     })
     // Append-only once seeded. Receipts arrive in strict order (index ===
-    // segmentCount is enforced below), so seed at index 0 and append after;
+    // segmentCount is enforced above), so seed at index 0 and append after;
     // mid-stream legacy rows keep no partial array (a padded playlist would be
-    // invalid) and are materialized once by the timeline backfill, finalize, or
-    // the daily reconcile.
+    // invalid) and are materialized by finalization or daily reconciliation.
     const existingDurations = recording.durations
     const durations =
       index === 0
@@ -417,21 +416,14 @@ export const timeline = internalQuery({
       (args.index < -1 || !Number.isInteger(args.index) || args.index >= recording.segmentCount)
     )
       throw new Error('Forbidden')
-    // Playlist polling used to rescan every fragment row on each index.m3u8
-    // request. The durations are denormalized onto this row by receipt; legacy
-    // rows (pre-durations) read their fragments once, via the backfill below.
-    let durations = recording.durations
-    if (
-      args.index === null &&
-      recording.segmentCount > 0 &&
-      (!durations || durations.length !== recording.segmentCount)
-    ) {
-      durations = await backfillDurations(ctx, recording)
-    }
+    // A query cannot persist the legacy fallback. Until reconciliation writes
+    // the cache, serve the original fragment indexes and durations unchanged.
     const segments =
-      args.index === null && durations && durations.length === recording.segmentCount
-        ? durations.map((duration, index) => ({ index, duration }))
-        : []
+      args.index !== null
+        ? []
+        : recording.durations?.length === recording.segmentCount
+          ? recording.durations.map((duration, index) => ({ index, duration }))
+          : await readTimelineSegments(ctx, recording._id)
     return {
       complete: recording.status === 'ready',
       segments,
@@ -439,16 +431,25 @@ export const timeline = internalQuery({
   },
 })
 
-/** One-time materialization of durations for recordings that predate the field. */
+async function readTimelineSegments(ctx: QueryCtx, recordingId: Id<'segmentRecordings'>) {
+  const segments = await ctx.db
+    .query('mediaSegments')
+    .withIndex('by_recording_index', (q) => q.eq('recordingId', recordingId))
+    .take(MAX_SEGMENTS)
+  return segments.map(({ index, duration }) => ({ index, duration }))
+}
+
+/** Only a complete, contiguous timeline can be represented by an index-aligned cache. */
 async function backfillDurations(
   ctx: QueryCtx,
   recording: Doc<'segmentRecordings'>,
 ): Promise<number[] | undefined> {
-  const segments = await ctx.db
-    .query('mediaSegments')
-    .withIndex('by_recording_index', (q) => q.eq('recordingId', recording._id))
-    .take(MAX_SEGMENTS)
-  if (segments.length !== recording.segmentCount) return undefined
+  const segments = await readTimelineSegments(ctx, recording._id)
+  if (
+    segments.length !== recording.segmentCount ||
+    segments.some((segment, index) => segment.index !== index)
+  )
+    return undefined
   return segments.map(({ duration }) => duration)
 }
 
@@ -457,7 +458,7 @@ async function cleanupDisposition(
   ctx: QueryCtx,
   recording: Doc<'segmentRecordings'>,
   now: number,
-): Promise<'delete' | 'finalize' | 'stale' | 'materialize' | null> {
+): Promise<'delete' | 'finalize' | 'materialize' | null> {
   if (recording.status === 'cancelled') return 'delete'
   const owner = await ctx.db.get(recording.userId)
   const response = recording.responseId ? await ctx.db.get(recording.responseId) : null
@@ -491,7 +492,8 @@ async function cleanupDisposition(
   // recording can never resume: it was replaced by a retry, re-attach, or a
   // finalize elsewhere. Leaving it uploading keeps it in the 5-minute sweep
   // forever, re-reading owner and destination every pass.
-  if (source.segmentRecordingId !== recording._id) return 'stale'
+  const destination = response ?? source
+  if (destination.segmentRecordingId !== recording._id) return 'delete'
   return recording.initChecksum && recording.segmentCount > 0 ? 'finalize' : 'delete'
 }
 
@@ -526,7 +528,7 @@ export const cleanupPage = internalQuery({
     const materialize: Id<'segmentRecordings'>[] = []
     for (const recording of page.page) {
       const disposition = await cleanupDisposition(ctx, recording, now)
-      if (disposition === 'delete' || disposition === 'stale') ids.push(recording._id)
+      if (disposition === 'delete') ids.push(recording._id)
       else if (disposition === 'finalize') interrupted.push(recording._id)
       else if (disposition === 'materialize') materialize.push(recording._id)
     }
@@ -552,7 +554,12 @@ export const finalizeInterrupted = internalMutation({
       !record.segmentCount
     )
       return
-    if (!(await canFinalizePrefix(ctx, record))) return false
+    try {
+      // linkedAccess checks the destination's recording ID for roots and responses.
+      await linkedAccess(ctx, record, record.userId)
+    } catch {
+      return // Deletion/revocation is handled by the next cleanup scan.
+    }
     // Materialize denormalized durations once here so post-finalize playlist
     // polls read only this row (legacy uploads never got receipt-seeded ones).
     const durations =
@@ -566,32 +573,8 @@ export const finalizeInterrupted = internalMutation({
       updatedAt: finished.updatedAt,
     })
     await updatePlayable(ctx, finished)
-    return true
   },
 })
-
-/**
- * A stale upload only resumes if its destination still resolves this recording
- * and remains visible. A missing/deleted/expired destination never returns:
- * without this gate such a row stays in the uploading index and every 5-minute
- * sweep re-reads the owner, destination, and viewer checks forever.
- */
-async function canFinalizePrefix(
-  ctx: QueryCtx,
-  record: Doc<'segmentRecordings'>,
-): Promise<boolean> {
-  try {
-    await linkedAccess(ctx, record, record.userId)
-  } catch {
-    return false
-  }
-  if (record.responseId) {
-    const response = await ctx.db.get(record.responseId)
-    return Boolean(response && response.segmentRecordingId === record._id)
-  }
-  const bondfire = record.bondfireId && (await ctx.db.get(record.bondfireId))
-  return Boolean(bondfire && bondfire.segmentRecordingId === record._id)
-}
 
 /**
  * Materialize denormalized durations for a legacy recording that predates the
@@ -601,8 +584,9 @@ async function canFinalizePrefix(
 export const backfillRecordingDurations = internalMutation({
   args: { recordingId: v.id('segmentRecordings') },
   handler: async (ctx, { recordingId }) => {
+    requireSegmentMedia()
     const record = await ctx.db.get(recordingId)
-    if (!record || record.segmentCount === 0) return
+    if (!record || record.status === 'cancelled' || record.segmentCount === 0) return
     if (record.durations && record.durations.length === record.segmentCount) return
     const durations = await backfillDurations(ctx, record)
     if (!durations) return
@@ -619,12 +603,8 @@ export const revoke = internalMutation({
     requireSegmentMedia()
     const record = await ctx.db.get(recordingId)
     if (!record) return false
-    if (onlyIfCleanupEligible) {
-      // 'stale' uploads revoke like 'delete' candidates: the frequent sweep
-      // dispatches one revoke, then the hourly tombstone retry purges them.
-      const disposition = await cleanupDisposition(ctx, record, Date.now())
-      if (disposition !== 'delete' && disposition !== 'stale') return false
-    }
+    if (onlyIfCleanupEligible && (await cleanupDisposition(ctx, record, Date.now())) !== 'delete')
+      return false
     if (record.status !== 'cancelled') {
       await ctx.db.patch(recordingId, { status: 'cancelled', updatedAt: Date.now() })
       const sourceId = record.responseId ?? record.bondfireId
@@ -705,9 +685,6 @@ export const cleanup = internalAction({
       await ctx.scheduler.runAfter(0, internal.segmentMedia.finalizeInterrupted, { recordingId })
     }
     for (const recordingId of page.ids) {
-      // 'delete' candidates, plus past-window 'stale' uploads (their destination
-      // already moved on): revoke + worker deletion + purge stops the frequent
-      // sweep from re-reading them forever.
       await ctx.scheduler.runAfter(0, internal.segmentMedia.cleanupRecording, { recordingId })
     }
     for (const recordingId of page.materialize) {

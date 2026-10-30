@@ -539,6 +539,131 @@ it('serves index playlists from denormalized durations instead of fragment rows'
   expect(served.segments).toEqual(page.segments)
 })
 
+it('keeps playlist reads bounded independently of fragment count', async () => {
+  const { t, fixture, record, receipt } = await setup(600000)
+  await receipt(-1, 0)
+  for (let index = 0; index < 30; index++) await receipt(index)
+  const args = { recordingId: record.recordingId, userId: fixture.owner, index: null }
+  // This budget covers access checks but cannot accommodate the 30 fragment rows.
+  const readWithBudget = () =>
+    t.query((ctx) =>
+      ctx.runQuery(internal.segmentMedia.timeline, args, {
+        transactionLimits: { documentsRead: 20 },
+      }),
+    )
+  expect((await readWithBudget()).segments).toHaveLength(30)
+  await t.run((ctx) => ctx.db.patch(record.recordingId, { durations: undefined }))
+  await expect(readWithBudget()).rejects.toThrow()
+  await t.mutation(internal.segmentMedia.backfillRecordingDurations, {
+    recordingId: record.recordingId,
+  })
+  expect((await readWithBudget()).segments).toHaveLength(30)
+})
+
+it('extends a backfilled live timeline without duplicating retried receipts', async () => {
+  const { t, fixture, record, receipt } = await setup(60000)
+  await receipt(-1, 0)
+  await receipt(0, 3)
+  await t.run((ctx) => ctx.db.patch(record.recordingId, { durations: undefined }))
+  await receipt(1, 5)
+  expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.durations).toBeUndefined()
+  await t.mutation(internal.segmentMedia.backfillRecordingDurations, {
+    recordingId: record.recordingId,
+  })
+  await receipt(2, 4)
+  await receipt(2, 4)
+  expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.durations).toEqual([3, 5, 4])
+  expect(
+    (
+      await t.query(internal.segmentMedia.timeline, {
+        recordingId: record.recordingId,
+        userId: fixture.owner,
+        index: null,
+      })
+    ).segments,
+  ).toEqual([
+    { index: 0, duration: 3 },
+    { index: 1, duration: 5 },
+    { index: 2, duration: 4 },
+  ])
+})
+
+it.each(['missing', 'noncontiguous'] as const)(
+  'preserves legacy fragment indexes with a %s timeline',
+  async (kind) => {
+    const { t, fixture, record, receipt } = await setup()
+    await receipt(-1, 0)
+    await receipt(0, 3)
+    await receipt(1, 5)
+    await t.run(async (ctx) => {
+      await ctx.db.patch(record.recordingId, { durations: undefined })
+      const segment = await ctx.db
+        .query('mediaSegments')
+        .withIndex('by_recording_index', (q) =>
+          q.eq('recordingId', record.recordingId).eq('index', 0),
+        )
+        .unique()
+      if (!segment) throw new Error('Missing fixture')
+      if (kind === 'missing') await ctx.db.delete(segment._id)
+      else await ctx.db.patch(segment._id, { index: 2 })
+    })
+    await t.mutation(internal.segmentMedia.backfillRecordingDurations, {
+      recordingId: record.recordingId,
+    })
+    expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.durations).toBeUndefined()
+    expect(
+      (
+        await t.query(internal.segmentMedia.timeline, {
+          recordingId: record.recordingId,
+          userId: fixture.owner,
+          index: null,
+        })
+      ).segments,
+    ).toEqual(
+      kind === 'missing'
+        ? [{ index: 1, duration: 5 }]
+        : [
+            { index: 1, duration: 5 },
+            { index: 2, duration: 3 },
+          ],
+    )
+  },
+)
+
+it('materializes ready legacy recordings through daily reconciliation only once', async () => {
+  vi.useFakeTimers()
+  try {
+    const { t, owner, record, receipt } = await setup()
+    await receipt(-1, 0)
+    await receipt(0)
+    await owner.mutation(api.segmentMedia.finish, {
+      recordingId: record.recordingId,
+      segmentCount: 1,
+    })
+    await t.run((ctx) => ctx.db.patch(record.recordingId, { durations: undefined }))
+    const args = { cursor: null, mode: 'reconcile' as const }
+    expect(
+      (await t.query(internal.segmentMedia.cleanupPage, { cursor: null })).materialize,
+    ).toEqual([])
+    expect((await t.query(internal.segmentMedia.cleanupPage, args)).materialize).toEqual([
+      record.recordingId,
+    ])
+    await t.action(internal.segmentMedia.cleanup, { mode: 'reconcile' })
+    await t.finishAllScheduledFunctions(vi.runAllTimers)
+    expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.durations).toEqual([4])
+    expect((await t.query(internal.segmentMedia.cleanupPage, args)).materialize).toEqual([])
+    await t.mutation((ctx) =>
+      ctx.runMutation(
+        internal.segmentMedia.backfillRecordingDurations,
+        { recordingId: record.recordingId },
+        { transactionLimits: { documentsRead: 1, documentsWritten: 0 } },
+      ),
+    )
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
 it('retains a watchable prefix after the upload recovery window instead of deleting it', async () => {
   const { t, record, receipt } = await setup(60000)
   await receipt(-1, 0)
@@ -559,6 +684,144 @@ it('retains a watchable prefix after the upload recovery window instead of delet
     durationMs: 12000,
   })
   expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.finalCount).toBe(3)
+})
+
+describe('cleanup destination ownership', () => {
+  async function interruptedRecording(isResponse: boolean) {
+    const setupResult = await setup(60000)
+    const { t, owner, fixture, args, record: root, receipt } = setupResult
+    await receipt(-1, 0)
+    await receipt(0)
+    await owner.mutation(api.segmentMedia.finish, {
+      recordingId: root.recordingId,
+      segmentCount: 1,
+    })
+    const record = await owner.mutation(api.segmentMedia.begin, {
+      ...args,
+      localId: '00000000-0000-4000-8000-000000000002',
+      isResponse,
+      ...(isResponse ? { bondfireId: root.recordId as Id<'bondfires'> } : {}),
+    })
+    for (const index of [-1, 0, 1])
+      await t.mutation(internal.segmentMedia.receipt, {
+        recordingId: record.recordingId,
+        userId: fixture.owner,
+        index,
+        duration: index === -1 ? 0 : 4,
+        size: 1000,
+        checksum: 'a'.repeat(64),
+      })
+    // An upload spanning deployment has no materialized durations yet.
+    await t.run((ctx) => ctx.db.patch(record.recordingId, { durations: undefined }))
+    return { ...setupResult, record }
+  }
+
+  it.each([false, true])('preserves the linked prefix (response=%s)', async (isResponse) => {
+    const { t, record } = await interruptedRecording(isResponse)
+    await t.run((ctx) =>
+      ctx.db.patch(record.recordingId, { createdAt: Date.now() - 8 * 86400_000 }),
+    )
+    expect(await t.query(internal.segmentMedia.cleanupPage, { cursor: null })).toMatchObject({
+      ids: [],
+      interrupted: [record.recordingId],
+    })
+    expect(
+      await t.mutation(internal.segmentMedia.revoke, {
+        recordingId: record.recordingId,
+        onlyIfCleanupEligible: true,
+      }),
+    ).toBe(false)
+    await t.mutation(internal.segmentMedia.finalizeInterrupted, { recordingId: record.recordingId })
+    expect(await t.run((ctx) => ctx.db.get(record.recordingId))).toMatchObject({
+      status: 'ready',
+      finalCount: 2,
+      durations: [4, 4],
+    })
+    expect(await t.run((ctx) => ctx.db.get(record.recordId))).toMatchObject({
+      videoStatus: 'ready',
+      durationMs: 8000,
+    })
+    expect(await t.query(internal.segmentMedia.cleanupPage, { cursor: null })).toMatchObject({
+      ids: [],
+      interrupted: [],
+    })
+  })
+
+  it.each([false, true])(
+    'drains replaced uploads without changing the replacement (response=%s)',
+    async (isResponse) => {
+      const { t, record } = await interruptedRecording(isResponse)
+      const replacementId = await t.run(async (ctx) => {
+        const recording = await ctx.db.get(record.recordingId)
+        if (!recording) throw new Error('Missing fixture')
+        const { _id, _creationTime, ...fields } = recording
+        const id = await ctx.db.insert('segmentRecordings', { ...fields, localId: 'replacement' })
+        await ctx.db.patch(record.recordId, { segmentRecordingId: id })
+        return id
+      })
+      // Keep even an unlinked upload throughout its recovery window.
+      const cleanupArgs = {
+        cursor: null,
+        mode: 'reconcile' as const,
+        reconcileStatus: 'uploading' as const,
+      }
+      expect(await t.query(internal.segmentMedia.cleanupPage, cleanupArgs)).toMatchObject({
+        ids: [],
+        interrupted: [],
+      })
+      expect(
+        await t.mutation(internal.segmentMedia.revoke, {
+          recordingId: record.recordingId,
+          onlyIfCleanupEligible: true,
+        }),
+      ).toBe(false)
+      await t.run((ctx) =>
+        ctx.db.patch(record.recordingId, { createdAt: Date.now() - 8 * 86400_000 }),
+      )
+      expect(await t.query(internal.segmentMedia.cleanupPage, { cursor: null })).toMatchObject({
+        ids: [record.recordingId],
+        interrupted: [],
+      })
+      // A finalization queued before the replacement must recheck the link.
+      await t.mutation(internal.segmentMedia.finalizeInterrupted, {
+        recordingId: record.recordingId,
+      })
+      expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.status).toBe('uploading')
+      const destination = await t.run((ctx) => ctx.db.get(record.recordId))
+      const replacement = await t.run((ctx) => ctx.db.get(replacementId))
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 200 })))
+      await t.action(internal.segmentMedia.cleanupRecording, { recordingId: record.recordingId })
+      expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.status).toBe('cancelled')
+      expect(await t.run((ctx) => ctx.db.get(record.recordId))).toEqual(destination)
+      expect(await t.run((ctx) => ctx.db.get(replacementId))).toEqual(replacement)
+      expect(await t.query(internal.segmentMedia.cleanupPage, { cursor: null })).toMatchObject({
+        ids: [],
+        interrupted: [],
+      })
+    },
+  )
+
+  it.each([false, true])(
+    'rechecks a restored destination before revocation (response=%s)',
+    async (isResponse) => {
+      const { t, record } = await interruptedRecording(isResponse)
+      await t.run(async (ctx) => {
+        await ctx.db.patch(record.recordingId, { createdAt: Date.now() - 8 * 86400_000 })
+        await ctx.db.patch(record.recordId, { segmentRecordingId: undefined })
+      })
+      expect((await t.query(internal.segmentMedia.cleanupPage, { cursor: null })).ids).toEqual([
+        record.recordingId,
+      ])
+      await t.run((ctx) =>
+        ctx.db.patch(record.recordId, { segmentRecordingId: record.recordingId }),
+      )
+      const fetchMock = vi.fn()
+      vi.stubGlobal('fetch', fetchMock)
+      await t.action(internal.segmentMedia.cleanupRecording, { recordingId: record.recordingId })
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.status).toBe('uploading')
+    },
+  )
 })
 
 describe('indexed media cleanup', () => {
