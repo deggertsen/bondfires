@@ -19,7 +19,7 @@ import type {
   BondfireVideoItem,
   ScrollToIndexFailedInfo,
 } from '../_lib/bondfireDetailHelpers'
-import { SCREEN_WIDTH, shouldOfferResponseAfterPlayback } from '../_lib/bondfireDetailHelpers'
+import { SCREEN_WIDTH } from '../_lib/bondfireDetailHelpers'
 import {
   PLAYBACK_HEADER_BOTTOM_PADDING,
   PLAYBACK_HEADER_HEIGHT,
@@ -255,15 +255,8 @@ export function BondfirePlaybackScreen({
               segmentRecordingId={item.segmentRecordingId}
               recordingStopped={item.recordingStopped}
               onEffectiveRateChange={onEffectiveRateChange}
-              onRespondAfterPlayback={
-                shouldOfferResponseAfterPlayback({
-                  videoIndex: index,
-                  totalVideos,
-                  canRespond,
-                })
-                  ? handleRespond
-                  : undefined
-              }
+              onRespond={canRespond ? handleRespond : undefined}
+              nextCreatorName={videoItems[index + 1]?.creatorName}
             />
           )}
           horizontal

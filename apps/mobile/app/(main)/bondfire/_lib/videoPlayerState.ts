@@ -83,12 +83,50 @@ export function shouldResumeAfterPictureInPictureStop({
   return appState === 'active' && elapsedMs >= 0 && elapsedMs <= graceMs
 }
 
+/**
+ * The centered Respond button under the play indicator: whenever playback has
+ * stopped after the viewer watched some of the video (paused or finished),
+ * not before the first frame plays. A finished video that auto-advances to the
+ * next one skips it rather than flashing it during the swipe.
+ */
 export function shouldShowRespondCTA({
   hasEnded,
   isPlaying,
   isLoading,
-}: Pick<VideoPlayerState, 'hasEnded' | 'isPlaying' | 'isLoading'>) {
-  return hasEnded && !isPlaying && !isLoading
+  hasError,
+  hasProgress,
+  isHoldingLiveEdge,
+  advancesOnEnd,
+}: Pick<VideoPlayerState, 'hasEnded' | 'isPlaying' | 'isLoading' | 'hasError'> & {
+  /** Playback has moved past 0ms. */
+  hasProgress: boolean
+  isHoldingLiveEdge: boolean
+  advancesOnEnd: boolean
+}) {
+  if (isPlaying || isLoading || hasError || isHoldingLiveEdge) return false
+  if (hasEnded) return !advancesOnEnd
+  return hasProgress
+}
+
+/** How much of a video's end (media time) shows the "Something to add?" card. */
+export const RESPOND_NUDGE_WINDOW_MS = 5_000
+/** Shorter videos skip the card; it would cover too much of them. */
+export const RESPOND_NUDGE_MIN_DURATION_MS = 10_000
+
+/** The "Something to add?" card over the last few seconds of any finished-length video. */
+export function shouldShowRespondNudge({
+  isPlaying,
+  hasEnded,
+  duration,
+  elapsedMs,
+  isLive,
+}: Pick<VideoPlayerState, 'isPlaying' | 'hasEnded' | 'duration' | 'elapsedMs'> & {
+  isLive: boolean
+}) {
+  if (isLive || !isPlaying || hasEnded) return false
+  if (!Number.isFinite(duration) || duration < RESPOND_NUDGE_MIN_DURATION_MS) return false
+  const remainingMs = duration - elapsedMs
+  return remainingMs > 0 && remainingMs <= RESPOND_NUDGE_WINDOW_MS
 }
 
 /** How close to the end counts as "finished" when deciding to replay. */
