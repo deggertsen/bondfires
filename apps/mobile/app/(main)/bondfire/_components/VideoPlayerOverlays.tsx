@@ -509,18 +509,41 @@ export function RightSideControls({
   )
 }
 
+/**
+ * Respond under the play/replay indicator whenever playback stops: a pause on
+ * any video, or the end of the thread's last one (earlier videos advance).
+ */
 export function RespondCTAOverlay({
   state$,
+  isHoldingLiveEdge = false,
+  advancesOnEnd,
   onRespond,
 }: {
   state$: VideoPlayerState$
+  isHoldingLiveEdge?: boolean
+  advancesOnEnd: boolean
   onRespond: () => void
 }) {
   const hasEnded = useValue(state$.hasEnded)
   const isPlaying = useValue(state$.isPlaying)
   const isLoading = useValue(state$.isLoading)
+  const hasError = useValue(state$.hasError)
+  // A boolean selector so playback's 250ms clock ticks do not re-render this.
+  const hasProgress = useValue(() => state$.elapsedMs.get() > 0)
 
-  if (!shouldShowRespondCTA({ hasEnded, isPlaying, isLoading })) return null
+  if (
+    !shouldShowRespondCTA({
+      hasEnded,
+      isPlaying,
+      isLoading,
+      hasError,
+      hasProgress,
+      isHoldingLiveEdge,
+      advancesOnEnd,
+    })
+  ) {
+    return null
+  }
 
   return (
     <YStack
@@ -531,6 +554,7 @@ export function RespondCTAOverlay({
       marginTop={60}
       alignItems="center"
       zIndex={4}
+      pointerEvents="box-none"
       animation="quick"
       enterStyle={{ opacity: 0, scale: 0.9 }}
     >
@@ -548,10 +572,73 @@ export function RespondCTAOverlay({
       >
         <Flame size={22} color={OVERLAY_COLORS.textPrimary} />
         <Text fontSize={16} fontWeight="800" color={OVERLAY_COLORS.textPrimary}>
-          Respond to this Bondfire
+          {hasEnded ? 'Respond to this Bondfire' : 'Respond'}
         </Text>
       </Button>
     </YStack>
+  )
+}
+
+/** Height of RespondNudgeCard; captions lift by this much (plus a gap) while it shows. */
+export const RESPOND_NUDGE_HEIGHT = 60
+
+/**
+ * "Something to add?" over the last seconds of a video (see
+ * shouldShowRespondNudge), sitting where captions usually do and left of the
+ * react/mute stack. The caller decides visibility so it can lift captions too.
+ */
+export function RespondNudgeCard({
+  nextCreatorName,
+  onRespond,
+  bottomOffset = 0,
+}: {
+  nextCreatorName?: string
+  onRespond: () => void
+  bottomOffset?: number
+}) {
+  const insets = useSafeAreaInsets()
+
+  return (
+    <XStack
+      position="absolute"
+      left={16}
+      right={RIGHT_CONTROLS_RIGHT + RIGHT_CONTROL_SIZE + 12}
+      bottom={RIGHT_CONTROLS_BOTTOM + insets.bottom + bottomOffset}
+      height={RESPOND_NUDGE_HEIGHT}
+      alignItems="center"
+      gap={10}
+      paddingLeft={14}
+      paddingRight={8}
+      borderRadius={18}
+      borderWidth={1}
+      borderColor={'$primary'}
+      backgroundColor={OVERLAY_COLORS.pillBackground}
+      zIndex={4}
+      animation="quick"
+      enterStyle={{ opacity: 0, y: 12 }}
+    >
+      <YStack flex={1} minWidth={0}>
+        <Text fontSize={15} fontWeight="800" color={OVERLAY_COLORS.textPrimary} numberOfLines={1}>
+          Something to add?
+        </Text>
+        <Text fontSize={12} color={OVERLAY_COLORS.textSecondary} numberOfLines={1}>
+          {nextCreatorName ? `Up next: ${nextCreatorName}` : 'Last video in this thread'}
+        </Text>
+      </YStack>
+      <Button
+        variant="primary"
+        size="$md"
+        onPress={onRespond}
+        accessibilityLabel="Respond to this Bondfire"
+        borderRadius={14}
+        gap={6}
+      >
+        <Flame size={18} color={OVERLAY_COLORS.textPrimary} />
+        <Text fontSize={15} fontWeight="800" color={OVERLAY_COLORS.textPrimary}>
+          Respond
+        </Text>
+      </Button>
+    </XStack>
   )
 }
 

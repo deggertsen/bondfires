@@ -145,7 +145,9 @@ vi.mock('../../app/(main)/bondfire/_components/VideoPlayerOverlays', () => ({
   PlayPauseIndicator: 'PlayPauseIndicator',
   ReactionPresenceLayer: 'ReactionPresenceLayer',
   ReportOverlayGate: 'ReportOverlayGate',
+  RESPOND_NUDGE_HEIGHT: 60,
   RespondCTAOverlay: 'RespondCTAOverlay',
+  RespondNudgeCard: 'RespondNudgeCard',
   RightSideControls: 'RightSideControls',
   VideoProgressBar: 'VideoProgressBar',
 }))
