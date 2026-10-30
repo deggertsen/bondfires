@@ -5,7 +5,7 @@ import {
   useDefaultBondfireTitle,
 } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
-import { Check, Share } from '@tamagui/lucide-icons'
+import { Share } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useRef, useState } from 'react'
@@ -19,11 +19,14 @@ import { InviteSheet } from './InviteSheet'
 import { PushPrimerSheet } from './PushPrimerSheet'
 
 const MAX_TITLE_LENGTH = 80
+// Three lines at lineHeight 20 fits the longest upload note on small phones.
+const UPLOAD_NOTE_HEIGHT = 60
 
 interface CompletionScreenProps {
   onContinue?: () => void
   onRecordAnother?: () => void
-  detail?: string
+  /** Upload progress note shown under the actions; undefined once the video is ready. */
+  uploadNote?: string
   /**
    * The just-created bondfire, when the user owns it (live-publish camp and
    * personal flows). Enables the inline title field and the Invite button.
@@ -42,7 +45,7 @@ interface CompletionScreenProps {
 }
 
 export function CompletionScreen({
-  detail,
+  uploadNote,
   onContinue,
   onRecordAnother,
   bondfireId,
@@ -152,22 +155,10 @@ export function CompletionScreen({
             fontWeight="700"
             color={'$color'}
             textAlign="center"
-            marginBottom={detail ? 16 : 32}
+            marginBottom={32}
           >
             {message.message}
           </Text>
-
-          {detail && (
-            <Text
-              color={'$placeholderColor'}
-              fontSize={15}
-              lineHeight={22}
-              textAlign="center"
-              marginBottom={32}
-            >
-              {detail}
-            </Text>
-          )}
 
           {/* Inline title field — only when the user owns the new bondfire */}
           {bondfireId && (
@@ -202,21 +193,41 @@ export function CompletionScreen({
             </YStack>
           )}
 
-          {/* Buttons */}
-          {bondfireId ? (
-            <XStack gap={12}>
+          {/* Action block — fixed layout from first render through upload
+              ready/failed, so no button moves under the user's thumb. The
+              two-button row skips icons so both labels fit at 360pt widths. */}
+          <YStack width="100%" gap={12}>
+            <XStack width="100%" gap={12}>
+              {onRecordAnother && (
+                <Button
+                  flex={1}
+                  variant="outline"
+                  size="$lg"
+                  disabled={isSaving}
+                  paddingHorizontal={12}
+                  onPress={handleRecordAnother}
+                >
+                  <Text color={'$color'} fontWeight="700" numberOfLines={1}>
+                    Say more
+                  </Text>
+                </Button>
+              )}
               <Button
-                variant="outline"
+                flex={1}
+                variant={bondfireId ? 'outline' : 'primary'}
                 size="$lg"
+                paddingHorizontal={12}
                 disabled={isSaving}
                 onPress={handleDone}
-                icon={<Check size={18} color={'$color'} />}
               >
-                <Text color={'$color'} fontWeight="700">
+                <Text color={'$color'} fontWeight="700" numberOfLines={1}>
                   Done
                 </Text>
               </Button>
+            </XStack>
+            {bondfireId && (
               <Button
+                width="100%"
                 variant="primary"
                 size="$lg"
                 onPress={handleInvite}
@@ -226,26 +237,21 @@ export function CompletionScreen({
                   Invite
                 </Text>
               </Button>
-            </XStack>
-          ) : (
-            <Button variant="primary" size="$lg" onPress={handleDone} icon={Check}>
-              <Text color={'$color'}>Done</Text>
-            </Button>
-          )}
-          {onRecordAnother && (
-            <Text
-              accessibilityRole="link"
-              accessibilityState={{ disabled: isSaving }}
-              color="$primary"
-              fontSize={14}
-              textAlign="center"
-              marginTop={20}
-              paddingVertical={12}
-              onPress={isSaving ? undefined : handleRecordAnother}
-            >
-              Not finished? Record another response.
-            </Text>
-          )}
+            )}
+            {/* Fixed-height slot: clearing the note must not re-center the
+                column, so the slot stays mounted at full height. */}
+            <YStack height={UPLOAD_NOTE_HEIGHT} marginTop={4}>
+              <Text
+                color={'$placeholderColor'}
+                fontSize={14}
+                lineHeight={20}
+                numberOfLines={3}
+                textAlign="center"
+              >
+                {uploadNote ?? ''}
+              </Text>
+            </YStack>
+          </YStack>
         </YStack>
       </KeyboardAvoidingView>
 
