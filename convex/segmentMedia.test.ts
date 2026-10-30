@@ -500,6 +500,45 @@ describe('shared draft to growing playback', () => {
   })
 })
 
+it('serves index playlists from denormalized durations instead of fragment rows', async () => {
+  const { t, fixture, record, receipt } = await setup()
+  await receipt(-1, 0)
+  await receipt(0)
+  await receipt(1, 5)
+  const page = await t.query(internal.segmentMedia.timeline, {
+    recordingId: record.recordingId,
+    userId: fixture.owner,
+    index: null,
+  })
+  expect(page.segments).toEqual([
+    { index: 0, duration: 4 },
+    { index: 1, duration: 5 },
+  ])
+  expect(await t.run((ctx) => ctx.db.get(record.recordingId))).toMatchObject({
+    durations: [4, 5],
+  })
+  // Legacy row without durations: a query still serves the playlist (reading
+  // fragments), while the backfill mutation persists the materialized copy.
+  await t.run((ctx) => ctx.db.patch(record.recordingId, { durations: undefined }))
+  const legacy = await t.query(internal.segmentMedia.timeline, {
+    recordingId: record.recordingId,
+    userId: fixture.owner,
+    index: null,
+  })
+  expect(legacy.segments).toEqual(page.segments)
+  expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.durations).toBeUndefined()
+  await t.mutation(internal.segmentMedia.backfillRecordingDurations, {
+    recordingId: record.recordingId,
+  })
+  expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.durations).toEqual([4, 5])
+  const served = await t.query(internal.segmentMedia.timeline, {
+    recordingId: record.recordingId,
+    userId: fixture.owner,
+    index: null,
+  })
+  expect(served.segments).toEqual(page.segments)
+})
+
 it('retains a watchable prefix after the upload recovery window instead of deleting it', async () => {
   const { t, record, receipt } = await setup(60000)
   await receipt(-1, 0)
@@ -627,6 +666,7 @@ describe('indexed media cleanup', () => {
     ).toEqual({
       ids: [],
       interrupted: [],
+      materialize: [],
       cursor: null,
     })
     await t.run((ctx) => ctx.db.patch(record.recordingId, { status: 'cancelled' }))
@@ -635,6 +675,7 @@ describe('indexed media cleanup', () => {
     ).toEqual({
       ids: [record.recordingId],
       interrupted: [],
+      materialize: [],
       cursor: null,
     })
     await t.run((ctx) => ctx.db.delete(record.recordId))
@@ -696,6 +737,7 @@ describe('indexed media cleanup', () => {
       expect(await t.query(internal.segmentMedia.cleanupPage, { cursor, mode })).toEqual({
         ids: [readyId],
         interrupted: [],
+        materialize: [],
         cursor: null,
       })
       // Recent uploads with missing parents must still be reconciled daily.
@@ -706,7 +748,7 @@ describe('indexed media cleanup', () => {
           mode: 'reconcile',
           reconcileStatus: 'uploading',
         }),
-      ).toEqual({ ids: [record.recordingId], interrupted: [], cursor: null })
+      ).toEqual({ ids: [record.recordingId], interrupted: [], materialize: [], cursor: null })
     },
   )
 
@@ -794,6 +836,7 @@ it('keeps the uploading index cutoff fixed across delayed cleanup pages', async 
   const runQuery = vi.fn(async (_reference: unknown, _args: unknown) => ({
     ids: [],
     interrupted: [],
+    materialize: [],
     cursor: 'next-page',
   }))
   const runAfter = vi.fn()
@@ -873,7 +916,7 @@ describe('independent media cleanup jobs', () => {
     async ({ mode, cursor }) => {
       const ids = ['failed-recording', 'healthy-recording'] as Id<'segmentRecordings'>[]
       const interrupted = ['playable-recording'] as Id<'segmentRecordings'>[]
-      const runQuery = vi.fn(async () => ({ ids, interrupted, cursor }))
+      const runQuery = vi.fn(async () => ({ ids, interrupted, materialize: [], cursor }))
       const runAfter = vi.fn()
       if (!('_handler' in cleanup) || typeof cleanup._handler !== 'function')
         throw new Error('Missing cleanup action handler')

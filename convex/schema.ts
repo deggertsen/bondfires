@@ -1261,6 +1261,9 @@ export default defineSchema({
     status: v.union(v.literal('uploading'), v.literal('ready'), v.literal('cancelled')),
     segmentCount: v.number(),
     duration: v.number(),
+    // Denormalized fragment durations (index-aligned). Lets playlist polling
+    // return from the recording row instead of reading every fragment row.
+    durations: v.optional(v.array(v.number())),
     maxDuration: v.number(),
     initChecksum: v.optional(v.string()),
     finalCount: v.optional(v.number()),
