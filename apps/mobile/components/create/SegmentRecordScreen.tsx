@@ -310,7 +310,7 @@ export function SegmentRecordScreen({
         bondfireId={ownedBondfireId}
         campName={campName}
         inviteMode={options.personalCamp ? 'personal-bondfire' : 'bondfire'}
-        detail={
+        uploadNote={
           destination?.videoStatus === 'ready'
             ? undefined
             : error
