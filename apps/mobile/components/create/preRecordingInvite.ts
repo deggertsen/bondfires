@@ -141,6 +141,19 @@ export function buildAutoTitle(
   selectedIds: ReadonlyArray<Id<'users'>>,
   emails: ReadonlyArray<string> = [],
 ): string {
+  const summary = summarizeAudience(candidates, selectedIds, emails)
+  return summary ? `Hey ${summary}`.slice(0, MAX_TITLE_LENGTH) : ''
+}
+
+/**
+ * First names of the selected audience: "Mom", "Mom & Sam", "Mom, Dad & Sam",
+ * "Mom, Dad, Sam & 2 more". Empty when nobody is selected.
+ */
+export function summarizeAudience(
+  candidates: ReadonlyArray<InviteCandidate>,
+  selectedIds: ReadonlyArray<Id<'users'>>,
+  emails: ReadonlyArray<string> = [],
+): string {
   const labels = [
     ...candidates.filter((candidate) => selectedIds.includes(candidate._id)).map(firstName),
     ...emails.map(emailHandle),
@@ -151,20 +164,12 @@ export function buildAutoTitle(
       labels.findIndex((candidate) => candidate.toLowerCase() === label.toLowerCase()) === index,
   )
 
-  let title: string
   if (uniqueLabels.length === 0) return ''
-  if (uniqueLabels.length === 1) {
-    title = `Hey ${uniqueLabels[0]}`
-  } else if (uniqueLabels.length === 2) {
-    title = `Hey ${uniqueLabels[0]} & ${uniqueLabels[1]}`
-  } else {
-    const visible = uniqueLabels.slice(0, 3)
-    const remaining = uniqueLabels.length - visible.length
-    title =
-      remaining === 0
-        ? `Hey ${visible.slice(0, -1).join(', ')} & ${visible[visible.length - 1]}`
-        : `Hey ${visible.join(', ')} & ${remaining} more`
-  }
-
-  return title.slice(0, MAX_TITLE_LENGTH)
+  if (uniqueLabels.length === 1) return uniqueLabels[0] ?? ''
+  if (uniqueLabels.length === 2) return `${uniqueLabels[0]} & ${uniqueLabels[1]}`
+  const visible = uniqueLabels.slice(0, 3)
+  const remaining = uniqueLabels.length - visible.length
+  return remaining === 0
+    ? `${visible.slice(0, -1).join(', ')} & ${visible[visible.length - 1]}`
+    : `${visible.join(', ')} & ${remaining} more`
 }

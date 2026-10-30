@@ -65,8 +65,9 @@ export const routes = {
   // tab, so it cleanly unmounts when the user navigates away.
   create: '/(main)/create',
 
-  // Generic Spark/create entry — no camp pre-selected. Use this for the bottom
-  // tab so stale search params from a prior visit cannot skip the camp picker.
+  // Generic Spark/create entry — no camp pre-selected, so the composer opens on
+  // People. Use this for the bottom tab so stale search params from a prior
+  // visit cannot open the Camp tab instead.
   createFresh: (): Href => ({
     pathname: '/(main)/create',
     params: {},

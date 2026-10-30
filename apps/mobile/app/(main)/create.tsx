@@ -2,20 +2,27 @@ import { appActions, appStore$, telemetry, useAppThemeColors } from '@bondfires/
 import { Button, Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useIsFocused } from '@react-navigation/native'
-import { ChevronLeft, Flame } from '@tamagui/lucide-icons'
+import { Flame } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera'
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AppState, Pressable, StatusBar } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { XStack, YStack } from 'tamagui'
+import { AppState, StatusBar } from 'react-native'
+import { YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
-import { CampPickerScreen } from '../../components/create/CampPickerScreen'
+import { CampSparkPane } from '../../components/create/CampSparkPane'
 import { PreRecordingInviteScreen } from '../../components/create/PreRecordingInviteScreen'
 import { SegmentRecordScreen } from '../../components/create/SegmentRecordScreen'
+import { SparkModeToggle } from '../../components/create/SparkModeToggle'
 import type { TradeTag } from '../../components/create/shared'
+import {
+  buildCampPickerList,
+  orderedPickableCamps,
+  resolveInitialSparkMode,
+  resolveSelectedCampId,
+  type SparkMode,
+} from '../../components/create/sparkComposer'
 import { segmentMediaEnabled } from '../../lib/media/segmentUploads'
 import { goBackOrReplace } from '../../lib/navigation'
 import { routes } from '../../lib/routes'
@@ -43,16 +50,15 @@ function RecordingUnavailableScreen() {
 // gate as the uploader so disabled builds cannot accumulate unsendable videos.
 function EnabledCreateScreen() {
   const { colors, statusBarStyle } = useAppThemeColors()
-  const insets = useSafeAreaInsets()
   const router = useRouter()
   const navigation = useNavigation()
-  const { campId, respondTo, personalCamp, resumeDraft } = useLocalSearchParams<{
+  // `personalCamp=1` still arrives from Hearth entry points; People is the
+  // default for every fresh entry now, so it needs no special handling.
+  const { campId, respondTo, resumeDraft } = useLocalSearchParams<{
     campId?: string
     respondTo?: string
-    personalCamp?: string
     resumeDraft?: string
   }>()
-  const isPersonalCamp = personalCamp === '1'
   // Each attempt mounts a fresh recorder with its own durable upload journal.
   const [nextResponse, setNextResponse] = useState<{
     bondfireId: Id<'bondfires'>
@@ -95,15 +101,19 @@ function EnabledCreateScreen() {
   const state$ = useObservable({
     isAppActive: AppState.currentState === 'active',
     isFocused: isFocused,
-    selectedCampId: null as Id<'camps'> | null,
-    promptCampId: null as Id<'camps'> | null,
-    promptDismissed: false,
+    // People unless the caller scoped this spark to a camp.
+    mode: resolveInitialSparkMode({ campId }) as SparkMode,
+    /** Camp chosen in the camp sheet; null until the user picks one. */
+    pickedCampId: null as Id<'camps'> | null,
+    /** Set when "Record in {camp}" is pressed — hands off to the recorder. */
+    campConfirmed: false,
     tradeTag: null as TradeTag | null,
   })
 
   const isAppActive = useValue(state$.isAppActive)
-  const selectedCampId = useValue(state$.selectedCampId)
-  const promptDismissed = useValue(state$.promptDismissed)
+  const mode = useValue(state$.mode)
+  const pickedCampId = useValue(state$.pickedCampId)
+  const campConfirmed = useValue(state$.campConfirmed)
   const tradeTag = useValue(state$.tradeTag)
   const currentCampId = useValue(appStore$.currentCampId)
   const draftBondfireId$ = useObservable<string | null>(null)
@@ -116,11 +126,7 @@ function EnabledCreateScreen() {
   const camps = useQuery(api.camps.list, respondTo ? 'skip' : {})
   const subscription = useQuery(api.subscriptions.current, {})
   const currentUser = useQuery(api.users.current)
-  const personalCampDoc = useQuery(api.personalCamps.getMyPersonalCamp, {})
-  const existingDraft = useQuery(
-    api.personalBondfires.getMyDraftBondfire,
-    isPersonalCamp ? {} : 'skip',
-  )
+  const existingDraft = useQuery(api.personalBondfires.getMyDraftBondfire, respondTo ? 'skip' : {})
   useEffect(() => {
     // Resolve the exact owner draft before bypassing audience setup. Retain the
     // selection when uploading activates it and getMyDraftBondfire becomes null.
@@ -130,50 +136,53 @@ function EnabledCreateScreen() {
   }, [resumeDraft, existingDraft, draftBondfireId, draftBondfireId$])
   const joinCamp = useMutation(api.camps.join)
   const persistedCampId = currentCampId as Id<'camps'> | null
-  const effectiveCampId = respondTo
-    ? undefined
-    : isPersonalCamp
-      ? undefined
-      : ((campId as Id<'camps'> | undefined) ?? selectedCampId ?? undefined)
-  const selectedCamp = useMemo(() => {
-    if (!effectiveCampId || !camps) return null
-    return camps.find((camp) => camp._id === effectiveCampId) ?? null
-  }, [camps, effectiveCampId])
-  const isResolvingSelectedCamp = !respondTo && !!effectiveCampId && camps === undefined
-  const isSelectedCampUnavailable =
-    !respondTo && !!effectiveCampId && camps !== undefined && selectedCamp === null
-  const sortedCamps = useMemo(() => {
-    if (!camps) return []
-    const userGender = currentUser?.gender
-    return camps
-      .filter((camp) => camp.access !== 'invite' || camp.membership?.role === 'owner')
-      .sort((left, right) => {
-        const leftWelcome = left.slug.startsWith('welcome-fires') ? -1 : 0
-        const rightWelcome = right.slug.startsWith('welcome-fires') ? -1 : 0
-        if (leftWelcome !== rightWelcome) return leftWelcome - rightWelcome
 
-        const leftMatch = userGender && left.rules.access.gender?.value === userGender ? -1 : 0
-        const rightMatch = userGender && right.rules.access.gender?.value === userGender ? -1 : 0
-        if (leftMatch !== rightMatch) return leftMatch - rightMatch
+  const campPickerList = useMemo(
+    () => (camps ? buildCampPickerList(camps, persistedCampId) : null),
+    [camps, persistedCampId],
+  )
+  const pickableCamps = useMemo(
+    () => (campPickerList ? orderedPickableCamps(campPickerList) : []),
+    [campPickerList],
+  )
+  const selectedCampId = resolveSelectedCampId(pickableCamps, {
+    pickedCampId,
+    paramCampId: campId,
+    lastUsedCampId: persistedCampId,
+  })
+  const selectedCamp = useMemo(
+    () => pickableCamps.find((camp) => camp._id === selectedCampId) ?? null,
+    [pickableCamps, selectedCampId],
+  )
+  const requestedCampUnavailable =
+    !!campId && camps !== undefined && !pickableCamps.some((camp) => camp._id === campId)
 
-        return left.name.localeCompare(right.name)
-      })
-  }, [camps, currentUser?.gender])
-  const selectedCampTags = tradeTag ? [tradeTag] : undefined
+  // What the recorder is about to capture. Null keeps the composer up.
+  const recordingTarget: 'response' | 'personal' | 'camp' | null = respondTo
+    ? 'response'
+    : draftBondfireId || inviteSkipped
+      ? 'personal'
+      : campConfirmed && selectedCamp
+        ? 'camp'
+        : null
+
+  const selectedCampTags = recordingTarget === 'camp' && tradeTag ? [tradeTag] : undefined
   const selectedCampMaxSeconds = selectedCamp?.rules.participation.maxDurationMs
     ? Math.floor(selectedCamp.rules.participation.maxDurationMs / 1000)
     : undefined
   const tierMaxSeconds = subscription?.maxVideoDurationMs
     ? Math.floor(subscription.maxVideoDurationMs / 1000)
     : undefined
-  const effectiveMaxRecordingSeconds = useMemo(() => {
+  const campMaxRecordingSeconds = useMemo(() => {
     const limits = [selectedCampMaxSeconds, tierMaxSeconds].filter(
       (limit): limit is number => typeof limit === 'number' && limit > 0,
     )
     return limits.length > 0 ? Math.min(...limits) : undefined
   }, [selectedCampMaxSeconds, tierMaxSeconds])
-  const needsTradeTag =
-    !respondTo && selectedCamp?.rules.advisory.requiresTradeTags === true && tradeTag === null
+  // Camp limits only apply to camp fires; Hearth fires and responses keep the
+  // tier limit alone.
+  const effectiveMaxRecordingSeconds =
+    recordingTarget === 'camp' ? campMaxRecordingSeconds : tierMaxSeconds
 
   useEffect(() => {
     if (respondTo || !campId) {
@@ -192,37 +201,6 @@ function EnabledCreateScreen() {
       appActions.setCurrentCampId(null)
     }
   }, [camps, persistedCampId, respondTo])
-
-  // Spark tab and other generic /create entry points carry no campId param. Clear
-  // any lingering in-screen camp selection from a prior visit so we always land
-  // on the camp picker instead of replaying the Welcome Fires prompt.
-  useEffect(() => {
-    if (!isFocused || respondTo || isPersonalCamp || campId) {
-      return
-    }
-
-    state$.selectedCampId.set(null)
-    state$.promptCampId.set(null)
-    state$.promptDismissed.set(true)
-    state$.tradeTag.set(null)
-  }, [campId, isFocused, isPersonalCamp, respondTo, state$])
-
-  useEffect(() => {
-    if (respondTo || !effectiveCampId) {
-      state$.promptCampId.set(null)
-      state$.promptDismissed.set(true)
-      return
-    }
-
-    if (!selectedCamp) {
-      return
-    }
-
-    if (state$.promptCampId.get() !== selectedCamp._id) {
-      state$.promptCampId.set(effectiveCampId)
-      state$.promptDismissed.set(false)
-    }
-  }, [effectiveCampId, respondTo, selectedCamp, state$])
 
   // Track app active state (external subscription - keep useEffect)
   useEffect(() => {
@@ -259,14 +237,19 @@ function EnabledCreateScreen() {
     }
   }, [cameraPermission?.status, micPermission?.status, requestPermissions])
 
-  const handleCampConfirmed = useCallback(
-    (selectedId: Id<'camps'>) => {
-      state$.selectedCampId.set(selectedId)
+  const handleSelectCamp = useCallback(
+    (id: Id<'camps'>) => {
+      state$.pickedCampId.set(id)
       state$.tradeTag.set(null)
-      appActions.setCurrentCampId(selectedId)
     },
     [state$],
   )
+
+  const handleRecordInCamp = useCallback(() => {
+    if (!selectedCamp) return
+    appActions.setCurrentCampId(selectedCamp._id)
+    state$.campConfirmed.set(true)
+  }, [selectedCamp, state$])
 
   const handleBack = useCallback(() => {
     goBackOrReplace(router, navigation, routes.feed)
@@ -310,173 +293,6 @@ function EnabledCreateScreen() {
     )
   }
 
-  if (isResolvingSelectedCamp) {
-    return (
-      <YStack
-        flex={1}
-        backgroundColor={'$background'}
-        alignItems="center"
-        justifyContent="center"
-        gap={14}
-      >
-        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
-        <Spinner size="large" color={'$primary'} />
-        <Text color={'$placeholderColor'}>Loading camp...</Text>
-      </YStack>
-    )
-  }
-
-  if (isSelectedCampUnavailable) {
-    return (
-      <YStack
-        flex={1}
-        backgroundColor={'$background'}
-        alignItems="center"
-        justifyContent="center"
-        padding={24}
-        gap={16}
-      >
-        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
-        <Text fontSize={24} fontWeight="900" textAlign="center">
-          Camp unavailable
-        </Text>
-        <Text fontSize={15} color={'$placeholderColor'} textAlign="center" lineHeight={22}>
-          Choose an active camp before recording.
-        </Text>
-        <Button
-          variant="primary"
-          size="$lg"
-          onPress={() => {
-            state$.selectedCampId.set(null)
-            state$.tradeTag.set(null)
-            appActions.setCurrentCampId(null)
-            router.replace(routes.create)
-          }}
-        >
-          <Text color={'$color'} fontWeight="900">
-            Choose Camp
-          </Text>
-        </Button>
-      </YStack>
-    )
-  }
-
-  if (!respondTo && !isPersonalCamp && !effectiveCampId) {
-    return (
-      <CampPickerScreen
-        camps={camps}
-        sortedCamps={sortedCamps}
-        personalCampDoc={personalCampDoc}
-        joinCamp={joinCamp}
-        onCampConfirmed={handleCampConfirmed}
-        onBack={handleBack}
-      />
-    )
-  }
-
-  if (!respondTo && !isPersonalCamp && selectedCamp && !promptDismissed) {
-    return (
-      <YStack
-        flex={1}
-        backgroundColor={'$background'}
-        alignItems="center"
-        justifyContent="center"
-        padding={24}
-        gap={18}
-      >
-        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
-        <Pressable
-          onPress={handleBack}
-          hitSlop={12}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-          style={{
-            position: 'absolute',
-            top: insets.top + 12,
-            left: 20,
-            minWidth: 44,
-            minHeight: 44,
-            justifyContent: 'center',
-          }}
-        >
-          <ChevronLeft size={26} color={'$color'} />
-        </Pressable>
-        <YStack
-          width={78}
-          height={78}
-          borderRadius={22}
-          backgroundColor={selectedCamp.color ?? '$backgroundHover'}
-          alignItems="center"
-          justifyContent="center"
-        >
-          <Flame size={38} color={'$color'} />
-        </YStack>
-        <Text fontSize={24} fontWeight="900" textAlign="center">
-          {selectedCamp.name}
-        </Text>
-        <Text fontSize={16} color={'$color'} textAlign="center" lineHeight={23}>
-          {selectedCamp.defaultPrompt ?? selectedCamp.purpose}
-        </Text>
-        <Button variant="primary" size="$lg" onPress={() => state$.promptDismissed.set(true)}>
-          <Text color={'$color'} fontWeight="900">
-            Continue
-          </Text>
-        </Button>
-      </YStack>
-    )
-  }
-
-  if (needsTradeTag) {
-    return (
-      <YStack
-        flex={1}
-        backgroundColor={'$background'}
-        padding={24}
-        justifyContent="center"
-        gap={18}
-      >
-        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
-        <Pressable
-          onPress={handleBack}
-          hitSlop={12}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-          style={{
-            position: 'absolute',
-            top: insets.top + 12,
-            left: 20,
-            minWidth: 44,
-            minHeight: 44,
-            justifyContent: 'center',
-          }}
-        >
-          <ChevronLeft size={26} color={'$color'} />
-        </Pressable>
-        <Text fontSize={24} fontWeight="900" textAlign="center">
-          Need or Offer?
-        </Text>
-        <Text fontSize={15} color={'$placeholderColor'} textAlign="center" lineHeight={22}>
-          Trading Post sparks need a clear tag before recording.
-        </Text>
-        <XStack gap={12}>
-          {(['need', 'offer'] as const).map((tag) => (
-            <Button
-              key={tag}
-              variant="primary"
-              size="$lg"
-              flex={1}
-              onPress={() => state$.tradeTag.set(tag)}
-            >
-              <Text color={'$color'} fontWeight="900" textTransform="capitalize">
-                {tag}
-              </Text>
-            </Button>
-          ))}
-        </XStack>
-      </YStack>
-    )
-  }
-
   if (resumeDraft && !draftBondfireId) {
     return (
       <YStack flex={1} backgroundColor="$background" justifyContent="center" padding="$4" gap="$3">
@@ -494,44 +310,57 @@ function EnabledCreateScreen() {
     )
   }
 
-  // Pre-recording invite screen for Hearth (personal camp) bondfires.
-  // Shown before the recording screen so the audience is established first.
-  if (isPersonalCamp && !respondTo && !draftBondfireId && !inviteSkipped) {
-    // Resolve the one-draft-at-a-time state before exposing Skip. Otherwise a
-    // fast tap during the query's initial undefined state can bypass an
-    // existing audience and orphan that draft until cleanup.
-    if (existingDraft === undefined) {
-      return (
-        <YStack
-          flex={1}
-          backgroundColor={'$background'}
-          alignItems="center"
-          justifyContent="center"
-          gap={14}
-        >
-          <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
-          <Spinner size="large" color={'$primary'} />
-          <Text color={'$placeholderColor'}>Loading your Hearth...</Text>
-        </YStack>
-      )
-    }
-
+  // Spark composer: People (Hearth invite screen) | Camp. Both panes stay
+  // mounted so a round trip through the other tab keeps what was picked; only
+  // the active tab's choice is used.
+  if (recordingTarget === null) {
+    const modeToggle = (
+      <SparkModeToggle mode={mode} onChange={(nextMode) => state$.mode.set(nextMode)} />
+    )
     return (
-      <PreRecordingInviteScreen
-        existingDraft={existingDraft}
-        onContinue={(bondfireId, _title) => {
-          draftBondfireId$.set(bondfireId)
-        }}
-        onSkip={() => {
-          inviteSkipped$.set(true)
-        }}
-        onCancel={() => {
-          if (router.canDismiss()) {
-            router.dismissAll()
-          }
-          router.replace(routes.feed)
-        }}
-      />
+      <YStack flex={1} backgroundColor={'$background'}>
+        <YStack flex={1} display={mode === 'people' ? 'flex' : 'none'}>
+          {/* Resolve the one-draft-at-a-time state before exposing Skip.
+              Otherwise a fast tap during the query's initial undefined state
+              can bypass an existing audience and orphan that draft. */}
+          {existingDraft === undefined ? (
+            <YStack flex={1} alignItems="center" justifyContent="center" gap={14}>
+              <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+              <Spinner size="large" color={'$primary'} />
+              <Text color={'$placeholderColor'}>Loading your Hearth...</Text>
+            </YStack>
+          ) : (
+            <PreRecordingInviteScreen
+              existingDraft={existingDraft}
+              modeToggle={modeToggle}
+              onContinue={(bondfireId, _title) => {
+                draftBondfireId$.set(bondfireId)
+              }}
+              onSkip={() => {
+                inviteSkipped$.set(true)
+              }}
+              onCancel={handleBack}
+            />
+          )}
+        </YStack>
+        <YStack flex={1} display={mode === 'camp' ? 'flex' : 'none'}>
+          <CampSparkPane
+            modeToggle={modeToggle}
+            onClose={handleBack}
+            camps={camps}
+            pickerList={campPickerList}
+            selectedCamp={selectedCamp}
+            requestedCampUnavailable={requestedCampUnavailable}
+            maxRecordingSeconds={campMaxRecordingSeconds}
+            tradeTag={tradeTag}
+            userGender={currentUser?.gender}
+            joinCamp={joinCamp}
+            onSelectCamp={handleSelectCamp}
+            onTradeTagChange={(tag) => state$.tradeTag.set(tag)}
+            onRecord={handleRecordInCamp}
+          />
+        </YStack>
+      </YStack>
     )
   }
 
@@ -547,7 +376,7 @@ function EnabledCreateScreen() {
     <SegmentRecordScreen
       key={nextResponse?.attempt ?? 0}
       userId={currentUser._id}
-      campName={selectedCamp?.name}
+      campName={recordingTarget === 'camp' ? selectedCamp?.name : undefined}
       isScreenFocused={isFocused}
       isAppActive={isAppActive}
       onContinue={() => {
@@ -562,8 +391,8 @@ function EnabledCreateScreen() {
       options={{
         isResponse: !!nextResponse || !!respondTo,
         bondfireId: nextResponse?.bondfireId ?? (respondTo as Id<'bondfires'> | undefined),
-        campId: effectiveCampId,
-        personalCamp: isPersonalCamp,
+        campId: recordingTarget === 'camp' ? selectedCamp?._id : undefined,
+        personalCamp: recordingTarget === 'personal',
         tags: selectedCampTags,
         draftBondfireId: nextResponse ? null : (draftBondfireId as Id<'bondfires'> | null),
       }}

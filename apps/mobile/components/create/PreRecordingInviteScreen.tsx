@@ -1,10 +1,10 @@
 import { appStore$, subscriptionActions, telemetry, useAppThemeColors } from '@bondfires/app'
 import { Button, Spinner, Text, UserAvatar } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { Check, Copy, Link, Plus, Share, ShieldCheck, X } from '@tamagui/lucide-icons'
+import { Check, ChevronRight, Plus, ShieldCheck, Video } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import * as Clipboard from 'expo-clipboard'
-import { useCallback, useMemo } from 'react'
+import { type ReactNode, useCallback, useMemo } from 'react'
 import { Alert, Pressable, Share as RNShare, ScrollView, StatusBar, TextInput } from 'react-native'
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -12,6 +12,7 @@ import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
 import { hasSavedDraftCapture, segmentMediaEnabled } from '../../lib/media/segmentUploads'
+import { InviteSomeoneSheet } from './InviteSomeoneSheet'
 import type { AudienceFilterKey } from './preRecordingInvite'
 import {
   buildAudienceFilters,
@@ -22,7 +23,10 @@ import {
   MAX_TITLE_LENGTH,
   resolveAudienceFilter,
   selectAudienceItems,
+  summarizeAudience,
 } from './preRecordingInvite'
+import { SparkComposerHeader } from './SparkModeToggle'
+import { buildPeopleCtaLabel } from './sparkComposer'
 
 const CLOSE_CIRCLE_DISPLAY_LIMIT = 8
 const RECENT_CONNECTIONS_DISPLAY_LIMIT = 20
@@ -46,6 +50,7 @@ interface InviteFormState {
   isDiscarding: boolean
   isCreatingLink: boolean
   isCreatingFamilyLink: boolean
+  inviteSheetOpen: boolean
 }
 
 /** Cap errors thrown by sendDraftInvites — see getParticipantCap tiers. */
@@ -75,6 +80,8 @@ interface PreRecordingInviteScreenProps {
   /** Record without setting up an audience first (pre-invite behavior). */
   onSkip: () => void
   existingDraft?: ExistingDraft | null
+  /** People | Camp toggle, rendered under the header. */
+  modeToggle?: ReactNode
 }
 
 /**
@@ -85,11 +92,12 @@ interface PreRecordingInviteScreenProps {
  *      Circle (pinned), and Recent Connections (interacted-with users from
  *      the last 30 days) — with relationship chips to filter it, for one-tap
  *      in-app invites.
- *   2. Email invites — emails that match an existing account become a direct
- *      invite; the rest get the code via Resend.
- *   3. A share link, created on demand (creating it creates the draft, so
- *      the link people receive is the one that goes live with the recording).
- *   4. Auto-generated title from the selected recipients; user can override
+ *   2. "Invite someone new", a sheet with email invites (emails that match an
+ *      existing account become a direct invite; the rest get the code via
+ *      Resend), a share link and a family link. Links are created on demand,
+ *      and creating one creates the draft, so the link people receive is the
+ *      one that goes live with the recording.
+ *   3. Auto-generated title from the selected recipients; user can override
  *      and the auto-fill stops the moment they touch the field.
  *
  * If the user already has a draft (e.g. they backed out of recording and
@@ -101,6 +109,7 @@ export function PreRecordingInviteScreen({
   onCancel,
   onSkip,
   existingDraft,
+  modeToggle,
 }: PreRecordingInviteScreenProps) {
   const { colors, statusBarStyle } = useAppThemeColors()
   const insets = useSafeAreaInsets()
@@ -122,6 +131,7 @@ export function PreRecordingInviteScreen({
     isDiscarding: false,
     isCreatingLink: false,
     isCreatingFamilyLink: false,
+    inviteSheetOpen: false,
   })
 
   // Only fetch invite candidates for Hearth — the screen is never shown for
@@ -160,6 +170,7 @@ export function PreRecordingInviteScreen({
   const isDiscarding = useValue(form$.isDiscarding)
   const isCreatingLink = useValue(form$.isCreatingLink)
   const isCreatingFamilyLink = useValue(form$.isCreatingFamilyLink)
+  const inviteSheetOpen = useValue(form$.inviteSheetOpen)
   const isBusy = isSubmitting || isDiscarding || isCreatingLink || isCreatingFamilyLink
 
   // Combined candidate set used for both selection and auto-title.
@@ -193,6 +204,9 @@ export function PreRecordingInviteScreen({
     [allCandidates, emails, selectedRecipientIds],
   )
   const displayTitle = titleTouched ? title : autoTitle
+  const ctaLabel = buildPeopleCtaLabel(
+    summarizeAudience(allCandidates, selectedRecipientIds, emails),
+  )
 
   const canContinue =
     !isBusy &&
@@ -487,32 +501,22 @@ export function PreRecordingInviteScreen({
   const familyShareUrl = familyShareInfo
     ? `${FAMILY_INVITE_BASE_URL}/${familyShareInfo.code}`
     : null
+  const inviteSummary =
+    [
+      emails.length > 0 ? `${emails.length} email${emails.length === 1 ? '' : 's'}` : null,
+      shareUrl ? 'share link ready' : null,
+      familyShareUrl ? 'family link ready' : null,
+    ]
+      .filter(Boolean)
+      .join(' · ') || 'Email, share link or family link'
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       <YStack flex={1} backgroundColor={'$background'}>
         <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
 
-        {/* Header */}
-        <XStack
-          alignItems="center"
-          justifyContent="space-between"
-          paddingHorizontal={16}
-          paddingTop={insets.top + 8}
-          paddingBottom={12}
-        >
-          <Text fontSize={20} fontWeight="800" color={'$color'}>
-            New Hearth Bondfire
-          </Text>
-          <Pressable
-            onPress={onCancel}
-            hitSlop={12}
-            accessibilityLabel="Close invite screen"
-            accessibilityRole="button"
-          >
-            <X size={24} color={colors.color} />
-          </Pressable>
-        </XStack>
+        <SparkComposerHeader topInset={insets.top} onClose={onCancel} />
+        {modeToggle}
 
         <ScrollView
           contentContainerStyle={{ paddingBottom: 180 }}
@@ -613,199 +617,49 @@ export function PreRecordingInviteScreen({
             </InviteSection>
           )}
 
-          {/* Email invites */}
-          <InviteSection
-            title="Invite by email"
-            caption="Existing accounts get a push; new addresses get an email invite."
-          >
-            <YStack paddingHorizontal={16} gap={10}>
-              <XStack gap={8} alignItems="center">
-                <TextInput
-                  value={emailInput}
-                  onChangeText={(text) => form$.emailInput.set(text)}
-                  onSubmitEditing={addEmail}
-                  placeholder="friend@example.com"
-                  placeholderTextColor={colors.placeholderColor}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  maxLength={254}
-                  returnKeyType="done"
-                  style={{
-                    flex: 1,
-                    backgroundColor: colors.backgroundHover,
-                    color: colors.color,
-                    fontSize: 15,
-                    paddingHorizontal: 14,
-                    paddingVertical: 12,
-                    borderRadius: 12,
-                    borderWidth: 1,
-                    borderColor: colors.borderColor,
-                  }}
-                />
-                <Button
-                  variant="primary"
-                  size="$md"
-                  onPress={addEmail}
-                  icon={<Plus size={16} color={'$color'} />}
+          {/* Email, share link and family link live in a sheet so the people
+              you already know stay the focus of the screen. */}
+          <YStack paddingHorizontal={16} marginBottom={24}>
+            <Pressable
+              onPress={() => form$.inviteSheetOpen.set(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Invite someone new"
+              accessibilityHint="Opens email, share link and family link options"
+            >
+              <XStack
+                alignItems="center"
+                gap={12}
+                paddingVertical={12}
+                paddingHorizontal={14}
+                borderRadius={12}
+                borderWidth={1}
+                borderColor={'$borderColor'}
+                backgroundColor={'$backgroundHover'}
+              >
+                <YStack
+                  width={32}
+                  height={32}
+                  borderRadius={16}
+                  borderWidth={1.5}
+                  borderStyle="dashed"
+                  borderColor={'$primary'}
+                  alignItems="center"
+                  justifyContent="center"
                 >
-                  <Text color={'$color'} fontWeight="700">
-                    Add
+                  <Plus size={16} color={'$primary'} />
+                </YStack>
+                <YStack flex={1} gap={2}>
+                  <Text color={'$color'} fontSize={15} fontWeight="700">
+                    Invite someone new
                   </Text>
-                </Button>
+                  <Text color={'$placeholderColor'} fontSize={12} numberOfLines={1}>
+                    {inviteSummary}
+                  </Text>
+                </YStack>
+                <ChevronRight size={18} color={'$placeholderColor'} />
               </XStack>
-              {emails.length > 0 && (
-                <XStack gap={8} flexWrap="wrap">
-                  {emails.map((entry) => (
-                    <EmailChip key={entry} email={entry} onRemove={() => removeEmail(entry)} />
-                  ))}
-                </XStack>
-              )}
-            </YStack>
-          </InviteSection>
-
-          {/* Share link */}
-          <InviteSection
-            title="Share a regular invite"
-            caption="For people in your age group or an existing family connection."
-          >
-            <YStack paddingHorizontal={16} gap={10}>
-              {shareUrl ? (
-                <>
-                  <XStack
-                    alignItems="center"
-                    gap={10}
-                    padding={12}
-                    borderRadius={12}
-                    borderWidth={1}
-                    borderColor={'$borderColor'}
-                    backgroundColor={'$backgroundHover'}
-                  >
-                    <Link size={18} color={'$placeholderColor'} />
-                    <Text color={'$color'} fontSize={13} flex={1} numberOfLines={1}>
-                      {shareUrl}
-                    </Text>
-                  </XStack>
-                  <XStack gap={10}>
-                    <Button
-                      flex={1}
-                      variant="primary"
-                      size="$md"
-                      onPress={handleCopyLink}
-                      icon={
-                        copied ? (
-                          <Check size={16} color={'$color'} />
-                        ) : (
-                          <Copy size={16} color={'$color'} />
-                        )
-                      }
-                    >
-                      <Text color={'$color'} fontWeight="700">
-                        {copied ? 'Copied' : 'Copy'}
-                      </Text>
-                    </Button>
-                    <Button
-                      flex={1}
-                      variant="outline"
-                      size="$md"
-                      onPress={handleShareSheet}
-                      icon={<Share size={16} color={'$color'} />}
-                    >
-                      <Text color={'$color'} fontWeight="700">
-                        Share
-                      </Text>
-                    </Button>
-                  </XStack>
-                </>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="$md"
-                  onPress={handleCreateShareLink}
-                  disabled={isBusy}
-                  icon={
-                    isCreatingLink ? (
-                      <Spinner size="small" color={'$color'} />
-                    ) : (
-                      <Link size={16} color={'$color'} />
-                    )
-                  }
-                >
-                  <Text color={'$color'} fontWeight="700">
-                    {isCreatingLink ? 'Creating link…' : 'Create share link'}
-                  </Text>
-                </Button>
-              )}
-            </YStack>
-          </InviteSection>
-
-          <InviteSection
-            title="Invite family across age groups"
-            caption="Creates a 24-hour, one-time link with an explicit acceptance step."
-          >
-            <YStack paddingHorizontal={16} gap={10}>
-              <Text color="$placeholderColor" fontSize={12} lineHeight={18}>
-                Share only with someone you know and trust offline. Bondfires does not verify legal
-                or biological relationships, and either person can revoke access later.
-              </Text>
-              {familyShareUrl ? (
-                <>
-                  <XStack
-                    alignItems="center"
-                    gap={10}
-                    padding={12}
-                    borderRadius={12}
-                    borderWidth={1}
-                    borderColor="$borderColor"
-                    backgroundColor="$backgroundHover"
-                  >
-                    <Link size={18} color="$placeholderColor" />
-                    <Text color="$color" fontSize={13} flex={1} numberOfLines={1}>
-                      {familyShareUrl}
-                    </Text>
-                  </XStack>
-                  <XStack gap={10}>
-                    <Button
-                      flex={1}
-                      variant="primary"
-                      size="$md"
-                      onPress={handleCopyFamilyLink}
-                      icon={familyCopied ? <Check size={16} /> : <Copy size={16} />}
-                    >
-                      <Text fontWeight="700">{familyCopied ? 'Copied' : 'Copy'}</Text>
-                    </Button>
-                    <Button
-                      flex={1}
-                      variant="outline"
-                      size="$md"
-                      onPress={handleShareFamilyLink}
-                      icon={<Share size={16} />}
-                    >
-                      <Text fontWeight="700">Share</Text>
-                    </Button>
-                  </XStack>
-                </>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="$md"
-                  onPress={handleCreateFamilyLink}
-                  disabled={isBusy}
-                  icon={
-                    isCreatingFamilyLink ? (
-                      <Spinner size="small" color="$color" />
-                    ) : (
-                      <Link size={16} color="$color" />
-                    )
-                  }
-                >
-                  <Text fontWeight="700">
-                    {isCreatingFamilyLink ? 'Creating…' : 'Create family link'}
-                  </Text>
-                </Button>
-              )}
-            </YStack>
-          </InviteSection>
+            </Pressable>
+          </YStack>
 
           {/* Title */}
           <InviteSection title="Title" caption="Auto-fills from who you invite. Edit anytime.">
@@ -855,12 +709,12 @@ export function PreRecordingInviteScreen({
               isSubmitting ? (
                 <Spinner size="small" color={'$color'} />
               ) : (
-                <Check size={18} color={'$color'} />
+                <Video size={18} color={'$color'} />
               )
             }
           >
-            <Text color={'$color'} fontWeight="800">
-              {isSubmitting ? 'Setting up…' : 'Continue to record'}
+            <Text color={'$color'} fontWeight="800" numberOfLines={1}>
+              {isSubmitting ? 'Setting up…' : ctaLabel}
             </Text>
           </Button>
           {canSkip && (
@@ -877,6 +731,29 @@ export function PreRecordingInviteScreen({
           )}
         </YStack>
       </YStack>
+
+      <InviteSomeoneSheet
+        open={inviteSheetOpen}
+        onClose={() => form$.inviteSheetOpen.set(false)}
+        isBusy={isBusy}
+        emailInput={emailInput}
+        onEmailInputChange={(text) => form$.emailInput.set(text)}
+        onAddEmail={addEmail}
+        emails={emails}
+        onRemoveEmail={removeEmail}
+        shareUrl={shareUrl}
+        copied={copied}
+        isCreatingLink={isCreatingLink}
+        onCreateShareLink={handleCreateShareLink}
+        onCopyLink={handleCopyLink}
+        onShareLink={handleShareSheet}
+        familyShareUrl={familyShareUrl}
+        familyCopied={familyCopied}
+        isCreatingFamilyLink={isCreatingFamilyLink}
+        onCreateFamilyLink={handleCreateFamilyLink}
+        onCopyFamilyLink={handleCopyFamilyLink}
+        onShareFamilyLink={handleShareFamilyLink}
+      />
     </KeyboardAvoidingView>
   )
 }
@@ -1026,32 +903,5 @@ function CandidateAvatar({
         </YStack>
       </YStack>
     </Pressable>
-  )
-}
-
-function EmailChip({ email, onRemove }: { email: string; onRemove: () => void }) {
-  return (
-    <XStack
-      alignItems="center"
-      gap={6}
-      paddingHorizontal={10}
-      paddingVertical={6}
-      borderRadius={16}
-      backgroundColor={'$backgroundHover'}
-      borderWidth={1}
-      borderColor={'$borderColor'}
-    >
-      <Text color={'$color'} fontSize={12}>
-        {email}
-      </Text>
-      <Pressable
-        onPress={onRemove}
-        hitSlop={8}
-        accessibilityLabel={`Remove ${email}`}
-        accessibilityRole="button"
-      >
-        <X size={14} color={'$placeholderColor'} />
-      </Pressable>
-    </XStack>
   )
 }
