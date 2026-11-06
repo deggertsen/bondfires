@@ -1261,9 +1261,13 @@ export default defineSchema({
     status: v.union(v.literal('uploading'), v.literal('ready'), v.literal('cancelled')),
     segmentCount: v.number(),
     duration: v.number(),
-    // Denormalized fragment durations (index-aligned). Lets playlist polling
-    // return from the recording row instead of reading every fragment row.
+    // Legacy inline playlist cache. New writes leave this empty; the array
+    // lives on segmentTimelines so auth, receipt, and per-fragment reads do
+    // not pull every duration. Cleared once durationsCached is set.
     durations: v.optional(v.array(v.number())),
+    // True once segmentTimelines has one duration per fragment. Checked
+    // instead of reading the array, including on the daily reconcile pass.
+    durationsCached: v.optional(v.boolean()),
     maxDuration: v.number(),
     initChecksum: v.optional(v.string()),
     finalCount: v.optional(v.number()),
@@ -1273,6 +1277,11 @@ export default defineSchema({
     .index('by_owner_local', ['userId', 'localId'])
     .index('by_status_created', ['status', 'createdAt'])
     .index('by_updated', ['updatedAt']),
+  // Playlist durations, off the hot recording row. One doc per recording.
+  segmentTimelines: defineTable({
+    recordingId: v.id('segmentRecordings'),
+    durations: v.array(v.number()),
+  }).index('by_recording', ['recordingId']),
   segmentTranscriptionJobs: defineTable({
     recordingId: v.id('segmentRecordings'),
     status: v.union(

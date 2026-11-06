@@ -211,10 +211,11 @@ describe('internal recording lifecycle', () => {
         expect(await finish(2)).toEqual({ complete: false })
         await finish(0)
       }
-      // A growing receipt may insert its segment and update its recording only.
+      // A growing receipt may insert its segment, append the side timeline,
+      // and update its recording. It must not patch the parent feed row.
       // Equal-value parent patches also invalidate subscriptions, so comparing
       // documents alone would not protect the bandwidth optimization.
-      for (let index = 2; index < 9; index++) await receipt(index, 2)
+      for (let index = 2; index < 9; index++) await receipt(index, 3)
       expect(await t.run((ctx) => ctx.db.get(record.recordId))).toEqual(
         finishEarly ? { ...live, recordingStopped: true } : live,
       )
@@ -226,7 +227,7 @@ describe('internal recording lifecycle', () => {
       })
       expect(timeline.complete).toBe(false)
       expect(timeline.segments.reduce((sum, segment) => sum + segment.duration, 0)).toBe(36)
-      await receipt(9, finishEarly ? undefined : 2)
+      await receipt(9, finishEarly ? undefined : 3)
       if (!finishEarly) expect(await finish()).toEqual({ complete: true })
       const ready = await t.run((ctx) => ctx.db.get(record.recordId))
       const finishedRecording = await t.run((ctx) => ctx.db.get(record.recordingId))
@@ -500,6 +501,30 @@ describe('shared draft to growing playback', () => {
   })
 })
 
+type MediaTest = Awaited<ReturnType<typeof setup>>['t']
+
+async function cachedDurations(t: MediaTest, recordingId: Id<'segmentRecordings'>) {
+  return await t.run(async (ctx) => {
+    const row = await ctx.db
+      .query('segmentTimelines')
+      .withIndex('by_recording', (q) => q.eq('recordingId', recordingId))
+      .unique()
+    return row?.durations
+  })
+}
+
+/** A recording written before the side cache: no inline array and no flag. */
+async function clearDurationCache(t: MediaTest, recordingId: Id<'segmentRecordings'>) {
+  await t.run(async (ctx) => {
+    await ctx.db.patch(recordingId, { durations: undefined, durationsCached: undefined })
+    const row = await ctx.db
+      .query('segmentTimelines')
+      .withIndex('by_recording', (q) => q.eq('recordingId', recordingId))
+      .unique()
+    if (row) await ctx.db.delete(row._id)
+  })
+}
+
 it('serves index playlists from denormalized durations instead of fragment rows', async () => {
   const { t, fixture, record, receipt } = await setup()
   await receipt(-1, 0)
@@ -514,23 +539,26 @@ it('serves index playlists from denormalized durations instead of fragment rows'
     { index: 0, duration: 4 },
     { index: 1, duration: 5 },
   ])
-  expect(await t.run((ctx) => ctx.db.get(record.recordingId))).toMatchObject({
-    durations: [4, 5],
-  })
-  // Legacy row without durations: a query still serves the playlist (reading
-  // fragments), while the backfill mutation persists the materialized copy.
-  await t.run((ctx) => ctx.db.patch(record.recordingId, { durations: undefined }))
+  // The array lives beside the recording so auth and per-fragment reads stay small.
+  expect(await cachedDurations(t, record.recordingId)).toEqual([4, 5])
+  const stored = await t.run((ctx) => ctx.db.get(record.recordingId))
+  expect(stored).toMatchObject({ durationsCached: true })
+  expect(stored?.durations).toBeUndefined()
+  // Legacy row without a cache: a query still serves the playlist (reading
+  // fragments), while the backfill mutation persists the side copy.
+  await clearDurationCache(t, record.recordingId)
   const legacy = await t.query(internal.segmentMedia.timeline, {
     recordingId: record.recordingId,
     userId: fixture.owner,
     index: null,
   })
   expect(legacy.segments).toEqual(page.segments)
-  expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.durations).toBeUndefined()
+  expect(await cachedDurations(t, record.recordingId)).toBeNull()
   await t.mutation(internal.segmentMedia.backfillRecordingDurations, {
     recordingId: record.recordingId,
   })
-  expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.durations).toEqual([4, 5])
+  expect(await cachedDurations(t, record.recordingId)).toEqual([4, 5])
+  expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.durations).toBeUndefined()
   const served = await t.query(internal.segmentMedia.timeline, {
     recordingId: record.recordingId,
     userId: fixture.owner,
@@ -552,7 +580,7 @@ it('keeps playlist reads bounded independently of fragment count', async () => {
       }),
     )
   expect((await readWithBudget()).segments).toHaveLength(30)
-  await t.run((ctx) => ctx.db.patch(record.recordingId, { durations: undefined }))
+  await clearDurationCache(t, record.recordingId)
   await expect(readWithBudget()).rejects.toThrow()
   await t.mutation(internal.segmentMedia.backfillRecordingDurations, {
     recordingId: record.recordingId,
@@ -560,19 +588,34 @@ it('keeps playlist reads bounded independently of fragment count', async () => {
   expect((await readWithBudget()).segments).toHaveLength(30)
 })
 
+it('authorizes one fragment without reading every fragment row', async () => {
+  const { t, fixture, record, receipt } = await setup(600000)
+  await receipt(-1, 0)
+  for (let index = 0; index < 30; index++) await receipt(index)
+  const segment = await t.query((ctx) =>
+    ctx.runQuery(
+      internal.segmentMedia.timeline,
+      { recordingId: record.recordingId, userId: fixture.owner, index: 0 },
+      { transactionLimits: { documentsRead: 20 } },
+    ),
+  )
+  expect(segment).toEqual({ complete: false, segments: [] })
+})
+
 it('extends a backfilled live timeline without duplicating retried receipts', async () => {
   const { t, fixture, record, receipt } = await setup(60000)
   await receipt(-1, 0)
   await receipt(0, 3)
-  await t.run((ctx) => ctx.db.patch(record.recordingId, { durations: undefined }))
+  await clearDurationCache(t, record.recordingId)
   await receipt(1, 5)
-  expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.durations).toBeUndefined()
+  expect(await cachedDurations(t, record.recordingId)).toBeNull()
   await t.mutation(internal.segmentMedia.backfillRecordingDurations, {
     recordingId: record.recordingId,
   })
   await receipt(2, 4)
   await receipt(2, 4)
-  expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.durations).toEqual([3, 5, 4])
+  expect(await cachedDurations(t, record.recordingId)).toEqual([3, 5, 4])
+  expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.durations).toBeUndefined()
   expect(
     (
       await t.query(internal.segmentMedia.timeline, {
@@ -596,7 +639,12 @@ it.each(['missing', 'noncontiguous'] as const)(
     await receipt(0, 3)
     await receipt(1, 5)
     await t.run(async (ctx) => {
-      await ctx.db.patch(record.recordingId, { durations: undefined })
+      await ctx.db.patch(record.recordingId, { durations: undefined, durationsCached: undefined })
+      const timeline = await ctx.db
+        .query('segmentTimelines')
+        .withIndex('by_recording', (q) => q.eq('recordingId', record.recordingId))
+        .unique()
+      if (timeline) await ctx.db.delete(timeline._id)
       const segment = await ctx.db
         .query('mediaSegments')
         .withIndex('by_recording_index', (q) =>
@@ -610,6 +658,7 @@ it.each(['missing', 'noncontiguous'] as const)(
     await t.mutation(internal.segmentMedia.backfillRecordingDurations, {
       recordingId: record.recordingId,
     })
+    expect(await cachedDurations(t, record.recordingId)).toBeNull()
     expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.durations).toBeUndefined()
     expect(
       (
@@ -640,7 +689,7 @@ it('materializes ready legacy recordings through daily reconciliation only once'
       recordingId: record.recordingId,
       segmentCount: 1,
     })
-    await t.run((ctx) => ctx.db.patch(record.recordingId, { durations: undefined }))
+    await clearDurationCache(t, record.recordingId)
     const args = { cursor: null, mode: 'reconcile' as const }
     expect(
       (await t.query(internal.segmentMedia.cleanupPage, { cursor: null })).materialize,
@@ -650,7 +699,8 @@ it('materializes ready legacy recordings through daily reconciliation only once'
     ])
     await t.action(internal.segmentMedia.cleanup, { mode: 'reconcile' })
     await t.finishAllScheduledFunctions(vi.runAllTimers)
-    expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.durations).toEqual([4])
+    expect(await cachedDurations(t, record.recordingId)).toEqual([4])
+    expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.durations).toBeUndefined()
     expect((await t.query(internal.segmentMedia.cleanupPage, args)).materialize).toEqual([])
     await t.mutation((ctx) =>
       ctx.runMutation(
@@ -712,7 +762,7 @@ describe('cleanup destination ownership', () => {
         checksum: 'a'.repeat(64),
       })
     // An upload spanning deployment has no materialized durations yet.
-    await t.run((ctx) => ctx.db.patch(record.recordingId, { durations: undefined }))
+    await clearDurationCache(t, record.recordingId)
     return { ...setupResult, record }
   }
 
@@ -735,8 +785,10 @@ describe('cleanup destination ownership', () => {
     expect(await t.run((ctx) => ctx.db.get(record.recordingId))).toMatchObject({
       status: 'ready',
       finalCount: 2,
-      durations: [4, 4],
+      durationsCached: true,
     })
+    expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.durations).toBeUndefined()
+    expect(await cachedDurations(t, record.recordingId)).toEqual([4, 4])
     expect(await t.run((ctx) => ctx.db.get(record.recordId))).toMatchObject({
       videoStatus: 'ready',
       durationMs: 8000,
