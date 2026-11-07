@@ -3,11 +3,13 @@ import { Button, Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useMutation } from 'convex/react'
 import { useRouter } from 'expo-router'
+import { useRef } from 'react'
 import { Alert, Switch } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../../../../convex/_generated/api'
 import {
   CAMP_SETTINGS_LIMITS,
+  changedCampRules,
   readCampRulesInput,
 } from '../../../../../../../convex/lib/campSettingsPolicy'
 import { LimitControl, SectionLabel } from '../../../../../components/camps/CampSettingsControls'
@@ -21,6 +23,7 @@ function VideosForm({ camp }: { camp: OwnedCamp }) {
   const router = useRouter()
   const { colors } = useAppThemeColors()
   const updateRules = useMutation(api.camps.updateCampRules)
+  const initialRules = useRef(readCampRulesInput(camp.rules)).current
   const rules$ = useObservable(readCampRulesInput(camp.rules))
   const ui$ = useObservable({ isSaving: false })
   const maxDuration = useValue(rules$.maxDurationMinutes)
@@ -31,7 +34,14 @@ function VideosForm({ camp }: { camp: OwnedCamp }) {
   const handleSave = async () => {
     ui$.isSaving.set(true)
     try {
-      await updateRules({ campId: camp._id, rules: rules$.get() })
+      await updateRules({
+        campId: camp._id,
+        rules: changedCampRules(initialRules, rules$.get(), [
+          'maxDurationMinutes',
+          'maxResponses',
+          'requiresTradeTags',
+        ]),
+      })
       router.back()
     } catch (error) {
       Alert.alert('Couldn’t save', parseError(error).message)

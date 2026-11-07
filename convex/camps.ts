@@ -2968,15 +2968,15 @@ const tierValidator = v.union(
 const nullableNumber = v.union(v.number(), v.null())
 
 const campRulesInputValidator = v.object({
-  gender: v.union(v.literal('any'), v.literal('male'), v.literal('female')),
-  minAge: nullableNumber,
-  maxAge: nullableNumber,
-  allowedTiers: v.array(tierValidator),
-  visibilityMode: accessVisibilityModeValidator,
-  maxDurationMinutes: nullableNumber,
-  maxResponses: nullableNumber,
-  requiresTradeTags: v.boolean(),
-  guidelines: v.array(v.string()),
+  gender: v.optional(v.union(v.literal('any'), v.literal('male'), v.literal('female'))),
+  minAge: v.optional(nullableNumber),
+  maxAge: v.optional(nullableNumber),
+  allowedTiers: v.optional(v.array(tierValidator)),
+  visibilityMode: v.optional(accessVisibilityModeValidator),
+  maxDurationMinutes: v.optional(nullableNumber),
+  maxResponses: v.optional(nullableNumber),
+  requiresTradeTags: v.optional(v.boolean()),
+  guidelines: v.optional(v.array(v.string())),
 })
 
 /**
@@ -3038,7 +3038,7 @@ export const updateCampRules = mutation({
  *   kindling: the camp already burns one a month either way.
  * - Going private removes pending join requests (only invite codes get people
  *   in now). Members stay; only the owner can spark from then on.
- * - Going open approves pending requests, since anyone could now join anyway.
+ * - Going open approves pending requests that still meet the resulting join rules.
  */
 export const changeCampVisibility = mutation({
   args: {
@@ -3065,6 +3065,8 @@ export const changeCampVisibility = mutation({
     }
 
     const now = Date.now()
+    const visibilityPatch = buildVisibilityPatch(camp, args.access)
+    const nextCamp = { ...camp, ...visibilityPatch }
     const pending = await ctx.db
       .query('campMembers')
       .withIndex('by_camp_status', (q) => q.eq('campId', camp._id).eq('status', 'pending'))
@@ -3078,7 +3080,13 @@ export const changeCampVisibility = mutation({
     } else if (args.access === 'open') {
       for (const request of pending) {
         const requester = await ctx.db.get(request.userId)
-        if (!isUserEligibleForCamp(requester, camp)) {
+        if (!requester || !isUserEligibleForCamp(requester, nextCamp)) {
+          continue
+        }
+        const tier = await getEntitlementSubscriptionTier(ctx, requester._id)
+        // Evaluate against the resulting public rules, without treating this
+        // pending request as a reason to deny joining.
+        if (!evaluateJoinRules(nextCamp, requester, tier, null).canJoin) {
           continue
         }
         await ctx.db.patch(request._id, {
@@ -3099,7 +3107,7 @@ export const changeCampVisibility = mutation({
       }
     }
 
-    await ctx.db.patch(camp._id, { ...buildVisibilityPatch(camp, args.access), updatedAt: now })
+    await ctx.db.patch(camp._id, { ...visibilityPatch, updatedAt: now })
     if (result.approvedRequests > 0) {
       await refreshActiveMemberCount(ctx, camp._id)
     }

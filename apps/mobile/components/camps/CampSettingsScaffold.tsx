@@ -29,7 +29,7 @@ export function useOwnedCamp(): {
   const camp = useQuery(api.camps.get, campId ? { campId } : 'skip')
   if (camp === undefined) return { campId, camp: undefined }
   const isOwner = camp?.membership?.status === 'active' && camp.membership.role === 'owner'
-  return { campId, camp: camp && isOwner ? (camp as OwnedCamp) : null }
+  return { campId, camp: camp && isOwner && camp.status === 'active' ? (camp as OwnedCamp) : null }
 }
 
 /**
@@ -117,10 +117,10 @@ export function CampSettingsScaffold({
         ) : camp === null ? (
           <YStack flex={1} alignItems="center" justifyContent="center" padding={32} gap={8}>
             <Text fontSize={18} fontWeight="900" textAlign="center">
-              Only the camp owner can change these settings
+              Settings are unavailable
             </Text>
             <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
-              Ask the owner if something about this camp should change.
+              Only the owner of an active camp can change its settings.
             </Text>
           </YStack>
         ) : (

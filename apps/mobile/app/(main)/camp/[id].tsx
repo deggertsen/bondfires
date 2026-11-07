@@ -422,7 +422,7 @@ function CampHeader({
         </Pressable>
 
         <XStack gap={10}>
-          {isOwner && !isArchived ? (
+          {isOwner && camp.status === 'active' ? (
             <Pressable
               onPress={onOpenSettings}
               accessibilityRole="button"

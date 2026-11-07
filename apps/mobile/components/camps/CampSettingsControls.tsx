@@ -1,7 +1,7 @@
 import { useAppThemeColors } from '@bondfires/app'
 import { Text } from '@bondfires/ui'
 import { Check, Globe, Lock, Minus, Plus } from '@tamagui/lucide-icons'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Pressable, TextInput } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 import {
@@ -299,8 +299,9 @@ export function LimitControl({
 }) {
   const { colors } = useAppThemeColors()
   const [draft, setDraft] = useState(value === null ? '' : String(value))
+  const isEditing = useRef(false)
   useEffect(() => {
-    setDraft(value === null ? '' : String(value))
+    if (!isEditing.current) setDraft(value === null ? '' : String(value))
   }, [value])
 
   const commitDraft = () => {
@@ -309,6 +310,7 @@ export function LimitControl({
       setDraft(value === null ? '' : String(value))
       return
     }
+    setDraft(String(parsed))
     onChange(parsed)
   }
 
@@ -327,7 +329,10 @@ export function LimitControl({
           { value: 'set', label: 'Set a limit' },
         ]}
         value={value === null ? 'none' : 'set'}
-        onChange={(mode) => onChange(mode === 'none' ? null : (value ?? defaultValue))}
+        onChange={(mode) => {
+          isEditing.current = false
+          onChange(mode === 'none' ? null : Math.min(max, Math.max(min, value ?? defaultValue)))
+        }}
       />
       {value !== null ? (
         <XStack
@@ -345,7 +350,11 @@ export function LimitControl({
             accessibilityRole="button"
             accessibilityLabel={`Lower ${label.toLowerCase()}`}
             disabled={value <= min}
-            onPress={() => onChange(Math.max(min, value - 1))}
+            onPress={() => {
+              const next = Math.max(min, value - 1)
+              setDraft(String(next))
+              onChange(next)
+            }}
           >
             <YStack
               width={44}
@@ -372,8 +381,21 @@ export function LimitControl({
           >
             <TextInput
               value={draft}
-              onChangeText={setDraft}
-              onBlur={commitDraft}
+              onFocus={() => {
+                isEditing.current = true
+              }}
+              onChangeText={(text) => {
+                isEditing.current = true
+                setDraft(text)
+                // Save can run while the keyboard remains open. Keep the
+                // form value current without clamping the visible draft mid-entry.
+                const parsed = parseLimitInput(text, min, max)
+                if (parsed !== null) onChange(parsed)
+              }}
+              onBlur={() => {
+                isEditing.current = false
+                commitDraft()
+              }}
               onSubmitEditing={commitDraft}
               keyboardType="number-pad"
               returnKeyType="done"
@@ -398,7 +420,11 @@ export function LimitControl({
             accessibilityRole="button"
             accessibilityLabel={`Raise ${label.toLowerCase()}`}
             disabled={value >= max}
-            onPress={() => onChange(Math.min(max, value + 1))}
+            onPress={() => {
+              const next = Math.min(max, value + 1)
+              setDraft(String(next))
+              onChange(next)
+            }}
           >
             <YStack
               width={44}

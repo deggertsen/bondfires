@@ -139,6 +139,21 @@ export type CampRulesInput = {
   guidelines: string[]
 }
 
+/** Send only edited fields so unrelated rules and concurrent section edits survive. */
+export function changedCampRules(
+  initial: CampRulesInput,
+  current: CampRulesInput,
+  fields: readonly (keyof CampRulesInput)[],
+): Partial<CampRulesInput> {
+  const changes: Partial<CampRulesInput> = {}
+  for (const field of fields) {
+    if (JSON.stringify(initial[field]) !== JSON.stringify(current[field])) {
+      Object.assign(changes, { [field]: current[field] })
+    }
+  }
+  return changes
+}
+
 function assertWholeNumberInRange(value: number, min: number, max: number, message: string) {
   if (!Number.isInteger(value) || value < min || value > max) {
     throwUserError(message)
@@ -151,13 +166,15 @@ function assertWholeNumberInRange(value: number, min: number, max: number, messa
  */
 export function buildCampRules(
   existing: CampRules,
-  input: CampRulesInput,
+  input: Partial<CampRulesInput>,
   ageBand: AgeBand,
 ): CampRules {
   const bounds = AGE_BOUNDS[ageBand]
   const mode = input.visibilityMode
+  const minAge = input.minAge === undefined ? existing.access.minAge?.value : input.minAge
+  const maxAge = input.maxAge === undefined ? existing.access.maxAge?.value : input.maxAge
 
-  if (input.minAge !== null) {
+  if (input.minAge != null) {
     assertWholeNumberInRange(
       input.minAge,
       bounds.min,
@@ -165,7 +182,7 @@ export function buildCampRules(
       `Minimum age must be between ${bounds.min} and ${bounds.max}`,
     )
   }
-  if (input.maxAge !== null) {
+  if (input.maxAge != null) {
     assertWholeNumberInRange(
       input.maxAge,
       bounds.min,
@@ -173,16 +190,17 @@ export function buildCampRules(
       `Maximum age must be between ${bounds.min} and ${bounds.max}`,
     )
   }
-  if (input.minAge !== null && input.maxAge !== null && input.minAge > input.maxAge) {
+  if (minAge != null && maxAge != null && minAge > maxAge) {
     throwUserError('Minimum age can’t be higher than maximum age')
   }
 
-  const tiers = ALL_CAMP_TIERS.filter((tier) => input.allowedTiers.includes(tier))
-  if (tiers.length === 0) {
+  const tiers =
+    input.allowedTiers && ALL_CAMP_TIERS.filter((tier) => input.allowedTiers?.includes(tier))
+  if (tiers?.length === 0) {
     throwUserError('Let at least one plan join')
   }
 
-  if (input.maxDurationMinutes !== null) {
+  if (input.maxDurationMinutes != null) {
     assertWholeNumberInRange(
       input.maxDurationMinutes,
       1,
@@ -190,7 +208,7 @@ export function buildCampRules(
       `Longest video must be between 1 and ${CAMP_SETTINGS_LIMITS.maxDurationMinutes} minutes`,
     )
   }
-  if (input.maxResponses !== null) {
+  if (input.maxResponses != null) {
     assertWholeNumberInRange(
       input.maxResponses,
       1,
@@ -199,34 +217,58 @@ export function buildCampRules(
     )
   }
 
-  const guidelines = input.guidelines.map((line) => line.trim()).filter((line) => line.length > 0)
-  if (guidelines.length > CAMP_SETTINGS_LIMITS.guidelines) {
+  const guidelines = input.guidelines?.map((line) => line.trim()).filter((line) => line.length > 0)
+  if (guidelines && guidelines.length > CAMP_SETTINGS_LIMITS.guidelines) {
     throwUserError(`A camp can have at most ${CAMP_SETTINGS_LIMITS.guidelines} guidelines`)
   }
-  if (guidelines.some((line) => line.length > CAMP_SETTINGS_LIMITS.guidelineLength)) {
+  if (guidelines?.some((line) => line.length > CAMP_SETTINGS_LIMITS.guidelineLength)) {
     throwUserError(`Keep each guideline under ${CAMP_SETTINGS_LIMITS.guidelineLength} characters`)
   }
 
-  const access: CampRules['access'] = {
-    ...existing.access,
-    gender: { value: input.gender, visibilityMode: mode },
-    allowedTiers: { value: tiers, visibilityMode: mode },
-    minAge: input.minAge !== null ? { value: input.minAge, visibilityMode: mode } : undefined,
-    maxAge: input.maxAge !== null ? { value: input.maxAge, visibilityMode: mode } : undefined,
+  const access = { ...existing.access }
+  if (input.gender !== undefined) {
+    access.gender = {
+      value: input.gender,
+      visibilityMode: mode ?? access.gender?.visibilityMode ?? 'gate',
+    }
+  }
+  if (tiers !== undefined) {
+    access.allowedTiers = {
+      value: tiers,
+      visibilityMode: mode ?? access.allowedTiers?.visibilityMode ?? 'gate',
+    }
+  }
+  for (const key of ['minAge', 'maxAge'] as const) {
+    const value = input[key]
+    if (value !== undefined) {
+      access[key] =
+        value === null
+          ? undefined
+          : { value, visibilityMode: mode ?? access[key]?.visibilityMode ?? 'gate' }
+    }
+  }
+  if (mode !== undefined) {
+    for (const key of ['gender', 'allowedTiers', 'minAge', 'maxAge'] as const) {
+      const rule = access[key]
+      if (rule) Object.assign(access, { [key]: { ...rule, visibilityMode: mode } })
+    }
   }
 
   return {
+    ...existing,
     access,
     participation: {
       ...existing.participation,
-      maxDurationMs:
-        input.maxDurationMinutes !== null ? input.maxDurationMinutes * 60_000 : undefined,
-      maxResponses: input.maxResponses ?? undefined,
+      ...(input.maxDurationMinutes !== undefined && {
+        maxDurationMs:
+          input.maxDurationMinutes === null ? undefined : input.maxDurationMinutes * 60_000,
+      }),
+      ...(input.maxResponses !== undefined && { maxResponses: input.maxResponses ?? undefined }),
     },
     advisory: {
       ...existing.advisory,
-      guidelines,
-      requiresTradeTags: input.requiresTradeTags,
+      ...(guidelines !== undefined && { guidelines }),
+      ...(input.requiresTradeTags !== undefined && { requiresTradeTags: input.requiresTradeTags }),
     },
   }
 }
@@ -291,6 +333,7 @@ export function buildVisibilityPatch(
   const guidelines = (rules.advisory.guidelines ?? []).filter((line) => !defaults.includes(line))
   const tierRule = rules.access.allowedTiers
   const isPrivateTierDefault =
+    camp.theme === PRIVATE_CAMP_THEME &&
     tierRule !== undefined &&
     tierRule.visibilityMode === 'hide' &&
     sameTiers(tierRule.value, PRIVATE_CAMP_DEFAULT_TIERS)

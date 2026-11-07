@@ -3,6 +3,7 @@ import { Button, Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useMutation } from 'convex/react'
 import { useRouter } from 'expo-router'
+import { useRef } from 'react'
 import { Alert, Pressable } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../../../../convex/_generated/api'
@@ -11,6 +12,7 @@ import {
   type CampGenderRule,
   type CampRuleVisibilityMode,
   campAgeBounds,
+  changedCampRules,
   readCampRulesInput,
 } from '../../../../../../../convex/lib/campSettingsPolicy'
 import {
@@ -38,6 +40,7 @@ function WhoCanJoinForm({ camp }: { camp: OwnedCamp }) {
   const router = useRouter()
   const updateRules = useMutation(api.camps.updateCampRules)
   const bounds = campAgeBounds(camp.ageBand ?? 'adult')
+  const initialRules = useRef(readCampRulesInput(camp.rules)).current
   const rules$ = useObservable(readCampRulesInput(camp.rules))
   const ui$ = useObservable({ isSaving: false })
   const gender = useValue(rules$.gender)
@@ -60,7 +63,16 @@ function WhoCanJoinForm({ camp }: { camp: OwnedCamp }) {
   const handleSave = async () => {
     ui$.isSaving.set(true)
     try {
-      await updateRules({ campId: camp._id, rules: rules$.get() })
+      await updateRules({
+        campId: camp._id,
+        rules: changedCampRules(initialRules, rules$.get(), [
+          'gender',
+          'minAge',
+          'maxAge',
+          'allowedTiers',
+          'visibilityMode',
+        ]),
+      })
       router.back()
     } catch (error) {
       Alert.alert('Couldn’t save', parseError(error).message)

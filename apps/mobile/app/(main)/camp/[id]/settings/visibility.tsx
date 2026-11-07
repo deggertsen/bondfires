@@ -43,7 +43,7 @@ function Consequence({
         width={34}
         height={34}
         borderRadius={10}
-        backgroundColor={warn ? 'rgba(245,158,11,0.15)' : '$backgroundHover'}
+        backgroundColor={'$backgroundHover'}
         alignItems="center"
         justifyContent="center"
       >
@@ -101,6 +101,7 @@ function VisibilityForm({ camp }: { camp: OwnedCamp }) {
   }
 
   const handleChange = (next: CampVisibilityChoice) => {
+    if (state$.isSaving.get()) return
     const stayingPublic = next.visibility === 'public' && current.visibility === 'public'
     // Join mode on a camp that's already public saves right away.
     if (stayingPublic && next.join !== current.join) {
@@ -111,7 +112,7 @@ function VisibilityForm({ camp }: { camp: OwnedCamp }) {
       if (next.join === 'open' && pendingCount > 0) {
         Alert.alert(
           'Approve pending requests?',
-          `Opening the camp lets in the ${plural(pendingCount, 'person', 'people')} waiting for approval.`,
+          `Opening the camp approves pending requests that still meet your camp’s join rules. There are ${plural(pendingCount, 'request', 'requests')} waiting.`,
           [
             { text: 'Cancel', style: 'cancel' },
             { text: 'Open camp', onPress: apply },

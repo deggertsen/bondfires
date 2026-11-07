@@ -10,6 +10,7 @@ import {
   buildVisibilityPatch,
   type CampRules,
   type CampRulesInput,
+  changedCampRules,
   PRIVATE_CAMP_DEFAULT_GUIDELINES,
   readCampRulesInput,
 } from './lib/campSettingsPolicy'
@@ -130,6 +131,60 @@ describe('changeCampVisibility', () => {
     expect((await t.run((ctx) => ctx.db.get(campId)))?.activeMemberCount).toBe(3)
   })
 
+  it.each([
+    { gender: 'female' as const },
+    { minAge: 100 },
+    { maxAge: 18 },
+    { allowedTiers: ['pro' as const] },
+  ])('does not auto-approve a request that no longer meets %j', async (rules) => {
+    const { t, campId, pro, requester } = await fixture()
+    const owner = as(t, pro)
+    await owner.mutation(api.camps.changeCampVisibility, { campId, access: 'approval' })
+    await owner.mutation(api.camps.updateCampRules, { campId, rules })
+    const result = await owner.mutation(api.camps.changeCampVisibility, { campId, access: 'open' })
+    expect(result.approvedRequests).toBe(0)
+    expect((await membership(t, campId, requester))?.status).toBe('pending')
+    expect(await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect())).toEqual([])
+    // Automatic approval uses the same policy as a fresh join request.
+    await t.run(async (ctx) => {
+      const request = await ctx.db
+        .query('campMembers')
+        .withIndex('by_user_camp', (q) => q.eq('userId', requester).eq('campId', campId))
+        .first()
+      if (request) await ctx.db.delete(request._id)
+    })
+    await expect(as(t, requester).mutation(api.camps.join, { campId })).rejects.toThrow()
+  })
+
+  it('does not approve requests across age bands', async () => {
+    const { t, campId, pro, requester } = await fixture()
+    const birthDate = `${new Date().getUTCFullYear() - 15}-01-01`
+    await t.run((ctx) => ctx.db.patch(requester, { birthDate }))
+    const result = await as(t, pro).mutation(api.camps.changeCampVisibility, {
+      campId,
+      access: 'open',
+    })
+    expect(result.approvedRequests).toBe(0)
+    expect((await membership(t, campId, requester))?.status).toBe('pending')
+  })
+
+  it('preserves custom paid-plan rules through public/private/public changes', async () => {
+    const { t, campId, pro } = await fixture()
+    const owner = as(t, pro)
+    await owner.mutation(api.camps.changeCampVisibility, { campId, access: 'approval' })
+    await owner.mutation(api.camps.updateCampRules, {
+      campId,
+      rules: { allowedTiers: ['plus', 'premium', 'pro'], visibilityMode: 'hide' },
+    })
+    await owner.mutation(api.camps.changeCampVisibility, { campId, access: 'invite' })
+    await owner.mutation(api.camps.changeCampVisibility, { campId, access: 'open' })
+    const camp = await t.run((ctx) => ctx.db.get(campId))
+    expect(camp?.rules.access.allowedTiers).toEqual({
+      value: ['plus', 'premium', 'pro'],
+      visibilityMode: 'hide',
+    })
+  })
+
   it('removes pending requests and keeps members when a camp goes private', async () => {
     const { t, campId, pro, member, requester } = await fixture()
     await as(t, pro).mutation(api.camps.changeCampVisibility, { campId, access: 'approval' })
@@ -212,6 +267,71 @@ describe('updateCampRules and updateCampDetails', () => {
     ).rejects.toThrow('Only the camp owner')
   })
 
+  it('merges separate form edits without replacing untouched rules or rounding limits', async () => {
+    const { t, campId, pro } = await fixture()
+    const seeded: CampRules = {
+      access: {
+        gender: { value: 'male', visibilityMode: 'hide' },
+        allowedTiers: { value: ['plus', 'premium', 'pro'], visibilityMode: 'gate' },
+        inviteOnly: { value: false, visibilityMode: 'gate' },
+      },
+      participation: { maxDurationMs: 90_000, maxResponses: 7 },
+      advisory: { guidelines: ['Original'], requiresTradeTags: true },
+    }
+    await t.run((ctx) => ctx.db.patch(campId, { rules: seeded }))
+    const initial = readCampRulesInput(seeded)
+    const guidelinesEdit = changedCampRules(initial, { ...initial, guidelines: ['  Updated  '] }, [
+      'guidelines',
+    ])
+    const owner = as(t, pro)
+    // Another settings screen saves while the guidelines form is still open.
+    await owner.mutation(api.camps.updateCampRules, { campId, rules: { maxResponses: 12 } })
+    await owner.mutation(api.camps.updateCampRules, { campId, rules: guidelinesEdit })
+    const camp = await t.run((ctx) => ctx.db.get(campId))
+    expect(camp?.rules).toEqual({
+      ...seeded,
+      participation: { maxDurationMs: 90_000, maxResponses: 12 },
+      advisory: { guidelines: ['Updated'], requiresTradeTags: true },
+    })
+    await owner.mutation(api.camps.updateCampRules, { campId, rules: { minAge: 40 } })
+    await expect(
+      owner.mutation(api.camps.updateCampRules, {
+        campId,
+        rules: { maxAge: 30 },
+      }),
+    ).rejects.toThrow('Minimum age')
+    await owner.mutation(api.camps.updateCampRules, { campId, rules: { minAge: null, maxAge: 30 } })
+    expect((await t.run((ctx) => ctx.db.get(campId)))?.rules.access.minAge).toBeUndefined()
+  })
+
+  it('rejects edits by moderators and owners of inactive camps', async () => {
+    const { t, campId, pro, member } = await fixture()
+    const existing = await membership(t, campId, member)
+    if (!existing) throw new Error('Fixture membership missing')
+    await t.run((ctx) => ctx.db.patch(existing._id, { role: 'moderator' }))
+    await expect(
+      as(t, member).mutation(api.camps.updateCampRules, {
+        campId,
+        rules: { guidelines: ['No'] },
+      }),
+    ).rejects.toThrow('Only the camp owner')
+    for (const status of ['frozen', 'grace', 'archived'] as const) {
+      await t.run((ctx) => ctx.db.patch(campId, { status }))
+      await expect(
+        as(t, pro).mutation(api.camps.updateCampRules, {
+          campId,
+          rules: { guidelines: ['No'] },
+        }),
+      ).rejects.toThrow('current state')
+      await expect(
+        as(t, pro).mutation(api.camps.changeCampVisibility, {
+          campId,
+          access: 'open',
+        }),
+      ).rejects.toThrow('current state')
+    }
+  })
+
   it('renames a private camp and keeps its display name in step', async () => {
     const { t, campId, pro } = await fixture()
     await as(t, pro).mutation(api.camps.updateCampDetails, {
@@ -253,6 +373,26 @@ describe('campSettingsPolicy', () => {
     expect(rules.access.inviteOnly).toEqual(baseRules.access.inviteOnly)
     expect(rules.access.allowedTiers).toEqual(baseRules.access.allowedTiers)
     expect(rules.participation.maxDurationMs).toBe(900_000)
+  })
+
+  it('preserves mixed visibility modes unless the owner edits the mode', () => {
+    const rules: CampRules = {
+      ...baseRules,
+      access: { ...baseRules.access, minAge: { value: 21, visibilityMode: 'gate' } },
+    }
+    const initial = readCampRulesInput(rules)
+    const changes = changedCampRules(initial, { ...initial, gender: 'female' }, [
+      'gender',
+      'visibilityMode',
+    ])
+    expect(changes).toEqual({ gender: 'female' })
+    const updated = buildCampRules(rules, changes, 'adult')
+    expect(updated.access.minAge).toEqual(rules.access.minAge)
+    expect(updated.access.gender).toEqual({ value: 'female', visibilityMode: 'hide' })
+    const uniform = buildCampRules(rules, { visibilityMode: 'gate' }, 'adult')
+    expect(uniform.access.gender?.visibilityMode).toBe('gate')
+    expect(rules.access.gender?.visibilityMode).toBe('hide')
+    expect(changedCampRules(initial, initial, ['guidelines'])).toEqual({})
   })
 
   it('bounds ages by the camp’s age band', () => {

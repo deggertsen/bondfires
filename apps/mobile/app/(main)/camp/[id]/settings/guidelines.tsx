@@ -4,12 +4,13 @@ import { useObservable, useValue } from '@legendapp/state/react'
 import { ChevronDown, ChevronUp, Plus, Trash2 } from '@tamagui/lucide-icons'
 import { useMutation } from 'convex/react'
 import { useRouter } from 'expo-router'
-import type { ComponentType } from 'react'
+import { type ComponentType, useRef } from 'react'
 import { Alert, Pressable, TextInput } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../../../../convex/_generated/api'
 import {
   CAMP_SETTINGS_LIMITS,
+  changedCampRules,
   readCampRulesInput,
 } from '../../../../../../../convex/lib/campSettingsPolicy'
 import {
@@ -54,6 +55,7 @@ function GuidelinesForm({ camp }: { camp: OwnedCamp }) {
   const router = useRouter()
   const { colors } = useAppThemeColors()
   const updateRules = useMutation(api.camps.updateCampRules)
+  const initialRules = useRef(readCampRulesInput(camp.rules)).current
   const rules$ = useObservable(readCampRulesInput(camp.rules))
   const ui$ = useObservable({ draft: '', isSaving: false })
   const items = useValue(rules$.guidelines)
@@ -85,7 +87,10 @@ function GuidelinesForm({ camp }: { camp: OwnedCamp }) {
     addDraft()
     ui$.isSaving.set(true)
     try {
-      await updateRules({ campId: camp._id, rules: rules$.get() })
+      await updateRules({
+        campId: camp._id,
+        rules: changedCampRules(initialRules, rules$.get(), ['guidelines']),
+      })
       router.back()
     } catch (error) {
       Alert.alert('Couldn’t save', parseError(error).message)
