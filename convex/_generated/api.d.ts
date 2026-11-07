@@ -50,6 +50,7 @@ import type * as legal from "../legal.js";
 import type * as lib_accountDeletionPolicy from "../lib/accountDeletionPolicy.js";
 import type * as lib_appVersion from "../lib/appVersion.js";
 import type * as lib_authProfiles from "../lib/authProfiles.js";
+import type * as lib_campSettingsPolicy from "../lib/campSettingsPolicy.js";
 import type * as lib_clientTelemetry from "../lib/clientTelemetry.js";
 import type * as lib_emojis from "../lib/emojis.js";
 import type * as lib_latestResponsePlayback from "../lib/latestResponsePlayback.js";
@@ -146,6 +147,7 @@ declare const fullApi: ApiFromModules<{
   "lib/accountDeletionPolicy": typeof lib_accountDeletionPolicy;
   "lib/appVersion": typeof lib_appVersion;
   "lib/authProfiles": typeof lib_authProfiles;
+  "lib/campSettingsPolicy": typeof lib_campSettingsPolicy;
   "lib/clientTelemetry": typeof lib_clientTelemetry;
   "lib/emojis": typeof lib_emojis;
   "lib/latestResponsePlayback": typeof lib_latestResponsePlayback;

@@ -1,6 +1,16 @@
 import { parsePersonalBondfireInvite } from '@bondfires/app'
 import type { Href } from 'expo-router'
 
+const CAMP_SETTINGS_PATHS = {
+  details: '/(main)/camp/[id]/settings/details',
+  visibility: '/(main)/camp/[id]/settings/visibility',
+  'who-can-join': '/(main)/camp/[id]/settings/who-can-join',
+  videos: '/(main)/camp/[id]/settings/videos',
+  guidelines: '/(main)/camp/[id]/settings/guidelines',
+} as const
+
+export type CampSettingsSection = keyof typeof CAMP_SETTINGS_PATHS
+
 /**
  * Centralized, type-safe route registry for the mobile app.
  *
@@ -112,6 +122,17 @@ export const routes = {
 
   camp: (id: string): Href => ({
     pathname: '/(main)/camp/[id]',
+    params: { id },
+  }),
+
+  campSettings: (id: string): Href => ({
+    pathname: '/(main)/camp/[id]/settings',
+    params: { id },
+  }),
+
+  /** One camp settings sub-screen (owner only). */
+  campSettingsSection: (id: string, section: CampSettingsSection): Href => ({
+    pathname: CAMP_SETTINGS_PATHS[section],
     params: { id },
   }),
 

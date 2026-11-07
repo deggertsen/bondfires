@@ -236,7 +236,7 @@ async function assertUserCanParticipateInCamp(
   if (args.operation === 'spark' && camp.rules?.advisory?.requiresTradeTags) {
     const tags = args.tags ?? []
     if (!tags.includes('need') && !tags.includes('offer')) {
-      throwUserError('The Trading Post requires a need or offer tag')
+      throwUserError('This camp asks you to tag what you need or offer')
     }
   }
 

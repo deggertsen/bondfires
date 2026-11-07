@@ -35,6 +35,7 @@ import {
   Lock,
   MessageCircle,
   RefreshCw,
+  Settings,
   Shield,
   UserX,
 } from '@tamagui/lucide-icons'
@@ -54,11 +55,14 @@ import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
 import { Separator, Image as TamaguiImage, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
+import { readCampRulesInput } from '../../../../../convex/lib/campSettingsPolicy'
+import { CampGuidelinesCard } from '../../../components/camps/CampGuidelinesCard'
 import { EditTitleSheet, useEditTitleSheet } from '../../../components/EditTitleSheet'
 import { InviteSheet } from '../../../components/InviteSheet'
 import { useHeaderTopPadding } from '../../../components/UploadStatusLayout'
 import { getBondfireRightSwipeActions } from '../../../lib/bondfireSwipeActions'
 import { isAuthSessionErrorMessage, redirectToCampJoinLogin } from '../../../lib/campJoinAuth'
+import { campRulePills } from '../../../lib/campSettings'
 import { goBackOrReplace } from '../../../lib/navigation'
 import { getThreadReactionRowProps } from '../../../lib/reactionChipProps'
 import { routes } from '../../../lib/routes'
@@ -295,6 +299,7 @@ function CampHeader({
   onBanMember,
   onUnbanMember,
   onArchive,
+  onOpenSettings,
   currentUserId,
 }: {
   camp: CampWithMembership
@@ -314,6 +319,7 @@ function CampHeader({
   onBanMember: (member: CampMember) => void
   onUnbanMember: (membershipId: string) => void
   onArchive: () => void
+  onOpenSettings: () => void
   currentUserId?: string
 }) {
   const headerTopPadding = useHeaderTopPadding(58)
@@ -415,26 +421,52 @@ function CampHeader({
           </YStack>
         </Pressable>
 
-        {isActiveMember ? (
-          <Pressable onPress={onMute}>
-            <YStack
-              width={42}
-              height={42}
-              borderRadius={21}
-              alignItems="center"
-              justifyContent="center"
-              backgroundColor={'$backgroundHover'}
-              borderWidth={1}
-              borderColor={muted ? '$warning' : '$borderColor'}
+        <XStack gap={10}>
+          {isOwner && camp.status === 'active' ? (
+            <Pressable
+              onPress={onOpenSettings}
+              accessibilityRole="button"
+              accessibilityLabel="Camp settings"
             >
-              {muted ? (
-                <BellOff size={20} color={'$warning'} />
-              ) : (
-                <Bell size={20} color={'$color'} />
-              )}
-            </YStack>
-          </Pressable>
-        ) : null}
+              <XStack
+                height={42}
+                paddingLeft={12}
+                paddingRight={14}
+                borderRadius={21}
+                alignItems="center"
+                gap={6}
+                backgroundColor={'$backgroundHover'}
+                borderWidth={1}
+                borderColor={'$borderColor'}
+              >
+                <Settings size={18} color={'$color'} />
+                <Text fontSize={13} fontWeight="900">
+                  Settings
+                </Text>
+              </XStack>
+            </Pressable>
+          ) : null}
+          {isActiveMember ? (
+            <Pressable onPress={onMute}>
+              <YStack
+                width={42}
+                height={42}
+                borderRadius={21}
+                alignItems="center"
+                justifyContent="center"
+                backgroundColor={'$backgroundHover'}
+                borderWidth={1}
+                borderColor={muted ? '$warning' : '$borderColor'}
+              >
+                {muted ? (
+                  <BellOff size={20} color={'$warning'} />
+                ) : (
+                  <Bell size={20} color={'$color'} />
+                )}
+              </YStack>
+            </Pressable>
+          ) : null}
+        </XStack>
       </XStack>
 
       <XStack alignItems="center" gap={14}>
@@ -488,17 +520,9 @@ function CampHeader({
       <XStack flexWrap="wrap" gap={8}>
         <RulePill label={getAccessLabel(camp)} />
         <RulePill label={[camp.activeMemberCount ?? 0, 'members'].join(' ')} />
-        {rules.access.gender?.value ? (
-          <RulePill
-            label={rules.access.gender.value === 'any' ? 'All genders' : rules.access.gender.value}
-          />
-        ) : null}
-        {rules.participation.maxDurationMs ? (
-          <RulePill
-            label={['Max', Math.round(rules.participation.maxDurationMs / 60000), 'min'].join(' ')}
-          />
-        ) : null}
-        {rules.advisory.requiresTradeTags ? <RulePill label="Need/offer tags" /> : null}
+        {campRulePills(readCampRulesInput(rules)).map((label) => (
+          <RulePill key={label} label={label} />
+        ))}
       </XStack>
 
       {camp.defaultPrompt ? (
@@ -518,6 +542,8 @@ function CampHeader({
           </Text>
         </YStack>
       ) : null}
+
+      <CampGuidelinesCard guidelines={rules.advisory.guidelines} />
 
       {isActiveMember && !isFrozen && !isArchived ? (
         <YStack gap={10}>
@@ -1262,6 +1288,7 @@ export default function CampDetailScreen() {
               onBanMember={handleBanMember}
               onUnbanMember={handleUnbanMember}
               onArchive={handleArchive}
+              onOpenSettings={() => router.push(routes.campSettings(camp._id))}
               currentUserId={camp.membership?.userId}
             />
             {isOwner ? <OwnerCampSections camp={camp} /> : null}
