@@ -285,6 +285,7 @@ async function updatePlayable(ctx: MutationCtx, recording: Doc<'segmentRecording
     }
   }
   if (complete) {
+    await materializeDurations(ctx, recording)
     if (recording.status !== 'ready') await ctx.db.patch(recording._id, { status: 'ready' })
     await enqueueTranscription(ctx, recording._id)
   }
@@ -350,18 +351,21 @@ export const receipt = internalMutation({
     // Keep the playlist cache off this row. Receipts are ordered (index ===
     // segmentCount), so seed at 0 and append; a gap keeps no partial cache
     // and is materialized by finalization or daily reconciliation.
-    const durations = await appendCachedDuration(ctx, recording, index, duration)
+    const durationsCached = await appendCachedDuration(ctx, recording, index, duration)
     const next = {
       ...recording,
       segmentCount: index + 1,
       duration: recording.duration + duration,
+      durations: undefined,
+      durationsCached,
       updatedAt: Date.now(),
     }
     await ctx.db.patch(recording._id, {
       segmentCount: next.segmentCount,
       duration: next.duration,
-      // Drop a legacy inline array the moment the side cache takes over.
-      ...(durations ? { durations: undefined, durationsCached: true as const } : {}),
+      // Clear stale inline data and keep the flag true only for a complete cache.
+      durations: undefined,
+      durationsCached,
       updatedAt: next.updatedAt,
     })
     await updatePlayable(ctx, next)
@@ -459,7 +463,7 @@ async function readCachedDurations(ctx: QueryCtx, recording: Doc<'segmentRecordi
   return row && row.durations.length === recording.segmentCount ? row.durations : undefined
 }
 
-/** Extend the side cache. Returns undefined when the prefix is not contiguous. */
+/** Extend the side cache. Returns false when the prefix is not contiguous. */
 async function appendCachedDuration(
   ctx: MutationCtx,
   recording: Doc<'segmentRecordings'>,
@@ -473,28 +477,24 @@ async function appendCachedDuration(
       : row && row.durations.length === index
         ? row.durations
         : legacyDurations(recording, index)
-  if (index !== 0 && !base) return undefined
-  const durations = [...(base ?? []), duration]
+  if (!base) return false
+  const durations = [...base, duration]
   if (row) await ctx.db.patch(row._id, { durations })
   else await ctx.db.insert('segmentTimelines', { recordingId: recording._id, durations })
-  return durations
+  return true
 }
 
-/** Persist a complete cache and drop the inline copy so later row reads shrink. */
-async function writeCachedDurations(
-  ctx: MutationCtx,
-  recording: Doc<'segmentRecordings'>,
-  durations: number[],
-) {
+/** All completion paths and daily reconciliation migrate legacy recordings once. */
+async function materializeDurations(ctx: MutationCtx, recording: Doc<'segmentRecordings'>) {
+  // The flag avoids reading the array or fragments again on retries.
+  if (recording.durationsCached || recording.segmentCount === 0) return
+  const durations =
+    legacyDurations(recording, recording.segmentCount) ?? (await backfillDurations(ctx, recording))
+  if (!durations) return
   const row = await timelineRow(ctx, recording._id)
-  if (row) {
-    const unchanged =
-      row.durations.length === durations.length &&
-      row.durations.every((duration, index) => duration === durations[index])
-    if (!unchanged) await ctx.db.patch(row._id, { durations })
-  } else await ctx.db.insert('segmentTimelines', { recordingId: recording._id, durations })
-  if (recording.durations !== undefined || recording.durationsCached !== true)
-    await ctx.db.patch(recording._id, { durations: undefined, durationsCached: true })
+  if (row) await ctx.db.patch(row._id, { durations })
+  else await ctx.db.insert('segmentTimelines', { recordingId: recording._id, durations })
+  await ctx.db.patch(recording._id, { durations: undefined, durationsCached: true })
 }
 
 /** Only a complete, contiguous timeline can be represented by an index-aligned cache. */
@@ -615,14 +615,6 @@ export const finalizeInterrupted = internalMutation({
     } catch {
       return // Deletion/revocation is handled by the next cleanup scan.
     }
-    // Materialize durations onto the side document so later playlist polls
-    // do not scan fragments and this row stays small.
-    const durations =
-      (await readCachedDurations(ctx, record)) ??
-      legacyDurations(record, record.segmentCount) ??
-      (await backfillDurations(ctx, record))
-    if (durations && durations.length === record.segmentCount)
-      await writeCachedDurations(ctx, record, durations)
     const finished = { ...record, finalCount: record.segmentCount, updatedAt: Date.now() }
     await ctx.db.patch(record._id, {
       finalCount: finished.finalCount,
@@ -643,12 +635,7 @@ export const backfillRecordingDurations = internalMutation({
     requireSegmentMedia()
     const record = await ctx.db.get(recordingId)
     if (!record || record.status === 'cancelled' || record.segmentCount === 0) return
-    // Flag means the side cache is complete. Do not re-read it or the fragments.
-    if (record.durationsCached) return
-    const durations =
-      legacyDurations(record, record.segmentCount) ?? (await backfillDurations(ctx, record))
-    if (!durations) return
-    await writeCachedDurations(ctx, record, durations)
+    await materializeDurations(ctx, record)
   },
 })
 

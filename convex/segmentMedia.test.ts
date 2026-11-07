@@ -588,19 +588,136 @@ it('keeps playlist reads bounded independently of fragment count', async () => {
   expect((await readWithBudget()).segments).toHaveLength(30)
 })
 
-it('authorizes one fragment without reading every fragment row', async () => {
-  const { t, fixture, record, receipt } = await setup(600000)
-  await receipt(-1, 0)
-  for (let index = 0; index < 30; index++) await receipt(index)
-  const segment = await t.query((ctx) =>
-    ctx.runQuery(
-      internal.segmentMedia.timeline,
-      { recordingId: record.recordingId, userId: fixture.owner, index: 0 },
-      { transactionLimits: { documentsRead: 20 } },
-    ),
-  )
-  expect(segment).toEqual({ complete: false, segments: [] })
-})
+it.each(['fragment', 'init', 'read', 'upload', 'playbackDuration'] as const)(
+  'keeps %s authorization reads independent of timeline bytes',
+  async (operation) => {
+    const { t, owner, fixture, record, receipt } = await setup()
+    await receipt(-1, 0)
+    await receipt(0)
+    await t.run(async (ctx) => {
+      const timeline = await ctx.db
+        .query('segmentTimelines')
+        .withIndex('by_recording', (q) => q.eq('recordingId', record.recordingId))
+        .unique()
+      if (!timeline) throw new Error('Missing fixture')
+      await ctx.db.patch(timeline._id, { durations: Array(1800).fill(4) })
+      await ctx.db.patch(record.recordingId, { segmentCount: 1800, duration: 7200 })
+    })
+    // Access checks fit; the duration array alone exceeds this byte budget.
+    // A document-count budget would still allow an accidental side-cache read.
+    const options = { transactionLimits: { bytesRead: 8000 } }
+    const args = { recordingId: record.recordingId, userId: fixture.owner }
+    if (operation === 'playbackDuration') {
+      expect(
+        await owner.query((ctx) =>
+          ctx.runQuery(
+            api.segmentMedia.playbackDuration,
+            { recordingId: record.recordingId },
+            options,
+          ),
+        ),
+      ).toBe(7200)
+    } else if (operation === 'read' || operation === 'upload') {
+      await t.query((ctx) =>
+        ctx.runQuery(internal.segmentMedia.authorize, { ...args, operation }, options),
+      )
+    } else {
+      expect(
+        await t.query((ctx) =>
+          ctx.runQuery(
+            internal.segmentMedia.timeline,
+            { ...args, index: operation === 'init' ? -1 : 0 },
+            options,
+          ),
+        ),
+      ).toEqual({ complete: false, segments: [] })
+    }
+    await expect(
+      t.query((ctx) =>
+        ctx.runQuery(internal.segmentMedia.timeline, { ...args, index: null }, options),
+      ),
+    ).rejects.toThrow(/Read too much data/)
+  },
+)
+
+it.each([
+  { completion: 'finish', inline: true },
+  { completion: 'finish', inline: false },
+  { completion: 'last receipt', inline: true },
+  { completion: 'last receipt', inline: false },
+  { completion: 'interrupted', inline: true },
+  { completion: 'interrupted', inline: false },
+] as const)(
+  'migrates legacy durations on $completion (inline=$inline)',
+  async ({ completion, inline }) => {
+    const { t, owner, fixture, record, receipt } = await setup()
+    await receipt(-1, 0)
+    await receipt(0, 3)
+    await clearDurationCache(t, record.recordingId)
+    if (inline) await t.run((ctx) => ctx.db.patch(record.recordingId, { durations: [3] }))
+    const args = { recordingId: record.recordingId, userId: fixture.owner, index: null }
+    expect((await t.query(internal.segmentMedia.timeline, args)).segments).toEqual([
+      { index: 0, duration: 3 },
+    ])
+    if (completion === 'interrupted') {
+      await t.run((ctx) =>
+        ctx.db.patch(record.recordingId, { createdAt: Date.now() - 8 * 86400_000 }),
+      )
+      await t.mutation(internal.segmentMedia.finalizeInterrupted, {
+        recordingId: record.recordingId,
+      })
+    } else {
+      await owner.mutation(api.segmentMedia.finish, {
+        recordingId: record.recordingId,
+        segmentCount: completion === 'last receipt' ? 2 : 1,
+      })
+      if (completion === 'last receipt') await receipt(1, 5)
+    }
+    const expected = completion === 'last receipt' ? [3, 5] : [3]
+    expect(await cachedDurations(t, record.recordingId)).toEqual(expected)
+    const stored = await t.run((ctx) => ctx.db.get(record.recordingId))
+    expect(stored).toMatchObject({ status: 'ready', durationsCached: true })
+    expect(stored?.durations).toBeUndefined()
+    expect(await t.query(internal.segmentMedia.timeline, args)).toEqual({
+      complete: true,
+      segments: expected.map((duration, index) => ({ index, duration })),
+    })
+    await t.mutation((ctx) =>
+      ctx.runMutation(
+        internal.segmentMedia.backfillRecordingDurations,
+        { recordingId: record.recordingId },
+        { transactionLimits: { documentsRead: 1, documentsWritten: 0 } },
+      ),
+    )
+  },
+)
+
+it.each(['missing', 'short'] as const)(
+  'repairs a %s side cache after the next receipt',
+  async (kind) => {
+    const { t, record, receipt } = await setup(60000)
+    await receipt(-1, 0)
+    await receipt(0, 3)
+    await t.run(async (ctx) => {
+      const timeline = await ctx.db
+        .query('segmentTimelines')
+        .withIndex('by_recording', (q) => q.eq('recordingId', record.recordingId))
+        .unique()
+      if (!timeline) throw new Error('Missing fixture')
+      if (kind === 'missing') await ctx.db.delete(timeline._id)
+      else await ctx.db.patch(timeline._id, { durations: [] })
+    })
+    await receipt(1, 5)
+    expect((await t.run((ctx) => ctx.db.get(record.recordingId)))?.durationsCached).toBe(false)
+    await t.mutation(internal.segmentMedia.backfillRecordingDurations, {
+      recordingId: record.recordingId,
+    })
+    expect(await cachedDurations(t, record.recordingId)).toEqual([3, 5])
+    await receipt(2, 4)
+    await receipt(2, 4)
+    expect(await cachedDurations(t, record.recordingId)).toEqual([3, 5, 4])
+  },
+)
 
 it('extends a backfilled live timeline without duplicating retried receipts', async () => {
   const { t, fixture, record, receipt } = await setup(60000)
@@ -1115,7 +1232,9 @@ describe('indexed media cleanup', () => {
   )
 
   it('queues explicit deletion immediately and keeps the original one-hour tombstone', async () => {
-    const { t, owner, record } = await setup()
+    const { t, owner, record, receipt } = await setup()
+    await receipt(-1, 0)
+    await receipt(0)
     await owner.mutation(api.bondfires.deleteBondfire, {
       bondfireId: record.recordId as import('./_generated/dataModel').Id<'bondfires'>,
     })
@@ -1123,6 +1242,7 @@ describe('indexed media cleanup', () => {
     expect(cancelled?.status).toBe('cancelled')
     await t.mutation(internal.segmentMedia.purge, { recordingId: record.recordingId })
     expect(await t.run((ctx) => ctx.db.get(record.recordingId))).not.toBeNull()
+    expect(await cachedDurations(t, record.recordingId)).toEqual([4])
     const originalCancellation = Date.now() - 3600_001
     await t.run(async (ctx) => {
       await ctx.db.patch(record.recordingId, { updatedAt: originalCancellation })
@@ -1133,6 +1253,7 @@ describe('indexed media cleanup', () => {
     )
     await t.mutation(internal.segmentMedia.purge, { recordingId: record.recordingId })
     expect(await t.run((ctx) => ctx.db.get(record.recordingId))).toBeNull()
+    expect(await cachedDurations(t, record.recordingId)).toBeNull()
   })
 
   it('deletes abandoned empty uploads only after the recovery window', async () => {
