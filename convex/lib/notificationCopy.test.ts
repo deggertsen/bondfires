@@ -7,7 +7,12 @@ import {
   hearthJoinBody,
   responseLiveBody,
   responsePublishBody,
+  uploadResumeBody,
 } from './notificationCopy'
+
+it('tells the owner how to resume a paused upload', () => {
+  expect(uploadResumeBody()).toBe('Open so that your recording gets sent.')
+})
 
 describe('bodyFromSummary', () => {
   it('formats third-person summary into Name: Rest', () => {

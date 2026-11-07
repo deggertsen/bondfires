@@ -680,6 +680,15 @@ export const purge = internalMutation({
     for (const segment of segments) await ctx.db.delete(segment._id)
     const timeline = await timelineRow(ctx, recordingId)
     if (timeline) await ctx.db.delete(timeline._id)
+    // Upload reminders are keyed by recording, so destination cleanup cannot
+    // remove them. There is at most one terminal delivery for its owner.
+    const reminder = await ctx.db
+      .query('notificationDeliveries')
+      .withIndex('by_video_user', (q) =>
+        q.eq('videoKey', `upload-resume:${recordingId}`).eq('userId', tombstone.userId),
+      )
+      .first()
+    if (reminder) await ctx.db.delete(reminder._id)
     if (await ctx.db.get(recordingId)) await ctx.db.delete(recordingId)
   },
 })

@@ -97,6 +97,10 @@ export function accessApprovedBody(): string {
   return "You're now a member — tap to look around"
 }
 
+export function uploadResumeBody(): string {
+  return 'Open so that your recording gets sent.'
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
