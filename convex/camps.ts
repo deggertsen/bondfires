@@ -34,6 +34,14 @@ import {
   isInviteCodeClaimable,
   normalizeInviteCode,
 } from './inviteCodes'
+import {
+  buildCampDetailsPatch,
+  buildCampRules,
+  buildVisibilityPatch,
+  isPublicAccess,
+  PRIVATE_CAMP_DEFAULT_GUIDELINES,
+  PRIVATE_CAMP_THEME,
+} from './lib/campSettingsPolicy'
 import { boundedInteger } from './lib/queryBounds'
 import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
 import { isEitherUserBlocked } from './userSafety'
@@ -1649,13 +1657,11 @@ export const setCampAccess = mutation({
       throwUserError('Camp not found')
     }
 
+    // Admin-only. Owners change visibility through changeCampVisibility,
+    // which enforces the Pro requirement and handles pending requests.
     const user = await getCurrentUser(ctx)
-    if (!isAdmin(user) && camp.ownerId !== user._id) {
-      throwUserError('Only admins and camp owners can change camp access')
-    }
-
-    if (!isAdmin(user) && !isOwnerManageableCampStatus(camp.status)) {
-      throwUserError('This camp cannot be managed in its current state')
+    if (!isAdmin(user)) {
+      throwUserError('Only admins can change camp access directly')
     }
 
     await ctx.db.patch(args.campId, {
@@ -2080,7 +2086,7 @@ export const createPrivateCamp = mutation({
     const campId = await ctx.db.insert('camps', {
       slug,
       name,
-      theme: 'Private Camp',
+      theme: PRIVATE_CAMP_THEME,
       purpose:
         args.purpose?.trim() ||
         ['Private camp hosted by', user.displayName ?? user.name ?? 'this member'].join(' '),
@@ -2097,10 +2103,7 @@ export const createPrivateCamp = mutation({
           maxDurationMs: getTierMaxVideoDurationMs(tier),
         },
         advisory: {
-          guidelines: [
-            'The camp owner starts new Bondfires here.',
-            'Invited members can respond to fires they can access.',
-          ],
+          guidelines: [...PRIVATE_CAMP_DEFAULT_GUIDELINES],
         },
       },
       nameOverride: name, // Custom name set by owner
@@ -2909,6 +2912,12 @@ export const updateSettings = mutation({
       throw new Error('This camp cannot be managed in its current state')
     }
 
+    // Visibility and rules have their own owner mutations with tier checks
+    // (changeCampVisibility, updateCampRules). Only admins write them raw.
+    if (!isAdmin(user) && (fields.access !== undefined || fields.rules !== undefined)) {
+      throwUserError('Change visibility and rules from camp settings')
+    }
+
     if (fields.status !== undefined) {
       if (fields.status === 'archived' && camp.isLaunchCamp === true) {
         throw new Error('Launch camps cannot be archived')
@@ -2947,6 +2956,154 @@ export const updateSettings = mutation({
     await ctx.db.patch(campId, updates)
 
     return campId
+  },
+})
+
+const tierValidator = v.union(
+  v.literal('free'),
+  v.literal('plus'),
+  v.literal('premium'),
+  v.literal('pro'),
+)
+const nullableNumber = v.union(v.number(), v.null())
+
+const campRulesInputValidator = v.object({
+  gender: v.union(v.literal('any'), v.literal('male'), v.literal('female')),
+  minAge: nullableNumber,
+  maxAge: nullableNumber,
+  allowedTiers: v.array(tierValidator),
+  visibilityMode: accessVisibilityModeValidator,
+  maxDurationMinutes: nullableNumber,
+  maxResponses: nullableNumber,
+  requiresTradeTags: v.boolean(),
+  guidelines: v.array(v.string()),
+})
+
+/**
+ * Load a camp for an owner settings edit. The owner (or an admin) may edit;
+ * moderators manage members but not settings.
+ */
+async function assertCanEditCampSettings(ctx: MutationCtx, campId: Id<'camps'>) {
+  const user = await getCurrentUser(ctx)
+  const camp = await ctx.db.get(campId)
+  if (!camp) {
+    throwUserError('Camp not found')
+  }
+  if (isAdmin(user)) {
+    return { camp, user }
+  }
+  if (camp.ownerId !== user._id) {
+    throwUserError('Only the camp owner can change camp settings')
+  }
+  if (!isOwnerManageableCampStatus(camp.status)) {
+    throwUserError('This camp cannot be managed in its current state')
+  }
+  return { camp, user }
+}
+
+/** Owner: rename the camp or change its purpose or prompt. */
+export const updateCampDetails = mutation({
+  args: {
+    campId: v.id('camps'),
+    name: v.optional(v.string()),
+    purpose: v.optional(v.string()),
+    defaultPrompt: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const { camp } = await assertCanEditCampSettings(ctx, args.campId)
+    const patch = buildCampDetailsPatch(camp, args)
+    await ctx.db.patch(camp._id, { ...patch, updatedAt: Date.now() })
+    return camp._id
+  },
+})
+
+/** Owner: edit who can join and how the camp's videos and responses work. */
+export const updateCampRules = mutation({
+  args: {
+    campId: v.id('camps'),
+    rules: campRulesInputValidator,
+  },
+  handler: async (ctx, args) => {
+    const { camp } = await assertCanEditCampSettings(ctx, args.campId)
+    const rules = buildCampRules(camp.rules, args.rules, getCampAgeBand(camp))
+    await ctx.db.patch(camp._id, { rules, updatedAt: Date.now() })
+    return camp._id
+  },
+})
+
+/**
+ * Owner: switch a camp between public (open / approval) and private (invite).
+ *
+ * - Going public needs Pro, the same bar as createPublicCamp. It costs no
+ *   kindling: the camp already burns one a month either way.
+ * - Going private removes pending join requests (only invite codes get people
+ *   in now). Members stay; only the owner can spark from then on.
+ * - Going open approves pending requests, since anyone could now join anyway.
+ */
+export const changeCampVisibility = mutation({
+  args: {
+    campId: v.id('camps'),
+    access: accessValidator,
+  },
+  handler: async (ctx, args) => {
+    const { camp, user } = await assertCanEditCampSettings(ctx, args.campId)
+    const result = { campId: camp._id, approvedRequests: 0, removedRequests: 0 }
+    if (camp.access === args.access) {
+      return result
+    }
+
+    if (!isAdmin(user)) {
+      if (camp.isLaunchCamp === true) {
+        throwUserError('Launch camps can’t change visibility')
+      }
+      if (isPublicAccess(args.access)) {
+        const tier = await getEntitlementSubscriptionTier(ctx, user._id)
+        if (TIER_RANK[tier] < TIER_RANK.pro) {
+          throwUserError('Public camps need Pro')
+        }
+      }
+    }
+
+    const now = Date.now()
+    const pending = await ctx.db
+      .query('campMembers')
+      .withIndex('by_camp_status', (q) => q.eq('campId', camp._id).eq('status', 'pending'))
+      .collect()
+
+    if (args.access === 'invite') {
+      for (const request of pending) {
+        await ctx.db.delete(request._id)
+        result.removedRequests++
+      }
+    } else if (args.access === 'open') {
+      for (const request of pending) {
+        const requester = await ctx.db.get(request.userId)
+        if (!isUserEligibleForCamp(requester, camp)) {
+          continue
+        }
+        await ctx.db.patch(request._id, {
+          status: 'active',
+          approvedAt: now,
+          joinedAt: request.joinedAt ?? now,
+          updatedAt: now,
+        })
+        await ctx.scheduler.runAfter(0, internal.sendNotification.notifyAccessApproved, {
+          campId: camp._id,
+          userId: request.userId,
+        })
+        await ctx.scheduler.runAfter(0, internal.sendNotification.emailAccessApproved, {
+          campId: camp._id,
+          userId: request.userId,
+        })
+        result.approvedRequests++
+      }
+    }
+
+    await ctx.db.patch(camp._id, { ...buildVisibilityPatch(camp, args.access), updatedAt: now })
+    if (result.approvedRequests > 0) {
+      await refreshActiveMemberCount(ctx, camp._id)
+    }
+    return result
   },
 })
 

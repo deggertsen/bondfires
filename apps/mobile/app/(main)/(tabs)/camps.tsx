@@ -17,6 +17,7 @@ import { Alert, FlatList, Pressable, RefreshControl, StatusBar } from 'react-nat
 import { Image, Separator, Sheet, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc } from '../../../../../convex/_generated/dataModel'
+import { CreateCampSheet } from '../../../components/camps/CreateCampSheet'
 import { useHeaderTopPadding } from '../../../components/UploadStatusLayout'
 import { isAuthSessionErrorMessage, redirectToCampJoinLogin } from '../../../lib/campJoinAuth'
 import { shouldLoadSparsePage, uniqueById } from '../../../lib/pagination'
@@ -419,14 +420,11 @@ export default function CampsScreen() {
   const joinCamp = useMutation(api.camps.join)
   const requestJoinCamp = useMutation(api.camps.requestJoin)
   const { isAuthenticated } = useAuth()
-  const createPrivateCamp = useMutation(api.camps.createPrivateCamp)
   const redeemInvite = useMutation(api.camps.redeemInvite)
   const [query, setQuery] = useState('')
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isCreatePrivateOpen, setIsCreatePrivateOpen] = useState(false)
   const [isRedeemInviteOpen, setIsRedeemInviteOpen] = useState(false)
-  const [privateCampName, setPrivateCampName] = useState('')
-  const [privateCampPurpose, setPrivateCampPurpose] = useState('')
   const [inviteCode, setInviteCode] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [archivedExpanded, setArchivedExpanded] = useState(false)
@@ -551,53 +549,6 @@ export default function CampsScreen() {
     },
     [joinCamp, requestJoinCamp, isAuthenticated, router],
   )
-
-  const handleCreatePrivateCamp = useCallback(async () => {
-    if (!canCreatePrivateCamp) {
-      Alert.alert('Membership Required', 'Private camps require Plus, Premium, or Pro.')
-      return
-    }
-
-    const name = privateCampName.trim()
-    if (name.length < 3) {
-      Alert.alert('Name Required', 'Give your private camp a name first.')
-      return
-    }
-
-    if (
-      subscription?.tier === 'pro' &&
-      kindlingBalance !== undefined &&
-      kindlingBalance.balance < 1
-    ) {
-      Alert.alert('Camp Kindling Required', 'Buy a kindling pack to create more private camps.')
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      const campId = await createPrivateCamp({
-        name,
-        purpose: privateCampPurpose.trim() || undefined,
-      })
-      setPrivateCampName('')
-      setPrivateCampPurpose('')
-      setIsCreatePrivateOpen(false)
-      router.push(routes.camp(campId))
-    } catch (error) {
-      const message = parseError(error).message
-      Alert.alert('Private Camp Unavailable', message)
-    } finally {
-      setIsSubmitting(false)
-    }
-  }, [
-    canCreatePrivateCamp,
-    createPrivateCamp,
-    privateCampName,
-    privateCampPurpose,
-    router,
-    kindlingBalance,
-    subscription?.tier,
-  ])
 
   const handleRedeemInvite = useCallback(async () => {
     const code = inviteCode.trim().toLowerCase()
@@ -834,84 +785,13 @@ export default function CampsScreen() {
         contentContainerStyle={{ paddingBottom: 110 }}
       />
 
-      <Sheet
-        modal
+      <CreateCampSheet
         open={isCreatePrivateOpen}
         onOpenChange={setIsCreatePrivateOpen}
-        snapPointsMode="fit"
-        dismissOnSnapToBottom
-        moveOnKeyboardChange
-      >
-        <Sheet.Overlay backgroundColor="rgba(0,0,0,0.45)" />
-        <Sheet.Frame padding={20} backgroundColor={'$backgroundPress'} gap={16}>
-          <Sheet.Handle backgroundColor={'$borderColor'} />
-          <YStack gap={6}>
-            <Text fontSize={22} fontWeight="900">
-              Create Camp
-            </Text>
-            <Text fontSize={14} color={'$placeholderColor'} lineHeight={20}>
-              Owner-led and invite-only. You spark; members respond.
-            </Text>
-          </YStack>
-          <YStack gap={10}>
-            <Input
-              value={privateCampName}
-              onChangeText={setPrivateCampName}
-              placeholder="Camp name"
-            />
-            <Input
-              value={privateCampPurpose}
-              onChangeText={setPrivateCampPurpose}
-              placeholder="Purpose, theme, or focus"
-            />
-          </YStack>
-          {subscription?.tier === 'pro' && kindlingBalance !== undefined ? (
-            <YStack
-              borderRadius={10}
-              backgroundColor={'$backgroundHover'}
-              borderWidth={1}
-              borderColor={'$borderColor'}
-              padding={10}
-              gap={4}
-            >
-              <Text fontSize={11} color={'$placeholderColor'} fontWeight="900">
-                CAMP KINDLING
-              </Text>
-              <Text
-                fontSize={18}
-                fontWeight="900"
-                color={kindlingBalance.balance > 0 ? '$success' : '$error'}
-              >
-                {kindlingBalance.balance} kindling remaining
-              </Text>
-              {kindlingBalance.balance < 1 ? (
-                <Text fontSize={12} color={'$placeholderColor'}>
-                  Buy a kindling pack to create more camps.
-                </Text>
-              ) : null}
-            </YStack>
-          ) : null}
-          <Button
-            variant="primary"
-            size="$lg"
-            disabled={
-              isSubmitting ||
-              (subscription?.tier === 'pro' &&
-                kindlingBalance !== undefined &&
-                kindlingBalance.balance < 1)
-            }
-            onPress={handleCreatePrivateCamp}
-          >
-            {isSubmitting ? (
-              <Spinner color={'$color'} />
-            ) : (
-              <Text color={'$color'} fontWeight="900">
-                Create Camp
-              </Text>
-            )}
-          </Button>
-        </Sheet.Frame>
-      </Sheet>
+        canChoosePublic={isPro}
+        kindlingBalance={isPro ? kindlingBalance?.balance : undefined}
+        onCreated={(campId) => router.push(routes.camp(campId))}
+      />
 
       <Sheet
         modal

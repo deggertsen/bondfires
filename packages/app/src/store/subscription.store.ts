@@ -169,8 +169,9 @@ export const TIER_DEFINITIONS: Record<
     description: 'Create and manage camps with recordings up to 3 hours.',
     features: [
       { label: 'Everything in Premium' },
-      { label: 'Create private (invite-only) camps' },
-      { label: 'Approve join requests and manage members' },
+      { label: 'Create public and private camps' },
+      { label: 'Switch camps between public and private' },
+      { label: 'Set camp rules and approve members' },
       { label: '3 kindling per month' },
       { label: 'Extra kindling packs available' },
       { label: '3-hour recordings' },

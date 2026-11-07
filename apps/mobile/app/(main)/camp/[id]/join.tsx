@@ -8,8 +8,11 @@ import { Alert, Pressable, ScrollView } from 'react-native'
 import { Image as TamaguiImage, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../../convex/_generated/api'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
+import { readCampRulesInput } from '../../../../../../convex/lib/campSettingsPolicy'
+import { CampGuidelinesCard } from '../../../../components/camps/CampGuidelinesCard'
 import { useHeaderTopPadding } from '../../../../components/UploadStatusLayout'
 import { isAuthSessionErrorMessage, redirectToCampJoinLogin } from '../../../../lib/campJoinAuth'
+import { campRulePills } from '../../../../lib/campSettings'
 import { resolveExternalRoute, routes } from '../../../../lib/routes'
 
 /**
@@ -250,22 +253,14 @@ export default function CampJoinGateScreen() {
           <XStack flexWrap="wrap" gap={8}>
             <RulePill label={getAccessLabel(camp)} />
             <RulePill label={[camp.activeMemberCount ?? 0, 'members'].join(' ')} />
-            {rules?.access?.gender?.value ? (
-              <RulePill
-                label={
-                  rules.access.gender.value === 'any' ? 'All genders' : rules.access.gender.value
-                }
-              />
-            ) : null}
-            {rules?.participation?.maxDurationMs ? (
-              <RulePill
-                label={['Max', Math.round(rules.participation.maxDurationMs / 60000), 'min'].join(
-                  ' ',
-                )}
-              />
-            ) : null}
-            {rules?.advisory?.requiresTradeTags ? <RulePill label="Need/offer tags" /> : null}
+            {rules
+              ? campRulePills(readCampRulesInput(rules)).map((label) => (
+                  <RulePill key={label} label={label} />
+                ))
+              : null}
           </XStack>
+
+          <CampGuidelinesCard guidelines={rules?.advisory?.guidelines} />
 
           {/* Join message */}
           <YStack
