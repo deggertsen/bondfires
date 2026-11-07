@@ -13,7 +13,7 @@
  *              private camp videos retained for 1 month
  *   premium  — plus perks + unlimited private-camp video retention, 30-min video limit
  *   pro      — premium perks + create/manage up to 3 public camps plus verified add-ons,
- *              unlimited video length, analytics, custom camp branding
+ *              3-hour video limit, analytics, custom camp branding
  */
 
 import { internal } from './_generated/api'
