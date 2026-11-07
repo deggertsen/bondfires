@@ -1,7 +1,7 @@
 import { v } from 'convex/values'
 import type { Doc } from './_generated/dataModel'
 import { mutation, query } from './_generated/server'
-import { calculateAgeAt } from './agePolicy'
+import { getUserAgeBand, getUserMinimumAge } from './agePolicy'
 import { auth, getUserIdIncludingDeleting } from './auth'
 import { throwUserError } from './errors'
 import { getBlockedUserIds } from './userSafety'
@@ -49,7 +49,12 @@ function currentUser(user: Doc<'users'>) {
     displayName: user.displayName,
     photoUrl: user.photoUrl,
     gender: user.gender,
-    age: user.birthDate ? (calculateAgeAt(user.birthDate) ?? undefined) : undefined,
+    // Only a legacy full date supports displaying an exact age. A birth month
+    // can still span two ages; show the community band for all new accounts.
+    age: user.birthDate ? (getUserMinimumAge(user) ?? undefined) : undefined,
+    ageBand: getUserAgeBand(user) ?? undefined,
+    ageBlocked: !!user.ageBlockedAt,
+    ageBlockedReason: user.ageBlockedAt ? (user.ageBlockedReason ?? 'under_13') : undefined,
     bondfireCount: user.bondfireCount ?? 0,
     responseCount: user.responseCount ?? 0,
     totalViews: user.totalViews ?? 0,

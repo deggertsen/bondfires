@@ -1,6 +1,11 @@
 import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
-import { assertUserAgeBand, getPersonalCampAgeBand, getUserAgeBand } from './agePolicy'
+import {
+  type AgeProfile,
+  assertUserAgeBand,
+  getPersonalCampAgeBand,
+  getUserAgeBand,
+} from './agePolicy'
 import { getEntitlementSubscriptionTier, PAID_TIERS, type SubscriptionTier } from './entitlements'
 import { throwUserError } from './errors'
 import { assertUsersCanShareHearth, isHearthParticipantAuthorized } from './familyRelationships'
@@ -10,7 +15,7 @@ type ConvexCtx = QueryCtx | MutationCtx
 
 export async function getPersonalCampForOwner(
   ctx: ConvexCtx,
-  owner: Pick<Doc<'users'>, '_id' | 'birthDate'>,
+  owner: Pick<Doc<'users'>, '_id'> & AgeProfile,
 ) {
   const ageBand = assertUserAgeBand(owner)
   const camps = await ctx.db

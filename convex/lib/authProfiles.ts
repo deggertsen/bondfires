@@ -1,5 +1,7 @@
 import type { ConvexAuthConfig } from '@convex-dev/auth/server'
 import type { MutationCtx } from '../_generated/server'
+import { isDeviceAgeSource } from '../agePolicy'
+import type { RegistrationAgeFields } from './registrationPolicy'
 
 // Explicit mappings avoid unsupported `image` fields and preserve provider
 // identity separately from editable names/email in the application profile.
@@ -45,6 +47,25 @@ export function appleProfile(
     ...(profile.user?.name?.lastName ? { lastName: profile.user.name.lastName } : {}),
     ...(tokens.refresh_token ? { appleRefreshToken: tokens.refresh_token } : {}),
   }
+}
+
+/** Copy only the age fields registrationProfile() produced for a password signup. */
+function registrationAgeFromProfile(profile: Record<string, unknown>): RegistrationAgeFields {
+  if (isDeviceAgeSource(profile.ageSource)) {
+    if (profile.deviceAgeBand !== 'teen' && profile.deviceAgeBand !== 'adult') {
+      throw new Error('Invalid age range.')
+    }
+    return {
+      ageSource: profile.ageSource,
+      deviceAgeBand: profile.deviceAgeBand,
+      deviceAgeCheckedAt:
+        typeof profile.deviceAgeCheckedAt === 'number' ? profile.deviceAgeCheckedAt : Date.now(),
+    }
+  }
+  if (profile.ageSource !== 'birth_month' || typeof profile.birthMonth !== 'string') {
+    throw new Error('Enter your birth month and year (YYYY-MM).')
+  }
+  return { ageSource: 'birth_month', birthMonth: profile.birthMonth }
 }
 
 type UserArgs = Parameters<
@@ -94,7 +115,9 @@ export async function createOrUpdateAuthUser(ctx: MutationCtx, args: UserArgs) {
       registrationPending: social,
       ...(!social
         ? {
-            birthDate: profile.birthDate as string,
+            // Password signup already ran registrationProfile(): either a
+            // device band or a birth month, never a full birth date.
+            ...registrationAgeFromProfile(profile),
             acceptedTermsVersion: profile.acceptedTermsVersion as string,
             acceptedCommunityGuidelinesVersion:
               profile.acceptedCommunityGuidelinesVersion as string,

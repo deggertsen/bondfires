@@ -2,18 +2,19 @@ import { getAuthErrorMessage, useSystemThemeColors } from '@bondfires/app'
 import { Button, Input, Spinner, Text } from '@bondfires/ui'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
-import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker'
-import { CheckSquare, Flame, Square, UserPlus } from '@tamagui/lucide-icons'
+import { CheckSquare, Flame, ShieldCheck, Square, UserPlus } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router'
-import { useEffect, useRef, useState } from 'react'
-import { Alert, Linking, Platform, Pressable, StatusBar } from 'react-native'
+import { useEffect, useRef } from 'react'
+import { Alert, Linking, Pressable, StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { XStack, YStack } from 'tamagui'
 import { api } from '../../../convex/_generated/api'
-import { getAgeBand } from '../../../convex/agePolicy'
+import { type DeviceAgeRange, parseBirthMonth } from '../../../convex/agePolicy'
+import { birthMonthFromControls } from '../lib/deviceAgeSignal'
 import { routes } from '../lib/routes'
 import { clearRegistrationDestination, registrationDestination } from '../lib/socialAuth'
+import { useRegistrationAge } from '../lib/useRegistrationAge'
 
 type Gender = 'male' | 'female' | 'other'
 
@@ -23,26 +24,23 @@ const GENDER_OPTIONS: Array<{ value: Gender; label: string }> = [
   { value: 'other', label: 'Other' },
 ]
 
-/**
- * Format a Date to YYYY-MM-DD string.
- */
-function formatDate(date: Date): string {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
+const MONTH_OPTIONS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+] as const
 
-/** Minimum age to join Bondfires */
-const MIN_AGE = 13
-
-/** Latest selectable birth date under the backend's conservative UTC policy. */
-function getLatestBirthDate(): Date {
-  const now = new Date()
-  // Construct a local Date for the native calendar picker using UTC calendar
-  // components, so formatting it produces the same date the server evaluates.
-  return new Date(now.getUTCFullYear() - MIN_AGE, now.getUTCMonth(), now.getUTCDate() - 1)
-}
+/** Either the phone's range or the typed month, never both and never a full date. */
+type AgeInput = { deviceAgeRange: DeviceAgeRange } | { birthMonth: string }
 
 export function RegistrationForm({ completing = false }: { completing?: boolean }) {
   const { colors, statusBarStyle } = useSystemThemeColors()
@@ -53,6 +51,10 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
   const complete = useMutation(api.registration.complete)
   const deleteAccount = useMutation(api.accountDeletion.request)
   const initialized = useRef(false)
+  // Wait for completion status before prompting an already registered user.
+  const { step: ageStep, range: deviceAgeRange } = useRegistrationAge(
+    !completing || status?.pending === true,
+  )
 
   const form$ = useObservable({
     firstName: '',
@@ -61,7 +63,9 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
     password: '',
     confirmPassword: '',
     gender: null as Gender | null,
-    birthDate: '',
+    // Month/year fallback controls start unset on purpose.
+    birthMonthIndex: null as number | null,
+    birthYear: '',
     isLoading: false,
     error: null as string | null,
     acceptedLegal: false,
@@ -73,13 +77,11 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
   const password = useValue(form$.password)
   const confirmPassword = useValue(form$.confirmPassword)
   const gender = useValue(form$.gender)
-  const birthDate = useValue(form$.birthDate)
+  const birthMonthIndex = useValue(form$.birthMonthIndex)
+  const birthYear = useValue(form$.birthYear)
   const isLoading = useValue(form$.isLoading)
   const error = useValue(form$.error)
   const acceptedLegal = useValue(form$.acceptedLegal)
-
-  // Date picker state
-  const [showDatePicker, setShowDatePicker] = useState(false)
 
   useEffect(() => {
     if (!completing || !status || initialized.current) return
@@ -87,7 +89,6 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
     form$.firstName.set(status.firstName)
     form$.lastName.set(status.lastName)
     form$.email.set(status.email)
-    form$.birthDate.set(status.birthDate)
   }, [completing, status, form$])
 
   const destination = redirectTo ?? registrationDestination()
@@ -98,7 +99,15 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
       </YStack>
     )
   if (completing && status === null) return <Redirect href={routes.login(destination)} />
+  if (completing && status?.ageBlocked) return <Redirect href={routes.ageBlocked} />
   if (completing && status && !status.pending) return <Redirect href={routes.splash(destination)} />
+
+  const resolveAgeInput = (): AgeInput | null => {
+    if ((ageStep === 'teen' || ageStep === 'adult') && deviceAgeRange) return { deviceAgeRange }
+    if (ageStep !== 'ask') return null
+    const birthMonth = birthMonthFromControls(form$.birthMonthIndex.get(), form$.birthYear.get())
+    return birthMonth && parseBirthMonth(birthMonth) ? { birthMonth } : null
+  }
 
   const handleSignup = async () => {
     const currentFirstName = form$.firstName.get().trim()
@@ -107,22 +116,22 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
     const currentPassword = form$.password.get()
     const currentConfirmPassword = form$.confirmPassword.get()
     const currentGender = form$.gender.get()
-    const currentBirthDate = form$.birthDate.get().trim()
     const currentAcceptedLegal = form$.acceptedLegal.get()
+    if (ageStep === 'checking' || ageStep === 'blocked') return
 
     if (
       !currentFirstName ||
       !currentLastName ||
       (!completing && (!currentEmail || !currentPassword)) ||
-      !currentGender ||
-      !currentBirthDate
+      !currentGender
     ) {
       form$.error.set('Please fill in all fields')
       return
     }
 
-    if (!getAgeBand(currentBirthDate)) {
-      form$.error.set('A valid birth date for someone age 13 or older is required.')
+    const ageInput = resolveAgeInput()
+    if (!ageInput) {
+      form$.error.set('Please select your birth month and enter your birth year.')
       return
     }
 
@@ -149,7 +158,7 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
           firstName: currentFirstName,
           lastName: currentLastName,
           gender: currentGender,
-          birthDate: currentBirthDate,
+          ...ageInput,
           acceptedLegal: currentAcceptedLegal,
         })
         router.replace(routes.splash(destination))
@@ -162,7 +171,7 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
         lastName: currentLastName,
         gender: currentGender,
         flow: 'signUp',
-        birthDate: currentBirthDate,
+        ...ageInput,
         acceptedLegal: 'true',
       })
       // Pass email to verify-email screen for OTP verification
@@ -174,13 +183,7 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
     }
   }
 
-  const handleDateChange = (_event: DateTimePickerEvent, selectedDate?: Date) => {
-    setShowDatePicker(Platform.OS === 'ios')
-    if (selectedDate) {
-      form$.birthDate.set(formatDate(selectedDate))
-      form$.error.set(null)
-    }
-  }
+  const submitDisabled = isLoading || ageStep === 'checking' || ageStep === 'blocked'
 
   return (
     <YStack flex={1} backgroundColor="$background">
@@ -289,50 +292,112 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
               </XStack>
             </YStack>
 
-            {/* Birth Date with Calendar Picker */}
+            {/* Age: phone first, month/year only when the phone cannot answer. */}
             <YStack gap={8}>
               <Text variant="label" color={'$color'}>
-                Birth Date
+                Age
               </Text>
-              <Text fontSize={12} color={'$placeholderColor'} marginBottom={4}>
-                Required. You must be at least 13. Your date is private and keeps 13–17 and adult
-                public communities separate. Private family Hearths require a separate invitation
-                and acceptance.
-              </Text>
-              <YStack
-                backgroundColor="$backgroundHover"
-                borderColor="$borderColor"
-                borderWidth={1}
-                borderRadius="$3"
-                padding="$3"
-                gap="$2"
-              >
-                <Text fontSize={13} fontWeight="700" color="$color">
-                  Stay safe when sharing video
-                </Text>
-                <Text fontSize={12} color="$placeholderColor" lineHeight={17}>
-                  Never share your address, school, exact location, passwords, or private contact
-                  details. Tell a trusted adult and use Report if an interaction feels unsafe.
-                </Text>
-              </YStack>
-              <Pressable onPress={() => setShowDatePicker(true)}>
-                <YStack pointerEvents="none">
+              {ageStep === 'checking' && (
+                <XStack gap={8} alignItems="center">
+                  <Spinner size="small" color={'$placeholderColor'} />
+                  <Text fontSize={12} color={'$placeholderColor'}>
+                    Checking your device…
+                  </Text>
+                </XStack>
+              )}
+              {(ageStep === 'teen' || ageStep === 'adult') && (
+                <XStack gap={8} alignItems="center">
+                  <ShieldCheck size={18} color={'$success'} />
+                  <Text fontSize={13} color={'$color'}>
+                    Age confirmed from your device.
+                  </Text>
+                </XStack>
+              )}
+              {ageStep === 'blocked' && (
+                <YStack
+                  backgroundColor="$backgroundHover"
+                  borderColor="$borderColor"
+                  borderWidth={1}
+                  borderRadius="$3"
+                  padding="$3"
+                  gap="$2"
+                >
+                  <Text fontSize={13} fontWeight="700" color="$color">
+                    Bondfires isn’t available for your age range
+                  </Text>
+                  <Text fontSize={12} color="$placeholderColor" lineHeight={17}>
+                    Your device reported an age range that Bondfires doesn’t support, so an account
+                    can’t be created right now.
+                  </Text>
+                </YStack>
+              )}
+              {ageStep === 'ask' && (
+                <YStack gap={8}>
+                  <Text fontSize={12} color={'$placeholderColor'} marginBottom={4}>
+                    Your birth month and year are private and are only used to keep 13–17 and adult
+                    public communities separate. Private family Hearths require a separate
+                    invitation and acceptance.
+                  </Text>
+                  <Text fontSize={12} color={'$color'}>
+                    Birth month
+                  </Text>
+                  <XStack gap={6} flexWrap="wrap">
+                    {MONTH_OPTIONS.map((label, index) => {
+                      const month = index + 1
+                      const selected = birthMonthIndex === month
+                      return (
+                        <Button
+                          key={label}
+                          variant={selected ? 'primary' : 'outline'}
+                          size="$sm"
+                          minWidth={56}
+                          accessibilityRole="radio"
+                          accessibilityState={{ selected }}
+                          onPress={() => {
+                            form$.birthMonthIndex.set(month)
+                            form$.error.set(null)
+                          }}
+                        >
+                          <Text color={selected ? '$color' : '$placeholderColor'} fontWeight="700">
+                            {label}
+                          </Text>
+                        </Button>
+                      )
+                    })}
+                  </XStack>
+                  <Text fontSize={12} color={'$color'}>
+                    Birth year
+                  </Text>
                   <Input
-                    placeholder="YYYY-MM-DD"
-                    value={birthDate}
-                    editable={false}
-                    autoCapitalize="none"
+                    placeholder="YYYY"
+                    value={birthYear}
+                    onChangeText={(text) => {
+                      form$.birthYear.set(text.replace(/[^0-9]/g, '').slice(0, 4))
+                      form$.error.set(null)
+                    }}
+                    keyboardType="number-pad"
+                    maxLength={4}
+                    autoComplete="off"
                   />
                 </YStack>
-              </Pressable>
-              {showDatePicker && (
-                <DateTimePicker
-                  value={birthDate ? new Date(`${birthDate}T00:00:00`) : getLatestBirthDate()}
-                  mode="date"
-                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                  maximumDate={getLatestBirthDate()}
-                  onChange={handleDateChange}
-                />
+              )}
+              {ageStep !== 'blocked' && (
+                <YStack
+                  backgroundColor="$backgroundHover"
+                  borderColor="$borderColor"
+                  borderWidth={1}
+                  borderRadius="$3"
+                  padding="$3"
+                  gap="$2"
+                >
+                  <Text fontSize={13} fontWeight="700" color="$color">
+                    Stay safe when sharing video
+                  </Text>
+                  <Text fontSize={12} color="$placeholderColor" lineHeight={17}>
+                    Never share your address, school, exact location, passwords, or private contact
+                    details. Tell a trusted adult and use Report if an interaction feels unsafe.
+                  </Text>
+                </YStack>
               )}
             </YStack>
 
@@ -420,7 +485,7 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
 
           {/* Actions */}
           <YStack gap={12}>
-            <Button variant="primary" size="$lg" onPress={handleSignup} disabled={isLoading}>
+            <Button variant="primary" size="$lg" onPress={handleSignup} disabled={submitDisabled}>
               {isLoading ? (
                 <Spinner color={'$color'} />
               ) : (

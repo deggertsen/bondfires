@@ -30,7 +30,8 @@
         "com.apple.developer.associated-domains": [
           "applinks:bondfires.org",
           "applinks:bondfires.app"
-        ]
+        ],
+        "com.apple.developer.declared-age-range": true
       },
       "infoPlist": {
         "AppStoreID": "6755933598",

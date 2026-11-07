@@ -50,6 +50,8 @@ export const routes = {
     params: { redirectTo },
   }),
   forgotPassword: '/(auth)/forgot-password',
+  // Static block after a device age range reported under 13; never reopens registration.
+  ageBlocked: '/(auth)/age-blocked',
 
   login: (redirectTo?: string): Href =>
     redirectTo ? { pathname: '/(auth)/login', params: { redirectTo } } : '/(auth)/login',

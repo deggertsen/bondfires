@@ -128,7 +128,34 @@ export default defineSchema({
     photoStorageId: v.optional(v.id('_storage')),
     gender: userGender,
     registrationPending: v.optional(v.boolean()),
-    birthDate: v.optional(v.string()), // ISO date string (YYYY-MM-DD), private
+    birthDate: v.optional(v.string()), // ISO date string (YYYY-MM-DD), private. Legacy full dates only.
+    // Month/year fallback (YYYY-MM) collected only when the device gives no
+    // age range. Private. New registrations never store a full birth date.
+    birthMonth: v.optional(v.string()),
+    // Which input currently decides the age band (see agePolicy.ts). Device
+    // sources are client-reported OS signals, the same trust level as a
+    // client-sent birth date; they are not identity verification.
+    ageSource: v.optional(
+      v.union(
+        v.literal('birth_date'),
+        v.literal('birth_month'),
+        v.literal('apple_declared_age_range'),
+        v.literal('play_age_signals'),
+      ),
+    ),
+    // Band mapped from the last eligible device range. Set only for device sources.
+    deviceAgeBand: v.optional(ageBand),
+    deviceAgeCheckedAt: v.optional(v.number()),
+    // Set when a later device range reported someone under 13, or 13-17 on an
+    // adult account. The account is kept but cannot use the app and never
+    // re-enters registration.
+    ageBlockedAt: v.optional(v.number()),
+    // Why the account is blocked. `teen_on_adult_account`: the device reported
+    // 13-17 on an adult account, which never moves to the teen band. Missing on
+    // a blocked account means under 13.
+    ageBlockedReason: v.optional(
+      v.union(v.literal('under_13'), v.literal('teen_on_adult_account')),
+    ),
     // Opaque UUID sent to StoreKit/Play Billing to bind new purchases to this
     // authenticated account. It is never accepted as proof without a verified
     // store response containing the same value.

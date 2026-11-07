@@ -199,7 +199,7 @@ export function isCampContentVisibleToViewer(
     {
       gender: viewer.user?.gender ?? 'other',
       tier: viewer.tier,
-      birthDate: viewer.user?.birthDate,
+      ageProfile: viewer.user,
     },
     camp,
   ).visible

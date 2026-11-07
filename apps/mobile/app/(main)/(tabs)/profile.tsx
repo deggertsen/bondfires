@@ -79,6 +79,7 @@ type CurrentUserData = {
   photoUrl?: string
   gender: Gender
   age?: number
+  ageBand?: 'teen' | 'adult'
   bondfireCount: number
   responseCount: number
   totalViews: number
@@ -1047,10 +1048,16 @@ export default function ProfileScreen() {
                 Age
               </Text>
               <Text fontSize={12} color={'$placeholderColor'}>
-                {currentUser?.age !== undefined ? currentUser.age : 'Not set'}
+                {currentUser?.age !== undefined
+                  ? currentUser.age
+                  : currentUser?.ageBand === 'teen'
+                    ? '13–17'
+                    : currentUser?.ageBand === 'adult'
+                      ? '18+'
+                      : 'Not set'}
               </Text>
               <Text fontSize={12} color={'$placeholderColor'}>
-                Based on your private birth date. Contact support to request a correction.
+                Based on your private age information. Contact support to request a correction.
               </Text>
             </YStack>
 
