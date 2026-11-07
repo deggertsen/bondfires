@@ -1057,8 +1057,7 @@ export default function ProfileScreen() {
                       : 'Not set'}
               </Text>
               <Text fontSize={12} color={'$placeholderColor'}>
-                Based on your device’s age range or your private birth month. Contact support to
-                request a correction.
+                Based on your private age information. Contact support to request a correction.
               </Text>
             </YStack>
 

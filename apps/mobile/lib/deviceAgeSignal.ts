@@ -36,7 +36,8 @@ export function deviceAgeRangeFromSignal(
   const lowerBound = typeof signal.lowerBound === 'number' ? signal.lowerBound : null
   const upperBound = typeof signal.upperBound === 'number' ? signal.upperBound : null
   if (lowerBound === null && upperBound === null) return null
-  return { source, lowerBound, upperBound }
+  const range = { source, lowerBound, upperBound }
+  return getDeviceAgeOutcome(range) === null ? null : range
 }
 
 /**

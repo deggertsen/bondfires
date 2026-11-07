@@ -82,6 +82,16 @@ describe('device age signal decision', () => {
     expect(birthMonthFromControls(12, '2008')).toBe('2008-12')
   })
 
+  it('treats malformed native ranges as silence instead of recording an answer', () => {
+    for (const bounds of [
+      { lowerBound: 18, upperBound: 12 },
+      { lowerBound: Number.NaN },
+      { lowerBound: 13.5 },
+    ]) {
+      expect(deviceAgeRangeFromSignal({ status: 'shared', ...bounds }, apple)).toBeNull()
+    }
+  })
+
   it('re-checks daily after an answer and weekly while the phone stays silent', () => {
     const now = Date.now()
     expect(shouldRecheckDeviceAge(null, now)).toBe(true)

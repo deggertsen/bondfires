@@ -336,14 +336,25 @@ function AppContent() {
   useEffect(() => {
     if (currentUser?.ageBlocked && !segments.some((segment) => segment === 'age-blocked')) {
       router.replace(routes.ageBlocked)
+    } else if (
+      currentUser &&
+      !currentUser.ageBlocked &&
+      segments.some((segment) => segment === 'age-blocked')
+    ) {
+      router.replace(routes.splash())
     }
-  }, [currentUser?.ageBlocked, segments, router])
+  }, [currentUser, segments, router])
   const isServerAuthenticated =
     isAuthenticated && !!currentUser && !currentUser.registrationPending && !currentUser.ageBlocked
   // Phone-first age: re-check the device on launch/foreground for signed-in
   // users without a legacy birth date (the server decides who qualifies).
-  const registrationStatus = useQuery(api.registration.status, isServerAuthenticated ? {} : 'skip')
-  useDeviceAgeRecheck({ enabled: registrationStatus?.deviceAgeRecheck === true })
+  // Blocked accounts still need this query so a later eligible signal can
+  // restore access. The regular app gate above remains closed for them.
+  const registrationStatus = useQuery(api.registration.status, isAuthenticated ? {} : 'skip')
+  useDeviceAgeRecheck({
+    userId: registrationStatus?.deviceAgeRecheck ? registrationStatus.userId : null,
+    checkedAt: registrationStatus?.deviceAgeCheckedAt,
+  })
   const serverAuthRef = useRef(isServerAuthenticated)
   serverAuthRef.current = isServerAuthenticated
   const hasCompletedInviteCheck = useValue(appStore$.hasCompletedInviteCheck)

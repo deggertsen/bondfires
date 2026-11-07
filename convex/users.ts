@@ -49,9 +49,9 @@ function currentUser(user: Doc<'users'>) {
     displayName: user.displayName,
     photoUrl: user.photoUrl,
     gender: user.gender,
-    // Exact age is only known from a birth date or month; a device band
-    // reports its floor (13 or 18). Never the raw fields.
-    age: user.birthDate || user.birthMonth ? (getUserMinimumAge(user) ?? undefined) : undefined,
+    // Only a legacy full date supports displaying an exact age. A birth month
+    // can still span two ages; show the community band for all new accounts.
+    age: user.birthDate ? (getUserMinimumAge(user) ?? undefined) : undefined,
     ageBand: getUserAgeBand(user) ?? undefined,
     ageBlocked: !!user.ageBlockedAt,
     bondfireCount: user.bondfireCount ?? 0,

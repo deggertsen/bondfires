@@ -1,22 +1,21 @@
 import { mmkvStorage, telemetry } from '@bondfires/app'
 import { useMutation } from 'convex/react'
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { AppState, type AppStateStatus } from 'react-native'
 import { api } from '../../../convex/_generated/api'
+import type { Id } from '../../../convex/_generated/dataModel'
 import { requestDeviceAgeRange } from './deviceAgeRange'
 import { type DeviceAgeRecheckRecord, shouldRecheckDeviceAge } from './deviceAgeSignal'
 
-const RECHECK_KEY = 'device-age-recheck'
-
-function readRecord(): DeviceAgeRecheckRecord | null {
-  const raw = mmkvStorage.getItem(RECHECK_KEY)
+function readRecord(key: string): DeviceAgeRecheckRecord | null {
+  const raw = mmkvStorage.getItem(key)
   if (!raw) return null
   try {
     const parsed: unknown = JSON.parse(raw)
     if (
       typeof parsed === 'object' &&
       parsed !== null &&
-      typeof (parsed as DeviceAgeRecheckRecord).attemptedAt === 'number' &&
+      Number.isFinite((parsed as DeviceAgeRecheckRecord).attemptedAt) &&
       typeof (parsed as DeviceAgeRecheckRecord).answered === 'boolean'
     ) {
       return parsed as DeviceAgeRecheckRecord
@@ -33,34 +32,56 @@ function readRecord(): DeviceAgeRecheckRecord | null {
  * reports `deviceAgeRecheck` only for them). Shows no UI of its own: a phone
  * answer is sent to the server, silence keeps the last eligible band.
  */
-export function useDeviceAgeRecheck({ enabled }: { enabled: boolean }) {
+export function useDeviceAgeRecheck({
+  userId,
+  checkedAt,
+}: {
+  userId: Id<'users'> | null
+  checkedAt?: number
+}) {
   const recheck = useMutation(api.registration.recheckDeviceAge)
-  const recheckRef = useRef(recheck)
-  recheckRef.current = recheck
-  const inFlight = useRef(false)
 
   useEffect(() => {
-    if (!enabled) return
+    if (!userId) return
+    const key = `device-age-recheck:${userId}`
+    let cancelled = false
+    let inFlight = false
     const run = async () => {
-      if (inFlight.current || !shouldRecheckDeviceAge(readRecord())) return
-      inFlight.current = true
+      if (cancelled || inFlight) return
+      inFlight = true
       try {
+        // Let effect cleanup run before opening native UI (including Strict
+        // Mode's setup/cleanup replay).
+        await Promise.resolve()
+        if (cancelled) return
+        const record = readRecord(key)
+        const latest =
+          checkedAt !== undefined && (!record || checkedAt > record.attemptedAt)
+            ? { attemptedAt: checkedAt, answered: true }
+            : record
+        if (!shouldRecheckDeviceAge(latest)) return
         const range = await requestDeviceAgeRange()
+        if (cancelled) return
+        if (range) await recheck({ expectedUserId: userId, deviceAgeRange: range })
+        // Only throttle an answer after the server saved it. A network error
+        // must leave the next foreground free to retry.
         mmkvStorage.setItem(
-          RECHECK_KEY,
+          key,
           JSON.stringify({ attemptedAt: Date.now(), answered: range !== null }),
         )
-        if (range) await recheckRef.current({ deviceAgeRange: range })
       } catch (error) {
         telemetry.warn('age:deviceRecheck', String(error))
       } finally {
-        inFlight.current = false
+        inFlight = false
       }
     }
     void run()
     const subscription = AppState.addEventListener('change', (state: AppStateStatus) => {
       if (state === 'active') void run()
     })
-    return () => subscription.remove()
-  }, [enabled])
+    return () => {
+      cancelled = true
+      subscription.remove()
+    }
+  }, [userId, checkedAt, recheck])
 }

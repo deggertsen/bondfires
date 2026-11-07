@@ -11,14 +11,10 @@ import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { XStack, YStack } from 'tamagui'
 import { api } from '../../../convex/_generated/api'
 import { type DeviceAgeRange, parseBirthMonth } from '../../../convex/agePolicy'
-import { requestDeviceAgeRange } from '../lib/deviceAgeRange'
-import {
-  birthMonthFromControls,
-  decideRegistrationAgeStep,
-  type RegistrationAgeStep,
-} from '../lib/deviceAgeSignal'
+import { birthMonthFromControls } from '../lib/deviceAgeSignal'
 import { routes } from '../lib/routes'
 import { clearRegistrationDestination, registrationDestination } from '../lib/socialAuth'
+import { useRegistrationAge } from '../lib/useRegistrationAge'
 
 type Gender = 'male' | 'female' | 'other'
 
@@ -55,7 +51,10 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
   const complete = useMutation(api.registration.complete)
   const deleteAccount = useMutation(api.accountDeletion.request)
   const initialized = useRef(false)
-  const deviceAsked = useRef(false)
+  // Wait for completion status before prompting an already registered user.
+  const { step: ageStep, range: deviceAgeRange } = useRegistrationAge(
+    !completing || status?.pending === true,
+  )
 
   const form$ = useObservable({
     firstName: '',
@@ -64,9 +63,6 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
     password: '',
     confirmPassword: '',
     gender: null as Gender | null,
-    // Phone-first age: ask the device before showing any age field.
-    ageStep: 'checking' as 'checking' | RegistrationAgeStep,
-    deviceAgeRange: null as DeviceAgeRange | null,
     // Month/year fallback controls start unset on purpose.
     birthMonthIndex: null as number | null,
     birthYear: '',
@@ -81,7 +77,6 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
   const password = useValue(form$.password)
   const confirmPassword = useValue(form$.confirmPassword)
   const gender = useValue(form$.gender)
-  const ageStep = useValue(form$.ageStep)
   const birthMonthIndex = useValue(form$.birthMonthIndex)
   const birthYear = useValue(form$.birthYear)
   const isLoading = useValue(form$.isLoading)
@@ -96,21 +91,6 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
     form$.email.set(status.email)
   }, [completing, status, form$])
 
-  // One device request per form. Any failure resolves to "ask" (month/year).
-  useEffect(() => {
-    if (deviceAsked.current) return
-    deviceAsked.current = true
-    let cancelled = false
-    requestDeviceAgeRange().then((range) => {
-      if (cancelled) return
-      form$.deviceAgeRange.set(range)
-      form$.ageStep.set(decideRegistrationAgeStep(range))
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [form$])
-
   const destination = redirectTo ?? registrationDestination()
   if (completing && status === undefined)
     return (
@@ -123,10 +103,8 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
   if (completing && status && !status.pending) return <Redirect href={routes.splash(destination)} />
 
   const resolveAgeInput = (): AgeInput | null => {
-    const step = form$.ageStep.get()
-    const range = form$.deviceAgeRange.get()
-    if ((step === 'teen' || step === 'adult') && range) return { deviceAgeRange: range }
-    if (step !== 'ask') return null
+    if ((ageStep === 'teen' || ageStep === 'adult') && deviceAgeRange) return { deviceAgeRange }
+    if (ageStep !== 'ask') return null
     const birthMonth = birthMonthFromControls(form$.birthMonthIndex.get(), form$.birthYear.get())
     return birthMonth && parseBirthMonth(birthMonth) ? { birthMonth } : null
   }
@@ -139,9 +117,7 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
     const currentConfirmPassword = form$.confirmPassword.get()
     const currentGender = form$.gender.get()
     const currentAcceptedLegal = form$.acceptedLegal.get()
-    const currentStep = form$.ageStep.get()
-
-    if (currentStep === 'checking' || currentStep === 'blocked') return
+    if (ageStep === 'checking' || ageStep === 'blocked') return
 
     if (
       !currentFirstName ||

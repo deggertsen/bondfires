@@ -112,7 +112,7 @@ const ResendPasswordReset = Resend({
 // Password provider with email verification, password reset, and profile support
 const PasswordWithVerification = Password({
   // Profile fields to include when creating a user.
-  // Only requires birthDate during signUp flow.
+  // Only requires a device age range or birth month during signUp.
   profile(params) {
     const email = typeof params.email === 'string' ? params.email.trim() : ''
     if (!email) throw new Error('Email is required')

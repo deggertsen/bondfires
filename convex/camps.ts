@@ -12,6 +12,7 @@ import {
   assertUserCanAccessCamp,
   getCampAgeBand,
   getUserAgeBand,
+  getUserMaximumAge,
   getUserMinimumAge,
   isUserEligibleForCamp,
 } from './agePolicy'
@@ -559,7 +560,8 @@ export function computeVisibility(
       `This camp requires you to be at least ${access.minAge.value}`,
     )
   }
-  if (access.maxAge && (age === null || age > access.maxAge.value)) {
+  const maximumAge = user.ageProfile ? getUserMaximumAge(user.ageProfile) : null
+  if (access.maxAge && (maximumAge === null || maximumAge > access.maxAge.value)) {
     return deniedByAccessRule(
       access.maxAge.visibilityMode,
       'underage',

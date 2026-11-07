@@ -182,6 +182,19 @@ export function getUserMinimumAge(user: AgeProfile, now = new Date()): number | 
   return lastDay ? calculateAgeAt(lastDay, now) : null
 }
 
+/**
+ * A minimum cannot prove a maximum-age rule. Months use the earliest possible
+ * birthday; legacy dates remain exact. Stored device bands have no known
+ * ceiling: even a teen band may have come from a range straddling 18.
+ */
+export function getUserMaximumAge(user: AgeProfile, now = new Date()): number | null {
+  if (user.ageBlockedAt) return null
+  if (user.birthDate) return calculateAgeAt(user.birthDate, now)
+  if (isDeviceAgeSource(user.ageSource)) return null
+  if (!user.birthMonth || !parseBirthMonth(user.birthMonth)) return null
+  return calculateAgeAt(`${user.birthMonth}-01`, now)
+}
+
 /** Legacy camps are adult-only until the explicit production backfill assigns a band. */
 export function getCampAgeBand(camp: Pick<Doc<'camps'>, 'ageBand'>): AgeBand {
   return camp.ageBand ?? 'adult'

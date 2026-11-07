@@ -12,7 +12,8 @@ import { clearRegistrationDestination } from '../../lib/socialAuth'
 /**
  * Shown when a later device age range reported someone under 13. The account
  * is kept, nothing is deleted, and registration is never reopened (that would
- * let a typed month override the phone). The only way out is signing out.
+ * let a typed month override the phone). A later eligible device check restores
+ * access; the only manual action here is signing out.
  */
 export default function AgeBlockedScreen() {
   const { colors, statusBarStyle } = useSystemThemeColors()
@@ -35,7 +36,7 @@ export default function AgeBlockedScreen() {
       </Text>
       <Text fontSize={15} color="$placeholderColor" textAlign="center">
         Your device reported an age range that Bondfires doesn’t support. Your account has not been
-        deleted. If this changes, the app will check again the next time it opens.
+        deleted. The app periodically checks your device again when you open it.
       </Text>
       <Button
         variant="outline"

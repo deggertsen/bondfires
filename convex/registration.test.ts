@@ -168,7 +168,10 @@ describe('social registration', () => {
       deviceAgeRecheck: false,
     })
     expect(
-      await legacyUser.mutation(api.registration.recheckDeviceAge, { deviceAgeRange: adultDevice }),
+      await legacyUser.mutation(api.registration.recheckDeviceAge, {
+        expectedUserId: legacy,
+        deviceAgeRange: adultDevice,
+      }),
     ).toEqual({ status: 'skipped' })
     expect(await t.run((ctx) => ctx.db.get(legacy))).toMatchObject({
       birthDate: '2010-06-15',
@@ -186,7 +189,10 @@ describe('social registration', () => {
       ageSource: 'birth_month',
     })
     expect(
-      await monthUser.mutation(api.registration.recheckDeviceAge, { deviceAgeRange: adultDevice }),
+      await monthUser.mutation(api.registration.recheckDeviceAge, {
+        expectedUserId: month,
+        deviceAgeRange: adultDevice,
+      }),
     ).toEqual({ status: 'updated' })
     const promoted = await t.run((ctx) => ctx.db.get(month))
     expect(promoted).toMatchObject({
@@ -198,6 +204,7 @@ describe('social registration', () => {
     // A later empty signal keeps the last eligible band.
     expect(
       await monthUser.mutation(api.registration.recheckDeviceAge, {
+        expectedUserId: month,
         deviceAgeRange: { source: 'apple_declared_age_range' },
       }),
     ).toEqual({ status: 'skipped' })
@@ -214,7 +221,10 @@ describe('social registration', () => {
     const user = t.withIdentity({ subject: `${id}|session` })
     expect(await user.run((ctx) => auth.getUserId(ctx))).toBe(id)
     expect(
-      await user.mutation(api.registration.recheckDeviceAge, { deviceAgeRange: childDevice }),
+      await user.mutation(api.registration.recheckDeviceAge, {
+        expectedUserId: id,
+        deviceAgeRange: childDevice,
+      }),
     ).toEqual({ status: 'blocked' })
     const blocked = await t.run((ctx) => ctx.db.get(id))
     expect(blocked?.ageBlockedAt).toBeTypeOf('number')
@@ -229,6 +239,8 @@ describe('social registration', () => {
     expect(await user.query(api.registration.status)).toMatchObject({
       pending: false,
       ageBlocked: true,
+      deviceAgeRecheck: true,
+      userId: id,
     })
     await expect(user.mutation(api.users.updateProfile, { gender: 'male' })).rejects.toThrow(
       'Not authenticated',
@@ -239,6 +251,37 @@ describe('social registration', () => {
     expect(stillBlocked?.ageBlockedAt).toBeTypeOf('number')
     expect(stillBlocked?.birthMonth).toBeUndefined()
     expect(await user.run((ctx) => auth.getUserId(ctx))).toBeNull()
+    // The same blocked session can recover without entering registration.
+    await user.mutation(api.registration.recheckDeviceAge, {
+      expectedUserId: id,
+      deviceAgeRange: teenDevice,
+    })
+    expect(await user.query(api.users.current)).toMatchObject({
+      ageBlocked: false,
+      ageBand: 'teen',
+    })
+    expect(await user.run((ctx) => auth.getUserId(ctx))).toBe(id)
+  })
+
+  it('rejects a device response requested by a different account', async () => {
+    const t = setup()
+    const first = await t.run((ctx) => ctx.db.insert('users', registrationProfile(details)))
+    const second = await t.run((ctx) => ctx.db.insert('users', registrationProfile(details)))
+    const user = t.withIdentity({ subject: `${second}|session` })
+    await expect(
+      user.mutation(api.registration.recheckDeviceAge, {
+        expectedUserId: first,
+        deviceAgeRange: childDevice,
+      }),
+    ).rejects.toThrow('Account changed')
+    expect(await user.query(api.users.current)).toMatchObject({
+      ageBlocked: false,
+      ageBand: 'adult',
+    })
+    expect(await user.query(api.users.current)).not.toHaveProperty('age')
+    expect(await t.run((ctx) => ctx.db.get(second))).toMatchObject({
+      birthMonth: details.birthMonth,
+    })
   })
 
   it('links a verified email without changing profile, birthday, legal or moderation state', async () => {

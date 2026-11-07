@@ -29,6 +29,7 @@ export const status = query({
     const user = userId ? await ctx.db.get(userId) : null
     if (!user || user.accountDeletionStatus) return null
     return {
+      userId: user._id,
       pending: user.registrationPending === true,
       firstName: user.firstName ?? '',
       lastName: user.lastName ?? '',
@@ -79,11 +80,14 @@ export const complete = mutation({
  * access; nothing else can.
  */
 export const recheckDeviceAge = mutation({
-  args: { deviceAgeRange },
+  args: { expectedUserId: v.id('users'), deviceAgeRange },
   handler: async (ctx, args) => {
     const userId = await getUserIdIncludingDeleting(ctx)
     const user = userId ? await ctx.db.get(userId) : null
     if (!user || user.accountDeletionStatus) throwUserError('Not authenticated')
+    // Native prompts and queued mutations can outlive the session that started
+    // them. Never apply an earlier account's response to a new session.
+    if (user._id !== args.expectedUserId) throwUserError('Account changed. Please try again.')
     const { status, patch } = deviceAgeRecheckPatch(user, args.deviceAgeRange)
     if (status !== 'skipped') await ctx.db.patch(user._id, patch)
     return { status }
