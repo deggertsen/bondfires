@@ -97,6 +97,10 @@ export function accessApprovedBody(): string {
   return "You're now a member — tap to look around"
 }
 
+export function uploadResumeBody(): string {
+  return 'Your recording is still on this phone. Open Bondfires to finish uploading.'
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }

@@ -2,6 +2,12 @@ import { cronJobs } from 'convex/server'
 import { internal } from './_generated/api'
 
 const crons = cronJobs()
+crons.interval(
+  'nudge stalled segment uploads',
+  { minutes: 15 },
+  internal.uploadResumeNudges.startSweep,
+)
+
 // Frequent indexed work handles abandoned uploads; cancelled tombstones retry hourly.
 // Reconciliation catches legacy orphans, parent expiry, and deletion paths missed
 // by producers once daily; explicit deletion/revocation remains immediate.

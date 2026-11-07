@@ -89,6 +89,7 @@ import type * as serverTelemetry from "../serverTelemetry.js";
 import type * as storeBilling from "../storeBilling.js";
 import type * as storeBillingActions from "../storeBillingActions.js";
 import type * as subscriptions from "../subscriptions.js";
+import type * as uploadResumeNudges from "../uploadResumeNudges.js";
 import type * as userSafety from "../userSafety.js";
 import type * as users from "../users.js";
 import type * as videoCountRepair from "../videoCountRepair.js";
@@ -184,6 +185,7 @@ declare const fullApi: ApiFromModules<{
   storeBilling: typeof storeBilling;
   storeBillingActions: typeof storeBillingActions;
   subscriptions: typeof subscriptions;
+  uploadResumeNudges: typeof uploadResumeNudges;
   userSafety: typeof userSafety;
   users: typeof users;
   videoCountRepair: typeof videoCountRepair;
