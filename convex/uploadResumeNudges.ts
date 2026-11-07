@@ -108,7 +108,11 @@ export const claimPage = internalMutation({
     if (!run || run.stats.claimed) return null
     const page = await ctx.db
       .query('segmentRecordings')
-      .withIndex('by_status_created', (q) => q.eq('status', 'uploading'))
+      // New recordings cannot be stalled yet. Freeze the bound across pages
+      // so a busy or delayed sweep does not keep chasing incoming uploads.
+      .withIndex('by_status_created', (q) =>
+        q.eq('status', 'uploading').lte('createdAt', run.startedAt - STALLED_MS),
+      )
       .paginate({ cursor: args.cursor ?? null, numItems: 25 })
     const recordingIds: Id<'segmentRecordings'>[] = []
     for (const recording of page.page) {
@@ -133,6 +137,12 @@ export const getCandidate = internalQuery({
 export const recordDelivery = internalMutation({
   args: { recordingId: v.id('segmentRecordings'), userId: v.id('users') },
   handler: async (ctx, args) => {
+    // A send may finish after media/account cleanup. Never recreate metadata
+    // that those jobs have already removed or are about to remove.
+    const recording = await ctx.db.get(args.recordingId)
+    if (!recording || recording.status === 'cancelled' || recording.userId !== args.userId) return
+    const owner = await ctx.db.get(args.userId)
+    if (!owner || owner.accountDeletionStatus) return
     const existing = await ctx.db
       .query('notificationDeliveries')
       .withIndex('by_video_user', (q) =>
@@ -177,30 +187,36 @@ export const sendPage = internalAction({
     const page = await ctx.runMutation(internal.uploadResumeNudges.claimPage, args)
     if (!page) return
     for (const recordingId of page.recordingIds) {
-      const recipient = await ctx.runQuery(internal.uploadResumeNudges.getCandidate, {
-        ...args,
-        recordingId,
-      })
-      if (!recipient) continue
-      const result = await ctx.runAction(internal.sendNotification.sendToUser, {
-        userId: recipient.userId,
-        title: 'Upload paused',
-        body: uploadResumeBody(),
-        category: 'account',
-        data: {
-          type: 'upload-resume',
-          bondfireId: recipient.bondfireId,
-          bondfireVideoId: recipient.bondfireVideoId,
+      try {
+        const recipient = await ctx.runQuery(internal.uploadResumeNudges.getCandidate, {
+          ...args,
           recordingId,
-        },
-      })
-      // No tokens is terminal too: do not poll this recording forever. All other
-      // failures remain unclaimed for the next cron, never a tight-loop retry.
-      if (result.success || result.error === 'No device tokens found for user')
-        await ctx.runMutation(internal.uploadResumeNudges.recordDelivery, {
-          recordingId,
-          userId: recipient.userId,
         })
+        if (!recipient) continue
+        const result = await ctx.runAction(internal.sendNotification.sendToUser, {
+          userId: recipient.userId,
+          title: 'Upload paused',
+          body: uploadResumeBody(),
+          category: 'account',
+          data: {
+            type: 'upload-resume',
+            bondfireId: recipient.bondfireId,
+            bondfireVideoId: recipient.bondfireVideoId,
+            recordingId,
+          },
+        })
+        // No tokens is terminal too. All other failures remain eligible for
+        // the next cron, never a tight-loop retry.
+        if (result.success || result.error === 'No device tokens found for user')
+          await ctx.runMutation(internal.uploadResumeNudges.recordDelivery, {
+            recordingId,
+            userId: recipient.userId,
+          })
+      } catch (error) {
+        // A failed action/RPC must not strand later recordings or pages behind
+        // the same failing recipient on every lease recovery.
+        console.error('Upload resume notification failed', { recordingId, error })
+      }
     }
     await ctx.runMutation(internal.uploadResumeNudges.finishPage, {
       ...args,

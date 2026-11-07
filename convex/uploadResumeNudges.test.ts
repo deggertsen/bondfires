@@ -3,8 +3,10 @@ import { convexTest } from 'convex-test'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { internal } from './_generated/api'
 import type { Doc } from './_generated/dataModel'
+import type { ActionCtx } from './_generated/server'
 import * as providers from './lib/pushProviders'
 import schema from './schema'
+import { sendPage } from './uploadResumeNudges'
 
 const modules = import.meta.glob('./**/*.ts')
 const NOW = 1_800_000_000_000
@@ -21,6 +23,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
   vi.useRealTimers()
 })
 
@@ -170,6 +173,75 @@ describe('upload resume delivery', () => {
     await f.sweep()
     expect(await f.deliveries()).toHaveLength(1)
   })
+
+  it('continues the page after a send action throws and retries on the next sweep', async () => {
+    const f = await fixture()
+    await f.addRecording()
+    await f.t.mutation(internal.uploadResumeNudges.startSweep, {})
+    const run = await f.run()
+    if (!run) throw new Error('Missing sweep')
+    const error = new Error('Push action unavailable')
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const runAction = vi.fn(f.t.action).mockRejectedValueOnce(error)
+    // Inject an action-level failure, outside sendToUser's provider error handling.
+    const action = sendPage as unknown as {
+      _handler: (ctx: ActionCtx, args: { runId: string }) => Promise<void>
+    }
+    await action._handler(
+      { runQuery: f.t.query, runMutation: f.t.mutation, runAction } as unknown as ActionCtx,
+      { runId: run.runId },
+    )
+    await f.t.finishAllScheduledFunctions(vi.runAllTimers)
+    expect(runAction).toHaveBeenCalledTimes(2)
+    expect(log).toHaveBeenCalled()
+    expect(await f.deliveries()).toHaveLength(1)
+    expect(await f.run()).toMatchObject({ status: 'complete' })
+    await f.sweep()
+    expect(await f.deliveries()).toHaveLength(2)
+    expect(f.send).toHaveBeenCalledTimes(2)
+  })
+
+  it('purges reminder metadata with its recording and rejects a late delivery write', async () => {
+    vi.stubEnv('CONVEX_CLOUD_URL', 'https://lovely-malamute-525.convex.cloud')
+    vi.stubEnv('INTERNAL_SEGMENT_MEDIA', '1')
+    const f = await fixture()
+    await f.sweep()
+    await f.t.run((ctx) =>
+      ctx.db.patch(f.recordingId, { status: 'cancelled', updatedAt: NOW - 3600_000 }),
+    )
+    await f.t.mutation(internal.segmentMedia.purge, { recordingId: f.recordingId })
+    expect(await f.t.run((ctx) => ctx.db.get(f.recordingId))).toBeNull()
+    expect(await f.deliveries()).toHaveLength(0)
+    await f.t.mutation(internal.uploadResumeNudges.recordDelivery, {
+      recordingId: f.recordingId,
+      userId: f.userId,
+    })
+    expect(await f.deliveries()).toHaveLength(0)
+  })
+
+  it.each(['cancelled', 'deleting owner', 'deleted owner'])(
+    'does not create delivery metadata after %s during a send',
+    async (reason) => {
+      const f = await fixture()
+      f.send.mockImplementationOnce(async () => {
+        await f.t.run(async (ctx) => {
+          if (reason === 'cancelled') await ctx.db.patch(f.recordingId, { status: 'cancelled' })
+          if (reason === 'deleting owner')
+            await ctx.db.patch(f.userId, { accountDeletionStatus: 'requested' })
+          if (reason === 'deleted owner') await ctx.db.delete(f.userId)
+        })
+        return {
+          successCount: 1,
+          failureCount: 0,
+          invalidTokens: [],
+          tokenResults: [{ token, outcome: 'success' }],
+        }
+      })
+      await f.sweep()
+      expect(f.send).toHaveBeenCalledTimes(1)
+      expect(await f.deliveries()).toHaveLength(0)
+    },
+  )
 })
 
 describe('upload resume eligibility', () => {
@@ -257,6 +329,18 @@ describe('upload resume eligibility', () => {
 })
 
 describe('upload resume sweep leases', () => {
+  it('excludes new uploads from the indexed scan using the sweep start time', async () => {
+    const f = await fixture()
+    for (let i = 0; i < 25; i++) await f.addRecording({ createdAt: NOW, updatedAt: NOW })
+    await f.t.mutation(internal.uploadResumeNudges.startSweep, {})
+    vi.setSystemTime(NOW + 30 * 60_000)
+    await f.t.finishAllScheduledFunctions(vi.runAllTimers)
+    expect(f.send).toHaveBeenCalledTimes(1)
+    expect(await f.run()).toMatchObject({ status: 'complete', pagesProcessed: 1 })
+    await f.sweep()
+    expect(f.send).toHaveBeenCalledTimes(26)
+  })
+
   it('rejects overlapping cron ticks and duplicate page actions', async () => {
     const f = await fixture()
     expect(await f.t.mutation(internal.uploadResumeNudges.startSweep, {})).toBe(true)
