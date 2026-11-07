@@ -36,6 +36,9 @@ export const status = query({
       email: user.email ?? '',
       gender: user.registrationPending ? undefined : user.gender,
       acceptedLegal: hasCurrentLegalAcceptance(user),
+      // Older app versions prefill their birth date field from this and call
+      // .trim() on it. Always empty: full birth dates are never sent back.
+      birthDate: '',
       ageSource: user.ageSource,
       // Only accounts without a legacy full birth date re-check the device.
       deviceAgeRecheck: user.registrationPending !== true && !user.birthDate,
@@ -52,8 +55,10 @@ export const complete = mutation({
     lastName: v.string(),
     gender: v.union(v.literal('male'), v.literal('female'), v.literal('other')),
     // Phone-first: a device range decides alone; otherwise YYYY-MM is required.
-    // A full YYYY-MM-DD is not an accepted argument.
     birthMonth: v.optional(v.string()),
+    // Sent only by app versions released before device age ranges (1.0.108
+    // and earlier). Reduced to YYYY-MM; a full date is never stored.
+    birthDate: v.optional(v.string()),
     deviceAgeRange: v.optional(deviceAgeRange),
     acceptedLegal: v.boolean(),
   },

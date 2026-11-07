@@ -39,18 +39,39 @@ export function parseDeviceAgeRange(value: unknown): DeviceAgeRange | null {
 }
 
 /**
+ * Older app versions send a full `YYYY-MM-DD` birth date. Keep only `YYYY-MM`
+ * so no full date is stored. Returns null when nothing was sent; throws on a
+ * malformed date.
+ */
+export function legacyBirthDateMonth(value: unknown): string | null {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'string') throw new Error('Enter your birth month and year (YYYY-MM).')
+  const trimmed = value.trim()
+  if (trimmed === '') return null
+  const match = /^(\d{4}-\d{2})-(\d{2})$/.exec(trimmed)
+  const day = match ? Number(match[2]) : 0
+  if (!match || day < 1 || day > 31) {
+    throw new Error('Enter your birth month and year (YYYY-MM).')
+  }
+  return match[1]
+}
+
+/**
  * Phone-first age input for new registrations:
  * - a device range decides alone; under 13 is rejected even if a month is
  *   also sent, and an eligible range stores only the device source and band
  * - with no usable device range, a `YYYY-MM` birth month is required and
  *   banded from the end of the month
- * - a full `YYYY-MM-DD` is never accepted from new users
+ * - a full `YYYY-MM-DD` is never stored. App versions released before
+ *   device age ranges (1.0.108 and earlier) still send one as `birthDate`; it
+ *   is reduced to its month and treated exactly like the month fallback.
  */
 export function registrationAgeFields(
   params: Record<string, unknown>,
   now = new Date(),
 ): RegistrationAgeFields {
-  if (typeof params.birthDate === 'string' && params.birthDate.trim() !== '') {
+  const legacyBirthMonth = legacyBirthDateMonth(params.birthDate)
+  if (legacyBirthMonth !== null && (params.birthMonth !== undefined || params.deviceAgeRange)) {
     throw new Error('Only a birth month and year can be provided.')
   }
   const device = parseDeviceAgeRange(params.deviceAgeRange)
@@ -59,7 +80,8 @@ export function registrationAgeFields(
   if (device && outcome) {
     return { ageSource: device.source, deviceAgeBand: outcome, deviceAgeCheckedAt: now.getTime() }
   }
-  const birthMonth = typeof params.birthMonth === 'string' ? params.birthMonth.trim() : ''
+  const birthMonth =
+    legacyBirthMonth ?? (typeof params.birthMonth === 'string' ? params.birthMonth.trim() : '')
   if (!parseBirthMonth(birthMonth)) {
     throw new Error('Enter your birth month and year (YYYY-MM).')
   }

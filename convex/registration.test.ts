@@ -145,13 +145,43 @@ describe('social registration', () => {
     await expect(
       user.mutation(api.registration.complete, { ...details, birthMonth: '2000-01-01' }),
     ).rejects.toThrow('YYYY-MM')
-    // The old full-date argument is not accepted at all.
+    // A full date alongside the month is never accepted.
     await expect(
-      user.mutation(anyApi.registration.complete, { ...details, birthDate: '2000-01-01' }),
-    ).rejects.toThrow()
+      user.mutation(api.registration.complete, { ...details, birthDate: '2000-01-01' }),
+    ).rejects.toThrow('month and year')
     expect(await t.run((ctx) => ctx.db.get(id))).toMatchObject({ registrationPending: true })
     await user.mutation(api.registration.complete, details)
     expect(await t.run((ctx) => ctx.db.get(id))).toMatchObject({ birthMonth: '2000-01' })
+  })
+
+  it('completes sign-up from older app versions that still send a full birth date', async () => {
+    const t = setup()
+    const id = await t.run((ctx) =>
+      createOrUpdateAuthUser(ctx, {
+        existingUserId: null,
+        type: 'oauth',
+        provider: google,
+        profile,
+      }),
+    )
+    const user = t.withIdentity({ subject: `${id}|session` })
+    // 1.0.108 prefills its date field from status.birthDate and trims it.
+    expect(await user.query(api.registration.status)).toMatchObject({ birthDate: '' })
+    // Exactly the argument shape 1.0.108 sends.
+    await user.mutation(anyApi.registration.complete, {
+      firstName: 'Test',
+      lastName: 'Member',
+      gender: 'other',
+      birthDate: '2000-01-15',
+      acceptedLegal: true,
+    })
+    const stored = await t.run((ctx) => ctx.db.get(id))
+    expect(stored).toMatchObject({
+      registrationPending: false,
+      ageSource: 'birth_month',
+      birthMonth: '2000-01',
+    })
+    expect(stored?.birthDate).toBeUndefined()
   })
 
   it('re-checks the device after signup without touching a legacy birth date', async () => {
@@ -540,8 +570,13 @@ describe('registration validation and OAuth mappings', () => {
       { birthMonth: '2012-13' },
       { birthMonth: '2000-01-01' },
       { birthMonth: undefined },
-      { birthMonth: undefined, birthDate: '2000-01-01' },
       { birthDate: '2000-01-01' },
+      { birthDate: '2000-01-01', deviceAgeRange: adultDevice, birthMonth: undefined },
+      { birthMonth: undefined, birthDate: '2013-09-01' },
+      { birthMonth: undefined, birthDate: '2000-13-01' },
+      { birthMonth: undefined, birthDate: '2000-01-32' },
+      { birthMonth: undefined, birthDate: '2000-01' },
+      { birthMonth: undefined, birthDate: 20000101 },
     ]) {
       expect(() => registrationProfile({ ...details, ...patch }, now)).toThrow()
     }
@@ -554,6 +589,13 @@ describe('registration validation and OAuth mappings', () => {
     expect(registrationProfile({ ...details, birthMonth: '2013-07' }, now)).not.toHaveProperty(
       'birthDate',
     )
+    // Older app versions send a full date: only its month is kept, banded the same way.
+    const legacy = registrationProfile(
+      { ...details, birthMonth: undefined, birthDate: '2013-07-31' },
+      now,
+    )
+    expect(legacy).toMatchObject({ birthMonth: '2013-07', ageSource: 'birth_month' })
+    expect(legacy).not.toHaveProperty('birthDate')
   })
   it('lets a device range decide alone and rejects under-13 ranges regardless of the month', () => {
     const now = new Date('2026-09-20T12:00:00Z')
