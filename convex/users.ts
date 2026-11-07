@@ -1,7 +1,7 @@
 import { v } from 'convex/values'
 import type { Doc } from './_generated/dataModel'
 import { mutation, query } from './_generated/server'
-import { calculateAgeAt } from './agePolicy'
+import { getUserAgeBand, getUserMinimumAge } from './agePolicy'
 import { auth, getUserIdIncludingDeleting } from './auth'
 import { throwUserError } from './errors'
 import { getBlockedUserIds } from './userSafety'
@@ -49,7 +49,11 @@ function currentUser(user: Doc<'users'>) {
     displayName: user.displayName,
     photoUrl: user.photoUrl,
     gender: user.gender,
-    age: user.birthDate ? (calculateAgeAt(user.birthDate) ?? undefined) : undefined,
+    // Exact age is only known from a birth date or month; a device band
+    // reports its floor (13 or 18). Never the raw fields.
+    age: user.birthDate || user.birthMonth ? (getUserMinimumAge(user) ?? undefined) : undefined,
+    ageBand: getUserAgeBand(user) ?? undefined,
+    ageBlocked: !!user.ageBlockedAt,
     bondfireCount: user.bondfireCount ?? 0,
     responseCount: user.responseCount ?? 0,
     totalViews: user.totalViews ?? 0,

@@ -7,11 +7,12 @@ import { internalMutation, mutation, query } from './_generated/server'
 import { enforceInviteAttemptLimit } from './abuseLimits'
 import {
   type AgeBand,
+  type AgeProfile,
   assertUserAgeBand,
   assertUserCanAccessCamp,
-  calculateAgeAt,
   getCampAgeBand,
   getUserAgeBand,
+  getUserMinimumAge,
   isUserEligibleForCamp,
 } from './agePolicy'
 import { auth } from './auth'
@@ -511,17 +512,14 @@ function getMinimumTier(tiers: readonly SubscriptionTier[]): SubscriptionTier | 
  * - Invite-only camps default to hidden for non-members.
  */
 export function computeVisibility(
-  user: { gender?: string; tier: SubscriptionTier; birthDate?: string },
+  user: { gender?: string; tier: SubscriptionTier; ageProfile: AgeProfile | null },
   camp: Doc<'camps'>,
 ): CampVisibilityResult {
-  const userAgeBand = getUserAgeBand(user)
   const campAgeBand = getCampAgeBand(camp)
   // Anonymous viewers may discover adult camps before authentication. Teen
-  // camps never appear without an authenticated profile/DOB.
-  if (
-    (!user.birthDate && campAgeBand === 'teen') ||
-    (user.birthDate !== undefined && userAgeBand !== campAgeBand)
-  ) {
+  // camps never appear without an authenticated age band, and a signed-in
+  // viewer only ever sees camps in their own band.
+  if (user.ageProfile ? getUserAgeBand(user.ageProfile) !== campAgeBand : campAgeBand === 'teen') {
     return deniedByAccessRule('hide', 'age_group', 'This camp is for a different age group')
   }
 
@@ -553,7 +551,7 @@ export function computeVisibility(
     )
   }
 
-  const age = user.birthDate ? calculateAgeAt(user.birthDate) : null
+  const age = user.ageProfile ? getUserMinimumAge(user.ageProfile) : null
   if (access.minAge && (age === null || age < access.minAge.value)) {
     return deniedByAccessRule(
       access.minAge.visibilityMode,
@@ -615,7 +613,7 @@ function evaluateJoinRules(
     {
       gender: user.gender,
       tier: userTier,
-      birthDate: user.birthDate,
+      ageProfile: user,
     },
     camp,
   )
@@ -647,7 +645,7 @@ function computeSortRank(
       {
         gender: 'other',
         tier: 'free',
-        birthDate: undefined,
+        ageProfile: null,
       },
       camp,
     )
@@ -658,7 +656,7 @@ function computeSortRank(
     {
       gender: user.gender,
       tier: userTier,
-      birthDate: user.birthDate,
+      ageProfile: user,
     },
     camp,
   )
@@ -989,7 +987,7 @@ export function decorateCampListPage(
         {
           gender: user?.gender ?? 'other',
           tier: userTier,
-          birthDate: user?.birthDate,
+          ageProfile: user,
         },
         camp,
       ).visible
@@ -1004,7 +1002,7 @@ export function decorateCampListPage(
               {
                 gender: user?.gender ?? 'other',
                 tier: userTier,
-                birthDate: user?.birthDate,
+                ageProfile: user,
               },
               camp,
             )
@@ -1185,7 +1183,7 @@ export const get = query({
       {
         gender: user?.gender ?? 'other',
         tier: userTier,
-        birthDate: user?.birthDate,
+        ageProfile: user,
       },
       camp,
     )

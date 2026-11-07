@@ -55,7 +55,7 @@ export default function SplashScreen() {
         elapsedMs: elapsed,
       })
 
-      if (currentUser && !currentUser.registrationPending) {
+      if (currentUser && !currentUser.registrationPending && !currentUser.ageBlocked) {
         appActions.setAuth(currentUser._id)
         telemetry.setUserId(currentUser._id)
       } else {
@@ -214,6 +214,7 @@ export default function SplashScreen() {
   // User is authenticated, go to main app
   telemetry.breadcrumb('route:main')
   const destination = redirectTo ?? registrationDestination()
+  if (currentUser.ageBlocked) return <Redirect href={routes.ageBlocked} />
   if (currentUser.registrationPending)
     return <Redirect href={routes.completeProfile(destination)} />
   clearRegistrationDestination()

@@ -1,0 +1,28 @@
+plugins {
+  id 'com.android.library'
+  id 'org.jetbrains.kotlin.android'
+}
+
+group = 'org.bondfires.agesignal'
+version = '0.1.0'
+
+android {
+  namespace 'org.bondfires.agesignal'
+  compileSdk rootProject.ext.compileSdkVersion
+
+  defaultConfig {
+    minSdk 24
+  }
+}
+
+repositories {
+  mavenCentral()
+  google()
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+  // Google Play Age Signals API (beta). Default bands 0-12, 13-15, 16-17, 18+.
+  // https://developer.android.com/google/play/age-signals/request-age-signals
+  implementation 'com.google.android.play:age-signals:0.0.4'
+}

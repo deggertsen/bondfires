@@ -1,6 +1,69 @@
 import type { Doc } from '../_generated/dataModel'
-import { getAgeBand } from '../agePolicy'
+import {
+  type AgeBand,
+  type DeviceAgeRange,
+  type DeviceAgeSource,
+  getBirthMonthAgeBand,
+  getDeviceAgeOutcome,
+  isDeviceAgeSource,
+  parseBirthMonth,
+} from '../agePolicy'
 import { CURRENT_COMMUNITY_GUIDELINES_VERSION, CURRENT_TERMS_VERSION } from '../contentSafety'
+
+export const UNDER_13_MESSAGE = 'Bondfires is only available to people age 13 or older.'
+
+/** Age fields written at registration. Never a full birth date. */
+export type RegistrationAgeFields =
+  | { ageSource: DeviceAgeSource; deviceAgeBand: AgeBand; deviceAgeCheckedAt: number }
+  | { ageSource: 'birth_month'; birthMonth: string }
+
+function optionalBound(value: unknown): number | null {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error('Invalid age range.')
+  return value
+}
+
+/** Parse a client-sent device range. Returns null when nothing was sent. */
+export function parseDeviceAgeRange(value: unknown): DeviceAgeRange | null {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'object') throw new Error('Invalid age range.')
+  const range = value as Record<string, unknown>
+  if (!isDeviceAgeSource(range.source)) throw new Error('Invalid age range source.')
+  return {
+    source: range.source,
+    lowerBound: optionalBound(range.lowerBound),
+    upperBound: optionalBound(range.upperBound),
+  }
+}
+
+/**
+ * Phone-first age input for new registrations:
+ * - a device range decides alone; under 13 is rejected even if a month is
+ *   also sent, and an eligible range stores only the device source and band
+ * - with no usable device range, a `YYYY-MM` birth month is required and
+ *   banded from the end of the month
+ * - a full `YYYY-MM-DD` is never accepted from new users
+ */
+export function registrationAgeFields(
+  params: Record<string, unknown>,
+  now = new Date(),
+): RegistrationAgeFields {
+  if (typeof params.birthDate === 'string' && params.birthDate.trim() !== '') {
+    throw new Error('Only a birth month and year can be provided.')
+  }
+  const device = parseDeviceAgeRange(params.deviceAgeRange)
+  const outcome = device ? getDeviceAgeOutcome(device) : null
+  if (outcome === 'under_13') throw new Error(UNDER_13_MESSAGE)
+  if (device && outcome) {
+    return { ageSource: device.source, deviceAgeBand: outcome, deviceAgeCheckedAt: now.getTime() }
+  }
+  const birthMonth = typeof params.birthMonth === 'string' ? params.birthMonth.trim() : ''
+  if (!parseBirthMonth(birthMonth)) {
+    throw new Error('Enter your birth month and year (YYYY-MM).')
+  }
+  if (!getBirthMonthAgeBand(birthMonth, now)) throw new Error(UNDER_13_MESSAGE)
+  return { ageSource: 'birth_month', birthMonth }
+}
 
 export function registrationProfile(params: Record<string, unknown>, now = new Date()) {
   const firstName = typeof params.firstName === 'string' ? params.firstName.trim() : ''
@@ -12,10 +75,7 @@ export function registrationProfile(params: Record<string, unknown>, now = new D
   if (gender !== 'male' && gender !== 'female' && gender !== 'other') {
     throw new Error('Please select your gender.')
   }
-  const birthDate = typeof params.birthDate === 'string' ? params.birthDate.trim() : ''
-  if (!getAgeBand(birthDate, now)) {
-    throw new Error('A valid birth date for someone age 13 or older is required.')
-  }
+  const age = registrationAgeFields(params, now)
   if (params.acceptedLegal !== true && params.acceptedLegal !== 'true') {
     throw new Error('You must accept the Terms and Community Guidelines.')
   }
@@ -24,7 +84,7 @@ export function registrationProfile(params: Record<string, unknown>, now = new D
     lastName,
     name: `${firstName} ${lastName}`,
     gender,
-    birthDate,
+    ...age,
     acceptedTermsVersion: CURRENT_TERMS_VERSION,
     acceptedCommunityGuidelinesVersion: CURRENT_COMMUNITY_GUIDELINES_VERSION,
     legalAcceptedAt: now.getTime(),
@@ -32,8 +92,51 @@ export function registrationProfile(params: Record<string, unknown>, now = new D
   } as const
 }
 
+/** A completed, non-deleting account that no device range has blocked. */
 export function canUseApp(user: Doc<'users'> | null) {
-  return !!user && !user.accountDeletionStatus && user.registrationPending !== true
+  return (
+    !!user && !user.accountDeletionStatus && user.registrationPending !== true && !user.ageBlockedAt
+  )
+}
+
+/**
+ * Launch / foreground re-check. A device range may update the band, replace a
+ * stored birth month, lift or apply an age block. It never touches a legacy
+ * birth date, and a month is never accepted here. Returns the patch to apply.
+ */
+export function deviceAgeRecheckPatch(
+  user: Pick<Doc<'users'>, 'birthDate' | 'registrationPending'>,
+  range: DeviceAgeRange,
+  now = new Date(),
+): { status: 'skipped' | 'updated' | 'blocked'; patch: Partial<Doc<'users'>> } {
+  if (user.registrationPending === true || user.birthDate) return { status: 'skipped', patch: {} }
+  const outcome = getDeviceAgeOutcome(range)
+  if (outcome === null) return { status: 'skipped', patch: {} }
+  const checkedAt = now.getTime()
+  if (outcome === 'under_13') {
+    return {
+      status: 'blocked',
+      patch: {
+        ageSource: range.source,
+        birthMonth: undefined,
+        deviceAgeBand: undefined,
+        deviceAgeCheckedAt: checkedAt,
+        ageBlockedAt: checkedAt,
+        updatedAt: checkedAt,
+      },
+    }
+  }
+  return {
+    status: 'updated',
+    patch: {
+      ageSource: range.source,
+      birthMonth: undefined,
+      deviceAgeBand: outcome,
+      deviceAgeCheckedAt: checkedAt,
+      ageBlockedAt: undefined,
+      updatedAt: checkedAt,
+    },
+  }
 }
 
 // The browser receives a one-time Convex code, never provider tokens. Only this

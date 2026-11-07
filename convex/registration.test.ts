@@ -1,10 +1,18 @@
 /// <reference types="vite/client" />
+import { anyApi } from 'convex/server'
 import { convexTest } from 'convex-test'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api, internal } from './_generated/api'
 import { auth } from './auth'
 import { appleProfile, createOrUpdateAuthUser, googleProfile } from './lib/authProfiles'
-import { authRedirect, MOBILE_AUTH_CALLBACK, registrationProfile } from './lib/registrationPolicy'
+import {
+  authRedirect,
+  canUseApp,
+  deviceAgeRecheckPatch,
+  MOBILE_AUTH_CALLBACK,
+  registrationAgeFields,
+  registrationProfile,
+} from './lib/registrationPolicy'
 import schema from './schema'
 
 const modules = import.meta.glob('./**/*.ts')
@@ -12,9 +20,16 @@ const details = {
   firstName: 'Test',
   lastName: 'Member',
   gender: 'other' as const,
-  birthDate: '2000-01-01',
+  birthMonth: '2000-01',
   acceptedLegal: true,
 }
+const adultDevice = {
+  source: 'apple_declared_age_range' as const,
+  lowerBound: 18,
+  upperBound: null,
+}
+const teenDevice = { source: 'play_age_signals' as const, lowerBound: 13, upperBound: 15 }
+const childDevice = { source: 'play_age_signals' as const, lowerBound: 0, upperBound: 12 }
 const google = { id: 'google', name: 'Google', type: 'oidc' as const }
 const apple = { id: 'apple', name: 'Apple', type: 'oidc' as const }
 const profile = {
@@ -60,7 +75,7 @@ describe('social registration', () => {
       user.mutation(api.registration.complete, { ...details, acceptedLegal: false }),
     ).rejects.toThrow('accept')
     await expect(
-      user.mutation(api.registration.complete, { ...details, birthDate: '2020-01-01' }),
+      user.mutation(api.registration.complete, { ...details, birthMonth: '2020-01' }),
     ).rejects.toThrow('13')
     await user.mutation(api.registration.complete, details)
     expect(await user.run((ctx) => auth.getUserId(ctx))).toBe(id)
@@ -70,9 +85,160 @@ describe('social registration', () => {
       acceptedLegal: true,
       gender: 'other',
     })
-    // A retry (or an attempted age-band change) never replaces the original DOB.
-    await user.mutation(api.registration.complete, { ...details, birthDate: '2010-01-01' })
-    expect(await t.run((ctx) => ctx.db.get(id))).toMatchObject({ birthDate: '2000-01-01' })
+    // A retry (or an attempted age-band change) never replaces the original age data.
+    await user.mutation(api.registration.complete, { ...details, birthMonth: '2010-01' })
+    expect(await t.run((ctx) => ctx.db.get(id))).toMatchObject({
+      birthMonth: '2000-01',
+      ageSource: 'birth_month',
+    })
+    expect((await t.run((ctx) => ctx.db.get(id)))?.birthDate).toBeUndefined()
+  })
+
+  it('stores only the device source and band when the phone answers, never a fake date', async () => {
+    const t = setup()
+    const id = await t.run((ctx) =>
+      createOrUpdateAuthUser(ctx, {
+        existingUserId: null,
+        type: 'oauth',
+        provider: google,
+        profile,
+      }),
+    )
+    const user = t.withIdentity({ subject: `${id}|session` })
+    await user.mutation(api.registration.complete, {
+      ...details,
+      birthMonth: undefined,
+      deviceAgeRange: teenDevice,
+    })
+    const stored = await t.run((ctx) => ctx.db.get(id))
+    expect(stored).toMatchObject({
+      registrationPending: false,
+      ageSource: 'play_age_signals',
+      deviceAgeBand: 'teen',
+    })
+    expect(stored?.deviceAgeCheckedAt).toBeTypeOf('number')
+    expect(stored?.birthDate).toBeUndefined()
+    expect(stored?.birthMonth).toBeUndefined()
+    expect(await user.query(api.users.current)).toMatchObject({
+      ageBand: 'teen',
+      ageBlocked: false,
+    })
+    expect(await user.query(api.users.current)).not.toHaveProperty('deviceAgeBand')
+    expect(await user.query(api.users.current)).not.toHaveProperty('birthMonth')
+  })
+
+  it('rejects an under-13 device range even when the month says adult, and rejects full dates', async () => {
+    const t = setup()
+    const id = await t.run((ctx) =>
+      createOrUpdateAuthUser(ctx, {
+        existingUserId: null,
+        type: 'oauth',
+        provider: google,
+        profile,
+      }),
+    )
+    const user = t.withIdentity({ subject: `${id}|session` })
+    await expect(
+      user.mutation(api.registration.complete, { ...details, deviceAgeRange: childDevice }),
+    ).rejects.toThrow('13')
+    await expect(
+      user.mutation(api.registration.complete, { ...details, birthMonth: '2000-01-01' }),
+    ).rejects.toThrow('YYYY-MM')
+    // The old full-date argument is not accepted at all.
+    await expect(
+      user.mutation(anyApi.registration.complete, { ...details, birthDate: '2000-01-01' }),
+    ).rejects.toThrow()
+    expect(await t.run((ctx) => ctx.db.get(id))).toMatchObject({ registrationPending: true })
+    await user.mutation(api.registration.complete, details)
+    expect(await t.run((ctx) => ctx.db.get(id))).toMatchObject({ birthMonth: '2000-01' })
+  })
+
+  it('re-checks the device after signup without touching a legacy birth date', async () => {
+    const t = setup()
+    const legacy = await t.run((ctx) =>
+      ctx.db.insert('users', {
+        ...registrationProfile(details),
+        birthMonth: undefined,
+        ageSource: 'birth_date',
+        birthDate: '2010-06-15',
+      }),
+    )
+    const legacyUser = t.withIdentity({ subject: `${legacy}|session` })
+    expect(await legacyUser.query(api.registration.status)).toMatchObject({
+      deviceAgeRecheck: false,
+    })
+    expect(
+      await legacyUser.mutation(api.registration.recheckDeviceAge, { deviceAgeRange: adultDevice }),
+    ).toEqual({ status: 'skipped' })
+    expect(await t.run((ctx) => ctx.db.get(legacy))).toMatchObject({
+      birthDate: '2010-06-15',
+      ageSource: 'birth_date',
+    })
+    expect((await t.run((ctx) => ctx.db.get(legacy)))?.deviceAgeBand).toBeUndefined()
+
+    // A month-sourced teen becomes an adult from the phone alone.
+    const month = await t.run((ctx) =>
+      ctx.db.insert('users', { ...registrationProfile({ ...details, birthMonth: '2008-01' }) }),
+    )
+    const monthUser = t.withIdentity({ subject: `${month}|session` })
+    expect(await monthUser.query(api.registration.status)).toMatchObject({
+      deviceAgeRecheck: true,
+      ageSource: 'birth_month',
+    })
+    expect(
+      await monthUser.mutation(api.registration.recheckDeviceAge, { deviceAgeRange: adultDevice }),
+    ).toEqual({ status: 'updated' })
+    const promoted = await t.run((ctx) => ctx.db.get(month))
+    expect(promoted).toMatchObject({
+      ageSource: 'apple_declared_age_range',
+      deviceAgeBand: 'adult',
+    })
+    expect(promoted?.birthMonth).toBeUndefined()
+    expect(promoted?.birthDate).toBeUndefined()
+    // A later empty signal keeps the last eligible band.
+    expect(
+      await monthUser.mutation(api.registration.recheckDeviceAge, {
+        deviceAgeRange: { source: 'apple_declared_age_range' },
+      }),
+    ).toEqual({ status: 'skipped' })
+    expect(await t.run((ctx) => ctx.db.get(month))).toMatchObject({ deviceAgeBand: 'adult' })
+  })
+
+  it('blocks access when a later device range is under 13 and a month cannot clear it', async () => {
+    const t = setup()
+    const id = await t.run((ctx) =>
+      ctx.db.insert('users', {
+        ...registrationProfile({ ...details, deviceAgeRange: teenDevice }),
+      }),
+    )
+    const user = t.withIdentity({ subject: `${id}|session` })
+    expect(await user.run((ctx) => auth.getUserId(ctx))).toBe(id)
+    expect(
+      await user.mutation(api.registration.recheckDeviceAge, { deviceAgeRange: childDevice }),
+    ).toEqual({ status: 'blocked' })
+    const blocked = await t.run((ctx) => ctx.db.get(id))
+    expect(blocked?.ageBlockedAt).toBeTypeOf('number')
+    expect(blocked?.deviceAgeBand).toBeUndefined()
+    expect(canUseApp(blocked)).toBe(false)
+    // Blocked, but the account still exists and never re-enters registration.
+    expect(await user.run((ctx) => auth.getUserId(ctx))).toBeNull()
+    expect(await user.query(api.users.current)).toMatchObject({
+      registrationPending: false,
+      ageBlocked: true,
+    })
+    expect(await user.query(api.registration.status)).toMatchObject({
+      pending: false,
+      ageBlocked: true,
+    })
+    await expect(user.mutation(api.users.updateProfile, { gender: 'male' })).rejects.toThrow(
+      'Not authenticated',
+    )
+    // Completion is one-time, so a typed month cannot override the phone.
+    await user.mutation(api.registration.complete, { ...details, birthMonth: '2000-01' })
+    const stillBlocked = await t.run((ctx) => ctx.db.get(id))
+    expect(stillBlocked?.ageBlockedAt).toBeTypeOf('number')
+    expect(stillBlocked?.birthMonth).toBeUndefined()
+    expect(await user.run((ctx) => auth.getUserId(ctx))).toBeNull()
   })
 
   it('links a verified email without changing profile, birthday, legal or moderation state', async () => {
@@ -167,8 +333,10 @@ describe('social registration', () => {
     )
     expect(await t.run((ctx) => ctx.db.get(id))).toMatchObject({
       registrationPending: false,
-      birthDate: details.birthDate,
+      birthMonth: details.birthMonth,
+      ageSource: 'birth_month',
     })
+    expect((await t.run((ctx) => ctx.db.get(id)))?.birthDate).toBeUndefined()
     expect((await t.run((ctx) => ctx.db.get(id)))?.emailVerificationTime).toBeUndefined()
     await t.run((ctx) =>
       createOrUpdateAuthUser(ctx, {
@@ -249,14 +417,83 @@ describe('registration validation and OAuth mappings', () => {
       { lastName: '' },
       { gender: undefined },
       { acceptedLegal: false },
-      { birthDate: '2013-09-20' },
-      { birthDate: '2012-02-30' },
+      { birthMonth: '2013-09' },
+      { birthMonth: '2012-13' },
+      { birthMonth: '2000-01-01' },
+      { birthMonth: undefined },
+      { birthMonth: undefined, birthDate: '2000-01-01' },
+      { birthDate: '2000-01-01' },
     ]) {
       expect(() => registrationProfile({ ...details, ...patch }, now)).toThrow()
     }
-    expect(registrationProfile({ ...details, birthDate: '2013-09-19' }, now)).toMatchObject({
+    // Born July 2013: 13 only once July 2026 is over (end-of-month, prior UTC day).
+    expect(registrationProfile({ ...details, birthMonth: '2013-07' }, now)).toMatchObject({
       registrationPending: false,
+      birthMonth: '2013-07',
+      ageSource: 'birth_month',
     })
+    expect(registrationProfile({ ...details, birthMonth: '2013-07' }, now)).not.toHaveProperty(
+      'birthDate',
+    )
+  })
+  it('lets a device range decide alone and rejects under-13 ranges regardless of the month', () => {
+    const now = new Date('2026-09-20T12:00:00Z')
+    expect(
+      registrationAgeFields({ deviceAgeRange: adultDevice, birthMonth: '2015-01' }, now),
+    ).toEqual({
+      ageSource: 'apple_declared_age_range',
+      deviceAgeBand: 'adult',
+      deviceAgeCheckedAt: now.getTime(),
+    })
+    expect(registrationAgeFields({ deviceAgeRange: teenDevice }, now)).toMatchObject({
+      ageSource: 'play_age_signals',
+      deviceAgeBand: 'teen',
+    })
+    expect(() =>
+      registrationAgeFields({ deviceAgeRange: childDevice, birthMonth: '2000-01' }, now),
+    ).toThrow('13')
+    expect(() =>
+      registrationAgeFields(
+        { deviceAgeRange: { source: 'play_age_signals', lowerBound: 10, upperBound: 15 } },
+        now,
+      ),
+    ).toThrow('13')
+    // No usable device range: fall back to the month.
+    expect(
+      registrationAgeFields(
+        { deviceAgeRange: { source: 'play_age_signals' }, birthMonth: '2000-01' },
+        now,
+      ),
+    ).toEqual({ ageSource: 'birth_month', birthMonth: '2000-01' })
+    expect(() =>
+      registrationAgeFields({ deviceAgeRange: { source: 'play_age_signals' } }, now),
+    ).toThrow('YYYY-MM')
+    expect(() => registrationAgeFields({ deviceAgeRange: { source: 'nope' } }, now)).toThrow()
+    expect(() =>
+      registrationAgeFields(
+        { deviceAgeRange: { source: 'play_age_signals', lowerBound: '18' } },
+        now,
+      ),
+    ).toThrow()
+  })
+  it('re-check never writes a birth date and never reads a month', () => {
+    const now = new Date('2026-09-20T12:00:00Z')
+    expect(deviceAgeRecheckPatch({ birthDate: '2000-01-01' }, childDevice, now)).toEqual({
+      status: 'skipped',
+      patch: {},
+    })
+    expect(deviceAgeRecheckPatch({ registrationPending: true }, adultDevice, now)).toEqual({
+      status: 'skipped',
+      patch: {},
+    })
+    const updated = deviceAgeRecheckPatch({}, adultDevice, now)
+    expect(updated.status).toBe('updated')
+    expect(updated.patch).toMatchObject({ deviceAgeBand: 'adult', ageBlockedAt: undefined })
+    expect(updated.patch).not.toHaveProperty('birthDate')
+    const blocked = deviceAgeRecheckPatch({}, childDevice, now)
+    expect(blocked.status).toBe('blocked')
+    expect(blocked.patch).toMatchObject({ ageBlockedAt: now.getTime(), deviceAgeBand: undefined })
+    expect(blocked.patch).not.toHaveProperty('birthDate')
   })
   it('rejects unverified identities and maps only supported profile fields', () => {
     expect(() =>

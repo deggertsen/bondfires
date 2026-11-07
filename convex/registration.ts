@@ -3,7 +3,19 @@ import { internalQuery, mutation, query } from './_generated/server'
 import { getUserIdIncludingDeleting } from './auth'
 import { hasCurrentLegalAcceptance } from './contentSafety'
 import { throwUserError } from './errors'
-import { registrationProfile, canUseApp as userCanUseApp } from './lib/registrationPolicy'
+import {
+  deviceAgeRecheckPatch,
+  registrationProfile,
+  canUseApp as userCanUseApp,
+} from './lib/registrationPolicy'
+
+// Client-reported device range (Apple Declared Age Range / Play Age Signals).
+// Same trust level as a client-sent birth date; it is not identity verification.
+const deviceAgeRange = v.object({
+  source: v.union(v.literal('apple_declared_age_range'), v.literal('play_age_signals')),
+  lowerBound: v.optional(v.union(v.number(), v.null())),
+  upperBound: v.optional(v.union(v.number(), v.null())),
+})
 
 export const canUseApp = internalQuery({
   args: { userId: v.id('users') },
@@ -22,8 +34,12 @@ export const status = query({
       lastName: user.lastName ?? '',
       email: user.email ?? '',
       gender: user.registrationPending ? undefined : user.gender,
-      birthDate: user.birthDate ?? '',
       acceptedLegal: hasCurrentLegalAcceptance(user),
+      ageSource: user.ageSource,
+      // Only accounts without a legacy full birth date re-check the device.
+      deviceAgeRecheck: user.registrationPending !== true && !user.birthDate,
+      deviceAgeCheckedAt: user.deviceAgeCheckedAt,
+      ageBlocked: !!user.ageBlockedAt,
     }
   },
 })
@@ -33,14 +49,17 @@ export const complete = mutation({
     firstName: v.string(),
     lastName: v.string(),
     gender: v.union(v.literal('male'), v.literal('female'), v.literal('other')),
-    birthDate: v.string(),
+    // Phone-first: a device range decides alone; otherwise YYYY-MM is required.
+    // A full YYYY-MM-DD is not an accepted argument.
+    birthMonth: v.optional(v.string()),
+    deviceAgeRange: v.optional(deviceAgeRange),
     acceptedLegal: v.boolean(),
   },
   handler: async (ctx, args) => {
     const userId = await getUserIdIncludingDeleting(ctx)
     const user = userId ? await ctx.db.get(userId) : null
     if (!user || user.accountDeletionStatus) throwUserError('Not authenticated')
-    // Completion is one-time and retry-safe; it cannot change an existing DOB.
+    // Completion is one-time and retry-safe; it cannot change stored age data.
     if (user.registrationPending !== true) return
     let profile: ReturnType<typeof registrationProfile>
     try {
@@ -49,6 +68,25 @@ export const complete = mutation({
       throwUserError(error instanceof Error ? error.message : 'Invalid registration details')
     }
     await ctx.db.patch(user._id, { ...profile, updatedAt: Date.now() })
+  },
+})
+
+/**
+ * Launch / foreground device re-check for completed accounts. Lets a 17-year-old
+ * become an adult without storing a birthday and blocks a later under-13
+ * result. Never sets or clears a legacy birthDate and never accepts a month.
+ * Blocked accounts may still call this so a later eligible range can restore
+ * access; nothing else can.
+ */
+export const recheckDeviceAge = mutation({
+  args: { deviceAgeRange },
+  handler: async (ctx, args) => {
+    const userId = await getUserIdIncludingDeleting(ctx)
+    const user = userId ? await ctx.db.get(userId) : null
+    if (!user || user.accountDeletionStatus) throwUserError('Not authenticated')
+    const { status, patch } = deviceAgeRecheckPatch(user, args.deviceAgeRange)
+    if (status !== 'skipped') await ctx.db.patch(user._id, patch)
+    return { status }
   },
 })
 

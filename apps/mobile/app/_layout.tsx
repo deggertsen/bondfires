@@ -51,6 +51,7 @@ import { createConnectionStateLogger } from '../lib/convexConnectionTelemetry'
 import { resolveNotificationRoute } from '../lib/notificationRouting'
 import { routes } from '../lib/routes'
 import { registrationDestination } from '../lib/socialAuth'
+import { useDeviceAgeRecheck } from '../lib/useDeviceAgeRecheck'
 
 export const unstable_settings = {
   // Ensure that reloading keeps proper navigation state
@@ -330,7 +331,19 @@ function AppContent() {
       router.replace(routes.completeProfile(registrationDestination()))
     }
   }, [currentUser?.registrationPending, segments, router])
-  const isServerAuthenticated = isAuthenticated && !!currentUser && !currentUser.registrationPending
+  // An age-blocked account keeps its session but cannot use the app and must
+  // not land back in registration. Route it to the static block screen.
+  useEffect(() => {
+    if (currentUser?.ageBlocked && !segments.some((segment) => segment === 'age-blocked')) {
+      router.replace(routes.ageBlocked)
+    }
+  }, [currentUser?.ageBlocked, segments, router])
+  const isServerAuthenticated =
+    isAuthenticated && !!currentUser && !currentUser.registrationPending && !currentUser.ageBlocked
+  // Phone-first age: re-check the device on launch/foreground for signed-in
+  // users without a legacy birth date (the server decides who qualifies).
+  const registrationStatus = useQuery(api.registration.status, isServerAuthenticated ? {} : 'skip')
+  useDeviceAgeRecheck({ enabled: registrationStatus?.deviceAgeRecheck === true })
   const serverAuthRef = useRef(isServerAuthenticated)
   serverAuthRef.current = isServerAuthenticated
   const hasCompletedInviteCheck = useValue(appStore$.hasCompletedInviteCheck)

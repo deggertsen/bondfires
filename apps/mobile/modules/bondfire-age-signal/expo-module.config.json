@@ -1,0 +1,10 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "podspecPath": "BondfireAgeSignal.podspec",
+    "modules": ["BondfireAgeSignalModule"]
+  },
+  "android": {
+    "modules": ["org.bondfires.agesignal.BondfireAgeSignalModule"]
+  }
+}
