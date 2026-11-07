@@ -228,7 +228,8 @@ describe('social registration', () => {
     ).toEqual({ status: 'blocked' })
     const blocked = await t.run((ctx) => ctx.db.get(id))
     expect(blocked?.ageBlockedAt).toBeTypeOf('number')
-    expect(blocked?.deviceAgeBand).toBeUndefined()
+    // The prior band is kept (unusable while blocked) so a later range can't downgrade it.
+    expect(blocked?.deviceAgeBand).toBe('teen')
     expect(canUseApp(blocked)).toBe(false)
     // Blocked, but the account still exists and never re-enters registration.
     expect(await user.run((ctx) => auth.getUserId(ctx))).toBeNull()
@@ -282,6 +283,33 @@ describe('social registration', () => {
     expect(await t.run((ctx) => ctx.db.get(second))).toMatchObject({
       birthMonth: details.birthMonth,
     })
+  })
+
+  it('never moves an adult account into the teen band, even through a block', async () => {
+    const t = setup()
+    const deviceAdult = await t.run((ctx) =>
+      ctx.db.insert('users', {
+        ...registrationProfile({ ...details, deviceAgeRange: adultDevice }),
+      }),
+    )
+    const monthAdult = await t.run((ctx) => ctx.db.insert('users', registrationProfile(details)))
+    for (const id of [deviceAdult, monthAdult]) {
+      const user = t.withIdentity({ subject: `${id}|session` })
+      const recheck = (deviceAgeRange: typeof adultDevice | typeof teenDevice) =>
+        user.mutation(api.registration.recheckDeviceAge, { expectedUserId: id, deviceAgeRange })
+      expect(await recheck(teenDevice)).toEqual({ status: 'skipped' })
+      expect(await user.query(api.users.current)).toMatchObject({ ageBand: 'adult' })
+      // Blocked, then a teen range: the block stays rather than becoming a teen account.
+      expect(await recheck(childDevice)).toEqual({ status: 'blocked' })
+      expect(await recheck(teenDevice)).toEqual({ status: 'skipped' })
+      expect(await user.query(api.users.current)).toMatchObject({ ageBlocked: true })
+      // An adult range restores the adult account.
+      expect(await recheck(adultDevice)).toEqual({ status: 'updated' })
+      expect(await user.query(api.users.current)).toMatchObject({
+        ageBand: 'adult',
+        ageBlocked: false,
+      })
+    }
   })
 
   it('links a verified email without changing profile, birthday, legal or moderation state', async () => {
@@ -535,8 +563,31 @@ describe('registration validation and OAuth mappings', () => {
     expect(updated.patch).not.toHaveProperty('birthDate')
     const blocked = deviceAgeRecheckPatch({}, childDevice, now)
     expect(blocked.status).toBe('blocked')
-    expect(blocked.patch).toMatchObject({ ageBlockedAt: now.getTime(), deviceAgeBand: undefined })
+    expect(blocked.patch).toMatchObject({ ageBlockedAt: now.getTime() })
     expect(blocked.patch).not.toHaveProperty('birthDate')
+    expect(blocked.patch).not.toHaveProperty('deviceAgeBand')
+    expect(blocked.patch).not.toHaveProperty('birthMonth')
+    // Already blocked: nothing to change.
+    expect(deviceAgeRecheckPatch({ ageBlockedAt: 1 }, childDevice, now).status).toBe('skipped')
+    // One-way: teen graduates to adult, adult never becomes teen.
+    const teen = { ageSource: 'play_age_signals', deviceAgeBand: 'teen' } as const
+    const adult = { ageSource: 'apple_declared_age_range', deviceAgeBand: 'adult' } as const
+    expect(deviceAgeRecheckPatch(teen, adultDevice, now).patch).toMatchObject({
+      deviceAgeBand: 'adult',
+    })
+    expect(deviceAgeRecheckPatch(adult, teenDevice, now).status).toBe('skipped')
+    expect(
+      deviceAgeRecheckPatch({ ageSource: 'birth_month', birthMonth: '2000-01' }, teenDevice, now)
+        .status,
+    ).toBe('skipped')
+    expect(deviceAgeRecheckPatch({ ...adult, ageBlockedAt: 1 }, teenDevice, now).status).toBe(
+      'skipped',
+    )
+    // A month-sourced teen whose phone also says teen moves to the device source.
+    expect(
+      deviceAgeRecheckPatch({ ageSource: 'birth_month', birthMonth: '2012-01' }, teenDevice, now)
+        .patch,
+    ).toMatchObject({ ageSource: 'play_age_signals', deviceAgeBand: 'teen', birthMonth: undefined })
   })
   it('rejects unverified identities and maps only supported profile fields', () => {
     expect(() =>

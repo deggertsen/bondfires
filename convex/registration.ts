@@ -75,7 +75,8 @@ export const complete = mutation({
 /**
  * Launch / foreground device re-check for completed accounts. Lets a 17-year-old
  * become an adult without storing a birthday and blocks a later under-13
- * result. Never sets or clears a legacy birthDate and never accepts a month.
+ * result. An adult account never moves to the teen band. Never sets or clears
+ * a legacy birthDate and never accepts a month.
  * Blocked accounts may still call this so a later eligible range can restore
  * access; nothing else can.
  */
