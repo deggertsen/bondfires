@@ -285,7 +285,7 @@ describe('social registration', () => {
     })
   })
 
-  it('never moves an adult account into the teen band, even through a block', async () => {
+  it('blocks an adult account whose phone says teen instead of moving it to the teen band', async () => {
     const t = setup()
     const deviceAdult = await t.run((ctx) =>
       ctx.db.insert('users', {
@@ -297,17 +297,37 @@ describe('social registration', () => {
       const user = t.withIdentity({ subject: `${id}|session` })
       const recheck = (deviceAgeRange: typeof adultDevice | typeof teenDevice) =>
         user.mutation(api.registration.recheckDeviceAge, { expectedUserId: id, deviceAgeRange })
+      expect(await recheck(teenDevice)).toEqual({ status: 'blocked' })
+      expect(await user.query(api.users.current)).toMatchObject({
+        ageBlocked: true,
+        ageBlockedReason: 'teen_on_adult_account',
+      })
+      expect(await user.query(api.registration.status)).toMatchObject({
+        ageBlockedReason: 'teen_on_adult_account',
+      })
+      expect(await user.run((ctx) => auth.getUserId(ctx))).toBeNull()
+      // The stored band is still adult; nothing moved it to teen.
+      expect((await t.run((ctx) => ctx.db.get(id)))?.deviceAgeBand).not.toBe('teen')
+      // Repeating the teen answer changes nothing; under 13 takes over the reason.
       expect(await recheck(teenDevice)).toEqual({ status: 'skipped' })
-      expect(await user.query(api.users.current)).toMatchObject({ ageBand: 'adult' })
-      // Blocked, then a teen range: the block stays rather than becoming a teen account.
       expect(await recheck(childDevice)).toEqual({ status: 'blocked' })
-      expect(await recheck(teenDevice)).toEqual({ status: 'skipped' })
-      expect(await user.query(api.users.current)).toMatchObject({ ageBlocked: true })
-      // An adult range restores the adult account.
+      expect(await user.query(api.users.current)).toMatchObject({ ageBlockedReason: 'under_13' })
+      expect(await recheck(teenDevice)).toEqual({ status: 'blocked' })
+      expect(await user.query(api.users.current)).toMatchObject({
+        ageBlockedReason: 'teen_on_adult_account',
+      })
+      // An adult range (e.g. the person fixed their phone's age) restores the account.
       expect(await recheck(adultDevice)).toEqual({ status: 'updated' })
       expect(await user.query(api.users.current)).toMatchObject({
         ageBand: 'adult',
         ageBlocked: false,
+      })
+      expect(await user.query(api.users.current)).not.toHaveProperty('ageBlockedReason')
+      expect((await t.run((ctx) => ctx.db.get(id)))?.ageBlockedReason).toBeUndefined()
+      // A blocked account can still delete itself to start over.
+      expect(await recheck(teenDevice)).toEqual({ status: 'blocked' })
+      expect(await user.mutation(api.accountDeletion.request, {})).toMatchObject({
+        accepted: true,
       })
     }
   })
@@ -575,14 +595,39 @@ describe('registration validation and OAuth mappings', () => {
     expect(deviceAgeRecheckPatch(teen, adultDevice, now).patch).toMatchObject({
       deviceAgeBand: 'adult',
     })
-    expect(deviceAgeRecheckPatch(adult, teenDevice, now).status).toBe('skipped')
+    // A teen range on an adult account blocks it; the band itself is never touched.
+    const teenOnAdult = deviceAgeRecheckPatch(adult, teenDevice, now)
+    expect(teenOnAdult).toEqual({
+      status: 'blocked',
+      patch: {
+        deviceAgeCheckedAt: now.getTime(),
+        ageBlockedAt: now.getTime(),
+        ageBlockedReason: 'teen_on_adult_account',
+        updatedAt: now.getTime(),
+      },
+    })
     expect(
       deviceAgeRecheckPatch({ ageSource: 'birth_month', birthMonth: '2000-01' }, teenDevice, now)
-        .status,
+        .patch,
+    ).toMatchObject({ ageBlockedReason: 'teen_on_adult_account' })
+    // Already blocked for under 13: the reason switches and the original block time is kept.
+    expect(deviceAgeRecheckPatch({ ...adult, ageBlockedAt: 1 }, teenDevice, now).patch).toEqual({
+      deviceAgeCheckedAt: now.getTime(),
+      ageBlockedAt: 1,
+      ageBlockedReason: 'teen_on_adult_account',
+      updatedAt: now.getTime(),
+    })
+    expect(
+      deviceAgeRecheckPatch(
+        { ...adult, ageBlockedAt: 1, ageBlockedReason: 'teen_on_adult_account' },
+        teenDevice,
+        now,
+      ).status,
     ).toBe('skipped')
-    expect(deviceAgeRecheckPatch({ ...adult, ageBlockedAt: 1 }, teenDevice, now).status).toBe(
-      'skipped',
-    )
+    // A blocked teen account whose phone says teen again is simply unblocked.
+    expect(
+      deviceAgeRecheckPatch({ ...teen, ageBlockedAt: 1 }, teenDevice, now).patch,
+    ).toMatchObject({ deviceAgeBand: 'teen', ageBlockedAt: undefined, ageBlockedReason: undefined })
     // A month-sourced teen whose phone also says teen moves to the device source.
     expect(
       deviceAgeRecheckPatch({ ageSource: 'birth_month', birthMonth: '2012-01' }, teenDevice, now)

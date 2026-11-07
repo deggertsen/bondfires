@@ -54,6 +54,7 @@ function currentUser(user: Doc<'users'>) {
     age: user.birthDate ? (getUserMinimumAge(user) ?? undefined) : undefined,
     ageBand: getUserAgeBand(user) ?? undefined,
     ageBlocked: !!user.ageBlockedAt,
+    ageBlockedReason: user.ageBlockedAt ? (user.ageBlockedReason ?? 'under_13') : undefined,
     bondfireCount: user.bondfireCount ?? 0,
     responseCount: user.responseCount ?? 0,
     totalViews: user.totalViews ?? 0,

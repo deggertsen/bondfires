@@ -101,14 +101,18 @@ export function canUseApp(user: Doc<'users'> | null) {
   )
 }
 
+/** Why an account is age-blocked. Missing on a blocked account means under 13. */
+export type AgeBlockedReason = NonNullable<Doc<'users'>['ageBlockedReason']>
+
 /**
  * Launch / foreground re-check. A device range may graduate a teen to adult,
  * replace a stored birth month, or apply / lift an age block. It never moves an
- * adult account into the teen band (that needs a new teen account), never
- * touches a legacy birth date, and never accepts a month. Returns the patch.
+ * adult account into the teen band: a teen range on an adult account blocks it
+ * (`teen_on_adult_account`) so that person starts over with a teen account. It
+ * never touches a legacy birth date and never accepts a month. Returns the patch.
  */
 export function deviceAgeRecheckPatch(
-  user: Pick<Doc<'users'>, 'registrationPending'> & AgeProfile,
+  user: Pick<Doc<'users'>, 'registrationPending' | 'ageBlockedReason'> & AgeProfile,
   range: DeviceAgeRange,
   now = new Date(),
 ): { status: 'skipped' | 'updated' | 'blocked'; patch: Partial<Doc<'users'>> } {
@@ -116,19 +120,24 @@ export function deviceAgeRecheckPatch(
   const outcome = getDeviceAgeOutcome(range)
   if (outcome === null) return { status: 'skipped', patch: {} }
   const checkedAt = now.getTime()
-  if (outcome === 'under_13') {
-    if (user.ageBlockedAt) return { status: 'skipped', patch: {} }
-    // Keep the stored band so lifting the block later still can't move an
-    // adult account into the teen band.
+  // The band the account holds, ignoring any block. Blocking keeps it stored so
+  // lifting a block later still applies the one-way rule.
+  const currentBand = getUserAgeBand({ ...user, ageBlockedAt: undefined }, now)
+  const block = (blockReason: AgeBlockedReason) => {
+    const currentReason = user.ageBlockedAt ? (user.ageBlockedReason ?? 'under_13') : null
+    if (currentReason === blockReason) return { status: 'skipped' as const, patch: {} }
     return {
       status: 'blocked',
-      patch: { deviceAgeCheckedAt: checkedAt, ageBlockedAt: checkedAt, updatedAt: checkedAt },
-    }
+      patch: {
+        deviceAgeCheckedAt: checkedAt,
+        ageBlockedAt: user.ageBlockedAt ?? checkedAt,
+        ageBlockedReason: blockReason,
+        updatedAt: checkedAt,
+      },
+    } as const
   }
-  // The band the account holds, ignoring any block. Adult never becomes teen;
-  // a blocked adult account whose phone now says teen stays blocked.
-  const currentBand = getUserAgeBand({ ...user, ageBlockedAt: undefined }, now)
-  if (currentBand === 'adult' && outcome === 'teen') return { status: 'skipped', patch: {} }
+  if (outcome === 'under_13') return block('under_13')
+  if (currentBand === 'adult' && outcome === 'teen') return block('teen_on_adult_account')
   return {
     status: 'updated',
     patch: {
@@ -137,6 +146,7 @@ export function deviceAgeRecheckPatch(
       deviceAgeBand: outcome,
       deviceAgeCheckedAt: checkedAt,
       ageBlockedAt: undefined,
+      ageBlockedReason: undefined,
       updatedAt: checkedAt,
     },
   }

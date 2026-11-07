@@ -41,6 +41,7 @@ export const status = query({
       deviceAgeRecheck: user.registrationPending !== true && !user.birthDate,
       deviceAgeCheckedAt: user.deviceAgeCheckedAt,
       ageBlocked: !!user.ageBlockedAt,
+      ageBlockedReason: user.ageBlockedAt ? (user.ageBlockedReason ?? 'under_13') : undefined,
     }
   },
 })
@@ -75,7 +76,8 @@ export const complete = mutation({
 /**
  * Launch / foreground device re-check for completed accounts. Lets a 17-year-old
  * become an adult without storing a birthday and blocks a later under-13
- * result. An adult account never moves to the teen band. Never sets or clears
+ * result. An adult account never moves to the teen band; a teen range blocks it
+ * so the person starts over with a teen account. Never sets or clears
  * a legacy birthDate and never accepts a month.
  * Blocked accounts may still call this so a later eligible range can restore
  * access; nothing else can.

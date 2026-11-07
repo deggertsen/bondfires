@@ -146,9 +146,16 @@ export default defineSchema({
     // Band mapped from the last eligible device range. Set only for device sources.
     deviceAgeBand: v.optional(ageBand),
     deviceAgeCheckedAt: v.optional(v.number()),
-    // Set when a device range reported someone under 13 after signup. The
-    // account is kept but cannot use the app and never re-enters registration.
+    // Set when a later device range reported someone under 13, or 13-17 on an
+    // adult account. The account is kept but cannot use the app and never
+    // re-enters registration.
     ageBlockedAt: v.optional(v.number()),
+    // Why the account is blocked. `teen_on_adult_account`: the device reported
+    // 13-17 on an adult account, which never moves to the teen band. Missing on
+    // a blocked account means under 13.
+    ageBlockedReason: v.optional(
+      v.union(v.literal('under_13'), v.literal('teen_on_adult_account')),
+    ),
     // Opaque UUID sent to StoreKit/Play Billing to bind new purchases to this
     // authenticated account. It is never accepted as proof without a verified
     // store response containing the same value.
