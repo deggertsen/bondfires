@@ -285,6 +285,7 @@ async function updatePlayable(ctx: MutationCtx, recording: Doc<'segmentRecording
     }
   }
   if (complete) {
+    await materializeDurations(ctx, recording)
     if (recording.status !== 'ready') await ctx.db.patch(recording._id, { status: 'ready' })
     await enqueueTranscription(ctx, recording._id)
   }
@@ -347,27 +348,24 @@ export const receipt = internalMutation({
       size,
       checksum,
     })
-    // Append-only once seeded. Receipts arrive in strict order (index ===
-    // segmentCount is enforced above), so seed at index 0 and append after;
-    // mid-stream legacy rows keep no partial array (a padded playlist would be
-    // invalid) and are materialized by finalization or daily reconciliation.
-    const existingDurations = recording.durations
-    const durations =
-      index === 0
-        ? [duration]
-        : existingDurations && existingDurations.length === index
-          ? [...existingDurations, duration]
-          : undefined
+    // Keep the playlist cache off this row. Receipts are ordered (index ===
+    // segmentCount), so seed at 0 and append; a gap keeps no partial cache
+    // and is materialized by finalization or daily reconciliation.
+    const durationsCached = await appendCachedDuration(ctx, recording, index, duration)
     const next = {
       ...recording,
       segmentCount: index + 1,
       duration: recording.duration + duration,
+      durations: undefined,
+      durationsCached,
       updatedAt: Date.now(),
     }
     await ctx.db.patch(recording._id, {
       segmentCount: next.segmentCount,
       duration: next.duration,
-      ...(durations ? { durations } : {}),
+      // Clear stale inline data and keep the flag true only for a complete cache.
+      durations: undefined,
+      durationsCached,
       updatedAt: next.updatedAt,
     })
     await updatePlayable(ctx, next)
@@ -416,13 +414,16 @@ export const timeline = internalQuery({
       (args.index < -1 || !Number.isInteger(args.index) || args.index >= recording.segmentCount)
     )
       throw new Error('Forbidden')
+    // Per-fragment reads only authorize. Do not touch the playlist cache;
+    // that array is what made every segment request re-read the whole timeline.
     // A query cannot persist the legacy fallback. Until reconciliation writes
     // the cache, serve the original fragment indexes and durations unchanged.
+    const cached = args.index === null ? await readCachedDurations(ctx, recording) : undefined
     const segments =
       args.index !== null
         ? []
-        : recording.durations?.length === recording.segmentCount
-          ? recording.durations.map((duration, index) => ({ index, duration }))
+        : cached
+          ? cached.map((duration, index) => ({ index, duration }))
           : await readTimelineSegments(ctx, recording._id)
     return {
       complete: recording.status === 'ready',
@@ -437,6 +438,63 @@ async function readTimelineSegments(ctx: QueryCtx, recordingId: Id<'segmentRecor
     .withIndex('by_recording_index', (q) => q.eq('recordingId', recordingId))
     .take(MAX_SEGMENTS)
   return segments.map(({ index, duration }) => ({ index, duration }))
+}
+
+async function timelineRow(ctx: QueryCtx, recordingId: Id<'segmentRecordings'>) {
+  return await ctx.db
+    .query('segmentTimelines')
+    .withIndex('by_recording', (q) => q.eq('recordingId', recordingId))
+    .unique()
+}
+
+/** Legacy inline array, only while it still matches the expected length. */
+function legacyDurations(recording: Doc<'segmentRecordings'>, expectedLength: number) {
+  return recording.durations?.length === expectedLength ? recording.durations : undefined
+}
+
+/**
+ * Playlist cache. Segment authorization must not call this: the array grows
+ * with the recording, and reading it on every fragment dominated DB egress.
+ * A legacy inline array is served as-is so migration does not add a read.
+ */
+async function readCachedDurations(ctx: QueryCtx, recording: Doc<'segmentRecordings'>) {
+  if (!recording.durationsCached) return legacyDurations(recording, recording.segmentCount)
+  const row = await timelineRow(ctx, recording._id)
+  return row && row.durations.length === recording.segmentCount ? row.durations : undefined
+}
+
+/** Extend the side cache. Returns false when the prefix is not contiguous. */
+async function appendCachedDuration(
+  ctx: MutationCtx,
+  recording: Doc<'segmentRecordings'>,
+  index: number,
+  duration: number,
+) {
+  const row = await timelineRow(ctx, recording._id)
+  const base =
+    index === 0
+      ? []
+      : row && row.durations.length === index
+        ? row.durations
+        : legacyDurations(recording, index)
+  if (!base) return false
+  const durations = [...base, duration]
+  if (row) await ctx.db.patch(row._id, { durations })
+  else await ctx.db.insert('segmentTimelines', { recordingId: recording._id, durations })
+  return true
+}
+
+/** All completion paths and daily reconciliation migrate legacy recordings once. */
+async function materializeDurations(ctx: MutationCtx, recording: Doc<'segmentRecordings'>) {
+  // The flag avoids reading the array or fragments again on retries.
+  if (recording.durationsCached || recording.segmentCount === 0) return
+  const durations =
+    legacyDurations(recording, recording.segmentCount) ?? (await backfillDurations(ctx, recording))
+  if (!durations) return
+  const row = await timelineRow(ctx, recording._id)
+  if (row) await ctx.db.patch(row._id, { durations })
+  else await ctx.db.insert('segmentTimelines', { recordingId: recording._id, durations })
+  await ctx.db.patch(recording._id, { durations: undefined, durationsCached: true })
 }
 
 /** Only a complete, contiguous timeline can be represented by an index-aligned cache. */
@@ -477,12 +535,9 @@ async function cleanupDisposition(
     return 'delete'
   if (recording.status !== 'uploading') {
     // Ready rows on the daily reconcile pass also materialize durations for
-    // recordings that predate that field.
-    if (
-      recording.status === 'ready' &&
-      recording.segmentCount > 0 &&
-      (!recording.durations || recording.durations.length !== recording.segmentCount)
-    )
+    // recordings that predate the side cache. The flag is on this row, so the
+    // check does not read the duration array.
+    if (recording.status === 'ready' && recording.segmentCount > 0 && !recording.durationsCached)
       return 'materialize'
     return null
   }
@@ -560,16 +615,9 @@ export const finalizeInterrupted = internalMutation({
     } catch {
       return // Deletion/revocation is handled by the next cleanup scan.
     }
-    // Materialize denormalized durations once here so post-finalize playlist
-    // polls read only this row (legacy uploads never got receipt-seeded ones).
-    const durations =
-      record.durations && record.durations.length === record.segmentCount
-        ? record.durations
-        : await backfillDurations(ctx, record)
     const finished = { ...record, finalCount: record.segmentCount, updatedAt: Date.now() }
     await ctx.db.patch(record._id, {
       finalCount: finished.finalCount,
-      ...(durations && durations.length === record.segmentCount ? { durations } : {}),
       updatedAt: finished.updatedAt,
     })
     await updatePlayable(ctx, finished)
@@ -587,10 +635,7 @@ export const backfillRecordingDurations = internalMutation({
     requireSegmentMedia()
     const record = await ctx.db.get(recordingId)
     if (!record || record.status === 'cancelled' || record.segmentCount === 0) return
-    if (record.durations && record.durations.length === record.segmentCount) return
-    const durations = await backfillDurations(ctx, record)
-    if (!durations) return
-    await ctx.db.patch(recordingId, { durations })
+    await materializeDurations(ctx, record)
   },
 })
 
@@ -633,6 +678,8 @@ export const purge = internalMutation({
       .withIndex('by_recording_index', (q) => q.eq('recordingId', recordingId))
       .take(MAX_SEGMENTS)
     for (const segment of segments) await ctx.db.delete(segment._id)
+    const timeline = await timelineRow(ctx, recordingId)
+    if (timeline) await ctx.db.delete(timeline._id)
     if (await ctx.db.get(recordingId)) await ctx.db.delete(recordingId)
   },
 })
