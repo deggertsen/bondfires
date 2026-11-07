@@ -43,6 +43,7 @@ function setup() {
   return convexTest(schema, modules)
 }
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
@@ -308,8 +309,8 @@ describe('social registration', () => {
       expect(await user.run((ctx) => auth.getUserId(ctx))).toBeNull()
       // The stored band is still adult; nothing moved it to teen.
       expect((await t.run((ctx) => ctx.db.get(id)))?.deviceAgeBand).not.toBe('teen')
-      // Repeating the teen answer changes nothing; under 13 takes over the reason.
-      expect(await recheck(teenDevice)).toEqual({ status: 'skipped' })
+      // Repeating the teen answer keeps the block; under 13 takes over the reason.
+      expect(await recheck(teenDevice)).toEqual({ status: 'blocked' })
       expect(await recheck(childDevice)).toEqual({ status: 'blocked' })
       expect(await user.query(api.users.current)).toMatchObject({ ageBlockedReason: 'under_13' })
       expect(await recheck(teenDevice)).toEqual({ status: 'blocked' })
@@ -331,6 +332,33 @@ describe('social registration', () => {
       })
     }
   })
+
+  it.each([childDevice, teenDevice])(
+    'records later checks that keep an adult account blocked ($lowerBound–$upperBound)',
+    async (deviceAgeRange) => {
+      const t = setup()
+      const id = await t.run((ctx) => ctx.db.insert('users', registrationProfile(details)))
+      const user = t.withIdentity({ subject: `${id}|session` })
+      const firstCheck = Date.now()
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(firstCheck)
+      const recheck = () =>
+        user.mutation(api.registration.recheckDeviceAge, { expectedUserId: id, deviceAgeRange })
+      await recheck()
+      const laterCheck = firstCheck + 24 * 60 * 60 * 1000
+      vi.setSystemTime(laterCheck)
+      expect(await recheck()).toEqual({ status: 'blocked' })
+      expect(await user.query(api.registration.status)).toMatchObject({
+        ageBlocked: true,
+        deviceAgeCheckedAt: laterCheck,
+      })
+      expect(await t.run((ctx) => ctx.db.get(id))).toMatchObject({
+        ageBlockedAt: firstCheck,
+        birthMonth: details.birthMonth,
+      })
+      expect(await user.run((ctx) => auth.getUserId(ctx))).toBeNull()
+    },
+  )
 
   it('links a verified email without changing profile, birthday, legal or moderation state', async () => {
     const t = setup()
@@ -587,8 +615,11 @@ describe('registration validation and OAuth mappings', () => {
     expect(blocked.patch).not.toHaveProperty('birthDate')
     expect(blocked.patch).not.toHaveProperty('deviceAgeBand')
     expect(blocked.patch).not.toHaveProperty('birthMonth')
-    // Already blocked: nothing to change.
-    expect(deviceAgeRecheckPatch({ ageBlockedAt: 1 }, childDevice, now).status).toBe('skipped')
+    // Already blocked: keep the original block time, but save the latest check.
+    expect(deviceAgeRecheckPatch({ ageBlockedAt: 1 }, childDevice, now)).toMatchObject({
+      status: 'blocked',
+      patch: { ageBlockedAt: 1, deviceAgeCheckedAt: now.getTime() },
+    })
     // One-way: teen graduates to adult, adult never becomes teen.
     const teen = { ageSource: 'play_age_signals', deviceAgeBand: 'teen' } as const
     const adult = { ageSource: 'apple_declared_age_range', deviceAgeBand: 'adult' } as const
@@ -623,7 +654,7 @@ describe('registration validation and OAuth mappings', () => {
         teenDevice,
         now,
       ).status,
-    ).toBe('skipped')
+    ).toBe('blocked')
     // A blocked teen account whose phone says teen again is simply unblocked.
     expect(
       deviceAgeRecheckPatch({ ...teen, ageBlockedAt: 1 }, teenDevice, now).patch,

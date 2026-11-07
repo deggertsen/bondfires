@@ -124,8 +124,8 @@ export function deviceAgeRecheckPatch(
   // lifting a block later still applies the one-way rule.
   const currentBand = getUserAgeBand({ ...user, ageBlockedAt: undefined }, now)
   const block = (blockReason: AgeBlockedReason) => {
-    const currentReason = user.ageBlockedAt ? (user.ageBlockedReason ?? 'under_13') : null
-    if (currentReason === blockReason) return { status: 'skipped' as const, patch: {} }
+    // Even an unchanged block is a saved answer. Refresh its check timestamp
+    // so another device or a cleared local cache respects the daily interval.
     return {
       status: 'blocked',
       patch: {

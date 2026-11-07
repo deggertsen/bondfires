@@ -87,8 +87,21 @@ describe('device age signal decision', () => {
       { lowerBound: 18, upperBound: 12 },
       { lowerBound: Number.NaN },
       { lowerBound: 13.5 },
+      { lowerBound: -1, upperBound: 12 },
+      { upperBound: -1 },
     ]) {
       expect(deviceAgeRangeFromSignal({ status: 'shared', ...bounds }, apple)).toBeNull()
+    }
+  })
+
+  it('rejects malformed native bounds instead of treating them as open-ended', async () => {
+    for (const bounds of [
+      { lowerBound: 18, upperBound: '17' },
+      { lowerBound: '13', upperBound: 17 },
+      { lowerBound: 18, upperBound: false },
+    ]) {
+      const signal = JSON.parse(JSON.stringify({ status: 'shared', ...bounds }))
+      expect(await resolveDeviceAgeRange(async () => signal, apple)).toBeNull()
     }
   })
 

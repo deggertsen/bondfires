@@ -135,8 +135,8 @@ export function getDeviceAgeOutcome(range: DeviceAgeRange): DeviceAgeOutcome {
   const upper = range.upperBound ?? null
   if (lower === null && upper === null) return null
   if (
-    (lower !== null && !Number.isInteger(lower)) ||
-    (upper !== null && !Number.isInteger(upper)) ||
+    (lower !== null && (!Number.isSafeInteger(lower) || lower < 0)) ||
+    (upper !== null && (!Number.isSafeInteger(upper) || upper < 0)) ||
     (lower !== null && upper !== null && upper < lower)
   ) {
     return null

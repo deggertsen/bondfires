@@ -136,6 +136,9 @@ describe('device age ranges', () => {
     expect(getDeviceAgeOutcome({ source: play, lowerBound: null, upperBound: null })).toBeNull()
     expect(getDeviceAgeOutcome({ source: play, lowerBound: 18, upperBound: 13 })).toBeNull()
     expect(getDeviceAgeOutcome({ source: play, lowerBound: 13.5 })).toBeNull()
+    expect(getDeviceAgeOutcome({ source: play, lowerBound: -1, upperBound: 12 })).toBeNull()
+    expect(getDeviceAgeOutcome({ source: apple, upperBound: -1 })).toBeNull()
+    expect(getDeviceAgeOutcome({ source: play, lowerBound: Number.MAX_VALUE })).toBeNull()
   })
 })
 

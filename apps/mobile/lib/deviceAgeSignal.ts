@@ -29,13 +29,22 @@ export function deviceAgeSourceForPlatform(os: string): DeviceAgeSource | null {
 
 /** A shared signal with at least one bound becomes a range; declined/unavailable is null. */
 export function deviceAgeRangeFromSignal(
-  signal: DeviceAgeSignalResult | null | undefined,
+  signal: unknown,
   source: DeviceAgeSource | null,
 ): DeviceAgeRange | null {
-  if (!signal || !source || signal.status !== 'shared') return null
-  const lowerBound = typeof signal.lowerBound === 'number' ? signal.lowerBound : null
-  const upperBound = typeof signal.upperBound === 'number' ? signal.upperBound : null
-  if (lowerBound === null && upperBound === null) return null
+  if (!source || !signal || typeof signal !== 'object') return null
+  const result = signal as Record<string, unknown>
+  if (result.status !== 'shared') return null
+  const lowerBound = result.lowerBound ?? null
+  const upperBound = result.upperBound ?? null
+  // A malformed bound is not an absent bound: dropping it can turn an invalid
+  // range into an eligible, open-ended one.
+  if (
+    (lowerBound !== null && typeof lowerBound !== 'number') ||
+    (upperBound !== null && typeof upperBound !== 'number')
+  ) {
+    return null
+  }
   const range = { source, lowerBound, upperBound }
   return getDeviceAgeOutcome(range) === null ? null : range
 }

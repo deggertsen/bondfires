@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   records: new Map<string, string>(),
   listeners: new Set<(state: string) => void>(),
+  appState: 'active',
 }))
 vi.mock('../lib/deviceAgeRange', () => ({ requestDeviceAgeRange: mocks.request }))
 vi.mock('convex/react', () => ({ useMutation: () => mocks.save }))
@@ -24,6 +25,9 @@ vi.mock('@bondfires/app', () => ({
 }))
 vi.mock('react-native', () => ({
   AppState: {
+    get currentState() {
+      return mocks.appState
+    },
     addEventListener: (_event: string, listener: (state: string) => void) => {
       mocks.listeners.add(listener)
       return { remove: () => mocks.listeners.delete(listener) }
@@ -46,6 +50,7 @@ function Recheck(props: Parameters<typeof useDeviceAgeRecheck>[0]) {
   return null
 }
 async function foreground() {
+  mocks.appState = 'active'
   await act(async () => {
     for (const listener of mocks.listeners) listener('active')
   })
@@ -61,6 +66,7 @@ function deferred() {
 beforeEach(() => {
   mocks.records.clear()
   mocks.listeners.clear()
+  mocks.appState = 'active'
   mocks.request.mockReset().mockResolvedValue(adult)
   mocks.save.mockReset().mockResolvedValue({ status: 'updated' })
   ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -140,6 +146,59 @@ describe('foreground device recheck', () => {
     await foreground()
     expect(mocks.save).toHaveBeenCalledTimes(2)
     expect(mocks.records.size).toBe(1)
+  })
+
+  it('retries saving an under-13 answer without asking the device to replace it', async () => {
+    const child: DeviceAgeRange = { source: 'play_age_signals', lowerBound: 0, upperBound: 12 }
+    mocks.request.mockResolvedValueOnce(child).mockResolvedValue(null)
+    mocks.save.mockRejectedValueOnce(new Error('offline'))
+    await act(async () => {
+      renderer = create(createElement(Recheck, { userId: first }))
+    })
+    expect(mocks.records.size).toBe(0)
+    await foreground()
+    expect(mocks.request).toHaveBeenCalledOnce()
+    expect(mocks.save).toHaveBeenCalledTimes(2)
+    expect(mocks.save).toHaveBeenLastCalledWith({ expectedUserId: first, deviceAgeRange: child })
+    expect(JSON.parse(mocks.records.get(`device-age-recheck:${first}`) ?? 'null')).toMatchObject({
+      answered: true,
+    })
+  })
+
+  it('does not reuse an unsaved answer after switching accounts', async () => {
+    mocks.save.mockRejectedValueOnce(new Error('offline'))
+    mocks.request.mockResolvedValueOnce(adult).mockResolvedValue(null)
+    await act(async () => {
+      renderer = create(createElement(Recheck, { userId: first }))
+    })
+    await act(async () => renderer.update(createElement(Recheck, { userId: second })))
+    await foreground()
+    expect(mocks.save).toHaveBeenCalledOnce()
+    expect(mocks.records.has(`device-age-recheck:${first}`)).toBe(false)
+  })
+
+  it('waits for the foreground before opening a device prompt', async () => {
+    mocks.appState = 'background'
+    await act(async () => {
+      renderer = create(createElement(Recheck, { userId: first }))
+    })
+    expect(mocks.request).not.toHaveBeenCalled()
+    await foreground()
+    expect(mocks.request).toHaveBeenCalledOnce()
+  })
+
+  it('keeps an outstanding answer when the server check timestamp changes', async () => {
+    const pending = deferred()
+    mocks.request.mockReturnValueOnce(pending.promise).mockResolvedValue(null)
+    await act(async () => {
+      renderer = create(createElement(Recheck, { userId: first }))
+    })
+    await act(async () =>
+      renderer.update(createElement(Recheck, { userId: first, checkedAt: Date.now() })),
+    )
+    await act(async () => pending.resolve(adult))
+    expect(mocks.request).toHaveBeenCalledOnce()
+    expect(mocks.save).toHaveBeenCalledWith({ expectedUserId: first, deviceAgeRange: adult })
   })
 
   it('uses the saved server check to avoid prompting again immediately after signup', async () => {
