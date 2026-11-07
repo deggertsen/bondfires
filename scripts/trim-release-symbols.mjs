@@ -18,8 +18,8 @@ for (let index = 0; index < argv.length; index += 1) {
   const flag = argv[index]
   const value = argv[index + 1]
   if ((flag !== '--only' && flag !== '--skip') || !value) {
-    console.error(
-      `Unexpected argument: ${flag}. Use --only <version-platform> or --skip <version-platform>.`,
+    process.stderr.write(
+      `Unexpected argument: ${flag}. Use --only <version-platform> or --skip <version-platform>.\n`,
     )
     process.exit(1)
   }
@@ -29,6 +29,6 @@ for (let index = 0; index < argv.length; index += 1) {
 
 const results = trimReleaseSymbols(resolve(repositoryRoot, 'apps/mobile/build'), { only, skip })
 for (const { name, action, reason } of results) {
-  console.log(`🧹 ${name}: ${action}${reason ? ` (${reason})` : ''}`)
+  process.stdout.write(`🧹 ${name}: ${action}${reason ? ` (${reason})` : ''}\n`)
 }
-if (results.length === 0) console.log('🧹 No release build folders to trim')
+if (results.length === 0) process.stdout.write('🧹 No release build folders to trim\n')
