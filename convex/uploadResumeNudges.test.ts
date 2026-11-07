@@ -102,7 +102,7 @@ describe('upload resume delivery', () => {
       [token],
       expect.objectContaining({
         title: 'Upload paused',
-        body: 'Your recording is still on this phone. Open Bondfires to finish uploading.',
+        body: 'Open so that your recording gets sent.',
         channelId: 'bondfires-default',
         threadId: 'bondfires-account',
         data: {

@@ -98,7 +98,7 @@ export function accessApprovedBody(): string {
 }
 
 export function uploadResumeBody(): string {
-  return 'Your recording is still on this phone. Open Bondfires to finish uploading.'
+  return 'Open so that your recording gets sent.'
 }
 
 function escapeRegExp(value: string): string {

@@ -11,9 +11,7 @@ import {
 } from './notificationCopy'
 
 it('tells the owner how to resume a paused upload', () => {
-  expect(uploadResumeBody()).toBe(
-    'Your recording is still on this phone. Open Bondfires to finish uploading.',
-  )
+  expect(uploadResumeBody()).toBe('Open so that your recording gets sent.')
 })
 
 describe('bodyFromSummary', () => {
