@@ -105,6 +105,7 @@
       "id": "mobile-native",
       "description": "Native modules, application configuration, credentials metadata, and bundled assets",
       "patterns": [
+        "scripts/native-build-plugins.test.mjs",
         "apps/mobile/modules/**",
         "apps/mobile/targets/**",
         "apps/mobile/app.json",
