@@ -150,6 +150,8 @@
           }
         }
       ],
+      "./plugins/withPodsDeploymentTarget",
+      "./plugins/withGradleJvmArgs",
       [
         "expo-video",
         {
