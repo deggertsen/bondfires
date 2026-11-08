@@ -216,6 +216,10 @@
       "patterns": [
         "scripts/release.sh",
         "scripts/release-evidence.mjs",
+        "scripts/trim-release-symbols.mjs",
+        "scripts/check-release-disk-space.mjs",
+        "scripts/lib/release-symbols.mjs",
+        "scripts/release-symbols.test.mjs",
         "scripts/migrate-mux-r2.mjs",
         "scripts/mobile-release-preflight.mjs",
         "scripts/refresh-ios-provisioning-profile.sh",

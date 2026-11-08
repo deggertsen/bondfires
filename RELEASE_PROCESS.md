@@ -42,6 +42,9 @@ The release machine needs:
 - App Store Connect and Google Play submission access
 - `jq`, `fastlane`, CocoaPods, Xcode, and the Android SDK/JDK
 - `ANDROID_HOME` or `ANDROID_SDK_ROOT` when releasing Android
+- At least 25 GiB of free disk space (override with a positive number in `RELEASE_MIN_FREE_GB`). The release checks
+  this after trimming earlier build folders and stops before changing the version or production state if there isn't
+  enough.
 
 ## Automated preflight
 
@@ -121,18 +124,57 @@ registrations, or a mismatched Convex URL.
 
 The script:
 
-1. Validates the local toolchain, clean working tree, and repository.
-2. Increments the app version and shared iOS/Android build number in `apps/mobile/app.json`.
-3. Commits the version change.
-4. Starts an ignored evidence manifest at `apps/mobile/build/release-<version>.json`.
-5. Deploys Convex to production.
-6. Builds the requested native platforms locally (`eas build --local`).
-7. Submits those local artifacts (`eas submit --path`) to App Store Connect and/or
+1. Validates the local toolchain and clean working tree.
+2. Trims earlier local build folders and checks free disk space.
+3. Validates the repository.
+4. Increments the app version and shared iOS/Android build number in `apps/mobile/app.json`.
+5. Commits the version change.
+6. Starts an ignored evidence manifest at `apps/mobile/build/release-<version>.json`.
+7. Deploys Convex to production.
+8. Builds the requested native platforms locally (`eas build --local`), trimming each platform's
+   build folder as soon as its build finishes.
+9. Submits those local artifacts (`eas submit --path`) to App Store Connect and/or
    Google Play internal testing.
-8. Records build, submission, completion, or failure events in the evidence manifest.
+10. Records build, submission, completion, or failure events in the evidence manifest.
 
 The evidence manifest is local and ignored by Git. Copy it elsewhere if a durable release record is
 needed.
+
+### Local build folders
+
+Each local build writes its full EAS working directory (node_modules, Pods, Gradle output) to
+`apps/mobile/build/symbols/<version>-<platform>/eas`. That is roughly 5 GB for iOS and 11 GB for
+Android, so a few releases can fill the disk. `scripts/trim-release-symbols.mjs` keeps only what
+crash diagnostics need and deletes the rest:
+
+- iOS: `dSYMs/` (app, notification extension, and any additional framework/extension symbols) and `main.jsbundle.map`
+- Android: `index.android.bundle.map` and `native-symbol-tables/`
+
+The release runs it automatically, but you can also run it yourself (for example after an
+interrupted or hand-completed release):
+
+```bash
+node scripts/trim-release-symbols.mjs                     # every eligible folder
+node scripts/trim-release-symbols.mjs --only 1.0.109-ios  # one folder
+```
+
+It decides from the release's evidence manifest:
+
+- **Platform recorded as built:** validate every diagnostic before moving anything, then move the
+  diagnostics out and delete `eas/`. dSYMs must contain DWARF data and Android must have nonempty
+  native symbol tables. Missing/empty diagnostics, symlinks, or existing destination collisions
+  keep the working directory and print a reason. Interrupted extractions can be retried.
+- **Platform not recorded as built:** leave it alone, even if the release is marked failed.
+  The build may still be active, or may have finished before evidence could be written.
+- **Missing, malformed, or mismatched evidence:** leave it alone and continue checking other folders.
+
+Failed/interrupted builds need manual inspection; lack of a completion event is never permission
+for automatic deletion. Do not run cleanup while manually rebuilding a previously recorded version.
+Pass `--skip <version-platform>` to exclude a folder. `--only` and `--skip` require an exact
+`<major>.<minor>.<patch>-ios` or `-android` name; malformed arguments fail before cleanup.
+
+Never delete these folders by hand without keeping the files above: they are the only local copy
+of the symbols for that exact binary.
 
 ## After submission
 
@@ -213,4 +255,4 @@ For an iOS capability/provisioning mismatch, run
 
 **Established:** 2026-02-19 after a navigation routing failure reached users
 
-**Last updated:** 2026-08-13 — local production builds required; EAS is submit-only
+**Last updated:** 2026-11-07 — local build folders trimmed automatically; free-space preflight

@@ -52,6 +52,12 @@ if [[ -n "$(git status --porcelain)" ]]; then
   exit 1
 fi
 
+# --- Reclaim disk from earlier local builds, then require room for this one ---
+# Each local build leaves an EAS working directory (~5 GB iOS, ~11 GB Android).
+# Trimming keeps dSYMs, JS source maps and Android native symbol tables only.
+node scripts/trim-release-symbols.mjs
+node scripts/check-release-disk-space.mjs
+
 # --- Deterministic preflight before changing version or production state ---
 echo "🔎 Running repository validation and release preflight..."
 node scripts/mobile-release-preflight.mjs --profile production
@@ -155,6 +161,8 @@ for platform in "${PLATFORMS[@]}"; do
     --platform "$platform" \
     --artifact "apps/mobile/$ARTIFACT"
   echo "✅ $platform build complete: $ARTIFACT"
+  # Free this build's working directory before the next platform builds.
+  node "$REPO_ROOT/scripts/trim-release-symbols.mjs" --only "$NEW_VERSION-$platform"
 
   echo "📤 Submitting $platform build..."
   npx eas-cli submit \
