@@ -8,7 +8,7 @@ const MARKER = '# Bondfires: raise pod deployment targets to the app minimum'
 
 const SNIPPET = `
     ${MARKER} (Xcode 27 rejects < 15.0).
-    bondfires_min_ios = podfile_properties['ios.deploymentTarget'] || '16.4'
+    bondfires_min_ios = podfile_properties.fetch('ios.deploymentTarget')
     installer.pods_project.targets.each do |target|
       target.build_configurations.each do |build_config|
         current = build_config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']

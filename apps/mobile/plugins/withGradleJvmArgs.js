@@ -6,15 +6,13 @@ const { withGradleProperties } = require('expo/config-plugins')
 const JVM_ARGS = '-Xmx4096m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8'
 
 function setJvmArgs(properties) {
-  const existing = properties.find(
-    (item) => item.type === 'property' && item.key === 'org.gradle.jvmargs',
-  )
-  if (existing) {
-    existing.value = JVM_ARGS
-  } else {
-    properties.push({ type: 'property', key: 'org.gradle.jvmargs', value: JVM_ARGS })
-  }
-  return properties
+  // Gradle uses the last definition, so replace all occurrences, not just the first.
+  return [
+    ...properties.filter(
+      (item) => !(item.type === 'property' && item.key === 'org.gradle.jvmargs'),
+    ),
+    { type: 'property', key: 'org.gradle.jvmargs', value: JVM_ARGS },
+  ]
 }
 
 module.exports = (config) =>
