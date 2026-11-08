@@ -42,8 +42,8 @@ The release machine needs:
 - App Store Connect and Google Play submission access
 - `jq`, `fastlane`, CocoaPods, Xcode, and the Android SDK/JDK
 - `ANDROID_HOME` or `ANDROID_SDK_ROOT` when releasing Android
-- At least 25 GB of free disk space (override with `RELEASE_MIN_FREE_GB`). The release checks
-  this after trimming earlier build folders and stops before changing anything if there isn't
+- At least 25 GiB of free disk space (override with a positive number in `RELEASE_MIN_FREE_GB`). The release checks
+  this after trimming earlier build folders and stops before changing the version or production state if there isn't
   enough.
 
 ## Automated preflight
@@ -147,7 +147,7 @@ Each local build writes its full EAS working directory (node_modules, Pods, Grad
 Android, so a few releases can fill the disk. `scripts/trim-release-symbols.mjs` keeps only what
 crash diagnostics need and deletes the rest:
 
-- iOS: `dSYMs/` (app and notification extension) and `main.jsbundle.map`
+- iOS: `dSYMs/` (app, notification extension, and any additional framework/extension symbols) and `main.jsbundle.map`
 - Android: `index.android.bundle.map` and `native-symbol-tables/`
 
 The release runs it automatically, but you can also run it yourself (for example after an
@@ -160,13 +160,18 @@ node scripts/trim-release-symbols.mjs --only 1.0.109-ios  # one folder
 
 It decides from the release's evidence manifest:
 
-- **Platform recorded as built:** the diagnostic files are moved out and `eas/` is deleted. If any
-  of those files is missing, the folder is kept and the reason is printed.
-- **Platform never built:** the folder is removed entirely; a failed build has nothing worth keeping.
-- **No evidence manifest:** the folder is left alone.
+- **Platform recorded as built:** validate every diagnostic before moving anything, then move the
+  diagnostics out and delete `eas/`. dSYMs must contain DWARF data and Android must have nonempty
+  native symbol tables. Missing/empty diagnostics, symlinks, or existing destination collisions
+  keep the working directory and print a reason. Interrupted extractions can be retried.
+- **Platform not recorded as built:** leave it alone, even if the release is marked failed.
+  The build may still be active, or may have finished before evidence could be written.
+- **Missing, malformed, or mismatched evidence:** leave it alone and continue checking other folders.
 
-Don't run it by hand while a local build is in progress: that build isn't recorded as built yet, so
-its folder would be removed. Pass `--skip <version-platform>` if you need to.
+Failed/interrupted builds need manual inspection; lack of a completion event is never permission
+for automatic deletion. Do not run cleanup while manually rebuilding a previously recorded version.
+Pass `--skip <version-platform>` to exclude a folder. `--only` and `--skip` require an exact
+`<major>.<minor>.<patch>-ios` or `-android` name; malformed arguments fail before cleanup.
 
 Never delete these folders by hand without keeping the files above: they are the only local copy
 of the symbols for that exact binary.

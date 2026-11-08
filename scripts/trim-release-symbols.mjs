@@ -8,7 +8,7 @@
 //   node scripts/trim-release-symbols.mjs --skip 1.0.109-android
 
 import { resolve } from 'node:path'
-import { trimReleaseSymbols } from './lib/release-symbols.mjs'
+import { SYMBOL_DIR_PATTERN, trimReleaseSymbols } from './lib/release-symbols.mjs'
 import { repositoryRoot } from './lib/repository-intelligence.mjs'
 
 const only = []
@@ -17,7 +17,7 @@ const argv = process.argv.slice(2)
 for (let index = 0; index < argv.length; index += 1) {
   const flag = argv[index]
   const value = argv[index + 1]
-  if ((flag !== '--only' && flag !== '--skip') || !value) {
+  if ((flag !== '--only' && flag !== '--skip') || !value || !SYMBOL_DIR_PATTERN.test(value)) {
     process.stderr.write(
       `Unexpected argument: ${flag}. Use --only <version-platform> or --skip <version-platform>.\n`,
     )

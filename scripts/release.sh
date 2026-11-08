@@ -56,14 +56,7 @@ fi
 # Each local build leaves an EAS working directory (~5 GB iOS, ~11 GB Android).
 # Trimming keeps dSYMs, JS source maps and Android native symbol tables only.
 node scripts/trim-release-symbols.mjs
-MIN_FREE_GB="${RELEASE_MIN_FREE_GB:-25}"
-FREE_GB=$(( $(df -Pk "$REPO_ROOT" | awk 'NR==2 {print $4}') / 1024 / 1024 ))
-if (( FREE_GB < MIN_FREE_GB )); then
-  echo "❌ Only ${FREE_GB} GB free; local release builds need at least ${MIN_FREE_GB} GB."
-  echo "   Free space (or set RELEASE_MIN_FREE_GB) before releasing. See RELEASE_PROCESS.md."
-  exit 1
-fi
-echo "💾 ${FREE_GB} GB free"
+node scripts/check-release-disk-space.mjs
 
 # --- Deterministic preflight before changing version or production state ---
 echo "🔎 Running repository validation and release preflight..."

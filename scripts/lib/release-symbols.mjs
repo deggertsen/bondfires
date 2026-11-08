@@ -1,18 +1,5 @@
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-} from 'node:fs'
-import { join } from 'node:path'
-
-// Each local release keeps `apps/mobile/build/symbols/<version>-<platform>/eas`, the
-// full EAS working directory (node_modules, Pods, Gradle output): ~5 GB for iOS and
-// ~11 GB for Android. Crash diagnostics only need a few files from it. Trimming
-// moves those files up one level and deletes the working directory.
+import { lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 
 const IOS_DSYM_DIR =
   'eas/build/apps/mobile/ios/build/Build/Intermediates.noindex/ArchiveIntermediates/Bondfires/BuildProductsPath/Release-iphoneos'
@@ -22,90 +9,138 @@ const ANDROID_BUNDLE_MAP = 'generated/sourcemaps/react/release/index.android.bun
 const ANDROID_SYMBOL_TABLES =
   'intermediates/native_symbol_tables/release/extractReleaseNativeSymbolTables/out'
 
-const SYMBOL_DIR_PATTERN = /^(\d+\.\d+\.\d+)-(ios|android)$/
+export const SYMBOL_DIR_PATTERN = /^(\d+\.\d+\.\d+)-(ios|android)$/
 
-function isNonEmptyFile(path) {
-  return existsSync(path) && statSync(path).isFile() && statSync(path).size > 0
+function stat(path) {
+  try {
+    return lstatSync(path)
+  } catch (error) {
+    if (error.code === 'ENOENT') return null
+    throw error
+  }
 }
 
-function isDirectory(path) {
-  return existsSync(path) && statSync(path).isDirectory()
+// Do not retain links into the working directory we are about to delete, or
+// traverse links to another build's diagnostics while extracting files.
+function localPath(root, relative) {
+  let path = root
+  for (const part of relative.split('/')) {
+    path = join(path, part)
+    if (stat(path)?.isSymbolicLink()) throw new Error(`symbolic link: ${relative}`)
+  }
+  return path
 }
 
-function moveIfPresent(from, to) {
-  if (existsSync(from) && !existsSync(to)) renameSync(from, to)
+function nonEmptyFiles(path) {
+  const info = stat(path)
+  if (info?.isFile() && info.size > 0) return [path]
+  if (!info?.isDirectory()) throw new Error(`missing, empty, or linked diagnostic: ${path}`)
+  return readdirSync(path).flatMap((name) => nonEmptyFiles(join(path, name)))
 }
 
-/** Whether the evidence manifest recorded a finished build for this platform. */
-export function wasPlatformBuilt(buildDir, version, platform) {
-  const manifest = join(buildDir, `release-${version}.json`)
-  if (!existsSync(manifest)) return null
-  const events = JSON.parse(readFileSync(manifest, 'utf8')).events ?? []
-  return events.some((event) => event.name === 'platform-built' && event.platform === platform)
+function validateDiagnostic(path, kind) {
+  const files = nonEmptyFiles(path)
+  if (kind === 'file' && !stat(path)?.isFile()) throw new Error(`expected file: ${path}`)
+  if (kind === 'dsym') {
+    if (!stat(join(path, 'Contents/Info.plist'))?.isFile()) {
+      throw new Error(`missing dSYM Info.plist: ${path}`)
+    }
+    const dwarfDir = join(path, 'Contents/Resources/DWARF')
+    if (!files.some((file) => dirname(file) === dwarfDir)) {
+      throw new Error(`missing dSYM DWARF data: ${path}`)
+    }
+  }
+  if (kind === 'native' && !files.some((file) => file.endsWith('.sym'))) {
+    throw new Error(`missing native symbol tables: ${path}`)
+  }
 }
 
-/** Move the kept diagnostics out of `eas/`. Returns the files still missing. */
-export function extractSymbols(dir, platform) {
-  if (platform === 'ios') {
-    const dsyms = join(dir, 'dSYMs')
-    mkdirSync(dsyms, { recursive: true })
-    for (const name of IOS_DSYMS) moveIfPresent(join(dir, IOS_DSYM_DIR, name), join(dsyms, name))
+function requireBuiltPlatform(buildDir, version, platform) {
+  const path = join(buildDir, `release-${version}.json`)
+  if (!stat(path)?.isFile()) throw new Error('no regular release evidence manifest')
+  const manifest = JSON.parse(readFileSync(path, 'utf8'))
+  if (
+    manifest?.schemaVersion !== 1 ||
+    manifest.release?.version !== version ||
+    !Array.isArray(manifest.events)
+  ) {
+    throw new Error('invalid release evidence manifest')
+  }
+  if (
+    !manifest.events.some(
+      (event) => event?.name === 'platform-built' && event.platform === platform,
+    )
+  ) {
+    throw new Error('no completed build recorded; may be active or interrupted')
+  }
+}
+
+function diagnosticPlan(dir, platform) {
+  if (platform === 'android') {
     return [
-      ...IOS_DSYMS.filter((name) => !isDirectory(join(dsyms, name))).map((name) => `dSYMs/${name}`),
-      ...(isNonEmptyFile(join(dir, 'main.jsbundle.map')) ? [] : ['main.jsbundle.map']),
+      [join(ANDROID_BUILD_DIR, ANDROID_BUNDLE_MAP), 'index.android.bundle.map', 'file'],
+      [join(ANDROID_BUILD_DIR, ANDROID_SYMBOL_TABLES), 'native-symbol-tables', 'native'],
     ]
   }
-
-  moveIfPresent(
-    join(dir, ANDROID_BUILD_DIR, ANDROID_BUNDLE_MAP),
-    join(dir, 'index.android.bundle.map'),
-  )
-  moveIfPresent(
-    join(dir, ANDROID_BUILD_DIR, ANDROID_SYMBOL_TABLES),
-    join(dir, 'native-symbol-tables'),
-  )
+  const source = localPath(dir, IOS_DSYM_DIR)
+  const saved = localPath(dir, 'dSYMs')
+  // Preserve additional framework/extension dSYMs as well as the two required bundles.
+  const names = new Set(IOS_DSYMS)
+  for (const path of [source, saved]) {
+    if (stat(path)?.isDirectory()) {
+      for (const name of readdirSync(path)) if (name.endsWith('.dSYM')) names.add(name)
+    }
+  }
   return [
-    ...(isNonEmptyFile(join(dir, 'index.android.bundle.map')) ? [] : ['index.android.bundle.map']),
-    ...(isDirectory(join(dir, 'native-symbol-tables')) ? [] : ['native-symbol-tables']),
+    ['main.jsbundle.map', 'main.jsbundle.map', 'file'],
+    ...[...names].map((name) => [join(IOS_DSYM_DIR, name), `dSYMs/${name}`, 'dsym']),
   ]
 }
 
-/**
- * Trim every `<version>-<platform>` symbol folder that still holds an `eas/` working
- * directory. A build the evidence manifest marks as built keeps its working directory
- * if any diagnostic file is missing; a build that never finished has nothing worth
- * keeping and is removed outright. Folders without a manifest are left alone.
- */
+function extractSymbols(dir, platform) {
+  const moves = []
+  // Validate the entire plan before moving anything. A destination collision may
+  // be from a different attempt at the same version: never silently prefer it.
+  for (const [from, to, kind] of diagnosticPlan(dir, platform)) {
+    const source = localPath(dir, from)
+    const destination = localPath(dir, to)
+    const hasSource = stat(source) !== null
+    const hasDestination = stat(destination) !== null
+    if (source !== destination && hasSource && hasDestination) {
+      throw new Error(`diagnostic destination already exists: ${to}`)
+    }
+    validateDiagnostic(hasSource ? source : destination, kind)
+    if (source !== destination && hasSource) moves.push([source, destination])
+  }
+  for (const [source, destination] of moves) {
+    mkdirSync(dirname(destination), { recursive: true })
+    renameSync(source, destination)
+  }
+}
+
+/** Only completed builds with verified, retained diagnostics may lose their EAS directory. */
 export function trimReleaseSymbols(buildDir, { only = [], skip = [] } = {}) {
   const symbolsDir = join(buildDir, 'symbols')
-  if (!isDirectory(symbolsDir)) return []
+  if (!stat(symbolsDir)?.isDirectory()) return []
   const results = []
   for (const name of readdirSync(symbolsDir).sort()) {
     const match = SYMBOL_DIR_PATTERN.exec(name)
-    if (!match) continue
-    if (only.length > 0 && !only.includes(name)) continue
-    if (skip.includes(name)) continue
+    if (!match || (only.length > 0 && !only.includes(name)) || skip.includes(name)) continue
     const dir = join(symbolsDir, name)
     const workDir = join(dir, 'eas')
-    if (!isDirectory(workDir)) continue
-    const [, version, platform] = match
-    const built = wasPlatformBuilt(buildDir, version, platform)
-    if (built === null) {
-      results.push({ name, action: 'kept', reason: 'no release evidence manifest' })
-      continue
+    try {
+      if (!stat(dir)?.isDirectory()) throw new Error('not a regular symbol directory')
+      if (!stat(workDir)) continue
+      if (!stat(workDir)?.isDirectory()) throw new Error('not a regular EAS directory')
+      const [, version, platform] = match
+      requireBuiltPlatform(buildDir, version, platform)
+      extractSymbols(dir, platform)
+      rmSync(workDir, { recursive: true })
+      results.push({ name, action: 'trimmed' })
+    } catch (error) {
+      // One unreadable/corrupt build must not prevent cleanup of other valid builds.
+      results.push({ name, action: 'kept', reason: error.message })
     }
-    if (!built) {
-      rmSync(dir, { recursive: true, force: true })
-      results.push({ name, action: 'removed', reason: 'build never finished' })
-      continue
-    }
-    const missing = extractSymbols(dir, platform)
-    if (missing.length > 0) {
-      results.push({ name, action: 'kept', reason: `missing ${missing.join(', ')}` })
-      continue
-    }
-    rmSync(workDir, { recursive: true, force: true })
-    results.push({ name, action: 'trimmed' })
   }
   return results
 }
