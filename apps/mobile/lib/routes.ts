@@ -200,6 +200,15 @@ export function createForCampPath(campId: string): string {
   return `/(main)/create?campId=${encodeURIComponent(campId)}`
 }
 
+/**
+ * Serialized form of `routes.createRespondTo`, for the camp join gate's
+ * `redirect` param: a Respond press that had to join first continues into the
+ * respond recorder after an open-camp join.
+ */
+export function createRespondToPath(bondfireId: string): string {
+  return `/(main)/create?respondTo=${encodeURIComponent(bondfireId)}`
+}
+
 export function campJoinGatePath(campId: string, redirect?: string): string {
   const path = `${campPath(campId)}/join`
   return redirect ? `${path}?redirect=${encodeURIComponent(redirect)}` : path
@@ -239,6 +248,8 @@ const EXTERNAL_BONDFIRE_ROUTE = /^\/\(main\)\/bondfire\/([^/?#]+)$/
 const EXTERNAL_CAMP_ROUTE = /^\/\(main\)\/camp\/([^/?#]+)$/
 const EXTERNAL_CAMP_JOIN_ROUTE = /^\/\(main\)\/camp\/([^/?#]+)\/join(?:\?redirect=([^#]+))?$/
 const EXTERNAL_CREATE_FOR_CAMP_ROUTE = /^\/\(main\)\/create\?campId=([^&#]+)$/
+// Exactly one query param; the create screen re-checks camp membership itself.
+const EXTERNAL_CREATE_RESPOND_TO_ROUTE = /^\/\(main\)\/create\?respondTo=([^&#]+)$/
 
 const EXTERNAL_INVITE_ROUTE = /^\/invite\/([^/?#]+)$/
 const EXTERNAL_CAMP_INVITE_ROUTE = /^\/invite\/camp\/([^/?#]+)$/
@@ -271,6 +282,11 @@ export function resolveExternalRoute(path: string | null | undefined): Href | nu
 
   const createForCampMatch = EXTERNAL_CREATE_FOR_CAMP_ROUTE.exec(path)
   if (createForCampMatch) return routes.createForCamp(decodeURIComponent(createForCampMatch[1]))
+
+  const createRespondToMatch = EXTERNAL_CREATE_RESPOND_TO_ROUTE.exec(path)
+  if (createRespondToMatch) {
+    return routes.createRespondTo(decodeURIComponent(createRespondToMatch[1]))
+  }
 
   const inviteMatch = EXTERNAL_INVITE_ROUTE.exec(path)
   if (inviteMatch) return routes.externalInvite(decodeURIComponent(inviteMatch[1]))

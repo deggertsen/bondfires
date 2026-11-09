@@ -13,6 +13,7 @@ import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
 import { CampSparkPane } from '../../components/create/CampSparkPane'
 import { PreRecordingInviteScreen } from '../../components/create/PreRecordingInviteScreen'
+import { RespondGate } from '../../components/create/RespondGate'
 import { SegmentRecordScreen } from '../../components/create/SegmentRecordScreen'
 import { SparkModeToggle } from '../../components/create/SparkModeToggle'
 import type { TradeTag } from '../../components/create/shared'
@@ -28,7 +29,16 @@ import { goBackOrReplace } from '../../lib/navigation'
 import { routes } from '../../lib/routes'
 
 export default function CreateScreen() {
-  return segmentMediaEnabled ? <EnabledCreateScreen /> : <RecordingUnavailableScreen />
+  return segmentMediaEnabled ? <AvailableCreateScreen /> : <RecordingUnavailableScreen />
+}
+
+function AvailableCreateScreen() {
+  const { respondTo } = useLocalSearchParams<{ respondTo?: string }>()
+  return (
+    <RespondGate bondfireId={respondTo}>
+      <EnabledCreateScreen key={respondTo ?? 'create'} />
+    </RespondGate>
+  )
 }
 
 function RecordingUnavailableScreen() {

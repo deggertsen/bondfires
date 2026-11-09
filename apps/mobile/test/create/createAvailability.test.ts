@@ -22,7 +22,11 @@ vi.mock('@react-navigation/native', () => ({}))
 vi.mock('@tamagui/lucide-icons', () => ({}))
 vi.mock('convex/react', () => ({ useQuery: mocks.useQuery }))
 vi.mock('expo-camera', () => ({ useCameraPermissions: mocks.useCameraPermissions }))
-vi.mock('expo-router', () => ({ useRouter: () => ({ replace: mocks.replace }) }))
+vi.mock('expo-router', () => ({
+  useRouter: () => ({ replace: mocks.replace }),
+  useNavigation: () => ({}),
+  useLocalSearchParams: () => ({ respondTo: 'bf-1' }),
+}))
 vi.mock('react-native-safe-area-context', () => ({}))
 vi.mock('../../components/create/CampSparkPane', () => ({}))
 vi.mock('../../components/create/SparkModeToggle', () => ({}))
@@ -59,5 +63,18 @@ describe('create availability', () => {
     expect(mocks.useQuery).not.toHaveBeenCalled()
     await act(async () => renderer.root.findByType('Button').props.onPress())
     expect(mocks.replace).toHaveBeenCalledWith('/feed')
+  })
+
+  it('does not mount permission hooks or the composer while response access is loading', async () => {
+    mocks.enabled = true
+    mocks.useQuery.mockReturnValue(undefined)
+    await act(async () => {
+      renderer = create(createElement(CreateScreen))
+    })
+    expect(renderer.root.findAllByType('Spinner')).toHaveLength(1)
+    expect(mocks.useCameraPermissions).not.toHaveBeenCalled()
+    // Only the response gate query runs; the composer and its draft queries stay unmounted.
+    expect(mocks.useQuery).toHaveBeenCalledTimes(1)
+    expect(mocks.useQuery.mock.calls[0][1]).toEqual({ id: 'bf-1' })
   })
 })
