@@ -31,6 +31,7 @@ import {
 import type { BondfireThumbnailFields } from '../../../lib/bondfireThumbnails'
 import { getMyFireRowCreatorName } from '../../../lib/myFireRow'
 import { getThreadReactionRowProps } from '../../../lib/reactionChipProps'
+import { decideRespondGate, respondGateHref } from '../../../lib/respondGate'
 import { routes } from '../../../lib/routes'
 import { useBondfireThumbnails } from '../../../lib/useBondfireThumbnails'
 import { useReactionRowVisibility } from '../../../lib/useReactionRowVisibility'
@@ -253,6 +254,9 @@ export default function MyFiresScreen() {
   const invitedRows = useQuery(api.inviteClaims.listUnseenInvites, canLoadTabData ? {} : 'skip') as
     | InviteRow[]
     | undefined
+  // Active memberships, so Respond on an invited or stale row can go straight
+  // to the camp join gate instead of flashing the recorder first.
+  const joinedCamps = useQuery(api.camps.listMine, canLoadTabData && currentUserId ? {} : 'skip')
 
   // Swipe action mutations
   const deleteBondfire = useMutation(api.bondfires.deleteBondfire)
@@ -382,10 +386,21 @@ export default function MyFiresScreen() {
   )
 
   const handleRespond = useCallback(
-    (bondfireId: string) => {
-      router.push(routes.createRespondTo(bondfireId))
+    (bondfire: Pick<Doc<'bondfires'>, '_id' | 'campId'>) => {
+      // Until memberships load, the create screen re-checks before recording.
+      if (joinedCamps === undefined) {
+        router.push(routes.createRespondTo(bondfire._id))
+        return
+      }
+      const membership = joinedCamps.find((camp) => camp._id === bondfire.campId)?.membership
+      router.push(
+        respondGateHref(
+          bondfire._id,
+          decideRespondGate({ campId: bondfire.campId, membershipStatus: membership?.status }),
+        ),
+      )
     },
-    [router],
+    [joinedCamps, router],
   )
 
   const handleDelete = useCallback(
@@ -515,7 +530,7 @@ export default function MyFiresScreen() {
             currentUserId,
             pinnedIds,
             () => handleOpen(item._id),
-            () => handleRespond(item._id),
+            () => handleRespond(item),
             () => handleDelete(item._id),
             () => handlePin(item._id),
             () => handleUnpin(item._id),
@@ -579,7 +594,7 @@ export default function MyFiresScreen() {
                   const props = toInvitedBondfireRowProps(
                     item,
                     () => handleOpen(item._id),
-                    () => handleRespond(item._id),
+                    () => handleRespond(item),
                     () => handleDismissInvite(row.claim._id),
                   )
 

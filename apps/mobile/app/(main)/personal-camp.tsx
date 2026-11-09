@@ -22,6 +22,7 @@ import {
 import type { BondfireThumbnailFields } from '../../lib/bondfireThumbnails'
 import { goBackOrReplace } from '../../lib/navigation'
 import { getThreadReactionRowProps } from '../../lib/reactionChipProps'
+import { decideRespondGate, respondGateHref } from '../../lib/respondGate'
 import { routes } from '../../lib/routes'
 import { useBondfireThumbnails } from '../../lib/useBondfireThumbnails'
 import { useReactionRowVisibility } from '../../lib/useReactionRowVisibility'
@@ -158,8 +159,16 @@ export default function PersonalCampScreen() {
   )
 
   const handleRespond = useCallback(
-    (bondfireId: string) => {
-      router.push(routes.createRespondTo(bondfireId))
+    (bondfire: Pick<Doc<'bondfires'>, '_id' | 'campId'>) => {
+      // Hearth fires carry no campId, so this resolves to the recorder. A row
+      // that somehow belongs to a camp has no known membership here and goes
+      // to the join gate; the create screen re-checks either way.
+      router.push(
+        respondGateHref(
+          bondfire._id,
+          decideRespondGate({ campId: bondfire.campId, membershipStatus: null }),
+        ),
+      )
     },
     [router],
   )
@@ -288,7 +297,7 @@ export default function PersonalCampScreen() {
             ),
         }),
         onOpen: () => handleOpenBondfire(bondfire._id),
-        onRespond: () => handleRespond(bondfire._id),
+        onRespond: () => handleRespond(bondfire),
       }
     },
     [

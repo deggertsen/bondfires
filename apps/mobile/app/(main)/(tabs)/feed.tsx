@@ -63,6 +63,7 @@ import {
 import { getMyFireRowCreatorName } from '../../../lib/myFireRow'
 import { shouldLoadSparsePage, uniqueById } from '../../../lib/pagination'
 import { getThreadReactionRowProps } from '../../../lib/reactionChipProps'
+import { decideRespondGate, respondGateHref } from '../../../lib/respondGate'
 import { routes } from '../../../lib/routes'
 import { useBondfireThumbnails } from '../../../lib/useBondfireThumbnails'
 import { useHomeFeedScrollRestoration } from '../../../lib/useHomeFeedScrollRestoration'
@@ -826,10 +827,22 @@ export default function HomeScreen() {
   )
 
   const handleRespond = useCallback(
-    (bondfireId: string) => {
-      router.push(routes.createRespondTo(bondfireId))
+    (bondfire: Pick<Doc<'bondfires'>, '_id' | 'campId'>) => {
+      // `listMine` is active memberships only, so a camp missing from it means
+      // the viewer has not joined. Until it loads, the create screen re-checks.
+      if (joinedCamps === undefined) {
+        router.push(routes.createRespondTo(bondfire._id))
+        return
+      }
+      const membership = joinedCamps.find((camp) => camp._id === bondfire.campId)?.membership
+      router.push(
+        respondGateHref(
+          bondfire._id,
+          decideRespondGate({ campId: bondfire.campId, membershipStatus: membership?.status }),
+        ),
+      )
     },
-    [router],
+    [joinedCamps, router],
   )
 
   const handleSpark = useCallback(() => {
@@ -1066,7 +1079,7 @@ export default function HomeScreen() {
             currentUserId,
             pinnedIds,
             () => handleBondfirePress(item._id),
-            () => handleRespond(item._id),
+            () => handleRespond(item),
             () => handleDelete(item._id),
             () => handlePin(item._id),
             () => handleUnpin(item._id),
@@ -1149,7 +1162,7 @@ export default function HomeScreen() {
                     currentUserId,
                     pinnedIds,
                     () => handleBondfirePress(thread._id),
-                    () => handleRespond(thread._id),
+                    () => handleRespond(thread),
                     () => handleDelete(thread._id),
                     () => handlePin(thread._id),
                     () => handleUnpin(thread._id),

@@ -25,6 +25,7 @@ import {
 } from '../../components/create/sparkComposer'
 import { segmentMediaEnabled } from '../../lib/media/segmentUploads'
 import { goBackOrReplace } from '../../lib/navigation'
+import { decideRespondGate, type RespondGateDecision, respondGateHref } from '../../lib/respondGate'
 import { routes } from '../../lib/routes'
 
 export default function CreateScreen() {
@@ -124,6 +125,31 @@ function EnabledCreateScreen() {
   const inviteSkipped = useValue(inviteSkipped$)
 
   const camps = useQuery(api.camps.list, respondTo ? 'skip' : {})
+  // Choke point for every respondTo entry (feed rows, playback, deep links,
+  // future callers): the server rejects a camp response unless the viewer's
+  // membership is active, so a non-member must go through the join gate
+  // before any permission prompt or recorder mount. `null` context (bondfire
+  // not visible) carries no camp, so it falls through and the server decides.
+  const respondContext = useQuery(
+    api.bondfires.getWithCampContext,
+    respondTo ? { id: respondTo } : 'skip',
+  )
+  const respondGate: RespondGateDecision | null = !respondTo
+    ? { kind: 'respond' }
+    : respondContext === undefined
+      ? null
+      : decideRespondGate({
+          campId: respondContext?.bondfire.campId,
+          membershipStatus: respondContext?.membership?.status,
+        })
+  const canEnterRecorder = respondGate?.kind === 'respond'
+  const respondGateJoinCampId = respondGate?.kind === 'join' ? respondGate.campId : null
+  const hasRedirectedToJoinGate = useRef(false)
+  useEffect(() => {
+    if (!respondTo || !respondGateJoinCampId || hasRedirectedToJoinGate.current) return
+    hasRedirectedToJoinGate.current = true
+    router.replace(respondGateHref(respondTo, { kind: 'join', campId: respondGateJoinCampId }))
+  }, [respondTo, respondGateJoinCampId, router])
   const subscription = useQuery(api.subscriptions.current, {})
   const currentUser = useQuery(api.users.current)
   const existingDraft = useQuery(api.personalBondfires.getMyDraftBondfire, respondTo ? 'skip' : {})
@@ -232,10 +258,12 @@ function EnabledCreateScreen() {
   }, [cameraPermission, micPermission, requestCameraPermission, requestMicPermission])
 
   useEffect(() => {
+    // Never prompt for camera/mic while a respond entry is still being gated.
+    if (!canEnterRecorder) return
     if (cameraPermission?.status === 'undetermined' || micPermission?.status === 'undetermined') {
       void requestPermissions()
     }
-  }, [cameraPermission?.status, micPermission?.status, requestPermissions])
+  }, [canEnterRecorder, cameraPermission?.status, micPermission?.status, requestPermissions])
 
   const handleSelectCamp = useCallback(
     (id: Id<'camps'>) => {
@@ -254,6 +282,17 @@ function EnabledCreateScreen() {
   const handleBack = useCallback(() => {
     goBackOrReplace(router, navigation, routes.feed)
   }, [navigation, router])
+
+  // Respond gate still resolving, or redirecting to the join gate. Rendered
+  // before the permission UI so neither it nor the recorder can appear.
+  if (!canEnterRecorder) {
+    return (
+      <YStack flex={1} backgroundColor="$background" justifyContent="center">
+        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+        <Spinner />
+      </YStack>
+    )
+  }
 
   // Permission denied state
   if (!cameraPermission?.granted || !micPermission?.granted) {

@@ -7,6 +7,7 @@ vi.mock('@bondfires/app', () => ({
 import {
   campJoinGatePath,
   createForCampPath,
+  createRespondToPath,
   resolveAuthRedirect,
   resolveExternalRoute,
 } from '../lib/routes'
@@ -31,6 +32,32 @@ describe('mobile routes', () => {
       pathname: '/(main)/create',
       params: { campId: 'camp-1' },
     })
+  })
+
+  it('allowlists the exact respond recorder destination for the camp join gate redirect', () => {
+    const redirect = createRespondToPath('bf-1')
+    expect(redirect).toBe('/(main)/create?respondTo=bf-1')
+
+    expect(resolveExternalRoute(redirect)).toEqual({
+      pathname: '/(main)/create',
+      params: { respondTo: 'bf-1' },
+    })
+
+    expect(resolveExternalRoute(campJoinGatePath('camp-1', redirect))).toEqual({
+      pathname: '/(main)/camp/[id]/join',
+      params: { id: 'camp-1', redirect },
+    })
+  })
+
+  it('rejects respond paths with extra or unknown query params', () => {
+    expect(resolveExternalRoute('/(main)/create?respondTo=bf-1&campId=camp-1')).toBeNull()
+    expect(resolveExternalRoute('/(main)/create?respondTo=')).toBeNull()
+    expect(resolveExternalRoute('/(main)/create?foo=bar')).toBeNull()
+    expect(resolveExternalRoute('/(main)/create?respondTo=bf-1#x')).toBeNull()
+  })
+
+  it('leaves a bare bondfire id unresolved so the join gate falls back to the bondfire screen', () => {
+    expect(resolveExternalRoute('bf-1')).toBeNull()
   })
 
   it('allowlists a nested family invitation without treating it as a regular invite', () => {
