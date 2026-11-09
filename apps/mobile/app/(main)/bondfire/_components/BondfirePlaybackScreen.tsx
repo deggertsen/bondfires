@@ -13,7 +13,6 @@ import { InviteSheet } from '../../../../components/InviteSheet'
 import { NotepadOverlay } from '../../../../components/NotepadOverlay'
 import { SettingsPopover } from '../../../../components/SettingsPopover'
 import { VIDEO_OVERLAY_COLORS as OVERLAY_COLORS } from '../../../../components/videoOverlayColors'
-import { decideRespondGate, respondGateHref } from '../../../../lib/respondGate'
 import { routes } from '../../../../lib/routes'
 import type {
   BondfireDetailData,
@@ -46,7 +45,6 @@ export function BondfirePlaybackScreen({
   bondfireId,
   bondfireData,
   canInvite,
-  campMembershipStatus,
   videoItems,
   currentVideoIndex,
   isFocused,
@@ -74,12 +72,6 @@ export function BondfirePlaybackScreen({
   bondfireId: Id<'bondfires'>
   bondfireData: BondfireDetailData
   canInvite: boolean
-  /**
-   * Viewer's `campMembers.status` for this bondfire's camp. `null` when there
-   * is no membership row; `undefined` while the camp context is still loading
-   * (the create screen then re-checks before mounting the recorder).
-   */
-  campMembershipStatus: string | null | undefined
   videoItems: BondfireVideoItem[]
   currentVideoIndex: number
   isFocused: boolean
@@ -147,27 +139,8 @@ export function BondfirePlaybackScreen({
     // route mounts. The imperative release above is the deterministic path;
     // this also covers the brief window where the active item has no ref.
     await waitForNextFrame()
-    // Non-members go to the join gate instead of the recorder; the server
-    // would reject their upload anyway. Respond itself stays visible.
-    router.push(
-      campMembershipStatus === undefined
-        ? routes.createRespondTo(bondfireId)
-        : respondGateHref(
-            bondfireId,
-            decideRespondGate({
-              campId: bondfireData.campId,
-              membershipStatus: campMembershipStatus,
-            }),
-          ),
-    )
-  }, [
-    bondfireData.campId,
-    bondfireData.campStatus,
-    bondfireId,
-    campMembershipStatus,
-    overlayState$,
-    router,
-  ])
+    router.push(routes.createRespondTo(bondfireId))
+  }, [bondfireData.campStatus, bondfireId, overlayState$, router])
 
   useEffect(() => {
     if (isFocused) {

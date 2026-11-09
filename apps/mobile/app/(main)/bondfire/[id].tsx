@@ -608,10 +608,6 @@ export default function BondfireDetailScreen() {
       bondfireId={bondfireId}
       bondfireData={bondfireData}
       canInvite={campContext?.canInvite ?? false}
-      // Membership row only: `hasInviteClaim` lets a viewer watch, not respond.
-      campMembershipStatus={
-        campContext === undefined ? undefined : (campContext?.membership?.status ?? null)
-      }
       videoItems={videoItems}
       currentVideoIndex={currentVideoIndex}
       isFocused={isFocused}

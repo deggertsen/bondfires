@@ -1,37 +1,29 @@
-import type { Href } from 'expo-router'
-import { createRespondToPath, routes } from './routes'
+import type { Doc } from '../../../convex/_generated/dataModel'
+import { isCampParticipableStatus } from '../../../convex/campLifecycle'
 
-/**
- * Client mirror of the server participation rule (`assertUserCanParticipateInCamp`
- * in convex/videos.ts): a camp response requires `campMembers.status === 'active'`.
- * Anything else, including no membership row, is rejected at upload time with
- * "Join this camp before sparking here". An invite claim does NOT satisfy it, so
- * callers must pass the membership row's status, never `hasInviteClaim`.
- *
- * Hearth / personal bondfires carry no `campId` and are not camp responses.
- * Archived camps are handled separately by the playback screen's `canRespond`.
- */
-export type RespondGateDecision = { kind: 'respond' } | { kind: 'join'; campId: string }
-
-export function decideRespondGate(input: {
-  campId: string | null | undefined
-  /** Resolved membership status. `null`/`undefined` means no membership row. */
-  membershipStatus: string | null | undefined
-}): RespondGateDecision {
-  if (!input.campId) return { kind: 'respond' }
-  if (input.membershipStatus === 'active') return { kind: 'respond' }
-  return { kind: 'join', campId: input.campId }
+type RespondContext = {
+  bondfire: { campId?: string }
+  camp: { status: Doc<'camps'>['status'] } | null
+  membership: { status: string } | null
 }
 
-/**
- * Where a Respond press should navigate. A `join` decision opens the existing
- * full-screen camp join gate with the respond recorder as its post-join
- * redirect, so an open-camp join continues into the recording the user asked
- * for. Approval and invite-only camps never reach that redirect.
- */
-export function respondGateHref(bondfireId: string, decision: RespondGateDecision): Href {
-  if (decision.kind === 'join') {
-    return routes.campJoinGate(decision.campId, createRespondToPath(bondfireId))
+export type RespondGateDecision =
+  | { kind: 'loading' }
+  | { kind: 'unavailable' }
+  | { kind: 'respond' }
+  | { kind: 'join'; campId: string }
+
+// A missing/inaccessible bondfire is not a Hearth fire. Wait for the query and
+// require a visible target before deciding whether camp membership is needed.
+export function decideRespondGate(context: RespondContext | null | undefined): RespondGateDecision {
+  if (context === undefined) return { kind: 'loading' }
+  if (context === null) return { kind: 'unavailable' }
+  const campId = context.bondfire.campId
+  if (!campId) return { kind: 'respond' }
+  if (!context.camp || !isCampParticipableStatus(context.camp.status)) {
+    return { kind: 'unavailable' }
   }
-  return routes.createRespondTo(bondfireId)
+  // Invite claims grant viewing access, not permission to upload a response.
+  if (context.membership?.status === 'active') return { kind: 'respond' }
+  return { kind: 'join', campId }
 }
