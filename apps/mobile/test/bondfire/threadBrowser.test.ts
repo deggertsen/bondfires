@@ -183,6 +183,17 @@ describe('ThreadBrowser catch-up interactions', () => {
     )
     expect(text('Show')).toBeDefined()
   })
+
+  it.each([false, true])(
+    'keeps expanded earlier videos non-sticky to avoid Android Fabric inserts (hasOlder=%s)',
+    async (hasOlder) => {
+      await act(async () => renderer.update(createElement(Harness, { hasOlder })))
+      const earlierRow = renderer.root.findAllByType('Row')[hasOlder ? 1 : 0]
+      await act(async () => earlierRow.findByType('Pressable').props.onPress())
+      expect(text('Hide')).toBeDefined()
+      expect(renderer.root.findByType('FlatList').props).not.toHaveProperty('stickyHeaderIndices')
+    },
+  )
 })
 
 describe('ThreadBrowser list position', () => {
