@@ -16,16 +16,39 @@ import { useEffect, useRef, useState } from 'react'
 import { Linking } from 'react-native'
 import { Sheet, YStack } from 'tamagui'
 
-const COPY: Record<PushNudgeMode, { title: string; body: string; primary: string }> = {
-  request: {
-    title: 'Want to know when someone responds to you?',
-    body: 'Get a notification when someone adds a video to your Bondfire.',
-    primary: 'Notify me',
+/**
+ * Where the sheet is shown. The completion screen follows the user's own
+ * recording, so it can talk about their Bondfire; the feed nudge reaches new
+ * signups who may not have posted yet, so it can't assume they have one.
+ */
+export type PushPrimerContext = 'completion' | 'feed'
+
+type PrimerCopy = { title: string; body: string; primary: string }
+
+const COPY: Record<PushPrimerContext, Record<PushNudgeMode, PrimerCopy>> = {
+  completion: {
+    request: {
+      title: 'Want to know when someone responds to you?',
+      body: 'Get a notification when someone adds a video to your Bondfire.',
+      primary: 'Notify me',
+    },
+    settings: {
+      title: 'Notifications are off',
+      body: 'Turn them on in Settings to hear when someone responds to your Bondfire.',
+      primary: 'Open Settings',
+    },
   },
-  settings: {
-    title: 'Notifications are off',
-    body: 'Turn them on in Settings to hear when someone responds to your Bondfire.',
-    primary: 'Open Settings',
+  feed: {
+    request: {
+      title: 'Turn on notifications?',
+      body: 'Know when your people start a Bondfire or reply to yours.',
+      primary: 'Notify me',
+    },
+    settings: {
+      title: 'Notifications are off',
+      body: 'Turn them on in Settings to know when your people start a Bondfire or reply to yours.',
+      primary: 'Open Settings',
+    },
   },
 }
 
@@ -50,9 +73,11 @@ const COPY: Record<PushNudgeMode, { title: string; body: string; primary: string
 interface PushPrimerSheetProps {
   /** Set true at the moment the primer should be considered (e.g. on the completion screen). */
   trigger: boolean
+  /** Picks the copy: see `PushPrimerContext`. */
+  context: PushPrimerContext
 }
 
-export function PushPrimerSheet({ trigger }: PushPrimerSheetProps) {
+export function PushPrimerSheet({ trigger, context }: PushPrimerSheetProps) {
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<PushNudgeMode>('request')
   // Guards against the sheet's close callback recording a decline after the
@@ -144,7 +169,7 @@ export function PushPrimerSheet({ trigger }: PushPrimerSheetProps) {
     telemetry.breadcrumb('push:nudge:declined')
   }
 
-  const copy = COPY[mode]
+  const copy = COPY[context][mode]
 
   return (
     <Sheet

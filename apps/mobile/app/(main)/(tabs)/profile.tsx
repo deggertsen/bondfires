@@ -50,6 +50,7 @@ import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Alert,
+  AppState,
   FlatList,
   Linking,
   Pressable,
@@ -224,6 +225,10 @@ export default function ProfileScreen() {
   const { preferences, setPlaybackQuality, setAutoplayVideos, setNotificationsEnabled } =
     usePreferences()
 
+  // Set while the user is in system Settings after tapping the switch, so the
+  // switch can turn on when they come back with notifications allowed.
+  const awaitingSettingsReturnRef = useRef(false)
+
   // The notifications switch was turned on: explicit user intent, so it is OK
   // to fire the OS permission dialog — unless the OS will no longer prompt, in
   // which case only system Settings can turn notifications on.
@@ -231,6 +236,10 @@ export default function ProfileScreen() {
     try {
       const permission = await getPushPermissionState()
       if (permission && pushNudgeMode(permission) === 'settings') {
+        // Leave the switch off until the OS permission is actually granted;
+        // the AppState listener below turns it on when the user returns.
+        setNotificationsEnabled(false)
+        awaitingSettingsReturnRef.current = true
         telemetry.breadcrumb('push:settings:openSettings')
         await Linking.openSettings()
         return
@@ -244,6 +253,20 @@ export default function ProfileScreen() {
       })
     }
   }
+
+  // External subscription (AppState), so useEffect rather than an observer.
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState !== 'active' || !awaitingSettingsReturnRef.current) return
+      awaitingSettingsReturnRef.current = false
+      void getPushPermissionState().then((permission) => {
+        const granted = permission?.granted ?? false
+        telemetry.breadcrumb('push:settings:returnFromSettings', { granted })
+        if (granted) setNotificationsEnabled(true)
+      })
+    })
+    return () => subscription.remove()
+  }, [setNotificationsEnabled])
 
   const { currentTier, isRestoring, managePlan, restore, showPaywall } = useSubscription()
   const { balance: kindlingBalance, isLoading: kindlingBalanceLoading } = useKindlingBalance()

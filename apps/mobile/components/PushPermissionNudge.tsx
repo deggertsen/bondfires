@@ -34,5 +34,5 @@ export function PushPermissionNudge({ communityGateDismissed }: PushPermissionNu
   const blocked =
     communityGatePending || isPaywallVisible || isExplainerVisible || isCreateRoute(pathname)
 
-  return <PushPrimerSheet trigger={notificationsEnabled && !blocked} />
+  return <PushPrimerSheet context="feed" trigger={notificationsEnabled && !blocked} />
 }
