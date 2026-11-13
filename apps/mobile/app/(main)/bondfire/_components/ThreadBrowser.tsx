@@ -267,7 +267,7 @@ function EarlierVideosRow({
   )
 }
 
-/** Sticky header over the unfolded watched videos; Hide folds them back up. */
+/** Normal row above the unfolded watched videos; Hide folds them back up. */
 function EarlierVideosHeader({ count, onPress }: { count: number; onPress?: () => void }) {
   return (
     <XStack
@@ -473,8 +473,8 @@ export function ThreadBrowser({
     if (playingEarlier) return
     const expanding = !earlierExpanded
     // Unfolding expands in place: land with the newest watched videos just
-    // above the new section (under the sticky header) and older ones a scroll
-    // up. Folding returns to the top, where the fold row is.
+    // above the new section and older ones a scroll up. Folding returns to
+    // the top, where the fold row is.
     pendingListOffsetRef.current = expanding
       ? Math.max(
           0,
@@ -591,6 +591,8 @@ export function ThreadBrowser({
               {processingCount > 0 ? ` · ${processingCount} processing` : ''}
             </Text>
           </XStack>
+          {/* Keep the earlier-videos header non-sticky: stickyHeaderIndices
+              can crash Android Fabric with addViewAt when history expands. */}
           <FlatList
             ref={listRef}
             windowSize={5}
@@ -607,9 +609,6 @@ export function ThreadBrowser({
               listHeightRef.current = event.nativeEvent.layout.height
               if (!state$.open.peek()) scrollToPlayingRow(false)
             }}
-            stickyHeaderIndices={
-              foldedCount > 0 && earlierExpanded ? [hasOlderResponses ? 1 : 0] : undefined
-            }
             onContentSizeChange={() => {
               const offset = pendingListOffsetRef.current
               if (offset === null) {
