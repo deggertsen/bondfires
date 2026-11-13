@@ -22,6 +22,7 @@ import {
   closeOpenSwipeableRow,
   EmberRail,
   type EmberRailItem,
+  type EmberRailThumbnailVariant,
   Input,
   Spinner,
   Text,
@@ -635,10 +636,14 @@ export default function HomeScreen() {
     [railThreads],
   )
   const renderRailThumbnail = useCallback(
-    (item: EmberRailItem) => {
+    (item: EmberRailItem, variant: EmberRailThumbnailVariant) => {
       const thread = railThreadsById.get(item.id)
       return thread ? (
-        <BondfireThumbnailContent bondfire={thread} thumbnailUrls$={thumbnailUrls$} />
+        <BondfireThumbnailContent
+          bondfire={thread}
+          thumbnailUrls$={thumbnailUrls$}
+          fallbackSize={variant === 'mini' ? 7 : 22}
+        />
       ) : null
     },
     [railThreadsById, thumbnailUrls$],
