@@ -11,10 +11,11 @@ import { SubscriptionPaywall } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
 import { useConvex, useQuery } from 'convex/react'
 import { Redirect, Stack } from 'expo-router'
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../../../convex/_generated/api'
 import { CommunityAcceptanceGate } from '../../components/CommunityAcceptanceGate'
 import { FreeCapabilitiesExplainer } from '../../components/FreeCapabilitiesExplainer'
+import { PushPermissionNudge } from '../../components/PushPermissionNudge'
 import { UploadStatusLayout } from '../../components/UploadStatusLayout'
 import {
   runSegmentUploads,
@@ -180,6 +181,7 @@ export default function MainLayout() {
 
 function MainContent() {
   useNetworkStatusSync()
+  const [communityGateDismissed, setCommunityGateDismissed] = useState(false)
   return (
     <>
       <UploadStatusLayout>
@@ -203,7 +205,11 @@ function MainContent() {
       <SegmentUploadResume />
       <GlobalPaywall />
       <FreeCapabilitiesExplainer />
-      <CommunityAcceptanceGate />
+      <CommunityAcceptanceGate
+        dismissed={communityGateDismissed}
+        onDismiss={() => setCommunityGateDismissed(true)}
+      />
+      <PushPermissionNudge communityGateDismissed={communityGateDismissed} />
     </>
   )
 }

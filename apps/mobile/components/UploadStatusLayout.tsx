@@ -57,7 +57,7 @@ function bannerVisual(state: Exclude<UploadStatusState, { kind: 'idle' }>): Bann
   }
 }
 
-function isCreateRoute(pathname: string) {
+export function isCreateRoute(pathname: string) {
   return pathname === '/create' || pathname.startsWith('/create/')
 }
 

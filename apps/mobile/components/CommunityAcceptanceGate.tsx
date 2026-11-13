@@ -9,16 +9,28 @@ const TERMS_URL = 'https://bondfires.org/terms'
 const GUIDELINES_URL = 'https://bondfires.org/community-guidelines'
 const PRIVACY_URL = 'https://bondfires.org/privacy'
 
-export function CommunityAcceptanceGate() {
+interface CommunityAcceptanceGateProps {
+  /** The user chose "Not now" this session. Owned by the layout so other global surfaces can defer to the gate. */
+  dismissed: boolean
+  onDismiss: () => void
+}
+
+type AcceptanceStatus = { accepted: boolean } | null | undefined
+
+/** Whether the gate is on screen. A still-loading status counts as closed here. */
+export function isCommunityAcceptanceGateOpen(status: AcceptanceStatus, dismissed: boolean) {
+  return Boolean(status) && !status?.accepted && !dismissed
+}
+
+export function CommunityAcceptanceGate({ dismissed, onDismiss }: CommunityAcceptanceGateProps) {
   const status = useQuery(api.legal.getAcceptanceStatus)
   const accept = useMutation(api.legal.acceptCurrent)
   const [isAccepting, setIsAccepting] = useState(false)
-  const [dismissed, setDismissed] = useState(false)
 
-  if (!status || status.accepted || dismissed) return null
+  if (!status || !isCommunityAcceptanceGateOpen(status, dismissed)) return null
 
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={() => setDismissed(true)}>
+    <Modal visible transparent animationType="fade" onRequestClose={onDismiss}>
       <YStack flex={1} backgroundColor="rgba(0,0,0,0.72)" justifyContent="center" padding={24}>
         <Card accessibilityRole="summary">
           <YStack gap={16}>
@@ -80,7 +92,7 @@ export function CommunityAcceptanceGate() {
               variant="outline"
               size="$md"
               disabled={isAccepting}
-              onPress={() => setDismissed(true)}
+              onPress={onDismiss}
               accessibilityLabel="Review community policies later"
             >
               <Text>Not now</Text>

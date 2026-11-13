@@ -13,6 +13,7 @@ export {
   scrubTelemetryValue,
 } from './services/privacyScrubber'
 export {
+  getPushPermissionState,
   isPushPermissionGranted,
   requestPushPermission,
   resetChannelForCategory,

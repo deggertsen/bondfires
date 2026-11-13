@@ -48,7 +48,7 @@ export interface AppState {
     lastShownAt: number | null
     // Times the user dismissed the pre-prompt. Stop asking after 3.
     declineCount: number
-    // User said yes and we fired (or attempted) the OS dialog.
+    // User said yes and the OS permission was actually granted.
     accepted: boolean
   }
 }
@@ -195,6 +195,24 @@ export const appActions = {
 
   recordPushPrimerShown: () => {
     appStore$.pushPrimer.lastShownAt.set(Date.now())
+  },
+
+  /**
+   * Claim the primer synchronously: returns null when it is not eligible,
+   * otherwise records "shown" (so a second mount in the same moment sees the
+   * cooldown) and returns a release function. Call release only if the sheet
+   * never actually opened, to hand the slot back.
+   */
+  claimPushPrimer: (): (() => void) | null => {
+    if (!appActions.shouldShowPushPrimer()) return null
+    const previous = appStore$.pushPrimer.lastShownAt.peek()
+    const claimedAt = Date.now()
+    appStore$.pushPrimer.lastShownAt.set(claimedAt)
+    return () => {
+      if (appStore$.pushPrimer.lastShownAt.peek() === claimedAt) {
+        appStore$.pushPrimer.lastShownAt.set(previous)
+      }
+    }
   },
 
   recordPushPrimerDeclined: () => {
