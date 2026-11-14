@@ -65,6 +65,7 @@ import { isAuthSessionErrorMessage, redirectToCampJoinLogin } from '../../../lib
 import { campRulePills } from '../../../lib/campSettings'
 import { goBackOrReplace } from '../../../lib/navigation'
 import { getThreadReactionRowProps } from '../../../lib/reactionChipProps'
+import { readableLabelColor } from '../../../lib/readableLabelColor'
 import { routes } from '../../../lib/routes'
 import {
   type ReactionRowVisibility$,
@@ -350,7 +351,10 @@ function CampHeader({
   const cooldownEndDate = rejectedAt != null ? new Date(rejectedAt + REJECTION_COOLDOWN_MS) : null
 
   const canJoin = !isActiveMember && !isPending && !isInCooldown && camp.access !== 'invite'
-  const accentColor = camp.accentColor ?? '$primary'
+  // A camp's own accent replaces the primary fill on "Spark Here", so its
+  // label can't rely on the onPrimary theme: pick white or dark per accent.
+  const accentColor = camp.accentColor
+  const sparkLabelColor = accentColor ? readableLabelColor(accentColor) : '$color'
   const coverImageUrl = camp.coverImageUrl
 
   return (
@@ -548,9 +552,14 @@ function CampHeader({
       {isActiveMember && !isFrozen && !isArchived ? (
         <YStack gap={10}>
           {(camp.access !== 'invite' || isOwner) && canCreate ? (
-            <Button variant="primary" size="$lg" onPress={onSpark} backgroundColor={accentColor}>
-              <Flame size={20} color={'$color'} />
-              <Text color={'$color'} fontWeight="900">
+            <Button
+              variant="primary"
+              size="$lg"
+              onPress={onSpark}
+              {...(accentColor ? { backgroundColor: accentColor } : null)}
+            >
+              <Flame size={20} color={sparkLabelColor} />
+              <Text color={sparkLabelColor} fontWeight="900">
                 Spark Here
               </Text>
             </Button>

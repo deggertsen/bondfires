@@ -1,6 +1,6 @@
 import { type GetProps, styled, Button as TamaguiButton } from 'tamagui'
 
-export const Button = styled(TamaguiButton, {
+const ButtonFrame = styled(TamaguiButton, {
   name: 'Button',
   // Disable TamaguiButton's default size-to-font mapping to prevent warnings
   unstyled: true,
@@ -14,15 +14,17 @@ export const Button = styled(TamaguiButton, {
 
   variants: {
     variant: {
+      // Filled variants render under the `onPrimary` sub-theme (see Button
+      // below), so labels/icons that use `$color` come out white. The darker
+      // `*Solid` fills keep that white label above WCAG AA in both themes.
       primary: {
-        backgroundColor: '$primary',
-        color: '$color',
+        backgroundColor: '$primarySolid',
+        color: '$colorOnPrimary',
         hoverStyle: {
-          backgroundColor: '$secondary',
+          backgroundColor: '$primarySolidHover',
         },
         pressStyle: {
-          backgroundColor: '$primaryPress',
-          opacity: 0.9,
+          backgroundColor: '$primarySolidPress',
         },
       },
       secondary: {
@@ -61,14 +63,13 @@ export const Button = styled(TamaguiButton, {
         },
       },
       destructive: {
-        backgroundColor: '$error',
-        color: '$color',
+        backgroundColor: '$errorSolid',
+        color: '$colorOnError',
         hoverStyle: {
-          backgroundColor: '$error',
+          backgroundColor: '$errorSolidPress',
         },
         pressStyle: {
-          backgroundColor: '$error',
-          opacity: 0.9,
+          backgroundColor: '$errorSolidPress',
         },
       },
     },
@@ -108,6 +109,19 @@ export const Button = styled(TamaguiButton, {
     variant: 'primary',
     size: '$md',
   },
+})
+
+const FILLED_VARIANTS = new Set(['primary', 'destructive'])
+
+/**
+ * Filled variants (primary, destructive) sit on a dark fill, so their content
+ * needs a light foreground in both themes. Rendering them under the
+ * `onPrimary` sub-theme remaps `$color` to `$colorOnPrimary` for every
+ * descendant, so call sites can keep writing `<Text color="$color">`.
+ */
+export const Button = ButtonFrame.styleable((props, ref) => {
+  const filled = FILLED_VARIANTS.has(props.variant ?? 'primary')
+  return <ButtonFrame ref={ref} theme={filled ? 'onPrimary' : undefined} {...props} />
 })
 
 export type ButtonProps = GetProps<typeof Button>

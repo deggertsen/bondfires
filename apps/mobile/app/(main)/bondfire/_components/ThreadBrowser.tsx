@@ -699,8 +699,8 @@ export function ThreadBrowser({
             >
               {canRespond ? (
                 <Button variant="primary" size="$lg" flex={1} onPress={onRespond}>
-                  <Flame size={18} color={OVERLAY_COLORS.textPrimary} />
-                  <Text color={OVERLAY_COLORS.textPrimary} fontWeight="700">
+                  <Flame size={18} color={'$color'} />
+                  <Text color={'$color'} fontWeight="700">
                     Respond
                   </Text>
                 </Button>
