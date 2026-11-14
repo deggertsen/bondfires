@@ -34,7 +34,16 @@ config.resolver.blockList = [
 ]
 
 // Use official Tamagui Metro plugin for proper monorepo handling
-module.exports = withTamagui(config, {
+const metroConfig = withTamagui(config, {
   components: ['tamagui'],
   config: './tamagui.config.ts',
 })
+
+// EAS local builds unpack inside a tree Watchman may already be watching.
+// A production install can overflow fsevents ("UserDropped") and the one-shot
+// bundle then misses packages that are on disk. Node's crawler reads the tree.
+if (process.env.EAS_BUILD === '1') {
+  metroConfig.resolver.useWatchman = false
+}
+
+module.exports = metroConfig
