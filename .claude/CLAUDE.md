@@ -206,6 +206,7 @@ packages/app/src/
 ├── store/
 │   ├── index.ts           # Re-exports all stores
 │   ├── app.store.ts       # App-wide persistent state
+│   ├── appSession.store.ts  # Current app session start (transient, once-per-session prompts)
 │   ├── ui.store.ts        # Transient UI state (not persisted)
 │   ├── notepad.store.ts   # Notepad content (persisted)
 │   ├── freeUpgrade.store.ts  # Free-tier upgrade flow state

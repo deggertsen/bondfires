@@ -13,7 +13,9 @@ export {
   scrubTelemetryValue,
 } from './services/privacyScrubber'
 export {
+  getPushPermissionState,
   isPushPermissionGranted,
+  onReturnToApp,
   requestPushPermission,
   resetChannelForCategory,
   setChannelResetter,

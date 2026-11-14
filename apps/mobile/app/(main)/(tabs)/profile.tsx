@@ -1,7 +1,10 @@
 import {
   appActions,
   getBondfireVideoIndex,
+  getPushPermissionState,
+  onReturnToApp,
   parseError,
+  pushNudgeMode,
   requestPushPermission,
   setBondfireVideoIndex,
   setFeedActiveBondfireId,
@@ -46,7 +49,15 @@ import { manipulateAsync, SaveFormat } from 'expo-image-manipulator'
 import * as ImagePicker from 'expo-image-picker'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Alert, FlatList, Pressable, RefreshControl, ScrollView, StatusBar } from 'react-native'
+import {
+  Alert,
+  FlatList,
+  Linking,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StatusBar,
+} from 'react-native'
 import { Separator, Sheet, Switch, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
@@ -213,6 +224,42 @@ export default function ProfileScreen() {
 
   const { preferences, setPlaybackQuality, setAutoplayVideos, setNotificationsEnabled } =
     usePreferences()
+
+  // The notifications switch was turned on: explicit user intent, so it is OK
+  // to fire the OS permission dialog — unless the OS will no longer prompt, in
+  // which case only system Settings can turn notifications on.
+  const enablePushFromToggle = async () => {
+    try {
+      const permission = await getPushPermissionState()
+      if (permission && pushNudgeMode(permission) === 'settings') {
+        // Leave the switch off until the OS permission is actually granted,
+        // and turn it on only if the user comes back with it allowed.
+        setNotificationsEnabled(false)
+        const cancel = onReturnToApp(() => {
+          void getPushPermissionState().then((next) => {
+            const granted = next?.granted ?? false
+            telemetry.breadcrumb('push:settings:returnFromSettings', { granted })
+            if (granted) setNotificationsEnabled(true)
+          })
+        })
+        telemetry.breadcrumb('push:settings:openSettings')
+        try {
+          await Linking.openSettings()
+        } catch (e) {
+          cancel()
+          throw e
+        }
+        return
+      }
+      const granted = await requestPushPermission()
+      // Don't leave the switch on while the OS permission is denied.
+      if (!granted) setNotificationsEnabled(false)
+    } catch (e) {
+      telemetry.warn('push:settings', 'Enabling push from settings toggle failed', {
+        error: String(e),
+      })
+    }
+  }
 
   const { currentTier, isRestoring, managePlan, restore, showPaywall } = useSubscription()
   const { balance: kindlingBalance, isLoading: kindlingBalanceLoading } = useKindlingBalance()
@@ -867,9 +914,7 @@ export default function ProfileScreen() {
                       setNotificationsEnabled(enabled)
                       telemetry.breadcrumb('push:settings:toggle', { enabled })
                       if (enabled) {
-                        // Explicit user intent — OK to fire the OS
-                        // permission dialog if it hasn't been asked yet.
-                        requestPushPermission()
+                        void enablePushFromToggle()
                       }
                     }}
                     backgroundColor={'$borderColor'}
