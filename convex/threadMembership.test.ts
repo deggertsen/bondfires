@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from 'convex-test'
 import { describe, expect, it, vi } from 'vitest'
-import { api } from './_generated/api'
+import { api, internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import type { QueryCtx } from './_generated/server'
 import { auth } from './auth'
@@ -122,6 +122,33 @@ describe('thread membership index', () => {
     expect(capped.map((thread) => thread._id)).toEqual([newest, ids.bondfireId])
   })
 
+  it('keeps index order within a page even when the visible summary time disagrees', async () => {
+    const { t, ids } = await fixture()
+    // Index says `bumped` is newer (e.g. a response the viewer cannot see),
+    // but its visible summary time is older than `fresh`.
+    const bumped = await insertFire(t, ids.owner, 50)
+    const fresh = await insertFire(t, ids.owner, 250)
+    await markIndexReady(t)
+    await t.run(async (ctx) => {
+      await ctx.db.insert('threadMemberships', {
+        userId: ids.owner,
+        bondfireId: bumped,
+        lastActivityAt: 400,
+      })
+      await ctx.db.insert('threadMemberships', {
+        userId: ids.owner,
+        bondfireId: fresh,
+        lastActivityAt: 250,
+      })
+    })
+    const page = await t
+      .withIdentity({ subject: ids.owner })
+      .query(api.conversations.listMyFiresPage, {
+        paginationOpts: { numItems: 20, cursor: null },
+      })
+    expect(page.page.map((thread) => thread._id)).toEqual([bumped, fresh])
+  })
+
   it('does not scan bondfires once the membership index is ready', async () => {
     const { t, ids } = await fixture()
     await markIndexReady(t)
@@ -196,5 +223,30 @@ describe('thread membership index', () => {
       const left = await ctx.db.query('threadMemberships').collect()
       expect(left.map((row) => row.userId)).toEqual([ids.owner])
     })
+  })
+
+  it('gives a stale restart a new runId so the old chain stops', async () => {
+    const { t } = await fixture()
+    const runId = await t.run(async (ctx) => {
+      await ctx.db.insert('maintenanceJobRuns', {
+        job: THREAD_MEMBERSHIP_JOB,
+        runId: 'old-run',
+        status: 'running',
+        cursor: undefined,
+        startedAt: 1,
+        updatedAt: 1,
+        pagesProcessed: 3,
+        stats: { bondfires: 3 },
+      })
+      return 'old-run'
+    })
+    await t.mutation(internal.threadMembershipBackfill.kick, {})
+    const restarted = await t.run((ctx) => ctx.db.query('maintenanceJobRuns').first())
+    expect(restarted?.runId).not.toBe(runId)
+    expect(restarted?.pagesProcessed).toBe(3)
+    await t.mutation(internal.threadMembershipBackfill.scanPage, { runId })
+    expect((await t.run((ctx) => ctx.db.query('maintenanceJobRuns').first()))?.pagesProcessed).toBe(
+      3,
+    )
   })
 })

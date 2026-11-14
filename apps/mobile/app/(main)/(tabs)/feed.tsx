@@ -566,13 +566,15 @@ export default function HomeScreen() {
   } = usePaginatedQuery(
     api.conversations.listMyFiresPage,
     railQueryEnabled ? { pinnedFirst: false } : 'skip',
-    { initialNumItems: 20 },
+    // One page covers the window, so first paint waits on a single round trip.
+    { initialNumItems: RAIL_HISTORY_WINDOW },
   )
   const railThreadsLoaded = useMemo(() => uniqueById(railPages as MyFire[]), [railPages])
   useEffect(() => {
-    if (!railQueryEnabled || railStatus !== 'CanLoadMore') return
-    if (railThreadsLoaded.length >= RAIL_HISTORY_WINDOW) return
-    loadMoreRail(20)
+    // Hidden or deleted fires can leave the first page short; top it up.
+    if (!railQueryEnabled) return
+    if (shouldLoadSparsePage(railStatus, railThreadsLoaded.length, RAIL_HISTORY_WINDOW))
+      loadMoreRail(20)
   }, [loadMoreRail, railQueryEnabled, railStatus, railThreadsLoaded.length])
   const railWindowFilled =
     railStatus !== 'LoadingFirstPage' &&

@@ -23,6 +23,26 @@ export async function readTranscriptBody(ctx: ReadCtx, row: Doc<'videoTranscript
   return { text, captionsVtt: captionsVtt || undefined }
 }
 
+/**
+ * Move a legacy inline body into a cursor -1 chunk and clear it from the row.
+ * Shared by the daily sweep and the next transcript window so both store the
+ * same prefix. Returns the lengths now recorded on the row.
+ */
+export async function moveLegacyTranscriptBody(ctx: MutationCtx, row: Doc<'videoTranscripts'>) {
+  const vtt = row.captionsVtt ?? ''
+  if (row.text.length > 0 || vtt.length > 0) {
+    await ctx.db.insert('transcriptChunks', {
+      transcriptId: row._id,
+      cursor: -1,
+      text: row.text,
+      vtt,
+    })
+  }
+  const lengths = { textChars: row.text.length, captionChars: vtt.length }
+  await ctx.db.patch(row._id, { text: '', captionsVtt: undefined, ...lengths })
+  return lengths
+}
+
 /** Chunk rows are not visible to the orphan sweep, so deletion has to remove them. */
 export async function deleteTranscriptChunks(
   ctx: MutationCtx,

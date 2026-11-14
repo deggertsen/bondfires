@@ -22,7 +22,7 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from './_generated/server'
-import { deleteTranscriptChunks } from './lib/transcriptBody'
+import { deleteTranscriptChunks, moveLegacyTranscriptBody } from './lib/transcriptBody'
 import { retainedVideoExists } from './retentionCleanup'
 import { requireSegmentMedia } from './segmentMedia'
 import { logServerEvent } from './serverTelemetry'
@@ -300,28 +300,18 @@ export const completeChunk = internalMutation({
     // Lengths live on the metadata row so the next window does not reread the body.
     let textChars = 0
     let captionChars = 0
-    let vttPiece = `WEBVTT\n\n${chunkVtt}`
-    if (existing && matches && existing.textChars !== undefined) {
-      textChars = existing.textChars
-      captionChars = existing.captionChars ?? 0
-      vttPiece = chunkVtt
-    } else if (existing && matches) {
-      const hadBody = existing.text.length > 0 || existing.captionsVtt !== undefined
-      if (hadBody) {
-        const prefixVtt = existing.captionsVtt ?? 'WEBVTT\n\n'
-        await ctx.db.insert('transcriptChunks', {
-          transcriptId: existing._id,
-          cursor: -1,
-          text: existing.text,
-          vtt: prefixVtt,
-        })
-        textChars = existing.text.length
-        captionChars = prefixVtt.length
-        vttPiece = chunkVtt
-      }
+    if (existing && matches) {
+      const lengths =
+        existing.textChars !== undefined
+          ? { textChars: existing.textChars, captionChars: existing.captionChars ?? 0 }
+          : await moveLegacyTranscriptBody(ctx, existing)
+      textChars = lengths.textChars
+      captionChars = lengths.captionChars
     } else if (existing) {
       await deleteTranscriptChunks(ctx, existing._id)
     }
+    // Stored captions with no VTT yet need the header before the first cue.
+    const vttPiece = captionChars === 0 ? `WEBVTT\n\n${chunkVtt}` : chunkVtt
     const textLength = appendedTextLength(textChars, chunkText)
     const captionLength = captionChars + vttPiece.length
     if (textLength > 150_000 || captionLength > 500_000) throw Error('Transcript exceeds bounds')

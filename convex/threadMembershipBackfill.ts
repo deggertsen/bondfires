@@ -123,10 +123,11 @@ export const kick = internalMutation({
       .first()
     if (existing?.status === 'complete') return
     if (existing?.status === 'running' && now - existing.updatedAt < STALE_MS) return
-    const runId = `${THREAD_MEMBERSHIP_JOB}:${existing?.runId ?? now}`
+    // Always mint a new runId. A slow chain from the stale run sees the mismatch
+    // and stops, so a restart never leaves two chains scanning the same cursor.
     const fields = {
       job: THREAD_MEMBERSHIP_JOB,
-      runId: existing?.status === 'running' ? existing.runId : runId,
+      runId: `${THREAD_MEMBERSHIP_JOB}:${now}`,
       status: 'running' as const,
       cursor: existing?.cursor,
       startedAt: existing?.startedAt ?? now,

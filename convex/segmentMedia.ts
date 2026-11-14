@@ -512,6 +512,17 @@ async function backfillDurations(
   return segments.map(({ duration }) => duration)
 }
 
+const CACHED_READY_CHECK_DAYS = 7
+
+/** Spreads full checks of cached ready rows across the week by creation time. */
+export function cachedReadyRowDueForFullCheck(
+  recording: Pick<Doc<'segmentRecordings'>, '_creationTime'>,
+  now: number,
+) {
+  const day = Math.floor(now / 86400_000) % CACHED_READY_CHECK_DAYS
+  return Math.floor(recording._creationTime) % CACHED_READY_CHECK_DAYS === day
+}
+
 /** Recheck destructive eligibility in the revocation transaction as well as discovery. */
 async function cleanupDisposition(
   ctx: QueryCtx,
@@ -519,10 +530,15 @@ async function cleanupDisposition(
   now: number,
 ): Promise<'delete' | 'finalize' | 'materialize' | null> {
   if (recording.status === 'cancelled') return 'delete'
-  // Cached ready rows leave the ready index only through cancelSegmentMedia, which
-  // every delete path runs before the parent is removed. Skip owner and parent
-  // reads here. Daily reconcile still inspects legacy rows that predate the flag.
-  if (recording.status === 'ready' && recording.durationsCached) return null
+  // Delete paths call cancelSegmentMedia themselves, so most cached ready rows
+  // skip the owner/parent reads. Each one still gets the full check one day a
+  // week, which catches account deletion, expiry, and any path that skipped it.
+  if (
+    recording.status === 'ready' &&
+    recording.durationsCached &&
+    !cachedReadyRowDueForFullCheck(recording, now)
+  )
+    return null
   const owner = await ctx.db.get(recording.userId)
   const response = recording.responseId ? await ctx.db.get(recording.responseId) : null
   const source = recording.bondfireId

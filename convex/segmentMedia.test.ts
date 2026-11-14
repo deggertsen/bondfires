@@ -3,7 +3,7 @@
 import { getFunctionName } from 'convex/server'
 import { ConvexError } from 'convex/values'
 import { convexTest } from 'convex-test'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, assert, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import type { ActionCtx } from './_generated/server'
@@ -11,7 +11,7 @@ import { CURRENT_COMMUNITY_GUIDELINES_VERSION, CURRENT_TERMS_VERSION } from './c
 import crons from './crons'
 import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
 import schema from './schema'
-import { cleanup } from './segmentMedia'
+import { cachedReadyRowDueForFullCheck, cleanup } from './segmentMedia'
 import * as videos from './videos'
 
 const modules = import.meta.glob('./**/*.ts')
@@ -1145,7 +1145,7 @@ describe('indexed media cleanup', () => {
     },
   )
 
-  it('skips owner and parent reads for cached ready rows', async () => {
+  it('checks cached ready rows on their weekly day and skips owner/parent reads otherwise', async () => {
     const { t, owner, record, receipt } = await setup()
     await receipt(-1, 0)
     await receipt(0)
@@ -1153,16 +1153,31 @@ describe('indexed media cleanup', () => {
       recordingId: record.recordingId,
       segmentCount: 1,
     })
+    const recording = await t.run((ctx) => ctx.db.get(record.recordingId))
+    assert(recording?.durationsCached)
     await t.run((ctx) => ctx.db.delete(record.recordId))
-    expect(
-      await t.query((ctx) =>
-        ctx.runQuery(
-          internal.segmentMedia.cleanupPage,
-          { cursor: null, mode: 'reconcile' },
-          { transactionLimits: { documentsRead: 1 } },
+    const dueDay = Math.floor(recording._creationTime) % 7
+    const dayStart = (offset: number) =>
+      (Math.floor(Date.now() / 86400_000 / 7) * 7 + dueDay + offset) * 86400_000 + 3600_000
+    expect(cachedReadyRowDueForFullCheck(recording, dayStart(0))).toBe(true)
+    vi.useFakeTimers({ now: dayStart(1), toFake: ['Date'] })
+    try {
+      expect(
+        await t.query((ctx) =>
+          ctx.runQuery(
+            internal.segmentMedia.cleanupPage,
+            { cursor: null, mode: 'reconcile' },
+            { transactionLimits: { documentsRead: 1 } },
+          ),
         ),
-      ),
-    ).toEqual({ ids: [], interrupted: [], materialize: [], cursor: null })
+      ).toEqual({ ids: [], interrupted: [], materialize: [], cursor: null })
+      vi.setSystemTime(dayStart(7))
+      expect(
+        (await t.query(internal.segmentMedia.cleanupPage, { cursor: null, mode: 'reconcile' })).ids,
+      ).toEqual([record.recordingId])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it.each([undefined, 'reconcile'] as const)(

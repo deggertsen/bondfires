@@ -3,7 +3,12 @@ import { internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import type { QueryCtx } from './_generated/server'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
-import { deleteTranscriptChunks, readTranscriptBody } from './lib/transcriptBody'
+import {
+  deleteTranscriptChunks,
+  moveLegacyTranscriptBody,
+  readTranscriptBody,
+  transcriptBodyExternal,
+} from './lib/transcriptBody'
 import { retainedVideoExists } from './retentionCleanup'
 
 /**
@@ -23,6 +28,9 @@ const DEFAULT_OPENROUTER_MODEL = 'z-ai/glm-4.5-air'
 const OPENROUTER_TIMEOUT_MS = 60_000
 // Orphan sweep page. Bodies live in transcriptChunks, so this only scans metadata.
 const SWEEP_PAGE_SIZE = 100
+// Body characters a sweep pass may copy into chunks. UTF-8 is at most 3 bytes a
+// character, so this stays well under the per-transaction write limit.
+const SWEEP_MIGRATION_CHARS = 2_000_000
 // ~10 minutes of speech. Longer videos are summarized from the head; the tail
 // of a rambling video rarely changes the one-line summary.
 const MAX_TRANSCRIPT_CHARS = 16_000
@@ -342,6 +350,14 @@ export const saveTranscript = internalMutation({
       return null
     const existing = await findTranscriptRow(ctx, args.table, args.recordId)
 
+    // Mux replaces only the text. Caption VTT written by the segment pipeline
+    // stays, as it did when both lived inline on this row. Reading the old body
+    // costs one chunk scan per Mux asset, and only when captions exist.
+    const keptVtt =
+      existing && (!transcriptBodyExternal(existing) || (existing.captionChars ?? 0) > 0)
+        ? ((await readTranscriptBody(ctx, existing)).captionsVtt ?? '')
+        : ''
+
     // Keep the body off the metadata row. Caption-track lookups and the daily
     // sweep read videoTranscripts for ids only.
     const fields = {
@@ -351,7 +367,7 @@ export const saveTranscript = internalMutation({
       text: '',
       captionsVtt: undefined,
       textChars: args.text.length,
-      captionChars: 0,
+      captionChars: keptVtt.length,
     }
 
     const transcriptId = existing
@@ -371,7 +387,7 @@ export const saveTranscript = internalMutation({
       transcriptId,
       cursor: 0,
       text: args.text,
-      vtt: '',
+      vtt: keptVtt,
     })
     return transcriptId
   },
@@ -462,6 +478,8 @@ export const sweepOrphanedTranscripts = internalMutation({
       .paginate({ cursor: args.cursor ?? null, numItems: SWEEP_PAGE_SIZE })
 
     let deleted = 0
+    let migratedChars = 0
+    let deferred = false
     for (const row of page.page) {
       const parentId = row.bondfireId ?? row.bondfireVideoId
       const parent = parentId ? await ctx.db.get(parentId) : null
@@ -473,28 +491,23 @@ export const sweepOrphanedTranscripts = internalMutation({
       }
       // Move a legacy inline body once. Later passes read only this short row.
       if (row.textChars !== undefined) continue
-      if (row.text.length > 0 || row.captionsVtt !== undefined) {
-        await ctx.db.insert('transcriptChunks', {
-          transcriptId: row._id,
-          cursor: -1,
-          text: row.text,
-          vtt: row.captionsVtt ?? '',
-        })
+      // Each move writes a copy of the body. Cap the copies per transaction and
+      // rerun this page for the rest; moved rows are short on the rerun.
+      const size = row.text.length + (row.captionsVtt?.length ?? 0)
+      if (migratedChars > 0 && migratedChars + size > SWEEP_MIGRATION_CHARS) {
+        deferred = true
+        continue
       }
-      await ctx.db.patch(row._id, {
-        text: '',
-        captionsVtt: undefined,
-        textChars: row.text.length,
-        captionChars: (row.captionsVtt ?? '').length,
-      })
+      migratedChars += size
+      await moveLegacyTranscriptBody(ctx, row)
     }
 
-    if (!page.isDone) {
+    if (deferred || !page.isDone) {
       await ctx.scheduler.runAfter(0, internal.ai.sweepOrphanedTranscripts, {
-        cursor: page.continueCursor,
+        cursor: deferred ? args.cursor : page.continueCursor,
       })
     }
-    return { scanned: page.page.length, deleted, done: page.isDone }
+    return { scanned: page.page.length, deleted, done: page.isDone && !deferred }
   },
 })
 

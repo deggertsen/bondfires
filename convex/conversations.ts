@@ -59,7 +59,8 @@ type PublicUser = {
 const DEFAULT_THREAD_LIMIT = 50
 const MAX_THREAD_LIMIT = 80
 const MY_FIRES_PAGE_DEFAULT = 20
-const MY_FIRES_PAGE_MAX = 40
+// Matches the legacy cap so the home rail can fill its window in one round trip.
+const MY_FIRES_PAGE_MAX = MAX_THREAD_LIMIT
 const THREAD_CANDIDATE_MULTIPLIER = 4
 const CLOSE_CIRCLE_LIMIT = 8
 const CLOSE_CIRCLE_THREAD_CANDIDATE_LIMIT = 80
@@ -402,19 +403,23 @@ async function finalizeMyFireThreads(
     pinnedFirst?: boolean
     pinnedBondfireIds: Set<Id<'bondfires'>>
     limit?: number
+    /**
+     * 'index' keeps the caller's membership-index order. Pages are stitched
+     * together on the client, so re-sorting one page by the viewer's summary
+     * time would interleave badly with the next page.
+     */
+    order: 'activity' | 'index'
   },
 ) {
   const threads = [...args.threads]
-  if (args.pinnedFirst) {
-    threads.sort((a, b) => {
-      const aPinned = args.pinnedBondfireIds.has(a._id) ? 1 : 0
-      const bPinned = args.pinnedBondfireIds.has(b._id) ? 1 : 0
-      if (aPinned !== bPinned) return bPinned - aPinned
-      return b.lastActivityAt - a.lastActivityAt
-    })
-  } else {
-    threads.sort((a, b) => b.lastActivityAt - a.lastActivityAt)
-  }
+  const pinRank = (thread: ThreadSummary) =>
+    args.pinnedFirst && args.pinnedBondfireIds.has(thread._id) ? 1 : 0
+  // Array.prototype.sort is stable, so 'index' order survives the pin partition.
+  threads.sort((a, b) => {
+    const pinned = pinRank(b) - pinRank(a)
+    if (pinned !== 0 || args.order === 'index') return pinned
+    return b.lastActivityAt - a.lastActivityAt
+  })
 
   // Resolve names only for returned unread rows; candidate summaries need no watch lookups.
   const visibleThreads = args.limit === undefined ? threads : threads.slice(0, args.limit)
@@ -465,6 +470,7 @@ async function loadLegacyMyFires(
     pinnedFirst,
     pinnedBondfireIds,
     limit,
+    order: 'activity',
   })
 }
 
@@ -537,6 +543,7 @@ async function loadIndexedMyFires(
     threads,
     pinnedFirst: args.pinnedFirst && args.cursor === null,
     pinnedBondfireIds,
+    order: 'index',
   })
   return { ...result, page }
 }

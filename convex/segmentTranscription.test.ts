@@ -510,6 +510,50 @@ describe('R2 transcription jobs', () => {
       ),
     )
   })
+  it('caps legacy body copies per sweep pass and reruns the page for the rest', async () => {
+    const { t, bondfireId } = await setup()
+    const body = 'x'.repeat(800_000)
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 3; i++)
+        await ctx.db.insert('videoTranscripts', { bondfireId, text: body, createdAt: Date.now() })
+    })
+    const first = await t.mutation(internal.ai.sweepOrphanedTranscripts, {})
+    expect(first.done).toBe(false)
+    const legacyCount = async () =>
+      (await t.run((ctx) => ctx.db.query('videoTranscripts').collect())).filter(
+        (row) => row.textChars === undefined,
+      ).length
+    expect(await legacyCount()).toBe(1)
+    await t.finishAllScheduledFunctions(vi.runAllTimers)
+    expect(await legacyCount()).toBe(0)
+    expect(await t.run((ctx) => ctx.db.query('transcriptChunks').collect())).toHaveLength(3)
+  })
+  it('keeps segment caption VTT when a Mux transcript replaces the text', async () => {
+    const { t, bondfireId, recordingId, userId } = await setup()
+    const vtt = 'WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nSegment.\n\n'
+    await t.run(async (ctx) => {
+      await ctx.db.patch(bondfireId, { muxAssetId: 'asset-1', captionsReadyAt: Date.now() })
+      const transcriptId = await ctx.db.insert('videoTranscripts', {
+        bondfireId,
+        segmentRecordingId: recordingId,
+        text: '',
+        textChars: 8,
+        captionChars: vtt.length,
+        createdAt: Date.now(),
+      })
+      await ctx.db.insert('transcriptChunks', { transcriptId, cursor: 0, text: 'Segment.', vtt })
+    })
+    await t.mutation(internal.ai.saveTranscript, {
+      table: 'bondfires',
+      recordId: bondfireId,
+      muxAssetId: 'asset-1',
+      text: 'Mux text.',
+    })
+    expect(await storedTranscript(t)).toMatchObject({ text: 'Mux text.', captionsVtt: vtt })
+    expect(await t.query(internal.segmentMedia.captions, { recordingId, userId })).toEqual({
+      captionsVtt: vtt,
+    })
+  })
   it('does not recreate transcripts after deletion and refuses revoked caption access', async () => {
     const { t, recordingId, bondfireId, userId } = await setup()
     const claim = await t.mutation(internal.segmentTranscription.claim, { recordingId })
