@@ -4,6 +4,8 @@ import type { Doc, Id, TableNames } from './_generated/dataModel'
 import { internalMutation, type MutationCtx, type QueryCtx } from './_generated/server'
 import { collectMuxDeletionTargets } from './lib/accountDeletionPolicy'
 import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
+import { deleteThreadMemberships, releaseThreadParticipant } from './lib/threadMembership'
+import { deleteTranscriptChunks } from './lib/transcriptBody'
 import { requestReactionSummaryFlush } from './lib/videoReactions'
 import { uncountResponse } from './responseCounts'
 import { enqueueRetentionMedia } from './retentionMedia'
@@ -83,6 +85,7 @@ export async function claimBondfire(ctx: MutationCtx, bondfire: Doc<'bondfires'>
   await inventoryVideo(ctx, bondfire)
   await enqueueJob(ctx, 'bondfire', bondfire._id)
   await cancelSegmentMedia(ctx, bondfire)
+  await deleteThreadMemberships(ctx, bondfire._id)
   await ctx.db.delete(bondfire._id)
   if (bondfire.status !== 'draft') {
     const user = await ctx.db.get(bondfire.userId)
@@ -118,6 +121,7 @@ async function claimResponse(ctx: MutationCtx, response: Doc<'bondfireVideos'>) 
   )
   await cancelSegmentMedia(ctx, response)
   await ctx.db.delete(response._id)
+  await releaseThreadParticipant(ctx, response.userId, response.bondfireId)
 }
 
 export async function claimCamp(ctx: MutationCtx, camp: Doc<'camps'>) {
@@ -305,7 +309,11 @@ export const runBatch = internalMutation({
     // A retained bondfire's own reactions need no accounting: it goes too.
     if (stage === 'reactions' && job.kind === 'response' && page.page.length > 0)
       await requestReactionSummaryFlush(ctx, page.page[0] as Doc<'videoReactions'>)
-    for (const row of page.page) await ctx.db.delete(row._id)
+    for (const row of page.page) {
+      if (stage === 'transcripts')
+        await deleteTranscriptChunks(ctx, row._id as Id<'videoTranscripts'>)
+      await ctx.db.delete(row._id)
+    }
     const nextStage = more || !page.isDone ? job.stage : job.stage + 1
     if (nextStage === stages.length) {
       await ctx.db.delete(job._id)

@@ -1002,7 +1002,7 @@ describe('indexed media cleanup', () => {
       {
         name: getFunctionName(internal.segmentMedia.cleanup),
         args: [{}],
-        schedule: { type: 'interval', minutes: 5 },
+        schedule: { type: 'interval', hours: 1 },
       },
       {
         name: getFunctionName(internal.segmentMedia.cleanup),
@@ -1144,6 +1144,26 @@ describe('indexed media cleanup', () => {
       ).toContain(record.recordingId)
     },
   )
+
+  it('skips owner and parent reads for cached ready rows', async () => {
+    const { t, owner, record, receipt } = await setup()
+    await receipt(-1, 0)
+    await receipt(0)
+    await owner.mutation(api.segmentMedia.finish, {
+      recordingId: record.recordingId,
+      segmentCount: 1,
+    })
+    await t.run((ctx) => ctx.db.delete(record.recordId))
+    expect(
+      await t.query((ctx) =>
+        ctx.runQuery(
+          internal.segmentMedia.cleanupPage,
+          { cursor: null, mode: 'reconcile' },
+          { transactionLimits: { documentsRead: 1 } },
+        ),
+      ),
+    ).toEqual({ ids: [], interrupted: [], materialize: [], cursor: null })
+  })
 
   it.each([undefined, 'reconcile'] as const)(
     'restarts a legacy full-table continuation (mode=%s) on indexed status pages',

@@ -1,3 +1,4 @@
+import { paginationOptsValidator } from 'convex/server'
 import { v } from 'convex/values'
 import type { Doc, Id } from './_generated/dataModel'
 import type { QueryCtx } from './_generated/server'
@@ -14,6 +15,8 @@ import {
 import { throwUserError } from './errors'
 import { addInviteBadgesToBondfires, type BondfireBadge } from './inviteBadges'
 import { getPlayableVideoPlayback, type VideoPlaybackReference } from './lib/latestResponsePlayback'
+import { boundedInteger } from './lib/queryBounds'
+import { threadMembershipIndexReady } from './lib/threadMembership'
 import { isPlayableVideoRecord } from './lib/videoLifecycle'
 import { isVideoWatchedByViewer } from './lib/viewerWatchState'
 import { assertUsersMayInteract } from './userSafety'
@@ -55,6 +58,8 @@ type PublicUser = {
 
 const DEFAULT_THREAD_LIMIT = 50
 const MAX_THREAD_LIMIT = 80
+const MY_FIRES_PAGE_DEFAULT = 20
+const MY_FIRES_PAGE_MAX = 40
 const THREAD_CANDIDATE_MULTIPLIER = 4
 const CLOSE_CIRCLE_LIMIT = 8
 const CLOSE_CIRCLE_THREAD_CANDIDATE_LIMIT = 80
@@ -379,6 +384,167 @@ async function listVisiblePrivateCampThreadsByUser(
   return threads.sort((a, b) => b.lastActivityAt - a.lastActivityAt).slice(0, args.limit)
 }
 
+function isListableMyFire(bondfire: Doc<'bondfires'>, userId: Id<'users'>) {
+  // A creator keeps seeing their own fire while its on-device backup uploads
+  // (videoStatus 'awaiting_recovery'). Hiding it until playable makes a
+  // recording that is safely saved look like it was lost.
+  const isRecoveringForCreator =
+    bondfire.userId === userId && bondfire.videoStatus === 'awaiting_recovery'
+  return isPlayableVideoRecord(bondfire) || isRecoveringForCreator
+}
+
+async function finalizeMyFireThreads(
+  ctx: QueryCtx,
+  args: {
+    userId: Id<'users'>
+    viewer: ViewerVisibilityContext
+    threads: ThreadSummary[]
+    pinnedFirst?: boolean
+    pinnedBondfireIds: Set<Id<'bondfires'>>
+    limit?: number
+  },
+) {
+  const threads = [...args.threads]
+  if (args.pinnedFirst) {
+    threads.sort((a, b) => {
+      const aPinned = args.pinnedBondfireIds.has(a._id) ? 1 : 0
+      const bPinned = args.pinnedBondfireIds.has(b._id) ? 1 : 0
+      if (aPinned !== bPinned) return bPinned - aPinned
+      return b.lastActivityAt - a.lastActivityAt
+    })
+  } else {
+    threads.sort((a, b) => b.lastActivityAt - a.lastActivityAt)
+  }
+
+  // Resolve names only for returned unread rows; candidate summaries need no watch lookups.
+  const visibleThreads = args.limit === undefined ? threads : threads.slice(0, args.limit)
+  for (const thread of visibleThreads) {
+    if (!thread.unread) continue
+    thread.firstUnwatchedResponder =
+      (await getFirstUnwatchedResponder(ctx, {
+        bondfire: thread,
+        viewerId: args.userId,
+        viewer: args.viewer,
+      })) ??
+      thread.participants.find((participant) => participant.user._id !== args.userId)?.user ??
+      null
+  }
+  return await addInviteBadgesToBondfires(ctx, args.userId, visibleThreads)
+}
+
+async function loadLegacyMyFires(
+  ctx: QueryCtx,
+  userId: Id<'users'>,
+  limit: number,
+  pinnedFirst: boolean | undefined,
+) {
+  const candidateLimit = limit * THREAD_CANDIDATE_MULTIPLIER
+  const [threadIds, viewer, pinnedUserIds] = await Promise.all([
+    getParticipantThreadIds(ctx, userId, candidateLimit),
+    buildViewerVisibilityContext(ctx, userId),
+    getPinnedUserIds(ctx, userId),
+  ])
+  const pinnedBondfireIds = new Set(viewer.user?.pinnedBondfireIds ?? [])
+  const threads: ThreadSummary[] = []
+  for (const threadId of threadIds) {
+    const bondfire = await ctx.db.get(threadId)
+    if (!bondfire || !isListableMyFire(bondfire, userId)) continue
+    if (!(await isBondfireVisibleToViewer(ctx, bondfire, viewer))) continue
+    const summary = await buildThreadSummary(ctx, {
+      bondfire,
+      viewerId: userId,
+      viewer,
+      pinnedUserIds,
+    })
+    if (summary) threads.push(summary)
+  }
+  return await finalizeMyFireThreads(ctx, {
+    userId,
+    viewer,
+    threads,
+    pinnedFirst,
+    pinnedBondfireIds,
+    limit,
+  })
+}
+
+async function loadIndexedMyFires(
+  ctx: QueryCtx,
+  userId: Id<'users'>,
+  args: {
+    numItems: number
+    cursor: string | null
+    endCursor?: string | null
+    pinnedFirst?: boolean
+  },
+) {
+  const [viewer, pinnedUserIds] = await Promise.all([
+    buildViewerVisibilityContext(ctx, userId),
+    getPinnedUserIds(ctx, userId),
+  ])
+  const pinnedBondfireIds = new Set(viewer.user?.pinnedBondfireIds ?? [])
+  const result = await ctx.db
+    .query('threadMemberships')
+    .withIndex('by_user_activity', (q) => q.eq('userId', userId))
+    .order('desc')
+    .paginate({
+      cursor: args.cursor,
+      ...(args.endCursor ? { endCursor: args.endCursor } : {}),
+      numItems: args.numItems,
+      maximumRowsRead: args.numItems,
+      maximumBytesRead: 500_000,
+    })
+
+  const bondfires: Doc<'bondfires'>[] = []
+  for (const membership of result.page) {
+    const bondfire = await ctx.db.get(membership.bondfireId)
+    if (!bondfire || !isListableMyFire(bondfire, userId)) continue
+    if (!(await isBondfireVisibleToViewer(ctx, bondfire, viewer))) continue
+    bondfires.push(bondfire)
+  }
+
+  // Pins are at most eight. Put any that missed this activity page on the first
+  // page so pin-first does not depend on scanning the whole index.
+  if (args.pinnedFirst && args.cursor === null) {
+    const seen = new Set(bondfires.map((bondfire) => bondfire._id))
+    for (const pinnedId of viewer.user?.pinnedBondfireIds ?? []) {
+      if (seen.has(pinnedId)) continue
+      const bondfire = await ctx.db.get(pinnedId)
+      if (!bondfire || !isListableMyFire(bondfire, userId)) continue
+      const member = await ctx.db
+        .query('threadMemberships')
+        .withIndex('by_user_bondfire', (q) => q.eq('userId', userId).eq('bondfireId', pinnedId))
+        .unique()
+      if (!member) continue
+      if (!(await isBondfireVisibleToViewer(ctx, bondfire, viewer))) continue
+      bondfires.push(bondfire)
+    }
+  }
+
+  const threads: ThreadSummary[] = []
+  for (const bondfire of bondfires) {
+    const summary = await buildThreadSummary(ctx, {
+      bondfire,
+      viewerId: userId,
+      viewer,
+      pinnedUserIds,
+    })
+    if (summary) threads.push(summary)
+  }
+  const page = await finalizeMyFireThreads(ctx, {
+    userId,
+    viewer,
+    threads,
+    pinnedFirst: args.pinnedFirst && args.cursor === null,
+    pinnedBondfireIds,
+  })
+  return { ...result, page }
+}
+
+function finishedMyFiresPage<T>(page: T[], cursor: string | null) {
+  return { page, isDone: true, continueCursor: cursor ?? 'done' }
+}
+
 export const listMyFires = query({
   args: {
     limit: v.optional(v.number()),
@@ -386,70 +552,50 @@ export const listMyFires = query({
   },
   handler: async (ctx, args) => {
     const userId = await auth.getUserId(ctx)
-    if (!userId) {
-      return []
-    }
-
+    if (!userId) return []
     const limit = clampLimit(args.limit)
-    const candidateLimit = limit * THREAD_CANDIDATE_MULTIPLIER
-    const [threadIds, viewer, pinnedUserIds] = await Promise.all([
-      getParticipantThreadIds(ctx, userId, candidateLimit),
-      buildViewerVisibilityContext(ctx, userId),
-      getPinnedUserIds(ctx, userId),
-    ])
-
-    const pinnedBondfireIds = new Set(viewer.user?.pinnedBondfireIds ?? [])
-
-    const threads: ThreadSummary[] = []
-    for (const threadId of threadIds) {
-      const bondfire = await ctx.db.get(threadId)
-      if (!bondfire) {
-        continue
-      }
-      // A creator keeps seeing their own fire while its on-device backup
-      // uploads (videoStatus 'awaiting_recovery'). Hiding it until playable
-      // makes a recording that is safely saved look like it was lost.
-      const isRecoveringForCreator =
-        bondfire.userId === userId && bondfire.videoStatus === 'awaiting_recovery'
-      if (!isPlayableVideoRecord(bondfire) && !isRecoveringForCreator) {
-        continue
-      }
-      if (!(await isBondfireVisibleToViewer(ctx, bondfire, viewer))) {
-        continue
-      }
-
-      const summary = await buildThreadSummary(ctx, {
-        bondfire,
-        viewerId: userId,
-        viewer,
-        pinnedUserIds,
-      })
-      if (summary) {
-        threads.push(summary)
-      }
+    // Installed clients keep this capped array. Once the index exists, the cap
+    // is an indexed page instead of a candidate scan. New clients use listMyFiresPage.
+    if (!(await threadMembershipIndexReady(ctx))) {
+      return await loadLegacyMyFires(ctx, userId, limit, args.pinnedFirst)
     }
+    const indexed = await loadIndexedMyFires(ctx, userId, {
+      numItems: limit,
+      cursor: null,
+      pinnedFirst: args.pinnedFirst,
+    })
+    return indexed.page
+  },
+})
 
-    if (args.pinnedFirst) {
-      threads.sort((a, b) => {
-        const aPinned = pinnedBondfireIds.has(a._id) ? 1 : 0
-        const bPinned = pinnedBondfireIds.has(b._id) ? 1 : 0
-        if (aPinned !== bPinned) return bPinned - aPinned
-        return b.lastActivityAt - a.lastActivityAt
-      })
-    } else {
-      threads.sort((a, b) => b.lastActivityAt - a.lastActivityAt)
+/** Load-more My Fires. Falls back to one legacy page until the membership backfill finishes. */
+export const listMyFiresPage = query({
+  args: {
+    paginationOpts: paginationOptsValidator,
+    pinnedFirst: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx)
+    if (!userId) return finishedMyFiresPage([], args.paginationOpts.cursor)
+    if (!(await threadMembershipIndexReady(ctx))) {
+      if (args.paginationOpts.cursor) return finishedMyFiresPage([], args.paginationOpts.cursor)
+      // One legacy window, then stop. A short page here would hide history the
+      // index has not recorded yet.
+      const page = await loadLegacyMyFires(ctx, userId, MAX_THREAD_LIMIT, args.pinnedFirst)
+      return finishedMyFiresPage(page, null)
     }
-
-    // Resolve names only for returned unread rows; candidate summaries need no watch lookups.
-    const visibleThreads = threads.slice(0, limit)
-    for (const thread of visibleThreads) {
-      if (!thread.unread) continue
-      thread.firstUnwatchedResponder =
-        (await getFirstUnwatchedResponder(ctx, { bondfire: thread, viewerId: userId, viewer })) ??
-        thread.participants.find((participant) => participant.user._id !== userId)?.user ??
-        null
-    }
-    return await addInviteBadgesToBondfires(ctx, userId, visibleThreads)
+    const numItems = boundedInteger(args.paginationOpts.numItems, {
+      defaultValue: MY_FIRES_PAGE_DEFAULT,
+      min: 1,
+      max: MY_FIRES_PAGE_MAX,
+      name: 'paginationOpts.numItems',
+    })
+    return await loadIndexedMyFires(ctx, userId, {
+      numItems,
+      cursor: args.paginationOpts.cursor,
+      endCursor: args.paginationOpts.endCursor,
+      pinnedFirst: args.pinnedFirst,
+    })
   },
 })
 

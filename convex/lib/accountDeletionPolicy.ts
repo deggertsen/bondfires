@@ -27,6 +27,7 @@ export const ACCOUNT_DELETION_USER_STAGES = [
   'moderated_responses',
   'reports_reviewer',
   'thread_reads',
+  'thread_memberships',
   'pins_owned',
   'pins_incoming',
   'watch_events',

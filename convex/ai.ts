@@ -3,6 +3,7 @@ import { internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import type { QueryCtx } from './_generated/server'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
+import { deleteTranscriptChunks, readTranscriptBody } from './lib/transcriptBody'
 import { retainedVideoExists } from './retentionCleanup'
 
 /**
@@ -20,8 +21,7 @@ import { retainedVideoExists } from './retentionCleanup'
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 const DEFAULT_OPENROUTER_MODEL = 'z-ai/glm-4.5-air'
 const OPENROUTER_TIMEOUT_MS = 60_000
-// Page size for the orphaned-transcript sweep: rows carry multi-KB caption
-// text, so each page stays far below Convex's per-transaction read limits.
+// Orphan sweep page. Bodies live in transcriptChunks, so this only scans metadata.
 const SWEEP_PAGE_SIZE = 100
 // ~10 minutes of speech. Longer videos are summarized from the head; the tail
 // of a rambling video rarely changes the one-line summary.
@@ -311,9 +311,13 @@ export const getStoredTranscript = internalQuery({
   args: { table: recordTable, recordId },
   handler: async (ctx, args) => {
     const row = await findTranscriptRow(ctx, args.table, args.recordId)
-    return row
-      ? { text: row.text, muxAssetId: row.muxAssetId, segmentRecordingId: row.segmentRecordingId }
-      : null
+    if (!row) return null
+    const body = await readTranscriptBody(ctx, row)
+    return {
+      text: body.text,
+      muxAssetId: row.muxAssetId,
+      segmentRecordingId: row.segmentRecordingId,
+    }
   },
 })
 
@@ -338,25 +342,38 @@ export const saveTranscript = internalMutation({
       return null
     const existing = await findTranscriptRow(ctx, args.table, args.recordId)
 
+    // Keep the body off the metadata row. Caption-track lookups and the daily
+    // sweep read videoTranscripts for ids only.
     const fields = {
       muxAssetId: args.muxAssetId,
       muxTrackId: args.muxTrackId,
       languageCode: args.languageCode,
-      text: args.text,
+      text: '',
+      captionsVtt: undefined,
+      textChars: args.text.length,
+      captionChars: 0,
     }
 
+    const transcriptId = existing
+      ? existing._id
+      : await ctx.db.insert('videoTranscripts', {
+          ...fields,
+          bondfireId: args.table === 'bondfires' ? (args.recordId as Id<'bondfires'>) : undefined,
+          bondfireVideoId:
+            args.table === 'bondfireVideos' ? (args.recordId as Id<'bondfireVideos'>) : undefined,
+          createdAt: Date.now(),
+        })
     if (existing) {
+      await deleteTranscriptChunks(ctx, existing._id)
       await ctx.db.patch(existing._id, fields)
-      return existing._id
     }
-
-    return await ctx.db.insert('videoTranscripts', {
-      ...fields,
-      bondfireId: args.table === 'bondfires' ? (args.recordId as Id<'bondfires'>) : undefined,
-      bondfireVideoId:
-        args.table === 'bondfireVideos' ? (args.recordId as Id<'bondfireVideos'>) : undefined,
-      createdAt: Date.now(),
+    await ctx.db.insert('transcriptChunks', {
+      transcriptId,
+      cursor: 0,
+      text: args.text,
+      vtt: '',
     })
+    return transcriptId
   },
 })
 
@@ -449,9 +466,27 @@ export const sweepOrphanedTranscripts = internalMutation({
       const parentId = row.bondfireId ?? row.bondfireVideoId
       const parent = parentId ? await ctx.db.get(parentId) : null
       if (!parent) {
+        await deleteTranscriptChunks(ctx, row._id)
         await ctx.db.delete(row._id)
         deleted++
+        continue
       }
+      // Move a legacy inline body once. Later passes read only this short row.
+      if (row.textChars !== undefined) continue
+      if (row.text.length > 0 || row.captionsVtt !== undefined) {
+        await ctx.db.insert('transcriptChunks', {
+          transcriptId: row._id,
+          cursor: -1,
+          text: row.text,
+          vtt: row.captionsVtt ?? '',
+        })
+      }
+      await ctx.db.patch(row._id, {
+        text: '',
+        captionsVtt: undefined,
+        textChars: row.text.length,
+        captionChars: (row.captionsVtt ?? '').length,
+      })
     }
 
     if (!page.isDone) {
