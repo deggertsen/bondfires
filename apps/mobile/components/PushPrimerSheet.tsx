@@ -3,27 +3,35 @@ import {
   appStore$,
   canConsiderPushNudge,
   getPushPermissionState,
+  onReturnToApp,
   type PushNudgeMode,
   pushNudgeMode,
   requestPushFromNudge,
   requestPushPermission,
+  settlePushSettingsReturn,
   telemetry,
 } from '@bondfires/app'
 import { Button, Text } from '@bondfires/ui'
-import { Bell } from '@tamagui/lucide-icons'
+import { Bell, BellOff } from '@tamagui/lucide-icons'
 import * as Device from 'expo-device'
 import { useEffect, useRef, useState } from 'react'
-import { Linking } from 'react-native'
+import { Linking, Platform } from 'react-native'
 import { Sheet, YStack } from 'tamagui'
 
 /**
- * Where the sheet is shown. The completion screen follows the user's own
- * recording, so it can talk about their Bondfire; the feed nudge reaches new
- * signups who may not have posted yet, so it can't assume they have one.
+ * Where the sheet is shown. The completion screen follows a recording the
+ * user just made; the feed nudge comes back in later sessions, where the
+ * broader "your people" framing fits better than one specific Bondfire.
  */
 export type PushPrimerContext = 'completion' | 'feed'
 
 type PrimerCopy = { title: string; body: string; primary: string }
+
+/** What to tap once the app's page in system Settings opens. */
+const SETTINGS_STEPS =
+  Platform.OS === 'ios'
+    ? 'Tap Notifications, then turn on Allow Notifications.'
+    : 'Tap Notifications, then turn them on.'
 
 const COPY: Record<PushPrimerContext, Record<PushNudgeMode, PrimerCopy>> = {
   completion: {
@@ -60,14 +68,15 @@ const COPY: Record<PushPrimerContext, Record<PushNudgeMode, PrimerCopy>> = {
  * When the OS will no longer prompt (`canAskAgain` false) it points the user
  * at system Settings instead.
  *
- * Mounted globally (PushPermissionNudge, so new signups see it on the feed)
+ * Mounted globally (PushPermissionNudge, on the feed once the user has recorded)
  * and on the finished-recording screen. Both mounts share the primer state
  * in the app store, and the primer is claimed synchronously so two mounts
  * in the same moment cannot both open.
  *
  * Self-gating: renders nothing unless this is a physical device, the in-app
  * notifications preference is on, the primer is eligible (never accepted,
- * < 3 declines, 7-day cooldown) and OS permission isn't already granted.
+ * < 3 declines, not yet shown this app session) and OS permission isn't
+ * already granted.
  * Mount it with `trigger` set when the moment is right.
  */
 interface PushPrimerSheetProps {
@@ -93,7 +102,7 @@ export function PushPrimerSheet({ trigger, context }: PushPrimerSheetProps) {
     })
     if (!eligible) return
 
-    // Claim before any await: records "shown" so a second mount sees the cooldown.
+    // Claim before any await: records "shown" so a second mount sees it was shown this session.
     const release = appActions.claimPushPrimer()
     if (!release) return
 
@@ -141,9 +150,22 @@ export function PushPrimerSheet({ trigger, context }: PushPrimerSheetProps) {
 
   const handleOpenSettings = async () => {
     telemetry.breadcrumb('push:nudge:settings')
+    // Coming back still off counts as a decline, so the decline cap also
+    // covers users who keep backing out of Settings.
+    const cancel = onReturnToApp(() => {
+      void getPushPermissionState().then((permission) => {
+        const granted = permission?.granted ?? false
+        telemetry.breadcrumb('push:nudge:returnFromSettings', { granted })
+        settlePushSettingsReturn(granted, {
+          recordAccepted: appActions.recordPushPrimerAccepted,
+          recordDeclined: appActions.recordPushPrimerDeclined,
+        })
+      })
+    })
     try {
       await Linking.openSettings()
     } catch (e) {
+      cancel()
       telemetry.warn('push:primer', 'Opening system settings from primer failed', {
         error: String(e),
       })
@@ -193,7 +215,11 @@ export function PushPrimerSheet({ trigger, context }: PushPrimerSheetProps) {
           alignItems="center"
           justifyContent="center"
         >
-          <Bell size={28} color="white" />
+          {mode === 'settings' ? (
+            <BellOff size={28} color="white" />
+          ) : (
+            <Bell size={28} color="white" />
+          )}
         </YStack>
 
         <Text fontSize={20} fontWeight="700" textAlign="center">
@@ -203,6 +229,12 @@ export function PushPrimerSheet({ trigger, context }: PushPrimerSheetProps) {
         <Text fontSize={15} color={'$placeholderColor'} textAlign="center" lineHeight={22}>
           {copy.body}
         </Text>
+
+        {mode === 'settings' && (
+          <Text fontSize={14} fontWeight="600" textAlign="center">
+            {SETTINGS_STEPS}
+          </Text>
+        )}
 
         <YStack gap={10} width="100%" marginTop={8}>
           <Button variant="primary" size="$lg" onPress={handlePrimary}>

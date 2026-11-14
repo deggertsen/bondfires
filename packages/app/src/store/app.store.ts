@@ -1,6 +1,8 @@
 import { observable, syncState, when } from '@legendapp/state'
 import { ObservablePersistMMKV } from '@legendapp/state/persist-plugins/mmkv'
 import { configureObservableSync, syncObservable } from '@legendapp/state/sync'
+import { isPushPrimerEligible } from '../utils/pushNudge'
+import { appSessionStore$ } from './appSession.store'
 
 // Configure MMKV as default persistence plugin
 configureObservableSync({
@@ -42,11 +44,13 @@ export interface AppState {
 
   // Push permission priming — we never fire the one-shot OS permission
   // dialog cold. An in-app pre-prompt asks first, at a high-intent moment
-  // (the finished-recording screen after the user's first commit).
+  // (the finished-recording screen, or the feed once the user has recorded).
   pushPrimer: {
-    // Last time the pre-prompt was shown (ms epoch). Never re-show within 7 days.
+    // Last time the pre-prompt was shown (ms epoch). Shown at most once per
+    // app session (appSessionStore$).
     lastShownAt: number | null
-    // Times the user dismissed the pre-prompt. Stop asking after 3.
+    // Times the user said no ("Not now", or back from Settings still off).
+    // Stop asking after PUSH_PRIMER_MAX_DECLINES.
     declineCount: number
     // User said yes and the OS permission was actually granted.
     accepted: boolean
@@ -78,9 +82,6 @@ const defaultState: AppState = {
   },
 }
 
-const PUSH_PRIMER_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000
-const PUSH_PRIMER_MAX_DECLINES = 3
-
 // Create the observable store
 export const appStore$ = observable<AppState>(defaultState)
 
@@ -101,7 +102,7 @@ syncObservable(appStore$, {
 // Must run AFTER persistence has loaded, or the loaded MMKV blob would clobber
 // whatever the migration set. `syncState(...).isPersistLoaded` resolves
 // synchronously for the MMKV plugin, so this normally fires on the same tick.
-const CURRENT_MIGRATION_VERSION = 3
+const CURRENT_MIGRATION_VERSION = 4
 
 when(syncState(appStore$).isPersistLoaded, () => {
   const persistedVersion = appStore$.migrationVersion.peek() ?? 0
@@ -118,6 +119,14 @@ when(syncState(appStore$).isPersistLoaded, () => {
 
   if (persistedVersion < 3) {
     appStore$.preferences.playbackQuality.set(720)
+  }
+
+  // v4 — before the push nudge shipped, tapping "Notify me" marked the primer
+  // accepted even when the OS dialog was then denied, which silenced those
+  // users for good. Clear it once: the primer checks the OS permission before
+  // opening, so users who did grant it still never see the sheet.
+  if (persistedVersion < 4) {
+    appStore$.pushPrimer.accepted.set(false)
   }
 
   appStore$.migrationVersion.set(CURRENT_MIGRATION_VERSION)
@@ -183,15 +192,8 @@ export const appActions = {
   // ── Push permission priming ──
 
   /** Whether the in-app push pre-prompt may be shown right now. */
-  shouldShowPushPrimer: (): boolean => {
-    const primer = appStore$.pushPrimer.get()
-    if (primer.accepted) return false
-    if (primer.declineCount >= PUSH_PRIMER_MAX_DECLINES) return false
-    if (primer.lastShownAt !== null && Date.now() - primer.lastShownAt < PUSH_PRIMER_COOLDOWN_MS) {
-      return false
-    }
-    return true
-  },
+  shouldShowPushPrimer: (): boolean =>
+    isPushPrimerEligible(appStore$.pushPrimer.get(), appSessionStore$.startedAt.peek()),
 
   recordPushPrimerShown: () => {
     appStore$.pushPrimer.lastShownAt.set(Date.now())
@@ -199,8 +201,8 @@ export const appActions = {
 
   /**
    * Claim the primer synchronously: returns null when it is not eligible,
-   * otherwise records "shown" (so a second mount in the same moment sees the
-   * cooldown) and returns a release function. Call release only if the sheet
+   * otherwise records "shown" (so a second mount in the same moment sees it
+   * was already shown this session) and returns a release function. Call release only if the sheet
    * never actually opened, to hand the slot back.
    */
   claimPushPrimer: (): (() => void) | null => {

@@ -34,7 +34,7 @@ export interface PushNudgeContext {
   isPhysicalDevice: boolean
   /** In-app notifications preference — off means the user opted out; do not nag. */
   notificationsEnabled: boolean
-  /** Primer cooldown/decline budget (`appActions.shouldShowPushPrimer()`). */
+  /** Once-per-session and decline budget (`appActions.shouldShowPushPrimer()`). */
   primerEligible: boolean
 }
 
@@ -46,7 +46,7 @@ export function canConsiderPushNudge(context: PushNudgeContext): boolean {
 /**
  * Run the OS permission request and mark the primer accepted only when it
  * was actually granted. A denial (or a failed request) leaves the primer
- * un-accepted so the nudge can return after its cooldown.
+ * un-accepted so the nudge can return in a later session.
  */
 export async function requestPushFromNudge(
   request: () => Promise<boolean>,
@@ -55,4 +55,48 @@ export async function requestPushFromNudge(
   const granted = await request()
   if (granted) recordAccepted()
   return granted
+}
+
+/** Stop asking after this many "no"s ("Not now", or back from Settings still off). */
+export const PUSH_PRIMER_MAX_DECLINES = 3
+
+/** Persisted primer bookkeeping (`appStore$.pushPrimer`). */
+export interface PushPrimerState {
+  lastShownAt: number | null
+  declineCount: number
+  accepted: boolean
+}
+
+/**
+ * The primer shows at most once per app session (see `appSessionStore$`)
+ * until the user accepts or has said no `PUSH_PRIMER_MAX_DECLINES` times.
+ */
+export function isPushPrimerEligible(primer: PushPrimerState, sessionStartedAt: number): boolean {
+  if (primer.accepted) return false
+  if (primer.declineCount >= PUSH_PRIMER_MAX_DECLINES) return false
+  return primer.lastShownAt === null || primer.lastShownAt < sessionStartedAt
+}
+
+/**
+ * The feed nudge waits until the user has recorded a video (a Bondfire or a
+ * response), so the ask comes after they have something to hear back about.
+ */
+export function hasRecordedVideo(
+  user: { bondfireCount?: number; responseCount?: number } | null | undefined,
+): boolean {
+  if (!user) return false
+  return (user.bondfireCount ?? 0) + (user.responseCount ?? 0) > 0
+}
+
+/**
+ * The user came back from system Settings after the primer sent them there.
+ * Allowed counts as accepted; still off counts as a decline, so the decline
+ * cap also covers users who keep backing out of Settings.
+ */
+export function settlePushSettingsReturn(
+  granted: boolean,
+  actions: { recordAccepted: () => void; recordDeclined: () => void },
+): void {
+  if (granted) actions.recordAccepted()
+  else actions.recordDeclined()
 }

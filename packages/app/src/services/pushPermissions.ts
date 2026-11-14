@@ -1,4 +1,5 @@
 import * as Notifications from 'expo-notifications'
+import { AppState } from 'react-native'
 import type { PushPermissionState } from '../utils/pushNudge'
 import { telemetry } from './telemetry'
 
@@ -71,4 +72,24 @@ export async function isPushPermissionGranted(): Promise<boolean> {
 export async function resetChannelForCategory(category: string): Promise<void> {
   if (!channelResetter) return
   await channelResetter(category)
+}
+
+/**
+ * Run `callback` the next time the app comes back to the foreground after
+ * leaving it, e.g. on return from system Settings. Not tied to a component,
+ * so it still fires if the screen that opened Settings has unmounted.
+ * Returns a cancel function (call it if Settings failed to open).
+ */
+export function onReturnToApp(callback: () => void): () => void {
+  let left = AppState.currentState !== 'active'
+  const subscription = AppState.addEventListener('change', (state) => {
+    if (state !== 'active') {
+      left = true
+      return
+    }
+    if (!left) return
+    subscription.remove()
+    callback()
+  })
+  return () => subscription.remove()
 }

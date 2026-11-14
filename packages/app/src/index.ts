@@ -15,6 +15,7 @@ export {
 export {
   getPushPermissionState,
   isPushPermissionGranted,
+  onReturnToApp,
   requestPushPermission,
   resetChannelForCategory,
   setChannelResetter,
