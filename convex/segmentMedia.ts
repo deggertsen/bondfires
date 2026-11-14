@@ -22,6 +22,7 @@ import { auth } from './auth'
 import { getEntitlementSubscriptionTier, getTierMaxVideoDurationMs } from './entitlements'
 import { throwUserError } from './errors'
 import { recordingMaxDurationSeconds } from './lib/recordingLimits'
+import { readTranscriptBody } from './lib/transcriptBody'
 import { getSegmentVideoStatus, isPlayableVideoRecord } from './lib/videoLifecycle'
 import { countResponse, uncountResponse } from './responseCounts'
 import { enqueueTranscription } from './segmentTranscription'
@@ -518,6 +519,10 @@ async function cleanupDisposition(
   now: number,
 ): Promise<'delete' | 'finalize' | 'materialize' | null> {
   if (recording.status === 'cancelled') return 'delete'
+  // Cached ready rows leave the ready index only through cancelSegmentMedia, which
+  // every delete path runs before the parent is removed. Skip owner and parent
+  // reads here. Daily reconcile still inspects legacy rows that predate the flag.
+  if (recording.status === 'ready' && recording.durationsCached) return null
   const owner = await ctx.db.get(recording.userId)
   const response = recording.responseId ? await ctx.db.get(recording.responseId) : null
   const source = recording.bondfireId
@@ -546,7 +551,7 @@ async function cleanupDisposition(
   // Past the recovery window, a destination no longer pointing at this
   // recording can never resume: it was replaced by a retry, re-attach, or a
   // finalize elsewhere. Leaving it uploading keeps it in the 5-minute sweep
-  // forever, re-reading owner and destination every pass.
+  // forever, re-reading owner and destination every hourly pass.
   const destination = response ?? source
   if (destination.segmentRecordingId !== recording._id) return 'delete'
   return recording.initChecksum && recording.segmentCount > 0 ? 'finalize' : 'delete'
@@ -785,8 +790,8 @@ export const captions = internalQuery({
           .query('videoTranscripts')
           .withIndex('by_bondfire', (q) => q.eq('bondfireId', recording.bondfireId))
           .first()
-    return {
-      captionsVtt: row?.segmentRecordingId === recording._id ? (row.captionsVtt ?? null) : null,
-    }
+    if (!row || row.segmentRecordingId !== recording._id) return { captionsVtt: null }
+    const body = await readTranscriptBody(ctx, row)
+    return { captionsVtt: body.captionsVtt ?? null }
   },
 })

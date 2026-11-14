@@ -116,6 +116,8 @@ type ViewMode = 'discover' | 'recent' | 'active' | 'unseen'
 // the "See all" overflow into My Fires, so heavy responders still reach
 // Discover in one thumb-swipe.
 const NEW_RESPONSES_CAP = 5
+/** Same window the capped listMyFires query used to subscribe. */
+const RAIL_HISTORY_WINDOW = 80
 // The rail is recognition, not an archive — cap it and let the lead tile carry
 // the full list.
 const RAIL_MAX_ITEMS = 20
@@ -557,10 +559,25 @@ export default function HomeScreen() {
   // "New responses" section. Convex keeps this live, so unread state and new
   // responses appear without a manual refresh.
   const railQueryEnabled = canLoadTabData && !!currentUserId
-  const liveMyFires = useQuery(
-    api.conversations.listMyFires,
-    railQueryEnabled ? { limit: 80, pinnedFirst: false } : 'skip',
-  ) as MyFire[] | undefined
+  const {
+    results: railPages,
+    status: railStatus,
+    loadMore: loadMoreRail,
+  } = usePaginatedQuery(
+    api.conversations.listMyFiresPage,
+    railQueryEnabled ? { pinnedFirst: false } : 'skip',
+    { initialNumItems: 20 },
+  )
+  const railThreadsLoaded = useMemo(() => uniqueById(railPages as MyFire[]), [railPages])
+  useEffect(() => {
+    if (!railQueryEnabled || railStatus !== 'CanLoadMore') return
+    if (railThreadsLoaded.length >= RAIL_HISTORY_WINDOW) return
+    loadMoreRail(20)
+  }, [loadMoreRail, railQueryEnabled, railStatus, railThreadsLoaded.length])
+  const railWindowFilled =
+    railStatus !== 'LoadingFirstPage' &&
+    (railStatus === 'Exhausted' || railThreadsLoaded.length >= RAIL_HISTORY_WINDOW)
+  const liveMyFires = !railQueryEnabled || !railWindowFilled ? undefined : railThreadsLoaded
   const myFires = useHomeFeedSnapshot(currentUserId, liveMyFires)
   const myFireIdSet = useMemo(() => new Set((myFires ?? []).map((t) => t._id)), [myFires])
 

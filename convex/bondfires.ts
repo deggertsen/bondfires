@@ -36,6 +36,7 @@ import { addInviteBadgesToBondfires } from './inviteBadges'
 import { getLatestResponsePlayback } from './lib/latestResponsePlayback'
 import { boundedInteger, boundedScanSize } from './lib/queryBounds'
 import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
+import { deleteThreadMemberships, recordThreadParticipant } from './lib/threadMembership'
 import { getVideoLifecycle, isPlayableVideoRecord } from './lib/videoLifecycle'
 import { isVideoWatchedByViewer } from './lib/viewerWatchState'
 import { incrementProfileViews } from './watchEvents'
@@ -815,6 +816,13 @@ export const create = internalMutation({
       updatedAt: now,
     })
 
+    await recordThreadParticipant(ctx, {
+      userId,
+      bondfireId,
+      activityAt: now,
+      bump: true,
+    })
+
     // Update user's bondfire count
     await ctx.db.patch(userId, {
       bondfireCount: (user?.bondfireCount ?? 0) + 1,
@@ -1095,6 +1103,7 @@ export const deleteBondfire = mutation({
     }
 
     await cancelSegmentMedia(ctx, bondfire)
+    await deleteThreadMemberships(ctx, args.bondfireId)
     await ctx.db.delete(args.bondfireId)
 
     // Decrement the creator's bondfire count.

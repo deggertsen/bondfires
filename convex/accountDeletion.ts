@@ -23,6 +23,8 @@ import {
   nextAccountDeletionStage,
 } from './lib/accountDeletionPolicy'
 import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
+import { deleteThreadMemberships, releaseThreadParticipant } from './lib/threadMembership'
+import { deleteTranscriptChunks } from './lib/transcriptBody'
 import { requestReactionSummaryFlush } from './lib/videoReactions'
 import { uncountResponse } from './responseCounts'
 import { enqueueRetentionMedia } from './retentionMedia'
@@ -480,11 +482,13 @@ export const deleteContentBatch = internalMutation({
       }
       const stage = content.cleanupStage ?? RESPONSE_STAGES[0]
       let rows: Array<{ _id: Id<TableNames> }> = []
-      if (stage === 'transcripts')
+      if (stage === 'transcripts') {
         rows = await ctx.db
           .query('videoTranscripts')
           .withIndex('by_bondfire_video', (q) => q.eq('bondfireVideoId', video._id))
           .take(BATCH_SIZE)
+        for (const row of rows) await deleteTranscriptChunks(ctx, row._id as Id<'videoTranscripts'>)
+      }
       if (stage === 'reports')
         rows = await ctx.db
           .query('reports')
@@ -522,6 +526,7 @@ export const deleteContentBatch = internalMutation({
           await ctx.db.delete(video.liveSessionId)
         await cancelSegmentMedia(ctx, video)
         await ctx.db.delete(video._id)
+        await releaseThreadParticipant(ctx, video.userId, video.bondfireId)
         await ctx.db.patch(content._id, { databaseStatus: 'deleted', updatedAt: now })
       } else {
         await ctx.db.patch(content._id, {
@@ -568,11 +573,13 @@ export const deleteContentBatch = internalMutation({
       })
       return { found: true }
     }
-    if (stage === 'transcripts')
+    if (stage === 'transcripts') {
       rows = await ctx.db
         .query('videoTranscripts')
         .withIndex('by_bondfire', (q) => q.eq('bondfireId', bondfire._id))
         .take(BATCH_SIZE)
+      for (const row of rows) await deleteTranscriptChunks(ctx, row._id as Id<'videoTranscripts'>)
+    }
     if (stage === 'reports')
       rows = await ctx.db
         .query('reports')
@@ -639,6 +646,7 @@ export const deleteContentBatch = internalMutation({
       if (bondfire.liveSessionId && (await ctx.db.get(bondfire.liveSessionId)))
         await ctx.db.delete(bondfire.liveSessionId)
       await cancelSegmentMedia(ctx, bondfire)
+      await deleteThreadMemberships(ctx, bondfire._id)
       await ctx.db.delete(bondfire._id)
       await ctx.db.patch(content._id, { databaseStatus: 'deleted', updatedAt: now })
     } else {
@@ -891,6 +899,11 @@ export const cleanupUserBatch = internalMutation({
       rows = await ctx.db
         .query('bondfireThreadReads')
         .withIndex('by_user', (q) => q.eq('userId', userId))
+        .take(BATCH_SIZE)
+    if (stage === 'thread_memberships')
+      rows = await ctx.db
+        .query('threadMemberships')
+        .withIndex('by_user_activity', (q) => q.eq('userId', userId))
         .take(BATCH_SIZE)
     if (stage === 'pins_owned')
       rows = await ctx.db

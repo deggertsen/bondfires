@@ -33,6 +33,7 @@ import {
 import { throwUserError } from './errors'
 import { deleteBondfireInviteArtifacts } from './inviteArtifacts'
 import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
+import { deleteThreadMemberships, recordThreadParticipant } from './lib/threadMembership'
 import { canResumeUnrecordedDraft, isPlayableVideoRecord } from './lib/videoLifecycle'
 import { importedUrls } from './mediaImports'
 import {
@@ -384,6 +385,7 @@ export const deleteExpiredPrivateCampVideoRecords = internalMutation({
       await deleteBondfireInviteArtifacts(ctx, bondfire._id)
       if (bondfire.muxAssetId) await enqueueRetentionMedia(ctx, 'asset', bondfire.muxAssetId)
       await cancelSegmentMedia(ctx, bondfire)
+      await deleteThreadMemberships(ctx, bondfire._id)
       await ctx.db.delete(bondfire._id)
       deletedBondfires += 1
     }
@@ -630,6 +632,13 @@ export async function createPendingVideoRecord(ctx: MutationCtx, args: PendingVi
       createdAt: now,
     })
 
+    await recordThreadParticipant(ctx, {
+      userId: args.userId,
+      bondfireId: args.bondfireId,
+      activityAt: now,
+      bump: false,
+    })
+
     return { recordId, recordType: 'response' as const }
   }
 
@@ -672,6 +681,12 @@ export async function createPendingVideoRecord(ctx: MutationCtx, args: PendingVi
         height: args.height,
         tags: args.tags,
         updatedAt: now,
+      })
+      await recordThreadParticipant(ctx, {
+        userId: args.userId,
+        bondfireId: args.draftBondfireId,
+        activityAt: draft.createdAt,
+        bump: true,
       })
 
       // Drafts don't count toward bondfireCount until they hold a recording.
@@ -722,6 +737,13 @@ export async function createPendingVideoRecord(ctx: MutationCtx, args: PendingVi
       updatedAt: now,
     })
 
+    await recordThreadParticipant(ctx, {
+      userId: args.userId,
+      bondfireId: recordId,
+      activityAt: now,
+      bump: true,
+    })
+
     return { recordId, recordType: 'bondfire' as const }
   }
 
@@ -754,6 +776,13 @@ export async function createPendingVideoRecord(ctx: MutationCtx, args: PendingVi
     viewCount: 0,
     createdAt: now,
     updatedAt: now,
+  })
+
+  await recordThreadParticipant(ctx, {
+    userId: args.userId,
+    bondfireId: recordId,
+    activityAt: now,
+    bump: true,
   })
 
   return { recordId, recordType: 'bondfire' as const }

@@ -34,6 +34,7 @@ import {
   normalizeInviteCode,
 } from './inviteCodes'
 import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
+import { deleteThreadMemberships, recordThreadParticipant } from './lib/threadMembership'
 import { getVideoLifecycle } from './lib/videoLifecycle'
 import {
   canViewPersonalBondfire,
@@ -199,6 +200,7 @@ async function deleteDraftBondfireCascade(ctx: MutationCtx, bondfire: Doc<'bondf
   }
 
   await cancelSegmentMedia(ctx, bondfire)
+  await deleteThreadMemberships(ctx, bondfire._id)
 
   await ctx.db.delete(bondfire._id)
 
@@ -301,6 +303,13 @@ export const createBondfire = internalMutation({
     await ctx.db.patch(user._id, {
       bondfireCount: (user.bondfireCount ?? 0) + 1,
       updatedAt: now,
+    })
+
+    await recordThreadParticipant(ctx, {
+      userId: user._id,
+      bondfireId,
+      activityAt: now,
+      bump: true,
     })
 
     return bondfireId
@@ -889,6 +898,7 @@ export const deleteBondfire = mutation({
 
     // Delete the bondfire itself.
     await cancelSegmentMedia(ctx, bondfire)
+    await deleteThreadMemberships(ctx, args.bondfireId)
     await ctx.db.delete(args.bondfireId)
     await ctx.db.patch(user._id, {
       bondfireCount: Math.max(0, (user.bondfireCount ?? 1) - 1),
