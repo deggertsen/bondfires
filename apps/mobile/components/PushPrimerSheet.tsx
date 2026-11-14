@@ -75,7 +75,7 @@ const COPY: Record<PushPrimerContext, Record<PushNudgeMode, PrimerCopy>> = {
  *
  * Self-gating: renders nothing unless this is a physical device, the in-app
  * notifications preference is on, the primer is eligible (never accepted,
- * < 3 declines, not yet shown this app session) and OS permission isn't
+ * not yet shown this app session) and OS permission isn't
  * already granted.
  * Mount it with `trigger` set when the moment is right.
  */
@@ -150,8 +150,8 @@ export function PushPrimerSheet({ trigger, context }: PushPrimerSheetProps) {
 
   const handleOpenSettings = async () => {
     telemetry.breadcrumb('push:nudge:settings')
-    // Coming back still off counts as a decline, so the decline cap also
-    // covers users who keep backing out of Settings.
+    // Coming back with notifications allowed counts as accepted; still off
+    // counts as a decline, the same as "Not now".
     const cancel = onReturnToApp(() => {
       void getPushPermissionState().then((permission) => {
         const granted = permission?.granted ?? false

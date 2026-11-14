@@ -7,7 +7,6 @@ import {
   canConsiderPushNudge,
   hasRecordedVideo,
   isPushPrimerEligible,
-  PUSH_PRIMER_MAX_DECLINES,
   pushNudgeMode,
   requestPushFromNudge,
   settlePushSettingsReturn,
@@ -105,13 +104,10 @@ describe('isPushPrimerEligible', () => {
     ).toBe(false)
   })
 
-  it('stops after the decline cap', () => {
-    expect(
-      isPushPrimerEligible({ ...fresh, declineCount: PUSH_PRIMER_MAX_DECLINES }, sessionStartedAt),
-    ).toBe(false)
+  it('keeps asking each session no matter how many times the user declined', () => {
     expect(
       isPushPrimerEligible(
-        { ...fresh, declineCount: PUSH_PRIMER_MAX_DECLINES - 1 },
+        { ...fresh, declineCount: 25, lastShownAt: sessionStartedAt - 1 },
         sessionStartedAt,
       ),
     ).toBe(true)

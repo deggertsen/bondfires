@@ -50,7 +50,7 @@ export interface AppState {
     // app session (appSessionStore$).
     lastShownAt: number | null
     // Times the user said no ("Not now", or back from Settings still off).
-    // Stop asking after PUSH_PRIMER_MAX_DECLINES.
+    // Bookkeeping only: declines don't stop the primer.
     declineCount: number
     // User said yes and the OS permission was actually granted.
     accepted: boolean

@@ -57,9 +57,6 @@ export async function requestPushFromNudge(
   return granted
 }
 
-/** Stop asking after this many "no"s ("Not now", or back from Settings still off). */
-export const PUSH_PRIMER_MAX_DECLINES = 3
-
 /** Persisted primer bookkeeping (`appStore$.pushPrimer`). */
 export interface PushPrimerState {
   lastShownAt: number | null
@@ -69,11 +66,11 @@ export interface PushPrimerState {
 
 /**
  * The primer shows at most once per app session (see `appSessionStore$`)
- * until the user accepts or has said no `PUSH_PRIMER_MAX_DECLINES` times.
+ * until the user accepts. There is no decline cap: a user who keeps saying no
+ * is asked again next session. `declineCount` is bookkeeping only.
  */
 export function isPushPrimerEligible(primer: PushPrimerState, sessionStartedAt: number): boolean {
   if (primer.accepted) return false
-  if (primer.declineCount >= PUSH_PRIMER_MAX_DECLINES) return false
   return primer.lastShownAt === null || primer.lastShownAt < sessionStartedAt
 }
 
@@ -90,8 +87,8 @@ export function hasRecordedVideo(
 
 /**
  * The user came back from system Settings after the primer sent them there.
- * Allowed counts as accepted; still off counts as a decline, so the decline
- * cap also covers users who keep backing out of Settings.
+ * Allowed counts as accepted (no more asks); still off counts as a decline,
+ * the same as "Not now".
  */
 export function settlePushSettingsReturn(
   granted: boolean,

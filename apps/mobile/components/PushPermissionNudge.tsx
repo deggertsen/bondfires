@@ -22,8 +22,8 @@ interface PushPermissionNudgeProps {
  * Global push permission nudge for signed-in users who have not granted OS
  * notification permission. The finished-recording screen asks once, right
  * after a recording; this asks again on the feed in later app sessions, so a
- * user who said "Not now" there is asked once per session (up to the decline
- * cap) instead of never again.
+ * user who said "Not now" there is asked once per session until they turn
+ * notifications on.
  *
  * Waits until the user has recorded a video, so the ask comes when they have
  * something to hear back about. Decides only *when* the moment is right: it
