@@ -92,6 +92,14 @@ const darkTheme = createTheme({
   primaryHover: bondfireColors.moltenGold,
   primaryPress: bondfireColors.deepEmber,
   primaryFocus: bondfireColors.bondfireCopper,
+
+  // Filled primary surfaces (Button primary variant). One step darker than
+  // $primary so a white label clears WCAG AA (4.56:1 at rest, 5.82:1 pressed).
+  // Same values in both themes so a primary button looks identical in each.
+  primarySolid: bondfireColors.ember,
+  primarySolidHover: bondfireColors.deepEmber,
+  primarySolidPress: bondfireColors.deepEmber,
+  colorOnPrimary: '#FFFFFF',
   
   // Secondary (Molten Gold)
   secondary: bondfireColors.moltenGold,
@@ -123,6 +131,12 @@ const darkTheme = createTheme({
   success: bondfireColors.success,
   error: bondfireColors.error,
   warning: bondfireColors.warning,
+
+  // Filled destructive surfaces (Button destructive variant): white label on
+  // the darker red passes AA in both themes (4.83:1 rest, 6.47:1 pressed).
+  errorSolid: bondfireColors.errorDark,
+  errorSolidPress: '#B91C1C',
+  colorOnError: '#FFFFFF',
   
   // Gray scale (mapped to Bondfire palette)
   gray1: bondfireColors.obsidian,
@@ -177,6 +191,14 @@ const lightTheme = createTheme({
   primaryHover: bondfireColors.deepEmber,
   primaryPress: bondfireColors.ember,
   primaryFocus: bondfireColors.bondfireCopper,
+
+  // Filled primary surfaces (Button primary variant). One step darker than
+  // $primary so a white label clears WCAG AA (4.56:1 at rest, 5.82:1 pressed).
+  // Same values in both themes so a primary button looks identical in each.
+  primarySolid: bondfireColors.ember,
+  primarySolidHover: bondfireColors.deepEmber,
+  primarySolidPress: bondfireColors.deepEmber,
+  colorOnPrimary: '#FFFFFF',
   
   // Secondary
   secondary: bondfireColors.deepEmber,
@@ -208,6 +230,12 @@ const lightTheme = createTheme({
   success: bondfireColors.successDark,
   error: bondfireColors.errorDark,
   warning: bondfireColors.warningDark,
+
+  // Filled destructive surfaces (Button destructive variant): white label on
+  // the darker red passes AA in both themes (4.83:1 rest, 6.47:1 pressed).
+  errorSolid: bondfireColors.errorDark,
+  errorSolidPress: '#B91C1C',
+  colorOnError: '#FFFFFF',
   
   // Gray scale for light mode
   gray1: '#FFFFFF',
@@ -237,6 +265,16 @@ const lightTheme = createTheme({
   orange11: bondfireColors.deepEmber,
   orange12: '#7C2D12',
 })
+
+function onPrimaryTheme<T extends typeof darkTheme>(base: T): T {
+  return {
+    ...base,
+    color: base.colorOnPrimary,
+    colorHover: base.colorOnPrimary,
+    colorPress: base.colorOnPrimary,
+    colorFocus: base.colorOnPrimary,
+  }
+}
 
 // ============================================
 // Animations
@@ -334,6 +372,11 @@ export const config = createTamagui({
   themes: {
     dark: darkTheme,
     light: lightTheme,
+    // Sub-themes for content on a filled primary/destructive surface. Button
+    // renders those variants under `theme="onPrimary"`, so any child that asks
+    // for `$color` (label Text, lucide icons, Spinner) resolves to white.
+    dark_onPrimary: onPrimaryTheme(darkTheme),
+    light_onPrimary: onPrimaryTheme(lightTheme),
   },
   tokens,
   media: {

@@ -412,7 +412,6 @@ function TierCard({
           size="$md"
           disabled={isPurchasing || isComingSoon}
           onPress={() => onPurchase(tier, selectedProductId ?? undefined)}
-          backgroundColor={isFeatured ? '$primary' : 'transparent'}
           borderColor={
             isFeatured ? 'transparent' : isAvailable ? '$placeholderColor' : '$borderColor'
           }
