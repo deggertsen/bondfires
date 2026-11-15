@@ -10,9 +10,8 @@ import {
   useAppThemeColors,
 } from '@bondfires/app'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { useIsFocused, useNavigation } from '@react-navigation/native'
 import { useAction, useMutation, usePaginatedQuery, useQuery } from 'convex/react'
-import { useLocalSearchParams, useRouter } from 'expo-router'
+import { useIsFocused, useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { Alert, Animated, AppState, type FlatList, InteractionManager } from 'react-native'
 import { api } from '../../../../../convex/_generated/api'

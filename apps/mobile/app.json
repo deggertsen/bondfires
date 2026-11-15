@@ -7,7 +7,6 @@
     "icon": "./assets/images/icon.png",
     "scheme": "bondfires",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "splash": {
       "image": "./assets/images/icon.png",
       "resizeMode": "contain",
@@ -53,7 +52,6 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#141416"
       },
-      "edgeToEdgeEnabled": true,
       "intentFilters": [
         {
           "action": "VIEW",

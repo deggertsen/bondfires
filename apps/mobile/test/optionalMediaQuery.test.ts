@@ -1,7 +1,6 @@
 import { ConvexProvider, ConvexReactClient } from 'convex/react'
 import { makeFunctionReference } from 'convex/server'
 import { createElement } from 'react'
-// @ts-expect-error react-test-renderer does not ship TypeScript declarations.
 import { act, create } from 'react-test-renderer'
 import { expect, it, vi } from 'vitest'
 import { useOptionalQuery } from '../lib/media/useOptionalQuery'

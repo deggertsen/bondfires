@@ -2,7 +2,6 @@
 import type { FunctionReturnType } from 'convex/server'
 import { convexTest } from 'convex-test'
 import { createElement } from 'react'
-// @ts-expect-error react-test-renderer does not ship TypeScript declarations.
 import { act, create } from 'react-test-renderer'
 import { describe, expect, it, vi } from 'vitest'
 import { api } from '../../../../convex/_generated/api'

@@ -28,10 +28,9 @@ import {
   Text,
 } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
-import { useIsFocused } from '@react-navigation/native'
 import { AlertTriangle, Flame, RefreshCw, Search, X } from '@tamagui/lucide-icons'
 import { useMutation, usePaginatedQuery, useQuery } from 'convex/react'
-import { useRouter } from 'expo-router'
+import { useIsFocused, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,

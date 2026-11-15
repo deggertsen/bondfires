@@ -1,5 +1,4 @@
 import { createElement } from 'react'
-// @ts-expect-error react-test-renderer does not ship TypeScript declarations.
 import { act, create } from 'react-test-renderer'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useMicLevelWarning } from '../../../../packages/app/src/hooks/useMicLevelWarning'

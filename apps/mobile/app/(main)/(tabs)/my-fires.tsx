@@ -10,10 +10,9 @@ import {
   useLoadingTimeoutTelemetry,
 } from '@bondfires/app'
 import { type BondfireRowProps, Button, closeOpenSwipeableRow, Spinner, Text } from '@bondfires/ui'
-import { useIsFocused } from '@react-navigation/native'
 import { AlertTriangle, ChevronLeft, Flame, Pin, RefreshCw } from '@tamagui/lucide-icons'
 import { useMutation, usePaginatedQuery, useQuery } from 'convex/react'
-import { useRouter } from 'expo-router'
+import { useIsFocused, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, FlatList, Pressable, RefreshControl, StatusBar, type ViewToken } from 'react-native'
 import { Separator, useTheme, variableToString, XStack, YStack } from 'tamagui'

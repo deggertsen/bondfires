@@ -1,5 +1,4 @@
 import { createElement } from 'react'
-// @ts-expect-error react-test-renderer does not ship TypeScript declarations.
 import { act, create } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CreateScreen from '../../app/(main)/create'
@@ -18,13 +17,13 @@ vi.mock('@bondfires/ui', () => ({ Button: 'Button', Spinner: 'Spinner', Text: 'T
 vi.mock('tamagui', () => ({ XStack: 'XStack', YStack: 'YStack' }))
 vi.mock('react-native', () => ({ StatusBar: 'StatusBar' }))
 vi.mock('@legendapp/state/react', () => ({}))
-vi.mock('@react-navigation/native', () => ({}))
 vi.mock('@tamagui/lucide-icons', () => ({}))
 vi.mock('convex/react', () => ({ useQuery: mocks.useQuery }))
 vi.mock('expo-camera', () => ({ useCameraPermissions: mocks.useCameraPermissions }))
 vi.mock('expo-router', () => ({
   useRouter: () => ({ replace: mocks.replace }),
   useNavigation: () => ({}),
+  useIsFocused: () => true,
   useLocalSearchParams: () => ({ respondTo: 'bf-1' }),
 }))
 vi.mock('react-native-safe-area-context', () => ({}))

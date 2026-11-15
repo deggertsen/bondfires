@@ -22,7 +22,6 @@ import {
   Text,
 } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
-import { useIsFocused } from '@react-navigation/native'
 import {
   AlertTriangle,
   ArrowLeft,
@@ -40,7 +39,7 @@ import {
   UserX,
 } from '@tamagui/lucide-icons'
 import { useConvex, useMutation, useQuery } from 'convex/react'
-import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
+import { useIsFocused, useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useRef, useState } from 'react'
 import {
   Alert,
