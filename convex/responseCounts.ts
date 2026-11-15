@@ -1,5 +1,6 @@
 import type { Doc } from './_generated/dataModel'
 import type { MutationCtx } from './_generated/server'
+import { recordThreadParticipant } from './lib/threadMembership'
 
 // ── Response counting ────────────────────────────────────────────────────────
 //
@@ -45,6 +46,15 @@ export async function countResponse(ctx: MutationCtx, video: Doc<'bondfireVideos
       updatedAt: now,
     })
   }
+
+  // Playable responses are the activity My Fires sorts on. Pending rows are
+  // recorded at insert time without moving that timestamp.
+  await recordThreadParticipant(ctx, {
+    userId: video.userId,
+    bondfireId: video.bondfireId,
+    activityAt: video.createdAt,
+    bump: true,
+  })
 }
 
 /**

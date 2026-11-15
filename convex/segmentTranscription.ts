@@ -22,6 +22,7 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from './_generated/server'
+import { deleteTranscriptChunks, moveLegacyTranscriptBody } from './lib/transcriptBody'
 import { retainedVideoExists } from './retentionCleanup'
 import { requireSegmentMedia } from './segmentMedia'
 import { logServerEvent } from './serverTelemetry'
@@ -91,6 +92,14 @@ async function destination(ctx: QueryCtx | MutationCtx, recordingId: Id<'segment
     table: recording.responseId ? ('bondfireVideos' as const) : ('bondfires' as const),
   }
 }
+/** Same end result as appending onto the trimmed transcript, without reading it. */
+function appendedTextLength(previous: number, chunkText: string) {
+  if (!chunkText || !chunkText.trim()) return previous
+  if (previous === 0) return chunkText.trim().length
+  const trailing = chunkText.length - chunkText.trimEnd().length
+  return previous + 1 + chunkText.length - trailing
+}
+
 async function transcript(
   ctx: QueryCtx | MutationCtx,
   recording: { responseId?: Id<'bondfireVideos'>; bondfireId?: Id<'bondfires'> },
@@ -288,26 +297,49 @@ export const completeChunk = internalMutation({
     const chunkVtt = args.timingMismatch
       ? `NOTE caption gap: timing_mismatch; start=${args.timingMismatch.start}s; end=${args.timingMismatch.end}s\n\n`
       : args.vtt
-    const text = `${matches ? existing.text : ''}${chunkText ? ` ${chunkText}` : ''}`.trim()
-    const captionsVtt = `${matches ? (existing.captionsVtt ?? 'WEBVTT\n\n') : 'WEBVTT\n\n'}${chunkVtt}`
-    if (text.length > 150_000 || captionsVtt.length > 500_000)
-      throw Error('Transcript exceeds bounds')
+    // Lengths live on the metadata row so the next window does not reread the body.
+    let textChars = 0
+    let captionChars = 0
+    if (existing && matches) {
+      const lengths =
+        existing.textChars !== undefined
+          ? { textChars: existing.textChars, captionChars: existing.captionChars ?? 0 }
+          : await moveLegacyTranscriptBody(ctx, existing)
+      textChars = lengths.textChars
+      captionChars = lengths.captionChars
+    } else if (existing) {
+      await deleteTranscriptChunks(ctx, existing._id)
+    }
+    // Stored captions with no VTT yet need the header before the first cue.
+    const vttPiece = captionChars === 0 ? `WEBVTT\n\n${chunkVtt}` : chunkVtt
+    const textLength = appendedTextLength(textChars, chunkText)
+    const captionLength = captionChars + vttPiece.length
+    if (textLength > 150_000 || captionLength > 500_000) throw Error('Transcript exceeds bounds')
     const fields = {
       segmentRecordingId: recording._id,
       muxAssetId: undefined,
       muxTrackId: undefined,
       languageCode: (args.timingMismatch ? undefined : args.language) ?? existing?.languageCode,
-      text,
-      captionsVtt,
+      text: '',
+      captionsVtt: undefined,
+      textChars: textLength,
+      captionChars: captionLength,
     }
+    const transcriptId = existing
+      ? existing._id
+      : await ctx.db.insert('videoTranscripts', {
+          ...fields,
+          bondfireId: recording.bondfireId,
+          bondfireVideoId: recording.responseId,
+          createdAt: Date.now(),
+        })
     if (existing) await ctx.db.patch(existing._id, fields)
-    else
-      await ctx.db.insert('videoTranscripts', {
-        ...fields,
-        bondfireId: recording.bondfireId,
-        bondfireVideoId: recording.responseId,
-        createdAt: Date.now(),
-      })
+    await ctx.db.insert('transcriptChunks', {
+      transcriptId,
+      cursor: args.cursor,
+      text: chunkText,
+      vtt: vttPiece,
+    })
     const done = args.nextIndex === recording.segmentCount
     await ctx.db.patch(job._id, {
       cursor: args.nextIndex,

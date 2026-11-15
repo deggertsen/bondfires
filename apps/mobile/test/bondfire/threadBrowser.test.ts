@@ -49,7 +49,9 @@ vi.mock('react-native', async () => {
       createElement(
         'FlatList',
         props,
-        data.map((item) => createElement('Row', { key: item.key }, renderItem({ item }))),
+        data.map((item) =>
+          createElement('Row', { key: item.key, rowKey: item.key }, renderItem({ item })),
+        ),
       ),
   }
 })
@@ -69,6 +71,7 @@ const videos: BondfireVideoItem[] = [true, true, true, false, false].map(
 const arrival = getThreadCatchUp(videos, 4)
 const acknowledged = vi.fn()
 const loadOlder = vi.fn()
+const selectVideo = vi.fn()
 function Harness({
   currentVideoIndex = 4,
   catchUp = arrival,
@@ -92,7 +95,7 @@ function Harness({
     processingCount: 0,
     canRespond: false,
     canShare: false,
-    onSelectVideo: vi.fn(),
+    onSelectVideo: selectVideo,
     onRespond: vi.fn(),
     onShare: vi.fn(),
   })
@@ -100,6 +103,7 @@ function Harness({
 
 describe('ThreadBrowser catch-up interactions', () => {
   let renderer: ReturnType<typeof create>
+  const scrollToOffset = vi.fn()
   const sheet = () => renderer.root.findByType('Sheet')
   const text = (value: string) =>
     renderer.root
@@ -110,7 +114,9 @@ describe('ThreadBrowser catch-up interactions', () => {
     vi.clearAllMocks()
     ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
     await act(async () => {
-      renderer = create(createElement(Harness))
+      renderer = create(createElement(Harness), {
+        createNodeMock: () => ({ scrollToOffset }),
+      })
     })
   })
   afterEach(async () => {
@@ -171,6 +177,7 @@ describe('ThreadBrowser catch-up interactions', () => {
     expect(text('NOW')).toBeDefined()
     expect(text('Hide')).toBeUndefined()
     expect(renderer.root.findAllByType('Row')).toHaveLength(7)
+    expect(renderer.root.findByType('FlatList').props).not.toHaveProperty('stickyHeaderIndices')
     await act(async () => renderer.update(createElement(Harness, { currentVideoIndex: 4 })))
     expect(text('Show')).toBeDefined()
   })
@@ -183,6 +190,62 @@ describe('ThreadBrowser catch-up interactions', () => {
     )
     expect(text('Show')).toBeDefined()
   })
+
+  it.each([false, true])(
+    'expands and hides non-sticky history without losing rows or scroll position (hasOlder=%s)',
+    async (hasOlder) => {
+      await act(async () => renderer.update(createElement(Harness, { hasOlder })))
+      // Let the arrival open and settle before testing user-driven scrolling.
+      await act(async () => vi.advanceTimersByTime(350))
+      await act(async () => vi.advanceTimersByTime(60))
+      expect(sheet().props.open).toBe(true)
+      const list = () => renderer.root.findByType('FlatList')
+      const row = (key: string) =>
+        renderer.root
+          .findAllByType('Row')
+          .find((node: { props: { rowKey: string } }) => node.props.rowKey === key)
+      const rowKeys = () =>
+        renderer.root
+          .findAllByType('Row')
+          .map((node: { props: { rowKey: string } }) => node.props.rowKey)
+      const olderKeys = hasOlder ? ['load-older'] : []
+      const foldedKeys = [...olderKeys, 'earlier', 'new-label', 'video-3', 'video-4']
+      expect(rowKeys()).toEqual(foldedKeys)
+
+      // Repeat the insert/remove cycle that triggered the native crash.
+      for (let cycle = 0; cycle < 2; cycle++) {
+        await act(async () => row('earlier').findByType('Pressable').props.onPress())
+        expect(text('Hide')).toBeDefined()
+        expect(list().props).not.toHaveProperty('stickyHeaderIndices')
+        expect(rowKeys()).toEqual([
+          ...olderKeys,
+          'earlier',
+          'video-0',
+          'video-1',
+          'video-2',
+          'new-label',
+          'video-3',
+          'video-4',
+        ])
+        await act(async () => list().props.onContentSizeChange())
+        // Header (32), optional older-page row (54), then one watched row
+        // (54): the newest two watched videos sit just above the new section.
+        expect(scrollToOffset).toHaveBeenLastCalledWith({
+          offset: (hasOlder ? 54 : 0) + 32 + 54,
+          animated: false,
+        })
+        await act(async () => row('video-1').findByType('Pressable').props.onPress())
+        expect(selectVideo).toHaveBeenLastCalledWith(1)
+
+        await act(async () => row('earlier').findByType('Pressable').props.onPress())
+        expect(text('Hide')).toBeUndefined()
+        expect(rowKeys()).toEqual(foldedKeys)
+        await act(async () => list().props.onContentSizeChange())
+        expect(scrollToOffset).toHaveBeenLastCalledWith({ offset: 0, animated: false })
+        expect(loadOlder).not.toHaveBeenCalled()
+      }
+    },
+  )
 })
 
 describe('ThreadBrowser list position', () => {

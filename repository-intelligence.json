@@ -259,6 +259,7 @@
       ],
       "environmentKeys": [
         "APP_VARIANT",
+        "EAS_BUILD",
         "EAS_BUILD_PROFILE",
         "EXPO_PUBLIC_APP_ENV",
         "CRASHLYTICS_ENABLED",

@@ -12,7 +12,7 @@ import {
 import { type BondfireRowProps, Button, closeOpenSwipeableRow, Spinner, Text } from '@bondfires/ui'
 import { useIsFocused } from '@react-navigation/native'
 import { AlertTriangle, ChevronLeft, Flame, Pin, RefreshCw } from '@tamagui/lucide-icons'
-import { useMutation, useQuery } from 'convex/react'
+import { useMutation, usePaginatedQuery, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, FlatList, Pressable, RefreshControl, StatusBar, type ViewToken } from 'react-native'
@@ -30,6 +30,7 @@ import {
 } from '../../../lib/bondfireSwipeActions'
 import type { BondfireThumbnailFields } from '../../../lib/bondfireThumbnails'
 import { getMyFireRowCreatorName } from '../../../lib/myFireRow'
+import { shouldLoadSparsePage, uniqueById } from '../../../lib/pagination'
 import { getThreadReactionRowProps } from '../../../lib/reactionChipProps'
 import { routes } from '../../../lib/routes'
 import { useBondfireThumbnails } from '../../../lib/useBondfireThumbnails'
@@ -71,25 +72,42 @@ type InviteRow = {
   sender: PublicUser | null
 }
 
+const MY_FIRES_PAGE_SIZE = 20
+
 function MyFiresSubscription({
   enabled,
   pinnedFirst,
+  loadMoreRequest,
   onResolved,
 }: {
   enabled: boolean
   pinnedFirst: boolean
+  loadMoreRequest: number
   onResolved: (threads: MyFire[]) => void
 }) {
-  const threads = useQuery(
-    api.conversations.listMyFires,
-    enabled ? { limit: 80, pinnedFirst } : 'skip',
-  ) as MyFire[] | undefined
+  const { results, status, loadMore } = usePaginatedQuery(
+    api.conversations.listMyFiresPage,
+    enabled ? { pinnedFirst } : 'skip',
+    { initialNumItems: MY_FIRES_PAGE_SIZE },
+  )
+  const threads = useMemo(() => uniqueById(results as MyFire[]), [results])
+  const resolved = !enabled || status === 'LoadingFirstPage' ? undefined : threads
+  const handledLoadRequest = useRef(0)
+  const requestedVisibleCount = useRef(MY_FIRES_PAGE_SIZE)
 
   useEffect(() => {
-    if (threads !== undefined) {
-      onResolved(threads)
+    if (resolved !== undefined) onResolved(resolved)
+  }, [onResolved, resolved])
+
+  useEffect(() => {
+    if (!enabled) return
+    if (loadMoreRequest > handledLoadRequest.current) {
+      handledLoadRequest.current = loadMoreRequest
+      requestedVisibleCount.current = threads.length + 1
     }
-  }, [onResolved, threads])
+    if (shouldLoadSparsePage(status, threads.length, requestedVisibleCount.current))
+      loadMore(MY_FIRES_PAGE_SIZE)
+  }, [enabled, loadMore, loadMoreRequest, status, threads.length])
 
   return null
 }
@@ -241,6 +259,7 @@ export default function MyFiresScreen() {
   const shouldRunBackgroundWork = isFocused
   const { userId: currentUserId, isLoading: isUserLoading, currentUser } = useCurrentUserId()
   const [refreshKey, setRefreshKey] = useState(0)
+  const [loadMoreRequest, setLoadMoreRequest] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [pinnedFirst, setPinnedFirst] = useState(false)
   const { visibleRows$: reactionVisibility$, updateVisibleRows } = useReactionRowVisibility()
@@ -478,6 +497,7 @@ export default function MyFiresScreen() {
           key={`subscription-${refreshKey}`}
           enabled={canLoadTabData}
           pinnedFirst={pinnedFirst}
+          loadMoreRequest={loadMoreRequest}
           onResolved={handleThreadsResolved}
         />
         <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
@@ -492,6 +512,7 @@ export default function MyFiresScreen() {
         key={`subscription-${refreshKey}`}
         enabled={canLoadTabData}
         pinnedFirst={pinnedFirst}
+        loadMoreRequest={loadMoreRequest}
         onResolved={handleThreadsResolved}
       />
       <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
@@ -500,6 +521,8 @@ export default function MyFiresScreen() {
         data={threads}
         extraData={listExtraData}
         keyExtractor={(item) => item._id}
+        onEndReached={() => setLoadMoreRequest((current) => current + 1)}
+        onEndReachedThreshold={0.5}
         onScrollBeginDrag={closeOpenSwipeableRow}
         refreshControl={
           <RefreshControl

@@ -176,6 +176,9 @@ describe('retention transactions and resumable cleanup', () => {
               return rows.slice(0, size)
             },
             collect: async () => {
+              // Membership rows are deleted with the thread. Subscription
+              // history is the only other collect, and it stays bounded.
+              if (table === 'threadMemberships') return rows
               expect(table).toBe('subscriptions')
               expect(rows.length).toBeLessThanOrEqual(100)
               return rows
@@ -311,6 +314,9 @@ describe('retention transactions and resumable cleanup', () => {
       }),
     ).toEqual(expect.any(String))
     expect(tables.videoTranscripts).toHaveLength(1)
+    expect(tables.transcriptChunks).toEqual([
+      expect.objectContaining({ transcriptId: tables.videoTranscripts[0]._id, text: 'current' }),
+    ])
     expect(
       await handler<MutationCtx>(saveTranscript)(ctx, {
         table: 'bondfireVideos',
@@ -319,7 +325,8 @@ describe('retention transactions and resumable cleanup', () => {
         text: 'stale',
       }),
     ).toBeNull()
-    expect(tables.videoTranscripts[0].text).toBe('current')
+    expect(tables.videoTranscripts[0].text).toBe('')
+    expect(tables.transcriptChunks[0].text).toBe('current')
   })
 
   it.each(['reply', 'upgrade', 'live', 'upload', 'root_live_session'])(

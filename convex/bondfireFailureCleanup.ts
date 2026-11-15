@@ -1,4 +1,5 @@
 import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
+import { deleteThreadMemberships } from './lib/threadMembership'
 import { isPlayableVideoRecord } from './lib/videoLifecycle'
 import { enqueueRetentionMedia } from './retentionMedia'
 /**
@@ -219,6 +220,7 @@ export async function purgeBondfireConvexRecords(
   }
 
   await cancelSegmentMedia(ctx, bondfire)
+  await deleteThreadMemberships(ctx, bondfireId)
   await ctx.db.delete(bondfireId)
 
   // Recount affected users by re-querying playable records (matches retention).

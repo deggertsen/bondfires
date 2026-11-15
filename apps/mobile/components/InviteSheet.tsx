@@ -333,7 +333,7 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
                 disabled={!shareUrl}
                 icon={copied ? <Check size={18} /> : <Copy size={18} />}
               >
-                <Text color={copied ? '$success' : '$color'} fontWeight="700">
+                <Text color={'$color'} fontWeight="700">
                   {copied ? 'Copied' : 'Copy Link'}
                 </Text>
               </Button>

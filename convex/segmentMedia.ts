@@ -22,6 +22,7 @@ import { auth } from './auth'
 import { getEntitlementSubscriptionTier, getTierMaxVideoDurationMs } from './entitlements'
 import { throwUserError } from './errors'
 import { recordingMaxDurationSeconds } from './lib/recordingLimits'
+import { readTranscriptBody } from './lib/transcriptBody'
 import { getSegmentVideoStatus, isPlayableVideoRecord } from './lib/videoLifecycle'
 import { countResponse, uncountResponse } from './responseCounts'
 import { enqueueTranscription } from './segmentTranscription'
@@ -511,6 +512,17 @@ async function backfillDurations(
   return segments.map(({ duration }) => duration)
 }
 
+const CACHED_READY_CHECK_DAYS = 7
+
+/** Spreads full checks of cached ready rows across the week by creation time. */
+export function cachedReadyRowDueForFullCheck(
+  recording: Pick<Doc<'segmentRecordings'>, '_creationTime'>,
+  now: number,
+) {
+  const day = Math.floor(now / 86400_000) % CACHED_READY_CHECK_DAYS
+  return Math.floor(recording._creationTime) % CACHED_READY_CHECK_DAYS === day
+}
+
 /** Recheck destructive eligibility in the revocation transaction as well as discovery. */
 async function cleanupDisposition(
   ctx: QueryCtx,
@@ -518,6 +530,15 @@ async function cleanupDisposition(
   now: number,
 ): Promise<'delete' | 'finalize' | 'materialize' | null> {
   if (recording.status === 'cancelled') return 'delete'
+  // Delete paths call cancelSegmentMedia themselves, so most cached ready rows
+  // skip the owner/parent reads. Each one still gets the full check one day a
+  // week, which catches account deletion, expiry, and any path that skipped it.
+  if (
+    recording.status === 'ready' &&
+    recording.durationsCached &&
+    !cachedReadyRowDueForFullCheck(recording, now)
+  )
+    return null
   const owner = await ctx.db.get(recording.userId)
   const response = recording.responseId ? await ctx.db.get(recording.responseId) : null
   const source = recording.bondfireId
@@ -546,7 +567,7 @@ async function cleanupDisposition(
   // Past the recovery window, a destination no longer pointing at this
   // recording can never resume: it was replaced by a retry, re-attach, or a
   // finalize elsewhere. Leaving it uploading keeps it in the 5-minute sweep
-  // forever, re-reading owner and destination every pass.
+  // forever, re-reading owner and destination every hourly pass.
   const destination = response ?? source
   if (destination.segmentRecordingId !== recording._id) return 'delete'
   return recording.initChecksum && recording.segmentCount > 0 ? 'finalize' : 'delete'
@@ -785,8 +806,8 @@ export const captions = internalQuery({
           .query('videoTranscripts')
           .withIndex('by_bondfire', (q) => q.eq('bondfireId', recording.bondfireId))
           .first()
-    return {
-      captionsVtt: row?.segmentRecordingId === recording._id ? (row.captionsVtt ?? null) : null,
-    }
+    if (!row || row.segmentRecordingId !== recording._id) return { captionsVtt: null }
+    const body = await readTranscriptBody(ctx, row)
+    return { captionsVtt: body.captionsVtt ?? null }
   },
 })

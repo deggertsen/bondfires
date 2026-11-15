@@ -712,6 +712,9 @@ export default defineSchema({
     threadReactionCounts: v.optional(reactionCounts),
     threadLastReactionAt: v.optional(v.number()),
     threadLastReactorId: v.optional(v.id('users')),
+    // max(createdAt, playable response createdAt). Membership rows copy it so
+    // My Fires can page by activity without scanning every candidate thread.
+    threadLastActivityAt: v.optional(v.number()),
 
     // Timestamps
     createdAt: v.number(),
@@ -822,11 +825,10 @@ export default defineSchema({
     // Reconciliation: find records stuck in a non-terminal video status
     .index('by_video_status', ['videoStatus', 'createdAt']),
 
-  // Full video transcripts from Mux auto-generated captions. A separate table
-  // (rather than a field on bondfires/bondfireVideos) so multi-KB transcript
-  // text never ships with feed/detail queries that spread whole video docs.
-  // Exactly one of bondfireId/bondfireVideoId is set, matching which table the
-  // transcribed video lives in.
+  // Transcript metadata. Bodies live in transcriptChunks once textChars is set,
+  // so sweeps and caption-track lookups do not reread the text. Legacy rows still
+  // carry inline text until the daily sweep moves them. Exactly one of
+  // bondfireId/bondfireVideoId is set.
   videoTranscripts: defineTable({
     bondfireId: v.optional(v.id('bondfires')),
     bondfireVideoId: v.optional(v.id('bondfireVideos')),
@@ -836,10 +838,22 @@ export default defineSchema({
     muxTrackId: v.optional(v.string()),
     languageCode: v.optional(v.string()),
     text: v.string(),
+    // Length of the external body. Absent means this row still stores it inline.
+    textChars: v.optional(v.number()),
+    captionChars: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index('by_bondfire', ['bondfireId'])
     .index('by_bondfire_video', ['bondfireVideoId']),
+
+  // One row per completed transcript window. cursor -1 is a prefix migrated off
+  // a legacy videoTranscripts row. Append does not read earlier chunks.
+  transcriptChunks: defineTable({
+    transcriptId: v.id('videoTranscripts'),
+    cursor: v.number(),
+    text: v.string(),
+    vtt: v.string(),
+  }).index('by_transcript_cursor', ['transcriptId', 'cursor']),
 
   // Per-user read markers for ongoing Bondfire conversations.
   bondfireThreadReads: defineTable({
@@ -852,6 +866,18 @@ export default defineSchema({
     .index('by_user', ['userId', 'updatedAt'])
     .index('by_user_bondfire', ['userId', 'bondfireId'])
     .index('by_bondfire', ['bondfireId']),
+
+  // One row per participant (owner or responder), ordered by thread activity.
+  // listMyFires pages this after threadMembershipBackfill finishes. Until then
+  // the legacy candidate scan stays in place so history is not hidden.
+  threadMemberships: defineTable({
+    userId: v.id('users'),
+    bondfireId: v.id('bondfires'),
+    lastActivityAt: v.number(),
+  })
+    .index('by_user_activity', ['userId', 'lastActivityAt'])
+    .index('by_bondfire', ['bondfireId'])
+    .index('by_user_bondfire', ['userId', 'bondfireId']),
 
   // Profile Close Circle pins. A user can pin up to 8 other participants.
   closeCirclePins: defineTable({
