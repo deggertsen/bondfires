@@ -822,6 +822,7 @@ export default function ProfileScreen() {
                     {([720, 1080] as const).map((quality) => (
                       <Button
                         key={quality}
+                        variant="outline"
                         flex={1}
                         accessibilityRole="radio"
                         accessibilityState={{
