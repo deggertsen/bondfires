@@ -570,8 +570,8 @@ export function RespondCTAOverlay({
         shadowRadius={12}
         elevation={8}
       >
-        <Flame size={22} color={OVERLAY_COLORS.textPrimary} />
-        <Text fontSize={16} fontWeight="800" color={OVERLAY_COLORS.textPrimary}>
+        <Flame size={22} color={'$color'} />
+        <Text fontSize={16} fontWeight="800" color={'$color'}>
           {hasEnded ? 'Respond to this Bondfire' : 'Respond'}
         </Text>
       </Button>
@@ -633,8 +633,8 @@ export function RespondNudgeCard({
         borderRadius={14}
         gap={6}
       >
-        <Flame size={18} color={OVERLAY_COLORS.textPrimary} />
-        <Text fontSize={15} fontWeight="800" color={OVERLAY_COLORS.textPrimary}>
+        <Flame size={18} color={'$color'} />
+        <Text fontSize={15} fontWeight="800" color={'$color'}>
           Respond
         </Text>
       </Button>

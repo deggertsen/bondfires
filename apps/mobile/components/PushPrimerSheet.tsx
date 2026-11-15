@@ -94,7 +94,13 @@ export function PushPrimerSheet({ trigger, context }: PushPrimerSheetProps) {
   const answeredRef = useRef(false)
 
   useEffect(() => {
-    if (!trigger) return
+    if (!trigger) {
+      // A gate or route can change after the sheet has opened. Suppression is
+      // not a user decline, and a sheet already shown still consumes its slot.
+      answeredRef.current = true
+      setOpen(false)
+      return
+    }
     const eligible = canConsiderPushNudge({
       isPhysicalDevice: Device.isDevice,
       notificationsEnabled: appStore$.preferences.notificationsEnabled.peek(),
@@ -196,9 +202,9 @@ export function PushPrimerSheet({ trigger, context }: PushPrimerSheetProps) {
   return (
     <Sheet
       modal
-      open={open}
+      open={open && trigger}
       onOpenChange={(isOpen: boolean) => {
-        if (!isOpen && open) {
+        if (!isOpen && open && trigger) {
           handleNotNow()
         }
       }}

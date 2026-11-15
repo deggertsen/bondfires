@@ -4,6 +4,10 @@ import { describe, expect, it } from 'vitest'
 const require = createRequire(import.meta.url)
 const { addPodsDeploymentTarget } = require('../apps/mobile/plugins/withPodsDeploymentTarget.js')
 const { setJvmArgs, JVM_ARGS } = require('../apps/mobile/plugins/withGradleJvmArgs.js')
+const {
+  adoptSceneLifecycle,
+  WINDOW_BLOCK,
+} = require('../apps/mobile/plugins/withIosSceneLifecycle.js')
 
 // Match the multiline call emitted by the installed Expo template, including
 // code after the hook so insertion cannot silently move outside post_install.
@@ -18,6 +22,25 @@ const podfile = `target 'Bondfires' do
     keep_existing_post_install_work(installer)
   end
 end
+`
+
+const appDelegateTemplate = `public class AppDelegate: ExpoAppDelegate {
+  var window: UIWindow?
+
+  var reactNativeDelegate: ExpoReactNativeFactoryDelegate?
+  var reactNativeFactory: RCTReactNativeFactory?
+
+  public override func application(
+    _ application: UIApplication,
+    didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+  ) -> Bool {
+    bindReactNativeFactory(factory)
+
+${WINDOW_BLOCK}
+
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+}
 `
 
 describe('native build config plugins', () => {
@@ -55,6 +78,35 @@ describe('native build config plugins', () => {
       { type: 'property', key: 'org.gradle.jvmargs', value: JVM_ARGS },
     ])
     expect(setJvmArgs(updated)).toEqual(updated)
+  })
+
+  it('moves React Native startup out of didFinishLaunching for the iOS 27 scene lifecycle', () => {
+    const updated = adoptSceneLifecycle(appDelegateTemplate)
+    expect(updated).toContain('var launchOptions: [UIApplication.LaunchOptionsKey: Any]?')
+    expect(updated).toContain('self.launchOptions = launchOptions')
+    expect(updated).not.toContain('UIWindow(frame: UIScreen.main.bounds)')
+    expect(updated).not.toContain('factory.startReactNative')
+    expect(adoptSceneLifecycle(updated)).toBe(updated)
+  })
+
+  it('keeps FirebaseApp.configure when it was inserted inside the startup block', () => {
+    const withFirebase = appDelegateTemplate.replace(
+      '    window = UIWindow(frame: UIScreen.main.bounds)\n',
+      '    window = UIWindow(frame: UIScreen.main.bounds)\nFirebaseApp.configure()\n',
+    )
+    const updated = adoptSceneLifecycle(withFirebase)
+    expect(updated).toContain('FirebaseApp.configure()')
+    expect(updated).toContain('self.launchOptions = launchOptions')
+    expect(updated).not.toContain('factory.startReactNative')
+    expect(updated.indexOf('FirebaseApp.configure()')).toBeLessThan(
+      updated.indexOf('self.launchOptions = launchOptions'),
+    )
+  })
+
+  it('fails visibly when the Expo AppDelegate startup block changes', () => {
+    expect(() => adoptSceneLifecycle('class AppDelegate {}\n')).toThrow(
+      'no longer matches the Expo startup block',
+    )
   })
 
   it('adds the memory budget when the template omits JVM properties', () => {
