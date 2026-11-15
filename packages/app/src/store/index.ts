@@ -1,4 +1,5 @@
 export * from './app.store'
+export * from './appSession.store'
 export * from './freeUpgrade.store'
 export * from './notepad.store'
 export * from './reactionFlyIn.store'

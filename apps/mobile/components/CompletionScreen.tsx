@@ -269,7 +269,7 @@ export function CompletionScreen({
       {/* Push permission pre-prompt — the user just committed a video, the
           highest-intent moment to ask about response notifications. Defers
           to the InviteSheet while that is open. */}
-      <PushPrimerSheet trigger={!isInviteSheetOpen} />
+      <PushPrimerSheet context="completion" trigger={!isInviteSheetOpen} />
     </>
   )
 }
