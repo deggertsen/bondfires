@@ -3,6 +3,12 @@ import { internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import type { QueryCtx } from './_generated/server'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
+import {
+  deleteTranscriptChunks,
+  moveLegacyTranscriptBody,
+  readTranscriptBody,
+  transcriptBodyExternal,
+} from './lib/transcriptBody'
 import { retainedVideoExists } from './retentionCleanup'
 
 /**
@@ -20,9 +26,11 @@ import { retainedVideoExists } from './retentionCleanup'
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 const DEFAULT_OPENROUTER_MODEL = 'z-ai/glm-4.5-air'
 const OPENROUTER_TIMEOUT_MS = 60_000
-// Page size for the orphaned-transcript sweep: rows carry multi-KB caption
-// text, so each page stays far below Convex's per-transaction read limits.
+// Orphan sweep page. Bodies live in transcriptChunks, so this only scans metadata.
 const SWEEP_PAGE_SIZE = 100
+// Body characters a sweep pass may copy into chunks. UTF-8 is at most 3 bytes a
+// character, so this stays well under the per-transaction write limit.
+const SWEEP_MIGRATION_CHARS = 2_000_000
 // ~10 minutes of speech. Longer videos are summarized from the head; the tail
 // of a rambling video rarely changes the one-line summary.
 const MAX_TRANSCRIPT_CHARS = 16_000
@@ -311,9 +319,13 @@ export const getStoredTranscript = internalQuery({
   args: { table: recordTable, recordId },
   handler: async (ctx, args) => {
     const row = await findTranscriptRow(ctx, args.table, args.recordId)
-    return row
-      ? { text: row.text, muxAssetId: row.muxAssetId, segmentRecordingId: row.segmentRecordingId }
-      : null
+    if (!row) return null
+    const body = await readTranscriptBody(ctx, row)
+    return {
+      text: body.text,
+      muxAssetId: row.muxAssetId,
+      segmentRecordingId: row.segmentRecordingId,
+    }
   },
 })
 
@@ -338,25 +350,46 @@ export const saveTranscript = internalMutation({
       return null
     const existing = await findTranscriptRow(ctx, args.table, args.recordId)
 
+    // Mux replaces only the text. Caption VTT written by the segment pipeline
+    // stays, as it did when both lived inline on this row. Reading the old body
+    // costs one chunk scan per Mux asset, and only when captions exist.
+    const keptVtt =
+      existing && (!transcriptBodyExternal(existing) || (existing.captionChars ?? 0) > 0)
+        ? ((await readTranscriptBody(ctx, existing)).captionsVtt ?? '')
+        : ''
+
+    // Keep the body off the metadata row. Caption-track lookups and the daily
+    // sweep read videoTranscripts for ids only.
     const fields = {
       muxAssetId: args.muxAssetId,
       muxTrackId: args.muxTrackId,
       languageCode: args.languageCode,
-      text: args.text,
+      text: '',
+      captionsVtt: undefined,
+      textChars: args.text.length,
+      captionChars: keptVtt.length,
     }
 
+    const transcriptId = existing
+      ? existing._id
+      : await ctx.db.insert('videoTranscripts', {
+          ...fields,
+          bondfireId: args.table === 'bondfires' ? (args.recordId as Id<'bondfires'>) : undefined,
+          bondfireVideoId:
+            args.table === 'bondfireVideos' ? (args.recordId as Id<'bondfireVideos'>) : undefined,
+          createdAt: Date.now(),
+        })
     if (existing) {
+      await deleteTranscriptChunks(ctx, existing._id)
       await ctx.db.patch(existing._id, fields)
-      return existing._id
     }
-
-    return await ctx.db.insert('videoTranscripts', {
-      ...fields,
-      bondfireId: args.table === 'bondfires' ? (args.recordId as Id<'bondfires'>) : undefined,
-      bondfireVideoId:
-        args.table === 'bondfireVideos' ? (args.recordId as Id<'bondfireVideos'>) : undefined,
-      createdAt: Date.now(),
+    await ctx.db.insert('transcriptChunks', {
+      transcriptId,
+      cursor: 0,
+      text: args.text,
+      vtt: keptVtt,
     })
+    return transcriptId
   },
 })
 
@@ -445,21 +478,36 @@ export const sweepOrphanedTranscripts = internalMutation({
       .paginate({ cursor: args.cursor ?? null, numItems: SWEEP_PAGE_SIZE })
 
     let deleted = 0
+    let migratedChars = 0
+    let deferred = false
     for (const row of page.page) {
       const parentId = row.bondfireId ?? row.bondfireVideoId
       const parent = parentId ? await ctx.db.get(parentId) : null
       if (!parent) {
+        await deleteTranscriptChunks(ctx, row._id)
         await ctx.db.delete(row._id)
         deleted++
+        continue
       }
+      // Move a legacy inline body once. Later passes read only this short row.
+      if (row.textChars !== undefined) continue
+      // Each move writes a copy of the body. Cap the copies per transaction and
+      // rerun this page for the rest; moved rows are short on the rerun.
+      const size = row.text.length + (row.captionsVtt?.length ?? 0)
+      if (migratedChars > 0 && migratedChars + size > SWEEP_MIGRATION_CHARS) {
+        deferred = true
+        continue
+      }
+      migratedChars += size
+      await moveLegacyTranscriptBody(ctx, row)
     }
 
-    if (!page.isDone) {
+    if (deferred || !page.isDone) {
       await ctx.scheduler.runAfter(0, internal.ai.sweepOrphanedTranscripts, {
-        cursor: page.continueCursor,
+        cursor: deferred ? args.cursor : page.continueCursor,
       })
     }
-    return { scanned: page.page.length, deleted, done: page.isDone }
+    return { scanned: page.page.length, deleted, done: page.isDone && !deferred }
   },
 })
 

@@ -8,6 +8,7 @@ import {
   transcriptionWindow,
 } from '../packages/media/src/transcription'
 import { internal } from './_generated/api'
+import { readTranscriptBody } from './lib/transcriptBody'
 import schema from './schema'
 import { enqueueTranscription } from './segmentTranscription'
 
@@ -23,6 +24,18 @@ afterEach(() => {
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
 })
+
+async function storedTranscript(t: ReturnType<typeof convexTest>) {
+  return await t.run(async (ctx) => {
+    const row = await ctx.db.query('videoTranscripts').first()
+    if (!row) return null
+    return {
+      ...(await readTranscriptBody(ctx, row)),
+      languageCode: row.languageCode,
+      textStoredInline: row.text,
+    }
+  })
+}
 async function setup(t = convexTest(schema, modules), segmentCount = 8) {
   const ids = await t.run(async (ctx) => {
     const userId = await ctx.db.insert('users', { gender: 'other' })
@@ -224,8 +237,9 @@ describe('R2 transcription jobs', () => {
       expect(job?.status).toBe(cursor === 48 ? 'ready' : 'queued')
     }
     expect(acceptedText.length).toBeGreaterThan(2)
-    expect(await t.run((ctx) => ctx.db.query('videoTranscripts').first())).toMatchObject({
+    expect(await storedTranscript(t)).toMatchObject({
       text: acceptedText.join(' '),
+      textStoredInline: '',
     })
   })
   it('rebuilds legacy cursor timing in bounded batches without replaying completed captions', async () => {
@@ -270,8 +284,9 @@ describe('R2 transcription jobs', () => {
       text: 'Next captions.',
       vtt: '',
     })
-    expect(await t.run((ctx) => ctx.db.query('videoTranscripts').first())).toMatchObject({
+    expect(await storedTranscript(t)).toMatchObject({
       text: 'Existing captions. Next captions.',
+      textStoredInline: '',
     })
   })
   it('checkpoints the final legacy batch before a failed window and keeps retries bounded', async () => {
@@ -414,6 +429,130 @@ describe('R2 transcription jobs', () => {
     expect((await t.run((ctx) => ctx.db.get(bondfireId)))?.captionsReadyAt).toBeTypeOf('number')
     expect((await t.run((ctx) => ctx.db.get(claim.jobId)))?.insightsStatus).toBe('queued')
     expect(await t.run((ctx) => enqueueTranscription(ctx, recordingId))).toBe(false)
+  })
+  it('does not reread earlier caption text when appending the next window', async () => {
+    const { t, recordingId } = await setup()
+    const claim = await t.mutation(internal.segmentTranscription.claim, { recordingId })
+    assert(claim)
+    expect(
+      await t.mutation(internal.segmentTranscription.completeChunk, {
+        recordingId,
+        jobId: claim.jobId,
+        cursor: 0,
+        leaseUntil: claim.leaseUntil,
+        nextIndex: claim.nextIndex,
+        text: 'First.',
+        vtt: '00:00:00.000 --> 00:00:02.000\nFirst.\n\n',
+      }),
+    ).toBe(true)
+    await t.run(async (ctx) => {
+      const chunk = await ctx.db.query('transcriptChunks').first()
+      assert(chunk)
+      await ctx.db.patch(chunk._id, { text: 'x'.repeat(80_000), vtt: 'y'.repeat(80_000) })
+    })
+    const next = await t.mutation(internal.segmentTranscription.claim, { recordingId })
+    assert(next)
+    await t.mutation((ctx) =>
+      ctx.runMutation(
+        internal.segmentTranscription.completeChunk,
+        {
+          recordingId,
+          jobId: next.jobId,
+          cursor: next.cursor,
+          leaseUntil: next.leaseUntil,
+          nextIndex: 8,
+          text: 'Second.',
+          vtt: '00:00:28.000 --> 00:00:30.000\nSecond.\n\n',
+        },
+        { transactionLimits: { bytesRead: 32_000 } },
+      ),
+    )
+    const body = await storedTranscript(t)
+    expect(body?.text.endsWith('Second.')).toBe(true)
+    expect(body?.textStoredInline).toBe('')
+  })
+  it('moves legacy transcript bodies off the sweep and deletes orphan chunks', async () => {
+    const { t, bondfireId } = await setup()
+    const fat = 'x'.repeat(40_000)
+    await t.run(async (ctx) => {
+      await ctx.db.insert('videoTranscripts', {
+        bondfireId,
+        text: fat,
+        captionsVtt: 'WEBVTT\n\nlegacy\n\n',
+        createdAt: Date.now(),
+      })
+      const orphanId = await ctx.db.insert('videoTranscripts', {
+        text: 'orphan',
+        createdAt: Date.now(),
+      })
+      await ctx.db.insert('transcriptChunks', {
+        transcriptId: orphanId,
+        cursor: 0,
+        text: 'orphan body',
+        vtt: '',
+      })
+    })
+    await t.mutation(internal.ai.sweepOrphanedTranscripts, {})
+    expect(await storedTranscript(t)).toMatchObject({
+      text: fat,
+      captionsVtt: 'WEBVTT\n\nlegacy\n\n',
+      textStoredInline: '',
+    })
+    expect(await t.run((ctx) => ctx.db.query('videoTranscripts').collect())).toHaveLength(1)
+    expect(await t.run((ctx) => ctx.db.query('transcriptChunks').collect())).toHaveLength(1)
+    await t.mutation((ctx) =>
+      ctx.runMutation(
+        internal.ai.sweepOrphanedTranscripts,
+        {},
+        {
+          transactionLimits: { bytesRead: 32_000 },
+        },
+      ),
+    )
+  })
+  it('caps legacy body copies per sweep pass and reruns the page for the rest', async () => {
+    const { t, bondfireId } = await setup()
+    const body = 'x'.repeat(800_000)
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 3; i++)
+        await ctx.db.insert('videoTranscripts', { bondfireId, text: body, createdAt: Date.now() })
+    })
+    const first = await t.mutation(internal.ai.sweepOrphanedTranscripts, {})
+    expect(first.done).toBe(false)
+    const legacyCount = async () =>
+      (await t.run((ctx) => ctx.db.query('videoTranscripts').collect())).filter(
+        (row) => row.textChars === undefined,
+      ).length
+    expect(await legacyCount()).toBe(1)
+    await t.finishAllScheduledFunctions(vi.runAllTimers)
+    expect(await legacyCount()).toBe(0)
+    expect(await t.run((ctx) => ctx.db.query('transcriptChunks').collect())).toHaveLength(3)
+  })
+  it('keeps segment caption VTT when a Mux transcript replaces the text', async () => {
+    const { t, bondfireId, recordingId, userId } = await setup()
+    const vtt = 'WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nSegment.\n\n'
+    await t.run(async (ctx) => {
+      await ctx.db.patch(bondfireId, { muxAssetId: 'asset-1', captionsReadyAt: Date.now() })
+      const transcriptId = await ctx.db.insert('videoTranscripts', {
+        bondfireId,
+        segmentRecordingId: recordingId,
+        text: '',
+        textChars: 8,
+        captionChars: vtt.length,
+        createdAt: Date.now(),
+      })
+      await ctx.db.insert('transcriptChunks', { transcriptId, cursor: 0, text: 'Segment.', vtt })
+    })
+    await t.mutation(internal.ai.saveTranscript, {
+      table: 'bondfires',
+      recordId: bondfireId,
+      muxAssetId: 'asset-1',
+      text: 'Mux text.',
+    })
+    expect(await storedTranscript(t)).toMatchObject({ text: 'Mux text.', captionsVtt: vtt })
+    expect(await t.query(internal.segmentMedia.captions, { recordingId, userId })).toEqual({
+      captionsVtt: vtt,
+    })
   })
   it('does not recreate transcripts after deletion and refuses revoked caption access', async () => {
     const { t, recordingId, bondfireId, userId } = await setup()
@@ -591,8 +730,9 @@ describe('R2 transcription jobs', () => {
       attempts: 0,
       timing: { index: 8, time: 36.825 },
     })
-    const transcript = await t.run((ctx) => ctx.db.query('videoTranscripts').first())
+    const transcript = await storedTranscript(t)
     expect(transcript?.text).toBe('Before the stall. After the stall.')
+    expect(transcript?.textStoredInline).toBe('')
     expect(transcript?.captionsVtt).toContain('00:00:24.825 --> 00:00:26.825')
     expect(transcript?.captionsVtt).not.toContain('NOTE')
     expect(await t.run((ctx) => ctx.db.query('clientLogs').collect())).toHaveLength(0)
@@ -654,8 +794,9 @@ describe('R2 transcription jobs', () => {
         insightsStatus: 'queued',
         timing: { index: 8, time: 32 },
       })
-      expect(await t.run((ctx) => ctx.db.query('videoTranscripts').first())).toMatchObject({
+      expect(await storedTranscript(t)).toMatchObject({
         text: 'Remaining captions.',
+        textStoredInline: '',
         captionsVtt:
           'WEBVTT\n\nNOTE caption gap: timing_mismatch; start=0s; end=24s\n\n00:00:24.000 --> 00:00:26.000\nRemaining captions.\n\n',
       })
@@ -719,9 +860,10 @@ describe('R2 transcription jobs', () => {
       attempts: 0,
       timing: { index: 8, time: 32 },
     })
-    expect(await t.run((ctx) => ctx.db.query('videoTranscripts').first())).toMatchObject({
+    expect(await storedTranscript(t)).toMatchObject({
       text: 'Earlier captions.',
       languageCode: 'en',
+      textStoredInline: '',
       captionsVtt:
         'WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nEarlier captions.\n\nNOTE caption gap: timing_mismatch; start=24s; end=32s\n\n',
     })
@@ -821,9 +963,10 @@ describe('R2 transcription jobs', () => {
     )
     const { t, recordingId } = await setup()
     await t.action(internal.segmentTranscription.run, { recordingId })
-    expect(await t.run((ctx) => ctx.db.query('videoTranscripts').first())).toMatchObject({
+    expect(await storedTranscript(t)).toMatchObject({
       text: 'Hello world.',
       languageCode: 'en',
+      textStoredInline: '',
       captionsVtt: 'WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello world.\n\n',
     })
     expect(await t.run((ctx) => ctx.db.query('segmentTranscriptionJobs').first())).toMatchObject({
@@ -875,8 +1018,9 @@ describe('R2 transcription jobs', () => {
       status: 'queued',
       attempts: 0,
     })
-    expect(await t.run((ctx) => ctx.db.query('videoTranscripts').first())).toMatchObject({
+    expect(await storedTranscript(t)).toMatchObject({
       text: 'Recovered.',
+      textStoredInline: '',
     })
   })
   it('logs retryable provider failures at info until the retry budget is exhausted', async () => {

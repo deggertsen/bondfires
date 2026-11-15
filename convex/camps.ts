@@ -46,6 +46,7 @@ import {
 } from './lib/campSettingsPolicy'
 import { boundedInteger } from './lib/queryBounds'
 import { cancelSegmentMedia } from './lib/segmentMediaCleanup'
+import { deleteThreadMemberships } from './lib/threadMembership'
 import { isEitherUserBlocked } from './userSafety'
 
 type CampAccess = 'open' | 'approval' | 'invite'
@@ -1754,6 +1755,7 @@ export const resetAndReseed = mutation({
         }
         await deleteBondfireInviteArtifacts(ctx, bondfire._id)
         await cancelSegmentMedia(ctx, bondfire)
+        await deleteThreadMemberships(ctx, bondfire._id)
         await ctx.db.delete(bondfire._id)
       }
 
@@ -1817,6 +1819,7 @@ export const resetAndReseedAdmin = internalMutation({
         }
         await deleteBondfireInviteArtifacts(ctx, bondfire._id)
         await cancelSegmentMedia(ctx, bondfire)
+        await deleteThreadMemberships(ctx, bondfire._id)
         await ctx.db.delete(bondfire._id)
       }
       const memberships = await ctx.db

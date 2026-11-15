@@ -8,10 +8,10 @@ crons.interval(
   internal.uploadResumeNudges.startSweep,
 )
 
-// Frequent indexed work handles abandoned uploads; cancelled tombstones retry hourly.
-// Reconciliation catches legacy orphans, parent expiry, and deletion paths missed
-// by producers once daily; explicit deletion/revocation remains immediate.
-crons.interval('cleanup internal segment media', { minutes: 5 }, internal.segmentMedia.cleanup, {})
+// Abandoned uploads are only due after a week, so an hourly indexed sweep is enough.
+// Cancelled tombstones retry hourly. Reconciliation catches legacy orphans once a day;
+// explicit deletion already calls cancelSegmentMedia and stays immediate.
+crons.interval('cleanup internal segment media', { hours: 1 }, internal.segmentMedia.cleanup, {})
 crons.interval(
   'retry cancelled segment media tombstones',
   { hours: 1 },
@@ -197,6 +197,15 @@ crons.interval(
   'recover caption processing',
   { minutes: 5 },
   internal.segmentTranscription.recover,
+  {},
+)
+
+// One-shot index of thread participation. scanPage reschedules itself; this
+// kick only restarts it if a page stalled. It no-ops once the job is complete.
+crons.interval(
+  'index thread memberships',
+  { minutes: 5 },
+  internal.threadMembershipBackfill.kick,
   {},
 )
 
