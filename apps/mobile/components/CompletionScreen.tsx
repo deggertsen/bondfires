@@ -142,7 +142,7 @@ export function CompletionScreen({
           justifyContent="center"
           padding={32}
         >
-          <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+          <StatusBar barStyle={statusBarStyle} />
 
           {/* Large emoji */}
           <Text fontSize={120} marginBottom={32}>

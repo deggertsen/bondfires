@@ -35,11 +35,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   FlatList,
+  type ListViewToken,
   Pressable,
   RefreshControl,
   ScrollView,
   StatusBar,
-  type ViewToken,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Separator, XStack, YStack } from 'tamagui'
@@ -978,7 +978,7 @@ export default function HomeScreen() {
 
   const { visibleRows$: reactionVisibility$, updateVisibleRows } = useReactionRowVisibility()
   const onViewableItemsChanged = useCallback(
-    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+    ({ viewableItems }: { viewableItems: ListViewToken[] }) => {
       updateVisibleRows(viewableItems)
       const items = filteredRef.current
       if (!shouldRunBackgroundWork) return
@@ -1054,7 +1054,7 @@ export default function HomeScreen() {
         loadMoreRequest={loadMoreRequest}
         onResolved={handleBondfiresResolved}
       />
-      <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
+      <StatusBar barStyle={statusBarStyle} />
 
       <FlatList
         ref={(r) => {

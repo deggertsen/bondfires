@@ -5,7 +5,7 @@ import ReanimatedSwipeable, {
   SwipeDirection,
 } from 'react-native-gesture-handler/ReanimatedSwipeable'
 import Animated, { type SharedValue, useAnimatedStyle } from 'react-native-reanimated'
-import { YStack } from 'tamagui'
+import { type GetProps, YStack } from 'tamagui'
 import { Text } from './Text'
 
 export type SwipeAction = {
@@ -200,7 +200,7 @@ export function SwipeableRow({
       : undefined
 
   if (!renderRightActions && !renderLeftActions) {
-    return <YStack style={style}>{children}</YStack>
+    return <YStack style={style as GetProps<typeof YStack>['style']}>{children}</YStack>
   }
 
   return (

@@ -18,7 +18,7 @@ export function RespondGate({
   bondfireId?: string
   children: ReactNode
 }) {
-  const { colors, statusBarStyle } = useAppThemeColors()
+  const { statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const navigation = useNavigation()
   const context = useQuery(
@@ -35,7 +35,7 @@ export function RespondGate({
   }
   return (
     <YStack flex={1} backgroundColor="$background" justifyContent="center" padding="$4" gap="$3">
-      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+      <StatusBar barStyle={statusBarStyle} />
       {decision.kind === 'loading' ? (
         <Spinner />
       ) : (

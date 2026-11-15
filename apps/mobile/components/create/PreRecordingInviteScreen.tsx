@@ -513,7 +513,7 @@ export function PreRecordingInviteScreen({
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       <YStack flex={1} backgroundColor={'$background'}>
-        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+        <StatusBar barStyle={statusBarStyle} />
 
         <SparkComposerHeader topInset={insets.top} onClose={onCancel} />
         {modeToggle}

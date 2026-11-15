@@ -23,7 +23,7 @@ export default function FamilyInviteScreen() {
   const { code: codeParam } = useLocalSearchParams<{ code: string | string[] }>()
   const code = Array.isArray(codeParam) ? codeParam[0] : codeParam
   const isAuthenticated = useValue(appStore$.isAuthenticated)
-  const { colors, statusBarStyle } = useAppThemeColors()
+  const { statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const preview = useQuery(api.familyConnections.checkInvite, code ? { code } : 'skip')
   const acceptInvite = useMutation(api.familyConnections.acceptInvite)
@@ -53,7 +53,7 @@ export default function FamilyInviteScreen() {
     <>
       <Stack.Screen options={{ headerShown: false }} />
       <YStack flex={1} backgroundColor="$background" paddingHorizontal={24}>
-        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+        <StatusBar barStyle={statusBarStyle} />
         <Pressable
           onPress={() => router.replace(routes.feed)}
           accessibilityRole="button"

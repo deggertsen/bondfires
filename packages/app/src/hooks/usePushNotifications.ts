@@ -616,7 +616,7 @@ export function usePushNotifications(
   useEffect(() => {
     const handleAppStateChange = async (nextAppState: AppStateStatus) => {
       const cameToForeground =
-        appStateRef.current.match(/inactive|background/) && nextAppState === 'active'
+        appStateRef.current?.match(/inactive|background/) && nextAppState === 'active'
       appStateRef.current = nextAppState
 
       if (cameToForeground) {

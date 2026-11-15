@@ -44,11 +44,11 @@ import { useCallback, useRef, useState } from 'react'
 import {
   Alert,
   FlatList,
+  type ListViewToken,
   Modal,
   Pressable,
   StatusBar,
   TextInput,
-  type ViewToken,
 } from 'react-native'
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
 import { Separator, Image as TamaguiImage, XStack, YStack } from 'tamagui'
@@ -949,7 +949,7 @@ export default function CampDetailScreen() {
   const convex = useConvex()
   const { visibleRows$: reactionVisibility$, updateVisibleRows } = useReactionRowVisibility()
   const handleReactionRowsViewable = useCallback(
-    ({ viewableItems }: { viewableItems: ViewToken[] }) => updateVisibleRows(viewableItems),
+    ({ viewableItems }: { viewableItems: ListViewToken[] }) => updateVisibleRows(viewableItems),
     [updateVisibleRows],
   )
   const reactionViewabilityConfig = useRef({ itemVisiblePercentThreshold: 10 }).current
@@ -1185,7 +1185,7 @@ export default function CampDetailScreen() {
           padding="$6"
           gap="$4"
         >
-          <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
+          <StatusBar barStyle={statusBarStyle} />
           <AlertTriangle size={48} color={'$primary'} />
           <Text fontSize="$6" fontWeight="700" color={'$color'} textAlign="center">
             Connection Issue
@@ -1219,7 +1219,7 @@ export default function CampDetailScreen() {
 
     return (
       <YStack flex={1} backgroundColor={'$background'} alignItems="center" justifyContent="center">
-        <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
+        <StatusBar barStyle={statusBarStyle} />
         <Spinner size="large" color={'$primary'} />
         <Text marginTop={18} color={'$placeholderColor'}>
           Loading camp...
@@ -1251,7 +1251,7 @@ export default function CampDetailScreen() {
 
   return (
     <YStack flex={1} backgroundColor={'$background'}>
-      <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
+      <StatusBar barStyle={statusBarStyle} />
       <FlatList
         data={bondfires ?? []}
         keyExtractor={(item) => item._id}

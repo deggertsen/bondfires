@@ -60,7 +60,7 @@ export function CampSparkPane({
   onTradeTagChange,
   onRecord,
 }: CampSparkPaneProps) {
-  const { colors, statusBarStyle } = useAppThemeColors()
+  const { statusBarStyle } = useAppThemeColors()
   const insets = useSafeAreaInsets()
   const router = useRouter()
   const sheetOpen$ = useObservable(false)
@@ -217,7 +217,7 @@ export function CampSparkPane({
 
   return (
     <YStack flex={1} backgroundColor={'$background'}>
-      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+      <StatusBar barStyle={statusBarStyle} />
       <SparkComposerHeader topInset={insets.top} onClose={onClose} />
       {modeToggle}
       {body}

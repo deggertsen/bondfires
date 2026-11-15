@@ -28,7 +28,14 @@ import {
   useRef,
   useState,
 } from 'react'
-import { AppState, type LayoutChangeEvent, PanResponder, Pressable, type View } from 'react-native'
+import {
+  AppState,
+  type AppStateStatus,
+  type LayoutChangeEvent,
+  PanResponder,
+  Pressable,
+  type ViewInstance,
+} from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { YStack } from 'tamagui'
 import { api } from '../../../../../../convex/_generated/api'
@@ -337,7 +344,7 @@ export function VideoPlayer({
     }
   }, [resetLocalReactionState, videoReactionKey])
 
-  const progressBarViewRef = useRef<View>(null)
+  const progressBarViewRef = useRef<ViewInstance>(null)
   const progressBarRef = useRef<ProgressBarMetrics>({ width: 0, pageX: null })
   const isScrubbingRef = useRef(false)
   const onScrubbingChangeRef = useRef(onScrubbingChange)
@@ -1309,7 +1316,8 @@ export function VideoPlayer({
   }, [pictureInPicturePlayback, isLive, videoId])
 
   const handlePictureInPictureStop = useCallback(() => {
-    const appState = AppState.currentState
+    // RN 0.88 types currentState as string | null | undefined.
+    const appState = (AppState.currentState ?? 'unknown') as AppStateStatus
     isInPictureInPictureRef.current = false
     telemetry.info('video:pip_stop', 'Video exited picture-in-picture', {
       videoId,

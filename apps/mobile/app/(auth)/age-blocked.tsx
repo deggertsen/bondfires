@@ -19,7 +19,7 @@ import { clearRegistrationDestination } from '../../lib/socialAuth'
  * A teen on an adult account can delete it and start over with a teen account.
  */
 export default function AgeBlockedScreen() {
-  const { colors, statusBarStyle } = useSystemThemeColors()
+  const { statusBarStyle } = useSystemThemeColors()
   const { signOut } = useAuthActions()
   const router = useRouter()
   const currentUser = useQuery(api.users.current)
@@ -74,7 +74,7 @@ export default function AgeBlockedScreen() {
       padding={24}
       gap={16}
     >
-      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+      <StatusBar barStyle={statusBarStyle} />
       <ShieldAlert size={48} color="$primary" />
       {teenOnAdultAccount ? (
         <>

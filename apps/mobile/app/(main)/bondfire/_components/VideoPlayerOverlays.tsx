@@ -4,7 +4,7 @@ import { useValue } from '@legendapp/state/react'
 import { Flame, Play, RotateCcw, Volume2, VolumeX } from '@tamagui/lucide-icons'
 import { type RefObject, useEffect, useState } from 'react'
 import type { LayoutChangeEvent, PanResponderInstance } from 'react-native'
-import { Pressable, View } from 'react-native'
+import { Pressable, View, type ViewInstance } from 'react-native'
 import Animated, {
   useAnimatedStyle,
   useReducedMotion,
@@ -350,7 +350,7 @@ export function VideoProgressBar({
   onSeekMs,
 }: {
   state$: VideoPlayerState$
-  progressBarViewRef: RefObject<View | null>
+  progressBarViewRef: RefObject<ViewInstance | null>
   onLayout: (event: LayoutChangeEvent) => void
   panHandlers: PanResponderInstance['panHandlers']
   heatmap?: ReactionHeatmap | null

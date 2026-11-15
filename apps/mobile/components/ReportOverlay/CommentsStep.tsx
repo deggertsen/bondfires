@@ -2,13 +2,13 @@ import { useAppThemeColors } from '@bondfires/app'
 import { Button, Text } from '@bondfires/ui'
 import { ArrowLeft } from '@tamagui/lucide-icons'
 import { useEffect, useRef } from 'react'
-import { Pressable, StyleSheet, TextInput } from 'react-native'
+import { Pressable, StyleSheet, TextInput, type TextInputInstance } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 import { type CommentsStepProps, MIN_COMMENT_LENGTH } from './types'
 
 export function CommentsStep({ value, onChange, onNext, onBack }: CommentsStepProps) {
   const { colors } = useAppThemeColors()
-  const textInputRef = useRef<TextInput>(null)
+  const textInputRef = useRef<TextInputInstance>(null)
   const charCount = value.trim().length
   const isValid = charCount >= MIN_COMMENT_LENGTH
 

@@ -13,7 +13,7 @@ import { useObservable, useValue } from '@legendapp/state/react'
 import { useAction, useMutation, usePaginatedQuery, useQuery } from 'convex/react'
 import { useIsFocused, useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
-import { Alert, Animated, AppState, type FlatList, InteractionManager } from 'react-native'
+import { Alert, Animated, AppState, type FlatList } from 'react-native'
 import { api } from '../../../../../convex/_generated/api'
 import type { Id } from '../../../../../convex/_generated/dataModel'
 import {
@@ -83,7 +83,7 @@ function getWatchTarget(
 }
 
 export default function BondfireDetailScreen() {
-  const { colors, statusBarStyle } = useAppThemeColors()
+  const { statusBarStyle } = useAppThemeColors()
   const { id, videoId } = useLocalSearchParams<{ id: string; videoId?: string | string[] }>()
   const deepLinkVideoId = typeof videoId === 'string' ? videoId : undefined
   const router = useRouter()
@@ -183,9 +183,9 @@ export default function BondfireDetailScreen() {
   }, [bondfireData?.videoStatus, pendingPulse])
 
   const persistPositionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const restoreScrollTaskRef = useRef<ReturnType<
-    typeof InteractionManager.runAfterInteractions
-  > | null>(null)
+  // Idle-callback id for the deferred scroll restore (React Native 0.88 removed
+  // InteractionManager; requestIdleCallback is its replacement).
+  const restoreScrollTaskRef = useRef<number | null>(null)
   const restoreRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const recordedWatchEventsRef = useRef<Set<string>>(new Set())
 
@@ -269,7 +269,9 @@ export default function BondfireDetailScreen() {
   }, [screenState$])
 
   const clearScheduledRestoreScroll = useCallback(() => {
-    restoreScrollTaskRef.current?.cancel()
+    if (restoreScrollTaskRef.current !== null) {
+      cancelIdleCallback(restoreScrollTaskRef.current)
+    }
     restoreScrollTaskRef.current = null
 
     if (restoreRetryTimerRef.current) {
@@ -286,7 +288,7 @@ export default function BondfireDetailScreen() {
     (index: number) => {
       clearScheduledRestoreScroll()
 
-      restoreScrollTaskRef.current = InteractionManager.runAfterInteractions(() => {
+      restoreScrollTaskRef.current = requestIdleCallback(() => {
         restoreScrollTaskRef.current = null
         scrollToVideoIndex(index, false)
       })
@@ -520,7 +522,6 @@ export default function BondfireDetailScreen() {
 
   const statusScreenProps = {
     statusBarStyle,
-    backgroundColor: colors.background,
     onBackPress: handleBackPress,
   }
 
@@ -603,7 +604,6 @@ export default function BondfireDetailScreen() {
   return (
     <BondfirePlaybackScreen
       statusBarStyle={statusBarStyle}
-      backgroundColor={colors.background}
       bondfireId={bondfireId}
       bondfireData={bondfireData}
       canInvite={campContext?.canInvite ?? false}

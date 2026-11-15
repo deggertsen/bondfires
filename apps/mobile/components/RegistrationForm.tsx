@@ -43,7 +43,7 @@ const MONTH_OPTIONS = [
 type AgeInput = { deviceAgeRange: DeviceAgeRange } | { birthMonth: string }
 
 export function RegistrationForm({ completing = false }: { completing?: boolean }) {
-  const { colors, statusBarStyle } = useSystemThemeColors()
+  const { statusBarStyle } = useSystemThemeColors()
   const router = useRouter()
   const { redirectTo } = useLocalSearchParams<{ redirectTo?: string }>()
   const { signIn, signOut } = useAuthActions()
@@ -187,7 +187,7 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
 
   return (
     <YStack flex={1} backgroundColor="$background">
-      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+      <StatusBar barStyle={statusBarStyle} />
       <KeyboardAwareScrollView
         contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
         keyboardShouldPersistTaps="handled"

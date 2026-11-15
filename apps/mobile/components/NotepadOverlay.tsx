@@ -3,7 +3,7 @@ import { Button, Text, XStack, YStack } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
 import { Trash2 } from '@tamagui/lucide-icons'
 import { useEffect, useRef } from 'react'
-import { Pressable, StyleSheet, TextInput } from 'react-native'
+import { Pressable, StyleSheet, TextInput, type TextInputInstance } from 'react-native'
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
 import { VIDEO_OVERLAY_COLORS } from './videoOverlayColors'
 
@@ -15,7 +15,7 @@ interface NotepadOverlayProps {
 export function NotepadOverlay({ onClose, autoFocus = true }: NotepadOverlayProps) {
   const { colors, themeName } = useAppThemeColors()
   const content = useValue(notepadStore$.content)
-  const textInputRef = useRef<TextInput>(null)
+  const textInputRef = useRef<TextInputInstance>(null)
 
   const overlayBg =
     themeName === 'dark' ? VIDEO_OVERLAY_COLORS.playPauseBackground : 'rgba(250, 250, 250, 0.85)'
