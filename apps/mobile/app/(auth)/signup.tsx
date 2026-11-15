@@ -13,13 +13,13 @@ export default function SignupScreen() {
   const router = useRouter()
   if (email) return <RegistrationForm />
   return (
-    <YStack flex={1} justifyContent="center" backgroundColor="$background" padding={24} gap={24}>
+    <YStack flex={1} justifyContent="center" backgroundColor="background" padding={24} gap={24}>
       <Text fontSize={28} fontWeight="700">
         Join Bondfires
       </Text>
-      <Text color="$placeholderColor">Choose how you’d like to create your account.</Text>
+      <Text color="placeholderColor">Choose how you’d like to create your account.</Text>
       <SocialSignInButtons redirectTo={redirectTo} onBusyChange={setBusy} />
-      <Button size="$lg" variant="primary" disabled={busy} onPress={() => setEmail(true)}>
+      <Button size="lg" variant="primary" disabled={busy} onPress={() => setEmail(true)}>
         <Text>Continue with Email</Text>
       </Button>
       <Button variant="ghost" onPress={() => router.replace(routes.login(redirectTo))}>

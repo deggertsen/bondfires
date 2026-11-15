@@ -1,7 +1,7 @@
-import { AlertTriangle, RefreshCw, Send } from '@tamagui/lucide-icons'
 import { Linking } from 'react-native'
 import { YStack } from 'tamagui'
 import { Button } from './Button'
+import { AlertTriangle, RefreshCw, Send } from './icons'
 import { Text } from './Text'
 
 /** Context passed alongside the error for reporting. */
@@ -185,9 +185,9 @@ export function ErrorDisplay({
       : 'Something went wrong'
 
   const icon = isNetworkError ? (
-    <RefreshCw size={24} color={'$warning'} />
+    <RefreshCw size={24} color={'warning'} />
   ) : (
-    <AlertTriangle size={24} color={'$error'} />
+    <AlertTriangle size={24} color={'error'} />
   )
 
   if (compact) {
@@ -195,20 +195,20 @@ export function ErrorDisplay({
       <YStack gap={8} paddingHorizontal={16} paddingVertical={12}>
         <YStack flexDirection="row" alignItems="flex-start" gap={8}>
           {icon}
-          <Text fontSize={14} color={'$placeholderColor'} flexShrink={1} lineHeight={20}>
+          <Text fontSize={14} color={'placeholderColor'} flexShrink={1} lineHeight="20px">
             {isNetworkError ? 'Check your connection and try again.' : message}
           </Text>
         </YStack>
         {isNetworkError && onRetry ? (
-          <Button variant="secondary" size="$sm" marginTop={4} onPress={onRetry}>
+          <Button variant="secondary" size="sm" marginTop={4} onPress={onRetry}>
             Try Again
           </Button>
         ) : showReportButton ? (
           <Button
             variant="ghost"
-            size="$sm"
+            size="sm"
             marginTop={4}
-            icon={<Send size={14} color={'$placeholderColor'} />}
+            icon={<Send size={14} color={'placeholderColor'} />}
             onPress={handleReport}
           >
             Report Issue
@@ -228,19 +228,19 @@ export function ErrorDisplay({
     >
       {icon}
       <YStack gap={4} alignItems="center">
-        <Text fontSize={16} fontWeight="600" color={'$color'} textAlign="center">
+        <Text fontSize={16} fontWeight="600" color={'color'} textAlign="center">
           {title}
         </Text>
-        <Text fontSize={14} color={'$placeholderColor'} textAlign="center" lineHeight={20}>
+        <Text fontSize={14} color={'placeholderColor'} textAlign="center" lineHeight="20px">
           {isNetworkError ? 'Check your connection and try again.' : message}
         </Text>
       </YStack>
       <YStack gap={8} width="100%" maxWidth={280}>
         {isNetworkError && onRetry ? (
           <Button
-            icon={<RefreshCw size={16} color={'$color'} />}
+            icon={<RefreshCw size={16} color={'color'} />}
             variant="primary"
-            size="$md"
+            size="md"
             onPress={onRetry}
           >
             Try Again
@@ -248,9 +248,9 @@ export function ErrorDisplay({
         ) : null}
         {showReportButton ? (
           <Button
-            icon={<Send size={16} color={'$placeholderColor'} />}
+            icon={<Send size={16} color={'placeholderColor'} />}
             variant="secondary"
-            size="$md"
+            size="md"
             onPress={handleReport}
           >
             Report Issue

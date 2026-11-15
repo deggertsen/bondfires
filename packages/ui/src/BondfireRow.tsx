@@ -1,8 +1,8 @@
-import { Flame, MessageCircle } from '@tamagui/lucide-icons'
 import { Image } from 'expo-image'
 import { Pressable } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 import { Button } from './Button'
+import { Flame, MessageCircle } from './icons'
 import { ReactionChip, type ReactionChipCount } from './ReactionChip'
 import { type SwipeAction, SwipeableRow } from './SwipeableRow'
 import { Text } from './Text'
@@ -76,7 +76,7 @@ function ParticipantStack({ participants }: { participants: BondfireParticipant[
           size={24}
           marginLeft={index === 0 ? 0 : -8}
           borderWidth={1}
-          borderColor="$background"
+          borderColor="background"
         />
       ))}
     </XStack>
@@ -86,11 +86,11 @@ function ParticipantStack({ participants }: { participants: BondfireParticipant[
 function getRibbonConfig(badge: NonNullable<BondfireRowProps['badge']>) {
   switch (badge) {
     case 'invited':
-      return { label: 'Invited', bgColor: '$secondary' as const }
+      return { label: 'Invited', bgColor: 'secondary' as const }
     case 'sparked':
-      return { label: 'Sparked', bgColor: '$primary' as const }
+      return { label: 'Sparked', bgColor: 'primary' as const }
     case 'kindled':
-      return { label: 'Kindled', bgColor: '$warning' as const }
+      return { label: 'Kindled', bgColor: 'warning' as const }
   }
 }
 
@@ -115,7 +115,7 @@ function BondfireRibbon({ badge }: { badge: NonNullable<BondfireRowProps['badge'
       <Text
         fontSize={9}
         fontWeight="900"
-        color="$background"
+        color="background"
         textTransform="uppercase"
         letterSpacing={0.8}
       >
@@ -172,7 +172,7 @@ export function BondfireRow({
         paddingVertical={12}
         gap={12}
         alignItems="center"
-        backgroundColor="$background"
+        backgroundColor="background"
       >
         {/* Thumbnail */}
         <YStack
@@ -180,9 +180,9 @@ export function BondfireRow({
           height={74}
           borderRadius={16}
           overflow="hidden"
-          backgroundColor="$backgroundHover"
+          backgroundColor="backgroundHover"
           borderWidth={1}
-          borderColor="$borderColor"
+          borderColor="borderColor"
           alignItems="center"
           justifyContent="center"
         >
@@ -196,19 +196,19 @@ export function BondfireRow({
               cachePolicy="memory-disk"
             />
           ) : (
-            <Flame size={30} color="$primary" />
+            <Flame size={30} color="primary" />
           )}
           {isLive && (
             <YStack
               position="absolute"
               top={6}
               left={6}
-              backgroundColor="$error"
+              backgroundColor="error"
               paddingHorizontal={7}
               paddingVertical={3}
               borderRadius={10}
             >
-              <Text color="$color" fontSize={9} fontWeight="900">
+              <Text color="color" fontSize={9} fontWeight="900">
                 LIVE
               </Text>
             </YStack>
@@ -223,13 +223,13 @@ export function BondfireRow({
               <Text fontSize={16} fontWeight="900" numberOfLines={1}>
                 {displayTitle}
               </Text>
-              <Text fontSize={12} color="$placeholderColor" numberOfLines={1}>
+              <Text fontSize={12} color="placeholderColor" numberOfLines={1}>
                 {creatorName ? `${creatorName} · ${subtitle}` : subtitle}
               </Text>
             </YStack>
 
-            <Button variant="outline" size="$sm" onPress={onRespond} borderColor="$primary">
-              <Text color="$color" fontWeight="800">
+            <Button variant="outline" size="sm" onPress={onRespond} borderColor="primary">
+              <Text color="color" fontWeight="800">
                 Respond
               </Text>
             </Button>
@@ -238,8 +238,8 @@ export function BondfireRow({
           <XStack alignItems="center" gap={14}>
             {participants.length > 0 ? <ParticipantStack participants={participants} /> : null}
             <XStack alignItems="center" gap={6}>
-              <MessageCircle size={16} color="$placeholderColor" />
-              <Text fontSize={13} color="$placeholderColor">
+              <MessageCircle size={16} color="placeholderColor" />
+              <Text fontSize={13} color="placeholderColor">
                 {responses} {responses === 1 ? 'response' : 'responses'}
               </Text>
             </XStack>
@@ -257,11 +257,11 @@ export function BondfireRow({
                 paddingHorizontal={8}
                 paddingVertical={3}
                 borderRadius={8}
-                backgroundColor="$backgroundHover"
+                backgroundColor="backgroundHover"
                 borderWidth={1}
-                borderColor="$borderColor"
+                borderColor="borderColor"
               >
-                <Text fontSize={11} fontWeight="800" color="$primary" numberOfLines={1}>
+                <Text fontSize={11} fontWeight="800" color="primary" numberOfLines={1}>
                   {campLabel}
                 </Text>
               </YStack>

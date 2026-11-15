@@ -3,7 +3,7 @@ import { type GetProps, styled, YStack } from 'tamagui'
 export const Container = styled(YStack, {
   name: 'Container',
   flex: 1,
-  backgroundColor: '$background',
+  backgroundColor: 'background',
 
   variants: {
     centered: {
@@ -14,22 +14,22 @@ export const Container = styled(YStack, {
     },
     padded: {
       true: {
-        padding: '$4',
+        padding: '4',
       },
       sm: {
-        padding: '$2',
+        padding: '2',
       },
       md: {
-        padding: '$4',
+        padding: '4',
       },
       lg: {
-        padding: '$6',
+        padding: '6',
       },
     },
     safe: {
       true: {
-        paddingTop: '$6',
-        paddingBottom: '$4',
+        paddingTop: '6',
+        paddingBottom: '4',
       },
     },
   } as const,
@@ -42,9 +42,9 @@ export const Row = styled(YStack, {
 
   variants: {
     gap: {
-      sm: { gap: '$2' },
-      md: { gap: '$3' },
-      lg: { gap: '$4' },
+      sm: { gap: '2' },
+      md: { gap: '3' },
+      lg: { gap: '4' },
     },
     justify: {
       start: { justifyContent: 'flex-start' },
@@ -61,9 +61,9 @@ export const Column = styled(YStack, {
 
   variants: {
     gap: {
-      sm: { gap: '$2' },
-      md: { gap: '$3' },
-      lg: { gap: '$4' },
+      sm: { gap: '2' },
+      md: { gap: '3' },
+      lg: { gap: '4' },
     },
     align: {
       start: { alignItems: 'flex-start' },

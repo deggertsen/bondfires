@@ -1,7 +1,7 @@
-import { Flame } from '@tamagui/lucide-icons'
 import { Image } from 'expo-image'
 import { Pressable, ScrollView } from 'react-native'
 import { XStack, YStack } from 'tamagui'
+import { Flame } from './icons'
 import { Text } from './Text'
 
 export type EmberRailItem = {
@@ -62,7 +62,7 @@ function RailTile({
         <Text
           fontSize={12}
           fontWeight={muted ? '600' : '700'}
-          color={muted ? '$placeholderColor' : '$color'}
+          color={muted ? 'placeholderColor' : 'color'}
           numberOfLines={1}
         >
           {label}
@@ -82,13 +82,13 @@ function CountBadge({ count }: { count: number }) {
       height={23}
       paddingHorizontal={5}
       borderRadius={12}
-      backgroundColor="$backgroundPress"
+      backgroundColor="backgroundPress"
       borderWidth={2}
-      borderColor="$background"
+      borderColor="background"
       alignItems="center"
       justifyContent="center"
     >
-      <Text fontSize={11} fontWeight="900" color="$color">
+      <Text fontSize={11} fontWeight="900" color="color">
         {count > 99 ? '99+' : count}
       </Text>
     </YStack>
@@ -108,7 +108,7 @@ function MiniThumbnail({
       height={PREVIEW_THUMB_SIZE}
       borderRadius={3}
       overflow="hidden"
-      backgroundColor="$borderColor"
+      backgroundColor="borderColor"
       alignItems="center"
       justifyContent="center"
     >
@@ -149,8 +149,8 @@ function AllFiresPreview({
         height={RING_SIZE}
         borderRadius={RING_SIZE / 2}
         borderWidth={1.5}
-        borderColor="$borderColor"
-        backgroundColor="$backgroundHover"
+        borderColor="borderColor"
+        backgroundColor="backgroundHover"
         overflow="hidden"
         alignItems="center"
         justifyContent="center"
@@ -159,7 +159,7 @@ function AllFiresPreview({
           <YStack position="absolute" top={9} left={12} right={10} gap={3}>
             {rows.map((item, index) => (
               <YStack key={item.id} gap={3} opacity={PREVIEW_ROW_OPACITY[index] ?? 0.25}>
-                {index > 0 ? <YStack height={1} backgroundColor="$borderColor" /> : null}
+                {index > 0 ? <YStack height={1} backgroundColor="borderColor" /> : null}
                 <XStack height={PREVIEW_THUMB_SIZE} alignItems="center" gap={3}>
                   {item.unread ? (
                     <YStack
@@ -168,7 +168,7 @@ function AllFiresPreview({
                       width={3}
                       height={3}
                       borderRadius={2}
-                      backgroundColor="$primary"
+                      backgroundColor="primary"
                     />
                   ) : null}
                   <MiniThumbnail item={item} renderThumbnail={renderThumbnail} />
@@ -177,14 +177,14 @@ function AllFiresPreview({
                       width={index % 2 === 0 ? '90%' : '75%'}
                       height={3}
                       borderRadius={2}
-                      backgroundColor="$placeholderColor"
+                      backgroundColor="placeholderColor"
                       opacity={0.7}
                     />
                     <YStack
                       width={index % 2 === 0 ? '55%' : '65%'}
                       height={3}
                       borderRadius={2}
-                      backgroundColor="$placeholderColor"
+                      backgroundColor="placeholderColor"
                       opacity={0.4}
                     />
                   </YStack>
@@ -193,14 +193,14 @@ function AllFiresPreview({
                     height={7}
                     borderRadius={3}
                     borderWidth={1}
-                    borderColor="$primary"
+                    borderColor="primary"
                   />
                 </XStack>
               </YStack>
             ))}
           </YStack>
         ) : (
-          <Flame size={24} color="$primary" />
+          <Flame size={24} color="primary" />
         )}
       </YStack>
       <CountBadge count={totalCount} />
@@ -252,14 +252,14 @@ export function EmberRail({
             height={RING_SIZE}
             borderRadius={RING_SIZE / 2}
             borderWidth={RING_WIDTH}
-            borderColor={item.unread ? '$primary' : '$borderColor'}
+            borderColor={item.unread ? 'primary' : 'borderColor'}
             padding={RING_PADDING}
           >
             <YStack
               flex={1}
               borderRadius={(RING_SIZE - RING_WIDTH * 2 - RING_PADDING * 2) / 2}
               overflow="hidden"
-              backgroundColor="$backgroundHover"
+              backgroundColor="backgroundHover"
               alignItems="center"
               justifyContent="center"
               opacity={item.unread ? 1 : 0.6}
@@ -274,7 +274,7 @@ export function EmberRail({
                   cachePolicy="memory-disk"
                 />
               ) : (
-                <Flame size={22} color="$primary" />
+                <Flame size={22} color="primary" />
               )}
             </YStack>
             {item.unread ? (
@@ -285,9 +285,9 @@ export function EmberRail({
                 width={18}
                 height={18}
                 borderRadius={9}
-                backgroundColor="$primary"
+                backgroundColor="primary"
                 borderWidth={2}
-                borderColor="$background"
+                borderColor="background"
               />
             ) : item.isUnansweredSpark ? (
               <XStack
@@ -297,9 +297,9 @@ export function EmberRail({
                 width={13}
                 height={13}
                 borderRadius={7}
-                backgroundColor="$secondary"
+                backgroundColor="secondary"
                 borderWidth={2}
-                borderColor="$background"
+                borderColor="background"
               />
             ) : null}
           </YStack>

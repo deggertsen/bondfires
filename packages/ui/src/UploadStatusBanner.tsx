@@ -1,4 +1,3 @@
-import { AlertTriangle, CheckCircle2, CloudUpload, RefreshCw, WifiOff } from '@tamagui/lucide-icons'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   type AccessibilityActionEvent,
@@ -18,6 +17,7 @@ import Reanimated, {
   withTiming,
 } from 'react-native-reanimated'
 import { XStack, YStack } from 'tamagui'
+import { AlertTriangle, CheckCircle2, CloudUpload, RefreshCw, WifiOff } from './icons'
 import { Spinner } from './Spinner'
 import { Text } from './Text'
 
@@ -49,10 +49,10 @@ export interface UploadStatusBannerProps {
 }
 
 const TONE_COLOR = {
-  progress: '$primary',
-  warning: '$warning',
-  error: '$error',
-  success: '$success',
+  progress: 'primary',
+  warning: 'warning',
+  error: 'error',
+  success: 'success',
 } as const
 
 const ICONS = {
@@ -123,7 +123,7 @@ function IndeterminateBar() {
         <Animated.View
           style={{ width: segment, height: 2, transform: reduceMotion ? [] : [{ translateX }] }}
         >
-          <YStack flex={1} backgroundColor="$primary" />
+          <YStack flex={1} backgroundColor="primary" />
         </Animated.View>
       ) : null}
     </YStack>
@@ -249,15 +249,15 @@ export function UploadStatusBanner({
         justifyContent="center"
         overflow="hidden"
       >
-        <YStack position="absolute" fullscreen backgroundColor={toneColor} opacity={0.15} />
+        <YStack position="absolute" inset={0} backgroundColor={toneColor} opacity={0.15} />
         <Icon size={18} color={toneColor} />
       </YStack>
 
       <YStack flex={1} gap={2}>
-        <Text fontSize={14} fontWeight="700" lineHeight={18} numberOfLines={1}>
+        <Text fontSize={14} fontWeight="700" lineHeight="18px" numberOfLines={1}>
           {title}
         </Text>
-        <Text fontSize={12.5} lineHeight={17} color="$placeholderColor" numberOfLines={2}>
+        <Text fontSize={12.5} lineHeight="17px" color="placeholderColor" numberOfLines={2}>
           {message}
         </Text>
       </YStack>
@@ -269,25 +269,25 @@ export function UploadStatusBanner({
           borderRadius={999}
           alignItems="center"
           justifyContent="center"
-          backgroundColor={tone === 'error' ? '$primary' : 'transparent'}
+          backgroundColor={tone === 'error' ? 'primary' : 'transparent'}
           borderWidth={tone === 'error' ? 0 : 1}
-          borderColor="$borderColor"
+          borderColor="borderColor"
         >
           <Text
             fontSize={13}
             fontWeight={tone === 'error' ? '700' : '600'}
-            color={tone === 'error' ? '$background' : '$color'}
+            color={tone === 'error' ? 'background' : 'color'}
             numberOfLines={1}
           >
             {actionLabel}
           </Text>
         </XStack>
       ) : percent !== undefined ? (
-        <Text fontSize={13} fontWeight="700" color="$primary">
+        <Text fontSize={13} fontWeight="700" color="primary">
           {percent}%
         </Text>
       ) : tone === 'progress' ? (
-        <Spinner size="small" color="$primary" />
+        <Spinner size="small" color="primary" />
       ) : null}
     </XStack>
   )
@@ -302,19 +302,20 @@ export function UploadStatusBanner({
       <GestureDetector gesture={swipe}>
         <Reanimated.View style={swipeStyle}>
           <YStack
-            onLayout={(event) => {
+            onLayout={(layoutEvent) => {
+              const event = layoutEvent as LayoutChangeEvent
               const { width: measuredWidth, height: measuredHeight } = event.nativeEvent.layout
               width.value = measuredWidth
               if (measuredHeight > 0) totalHeight.value = measuredHeight
               onLayout?.(event)
             }}
             paddingTop={topInset}
-            backgroundColor="$backgroundStrong"
+            backgroundColor="backgroundStrong"
             borderBottomWidth={1}
-            borderBottomColor={tone === 'error' ? '$error' : '$borderColor'}
+            borderBottomColor={tone === 'error' ? 'error' : 'borderColor'}
           >
             {tone === 'error' ? (
-              <YStack position="absolute" fullscreen backgroundColor="$error" opacity={0.1} />
+              <YStack position="absolute" inset={0} backgroundColor="error" opacity={0.1} />
             ) : null}
             {hasAction ? (
               <Pressable
@@ -335,14 +336,16 @@ export function UploadStatusBanner({
                 accessibilityLabel={`${title}. ${message}`}
                 accessibilityLiveRegion="polite"
                 accessibilityActions={accessibilityActions}
-                onAccessibilityAction={handleAccessibilityAction}
+                onAccessibilityAction={(event) =>
+                  handleAccessibilityAction(event as unknown as AccessibilityActionEvent)
+                }
               >
                 {content}
               </YStack>
             )}
             {percent !== undefined ? (
               <YStack position="absolute" left={0} bottom={0} height={2} width={`${percent}%`}>
-                <YStack flex={1} backgroundColor="$primary" />
+                <YStack flex={1} backgroundColor="primary" />
               </YStack>
             ) : progress === 'indeterminate' ? (
               <IndeterminateBar />

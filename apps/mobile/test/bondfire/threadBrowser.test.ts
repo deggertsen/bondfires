@@ -12,7 +12,7 @@ vi.mock('@bondfires/ui', () => ({
   Text: 'Text',
   UserAvatar: 'UserAvatar',
 }))
-vi.mock('@tamagui/lucide-icons', () => ({
+vi.mock('@bondfires/ui/icons', () => ({
   Bell: 'Bell',
   Check: 'Check',
   ChevronDown: 'ChevronDown',
@@ -27,7 +27,8 @@ vi.mock('tamagui', async () => {
     XStack: 'XStack',
     YStack: 'YStack',
     Sheet: Object.assign((props: Record<string, unknown>) => createElement('Sheet', props), {
-      Frame: 'Frame',
+      Container: 'Container',
+      Background: 'Background',
       Handle: 'Handle',
       Overlay: 'Overlay',
     }),

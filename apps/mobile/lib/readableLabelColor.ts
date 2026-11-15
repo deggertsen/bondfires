@@ -2,7 +2,7 @@
  * Picks a legible label color for text drawn on an arbitrary solid fill,
  * such as a camp's accent color behind its "Spark Here" button.
  *
- * Theme fills (`$primarySolid`, `$errorSolid`) already have a matching
+ * Theme fills (`primarySolid`, `errorSolid`) already have a matching
  * `$colorOn*` token; this is only for user-chosen colors that don't.
  */
 

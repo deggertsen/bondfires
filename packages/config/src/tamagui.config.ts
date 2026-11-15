@@ -1,8 +1,8 @@
 import { createAnimations } from '@tamagui/animations-react-native'
 import { createInterFont } from '@tamagui/font-inter'
 import { shorthands } from '@tamagui/shorthands'
-import { tokens as defaultTokens } from '@tamagui/themes'
-import { createTamagui, createTheme } from 'tamagui'
+import { createTamagui, createTokens } from 'tamagui'
+import { legacyColors, legacyRadius, legacySize, legacySpace, legacyZIndex } from './legacyTokens'
 
 // ============================================
 // Bondfire Brand Colors
@@ -40,10 +40,12 @@ const bondfireColors = {
 // ============================================
 // Custom Tokens with Bondfire Colors
 // ============================================
-const tokens = {
-  ...defaultTokens,
+const tokens = createTokens({
+  space: legacySpace,
+  radius: legacyRadius,
+  zIndex: legacyZIndex,
   color: {
-    ...defaultTokens.color,
+    ...legacyColors,
     // Brand colors as tokens
     bondfireCopper: bondfireColors.bondfireCopper,
     deepEmber: bondfireColors.deepEmber,
@@ -59,19 +61,36 @@ const tokens = {
     warmWhite: bondfireColors.warmWhite,
   },
   size: {
-    ...defaultTokens.size,
+    ...legacySize,
     // Named size tokens used by Button and other components
-    sm: defaultTokens.size['$3'],
-    md: defaultTokens.size['$4'],
-    lg: defaultTokens.size['$5'],
-    xl: defaultTokens.size['$6'],
+    sm: legacySize['3'],
+    md: legacySize['4'],
+    lg: legacySize['5'],
+    xl: legacySize['6'],
   },
+})
+
+// ============================================
+// Theme key aliases
+// ============================================
+// Tamagui v3 components read kebab-case theme keys (`background-hover`,
+// `border-color`, `placeholder-color`, ...). Our code keeps the camelCase names,
+// so every multi-word key is also published under its kebab-case spelling.
+const kebab = (key: string) => key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`).replace(/(\d+)/, '-$1')
+
+function withKebabAliases<T extends Record<string, string>>(theme: T): T & Record<string, string> {
+  const aliased: Record<string, string> = { ...theme }
+  for (const [key, value] of Object.entries(theme)) {
+    const alias = kebab(key)
+    if (alias !== key) aliased[alias] = value
+  }
+  return aliased as T & Record<string, string>
 }
 
 // ============================================
 // Dark Theme (Primary)
 // ============================================
-const darkTheme = createTheme({
+const darkTheme = withKebabAliases({
   // Backgrounds
   background: bondfireColors.obsidian,
   backgroundHover: bondfireColors.gunmetal,
@@ -170,7 +189,7 @@ const darkTheme = createTheme({
 // ============================================
 // Light Theme
 // ============================================
-const lightTheme = createTheme({
+const lightTheme = withKebabAliases({
   // Backgrounds
   background: bondfireColors.warmWhite,
   backgroundHover: bondfireColors.whiteSmoke,
@@ -267,13 +286,14 @@ const lightTheme = createTheme({
 })
 
 function onPrimaryTheme<T extends typeof darkTheme>(base: T): T {
-  return {
+  // Re-run the alias pass so `color-hover` etc. follow the remapped values.
+  return withKebabAliases({
     ...base,
     color: base.colorOnPrimary,
     colorHover: base.colorOnPrimary,
     colorPress: base.colorOnPrimary,
     colorFocus: base.colorOnPrimary,
-  }
+  })
 }
 
 // ============================================
@@ -350,6 +370,10 @@ const bodyFont = createInterFont(
       lg: 18,
       xl: 20,
     },
+    // v3's createInterFont defaults body text to weight 400; v1 used 300.
+    weight: {
+      4: '300',
+    },
   },
   {
     sizeLineHeight: (size) => size + 6,
@@ -361,9 +385,6 @@ const bodyFont = createInterFont(
 // ============================================
 export const config = createTamagui({
   animations,
-  defaultTheme: 'dark',
-  shouldAddPrefersColorThemes: true,
-  themeClassNameOnRoot: true,
   shorthands,
   fonts: {
     heading: headingFont,
@@ -374,11 +395,24 @@ export const config = createTamagui({
     light: lightTheme,
     // Sub-themes for content on a filled primary/destructive surface. Button
     // renders those variants under `theme="onPrimary"`, so any child that asks
-    // for `$color` (label Text, lucide icons, Spinner) resolves to white.
+    // for `color` (label Text, lucide icons, Spinner) resolves to white.
     dark_onPrimary: onPrimaryTheme(darkTheme),
     light_onPrimary: onPrimaryTheme(lightTheme),
   },
   tokens,
+  // Control size ladder (Switch, Input base frame, etc.) expressed in our own
+  // frozen tokens. The v3 default ladder points at Config v6 names (`base`,
+  // radius `sm`/`md`) that this config does not define.
+  sizing: {
+    default: 'md',
+    sizes: {
+      xs: { fontSize: '1', controlFontSize: '1', paddingInline: '2', paddingBlock: '1', gap: '1', radius: '3' },
+      sm: { fontSize: 'sm', controlFontSize: 'sm', paddingInline: '3', paddingBlock: '1-5', gap: '1-5', radius: '4' },
+      md: { fontSize: 'sm', controlFontSize: 'md', paddingInline: '4', paddingBlock: '2', gap: '2', radius: '4' },
+      lg: { fontSize: 'md', controlFontSize: 'lg', paddingInline: '5', paddingBlock: '2', gap: '2', radius: '4' },
+      xl: { fontSize: 'lg', controlFontSize: 'xl', paddingInline: '6', paddingBlock: '2-5', gap: '2-5', radius: '6' },
+    },
+  },
   media: {
     xs: { maxWidth: 660 },
     sm: { maxWidth: 800 },
@@ -394,6 +428,14 @@ export const config = createTamagui({
     tall: { minHeight: 820 },
     hoverNone: { hover: 'none' },
     pointerCoarse: { pointer: 'coarse' },
+  },
+  settings: {
+    defaultFont: 'body',
+    shouldAddPrefersColorThemes: true,
+    // Keep Tamagui v1 layout semantics: v3 defaults to CSS flex expansion and
+    // `position: static`, which would change every flex: 1 and absolute child.
+    styleCompat: 'legacy',
+    defaultPosition: 'relative',
   },
 })
 

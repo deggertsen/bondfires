@@ -103,7 +103,7 @@ function FlyingEmoji({
         style,
       ]}
     >
-      <Text fontSize={16} lineHeight={20}>
+      <Text fontSize={16} lineHeight="20px">
         {emoji}
       </Text>
     </Animated.View>
@@ -130,8 +130,8 @@ function ReactionChipBody({ counts, count, isNew, size }: ChipBodyProps) {
       paddingHorizontal={metrics.paddingX}
       borderRadius={metrics.height / 2}
       borderWidth={1}
-      borderColor={isNew ? '$secondary' : '$borderColor'}
-      backgroundColor="$backgroundHover"
+      borderColor={isNew ? 'secondary' : 'borderColor'}
+      backgroundColor="backgroundHover"
       alignItems="center"
       gap={4}
       overflow="hidden"
@@ -143,11 +143,11 @@ function ReactionChipBody({ counts, count, isNew, size }: ChipBodyProps) {
           left={0}
           right={0}
           bottom={0}
-          backgroundColor="$secondary"
+          backgroundColor="secondary"
           opacity={0.14}
         />
       ) : null}
-      <Text fontSize={metrics.emoji} lineHeight={metrics.height - 4}>
+      <Text fontSize={metrics.emoji} lineHeight={`${metrics.height - 4}px`}>
         {counts
           .slice(0, MAX_SHOWN_EMOJIS)
           .map((entry) => entry.emoji)
@@ -156,7 +156,7 @@ function ReactionChipBody({ counts, count, isNew, size }: ChipBodyProps) {
       <Text
         fontSize={metrics.count}
         fontWeight="800"
-        color={isNew ? '$secondary' : '$color'}
+        color={isNew ? 'secondary' : 'color'}
         style={{ fontVariant: ['tabular-nums'] }}
       >
         {count}

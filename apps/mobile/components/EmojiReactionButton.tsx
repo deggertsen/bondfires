@@ -1,4 +1,4 @@
-import { Smile } from '@tamagui/lucide-icons'
+import { Smile } from '@bondfires/ui/icons'
 import { Pressable } from 'react-native'
 import { YStack } from 'tamagui'
 import { VIDEO_OVERLAY_COLORS } from './videoOverlayColors'

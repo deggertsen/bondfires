@@ -30,22 +30,22 @@ const TOAST_MUTED_TEXT_COLOR = 'rgba(255, 255, 255, 0.82)'
 const TYPE_STYLES: Record<ToastType, { bg: string; border: string; text: string }> = {
   error: {
     bg: 'rgba(239, 68, 68, 0.95)',
-    border: '$error',
+    border: 'error',
     text: TOAST_TEXT_COLOR,
   },
   warn: {
     bg: 'rgba(245, 158, 11, 0.95)',
-    border: '$warning',
+    border: 'warning',
     text: TOAST_TEXT_COLOR,
   },
   info: {
     bg: 'rgba(156, 163, 175, 0.95)',
-    border: '$placeholderColor',
+    border: 'placeholderColor',
     text: TOAST_TEXT_COLOR,
   },
   success: {
     bg: 'rgba(34, 197, 94, 0.95)',
-    border: '$success',
+    border: 'success',
     text: TOAST_TEXT_COLOR,
   },
 }
@@ -101,13 +101,13 @@ function ToastItem({ entry, onDismiss }: { entry: ToastEntry; onDismiss: (id: st
                 fontSize={14}
                 fontWeight="600"
                 color={styles.text}
-                lineHeight={18}
+                lineHeight="18px"
                 numberOfLines={2}
               >
                 {entry.message}
               </TamaguiText>
               {entry.referenceId ? (
-                <TamaguiText fontSize={11} color={TOAST_MUTED_TEXT_COLOR} lineHeight={14}>
+                <TamaguiText fontSize={11} color={TOAST_MUTED_TEXT_COLOR} lineHeight="14px">
                   Ref: {entry.referenceId}
                 </TamaguiText>
               ) : null}

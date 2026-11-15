@@ -1,7 +1,7 @@
 import { notepadActions, notepadStore$, useAppThemeColors } from '@bondfires/app'
 import { Button, Text, XStack, YStack } from '@bondfires/ui'
+import { Trash2 } from '@bondfires/ui/icons'
 import { useValue } from '@legendapp/state/react'
-import { Trash2 } from '@tamagui/lucide-icons'
 import { useEffect, useRef } from 'react'
 import { Pressable, StyleSheet, TextInput, type TextInputInstance } from 'react-native'
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
@@ -65,8 +65,8 @@ export function NotepadOverlay({ onClose, autoFocus = true }: NotepadOverlayProp
 
           {/* Clear button */}
           <XStack paddingTop={16}>
-            <Button variant="secondary" size="$sm" onPress={handleClear} icon={Trash2}>
-              <Text color={'$color'}>Clear Notepad</Text>
+            <Button variant="secondary" size="sm" onPress={handleClear} icon={Trash2}>
+              <Text color={'color'}>Clear Notepad</Text>
             </Button>
           </XStack>
         </YStack>

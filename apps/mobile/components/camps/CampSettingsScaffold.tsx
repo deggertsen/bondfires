@@ -1,6 +1,6 @@
 import { useAppThemeColors } from '@bondfires/app'
 import { Spinner, Text } from '@bondfires/ui'
-import { ChevronLeft, ChevronRight } from '@tamagui/lucide-icons'
+import { ChevronLeft, ChevronRight } from '@bondfires/ui/icons'
 import { useQuery } from 'convex/react'
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import type { ReactNode } from 'react'
@@ -74,7 +74,7 @@ export function CampSettingsScaffold({
   }
 
   return (
-    <YStack flex={1} backgroundColor={'$background'}>
+    <YStack flex={1} backgroundColor={'background'}>
       <StatusBar barStyle={statusBarStyle} />
       <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
         <XStack
@@ -91,11 +91,11 @@ export function CampSettingsScaffold({
               borderRadius={21}
               alignItems="center"
               justifyContent="center"
-              backgroundColor={'$backgroundHover'}
+              backgroundColor={'backgroundHover'}
               borderWidth={1}
-              borderColor={'$borderColor'}
+              borderColor={'borderColor'}
             >
-              <ChevronLeft size={22} color={'$color'} />
+              <ChevronLeft size={22} color={'color'} />
             </YStack>
           </Pressable>
           <YStack flex={1}>
@@ -103,7 +103,7 @@ export function CampSettingsScaffold({
               {title}
             </Text>
             {subtitle ? (
-              <Text fontSize={12} color={'$placeholderColor'} numberOfLines={1}>
+              <Text fontSize={12} color={'placeholderColor'} numberOfLines={1}>
                 {subtitle}
               </Text>
             ) : null}
@@ -112,14 +112,14 @@ export function CampSettingsScaffold({
 
         {camp === undefined ? (
           <YStack flex={1} alignItems="center" justifyContent="center">
-            <Spinner size="large" color={'$primary'} />
+            <Spinner size="large" color={'primary'} />
           </YStack>
         ) : camp === null ? (
           <YStack flex={1} alignItems="center" justifyContent="center" padding={32} gap={8}>
             <Text fontSize={18} fontWeight="900" textAlign="center">
               Settings are unavailable
             </Text>
-            <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
+            <Text fontSize={14} color={'placeholderColor'} textAlign="center">
               Only the owner of an active camp can change its settings.
             </Text>
           </YStack>
@@ -172,24 +172,24 @@ export function SettingsRow({
         paddingHorizontal={14}
         paddingVertical={10}
         borderBottomWidth={last ? 0 : 1}
-        borderBottomColor={'$borderColor'}
+        borderBottomColor={'borderColor'}
       >
         <YStack flex={1} gap={2}>
           <Text fontSize={15} fontWeight="700">
             {label}
           </Text>
           {detail ? (
-            <Text fontSize={12} color={'$placeholderColor'} numberOfLines={2}>
+            <Text fontSize={12} color={'placeholderColor'} numberOfLines={2}>
               {detail}
             </Text>
           ) : null}
         </YStack>
         {value ? (
-          <Text fontSize={14} color={'$placeholderColor'} numberOfLines={1} maxWidth={170}>
+          <Text fontSize={14} color={'placeholderColor'} numberOfLines={1} maxWidth={170}>
             {value}
           </Text>
         ) : null}
-        <ChevronRight size={16} color={'$placeholderColor'} />
+        <ChevronRight size={16} color={'placeholderColor'} />
       </XStack>
     </Pressable>
   )
@@ -200,9 +200,9 @@ export function SettingsGroup({ children }: { children: ReactNode }) {
   return (
     <YStack
       borderRadius={14}
-      backgroundColor={'$backgroundHover'}
+      backgroundColor={'backgroundHover'}
       borderWidth={1}
-      borderColor={'$borderColor'}
+      borderColor={'borderColor'}
       overflow="hidden"
     >
       {children}

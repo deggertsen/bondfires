@@ -79,7 +79,7 @@ function DetailsForm({ camp }: { camp: OwnedCamp }) {
           paddingVertical={10}
           accessibilityLabel="Camp purpose"
         />
-        <Text fontSize={12} color={'$placeholderColor'}>
+        <Text fontSize={12} color={'placeholderColor'}>
           Shown on the camp page and in Browse.
         </Text>
       </YStack>
@@ -92,15 +92,15 @@ function DetailsForm({ camp }: { camp: OwnedCamp }) {
           placeholder="What’s on your mind this week?"
           accessibilityLabel="Camp prompt"
         />
-        <Text fontSize={12} color={'$placeholderColor'}>
+        <Text fontSize={12} color={'placeholderColor'}>
           A question to get people started when they spark here.
         </Text>
       </YStack>
-      <Button variant="primary" size="$lg" disabled={isSaving} onPress={handleSave}>
+      <Button variant="primary" size="lg" disabled={isSaving} onPress={handleSave}>
         {isSaving ? (
-          <Spinner color={'$color'} />
+          <Spinner color={'color'} />
         ) : (
-          <Text color={'$color'} fontWeight="900">
+          <Text color={'color'} fontWeight="900">
             Save
           </Text>
         )}

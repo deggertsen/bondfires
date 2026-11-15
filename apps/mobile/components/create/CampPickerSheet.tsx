@@ -1,7 +1,7 @@
 import { useAppThemeColors } from '@bondfires/app'
 import { Text } from '@bondfires/ui'
+import { Check, Clock, Plus, Search, Tent } from '@bondfires/ui/icons'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { Check, Clock, Plus, Search, Tent } from '@tamagui/lucide-icons'
 import { useMemo } from 'react'
 import { Pressable, TextInput } from 'react-native'
 import { Sheet, XStack, YStack } from 'tamagui'
@@ -79,7 +79,7 @@ export function CampPickerSheet({
         <CampRow key={camp._id} camp={camp} selected={false} pending />
       ))}
       {!hasMatches ? (
-        <Text color={'$placeholderColor'} fontSize={14} paddingVertical={20} textAlign="center">
+        <Text color={'placeholderColor'} fontSize={14} paddingVertical={20} textAlign="center">
           No camps match “{query.trim()}”.
         </Text>
       ) : null}
@@ -95,22 +95,31 @@ export function CampPickerSheet({
       moveOnKeyboardChange
       {...(list.showSearch ? { snapPoints: [85] } : { snapPointsMode: 'fit' as const })}
     >
-      <Sheet.Overlay backgroundColor="rgba(0,0,0,0.45)" />
-      <Sheet.Frame
-        backgroundColor={'$backgroundPress'}
-        borderTopLeftRadius={20}
-        borderTopRightRadius={20}
+      <Sheet.Overlay
+        backgroundColor="rgba(0,0,0,0.45)"
+        transition="quick"
+        opacity={{ default: 1, enter: 0, exit: 0 }}
+      />
+      <Sheet.Container
         paddingHorizontal={16}
         paddingTop={12}
         paddingBottom={32}
         gap={12}
+        borderTopLeftRadius={20}
+        borderTopRightRadius={20}
+        overflow="hidden"
       >
-        <Sheet.Handle backgroundColor={'$borderColor'} />
+        <Sheet.Background
+          backgroundColor={'backgroundPress'}
+          borderTopLeftRadius={20}
+          borderTopRightRadius={20}
+        />
+        <Sheet.Handle backgroundColor={'borderColor'} />
         <XStack alignItems="baseline" justifyContent="space-between" paddingHorizontal={2}>
           <Text fontSize={20} fontWeight="800">
             Choose a camp
           </Text>
-          <Text fontSize={13} color={'$placeholderColor'}>
+          <Text fontSize={13} color={'placeholderColor'}>
             {list.pickableCount === 1 ? '1 camp' : `${list.pickableCount} camps`}
           </Text>
         </XStack>
@@ -122,10 +131,10 @@ export function CampPickerSheet({
             paddingHorizontal={14}
             borderRadius={12}
             borderWidth={1}
-            borderColor={'$borderColor'}
-            backgroundColor={'$background'}
+            borderColor={'borderColor'}
+            backgroundColor={'background'}
           >
-            <Search size={16} color={'$placeholderColor'} />
+            <Search size={16} color={'placeholderColor'} />
             <TextInput
               value={query}
               onChangeText={(text) => query$.set(text)}
@@ -150,18 +159,18 @@ export function CampPickerSheet({
             height={48}
             borderRadius={12}
             borderWidth={1}
-            borderColor={'$borderColor'}
+            borderColor={'borderColor'}
             alignItems="center"
             justifyContent="center"
             gap={8}
           >
-            <Plus size={16} color={'$primary'} />
+            <Plus size={16} color={'primary'} />
             <Text fontSize={14} fontWeight="700">
               Find more camps
             </Text>
           </XStack>
         </Pressable>
-      </Sheet.Frame>
+      </Sheet.Container>
     </Sheet>
   )
 }
@@ -173,7 +182,7 @@ function SectionLabel({ children }: { children: string }) {
       fontWeight="700"
       letterSpacing={0.7}
       textTransform="uppercase"
-      color={'$placeholderColor'}
+      color={'placeholderColor'}
       paddingTop={10}
       paddingBottom={2}
       paddingHorizontal={2}
@@ -190,11 +199,11 @@ export function CampSwatch({ color, size = 40 }: { color: string | undefined; si
       width={size}
       height={size}
       borderRadius={size * 0.3}
-      backgroundColor={color ?? '$backgroundHover'}
+      backgroundColor={color ?? 'backgroundHover'}
       alignItems="center"
       justifyContent="center"
     >
-      <Tent size={size / 2} color={'$color'} />
+      <Tent size={size / 2} color={'color'} />
     </YStack>
   )
 }
@@ -227,17 +236,17 @@ function CampRow({
           <Text
             fontSize={16}
             fontWeight={selected ? '800' : '700'}
-            color={pending ? '$placeholderColor' : '$color'}
+            color={pending ? 'placeholderColor' : 'color'}
             numberOfLines={1}
           >
             {camp.name}
           </Text>
-          <Text fontSize={12} color={'$placeholderColor'} numberOfLines={1}>
+          <Text fontSize={12} color={'placeholderColor'} numberOfLines={1}>
             {pending ? 'Request pending' : (memberCount ?? camp.theme ?? 'Camp')}
           </Text>
         </YStack>
-        {selected ? <Check size={20} color={'$primary'} /> : null}
-        {pending ? <Clock size={16} color={'$placeholderColor'} /> : null}
+        {selected ? <Check size={20} color={'primary'} /> : null}
+        {pending ? <Clock size={16} color={'placeholderColor'} /> : null}
       </XStack>
     </Pressable>
   )

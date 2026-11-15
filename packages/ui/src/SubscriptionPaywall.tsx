@@ -5,11 +5,11 @@ import type {
   SubscriptionTier,
   TierInfo,
 } from '@bondfires/app'
-import { Check, Crown, Flame, Sparkles, Star, X } from '@tamagui/lucide-icons'
 import { useState } from 'react'
 import { Pressable, ScrollView } from 'react-native'
 import { Card, Sheet, Text, XStack, YStack } from 'tamagui'
 import { Button } from './Button'
+import { Check, Crown, Flame, Sparkles, Star, X } from './icons'
 import { Spinner } from './Spinner'
 
 const TIER_ICONS: Record<string, typeof Flame> = {
@@ -86,24 +86,28 @@ export function SubscriptionPaywall({
       disableDrag={false}
     >
       <Sheet.Overlay
-        animation="lazy"
-        enterStyle={{ opacity: 0 }}
-        exitStyle={{ opacity: 0 }}
         backgroundColor="rgba(0,0,0,0.6)"
+        transition="quick"
+        opacity={{ default: 1, enter: 0, exit: 0 }}
       />
-      <Sheet.Frame
-        backgroundColor={'$backgroundHover'}
+      <Sheet.Container
+        padding={20}
         borderTopLeftRadius={24}
         borderTopRightRadius={24}
-        padding={20}
+        overflow="hidden"
       >
+        <Sheet.Background
+          backgroundColor={'backgroundHover'}
+          borderTopLeftRadius={24}
+          borderTopRightRadius={24}
+        />
         {/* Header */}
         <XStack justifyContent="space-between" alignItems="center" marginBottom={20}>
           <YStack>
-            <Text color={'$color'} fontSize={22} fontWeight="700">
+            <Text color={'color'} fontSize={22} fontWeight="700">
               Choose a Plan
             </Text>
-            <Text color={'$placeholderColor'} fontSize={14} marginTop={4}>
+            <Text color={'placeholderColor'} fontSize={14} marginTop={4}>
               Create bondfires with Plus or higher
             </Text>
           </YStack>
@@ -116,11 +120,11 @@ export function SubscriptionPaywall({
               width={36}
               height={36}
               borderRadius={18}
-              backgroundColor={'$borderColor'}
+              backgroundColor={'borderColor'}
               alignItems="center"
               justifyContent="center"
             >
-              <X size={20} color={'$color'} />
+              <X size={20} color={'color'} />
             </YStack>
           </Pressable>
         </XStack>
@@ -128,8 +132,8 @@ export function SubscriptionPaywall({
         {/* Product fetch failure — offer retry */}
         {productFetchFailed && onRetryProductFetch ? (
           <Card
-            backgroundColor={'$backgroundPress'}
-            borderColor={'$error'}
+            backgroundColor={'backgroundPress'}
+            borderColor={'error'}
             borderWidth={1}
             padding={12}
             borderRadius={12}
@@ -137,22 +141,22 @@ export function SubscriptionPaywall({
           >
             <XStack alignItems="center" justifyContent="space-between">
               <YStack flex={1} paddingRight={12}>
-                <Text color={'$error'} fontSize={13} fontWeight="600">
+                <Text color={'error'} fontSize={13} fontWeight="600">
                   Couldn't load pricing
                 </Text>
-                <Text color={'$placeholderColor'} fontSize={12} marginTop={2}>
+                <Text color={'placeholderColor'} fontSize={12} marginTop={2}>
                   Check your connection and try again.
                 </Text>
               </YStack>
               <Button
                 variant="outline"
-                size="$sm"
-                borderColor={'$error'}
+                size="sm"
+                borderColor={'error'}
                 onPress={onRetryProductFetch}
                 disabled={isRetryingProductFetch}
               >
-                {isRetryingProductFetch ? <Spinner size="small" color={'$error'} /> : null}
-                <Text color={'$error'} fontSize={13} fontWeight="600">
+                {isRetryingProductFetch ? <Spinner size="small" color={'error'} /> : null}
+                <Text color={'error'} fontSize={13} fontWeight="600">
                   {isRetryingProductFetch ? 'Retrying…' : 'Retry'}
                 </Text>
               </Button>
@@ -162,8 +166,8 @@ export function SubscriptionPaywall({
 
         {/* Error message */}
         {lastError && (
-          <Card backgroundColor={'$error'} padding={12} borderRadius={12} marginBottom={16}>
-            <Text color={'$color'} fontSize={13}>
+          <Card backgroundColor={'error'} padding={12} borderRadius={12} marginBottom={16}>
+            <Text color={'color'} fontSize={13}>
               {lastError}
             </Text>
           </Card>
@@ -242,14 +246,14 @@ export function SubscriptionPaywall({
             disabled={isRestoring}
           >
             <XStack alignItems="center" gap={6}>
-              {isRestoring ? <Spinner size="small" color={'$placeholderColor'} /> : null}
-              <Text color={'$placeholderColor'} fontSize={13} textDecorationLine="underline">
+              {isRestoring ? <Spinner size="small" color={'placeholderColor'} /> : null}
+              <Text color={'placeholderColor'} fontSize={13} textDecorationLine="underline">
                 {isRestoring ? 'Restoring...' : 'Restore purchases'}
               </Text>
             </XStack>
           </Pressable>
         </XStack>
-      </Sheet.Frame>
+      </Sheet.Container>
     </Sheet>
   )
 }
@@ -304,14 +308,14 @@ function TierCard({
   const selectedProductId = activePeriod === 'annual' ? annualProductId : productId
   const selectedPrice = activePeriod === 'annual' ? annualPrice : price
   const isComingSoon = !isFree && (!isAvailable || !selectedProductId || !selectedPrice)
-  const accentColor = isFeatured ? '$secondary' : isCurrent ? '$primary' : '$borderColor'
-  const priceColor = isComingSoon ? '$placeholderColor' : '$secondary'
-  const ctaColor = isFeatured ? '$color' : '$primary'
+  const accentColor = isFeatured ? 'secondary' : isCurrent ? 'primary' : 'borderColor'
+  const priceColor = isComingSoon ? 'placeholderColor' : 'secondary'
+  const ctaColor = isFeatured ? 'color' : 'primary'
   const ctaLabel = isFree ? 'Continue free' : `Choose ${displayName}`
 
   return (
     <Card
-      backgroundColor={'$backgroundPress'}
+      backgroundColor={'backgroundPress'}
       borderWidth={isFeatured ? 2 : isCurrent ? 2 : 1}
       borderColor={accentColor}
       borderRadius={12}
@@ -321,16 +325,16 @@ function TierCard({
       {/* Tier header */}
       <XStack justifyContent="space-between" alignItems="center" marginBottom={12}>
         <XStack alignItems="center" gap={8}>
-          <TierIcon size={20} color={'$primary'} />
+          <TierIcon size={20} color={'primary'} />
           <YStack gap={2}>
             <XStack alignItems="center" gap={8}>
-              <Text color={'$color'} fontSize={18} fontWeight="700">
+              <Text color={'color'} fontSize={18} fontWeight="700">
                 {displayName}
               </Text>
               {isFeatured ? <PlanBadge label="Recommended" /> : null}
             </XStack>
             {isCurrent ? (
-              <Text color={'$primary'} fontSize={11}>
+              <Text color={'primary'} fontSize={11}>
                 Current
               </Text>
             ) : null}
@@ -341,7 +345,7 @@ function TierCard({
             {selectedPrice ?? 'Coming Soon'}
           </Text>
           {!isFree && !isComingSoon && (
-            <Text color={'$placeholderColor'} fontSize={11}>
+            <Text color={'placeholderColor'} fontSize={11}>
               /{activePeriod === 'annual' ? 'year' : 'month'}
             </Text>
           )}
@@ -349,7 +353,7 @@ function TierCard({
       </XStack>
 
       {/* Description */}
-      <Text color={'$placeholderColor'} fontSize={13} marginBottom={12}>
+      <Text color={'placeholderColor'} fontSize={13} marginBottom={12}>
         {description}
       </Text>
 
@@ -377,12 +381,12 @@ function TierCard({
         {features.map((feature) => (
           <XStack key={feature.label} alignItems="center" gap={8}>
             {feature.included ? (
-              <Check size={14} color={'$success'} />
+              <Check size={14} color={'success'} />
             ) : (
-              <X size={14} color={'$placeholderColor'} opacity={0.45} />
+              <X size={14} color={'placeholderColor'} opacity={0.45} />
             )}
             <Text
-              color={feature.included ? '$color' : '$placeholderColor'}
+              color={feature.included ? 'color' : 'placeholderColor'}
               fontSize={13}
               opacity={feature.included ? 1 : 0.55}
             >
@@ -396,32 +400,32 @@ function TierCard({
       {isCurrent ? (
         <Button
           variant="outline"
-          size="$md"
+          size="md"
           disabled
           opacity={0.7}
-          borderColor={'$primary'}
-          color={'$primary'}
+          borderColor={'primary'}
+          color={'primary'}
         >
-          <Text color={'$primary'} fontWeight="600">
+          <Text color={'primary'} fontWeight="600">
             Current plan
           </Text>
         </Button>
       ) : (
         <Button
           variant={isFeatured ? 'primary' : 'outline'}
-          size="$md"
+          size="md"
           disabled={isPurchasing || isComingSoon}
           onPress={() => onPurchase(tier, selectedProductId ?? undefined)}
           borderColor={
-            isFeatured ? 'transparent' : isAvailable ? '$placeholderColor' : '$borderColor'
+            isFeatured ? 'transparent' : isAvailable ? 'placeholderColor' : 'borderColor'
           }
           opacity={isPurchasing || isComingSoon ? 0.65 : 1}
         >
           <XStack alignItems="center" gap={8}>
             {isPurchasing ? (
-              <Spinner size="small" color={isFeatured ? '$color' : '$primary'} />
+              <Spinner size="small" color={isFeatured ? 'color' : 'primary'} />
             ) : null}
-            <Text color={isComingSoon ? '$placeholderColor' : ctaColor} fontWeight="600">
+            <Text color={isComingSoon ? 'placeholderColor' : ctaColor} fontWeight="600">
               {isFree
                 ? ctaLabel
                 : isComingSoon
@@ -469,45 +473,45 @@ function AddOnCard({
 
   return (
     <Card
-      backgroundColor={'$backgroundPress'}
+      backgroundColor={'backgroundPress'}
       borderWidth={1}
-      borderColor={'$borderColor'}
+      borderColor={'borderColor'}
       borderRadius={12}
       padding={16}
       opacity={isComingSoon ? 0.72 : 1}
     >
       <XStack justifyContent="space-between" alignItems="center" marginBottom={12}>
         <XStack alignItems="center" gap={8}>
-          <Sparkles size={20} color={'$secondary'} />
+          <Sparkles size={20} color={'secondary'} />
           <YStack gap={2}>
             <XStack alignItems="center" gap={8}>
-              <Text color={'$color'} fontSize={18} fontWeight="700">
+              <Text color={'color'} fontSize={18} fontWeight="700">
                 {addOn.displayName}
               </Text>
               <PlanBadge label="Pro add-on" />
             </XStack>
-            <Text color={'$placeholderColor'} fontSize={11}>
+            <Text color={'placeholderColor'} fontSize={11}>
               Permanent public camp kindling packs
             </Text>
           </YStack>
         </XStack>
         <YStack alignItems="flex-end">
           <Text
-            color={isComingSoon ? '$placeholderColor' : '$secondary'}
+            color={isComingSoon ? 'placeholderColor' : 'secondary'}
             fontSize={18}
             fontWeight="700"
           >
             {selectedPrice ?? 'Coming Soon'}
           </Text>
           {!isComingSoon ? (
-            <Text color={'$placeholderColor'} fontSize={11}>
+            <Text color={'placeholderColor'} fontSize={11}>
               {activeSize === 'tenPack' ? '10 kindling' : '3 kindling'}
             </Text>
           ) : null}
         </YStack>
       </XStack>
 
-      <Text color={'$placeholderColor'} fontSize={13} marginBottom={12}>
+      <Text color={'placeholderColor'} fontSize={13} marginBottom={12}>
         {addOn.description}
       </Text>
 
@@ -530,15 +534,15 @@ function AddOnCard({
 
       <Button
         variant="outline"
-        size="$md"
+        size="md"
         disabled={isPurchasing || isComingSoon}
         onPress={() => onPurchase(selectedProductId)}
-        borderColor={addOn.isAvailable ? '$placeholderColor' : '$borderColor'}
+        borderColor={addOn.isAvailable ? 'placeholderColor' : 'borderColor'}
         opacity={isPurchasing || isComingSoon ? 0.65 : 1}
       >
         <XStack alignItems="center" gap={8}>
-          {isPurchasing ? <Spinner size="small" color={'$primary'} /> : null}
-          <Text color={isComingSoon ? '$placeholderColor' : '$primary'} fontWeight="600">
+          {isPurchasing ? <Spinner size="small" color={'primary'} /> : null}
+          <Text color={isComingSoon ? 'placeholderColor' : 'primary'} fontWeight="600">
             {isComingSoon ? 'Coming soon' : isPurchasing ? 'Processing...' : 'Buy kindling pack'}
           </Text>
         </XStack>
@@ -551,13 +555,13 @@ function PlanBadge({ label }: { label: string }) {
   return (
     <YStack
       backgroundColor={'rgba(240, 171, 104, 0.13)'}
-      borderColor={'$secondary'}
+      borderColor={'secondary'}
       borderWidth={1}
       borderRadius={999}
       paddingHorizontal={8}
       paddingVertical={2}
     >
-      <Text color={'$secondary'} fontSize={10} fontWeight="700">
+      <Text color={'secondary'} fontSize={10} fontWeight="700">
         {label}
       </Text>
     </YStack>
@@ -587,17 +591,17 @@ function BillingOption({ label, price, selected, disabled, onPress }: BillingOpt
     >
       <YStack
         borderWidth={1}
-        borderColor={selected ? '$primary' : '$borderColor'}
-        backgroundColor={selected ? 'rgba(217, 119, 54, 0.13)' : '$backgroundHover'}
+        borderColor={selected ? 'primary' : 'borderColor'}
+        backgroundColor={selected ? 'rgba(217, 119, 54, 0.13)' : 'backgroundHover'}
         borderRadius={10}
         paddingVertical={8}
         paddingHorizontal={10}
         opacity={disabled ? 0.55 : 1}
       >
-        <Text color={'$color'} fontSize={12} fontWeight="700">
+        <Text color={'color'} fontSize={12} fontWeight="700">
           {label}
         </Text>
-        <Text color={'$placeholderColor'} fontSize={11} numberOfLines={1}>
+        <Text color={'placeholderColor'} fontSize={11} numberOfLines={1}>
           {price ?? 'Coming Soon'}
         </Text>
       </YStack>

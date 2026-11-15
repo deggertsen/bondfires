@@ -84,15 +84,10 @@ function ActionPanel({
             flex={1}
             alignItems="center"
             justifyContent="center"
-            backgroundColor={action.backgroundColor ?? '$backgroundHover'}
+            backgroundColor={action.backgroundColor ?? 'backgroundHover'}
             paddingHorizontal={8}
           >
-            <Text
-              fontSize={12}
-              fontWeight="800"
-              color={action.color ?? '$color'}
-              textAlign="center"
-            >
+            <Text fontSize={12} fontWeight="800" color={action.color ?? 'color'} textAlign="center">
               {action.label}
             </Text>
           </YStack>

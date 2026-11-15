@@ -1,8 +1,8 @@
 import { appActions, isTransientAuthError, telemetry, useAppThemeColors } from '@bondfires/app'
 import { Button, Input, Spinner, Text } from '@bondfires/ui'
+import { Flame } from '@bondfires/ui/icons'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { Flame } from '@tamagui/lucide-icons'
 import { useQuery } from 'convex/react'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useCallback, useEffect, useRef } from 'react'
@@ -190,7 +190,7 @@ export default function LoginScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor="$background">
+    <YStack flex={1} backgroundColor="background">
       <StatusBar barStyle={statusBarStyle} />
       <KeyboardAwareScrollView
         contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
@@ -204,19 +204,19 @@ export default function LoginScreen() {
               width={80}
               height={80}
               borderRadius={40}
-              backgroundColor={'$backgroundHover'}
+              backgroundColor={'backgroundHover'}
               alignItems="center"
               justifyContent="center"
               borderWidth={2}
-              borderColor={'$primary'}
+              borderColor={'primary'}
             >
-              <Flame size={40} color={'$primary'} />
+              <Flame size={40} color={'primary'} />
             </YStack>
             <YStack alignItems="center" gap={8}>
               <Text fontSize={28} fontWeight="700">
                 Welcome back
               </Text>
-              <Text fontSize={15} color={'$placeholderColor'}>
+              <Text fontSize={15} color={'placeholderColor'}>
                 Sign in to continue to Bondfires
               </Text>
             </YStack>
@@ -231,7 +231,7 @@ export default function LoginScreen() {
           {/* Form */}
           <YStack gap={20}>
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'color'}>
                 Email
               </Text>
               <Input
@@ -246,7 +246,7 @@ export default function LoginScreen() {
             </YStack>
 
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'color'}>
                 Password
               </Text>
               <Input
@@ -262,14 +262,14 @@ export default function LoginScreen() {
             </YStack>
 
             {error && (
-              <Text color={'$error'} fontSize={14}>
+              <Text color={'error'} fontSize={14}>
                 {error}
               </Text>
             )}
 
             <Button
               variant="ghost"
-              size="$sm"
+              size="sm"
               alignSelf="flex-end"
               onPress={() => router.push(routes.forgotPassword)}
             >
@@ -279,13 +279,13 @@ export default function LoginScreen() {
 
           {/* Actions */}
           <YStack gap={12}>
-            <Button variant="primary" size="$lg" onPress={handleLogin} disabled={isLoading}>
-              {isLoading ? <Spinner color={'$color'} /> : <Text color={'$color'}>Sign In</Text>}
+            <Button variant="primary" size="lg" onPress={handleLogin} disabled={isLoading}>
+              {isLoading ? <Spinner color={'color'} /> : <Text color={'color'}>Sign In</Text>}
             </Button>
 
             <Button
               variant="outline"
-              size="$md"
+              size="md"
               onPress={() => router.push(routes.signupWithRedirect(redirectTo))}
             >
               <Text>Create an account</Text>

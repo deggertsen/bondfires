@@ -33,7 +33,7 @@ function sourceFilesUnder(path) {
   const results = []
 
   for (const entry of readdirSync(absolutePath)) {
-    if (['.expo', 'build', 'dist', 'node_modules'].includes(entry)) continue
+    if (['.expo', '.tamagui', 'build', 'dist', 'node_modules'].includes(entry)) continue
     const child = resolve(absolutePath, entry)
     if (statSync(child).isDirectory()) {
       results.push(...sourceFilesUnder(relative(repositoryRoot, child)))

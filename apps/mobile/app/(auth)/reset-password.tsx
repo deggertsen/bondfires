@@ -1,8 +1,8 @@
 import { getAuthErrorMessage, useSystemThemeColors } from '@bondfires/app'
 import { Button, Input, Spinner, Text } from '@bondfires/ui'
+import { CheckCircle, ChevronLeft, KeyRound } from '@bondfires/ui/icons'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { CheckCircle, ChevronLeft, KeyRound } from '@tamagui/lucide-icons'
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { Pressable, StatusBar } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
@@ -109,7 +109,7 @@ export default function ResetPasswordScreen() {
     return (
       <YStack
         flex={1}
-        backgroundColor="$background"
+        backgroundColor="background"
         paddingHorizontal={24}
         alignItems="center"
         justifyContent="center"
@@ -121,20 +121,20 @@ export default function ResetPasswordScreen() {
             width={100}
             height={100}
             borderRadius={50}
-            backgroundColor={'$backgroundHover'}
+            backgroundColor={'backgroundHover'}
             alignItems="center"
             justifyContent="center"
             borderWidth={2}
-            borderColor={'$success'}
+            borderColor={'success'}
           >
-            <CheckCircle size={50} color={'$success'} />
+            <CheckCircle size={50} color={'success'} />
           </YStack>
 
           <YStack alignItems="center" gap={12}>
             <Text fontSize={24} fontWeight="700" textAlign="center">
               Password reset!
             </Text>
-            <Text fontSize={15} color={'$placeholderColor'} textAlign="center">
+            <Text fontSize={15} color={'placeholderColor'} textAlign="center">
               Your password has been updated. Redirecting to sign in...
             </Text>
           </YStack>
@@ -144,7 +144,7 @@ export default function ResetPasswordScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor="$background">
+    <YStack flex={1} backgroundColor="background">
       <StatusBar barStyle={statusBarStyle} />
 
       {/* Back button */}
@@ -154,11 +154,11 @@ export default function ResetPasswordScreen() {
             width={40}
             height={40}
             borderRadius={20}
-            backgroundColor={'$backgroundHover'}
+            backgroundColor={'backgroundHover'}
             alignItems="center"
             justifyContent="center"
           >
-            <ChevronLeft size={24} color={'$color'} />
+            <ChevronLeft size={24} color={'color'} />
           </YStack>
         </Pressable>
       </YStack>
@@ -175,19 +175,19 @@ export default function ResetPasswordScreen() {
               width={80}
               height={80}
               borderRadius={40}
-              backgroundColor={'$backgroundHover'}
+              backgroundColor={'backgroundHover'}
               alignItems="center"
               justifyContent="center"
               borderWidth={2}
-              borderColor={'$primary'}
+              borderColor={'primary'}
             >
-              <KeyRound size={36} color={'$primary'} />
+              <KeyRound size={36} color={'primary'} />
             </YStack>
             <YStack alignItems="center" gap={8}>
               <Text fontSize={28} fontWeight="700">
                 Set new password
               </Text>
-              <Text fontSize={15} color={'$placeholderColor'} textAlign="center">
+              <Text fontSize={15} color={'placeholderColor'} textAlign="center">
                 Enter the code from your email and choose a new password.
               </Text>
             </YStack>
@@ -196,7 +196,7 @@ export default function ResetPasswordScreen() {
           {/* Form */}
           <YStack gap={20}>
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'color'}>
                 Reset Code
               </Text>
               <Input
@@ -213,7 +213,7 @@ export default function ResetPasswordScreen() {
             </YStack>
 
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'color'}>
                 New Password
               </Text>
               <Input
@@ -229,7 +229,7 @@ export default function ResetPasswordScreen() {
             </YStack>
 
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'color'}>
                 Confirm Password
               </Text>
               <Input
@@ -245,7 +245,7 @@ export default function ResetPasswordScreen() {
             </YStack>
 
             {error && (
-              <Text color={'$error'} fontSize={14} textAlign="center">
+              <Text color={'error'} fontSize={14} textAlign="center">
                 {error}
               </Text>
             )}
@@ -255,22 +255,22 @@ export default function ResetPasswordScreen() {
           <YStack gap={12}>
             <Button
               variant="primary"
-              size="$lg"
+              size="lg"
               onPress={handleReset}
               disabled={isLoading || !code || !newPassword || !confirmPassword}
             >
               {isLoading ? (
-                <Spinner color={'$color'} />
+                <Spinner color={'color'} />
               ) : (
-                <Text color={'$color'}>Reset Password</Text>
+                <Text color={'color'}>Reset Password</Text>
               )}
             </Button>
 
-            <Button variant="ghost" size="$md" onPress={handleResend} disabled={isResending}>
+            <Button variant="ghost" size="md" onPress={handleResend} disabled={isResending}>
               {isResending ? (
-                <Spinner size="small" color={'$placeholderColor'} />
+                <Spinner size="small" color={'placeholderColor'} />
               ) : (
-                <Text color={'$placeholderColor'}>Didn't receive it? Resend code</Text>
+                <Text color={'placeholderColor'}>Didn't receive it? Resend code</Text>
               )}
             </Button>
           </YStack>

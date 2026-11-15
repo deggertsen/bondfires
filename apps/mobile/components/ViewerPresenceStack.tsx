@@ -118,9 +118,9 @@ export function ViewerPresenceStack({
           return (
             <YStack
               key={`live-${viewer._id}`}
-              animation="lazy"
-              enterStyle={{ opacity: 0, scale: 0.8 }}
-              exitStyle={{ opacity: 0, scale: 0.8 }}
+              transition="lazy"
+              opacity={{ default: 1, enter: 0, exit: 0 }}
+              scale={{ default: 1, enter: 0.8, exit: 0.8 }}
               alignItems="center"
               gap={2}
               marginBottom={overlapMargin}
@@ -184,9 +184,9 @@ function TransientReactionAvatar({
 }) {
   return (
     <YStack
-      animation="quick"
-      enterStyle={{ opacity: 0, scale: 0.8 }}
-      exitStyle={{ opacity: 0, scale: 0.8 }}
+      transition="quick"
+      opacity={{ default: 1, enter: 0, exit: 0 }}
+      scale={{ default: 1, enter: 0.8, exit: 0.8 }}
       alignItems="center"
       gap={2}
       marginBottom={marginBottom}
@@ -253,7 +253,7 @@ function AnimatedEmoji({
         transform: [{ scale: scaleRef }],
       }}
     >
-      <Text fontSize={EMOJI_FONT_SIZE} lineHeight={EMOJI_CONTAINER_SIZE}>
+      <Text fontSize={EMOJI_FONT_SIZE} lineHeight={`${EMOJI_CONTAINER_SIZE}px`}>
         {emoji}
       </Text>
     </Animated.View>

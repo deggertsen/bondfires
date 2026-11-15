@@ -1,6 +1,6 @@
 import { Text } from '@bondfires/ui'
+import { ChevronLeft, ChevronRight, FileText, Settings } from '@bondfires/ui/icons'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { ChevronLeft, ChevronRight, FileText, Settings } from '@tamagui/lucide-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { Stack, useRouter } from 'expo-router'
 import { type RefObject, useCallback, useEffect, useRef, useState } from 'react'
@@ -152,7 +152,7 @@ export function BondfirePlaybackScreen({
       <Stack.Screen options={{ headerShown: false }} />
       <StatusBar barStyle={statusBarStyle} />
 
-      <YStack flex={1} backgroundColor={'$background'}>
+      <YStack flex={1} backgroundColor={'background'}>
         <XStack
           position="absolute"
           top={0}
@@ -198,7 +198,7 @@ export function BondfirePlaybackScreen({
                   width={40}
                   height={PLAYBACK_HEADER_HEIGHT}
                   borderRadius={20}
-                  backgroundColor={showSettings ? '$primary' : OVERLAY_COLORS.pillBackground}
+                  backgroundColor={showSettings ? 'primary' : OVERLAY_COLORS.pillBackground}
                   alignItems="center"
                   justifyContent="center"
                 >
@@ -212,7 +212,7 @@ export function BondfirePlaybackScreen({
                   width={40}
                   height={PLAYBACK_HEADER_HEIGHT}
                   borderRadius={20}
-                  backgroundColor={showNotepad ? '$primary' : OVERLAY_COLORS.pillBackground}
+                  backgroundColor={showNotepad ? 'primary' : OVERLAY_COLORS.pillBackground}
                   alignItems="center"
                   justifyContent="center"
                 >

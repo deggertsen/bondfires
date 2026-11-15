@@ -12,12 +12,13 @@ function resolveThemeColor(
   color: TamaguiSpinnerProps['color'],
   theme: ReturnType<typeof useTheme>,
 ) {
-  if (typeof color !== 'string' || color[0] !== '$') {
+  if (typeof color !== 'string') {
     return color
   }
 
-  const themeKey = color.slice(1)
-  const themeValue = theme[themeKey as keyof typeof theme]
+  // Tamagui v3 tokens have no `$` sigil: resolve config-first (theme key, then
+  // color token) and treat anything unknown as a literal color.
+  const themeValue = theme[color as keyof typeof theme]
 
   return themeValue
     ? variableToString(themeValue)

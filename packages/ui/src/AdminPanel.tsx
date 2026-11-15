@@ -1,10 +1,10 @@
-import { ChevronDown, ChevronUp, Search, Shield, Smartphone } from '@tamagui/lucide-icons'
 import { useCallback, useEffect, useState } from 'react'
 import { Alert } from 'react-native'
 import { ScrollView, XStack, YStack } from 'tamagui'
 import { Button } from './Button'
 import { Card } from './Card'
 import { Input } from './Input'
+import { ChevronDown, ChevronUp, Search, Shield, Smartphone } from './icons'
 import { Spinner } from './Spinner'
 import { Text } from './Text'
 
@@ -198,15 +198,15 @@ export function AdminPanel({
       >
         <XStack justifyContent="space-between" alignItems="center">
           <XStack alignItems="center" gap={8}>
-            <Shield size={18} color={'$secondary'} />
+            <Shield size={18} color={'secondary'} />
             <Text fontSize={16} fontWeight="700">
               Admin Panel
             </Text>
           </XStack>
           {expanded ? (
-            <ChevronUp size={18} color={'$placeholderColor'} />
+            <ChevronUp size={18} color={'placeholderColor'} />
           ) : (
-            <ChevronDown size={18} color={'$placeholderColor'} />
+            <ChevronDown size={18} color={'placeholderColor'} />
           )}
         </XStack>
       </Card>
@@ -216,18 +216,18 @@ export function AdminPanel({
           <Card>
             <YStack gap={14}>
               <XStack alignItems="center" gap={8}>
-                <Smartphone size={18} color={'$primary'} />
+                <Smartphone size={18} color={'primary'} />
                 <YStack flex={1}>
                   <Text fontSize={15} fontWeight="700">
                     App Update Policy
                   </Text>
-                  <Text fontSize={12} color={'$placeholderColor'}>
+                  <Text fontSize={12} color={'placeholderColor'}>
                     Current minimum: {updateConfig?.minAppVersion ?? 'Not configured'}
                   </Text>
                 </YStack>
               </XStack>
 
-              <Text fontSize={13} color={'$warning'}>
+              <Text fontSize={13} color={'warning'}>
                 Only raise this after the version is downloadable from both app stores.
               </Text>
 
@@ -255,21 +255,21 @@ export function AdminPanel({
                         key={priority}
                         flex={1}
                         variant={selected ? 'primary' : 'outline'}
-                        size="$sm"
+                        size="sm"
                         disabled={isUpdatingConfig}
                         onPress={() => setUpdatePriority(priority)}
                         accessibilityRole="radio"
                         accessibilityState={{ selected }}
                         accessibilityLabel={`${label} update behavior`}
                       >
-                        <Text color={selected ? '$color' : '$placeholderColor'} fontSize={13}>
+                        <Text color={selected ? 'color' : 'placeholderColor'} fontSize={13}>
                           {label}
                         </Text>
                       </Button>
                     )
                   })}
                 </XStack>
-                <Text fontSize={12} color={'$placeholderColor'}>
+                <Text fontSize={12} color={'placeholderColor'}>
                   Immediate blocks outdated users. Flexible allows Android to download in the
                   background; iOS remains blocking.
                 </Text>
@@ -277,7 +277,7 @@ export function AdminPanel({
 
               <Button
                 variant="destructive"
-                size="$sm"
+                size="sm"
                 disabled={
                   isUpdatingConfig || updateConfig === undefined || minVersion.trim() === ''
                 }
@@ -285,9 +285,9 @@ export function AdminPanel({
                 accessibilityLabel="Save minimum app version policy"
               >
                 {isUpdatingConfig ? (
-                  <Spinner size="small" color={'$color'} />
+                  <Spinner size="small" color={'color'} />
                 ) : (
-                  <Text color={'$color'} fontWeight="600">
+                  <Text color={'color'} fontWeight="600">
                     Save Update Policy
                   </Text>
                 )}
@@ -313,23 +313,23 @@ export function AdminPanel({
                 />
                 <Button
                   variant="primary"
-                  size="$sm"
+                  size="sm"
                   onPress={handleSearch}
                   disabled={isSearching || emailQuery.trim().length < 2}
                 >
                   {isSearching ? (
-                    <Spinner size="small" color={'$color'} />
+                    <Spinner size="small" color={'color'} />
                   ) : (
                     <>
-                      <Search size={16} color={'$color'} />
-                      <Text color={'$color'}>Search</Text>
+                      <Search size={16} color={'color'} />
+                      <Text color={'color'}>Search</Text>
                     </>
                   )}
                 </Button>
               </XStack>
 
               {searchError && (
-                <Text fontSize={13} color={'$error'}>
+                <Text fontSize={13} color={'error'}>
                   {searchError}
                 </Text>
               )}
@@ -347,14 +347,14 @@ export function AdminPanel({
                                 <Text fontSize={14} fontWeight="600">
                                   {user.name ?? 'Unknown'}
                                 </Text>
-                                <Text fontSize={12} color={'$placeholderColor'}>
+                                <Text fontSize={12} color={'placeholderColor'}>
                                   {user.email}
                                 </Text>
-                                <Text fontSize={12} color={'$placeholderColor'}>
+                                <Text fontSize={12} color={'placeholderColor'}>
                                   Current:{' '}
                                   {user.forcedTier ? TIER_LABELS[user.forcedTier] : 'Store default'}
                                 </Text>
-                                <Text fontSize={12} color={'$placeholderColor'}>
+                                <Text fontSize={12} color={'placeholderColor'}>
                                   Kindling: {user.kindlingBalance ?? 0}
                                 </Text>
                               </YStack>
@@ -372,13 +372,13 @@ export function AdminPanel({
                                     <Button
                                       key={option.label}
                                       variant={isCurrent ? 'primary' : 'outline'}
-                                      size="$sm"
+                                      size="sm"
                                       disabled={isUpdating || isCurrent}
                                       onPress={() => handleSetTier(userEmail, option.value)}
                                     >
                                       <Text
                                         fontSize={12}
-                                        color={isCurrent ? '$color' : '$placeholderColor'}
+                                        color={isCurrent ? 'color' : 'placeholderColor'}
                                       >
                                         {isUpdating && isCurrent ? '...' : option.label}
                                       </Text>
@@ -400,14 +400,14 @@ export function AdminPanel({
                               />
                               <Button
                                 variant="primary"
-                                size="$sm"
+                                size="sm"
                                 disabled={grantingId === userEmail}
                                 onPress={() => handleGrantKindling(userEmail)}
                               >
                                 {grantingId === userEmail ? (
-                                  <Spinner size="small" color={'$color'} />
+                                  <Spinner size="small" color={'color'} />
                                 ) : (
-                                  <Text color={'$color'} fontSize={12}>
+                                  <Text color={'color'} fontSize={12}>
                                     Grant
                                   </Text>
                                 )}

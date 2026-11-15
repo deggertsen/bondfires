@@ -1,4 +1,4 @@
-import { Flag } from '@tamagui/lucide-icons'
+import { Flag } from '@bondfires/ui/icons'
 import { Pressable, type StyleProp, type ViewStyle } from 'react-native'
 import { YStack } from 'tamagui'
 import { VIDEO_OVERLAY_COLORS } from './videoOverlayColors'

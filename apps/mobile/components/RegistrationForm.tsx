@@ -1,8 +1,8 @@
 import { getAuthErrorMessage, useSystemThemeColors } from '@bondfires/app'
 import { Button, Input, Spinner, Text } from '@bondfires/ui'
+import { CheckSquare, Flame, ShieldCheck, Square, UserPlus } from '@bondfires/ui/icons'
 import { useAuthActions } from '@convex-dev/auth/react'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { CheckSquare, Flame, ShieldCheck, Square, UserPlus } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useRef } from 'react'
@@ -94,7 +94,7 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
   const destination = redirectTo ?? registrationDestination()
   if (completing && status === undefined)
     return (
-      <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center">
+      <YStack flex={1} backgroundColor="background" justifyContent="center" alignItems="center">
         <Spinner />
       </YStack>
     )
@@ -186,7 +186,7 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
   const submitDisabled = isLoading || ageStep === 'checking' || ageStep === 'blocked'
 
   return (
-    <YStack flex={1} backgroundColor="$background">
+    <YStack flex={1} backgroundColor="background">
       <StatusBar barStyle={statusBarStyle} />
       <KeyboardAwareScrollView
         contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
@@ -200,19 +200,19 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
               width={80}
               height={80}
               borderRadius={40}
-              backgroundColor={'$backgroundHover'}
+              backgroundColor={'backgroundHover'}
               alignItems="center"
               justifyContent="center"
               borderWidth={2}
-              borderColor={'$secondary'}
+              borderColor={'secondary'}
             >
-              <UserPlus size={36} color={'$secondary'} />
+              <UserPlus size={36} color={'secondary'} />
             </YStack>
             <YStack alignItems="center" gap={8}>
               <Text fontSize={28} fontWeight="700">
                 {completing ? 'Complete your registration' : 'Create account'}
               </Text>
-              <Text fontSize={15} color={'$placeholderColor'}>
+              <Text fontSize={15} color={'placeholderColor'}>
                 Join Bondfires and start sharing
               </Text>
             </YStack>
@@ -222,7 +222,7 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
           <YStack gap={16}>
             {/* First Name */}
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'color'}>
                 First Name
               </Text>
               <Input
@@ -237,7 +237,7 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
 
             {/* Last Name */}
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'color'}>
                 Last Name
               </Text>
               <Input
@@ -253,7 +253,7 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
             {/* Email is supplied by the provider for social accounts. */}
             {!completing && (
               <YStack gap={8}>
-                <Text variant="label" color={'$color'}>
+                <Text variant="label" color={'color'}>
                   Email
                 </Text>
                 <Input
@@ -269,7 +269,7 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
 
             {/* Gender */}
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'color'}>
                 Gender
               </Text>
               <XStack gap={8}>
@@ -279,11 +279,11 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
                     <Button
                       key={option.value}
                       variant={selected ? 'primary' : 'outline'}
-                      size="$md"
+                      size="md"
                       flex={1}
                       onPress={() => form$.gender.set(option.value)}
                     >
-                      <Text color={selected ? '$color' : '$placeholderColor'} fontWeight="900">
+                      <Text color={selected ? 'color' : 'placeholderColor'} fontWeight="900">
                         {option.label}
                       </Text>
                     </Button>
@@ -294,38 +294,38 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
 
             {/* Age: phone first, month/year only when the phone cannot answer. */}
             <YStack gap={8}>
-              <Text variant="label" color={'$color'}>
+              <Text variant="label" color={'color'}>
                 Age
               </Text>
               {ageStep === 'checking' && (
                 <XStack gap={8} alignItems="center">
-                  <Spinner size="small" color={'$placeholderColor'} />
-                  <Text fontSize={12} color={'$placeholderColor'}>
+                  <Spinner size="small" color={'placeholderColor'} />
+                  <Text fontSize={12} color={'placeholderColor'}>
                     Checking your device…
                   </Text>
                 </XStack>
               )}
               {(ageStep === 'teen' || ageStep === 'adult') && (
                 <XStack gap={8} alignItems="center">
-                  <ShieldCheck size={18} color={'$success'} />
-                  <Text fontSize={13} color={'$color'}>
+                  <ShieldCheck size={18} color={'success'} />
+                  <Text fontSize={13} color={'color'}>
                     Age confirmed from your device.
                   </Text>
                 </XStack>
               )}
               {ageStep === 'blocked' && (
                 <YStack
-                  backgroundColor="$backgroundHover"
-                  borderColor="$borderColor"
+                  backgroundColor="backgroundHover"
+                  borderColor="borderColor"
                   borderWidth={1}
-                  borderRadius="$3"
-                  padding="$3"
-                  gap="$2"
+                  borderRadius="3"
+                  padding="3"
+                  gap="2"
                 >
-                  <Text fontSize={13} fontWeight="700" color="$color">
+                  <Text fontSize={13} fontWeight="700" color="color">
                     Bondfires isn’t available for your age range
                   </Text>
-                  <Text fontSize={12} color="$placeholderColor" lineHeight={17}>
+                  <Text fontSize={12} color="placeholderColor" lineHeight="17px">
                     Your device reported an age range that Bondfires doesn’t support, so an account
                     can’t be created right now.
                   </Text>
@@ -333,12 +333,12 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
               )}
               {ageStep === 'ask' && (
                 <YStack gap={8}>
-                  <Text fontSize={12} color={'$placeholderColor'} marginBottom={4}>
+                  <Text fontSize={12} color={'placeholderColor'} marginBottom={4}>
                     Your birth month and year are private and are only used to keep 13–17 and adult
                     public communities separate. Private family Hearths require a separate
                     invitation and acceptance.
                   </Text>
-                  <Text fontSize={12} color={'$color'}>
+                  <Text fontSize={12} color={'color'}>
                     Birth month
                   </Text>
                   <XStack gap={6} flexWrap="wrap">
@@ -349,7 +349,7 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
                         <Button
                           key={label}
                           variant={selected ? 'primary' : 'outline'}
-                          size="$sm"
+                          size="sm"
                           minWidth={56}
                           accessibilityRole="radio"
                           accessibilityState={{ selected }}
@@ -358,14 +358,14 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
                             form$.error.set(null)
                           }}
                         >
-                          <Text color={selected ? '$color' : '$placeholderColor'} fontWeight="700">
+                          <Text color={selected ? 'color' : 'placeholderColor'} fontWeight="700">
                             {label}
                           </Text>
                         </Button>
                       )
                     })}
                   </XStack>
-                  <Text fontSize={12} color={'$color'}>
+                  <Text fontSize={12} color={'color'}>
                     Birth year
                   </Text>
                   <Input
@@ -383,17 +383,17 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
               )}
               {ageStep !== 'blocked' && (
                 <YStack
-                  backgroundColor="$backgroundHover"
-                  borderColor="$borderColor"
+                  backgroundColor="backgroundHover"
+                  borderColor="borderColor"
                   borderWidth={1}
-                  borderRadius="$3"
-                  padding="$3"
-                  gap="$2"
+                  borderRadius="3"
+                  padding="3"
+                  gap="2"
                 >
-                  <Text fontSize={13} fontWeight="700" color="$color">
+                  <Text fontSize={13} fontWeight="700" color="color">
                     Stay safe when sharing video
                   </Text>
-                  <Text fontSize={12} color="$placeholderColor" lineHeight={17}>
+                  <Text fontSize={12} color="placeholderColor" lineHeight="17px">
                     Never share your address, school, exact location, passwords, or private contact
                     details. Tell a trusted adult and use Report if an interaction feels unsafe.
                   </Text>
@@ -405,7 +405,7 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
               <>
                 {/* Password */}
                 <YStack gap={8}>
-                  <Text variant="label" color={'$color'}>
+                  <Text variant="label" color={'color'}>
                     Password
                   </Text>
                   <Input
@@ -421,7 +421,7 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
 
                 {/* Confirm Password */}
                 <YStack gap={8}>
-                  <Text variant="label" color={'$color'}>
+                  <Text variant="label" color={'color'}>
                     Confirm Password
                   </Text>
                   <Input
@@ -445,28 +445,28 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
             >
               <XStack gap={10} alignItems="flex-start">
                 {acceptedLegal ? (
-                  <CheckSquare size={22} color={'$primary'} />
+                  <CheckSquare size={22} color={'primary'} />
                 ) : (
-                  <Square size={22} color={'$placeholderColor'} />
+                  <Square size={22} color={'placeholderColor'} />
                 )}
-                <Text flex={1} fontSize={13} color={'$placeholderColor'}>
+                <Text flex={1} fontSize={13} color={'placeholderColor'}>
                   I agree to the{' '}
                   <Text
-                    color={'$primary'}
+                    color={'primary'}
                     onPress={() => Linking.openURL('https://bondfires.org/terms')}
                   >
                     Terms
                   </Text>{' '}
                   and{' '}
                   <Text
-                    color={'$primary'}
+                    color={'primary'}
                     onPress={() => Linking.openURL('https://bondfires.org/community-guidelines')}
                   >
                     Community Guidelines
                   </Text>
                   . I have also reviewed the{' '}
                   <Text
-                    color={'$primary'}
+                    color={'primary'}
                     onPress={() => Linking.openURL('https://bondfires.org/privacy')}
                   >
                     Privacy Policy
@@ -477,7 +477,7 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
             </Pressable>
 
             {error && (
-              <Text color={'$error'} fontSize={14}>
+              <Text color={'error'} fontSize={14}>
                 {error}
               </Text>
             )}
@@ -485,13 +485,13 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
 
           {/* Actions */}
           <YStack gap={12}>
-            <Button variant="primary" size="$lg" onPress={handleSignup} disabled={submitDisabled}>
+            <Button variant="primary" size="lg" onPress={handleSignup} disabled={submitDisabled}>
               {isLoading ? (
-                <Spinner color={'$color'} />
+                <Spinner color={'color'} />
               ) : (
                 <>
-                  <Flame size={20} color={'$color'} />
-                  <Text color={'$color'}>
+                  <Flame size={20} color={'color'} />
+                  <Text color={'color'}>
                     {completing ? 'Finish Registration' : 'Create Account'}
                   </Text>
                 </>
@@ -500,7 +500,7 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
 
             <Button
               variant="ghost"
-              size="$md"
+              size="md"
               disabled={isLoading}
               onPress={async () => {
                 if (completing) {
@@ -545,7 +545,7 @@ export function RegistrationForm({ completing = false }: { completing?: boolean 
                   )
                 }}
               >
-                <Text color="$error">Delete unfinished account</Text>
+                <Text color="error">Delete unfinished account</Text>
               </Button>
             )}
           </YStack>

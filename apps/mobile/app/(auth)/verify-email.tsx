@@ -1,7 +1,7 @@
 import { appActions, getAuthErrorMessage, telemetry, useAppThemeColors } from '@bondfires/app'
 import { Button, Input, Spinner, Text } from '@bondfires/ui'
+import { CheckCircle, Mail } from '@bondfires/ui/icons'
 import { useAuthActions } from '@convex-dev/auth/react'
-import { CheckCircle, Mail } from '@tamagui/lucide-icons'
 import { useQuery } from 'convex/react'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -139,7 +139,7 @@ export default function VerifyEmailScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor="$background">
+    <YStack flex={1} backgroundColor="background">
       <StatusBar barStyle={statusBarStyle} />
       <KeyboardAwareScrollView
         contentContainerStyle={{
@@ -157,16 +157,16 @@ export default function VerifyEmailScreen() {
               width={100}
               height={100}
               borderRadius={50}
-              backgroundColor={'$backgroundHover'}
+              backgroundColor={'backgroundHover'}
               alignItems="center"
               justifyContent="center"
               borderWidth={2}
-              borderColor={success ? '$success' : '$secondary'}
+              borderColor={success ? 'success' : 'secondary'}
             >
               {success ? (
-                <CheckCircle size={50} color={'$success'} />
+                <CheckCircle size={50} color={'success'} />
               ) : (
-                <Mail size={50} color={'$secondary'} />
+                <Mail size={50} color={'secondary'} />
               )}
             </YStack>
 
@@ -175,7 +175,7 @@ export default function VerifyEmailScreen() {
               <Text fontSize={24} fontWeight="700" textAlign="center">
                 {success ? 'Email verified!' : 'Check your email'}
               </Text>
-              <Text fontSize={15} color={'$placeholderColor'} textAlign="center" lineHeight={22}>
+              <Text fontSize={15} color={'placeholderColor'} textAlign="center" lineHeight="22px">
                 {success
                   ? 'Your account is now verified. Redirecting...'
                   : `We've sent a verification code to ${params.email ?? 'your email'}. Enter it below to verify your account.`}
@@ -199,7 +199,7 @@ export default function VerifyEmailScreen() {
                     error={!!error}
                   />
                   {error && (
-                    <Text color={'$error'} fontSize={14} textAlign="center">
+                    <Text color={'error'} fontSize={14} textAlign="center">
                       {error}
                     </Text>
                   )}
@@ -209,25 +209,25 @@ export default function VerifyEmailScreen() {
                 <YStack gap={12} width="100%" marginTop={8}>
                   <Button
                     variant="primary"
-                    size="$lg"
+                    size="lg"
                     onPress={handleVerify}
                     disabled={isVerifying || !code}
                   >
                     {isVerifying ? (
-                      <Spinner color={'$color'} />
+                      <Spinner color={'color'} />
                     ) : (
                       <>
-                        <CheckCircle size={20} color={'$color'} />
-                        <Text color={'$color'}>Verify Email</Text>
+                        <CheckCircle size={20} color={'color'} />
+                        <Text color={'color'}>Verify Email</Text>
                       </>
                     )}
                   </Button>
 
-                  <Button variant="ghost" size="$md" onPress={handleResend} disabled={isResending}>
+                  <Button variant="ghost" size="md" onPress={handleResend} disabled={isResending}>
                     {isResending ? (
-                      <Spinner size="small" color={'$placeholderColor'} />
+                      <Spinner size="small" color={'placeholderColor'} />
                     ) : (
-                      <Text color={'$placeholderColor'}>Didn't receive it? Resend</Text>
+                      <Text color={'placeholderColor'}>Didn't receive it? Resend</Text>
                     )}
                   </Button>
                 </YStack>

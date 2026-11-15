@@ -1,7 +1,7 @@
 import { getAuthErrorMessage, useSystemThemeColors } from '@bondfires/app'
 import { Button, Text } from '@bondfires/ui'
+import { ShieldAlert } from '@bondfires/ui/icons'
 import { useAuthActions } from '@convex-dev/auth/react'
-import { ShieldAlert } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useState } from 'react'
@@ -68,25 +68,25 @@ export default function AgeBlockedScreen() {
   return (
     <YStack
       flex={1}
-      backgroundColor="$background"
+      backgroundColor="background"
       justifyContent="center"
       alignItems="center"
       padding={24}
       gap={16}
     >
       <StatusBar barStyle={statusBarStyle} />
-      <ShieldAlert size={48} color="$primary" />
+      <ShieldAlert size={48} color="primary" />
       {teenOnAdultAccount ? (
         <>
           <Text fontSize={24} fontWeight="700" textAlign="center">
             This is an adult account
           </Text>
-          <Text fontSize={15} color="$placeholderColor" textAlign="center">
+          <Text fontSize={15} color="placeholderColor" textAlign="center">
             Your device says you’re 13–17. Bondfires keeps teen and adult communities separate, so
             you’ll need a teen account. Delete this account to start over, or if your device’s age
             is wrong, fix it in your phone’s account settings and the app will check again.
           </Text>
-          <Button variant="primary" size="$md" disabled={busy} onPress={handleStartOver}>
+          <Button variant="primary" size="md" disabled={busy} onPress={handleStartOver}>
             <Text>Delete account and start over</Text>
           </Button>
         </>
@@ -95,13 +95,13 @@ export default function AgeBlockedScreen() {
           <Text fontSize={24} fontWeight="700" textAlign="center">
             Bondfires isn’t available for your age range
           </Text>
-          <Text fontSize={15} color="$placeholderColor" textAlign="center">
+          <Text fontSize={15} color="placeholderColor" textAlign="center">
             Your device reported an age range that Bondfires doesn’t support. Your account has not
             been deleted. The app periodically checks your device again when you open it.
           </Text>
         </>
       )}
-      <Button variant="outline" size="$md" disabled={busy} onPress={handleSignOut}>
+      <Button variant="outline" size="md" disabled={busy} onPress={handleSignOut}>
         <Text>Sign out</Text>
       </Button>
     </YStack>

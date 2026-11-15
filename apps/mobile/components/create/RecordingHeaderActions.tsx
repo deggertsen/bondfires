@@ -1,5 +1,5 @@
 import { Spinner } from '@bondfires/ui'
-import { FileText, SwitchCamera } from '@tamagui/lucide-icons'
+import { FileText, SwitchCamera } from '@bondfires/ui/icons'
 import { Pressable } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 import { VIDEO_OVERLAY_COLORS } from '../videoOverlayColors'

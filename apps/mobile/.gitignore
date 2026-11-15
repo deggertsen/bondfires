@@ -46,3 +46,7 @@ credentials.json
 /ios
 /android
 build/
+
+# Tamagui v3 config build artifacts (tamagui.config.json stays tracked)
+.tamagui/*
+!.tamagui/tamagui.config.json

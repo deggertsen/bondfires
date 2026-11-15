@@ -1,5 +1,5 @@
 import { subscriptionActions } from '@bondfires/app'
-import { Lock } from '@tamagui/lucide-icons'
+import { Lock } from '@bondfires/ui/icons'
 import { Pressable, View } from 'react-native'
 import { Text, XStack, YStack } from 'tamagui'
 import { ALL_EMOJIS, FREE_EMOJIS, isFreeEmoji } from '../constants/emojis'

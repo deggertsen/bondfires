@@ -37,7 +37,7 @@ describe('contrastRatio', () => {
   })
 
   it('returns null for values that are not #RRGGBB', () => {
-    expect(contrastRatio('$primary', '#FFFFFF')).toBeNull()
+    expect(contrastRatio('primary', '#FFFFFF')).toBeNull()
     expect(contrastRatio('#FFF', '#FFFFFF')).toBeNull()
   })
 })
@@ -51,7 +51,7 @@ describe('readableLabelColor', () => {
   })
 
   it('falls back to white for unparseable input', () => {
-    expect(readableLabelColor('$primary')).toBe(LABEL_ON_DARK)
+    expect(readableLabelColor('primary')).toBe(LABEL_ON_DARK)
   })
 
   // #E63946 and #6C63FF top out at 4.41 and 4.32 with either label, so the

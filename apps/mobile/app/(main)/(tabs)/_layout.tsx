@@ -6,8 +6,8 @@ import {
   useAppThemeColors,
   useSubscription,
 } from '@bondfires/app'
+import { Flame, Home, Map, User } from '@bondfires/ui/icons'
 import { useValue } from '@legendapp/state/react'
-import { Flame, Home, Map, User } from '@tamagui/lucide-icons'
 import { Tabs, useRouter } from 'expo-router'
 import { useCallback } from 'react'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'

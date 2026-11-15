@@ -64,12 +64,12 @@ export function NotificationPreferencesSection() {
             <Text fontWeight="500" fontSize={14}>
               {category.label}
             </Text>
-            <Text fontSize={12} color={'$placeholderColor'}>
+            <Text fontSize={12} color={'placeholderColor'}>
               {category.description}
             </Text>
           </YStack>
           <Switch
-            size="$2"
+            size="sm"
             checked={prefs[category.key]}
             onCheckedChange={(checked: boolean) => {
               const wasEnabled = prefs[category.key]
@@ -86,11 +86,11 @@ export function NotificationPreferencesSection() {
                 telemetry.breadcrumb('push:settings:category:disable', { category: category.key })
               }
             }}
-            backgroundColor={'$borderColor'}
+            backgroundColor={'borderColor'}
           >
             <Switch.Thumb
-              animation="quick"
-              backgroundColor={prefs[category.key] ? '$primary' : '$placeholderColor'}
+              transition="quick"
+              backgroundColor={prefs[category.key] ? 'primary' : 'placeholderColor'}
             />
           </Switch>
         </XStack>
@@ -98,7 +98,7 @@ export function NotificationPreferencesSection() {
 
       {prefs.reminders && (
         <>
-          <Separator borderColor={'$borderColor'} />
+          <Separator borderColor={'borderColor'} />
           <YStack gap={8}>
             <Text fontWeight="500" fontSize={14}>
               Digest time
@@ -116,13 +116,13 @@ export function NotificationPreferencesSection() {
                       paddingVertical={6}
                       borderRadius={16}
                       borderWidth={1}
-                      borderColor={selected ? '$primary' : '$borderColor'}
-                      backgroundColor={selected ? '$primary' : 'transparent'}
+                      borderColor={selected ? 'primary' : 'borderColor'}
+                      backgroundColor={selected ? 'primary' : 'transparent'}
                     >
                       <Text
                         fontSize={13}
                         fontWeight={selected ? '700' : '500'}
-                        color={selected ? 'white' : '$color'}
+                        color={selected ? 'white' : 'color'}
                       >
                         {option.label}
                       </Text>
@@ -131,7 +131,7 @@ export function NotificationPreferencesSection() {
                 )
               })}
             </XStack>
-            <Text fontSize={12} color={'$placeholderColor'}>
+            <Text fontSize={12} color={'placeholderColor'}>
               One summary a day, in your local time
             </Text>
           </YStack>

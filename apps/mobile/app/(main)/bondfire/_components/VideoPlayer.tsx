@@ -1669,25 +1669,25 @@ export function VideoPlayer({
       <YStack
         flex={1}
         width={SCREEN_WIDTH}
-        backgroundColor={'$background'}
+        backgroundColor={'background'}
         alignItems="center"
         justifyContent="center"
         gap={14}
       >
         <YStack
-          backgroundColor={'$error'}
+          backgroundColor={'error'}
           paddingHorizontal={16}
           paddingVertical={8}
           borderRadius={16}
         >
-          <Text color={'$color'} fontWeight="900" fontSize={13}>
+          <Text color={'color'} fontWeight="900" fontSize={13}>
             PROCESSING
           </Text>
         </YStack>
-        <Text color={'$color'} fontSize={22} fontWeight="900">
+        <Text color={'color'} fontSize={22} fontWeight="900">
           Your video is processing
         </Text>
-        <Text color={'$placeholderColor'} fontSize={14}>
+        <Text color={'placeholderColor'} fontSize={14}>
           Your video will appear here when it is ready.
         </Text>
       </YStack>
@@ -1695,7 +1695,7 @@ export function VideoPlayer({
   }
 
   return (
-    <YStack flex={1} width={SCREEN_WIDTH} backgroundColor={'$background'}>
+    <YStack flex={1} width={SCREEN_WIDTH} backgroundColor={'background'}>
       {currentUrl && player ? (
         <VideoView
           ref={videoViewRef}
@@ -1711,7 +1711,7 @@ export function VideoPlayer({
         />
       ) : (
         <YStack flex={1} alignItems="center" justifyContent="center">
-          <Spinner size="large" color={'$primary'} />
+          <Spinner size="large" color={'primary'} />
         </YStack>
       )}
 
@@ -1780,12 +1780,12 @@ export function VideoPlayer({
           pointerEvents="none"
         >
           <YStack
-            backgroundColor={'$error'}
+            backgroundColor={'error'}
             paddingHorizontal={14}
             paddingVertical={7}
             borderRadius={16}
           >
-            <Text color={'$color'} fontSize={12} fontWeight="900">
+            <Text color={'color'} fontSize={12} fontWeight="900">
               {liveLabel}
             </Text>
           </YStack>

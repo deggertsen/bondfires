@@ -50,5 +50,10 @@
     "@convex-dev/auth": "^0.0.95",
     "convex": "^1.45.0",
     "google-auth-library": "10.9.1"
+  },
+  "resolutions": {
+    "@tamagui/core": "3.3.2",
+    "@tamagui/web": "3.3.2",
+    "tamagui": "3.3.2"
   }
 }

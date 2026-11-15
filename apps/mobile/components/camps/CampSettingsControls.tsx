@@ -1,6 +1,6 @@
 import { useAppThemeColors } from '@bondfires/app'
 import { Text } from '@bondfires/ui'
-import { Check, Globe, Lock, Minus, Plus } from '@tamagui/lucide-icons'
+import { Check, Globe, Lock, Minus, Plus } from '@bondfires/ui/icons'
 import { useEffect, useRef, useState } from 'react'
 import { Pressable, TextInput } from 'react-native'
 import { XStack, YStack } from 'tamagui'
@@ -13,7 +13,7 @@ import {
 
 export function SectionLabel({ children }: { children: string }) {
   return (
-    <Text fontSize={12} fontWeight="900" color={'$placeholderColor'} letterSpacing={0.4}>
+    <Text fontSize={12} fontWeight="900" color={'placeholderColor'} letterSpacing={0.4}>
       {children}
     </Text>
   )
@@ -38,9 +38,9 @@ export function SegmentedControl<T extends string>({
       padding={4}
       gap={6}
       borderRadius={12}
-      backgroundColor={'$backgroundHover'}
+      backgroundColor={'backgroundHover'}
       borderWidth={1}
-      borderColor={'$borderColor'}
+      borderColor={'borderColor'}
     >
       {options.map((option) => {
         const selected = option.value === value
@@ -57,12 +57,12 @@ export function SegmentedControl<T extends string>({
               borderRadius={9}
               alignItems="center"
               justifyContent="center"
-              backgroundColor={selected ? '$primary' : 'transparent'}
+              backgroundColor={selected ? 'primary' : 'transparent'}
             >
               <Text
                 fontSize={13}
                 fontWeight="900"
-                color={selected ? '$background' : '$color'}
+                color={selected ? 'background' : 'color'}
                 numberOfLines={1}
               >
                 {option.label}
@@ -108,13 +108,13 @@ function VisibilityCard({
         gap={6}
         padding={14}
         borderRadius={16}
-        backgroundColor={'$backgroundHover'}
+        backgroundColor={'backgroundHover'}
         borderWidth={selected ? 2 : 1}
-        borderColor={selected ? '$primary' : '$borderColor'}
+        borderColor={selected ? 'primary' : 'borderColor'}
         opacity={disabled ? 0.55 : 1}
       >
         <XStack alignItems="center" gap={10}>
-          <Icon size={22} color={'$color'} />
+          <Icon size={22} color={'color'} />
           {compact ? null : (
             <Text fontSize={16} fontWeight="900" flex={1}>
               {title}
@@ -127,9 +127,9 @@ function VisibilityCard({
               paddingVertical={2}
               borderRadius={5}
               borderWidth={1}
-              borderColor={'$borderColor'}
+              borderColor={'borderColor'}
             >
-              <Text fontSize={10} fontWeight="900" color={'$placeholderColor'}>
+              <Text fontSize={10} fontWeight="900" color={'placeholderColor'}>
                 {badge}
               </Text>
             </YStack>
@@ -139,11 +139,11 @@ function VisibilityCard({
               width={20}
               height={20}
               borderRadius={10}
-              backgroundColor={'$primary'}
+              backgroundColor={'primary'}
               alignItems="center"
               justifyContent="center"
             >
-              <Check size={12} color={'$background'} strokeWidth={3.5} />
+              <Check size={12} color={'background'} strokeWidth={3.5} />
             </YStack>
           ) : null}
         </XStack>
@@ -154,8 +154,8 @@ function VisibilityCard({
         ) : null}
         <Text
           fontSize={compact ? 12 : 13}
-          color={'$placeholderColor'}
-          lineHeight={compact ? 16 : 18}
+          color={'placeholderColor'}
+          lineHeight={compact ? '16px' : '18px'}
         >
           {detail}
         </Text>
@@ -233,7 +233,7 @@ export function VisibilityPicker({
         value={value.join}
         onChange={(join) => onChange({ ...value, join })}
       />
-      <Text fontSize={12} color={'$placeholderColor'} lineHeight={17}>
+      <Text fontSize={12} color={'placeholderColor'} lineHeight="17px">
         {value.join === 'open'
           ? 'Anyone can join right away.'
           : 'You approve each request to join.'}
@@ -244,11 +244,11 @@ export function VisibilityPicker({
     <YStack
       padding={12}
       borderRadius={12}
-      backgroundColor={'$backgroundHover'}
+      backgroundColor={'backgroundHover'}
       borderWidth={1}
-      borderColor={'$borderColor'}
+      borderColor={'borderColor'}
     >
-      <Text fontSize={12} color={'$placeholderColor'} lineHeight={17}>
+      <Text fontSize={12} color={'placeholderColor'} lineHeight="17px">
         People join with an invite code you share. You spark; members respond.
       </Text>
     </YStack>
@@ -318,9 +318,9 @@ export function LimitControl({
     <YStack
       padding={4}
       borderRadius={14}
-      backgroundColor={'$backgroundHover'}
+      backgroundColor={'backgroundHover'}
       borderWidth={1}
-      borderColor={'$borderColor'}
+      borderColor={'borderColor'}
     >
       <SegmentedControl
         accessibilityLabel={label}
@@ -360,12 +360,12 @@ export function LimitControl({
               width={44}
               height={44}
               borderRadius={12}
-              backgroundColor={'$backgroundPress'}
+              backgroundColor={'backgroundPress'}
               alignItems="center"
               justifyContent="center"
               opacity={value <= min ? 0.4 : 1}
             >
-              <Minus size={18} color={'$color'} />
+              <Minus size={18} color={'color'} />
             </YStack>
           </Pressable>
           <XStack
@@ -373,8 +373,8 @@ export function LimitControl({
             height={44}
             borderRadius={12}
             borderWidth={1}
-            borderColor={'$borderColor'}
-            backgroundColor={'$background'}
+            borderColor={'borderColor'}
+            backgroundColor={'background'}
             alignItems="center"
             justifyContent="center"
             gap={4}
@@ -411,7 +411,7 @@ export function LimitControl({
               }}
             />
             {unit ? (
-              <Text fontSize={12} color={'$placeholderColor'}>
+              <Text fontSize={12} color={'placeholderColor'}>
                 {unit}
               </Text>
             ) : null}
@@ -430,12 +430,12 @@ export function LimitControl({
               width={44}
               height={44}
               borderRadius={12}
-              backgroundColor={'$backgroundPress'}
+              backgroundColor={'backgroundPress'}
               alignItems="center"
               justifyContent="center"
               opacity={value >= max ? 0.4 : 1}
             >
-              <Plus size={18} color={'$color'} />
+              <Plus size={18} color={'color'} />
             </YStack>
           </Pressable>
         </XStack>

@@ -1,6 +1,6 @@
 import { Button, ReactionChip, Text, UserAvatar } from '@bondfires/ui'
+import { Bell, Check, ChevronDown, ChevronUp, Flame, Share2 } from '@bondfires/ui/icons'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { Bell, Check, ChevronDown, ChevronUp, Flame, Share2 } from '@tamagui/lucide-icons'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { FlatList, Pressable } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -80,7 +80,7 @@ function ThreadItemLines({
     <YStack flex={1} minWidth={0}>
       <XStack alignItems="center" gap={8} minWidth={0}>
         <XStack alignItems="center" gap={6} flex={1} minWidth={0}>
-          {item.isMainVideo ? <Flame size={11} color={'$primary'} /> : null}
+          {item.isMainVideo ? <Flame size={11} color={'primary'} /> : null}
           <Text
             fontSize={13}
             fontWeight="700"
@@ -155,29 +155,29 @@ function ThreadBrowserRow({
         // Border on every row, transparent unless playing, so highlighting a
         // row cannot change its height and the scroll math stays exact.
         borderWidth={1}
-        borderColor={isPlaying ? '$primary' : 'transparent'}
-        backgroundColor={isPlaying ? '$backgroundHover' : 'transparent'}
+        borderColor={isPlaying ? 'primary' : 'transparent'}
+        backgroundColor={isPlaying ? 'backgroundHover' : 'transparent'}
       >
         <UserAvatar name={item.creatorName} photoUrl={photoUrl} size={AVATAR_SIZE} />
         <ThreadItemLines
           item={item}
           summaryLines={2}
-          primaryColor={'$color'}
-          secondaryColor={'$placeholderColor'}
-          chipBackground={'$backgroundPress'}
+          primaryColor={'color'}
+          secondaryColor={'placeholderColor'}
+          chipBackground={'backgroundPress'}
           headerTrailing={
             <>
               <ReactionChip counts={item.reactionCounts} total={item.reactionTotal} size="sm" />
               {/* The video a push (or other deep link) opened the thread on. */}
-              {isLinked ? <Bell size={12} color={'$secondary'} /> : null}
+              {isLinked ? <Bell size={12} color={'secondary'} /> : null}
               {isPlaying ? (
-                <Text fontSize={9} fontWeight="800" color={'$primary'} letterSpacing={1}>
+                <Text fontSize={9} fontWeight="800" color={'primary'} letterSpacing={1}>
                   NOW
                 </Text>
               ) : isUnwatched ? (
                 <NewBadge label="NEW" />
               ) : (
-                <Check size={12} color={'$placeholderColor'} />
+                <Check size={12} color={'placeholderColor'} />
               )}
             </>
           }
@@ -190,12 +190,12 @@ function ThreadBrowserRow({
 function NewBadge({ label }: { label: string }) {
   return (
     <XStack
-      backgroundColor={'$secondary'}
+      backgroundColor={'secondary'}
       paddingHorizontal={6}
       paddingVertical={1}
       borderRadius={4}
     >
-      <Text fontSize={8} fontWeight="800" color={'$background'}>
+      <Text fontSize={8} fontWeight="800" color={'background'}>
         {label}
       </Text>
     </XStack>
@@ -240,7 +240,7 @@ function EarlierVideosRow({
               marginLeft={index === 0 ? 0 : -12}
               borderRadius={EARLIER_AVATAR_SIZE}
               borderWidth={2}
-              borderColor={'$backgroundPress'}
+              borderColor={'backgroundPress'}
             >
               <UserAvatar
                 name={item.creatorName}
@@ -251,17 +251,17 @@ function EarlierVideosRow({
           ))}
         </XStack>
         <YStack flex={1} minWidth={0}>
-          <Text fontSize={13} fontWeight="700" color={'$color'} numberOfLines={1}>
+          <Text fontSize={13} fontWeight="700" color={'color'} numberOfLines={1}>
             {items.length} earlier videos
           </Text>
-          <Text fontSize={11} color={'$placeholderColor'} numberOfLines={1}>
+          <Text fontSize={11} color={'placeholderColor'} numberOfLines={1}>
             All watched · {firstDay === lastDay ? firstDay : `${firstDay} – ${lastDay}`}
           </Text>
         </YStack>
-        <Text fontSize={11} color={'$placeholderColor'}>
+        <Text fontSize={11} color={'placeholderColor'}>
           Show
         </Text>
-        <ChevronDown size={14} color={'$placeholderColor'} />
+        <ChevronDown size={14} color={'placeholderColor'} />
       </XStack>
     </Pressable>
   )
@@ -274,16 +274,16 @@ function EarlierVideosHeader({ count, onPress }: { count: number; onPress?: () =
       alignItems="center"
       height={THREAD_SECTION_HEIGHTS.earlierHeader}
       paddingHorizontal={8}
-      backgroundColor={'$backgroundPress'}
+      backgroundColor={'backgroundPress'}
       borderBottomWidth={1}
-      borderBottomColor={'$borderColor'}
+      borderBottomColor={'borderColor'}
     >
       <Text
         flex={1}
         fontSize={9}
         fontWeight="800"
         letterSpacing={1}
-        color={'$placeholderColor'}
+        color={'placeholderColor'}
         numberOfLines={1}
       >
         EARLIER · {count} WATCHED
@@ -291,10 +291,10 @@ function EarlierVideosHeader({ count, onPress }: { count: number; onPress?: () =
       {onPress ? (
         <Pressable onPress={onPress} hitSlop={10}>
           <XStack alignItems="center" gap={4}>
-            <Text fontSize={11} color={'$placeholderColor'}>
+            <Text fontSize={11} color={'placeholderColor'}>
               Hide
             </Text>
-            <ChevronUp size={14} color={'$placeholderColor'} />
+            <ChevronUp size={14} color={'placeholderColor'} />
           </XStack>
         </Pressable>
       ) : null}
@@ -309,7 +309,7 @@ function NewSectionLabel() {
       justifyContent="flex-end"
       paddingHorizontal={8}
     >
-      <Text fontSize={9} fontWeight="800" letterSpacing={1} color={'$secondary'} paddingBottom={6}>
+      <Text fontSize={9} fontWeight="800" letterSpacing={1} color={'secondary'} paddingBottom={6}>
         NEW SINCE YOU LAST WATCHED
       </Text>
     </YStack>
@@ -565,14 +565,23 @@ export function ThreadBrowser({
       >
         {/* Transparent overlay: the video stays visible above the sheet and a
             tap on it collapses the browser. */}
-        <Sheet.Overlay backgroundColor="transparent" />
-        <Sheet.Frame
-          backgroundColor={'$backgroundPress'}
+        <Sheet.Overlay
+          backgroundColor="transparent"
+          transition="quick"
+          opacity={{ default: 1, enter: 0, exit: 0 }}
+        />
+        <Sheet.Container
+          paddingTop={8}
           borderTopLeftRadius={20}
           borderTopRightRadius={20}
-          paddingTop={8}
+          overflow="hidden"
         >
-          <Sheet.Handle backgroundColor={'$borderColor'} />
+          <Sheet.Background
+            backgroundColor={'backgroundPress'}
+            borderTopLeftRadius={20}
+            borderTopRightRadius={20}
+          />
+          <Sheet.Handle backgroundColor={'borderColor'} />
           <XStack
             justifyContent="space-between"
             alignItems="baseline"
@@ -584,7 +593,7 @@ export function ThreadBrowser({
             <Text fontSize={16} fontWeight="800" numberOfLines={1} flexShrink={1}>
               {title}
             </Text>
-            <Text fontSize={11} color={'$placeholderColor'}>
+            <Text fontSize={11} color={'placeholderColor'}>
               {totalVideos}
               {hasOlderResponses ? ' loaded' : ''} {totalVideos === 1 ? 'video' : 'videos'}
               {unwatchedCount > 0 ? ` · ${unwatchedCount} new` : ''}
@@ -640,17 +649,17 @@ export function ThreadBrowser({
                         gap={10}
                       >
                         <YStack flex={1}>
-                          <Text fontSize={13} fontWeight="700" color={'$color'}>
+                          <Text fontSize={13} fontWeight="700" color={'color'}>
                             See older responses
                           </Text>
-                          <Text fontSize={11} color={'$placeholderColor'}>
+                          <Text fontSize={11} color={'placeholderColor'}>
                             Older history may include unwatched videos
                           </Text>
                         </YStack>
-                        <Text fontSize={11} color={'$placeholderColor'}>
+                        <Text fontSize={11} color={'placeholderColor'}>
                           {loadingOlderResponses ? 'Loading…' : 'Show'}
                         </Text>
-                        <ChevronUp size={14} color={'$placeholderColor'} />
+                        <ChevronUp size={14} color={'placeholderColor'} />
                       </XStack>
                     </Pressable>
                   )
@@ -698,21 +707,21 @@ export function ThreadBrowser({
               paddingBottom={20 + insets.bottom}
             >
               {canRespond ? (
-                <Button variant="primary" size="$lg" flex={1} onPress={onRespond}>
-                  <Flame size={18} color={'$color'} />
-                  <Text color={'$color'} fontWeight="700">
+                <Button variant="primary" size="lg" flex={1} onPress={onRespond}>
+                  <Flame size={18} color={'color'} />
+                  <Text color={'color'} fontWeight="700">
                     Respond
                   </Text>
                 </Button>
               ) : null}
               {canShare ? (
-                <Button variant="outline" size="$lg" onPress={onShare}>
-                  <Share2 size={18} color={'$color'} />
+                <Button variant="outline" size="lg" onPress={onShare}>
+                  <Share2 size={18} color={'color'} />
                 </Button>
               ) : null}
             </XStack>
           ) : null}
-        </Sheet.Frame>
+        </Sheet.Container>
       </Sheet>
     </>
   )

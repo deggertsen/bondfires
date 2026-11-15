@@ -8,14 +8,14 @@ function getBannerConfig(variant: BannerVariant) {
     case 'pending':
       return {
         label: 'Awaiting Approval',
-        bgColor: '$warning',
-        textColor: '$background',
+        bgColor: 'warning',
+        textColor: 'background',
       }
     case 'rejected':
       return {
         label: 'Request Denied',
-        bgColor: '$error',
-        textColor: '$color',
+        bgColor: 'error',
+        textColor: 'color',
       }
   }
 }

@@ -1,5 +1,5 @@
 import { Button, Spinner, Text } from '@bondfires/ui'
-import { AlertTriangle } from '@tamagui/lucide-icons'
+import { AlertTriangle } from '@bondfires/ui/icons'
 import { XStack, YStack } from 'tamagui'
 import type { WarningStepProps } from './types'
 
@@ -10,39 +10,33 @@ export function WarningStep({ isSubmitting, error, onSubmit, onBack }: WarningSt
         width={64}
         height={64}
         borderRadius={32}
-        backgroundColor={'$warning'}
+        backgroundColor={'warning'}
         alignItems="center"
         justifyContent="center"
       >
-        <AlertTriangle size={32} color={'$background'} />
+        <AlertTriangle size={32} color={'background'} />
       </YStack>
-      <Text fontSize={18} fontWeight="600" color={'$color'} textAlign="center">
+      <Text fontSize={18} fontWeight="600" color={'color'} textAlign="center">
         Before You Submit
       </Text>
-      <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
+      <Text fontSize={14} color={'placeholderColor'} textAlign="center">
         Please only submit reports for genuine concerns. False or malicious reports may result in
         action against your account.
       </Text>
       {error && (
-        <Text fontSize={14} color={'$error'} textAlign="center">
+        <Text fontSize={14} color={'error'} textAlign="center">
           {error}
         </Text>
       )}
       <XStack gap={12} width="100%">
-        <Button variant="secondary" size="$md" flex={1} onPress={onBack} disabled={isSubmitting}>
-          <Text color={'$color'}>Go Back</Text>
+        <Button variant="secondary" size="md" flex={1} onPress={onBack} disabled={isSubmitting}>
+          <Text color={'color'}>Go Back</Text>
         </Button>
-        <Button
-          variant="destructive"
-          size="$md"
-          flex={1}
-          onPress={onSubmit}
-          disabled={isSubmitting}
-        >
+        <Button variant="destructive" size="md" flex={1} onPress={onSubmit} disabled={isSubmitting}>
           {isSubmitting ? (
-            <Spinner size="small" color={'$color'} />
+            <Spinner size="small" color={'color'} />
           ) : (
-            <Text color={'$color'} fontWeight="600">
+            <Text color={'color'} fontWeight="600">
               Submit Report
             </Text>
           )}

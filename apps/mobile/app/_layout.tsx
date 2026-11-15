@@ -188,16 +188,16 @@ function ErrorFallback({ error, retry }: ErrorFallbackProps) {
   return (
     <YStack
       flex={1}
-      backgroundColor="$background"
+      backgroundColor="background"
       alignItems="center"
       justifyContent="center"
       paddingHorizontal={24}
       gap={16}
     >
-      <Text fontSize={28} fontWeight="700" color="$color" textAlign="center">
+      <Text fontSize={28} fontWeight="700" color="color" textAlign="center">
         Something went wrong
       </Text>
-      <Text fontSize={14} color="$colorPress" textAlign="center">
+      <Text fontSize={14} color="colorPress" textAlign="center">
         {error.message}
       </Text>
       <Button variant="primary" onPress={retry}>
@@ -237,7 +237,7 @@ class LayoutErrorBoundary extends Component<
   render() {
     if (this.state.hasError && this.state.error) {
       return (
-        <TamaguiProvider config={config}>
+        <TamaguiProvider config={config} defaultTheme="dark">
           <Theme name="dark">
             <ErrorFallback error={this.state.error} retry={this.handleRetry} />
           </Theme>
@@ -256,12 +256,16 @@ export function ErrorBoundary(props: { error: Error; retry: () => void }) {
       stack: props.error.stack,
     })
   }, [props.error])
+  // Tamagui v3's provider reads safe-area insets, so SafeAreaProvider must wrap
+  // it. This boundary renders in place of RootLayout, outside its providers.
   return (
-    <TamaguiProvider config={config}>
-      <Theme name="dark">
-        <ErrorFallback error={props.error} retry={props.retry} />
-      </Theme>
-    </TamaguiProvider>
+    <SafeAreaProvider>
+      <TamaguiProvider config={config} defaultTheme="dark">
+        <Theme name="dark">
+          <ErrorFallback error={props.error} retry={props.retry} />
+        </Theme>
+      </TamaguiProvider>
+    </SafeAreaProvider>
   )
 }
 
@@ -300,10 +304,8 @@ function ThemeTransitionOverlay({ themeName }: { themeName: AppThemeName }) {
           pointerEvents="none"
           zIndex={999999}
           backgroundColor={appThemeColors[fadingTheme].background}
-          animation="themeCrossfade"
-          enterStyle={{ opacity: 1 }}
-          exitStyle={{ opacity: 0 }}
-          opacity={1}
+          transition="themeCrossfade"
+          opacity={{ default: 1, exit: 0 }}
         />
       )}
     </AnimatePresence>

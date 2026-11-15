@@ -1,7 +1,7 @@
 import { parseError, useAppThemeColors, useAuth } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
+import { Check, ChevronsUpDown, Tent, Video } from '@bondfires/ui/icons'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { Check, ChevronsUpDown, Tent, Video } from '@tamagui/lucide-icons'
 import type { FunctionReturnType } from 'convex/server'
 import { useRouter } from 'expo-router'
 import { type ReactNode, useCallback, useMemo } from 'react'
@@ -78,8 +78,8 @@ export function CampSparkPane({
   if (camps === undefined || pickerList === null) {
     body = (
       <YStack flex={1} alignItems="center" justifyContent="center" gap={14}>
-        <Spinner size="large" color={'$primary'} />
-        <Text color={'$placeholderColor'}>Loading camps...</Text>
+        <Spinner size="large" color={'primary'} />
+        <Text color={'placeholderColor'}>Loading camps...</Text>
       </YStack>
     )
   } else if (pickerList.pickableCount === 0 || !selectedCamp) {
@@ -103,7 +103,7 @@ export function CampSparkPane({
             Which camp?
           </Text>
           {requestedCampUnavailable ? (
-            <Text fontSize={12} color={'$placeholderColor'}>
+            <Text fontSize={12} color={'placeholderColor'}>
               That camp isn't available anymore. Pick another below.
             </Text>
           ) : null}
@@ -120,19 +120,19 @@ export function CampSparkPane({
               paddingHorizontal={14}
               borderRadius={14}
               borderWidth={1}
-              borderColor={'$borderColorHover'}
-              backgroundColor={'$backgroundHover'}
+              borderColor={'borderColorHover'}
+              backgroundColor={'backgroundHover'}
             >
               <CampSwatch color={selectedCamp.color} size={36} />
               <YStack flex={1} gap={2}>
                 <Text fontSize={16} fontWeight="800" numberOfLines={1}>
                   {selectedCamp.name}
                 </Text>
-                <Text fontSize={12} color={'$placeholderColor'} numberOfLines={1}>
+                <Text fontSize={12} color={'placeholderColor'} numberOfLines={1}>
                   {[memberCount, `1 of ${pickerList.pickableCount}`].filter(Boolean).join(' · ')}
                 </Text>
               </YStack>
-              <ChevronsUpDown size={20} color={'$color'} />
+              <ChevronsUpDown size={20} color={'color'} />
             </XStack>
           </Pressable>
         </YStack>
@@ -141,8 +141,8 @@ export function CampSparkPane({
           padding={20}
           borderRadius={20}
           borderWidth={1}
-          borderColor={'$borderColor'}
-          backgroundColor={'$backgroundHover'}
+          borderColor={'borderColor'}
+          backgroundColor={'backgroundHover'}
           gap={14}
         >
           <Text
@@ -150,15 +150,15 @@ export function CampSparkPane({
             fontWeight="700"
             letterSpacing={0.9}
             textTransform="uppercase"
-            color={'$secondary'}
+            color={'secondary'}
           >
             Camp prompt
           </Text>
-          <Text fontSize={24} lineHeight={30} fontWeight="800">
+          <Text fontSize={24} lineHeight="30px" fontWeight="800">
             {prompt}
           </Text>
           {selectedCamp.defaultPrompt ? (
-            <Text fontSize={14} lineHeight={20} color={'$placeholderColor'}>
+            <Text fontSize={14} lineHeight="20px" color={'placeholderColor'}>
               {selectedCamp.purpose}
             </Text>
           ) : null}
@@ -170,7 +170,7 @@ export function CampSparkPane({
             <RuleChip label="Title after recording" />
           </XStack>
           {requiresTradeTag ? (
-            <YStack gap={8} paddingTop={14} borderTopWidth={1} borderTopColor={'$borderColor'}>
+            <YStack gap={8} paddingTop={14} borderTopWidth={1} borderTopColor={'borderColor'}>
               <Text fontSize={13} fontWeight="700">
                 This spark is a…
               </Text>
@@ -192,10 +192,10 @@ export function CampSparkPane({
                         alignItems="center"
                         justifyContent="center"
                         gap={6}
-                        borderColor={selected ? '$primary' : '$borderColor'}
-                        backgroundColor={selected ? '$primary' : '$background'}
+                        borderColor={selected ? 'primary' : 'borderColor'}
+                        backgroundColor={selected ? 'primary' : 'background'}
                       >
-                        {selected ? <Check size={14} color={'$color'} /> : null}
+                        {selected ? <Check size={14} color={'color'} /> : null}
                         <Text
                           fontSize={15}
                           fontWeight={selected ? '800' : '700'}
@@ -216,7 +216,7 @@ export function CampSparkPane({
   }
 
   return (
-    <YStack flex={1} backgroundColor={'$background'}>
+    <YStack flex={1} backgroundColor={'background'}>
       <StatusBar barStyle={statusBarStyle} />
       <SparkComposerHeader topInset={insets.top} onClose={onClose} />
       {modeToggle}
@@ -232,18 +232,18 @@ export function CampSparkPane({
             paddingHorizontal={16}
             paddingTop={12}
             paddingBottom={Math.max(insets.bottom, 12) + 8}
-            backgroundColor={'$background'}
+            backgroundColor={'background'}
             borderTopWidth={1}
-            borderTopColor={'$borderColor'}
+            borderTopColor={'borderColor'}
           >
             <Button
               variant="primary"
-              size="$lg"
+              size="lg"
               disabled={!canRecord}
               onPress={onRecord}
-              icon={<Video size={18} color={'$color'} />}
+              icon={<Video size={18} color={'color'} />}
             >
-              <Text color={'$color'} fontWeight="800" numberOfLines={1}>
+              <Text color={'color'} fontWeight="800" numberOfLines={1}>
                 {buildCampCtaLabel(selectedCamp.name, requiresTradeTag ? tradeTag : null)}
               </Text>
             </Button>
@@ -272,9 +272,9 @@ function RuleChip({ label }: { label: string }) {
       paddingVertical={5}
       borderRadius={999}
       borderWidth={1}
-      borderColor={'$borderColor'}
+      borderColor={'borderColor'}
     >
-      <Text fontSize={12} color={'$color'} opacity={0.85}>
+      <Text fontSize={12} color={'color'} opacity={0.85}>
         {label}
       </Text>
     </XStack>
@@ -347,15 +347,15 @@ function NoCampsState({
           alignItems="center"
           justifyContent="center"
           borderWidth={1}
-          borderColor={'$primary'}
-          backgroundColor={'$backgroundHover'}
+          borderColor={'primary'}
+          backgroundColor={'backgroundHover'}
         >
-          <Tent size={32} color={'$primary'} />
+          <Tent size={32} color={'primary'} />
         </YStack>
         <Text fontSize={20} fontWeight="800" textAlign="center">
           You're not in a camp yet
         </Text>
-        <Text fontSize={14} lineHeight={20} color={'$placeholderColor'} textAlign="center">
+        <Text fontSize={14} lineHeight="20px" color={'placeholderColor'} textAlign="center">
           Camps are open circles around a shared interest. Join one to spark there, or switch to
           People for something private.
         </Text>
@@ -385,8 +385,8 @@ function NoCampsState({
         </YStack>
       ) : null}
 
-      <Button variant="outline" size="$lg" onPress={onBrowse}>
-        <Text color={'$color'} fontWeight="800">
+      <Button variant="outline" size="lg" onPress={onBrowse}>
+        <Text color={'color'} fontWeight="800">
           Browse all camps
         </Text>
       </Button>
@@ -401,7 +401,7 @@ function EmptyStateLabel({ children }: { children: string }) {
       fontWeight="700"
       letterSpacing={0.7}
       textTransform="uppercase"
-      color={'$placeholderColor'}
+      color={'placeholderColor'}
     >
       {children}
     </Text>
@@ -426,24 +426,24 @@ function SuggestedCampRow({
       padding={12}
       borderRadius={14}
       borderWidth={1}
-      borderColor={'$borderColor'}
-      backgroundColor={'$backgroundHover'}
+      borderColor={'borderColor'}
+      backgroundColor={'backgroundHover'}
     >
       <CampSwatch color={camp.color} />
       <YStack flex={1} gap={2}>
         <Text fontSize={16} fontWeight="800" numberOfLines={1}>
           {camp.name}
         </Text>
-        <Text fontSize={12} color={'$placeholderColor'} numberOfLines={1}>
+        <Text fontSize={12} color={'placeholderColor'} numberOfLines={1}>
           {caption}
         </Text>
       </YStack>
       {onJoin ? (
-        <Button variant="primary" size="$sm" onPress={onJoin} disabled={joining}>
+        <Button variant="primary" size="sm" onPress={onJoin} disabled={joining}>
           {joining ? (
-            <Spinner size="small" color={'$color'} />
+            <Spinner size="small" color={'color'} />
           ) : (
-            <Text color={'$color'} fontWeight="800">
+            <Text color={'color'} fontWeight="800">
               Join
             </Text>
           )}

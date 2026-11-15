@@ -1,7 +1,7 @@
 import { parseError, useAppThemeColors } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
+import { ChevronDown, ChevronUp, Plus, Trash2 } from '@bondfires/ui/icons'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { ChevronDown, ChevronUp, Plus, Trash2 } from '@tamagui/lucide-icons'
 import { useMutation } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { type ComponentType, useRef } from 'react'
@@ -45,7 +45,7 @@ function IconButton({
         justifyContent="center"
         opacity={disabled ? 0.3 : 1}
       >
-        <Icon size={18} color={'$placeholderColor'} />
+        <Icon size={18} color={'placeholderColor'} />
       </YStack>
     </Pressable>
   )
@@ -101,16 +101,16 @@ function GuidelinesForm({ camp }: { camp: OwnedCamp }) {
 
   return (
     <YStack gap={14}>
-      <Text fontSize={14} color={'$placeholderColor'} lineHeight={20}>
+      <Text fontSize={14} color={'placeholderColor'} lineHeight="20px">
         Shown on the camp page, and to people before they join. Bondfires’ community guidelines
         always apply too.
       </Text>
 
       <YStack
         borderRadius={14}
-        backgroundColor={'$backgroundHover'}
+        backgroundColor={'backgroundHover'}
         borderWidth={1}
-        borderColor={'$borderColor'}
+        borderColor={'borderColor'}
         overflow="hidden"
       >
         {items.map((line, index) => (
@@ -123,9 +123,9 @@ function GuidelinesForm({ camp }: { camp: OwnedCamp }) {
             paddingRight={4}
             minHeight={56}
             borderBottomWidth={1}
-            borderBottomColor={'$borderColor'}
+            borderBottomColor={'borderColor'}
           >
-            <Text flex={1} fontSize={15} lineHeight={20} paddingVertical={10}>
+            <Text flex={1} fontSize={15} lineHeight="20px" paddingVertical={10}>
               {line}
             </Text>
             <IconButton
@@ -144,7 +144,7 @@ function GuidelinesForm({ camp }: { camp: OwnedCamp }) {
           </XStack>
         ))}
         <XStack alignItems="center" gap={10} paddingLeft={14} paddingRight={8} minHeight={56}>
-          <Plus size={18} color={atLimit ? '$placeholderColor' : '$primary'} />
+          <Plus size={18} color={atLimit ? 'placeholderColor' : 'primary'} />
           <TextInput
             value={draft}
             onChangeText={(text) => ui$.draft.set(text)}
@@ -159,22 +159,22 @@ function GuidelinesForm({ camp }: { camp: OwnedCamp }) {
           />
           {draft.trim() ? (
             <Pressable accessibilityRole="button" onPress={addDraft} hitSlop={6}>
-              <Text fontSize={14} fontWeight="900" color={'$primary'}>
+              <Text fontSize={14} fontWeight="900" color={'primary'}>
                 Add
               </Text>
             </Pressable>
           ) : null}
         </XStack>
       </YStack>
-      <Text fontSize={12} color={'$placeholderColor'} paddingHorizontal={4}>
+      <Text fontSize={12} color={'placeholderColor'} paddingHorizontal={4}>
         Keep each one to a line. Up to {CAMP_SETTINGS_LIMITS.guidelines}.
       </Text>
 
-      <Button variant="primary" size="$lg" disabled={isSaving} onPress={handleSave}>
+      <Button variant="primary" size="lg" disabled={isSaving} onPress={handleSave}>
         {isSaving ? (
-          <Spinner color={'$color'} />
+          <Spinner color={'color'} />
         ) : (
-          <Text color={'$color'} fontWeight="900">
+          <Text color={'color'} fontWeight="900">
             Save
           </Text>
         )}

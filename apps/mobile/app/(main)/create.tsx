@@ -1,7 +1,7 @@
 import { appActions, appStore$, telemetry, useAppThemeColors } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
+import { Flame } from '@bondfires/ui/icons'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { Flame } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera'
 import { useIsFocused, useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
@@ -44,12 +44,12 @@ function RecordingUnavailableScreen() {
   const { statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   return (
-    <YStack flex={1} backgroundColor="$background" justifyContent="center" padding="$4" gap="$3">
+    <YStack flex={1} backgroundColor="background" justifyContent="center" padding="4" gap="3">
       <StatusBar barStyle={statusBarStyle} />
       <Text fontSize={20} fontWeight="600">
         Recording unavailable
       </Text>
-      <Text color="$placeholderColor">Recording is not available in this version of the app.</Text>
+      <Text color="placeholderColor">Recording is not available in this version of the app.</Text>
       <Button onPress={() => router.replace(routes.feed)}>Back to feed</Button>
     </YStack>
   )
@@ -269,7 +269,7 @@ function EnabledCreateScreen() {
     return (
       <YStack
         flex={1}
-        backgroundColor={'$background'}
+        backgroundColor={'background'}
         alignItems="center"
         justifyContent="center"
         paddingHorizontal={24}
@@ -280,21 +280,21 @@ function EnabledCreateScreen() {
             width={100}
             height={100}
             borderRadius={50}
-            backgroundColor={'$backgroundHover'}
+            backgroundColor={'backgroundHover'}
             alignItems="center"
             justifyContent="center"
             borderWidth={2}
-            borderColor={'$primary'}
+            borderColor={'primary'}
           >
-            <Flame size={50} color={'$primary'} />
+            <Flame size={50} color={'primary'} />
           </YStack>
           <Text fontSize={20} fontWeight="600" textAlign="center">
             Camera and microphone access required
           </Text>
-          <Text textAlign="center" color={'$placeholderColor'}>
+          <Text textAlign="center" color={'placeholderColor'}>
             We need access to your camera and microphone to record videos.
           </Text>
-          <Button variant="primary" size="$lg" onPress={requestPermissions}>
+          <Button variant="primary" size="lg" onPress={requestPermissions}>
             Grant Permissions
           </Button>
         </YStack>
@@ -304,7 +304,7 @@ function EnabledCreateScreen() {
 
   if (resumeDraft && !draftBondfireId) {
     return (
-      <YStack flex={1} backgroundColor="$background" justifyContent="center" padding="$4" gap="$3">
+      <YStack flex={1} backgroundColor="background" justifyContent="center" padding="4" gap="3">
         {existingDraft === undefined || existingDraft?._id === resumeDraft ? (
           <Spinner />
         ) : (
@@ -327,7 +327,7 @@ function EnabledCreateScreen() {
       <SparkModeToggle mode={mode} onChange={(nextMode) => state$.mode.set(nextMode)} />
     )
     return (
-      <YStack flex={1} backgroundColor={'$background'}>
+      <YStack flex={1} backgroundColor={'background'}>
         <YStack flex={1} display={mode === 'people' ? 'flex' : 'none'}>
           {/* Resolve the one-draft-at-a-time state before exposing Skip.
               Otherwise a fast tap during the query's initial undefined state
@@ -335,8 +335,8 @@ function EnabledCreateScreen() {
           {existingDraft === undefined ? (
             <YStack flex={1} alignItems="center" justifyContent="center" gap={14}>
               <StatusBar barStyle={statusBarStyle} />
-              <Spinner size="large" color={'$primary'} />
-              <Text color={'$placeholderColor'}>Loading your Hearth...</Text>
+              <Spinner size="large" color={'primary'} />
+              <Text color={'placeholderColor'}>Loading your Hearth...</Text>
             </YStack>
           ) : (
             <PreRecordingInviteScreen
@@ -377,7 +377,7 @@ function EnabledCreateScreen() {
   // screen and durable upload journal per attempt.
   if (!currentUser)
     return (
-      <YStack flex={1} backgroundColor="$background" justifyContent="center">
+      <YStack flex={1} backgroundColor="background" justifyContent="center">
         <Spinner />
       </YStack>
     )

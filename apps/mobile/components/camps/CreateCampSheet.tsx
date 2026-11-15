@@ -104,14 +104,29 @@ export function CreateCampSheet({
       dismissOnSnapToBottom
       moveOnKeyboardChange
     >
-      <Sheet.Overlay backgroundColor="rgba(0,0,0,0.45)" />
-      <Sheet.Frame padding={20} backgroundColor={'$backgroundPress'} gap={16}>
-        <Sheet.Handle backgroundColor={'$borderColor'} />
+      <Sheet.Overlay
+        backgroundColor="rgba(0,0,0,0.45)"
+        transition="quick"
+        opacity={{ default: 1, enter: 0, exit: 0 }}
+      />
+      <Sheet.Container
+        padding={20}
+        gap={16}
+        borderTopLeftRadius={9}
+        borderTopRightRadius={9}
+        overflow="hidden"
+      >
+        <Sheet.Background
+          backgroundColor={'backgroundPress'}
+          borderTopLeftRadius={9}
+          borderTopRightRadius={9}
+        />
+        <Sheet.Handle backgroundColor={'borderColor'} />
         <YStack gap={6}>
           <Text fontSize={22} fontWeight="900">
             Create Camp
           </Text>
-          <Text fontSize={14} color={'$placeholderColor'} lineHeight={20}>
+          <Text fontSize={14} color={'placeholderColor'} lineHeight="20px">
             You lead it. Choose who can find it.
           </Text>
         </YStack>
@@ -153,20 +168,20 @@ export function CreateCampSheet({
             justifyContent="space-between"
             gap={10}
             borderRadius={10}
-            backgroundColor={'$backgroundHover'}
+            backgroundColor={'backgroundHover'}
             borderWidth={1}
-            borderColor={'$borderColor'}
+            borderColor={'borderColor'}
             padding={10}
           >
             <YStack gap={2}>
-              <Text fontSize={11} color={'$placeholderColor'} fontWeight="900">
+              <Text fontSize={11} color={'placeholderColor'} fontWeight="900">
                 CAMP KINDLING
               </Text>
-              <Text fontSize={15} fontWeight="900" color={outOfKindling ? '$error' : '$success'}>
+              <Text fontSize={15} fontWeight="900" color={outOfKindling ? 'error' : 'success'}>
                 {kindlingBalance} kindling remaining
               </Text>
             </YStack>
-            <Text fontSize={12} color={'$placeholderColor'}>
+            <Text fontSize={12} color={'placeholderColor'}>
               {outOfKindling ? 'Buy a pack to create more' : 'Uses 1 a month'}
             </Text>
           </XStack>
@@ -174,19 +189,19 @@ export function CreateCampSheet({
 
         <Button
           variant="primary"
-          size="$lg"
+          size="lg"
           disabled={isSubmitting || outOfKindling}
           onPress={handleCreate}
         >
           {isSubmitting ? (
-            <Spinner color={'$color'} />
+            <Spinner color={'color'} />
           ) : (
-            <Text color={'$color'} fontWeight="900">
+            <Text color={'color'} fontWeight="900">
               {isPublic ? 'Create public camp' : 'Create private camp'}
             </Text>
           )}
         </Button>
-      </Sheet.Frame>
+      </Sheet.Container>
     </Sheet>
   )
 }

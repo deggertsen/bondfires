@@ -1,5 +1,5 @@
+import { X } from '@bondfires/ui/icons'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { X } from '@tamagui/lucide-icons'
 import { useMutation } from 'convex/react'
 import { Alert, Modal, Pressable, StyleSheet } from 'react-native'
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
@@ -214,7 +214,7 @@ export function ReportOverlay({
           <YStack flex={1} justifyContent="flex-end">
             <Pressable onPress={(e) => e.stopPropagation()}>
               <YStack
-                backgroundColor={'$backgroundPress'}
+                backgroundColor={'backgroundPress'}
                 borderTopLeftRadius={24}
                 borderTopRightRadius={24}
                 padding={20}
@@ -224,7 +224,7 @@ export function ReportOverlay({
                 {step !== 'success' && (
                   <XStack justifyContent="flex-end" marginBottom={16}>
                     <Pressable onPress={onClose}>
-                      <X size={24} color={'$placeholderColor'} />
+                      <X size={24} color={'placeholderColor'} />
                     </Pressable>
                   </XStack>
                 )}

@@ -1,8 +1,8 @@
-import { ArrowUpCircle, Download, RefreshCw } from '@tamagui/lucide-icons'
 import { useState } from 'react'
 import { Modal, Platform, StyleSheet } from 'react-native'
 import { YStack } from 'tamagui'
 import { Button } from './Button'
+import { ArrowUpCircle, Download, RefreshCw } from './icons'
 import { Spinner } from './Spinner'
 import { Text } from './Text'
 
@@ -57,25 +57,25 @@ export function ForceUpdateModal({
       >
         <YStack
           flex={1}
-          backgroundColor="$background"
+          backgroundColor="background"
           alignItems="center"
           justifyContent="center"
           paddingHorizontal={32}
           gap={24}
           style={StyleSheet.absoluteFill}
         >
-          <RefreshCw size={64} color="$success" />
+          <RefreshCw size={64} color="success" />
           <YStack gap={4} alignItems="center">
-            <Text fontSize={28} fontWeight="700" color="$color" textAlign="center">
+            <Text fontSize={28} fontWeight="700" color="color" textAlign="center">
               Finishing Update
             </Text>
-            <Text fontSize={15} color="$placeholderColor" textAlign="center" lineHeight={22}>
+            <Text fontSize={15} color="placeholderColor" textAlign="center" lineHeight="22px">
               The update has downloaded. Bondfires will reopen when installation completes.
             </Text>
           </YStack>
-          <Spinner size="large" color="$primary" />
+          <Spinner size="large" color="primary" />
           <YStack
-            backgroundColor="$backgroundHover"
+            backgroundColor="backgroundHover"
             borderRadius={12}
             paddingHorizontal={20}
             paddingVertical={12}
@@ -85,18 +85,18 @@ export function ForceUpdateModal({
             alignItems="center"
           >
             <YStack flexDirection="row" gap={8} alignItems="center">
-              <Text fontSize={13} color="$placeholderColor">
+              <Text fontSize={13} color="placeholderColor">
                 Your version:
               </Text>
-              <Text fontSize={13} fontWeight="600" color="$error">
+              <Text fontSize={13} fontWeight="600" color="error">
                 {currentVersion}
               </Text>
             </YStack>
             <YStack flexDirection="row" gap={8} alignItems="center">
-              <Text fontSize={13} color="$placeholderColor">
+              <Text fontSize={13} color="placeholderColor">
                 New version:
               </Text>
-              <Text fontSize={13} fontWeight="600" color="$success">
+              <Text fontSize={13} fontWeight="600" color="success">
                 {minRequiredVersion}
               </Text>
             </YStack>
@@ -128,7 +128,7 @@ export function ForceUpdateModal({
     >
       <YStack
         flex={1}
-        backgroundColor="$background"
+        backgroundColor="background"
         alignItems="center"
         justifyContent="center"
         paddingHorizontal={32}
@@ -136,22 +136,22 @@ export function ForceUpdateModal({
         style={StyleSheet.absoluteFill}
       >
         {isFlexible ? (
-          <Download size={64} color="$primary" />
+          <Download size={64} color="primary" />
         ) : (
-          <ArrowUpCircle size={64} color="$primary" />
+          <ArrowUpCircle size={64} color="primary" />
         )}
         <YStack gap={4} alignItems="center">
-          <Text fontSize={28} fontWeight="700" color="$color" textAlign="center">
+          <Text fontSize={28} fontWeight="700" color="color" textAlign="center">
             Update Required
           </Text>
-          <Text fontSize={15} color="$placeholderColor" textAlign="center" lineHeight={22}>
+          <Text fontSize={15} color="placeholderColor" textAlign="center" lineHeight="22px">
             {isFlexible
               ? 'A new version of Bondfires is available. Download it now to continue.'
               : 'A new version of Bondfires is available. You must update to continue using the app.'}
           </Text>
         </YStack>
         <YStack
-          backgroundColor="$backgroundHover"
+          backgroundColor="backgroundHover"
           borderRadius={12}
           paddingHorizontal={20}
           paddingVertical={12}
@@ -161,18 +161,18 @@ export function ForceUpdateModal({
           alignItems="center"
         >
           <YStack flexDirection="row" gap={8} alignItems="center">
-            <Text fontSize={13} color="$placeholderColor">
+            <Text fontSize={13} color="placeholderColor">
               Your version:
             </Text>
-            <Text fontSize={13} fontWeight="600" color="$error">
+            <Text fontSize={13} fontWeight="600" color="error">
               {currentVersion}
             </Text>
           </YStack>
           <YStack flexDirection="row" gap={8} alignItems="center">
-            <Text fontSize={13} color="$placeholderColor">
+            <Text fontSize={13} color="placeholderColor">
               Required:
             </Text>
-            <Text fontSize={13} fontWeight="600" color="$success">
+            <Text fontSize={13} fontWeight="600" color="success">
               {minRequiredVersion}
             </Text>
           </YStack>
@@ -181,20 +181,20 @@ export function ForceUpdateModal({
           variant="primary"
           width="100%"
           maxWidth={280}
-          size="$lg"
+          size="lg"
           onPress={handleStart}
           disabled={starting}
           icon={
             isFlexible ? (
-              <Download size={20} color="$color" />
+              <Download size={20} color="color" />
             ) : (
-              <ArrowUpCircle size={20} color="$color" />
+              <ArrowUpCircle size={20} color="color" />
             )
           }
         >
           {starting ? 'Starting...' : isFlexible ? 'Download Update' : `Update on ${storeLabel}`}
         </Button>
-        <Text fontSize={12} color="$placeholderColor" textAlign="center">
+        <Text fontSize={12} color="placeholderColor" textAlign="center">
           {isFlexible
             ? 'Android will download the update in the background.'
             : `You'll be redirected to the ${storeLabel} to download the latest version.`}
