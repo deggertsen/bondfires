@@ -43,15 +43,15 @@ export function getBondfireSwipeActions({
       ? {
           key: 'delete',
           label: 'Delete',
-          color: '$color',
-          backgroundColor: '$errorDark',
+          color: 'color',
+          backgroundColor: 'errorDark',
           onPress: onDelete,
         }
       : {
           key: 'report',
           label: 'Report',
-          color: '$warning',
-          backgroundColor: '$backgroundHover',
+          color: 'warning',
+          backgroundColor: 'backgroundHover',
           onPress: onReport,
         },
   ]
@@ -59,8 +59,8 @@ export function getBondfireSwipeActions({
   actions.push({
     key: 'pin',
     label: isPinned ? 'Unpin' : 'Pin',
-    color: '$primary',
-    backgroundColor: '$backgroundHover',
+    color: 'primary',
+    backgroundColor: 'backgroundHover',
     onPress: isPinned ? onUnpin : onPin,
   })
 
@@ -84,8 +84,8 @@ export function getBondfireRightSwipeActions({
     {
       key: 'edit',
       label: 'Edit',
-      color: '$color',
-      backgroundColor: '$primary',
+      color: 'color',
+      backgroundColor: 'primary',
       onPress: onEdit,
     },
   ]

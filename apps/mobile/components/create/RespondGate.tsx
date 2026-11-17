@@ -34,7 +34,7 @@ export function RespondGate({
     return <Redirect href={routes.campJoinGate(decision.campId, createRespondToPath(bondfireId))} />
   }
   return (
-    <YStack flex={1} backgroundColor="$background" justifyContent="center" padding="$4" gap="$3">
+    <YStack flex={1} backgroundColor="background" justifyContent="center" padding="4" gap="3">
       <StatusBar barStyle={statusBarStyle} />
       {decision.kind === 'loading' ? (
         <Spinner />
@@ -43,7 +43,7 @@ export function RespondGate({
           <Text fontSize={20} fontWeight="600">
             Response unavailable
           </Text>
-          <Text color="$placeholderColor">You can no longer respond to this bondfire.</Text>
+          <Text color="placeholderColor">You can no longer respond to this bondfire.</Text>
           <Button onPress={() => goBackOrReplace(router, navigation, routes.feed)}>Go Back</Button>
         </>
       )}

@@ -10,7 +10,7 @@ import {
   useLoadingTimeoutTelemetry,
 } from '@bondfires/app'
 import { type BondfireRowProps, Button, closeOpenSwipeableRow, Spinner, Text } from '@bondfires/ui'
-import { AlertTriangle, ChevronLeft, Flame, Pin, RefreshCw } from '@tamagui/lucide-icons'
+import { AlertTriangle, ChevronLeft, Flame, Pin, RefreshCw } from '@bondfires/ui/icons'
 import { useMutation, usePaginatedQuery, useQuery } from 'convex/react'
 import { useIsFocused, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -121,7 +121,7 @@ function MyFiresSubscription({
 function LoadingMyFires() {
   return (
     <YStack flex={1} alignItems="center" justifyContent="center">
-      <Spinner size="large" color={'$primary'} />
+      <Spinner size="large" color={'primary'} />
     </YStack>
   )
 }
@@ -132,29 +132,29 @@ function MyFiresRetry({ onRetry }: { onRetry: () => void }) {
       flex={1}
       alignItems="center"
       justifyContent="center"
-      backgroundColor={'$background'}
-      padding="$6"
-      gap="$4"
+      backgroundColor={'background'}
+      padding="6"
+      gap="4"
     >
-      <AlertTriangle size={48} color={'$primary'} />
-      <Text fontSize="$6" fontWeight="700" color={'$placeholderColor'} textAlign="center">
+      <AlertTriangle size={48} color={'primary'} />
+      <Text fontSize="6" fontWeight="700" color={'placeholderColor'} textAlign="center">
         Connection Issue
       </Text>
-      <Text fontSize="$4" color={'$placeholderColor'} opacity={0.7} textAlign="center">
+      <Text fontSize="4" color={'placeholderColor'} opacity={0.7} textAlign="center">
         We're having trouble loading your fires. Check your internet connection and try again.
       </Text>
       <Pressable onPress={onRetry}>
         <YStack
           flexDirection="row"
           alignItems="center"
-          gap="$2"
-          backgroundColor={'$primary'}
-          paddingHorizontal="$5"
-          paddingVertical="$3"
-          borderRadius="$4"
+          gap="2"
+          backgroundColor={'primary'}
+          paddingHorizontal="5"
+          paddingVertical="3"
+          borderRadius="4"
         >
-          <RefreshCw size={18} color={'$background'} />
-          <Text fontSize="$4" fontWeight="600" color={'$background'}>
+          <RefreshCw size={18} color={'background'} />
+          <Text fontSize="4" fontWeight="600" color={'background'}>
             Try Again
           </Text>
         </YStack>
@@ -243,8 +243,8 @@ function toInvitedBondfireRowProps(
       {
         key: 'dismiss',
         label: 'Dismiss',
-        color: '$placeholderColor',
-        backgroundColor: '$backgroundHover',
+        color: 'placeholderColor',
+        backgroundColor: 'backgroundHover',
         onPress: onDismiss,
       },
     ],
@@ -498,7 +498,7 @@ export default function MyFiresScreen() {
 
   if (isLoading) {
     return (
-      <YStack flex={1} backgroundColor={'$background'}>
+      <YStack flex={1} backgroundColor={'background'}>
         <MyFiresSubscription
           key={`subscription-${refreshKey}`}
           enabled={canLoadTabData}
@@ -513,7 +513,7 @@ export default function MyFiresScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor={'$background'}>
+    <YStack flex={1} backgroundColor={'background'}>
       <MyFiresSubscription
         key={`subscription-${refreshKey}`}
         enabled={canLoadTabData}
@@ -563,7 +563,7 @@ export default function MyFiresScreen() {
         onViewableItemsChanged={handleViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
         ItemSeparatorComponent={() => (
-          <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
+          <Separator borderColor={'borderColor'} opacity={0.6} marginHorizontal={16} />
         )}
         ListHeaderComponent={
           <YStack paddingTop={headerTopPadding} paddingHorizontal={16} paddingBottom={14} gap={10}>
@@ -575,13 +575,13 @@ export default function MyFiresScreen() {
                   hitSlop={12}
                   onPress={handleBack}
                 >
-                  <ChevronLeft size={26} color={'$color'} />
+                  <ChevronLeft size={26} color={'color'} />
                 </Pressable>
                 <YStack gap={2}>
                   <Text fontSize={28} fontWeight="900">
                     My Fires
                   </Text>
-                  <Text fontSize={13} color={'$placeholderColor'}>
+                  <Text fontSize={13} color={'placeholderColor'}>
                     {unreadCount > 0
                       ? `${unreadCount} unread ${unreadCount === 1 ? 'thread' : 'threads'}`
                       : 'All caught up'}
@@ -591,14 +591,14 @@ export default function MyFiresScreen() {
               <Pressable onPress={handleTogglePinnedFirst} hitSlop={12}>
                 <Pin
                   size={22}
-                  color={pinnedFirst ? '$primary' : '$placeholderColor'}
+                  color={pinnedFirst ? 'primary' : 'placeholderColor'}
                   fill={pinnedFirst ? primaryColor : 'transparent'}
                 />
               </Pressable>
             </XStack>
             {invitedThreads.length > 0 ? (
               <YStack gap={8} marginTop={4}>
-                <Text fontSize={13} color={'$placeholderColor'} fontWeight="900">
+                <Text fontSize={13} color={'placeholderColor'} fontWeight="900">
                   Invited
                 </Text>
                 {invitedThreads.map((item) => {
@@ -619,7 +619,7 @@ export default function MyFiresScreen() {
                         bondfire={item}
                         thumbnailUrls$={thumbnailUrls$}
                       />
-                      <Separator borderColor={'$borderColor'} opacity={0.6} />
+                      <Separator borderColor={'borderColor'} opacity={0.6} />
                     </YStack>
                   )
                 })}
@@ -630,20 +630,20 @@ export default function MyFiresScreen() {
         ListEmptyComponent={
           invitedThreads.length > 0 ? undefined : (
             <YStack flex={1} alignItems="center" justifyContent="center" paddingHorizontal={40}>
-              <Flame size={58} color={'$primary'} />
+              <Flame size={58} color={'primary'} />
               <Text fontSize={22} fontWeight="900" marginTop={18} textAlign="center">
                 No active fires yet
               </Text>
-              <Text fontSize={15} color={'$placeholderColor'} textAlign="center" marginTop={8}>
+              <Text fontSize={15} color={'placeholderColor'} textAlign="center" marginTop={8}>
                 Respond to a fire on Home and the conversation shows up here.
               </Text>
               <Button
                 variant="primary"
-                size="$lg"
+                size="lg"
                 marginTop={24}
                 onPress={() => router.push(routes.feed)}
               >
-                <Text color={'$color'} fontWeight="900">
+                <Text color={'color'} fontWeight="900">
                   Browse Home
                 </Text>
               </Button>

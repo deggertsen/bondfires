@@ -143,11 +143,11 @@ function WhoCanJoinForm({ camp }: { camp: OwnedCamp }) {
                   paddingHorizontal={16}
                   borderRadius={999}
                   justifyContent="center"
-                  backgroundColor={'$backgroundHover'}
+                  backgroundColor={'backgroundHover'}
                   borderWidth={on ? 2 : 1}
-                  borderColor={on ? '$primary' : '$borderColor'}
+                  borderColor={on ? 'primary' : 'borderColor'}
                 >
-                  <Text fontSize={13} fontWeight="900" color={on ? '$color' : '$placeholderColor'}>
+                  <Text fontSize={13} fontWeight="900" color={on ? 'color' : 'placeholderColor'}>
                     {tierLabel(tier)}
                   </Text>
                 </YStack>
@@ -155,7 +155,7 @@ function WhoCanJoinForm({ camp }: { camp: OwnedCamp }) {
             )
           })}
         </XStack>
-        <Text fontSize={12} color={'$placeholderColor'}>
+        <Text fontSize={12} color={'placeholderColor'}>
           {allTiers
             ? 'All plans can join. Turn a plan off to keep it out.'
             : 'Only the highlighted plans can join.'}
@@ -166,9 +166,9 @@ function WhoCanJoinForm({ camp }: { camp: OwnedCamp }) {
         <SectionLabel>IF SOMEONE DOESN’T MATCH</SectionLabel>
         <YStack
           borderRadius={14}
-          backgroundColor={'$backgroundHover'}
+          backgroundColor={'backgroundHover'}
           borderWidth={1}
-          borderColor={'$borderColor'}
+          borderColor={'borderColor'}
           overflow="hidden"
           accessibilityRole="radiogroup"
         >
@@ -186,20 +186,20 @@ function WhoCanJoinForm({ camp }: { camp: OwnedCamp }) {
                   gap={12}
                   padding={14}
                   borderBottomWidth={index === MODE_OPTIONS.length - 1 ? 0 : 1}
-                  borderBottomColor={'$borderColor'}
+                  borderBottomColor={'borderColor'}
                 >
                   <YStack
                     width={20}
                     height={20}
                     borderRadius={10}
                     borderWidth={selected ? 6 : 2}
-                    borderColor={selected ? '$primary' : '$placeholderColor'}
+                    borderColor={selected ? 'primary' : 'placeholderColor'}
                   />
                   <YStack flex={1} gap={2}>
                     <Text fontSize={15} fontWeight="800">
                       {option.title}
                     </Text>
-                    <Text fontSize={12} color={'$placeholderColor'}>
+                    <Text fontSize={12} color={'placeholderColor'}>
                       {option.detail}
                     </Text>
                   </YStack>
@@ -211,7 +211,7 @@ function WhoCanJoinForm({ camp }: { camp: OwnedCamp }) {
       </YStack>
 
       <YStack gap={8}>
-        <Text fontSize={12} color={'$placeholderColor'} textAlign="center" lineHeight={17}>
+        <Text fontSize={12} color={'placeholderColor'} textAlign="center" lineHeight="17px">
           {[
             'Everyone already in stays.',
             gender !== 'any'
@@ -222,11 +222,11 @@ function WhoCanJoinForm({ camp }: { camp: OwnedCamp }) {
             .filter(Boolean)
             .join(' ')}
         </Text>
-        <Button variant="primary" size="$lg" disabled={isSaving} onPress={handleSave}>
+        <Button variant="primary" size="lg" disabled={isSaving} onPress={handleSave}>
           {isSaving ? (
-            <Spinner color={'$color'} />
+            <Spinner color={'color'} />
           ) : (
-            <Text color={'$color'} fontWeight="900">
+            <Text color={'color'} fontWeight="900">
               Save
             </Text>
           )}

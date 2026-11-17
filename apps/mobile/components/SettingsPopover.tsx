@@ -62,9 +62,9 @@ export function SettingsPopover({
               height={40}
             >
               <Slider.Track>
-                <Slider.TrackActive backgroundColor={'$primary'} />
+                <Slider.TrackActive backgroundColor={'primary'} />
               </Slider.Track>
-              <Slider.Thumb index={0} circular backgroundColor={'$primary'} />
+              <Slider.Thumb index={0} circular backgroundColor={'primary'} />
             </Slider>
           </YStack>
           <Text fontSize={14} color={VIDEO_OVERLAY_COLORS.textPrimary} minWidth={40}>
@@ -79,10 +79,10 @@ export function SettingsPopover({
             accessibilityLabel="Captions"
             checked={captionsEnabled}
             onCheckedChange={(checked) => appActions.setCaptionsEnabled(checked === true)}
-            size="$2"
-            backgroundColor={captionsEnabled ? '$primary' : VIDEO_OVERLAY_COLORS.progressTrack}
+            size="sm"
+            backgroundColor={captionsEnabled ? 'primary' : VIDEO_OVERLAY_COLORS.progressTrack}
           >
-            <Switch.Thumb animation="quick" backgroundColor={VIDEO_OVERLAY_COLORS.textPrimary} />
+            <Switch.Thumb transition="quick" backgroundColor={VIDEO_OVERLAY_COLORS.textPrimary} />
           </Switch>
         </XStack>
       </YStack>

@@ -1,7 +1,7 @@
 import { parseError, useSubscription } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
+import { AlertTriangle, Flame, Globe, Lock, Users } from '@bondfires/ui/icons'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { AlertTriangle, Flame, Globe, Lock, Users } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import type { ComponentType } from 'react'
@@ -43,17 +43,17 @@ function Consequence({
         width={34}
         height={34}
         borderRadius={10}
-        backgroundColor={'$backgroundHover'}
+        backgroundColor={'backgroundHover'}
         alignItems="center"
         justifyContent="center"
       >
-        <Icon size={18} color={warn ? '$warning' : '$secondary'} />
+        <Icon size={18} color={warn ? 'warning' : 'secondary'} />
       </YStack>
       <YStack flex={1} gap={2}>
         <Text fontSize={15} fontWeight="800">
           {title}
         </Text>
-        <Text fontSize={13} color={'$placeholderColor'} lineHeight={18}>
+        <Text fontSize={13} color={'placeholderColor'} lineHeight="18px">
           {detail}
         </Text>
       </YStack>
@@ -128,7 +128,7 @@ function VisibilityForm({ camp }: { camp: OwnedCamp }) {
 
   return (
     <YStack gap={16}>
-      <Text fontSize={14} color={'$placeholderColor'} lineHeight={20}>
+      <Text fontSize={14} color={'placeholderColor'} lineHeight="20px">
         Who can find {camp.name}, and how they get in.
       </Text>
       <VisibilityPicker
@@ -140,22 +140,22 @@ function VisibilityForm({ camp }: { camp: OwnedCamp }) {
       {switching ? (
         <Button
           variant="primary"
-          size="$lg"
+          size="lg"
           disabled={isSaving}
           onPress={() => state$.confirmOpen.set(true)}
         >
-          <Text color={'$color'} fontWeight="900">
+          <Text color={'color'} fontWeight="900">
             Continue
           </Text>
         </Button>
       ) : (
-        <Text fontSize={12} color={'$placeholderColor'} textAlign="center" lineHeight={17}>
+        <Text fontSize={12} color={'placeholderColor'} textAlign="center" lineHeight="17px">
           {current.visibility === 'public'
             ? 'Join setting changes save right away. Switching to Private asks you to confirm first.'
             : 'Switching to Public asks you to confirm first.'}
         </Text>
       )}
-      <Text fontSize={12} color={'$placeholderColor'} textAlign="center">
+      <Text fontSize={12} color={'placeholderColor'} textAlign="center">
         Switching costs no extra kindling.
       </Text>
 
@@ -166,14 +166,29 @@ function VisibilityForm({ camp }: { camp: OwnedCamp }) {
         snapPointsMode="fit"
         dismissOnSnapToBottom
       >
-        <Sheet.Overlay backgroundColor="rgba(0,0,0,0.55)" />
-        <Sheet.Frame padding={20} backgroundColor={'$backgroundPress'} gap={18}>
-          <Sheet.Handle backgroundColor={'$borderColor'} />
+        <Sheet.Overlay
+          backgroundColor="rgba(0,0,0,0.55)"
+          transition="quick"
+          opacity={{ default: 1, enter: 0, exit: 0 }}
+        />
+        <Sheet.Container
+          padding={20}
+          gap={18}
+          borderTopLeftRadius={9}
+          borderTopRightRadius={9}
+          overflow="hidden"
+        >
+          <Sheet.Background
+            backgroundColor={'backgroundPress'}
+            borderTopLeftRadius={9}
+            borderTopRightRadius={9}
+          />
+          <Sheet.Handle backgroundColor={'borderColor'} />
           <YStack gap={6}>
             <Text fontSize={22} fontWeight="900">
               {goingPublic ? `Make ${camp.name} public?` : `Make ${camp.name} private?`}
             </Text>
-            <Text fontSize={14} color={'$placeholderColor'} lineHeight={20}>
+            <Text fontSize={14} color={'placeholderColor'} lineHeight="20px">
               Here’s what changes for the {plural(memberCount, 'person', 'people')} already in it.
             </Text>
           </YStack>
@@ -199,7 +214,7 @@ function VisibilityForm({ camp }: { camp: OwnedCamp }) {
                 detail="Not just you. Everyone can still respond."
               />
               <YStack gap={8}>
-                <Text fontSize={12} fontWeight="900" color={'$placeholderColor'}>
+                <Text fontSize={12} fontWeight="900" color={'placeholderColor'}>
                   HOW PEOPLE JOIN
                 </Text>
                 <SegmentedControl<CampJoinMode>
@@ -241,7 +256,7 @@ function VisibilityForm({ camp }: { camp: OwnedCamp }) {
           <YStack gap={10}>
             <Button
               variant="primary"
-              size="$lg"
+              size="lg"
               disabled={isSaving}
               onPress={() =>
                 save(choice, () => {
@@ -251,9 +266,9 @@ function VisibilityForm({ camp }: { camp: OwnedCamp }) {
               }
             >
               {isSaving ? (
-                <Spinner color={'$color'} />
+                <Spinner color={'color'} />
               ) : (
-                <Text color={'$color'} fontWeight="900">
+                <Text color={'color'} fontWeight="900">
                   {goingPublic ? 'Make public' : 'Make private'}
                 </Text>
               )}
@@ -268,7 +283,7 @@ function VisibilityForm({ camp }: { camp: OwnedCamp }) {
               </Text>
             </Pressable>
           </YStack>
-        </Sheet.Frame>
+        </Sheet.Container>
       </Sheet>
     </YStack>
   )

@@ -37,7 +37,7 @@ vi.mock('@bondfires/app', async () => ({
   telemetry: { breadcrumb: vi.fn(), warn: vi.fn() },
 }))
 vi.mock('@bondfires/ui', () => ({ Button: 'Button', Text: 'Text' }))
-vi.mock('@tamagui/lucide-icons', () => ({ Bell: 'Bell', BellOff: 'BellOff' }))
+vi.mock('@bondfires/ui/icons', () => ({ Bell: 'Bell', BellOff: 'BellOff' }))
 vi.mock('expo-device', () => ({
   get isDevice() {
     return mocks.physical
@@ -51,7 +51,8 @@ vi.mock('tamagui', async () => {
   const { createElement } = await import('react')
   const Sheet = Object.assign((props: Record<string, unknown>) => createElement('Sheet', props), {
     Overlay: 'Overlay',
-    Frame: 'Frame',
+    Container: 'Container',
+    Background: 'Background',
   })
   return { Sheet, YStack: 'YStack' }
 })

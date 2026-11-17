@@ -21,7 +21,6 @@ import {
   SwipeableRow,
   Text,
 } from '@bondfires/ui'
-import { useValue } from '@legendapp/state/react'
 import {
   AlertTriangle,
   ArrowLeft,
@@ -37,7 +36,8 @@ import {
   Settings,
   Shield,
   UserX,
-} from '@tamagui/lucide-icons'
+} from '@bondfires/ui/icons'
+import { useValue } from '@legendapp/state/react'
 import { useConvex, useMutation, useQuery } from 'convex/react'
 import { useIsFocused, useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useRef, useState } from 'react'
@@ -146,11 +146,11 @@ function RulePill({ label }: { label: string }) {
       paddingHorizontal={10}
       paddingVertical={6}
       borderRadius={999}
-      backgroundColor={'$backgroundHover'}
+      backgroundColor={'backgroundHover'}
       borderWidth={1}
-      borderColor={'$borderColor'}
+      borderColor={'borderColor'}
     >
-      <Text fontSize={12} color={'$color'} fontWeight="800">
+      <Text fontSize={12} color={'color'} fontWeight="800">
         {label}
       </Text>
     </YStack>
@@ -177,9 +177,9 @@ function getFirstVisitBanner(camp: Doc<'camps'>) {
 }
 
 function getRoleBadgeColor(role: string) {
-  if (role === 'owner') return '$secondary'
-  if (role === 'moderator') return '$warning'
-  return '$placeholderColor'
+  if (role === 'owner') return 'secondary'
+  if (role === 'moderator') return 'warning'
+  return 'placeholderColor'
 }
 
 function MemberRow({
@@ -208,18 +208,18 @@ function MemberRow({
         width={40}
         height={40}
         borderRadius={20}
-        backgroundColor={'$backgroundHover'}
+        backgroundColor={'backgroundHover'}
         borderWidth={1}
-        borderColor={'$borderColor'}
+        borderColor={'borderColor'}
         alignItems="center"
         justifyContent="center"
       >
         {member.role === 'owner' ? (
-          <Shield size={18} color={'$secondary'} />
+          <Shield size={18} color={'secondary'} />
         ) : member.role === 'moderator' ? (
-          <Shield size={18} color={'$warning'} />
+          <Shield size={18} color={'warning'} />
         ) : null}
-        {member.role === 'member' ? <Flame size={16} color={'$placeholderColor'} /> : null}
+        {member.role === 'member' ? <Flame size={16} color={'placeholderColor'} /> : null}
       </YStack>
 
       <YStack flex={1} gap={2}>
@@ -239,7 +239,7 @@ function MemberRow({
               {member.role}
             </Text>
           </YStack>
-          <Text fontSize={11} color={'$placeholderColor'}>
+          <Text fontSize={11} color={'placeholderColor'}>
             {getTimeAgo(member.joinedAt)}
           </Text>
         </XStack>
@@ -252,13 +252,13 @@ function MemberRow({
               width={36}
               height={36}
               borderRadius={18}
-              backgroundColor={'$backgroundHover'}
+              backgroundColor={'backgroundHover'}
               borderWidth={1}
-              borderColor={'$error'}
+              borderColor={'error'}
               alignItems="center"
               justifyContent="center"
             >
-              <UserX size={16} color={'$error'} />
+              <UserX size={16} color={'error'} />
             </YStack>
           </Pressable>
           <Pressable onPress={() => onBan(member)}>
@@ -266,13 +266,13 @@ function MemberRow({
               width={36}
               height={36}
               borderRadius={18}
-              backgroundColor={'$backgroundHover'}
+              backgroundColor={'backgroundHover'}
               borderWidth={1}
-              borderColor={'$warning'}
+              borderColor={'warning'}
               alignItems="center"
               justifyContent="center"
             >
-              <Ban size={16} color={'$warning'} />
+              <Ban size={16} color={'warning'} />
             </YStack>
           </Pressable>
         </XStack>
@@ -353,7 +353,7 @@ function CampHeader({
   // A camp's own accent replaces the primary fill on "Spark Here", so its
   // label can't rely on the onPrimary theme: pick white or dark per accent.
   const accentColor = camp.accentColor
-  const sparkLabelColor = accentColor ? readableLabelColor(accentColor) : '$color'
+  const sparkLabelColor = accentColor ? readableLabelColor(accentColor) : 'color'
   const coverImageUrl = camp.coverImageUrl
 
   return (
@@ -379,15 +379,15 @@ function CampHeader({
       {isFrozen ? (
         <YStack
           backgroundColor={'rgba(245, 158, 11, 0.13)'}
-          borderColor={'$warning'}
+          borderColor={'warning'}
           borderWidth={1}
           borderRadius={12}
           padding={12}
         >
-          <Text color={'$warning'} fontSize={14} fontWeight="600">
+          <Text color={'warning'} fontSize={14} fontWeight="600">
             🔒 This camp is frozen
           </Text>
-          <Text color={'$placeholderColor'} fontSize={12} marginTop={4}>
+          <Text color={'placeholderColor'} fontSize={12} marginTop={4}>
             No new videos can be created here. Upgrade to manage this camp.
           </Text>
         </YStack>
@@ -395,15 +395,15 @@ function CampHeader({
       {isArchived ? (
         <YStack
           backgroundColor={'rgba(239, 68, 68, 0.13)'}
-          borderColor={'$error'}
+          borderColor={'error'}
           borderWidth={1}
           borderRadius={12}
           padding={12}
         >
-          <Text color={'$error'} fontSize={14} fontWeight="600">
+          <Text color={'error'} fontSize={14} fontWeight="600">
             📦 This camp has been archived
           </Text>
-          <Text color={'$placeholderColor'} fontSize={12} marginTop={4}>
+          <Text color={'placeholderColor'} fontSize={12} marginTop={4}>
             This camp is read-only. Content will be permanently deleted 30 days after archival.
           </Text>
         </YStack>
@@ -416,11 +416,11 @@ function CampHeader({
             borderRadius={21}
             alignItems="center"
             justifyContent="center"
-            backgroundColor={'$backgroundHover'}
+            backgroundColor={'backgroundHover'}
             borderWidth={1}
-            borderColor={'$borderColor'}
+            borderColor={'borderColor'}
           >
-            <ArrowLeft size={22} color={'$color'} />
+            <ArrowLeft size={22} color={'color'} />
           </YStack>
         </Pressable>
 
@@ -438,11 +438,11 @@ function CampHeader({
                 borderRadius={21}
                 alignItems="center"
                 gap={6}
-                backgroundColor={'$backgroundHover'}
+                backgroundColor={'backgroundHover'}
                 borderWidth={1}
-                borderColor={'$borderColor'}
+                borderColor={'borderColor'}
               >
-                <Settings size={18} color={'$color'} />
+                <Settings size={18} color={'color'} />
                 <Text fontSize={13} fontWeight="900">
                   Settings
                 </Text>
@@ -457,14 +457,14 @@ function CampHeader({
                 borderRadius={21}
                 alignItems="center"
                 justifyContent="center"
-                backgroundColor={'$backgroundHover'}
+                backgroundColor={'backgroundHover'}
                 borderWidth={1}
-                borderColor={muted ? '$warning' : '$borderColor'}
+                borderColor={muted ? 'warning' : 'borderColor'}
               >
                 {muted ? (
-                  <BellOff size={20} color={'$warning'} />
+                  <BellOff size={20} color={'warning'} />
                 ) : (
-                  <Bell size={20} color={'$color'} />
+                  <Bell size={20} color={'color'} />
                 )}
               </YStack>
             </Pressable>
@@ -477,14 +477,14 @@ function CampHeader({
           width={72}
           height={72}
           borderRadius={20}
-          backgroundColor={camp.color ?? '$backgroundHover'}
+          backgroundColor={camp.color ?? 'backgroundHover'}
           alignItems="center"
           justifyContent="center"
         >
           {camp.access === 'invite' ? (
-            <Lock size={32} color={'$color'} />
+            <Lock size={32} color={'color'} />
           ) : (
-            <Flame size={36} color={'$color'} />
+            <Flame size={36} color={'color'} />
           )}
         </YStack>
 
@@ -492,13 +492,13 @@ function CampHeader({
           <Text fontSize={26} fontWeight="900" numberOfLines={2}>
             {camp.name}
           </Text>
-          <Text fontSize={14} color={'$placeholderColor'}>
+          <Text fontSize={14} color={'placeholderColor'}>
             {camp.theme ?? getAccessLabel(camp)}
           </Text>
         </YStack>
       </XStack>
 
-      <Text fontSize={15} color={'$color'} lineHeight={22}>
+      <Text fontSize={15} color={'color'} lineHeight="22px">
         {camp.purpose}
       </Text>
 
@@ -506,15 +506,15 @@ function CampHeader({
         <YStack
           padding={14}
           borderRadius={16}
-          backgroundColor={'$backgroundPress'}
+          backgroundColor={'backgroundPress'}
           borderWidth={1}
-          borderColor={camp.color ?? '$borderColor'}
+          borderColor={camp.color ?? 'borderColor'}
           gap={6}
         >
-          <Text fontSize={12} color={'$secondary'} fontWeight="900">
+          <Text fontSize={12} color={'secondary'} fontWeight="900">
             {firstVisitBanner.title}
           </Text>
-          <Text fontSize={14} color={'$color'} lineHeight={20}>
+          <Text fontSize={14} color={'color'} lineHeight="20px">
             {firstVisitBanner.body}
           </Text>
         </YStack>
@@ -532,15 +532,15 @@ function CampHeader({
         <YStack
           padding={14}
           borderRadius={16}
-          backgroundColor={'$backgroundHover'}
+          backgroundColor={'backgroundHover'}
           borderWidth={1}
-          borderColor={'$borderColor'}
+          borderColor={'borderColor'}
           gap={6}
         >
-          <Text fontSize={12} color={'$placeholderColor'} fontWeight="900">
+          <Text fontSize={12} color={'placeholderColor'} fontWeight="900">
             Prompt
           </Text>
-          <Text fontSize={15} color={'$color'} lineHeight={21}>
+          <Text fontSize={15} color={'color'} lineHeight="21px">
             {camp.defaultPrompt}
           </Text>
         </YStack>
@@ -553,7 +553,7 @@ function CampHeader({
           {(camp.access !== 'invite' || isOwner) && canCreate ? (
             <Button
               variant="primary"
-              size="$lg"
+              size="lg"
               onPress={onSpark}
               {...(accentColor ? { backgroundColor: accentColor } : null)}
             >
@@ -575,23 +575,23 @@ function CampHeader({
               <YStack
                 padding={12}
                 borderRadius={14}
-                backgroundColor={'$backgroundHover'}
+                backgroundColor={'backgroundHover'}
                 borderWidth={1}
-                borderColor={'$borderColor'}
+                borderColor={'borderColor'}
                 gap={2}
               >
-                <Text fontSize={13} color={'$color'} fontWeight="900">
+                <Text fontSize={13} color={'color'} fontWeight="900">
                   Free members can join and respond here
                 </Text>
-                <Text fontSize={12} color={'$primary'} fontWeight="900">
+                <Text fontSize={12} color={'primary'} fontWeight="900">
                   Spark your own with Plus →
                 </Text>
               </YStack>
             </Pressable>
           ) : null}
           {isOwner && camp.access === 'invite' ? (
-            <Button variant="outline" size="$lg" onPress={onCreateInvite}>
-              <Text color={'$color'} fontWeight="900">
+            <Button variant="outline" size="lg" onPress={onCreateInvite}>
+              <Text color={'color'} fontWeight="900">
                 Create Invite Code
               </Text>
             </Button>
@@ -600,8 +600,8 @@ function CampHeader({
       ) : null}
 
       {!isArchived && canJoin ? (
-        <Button variant="primary" size="$lg" onPress={onJoin}>
-          <Text color={'$color'} fontWeight="900">
+        <Button variant="primary" size="lg" onPress={onJoin}>
+          <Text color={'color'} fontWeight="900">
             {cooldownExpired
               ? 'Request to Join Again'
               : camp.access === 'approval'
@@ -615,11 +615,11 @@ function CampHeader({
         <YStack
           padding={12}
           borderRadius={14}
-          backgroundColor={'$backgroundHover'}
+          backgroundColor={'backgroundHover'}
           borderWidth={1}
-          borderColor={'$warning'}
+          borderColor={'warning'}
         >
-          <Text color={'$warning'} fontWeight="900" textAlign="center">
+          <Text color={'warning'} fontWeight="900" textAlign="center">
             Request pending — awaiting camp owner approval
           </Text>
         </YStack>
@@ -629,11 +629,11 @@ function CampHeader({
         <YStack
           padding={12}
           borderRadius={14}
-          backgroundColor={'$backgroundHover'}
+          backgroundColor={'backgroundHover'}
           borderWidth={1}
-          borderColor={'$error'}
+          borderColor={'error'}
         >
-          <Text color={'$error'} fontWeight="900" textAlign="center">
+          <Text color={'error'} fontWeight="900" textAlign="center">
             Request denied — you can try again on{' '}
             {cooldownEndDate?.toLocaleDateString('en-US', {
               year: 'numeric',
@@ -647,7 +647,7 @@ function CampHeader({
       {/* Owner: Pending access request queue */}
       {isOwner && pendingRequests.length > 0 ? (
         <YStack gap={12}>
-          <Text fontSize={14} color={'$secondary'} fontWeight="900">
+          <Text fontSize={14} color={'secondary'} fontWeight="900">
             Pending Requests ({pendingRequests.length})
           </Text>
           {pendingRequests.map((req) => (
@@ -655,9 +655,9 @@ function CampHeader({
               key={req.membershipId}
               padding={14}
               borderRadius={14}
-              backgroundColor={'$backgroundHover'}
+              backgroundColor={'backgroundHover'}
               borderWidth={1}
-              borderColor={'$borderColor'}
+              borderColor={'borderColor'}
               gap={10}
             >
               <XStack alignItems="center" justifyContent="space-between" gap={10}>
@@ -665,18 +665,18 @@ function CampHeader({
                   <Text fontSize={15} fontWeight="900">
                     {req.displayName || req.userName}
                   </Text>
-                  <Text fontSize={12} color={'$placeholderColor'}>
+                  <Text fontSize={12} color={'placeholderColor'}>
                     {getTimeAgo(req.requestedAt)}
                   </Text>
                 </YStack>
                 <XStack gap={8}>
-                  <Button variant="outline" size="$sm" onPress={() => onReject(req.membershipId)}>
-                    <Text color={'$error'} fontWeight="900">
+                  <Button variant="outline" size="sm" onPress={() => onReject(req.membershipId)}>
+                    <Text color={'error'} fontWeight="900">
                       Deny
                     </Text>
                   </Button>
-                  <Button variant="primary" size="$sm" onPress={() => onApprove(req.membershipId)}>
-                    <Text color={'$color'} fontWeight="900">
+                  <Button variant="primary" size="sm" onPress={() => onApprove(req.membershipId)}>
+                    <Text color={'color'} fontWeight="900">
                       Approve
                     </Text>
                   </Button>
@@ -690,14 +690,14 @@ function CampHeader({
       {/* Manager: Member management section */}
       {isManager && members !== undefined ? (
         <YStack gap={12}>
-          <Text fontSize={14} color={'$secondary'} fontWeight="900">
+          <Text fontSize={14} color={'secondary'} fontWeight="900">
             Members ({members.length})
           </Text>
           <YStack
             borderRadius={14}
-            backgroundColor={'$backgroundHover'}
+            backgroundColor={'backgroundHover'}
             borderWidth={1}
-            borderColor={'$borderColor'}
+            borderColor={'borderColor'}
             overflow="hidden"
           >
             {members.map((member) => (
@@ -718,20 +718,20 @@ function CampHeader({
         <YStack gap={8}>
           <Pressable onPress={() => setBannedExpanded(!bannedExpanded)}>
             <XStack alignItems="center" gap={6}>
-              <Text fontSize={13} color={'$error'} fontWeight="900">
+              <Text fontSize={13} color={'error'} fontWeight="900">
                 Banned Members ({bannedMembers.length})
               </Text>
               {bannedExpanded ? (
-                <ChevronUp size={14} color={'$error'} />
+                <ChevronUp size={14} color={'error'} />
               ) : (
-                <ChevronDown size={14} color={'$error'} />
+                <ChevronDown size={14} color={'error'} />
               )}
             </XStack>
           </Pressable>
           {bannedExpanded ? (
             <YStack
               borderRadius={14}
-              backgroundColor={'$backgroundHover'}
+              backgroundColor={'backgroundHover'}
               borderWidth={1}
               borderColor={'rgba(239, 68, 68, 0.25)'}
               overflow="hidden"
@@ -751,11 +751,11 @@ function CampHeader({
                         {banned.displayName || banned.name || 'Unknown'}
                       </Text>
                       {banned.moderationReason ? (
-                        <Text fontSize={12} color={'$placeholderColor'} numberOfLines={2}>
+                        <Text fontSize={12} color={'placeholderColor'} numberOfLines={2}>
                           Reason: {banned.moderationReason}
                         </Text>
                       ) : null}
-                      <Text fontSize={11} color={'$placeholderColor'}>
+                      <Text fontSize={11} color={'placeholderColor'}>
                         Banned {getTimeAgo(banned.updatedAt)}
                       </Text>
                     </YStack>
@@ -765,11 +765,11 @@ function CampHeader({
                           paddingHorizontal={12}
                           paddingVertical={6}
                           borderRadius={10}
-                          backgroundColor={'$backgroundHover'}
+                          backgroundColor={'backgroundHover'}
                           borderWidth={1}
-                          borderColor={'$primary'}
+                          borderColor={'primary'}
                         >
-                          <Text fontSize={12} color={'$primary'} fontWeight="900">
+                          <Text fontSize={12} color={'primary'} fontWeight="900">
                             Unban
                           </Text>
                         </YStack>
@@ -780,7 +780,7 @@ function CampHeader({
               ))}
               {bannedMembers.length === 0 ? (
                 <YStack padding={16} alignItems="center">
-                  <Text fontSize={13} color={'$placeholderColor'}>
+                  <Text fontSize={13} color={'placeholderColor'}>
                     No banned members
                   </Text>
                 </YStack>
@@ -793,12 +793,12 @@ function CampHeader({
       {/* Owner: Archive camp button */}
       {isOwner && !isArchived ? (
         <YStack paddingTop={8}>
-          <Button variant="outline" size="$lg" onPress={onArchive}>
-            <Text color={'$error'} fontWeight="900">
+          <Button variant="outline" size="lg" onPress={onArchive}>
+            <Text color={'error'} fontWeight="900">
               Archive Camp
             </Text>
           </Button>
-          <Text fontSize={11} color={'$placeholderColor'} marginTop={4} textAlign="center">
+          <Text fontSize={11} color={'placeholderColor'} marginTop={4} textAlign="center">
             Archiving makes the camp read-only. Content will be permanently deleted after 30 days.
           </Text>
         </YStack>
@@ -845,20 +845,20 @@ function BondfireRow({
           width={50}
           height={50}
           borderRadius={15}
-          backgroundColor={'$backgroundHover'}
+          backgroundColor={'backgroundHover'}
           borderWidth={1}
-          borderColor={'$borderColor'}
+          borderColor={'borderColor'}
           alignItems="center"
           justifyContent="center"
         >
-          <Flame size={24} color={'$primary'} />
+          <Flame size={24} color={'primary'} />
         </YStack>
 
         <YStack flex={1} gap={4}>
           <Text fontSize={16} fontWeight="900" numberOfLines={1}>
             {bondfire.title?.trim() || `${bondfire.creatorName ?? 'Anonymous'}'s Bondfire`}
           </Text>
-          <Text fontSize={12} color={'$placeholderColor'}>
+          <Text fontSize={12} color={'placeholderColor'}>
             {bondfire.creatorName ? `${bondfire.creatorName} · ` : ''}
             {bondfire.videoStatus === 'live' ? 'Live now' : getTimeAgo(bondfire.createdAt)}
           </Text>
@@ -873,8 +873,8 @@ function BondfireRow({
             isVisible={reactionChipVisible}
           />
           <XStack alignItems="center" gap={6}>
-            <MessageCircle size={15} color={'$placeholderColor'} />
-            <Text fontSize={13} color={'$placeholderColor'}>
+            <MessageCircle size={15} color={'placeholderColor'} />
+            <Text fontSize={13} color={'placeholderColor'}>
               {responses}
             </Text>
           </XStack>
@@ -1179,18 +1179,18 @@ export default function CampDetailScreen() {
       return (
         <YStack
           flex={1}
-          backgroundColor={'$background'}
+          backgroundColor={'background'}
           alignItems="center"
           justifyContent="center"
-          padding="$6"
-          gap="$4"
+          padding="6"
+          gap="4"
         >
           <StatusBar barStyle={statusBarStyle} />
-          <AlertTriangle size={48} color={'$primary'} />
-          <Text fontSize="$6" fontWeight="700" color={'$color'} textAlign="center">
+          <AlertTriangle size={48} color={'primary'} />
+          <Text fontSize="6" fontWeight="700" color={'color'} textAlign="center">
             Connection Issue
           </Text>
-          <Text fontSize="$4" color={'$placeholderColor'} opacity={0.7} textAlign="center">
+          <Text fontSize="4" color={'placeholderColor'} opacity={0.7} textAlign="center">
             We're having trouble loading this camp. Check your internet connection and try again.
           </Text>
           <Pressable
@@ -1201,14 +1201,14 @@ export default function CampDetailScreen() {
             <YStack
               flexDirection="row"
               alignItems="center"
-              gap="$2"
-              backgroundColor={'$primary'}
-              paddingHorizontal="$5"
-              paddingVertical="$3"
-              borderRadius="$4"
+              gap="2"
+              backgroundColor={'primary'}
+              paddingHorizontal="5"
+              paddingVertical="3"
+              borderRadius="4"
             >
-              <RefreshCw size={18} color={'$background'} />
-              <Text fontSize="$4" fontWeight="600" color={'$background'}>
+              <RefreshCw size={18} color={'background'} />
+              <Text fontSize="4" fontWeight="600" color={'background'}>
                 Try Again
               </Text>
             </YStack>
@@ -1218,10 +1218,10 @@ export default function CampDetailScreen() {
     }
 
     return (
-      <YStack flex={1} backgroundColor={'$background'} alignItems="center" justifyContent="center">
+      <YStack flex={1} backgroundColor={'background'} alignItems="center" justifyContent="center">
         <StatusBar barStyle={statusBarStyle} />
-        <Spinner size="large" color={'$primary'} />
-        <Text marginTop={18} color={'$placeholderColor'}>
+        <Spinner size="large" color={'primary'} />
+        <Text marginTop={18} color={'placeholderColor'}>
           Loading camp...
         </Text>
       </YStack>
@@ -1230,18 +1230,12 @@ export default function CampDetailScreen() {
 
   if (!camp) {
     return (
-      <YStack
-        flex={1}
-        backgroundColor={'$background'}
-        padding={24}
-        justifyContent="center"
-        gap={16}
-      >
+      <YStack flex={1} backgroundColor={'background'} padding={24} justifyContent="center" gap={16}>
         <Text fontSize={22} fontWeight="900" textAlign="center">
           Camp unavailable
         </Text>
-        <Button variant="primary" size="$lg" onPress={handleBack}>
-          <Text color={'$color'} fontWeight="900">
+        <Button variant="primary" size="lg" onPress={handleBack}>
+          <Text color={'color'} fontWeight="900">
             Go Back
           </Text>
         </Button>
@@ -1250,7 +1244,7 @@ export default function CampDetailScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor={'$background'}>
+    <YStack flex={1} backgroundColor={'background'}>
       <StatusBar barStyle={statusBarStyle} />
       <FlatList
         data={bondfires ?? []}
@@ -1274,7 +1268,7 @@ export default function CampDetailScreen() {
           )
         }}
         ItemSeparatorComponent={() => (
-          <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
+          <Separator borderColor={'borderColor'} opacity={0.6} marginHorizontal={16} />
         )}
         ListHeaderComponent={
           <>
@@ -1304,11 +1298,11 @@ export default function CampDetailScreen() {
         }
         ListEmptyComponent={
           <YStack paddingVertical={64} paddingHorizontal={32} alignItems="center" gap={12}>
-            <Flame size={54} color={'$primary'} />
+            <Flame size={54} color={'primary'} />
             <Text fontSize={19} fontWeight="900" textAlign="center">
               No Bondfires yet
             </Text>
-            <Text fontSize={14} color={'$placeholderColor'} textAlign="center" lineHeight={21}>
+            <Text fontSize={14} color={'placeholderColor'} textAlign="center" lineHeight="21px">
               This camp is ready. The first spark will set the tone.
             </Text>
           </YStack>
@@ -1332,7 +1326,7 @@ export default function CampDetailScreen() {
             padding={24}
           >
             <YStack
-              backgroundColor={'$backgroundPress'}
+              backgroundColor={'backgroundPress'}
               borderRadius={16}
               padding={20}
               gap={16}
@@ -1343,7 +1337,7 @@ export default function CampDetailScreen() {
                 <Text fontSize={18} fontWeight="900">
                   Ban Member
                 </Text>
-                <Text fontSize={14} color={'$placeholderColor'}>
+                <Text fontSize={14} color={'placeholderColor'}>
                   {banReasonModalMember
                     ? `Ban ${banReasonModalMember.displayName || banReasonModalMember.name || 'this member'} from this camp?`
                     : ''}
@@ -1373,15 +1367,15 @@ export default function CampDetailScreen() {
                 <Button
                   variant="outline"
                   flex={1}
-                  size="$lg"
+                  size="lg"
                   onPress={() => setBanReasonModalMember(null)}
                 >
-                  <Text color={'$color'} fontWeight="900">
+                  <Text color={'color'} fontWeight="900">
                     Cancel
                   </Text>
                 </Button>
-                <Button variant="primary" flex={1} size="$lg" onPress={handleConfirmBan}>
-                  <Text color={'$color'} fontWeight="900">
+                <Button variant="primary" flex={1} size="lg" onPress={handleConfirmBan}>
+                  <Text color={'color'} fontWeight="900">
                     Ban
                   </Text>
                 </Button>
@@ -1407,7 +1401,7 @@ export default function CampDetailScreen() {
             padding={24}
           >
             <YStack
-              backgroundColor={'$backgroundPress'}
+              backgroundColor={'backgroundPress'}
               borderRadius={16}
               padding={20}
               gap={16}
@@ -1418,7 +1412,7 @@ export default function CampDetailScreen() {
                 <Text fontSize={18} fontWeight="900">
                   Archive Camp
                 </Text>
-                <Text fontSize={14} color={'$placeholderColor'} lineHeight={20}>
+                <Text fontSize={14} color={'placeholderColor'} lineHeight="20px">
                   Archiving this camp will make it read-only for all members. After 30 days, all
                   content will be permanently deleted. This cannot be undone.
                 </Text>
@@ -1446,21 +1440,21 @@ export default function CampDetailScreen() {
                 <Button
                   variant="outline"
                   flex={1}
-                  size="$lg"
+                  size="lg"
                   onPress={() => setIsArchiveModalOpen(false)}
                 >
-                  <Text color={'$color'} fontWeight="900">
+                  <Text color={'color'} fontWeight="900">
                     Cancel
                   </Text>
                 </Button>
                 <Button
                   variant="primary"
                   flex={1}
-                  size="$lg"
+                  size="lg"
                   disabled={archiveConfirmText.trim() !== 'Archive Camp'}
                   onPress={handleConfirmArchive}
                 >
-                  <Text color={'$color'} fontWeight="900">
+                  <Text color={'color'} fontWeight="900">
                     Archive
                   </Text>
                 </Button>

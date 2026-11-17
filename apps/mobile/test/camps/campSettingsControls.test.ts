@@ -5,7 +5,7 @@ import { LimitControl } from '../../components/camps/CampSettingsControls'
 
 vi.mock('@bondfires/app', () => ({ useAppThemeColors: () => ({ colors: { color: '#000000' } }) }))
 vi.mock('@bondfires/ui', () => ({ Text: 'Text' }))
-vi.mock('@tamagui/lucide-icons', () => ({
+vi.mock('@bondfires/ui/icons', () => ({
   Check: 'Check',
   Globe: 'Globe',
   Lock: 'Lock',

@@ -12,7 +12,7 @@ import {
   telemetry,
 } from '@bondfires/app'
 import { Button, Text } from '@bondfires/ui'
-import { Bell, BellOff } from '@tamagui/lucide-icons'
+import { Bell, BellOff } from '@bondfires/ui/icons'
 import * as Device from 'expo-device'
 import { useEffect, useRef, useState } from 'react'
 import { Linking, Platform } from 'react-native'
@@ -211,13 +211,29 @@ export function PushPrimerSheet({ trigger, context }: PushPrimerSheetProps) {
       snapPointsMode="fit"
       dismissOnSnapToBottom
     >
-      <Sheet.Overlay animation="quick" enterStyle={{ opacity: 0 }} exitStyle={{ opacity: 0 }} />
-      <Sheet.Frame padding={24} gap={16} alignItems="center">
+      <Sheet.Overlay
+        backgroundColor="rgba(0,0,0,0.45)"
+        transition="quick"
+        opacity={{ default: 1, enter: 0, exit: 0 }}
+      />
+      <Sheet.Container
+        padding={24}
+        gap={16}
+        alignItems="center"
+        borderTopLeftRadius={9}
+        borderTopRightRadius={9}
+        overflow="hidden"
+      >
+        <Sheet.Background
+          backgroundColor={'background'}
+          borderTopLeftRadius={9}
+          borderTopRightRadius={9}
+        />
         <YStack
           width={56}
           height={56}
           borderRadius={28}
-          backgroundColor={'$primary'}
+          backgroundColor={'primary'}
           alignItems="center"
           justifyContent="center"
         >
@@ -232,7 +248,7 @@ export function PushPrimerSheet({ trigger, context }: PushPrimerSheetProps) {
           {copy.title}
         </Text>
 
-        <Text fontSize={15} color={'$placeholderColor'} textAlign="center" lineHeight={22}>
+        <Text fontSize={15} color={'placeholderColor'} textAlign="center" lineHeight="22px">
           {copy.body}
         </Text>
 
@@ -243,16 +259,16 @@ export function PushPrimerSheet({ trigger, context }: PushPrimerSheetProps) {
         )}
 
         <YStack gap={10} width="100%" marginTop={8}>
-          <Button variant="primary" size="$lg" onPress={handlePrimary}>
-            <Text color={'$color'} fontWeight="700">
+          <Button variant="primary" size="lg" onPress={handlePrimary}>
+            <Text color={'color'} fontWeight="700">
               {copy.primary}
             </Text>
           </Button>
-          <Button variant="outline" size="$lg" onPress={handleNotNow}>
-            <Text color={'$color'}>Not now</Text>
+          <Button variant="outline" size="lg" onPress={handleNotNow}>
+            <Text color={'color'}>Not now</Text>
           </Button>
         </YStack>
-      </Sheet.Frame>
+      </Sheet.Container>
     </Sheet>
   )
 }

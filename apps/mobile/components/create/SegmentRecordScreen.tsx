@@ -1,7 +1,7 @@
 import { telemetry, usePresence } from '@bondfires/app'
 import { useMicLevelWarning } from '@bondfires/app/src/hooks/useMicLevelWarning'
 import { Spinner, Text } from '@bondfires/ui'
-import { Flame, X } from '@tamagui/lucide-icons'
+import { Flame, X } from '@bondfires/ui/icons'
 import { useConvex } from 'convex/react'
 import type { FunctionArgs } from 'convex/server'
 import * as Crypto from 'expo-crypto'
@@ -343,7 +343,7 @@ export function SegmentRecordScreen({
             ? 'Saving your recording…'
             : 'Recording unavailable'
   return (
-    <YStack flex={1} backgroundColor="$background">
+    <YStack flex={1} backgroundColor="background">
       {/* Fixed overlay colors preserve contrast over the camera in both themes. */}
       <StatusBar barStyle="light-content" />
       <LivePublisherView style={{ flex: 1 }} />
@@ -376,7 +376,7 @@ export function SegmentRecordScreen({
         </Pressable>
         {isRecording && (
           <YStack
-            backgroundColor={countdown ? '$warning' : '$error'}
+            backgroundColor={countdown ? 'warning' : 'error'}
             paddingHorizontal={16}
             paddingVertical={6}
             borderRadius={16}
@@ -411,7 +411,7 @@ export function SegmentRecordScreen({
         {phase === 'ready' && (
           <YStack alignItems="center" gap={12} pointerEvents="none">
             <XStack alignItems="center" gap={8}>
-              <Flame size={28} color="$primary" />
+              <Flame size={28} color="primary" />
               <Text color={VIDEO_OVERLAY_COLORS.textPrimary} fontSize={22} fontWeight="700">
                 {options.isResponse ? 'Respond' : (campName ?? 'Spark a Bondfire')}
               </Text>
@@ -451,7 +451,7 @@ export function SegmentRecordScreen({
                 paddingHorizontal={24}
                 paddingVertical={10}
                 borderRadius={20}
-                backgroundColor="$primary"
+                backgroundColor="primary"
               >
                 <Text color={VIDEO_OVERLAY_COLORS.textPrimary} fontWeight="800">
                   {hasRecorded.current ? 'Continue' : 'Try Again'}
@@ -503,7 +503,7 @@ export function SegmentRecordScreen({
             borderColor={VIDEO_OVERLAY_COLORS.textPrimary}
             alignItems="center"
             justifyContent="center"
-            backgroundColor={isRecording ? '$error' : 'transparent'}
+            backgroundColor={isRecording ? 'error' : 'transparent'}
             opacity={recordDisabled ? 0.7 : 1}
           >
             {isBusy ? (
@@ -513,7 +513,7 @@ export function SegmentRecordScreen({
                 width={isRecording ? 30 : 60}
                 height={isRecording ? 30 : 60}
                 borderRadius={isRecording ? 6 : 30}
-                backgroundColor={isRecording ? VIDEO_OVERLAY_COLORS.textPrimary : '$primary'}
+                backgroundColor={isRecording ? VIDEO_OVERLAY_COLORS.textPrimary : 'primary'}
               />
             )}
           </YStack>

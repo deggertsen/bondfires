@@ -6,8 +6,8 @@ import {
   telemetry,
 } from '@bondfires/app'
 import { Spinner } from '@bondfires/ui'
+import { AlertTriangle, RefreshCw } from '@bondfires/ui/icons'
 import { useValue } from '@legendapp/state/react'
-import { AlertTriangle, RefreshCw } from '@tamagui/lucide-icons'
 import { useConvex, useQuery } from 'convex/react'
 import { Redirect, useLocalSearchParams } from 'expo-router'
 import { useEffect, useRef, useState } from 'react'
@@ -141,15 +141,15 @@ export default function SplashScreen() {
           flex={1}
           alignItems="center"
           justifyContent="center"
-          backgroundColor={'$background'}
-          padding="$6"
-          gap="$4"
+          backgroundColor={'background'}
+          padding="6"
+          gap="4"
         >
-          <AlertTriangle size={48} color={'$primary'} />
-          <Text fontSize="$6" fontWeight="700" color={'$placeholderColor'} textAlign="center">
+          <AlertTriangle size={48} color={'primary'} />
+          <Text fontSize="6" fontWeight="700" color={'placeholderColor'} textAlign="center">
             Connection Issue
           </Text>
-          <Text fontSize="$4" color={'$placeholderColor'} opacity={0.7} textAlign="center">
+          <Text fontSize="4" color={'placeholderColor'} opacity={0.7} textAlign="center">
             We're having trouble connecting. Check your internet connection and try again.
           </Text>
           <Pressable
@@ -174,14 +174,14 @@ export default function SplashScreen() {
             <YStack
               flexDirection="row"
               alignItems="center"
-              gap="$2"
-              backgroundColor={'$primary'}
-              paddingHorizontal="$5"
-              paddingVertical="$3"
-              borderRadius="$4"
+              gap="2"
+              backgroundColor={'primary'}
+              paddingHorizontal="5"
+              paddingVertical="3"
+              borderRadius="4"
             >
-              <RefreshCw size={18} color={'$background'} />
-              <Text fontSize="$4" fontWeight="600" color={'$background'}>
+              <RefreshCw size={18} color={'background'} />
+              <Text fontSize="4" fontWeight="600" color={'background'}>
                 Try Again
               </Text>
             </YStack>
@@ -191,9 +191,9 @@ export default function SplashScreen() {
     }
 
     return (
-      <YStack flex={1} alignItems="center" justifyContent="center" backgroundColor={'$background'}>
-        <Spinner size="large" color={'$primary'} />
-        <Text marginTop="$4" color={'$placeholderColor'}>
+      <YStack flex={1} alignItems="center" justifyContent="center" backgroundColor={'background'}>
+        <Spinner size="large" color={'primary'} />
+        <Text marginTop="4" color={'placeholderColor'}>
           Loading...
         </Text>
       </YStack>

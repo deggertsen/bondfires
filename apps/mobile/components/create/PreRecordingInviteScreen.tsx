@@ -1,7 +1,7 @@
 import { appStore$, subscriptionActions, telemetry, useAppThemeColors } from '@bondfires/app'
 import { Button, Spinner, Text, UserAvatar } from '@bondfires/ui'
+import { Check, ChevronRight, Plus, ShieldCheck, Video } from '@bondfires/ui/icons'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { Check, ChevronRight, Plus, ShieldCheck, Video } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import * as Clipboard from 'expo-clipboard'
 import { type ReactNode, useCallback, useMemo } from 'react'
@@ -512,7 +512,7 @@ export function PreRecordingInviteScreen({
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
-      <YStack flex={1} backgroundColor={'$background'}>
+      <YStack flex={1} backgroundColor={'background'}>
         <StatusBar barStyle={statusBarStyle} />
 
         <SparkComposerHeader topInset={insets.top} onClose={onCancel} />
@@ -529,13 +529,13 @@ export function PreRecordingInviteScreen({
               padding={16}
               borderRadius={16}
               borderWidth={1}
-              borderColor={'$primary'}
+              borderColor={'primary'}
               gap={12}
             >
-              <Text color={'$color'} fontWeight="700" fontSize={16}>
+              <Text color={'color'} fontWeight="700" fontSize={16}>
                 Continue recording?
               </Text>
-              <Text color={'$placeholderColor'} fontSize={14}>
+              <Text color={'placeholderColor'} fontSize={14}>
                 You already have a draft Bondfire
                 {existingDraft.title ? ` (“${existingDraft.title}”)` : ''}. Pick up where you left
                 off, or discard it and start fresh.
@@ -544,23 +544,23 @@ export function PreRecordingInviteScreen({
                 <Button
                   flex={1}
                   variant="primary"
-                  size="$md"
+                  size="md"
                   onPress={handleResumeDraft}
                   disabled={isBusy}
                 >
-                  <Text color={'$color'} fontWeight="700">
+                  <Text color={'color'} fontWeight="700">
                     Continue
                   </Text>
                 </Button>
                 <Button
                   flex={1}
                   variant="outline"
-                  size="$md"
+                  size="md"
                   onPress={handleDiscardDraft}
                   disabled={isBusy}
-                  icon={isDiscarding ? <Spinner size="small" color={'$color'} /> : undefined}
+                  icon={isDiscarding ? <Spinner size="small" color={'color'} /> : undefined}
                 >
-                  <Text color={'$color'} fontWeight="700">
+                  <Text color={'color'} fontWeight="700">
                     Discard
                   </Text>
                 </Button>
@@ -633,8 +633,8 @@ export function PreRecordingInviteScreen({
                 paddingHorizontal={14}
                 borderRadius={12}
                 borderWidth={1}
-                borderColor={'$borderColor'}
-                backgroundColor={'$backgroundHover'}
+                borderColor={'borderColor'}
+                backgroundColor={'backgroundHover'}
               >
                 <YStack
                   width={32}
@@ -642,21 +642,21 @@ export function PreRecordingInviteScreen({
                   borderRadius={16}
                   borderWidth={1.5}
                   borderStyle="dashed"
-                  borderColor={'$primary'}
+                  borderColor={'primary'}
                   alignItems="center"
                   justifyContent="center"
                 >
-                  <Plus size={16} color={'$primary'} />
+                  <Plus size={16} color={'primary'} />
                 </YStack>
                 <YStack flex={1} gap={2}>
-                  <Text color={'$color'} fontSize={15} fontWeight="700">
+                  <Text color={'color'} fontSize={15} fontWeight="700">
                     Invite someone new
                   </Text>
-                  <Text color={'$placeholderColor'} fontSize={12} numberOfLines={1}>
+                  <Text color={'placeholderColor'} fontSize={12} numberOfLines={1}>
                     {inviteSummary}
                   </Text>
                 </YStack>
-                <ChevronRight size={18} color={'$placeholderColor'} />
+                <ChevronRight size={18} color={'placeholderColor'} />
               </XStack>
             </Pressable>
           </YStack>
@@ -683,7 +683,7 @@ export function PreRecordingInviteScreen({
                 maxLength={MAX_TITLE_LENGTH}
                 returnKeyType="done"
               />
-              <Text fontSize={11} color={'$placeholderColor'} alignSelf="flex-end">
+              <Text fontSize={11} color={'placeholderColor'} alignSelf="flex-end">
                 {displayTitle.length}/{MAX_TITLE_LENGTH}
               </Text>
             </YStack>
@@ -695,25 +695,25 @@ export function PreRecordingInviteScreen({
           paddingHorizontal={16}
           paddingTop={12}
           paddingBottom={Math.max(insets.bottom, 12) + 8}
-          backgroundColor={'$background'}
+          backgroundColor={'background'}
           borderTopWidth={1}
-          borderTopColor={'$borderColor'}
+          borderTopColor={'borderColor'}
           gap={10}
         >
           <Button
             variant="primary"
-            size="$lg"
+            size="lg"
             disabled={!canContinue}
             onPress={handleContinue}
             icon={
               isSubmitting ? (
-                <Spinner size="small" color={'$color'} />
+                <Spinner size="small" color={'color'} />
               ) : (
-                <Video size={18} color={'$color'} />
+                <Video size={18} color={'color'} />
               )
             }
           >
-            <Text color={'$color'} fontWeight="800" numberOfLines={1}>
+            <Text color={'color'} fontWeight="800" numberOfLines={1}>
               {isSubmitting ? 'Setting up…' : ctaLabel}
             </Text>
           </Button>
@@ -724,7 +724,7 @@ export function PreRecordingInviteScreen({
               accessibilityRole="button"
               accessibilityLabel="Skip inviting and record now"
             >
-              <Text color={'$placeholderColor'} fontSize={13} fontWeight="600" textAlign="center">
+              <Text color={'placeholderColor'} fontSize={13} fontWeight="600" textAlign="center">
                 Skip — record without inviting
               </Text>
             </Pressable>
@@ -772,11 +772,11 @@ function InviteSection({
   return (
     <YStack marginBottom={20}>
       <YStack paddingHorizontal={16} marginBottom={10} gap={2}>
-        <Text color={'$color'} fontWeight="700" fontSize={16}>
+        <Text color={'color'} fontWeight="700" fontSize={16}>
           {title}
         </Text>
         {caption.length > 0 && (
-          <Text color={'$placeholderColor'} fontSize={12}>
+          <Text color={'placeholderColor'} fontSize={12}>
             {caption}
           </Text>
         )}
@@ -813,13 +813,13 @@ function AudienceFilterChip({
         paddingVertical={8}
         borderRadius={999}
         borderWidth={1}
-        backgroundColor={active ? '$primary' : '$backgroundHover'}
-        borderColor={active ? '$primary' : '$borderColor'}
+        backgroundColor={active ? 'primary' : 'backgroundHover'}
+        borderColor={active ? 'primary' : 'borderColor'}
       >
-        <Text fontSize={13} fontWeight="700" color={'$color'}>
+        <Text fontSize={13} fontWeight="700" color={'color'}>
           {label}
         </Text>
-        <Text fontSize={12} fontWeight="600" color={'$color'} opacity={active ? 0.85 : 0.55}>
+        <Text fontSize={12} fontWeight="600" color={'color'} opacity={active ? 0.85 : 0.55}>
           {count}
         </Text>
       </XStack>
@@ -854,10 +854,10 @@ function CandidateAvatar({
           height={60}
           borderRadius={30}
           borderWidth={selected ? 3 : 0}
-          borderColor={'$primary'}
+          borderColor={'primary'}
           alignItems="center"
           justifyContent="center"
-          backgroundColor={'$backgroundHover'}
+          backgroundColor={'backgroundHover'}
         >
           <UserAvatar name={displayName} photoUrl={candidate.photoUrl} size={selected ? 54 : 60} />
           {selected && (
@@ -868,11 +868,11 @@ function CandidateAvatar({
               width={20}
               height={20}
               borderRadius={10}
-              backgroundColor={'$primary'}
+              backgroundColor={'primary'}
               alignItems="center"
               justifyContent="center"
             >
-              <Check size={12} color={'$color'} />
+              <Check size={12} color={'color'} />
             </YStack>
           )}
           {familyConnection && (
@@ -883,21 +883,21 @@ function CandidateAvatar({
               width={20}
               height={20}
               borderRadius={10}
-              backgroundColor={'$background'}
+              backgroundColor={'background'}
               borderWidth={1}
-              borderColor={'$primary'}
+              borderColor={'primary'}
               alignItems="center"
               justifyContent="center"
             >
-              <ShieldCheck size={12} color={'$primary'} />
+              <ShieldCheck size={12} color={'primary'} />
             </YStack>
           )}
         </YStack>
         <YStack alignItems="center" gap={1}>
-          <Text color={'$color'} fontSize={11} fontWeight="600" numberOfLines={1}>
+          <Text color={'color'} fontSize={11} fontWeight="600" numberOfLines={1}>
             {displayName.split(' ')[0]}
           </Text>
-          <Text color={'$placeholderColor'} fontSize={10} numberOfLines={1}>
+          <Text color={'placeholderColor'} fontSize={10} numberOfLines={1}>
             {hint}
           </Text>
         </YStack>

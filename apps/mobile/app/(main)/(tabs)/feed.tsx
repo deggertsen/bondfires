@@ -27,8 +27,8 @@ import {
   Spinner,
   Text,
 } from '@bondfires/ui'
+import { AlertTriangle, Flame, RefreshCw, Search, X } from '@bondfires/ui/icons'
 import { useValue } from '@legendapp/state/react'
-import { AlertTriangle, Flame, RefreshCw, Search, X } from '@tamagui/lucide-icons'
 import { useMutation, usePaginatedQuery, useQuery } from 'convex/react'
 import { useIsFocused, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -136,11 +136,11 @@ function ModePill({
         paddingHorizontal={14}
         paddingVertical={8}
         borderRadius={999}
-        backgroundColor={selected ? '$primary' : '$backgroundHover'}
+        backgroundColor={selected ? 'primary' : 'backgroundHover'}
         borderWidth={1}
-        borderColor={selected ? '$primary' : '$borderColor'}
+        borderColor={selected ? 'primary' : 'borderColor'}
       >
-        <Text fontSize={13} fontWeight="800" color={selected ? '$background' : '$color'}>
+        <Text fontSize={13} fontWeight="800" color={selected ? 'background' : 'color'}>
           {label}
         </Text>
       </YStack>
@@ -164,15 +164,15 @@ function CampPill({
         paddingHorizontal={12}
         paddingVertical={8}
         borderRadius={12}
-        backgroundColor={selected ? '$primary' : '$backgroundHover'}
+        backgroundColor={selected ? 'primary' : 'backgroundHover'}
         borderWidth={1}
-        borderColor={selected ? '$primary' : '$borderColor'}
+        borderColor={selected ? 'primary' : 'borderColor'}
         alignItems="center"
       >
         <Text
           fontSize={12}
           fontWeight="900"
-          color={selected ? '$background' : '$color'}
+          color={selected ? 'background' : 'color'}
           numberOfLines={1}
         >
           {label}
@@ -287,31 +287,31 @@ function EmptyFeed({
       flex={1}
       alignItems="center"
       justifyContent="center"
-      backgroundColor={'$background'}
+      backgroundColor={'background'}
       paddingHorizontal={40}
     >
       <YStack
         width={120}
         height={120}
         borderRadius={60}
-        backgroundColor={'$backgroundHover'}
+        backgroundColor={'backgroundHover'}
         alignItems="center"
         justifyContent="center"
         marginBottom={32}
       >
-        <Flame size={60} color={'$primary'} />
+        <Flame size={60} color={'primary'} />
       </YStack>
       {canCreate ? (
         <>
           <Text fontSize={24} fontWeight="900" marginBottom={12} textAlign="center">
             Spark a Bondfire
           </Text>
-          <Text fontSize={16} color={'$placeholderColor'} textAlign="center" marginBottom={32}>
+          <Text fontSize={16} color={'placeholderColor'} textAlign="center" marginBottom={32}>
             Be the first to share a video!
           </Text>
-          <Button variant="primary" size="$lg" onPress={onSpark}>
-            <Flame size={20} color={'$color'} />
-            <Text color={'$color'} fontWeight="900">
+          <Button variant="primary" size="lg" onPress={onSpark}>
+            <Flame size={20} color={'color'} />
+            <Text color={'color'} fontWeight="900">
               Spark Bondfire
             </Text>
           </Button>
@@ -321,11 +321,11 @@ function EmptyFeed({
           <Text fontSize={24} fontWeight="900" marginBottom={12} textAlign="center">
             Find a fire to respond to
           </Text>
-          <Text fontSize={16} color={'$placeholderColor'} textAlign="center" marginBottom={32}>
+          <Text fontSize={16} color={'placeholderColor'} textAlign="center" marginBottom={32}>
             Join a camp to see its Bondfires here, then jump in with a video response.
           </Text>
-          <Button variant="primary" size="$lg" onPress={onBrowseCamps}>
-            <Text color={'$color'} fontWeight="900">
+          <Button variant="primary" size="lg" onPress={onBrowseCamps}>
+            <Text color={'color'} fontWeight="900">
               Browse Camps
             </Text>
           </Button>
@@ -346,23 +346,23 @@ function FreeSummaryCard() {
     <XStack
       alignItems="center"
       gap={12}
-      backgroundColor={'$backgroundHover'}
+      backgroundColor={'backgroundHover'}
       borderRadius={14}
       borderWidth={1}
-      borderColor={'$borderColor'}
+      borderColor={'borderColor'}
       paddingVertical={12}
       paddingHorizontal={14}
     >
-      <Flame size={20} color={'$primary'} />
+      <Flame size={20} color={'primary'} />
       <YStack flex={1} gap={2}>
-        <Text fontSize={13} color={'$color'} fontWeight="900">
+        <Text fontSize={13} color={'color'} fontWeight="900">
           You're on the free plan
         </Text>
-        <Text fontSize={12} color={'$placeholderColor'} lineHeight={17}>
+        <Text fontSize={12} color={'placeholderColor'} lineHeight="17px">
           Respond to any fire, or{' '}
           <Text
             fontSize={12}
-            color={'$primary'}
+            color={'primary'}
             fontWeight="900"
             accessibilityRole="button"
             accessibilityLabel="Upgrade to spark your own Bondfires"
@@ -379,7 +379,7 @@ function FreeSummaryCard() {
         hitSlop={10}
         onPress={() => freeUpgradeActions.dismissSummaryCard()}
       >
-        <X size={18} color={'$placeholderColor'} />
+        <X size={18} color={'placeholderColor'} />
       </Pressable>
     </XStack>
   )
@@ -387,9 +387,9 @@ function FreeSummaryCard() {
 
 function LoadingFeed() {
   return (
-    <YStack flex={1} alignItems="center" justifyContent="center" backgroundColor={'$background'}>
-      <Spinner size="large" color={'$primary'} />
-      <Text marginTop={20} color={'$placeholderColor'}>
+    <YStack flex={1} alignItems="center" justifyContent="center" backgroundColor={'background'}>
+      <Spinner size="large" color={'primary'} />
+      <Text marginTop={20} color={'placeholderColor'}>
         Loading bondfires...
       </Text>
     </YStack>
@@ -402,29 +402,29 @@ function FeedRetry({ onRetry }: { onRetry: () => void }) {
       flex={1}
       alignItems="center"
       justifyContent="center"
-      backgroundColor={'$background'}
-      padding="$6"
-      gap="$4"
+      backgroundColor={'background'}
+      padding="6"
+      gap="4"
     >
-      <AlertTriangle size={48} color={'$primary'} />
-      <Text fontSize="$6" fontWeight="700" color={'$placeholderColor'} textAlign="center">
+      <AlertTriangle size={48} color={'primary'} />
+      <Text fontSize="6" fontWeight="700" color={'placeholderColor'} textAlign="center">
         Connection Issue
       </Text>
-      <Text fontSize="$4" color={'$placeholderColor'} opacity={0.7} textAlign="center">
+      <Text fontSize="4" color={'placeholderColor'} opacity={0.7} textAlign="center">
         We're having trouble loading the feed. Check your internet connection and try again.
       </Text>
       <Pressable onPress={onRetry}>
         <YStack
           flexDirection="row"
           alignItems="center"
-          gap="$2"
-          backgroundColor={'$primary'}
-          paddingHorizontal="$5"
-          paddingVertical="$3"
-          borderRadius="$4"
+          gap="2"
+          backgroundColor={'primary'}
+          paddingHorizontal="5"
+          paddingVertical="3"
+          borderRadius="4"
         >
-          <RefreshCw size={18} color={'$background'} />
-          <Text fontSize="$4" fontWeight="600" color={'$background'}>
+          <RefreshCw size={18} color={'background'} />
+          <Text fontSize="4" fontWeight="600" color={'background'}>
             Try Again
           </Text>
         </YStack>
@@ -1046,7 +1046,7 @@ export default function HomeScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor={'$background'}>
+    <YStack flex={1} backgroundColor={'background'}>
       <FeedSubscription
         key={feedSubscriptionKey}
         enabled={canLoadTabData}
@@ -1105,7 +1105,7 @@ export default function HomeScreen() {
           )
         }}
         ItemSeparatorComponent={() => (
-          <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
+          <Separator borderColor={'borderColor'} opacity={0.6} marginHorizontal={16} />
         )}
         ListHeaderComponent={
           <YStack paddingTop={insets.top + 16} paddingBottom={12} gap={12}>
@@ -1115,15 +1115,15 @@ export default function HomeScreen() {
                   <Text fontSize={26} fontWeight="900" numberOfLines={1}>
                     Home
                   </Text>
-                  <Text fontSize={13} color={'$placeholderColor'}>
+                  <Text fontSize={13} color={'placeholderColor'}>
                     {unreadCount > 0
                       ? `${unreadCount} ${unreadCount === 1 ? 'fire has' : 'fires have'} new responses`
                       : 'All caught up — discover something new.'}
                   </Text>
                 </YStack>
 
-                <Button variant="secondary" size="$sm" onPress={handleSpark}>
-                  <Text color={'$color'} fontWeight="900">
+                <Button variant="secondary" size="sm" onPress={handleSpark}>
+                  <Text color={'color'} fontWeight="900">
                     Spark
                   </Text>
                 </Button>
@@ -1150,13 +1150,13 @@ export default function HomeScreen() {
                   alignItems="center"
                   justifyContent="space-between"
                 >
-                  <Text fontSize={13} color={'$placeholderColor'} fontWeight="900">
+                  <Text fontSize={13} color={'placeholderColor'} fontWeight="900">
                     New responses
                   </Text>
                   {unreadCount > NEW_RESPONSES_CAP ? (
                     <Text
                       fontSize={13}
-                      color={'$primary'}
+                      color={'primary'}
                       fontWeight="800"
                       accessibilityRole="button"
                       accessibilityLabel={`See all ${unreadCount} unread fires`}
@@ -1185,7 +1185,7 @@ export default function HomeScreen() {
                         bondfire={thread}
                         thumbnailUrls$={thumbnailUrls$}
                       />
-                      <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
+                      <Separator borderColor={'borderColor'} opacity={0.6} marginHorizontal={16} />
                     </YStack>
                   )
                 })}
@@ -1193,21 +1193,21 @@ export default function HomeScreen() {
             ) : null}
 
             <YStack paddingHorizontal={16} gap={12}>
-              <Text fontSize={13} color={'$placeholderColor'} fontWeight="900">
+              <Text fontSize={13} color={'placeholderColor'} fontWeight="900">
                 Discover
               </Text>
 
               <XStack
                 alignItems="center"
                 gap={10}
-                backgroundColor={'$backgroundHover'}
+                backgroundColor={'backgroundHover'}
                 borderRadius={14}
                 borderWidth={1}
-                borderColor={'$borderColor'}
+                borderColor={'borderColor'}
                 paddingHorizontal={12}
                 paddingVertical={10}
               >
-                <Search size={18} color={'$placeholderColor'} />
+                <Search size={18} color={'placeholderColor'} />
                 <Input
                   value={query}
                   onChangeText={setQuery}
@@ -1219,7 +1219,7 @@ export default function HomeScreen() {
                   flex={1}
                 />
                 {filtered ? (
-                  <Text fontSize={12} color={'$placeholderColor'} fontWeight="900">
+                  <Text fontSize={12} color={'placeholderColor'} fontWeight="900">
                     {filtered.length}
                   </Text>
                 ) : null}
@@ -1286,10 +1286,10 @@ export default function HomeScreen() {
           emptyState === 'loading' || emptyState === 'more' ? (
             <YStack paddingVertical={48} alignItems="center" gap={12}>
               {emptyState === 'loading' ? (
-                <Spinner size="large" color={'$primary'} />
+                <Spinner size="large" color={'primary'} />
               ) : (
                 <>
-                  <Text color={'$placeholderColor'}>More fires may match this view.</Text>
+                  <Text color={'placeholderColor'}>More fires may match this view.</Text>
                   <Button onPress={() => setLoadMoreRequest((current) => current + 1)}>
                     <Text>Load more</Text>
                   </Button>
@@ -1304,34 +1304,34 @@ export default function HomeScreen() {
             />
           ) : emptyState === 'caught-up' ? (
             <YStack paddingVertical={80} alignItems="center" justifyContent="center" gap={12}>
-              <Flame size={56} color={'$primary'} />
+              <Flame size={56} color={'primary'} />
               <Text fontSize={18} fontWeight="900">
                 All caught up
               </Text>
               <Text
                 fontSize={14}
-                color={'$placeholderColor'}
+                color={'placeholderColor'}
                 textAlign="center"
                 paddingHorizontal={48}
               >
                 No new fires in this view. Spark a new Bondfire to keep things burning.
               </Text>
-              <Button variant="primary" size="$md" onPress={handleSpark}>
-                <Flame size={18} color={'$color'} />
-                <Text color={'$color'} fontWeight="900">
+              <Button variant="primary" size="md" onPress={handleSpark}>
+                <Flame size={18} color={'color'} />
+                <Text color={'color'} fontWeight="900">
                   Spark
                 </Text>
               </Button>
             </YStack>
           ) : (
             <YStack paddingVertical={80} alignItems="center" justifyContent="center" gap={12}>
-              <Flame size={56} color={'$primary'} />
+              <Flame size={56} color={'primary'} />
               <Text fontSize={18} fontWeight="900">
                 No matches
               </Text>
               <Text
                 fontSize={14}
-                color={'$placeholderColor'}
+                color={'placeholderColor'}
                 textAlign="center"
                 paddingHorizontal={48}
               >
@@ -1339,13 +1339,13 @@ export default function HomeScreen() {
               </Text>
               <Button
                 variant="outline"
-                size="$md"
+                size="md"
                 onPress={() => {
                   setQuery('')
                   setViewMode('discover')
                 }}
               >
-                <Text color={'$color'} fontWeight="900">
+                <Text color={'color'} fontWeight="900">
                   Reset
                 </Text>
               </Button>

@@ -1,6 +1,6 @@
 import { useAppThemeColors } from '@bondfires/app'
 import { Text } from '@bondfires/ui'
-import { Globe, Lock, Tent, Users, X } from '@tamagui/lucide-icons'
+import { Globe, Lock, Tent, Users, X } from '@bondfires/ui/icons'
 import { Pressable } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 import type { SparkMode } from './sparkComposer'
@@ -22,7 +22,7 @@ export function SparkComposerHeader({
       paddingTop={topInset + 8}
       paddingBottom={12}
     >
-      <Text fontSize={20} fontWeight="800" color={'$color'}>
+      <Text fontSize={20} fontWeight="800" color={'color'}>
         New Bondfire
       </Text>
       <Pressable
@@ -74,8 +74,8 @@ export function SparkModeToggle({
         gap={4}
         borderRadius={14}
         borderWidth={1}
-        borderColor={'$borderColor'}
-        backgroundColor={'$backgroundHover'}
+        borderColor={'borderColor'}
+        backgroundColor={'backgroundHover'}
       >
         {MODE_OPTIONS.map((option) => {
           const selected = option.mode === mode
@@ -94,13 +94,13 @@ export function SparkModeToggle({
                 alignItems="center"
                 justifyContent="center"
                 gap={8}
-                backgroundColor={selected ? '$primary' : 'transparent'}
+                backgroundColor={selected ? 'primary' : 'transparent'}
               >
-                <option.Icon size={17} color={selected ? '$color' : '$placeholderColor'} />
+                <option.Icon size={17} color={selected ? 'color' : 'placeholderColor'} />
                 <Text
                   fontSize={15}
                   fontWeight={selected ? '800' : '700'}
-                  color={selected ? '$color' : '$placeholderColor'}
+                  color={selected ? 'color' : 'placeholderColor'}
                 >
                   {option.label}
                 </Text>
@@ -110,8 +110,8 @@ export function SparkModeToggle({
         })}
       </XStack>
       <XStack alignItems="center" gap={6} paddingHorizontal={4}>
-        <active.CaptionIcon size={13} color={'$placeholderColor'} />
-        <Text fontSize={12} color={'$placeholderColor'}>
+        <active.CaptionIcon size={13} color={'placeholderColor'} />
+        <Text fontSize={12} color={'placeholderColor'}>
           {active.caption}
         </Text>
       </XStack>

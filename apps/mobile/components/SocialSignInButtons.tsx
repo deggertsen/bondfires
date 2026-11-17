@@ -68,7 +68,7 @@ export function SocialSignInButtons({
       {providers.apple && (
         <Button
           variant="outline"
-          size="$lg"
+          size="lg"
           disabled={disabled || !!busy}
           onPress={() => start('apple')}
           accessibilityLabel="Continue with Apple"
@@ -79,7 +79,7 @@ export function SocialSignInButtons({
       {providers.google && (
         <Button
           variant="outline"
-          size="$lg"
+          size="lg"
           disabled={disabled || !!busy}
           onPress={() => start('google')}
           accessibilityLabel="Continue with Google"
@@ -88,7 +88,7 @@ export function SocialSignInButtons({
         </Button>
       )}
       {error && (
-        <Text color="$error" accessibilityRole="alert">
+        <Text color="error" accessibilityRole="alert">
           {error}
         </Text>
       )}

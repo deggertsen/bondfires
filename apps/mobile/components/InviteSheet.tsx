@@ -1,5 +1,5 @@
 import { Button, Text, UserAvatar } from '@bondfires/ui'
-import { Check, Copy, Share, X } from '@tamagui/lucide-icons'
+import { Check, Copy, Share, X } from '@bondfires/ui/icons'
 import { useMutation, useQuery } from 'convex/react'
 import * as Clipboard from 'expo-clipboard'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -227,15 +227,24 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
       snapPoints={[mode === 'personal-bondfire' ? 82 : 60]}
       dismissOnSnapToBottom
     >
-      <Sheet.Overlay backgroundColor="rgba(0,0,0,0.45)" />
-      <Sheet.Frame
-        backgroundColor={'$backgroundPress'}
+      <Sheet.Overlay
+        backgroundColor="rgba(0,0,0,0.45)"
+        transition="quick"
+        opacity={{ default: 1, enter: 0, exit: 0 }}
+      />
+      <Sheet.Container
+        padding={24}
         borderTopLeftRadius={20}
         borderTopRightRadius={20}
-        padding={24}
+        overflow="hidden"
       >
+        <Sheet.Background
+          backgroundColor={'backgroundPress'}
+          borderTopLeftRadius={20}
+          borderTopRightRadius={20}
+        />
         <YStack gap={16} flex={1}>
-          <Sheet.Handle backgroundColor={'$borderColor'} />
+          <Sheet.Handle backgroundColor={'borderColor'} />
 
           {/* Title + Close */}
           <XStack justifyContent="space-between" alignItems="center">
@@ -243,7 +252,7 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
               {sheetTitle}
             </Text>
             <Pressable onPress={onClose} hitSlop={8}>
-              <X size={20} color={'$placeholderColor'} />
+              <X size={20} color={'placeholderColor'} />
             </Pressable>
           </XStack>
 
@@ -253,7 +262,7 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
               <Text
                 fontSize={13}
                 fontWeight="700"
-                color={'$placeholderColor'}
+                color={'placeholderColor'}
                 textTransform="uppercase"
                 letterSpacing={1}
               >
@@ -278,14 +287,14 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
                             size={52}
                             // A sent invite reads as a state, not as a person,
                             // so it overrides the initials.
-                            fallback={sent ? <Check size={22} color="$green10Dark" /> : undefined}
-                            fallbackBackgroundColor={sent ? '$green10Light' : undefined}
+                            fallback={sent ? <Check size={22} color="green10Dark" /> : undefined}
+                            fallbackBackgroundColor={sent ? 'green10Light' : undefined}
                           />
                           <Text
                             fontSize={11}
                             textAlign="center"
                             numberOfLines={1}
-                            color={sent ? '$placeholderColor' : '$color'}
+                            color={sent ? 'placeholderColor' : 'color'}
                           >
                             {contact.displayName ?? contact.name ?? 'Unknown'}
                           </Text>
@@ -303,16 +312,16 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
             <Text
               fontSize={13}
               fontWeight="700"
-              color={'$placeholderColor'}
+              color={'placeholderColor'}
               textTransform="uppercase"
               letterSpacing={1}
             >
               Share Link
             </Text>
             <YStack
-              backgroundColor={'$backgroundHover'}
+              backgroundColor={'backgroundHover'}
               borderWidth={1}
-              borderColor={'$borderColor'}
+              borderColor={'borderColor'}
               borderRadius={14}
               paddingHorizontal={16}
               paddingVertical={12}
@@ -320,7 +329,7 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
               gap={4}
               width="100%"
             >
-              <Text fontSize={12} color={'$placeholderColor'} numberOfLines={1} textAlign="center">
+              <Text fontSize={12} color={'placeholderColor'} numberOfLines={1} textAlign="center">
                 {shareUrl ??
                   (isGeneratingCode ? 'Generating invite...' : 'Invite link unavailable')}
               </Text>
@@ -333,7 +342,7 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
                 disabled={!shareUrl}
                 icon={copied ? <Check size={18} /> : <Copy size={18} />}
               >
-                <Text color={'$color'} fontWeight="700">
+                <Text color={'color'} fontWeight="700">
                   {copied ? 'Copied' : 'Copy Link'}
                 </Text>
               </Button>
@@ -344,7 +353,7 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
                 disabled={!shareUrl}
                 icon={<Share size={18} />}
               >
-                <Text color={'$color'} fontWeight="700">
+                <Text color={'color'} fontWeight="700">
                   Share
                 </Text>
               </Button>
@@ -356,7 +365,7 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
             <YStack alignItems="center" gap={4} paddingTop={4}>
               <Text
                 fontSize={11}
-                color={'$placeholderColor'}
+                color={'placeholderColor'}
                 textTransform="uppercase"
                 letterSpacing={1}
                 fontWeight="600"
@@ -375,11 +384,11 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
               padding={14}
               borderRadius={14}
               borderWidth={1}
-              borderColor="$borderColor"
-              backgroundColor="$backgroundHover"
+              borderColor="borderColor"
+              backgroundColor="backgroundHover"
             >
               <Text fontWeight="800">Inviting a family member in another age group?</Text>
-              <Text color="$placeholderColor" fontSize={12} lineHeight={18}>
+              <Text color="placeholderColor" fontSize={12} lineHeight="18px">
                 Use a one-time family link. The recipient must explicitly accept, and either person
                 can revoke the connection later. Bondfires does not verify family relationships.
               </Text>
@@ -414,7 +423,7 @@ export function InviteSheet({ mode, id, title, open, onClose }: Props) {
             </YStack>
           )}
         </YStack>
-      </Sheet.Frame>
+      </Sheet.Container>
     </Sheet>
   )
 }

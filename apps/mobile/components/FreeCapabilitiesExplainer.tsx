@@ -1,7 +1,7 @@
 import { freeUpgradeActions, freeUpgradeStore$ } from '@bondfires/app'
 import { Button, Text } from '@bondfires/ui'
+import { Map, MessageCircle, PlayCircle } from '@bondfires/ui/icons'
 import { useValue } from '@legendapp/state/react'
-import { Map, MessageCircle, PlayCircle } from '@tamagui/lucide-icons'
 import { Modal, Pressable } from 'react-native'
 import { XStack, YStack } from 'tamagui'
 
@@ -55,10 +55,10 @@ export function FreeCapabilitiesExplainer() {
           {/* Stop propagation so taps inside the card don't dismiss it. */}
           <Pressable onPress={() => {}}>
             <YStack
-              backgroundColor={'$background'}
+              backgroundColor={'background'}
               borderRadius={20}
               borderWidth={1}
-              borderColor={'$borderColor'}
+              borderColor={'borderColor'}
               padding={24}
               gap={20}
               width="100%"
@@ -68,7 +68,7 @@ export function FreeCapabilitiesExplainer() {
                 <Text fontSize={22} fontWeight="900">
                   What you get for free
                 </Text>
-                <Text fontSize={14} color={'$placeholderColor'} lineHeight={20}>
+                <Text fontSize={14} color={'placeholderColor'} lineHeight="20px">
                   Bondfires is respond-first. Here's everything you can do today — no upgrade
                   needed.
                 </Text>
@@ -81,17 +81,17 @@ export function FreeCapabilitiesExplainer() {
                       width={42}
                       height={42}
                       borderRadius={21}
-                      backgroundColor={'$backgroundHover'}
+                      backgroundColor={'backgroundHover'}
                       alignItems="center"
                       justifyContent="center"
                     >
-                      <Icon size={22} color={'$primary'} />
+                      <Icon size={22} color={'primary'} />
                     </YStack>
                     <YStack flex={1} gap={2}>
                       <Text fontSize={16} fontWeight="900">
                         {title}
                       </Text>
-                      <Text fontSize={13} color={'$placeholderColor'} lineHeight={18}>
+                      <Text fontSize={13} color={'placeholderColor'} lineHeight="18px">
                         {body}
                       </Text>
                     </YStack>
@@ -101,11 +101,11 @@ export function FreeCapabilitiesExplainer() {
 
               <Button
                 variant="primary"
-                size="$lg"
+                size="lg"
                 accessibilityLabel="View subscription plans"
                 onPress={() => freeUpgradeActions.openPaywallFromExplainer()}
               >
-                <Text color={'$color'} fontWeight="900">
+                <Text color={'color'} fontWeight="900">
                   View Plans
                 </Text>
               </Button>

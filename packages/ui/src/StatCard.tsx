@@ -13,16 +13,16 @@ export function StatCard({ value, label, color }: StatCardProps) {
       flex={1}
       padding={14}
       borderRadius={14}
-      backgroundColor={'$backgroundHover'}
+      backgroundColor={'backgroundHover'}
       borderWidth={1}
-      borderColor={'$borderColor'}
+      borderColor={'borderColor'}
       alignItems="center"
       gap={4}
     >
-      <Text fontSize={28} fontWeight="900" color={color ?? '$color'}>
+      <Text fontSize={28} fontWeight="900" color={color ?? 'color'}>
         {typeof value === 'number' ? value.toLocaleString() : value}
       </Text>
-      <Text fontSize={12} color={'$placeholderColor'} textAlign="center">
+      <Text fontSize={12} color={'placeholderColor'} textAlign="center">
         {label}
       </Text>
     </YStack>

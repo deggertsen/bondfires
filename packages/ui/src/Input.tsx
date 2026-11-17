@@ -1,6 +1,9 @@
 import { Platform } from 'react-native'
-import { type GetProps, styled, Input as TamaguiInput, TextArea as TamaguiTextArea } from 'tamagui'
+import { createStyledHOC, type GetProps, styled } from 'tamagui'
+import { Input as TamaguiInput, TextArea as TamaguiTextArea } from 'tamagui/unstyled'
 
+// Built on Tamagui's unstyled input behavior so the v3 default skin (its size
+// table, radius and `Input` theme) doesn't sit under these styles.
 type TamaguiInputProps = GetProps<typeof TamaguiInput>
 type AutoCompleteValue = NonNullable<TamaguiInputProps['autoComplete']>
 type TextContentTypeValue = TamaguiInputProps['textContentType']
@@ -53,44 +56,35 @@ function resolveAndroidAutoComplete(
 
 const StyledInput = styled(TamaguiInput, {
   name: 'Input',
-  fontFamily: '$body',
+  fontFamily: 'body',
   // Bondfire styling - gunmetal background with iron border
-  backgroundColor: '$backgroundHover',
-  color: '$color',
-  placeholderTextColor: '$placeholderColor',
-  borderWidth: 1,
-  borderColor: '$borderColor',
+  backgroundColor: 'backgroundHover',
+  color: 'color',
+  placeholderTextColor: 'placeholderColor',
+  borderWidth: { default: 1, focus: 2 },
+  borderColor: 'borderColor focus:primary',
   borderRadius: 12,
   paddingHorizontal: 16,
   height: 44,
 
-  focusStyle: {
-    borderColor: '$primary',
-    borderWidth: 2,
-  },
-
   variants: {
     error: {
       true: {
-        borderColor: '$error',
-        focusStyle: {
-          borderColor: '$error',
-        },
+        borderColor: 'error focus:error',
       },
     },
-    // Use $-prefixed size tokens to match Tamagui's token format
     size: {
-      $sm: {
+      sm: {
         height: 36,
         fontSize: 14,
         paddingHorizontal: 12,
       },
-      $md: {
+      md: {
         height: 44,
         fontSize: 15,
         paddingHorizontal: 16,
       },
-      $lg: {
+      lg: {
         height: 52,
         fontSize: 16,
         paddingHorizontal: 20,
@@ -99,7 +93,7 @@ const StyledInput = styled(TamaguiInput, {
   } as const,
 
   defaultVariants: {
-    size: '$md',
+    size: 'md',
   },
 })
 
@@ -117,7 +111,7 @@ const StyledInput = styled(TamaguiInput, {
  *
  * Callers can override by passing `textContentType` directly (iOS only).
  */
-export const Input = StyledInput.styleable<InputProps>((props, ref) => {
+export const Input = createStyledHOC(StyledInput, (props: GetProps<typeof StyledInput>, ref) => {
   const { autoComplete, secureTextEntry, textContentType, importantForAutofill, ...rest } = props
 
   const resolvedTextContentType =
@@ -155,30 +149,25 @@ export const Input = StyledInput.styleable<InputProps>((props, ref) => {
 
 export const TextArea = styled(TamaguiTextArea, {
   name: 'TextArea',
-  fontFamily: '$body',
+  fontFamily: 'body',
   // Bondfire styling
-  backgroundColor: '$backgroundHover',
-  color: '$color',
-  placeholderTextColor: '$placeholderColor',
-  borderWidth: 1,
-  borderColor: '$borderColor',
+  backgroundColor: 'backgroundHover',
+  color: 'color',
+  placeholderTextColor: 'placeholderColor',
+  borderWidth: { default: 1, focus: 2 },
+  borderColor: 'borderColor focus:primary',
   borderRadius: 12,
   padding: 16,
   minHeight: 100,
 
-  focusStyle: {
-    borderColor: '$primary',
-    borderWidth: 2,
-  },
-
   variants: {
     error: {
       true: {
-        borderColor: '$error',
+        borderColor: 'error',
       },
     },
   } as const,
 })
 
-export type InputProps = TamaguiInputProps
-export type TextAreaProps = GetProps<typeof TamaguiTextArea>
+export type InputProps = GetProps<typeof Input>
+export type TextAreaProps = GetProps<typeof TextArea>

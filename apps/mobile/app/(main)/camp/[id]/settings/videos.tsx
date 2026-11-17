@@ -63,7 +63,7 @@ function VideosForm({ camp }: { camp: OwnedCamp }) {
           max={CAMP_SETTINGS_LIMITS.maxDurationMinutes}
           onChange={(value) => rules$.maxDurationMinutes.set(value)}
         />
-        <Text fontSize={12} color={'$placeholderColor'} lineHeight={17}>
+        <Text fontSize={12} color={'placeholderColor'} lineHeight="17px">
           {maxDuration === null
             ? 'Each person can record up to their plan’s limit (5 min on Free, up to 3 hours on Pro).'
             : 'Applies to sparks and responses. Nobody goes past their own plan: Free members still stop at 5 min.'}
@@ -80,7 +80,7 @@ function VideosForm({ camp }: { camp: OwnedCamp }) {
           max={CAMP_SETTINGS_LIMITS.maxResponses}
           onChange={(value) => rules$.maxResponses.set(value)}
         />
-        <Text fontSize={12} color={'$placeholderColor'} lineHeight={17}>
+        <Text fontSize={12} color={'placeholderColor'} lineHeight="17px">
           {maxResponses === null
             ? 'Bondfires take as many responses as people want to give.'
             : `Once a Bondfire has ${maxResponses} ${maxResponses === 1 ? 'response' : 'responses'}, it stops taking new ones.`}
@@ -92,15 +92,15 @@ function VideosForm({ camp }: { camp: OwnedCamp }) {
         gap={12}
         padding={14}
         borderRadius={14}
-        backgroundColor={'$backgroundHover'}
+        backgroundColor={'backgroundHover'}
         borderWidth={1}
-        borderColor={'$borderColor'}
+        borderColor={'borderColor'}
       >
         <YStack flex={1} gap={2}>
           <Text fontSize={15} fontWeight="800">
             Need / offer tags
           </Text>
-          <Text fontSize={12} color={'$placeholderColor'} lineHeight={17}>
+          <Text fontSize={12} color={'placeholderColor'} lineHeight="17px">
             Ask people to tag what they need or can offer when they spark. Good for trading camps.
           </Text>
         </YStack>
@@ -113,14 +113,14 @@ function VideosForm({ camp }: { camp: OwnedCamp }) {
       </XStack>
 
       <YStack gap={8}>
-        <Text fontSize={12} color={'$placeholderColor'} textAlign="center">
+        <Text fontSize={12} color={'placeholderColor'} textAlign="center">
           New limits apply to videos recorded from now on.
         </Text>
-        <Button variant="primary" size="$lg" disabled={isSaving} onPress={handleSave}>
+        <Button variant="primary" size="lg" disabled={isSaving} onPress={handleSave}>
           {isSaving ? (
-            <Spinner color={'$color'} />
+            <Spinner color={'color'} />
           ) : (
-            <Text color={'$color'} fontWeight="900">
+            <Text color={'color'} fontWeight="900">
               Save
             </Text>
           )}

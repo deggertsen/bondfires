@@ -1,6 +1,6 @@
 import { subscriptionActions, telemetry, useAppThemeColors } from '@bondfires/app'
 import { type BondfireRowProps, Button, closeOpenSwipeableRow, Spinner, Text } from '@bondfires/ui'
-import { ArrowLeft, Flame, Lock, Plus } from '@tamagui/lucide-icons'
+import { ArrowLeft, Flame, Lock, Plus } from '@bondfires/ui/icons'
 import { useMutation, useQuery } from 'convex/react'
 import { useIsFocused, useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -310,12 +310,12 @@ export default function PersonalCampScreen() {
     return (
       <YStack
         flex={1}
-        backgroundColor={'$backgroundPress'}
+        backgroundColor={'backgroundPress'}
         alignItems="center"
         justifyContent="center"
       >
         <StatusBar barStyle={statusBarStyle} />
-        <Spinner size="large" color={'$primary'} />
+        <Spinner size="large" color={'primary'} />
       </YStack>
     )
   }
@@ -325,7 +325,7 @@ export default function PersonalCampScreen() {
     return (
       <YStack
         flex={1}
-        backgroundColor={'$backgroundPress'}
+        backgroundColor={'backgroundPress'}
         paddingTop={headerTopPadding}
         paddingHorizontal={16}
         gap={16}
@@ -338,19 +338,19 @@ export default function PersonalCampScreen() {
             borderRadius={21}
             alignItems="center"
             justifyContent="center"
-            backgroundColor={'$backgroundHover'}
+            backgroundColor={'backgroundHover'}
             borderWidth={1}
-            borderColor={'$borderColor'}
+            borderColor={'borderColor'}
           >
-            <ArrowLeft size={22} color={'$color'} />
+            <ArrowLeft size={22} color={'color'} />
           </YStack>
         </Pressable>
         <YStack flex={1} alignItems="center" justifyContent="center" gap={12}>
-          <Flame size={48} color={'$placeholderColor'} />
-          <Text fontSize={18} fontWeight="900" color={'$placeholderColor'} textAlign="center">
+          <Flame size={48} color={'placeholderColor'} />
+          <Text fontSize={18} fontWeight="900" color={'placeholderColor'} textAlign="center">
             No Hearth
           </Text>
-          <Text fontSize={14} color={'$placeholderColor'} textAlign="center" lineHeight={20}>
+          <Text fontSize={14} color={'placeholderColor'} textAlign="center" lineHeight="20px">
             Subscribe to Plus, Premium, or Pro to unlock your Hearth.
           </Text>
           <Button marginTop={8} onPress={handleUpgrade}>
@@ -364,7 +364,7 @@ export default function PersonalCampScreen() {
   const isFrozen = personalCamp.status === 'frozen'
 
   return (
-    <YStack flex={1} backgroundColor={'$backgroundPress'}>
+    <YStack flex={1} backgroundColor={'backgroundPress'}>
       <StatusBar barStyle={statusBarStyle} />
 
       {/* Header */}
@@ -377,11 +377,11 @@ export default function PersonalCampScreen() {
               borderRadius={21}
               alignItems="center"
               justifyContent="center"
-              backgroundColor={'$backgroundHover'}
+              backgroundColor={'backgroundHover'}
               borderWidth={1}
-              borderColor={'$borderColor'}
+              borderColor={'borderColor'}
             >
-              <ArrowLeft size={22} color={'$color'} />
+              <ArrowLeft size={22} color={'color'} />
             </YStack>
           </Pressable>
           {bondfires && bondfires.length > 0 && !isFrozen && (
@@ -392,9 +392,9 @@ export default function PersonalCampScreen() {
                 borderRadius={21}
                 alignItems="center"
                 justifyContent="center"
-                backgroundColor={'$primary'}
+                backgroundColor={'primary'}
               >
-                <Plus size={22} color={'$color'} />
+                <Plus size={22} color={'color'} />
               </YStack>
             </Pressable>
           )}
@@ -405,18 +405,18 @@ export default function PersonalCampScreen() {
             width={72}
             height={72}
             borderRadius={20}
-            backgroundColor={'$primary'}
+            backgroundColor={'primary'}
             alignItems="center"
             justifyContent="center"
           >
-            <Flame size={36} color={'$color'} />
+            <Flame size={36} color={'color'} />
           </YStack>
 
           <YStack flex={1} gap={4}>
             <Text fontSize={26} fontWeight="900" numberOfLines={2}>
               {personalCamp.name}
             </Text>
-            <Text fontSize={14} color={'$placeholderColor'}>
+            <Text fontSize={14} color={'placeholderColor'}>
               Your hearth
             </Text>
           </YStack>
@@ -426,18 +426,18 @@ export default function PersonalCampScreen() {
         {isFrozen ? (
           <YStack
             backgroundColor={'rgba(245, 158, 11, 0.13)'}
-            borderColor={'$warning'}
+            borderColor={'warning'}
             borderWidth={1}
             borderRadius={12}
             padding={12}
           >
             <XStack alignItems="center" gap={8}>
-              <Lock size={16} color={'$warning'} />
-              <Text color={'$warning'} fontSize={14} fontWeight="700">
+              <Lock size={16} color={'warning'} />
+              <Text color={'warning'} fontSize={14} fontWeight="700">
                 Your Hearth is frozen
               </Text>
             </XStack>
-            <Text color={'$placeholderColor'} fontSize={12} marginTop={4}>
+            <Text color={'placeholderColor'} fontSize={12} marginTop={4}>
               Re-subscribe to Plus, Premium, or Pro to reactivate your Hearth.
             </Text>
           </YStack>
@@ -449,7 +449,7 @@ export default function PersonalCampScreen() {
       {/* Bondfires list using shared BondfireRow */}
       {bondfires === undefined ? (
         <YStack flex={1} alignItems="center" justifyContent="center">
-          <Spinner size="large" color={'$primary'} />
+          <Spinner size="large" color={'primary'} />
         </YStack>
       ) : bondfires.length === 0 ? (
         <YStack
@@ -459,11 +459,11 @@ export default function PersonalCampScreen() {
           paddingHorizontal={32}
           gap={12}
         >
-          <Flame size={48} color={'$placeholderColor'} />
-          <Text fontSize={18} fontWeight="900" color={'$placeholderColor'} textAlign="center">
+          <Flame size={48} color={'placeholderColor'} />
+          <Text fontSize={18} fontWeight="900" color={'placeholderColor'} textAlign="center">
             No fires yet
           </Text>
-          <Text fontSize={14} color={'$placeholderColor'} textAlign="center" lineHeight={20}>
+          <Text fontSize={14} color={'placeholderColor'} textAlign="center" lineHeight="20px">
             Your personal bondfires will appear here.
           </Text>
           {!isFrozen && (
@@ -471,9 +471,9 @@ export default function PersonalCampScreen() {
               variant="primary"
               marginTop={8}
               onPress={handleCreateBondfire}
-              icon={<Plus size={18} color={'$color'} />}
+              icon={<Plus size={18} color={'color'} />}
             >
-              <Text color={'$color'} fontWeight="900">
+              <Text color={'color'} fontWeight="900">
                 Create Bondfire
               </Text>
             </Button>
@@ -485,7 +485,7 @@ export default function PersonalCampScreen() {
           keyExtractor={(item) => item._id}
           onScrollBeginDrag={closeOpenSwipeableRow}
           ItemSeparatorComponent={() => (
-            <Separator borderColor={'$borderColor'} opacity={0.6} marginHorizontal={16} />
+            <Separator borderColor={'borderColor'} opacity={0.6} marginHorizontal={16} />
           )}
           contentContainerStyle={{ paddingBottom: 40 }}
           renderItem={({ item }) => (

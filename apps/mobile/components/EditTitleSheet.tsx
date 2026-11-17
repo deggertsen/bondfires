@@ -93,20 +93,24 @@ export function EditTitleSheet({
       moveOnKeyboardChange
     >
       <Sheet.Overlay
-        animation="quick"
-        enterStyle={{ opacity: 0 }}
-        exitStyle={{ opacity: 0 }}
         backgroundColor="rgba(0,0,0,0.5)"
+        transition="quick"
+        opacity={{ default: 1, enter: 0, exit: 0 }}
       />
-      <Sheet.Frame
-        backgroundColor={'$background'}
+      <Sheet.Container
+        padding={24}
         borderTopLeftRadius={20}
         borderTopRightRadius={20}
-        padding={24}
+        overflow="hidden"
       >
+        <Sheet.Background
+          backgroundColor={'background'}
+          borderTopLeftRadius={20}
+          borderTopRightRadius={20}
+        />
         <StatusBar barStyle={statusBarStyle} />
 
-        <Sheet.Handle backgroundColor={'$borderColor'} marginBottom={16} />
+        <Sheet.Handle backgroundColor={'borderColor'} marginBottom={16} />
 
         <YStack gap={16}>
           <Text fontSize={20} fontWeight="900" textAlign="center">
@@ -140,45 +144,39 @@ export function EditTitleSheet({
               }}
             />
             <XStack justifyContent="space-between" alignItems="center">
-              <Text fontSize={11} color={'$placeholderColor'}>
+              <Text fontSize={11} color={'placeholderColor'}>
                 {creatorName
                   ? `Empty resets to "${creatorName}'s Bondfire"`
                   : 'Empty resets to "My Bondfire"'}
               </Text>
-              <Text fontSize={11} color={'$placeholderColor'}>
+              <Text fontSize={11} color={'placeholderColor'}>
                 {editedTitle.length}/{MAX_TITLE_LENGTH}
               </Text>
             </XStack>
           </YStack>
 
           <XStack gap={12} marginTop={4}>
-            <Button
-              variant="outline"
-              size="$lg"
-              flex={1}
-              onPress={handleCancel}
-              disabled={isSaving}
-            >
-              <Text color={'$color'} fontWeight="700">
+            <Button variant="outline" size="lg" flex={1} onPress={handleCancel} disabled={isSaving}>
+              <Text color={'color'} fontWeight="700">
                 Cancel
               </Text>
             </Button>
             <Button
               variant="primary"
-              size="$lg"
+              size="lg"
               flex={1}
               onPress={() => {
                 void handleSave()
               }}
               disabled={isSaving}
             >
-              <Text color={'$color'} fontWeight="700">
+              <Text color={'color'} fontWeight="700">
                 {isSaving ? 'Saving...' : 'Save'}
               </Text>
             </Button>
           </XStack>
         </YStack>
-      </Sheet.Frame>
+      </Sheet.Container>
     </Sheet>
   )
 }

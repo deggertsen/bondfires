@@ -37,14 +37,14 @@ export function CommunityAcceptanceGate({ dismissed, onDismiss }: CommunityAccep
             <Text fontSize={22} fontWeight="800">
               Our community commitments
             </Text>
-            <Text color={'$placeholderColor'}>
+            <Text color={'placeholderColor'}>
               Before posting or responding, review and accept the current Terms and Community
               Guidelines. They explain prohibited content, reporting, blocking, and moderation.
             </Text>
             <XStack gap={8} flexWrap="wrap">
               <Button
                 variant="outline"
-                size="$sm"
+                size="sm"
                 onPress={() => Linking.openURL(TERMS_URL)}
                 accessibilityLabel="Open Terms of Service"
               >
@@ -52,7 +52,7 @@ export function CommunityAcceptanceGate({ dismissed, onDismiss }: CommunityAccep
               </Button>
               <Button
                 variant="outline"
-                size="$sm"
+                size="sm"
                 onPress={() => Linking.openURL(GUIDELINES_URL)}
                 accessibilityLabel="Open Community Guidelines"
               >
@@ -60,7 +60,7 @@ export function CommunityAcceptanceGate({ dismissed, onDismiss }: CommunityAccep
               </Button>
               <Button
                 variant="outline"
-                size="$sm"
+                size="sm"
                 onPress={() => Linking.openURL(PRIVACY_URL)}
                 accessibilityLabel="Open Privacy Policy"
               >
@@ -69,7 +69,7 @@ export function CommunityAcceptanceGate({ dismissed, onDismiss }: CommunityAccep
             </XStack>
             <Button
               variant="primary"
-              size="$lg"
+              size="lg"
               disabled={isAccepting}
               onPress={async () => {
                 setIsAccepting(true)
@@ -90,14 +90,14 @@ export function CommunityAcceptanceGate({ dismissed, onDismiss }: CommunityAccep
             </Button>
             <Button
               variant="outline"
-              size="$md"
+              size="md"
               disabled={isAccepting}
               onPress={onDismiss}
               accessibilityLabel="Review community policies later"
             >
               <Text>Not now</Text>
             </Button>
-            <Text fontSize={12} color={'$placeholderColor'}>
+            <Text fontSize={12} color={'placeholderColor'}>
               Posting and responding stay disabled until you accept. Terms {status.termsVersion} ·
               Guidelines {status.communityGuidelinesVersion}
             </Text>

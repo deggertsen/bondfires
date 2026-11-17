@@ -5,7 +5,7 @@ import {
   useDefaultBondfireTitle,
 } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
-import { Share } from '@tamagui/lucide-icons'
+import { Share } from '@bondfires/ui/icons'
 import { useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { useCallback, useRef, useState } from 'react'
@@ -137,7 +137,7 @@ export function CompletionScreen({
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
         <YStack
           flex={1}
-          backgroundColor={'$background'}
+          backgroundColor={'background'}
           alignItems="center"
           justifyContent="center"
           padding={32}
@@ -150,13 +150,7 @@ export function CompletionScreen({
           </Text>
 
           {/* Congratulatory message */}
-          <Text
-            fontSize={24}
-            fontWeight="700"
-            color={'$color'}
-            textAlign="center"
-            marginBottom={32}
-          >
+          <Text fontSize={24} fontWeight="700" color={'color'} textAlign="center" marginBottom={32}>
             {message.message}
           </Text>
 
@@ -185,9 +179,9 @@ export function CompletionScreen({
                   returnKeyType="done"
                   autoFocus={false}
                 />
-                {isSaving && <Spinner size="small" color={'$primary'} />}
+                {isSaving && <Spinner size="small" color={'primary'} />}
               </XStack>
-              <Text fontSize={11} color={'$placeholderColor'} alignSelf="flex-end">
+              <Text fontSize={11} color={'placeholderColor'} alignSelf="flex-end">
                 {title.length}/{MAX_TITLE_LENGTH}
               </Text>
             </YStack>
@@ -202,12 +196,12 @@ export function CompletionScreen({
                 <Button
                   flex={1}
                   variant="outline"
-                  size="$lg"
+                  size="lg"
                   disabled={isSaving}
                   paddingHorizontal={12}
                   onPress={handleRecordAnother}
                 >
-                  <Text color={'$color'} fontWeight="700" numberOfLines={1}>
+                  <Text color={'color'} fontWeight="700" numberOfLines={1}>
                     Say more
                   </Text>
                 </Button>
@@ -215,12 +209,12 @@ export function CompletionScreen({
               <Button
                 flex={1}
                 variant={bondfireId ? 'outline' : 'primary'}
-                size="$lg"
+                size="lg"
                 paddingHorizontal={12}
                 disabled={isSaving}
                 onPress={handleDone}
               >
-                <Text color={'$color'} fontWeight="700" numberOfLines={1}>
+                <Text color={'color'} fontWeight="700" numberOfLines={1}>
                   Done
                 </Text>
               </Button>
@@ -229,11 +223,11 @@ export function CompletionScreen({
               <Button
                 width="100%"
                 variant="primary"
-                size="$lg"
+                size="lg"
                 onPress={handleInvite}
-                icon={<Share size={18} color={'$color'} />}
+                icon={<Share size={18} color={'color'} />}
               >
-                <Text color={'$color'} fontWeight="700">
+                <Text color={'color'} fontWeight="700">
                   Invite
                 </Text>
               </Button>
@@ -242,9 +236,9 @@ export function CompletionScreen({
                 column, so the slot stays mounted at full height. */}
             <YStack height={UPLOAD_NOTE_HEIGHT} marginTop={4}>
               <Text
-                color={'$placeholderColor'}
+                color={'placeholderColor'}
                 fontSize={14}
-                lineHeight={20}
+                lineHeight="20px"
                 numberOfLines={3}
                 textAlign="center"
               >

@@ -1,7 +1,7 @@
 import { appStore$, useAppThemeColors } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
+import { ArrowLeft, ShieldCheck } from '@bondfires/ui/icons'
 import { useValue } from '@legendapp/state/react'
-import { ArrowLeft, ShieldCheck } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { Redirect, Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { useState } from 'react'
@@ -52,7 +52,7 @@ export default function FamilyInviteScreen() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <YStack flex={1} backgroundColor="$background" paddingHorizontal={24}>
+      <YStack flex={1} backgroundColor="background" paddingHorizontal={24}>
         <StatusBar barStyle={statusBarStyle} />
         <Pressable
           onPress={() => router.replace(routes.feed)}
@@ -66,11 +66,11 @@ export default function FamilyInviteScreen() {
             borderRadius={21}
             alignItems="center"
             justifyContent="center"
-            backgroundColor="$backgroundHover"
+            backgroundColor="backgroundHover"
             borderWidth={1}
-            borderColor="$borderColor"
+            borderColor="borderColor"
           >
-            <ArrowLeft size={22} color="$color" />
+            <ArrowLeft size={22} color="color" />
           </YStack>
         </Pressable>
 
@@ -79,35 +79,35 @@ export default function FamilyInviteScreen() {
             width={76}
             height={76}
             borderRadius={24}
-            backgroundColor="$primary"
+            backgroundColor="primary"
             alignSelf="center"
             alignItems="center"
             justifyContent="center"
           >
-            <ShieldCheck size={40} color="$color" />
+            <ShieldCheck size={40} color="color" />
           </YStack>
 
           {code && preview === undefined ? (
-            <Spinner size="large" color="$primary" />
+            <Spinner size="large" color="primary" />
           ) : preview?.valid ? (
             <>
               <Text fontSize={24} fontWeight="900" textAlign="center">
                 Family Hearth invitation
               </Text>
-              <Text fontSize={16} color="$color" textAlign="center" lineHeight={23}>
+              <Text fontSize={16} color="color" textAlign="center" lineHeight="23px">
                 {preview.inviterName} invited you to connect privately and join
                 {preview.bondfireTitle ? ` “${preview.bondfireTitle}”.` : ' a Hearth Bondfire.'}
               </Text>
               <YStack
-                backgroundColor="$backgroundHover"
-                borderColor="$borderColor"
+                backgroundColor="backgroundHover"
+                borderColor="borderColor"
                 borderWidth={1}
                 borderRadius={16}
                 padding={16}
                 gap={10}
               >
                 <Text fontWeight="800">Only accept someone you know and trust offline.</Text>
-                <Text color="$placeholderColor" lineHeight={20}>
+                <Text color="placeholderColor" lineHeight="20px">
                   Accepting creates a private family connection that can be used for future Hearth
                   invitations, including across teen and adult age groups. Bondfires does not verify
                   legal or biological relationships. Either person can revoke the connection from
@@ -116,16 +116,16 @@ export default function FamilyInviteScreen() {
               </YStack>
               <Button
                 variant="primary"
-                size="$lg"
+                size="lg"
                 onPress={handleAccept}
                 disabled={isAccepting}
-                icon={isAccepting ? <Spinner size="small" color="$color" /> : undefined}
+                icon={isAccepting ? <Spinner size="small" color="color" /> : undefined}
               >
                 <Text fontWeight="800">{isAccepting ? 'Accepting…' : 'Accept and join'}</Text>
               </Button>
               <Button
                 variant="outline"
-                size="$lg"
+                size="lg"
                 onPress={() => router.replace(routes.feed)}
                 disabled={isAccepting}
               >
@@ -137,10 +137,10 @@ export default function FamilyInviteScreen() {
               <Text fontSize={24} fontWeight="900" textAlign="center">
                 Invitation unavailable
               </Text>
-              <Text color="$placeholderColor" textAlign="center" lineHeight={22}>
+              <Text color="placeholderColor" textAlign="center" lineHeight="22px">
                 {inviteError(preview?.reason)}
               </Text>
-              <Button variant="primary" size="$lg" onPress={() => router.replace(routes.feed)}>
+              <Button variant="primary" size="lg" onPress={() => router.replace(routes.feed)}>
                 <Text fontWeight="800">Return to Bondfires</Text>
               </Button>
             </>

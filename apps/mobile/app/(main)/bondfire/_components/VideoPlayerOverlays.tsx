@@ -1,7 +1,7 @@
 import type { Viewer } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
+import { Flame, Play, RotateCcw, Volume2, VolumeX } from '@bondfires/ui/icons'
 import { useValue } from '@legendapp/state/react'
-import { Flame, Play, RotateCcw, Volume2, VolumeX } from '@tamagui/lucide-icons'
 import { type RefObject, useEffect, useState } from 'react'
 import type { LayoutChangeEvent, PanResponderInstance } from 'react-native'
 import { Pressable, View, type ViewInstance } from 'react-native'
@@ -54,9 +54,9 @@ export function LoadingOverlay({
       zIndex={2}
       pointerEvents="none"
     >
-      <Spinner size="large" color={'$primary'} />
+      <Spinner size="large" color={'primary'} />
       {isProcessing && (
-        <Text color={OVERLAY_COLORS.textPrimary} marginTop="$3">
+        <Text color={OVERLAY_COLORS.textPrimary} marginTop="3">
           Video still processing…
         </Text>
       )}
@@ -87,7 +87,7 @@ export function PlaybackErrorOverlay({
       justifyContent="center"
       backgroundColor={OVERLAY_COLORS.loadingBackground}
       zIndex={3}
-      gap="$3"
+      gap="3"
       paddingHorizontal={32}
     >
       <Text color={OVERLAY_COLORS.textPrimary} fontSize={15} textAlign="center">
@@ -95,7 +95,7 @@ export function PlaybackErrorOverlay({
           ? 'The rest of this video is still uploading. Try again in a moment.'
           : "This video couldn't be played. Check your connection and try again."}
       </Text>
-      <Button size="$3" icon={RotateCcw} onPress={onRetry}>
+      <Button size="sm" icon={RotateCcw} onPress={onRetry}>
         Try Again
       </Button>
     </YStack>
@@ -266,7 +266,7 @@ function HeatmapMarker({
           borderRadius={11}
           backgroundColor={OVERLAY_COLORS.pillBackground}
           borderWidth={1}
-          borderColor={'$secondary'}
+          borderColor={'secondary'}
           alignItems="center"
           gap={3}
         >
@@ -332,7 +332,7 @@ function ReactionHeatmapStrip({
             flex={1}
             height={2 + bin * (HEATMAP_BARS_HEIGHT - 2)}
             borderRadius={1}
-            backgroundColor={'$secondary'}
+            backgroundColor={'secondary'}
             opacity={0.25 + bin * 0.75}
           />
         ))}
@@ -372,7 +372,7 @@ export function VideoProgressBar({
           <YStack height={4} backgroundColor={OVERLAY_COLORS.progressTrack} borderRadius={2}>
             <YStack
               height={4}
-              backgroundColor={'$primary'}
+              backgroundColor={'primary'}
               borderRadius={2}
               width={progressPercent}
             />
@@ -384,7 +384,7 @@ export function VideoProgressBar({
               width={12}
               height={12}
               borderRadius={6}
-              backgroundColor={'$primary'}
+              backgroundColor={'primary'}
             />
           </YStack>
         </YStack>
@@ -555,23 +555,21 @@ export function RespondCTAOverlay({
       alignItems="center"
       zIndex={4}
       pointerEvents="box-none"
-      animation="quick"
-      enterStyle={{ opacity: 0, scale: 0.9 }}
+      transition="quick"
+      opacity={{ default: 1, enter: 0 }}
+      scale={{ default: 1, enter: 0.9 }}
     >
       <Button
         variant="primary"
-        size="$lg"
+        size="lg"
         onPress={onRespond}
         accessibilityLabel="Respond to this Bondfire"
         borderRadius={28}
-        shadowColor="rgba(0,0,0,0.4)"
-        shadowOffset={{ width: 0, height: 4 }}
-        shadowOpacity={0.5}
-        shadowRadius={12}
-        elevation={8}
+        // v1: shadowColor rgba(0,0,0,0.4) at shadowOpacity 0.5, radius 12, y 4
+        boxShadow="0 4px 12px rgba(0,0,0,0.2)"
       >
-        <Flame size={22} color={'$color'} />
-        <Text fontSize={16} fontWeight="800" color={'$color'}>
+        <Flame size={22} color={'color'} />
+        <Text fontSize={16} fontWeight="800" color={'color'}>
           {hasEnded ? 'Respond to this Bondfire' : 'Respond'}
         </Text>
       </Button>
@@ -611,11 +609,12 @@ export function RespondNudgeCard({
       paddingRight={8}
       borderRadius={18}
       borderWidth={1}
-      borderColor={'$primary'}
+      borderColor={'primary'}
       backgroundColor={OVERLAY_COLORS.pillBackground}
       zIndex={4}
-      animation="quick"
-      enterStyle={{ opacity: 0, y: 12 }}
+      transition="quick"
+      opacity={{ default: 1, enter: 0 }}
+      y={{ default: 0, enter: 12 }}
     >
       <YStack flex={1} minWidth={0}>
         <Text fontSize={15} fontWeight="800" color={OVERLAY_COLORS.textPrimary} numberOfLines={1}>
@@ -627,14 +626,14 @@ export function RespondNudgeCard({
       </YStack>
       <Button
         variant="primary"
-        size="$md"
+        size="md"
         onPress={onRespond}
         accessibilityLabel="Respond to this Bondfire"
         borderRadius={14}
         gap={6}
       >
-        <Flame size={18} color={'$color'} />
-        <Text fontSize={15} fontWeight="800" color={'$color'}>
+        <Flame size={18} color={'color'} />
+        <Text fontSize={15} fontWeight="800" color={'color'}>
           Respond
         </Text>
       </Button>

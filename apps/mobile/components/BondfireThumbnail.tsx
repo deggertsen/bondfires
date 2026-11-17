@@ -1,6 +1,6 @@
 import { BondfireRow, type BondfireRowProps } from '@bondfires/ui'
+import { Flame } from '@bondfires/ui/icons'
 import { useValue } from '@legendapp/state/react'
-import { Flame } from '@tamagui/lucide-icons'
 import { Image } from 'expo-image'
 import type { BondfireThumbnailFields } from '../lib/bondfireThumbnails'
 import { getBondfireThumbnailPlayback } from '../lib/bondfireThumbnails'
@@ -71,6 +71,6 @@ export function BondfireThumbnailContent({
       cachePolicy="memory-disk"
     />
   ) : (
-    <Flame size={fallbackSize} color="$primary" />
+    <Flame size={fallbackSize} color="primary" />
   )
 }

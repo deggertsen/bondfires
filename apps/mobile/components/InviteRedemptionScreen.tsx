@@ -1,6 +1,6 @@
 import { useAppThemeColors } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
-import { ArrowLeft, Flame } from '@tamagui/lucide-icons'
+import { ArrowLeft, Flame } from '@bondfires/ui/icons'
 import type { Href } from 'expo-router'
 import { Redirect, Stack, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -80,7 +80,7 @@ export function InviteRedemptionScreen({
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <YStack flex={1} backgroundColor={'$backgroundPress'}>
+      <YStack flex={1} backgroundColor={'backgroundPress'}>
         <StatusBar barStyle={statusBarStyle} />
 
         <YStack paddingTop={58} paddingHorizontal={16} paddingBottom={18}>
@@ -91,11 +91,11 @@ export function InviteRedemptionScreen({
               borderRadius={21}
               alignItems="center"
               justifyContent="center"
-              backgroundColor={'$backgroundHover'}
+              backgroundColor={'backgroundHover'}
               borderWidth={1}
-              borderColor={'$borderColor'}
+              borderColor={'borderColor'}
             >
-              <ArrowLeft size={22} color={'$color'} />
+              <ArrowLeft size={22} color={'color'} />
             </YStack>
           </Pressable>
         </YStack>
@@ -111,16 +111,16 @@ export function InviteRedemptionScreen({
             width={80}
             height={80}
             borderRadius={24}
-            backgroundColor={'$primary'}
+            backgroundColor={'primary'}
             alignItems="center"
             justifyContent="center"
           >
-            <Flame size={44} color={'$color'} />
+            <Flame size={44} color={'color'} />
           </YStack>
 
           {status === 'loading' && (
             <>
-              <Spinner size="large" color={'$primary'} />
+              <Spinner size="large" color={'primary'} />
               <Text fontSize={18} fontWeight="700" textAlign="center">
                 {loadingText}
               </Text>
@@ -129,10 +129,10 @@ export function InviteRedemptionScreen({
 
           {status === 'success' && (
             <>
-              <Text fontSize={22} fontWeight="900" textAlign="center" color={'$success'}>
+              <Text fontSize={22} fontWeight="900" textAlign="center" color={'success'}>
                 You're in!
               </Text>
-              <Text fontSize={15} color={'$placeholderColor'} textAlign="center" lineHeight={22}>
+              <Text fontSize={15} color={'placeholderColor'} textAlign="center" lineHeight="22px">
                 {successText}
               </Text>
             </>
@@ -140,10 +140,10 @@ export function InviteRedemptionScreen({
 
           {status === 'error' && (
             <>
-              <Text fontSize={22} fontWeight="900" textAlign="center" color={'$error'}>
+              <Text fontSize={22} fontWeight="900" textAlign="center" color={'error'}>
                 Couldn't join
               </Text>
-              <Text fontSize={15} color={'$placeholderColor'} textAlign="center" lineHeight={22}>
+              <Text fontSize={15} color={'placeholderColor'} textAlign="center" lineHeight="22px">
                 {error ?? fallbackErrorText}
               </Text>
               <Button
@@ -161,7 +161,7 @@ export function InviteRedemptionScreen({
               <Pressable onPress={() => router.replace(routes.feed)} style={{ marginTop: 8 }}>
                 <Text
                   fontSize={14}
-                  color={'$primary'}
+                  color={'primary'}
                   fontWeight="700"
                   textDecorationLine="underline"
                 >

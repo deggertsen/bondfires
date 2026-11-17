@@ -1,6 +1,6 @@
 import { parseError, useAuth } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
-import { ArrowLeft, Flame, Lock } from '@tamagui/lucide-icons'
+import { ArrowLeft, Flame, Lock } from '@bondfires/ui/icons'
 import { useMutation, useQuery } from 'convex/react'
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { useState } from 'react'
@@ -32,11 +32,11 @@ function RulePill({ label }: { label: string }) {
       paddingHorizontal={10}
       paddingVertical={6}
       borderRadius={999}
-      backgroundColor={'$backgroundHover'}
+      backgroundColor={'backgroundHover'}
       borderWidth={1}
-      borderColor={'$borderColor'}
+      borderColor={'borderColor'}
     >
-      <Text fontSize={12} color={'$color'} fontWeight="800">
+      <Text fontSize={12} color={'color'} fontWeight="800">
         {label}
       </Text>
     </YStack>
@@ -112,7 +112,7 @@ export default function CampJoinGateScreen() {
 
   if (camp === undefined) {
     return (
-      <YStack flex={1} backgroundColor={'$background'} alignItems="center" justifyContent="center">
+      <YStack flex={1} backgroundColor={'background'} alignItems="center" justifyContent="center">
         <Spinner size="large" />
       </YStack>
     )
@@ -122,7 +122,7 @@ export default function CampJoinGateScreen() {
     return (
       <YStack
         flex={1}
-        backgroundColor={'$background'}
+        backgroundColor={'background'}
         alignItems="center"
         justifyContent="center"
         paddingHorizontal={32}
@@ -130,10 +130,10 @@ export default function CampJoinGateScreen() {
         <Text fontSize={18} fontWeight="700" textAlign="center">
           Camp not found
         </Text>
-        <Text fontSize={14} color={'$placeholderColor'} textAlign="center" marginTop={8}>
+        <Text fontSize={14} color={'placeholderColor'} textAlign="center" marginTop={8}>
           This camp may have been removed or is no longer available.
         </Text>
-        <Button variant="primary" size="$lg" marginTop={24} onPress={handleBack}>
+        <Button variant="primary" size="lg" marginTop={24} onPress={handleBack}>
           Go Back
         </Button>
       </YStack>
@@ -141,14 +141,14 @@ export default function CampJoinGateScreen() {
   }
 
   const rules = camp.rules
-  const accentColor = camp.accentColor ?? '$primary'
+  const accentColor = camp.accentColor ?? 'primary'
   const coverImageUrl = camp.coverImageUrl
 
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
       <ScrollView
-        style={{ flex: 1, backgroundColor: '$background' }}
+        style={{ flex: 1, backgroundColor: 'background' }}
         contentContainerStyle={{ flexGrow: 1 }}
       >
         {coverImageUrl ? (
@@ -188,11 +188,11 @@ export default function CampJoinGateScreen() {
               borderRadius={21}
               alignItems="center"
               justifyContent="center"
-              backgroundColor={'$backgroundHover'}
+              backgroundColor={'backgroundHover'}
               borderWidth={1}
-              borderColor={'$borderColor'}
+              borderColor={'borderColor'}
             >
-              <ArrowLeft size={22} color={'$color'} />
+              <ArrowLeft size={22} color={'color'} />
             </YStack>
           </Pressable>
 
@@ -202,14 +202,14 @@ export default function CampJoinGateScreen() {
               width={72}
               height={72}
               borderRadius={20}
-              backgroundColor={camp.color ?? '$backgroundHover'}
+              backgroundColor={camp.color ?? 'backgroundHover'}
               alignItems="center"
               justifyContent="center"
             >
               {isInviteCamp ? (
-                <Lock size={32} color={'$color'} />
+                <Lock size={32} color={'color'} />
               ) : (
-                <Flame size={36} color={'$color'} />
+                <Flame size={36} color={'color'} />
               )}
             </YStack>
 
@@ -217,7 +217,7 @@ export default function CampJoinGateScreen() {
               <Text fontSize={26} fontWeight="900" numberOfLines={2}>
                 {camp.name}
               </Text>
-              <Text fontSize={14} color={'$placeholderColor'}>
+              <Text fontSize={14} color={'placeholderColor'}>
                 {camp.theme ?? getAccessLabel(camp)}
               </Text>
             </YStack>
@@ -225,7 +225,7 @@ export default function CampJoinGateScreen() {
 
           {/* Description */}
           {camp.purpose ? (
-            <Text fontSize={15} color={'$color'} lineHeight={22}>
+            <Text fontSize={15} color={'color'} lineHeight="22px">
               {camp.purpose}
             </Text>
           ) : null}
@@ -235,15 +235,15 @@ export default function CampJoinGateScreen() {
             <YStack
               padding={14}
               borderRadius={16}
-              backgroundColor={'$backgroundHover'}
+              backgroundColor={'backgroundHover'}
               borderWidth={1}
-              borderColor={'$borderColor'}
+              borderColor={'borderColor'}
               gap={6}
             >
-              <Text fontSize={12} color={'$secondary'} fontWeight="900">
+              <Text fontSize={12} color={'secondary'} fontWeight="900">
                 PROMPT
               </Text>
-              <Text fontSize={14} color={'$color'} lineHeight={20}>
+              <Text fontSize={14} color={'color'} lineHeight="20px">
                 {camp.defaultPrompt}
               </Text>
             </YStack>
@@ -266,7 +266,7 @@ export default function CampJoinGateScreen() {
           <YStack
             padding={16}
             borderRadius={16}
-            backgroundColor={'$backgroundPress'}
+            backgroundColor={'backgroundPress'}
             borderWidth={1}
             borderColor={accentColor}
             gap={8}
@@ -275,7 +275,7 @@ export default function CampJoinGateScreen() {
             <Text fontSize={16} fontWeight="800" textAlign="center">
               Join Camp to Continue
             </Text>
-            <Text fontSize={14} color={'$placeholderColor'} textAlign="center" lineHeight={20}>
+            <Text fontSize={14} color={'placeholderColor'} textAlign="center" lineHeight="20px">
               {isApprovalCamp
                 ? 'This camp requires approval. Request to join and the camp owner will review your request.'
                 : isInviteCamp
@@ -289,12 +289,12 @@ export default function CampJoinGateScreen() {
             {!isInviteCamp ? (
               <Button
                 variant="primary"
-                size="$lg"
+                size="lg"
                 width="100%"
                 onPress={handleJoin}
                 disabled={joining}
               >
-                <Text color={'$color'} fontWeight="700">
+                <Text color={'color'} fontWeight="700">
                   {joining
                     ? isApprovalCamp
                       ? 'Sending request...'
@@ -305,8 +305,8 @@ export default function CampJoinGateScreen() {
                 </Text>
               </Button>
             ) : null}
-            <Button variant="outline" size="$lg" width="100%" onPress={handleBack}>
-              <Text color={'$color'} fontWeight="600">
+            <Button variant="outline" size="lg" width="100%" onPress={handleBack}>
+              <Text color={'color'} fontWeight="600">
                 Go Back
               </Text>
             </Button>

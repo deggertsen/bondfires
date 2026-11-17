@@ -1,6 +1,6 @@
 import { useAppThemeColors } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
-import { Check, Copy, Link, Plus, Share, X } from '@tamagui/lucide-icons'
+import { Check, Copy, Link, Plus, Share, X } from '@bondfires/ui/icons'
 import type { ReactNode } from 'react'
 import { Pressable, TextInput } from 'react-native'
 import { Sheet, XStack, YStack } from 'tamagui'
@@ -51,15 +51,24 @@ export function InviteSomeoneSheet(props: InviteSomeoneSheetProps) {
       dismissOnSnapToBottom
       moveOnKeyboardChange
     >
-      <Sheet.Overlay backgroundColor="rgba(0,0,0,0.45)" />
-      <Sheet.Frame
-        backgroundColor={'$backgroundPress'}
-        borderTopLeftRadius={20}
-        borderTopRightRadius={20}
+      <Sheet.Overlay
+        backgroundColor="rgba(0,0,0,0.45)"
+        transition="quick"
+        opacity={{ default: 1, enter: 0, exit: 0 }}
+      />
+      <Sheet.Container
         paddingTop={12}
         paddingBottom={32}
+        borderTopLeftRadius={20}
+        borderTopRightRadius={20}
+        overflow="hidden"
       >
-        <Sheet.Handle backgroundColor={'$borderColor'} />
+        <Sheet.Background
+          backgroundColor={'backgroundPress'}
+          borderTopLeftRadius={20}
+          borderTopRightRadius={20}
+        />
+        <Sheet.Handle backgroundColor={'borderColor'} />
         <XStack
           justifyContent="space-between"
           alignItems="center"
@@ -71,7 +80,7 @@ export function InviteSomeoneSheet(props: InviteSomeoneSheetProps) {
             <Text fontSize={20} fontWeight="800">
               Invite someone new
             </Text>
-            <Text fontSize={13} color={'$placeholderColor'}>
+            <Text fontSize={13} color={'placeholderColor'}>
               They'll join this Bondfire when you post it.
             </Text>
           </YStack>
@@ -81,7 +90,7 @@ export function InviteSomeoneSheet(props: InviteSomeoneSheetProps) {
             accessibilityLabel="Done"
             accessibilityRole="button"
           >
-            <Text fontSize={16} fontWeight="800" color={'$primary'}>
+            <Text fontSize={16} fontWeight="800" color={'primary'}>
               Done
             </Text>
           </Pressable>
@@ -119,11 +128,11 @@ export function InviteSomeoneSheet(props: InviteSomeoneSheetProps) {
               />
               <Button
                 variant="primary"
-                size="$md"
+                size="md"
                 onPress={props.onAddEmail}
-                icon={<Plus size={16} color={'$color'} />}
+                icon={<Plus size={16} color={'color'} />}
               >
-                <Text color={'$color'} fontWeight="700">
+                <Text color={'color'} fontWeight="700">
                   Add
                 </Text>
               </Button>
@@ -162,7 +171,7 @@ export function InviteSomeoneSheet(props: InviteSomeoneSheetProps) {
             title="Invite family across age groups"
             caption="Creates a 24-hour, one-time link with an explicit acceptance step."
           >
-            <Text color="$placeholderColor" fontSize={12} lineHeight={18}>
+            <Text color="placeholderColor" fontSize={12} lineHeight="18px">
               Share only with someone you know and trust offline. Bondfires does not verify legal or
               biological relationships, and either person can revoke access later.
             </Text>
@@ -179,7 +188,7 @@ export function InviteSomeoneSheet(props: InviteSomeoneSheetProps) {
             />
           </SheetSection>
         </Sheet.ScrollView>
-      </Sheet.Frame>
+      </Sheet.Container>
     </Sheet>
   )
 }
@@ -196,10 +205,10 @@ function SheetSection({
   return (
     <YStack paddingHorizontal={20} marginBottom={24} gap={10}>
       <YStack gap={2}>
-        <Text color={'$color'} fontWeight="700" fontSize={16}>
+        <Text color={'color'} fontWeight="700" fontSize={16}>
           {title}
         </Text>
-        <Text color={'$placeholderColor'} fontSize={12}>
+        <Text color={'placeholderColor'} fontSize={12}>
           {caption}
         </Text>
       </YStack>
@@ -233,18 +242,14 @@ function LinkControls({
     return (
       <Button
         variant="outline"
-        size="$md"
+        size="md"
         onPress={onCreate}
         disabled={isBusy}
         icon={
-          isCreating ? (
-            <Spinner size="small" color={'$color'} />
-          ) : (
-            <Link size={16} color={'$color'} />
-          )
+          isCreating ? <Spinner size="small" color={'color'} /> : <Link size={16} color={'color'} />
         }
       >
-        <Text color={'$color'} fontWeight="700">
+        <Text color={'color'} fontWeight="700">
           {isCreating ? creatingLabel : createLabel}
         </Text>
       </Button>
@@ -258,11 +263,11 @@ function LinkControls({
         padding={12}
         borderRadius={12}
         borderWidth={1}
-        borderColor={'$borderColor'}
-        backgroundColor={'$background'}
+        borderColor={'borderColor'}
+        backgroundColor={'background'}
       >
-        <Link size={18} color={'$placeholderColor'} />
-        <Text color={'$color'} fontSize={13} flex={1} numberOfLines={1}>
+        <Link size={18} color={'placeholderColor'} />
+        <Text color={'color'} fontSize={13} flex={1} numberOfLines={1}>
           {url}
         </Text>
       </XStack>
@@ -270,22 +275,22 @@ function LinkControls({
         <Button
           flex={1}
           variant="primary"
-          size="$md"
+          size="md"
           onPress={onCopy}
-          icon={copied ? <Check size={16} color={'$color'} /> : <Copy size={16} color={'$color'} />}
+          icon={copied ? <Check size={16} color={'color'} /> : <Copy size={16} color={'color'} />}
         >
-          <Text color={'$color'} fontWeight="700">
+          <Text color={'color'} fontWeight="700">
             {copied ? 'Copied' : 'Copy'}
           </Text>
         </Button>
         <Button
           flex={1}
           variant="outline"
-          size="$md"
+          size="md"
           onPress={onShare}
-          icon={<Share size={16} color={'$color'} />}
+          icon={<Share size={16} color={'color'} />}
         >
-          <Text color={'$color'} fontWeight="700">
+          <Text color={'color'} fontWeight="700">
             Share
           </Text>
         </Button>
@@ -302,11 +307,11 @@ function EmailChip({ email, onRemove }: { email: string; onRemove: () => void })
       paddingHorizontal={10}
       paddingVertical={6}
       borderRadius={16}
-      backgroundColor={'$backgroundHover'}
+      backgroundColor={'backgroundHover'}
       borderWidth={1}
-      borderColor={'$borderColor'}
+      borderColor={'borderColor'}
     >
-      <Text color={'$color'} fontSize={12}>
+      <Text color={'color'} fontSize={12}>
         {email}
       </Text>
       <Pressable
@@ -315,7 +320,7 @@ function EmailChip({ email, onRemove }: { email: string; onRemove: () => void })
         accessibilityLabel={`Remove ${email}`}
         accessibilityRole="button"
       >
-        <X size={14} color={'$placeholderColor'} />
+        <X size={14} color={'placeholderColor'} />
       </Pressable>
     </XStack>
   )

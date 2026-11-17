@@ -1,51 +1,49 @@
-import { type GetProps, styled, Card as TamaguiCard } from 'tamagui'
+import { type GetProps, styled } from 'tamagui'
+import {
+  CardFrame as CardBehaviorFrame,
+  CardFooter as CardFooterBehavior,
+  CardHeader as CardHeaderBehavior,
+} from 'tamagui/unstyled'
 
-export const Card = styled(TamaguiCard, {
+// Built on Tamagui's unstyled card parts: the v3 default skin adds a size
+// ladder (radius/padding names this config doesn't define) under these styles.
+export const Card = styled(CardBehaviorFrame, {
   name: 'Card',
   // Use Bondfire gunmetal for card background
-  backgroundColor: '$backgroundHover',
+  backgroundColor: 'backgroundHover',
   borderRadius: 12,
-  padding: '$4',
+  padding: '4',
   borderWidth: 1,
-  borderColor: '$borderColor',
+  borderColor: 'borderColor',
   overflow: 'hidden',
 
   variants: {
     elevated: {
       true: {
-        shadowColor: 'rgba(0, 0, 0, 0.4)',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 12,
-        elevation: 6,
+        // v1: shadowColor rgba(0,0,0,0.4) at shadowOpacity 0.3, radius 12, y 4
+        boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
       },
     },
     interactive: {
       true: {
         cursor: 'pointer',
-        hoverStyle: {
-          backgroundColor: '$borderColor',
-          borderColor: '$placeholderColor',
-        },
-        pressStyle: {
-          backgroundColor: '$backgroundPress',
-          borderColor: '$primary',
-          opacity: 0.95,
-        },
+        backgroundColor: 'hover:borderColor press:backgroundPress',
+        borderColor: 'hover:placeholderColor press:primary',
+        opacity: { press: 0.95 },
       },
     },
     variant: {
       default: {},
       outline: {
         backgroundColor: 'transparent',
-        borderColor: '$borderColor',
+        borderColor: 'borderColor',
       },
       ghost: {
         backgroundColor: 'transparent',
         borderWidth: 0,
       },
       highlight: {
-        borderColor: '$primary',
+        borderColor: 'primary',
         borderWidth: 2,
       },
     },
@@ -56,20 +54,20 @@ export const Card = styled(TamaguiCard, {
   },
 })
 
-export const CardHeader = styled(TamaguiCard.Header, {
+export const CardHeader = styled(CardHeaderBehavior, {
   name: 'CardHeader',
-  paddingBottom: '$3',
+  paddingBottom: '3',
   borderBottomWidth: 1,
-  borderBottomColor: '$borderColor',
-  marginBottom: '$3',
+  borderBottomColor: 'borderColor',
+  marginBottom: '3',
 })
 
-export const CardFooter = styled(TamaguiCard.Footer, {
+export const CardFooter = styled(CardFooterBehavior, {
   name: 'CardFooter',
-  paddingTop: '$3',
+  paddingTop: '3',
   borderTopWidth: 1,
-  borderTopColor: '$borderColor',
-  marginTop: '$3',
+  borderTopColor: 'borderColor',
+  marginTop: '3',
 })
 
 export type CardProps = GetProps<typeof Card>

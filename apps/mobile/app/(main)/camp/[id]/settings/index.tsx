@@ -1,6 +1,6 @@
 import { useSubscription } from '@bondfires/app'
 import { Text } from '@bondfires/ui'
-import { Globe, Lock } from '@tamagui/lucide-icons'
+import { Globe, Lock } from '@bondfires/ui/icons'
 import { useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { Pressable } from 'react-native'
@@ -75,25 +75,25 @@ export default function CampSettingsScreen() {
                   gap={12}
                   padding={12}
                   borderRadius={14}
-                  backgroundColor={'$backgroundHover'}
+                  backgroundColor={'backgroundHover'}
                   borderWidth={1}
-                  borderColor={'$borderColor'}
+                  borderColor={'borderColor'}
                 >
                   <YStack
                     width={36}
                     height={36}
                     borderRadius={10}
-                    backgroundColor={'$backgroundPress'}
+                    backgroundColor={'backgroundPress'}
                     alignItems="center"
                     justifyContent="center"
                   >
-                    <AccessIcon size={20} color={'$secondary'} />
+                    <AccessIcon size={20} color={'secondary'} />
                   </YStack>
                   <YStack flex={1} gap={2}>
                     <Text fontSize={15} fontWeight="800">
                       {access.title}
                     </Text>
-                    <Text fontSize={12} color={'$placeholderColor'}>
+                    <Text fontSize={12} color={'placeholderColor'}>
                       {access.detail}
                     </Text>
                   </YStack>
@@ -128,7 +128,7 @@ export default function CampSettingsScreen() {
                 />
               </SettingsGroup>
               {isPrivate ? (
-                <Text fontSize={12} color={'$placeholderColor'} paddingHorizontal={4}>
+                <Text fontSize={12} color={'placeholderColor'} paddingHorizontal={4}>
                   Private camps let in whoever you invite, so there are no join rules.
                 </Text>
               ) : null}
@@ -140,12 +140,12 @@ export default function CampSettingsScreen() {
                 justifyContent="space-between"
                 padding={14}
                 borderRadius={14}
-                backgroundColor={'$backgroundHover'}
+                backgroundColor={'backgroundHover'}
                 borderWidth={1}
-                borderColor={'$borderColor'}
+                borderColor={'borderColor'}
               >
                 <YStack gap={2}>
-                  <Text fontSize={11} fontWeight="900" color={'$placeholderColor'}>
+                  <Text fontSize={11} fontWeight="900" color={'placeholderColor'}>
                     CAMP KINDLING
                   </Text>
                   <Text fontSize={14} fontWeight="800">
@@ -155,7 +155,7 @@ export default function CampSettingsScreen() {
                 <Text
                   fontSize={13}
                   fontWeight="900"
-                  color={kindling.balance > 0 ? '$success' : '$error'}
+                  color={kindling.balance > 0 ? 'success' : 'error'}
                 >
                   {kindling.balance} left
                 </Text>

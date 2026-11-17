@@ -9,21 +9,21 @@ export function CampGuidelinesCard({ guidelines }: { guidelines: readonly string
     <YStack
       padding={14}
       borderRadius={16}
-      backgroundColor={'$backgroundHover'}
+      backgroundColor={'backgroundHover'}
       borderWidth={1}
-      borderColor={'$borderColor'}
+      borderColor={'borderColor'}
       gap={8}
     >
-      <Text fontSize={12} color={'$placeholderColor'} fontWeight="900">
+      <Text fontSize={12} color={'placeholderColor'} fontWeight="900">
         CAMP GUIDELINES
       </Text>
       {lines.map((line, index) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: guidelines can repeat; the list is static and position is its identity
         <XStack key={`${index}-${line}`} gap={8}>
-          <Text fontSize={14} color={'$placeholderColor'} fontWeight="800" width={18}>
+          <Text fontSize={14} color={'placeholderColor'} fontWeight="800" width={18}>
             {index + 1}.
           </Text>
-          <Text fontSize={14} color={'$color'} lineHeight={20} flex={1}>
+          <Text fontSize={14} color={'color'} lineHeight="20px" flex={1}>
             {line}
           </Text>
         </XStack>

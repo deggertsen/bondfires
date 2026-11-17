@@ -1,99 +1,68 @@
-import { type GetProps, styled, Button as TamaguiButton } from 'tamagui'
+import { createStyledHOC, type GetProps, styled } from 'tamagui'
+import {
+  ButtonFrame as ButtonBehaviorFrame,
+  type ButtonBehaviorProps,
+  ButtonText as ButtonBehaviorText,
+  textParentInlineProps,
+  useButton,
+} from 'tamagui/unstyled'
 
-const ButtonFrame = styled(TamaguiButton, {
+type ButtonSize = 'sm' | 'md' | 'lg'
+
+// Icon px per size, matching the font-size tokens Tamagui v1 sized button icons
+// from (body font sm/md/lg).
+const ICON_SIZE: Record<ButtonSize, number> = { sm: 14, md: 16, lg: 18 }
+
+// Built on Tamagui's unstyled button behavior (the v3 replacement for
+// `styled(Button, { unstyled: true })`): the default skin's size ladder, radius
+// and level2 theme would otherwise sit under these styles.
+const ButtonFrame = styled(ButtonBehaviorFrame, {
   name: 'Button',
-  // Disable TamaguiButton's default size-to-font mapping to prevent warnings
-  unstyled: true,
   // Base button styles matching Flutter FilledButton
   alignItems: 'center',
   justifyContent: 'center',
   flexDirection: 'row',
   borderRadius: 24,
   cursor: 'pointer',
-  fontWeight: '600',
 
   variants: {
     variant: {
       // Filled variants render under the `onPrimary` sub-theme (see Button
-      // below), so labels/icons that use `$color` come out white. The darker
+      // below), so labels/icons that use `color` come out white. The darker
       // `*Solid` fills keep that white label above WCAG AA in both themes.
       primary: {
-        backgroundColor: '$primarySolid',
-        color: '$colorOnPrimary',
-        hoverStyle: {
-          backgroundColor: '$primarySolidHover',
-        },
-        pressStyle: {
-          backgroundColor: '$primarySolidPress',
-        },
+        backgroundColor: 'primarySolid hover:primarySolidHover press:primarySolidPress',
       },
       secondary: {
-        backgroundColor: '$backgroundHover',
-        color: '$color',
-        hoverStyle: {
-          backgroundColor: '$borderColor',
-        },
-        pressStyle: {
-          backgroundColor: '$backgroundPress',
-          opacity: 0.9,
-        },
+        backgroundColor: 'backgroundHover hover:borderColor press:backgroundPress',
+        opacity: { press: 0.9 },
       },
       outline: {
-        backgroundColor: 'transparent',
+        backgroundColor: 'transparent hover:backgroundHover press:backgroundPress',
         borderWidth: 1,
-        borderColor: '$borderColor',
-        color: '$color',
-        hoverStyle: {
-          backgroundColor: '$backgroundHover',
-          borderColor: '$placeholderColor',
-        },
-        pressStyle: {
-          backgroundColor: '$backgroundPress',
-          borderColor: '$primary',
-        },
+        borderColor: 'borderColor hover:placeholderColor press:primary',
       },
       ghost: {
-        backgroundColor: 'transparent',
-        color: '$color',
-        hoverStyle: {
-          backgroundColor: '$backgroundHover',
-        },
-        pressStyle: {
-          backgroundColor: '$borderColor',
-        },
+        backgroundColor: 'transparent hover:backgroundHover press:borderColor',
       },
       destructive: {
-        backgroundColor: '$errorSolid',
-        color: '$colorOnError',
-        hoverStyle: {
-          backgroundColor: '$errorSolidPress',
-        },
-        pressStyle: {
-          backgroundColor: '$errorSolidPress',
-        },
+        backgroundColor: 'errorSolid hover:errorSolidPress press:errorSolidPress',
       },
     },
-    // Use $-prefixed size tokens to match Tamagui's token format
     size: {
-      $sm: {
+      sm: {
         height: 36,
         paddingHorizontal: 16,
-        fontSize: 14,
-        fontFamily: '$body',
         gap: 6,
       },
-      $md: {
+      md: {
         height: 44,
         paddingHorizontal: 20,
-        fontSize: 15,
-        fontFamily: '$body',
         gap: 8,
       },
-      $lg: {
+      lg: {
         height: 52,
         paddingHorizontal: 24,
-        fontSize: 16,
-        fontFamily: '$body',
         gap: 10,
       },
     },
@@ -107,21 +76,63 @@ const ButtonFrame = styled(TamaguiButton, {
 
   defaultVariants: {
     variant: 'primary',
-    size: '$md',
+    size: 'md',
   },
 })
 
-const FILLED_VARIANTS = new Set(['primary', 'destructive'])
+const ButtonLabel = styled(ButtonBehaviorText, {
+  name: 'ButtonText',
+  fontFamily: 'body',
+  fontWeight: '600',
+  color: 'color',
+
+  variants: {
+    size: {
+      sm: { fontSize: 14 },
+      md: { fontSize: 15 },
+      lg: { fontSize: 16 },
+    },
+  } as const,
+
+  defaultVariants: {
+    size: 'md',
+  },
+})
+
+type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'destructive'
+
+const FILLED_VARIANTS = new Set<ButtonVariant>(['primary', 'destructive'])
 
 /**
  * Filled variants (primary, destructive) sit on a dark fill, so their content
  * needs a light foreground in both themes. Rendering them under the
- * `onPrimary` sub-theme remaps `$color` to `$colorOnPrimary` for every
- * descendant, so call sites can keep writing `<Text color="$color">`.
+ * `onPrimary` sub-theme remaps `color` to `colorOnPrimary` for every
+ * descendant, so call sites can keep writing `<Text color="color">`.
  */
-export const Button = ButtonFrame.styleable((props, ref) => {
-  const filled = FILLED_VARIANTS.has(props.variant ?? 'primary')
-  return <ButtonFrame ref={ref} theme={filled ? 'onPrimary' : undefined} {...props} />
-})
+export const Button = createStyledHOC(
+  ButtonFrame,
+  function Button(
+    props: ButtonBehaviorProps & { size?: ButtonSize | null; variant?: ButtonVariant | null },
+    ref,
+  ) {
+    const size: ButtonSize = props.size ?? 'md'
+    const filled = FILLED_VARIANTS.has(props.variant ?? 'primary')
+    const { props: buttonProps } = useButton(props, {
+      Text: ButtonLabel,
+      textProps: { size },
+      iconSize: ICON_SIZE[size],
+      iconColor: typeof props.color === 'string' ? props.color : 'color',
+    })
+    return (
+      <ButtonFrame
+        ref={ref}
+        theme={filled ? 'onPrimary' : undefined}
+        {...(buttonProps as GetProps<typeof ButtonFrame>)}
+      />
+    )
+  },
+  // Text style props (color, fontSize, ...) pass through to the label.
+  { staticConfig: { inlineProps: textParentInlineProps } },
+)
 
 export type ButtonProps = GetProps<typeof Button>

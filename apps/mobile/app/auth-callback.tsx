@@ -27,7 +27,7 @@ export default function AuthCallbackScreen() {
       flex={1}
       justifyContent="center"
       alignItems="center"
-      backgroundColor="$background"
+      backgroundColor="background"
       padding={24}
       gap={16}
     >

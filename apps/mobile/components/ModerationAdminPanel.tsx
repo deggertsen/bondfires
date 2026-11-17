@@ -1,5 +1,5 @@
 import { Button, Card, Spinner, Text } from '@bondfires/ui'
-import { ShieldCheck } from '@tamagui/lucide-icons'
+import { ShieldCheck } from '@bondfires/ui/icons'
 import { useMutation, useQuery } from 'convex/react'
 import { useRouter } from 'expo-router'
 import { Alert } from 'react-native'
@@ -37,12 +37,12 @@ export function ModerationAdminPanel() {
     <Card marginBottom={24}>
       <YStack gap={14}>
         <XStack gap={8} alignItems="center">
-          <ShieldCheck size={18} color={'$secondary'} />
+          <ShieldCheck size={18} color={'secondary'} />
           <Text fontSize={16} fontWeight="700">
             Safety moderation
           </Text>
         </XStack>
-        <Text fontSize={12} color={'$placeholderColor'}>
+        <Text fontSize={12} color={'placeholderColor'}>
           {queue.content.length} awaiting publication · {queue.reports.length} open reports
         </Text>
 
@@ -53,12 +53,12 @@ export function ModerationAdminPanel() {
                 {('title' in item ? item.title : undefined) ||
                   `${item.creatorName ?? 'User'}’s video`}
               </Text>
-              <Text fontSize={12} color={'$placeholderColor'}>
+              <Text fontSize={12} color={'placeholderColor'}>
                 Public {item.targetType} awaiting human review
               </Text>
               <XStack gap={8}>
                 <Button
-                  size="$sm"
+                  size="sm"
                   variant="outline"
                   accessibilityLabel="Review content playback"
                   onPress={() =>
@@ -73,7 +73,7 @@ export function ModerationAdminPanel() {
                   <Text>Review</Text>
                 </Button>
                 <Button
-                  size="$sm"
+                  size="sm"
                   variant="primary"
                   accessibilityLabel="Approve content for publication"
                   onPress={() =>
@@ -89,7 +89,7 @@ export function ModerationAdminPanel() {
                   <Text>Approve</Text>
                 </Button>
                 <Button
-                  size="$sm"
+                  size="sm"
                   variant="destructive"
                   accessibilityLabel="Remove content"
                   onPress={() =>
@@ -124,14 +124,14 @@ export function ModerationAdminPanel() {
               <Text fontWeight="700">
                 {report.subCategory?.replaceAll('_', ' ') ?? report.category.replaceAll('_', ' ')}
               </Text>
-              <Text fontSize={12} color={'$placeholderColor'}>
+              <Text fontSize={12} color={'placeholderColor'}>
                 {report.reporterName} reported {report.targetName}
               </Text>
               <Text fontSize={13}>{report.comments}</Text>
               <XStack gap={8} flexWrap="wrap">
                 {report.reviewBondfireId ? (
                   <Button
-                    size="$sm"
+                    size="sm"
                     variant="outline"
                     accessibilityLabel="Review reported content playback"
                     onPress={() => {
@@ -145,7 +145,7 @@ export function ModerationAdminPanel() {
                   </Button>
                 ) : null}
                 <Button
-                  size="$sm"
+                  size="sm"
                   variant="outline"
                   accessibilityLabel="Dismiss report"
                   onPress={() =>
@@ -161,7 +161,7 @@ export function ModerationAdminPanel() {
                   <Text>Dismiss</Text>
                 </Button>
                 <Button
-                  size="$sm"
+                  size="sm"
                   variant="destructive"
                   accessibilityLabel="Resolve report and enforce"
                   onPress={() =>
@@ -197,7 +197,7 @@ export function ModerationAdminPanel() {
               Removed: {('title' in item ? item.title : undefined) || item.creatorName || 'Video'}
             </Text>
             <Button
-              size="$sm"
+              size="sm"
               variant="outline"
               accessibilityLabel="Restore removed content"
               onPress={() =>
@@ -220,12 +220,12 @@ export function ModerationAdminPanel() {
           <XStack key={`suspended:${user.userId}`} gap={8} alignItems="center">
             <YStack flex={1}>
               <Text fontSize={13}>{user.displayName}</Text>
-              <Text fontSize={11} color={'$placeholderColor'} numberOfLines={1}>
+              <Text fontSize={11} color={'placeholderColor'} numberOfLines={1}>
                 {user.reason || 'Suspended'}
               </Text>
             </YStack>
             <Button
-              size="$sm"
+              size="sm"
               variant="outline"
               accessibilityLabel={`Reactivate ${user.displayName}`}
               onPress={() =>
@@ -243,7 +243,7 @@ export function ModerationAdminPanel() {
         queue.reports.length === 0 &&
         queue.removedContent.length === 0 &&
         queue.suspendedUsers.length === 0 ? (
-          <Text color={'$placeholderColor'}>Moderation queue is clear.</Text>
+          <Text color={'placeholderColor'}>Moderation queue is clear.</Text>
         ) : null}
       </YStack>
     </Card>

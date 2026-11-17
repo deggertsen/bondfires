@@ -152,6 +152,7 @@
       ],
       "./plugins/withPodsDeploymentTarget",
       "./plugins/withGradleJvmArgs",
+      "./plugins/withThirdPartyNotices",
       [
         "expo-video",
         {

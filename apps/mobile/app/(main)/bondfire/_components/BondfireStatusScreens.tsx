@@ -1,5 +1,5 @@
 import { Button, Spinner, Text } from '@bondfires/ui'
-import { ChevronLeft, Flame } from '@tamagui/lucide-icons'
+import { ChevronLeft, Flame } from '@bondfires/ui/icons'
 import { Stack } from 'expo-router'
 import type { Animated as AnimatedType } from 'react-native'
 import { Animated, Pressable, StatusBar, type StatusBarStyle } from 'react-native'
@@ -24,11 +24,11 @@ function StatusShell({
     <>
       <Stack.Screen options={{ headerShown: false }} />
       <StatusBar barStyle={statusBarStyle} />
-      <YStack flex={1} backgroundColor={'$background'} paddingHorizontal={24}>
+      <YStack flex={1} backgroundColor={'background'} paddingHorizontal={24}>
         <Pressable onPress={onBackPress}>
           <XStack alignItems="center" gap={6} paddingTop={headerTopPadding} paddingBottom={12}>
-            <ChevronLeft size={22} color={'$color'} />
-            <Text color={'$color'} fontWeight="800">
+            <ChevronLeft size={22} color={'color'} />
+            <Text color={'color'} fontWeight="800">
               Campground
             </Text>
           </XStack>
@@ -42,8 +42,8 @@ function StatusShell({
 
 export function BondfireLoadingScreen() {
   return (
-    <YStack flex={1} backgroundColor={'$background'} alignItems="center" justifyContent="center">
-      <Spinner size="large" color={'$primary'} />
+    <YStack flex={1} backgroundColor={'background'} alignItems="center" justifyContent="center">
+      <Spinner size="large" color={'primary'} />
     </YStack>
   )
 }
@@ -52,11 +52,11 @@ export function BondfireUnavailableScreen(props: BackProps) {
   return (
     <StatusShell {...props}>
       <YStack flex={1} alignItems="center" justifyContent="center" gap={16}>
-        <Flame size={44} color={'$placeholderColor'} />
+        <Flame size={44} color={'placeholderColor'} />
         <Text fontSize={22} fontWeight="900" textAlign="center">
           This Bondfire isn't available
         </Text>
-        <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
+        <Text fontSize={14} color={'placeholderColor'} textAlign="center">
           It may have expired, been removed, or its recording failed to process.
         </Text>
       </YStack>
@@ -90,14 +90,14 @@ export function BondfirePendingScreen({
             width={96}
             height={96}
             borderRadius={28}
-            backgroundColor={'$backgroundHover'}
+            backgroundColor={'backgroundHover'}
             borderWidth={1}
-            borderColor={'$primary'}
+            borderColor={'primary'}
             alignItems="center"
             justifyContent="center"
             alignSelf="center"
           >
-            <Flame size={44} color={'$primary'} />
+            <Flame size={44} color={'primary'} />
           </YStack>
         </Animated.View>
 
@@ -105,12 +105,12 @@ export function BondfirePendingScreen({
           <Text fontSize={24} fontWeight="900" textAlign="center">
             {bondfireData.title ?? `${creatorName}'s Bondfire`}
           </Text>
-          <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
+          <Text fontSize={14} color={'placeholderColor'} textAlign="center">
             {[creatorName, bondfireData.campName].filter(Boolean).join(' • ')}
           </Text>
         </YStack>
 
-        <Text fontSize={17} color={'$color'} textAlign="center" lineHeight={24}>
+        <Text fontSize={17} color={'color'} textAlign="center" lineHeight="24px">
           {isUploading
             ? isOwner
               ? 'Your recording is uploading. Keep the app open to continue.'
@@ -122,7 +122,7 @@ export function BondfirePendingScreen({
         {onStartRecording && <Button onPress={onStartRecording}>Start recording</Button>}
         {onDiscard && <Button onPress={onDiscard}>Discard draft</Button>}
         {!isOwner && (
-          <Text color="$placeholderColor" textAlign="center">
+          <Text color="placeholderColor" textAlign="center">
             Playback starts here when the video is ready.
           </Text>
         )}
@@ -135,11 +135,11 @@ export function BondfireProcessingScreen(props: BackProps) {
   return (
     <StatusShell {...props}>
       <YStack flex={1} alignItems="center" justifyContent="center" gap={16}>
-        <Spinner size="large" color={'$primary'} />
+        <Spinner size="large" color={'primary'} />
         <Text fontSize={22} fontWeight="900">
           Processing...
         </Text>
-        <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
+        <Text fontSize={14} color={'placeholderColor'} textAlign="center">
           The recording will play as soon as it is ready.
         </Text>
       </YStack>
@@ -165,11 +165,11 @@ export function BondfireRecoveringScreen({
   return (
     <StatusShell {...props}>
       <YStack flex={1} alignItems="center" justifyContent="center" gap={16}>
-        <Spinner size="large" color={'$primary'} />
+        <Spinner size="large" color={'primary'} />
         <Text fontSize={22} fontWeight="900" textAlign="center">
           Finishing upload...
         </Text>
-        <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
+        <Text fontSize={14} color={'placeholderColor'} textAlign="center">
           {isOwner
             ? 'This recording is saved on your phone and still uploading. Once it finishes it will play here for you and everyone else.'
             : `${creatorName}'s recording is still uploading. It will play as soon as it is ready.`}
@@ -190,11 +190,11 @@ export function BondfireErroredScreen({
   return (
     <StatusShell {...props}>
       <YStack flex={1} alignItems="center" justifyContent="center" gap={16}>
-        <Flame size={44} color={'$placeholderColor'} />
+        <Flame size={44} color={'placeholderColor'} />
         <Text fontSize={22} fontWeight="900" textAlign="center">
           Recording failed
         </Text>
-        <Text fontSize={14} color={'$placeholderColor'} textAlign="center">
+        <Text fontSize={14} color={'placeholderColor'} textAlign="center">
           {creatorName}'s recording didn't process correctly. They can try again.
         </Text>
       </YStack>

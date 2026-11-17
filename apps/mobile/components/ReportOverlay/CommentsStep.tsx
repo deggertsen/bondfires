@@ -1,6 +1,6 @@
 import { useAppThemeColors } from '@bondfires/app'
 import { Button, Text } from '@bondfires/ui'
-import { ArrowLeft } from '@tamagui/lucide-icons'
+import { ArrowLeft } from '@bondfires/ui/icons'
 import { useEffect, useRef } from 'react'
 import { Pressable, StyleSheet, TextInput, type TextInputInstance } from 'react-native'
 import { XStack, YStack } from 'tamagui'
@@ -22,13 +22,13 @@ export function CommentsStep({ value, onChange, onNext, onBack }: CommentsStepPr
     <YStack gap={16}>
       <XStack alignItems="center" gap={8}>
         <Pressable onPress={onBack}>
-          <ArrowLeft size={24} color={'$color'} />
+          <ArrowLeft size={24} color={'color'} />
         </Pressable>
-        <Text fontSize={18} fontWeight="600" color={'$color'}>
+        <Text fontSize={18} fontWeight="600" color={'color'}>
           Describe the Issue
         </Text>
       </XStack>
-      <Text fontSize={14} color={'$placeholderColor'}>
+      <Text fontSize={14} color={'placeholderColor'}>
         Please provide details about what you observed. This helps us review your report more
         effectively.
       </Text>
@@ -50,24 +50,24 @@ export function CommentsStep({ value, onChange, onNext, onBack }: CommentsStepPr
           textAlignVertical="top"
         />
         <XStack justifyContent="space-between" marginTop={8}>
-          <Text fontSize={12} color={isValid ? '$placeholderColor' : '$error'}>
+          <Text fontSize={12} color={isValid ? 'placeholderColor' : 'error'}>
             {isValid
               ? 'Thank you for the details'
               : `Minimum ${MIN_COMMENT_LENGTH} characters required`}
           </Text>
-          <Text fontSize={12} color={isValid ? '$placeholderColor' : '$error'}>
+          <Text fontSize={12} color={isValid ? 'placeholderColor' : 'error'}>
             {charCount}/{MIN_COMMENT_LENGTH}
           </Text>
         </XStack>
       </YStack>
       <Button
         variant="primary"
-        size="$lg"
+        size="lg"
         onPress={onNext}
         disabled={!isValid}
         opacity={isValid ? 1 : 0.5}
       >
-        <Text color={'$color'} fontWeight="600">
+        <Text color={'color'} fontWeight="600">
           Continue
         </Text>
       </Button>

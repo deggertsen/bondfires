@@ -1,6 +1,6 @@
 import { telemetry, useAppThemeColors } from '@bondfires/app'
 import { Button, Card, Spinner, Text, UserAvatar } from '@bondfires/ui'
-import { ArrowLeft, ShieldCheck } from '@tamagui/lucide-icons'
+import { ArrowLeft, ShieldCheck } from '@bondfires/ui/icons'
 import { useMutation, useQuery } from 'convex/react'
 import { Stack, useRouter } from 'expo-router'
 import { Alert, Pressable, ScrollView, StatusBar } from 'react-native'
@@ -46,7 +46,7 @@ export default function FamilyConnectionsScreen() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <YStack flex={1} backgroundColor="$background">
+      <YStack flex={1} backgroundColor="background">
         <StatusBar barStyle={statusBarStyle} />
         <XStack
           alignItems="center"
@@ -66,9 +66,9 @@ export default function FamilyConnectionsScreen() {
               borderRadius={21}
               alignItems="center"
               justifyContent="center"
-              backgroundColor="$backgroundHover"
+              backgroundColor="backgroundHover"
             >
-              <ArrowLeft size={22} color="$color" />
+              <ArrowLeft size={22} color="color" />
             </YStack>
           </Pressable>
           <Text fontSize={24} fontWeight="900">
@@ -79,10 +79,10 @@ export default function FamilyConnectionsScreen() {
         <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 4, paddingBottom: 48 }}>
           <Card marginBottom={20}>
             <XStack gap={12} alignItems="flex-start">
-              <ShieldCheck size={24} color="$primary" />
+              <ShieldCheck size={24} color="primary" />
               <YStack flex={1} gap={6}>
                 <Text fontWeight="800">Private, controlled Hearth access</Text>
-                <Text color="$placeholderColor" lineHeight={20}>
+                <Text color="placeholderColor" lineHeight="20px">
                   Family connections allow people in different age groups to share private Hearth
                   Bondfires. They never make either account discoverable in public Camps, search, or
                   recommendations. Bondfires does not verify legal or biological relationships.
@@ -92,13 +92,13 @@ export default function FamilyConnectionsScreen() {
           </Card>
 
           {connections === undefined ? (
-            <Spinner size="large" color="$primary" marginTop={24} />
+            <Spinner size="large" color="primary" marginTop={24} />
           ) : connections.length === 0 ? (
             <YStack alignItems="center" paddingVertical={32} gap={10}>
               <Text fontSize={18} fontWeight="800" textAlign="center">
                 No family connections yet
               </Text>
-              <Text color="$placeholderColor" textAlign="center" lineHeight={20}>
+              <Text color="placeholderColor" textAlign="center" lineHeight="20px">
                 Create a Hearth Bondfire, open its invite options, and choose “Create family link.”
                 The other person must explicitly accept it.
               </Text>
@@ -113,17 +113,17 @@ export default function FamilyConnectionsScreen() {
                       <UserAvatar name={name} photoUrl={connection.user.photoUrl} size={52} />
                       <YStack flex={1} gap={3}>
                         <Text fontWeight="800">{name}</Text>
-                        <Text color="$placeholderColor" fontSize={12}>
+                        <Text color="placeholderColor" fontSize={12}>
                           Connected privately for Hearth invitations
                         </Text>
                       </YStack>
                       <Button
                         variant="outline"
-                        size="$sm"
+                        size="sm"
                         onPress={() => confirmRevoke(connection._id, name)}
                         accessibilityLabel={`Remove family connection with ${name}`}
                       >
-                        <Text color="$error" fontWeight="700">
+                        <Text color="error" fontWeight="700">
                           Remove
                         </Text>
                       </Button>

@@ -1,5 +1,5 @@
 import { Button, Text } from '@bondfires/ui'
-import { ShieldAlert, UserRoundX } from '@tamagui/lucide-icons'
+import { ShieldAlert, UserRoundX } from '@bondfires/ui/icons'
 import { YStack } from 'tamagui'
 import type { ReportTarget } from './types'
 
@@ -17,29 +17,29 @@ export function TargetStep({
       </Text>
       <Button
         variant="outline"
-        size="$lg"
+        size="lg"
         onPress={() => onSelect('content')}
         accessibilityLabel="Report this video"
       >
-        <ShieldAlert size={20} color={'$warning'} />
+        <ShieldAlert size={20} color={'warning'} />
         <Text>Report this video</Text>
       </Button>
       <Button
         variant="destructive"
-        size="$lg"
+        size="lg"
         onPress={onBlock}
         accessibilityLabel="Block this user without submitting a report"
       >
-        <UserRoundX size={20} color={'$color'} />
+        <UserRoundX size={20} color={'color'} />
         <Text>Block user</Text>
       </Button>
       <Button
         variant="outline"
-        size="$lg"
+        size="lg"
         onPress={() => onSelect('user')}
         accessibilityLabel="Report this user"
       >
-        <UserRoundX size={20} color={'$warning'} />
+        <UserRoundX size={20} color={'warning'} />
         <Text>Report this user</Text>
       </Button>
     </YStack>

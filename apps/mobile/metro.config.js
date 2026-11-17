@@ -33,7 +33,8 @@ config.resolver.blockList = [
   /\.test\.[jt]sx?$/,
 ]
 
-// Use official Tamagui Metro plugin for proper monorepo handling
+// Tamagui Metro plugin: runs Tamagui v3's optimizing compiler (the replacement
+// for @tamagui/babel-plugin). Needs Metro 0.84-0.87 (Expo SDK 58 ships 0.87).
 const metroConfig = withTamagui(config, {
   components: ['tamagui'],
   config: './tamagui.config.ts',
