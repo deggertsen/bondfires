@@ -46,6 +46,7 @@ const { store, playback } = await vi.hoisted(async () => {
     currentTime: 10,
     duration: 60,
     playbackRate: 1,
+    maxResolution: null as { width: number; height: number } | null,
     play: native.play,
     pause: native.pause,
     replay: native.replay,
@@ -102,7 +103,13 @@ vi.mock('expo-video', () => ({
     const sourceKey = JSON.stringify(source)
     // biome-ignore lint/correctness/useExhaustiveDependencies: Match Expo: source changes recreate the player; setup identity does not.
     return useMemo(() => {
-      const player = { ...playback.player, playing: false, currentTime: 0, duration: 60 }
+      const player = {
+        ...playback.player,
+        playing: false,
+        currentTime: 0,
+        duration: 60,
+        maxResolution: null,
+      }
       playback.player = player
       setup(player)
       return player
@@ -335,6 +342,7 @@ describe('live-edge VideoPlayer integration', () => {
       renderer.update(createElement(VideoPlayer, { ...props, ...changedProps })),
     )
     expect(playback.player).not.toBe(oldPlayer)
+    expect(playback.player.maxResolution).toEqual({ width: 720, height: 1280 })
     expect(playback.player.currentTime).toBe(0)
     expect(playback.player.playing).toBe(false)
     expect(host('PlayPauseIndicator').props.state$.hasEnded.peek()).toBe(false)

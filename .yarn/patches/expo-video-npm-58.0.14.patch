@@ -1,29 +1,3 @@
-diff --git a/android/src/main/java/expo/modules/video/VideoModule.kt b/android/src/main/java/expo/modules/video/VideoModule.kt
---- a/android/src/main/java/expo/modules/video/VideoModule.kt
-+++ b/android/src/main/java/expo/modules/video/VideoModule.kt
-@@ -257,6 +257,22 @@ class VideoModule : Module() {
-           }
-         }
- 
-+      Property("maxVideoSize")
-+        .get { ref: VideoPlayer ->
-+          runBlocking(appContext.mainQueue.coroutineContext) {
-+            val parameters = ref.player.trackSelectionParameters
-+            VideoSize(parameters.maxVideoWidth, parameters.maxVideoHeight)
-+          }
-+        }
-+        .set { ref: VideoPlayer, size: VideoSize ->
-+          appContext.mainQueue.launch {
-+            ref.player.trackSelectionParameters = ref.player.trackSelectionParameters
-+              .buildUpon()
-+              .setMaxVideoSize(size.width.coerceAtLeast(1), size.height.coerceAtLeast(1))
-+              .build()
-+          }
-+        }
-+
-       Property("bufferOptions")
-         .get { ref: VideoPlayer ->
-           ref.bufferOptions
 diff --git a/android/src/main/java/expo/modules/video/records/VideoMetadata.kt b/android/src/main/java/expo/modules/video/records/VideoMetadata.kt
 --- a/android/src/main/java/expo/modules/video/records/VideoMetadata.kt
 +++ b/android/src/main/java/expo/modules/video/records/VideoMetadata.kt
@@ -56,16 +30,7 @@ diff --git a/android/src/main/java/expo/modules/video/records/VideoSource.kt b/a
 diff --git a/build/VideoPlayer.types.d.ts b/build/VideoPlayer.types.d.ts
 --- a/build/VideoPlayer.types.d.ts
 +++ b/build/VideoPlayer.types.d.ts
-@@ -146,6 +146,8 @@ export declare class VideoPlayer extends SharedObject<VideoPlayerEvents> {
-      * @platform ios
-      */
-     bufferOptions: BufferOptions;
-+  /** Bondfires: adaptive playback ceiling; does not reload the source. */
-+  maxVideoSize: { width: number; height: number };
-     /**
-      * Specifies the subtitle track which is currently displayed by the player. `null` when no subtitles are displayed.
-      *
-@@ -386,6 +388,12 @@ export type VideoMetadata = {
+@@ -386,6 +386,12 @@ export type VideoMetadata = {
       * @platform ios
       */
      artist?: string;
@@ -102,81 +67,10 @@ diff --git a/ios/Records/VideoMetadata.swift b/ios/Records/VideoMetadata.swift
    @Field
    var artwork: URL? = nil
  }
-diff --git a/ios/VideoModule.swift b/ios/VideoModule.swift
---- a/ios/VideoModule.swift
-+++ b/ios/VideoModule.swift
-@@ -261,6 +261,13 @@ public final class VideoModule: Module {
-         return player.bufferedPosition
-       }
- 
-+      Property("maxVideoSize") { player -> [String: Any] in
-+        return player.maxVideoSize.toDictionary()
-+      }
-+      .set { (player, size: VideoSize) in
-+        player.maxVideoSize = size
-+      }
-+
-       Property("bufferOptions") { player -> [String: Any] in
-         return player.bufferOptions.toDictionary()
-       }
-diff --git a/ios/VideoPlayer.swift b/ios/VideoPlayer.swift
---- a/ios/VideoPlayer.swift
-+++ b/ios/VideoPlayer.swift
-@@ -135,6 +135,17 @@ internal final class VideoPlayer: SharedRef<AVPlayer>, Hashable, VideoPlayerObse
-     return unixTime - timeIntervalSince
-   }
- 
-+  // Bondfires: constrain adaptive playback without replacing the AVPlayerItem.
-+  var maxVideoSize = VideoSize(width: 720, height: 1280) {
-+    didSet { applyMaxVideoSize(to: ref.currentItem) }
-+  }
-+
-+  private func applyMaxVideoSize(to item: AVPlayerItem?) {
-+    item?.preferredMaximumResolution = CGSize(
-+      width: CGFloat(maxVideoSize.width ?? 720), height: CGFloat(maxVideoSize.height ?? 1280)
-+    )
-+  }
-+
-   var bufferOptions = BufferOptions() {
-     didSet {
-       ref.currentItem?.preferredForwardBufferDuration = bufferOptions.preferredForwardBufferDuration
-@@ -226,6 +237,7 @@ internal final class VideoPlayer: SharedRef<AVPlayer>, Hashable, VideoPlayerObse
-     }
- 
-     playerItem.audioTimePitchAlgorithm = preservesPitch ? .spectral : .varispeed
-+    applyMaxVideoSize(to: playerItem)
-     playerItem.preferredForwardBufferDuration = bufferOptions.preferredForwardBufferDuration
- 
-     // The current item has to be replaced from the main thread. When replacing from other queues
-@@ -263,6 +275,7 @@ internal final class VideoPlayer: SharedRef<AVPlayer>, Hashable, VideoPlayerObse
-     }
- 
-     playerItem.audioTimePitchAlgorithm = self.preservesPitch ? .spectral : .varispeed
-+    applyMaxVideoSize(to: playerItem)
-     playerItem.preferredForwardBufferDuration = self.bufferOptions.preferredForwardBufferDuration
- 
-     // The current item has to be replaced from the main thread. When replacing from other queues
-@@ -431,6 +444,7 @@ internal final class VideoPlayer: SharedRef<AVPlayer>, Hashable, VideoPlayerObse
-       oldSource: oldVideoPlayerItem?.videoSource
-     )
-     safeEmit(event: "sourceChange", payload: payload)
-+    applyMaxVideoSize(to: newVideoPlayerItem)
-     newVideoPlayerItem?.preferredForwardBufferDuration = bufferOptions.preferredForwardBufferDuration
-     newVideoPlayerItem?.preferredMaximumResolution = maxResolution?.toCGSize() ?? .zero
-   }
 diff --git a/src/VideoPlayer.types.ts b/src/VideoPlayer.types.ts
 --- a/src/VideoPlayer.types.ts
 +++ b/src/VideoPlayer.types.ts
-@@ -168,6 +168,8 @@ export declare class VideoPlayer extends SharedObject<VideoPlayerEvents> {
-    * @platform ios
-    */
-   bufferOptions: BufferOptions;
-+  /** Bondfires: adaptive playback ceiling; does not reload the source. */
-+  maxVideoSize: { width: number; height: number };
- 
-   /**
-    * Specifies the subtitle track which is currently displayed by the player. `null` when no subtitles are displayed.
-@@ -446,6 +448,12 @@ export type VideoMetadata = {
+@@ -446,6 +446,12 @@ export type VideoMetadata = {
     * @platform ios
     */
    artist?: string;

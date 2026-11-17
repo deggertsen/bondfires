@@ -7924,12 +7924,12 @@ __metadata:
 
 "expo-video@patch:expo-video@npm%3A~58.0.14#~/.yarn/patches/expo-video-npm-58.0.14.patch":
   version: 58.0.14
-  resolution: "expo-video@patch:expo-video@npm%3A58.0.14#~/.yarn/patches/expo-video-npm-58.0.14.patch::version=58.0.14&hash=6e5fa9"
+  resolution: "expo-video@patch:expo-video@npm%3A58.0.14#~/.yarn/patches/expo-video-npm-58.0.14.patch::version=58.0.14&hash=3097cd"
   peerDependencies:
     expo: "*"
     react: "*"
     react-native: "*"
-  checksum: 10c0/80b6599a7e20df922bc2ac0ac0b3b4745cbd7a4cb5bcff9231de8cb6d96624896f15aa0b5883e38006c3c1c70e755c986497010f5ca5b4f8d1769ebcbe6537fd
+  checksum: 10c0/50646a9767fd051b06338c4ae905aadb4cfec5180a3884805102e6dd759ee473bcae0f82994c75f88e2fa644ea78f6ddaf3f26f1d5f763a7425c5fe227524c69
   languageName: node
   linkType: hard
 

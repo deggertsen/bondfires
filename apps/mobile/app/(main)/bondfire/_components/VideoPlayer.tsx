@@ -356,7 +356,7 @@ export function VideoPlayer({
   })
 
   const player = useVideoPlayer(currentSource, (player) => {
-    player.maxVideoSize = playbackSize(playbackQuality)
+    player.maxResolution = playbackSize(playbackQuality)
     player.loop = false
     player.muted = isMuted
     applyWatchPlaybackRate(player, watchRate.getRate())
