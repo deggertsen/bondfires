@@ -1,6 +1,6 @@
 /**
  * Lucide icons used by Bondfires, vendored from @tamagui/lucide-icons@1.144.4
- * (MIT, https://lucide.dev). Tamagui v3 ships no icon package and generates
+ * (MIT, see LICENSE in this directory). Tamagui v3 ships no icon package and generates
  * per-icon files instead; these keep the exact v1 shapes and use the v3
  * `themed()` wrapper from @tamagui/helpers-icon for theme colors and sizes.
  * Add a new icon by copying its file from the Lucide/Tamagui generator output.
