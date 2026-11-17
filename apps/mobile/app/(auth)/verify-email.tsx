@@ -16,7 +16,7 @@ import { resolveAuthRedirect, routes } from '../../lib/routes'
 const POST_VERIFY_NAV_TIMEOUT_MS = 6_000
 
 export default function VerifyEmailScreen() {
-  const { colors, statusBarStyle } = useAppThemeColors()
+  const { statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const { signIn } = useAuthActions()
   const params = useLocalSearchParams<{ email?: string; redirectTo?: string }>()
@@ -140,7 +140,7 @@ export default function VerifyEmailScreen() {
 
   return (
     <YStack flex={1} backgroundColor="$background">
-      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+      <StatusBar barStyle={statusBarStyle} />
       <KeyboardAwareScrollView
         contentContainerStyle={{
           flexGrow: 1,

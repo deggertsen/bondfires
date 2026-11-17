@@ -1,11 +1,10 @@
 import { appActions, appStore$, telemetry, useAppThemeColors } from '@bondfires/app'
 import { Button, Spinner, Text } from '@bondfires/ui'
 import { useObservable, useValue } from '@legendapp/state/react'
-import { useIsFocused } from '@react-navigation/native'
 import { Flame } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
 import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera'
-import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
+import { useIsFocused, useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AppState, StatusBar } from 'react-native'
 import { YStack } from 'tamagui'
@@ -42,11 +41,11 @@ function AvailableCreateScreen() {
 }
 
 function RecordingUnavailableScreen() {
-  const { colors, statusBarStyle } = useAppThemeColors()
+  const { statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   return (
     <YStack flex={1} backgroundColor="$background" justifyContent="center" padding="$4" gap="$3">
-      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+      <StatusBar barStyle={statusBarStyle} />
       <Text fontSize={20} fontWeight="600">
         Recording unavailable
       </Text>
@@ -59,7 +58,7 @@ function RecordingUnavailableScreen() {
 // Keep permissions, draft creation and capture behind the same availability
 // gate as the uploader so disabled builds cannot accumulate unsendable videos.
 function EnabledCreateScreen() {
-  const { colors, statusBarStyle } = useAppThemeColors()
+  const { statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const navigation = useNavigation()
   // `personalCamp=1` still arrives from Hearth entry points; People is the
@@ -275,7 +274,7 @@ function EnabledCreateScreen() {
         justifyContent="center"
         paddingHorizontal={24}
       >
-        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+        <StatusBar barStyle={statusBarStyle} />
         <YStack alignItems="center" gap={24}>
           <YStack
             width={100}
@@ -335,7 +334,7 @@ function EnabledCreateScreen() {
               can bypass an existing audience and orphan that draft. */}
           {existingDraft === undefined ? (
             <YStack flex={1} alignItems="center" justifyContent="center" gap={14}>
-              <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+              <StatusBar barStyle={statusBarStyle} />
               <Spinner size="large" color={'$primary'} />
               <Text color={'$placeholderColor'}>Loading your Hearth...</Text>
             </YStack>

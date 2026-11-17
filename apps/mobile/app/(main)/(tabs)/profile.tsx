@@ -550,7 +550,7 @@ export default function ProfileScreen() {
   return (
     <YStack flex={1} backgroundColor={'$background'}>
       <ProfileSubscription key={refreshKey} onResolved={handleProfileResolved} />
-      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+      <StatusBar barStyle={statusBarStyle} />
 
       <XStack
         justifyContent="space-between"

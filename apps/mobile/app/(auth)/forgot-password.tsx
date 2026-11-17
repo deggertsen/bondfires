@@ -11,7 +11,7 @@ import { goBackOrReplace } from '../../lib/navigation'
 import { routes } from '../../lib/routes'
 
 export default function ForgotPasswordScreen() {
-  const { colors, statusBarStyle } = useSystemThemeColors()
+  const { statusBarStyle } = useSystemThemeColors()
   const router = useRouter()
   const navigation = useNavigation()
   const { signIn } = useAuthActions()
@@ -46,7 +46,7 @@ export default function ForgotPasswordScreen() {
 
   return (
     <YStack flex={1} backgroundColor="$background">
-      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+      <StatusBar barStyle={statusBarStyle} />
 
       {/* Back button */}
       <YStack paddingTop={60} paddingHorizontal={16}>

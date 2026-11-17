@@ -28,19 +28,18 @@ import {
   Text,
 } from '@bondfires/ui'
 import { useValue } from '@legendapp/state/react'
-import { useIsFocused } from '@react-navigation/native'
 import { AlertTriangle, Flame, RefreshCw, Search, X } from '@tamagui/lucide-icons'
 import { useMutation, usePaginatedQuery, useQuery } from 'convex/react'
-import { useRouter } from 'expo-router'
+import { useIsFocused, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   FlatList,
+  type ListViewToken,
   Pressable,
   RefreshControl,
   ScrollView,
   StatusBar,
-  type ViewToken,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Separator, XStack, YStack } from 'tamagui'
@@ -979,7 +978,7 @@ export default function HomeScreen() {
 
   const { visibleRows$: reactionVisibility$, updateVisibleRows } = useReactionRowVisibility()
   const onViewableItemsChanged = useCallback(
-    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+    ({ viewableItems }: { viewableItems: ListViewToken[] }) => {
       updateVisibleRows(viewableItems)
       const items = filteredRef.current
       if (!shouldRunBackgroundWork) return
@@ -1055,7 +1054,7 @@ export default function HomeScreen() {
         loadMoreRequest={loadMoreRequest}
         onResolved={handleBondfiresResolved}
       />
-      <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
+      <StatusBar barStyle={statusBarStyle} />
 
       <FlatList
         ref={(r) => {

@@ -1,5 +1,4 @@
 import { createElement, StrictMode } from 'react'
-// @ts-expect-error react-test-renderer does not ship TypeScript declarations.
 import { act, create } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Id } from '../../../convex/_generated/dataModel'

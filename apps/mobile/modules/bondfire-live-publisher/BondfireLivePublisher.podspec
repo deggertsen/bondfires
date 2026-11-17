@@ -5,7 +5,7 @@ Pod::Spec.new do |s|
   s.description    = 'Local Expo module that hosts the live camera preview and publishes RTMPS streams.'
   s.author         = 'Bondfires'
   s.homepage       = 'https://bondfires.app'
-  s.platforms      = { :ios => '15.1' }
+  s.platforms      = { :ios => '16.4' }
   s.source         = { :path => '.' }
   s.static_framework = true
 

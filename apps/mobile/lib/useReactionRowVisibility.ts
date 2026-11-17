@@ -1,7 +1,7 @@
 import { batch, type Observable } from '@legendapp/state'
 import { useObservable } from '@legendapp/state/react'
 import { useCallback } from 'react'
-import type { ViewToken } from 'react-native'
+import type { ListViewToken } from 'react-native'
 
 export type ReactionRowVisibility$ = Observable<Record<string, boolean>>
 
@@ -15,7 +15,7 @@ export function useReactionRowVisibility() {
   const visible$ = useObservable<Record<string, boolean>>({})
 
   const updateVisibleRows = useCallback(
-    (viewableItems: ViewToken[]) => {
+    (viewableItems: ListViewToken[]) => {
       const next = new Set<string>()
       for (const token of viewableItems) {
         const id = (token.item as { _id?: unknown } | null)?._id

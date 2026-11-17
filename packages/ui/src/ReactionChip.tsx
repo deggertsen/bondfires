@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Dimensions, View } from 'react-native'
+import { Dimensions, View, type ViewInstance } from 'react-native'
 import Animated, {
   Easing,
   interpolate,
@@ -179,7 +179,7 @@ function AnimatedReactionChip({
 }: Required<Omit<ReactionChipProps, 'onRequestFlyIn' | 'isVisible'>> &
   Pick<ReactionChipProps, 'onRequestFlyIn' | 'isVisible'>) {
   const reduceMotion = useReducedMotion()
-  const ref = useRef<View>(null)
+  const ref = useRef<ViewInstance>(null)
   const requestedTotal = useRef<number | null>(null)
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
   const playCount = useRef(0)

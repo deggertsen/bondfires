@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight, FileText, Settings } from '@tamagui/lucide-i
 import { LinearGradient } from 'expo-linear-gradient'
 import { Stack, useRouter } from 'expo-router'
 import { type RefObject, useCallback, useEffect, useRef, useState } from 'react'
-import type { StatusBarStyle, ViewToken } from 'react-native'
+import type { ListViewToken, StatusBarStyle } from 'react-native'
 import { FlatList, Pressable, StatusBar } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { XStack, YStack } from 'tamagui'
@@ -41,7 +41,6 @@ function getNowPlayingTitle(bondfireData: BondfireDetailData, video: BondfireVid
 
 export function BondfirePlaybackScreen({
   statusBarStyle,
-  backgroundColor,
   bondfireId,
   bondfireData,
   canInvite,
@@ -68,7 +67,6 @@ export function BondfirePlaybackScreen({
   onScrollToIndexFailed,
 }: {
   statusBarStyle: StatusBarStyle
-  backgroundColor: string
   bondfireId: Id<'bondfires'>
   bondfireData: BondfireDetailData
   canInvite: boolean
@@ -121,8 +119,8 @@ export function BondfirePlaybackScreen({
     itemVisiblePercentThreshold: 50,
   }).current
   const onViewableItemsChanged = useCallback(
-    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
-      if (viewableItems.length > 0 && viewableItems[0].index !== null) {
+    ({ viewableItems }: { viewableItems: ListViewToken[] }) => {
+      if (viewableItems.length > 0 && viewableItems[0].index != null) {
         onVideoIndexChange(viewableItems[0].index)
       }
     },
@@ -152,7 +150,7 @@ export function BondfirePlaybackScreen({
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <StatusBar barStyle={statusBarStyle} backgroundColor={backgroundColor} />
+      <StatusBar barStyle={statusBarStyle} />
 
       <YStack flex={1} backgroundColor={'$background'}>
         <XStack

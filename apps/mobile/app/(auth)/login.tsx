@@ -14,7 +14,7 @@ import { SocialSignInButtons } from '../../components/SocialSignInButtons'
 import { resolveAuthRedirect, routes } from '../../lib/routes'
 
 export default function LoginScreen() {
-  const { colors, statusBarStyle } = useAppThemeColors()
+  const { statusBarStyle } = useAppThemeColors()
   const router = useRouter()
   const { redirectTo } = useLocalSearchParams<{ redirectTo?: string }>()
   const { signIn } = useAuthActions()
@@ -191,7 +191,7 @@ export default function LoginScreen() {
 
   return (
     <YStack flex={1} backgroundColor="$background">
-      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+      <StatusBar barStyle={statusBarStyle} />
       <KeyboardAwareScrollView
         contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
         keyboardShouldPersistTaps="handled"

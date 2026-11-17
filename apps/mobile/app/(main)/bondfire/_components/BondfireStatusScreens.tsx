@@ -9,13 +9,11 @@ import type { BondfireDetailData } from '../_lib/bondfireDetailHelpers'
 
 type BackProps = {
   statusBarStyle: StatusBarStyle
-  backgroundColor: string
   onBackPress: () => void
 }
 
 function StatusShell({
   statusBarStyle,
-  backgroundColor,
   onBackPress,
   children,
 }: BackProps & {
@@ -25,7 +23,7 @@ function StatusShell({
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <StatusBar barStyle={statusBarStyle} backgroundColor={backgroundColor} />
+      <StatusBar barStyle={statusBarStyle} />
       <YStack flex={1} backgroundColor={'$background'} paddingHorizontal={24}>
         <Pressable onPress={onBackPress}>
           <XStack alignItems="center" gap={6} paddingTop={headerTopPadding} paddingBottom={12}>

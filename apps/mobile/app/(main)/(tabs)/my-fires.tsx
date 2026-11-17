@@ -10,12 +10,18 @@ import {
   useLoadingTimeoutTelemetry,
 } from '@bondfires/app'
 import { type BondfireRowProps, Button, closeOpenSwipeableRow, Spinner, Text } from '@bondfires/ui'
-import { useIsFocused } from '@react-navigation/native'
 import { AlertTriangle, ChevronLeft, Flame, Pin, RefreshCw } from '@tamagui/lucide-icons'
 import { useMutation, usePaginatedQuery, useQuery } from 'convex/react'
-import { useRouter } from 'expo-router'
+import { useIsFocused, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, FlatList, Pressable, RefreshControl, StatusBar, type ViewToken } from 'react-native'
+import {
+  Alert,
+  FlatList,
+  type ListViewToken,
+  Pressable,
+  RefreshControl,
+  StatusBar,
+} from 'react-native'
 import { Separator, useTheme, variableToString, XStack, YStack } from 'tamagui'
 import { api } from '../../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel'
@@ -264,7 +270,7 @@ export default function MyFiresScreen() {
   const [pinnedFirst, setPinnedFirst] = useState(false)
   const { visibleRows$: reactionVisibility$, updateVisibleRows } = useReactionRowVisibility()
   const handleViewableItemsChanged = useCallback(
-    ({ viewableItems }: { viewableItems: ViewToken[] }) => updateVisibleRows(viewableItems),
+    ({ viewableItems }: { viewableItems: ListViewToken[] }) => updateVisibleRows(viewableItems),
     [updateVisibleRows],
   )
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 10 }).current
@@ -500,7 +506,7 @@ export default function MyFiresScreen() {
           loadMoreRequest={loadMoreRequest}
           onResolved={handleThreadsResolved}
         />
-        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+        <StatusBar barStyle={statusBarStyle} />
         {timedOut ? <MyFiresRetry onRetry={handleRetry} /> : <LoadingMyFires />}
       </YStack>
     )
@@ -515,7 +521,7 @@ export default function MyFiresScreen() {
         loadMoreRequest={loadMoreRequest}
         onResolved={handleThreadsResolved}
       />
-      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+      <StatusBar barStyle={statusBarStyle} />
       <FlatList
         key={`list-${refreshKey}`}
         data={threads}
@@ -622,7 +628,7 @@ export default function MyFiresScreen() {
           </YStack>
         }
         ListEmptyComponent={
-          invitedThreads.length > 0 ? null : (
+          invitedThreads.length > 0 ? undefined : (
             <YStack flex={1} alignItems="center" justifyContent="center" paddingHorizontal={40}>
               <Flame size={58} color={'$primary'} />
               <Text fontSize={22} fontWeight="900" marginTop={18} textAlign="center">

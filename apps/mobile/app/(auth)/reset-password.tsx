@@ -11,7 +11,7 @@ import { goBackOrReplace } from '../../lib/navigation'
 import { routes } from '../../lib/routes'
 
 export default function ResetPasswordScreen() {
-  const { colors, statusBarStyle } = useSystemThemeColors()
+  const { statusBarStyle } = useSystemThemeColors()
   const router = useRouter()
   const navigation = useNavigation()
   const { signIn } = useAuthActions()
@@ -114,7 +114,7 @@ export default function ResetPasswordScreen() {
         alignItems="center"
         justifyContent="center"
       >
-        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+        <StatusBar barStyle={statusBarStyle} />
 
         <YStack alignItems="center" gap={24} maxWidth={320}>
           <YStack
@@ -145,7 +145,7 @@ export default function ResetPasswordScreen() {
 
   return (
     <YStack flex={1} backgroundColor="$background">
-      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+      <StatusBar barStyle={statusBarStyle} />
 
       {/* Back button */}
       <YStack paddingTop={60} paddingHorizontal={16}>

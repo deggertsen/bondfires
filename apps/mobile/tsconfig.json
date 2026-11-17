@@ -6,7 +6,8 @@
       "@/*": ["./*"],
       "@bondfires/app": ["../../packages/app/src"],
       "@bondfires/config": ["../../packages/config/src"],
-      "@bondfires/ui": ["../../packages/ui/src"]
+      "@bondfires/ui": ["../../packages/ui/src"],
+      "react-test-renderer": ["./test/types/react-test-renderer.d.ts"]
     }
   },
   "include": [

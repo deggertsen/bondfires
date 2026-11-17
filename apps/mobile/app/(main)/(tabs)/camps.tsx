@@ -577,7 +577,7 @@ export default function CampsScreen() {
   if (campPageStatus === 'LoadingFirstPage') {
     return (
       <YStack flex={1} backgroundColor={'$background'} alignItems="center" justifyContent="center">
-        <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
+        <StatusBar barStyle={statusBarStyle} />
         <Spinner size="large" color={'$primary'} />
         <Text marginTop={18} color={'$placeholderColor'}>
           Loading camps...
@@ -588,7 +588,7 @@ export default function CampsScreen() {
 
   return (
     <YStack flex={1} backgroundColor={'$background'}>
-      <StatusBar barStyle={statusBarStyle} backgroundColor="transparent" translucent />
+      <StatusBar barStyle={statusBarStyle} />
 
       <FlatList
         data={listItems}

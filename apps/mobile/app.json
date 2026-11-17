@@ -7,7 +7,6 @@
     "icon": "./assets/images/icon.png",
     "scheme": "bondfires",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "splash": {
       "image": "./assets/images/icon.png",
       "resizeMode": "contain",
@@ -53,7 +52,6 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#141416"
       },
-      "edgeToEdgeEnabled": true,
       "intentFilters": [
         {
           "action": "VIEW",
@@ -113,6 +111,7 @@
         }
       ],
       "@react-native-firebase/crashlytics",
+      "./plugins/withFirebaseSceneAppDelegate",
       "./plugins/withCrashlyticsSymbols",
       [
         "expo-camera",
@@ -144,9 +143,10 @@
           },
           "android": {
             "minSdkVersion": 24,
-            "compileSdkVersion": 36,
+            "compileSdkVersion": 37,
             "targetSdkVersion": 36,
-            "buildToolsVersion": "35.0.0"
+            "buildToolsVersion": "37.0.0",
+            "enableMinifyInReleaseBuilds": false
           }
         }
       ],
@@ -162,8 +162,7 @@
       "expo-font",
       "expo-iap",
       "@react-native-community/datetimepicker",
-      "expo-web-browser",
-      "./plugins/withIosSceneLifecycle"
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true

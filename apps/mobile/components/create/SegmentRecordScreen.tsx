@@ -345,7 +345,7 @@ export function SegmentRecordScreen({
   return (
     <YStack flex={1} backgroundColor="$background">
       {/* Fixed overlay colors preserve contrast over the camera in both themes. */}
-      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      <StatusBar barStyle="light-content" />
       <LivePublisherView style={{ flex: 1 }} />
       <XStack
         position="absolute"

@@ -54,8 +54,9 @@ import { registrationDestination } from '../lib/socialAuth'
 import { useDeviceAgeRecheck } from '../lib/useDeviceAgeRecheck'
 
 export const unstable_settings = {
-  // Ensure that reloading keeps proper navigation state
-  initialRouteName: 'index',
+  // Ensure that reloading keeps proper navigation state. expo-router 58 renamed
+  // `initialRouteName` to `anchor`.
+  anchor: 'index',
 }
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.

@@ -7,7 +7,7 @@ import { XStack, YStack } from 'tamagui'
 import { routes } from '../../lib/routes'
 
 export default function OnboardingScreen() {
-  const { colors, statusBarStyle } = useAppThemeColors()
+  const { statusBarStyle } = useAppThemeColors()
   const router = useRouter()
 
   const handleContinue = () => {
@@ -22,7 +22,7 @@ export default function OnboardingScreen() {
 
   return (
     <YStack flex={1} backgroundColor={'$background'} paddingHorizontal={24} paddingVertical={60}>
-      <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+      <StatusBar barStyle={statusBarStyle} />
 
       <YStack flex={1} justifyContent="center" alignItems="center" gap={40}>
         {/* Logo */}

@@ -63,14 +63,14 @@ export default function TabsLayout() {
         name="camps"
         options={{
           title: 'Camps',
-          tabBarIcon: ({ color, size }) => <Map color={color} size={size} />,
+          tabBarIcon: ({ color, size }) => <Map color={color as string} size={size} />,
         }}
       />
       <Tabs.Screen
         name="feed"
         options={{
           title: 'Home',
-          tabBarIcon: ({ color, size }) => <Home color={color} size={size} />,
+          tabBarIcon: ({ color, size }) => <Home color={color as string} size={size} />,
         }}
       />
       <Tabs.Screen
@@ -99,14 +99,14 @@ export default function TabsLayout() {
           // never see this tab.
           href: showSparkTab ? undefined : null,
           title: 'Spark',
-          tabBarIcon: ({ color, size }) => <Flame color={color} size={size} />,
+          tabBarIcon: ({ color, size }) => <Flame color={color as string} size={size} />,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
           title: 'Profile',
-          tabBarIcon: ({ color, size }) => <User color={color} size={size} />,
+          tabBarIcon: ({ color, size }) => <User color={color as string} size={size} />,
         }}
       />
     </Tabs>

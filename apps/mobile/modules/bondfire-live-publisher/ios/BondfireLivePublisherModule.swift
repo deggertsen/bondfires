@@ -1429,14 +1429,16 @@ final class BondfireLivePublisherView: ExpoView {
 // MARK: - Exception
 
 final class LivePublisherException: Exception {
-  let message: String
+  // Not `message`: expo-modules-core 58 defines `Exception.message` (the JS
+  // error text, derived from `reason`).
+  let detail: String
 
   init(message: String) {
-    self.message = message
+    detail = message
     super.init()
   }
 
   override var reason: String {
-    message
+    detail
   }
 }

@@ -1,0 +1,85 @@
+diff --git a/android/src/main/java/expo/modules/video/records/VideoMetadata.kt b/android/src/main/java/expo/modules/video/records/VideoMetadata.kt
+--- a/android/src/main/java/expo/modules/video/records/VideoMetadata.kt
++++ b/android/src/main/java/expo/modules/video/records/VideoMetadata.kt
+@@ -10,5 +10,6 @@ import expo.modules.kotlin.types.OptimizedRecord
+ class VideoMetadata(
+   @Field var title: String? = null,
+   @Field var artist: String? = null,
++  @Field var album: String? = null,
+   @Field var artwork: Uri? = null
+ ) : Record, Serializable
+diff --git a/android/src/main/java/expo/modules/video/records/VideoSource.kt b/android/src/main/java/expo/modules/video/records/VideoSource.kt
+--- a/android/src/main/java/expo/modules/video/records/VideoSource.kt
++++ b/android/src/main/java/expo/modules/video/records/VideoSource.kt
+@@ -40,6 +40,7 @@ class VideoSource(
+       "DRMHeadersValues:${this.drm?.headers?.values?.joinToString { it }}}" +
+       "NotificationDataTitle:${this.metadata?.title}" +
+       "NotificationDataSecondaryText:${this.metadata?.artist}" +
++      "NotificationDataAlbum:${this.metadata?.album}" +
+       "NotificationDataArtwork:${this.metadata?.artwork?.path}" +
+       "ContentType:${this.contentType.value}"
+   }
+@@ -68,6 +69,7 @@ class VideoSource(
+           metadata?.let { data ->
+             setTitle(data.title)
+             setArtist(data.artist)
++            setAlbumTitle(data.album)
+             data.artwork?.let {
+               setArtworkUri(it)
+             }
+diff --git a/build/VideoPlayer.types.d.ts b/build/VideoPlayer.types.d.ts
+--- a/build/VideoPlayer.types.d.ts
++++ b/build/VideoPlayer.types.d.ts
+@@ -386,6 +386,12 @@ export type VideoMetadata = {
+      * @platform ios
+      */
+     artist?: string;
++    /**
++     * The album or collection containing the video.
++     * @platform android
++     * @platform ios
++     */
++    album?: string;
+     /**
+      * The uri of the video artwork.
+      * @platform android
+diff --git a/ios/NowPlayingManager.swift b/ios/NowPlayingManager.swift
+--- a/ios/NowPlayingManager.swift
++++ b/ios/NowPlayingManager.swift
+@@ -123,6 +123,7 @@ class NowPlayingManager: VideoPlayerObserverDelegate {
+       // `MPNowPlayingInfoCenter` needs plain values, not the `AVMetadataItem`s from the asset.
+       nowPlayingInfo[MPMediaItemPropertyTitle] = userMetadata?.title ?? title?.stringValue
+       nowPlayingInfo[MPMediaItemPropertyArtist] = userMetadata?.artist ?? artist?.stringValue
++      nowPlayingInfo[MPMediaItemPropertyAlbumTitle] = userMetadata?.album
+       nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = currentItem.duration.seconds
+       nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentItem.currentTime().seconds
+       nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = currentItem.duration.isIndefinite
+diff --git a/ios/Records/VideoMetadata.swift b/ios/Records/VideoMetadata.swift
+--- a/ios/Records/VideoMetadata.swift
++++ b/ios/Records/VideoMetadata.swift
+@@ -10,6 +10,9 @@ internal struct VideoMetadata: Record {
+   @Field
+   var artist: String? = nil
+ 
++  @Field
++  var album: String? = nil
++
+   @Field
+   var artwork: URL? = nil
+ }
+diff --git a/src/VideoPlayer.types.ts b/src/VideoPlayer.types.ts
+--- a/src/VideoPlayer.types.ts
++++ b/src/VideoPlayer.types.ts
+@@ -446,6 +446,12 @@ export type VideoMetadata = {
+    * @platform ios
+    */
+   artist?: string;
++  /**
++   * The album or collection containing the video.
++   * @platform android
++   * @platform ios
++   */
++  album?: string;
+   /**
+    * The uri of the video artwork.
+    * @platform android

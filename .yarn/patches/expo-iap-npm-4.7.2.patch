@@ -1,0 +1,15 @@
+diff --git a/android/build.gradle b/android/build.gradle
+--- a/android/build.gradle
++++ b/android/build.gradle
+@@ -79,6 +79,11 @@ if (useManagedAndroidSdkVersions) {
+ 
+ android {
+   namespace = "expo.modules.iap"
++  // Bondfires: AGP 9 (Expo SDK 58) no longer generates BuildConfig for libraries
++  // by default; expo-iap 6.x ships this same fix.
++  buildFeatures {
++    buildConfig = true
++  }
+   defaultConfig {
+     versionCode = 1
+     versionName = expoIapPackageVersion

@@ -57,7 +57,7 @@ export function usePlaybackQuality(
         const size = playbackSize(policy.resolution(preferenceRef.current), track?.size)
         const key = `${size.width}x${size.height}`
         if (key === appliedSize) return
-        current.maxVideoSize = size
+        current.maxResolution = size
         appliedSize = key
       })
     }

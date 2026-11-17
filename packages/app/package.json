@@ -30,7 +30,7 @@
     "react-native-mmkv": "*"
   },
   "devDependencies": {
-    "@types/react": "^19.1.0",
+    "@types/react": "^19.3.0",
     "typescript": "^6.0.0"
   }
 }

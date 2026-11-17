@@ -1,11 +1,10 @@
 import { subscriptionActions, telemetry, useAppThemeColors } from '@bondfires/app'
 import { type BondfireRowProps, Button, closeOpenSwipeableRow, Spinner, Text } from '@bondfires/ui'
-import { useIsFocused } from '@react-navigation/native'
 import { ArrowLeft, Flame, Lock, Plus } from '@tamagui/lucide-icons'
 import { useMutation, useQuery } from 'convex/react'
-import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
+import { useIsFocused, useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, FlatList, Pressable, StatusBar, type ViewToken } from 'react-native'
+import { Alert, FlatList, type ListViewToken, Pressable, StatusBar } from 'react-native'
 import { Separator, XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
 import type { Doc, Id } from '../../../../convex/_generated/dataModel'
@@ -128,7 +127,7 @@ export default function PersonalCampScreen() {
 
   // Preload thumbnails for visible items
   const handleViewableChanged = useCallback(
-    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+    ({ viewableItems }: { viewableItems: ListViewToken[] }) => {
       updateVisibleRows(viewableItems)
       if (!shouldRunBackgroundWork || !enrichedBondfires) return
       const indices = viewableItems

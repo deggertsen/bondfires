@@ -12,7 +12,7 @@ import { useHeaderTopPadding } from '../../components/UploadStatusLayout'
 export default function FamilyConnectionsScreen() {
   const headerTopPadding = useHeaderTopPadding(58)
   const router = useRouter()
-  const { colors, statusBarStyle } = useAppThemeColors()
+  const { statusBarStyle } = useAppThemeColors()
   const connections = useQuery(api.familyConnections.listMine)
   const revoke = useMutation(api.familyConnections.revoke)
 
@@ -47,7 +47,7 @@ export default function FamilyConnectionsScreen() {
     <>
       <Stack.Screen options={{ headerShown: false }} />
       <YStack flex={1} backgroundColor="$background">
-        <StatusBar barStyle={statusBarStyle} backgroundColor={colors.background} />
+        <StatusBar barStyle={statusBarStyle} />
         <XStack
           alignItems="center"
           gap={14}
