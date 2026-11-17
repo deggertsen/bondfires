@@ -381,8 +381,9 @@ export default function MyFiresScreen() {
     setTimeout(() => setIsRefreshing(false), 800)
   }, [resetLoadTracking, resetThumbnailUrls])
 
-  // My Fires left the tab bar (href: null) — it's reached from Home's Ember
-  // Rail, so it needs an explicit way back. Tab navigators don't keep stack
+  // My Fires is not a tab bar item (the button is hidden; the route stays
+  // focusable — see the tabs layout). It's reached from Home's Ember Rail,
+  // so it needs an explicit way back. Tab navigators don't keep stack
   // history (router.back() can land on a sibling tab like Camps), so the
   // chevron deterministically returns to Home.
   const handleBack = useCallback(() => {
