@@ -22,6 +22,11 @@ Requires Google Chrome in `/Applications` and Python 3 with Pillow.
 | `ios-13` | 2064×2752 | App Store iPad 13" (iPad Pro 13-inch simulator captures at this size) |
 | `play-phone` | 1080×1920 | Play phone screenshots |
 | `play-tablet` | 1600×2560 | Play 10-inch tablet screenshots |
+| `ios-6.3` | 1206×2622 | App Store "iPhone with Dynamic Island (medium display)", 6.1"/6.3" |
+
+App Store Connect's required iPhone slot is now "iPhone with Dynamic Island (medium display)". It
+accepts only 1206×2622 or 1179×2556 and rejects 6.9" files with "File dimensions are invalid", so
+upload `iphone-6.3/` there. Keep `ios-6.9` for a large-display slot if the listing adds one.
 
 ## Refreshing the screenshots
 

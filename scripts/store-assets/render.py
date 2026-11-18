@@ -3,7 +3,7 @@
 
 Usage: python3 -I render.py <slides.json> <captures_dir> <out_dir> [target,target]
 
-Targets: ios-6.9, ios-13, play-phone, play-tablet (default: all).
+Targets: ios-6.3, ios-6.9, ios-13, play-phone, play-tablet (default: all).
 
 slides.json: [{"id": "01-home", "headline": "...", "accent": "word", "sub": "...",
                "phone": "home.png", "tablet": "home-ipad.png"}]
@@ -17,6 +17,8 @@ TARGETS = {
     # name: (width, height, capture key, out subdir)
     "ios-6.9": (1320, 2868, "phone", "apple/iphone-6.9"),
     "ios-13": (2064, 2752, "tablet", "apple/ipad-13"),
+    # App Store Connect's required iPhone slot: "iPhone with Dynamic Island (medium display)", 6.1"/6.3".
+    "ios-6.3": (1206, 2622, "phone", "apple/iphone-6.3"),
     "play-phone": (1080, 1920, "phone", "play/phoneScreenshots"),
     "play-tablet": (1600, 2560, "tablet", "play/tenInchScreenshots"),
 }
