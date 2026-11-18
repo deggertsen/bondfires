@@ -76,12 +76,15 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="my-fires"
         options={{
-          // `href: null` hides the tab while keeping the route addressable:
-          // push notifications and deep links still target
-          // /(main)/(tabs)/my-fires (see EXTERNAL_STATIC_ROUTES). The screen
-          // is now reached from Home's Ember Rail instead of the tab bar.
-          href: null,
+          // Do not use `href: null`. Expo Router 58 turns that into
+          // `hidden: true`, then unmounts the tab navigator and redirects to
+          // the first visible tab as soon as this screen is focused. Opening
+          // All Fires from the Ember Rail never stays on this screen.
+          // Hide the tab button only. Notifications and deep links still
+          // target /(main)/(tabs)/my-fires (see EXTERNAL_STATIC_ROUTES).
           title: 'My Fires',
+          tabBarButton: () => null,
+          tabBarItemStyle: { display: 'none', width: 0, height: 0, flex: 0 },
         }}
       />
       <Tabs.Screen
