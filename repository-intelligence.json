@@ -234,6 +234,12 @@
       "actions": ["validate", "device-smoke"]
     },
     {
+      "id": "store-listing-assets",
+      "description": "App Store and Google Play screenshot framing tools and listing copy",
+      "patterns": ["scripts/store-assets/**"],
+      "actions": ["validate", "documentation-review"]
+    },
+    {
       "id": "legacy-infrastructure",
       "description": "Deprecated website infrastructure retained for reference",
       "patterns": ["infrastructure/**"],
