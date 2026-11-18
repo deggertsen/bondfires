@@ -55,6 +55,32 @@ describe('deriveUploadStatus', () => {
     })
   })
 
+  it('shows a terminal rejection instead of promising another automatic retry', () => {
+    const state = deriveUploadStatus(
+      input({
+        segmentJobs: [
+          segment({
+            paused: true,
+            failure: 'rejected',
+            failureDetail: 'Join this camp before sparking here',
+          }),
+        ],
+      }),
+    )
+    expect(state).toMatchObject({
+      kind: 'paused',
+      reason: 'retrying',
+      failure: 'rejected',
+      failureDetail: 'Join this camp before sparking here',
+    })
+    if (state.kind !== 'paused') throw new Error('expected paused')
+    expect(describeUploadStatus(state)).toEqual({
+      title: "Couldn't upload",
+      message: 'Join this camp before sparking here',
+      actionLabel: 'Retry now',
+    })
+  })
+
   it('says why a retrying upload is stuck, without looking idle', () => {
     const state = deriveUploadStatus(
       input({ segmentJobs: [segment({ paused: true, failure: 'unavailable' })] }),

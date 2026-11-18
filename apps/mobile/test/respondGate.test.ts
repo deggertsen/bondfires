@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { decideRespondGate } from '../lib/respondGate'
+import { decideRespondGate, viewerMayRecordResponse } from '../lib/respondGate'
 
 type Context = NonNullable<Parameters<typeof decideRespondGate>[0]>
 function campContext(status: string | null = 'active'): Context {
@@ -47,5 +47,44 @@ describe('decideRespondGate', () => {
     expect(decideRespondGate({ bondfire: {}, camp: null, membership: null })).toEqual({
       kind: 'respond',
     })
+  })
+})
+
+describe('viewerMayRecordResponse', () => {
+  it('keeps Respond off a camp fire until an active membership is loaded', () => {
+    expect(
+      viewerMayRecordResponse({
+        campStatus: 'active',
+        contextLoaded: false,
+      }),
+    ).toBe(false)
+    expect(
+      viewerMayRecordResponse({
+        campStatus: 'active',
+        campId: 'camp-1',
+        membershipStatus: null,
+        contextLoaded: true,
+      }),
+    ).toBe(false)
+    expect(
+      viewerMayRecordResponse({
+        campStatus: 'active',
+        campId: 'camp-1',
+        membershipStatus: 'active',
+        contextLoaded: true,
+      }),
+    ).toBe(true)
+  })
+
+  it('allows a Hearth fire and still blocks an archived camp', () => {
+    expect(viewerMayRecordResponse({ contextLoaded: false })).toBe(true)
+    expect(
+      viewerMayRecordResponse({
+        campStatus: 'archived',
+        campId: 'camp-1',
+        membershipStatus: 'active',
+        contextLoaded: true,
+      }),
+    ).toBe(false)
   })
 })
