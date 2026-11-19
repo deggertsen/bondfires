@@ -607,6 +607,15 @@ export default function BondfireDetailScreen() {
       bondfireId={bondfireId}
       bondfireData={bondfireData}
       canInvite={campContext?.canInvite ?? false}
+      respondContext={
+        campContext === undefined
+          ? { loaded: false }
+          : {
+              loaded: true,
+              campId: campContext?.bondfire?.campId ?? null,
+              membershipStatus: campContext?.membership?.status ?? null,
+            }
+      }
       videoItems={videoItems}
       currentVideoIndex={currentVideoIndex}
       isFocused={isFocused}

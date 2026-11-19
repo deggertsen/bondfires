@@ -163,6 +163,44 @@ it('backs off after begin fails instead of calling it on every queue pass', asyn
   )
 })
 
+it('does not call begin again after a membership rejection until Retry now', async () => {
+  const queue = await import('../lib/media/segmentUploads')
+  const convex = client()
+  convex.begin.mockRejectedValue({
+    name: 'ConvexError',
+    message: '[Request ID: abc] Server Error',
+    data: 'Join this camp before sparking here',
+  })
+  queue.setSegmentUploadOwner('owner')
+  await queue.prepareSegmentJob('owner', {
+    localId: id,
+    isResponse: true,
+    bondfireId: 'parent' as Id<'bondfires'>,
+  })
+  seedCapture()
+  await queue.runSegmentUploads(convex, 'owner')
+  await queue.runSegmentUploads(convex, 'owner')
+  expect(convex.begin).toHaveBeenCalledTimes(1)
+  expect(state.warn).toHaveBeenCalledWith(
+    'segment:upload:paused',
+    expect.any(String),
+    expect.objectContaining({
+      reason: 'rejected',
+      detail: 'Join this camp before sparking here',
+    }),
+  )
+  const saved = JSON.parse(state.files.get(`${root}${id}.json`) ?? '{}')
+  expect(saved.rejection).toEqual({ message: 'Join this camp before sparking here' })
+  expect(saved.beginRetry).toBeUndefined()
+  convex.begin.mockResolvedValue({
+    recordingId: 'recording1' as Id<'segmentRecordings'>,
+    recordId: 'bondfire1' as Id<'bondfires'>,
+    maxDuration: 60,
+  })
+  await queue.runSegmentUploads(convex, 'owner', { retryNow: true })
+  expect(convex.begin).toHaveBeenCalledTimes(2)
+})
+
 it('retries immediately on a manual tap while retaining backoff for automatic ticks', async () => {
   vi.useFakeTimers()
   const queue = await import('../lib/media/segmentUploads')
