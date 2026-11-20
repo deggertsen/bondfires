@@ -163,7 +163,8 @@
       "expo-font",
       "expo-iap",
       "@react-native-community/datetimepicker",
-      "expo-web-browser"
+      "expo-web-browser",
+      "./plugins/withOptionalHardwareFeatures"
     ],
     "experiments": {
       "typedRoutes": true
