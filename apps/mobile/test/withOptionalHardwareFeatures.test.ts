@@ -1,71 +1,63 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { AndroidConfig, type ConfigPlugin, compileModsAsync } from 'expo/config-plugins'
 import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const { markFeaturesOptional, OPTIONAL_FEATURES } =
-  require('../plugins/withOptionalHardwareFeatures.js') as {
-    markFeaturesOptional: (manifest: {
-      'uses-feature'?: { $: Record<string, string> } | Array<{ $: Record<string, string> }>
-    }) => void
-    OPTIONAL_FEATURES: readonly string[]
-  }
+const withOptionalHardwareFeatures =
+  require('../plugins/withOptionalHardwareFeatures.js') as ConfigPlugin
 
-describe('markFeaturesOptional', () => {
-  it('declares portrait and wifi as optional when the manifest omits them', () => {
-    const manifest: { 'uses-feature'?: Array<{ $: Record<string, string> }> } = {}
-
-    markFeaturesOptional(manifest)
-
-    expect(manifest['uses-feature']?.map((feature) => feature.$)).toEqual(
-      OPTIONAL_FEATURES.map((name) => ({
-        'android:name': name,
-        'android:required': 'false',
-      })),
+async function prebuildFeatures(initialFeatures: string) {
+  const projectRoot = await mkdtemp(join(tmpdir(), 'bondfires-android-manifest-'))
+  try {
+    const manifestPath = join(projectRoot, 'android/app/src/main/AndroidManifest.xml')
+    await mkdir(dirname(manifestPath), { recursive: true })
+    await writeFile(
+      manifestPath,
+      `<manifest xmlns:android="http://schemas.android.com/apk/res/android">${initialFeatures}</manifest>`,
     )
-  })
 
-  it('overrides an existing required feature without duplicating it', () => {
-    const manifest: {
-      'uses-feature': { $: Record<string, string> } | Array<{ $: Record<string, string> }>
-    } = {
-      'uses-feature': {
-        $: {
-          'android:name': 'android.hardware.wifi',
-          'android:required': 'true',
-        },
-      },
-    }
-
-    markFeaturesOptional(manifest)
-
-    const features = manifest['uses-feature']
-    if (!Array.isArray(features)) throw new Error('expected uses-feature to be normalized')
-    const wifi = features.filter((feature) => feature.$['android:name'] === 'android.hardware.wifi')
-    expect(wifi).toHaveLength(1)
-    expect(wifi[0].$['android:required']).toBe('false')
-    expect(features.map((feature) => feature.$['android:name'])).toEqual([
-      'android.hardware.wifi',
-      'android.hardware.screen.portrait',
-    ])
-  })
-
-  it('leaves unrelated hardware features alone', () => {
-    const manifest = {
-      'uses-feature': [
+    // Run the mod twice against the same file, as when prebuilding an existing project.
+    for (let run = 0; run < 2; run++) {
+      await compileModsAsync(
+        withOptionalHardwareFeatures({ name: 'Bondfires', slug: 'bondfires' }),
         {
-          $: {
-            'android:name': 'android.hardware.camera',
-            'android:required': 'true',
-          },
+          projectRoot,
+          platforms: ['android'],
         },
-      ],
+      )
     }
 
-    markFeaturesOptional(manifest)
+    const { manifest } = await AndroidConfig.Manifest.readAndroidManifestAsync(manifestPath)
+    return manifest['uses-feature']?.map((feature) => feature.$)
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true })
+  }
+}
 
-    expect(manifest['uses-feature'][0].$).toEqual({
-      'android:name': 'android.hardware.camera',
-      'android:required': 'true',
-    })
+describe('withOptionalHardwareFeatures', () => {
+  const portrait = {
+    'android:name': 'android.hardware.screen.portrait',
+    'android:required': 'false',
+  }
+  const wifi = { 'android:name': 'android.hardware.wifi', 'android:required': 'false' }
+
+  it('declares both features exactly once in a fresh manifest', async () => {
+    expect(await prebuildFeatures('')).toEqual([portrait, wifi])
+  })
+
+  it('updates an existing declaration and preserves required camera support', async () => {
+    const features = await prebuildFeatures(`
+      <uses-feature android:name="android.hardware.wifi" />
+      <uses-feature android:name="android.hardware.camera" android:required="true" />
+    `)
+
+    expect(features).toEqual([
+      wifi,
+      { 'android:name': 'android.hardware.camera', 'android:required': 'true' },
+      portrait,
+    ])
   })
 })
