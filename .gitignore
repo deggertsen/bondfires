@@ -75,3 +75,6 @@ Thumbs.db
 
 # Generated Workers runtime declarations (npm run types)
 /infrastructure/media/worker-configuration.d.ts
+
+# Generated store screenshots (scripts/store-assets)
+/store-assets/

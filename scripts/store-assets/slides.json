@@ -1,0 +1,20 @@
+[
+  {"id": "player", "headline": "Your group, on your own time.", "accent": "on your own time.",
+   "sub": "Record when you have a minute. They reply when they have theirs.",
+   "phone": "raw-player-hero.png", "tablet": "ipad-anon-player.png"},
+  {"id": "my-fires", "headline": "Every conversation, still going.", "accent": "still going.",
+   "sub": "Your fires in one place, with replies and reactions.",
+   "phone": "anon-my-fires.png", "tablet": "ipad-anon-my-fires.png"},
+  {"id": "thread", "headline": "Threads, not feeds.", "accent": "not feeds.",
+   "sub": "Replies stack under the spark, with summaries so you can skim.",
+   "phone": "anon-thread-browser.png", "tablet": "ipad-anon-thread-browser.png"},
+  {"id": "spark", "headline": "Pick your people. Hit record.", "accent": "Hit record.",
+   "sub": "Private by default. Only the people you pick can see it.",
+   "phone": "anon-spark.png"},
+  {"id": "camp", "headline": "Camps for the groups you already have.", "accent": "you already have.",
+   "sub": "A shared prompt, simple guidelines, and room for everyone.",
+   "phone": "anon-camp-detail.png"},
+  {"id": "camps", "headline": "Find your circle.", "accent": "your circle.",
+   "sub": "Join public camps or start a private one for your group.",
+   "phone": "raw-camps.png", "tablet": "ipad-anon-camps.png"}
+]
