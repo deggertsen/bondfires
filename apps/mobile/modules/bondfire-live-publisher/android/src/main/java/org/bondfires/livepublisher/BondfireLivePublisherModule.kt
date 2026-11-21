@@ -118,6 +118,13 @@ class BondfireLivePublisherModule : Module() {
     private const val PREVIEW_BIND_RETRY_DELAY_MS = 150L
     private const val PREVIEW_DETACH_TIMEOUT_MS = 600L
 
+    // StreamPack's start is a suspend call with no internal deadline. A wedged
+    // camera2 open (rare, but seen on fast-moving OS builds) would otherwise
+    // leave the JS promise pending forever: the recorder shows "Preparing
+    // camera…" with no error and no retry affordance. Bound it so the recorder
+    // surfaces "Camera couldn't start" and its Try Again path instead.
+    private const val PREVIEW_CAPTURE_START_TIMEOUT_MS = 10_000L
+
     // statsSupported=0 zeros: the JS stall watchdog ignores these samples.
     private val STATS_ZEROS = mapOf(
       "bitrateBps" to 0,
@@ -286,11 +293,20 @@ class BondfireLivePublisherModule : Module() {
       createStreamer(options.fps, options.videoBitrate, options.audioBitrate, segmented = true)
       val active = streamer ?: throw LivePublisherException("No camera")
       try {
-        active.startSegmentPreviewCapture()
+        // A timeout cancels the in-flight camera open; the pipeline may be
+        // half-open. Always tear down before surfacing the failure so the
+        // recorder's Try Again starts from a clean streamer.
+        withTimeoutOrNull(PREVIEW_CAPTURE_START_TIMEOUT_MS) {
+          active.startSegmentPreviewCapture()
+        } ?: throw IllegalStateException(
+          "Camera start did not settle within ${PREVIEW_CAPTURE_START_TIMEOUT_MS / 1000}s",
+        )
       } catch (error: Exception) {
         Log.e(TAG, "Segment preview failed", error)
         cleanupStreamer()
-        throw LivePublisherException("Could not prepare camera and microphone: ${error.message ?: error.javaClass.simpleName}")
+        throw LivePublisherException(
+          "Could not prepare camera and microphone: ${error.message ?: error.javaClass.simpleName}",
+        )
       }
     }
     AsyncFunction("startSegmentRecording") Coroutine { localId: String, maxDuration: Int ->

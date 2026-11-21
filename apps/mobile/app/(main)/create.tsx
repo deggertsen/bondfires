@@ -233,12 +233,43 @@ function EnabledCreateScreen() {
     if (!cameraPermission || !micPermission || requestingPermissions.current) return
     requestingPermissions.current = true
     try {
-      if (!cameraPermission.granted) await requestCameraPermission()
-      if (!micPermission.granted) await requestMicPermission()
+      if (!cameraPermission.granted) {
+        const next = await requestCameraPermission()
+        // A silent/permanent denial re-renders the same gate with no OS
+        // dialog and nothing in the logs — record the settled state so
+        // "camera won't load" bugs are visible in client telemetry.
+        telemetry.info('create:permissionRequest', 'Camera permission settled', {
+          status: next.status,
+        })
+      }
+      if (!micPermission.granted) {
+        const next = await requestMicPermission()
+        telemetry.info('create:permissionRequest', 'Microphone permission settled', {
+          status: next.status,
+        })
+      }
     } finally {
       requestingPermissions.current = false
     }
   }, [cameraPermission, micPermission, requestCameraPermission, requestMicPermission])
+
+  // The permission gate renders nothing but its own screen, so a stuck or
+  // permanently-denied state is invisible in client logs. Log the gate's
+  // state so telemetry can distinguish "blocked at the gate" from "recorder
+  // mounted but the preview never started" (that failure logs
+  // segment:preview:failed / surface "Camera couldn't start").
+  useEffect(() => {
+    if (cameraPermission?.granted && micPermission?.granted) return
+    telemetry.warn('create:permissionGate', 'Camera permission gate shown', {
+      camera: cameraPermission?.status ?? 'loading',
+      mic: micPermission?.status ?? 'loading',
+    })
+  }, [
+    cameraPermission?.granted,
+    cameraPermission?.status,
+    micPermission?.granted,
+    micPermission?.status,
+  ])
 
   useEffect(() => {
     if (cameraPermission?.status === 'undetermined' || micPermission?.status === 'undetermined') {
