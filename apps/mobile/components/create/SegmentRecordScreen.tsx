@@ -7,15 +7,7 @@ import type { FunctionArgs } from 'convex/server'
 import * as Crypto from 'expo-crypto'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  Alert,
-  AppState,
-  BackHandler,
-  Pressable,
-  StatusBar,
-  useWindowDimensions,
-  View,
-} from 'react-native'
+import { Alert, AppState, BackHandler, Pressable, StatusBar, StyleSheet } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
@@ -62,7 +54,6 @@ export function SegmentRecordScreen({
 }) {
   const client = useConvex()
   const insets = useSafeAreaInsets()
-  const { width: windowWidth, height: windowHeight } = useWindowDimensions()
   const [showNotes, setShowNotes] = useState(false)
   const [showInvite, setShowInvite] = useState(false)
   const [switchingCamera, setSwitchingCamera] = useState(false)
@@ -355,15 +346,7 @@ export function SegmentRecordScreen({
     <YStack flex={1} backgroundColor="background">
       {/* Fixed overlay colors preserve contrast over the camera in both themes. */}
       <StatusBar barStyle="light-content" />
-      {/* Explicit window size: a flex:1 native view inside this column resolves
-          to 0x0 (absolute chrome still paints), so the camera opens with no
-          viewfinder and the preview bind never runs. */}
-      <View collapsable={false} style={{ width: windowWidth, height: windowHeight }}>
-        <LivePublisherView
-          collapsable={false}
-          style={{ width: windowWidth, height: windowHeight }}
-        />
-      </View>
+      <LivePublisherView collapsable={false} style={StyleSheet.absoluteFill} />
       <XStack
         position="absolute"
         top={0}

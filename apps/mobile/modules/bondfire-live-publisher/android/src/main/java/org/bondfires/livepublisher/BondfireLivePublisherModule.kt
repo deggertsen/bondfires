@@ -1,5 +1,6 @@
 package org.bondfires.livepublisher
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -26,6 +27,8 @@ import android.util.Log
 import android.util.Size
 import android.view.View.MeasureSpec
 import android.widget.LinearLayout
+import expo.modules.interfaces.permissions.Permissions
+import expo.modules.kotlin.Promise
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
@@ -41,7 +44,6 @@ import io.github.thibaultbee.streampack.core.elements.sources.audio.audiorecord.
 import io.github.thibaultbee.streampack.core.elements.sources.video.IPreviewableSource
 import io.github.thibaultbee.streampack.core.elements.sources.video.camera.CameraSourceFactory
 import io.github.thibaultbee.streampack.core.streamers.single.SingleStreamer
-import io.github.thibaultbee.streampack.core.streamers.single.cameraSingleStreamer
 import java.io.File
 import java.io.IOException
 import io.github.thibaultbee.streampack.ui.views.PreviewView
@@ -50,13 +52,20 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 
 class LivePublisherStartOptions : Record {
@@ -121,11 +130,7 @@ class BondfireLivePublisherModule : Module() {
     private const val PREVIEW_BIND_RETRY_DELAY_MS = 150L
     private const val PREVIEW_DETACH_TIMEOUT_MS = 600L
 
-    // StreamPack's start is a suspend call with no internal deadline. A wedged
-    // camera2 open (rare, but seen on fast-moving OS builds) would otherwise
-    // leave the JS promise pending forever: the recorder shows "Preparing
-    // camera…" with no error and no retry affordance. Bound it so the recorder
-    // surfaces "Camera couldn't start" and its Try Again path instead.
+    private const val PREVIEW_LAYOUT_TIMEOUT_MS = 2_000L
     private const val PREVIEW_CAPTURE_START_TIMEOUT_MS = 10_000L
 
     // statsSupported=0 zeros: the JS stall watchdog ignores these samples.
@@ -217,22 +222,8 @@ class BondfireLivePublisherModule : Module() {
   private var lastTxAtMs = 0L
   private var txCounterAdvanced = false
 
-  // Guards against binding the camera/video source to the preview before the
-  // SurfaceView has a real (non-zero) size. Binding at 0x0 makes CameraX open
-  // the camera, then tear the session down and reopen once the surface sizes
-  // up — and that reconfigure deadlocks the Pixel/Tensor camera HAL
-  // (createCaptureSession never returns; CameraX kills it after 5s), wedging
-  // the UI on "Preparing camera...". We bind exactly once, after layout.
-  @Volatile
-  private var previewBound = false
-
-  // While a segment preview is waiting to bind, layout callbacks must only
-  // signal size. Binding from onLayout here would race startStream().
-  @Volatile
-  private var awaitingPreviewBind = false
-  private var previewLayoutSignal: CompletableDeferred<Unit>? = null
-
-  var previewView: PreviewView? = null
+  // Only attached, laid-out viewfinders can accept a StreamPack surface.
+  private val readyPreview = MutableStateFlow<PreviewView?>(null)
 
   override fun definition() = ModuleDefinition {
     Name("BondfireLivePublisher")
@@ -252,6 +243,14 @@ class BondfireLivePublisherModule : Module() {
       scope.launch {
         cleanupStreamer()
       }
+    }
+
+    AsyncFunction("getMicrophonePermissionsAsync") { promise: Promise ->
+      Permissions.getPermissionsWithPermissionsManager(appContext.permissions, promise, Manifest.permission.RECORD_AUDIO)
+    }
+
+    AsyncFunction("requestMicrophonePermissionsAsync") { promise: Promise ->
+      Permissions.askForPermissionsWithPermissionsManager(appContext.permissions, promise, Manifest.permission.RECORD_AUDIO)
     }
 
     AsyncFunction("isAvailable") {
@@ -300,31 +299,15 @@ class BondfireLivePublisherModule : Module() {
       cleanupStreamer()
       currentFacing = options.initialCamera
       try {
-        // Bind the viewfinder before opening the camera. A 0x0 preview used
-        // to fall through, startStream() reported success, and the recorder
-        // showed a black "ready" camera that never attached.
-        createStreamer(
-          options.fps,
-          options.videoBitrate,
-          options.audioBitrate,
-          segmented = true,
-          requirePreview = true,
-        )
-        val active = streamer ?: throw LivePublisherException("No camera")
-        // A timeout cancels the in-flight camera open; the pipeline may be
-        // half-open. Always tear down before surfacing the failure so the
-        // recorder's Try Again starts from a clean streamer.
         withTimeoutOrNull(PREVIEW_CAPTURE_START_TIMEOUT_MS) {
+          createStreamer(options.fps, options.videoBitrate, options.audioBitrate, segmented = true)
+          val active = streamer ?: throw LivePublisherException("No camera")
           active.startSegmentPreviewCapture()
-        } ?: throw IllegalStateException(
-          "Camera start did not settle within ${PREVIEW_CAPTURE_START_TIMEOUT_MS / 1000}s",
-        )
-      } catch (error: CancellationException) {
-        cleanupStreamer()
-        throw error
+        } ?: throw IllegalStateException("Camera start timed out after 10 seconds")
       } catch (error: Exception) {
+        withContext(NonCancellable) { cleanupStreamer() }
+        currentCoroutineContext().ensureActive()
         Log.e(TAG, "Segment preview failed", error)
-        cleanupStreamer()
         throw LivePublisherException(
           "Could not prepare camera and microphone: ${error.message ?: error.javaClass.simpleName}",
         )
@@ -373,12 +356,6 @@ class BondfireLivePublisherModule : Module() {
       // after the record tap. Rebuild once at the capture boundary, then keep
       // this fresh encoder alive while RTMP attaches and reconnects.
       if (existingStreamer != null) {
-        // Release the preview binding BEFORE teardown. setVideoSourceProvider
-        // stops the previous source's preview under its previewMutex and marks
-        // the viewfinder surface safe to release; doing it first (time-boxed)
-        // keeps that handshake from contending with — or hanging behind — the
-        // new bind below on a wedged old camera.
-        detachPreviewBestEffort()
         cleanupStreamer()
       }
       currentFacing = options.initialCamera
@@ -426,7 +403,6 @@ class BondfireLivePublisherModule : Module() {
       // before encoding begins (the old preview pipeline can fail to produce
       // video after the record tap on affected devices).
       if (streamer != null && streamer?.isStreamingFlow?.value != true) {
-        detachPreviewBestEffort()
         cleanupStreamer()
       }
       if (streamer == null) {
@@ -515,7 +491,6 @@ class BondfireLivePublisherModule : Module() {
       val nextFacing = if (currentFacing == "front") "back" else "front"
       s.setVideoSource(CameraSourceFactory(findCameraIdForFacing(nextFacing)))
       currentFacing = nextFacing
-      previewView?.setVideoSourceProvider(s)
       s.videoEncoder?.requestKeyFrame()
     }
 
@@ -748,7 +723,6 @@ class BondfireLivePublisherModule : Module() {
     audioBitrate: Int,
     segmented: Boolean = false,
     audioSourceName: String = "voice_communication",
-    requirePreview: Boolean = false,
   ) {
     val context = appContext.reactContext
       ?: throw LivePublisherException("No React context available")
@@ -788,13 +762,11 @@ class BondfireLivePublisherModule : Module() {
 
     normalizedMicrophone = if (segmented) NormalizedMicrophoneSourceFactory(audioRouting.audioSource) else null
     // Create camera + microphone streamer
-    val newStreamer = cameraSingleStreamer(
-      context,
-      cameraId = cameraId,
-      audioSourceFactory = normalizedMicrophone ?: MicrophoneSourceFactory(audioRouting.audioSource),
-      endpointFactory = CaptureTransportEndpointFactory(segmented),
-    )
+    val newStreamer = SingleStreamer(context, endpointFactory = CaptureTransportEndpointFactory(segmented))
+    // Keep the pipeline reachable by cleanup if either suspend call times out.
     streamer = newStreamer
+    newStreamer.setVideoSource(CameraSourceFactory(cameraId))
+    newStreamer.setAudioSource(normalizedMicrophone ?: MicrophoneSourceFactory(audioRouting.audioSource))
 
     val captureTransportEndpoint = newStreamer.endpoint as? CaptureTransportEndpoint
       ?: throw LivePublisherException("Capture endpoint unavailable")
@@ -924,6 +896,7 @@ class BondfireLivePublisherModule : Module() {
     try {
       newStreamer.setVideoConfig(videoConfig)
     } catch (e: Exception) {
+      currentCoroutineContext().ensureActive()
       Log.w(TAG, "Video config with ${resolution.width}x${resolution.height} failed, falling back to 720x1280", e)
       val fallbackConfig = VideoCodecConfig(
         mimeType = MediaFormat.MIMETYPE_VIDEO_AVC,
@@ -935,58 +908,8 @@ class BondfireLivePublisherModule : Module() {
       newStreamer.setVideoConfig(fallbackConfig)
     }
 
-    // Bind preview — but only once the view has a real size (see
-    // bindPreviewIfReady). If the view isn't laid out yet, the view's onLayout
-    // callback will trigger the bind. Await a bounded bind so the capture
-    // session is created with the preview output BEFORE startStream() adds
-    // the stream target — reconfiguring the session mid-encode to add the
-    // preview surface is exactly the flaky-HAL reconfigure this module avoids
-    // elsewhere, and the old fire-and-forget bind had exactly one attempt:
-    // when it lost the race or failed, nothing ever retried it and the
-    // preview stayed black for the whole recording while capture kept working.
-    previewBound = false
-    if (requirePreview) {
-      awaitingPreviewBind = true
-      try {
-        ensurePreviewLaidOut()
-        bindPreviewAwaiting()
-      } finally {
-        awaitingPreviewBind = false
-        previewLayoutSignal = null
-      }
-      if (!previewBound) {
-        val view = previewView
-        throw LivePublisherException(
-          "Camera preview did not attach (${view?.width ?: -1}x${view?.height ?: -1})",
-        )
-      }
-    } else {
-      bindPreviewAwaiting()
-    }
-
-    // Ensure unmuted at start
+    bindPreview(newStreamer, required = segmented)
     isMuted = false
-  }
-
-  /**
-   * Segment preview must not open the camera until the viewfinder has a
-   * non-zero frame. Layout often lands a frame after the JS call.
-   */
-  private suspend fun ensurePreviewLaidOut() {
-    if (previewHasFrame()) return
-    val signal = CompletableDeferred<Unit>()
-    previewLayoutSignal = signal
-    // Layout runs on the main thread. Re-check after publishing the signal so
-    // a frame that landed before the signal existed is not missed.
-    if (previewHasFrame()) return
-    val laidOut = withTimeoutOrNull(2_000) { signal.await() }
-    if (laidOut == null) {
-      val view = previewView
-      Log.w(
-        TAG,
-        "ensurePreviewLaidOut: still ${view?.width ?: -1}x${view?.height ?: -1} after 2s",
-      )
-    }
   }
 
   private data class AudioInputRouting(
@@ -1326,77 +1249,45 @@ class BondfireLivePublisherModule : Module() {
     }
   }
 
-  fun attachPreview(view: PreviewView) {
-    previewView = view
-    view.listener = previewViewListener
-    // A freshly mounted create screen brings a brand-new PreviewView. The
-    // module (and its streamer) is a singleton that outlives any single screen
-    // instance, so when the screen remounts while a streamer is still alive
-    // (e.g. an orphaned preview session that wasn't torn down), previewBound is
-    // still true from the *previous* view and bindPreviewIfReady would no-op —
-    // leaving the new view permanently black / stuck on "Preparing camera...".
-    // Reset the guard so this view (re)binds to the current streamer. The bind
-    // itself still waits for a non-zero layout via bindPreviewIfReady.
-    previewBound = false
-    if (awaitingPreviewBind) {
-      if (view.width > 0 && view.height > 0) signalPreviewLaidOut()
-      return
-    }
-    bindPreviewIfReady()
-  }
-
-  /**
-   * Bind the camera/video source to the preview view, but only once both the
-   * streamer exists AND the view has a real (non-zero) size. Binding while the
-   * SurfaceView is still 0x0 makes CameraX open the camera and then reconfigure
-   * the capture session when the surface finally sizes up — a reconfigure that
-   * deadlocks the Pixel/Tensor camera HAL and wedges the UI on "Preparing
-   * camera...". Binding once, after layout, lets CameraX configure a single
-   * stable session. Idempotent and Main-thread only, so the previewBound guard
-   * is race-free.
-   */
-  private fun bindPreviewIfReady() {
-    if (previewBound) return
-    val s = streamer ?: return
-    val view = previewView ?: return
-    if (view.width <= 0 || view.height <= 0) {
-      Log.i(TAG, "bindPreviewIfReady: waiting for preview layout (${view.width}x${view.height})")
-      return
-    }
-    previewBound = true
-    scope.launch {
-      if (!attachPreviewSource(view, s)) {
-        previewBound = false
-      }
+  internal fun updatePreviewLayout(view: PreviewView, available: Boolean) {
+    if (available) {
+      view.listener = previewViewListener
+      readyPreview.value = view
+    } else {
+      view.listener = null
+      readyPreview.compareAndSet(view, null)
     }
   }
 
-  /**
-   * Awaited variant for the streamer rebuild paths (record-tap startCapture /
-   * RTMP start). Preview trouble must never fail recording, so this is
-   * bounded, retried, and never throws — but unlike the fire-and-forget path
-   * it completes before startStream() opens the capture session, so the
-   * session is configured once with preview+stream targets instead of being
-   * reconfigured mid-encode.
-   */
-  private suspend fun bindPreviewAwaiting() {
-    if (previewBound) return
-    val s = streamer ?: return
-    val view = previewView ?: return
-    if (view.width <= 0 || view.height <= 0) {
-      Log.w(TAG, "bindPreviewAwaiting: preview is ${view.width}x${view.height}, skipping bind")
-      return
-    }
-    previewBound = true
-    if (!attachPreviewSource(view, s)) {
-      previewBound = false
-      // One late self-heal attempt: transient HAL/preview failures sometimes
-      // clear once the torn-down camera is fully released. bindPreviewIfReady
-      // no-ops safely if the streamer is already gone by then.
-      scope.launch {
-        delay(2_000)
-        bindPreviewIfReady()
+  /** One collector owns binding and detaching for the lifetime of this streamer. */
+  private suspend fun bindPreview(s: SingleStreamer, required: Boolean) {
+    val firstBind = CompletableDeferred<Boolean>()
+    synchronized(teardownLock) {
+      if (streamer !== s) throw LivePublisherException("Camera stopped during preview setup")
+      collectorJobs += scope.launch {
+        readyPreview.collectLatest { view ->
+          if (view == null) return@collectLatest
+          try {
+            val bound = attachPreviewSource(view, s)
+            if (readyPreview.value !== view) return@collectLatest
+            firstBind.complete(bound)
+            if (!bound && !required) {
+              delay(2_000)
+              attachPreviewSource(view, s)
+            }
+            // Detach before binding a replacement view or releasing this streamer.
+            awaitCancellation()
+          } finally {
+            withContext(NonCancellable) { detachPreviewBestEffort(view) }
+          }
+        }
       }
+    }
+    if (required || readyPreview.value != null) {
+      val waitMs = PREVIEW_LAYOUT_TIMEOUT_MS + PREVIEW_BIND_MAX_ATTEMPTS * PREVIEW_ATTACH_TIMEOUT_MS +
+        PREVIEW_BIND_RETRY_DELAY_MS
+      val bound = withTimeoutOrNull(waitMs) { firstBind.await() }
+      if (required && bound != true) throw LivePublisherException("Camera preview did not attach")
     }
   }
 
@@ -1418,12 +1309,8 @@ class BondfireLivePublisherModule : Module() {
           // until the camera actually reports previewing so startStream()
           // configures a capture session that already contains the preview
           // target instead of reconfiguring mid-encode.
-          val source = s.videoInput?.sourceFlow?.value
-          if (source is IPreviewableSource) {
-            source.isPreviewingFlow.first { it }
-          } else {
-            true
-          }
+          val source = s.videoInput?.sourceFlow?.filterIsInstance<IPreviewableSource>()?.first()
+          source?.isPreviewingFlow?.first { it } == true
         } catch (e: CancellationException) {
           throw e
         } catch (e: Exception) {
@@ -1446,7 +1333,7 @@ class BondfireLivePublisherModule : Module() {
     sendEvent(
       "error", mapOf(
         "code" to "preview_bind_failed",
-        "message" to "Camera preview failed to bind after retries; recording continues",
+        "message" to "Camera preview failed to bind after retries",
       )
     )
     return false
@@ -1458,8 +1345,7 @@ class BondfireLivePublisherModule : Module() {
    * safe to release, and skipping it (or letting it hang behind the teardown)
    * leaves the new bind racing a stale surface request.
    */
-  private suspend fun detachPreviewBestEffort() {
-    val view = previewView ?: return
+  private suspend fun detachPreviewBestEffort(view: PreviewView) {
     val detached = withTimeoutOrNull(PREVIEW_DETACH_TIMEOUT_MS) {
       try {
         view.setVideoSourceProvider(null)
@@ -1477,26 +1363,6 @@ class BondfireLivePublisherModule : Module() {
         "detachPreviewBestEffort: preview detach did not settle in $PREVIEW_DETACH_TIMEOUT_MS ms",
       )
     }
-    previewBound = false
-  }
-
-  /** Called by the view once it has a laid-out, non-zero size. */
-  fun onPreviewLaidOut() {
-    if (awaitingPreviewBind) {
-      signalPreviewLaidOut()
-      return
-    }
-    bindPreviewIfReady()
-  }
-
-  private fun previewHasFrame(): Boolean {
-    val view = previewView ?: return false
-    return view.width > 0 && view.height > 0
-  }
-
-  private fun signalPreviewLaidOut() {
-    val signal = previewLayoutSignal ?: return
-    if (!signal.isCompleted) signal.complete(Unit)
   }
 
   private val previewViewListener = object : PreviewView.Listener {
@@ -1645,8 +1511,6 @@ class BondfireLivePublisherModule : Module() {
       durationLimitJob = null
       isStoppingIntentionally = true
       isMuted = false
-      // Next session must rebind its preview from scratch.
-      previewBound = false
       // Snapshot + clear collectors under the same lock so the loser of the
       // race can't cancel jobs the winner is still using.
       val jobs = collectorJobs.toList()
@@ -1666,12 +1530,8 @@ class BondfireLivePublisherModule : Module() {
     // would surface as a bogus error/drop on the next session.
     claimed.second.forEach { it.cancel() }
 
-    // PreviewView retains its own source reference. Detach while that source
-    // is still alive: releasing it first cancels its coroutine scope, so the
-    // next bind tries to stop a dead source and fails with JobCancellationException.
-    // This also prevents window visibility changes from restarting a released
-    // camera when the user returns from the background.
-    detachPreviewBestEffort()
+    // The preview collector releases its viewfinder before the camera source dies.
+    claimed.second.joinAll()
 
     // Unregister the proactive network callback — the streamer is being torn
     // down, so we no longer need to watch for network swaps.
@@ -1821,7 +1681,7 @@ class BondfireLivePublisherModule : Module() {
 class BondfireLivePublisherView(context: Context, appContext: expo.modules.kotlin.AppContext) :
   ExpoView(context, appContext) {
 
-  val previewView: PreviewView = PreviewView(context).apply {
+  private val previewView = PreviewView(context).apply {
     layoutParams = LinearLayout.LayoutParams(
       LinearLayout.LayoutParams.MATCH_PARENT,
       LinearLayout.LayoutParams.MATCH_PARENT,
@@ -1833,28 +1693,18 @@ class BondfireLivePublisherView(context: Context, appContext: expo.modules.kotli
   // surface stays 0x0 even after the parent has a real frame.
   override val shouldUseAndroidLayout: Boolean = true
 
-  private var lastLoggedFrame = ""
-
   init {
     addView(previewView)
-    BondfireLivePublisherModule.currentInstance?.attachPreview(previewView)
+  }
+
+  override fun onAttachedToWindow() {
+    super.onAttachedToWindow()
+    updatePreviewLayout()
   }
 
   override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-    layoutPreview(right - left, bottom - top)
-  }
-
-  override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-    super.onSizeChanged(w, h, oldw, oldh)
-    layoutPreview(w, h)
-  }
-
-  private fun layoutPreview(width: Int, height: Int) {
-    val frame = "${width}x${height}"
-    if (frame != lastLoggedFrame) {
-      lastLoggedFrame = frame
-      Log.i("BondfireLivePublisher", "preview layout $frame")
-    }
+    val width = right - left
+    val height = bottom - top
     // React Native skips the native measure pass for manually-added children.
     // Without an explicit measure, PreviewView's measured size stays 0x0 and it
     // lays out its internal SurfaceView at zero size, so no preview surface is
@@ -1866,27 +1716,18 @@ class BondfireLivePublisherView(context: Context, appContext: expo.modules.kotli
       MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY),
     )
     previewView.layout(0, 0, width, height)
-    // Once the view has a real, non-zero size, it's safe to bind the camera
-    // source (bindPreviewIfReady is idempotent and a no-op at 0x0).
-    if (width > 0 && height > 0) {
-      BondfireLivePublisherModule.currentInstance?.onPreviewLaidOut()
-    }
+    updatePreviewLayout()
   }
 
-  // React Native owns layout via Yoga and ignores native requestLayout() calls,
-  // so when StreamPack's viewfinder resizes its internal SurfaceView after the
-  // camera surface is ready, the layout pass never happens. Re-run it manually.
-  override fun requestLayout() {
-    super.requestLayout()
-    post(measureAndLayout)
-  }
-
-  private val measureAndLayout = Runnable {
-    measure(
-      MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
-      MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY),
+  private fun updatePreviewLayout() {
+    BondfireLivePublisherModule.currentInstance?.updatePreviewLayout(
+      previewView, isAttachedToWindow && previewView.width > 0 && previewView.height > 0,
     )
-    layout(left, top, right, bottom)
+  }
+
+  override fun onDetachedFromWindow() {
+    BondfireLivePublisherModule.currentInstance?.updatePreviewLayout(previewView, false)
+    super.onDetachedFromWindow()
   }
 }
 

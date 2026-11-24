@@ -30,4 +30,10 @@ dependencies {
   implementation 'io.github.thibaultbee.streampack:streampack-core:3.1.2'
   implementation 'io.github.thibaultbee.streampack:streampack-rtmp:3.1.2'
   implementation 'io.github.thibaultbee.streampack:streampack-ui:3.1.2'
+  constraints {
+    implementation('androidx.camera.viewfinder:viewfinder-view') {
+      version { strictly '1.4.0-alpha13' }
+      because 'StreamPack 3.1.2 constructs CameraViewfinder, which was removed in 1.5'
+    }
+  }
 }
