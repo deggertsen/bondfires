@@ -24,6 +24,8 @@ import android.os.PowerManager.OnThermalStatusChangedListener
 import android.os.SystemClock
 import android.util.Log
 import android.util.Size
+import android.view.View.MeasureSpec
+import android.widget.LinearLayout
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
@@ -44,6 +46,7 @@ import java.io.File
 import java.io.IOException
 import io.github.thibaultbee.streampack.ui.views.PreviewView
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -223,6 +226,12 @@ class BondfireLivePublisherModule : Module() {
   @Volatile
   private var previewBound = false
 
+  // While a segment preview is waiting to bind, layout callbacks must only
+  // signal size. Binding from onLayout here would race startStream().
+  @Volatile
+  private var awaitingPreviewBind = false
+  private var previewLayoutSignal: CompletableDeferred<Unit>? = null
+
   var previewView: PreviewView? = null
 
   override fun definition() = ModuleDefinition {
@@ -290,9 +299,18 @@ class BondfireLivePublisherModule : Module() {
     AsyncFunction("startSegmentPreview") Coroutine { options: LivePublisherPreviewOptions ->
       cleanupStreamer()
       currentFacing = options.initialCamera
-      createStreamer(options.fps, options.videoBitrate, options.audioBitrate, segmented = true)
-      val active = streamer ?: throw LivePublisherException("No camera")
       try {
+        // Bind the viewfinder before opening the camera. A 0x0 preview used
+        // to fall through, startStream() reported success, and the recorder
+        // showed a black "ready" camera that never attached.
+        createStreamer(
+          options.fps,
+          options.videoBitrate,
+          options.audioBitrate,
+          segmented = true,
+          requirePreview = true,
+        )
+        val active = streamer ?: throw LivePublisherException("No camera")
         // A timeout cancels the in-flight camera open; the pipeline may be
         // half-open. Always tear down before surfacing the failure so the
         // recorder's Try Again starts from a clean streamer.
@@ -301,6 +319,9 @@ class BondfireLivePublisherModule : Module() {
         } ?: throw IllegalStateException(
           "Camera start did not settle within ${PREVIEW_CAPTURE_START_TIMEOUT_MS / 1000}s",
         )
+      } catch (error: CancellationException) {
+        cleanupStreamer()
+        throw error
       } catch (error: Exception) {
         Log.e(TAG, "Segment preview failed", error)
         cleanupStreamer()
@@ -727,6 +748,7 @@ class BondfireLivePublisherModule : Module() {
     audioBitrate: Int,
     segmented: Boolean = false,
     audioSourceName: String = "voice_communication",
+    requirePreview: Boolean = false,
   ) {
     val context = appContext.reactContext
       ?: throw LivePublisherException("No React context available")
@@ -923,10 +945,48 @@ class BondfireLivePublisherModule : Module() {
     // when it lost the race or failed, nothing ever retried it and the
     // preview stayed black for the whole recording while capture kept working.
     previewBound = false
-    bindPreviewAwaiting()
+    if (requirePreview) {
+      awaitingPreviewBind = true
+      try {
+        ensurePreviewLaidOut()
+        bindPreviewAwaiting()
+      } finally {
+        awaitingPreviewBind = false
+        previewLayoutSignal = null
+      }
+      if (!previewBound) {
+        val view = previewView
+        throw LivePublisherException(
+          "Camera preview did not attach (${view?.width ?: -1}x${view?.height ?: -1})",
+        )
+      }
+    } else {
+      bindPreviewAwaiting()
+    }
 
     // Ensure unmuted at start
     isMuted = false
+  }
+
+  /**
+   * Segment preview must not open the camera until the viewfinder has a
+   * non-zero frame. Layout often lands a frame after the JS call.
+   */
+  private suspend fun ensurePreviewLaidOut() {
+    if (previewHasFrame()) return
+    val signal = CompletableDeferred<Unit>()
+    previewLayoutSignal = signal
+    // Layout runs on the main thread. Re-check after publishing the signal so
+    // a frame that landed before the signal existed is not missed.
+    if (previewHasFrame()) return
+    val laidOut = withTimeoutOrNull(2_000) { signal.await() }
+    if (laidOut == null) {
+      val view = previewView
+      Log.w(
+        TAG,
+        "ensurePreviewLaidOut: still ${view?.width ?: -1}x${view?.height ?: -1} after 2s",
+      )
+    }
   }
 
   private data class AudioInputRouting(
@@ -1278,6 +1338,10 @@ class BondfireLivePublisherModule : Module() {
     // Reset the guard so this view (re)binds to the current streamer. The bind
     // itself still waits for a non-zero layout via bindPreviewIfReady.
     previewBound = false
+    if (awaitingPreviewBind) {
+      if (view.width > 0 && view.height > 0) signalPreviewLaidOut()
+      return
+    }
     bindPreviewIfReady()
   }
 
@@ -1295,7 +1359,10 @@ class BondfireLivePublisherModule : Module() {
     if (previewBound) return
     val s = streamer ?: return
     val view = previewView ?: return
-    if (view.width <= 0 || view.height <= 0) return
+    if (view.width <= 0 || view.height <= 0) {
+      Log.i(TAG, "bindPreviewIfReady: waiting for preview layout (${view.width}x${view.height})")
+      return
+    }
     previewBound = true
     scope.launch {
       if (!attachPreviewSource(view, s)) {
@@ -1316,7 +1383,10 @@ class BondfireLivePublisherModule : Module() {
     if (previewBound) return
     val s = streamer ?: return
     val view = previewView ?: return
-    if (view.width <= 0 || view.height <= 0) return
+    if (view.width <= 0 || view.height <= 0) {
+      Log.w(TAG, "bindPreviewAwaiting: preview is ${view.width}x${view.height}, skipping bind")
+      return
+    }
     previewBound = true
     if (!attachPreviewSource(view, s)) {
       previewBound = false
@@ -1412,7 +1482,21 @@ class BondfireLivePublisherModule : Module() {
 
   /** Called by the view once it has a laid-out, non-zero size. */
   fun onPreviewLaidOut() {
+    if (awaitingPreviewBind) {
+      signalPreviewLaidOut()
+      return
+    }
     bindPreviewIfReady()
+  }
+
+  private fun previewHasFrame(): Boolean {
+    val view = previewView ?: return false
+    return view.width > 0 && view.height > 0
+  }
+
+  private fun signalPreviewLaidOut() {
+    val signal = previewLayoutSignal ?: return
+    if (!signal.isCompleted) signal.complete(Unit)
   }
 
   private val previewViewListener = object : PreviewView.Listener {
@@ -1737,7 +1821,19 @@ class BondfireLivePublisherModule : Module() {
 class BondfireLivePublisherView(context: Context, appContext: expo.modules.kotlin.AppContext) :
   ExpoView(context, appContext) {
 
-  val previewView: PreviewView = PreviewView(context)
+  val previewView: PreviewView = PreviewView(context).apply {
+    layoutParams = LinearLayout.LayoutParams(
+      LinearLayout.LayoutParams.MATCH_PARENT,
+      LinearLayout.LayoutParams.MATCH_PARENT,
+    )
+  }
+
+  // StreamPack's viewfinder calls requestLayout() when its surface is created.
+  // React Native drops those unless the Expo view owns Android layout, so the
+  // surface stays 0x0 even after the parent has a real frame.
+  override val shouldUseAndroidLayout: Boolean = true
+
+  private var lastLoggedFrame = ""
 
   init {
     addView(previewView)
@@ -1745,8 +1841,20 @@ class BondfireLivePublisherView(context: Context, appContext: expo.modules.kotli
   }
 
   override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-    val width = right - left
-    val height = bottom - top
+    layoutPreview(right - left, bottom - top)
+  }
+
+  override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+    super.onSizeChanged(w, h, oldw, oldh)
+    layoutPreview(w, h)
+  }
+
+  private fun layoutPreview(width: Int, height: Int) {
+    val frame = "${width}x${height}"
+    if (frame != lastLoggedFrame) {
+      lastLoggedFrame = frame
+      Log.i("BondfireLivePublisher", "preview layout $frame")
+    }
     // React Native skips the native measure pass for manually-added children.
     // Without an explicit measure, PreviewView's measured size stays 0x0 and it
     // lays out its internal SurfaceView at zero size, so no preview surface is
