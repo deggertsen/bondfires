@@ -10,6 +10,7 @@
     },
     "autolinking": {
       "android": {
+        "exclude": ["expo-camera"],
         "buildFromSource": [
           "expo-video"
         ]

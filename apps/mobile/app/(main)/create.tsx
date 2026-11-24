@@ -3,7 +3,6 @@ import { Button, Spinner, Text } from '@bondfires/ui'
 import { Flame } from '@bondfires/ui/icons'
 import { useObservable, useValue } from '@legendapp/state/react'
 import { useMutation, useQuery } from 'convex/react'
-import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera'
 import { useIsFocused, useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AppState, StatusBar } from 'react-native'
@@ -23,6 +22,7 @@ import {
   resolveSelectedCampId,
   type SparkMode,
 } from '../../components/create/sparkComposer'
+import { useRecorderPermissions } from '../../components/create/useRecorderPermissions'
 import { segmentMediaEnabled } from '../../lib/media/segmentUploads'
 import { goBackOrReplace } from '../../lib/navigation'
 import { routes } from '../../lib/routes'
@@ -75,9 +75,7 @@ function EnabledCreateScreen() {
   } | null>(null)
   const isFocused = useIsFocused()
 
-  const [cameraPermission, requestCameraPermission] = useCameraPermissions()
-  const [micPermission, requestMicPermission] = useMicrophonePermissions()
-  const requestingPermissions = useRef(false)
+  const permissions = useRecorderPermissions()
 
   // TEMPORARY mount/unmount diagnostic — remove after the camera-freeze /
   // remount-loop regression is confirmed fixed. A stable per-instance id lets
@@ -227,25 +225,6 @@ function EnabledCreateScreen() {
     state$.isFocused.set(isFocused)
   }, [isFocused, state$])
 
-  const requestPermissions = useCallback(async () => {
-    // Wait for the permission reads before requesting. Re-requesting already
-    // granted permissions can briefly background Android's warmed camera.
-    if (!cameraPermission || !micPermission || requestingPermissions.current) return
-    requestingPermissions.current = true
-    try {
-      if (!cameraPermission.granted) await requestCameraPermission()
-      if (!micPermission.granted) await requestMicPermission()
-    } finally {
-      requestingPermissions.current = false
-    }
-  }, [cameraPermission, micPermission, requestCameraPermission, requestMicPermission])
-
-  useEffect(() => {
-    if (cameraPermission?.status === 'undetermined' || micPermission?.status === 'undetermined') {
-      void requestPermissions()
-    }
-  }, [cameraPermission?.status, micPermission?.status, requestPermissions])
-
   const handleSelectCamp = useCallback(
     (id: Id<'camps'>) => {
       state$.pickedCampId.set(id)
@@ -264,8 +243,15 @@ function EnabledCreateScreen() {
     goBackOrReplace(router, navigation, routes.feed)
   }, [navigation, router])
 
-  // Permission denied state
-  if (!cameraPermission?.granted || !micPermission?.granted) {
+  if (permissions.mode === 'loading') {
+    return (
+      <YStack flex={1} backgroundColor="background" justifyContent="center">
+        <StatusBar barStyle={statusBarStyle} />
+        <Spinner />
+      </YStack>
+    )
+  }
+  if (permissions.mode !== 'granted') {
     return (
       <YStack
         flex={1}
@@ -292,10 +278,12 @@ function EnabledCreateScreen() {
             Camera and microphone access required
           </Text>
           <Text textAlign="center" color={'placeholderColor'}>
-            We need access to your camera and microphone to record videos.
+            {permissions.mode === 'settings'
+              ? 'Allow camera and microphone access in Settings to record videos.'
+              : 'We need access to your camera and microphone to record videos.'}
           </Text>
-          <Button variant="primary" size="lg" onPress={requestPermissions}>
-            Grant Permissions
+          <Button variant="primary" size="lg" onPress={permissions.onPress}>
+            {permissions.mode === 'settings' ? 'Open Settings' : 'Grant Permissions'}
           </Button>
         </YStack>
       </YStack>
