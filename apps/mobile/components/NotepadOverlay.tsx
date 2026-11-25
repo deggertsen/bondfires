@@ -10,9 +10,15 @@ import { VIDEO_OVERLAY_COLORS } from './videoOverlayColors'
 interface NotepadOverlayProps {
   onClose: () => void
   autoFocus?: boolean
+  /** Screen-top clearance so the sheet stays below header controls. */
+  topOffset?: number
 }
 
-export function NotepadOverlay({ onClose, autoFocus = true }: NotepadOverlayProps) {
+export function NotepadOverlay({
+  onClose,
+  autoFocus = true,
+  topOffset = 100,
+}: NotepadOverlayProps) {
   const { colors, themeName } = useAppThemeColors()
   const content = useValue(notepadStore$.content)
   const textInputRef = useRef<TextInputInstance>(null)
@@ -42,13 +48,17 @@ export function NotepadOverlay({ onClose, autoFocus = true }: NotepadOverlayProp
   }
 
   return (
-    <Pressable style={StyleSheet.absoluteFill} onPress={onClose}>
-      <KeyboardAvoidingView style={styles.container} behavior="padding" keyboardVerticalOffset={0}>
+    <KeyboardAvoidingView
+      pointerEvents="box-none"
+      style={[StyleSheet.absoluteFill, { paddingTop: topOffset }]}
+      behavior="padding"
+      keyboardVerticalOffset={0}
+    >
+      <Pressable style={styles.container} onPress={onClose}>
         <YStack
           flex={1}
           backgroundColor={overlayBg}
           paddingHorizontal={12}
-          marginTop={100}
           paddingBottom={12}
           onPress={(e) => e.stopPropagation()}
         >
@@ -70,8 +80,8 @@ export function NotepadOverlay({ onClose, autoFocus = true }: NotepadOverlayProp
             </Button>
           </XStack>
         </YStack>
-      </KeyboardAvoidingView>
-    </Pressable>
+      </Pressable>
+    </KeyboardAvoidingView>
   )
 }
 

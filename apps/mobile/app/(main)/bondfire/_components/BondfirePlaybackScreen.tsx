@@ -24,6 +24,7 @@ import {
   PLAYBACK_HEADER_BOTTOM_PADDING,
   PLAYBACK_HEADER_HEIGHT,
   PLAYBACK_HEADER_TOP_PADDING,
+  presenceTop,
 } from '../_lib/liveWatch'
 import type { ThreadCatchUp } from '../_lib/threadCatchUp'
 import { ThreadBrowser } from './ThreadBrowser'
@@ -94,6 +95,7 @@ export function BondfirePlaybackScreen({
 }) {
   const router = useRouter()
   const insets = useSafeAreaInsets()
+  const overlayTop = presenceTop(insets.top)
   const overlayState$ = useObservable({
     showSettings: false,
     showNotepad: false,
@@ -158,7 +160,7 @@ export function BondfirePlaybackScreen({
           top={0}
           left={0}
           right={0}
-          zIndex={100}
+          zIndex={1100}
           paddingTop={insets.top + PLAYBACK_HEADER_TOP_PADDING}
           paddingHorizontal={16}
           paddingBottom={PLAYBACK_HEADER_BOTTOM_PADDING}
@@ -327,6 +329,7 @@ export function BondfirePlaybackScreen({
 
         {showSettings && (
           <SettingsPopover
+            topOffset={overlayTop}
             effectivePlaybackSpeed={
               effectiveRate?.videoId === videoItems[currentVideoIndex]?.key
                 ? effectiveRate.rate
@@ -338,7 +341,12 @@ export function BondfirePlaybackScreen({
             onClose={() => overlayState$.showSettings.set(false)}
           />
         )}
-        {showNotepad && <NotepadOverlay onClose={() => overlayState$.showNotepad.set(false)} />}
+        {showNotepad && (
+          <NotepadOverlay
+            topOffset={overlayTop}
+            onClose={() => overlayState$.showNotepad.set(false)}
+          />
+        )}
 
         <InviteSheet
           mode={bondfireData.personalCampId ? 'personal-bondfire' : 'bondfire'}
