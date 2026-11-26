@@ -7,7 +7,7 @@ import type { FunctionArgs } from 'convex/server'
 import * as Crypto from 'expo-crypto'
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Alert, AppState, BackHandler, Pressable, StatusBar } from 'react-native'
+import { Alert, AppState, BackHandler, Pressable, StatusBar, StyleSheet } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { XStack, YStack } from 'tamagui'
 import { api } from '../../../../convex/_generated/api'
@@ -346,7 +346,7 @@ export function SegmentRecordScreen({
     <YStack flex={1} backgroundColor="background">
       {/* Fixed overlay colors preserve contrast over the camera in both themes. */}
       <StatusBar barStyle="light-content" />
-      <LivePublisherView style={{ flex: 1 }} />
+      <LivePublisherView collapsable={false} style={StyleSheet.absoluteFill} />
       <XStack
         position="absolute"
         top={0}

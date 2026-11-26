@@ -13,7 +13,7 @@ export const UPLOAD_COMPLETION_HOLD_MS = 5_000
 export type UploadSubject = 'response' | 'bondfire' | 'recording'
 
 /** Why the latest upload pass failed. User-facing copy is derived from this, never from raw errors. */
-export type UploadFailureKind = 'unavailable' | 'timeout' | 'unauthorized' | 'server'
+export type UploadFailureKind = 'unavailable' | 'timeout' | 'unauthorized' | 'server' | 'rejected'
 
 /** Acknowledgement for a Retry tap. Cleared by the store once it has been readable. */
 export type UploadRetryNotice = 'started' | 'busy' | 'skipped'
@@ -28,6 +28,8 @@ export interface SegmentJobStatus {
   paused: boolean
   /** Set with `paused` and cleared on the next segment that actually uploads. */
   failure?: UploadFailureKind
+  /** Server message for a terminal `rejected` failure. */
+  failureDetail?: string
 }
 
 export interface UploadCompletion {
@@ -52,6 +54,8 @@ export type UploadStatusState =
       notice?: UploadRetryNotice
       /** Why the latest pass failed, when the queue reported one. */
       failure?: UploadFailureKind
+      /** Present when a single rejected job named the reason. */
+      failureDetail?: string
     }
   | {
       kind: 'completed'
@@ -76,11 +80,28 @@ function sharedSubject(jobs: SegmentJobStatus[]): UploadSubject {
   return jobs.length === 1 ? (jobs[0].isResponse ? 'response' : 'bondfire') : 'recording'
 }
 
-const FAILURE_PRIORITY: UploadFailureKind[] = ['unavailable', 'unauthorized', 'timeout', 'server']
+const FAILURE_PRIORITY: UploadFailureKind[] = [
+  'rejected',
+  'unavailable',
+  'unauthorized',
+  'timeout',
+  'server',
+]
 
 function dominantFailure(jobs: SegmentJobStatus[]): UploadFailureKind | undefined {
   const present = new Set(jobs.flatMap((job) => (job.failure ? [job.failure] : [])))
   return FAILURE_PRIORITY.find((kind) => present.has(kind))
+}
+
+function rejectedDetail(jobs: SegmentJobStatus[]): string | undefined {
+  const details = [
+    ...new Set(
+      jobs.flatMap((job) =>
+        job.failure === 'rejected' && job.failureDetail ? [job.failureDetail] : [],
+      ),
+    ),
+  ]
+  return details.length === 1 ? details[0] : undefined
 }
 
 function pausedState(
@@ -89,6 +110,7 @@ function pausedState(
   reason: 'offline' | 'retrying',
 ): Extract<UploadStatusState, { kind: 'paused' }> {
   const failure = reason === 'retrying' ? dominantFailure(jobs) : undefined
+  const detail = failure === 'rejected' ? rejectedDetail(jobs) : undefined
   const notice = input.retryNotice || undefined
   return {
     kind: 'paused',
@@ -96,6 +118,7 @@ function pausedState(
     subject: sharedSubject(jobs),
     reason,
     ...(failure ? { failure } : {}),
+    ...(detail ? { failureDetail: detail } : {}),
     ...(notice ? { notice } : {}),
   }
 }
@@ -152,8 +175,8 @@ function offlineMessage(state: Extract<UploadStatusState, { kind: 'paused' }>): 
     : `Your ${noun(state.subject)} is saved on this phone and will upload automatically.`
 }
 
-function failureMessage(failure: UploadFailureKind | undefined): string {
-  switch (failure) {
+function failureMessage(state: Extract<UploadStatusState, { kind: 'paused' }>): string {
+  switch (state.failure) {
     case 'unavailable':
       return 'Server unavailable, still saved on this phone.'
     case 'timeout':
@@ -162,13 +185,15 @@ function failureMessage(failure: UploadFailureKind | undefined): string {
       return "The upload couldn't be authorized, still saved on this phone."
     case 'server':
       return 'The server rejected the upload, still saved on this phone.'
+    case 'rejected':
+      return state.failureDetail ?? "This recording can't be uploaded."
     default:
       return 'Saved on this phone · retrying automatically'
   }
 }
 
 function pausedMessage(state: Extract<UploadStatusState, { kind: 'paused' }>): string {
-  return state.reason === 'offline' ? offlineMessage(state) : failureMessage(state.failure)
+  return state.reason === 'offline' ? offlineMessage(state) : failureMessage(state)
 }
 
 /** Banner copy for a non-idle state. */
@@ -197,6 +222,9 @@ export function describeUploadStatus(
       }
       if (state.reason === 'offline') {
         return { title: 'Waiting for a connection', message, actionLabel: 'Retry' }
+      }
+      if (state.failure === 'rejected') {
+        return { title: "Couldn't upload", message, actionLabel: 'Retry now' }
       }
       return { title: 'Retrying upload', message, actionLabel: 'Retry now' }
     }

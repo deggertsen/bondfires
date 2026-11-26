@@ -13,6 +13,7 @@ import { InviteSheet } from '../../../../components/InviteSheet'
 import { NotepadOverlay } from '../../../../components/NotepadOverlay'
 import { SettingsPopover } from '../../../../components/SettingsPopover'
 import { VIDEO_OVERLAY_COLORS as OVERLAY_COLORS } from '../../../../components/videoOverlayColors'
+import { viewerMayRecordResponse } from '../../../../lib/respondGate'
 import { routes } from '../../../../lib/routes'
 import type {
   BondfireDetailData,
@@ -45,6 +46,7 @@ export function BondfirePlaybackScreen({
   bondfireId,
   bondfireData,
   canInvite,
+  respondContext,
   videoItems,
   currentVideoIndex,
   isFocused,
@@ -71,6 +73,10 @@ export function BondfirePlaybackScreen({
   bondfireId: Id<'bondfires'>
   bondfireData: BondfireDetailData
   canInvite: boolean
+  /** Undefined while camp context is loading. Camp fires must not open Respond first. */
+  respondContext?:
+    | { campId?: string | null; membershipStatus?: string | null; loaded: boolean }
+    | undefined
   videoItems: BondfireVideoItem[]
   currentVideoIndex: number
   isFocused: boolean
@@ -115,7 +121,12 @@ export function BondfirePlaybackScreen({
   const activeVideoPlayerRef = useRef<VideoPlayerHandle>(null)
   const respondNavigationPendingRef = useRef(false)
   const totalVideos = videoItems.length
-  const canRespond = bondfireData.campStatus !== 'archived'
+  const canRespond = viewerMayRecordResponse({
+    campStatus: bondfireData.campStatus,
+    campId: respondContext?.campId,
+    membershipStatus: respondContext?.membershipStatus,
+    contextLoaded: respondContext?.loaded === true,
+  })
   const processingResponseCount = bondfireData.processingResponses?.length ?? 0
   const viewabilityConfig = useRef({
     itemVisiblePercentThreshold: 50,
