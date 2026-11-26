@@ -7,14 +7,6 @@
     "icon": "./assets/images/icon.png",
     "scheme": "bondfires",
     "userInterfaceStyle": "automatic",
-    "splash": {
-      "image": "./assets/images/icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#FAFAFA",
-      "dark": {
-        "backgroundColor": "#141416"
-      }
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "org.bondfires",
@@ -101,6 +93,17 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#FAFAFA",
+          "dark": {
+            "backgroundColor": "#141416"
+          }
+        }
+      ],
       "expo-dev-client",
       [
         "@react-native-firebase/app",
