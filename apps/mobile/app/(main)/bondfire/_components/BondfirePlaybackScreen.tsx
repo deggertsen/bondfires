@@ -237,7 +237,7 @@ export function BondfirePlaybackScreen({
         </XStack>
 
         <FlatList
-          key={bondfireId}
+          key={`videos-${bondfireId}`}
           ref={flatListRef}
           data={videoItems}
           keyExtractor={(item) => item.key}
@@ -310,7 +310,7 @@ export function BondfirePlaybackScreen({
         )}
 
         <ThreadBrowser
-          key={bondfireId}
+          key={`browser-${bondfireId}`}
           title={
             // || not ??: an empty-string user title must fall through, matching
             // the Boolean(title) gate the backend uses for aiTitle generation.
