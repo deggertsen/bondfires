@@ -16,6 +16,8 @@ declare module 'expo-image-manipulator' {
 }
 
 declare module 'expo-image-picker' {
+  export const useCameraPermissions: typeof import('expo-camera').useCameraPermissions
+
   export function launchImageLibraryAsync(options?: {
     mediaTypes?: string[]
     allowsEditing?: boolean

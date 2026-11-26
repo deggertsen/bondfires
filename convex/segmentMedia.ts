@@ -88,7 +88,19 @@ export const begin = mutation({
     try {
       return await beginRecording(ctx, args)
     } catch (error) {
-      if (error instanceof ConvexError) throw error
+      if (error instanceof ConvexError) {
+        // The mutation rolls back, so this console line is the only server copy.
+        // The client writes the durable row from ConvexError.data.
+        console.warn('[segmentMedia:begin] rejected', {
+          localId: args.localId,
+          isResponse: args.isResponse,
+          personalCamp: args.personalCamp === true,
+          campId: args.campId,
+          bondfireId: args.bondfireId,
+          reason: typeof error.data === 'string' ? error.data : 'rejected',
+        })
+        throw error
+      }
       // Prod redacts raw throws to "Server Error", and this mutation rolls
       // back, so the console line is the only copy of the real cause.
       console.error('[segmentMedia:begin] unexpected error', {

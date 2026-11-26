@@ -86,6 +86,7 @@ describe('begin failure diagnostics', () => {
   it('preserves expected errors without logging them as unexpected failures', async () => {
     const { t, owner, args } = await setup()
     const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     await expect(t.mutation(api.segmentMedia.begin, args)).rejects.toThrow('Sign in required')
     await expect(
       owner.mutation(api.segmentMedia.begin, { ...args, localId: 'invalid' }),
@@ -99,6 +100,10 @@ describe('begin failure diagnostics', () => {
       }),
     ).rejects.toThrow('This camp is no longer active')
     expect(log).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledWith(
+      '[segmentMedia:begin] rejected',
+      expect.objectContaining({ reason: 'This camp is no longer active' }),
+    )
   })
 
   it('logs the cause and destination, returns a safe error, and rolls back partial writes', async () => {

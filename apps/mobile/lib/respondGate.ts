@@ -27,3 +27,17 @@ export function decideRespondGate(context: RespondContext | null | undefined): R
   if (context.membership?.status === 'active') return { kind: 'respond' }
   return { kind: 'join', campId }
 }
+
+/** Player Respond. Camp fires stay closed until membership is known and active. */
+export function viewerMayRecordResponse(args: {
+  campStatus?: string | null
+  campId?: string | null
+  membershipStatus?: string | null
+  contextLoaded: boolean
+}): boolean {
+  if (args.campStatus === 'archived') return false
+  const inCamp = Boolean(args.campId) || args.campStatus != null
+  if (!inCamp) return true
+  if (!args.contextLoaded) return false
+  return args.membershipStatus === 'active'
+}

@@ -4,6 +4,7 @@ import * as FileSystem from 'expo-file-system/legacy'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
 import { telemetry } from '../../../../packages/app/src/services/telemetry'
+import { parseError } from '../../../../packages/app/src/utils/errorUtils'
 import type { UploadFailureKind } from '../../../../packages/app/src/utils/uploadStatus'
 import { mediaClientEnabled } from '../../../../packages/media/src/environment'
 
@@ -43,6 +44,8 @@ type Job = {
   createdAt: number
   /** Durable so relaunching the app does not restart a failing begin loop. */
   beginRetry?: { attempts: number; notBefore: number }
+  /** A user-facing begin rejection. Automatic passes must not call begin again. */
+  rejection?: { message: string }
 }
 const active = new Set<string>()
 let running = false
@@ -62,6 +65,8 @@ export type SegmentUploadJob = {
   paused: boolean
   /** Why the latest pass failed. Cleared when a segment makes progress. */
   failure?: UploadFailureKind
+  /** User-facing ConvexError text for a terminal rejection. */
+  failureDetail?: string
 }
 export type SegmentUploadObserver = {
   onJobs: (jobs: SegmentUploadJob[]) => void
@@ -81,7 +86,12 @@ function clearSnapshot() {
   snapshot.clear()
   publish()
 }
-function reportJob(job: Job, paused?: boolean, failure?: UploadFailureKind | null) {
+function reportJob(
+  job: Job,
+  paused?: boolean,
+  failure?: UploadFailureKind | null,
+  failureDetail?: string | null,
+) {
   // The capture still recording is the create screen's concern, not the banner's.
   if (active.has(job.args.localId)) return
   const previous = snapshot.get(job.args.localId)
@@ -94,19 +104,23 @@ function reportJob(job: Job, paused?: boolean, failure?: UploadFailureKind | nul
       ? previous?.failure
       : failure || undefined
     : undefined
+  const nextDetail =
+    nextFailure === 'rejected' ? (failureDetail ?? previous?.failureDetail) : undefined
   const next: SegmentUploadJob = {
     localId: job.args.localId,
     isResponse: job.args.isResponse,
     bondfireId: job.args.isResponse ? job.args.bondfireId : job.recordId,
     paused: nextPaused,
     ...(nextFailure ? { failure: nextFailure } : {}),
+    ...(nextDetail ? { failureDetail: nextDetail } : {}),
   }
   if (
     previous &&
     previous.paused === next.paused &&
     previous.bondfireId === next.bondfireId &&
     previous.isResponse === next.isResponse &&
-    previous.failure === next.failure
+    previous.failure === next.failure &&
+    previous.failureDetail === next.failureDetail
   )
     return
   snapshot.set(next.localId, next)
@@ -120,9 +134,21 @@ class UploadFailure extends Error {
   constructor(
     readonly code: string,
     readonly status?: number,
+    readonly detail?: string,
   ) {
-    super('Video upload paused; it will retry automatically.')
+    super(
+      code === 'rejected' && detail ? detail : 'Video upload paused; it will retry automatically.',
+    )
   }
+}
+/** Membership and other ConvexError rejections will not succeed until something changes. */
+function terminalBeginRejection(error: unknown): string | null {
+  if (error instanceof UploadFailure) return null
+  const info = parseError(error)
+  if (!info.isConvexError || info.isNetworkError) return null
+  if (/will retry/i.test(info.message)) return null
+  if (/^\[Request ID:/i.test(info.message) || /Server Error/i.test(info.message)) return null
+  return info.message
 }
 /** Convex mutations and immutable PUTs are idempotent, including after a lost acknowledgement. */
 async function bounded<T>(operation: Promise<T>, ms = 30_000, cancel?: () => Promise<void>) {
@@ -187,6 +213,7 @@ export function markSegmentCapture(localId: string, recording: boolean) {
 }
 function failureKind(error: unknown): UploadFailureKind | null {
   if (error instanceof UploadFailure) {
+    if (error.code === 'rejected') return 'rejected'
     if (error.code === 'timeout') return 'timeout'
     if (error.code === 'http') {
       if (error.status === undefined) return null
@@ -242,8 +269,18 @@ export async function runSegmentUploads(
         // an actual fragment is durable; failed empty captures can be retried.
         if (!(await FileSystem.getInfoAsync(`${dir}segment-000000.m4s`)).exists) continue
         seen.add(job.args.localId)
-        reportJob(job, job.beginRetry ? true : undefined)
+        reportJob(
+          job,
+          job.rejection || job.beginRetry ? true : undefined,
+          job.rejection ? 'rejected' : undefined,
+          job.rejection?.message,
+        )
         if (!job.recordingId) {
+          if (job.rejection && !retryNow) {
+            reportJob(job, true, 'rejected', job.rejection.message)
+            continue
+          }
+          if (retryNow) delete job.rejection
           const notBefore = job.beginRetry?.notBefore
           // An explicit retry bypasses the delay, but still shares the queue lock
           // and records a new backoff on failure for subsequent automatic ticks.
@@ -256,6 +293,15 @@ export async function runSegmentUploads(
           try {
             created = await bounded(client.begin(job.args))
           } catch (error) {
+            const rejection = terminalBeginRejection(error)
+            if (rejection) {
+              delete job.beginRetry
+              job.rejection = { message: rejection }
+              stage = 'journal'
+              await save(job)
+              stage = 'begin'
+              throw new UploadFailure('rejected', undefined, rejection)
+            }
             // A timeout may only be a lost acknowledgement; retry it on the next pass.
             if (!(error instanceof UploadFailure && error.code === 'timeout')) {
               const attempts = Math.min((job.beginRetry?.attempts ?? 0) + 1, 8)
@@ -384,7 +430,13 @@ export async function runSegmentUploads(
         reportJob(job, false)
       } catch (error) {
         if (uploadOwner !== userId) return 'started'
-        if (job && seen.has(job.args.localId)) reportJob(job, true, failureKind(error))
+        if (job && seen.has(job.args.localId))
+          reportJob(
+            job,
+            true,
+            failureKind(error),
+            error instanceof UploadFailure ? error.detail : undefined,
+          )
         const localId = job?.args.localId ?? name.slice(0, 36)
         const previous = failures.get(localId)
         const now = Date.now()
@@ -399,6 +451,7 @@ export async function runSegmentUploads(
             nextIndex: job?.nextIndex,
             reason: error instanceof UploadFailure ? error.code : 'operation_failed',
             status: error instanceof UploadFailure ? error.status : undefined,
+            ...(error instanceof UploadFailure && error.detail ? { detail: error.detail } : {}),
             isResponse: job?.args.isResponse,
             campId: job?.args.campId,
             bondfireId: job?.args.bondfireId,
@@ -406,7 +459,10 @@ export async function runSegmentUploads(
             hasDraft: job?.args.draftBondfireId != null,
           })
           failures.set(localId, {
-            message: 'Video upload paused; it will retry automatically.',
+            message:
+              error instanceof UploadFailure && error.detail
+                ? error.detail
+                : 'Video upload paused; it will retry automatically.',
             reportedAt: now,
           })
         }
