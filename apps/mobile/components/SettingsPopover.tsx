@@ -1,6 +1,6 @@
 import { appActions, appStore$ } from '@bondfires/app'
 import { useValue } from '@legendapp/state/react'
-import { Pressable, StyleSheet } from 'react-native'
+import { Pressable, StyleSheet, View } from 'react-native'
 import { Slider, Switch, Text, XStack, YStack } from 'tamagui'
 import { VIDEO_OVERLAY_COLORS } from './videoOverlayColors'
 
@@ -8,12 +8,15 @@ interface SettingsPopoverProps {
   onClose: () => void
   effectivePlaybackSpeed?: number
   onPlaybackSpeedChange?: (rate: number) => void
+  /** Screen-top clearance so the popover stays below header controls. */
+  topOffset?: number
 }
 
 export function SettingsPopover({
   onClose,
   effectivePlaybackSpeed,
   onPlaybackSpeedChange,
+  topOffset = 94,
 }: SettingsPopoverProps) {
   const savedPlaybackSpeed = useValue(appStore$.preferences.playbackSpeed)
   const playbackSpeed = effectivePlaybackSpeed ?? savedPlaybackSpeed
@@ -27,20 +30,19 @@ export function SettingsPopover({
   }
 
   return (
-    <>
-      {/* Backdrop to close on tap outside */}
-      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+    <View style={[StyleSheet.absoluteFill, { zIndex: 1000 }]} pointerEvents="box-none">
+      {/* Backdrop starts below the header so those buttons stay tappable. */}
+      <Pressable style={[StyleSheet.absoluteFill, { top: topOffset }]} onPress={onClose} />
 
-      {/* Popover container */}
       <YStack
         position="absolute"
-        top={94}
+        top={topOffset}
         right={16}
         width={300}
         padding={16}
         backgroundColor={VIDEO_OVERLAY_COLORS.popoverBackground}
         borderRadius={8}
-        zIndex={1000}
+        zIndex={1}
       >
         <Text
           fontSize={14}
@@ -86,6 +88,6 @@ export function SettingsPopover({
           </Switch>
         </XStack>
       </YStack>
-    </>
+    </View>
   )
 }

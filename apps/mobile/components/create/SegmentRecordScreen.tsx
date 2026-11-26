@@ -356,6 +356,7 @@ export function SegmentRecordScreen({
         paddingHorizontal={20}
         justifyContent="space-between"
         alignItems="center"
+        zIndex={2}
       >
         <Pressable
           accessibilityRole="button"
@@ -530,7 +531,13 @@ export function SegmentRecordScreen({
           onClose={() => setShowInvite(false)}
         />
       )}
-      {showNotes && <NotepadOverlay autoFocus={false} onClose={() => setShowNotes(false)} />}
+      {showNotes && (
+        <NotepadOverlay
+          autoFocus={false}
+          topOffset={Math.max(insets.top + 12, 60) + 40 + 12}
+          onClose={() => setShowNotes(false)}
+        />
+      )}
     </YStack>
   )
 }
