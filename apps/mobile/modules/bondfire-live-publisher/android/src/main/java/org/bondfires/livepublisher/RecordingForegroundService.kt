@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
@@ -79,8 +80,11 @@ class RecordingForegroundService : Service() {
     } else {
       Notification.Builder(this)
     }
+    val appInfo = packageManager.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
+    val smallIcon = appInfo.metaData?.getInt("expo.modules.notifications.default_notification_icon", appInfo.icon)
+      ?: appInfo.icon
     return builder
-      .setSmallIcon(applicationInfo.icon)
+      .setSmallIcon(smallIcon)
       .setContentTitle("Bondfires is recording")
       .setContentText("Tap to return. Recording continues when you switch apps.")
       .setContentIntent(returnIntent)
